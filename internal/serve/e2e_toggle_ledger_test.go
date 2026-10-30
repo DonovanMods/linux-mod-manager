@@ -83,7 +83,8 @@ import (
 //   - withholdStarted: drop every job_started frame too - with withholdDone,
 //     a job whose whole life passes unheard;
 //   - killStreams: hang up every open stream, as a restart or a lagging
-//     watcher does; EventSource reconnects on its own;
+//     watcher does; EventSource reconnects on its own, after the
+//     e2eStreamRetry every stream the wire answers opens with;
 //   - forget: answer a (re)connect with an empty snapshot and every
 //     GET /api/v1/jobs/{id} with the server's own 404 - a server that no
 //     longer knows the page's jobs;
@@ -91,6 +92,20 @@ import (
 //     up for good (readyState CLOSED).
 //
 // connects counts every stream request, answered or refused.
+// e2eStreamRetry is the reconnection time the wire hands EventSource at the
+// top of every stream it answers (the SSE `retry:` field), instead of the
+// browser's own ~3s, so a scenario that hangs a stream up does not wait out
+// a real reconnect delay (#576). lmm serve itself sends no `retry:`; nothing
+// a scenario asserts is about how long the browser waits, only about what
+// the page does once it is back.
+const e2eStreamRetry = 100 * time.Millisecond
+
+// writeStreamRetry opens a stream with e2eStreamRetry.
+func writeStreamRetry(rw http.ResponseWriter) error {
+	_, err := fmt.Fprintf(rw, "retry: %d\n\n", e2eStreamRetry.Milliseconds())
+	return err
+}
+
 type toggleWire struct {
 	backend *url.URL
 	proxy   *httputil.ReverseProxy
@@ -297,6 +312,7 @@ func (w *toggleWire) serveEvents(rw http.ResponseWriter, r *http.Request) {
 		rw.Header().Set("Content-Type", "text/event-stream")
 		rw.Header().Set("Cache-Control", "no-cache")
 		rw.WriteHeader(http.StatusOK)
+		_ = writeStreamRetry(rw)
 		_, _ = io.WriteString(rw, "event: snapshot\ndata: {\"jobs\":[]}\n\n")
 		rw.(http.Flusher).Flush()
 		<-ctx.Done()
@@ -321,6 +337,9 @@ func (w *toggleWire) relayEvents(ctx context.Context, rw http.ResponseWriter) {
 		rw.Header()[name] = values
 	}
 	rw.WriteHeader(resp.StatusCode)
+	if err := writeStreamRetry(rw); err != nil {
+		return
+	}
 	flusher := rw.(http.Flusher)
 	flusher.Flush()
 
@@ -548,7 +567,7 @@ func TestE2E_LibraryBatch_ARowTheBatchOwesStaysPendingUntilItsOwnJob(t *testing.
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
 		chromedp.Click(`[data-action="batch-enable"]`, chromedp.ByQuery),
 		pollUntil(`document.querySelectorAll(".mod-row--pending").length >= 1`),
-		settleEffects(),
+		quietWindow(),
 		chromedp.Evaluate(libraryRowStateJS("Beta Mod"), &beta),
 	)
 	awaitToggleRequests(t, &wire.toggles, 1)
@@ -559,7 +578,7 @@ func TestE2E_LibraryBatch_ARowTheBatchOwesStaysPendingUntilItsOwnJob(t *testing.
 	assert.True(t, beta.Disabled, "and its box is not live while that job is owed")
 	assert.Equal(t, "Enabling…", beta.Live)
 
-	f.runInBrowser(t, chromedp.Evaluate(libraryToggleJS("Beta Mod"), nil), settleEffects())
+	f.runInBrowser(t, chromedp.Evaluate(libraryToggleJS("Beta Mod"), nil), quietWindow())
 	assert.EqualValues(t, 1, wire.toggles.Load(), "a click on the frozen box sends nothing")
 
 	// One live request per mod, whichever surface asks: Beta's slide-over
@@ -571,7 +590,7 @@ func TestE2E_LibraryBatch_ARowTheBatchOwesStaysPendingUntilItsOwnJob(t *testing.
 		settleEffects(),
 		chromedp.Evaluate(slideOverToggleJS, &panel),
 		chromedp.Evaluate(`document.querySelector('.slide-over [data-action="toggle"]').click()`, nil),
-		settleEffects(),
+		quietWindow(),
 		chromedp.Evaluate(clientNavigateJS(f.ContextPath()), nil),
 		waitGone(`.slide-over`),
 	)
@@ -625,7 +644,7 @@ func TestE2E_LibraryRow_ASucceededToggleSettlesOnTheReadAfterIt(t *testing.T) {
 		10*time.Second, 20*time.Millisecond, "the job's ending must re-read the library")
 
 	var confirming e2eRowToggleState
-	f.runInBrowser(t, settleEffects(), chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &confirming))
+	f.runInBrowser(t, quietWindow(), chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &confirming))
 	assert.True(t, confirming.Pending,
 		"until a read taken after the job's end has landed, the row keeps what was asked (row: %+v)", confirming)
 	assert.False(t, confirming.Checked, "and does not flick back to the pre-job document")
@@ -857,6 +876,7 @@ func TestE2E_ActivityStream_IsReopenedAfterTheServerRefusesIt(t *testing.T) {
 
 	wire.withholdDone.Store(true)
 	f.runInBrowser(t,
+		scaleUITimers(),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
 		pollUntil(`document.querySelectorAll(".mod-row").length === 2`),
@@ -920,7 +940,7 @@ func TestE2E_LibraryRow_AJobThatEndsBeforeItsStartIsAnsweredStillSettles(t *test
 				15*time.Second, 20*time.Millisecond)
 
 			var waiting e2eRowToggleState
-			f.runInBrowser(t, settleEffects(), chromedp.Evaluate(libraryRowStateJS(tc.mod), &waiting))
+			f.runInBrowser(t, quietWindow(), chromedp.Evaluate(libraryRowStateJS(tc.mod), &waiting))
 			assert.True(t, waiting.Pending, "the start is not answered yet, so the request is still open (row: %+v)", waiting)
 
 			wire.releaseAnswers()
@@ -985,7 +1005,7 @@ func TestE2E_ActivityGap_AJobKnownOnlyFromASnapshotEndsItsLateBinding(t *testing
 			wire.killStreams()
 			require.Eventually(t, func() bool { return wire.connects.Load() >= 2 },
 				15*time.Second, 20*time.Millisecond, "the page must reconnect")
-			f.runInBrowser(t, settleEffects())
+			f.runInBrowser(t, quietWindow())
 			wire.holdAnswers.Store(false)
 			wire.releaseAnswers()
 
@@ -1126,7 +1146,7 @@ func TestE2E_LibraryToggle_AStartTheServerNeverAnswersSettlesAtTheDeadline(t *te
 			runWithin(t, f, compressed+15*time.Second,
 				pollUntil(toastSaysJS("did not answer")),
 				chromedp.Evaluate(toastTextsJS, &toasts),
-				settleEffects(),
+				quietWindow(),
 				chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &held),
 			)
 			toldAt := time.Since(clicked)
@@ -1165,7 +1185,7 @@ func TestE2E_LibraryToggle_AStartTheServerNeverAnswersSettlesAtTheDeadline(t *te
 					const row = document.querySelector('.mod-row[data-mod="fake:a"]');
 					return row !== null && !row.querySelector("td.col--enabled input").checked;
 				})()`),
-				settleEffects(),
+				quietWindow(),
 				chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &after),
 				chromedp.Evaluate(`window.__pendingAgain`, &pendingAgain),
 				chromedp.Evaluate(toastTextsJS, &toasts),
@@ -1302,7 +1322,7 @@ func TestE2E_LibraryToggle_ASupersededRereadSettlesNothing(t *testing.T) {
 			wire.releaseNextMods(t)
 			awaitMods(t, wire, 2, 1)
 			var superseded e2eRowToggleState
-			f.runInBrowser(t, settleEffects(), chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &superseded))
+			f.runInBrowser(t, quietWindow(), chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &superseded))
 			assert.True(t, superseded.Pending,
 				"a superseded read settles nothing: the row keeps what was asked until the newer read lands (row: %+v)", superseded)
 			assert.False(t, superseded.Checked, "and never shows the document from before its job")
@@ -1424,7 +1444,7 @@ func TestE2E_LibraryToggle_ASettlingReadThatNeverLandsEndsAtItsDeadline(t *testi
 					const row = document.querySelector('.mod-row[data-mod="fake:a"]');
 					return row !== null && !row.querySelector("td.col--enabled input").checked;
 				})()`),
-				settleEffects(),
+				quietWindow(),
 				chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &after),
 			)
 			assert.False(t, after.Pending, "and is never pending again")
@@ -1469,7 +1489,7 @@ func TestE2E_LibraryToggle_ASettleDeadlineOffScreenEndsNothing(t *testing.T) {
 	var toasts []string
 	runWithin(t, f, 20*time.Second,
 		pollUntil(`window.__settleDeadlinesPassed >= 1`),
-		settleEffects(),
+		quietWindow(),
 		chromedp.Evaluate(toastTextsJS, &toasts),
 	)
 	assert.NotContains(t, strings.Join(toasts, " | "), "could not be read",
@@ -1626,10 +1646,10 @@ func TestE2E_Toggle_TwoRapidClicksSendOneRequest(t *testing.T) {
 			chromedp.Navigate(f.HomePath()),
 			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
 			chromedp.DoubleClick(`.mod-row[data-mod="fake:a"] td.col--enabled input`, chromedp.ByQuery),
-			settleEffects(),
+			quietWindow(),
 		)
 		awaitToggleRequests(t, &wire.toggles, 1)
-		f.runInBrowser(t, settleEffects())
+		f.runInBrowser(t, quietWindow())
 		assert.EqualValues(t, 1, wire.toggles.Load())
 
 		wire.releaseToggles()
@@ -1645,10 +1665,10 @@ func TestE2E_Toggle_TwoRapidClicksSendOneRequest(t *testing.T) {
 			chromedp.Navigate(f.SlideOverPath("fake", "a")),
 			chromedp.WaitVisible(`.slide-over [data-action="toggle"]`, chromedp.ByQuery),
 			chromedp.DoubleClick(`.slide-over [data-action="toggle"]`, chromedp.ByQuery),
-			settleEffects(),
+			quietWindow(),
 		)
 		awaitToggleRequests(t, &wire.toggles, 1)
-		f.runInBrowser(t, settleEffects())
+		f.runInBrowser(t, quietWindow())
 		assert.EqualValues(t, 1, wire.toggles.Load())
 
 		wire.releaseToggles()

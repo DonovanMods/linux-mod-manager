@@ -42,6 +42,11 @@ import {
 import { updateFromFileInputID } from "./components/updatefromfile.js";
 import { copyReplaces } from "./components/plan_mod_copy.js";
 import { fetchJobResult, readoutHasNextStep } from "./jobresult.js";
+import {
+  succeededOriginReleaseMillis,
+  toastDismissMillis,
+  unreadRereadDelayMillis,
+} from "./timers.js";
 import { resultTallyLabel, resultTallyTone } from "./progress.js";
 import { resolveGamePath } from "./navigation.js";
 import { RELEVANCE, effectiveSort, knownSort } from "./searchsort.js";
@@ -1529,12 +1534,6 @@ function toggleUnread(entry, reason) {
   });
 }
 
-/** unreadRereadDelayMillis is how long after a request settled unread the
- * page asks again (issue 454 N1). Long enough not to hammer a server that
- * is struggling, short enough that the row does not sit on a stale value
- * until some unrelated read. */
-const unreadRereadDelayMillis = 3_000;
-
 // unreadRereadEntries are the requests waiting on the one re-read already
 // scheduled - a batch whose reads all failed schedules one read, not one
 // per mod.
@@ -2042,8 +2041,8 @@ function clearOrigin(origin) {
 // failed, and its readout then holds the failed item's way out - "Open on
 // <source>", "Update from file…" - which a timer took away a few seconds
 // after the user had been told to use it, mid-way through choosing the file.
-// jobresult.js#readoutHasNextStep says which readouts those are.
-const succeededOriginReleaseMillis = 4000;
+// jobresult.js#readoutHasNextStep says which readouts those are. The delay
+// is timers.js#succeededOriginReleaseMillis.
 
 /** releaseSucceededOrigin hands origin's control back once the job it is
  * showing has had its few seconds on screen - unless that readout is
@@ -2061,7 +2060,6 @@ async function releaseSucceededOrigin(origin, summary) {
 }
 
 let toastSeq = 0;
-const toastDismissMillis = 8000;
 
 /** Pushes a toast. Successes clear themselves after a while; failures do
  * not - a failure nobody saw is the case toasts exist for. A `sticky` toast

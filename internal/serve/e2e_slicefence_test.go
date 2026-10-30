@@ -280,8 +280,9 @@ func TestE2E_TwoModSettingsInFlightKeepTheNewerLibrary(t *testing.T) {
 	f.runInBrowser(t,
 		pollUntil(`window.__olderDelivered === true`),
 		// The older answer is in the SPA's hands; give the commit it would
-		// make without the fence room to land and repaint.
-		chromedp.Sleep(time.Second),
+		// make without the fence room to land and repaint. An absence, so a
+		// bounded window rather than a condition (#576).
+		quietWindow(),
 		chromedp.Evaluate(lockBadge("Alpha Mod")+` !== null`, &alpha),
 		chromedp.Evaluate(lockBadge("Beta Mod")+` !== null`, &beta),
 		chromedp.Evaluate(`window.__bailed === true`, &bailed),

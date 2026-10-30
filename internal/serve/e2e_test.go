@@ -227,9 +227,9 @@ func TestE2E_OnlyOnePickerDropdownOpenAtATime(t *testing.T) {
 
 	var afterEscape int
 	f.runInBrowser(t,
-		chromedp.Sleep(200*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.Sleep(200*time.Millisecond),
+		settleEffects(),
 		chromedp.Evaluate(`document.querySelectorAll(".picker__menu").length`, &afterEscape),
 	)
 	assert.Zero(t, afterEscape, "Escape must close whichever picker is open")
@@ -240,16 +240,16 @@ func TestE2E_OnlyOnePickerDropdownOpenAtATime(t *testing.T) {
 	// the LISTENER's outside-of-header check without depending on layout.
 	// The preact/hooks vendor batches useEffect through its own
 	// requestAnimationFrame-driven flush (measured empirically at up to a
-	// handful of frames in a headless browser), so the sleeps give both the
-	// listener's attachment and its resulting re-render room to land before
-	// each half is asserted.
+	// handful of frames in a headless browser), so settleEffects waits for
+	// both the listener's attachment and its resulting re-render before each
+	// half is asserted.
 	var afterOutsideClick int
 	f.runInBrowser(t,
 		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
-		chromedp.Sleep(200*time.Millisecond),
+		settleEffects(),
 		chromedp.Evaluate(`document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))`, nil),
-		chromedp.Sleep(200*time.Millisecond),
+		settleEffects(),
 		chromedp.Evaluate(`document.querySelectorAll(".picker__menu").length`, &afterOutsideClick),
 	)
 	assert.Zero(t, afterOutsideClick, "a click outside every picker must close the open one")
@@ -2243,7 +2243,7 @@ func TestE2E_FullModPage_JobCompletionDoesNotDropToLoading(t *testing.T) {
 		// onJobDone's own re-hydrate is a real (if fast) network round trip
 		// against the in-process test server - this waits it out; the
 		// MutationObserver above is what actually catches a flash.
-		chromedp.Sleep(300*time.Millisecond),
+		quietWindow(),
 		chromedp.Evaluate(`window.__modPageFlashed`, &flashed),
 	)
 	assert.False(t, flashed, "a job completion must not blank the full mod page back to its Loading state")
@@ -3449,7 +3449,7 @@ func TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape(t *testing.T) {
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
 		openMenu,
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.Click(`.section-header`, chromedp.ByQuery),
 		waitGone(`.row-menu`),
 	)
@@ -3462,7 +3462,7 @@ func TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape(t *testing.T) {
 		// menu's own DOM appearance by a handful of animation frames in a
 		// headless browser; WaitVisible above only proves the DOM is there,
 		// not that the effect has run yet.
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		waitGone(`.row-menu`),
 	)
@@ -3642,7 +3642,7 @@ func TestE2E_LibraryBatchBar_CancelKeepsTheSelectionAndReturnsFocus(t *testing.T
 		// lag the modal's own DOM appearance by a handful of animation
 		// frames in a headless browser (this suite's own established
 		// pattern - see TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape).
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		waitGone(`.modal[data-kind="uninstall-batch"]`),
 		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? document.activeElement?.tagName`, &activeAction),
@@ -3688,7 +3688,7 @@ func TestE2E_ProfilesModal_EscapeReturnsFocusToThePickerTrigger(t *testing.T) {
 		// frames in a headless browser (this suite's own established
 		// pattern - see TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape's
 		// identical note); WaitVisible above only proves the DOM is there.
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		waitGone(`[data-testid="profiles-list"]`),
 		chromedp.Evaluate(`document.activeElement?.className ?? ""`, &activeClass),
@@ -4128,7 +4128,7 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 	// this modal's own mount effect additionally kicks off an async
 	// reloadProfiles() fetch. Cheap insurance once the ACTUAL bug this
 	// scenario tripped over (below) was found and fixed.
-	settle := func() { time.Sleep(300 * time.Millisecond) }
+	settle := func() { f.runInBrowser(t, settleEffects()) }
 
 	openProfilesModal := func() {
 		f.runInBrowser(t,
@@ -4350,7 +4350,7 @@ mods:
 	importPath := filepath.Join(t.TempDir(), "imported.yaml")
 	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
 
-	settle := func() { time.Sleep(300 * time.Millisecond) }
+	settle := func() { f.runInBrowser(t, settleEffects()) }
 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
@@ -4438,7 +4438,7 @@ mods:
 	importPath := filepath.Join(t.TempDir(), "imported.yaml")
 	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
 
-	settle := func() { time.Sleep(300 * time.Millisecond) }
+	settle := func() { f.runInBrowser(t, settleEffects()) }
 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
@@ -4537,7 +4537,7 @@ mods: []
 	importPath := filepath.Join(t.TempDir(), "reimport.yaml")
 	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
 
-	settle := func() { time.Sleep(300 * time.Millisecond) }
+	settle := func() { f.runInBrowser(t, settleEffects()) }
 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
@@ -4632,7 +4632,7 @@ func TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelec
 	// effect-attached Escape listener lagging the DOM by a frame or two)
 	// even though the WaitVisible above already did real async work.
 	f.runInBrowser(t,
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		waitGone(`.modal[data-kind="uninstall-batch"]`),
 	)
@@ -4706,7 +4706,7 @@ func TestE2E_ReorderModal_EscapeDiscardsTheEditOnReopen(t *testing.T) {
 	// first - this suite's own established pattern against modal.js's
 	// effect-attached Escape listener lagging the DOM by a frame or two.
 	f.runInBrowser(t,
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		waitGone(`[data-testid="reorder-list"]`),
 	)
@@ -4752,7 +4752,7 @@ func TestE2E_ProfilesModal_ReopenDoesNotResumeAHalfTypedRename(t *testing.T) {
 	// picker's outside-click/Escape state and this modal's own mount effect
 	// both flush on requestAnimationFrame, up to a handful of frames in a
 	// headless browser - real insurance, not superstition, once observed.
-	settle := func() { time.Sleep(300 * time.Millisecond) }
+	settle := func() { f.runInBrowser(t, settleEffects()) }
 	openProfilesModal := func() {
 		f.runInBrowser(t,
 			chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
@@ -5034,7 +5034,7 @@ mods: []
 	importPath := filepath.Join(t.TempDir(), "imported.yaml")
 	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
 
-	settle := func() { time.Sleep(300 * time.Millisecond) }
+	settle := func() { f.runInBrowser(t, settleEffects()) }
 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
@@ -5750,13 +5750,15 @@ func TestE2E_ASlowStaleHydrationCannotRepaintTheProfileSwitchedTo(t *testing.T) 
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// succeededOriginReleaseBudget is main.js#succeededOriginReleaseMillis, as
+// succeededOriginReleaseBudget is timers.js#succeededOriginReleaseMillis, as
 // the two I-2 scenarios below need to reason about it: long enough that a
 // pinned failure is provably pinned, short enough that a released success
-// does not stretch the suite. Kept as a Go constant rather than read out of
+// does not stretch the suite. Kept as a Go value rather than read out of
 // the module, because a scenario that derived its own budget from the code
-// under test could not fail if that code changed.
-const succeededOriginReleaseBudget = 4 * time.Second
+// under test could not fail if that code changed. Both scenarios run the
+// page's timers at scaleUITimers' scale, so the budget is scaled with them
+// (#576).
+var succeededOriginReleaseBudget = scaledUITimer(4 * time.Second)
 
 // searchRefreshedAfterTheJob is the poll every C-2 scenario uses to sample
 // the toast decision at a point where it has definitely been made.
@@ -5855,6 +5857,7 @@ func TestE2E_SucceededDeployReleasesTheButtonOnItsOwn(t *testing.T) {
 	f := newE2EFixtureWithDeployableMods(t)
 
 	f.runInBrowser(t,
+		scaleUITimers(),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
@@ -5883,6 +5886,7 @@ func TestE2E_FailedDeployStaysPinnedUntilDismissed(t *testing.T) {
 
 	var stillFailed, deployButtonBack bool
 	f.runInBrowser(t,
+		scaleUITimers(),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
@@ -6307,7 +6311,8 @@ func TestE2E_ASlowStaleModPageHydrationCannotBlankTheOneOnScreen(t *testing.T) {
 	// The SECOND read scoped to "default" is the delayed one: the first is
 	// the cold load that puts the page on screen, and the second belongs to
 	// the job's re-hydrate - the one this scenario makes stale.
-	f.BaseURL = startE2EProxyDelayingTheNthModFilesRead(t, f.BaseURL, "default", 2, 2*time.Second)
+	var staleReads *atomic.Int64
+	f.BaseURL, staleReads = startE2EProxyDelayingTheNthModFilesRead(t, f.BaseURL, "default", 2, 2*time.Second)
 
 	modPage := func(profile string) string {
 		return f.BaseURL + "/g/" + f.Game.ID + "/" + profile + "/mod/fake/boots"
@@ -6324,7 +6329,8 @@ func TestE2E_ASlowStaleModPageHydrationCannotBlankTheOneOnScreen(t *testing.T) {
 	// A job finishing anywhere re-hydrates the route on screen, and THAT
 	// hydration's files read is the delayed one.
 	startEnableFromAnotherClient(t, f, "fake", "x")
-	time.Sleep(300 * time.Millisecond)
+	require.Eventually(t, func() bool { return staleReads.Load() >= 2 }, e2eTimeout, e2ePollInterval,
+		"the job's re-hydrate must have issued the delayed read before the page moves on")
 
 	// Move to the other profile's copy of this page while that is still
 	// fetching - the same two calls router.js's own navigate() makes, so
@@ -6337,13 +6343,18 @@ func TestE2E_ASlowStaleModPageHydrationCannotBlankTheOneOnScreen(t *testing.T) {
 			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
 	)
 
-	// Long enough for the delayed read to have landed and repainted. The
-	// Changelog and Versions SECTIONS are the observable: both are gated on
-	// modPage.detail / modPage.versions being non-null, so a write that
-	// resets them to null takes the headings off the page entirely.
+	// Until the delayed read has landed (the browser's own resource timing
+	// records it once its response is complete) and whatever it would
+	// repaint has. The Changelog and Versions SECTIONS are the observable:
+	// both are gated on modPage.detail / modPage.versions being non-null, so
+	// a write that resets them to null takes the headings off the page
+	// entirely.
 	var headings []string
 	f.runInBrowser(t,
-		chromedp.Sleep(3*time.Second),
+		pollUntil(`performance.getEntriesByType("resource")
+			.filter((e) => e.name.includes("/api/v1/mods/fake/boots/files") && e.name.includes("profile=default"))
+			.length >= 2`),
+		quietWindow(),
 		headingTexts(".mod-page h2", &headings),
 	)
 

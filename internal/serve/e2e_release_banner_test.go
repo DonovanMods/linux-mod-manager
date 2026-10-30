@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/assert"
@@ -83,9 +82,9 @@ func TestE2E_ReleaseBannerShowsAndDismissalPersistsPerVersion(t *testing.T) {
 		// A reload keeps it hidden: the dismissal is remembered per version.
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		pollUntil(`(async () => { await fetch("/api/v1/updates/lmm"); return true; })()`),
-		// The banner's own fetch has long since landed; give its render a beat.
-		chromedp.Sleep(300*time.Millisecond),
+		// Once the banner's own read has landed and rendered whatever it
+		// renders, nothing more is coming.
+		releaseReadLanded(),
 	)
 	var stored string
 	var present bool
@@ -113,8 +112,7 @@ func TestE2E_ReleaseBannerAbsentWhenNothingNewer(t *testing.T) {
 			f.runInBrowser(t,
 				chromedp.Navigate(f.HomePath()),
 				chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-				pollUntil(`(async () => { await fetch("/api/v1/updates/lmm"); return true; })()`),
-				chromedp.Sleep(300*time.Millisecond),
+				releaseReadLanded(),
 				chromedp.Evaluate(`document.querySelector('[data-testid="release-banner"]') !== null`, &present),
 			)
 			assert.False(t, present)
@@ -146,4 +144,17 @@ func TestE2E_ReleaseBannerAsksForARestartOnceANewerLmmIsInstalled(t *testing.T) 
 		waitGone(`[data-testid="release-banner"]`),
 	)
 	assert.Empty(t, f.BrowserErrors())
+}
+
+// releaseReadLanded waits until the page's own GET /api/v1/updates/lmm has
+// completed - the browser's resource timing records it once its response is
+// in (#576) - and the page has rendered what it says. A banner that is
+// absent is an absence, so this is the condition the absence is read
+// against: the read that would have put it on screen is over.
+func releaseReadLanded() chromedp.Action {
+	return chromedp.Tasks{
+		pollUntil(`performance.getEntriesByType("resource")
+			.some((e) => new URL(e.name).pathname === "/api/v1/updates/lmm")`),
+		settleEffects(),
+	}
 }

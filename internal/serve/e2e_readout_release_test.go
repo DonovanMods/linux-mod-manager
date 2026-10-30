@@ -21,8 +21,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// readoutReleaseWait is past the 4s release, with room for a slow runner.
-const readoutReleaseWait = 8 * time.Second
+// readoutReleaseWait is past the 4s release, with room for a slow runner, at
+// the scale scaleUITimers runs it at (#576).
+var readoutReleaseWait = scaledUITimer(8 * time.Second)
 
 func TestE2E_ReadoutRelease_FailedUpdateBatchStaysUntilDismissed(t *testing.T) {
 	f := newE2EFixtureWithManualUpdate(t)
@@ -32,6 +33,7 @@ func TestE2E_ReadoutRelease_FailedUpdateBatchStaysUntilDismissed(t *testing.T) {
 
 	const readout = `.library__toolbar .job-progress[data-state="succeeded"]`
 	f.runInBrowser(t,
+		scaleUITimers(),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
 		pollUntil(`document.querySelector('.library__toolbar [data-action="update-all"]')?.textContent.includes("1")`),
@@ -53,6 +55,7 @@ func TestE2E_ReadoutRelease_FailedUpdateBatchStaysUntilDismissed(t *testing.T) {
 func TestE2E_ReadoutRelease_VerifyFixResultStaysUntilDismissed(t *testing.T) {
 	f := newE2EFixtureWithRepairableMods(t)
 
+	f.runInBrowser(t, scaleUITimers())
 	f.runInBrowser(t, repairAllFromHealthCard(f)...)
 	f.runInBrowser(t,
 		chromedp.WaitVisible(`.card--health [data-testid="verify-fix-result"]`, chromedp.ByQuery),
@@ -70,6 +73,7 @@ func TestE2E_ReadoutRelease_FlagOnlySwitchNoticeStaysUntilDismissed(t *testing.T
 	require.NoError(t, os.WriteFile(path, []byte(strings.ReplaceAll(string(data), "is_default: true\n", "")), 0o644))
 
 	f.runInBrowser(t,
+		scaleUITimers(),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		clickWhenSettled(`.profile-picker__trigger`),
