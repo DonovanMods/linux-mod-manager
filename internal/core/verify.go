@@ -174,7 +174,8 @@ type VerifyFinding struct {
 	// problem at all - an "ok" or "skipped" row has nothing to explain).
 	// The one "skipped" row that does carry one is a check the source
 	// refused for want of a key (AuthSource, #582): "<Source> needs an API
-	// key" is the honest reason no repair is on offer.
+	// key" is the honest reason no repair is on offer, or "<Source>
+	// rejected its API key" when the user has supplied one.
 	// #334: it exists so a frontend offering a per-finding "Repair"
 	// affordance can say WHY the button is absent without reimplementing
 	// the question - the web UI carried a hand-maintained status->sentence
@@ -1694,6 +1695,11 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 			if errors.Is(err, domain.ErrAuthRequired) {
 				f.AuthSource = mod.SourceID
 				f.FixableReason = r.svc.sourceDisplayName(mod.SourceID) + " needs an API key"
+				// A refusal despite a key means that key is expired,
+				// revoked or mistyped, not missing.
+				if src, srcErr := r.svc.GetSource(mod.SourceID); srcErr == nil && r.svc.sourceHasCredential(r.ctx, src, mod.SourceID) {
+					f.FixableReason = r.svc.sourceDisplayName(mod.SourceID) + " rejected its API key"
+				}
 			}
 			r.finding(f, VerifyEvent{})
 			continue

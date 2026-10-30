@@ -379,3 +379,36 @@ func TestVerifyFinding_AuthRequiredNamesTheSource(t *testing.T) {
 	assert.Empty(t, byMod["unreachable-mod"].AuthSource, "only an auth refusal names a source to authenticate")
 	assert.Empty(t, byMod["unreachable-mod"].FixableReason)
 }
+
+// TestVerifyFinding_AuthRefusalWithAKeySaysTheKeyWasRejected (#582): when
+// the user HAS supplied a key and the source still refuses, "needs an API
+// key" is wrong - the key is expired, revoked or mistyped - so the reason
+// says the source rejected it.
+func TestVerifyFinding_AuthRefusalWithAKeySaysTheKeyWasRejected(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
+	ctx := context.Background()
+	require.NoError(t, svc.SaveGame(ctx, game))
+	_, err := svc.NewProfileManager().Create(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SaveSourceToken(ctx, "vsrc", "revoked-key-0123456789"))
+
+	svc.RegisterSource(&scriptedVersionSource{
+		mockSource: newMockSource("vsrc"),
+		errByModID: map[string]error{"keyed-mod": fmt.Errorf("getting mod files: %w: access denied (check API key is valid)", domain.ErrAuthRequired)},
+	})
+	seedVerifyMod(t, svc, game, "vsrc", "keyed-mod", "keyed-mod", "1.0", []string{"f1"}, true)
+	require.NoError(t, svc.SaveFileChecksum(ctx, "vsrc", "keyed-mod", game.ID, "default", "f1", "cs"))
+
+	result, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	require.NoError(t, err)
+	var got *core.VerifyFinding
+	for i, f := range result.Findings {
+		if f.ModID == "keyed-mod" && f.FileID == "" {
+			got = &result.Findings[i]
+		}
+	}
+	require.NotNil(t, got)
+	assert.Equal(t, "vsrc", got.AuthSource)
+	assert.Equal(t, "Mock Source rejected its API key", got.FixableReason)
+}

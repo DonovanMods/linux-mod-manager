@@ -26,7 +26,10 @@ status` now warn about each source whose key comes only from its
   skipped-source notice offer the same button; it opens Setup >
   Authentication focused on that source. `lmm verify` prints `could not
 check version: CurseForge needs an API key (run: lmm auth login
-curseforge)` instead of "source unreachable". On the wire,
+curseforge)` instead of "source unreachable"; a key the source refused
+  reads "CurseForge rejected its API key", and when that key comes from
+  `CURSEFORGE_API_KEY` the line says to check the variable, which outranks
+  a stored key, instead of `lmm auth login`. On the wire,
   `VerifyFinding.auth_source`, `UpdateCheckReport.auth_required` and
   `SourceWarning.auth_required` carry the refusing source.
 

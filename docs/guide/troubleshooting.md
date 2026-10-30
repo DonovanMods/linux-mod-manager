@@ -36,7 +36,10 @@ If a source needs an API key that lmm doesn't have, the Health card says so
 for each of its mods, with an **Add API key…** button that opens
 **Setup** > **Authentication** at that source. In the terminal, `lmm verify`
 names the command that stores the key, such as
-`lmm auth login curseforge`.
+`lmm auth login curseforge`. If the source turned down a key you gave it,
+the line says the key was rejected; when that key comes from a variable
+such as `CURSEFORGE_API_KEY`, fix or unset the variable, since it wins over
+a key stored with `lmm auth login`.
 
 ## Turn one mod off
 
