@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -73,6 +72,11 @@ func buildTarball(t *testing.T, entries ...tarEntry) []byte {
 type fakeRelease struct {
 	tag    string
 	assets map[string][]byte
+	// latestStatus, when set, is the latest-release document's HTTP status
+	// instead of the document: GitHub failing (#586).
+	latestStatus int
+	// onAsset, when set, runs as an asset is served.
+	onAsset func(name string)
 
 	mu       sync.Mutex
 	requests []string
@@ -109,6 +113,10 @@ func (r *fakeRelease) serve(t *testing.T) *httptest.Server {
 		r.headers = append(r.headers, req.Header.Clone())
 		r.mu.Unlock()
 		if req.URL.Path == "/repos/DonovanMods/linux-mod-manager/releases/latest" {
+			if r.latestStatus != 0 {
+				w.WriteHeader(r.latestStatus)
+				return
+			}
 			_, _ = fmt.Fprintf(w, `{"tag_name":%q,"html_url":"https://github.com/DonovanMods/linux-mod-manager/releases/tag/%s","draft":false,"prerelease":false}`, r.tag, r.tag)
 			return
 		}
@@ -122,6 +130,9 @@ func (r *fakeRelease) serve(t *testing.T) *httptest.Server {
 			http.NotFound(w, req)
 			return
 		}
+		if r.onAsset != nil {
+			r.onAsset(name)
+		}
 		_, _ = w.Write(body)
 	}))
 	t.Cleanup(srv.Close)
@@ -133,10 +144,15 @@ type fakeRestarter struct {
 	calls     int
 	restarted bool
 	err       error
+	// onRestart, when set, runs as the restart is asked for.
+	onRestart func()
 }
 
 func (f *fakeRestarter) RestartServeIfActive(context.Context) (bool, error) {
 	f.calls++
+	if f.onRestart != nil {
+		f.onRestart()
+	}
 	return f.restarted, f.err
 }
 
@@ -186,7 +202,10 @@ func goodTarball(t *testing.T) []byte {
 	)
 }
 
-func TestSelfUpdate_ReplacesTheBinaryAtomicallyAndRestartsServe(t *testing.T) {
+// Apply replaces the binary and stops there (#586 review): it cannot see
+// lmm serve's jobs, so lmm-serve.service restarts itself
+// (RestartServeWhenIdle) rather than being restarted under one.
+func TestSelfUpdate_ReplacesTheBinaryAtomicallyAndLeavesServeAlone(t *testing.T) {
 	f := newSelfUpdateFixture(t)
 	f.restarts.restarted = true
 	srv := newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t)
@@ -205,8 +224,8 @@ func TestSelfUpdate_ReplacesTheBinaryAtomicallyAndRestartsServe(t *testing.T) {
 	assert.True(t, res.Updated)
 	assert.Equal(t, "2.1.0", res.Previous)
 	assert.Equal(t, "2.2.0", res.Version)
-	assert.True(t, res.ServeRestarted)
-	assert.Equal(t, 1, f.restarts.calls)
+	assert.False(t, res.ServeRestarted)
+	assert.Zero(t, f.restarts.calls, "lmm serve restarts itself once it is idle")
 
 	data, err := os.ReadFile(f.exe)
 	require.NoError(t, err)
@@ -221,20 +240,6 @@ func TestSelfUpdate_ReplacesTheBinaryAtomicallyAndRestartsServe(t *testing.T) {
 	assert.Len(t, entries, 1)
 	staged, _ := os.ReadDir(filepath.Join(f.opts.DataDir, "downloads"))
 	assert.Empty(t, staged)
-}
-
-func TestSelfUpdate_AServeRestartFailureIsReportedNotFatal(t *testing.T) {
-	f := newSelfUpdateFixture(t)
-	f.restarts.err = errors.New("systemctl --user try-restart: boom")
-	srv := newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t)
-	u := f.updater(srv)
-	plan, err := u.Plan(context.Background())
-	require.NoError(t, err)
-	res, err := u.Apply(context.Background(), plan)
-	require.NoError(t, err)
-	assert.True(t, res.Updated)
-	assert.False(t, res.ServeRestarted)
-	assert.Contains(t, res.ServeRestartError, "boom")
 }
 
 func TestSelfUpdate_UpToDateIsANoOp(t *testing.T) {
@@ -453,14 +458,6 @@ func TestSelfUpdate_SendsTheLmmUserAgentAndNoCredential(t *testing.T) {
 		assert.Equal(t, "lmm/2.1.0", h.Get("User-Agent"))
 		assert.Empty(t, h.Get("Authorization"))
 	}
-}
-
-func TestSelfUpdate_AutoUpdateFollowsConfig(t *testing.T) {
-	f := newSelfUpdateFixture(t)
-	u := core.NewSelfUpdater(withBases(f.opts))
-	assert.False(t, u.AutoUpdateEnabled(), "off by default")
-	require.NoError(t, os.WriteFile(filepath.Join(f.opts.ConfigDir, "config.yaml"), []byte("auto_update: true\n"), 0o644))
-	assert.True(t, u.AutoUpdateEnabled())
 }
 
 func withBases(o core.SelfUpdateOptions) core.SelfUpdateOptions {

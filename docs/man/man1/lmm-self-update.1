@@ -27,18 +27,24 @@ you the command. You need write access to the directory lmm is in; lmm never
 uses sudo.
 
 .PP
-If lmm-serve.service (see 'lmm service') is running, it is restarted onto the
-new version. An 'lmm serve' you started yourself keeps running the old one
-until you restart it; its web UI says so.
+self-update never restarts lmm-serve.service (see 'lmm service'): it cannot
+see the web UI's running jobs. With automatic updates on, lmm-serve.service
+notices the new binary within a minute and restarts itself once no job is
+running. Otherwise, or for an 'lmm serve' you started yourself, it keeps
+running the old version until you restart it; its web UI says so.
 
 .PP
 Without --yes, lmm asks before it replaces the binary. --json never asks:
 without --yes it prints the plan and changes nothing.
 
 .PP
---auto is what lmm-update.timer runs ('lmm service install --auto-update'):
-it does nothing unless config.yaml says 'auto_update: true', and needs no
---yes.
+--auto is the automatic update: what lmm starts in the background after a
+command once it knows of a newer release, and what lmm-update.timer runs
+('lmm service install --auto-update'). It needs no --yes, and does nothing
+when config.yaml says 'auto_update: false', when another self-update is
+running, or for a release whose automatic update failed in the last day.
+Automatic updates are on by default for a self-managed lmm; a package's lmm
+is never updated by lmm itself.
 
 .PP
 Examples:
@@ -49,7 +55,7 @@ Examples:
 
 .SH OPTIONS
 \fB--auto\fP[=false]
-	run as the unattended timer does: update only when auto_update is true in config.yaml
+	run as an automatic update: no --yes, nothing when auto_update is false in config.yaml
 
 .PP
 \fB--check\fP[=false]

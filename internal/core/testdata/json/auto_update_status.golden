@@ -1,0 +1,17 @@
+{
+  "enabled": true,
+  "applicable": true,
+  "last": {
+    "from": "2.2.0",
+    "to": "2.3.0",
+    "at": "2026-10-30T03:00:00Z",
+    "first": true
+  },
+  "failure": {
+    "version": "2.4.0",
+    "at": "2026-11-02T03:00:00Z",
+    "error": "lmm 2.4.0 has no signature (checksums.txt.sig), so it cannot be verified; nothing was installed",
+    "retry_at": "2026-11-03T03:00:00Z"
+  },
+  "noticed": false
+}

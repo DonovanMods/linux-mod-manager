@@ -242,11 +242,22 @@ Extract and install:
 
 ```bash
 tar -xzf lmm_*.tar.gz
-sudo mv lmm /usr/local/bin/
+mkdir -p ~/.local/bin && mv lmm ~/.local/bin/
 ```
+
+(`sudo mv lmm /usr/local/bin/` works too, but then lmm cannot update
+itself, since it never uses `sudo`.)
 
 The tarball also carries the man pages under `docs/man/man1/`; copy them to
 `/usr/share/man/man1` (or `~/.local/share/man/man1`) to get `man lmm`.
+
+An lmm installed this way (or with `go install`, or from source) **updates
+itself**: when its daily release check finds a new release, it installs it,
+verified against the lmm release key. To turn
+this off, set `auto_update: false` in `~/.config/lmm/config.yaml`, or use
+**Setup > Updates** in the web UI. An lmm a package manager installed is
+never updated by lmm itself. (An install of v2.2.0 needs one
+`lmm self-update` by hand to pick this up.)
 
 ### With Go Install
 
@@ -853,7 +864,7 @@ default_link_method: symlink # Global default: symlink, hardlink, or copy
 default_game: baldurs-gate-3 # Optional, set via 'lmm game set-default'
 cache_path: ~/.local/share/lmm/cache # Optional, defaults to <data_dir>/cache
 update_check: false # Optional: stop the once-a-day check for a new lmm release (on by default)
-auto_update: true # Optional: let lmm-update.timer install new lmm releases (off by default; see lmm self-update)
+auto_update: false # Optional: stop lmm installing new lmm releases by itself (on by default for a self-managed install)
 ```
 
 The `cache_path` setting allows you to store downloaded mod files in a custom location. This is useful if you want to:
@@ -2807,23 +2818,35 @@ lmm self-update --yes     # no question; --json without --yes prints the plan
 3. It extracts only the `lmm` binary (a regular file, no path tricks) into a
    temporary file beside the running one, with its mode, and renames it over
    it, so a crash leaves one whole binary or the other.
-4. If `lmm-serve.service` is running, it restarts it (`try-restart`).
+4. It restarts nothing: it cannot see `lmm serve`'s running jobs. With
+   `auto_update` on, `lmm-serve.service` notices the new binary within a
+   minute and restarts itself once none of its jobs runs (#586).
 
 A binary a package manager owns is refused, with the upgrade command to run
 instead, and so is a development build. lmm needs write access to the
 directory the binary is in, and never uses `sudo`: move lmm somewhere you
 own, such as `~/.local/bin`, if it is not.
 
-**Unattended updates** are opt-in. `lmm service install --auto-update` also
-installs `lmm-update.timer` (daily, `Persistent=true`,
+**Automatic updates** are on by default for a self-managed lmm (#586):
+when the daily release check finds a newer release, an interactive command
+starts `lmm self-update --auto` detached (output in
+`<data dir>/auto-update.log`), and `lmm serve` installs it from its
+background refresh. Every updater only replaces the binary; `lmm serve`
+running as `lmm-serve.service` restarts itself onto a newer binary, whoever
+installed it, once none of its jobs runs.
+Each run takes the self-update lock and verifies the release as above; a
+release whose update failed waits a day. `auto_update: false` in
+`config.yaml`, or **Setup > Updates** in the web UI, turns them off; a
+package's binary is never touched. `lmm service install --auto-update`
+also installs `lmm-update.timer` (daily, `Persistent=true`,
 `RandomizedDelaySec=1h`) and the oneshot `lmm-update.service`, which runs
-`lmm self-update --auto`. That does nothing unless `config.yaml` says
-`auto_update: true`, so the setting turns updates on and off without
-touching the units; `lmm service uninstall` removes them.
+`lmm self-update --auto`, for a machine where lmm rarely runs;
+`lmm service uninstall` removes them. The first automatic update is
+announced once with how to turn them off, later ones in one line.
 
-A `lmm serve` you started yourself keeps running the old binary after an
-update; its banner says "lmm vX is installed; restart `lmm serve` to use
-it". lmm never restarts it, and does not treat `SIGHUP` as a restart: the
+A `lmm serve` you started yourself, or any with `auto_update: false`, keeps
+running the old binary after an update; its banner says "lmm vX is
+installed; restart `lmm serve` to use it". lmm never restarts it, and does not treat `SIGHUP` as a restart: the
 terminal sends one when it closes.
 
 How releases are signed, and how the key is rotated, is in

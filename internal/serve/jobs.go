@@ -58,6 +58,17 @@ const (
 // draining, and retrying against this same process cannot help.
 var errRegistryClosing = errors.New("serve: job registry is shutting down")
 
+// errRegistryRestarting is Start's refusal while an automatic update asks
+// systemd to restart this server (#586, quiesce): a job started now would
+// be cut short by the restart. It wraps errRegistryClosing, so every
+// handler's 503 mapping answers it too.
+var errRegistryRestarting = fmt.Errorf("%w: lmm is restarting to use the release it just installed; try again in a moment", errRegistryClosing)
+
+// restartHold bounds quiesce's hold on new jobs: the restart it was taken
+// for normally ends this process well inside it, and a restart that never
+// arrives must not leave the server refusing every job.
+const restartHold = 2 * time.Minute
+
 // jobState is a job's lifecycle state, and its wire value in a job status
 // document.
 type jobState string
@@ -399,7 +410,10 @@ type jobRegistry struct {
 	// called - see Start, where the same lock makes "is the registry
 	// closing" and "add this job to wg" one atomic decision.
 	closing bool
-	jobs    map[jobID]*job
+	// heldUntil, while in the future, refuses new jobs: quiesce's hold for
+	// an automatic update's restart.
+	heldUntil time.Time
+	jobs      map[jobID]*job
 	// order is every retained job's id in start order - the eviction pass
 	// walks it oldest-first.
 	order []jobID
@@ -469,6 +483,10 @@ func (r *jobRegistry) Start(kind string, run func(context.Context, core.EventSin
 	if r.closing {
 		r.mu.Unlock()
 		return "", errRegistryClosing
+	}
+	if time.Now().Before(r.heldUntil) {
+		r.mu.Unlock()
+		return "", errRegistryRestarting
 	}
 	r.jobs[j.id] = j
 	r.order = append(r.order, j.id)
@@ -572,6 +590,29 @@ func (r *jobRegistry) QueueDepth() int {
 		}
 	}
 	return depth
+}
+
+// quiesce is core.AutoRunOptions.Quiesce for this registry (#586): idle
+// is false while any job runs - a job may hold core's mutation slot for
+// only part of its life (an install's download runs outside it), so the
+// cross-process lock alone would not see it - and otherwise new jobs are
+// refused until resume, or restartHold, whichever comes first. The check
+// and the hold are one critical section with Start's admission, so no job
+// slips in between them.
+func (r *jobRegistry) quiesce() (resume func(), idle bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, j := range r.jobs {
+		if !j.isFinished() {
+			return func() {}, false
+		}
+	}
+	r.heldUntil = time.Now().Add(restartHold)
+	return func() {
+		r.mu.Lock()
+		r.heldUntil = time.Time{}
+		r.mu.Unlock()
+	}, true
 }
 
 // evictLocked forgets the oldest FINISHED jobs until at most retain remain.

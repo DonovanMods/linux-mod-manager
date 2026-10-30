@@ -116,6 +116,10 @@ type ReleaseStatus struct {
 	// binary has been replaced under it, and is running the old one until
 	// it restarts (#569). Empty otherwise, and always from the CLI.
 	Installed string `json:"installed,omitempty"`
+	// AutoUpdate is automatic updates' state (#586): `lmm serve` sets it
+	// for the web UI's Setup > Updates and its "updated itself" notice.
+	// Nil otherwise, and always from the CLI.
+	AutoUpdate *AutoUpdateStatus `json:"auto_update,omitempty"`
 }
 
 // ReleaseCheckOptions configures a ReleaseChecker.

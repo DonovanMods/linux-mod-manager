@@ -68,6 +68,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **lmm now updates itself by default (#586).** Automatic updates are ON for
+  a self-managed install (the release tarball, `go install`, `make
+install`): when the once-a-day release check finds a newer signed release,
+  lmm installs it by itself through the same verified path as `lmm
+self-update` (the release signature, then the checksum, then an atomic
+  replace). After an interactive command, the CLI starts a detached `lmm
+self-update --auto` and exits as it would have; a script or a pipe never
+  triggers one. `lmm serve` installs it from its background refresh. No
+  updater restarts `lmm-serve.service`, and neither does `lmm self-update`
+  any more: they replace the binary and stop, because only `lmm serve` can
+  see its own jobs. `lmm serve` running as `lmm-serve.service` looks at its
+  binary every minute and restarts itself onto a newer one once no job is
+  running; a `lmm serve` you started yourself, or any with
+  `auto_update: false`, asks you to restart it. Only one update runs
+  at a time, and a release whose update failed is not tried again for a
+  day; the CLI-started run logs to `<data dir>/auto-update.log`. The first
+  automatic update says so once, with how to turn them off ("lmm updated
+  itself to vX. To turn this off: `auto_update: false` in config.yaml, or
+  Setup > Updates."); later ones get a one-line notice. **To opt out**, set
+  `auto_update: false` in `config.yaml` (an explicit `false` survives every
+  save), or turn off **Update automatically** under the web UI's new
+  **Setup > Updates**, which also shows the installed version, the latest
+  release, the install method and the last automatic update
+  (`GET /api/v1/updates/lmm` gains `auto_update`; the switch is
+  `PUT /api/v1/settings/auto-update`). A package's lmm (deb, rpm, apk, AUR)
+  and a development build are never updated by lmm, and Setup > Updates says
+  why. `lmm-update.timer` (`lmm service install --auto-update`) is now
+  optional, for a machine where lmm rarely runs. **An install of v2.2.0
+  keeps v2.2.0's behaviour (automatic updates off) until it is updated once
+  by hand** (`lmm self-update`) to the release that carries this change.
+  An automatic update never runs while an lmm operation is running in any
+  lmm process (the cross-process operation lock, and `lmm serve`'s own
+  jobs); it tries again later. `lmm serve`'s restart onto a new binary
+  waits for its running jobs (up to ten minutes, holding new jobs off while
+  it restarts) or is left to you. A release check that fails (offline,
+  GitHub erroring or rate-limiting) backs off from an hour, doubling up to
+  a day, and never clears or replaces a release's own failed install,
+  which waits its day; an install lmm cannot settle or a release tag it
+  refuses waits a day. `config.yaml` writes (the default game, the
+  auto-update switch) now take a short lock of their own, so two lmm
+  processes writing it at once never lose either setting. The "updated
+  itself" notice is shown once overall, by the terminal or the web UI,
+  whichever comes first (`POST /api/v1/updates/lmm/notice`), and Setup >
+  Updates' switch no longer waits behind a running job.
+
 - **The web UI draws its text in the same face on every machine (#523).**
   It used the host's own `system-ui` font, so the page looked different, and
   laid out differently, from one machine to the next. `lmm serve` now

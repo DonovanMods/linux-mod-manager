@@ -2,7 +2,7 @@
 // doc §Scope: "a real Setup surface"). A whole page rather than a modal,
 // per the task brief - "a Setup page that earns it" - with one section per
 // admin surface: Games, Authentication, Sources, Archive import,
-// Adopt. Reached from the top bar's ⚙ (topbar.js), the empty-library links
+// Adopt, Updates (issue 586). Reached from the top bar's ⚙ (topbar.js), the empty-library links
 // (library.js), or straight after first-run add/detect via a game's own
 // Mission Control link.
 //
@@ -18,6 +18,7 @@ import { SetupAuth } from "./setupauth.js";
 import { SetupSources } from "./setupsources.js";
 import { SetupImportArchive } from "./setupimport.js";
 import { SetupAdopt } from "./setupadopt.js";
+import { SetupUpdates } from "./setupupdates.js";
 import { AwayBar } from "./awaybar.js";
 
 const SECTIONS = [
@@ -26,6 +27,7 @@ const SECTIONS = [
   { key: "sources", label: "Sources" },
   { key: "archive", label: "Archive import" },
   { key: "adopt", label: "Adopt" },
+  { key: "updates", label: "Updates" },
 ];
 
 export function SetupPage({ state, route, onThemeChange, actions }) {
@@ -141,7 +143,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
           // second time inside the panel would say the same thing twice.
           // So: a real <h2>, announced rather than drawn, the same call
           // Mission Control's own <h1> makes. It moves with the tab, which
-          // is what makes each of the five a real heading in turn.
+          // is what makes each section a real heading in turn.
           html`<h2 class="section-header visually-hidden">
             ${SECTIONS.find((s) => s.key === section)?.label ?? "Setup"}
           </h2>`
@@ -163,6 +165,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
           html`<${SetupImportArchive} state=${state} actions=${actions} />`
         }
         ${section === "adopt" && html`<${SetupAdopt} state=${state} actions=${actions} />`}
+        ${section === "updates" && html`<${SetupUpdates} />`}
       </div>
     </main>
   `;

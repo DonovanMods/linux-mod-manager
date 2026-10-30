@@ -67,6 +67,16 @@ type Options struct {
 	// no request, which is what keeps this package's tests off GitHub.
 	ReleaseChecker *core.ReleaseChecker
 
+	// AutoUpdater installs a newer lmm release by itself (#586): when the
+	// background refresh finds one, auto_update is on and the install is
+	// self-managed, it runs in this process. With auto_update on, this
+	// server also restarts itself onto a newer binary installed under it -
+	// by that update, lmm-update.timer's or the CLI's - once no job runs,
+	// when the AutoUpdater can restart lmm-serve.service (this server is
+	// that service). nil (every test that does not set one) never updates
+	// or restarts anything. Only consulted alongside a ReleaseChecker.
+	AutoUpdater AutoUpdater
+
 	// Notices receives the lines a person running the server should read
 	// - the release check's one-time first-run notice - beside the
 	// "listening on" line; nil discards them.
@@ -146,8 +156,17 @@ type Server struct {
 	// releases is Options.ReleaseChecker (api_release.go); nil when the
 	// server was built without one.
 	releases *core.ReleaseChecker
+	// autoUpdater is Options.AutoUpdater (api_release.go); nil when the
+	// server never updates lmm.
+	autoUpdater AutoUpdater
 	// notices is Options.Notices, never nil.
 	notices io.Writer
+	// installedCheckEvery is how often Serve looks for a newer binary
+	// installed under it: installedCheckEvery, shorter in a test.
+	installedCheckEvery time.Duration
+	// restartAsked is the installed version restartOntoInstalled last
+	// asked to restart onto; only the refresh goroutine touches it.
+	restartAsked string
 }
 
 // New builds a Server over svc. log receives request-level diagnostics at
@@ -193,7 +212,10 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		draining:       make(chan struct{}),
 		version:        opts.Version,
 		releases:       opts.ReleaseChecker,
+		autoUpdater:    opts.AutoUpdater,
 		notices:        opts.Notices,
+
+		installedCheckEvery: installedCheckEvery,
 	}
 	if s.notices == nil {
 		s.notices = io.Discard
@@ -268,11 +290,24 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.ln == nil {
 		return errors.New("serve: Listen must be called before Serve")
 	}
+	refreshed := make(chan struct{})
 	if s.releases != nil {
 		go s.releases.PrimeInstallMethod(ctx)
-		go s.refreshReleases(ctx)
+		go func() {
+			defer close(refreshed)
+			s.refreshReleases(ctx)
+		}()
+	} else {
+		close(refreshed)
 	}
 	err := serveGraceful(ctx, s.httpServer, s.ln, s.shutdownGrace, s.jobs.shutdown)
+	// An automatic update's restart arrives as this shutdown; its run ends
+	// with its context, but is let finish what it records (#586).
+	select {
+	case <-refreshed:
+	case <-time.After(refreshShutdownWait):
+		s.log.Warn("serve: the lmm release refresh did not stop in time")
+	}
 	// Staged uploads are large; an orderly shutdown takes them with it
 	// rather than leaving them for a future start to wonder about. A hard
 	// kill still leaves them, exactly as it does an interrupted download.

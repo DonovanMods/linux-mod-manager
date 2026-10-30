@@ -24,7 +24,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/releasesig"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // self_update.go - `lmm self-update` (#569): replace a self-managed lmm
@@ -320,7 +319,8 @@ type ServeRestarter interface {
 type SelfUpdateOptions struct {
 	// ConfigDir holds config.yaml, whose auto_update AutoUpdateEnabled reads.
 	ConfigDir string
-	// DataDir holds the staging directory the release downloads into.
+	// DataDir holds the staging directory the release downloads into, the
+	// self-update lock and the automatic-update state (auto_update.go).
 	// Required.
 	DataDir string
 	// Version is the running version, the bare release version. Required.
@@ -343,8 +343,17 @@ type SelfUpdateOptions struct {
 	TrustedKeys []string
 	// Arch is the release architecture to install; "" is runtime.GOARCH.
 	Arch string
-	// Restarter restarts lmm-serve.service after an update; nil skips it.
+	// Restarter restarts lmm-serve.service for RestartServeWhenIdle: only
+	// `lmm serve` running as that service sets it (#586). nil restarts
+	// nothing.
 	Restarter ServeRestarter
+	// OpLockPath is the cross-process mutation lock every lmm mutation
+	// takes (ServiceConfig.OpLockPath): an automatic update does not
+	// install while another lmm holds it (#586). Empty skips that check.
+	OpLockPath string
+	// Now is the clock automatic updates record their outcome by; nil is
+	// time.Now.
+	Now func() time.Time
 }
 
 // SelfUpdater updates the running lmm binary to the latest release (#569).
@@ -391,10 +400,13 @@ type SelfUpdateResult struct {
 	// Executable is the binary that was replaced.
 	Executable string `json:"executable"`
 	// ServeRestarted is true when lmm-serve.service was running and was
-	// restarted onto the new binary.
+	// restarted onto the new binary. Always false since #586: an update
+	// replaces the binary and stops, and lmm serve restarts itself once no
+	// job runs. Kept for the --json contract #569 shipped.
 	ServeRestarted bool `json:"serve_restarted"`
 	// ServeRestartError is why restarting it failed: the update itself
 	// stands, and the service runs the old binary until it restarts.
+	// Always empty since #586, as ServeRestarted.
 	ServeRestartError string `json:"serve_restart_error,omitempty"`
 }
 
@@ -491,14 +503,6 @@ func (u *SelfUpdater) Lock() (unlock func(), err error) {
 	return l.release, nil
 }
 
-// AutoUpdateEnabled reports config.yaml's auto_update, which the
-// unattended timer's run (`lmm self-update --auto`) obeys. A config.yaml
-// lmm cannot read answers false: an unattended update needs a clear yes.
-func (u *SelfUpdater) AutoUpdateEnabled() bool {
-	cfg, err := config.Load(u.opts.ConfigDir)
-	return err == nil && cfg.AutoUpdate
-}
-
 // probe is the configured InstallProbe, or the real one.
 func (u *SelfUpdater) probe() InstallProbe {
 	if u.opts.Probe != nil {
@@ -559,10 +563,17 @@ func (u *SelfUpdater) Plan(ctx context.Context) (SelfUpdatePlan, error) {
 // writable, downloads checksums.txt, its signature and the tarball into a
 // staging directory, verifies the signature and then the checksum, extracts
 // the binary beside the installed one and renames it over it. A refusal at
-// any step leaves the installed binary as it was. Afterwards it restarts
-// lmm-serve.service if it is running; a failure there is reported in the
-// result, not returned, because the update itself succeeded.
+// any step leaves the installed binary as it was. It does not restart
+// lmm-serve.service (#586 review): this process cannot see lmm serve's
+// jobs, so a running lmm serve restarts itself onto the new binary once
+// none runs (RestartServeWhenIdle), or its web UI asks for the restart.
 func (u *SelfUpdater) Apply(ctx context.Context, plan SelfUpdatePlan) (SelfUpdateResult, error) {
+	return u.install(ctx, plan)
+}
+
+// install is Apply, which RunAuto shares: everything up to the renamed
+// binary.
+func (u *SelfUpdater) install(ctx context.Context, plan SelfUpdatePlan) (SelfUpdateResult, error) {
 	res := SelfUpdateResult{Previous: plan.Current, Version: plan.Current, Executable: plan.Executable}
 	if plan.UpToDate {
 		return res, nil
@@ -633,14 +644,6 @@ func (u *SelfUpdater) Apply(ctx context.Context, plan SelfUpdatePlan) (SelfUpdat
 		return res, err
 	}
 	res.Updated, res.Version = true, plan.Latest
-
-	if u.opts.Restarter != nil {
-		restarted, err := u.opts.Restarter.RestartServeIfActive(ctx)
-		res.ServeRestarted = restarted && err == nil
-		if err != nil {
-			res.ServeRestartError = err.Error()
-		}
-	}
 	return res, nil
 }
 
