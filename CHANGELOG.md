@@ -17,15 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   product code in its `.build.info`, found through the prefix's Uninstall
   keys or directly under its Program Files. Each World of Warcraft flavor
   (Retail `wow`, Classic `wow_classic`, Classic Era `wow_classic_era`,
-  Forever `wowf`) is its own game at its own flavor folder, with mods in
+  Forever `wowf`; game ids `wow-retail`, `wow-classic`, `wow-classic-era`,
+  `wow-forever`) is its own game at its own flavor folder, with mods in
   `Interface/AddOns` from CurseForge and its CurseForge flavor (#544)
   already set. A flavor you already added by hand is recognised by its
-  install or mod folder and marked configured, not offered twice. The
-  catalog is extensible in `~/.config/lmm/battlenet-games.yaml`. Overwatch,
+  install or mod folder, never by its id, and marked configured, not
+  offered twice; adding it again fills in a flavor and launch the game
+  doesn't already set. The catalog is extensible in
+  `~/.config/lmm/battlenet-games.yaml`, and a broken one is a warning that
+  leaves the built-in catalog (and Steam detection) working. Overwatch,
   Hearthstone, Heroes of the Storm and Call of Duty are never listed, not
   even with `--include-unknown`. A detected game launches through the
   Battle.net client in its prefix: a new `battlenet` launch method
-  (`launch.battlenet` in `games.yaml`, prefilled when the game is added)
+  (`launch.battlenet` in `games.yaml`, prefilled when the game is added,
+  with the exact GE-Proton build that made the prefix when it is installed)
   runs a Proton prefix with `umu-run` and any other with `wine`, and asks
   Battle.net to launch World of Warcraft Retail directly or opens the
   client for the rest. A detected game is now named by its detector and
@@ -121,6 +126,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output, and shows as the row's tooltip.
 
 ### Fixed
+
+- **A detected game matches the game configured at its folder before the
+  one sharing its id (#545).** A detect row whose slug is one game's id and
+  whose install path is another's is now the second game, so selecting it
+  can no longer repair the first game onto the second one's folder.
 
 - **lmm refuses a database a newer lmm has migrated (#516).** This
   release and every later one guard against a downgrade; an lmm before it

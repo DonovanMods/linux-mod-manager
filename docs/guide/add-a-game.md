@@ -152,7 +152,7 @@ with a subfolder for each, and each flavor you have is its own game:
 
 | Flavor      | Folder           | lmm game id       | CurseForge flavor |
 | ----------- | ---------------- | ----------------- | ----------------- |
-| Retail      | `_retail_`       | `wow`             | `517`             |
+| Retail      | `_retail_`       | `wow-retail`      | `517`             |
 | Classic     | `_classic_`      | `wow-classic`     | `79434`           |
 | Classic Era | `_classic_era_`  | `wow-classic-era` | `67408`           |
 | Forever     | `_forever_`      | `wow-forever`     | not set yet       |
@@ -173,7 +173,9 @@ lmm game add --from-detected battlenet:wow_classic
 ```
 
 If you already added the game by hand, lmm recognises it by its folder and
-marks it **configured** rather than offering it twice.
+marks it **configured** rather than offering it twice, whatever you called
+it. Only the folder counts: a game you named `wow` for the Forever flavor is
+Forever, and Retail beside it is still offered as a new game.
 
 A game lmm adds this way can also be started from lmm, through Battle.net:
 see [Battle.net games](launch.md#battlenet-games) on the launching page.

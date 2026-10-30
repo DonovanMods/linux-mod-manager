@@ -57,7 +57,14 @@ A prefix made by umu-launcher or Steam (a Proton prefix) runs with
 `umu-run`, the way `omarchy-launch-battlenet` and similar launchers start
 it. lmm sets `WINEPREFIX`, `GAMEID=umu-battlenet`, `PROTON_VERB=run` and,
 when you set `proton`, `PROTONPATH`. If the prefix was last run by
-GE-Proton, lmm sets `proton: GE-Proton` when it adds the game. Any other
+GE-Proton, lmm sets `proton` to that exact build (say `GE-Proton11-11`)
+when it adds the game, so the prefix keeps running on the Proton that made
+it. When that build isn't installed where `umu-run` looks for it
+(`~/.local/share/Steam/compatibilitytools.d` or
+`~/.local/share/umu/compatibilitytools`), lmm sets `proton: GE-Proton`,
+which `umu-run` takes to mean the newest GE-Proton, and detection says so:
+a newer Proton may upgrade the prefix, so install the build or set `proton`
+yourself. Any other
 prefix runs with `wine` and `WINEPREFIX`. `runner` overrides the choice. If
 `umu-run` isn't installed, lmm won't start a Proton prefix with plain Wine:
 it says so, and you install umu-launcher or set `runner: wine`.

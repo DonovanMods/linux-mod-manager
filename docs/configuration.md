@@ -666,7 +666,9 @@ both Bottles locations and every Steam library's `compatdata/*/pfx`, then
 for game folders in each prefix's `system.reg` Uninstall keys and directly
 under its `drive_c/Program Files` folders. Overwatch, Hearthstone, Heroes
 of the Storm and Call of Duty are never detected, whatever this file says:
-they are competitive titles with anti-cheat.
+they are competitive titles with anti-cheat. A file lmm cannot read or
+parse is a detection warning, not a failure: Battle.net games are then
+detected from the embedded catalog alone, and Steam's are unaffected.
 
 ## File locations
 
