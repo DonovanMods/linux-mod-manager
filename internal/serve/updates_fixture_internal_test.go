@@ -55,6 +55,12 @@ type updatesSource struct {
 	// failing holds the mod ids whose downloads answer 503 - an update
 	// that fails inside a batch (#587).
 	failing sync.Map
+	// hold, when set, holds every download open until it is closed, and
+	// held is closed as the first one waits on it - a job mid-update for a
+	// test to look at (#588). Set both before anything downloads.
+	hold     <-chan struct{}
+	held     chan struct{}
+	heldOnce sync.Once
 }
 
 // newUpdatesSource starts the download server.
@@ -67,6 +73,10 @@ func newUpdatesSource(t *testing.T) *updatesSource {
 		if _, fail := s.failing.Load(modID); fail {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
+		}
+		if s.hold != nil {
+			s.heldOnce.Do(func() { close(s.held) })
+			<-s.hold
 		}
 		version := strings.TrimPrefix(fileID, modID+"-")
 		w.Header().Set("Content-Type", "application/zip")

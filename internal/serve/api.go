@@ -495,6 +495,11 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 // hydrate is exactly the repeated caller the memo exists for, and the
 // answer it gets carries `cached: true` plus the original `checked_at`, so
 // the card can say how old it is and offer a forced re-run.
+//
+// #588: while a mutation is running - a job here, or another lmm holding
+// the operation lock - core does not walk the game, forced or not, and the
+// answer carries `deferred: "job_running"` at once, never waiting for the
+// job. The SPA re-reads it when the job ends.
 func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveReadyAPISelection(w, r)
 	if !ok {

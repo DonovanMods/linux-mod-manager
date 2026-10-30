@@ -50,6 +50,7 @@ import {
   resultMayHoldNextStep,
 } from "./jobresult.js";
 import {
+  deferredHealthRetryMillis,
   succeededOriginReleaseMillis,
   toastDismissMillis,
   unreadRereadDelayMillis,
@@ -473,6 +474,7 @@ async function loadSlice(
       ),
     );
     commitSlices(seq, claim, { [key]: value }, { [key]: null });
+    if (key === "health") retryDeferredHealth(value);
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
     commitSlices(seq, claim, dropOnFailure ? { [key]: null } : {}, {
@@ -481,6 +483,30 @@ async function loadSlice(
   } finally {
     if (tracked) settleLoad(key, token);
   }
+}
+
+// deferredHealthRetry is the pending re-read of a deferred health answer.
+let deferredHealthRetry;
+
+/**
+ * retryDeferredHealth asks for health again, after a while, when the answer
+ * just committed is deferred behind a running job (issue 588) - and cancels
+ * a pending re-read when it is not. A job in this server ends with
+ * onJobDone's re-hydrate anyway; the timer is for a change no job here
+ * announces (another lmm process holding the operation lock), so the card
+ * is never left waiting for an event that will not come. A re-read that
+ * finds the answer replaced, or Mission Control left, does nothing.
+ */
+function retryDeferredHealth(value) {
+  clearTimeout(deferredHealthRetry);
+  deferredHealthRetry = undefined;
+  if (!value?.result?.deferred || store.get().health !== value) return;
+  deferredHealthRetry = setTimeout(() => {
+    deferredHealthRetry = undefined;
+    const { route, health } = store.get();
+    if (health !== value || route.view !== "home") return;
+    reload("health", "/api/v1/health");
+  }, deferredHealthRetryMillis);
 }
 
 /**
