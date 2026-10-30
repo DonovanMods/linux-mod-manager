@@ -290,12 +290,12 @@ func TestLaunch_Via(t *testing.T) {
 	assert.Equal(t, "steam", info.Method)
 
 	g2 := launchGame("g2")
-	g2.Launch = &domain.GameLaunch{Via: "battlenet"}
+	g2.Launch = &domain.GameLaunch{Via: "heroic"}
 	svc2, _ := launchFixture(t, g2)
 	info, argv, err := svc2.ResolveLaunch(context.Background(), mustGame(t, svc2, "g2"), "default")
 	require.NoError(t, err)
 	assert.Nil(t, argv)
-	assert.Contains(t, info.Reason, "battlenet")
+	assert.Contains(t, info.Reason, "heroic")
 	assert.Contains(t, info.Reason, "command, steam")
 }
 

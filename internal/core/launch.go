@@ -288,6 +288,11 @@ type LaunchRequest struct {
 	Profile string
 	// LookPath finds a program on lmm's PATH.
 	LookPath func(file string) (string, error)
+	// Env is what the argv needs in its environment, as KEY=VALUE - a Wine
+	// prefix, for the battlenet method (#545). A method's Resolve sets it
+	// when it applies; it reaches the game the way LMM_GAME_ID does, never
+	// a credential variable.
+	Env []string
 
 	launcher *Launcher
 	steam    *SteamApp
@@ -312,11 +317,16 @@ var builtinLaunchMethods = []LaunchMethod{
 	{Name: "steam", Requests: true, Resolve: resolveSteamLaunch},
 }
 
-// RegisterLaunchMethod adds a launch method after the built-in ones (a
-// later `battlenet`, #545). The composition root calls it.
+// RegisterLaunchMethod adds a launch method after the built-in ones -
+// BattleNetLaunchMethod (#545). The composition root calls it. A method
+// registered again under the same name replaces the earlier one.
 func (s *Service) RegisterLaunchMethod(m LaunchMethod) {
 	s.launchMu.Lock()
 	defer s.launchMu.Unlock()
+	if i := slices.IndexFunc(s.launchMethods, func(r LaunchMethod) bool { return r.Name == m.Name }); i >= 0 {
+		s.launchMethods[i] = m
+		return
+	}
 	s.launchMethods = append(s.launchMethods, m)
 }
 
@@ -405,6 +415,7 @@ func (l *Launcher) steamApp(game *domain.Game) SteamApp {
 type resolvedLaunch struct {
 	method LaunchMethod
 	argv   []string
+	env    []string
 	err    *LaunchUnconfiguredError
 }
 
@@ -429,6 +440,7 @@ func (s *Service) resolveLaunch(l *Launcher, game *domain.Game, profile string) 
 		methods = methods[i : i+1]
 	}
 	for _, m := range methods {
+		req.Env = nil
 		argv, ok, err := m.Resolve(req)
 		if !ok {
 			continue
@@ -436,7 +448,7 @@ func (s *Service) resolveLaunch(l *Launcher, game *domain.Game, profile string) 
 		if err != nil {
 			return refuse(err.Error())
 		}
-		return resolvedLaunch{method: m, argv: argv}
+		return resolvedLaunch{method: m, argv: argv, env: req.Env}
 	}
 	if game.Launch != nil && game.Launch.Via != "" {
 		return refuse(fmt.Sprintf("launch.via is %q, but that method does not apply to this game (for steam: no Steam app id is known; set launch.steam_app_id)", game.Launch.Via))
@@ -570,6 +582,12 @@ func (s *Service) Launch(ctx context.Context, game *domain.Game, opts LaunchOpti
 		dir = game.InstallPath
 		gameEnv = []string{"LMM_GAME_ID=" + game.ID, "LMM_GAME_PATH=" + game.InstallPath, "LMM_MOD_PATH=" + game.ModPath, "LMM_PROFILE=" + profile}
 	}
+	isCredential := s.isCredentialEnv()
+	for _, kv := range r.env {
+		if name, _, _ := strings.Cut(kv, "="); !isCredential(name) {
+			gameEnv = append(gameEnv, kv)
+		}
+	}
 
 	manager, systemdErr := l.systemd(ctx)
 	if systemdErr != nil && !opts.AllowDetached {
@@ -579,7 +597,6 @@ func (s *Service) Launch(ctx context.Context, game *domain.Game, opts LaunchOpti
 		return nil, &LaunchEnvironmentError{Missing: slices.Clone(launchDisplayEnv)}
 	}
 
-	isCredential := s.isCredentialEnv()
 	if systemdErr != nil {
 		result.Command = r.argv
 		if opts.DryRun {

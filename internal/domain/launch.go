@@ -26,7 +26,46 @@ type GameLaunch struct {
 	// Command is the argv to run - never a shell string. Its arguments
 	// may use LaunchPlaceholders; command[0] may start with ~/.
 	Command []string
+	// BattleNet is the `battlenet:` block (#545): which Wine prefix's
+	// Battle.net client starts the game. Nil for every other game.
+	BattleNet *BattleNetLaunch
 }
+
+// LaunchViaBattleNet is the method name `via: battlenet` selects: ask the
+// Battle.net client in launch.battlenet.prefix to start the game.
+const LaunchViaBattleNet = "battlenet"
+
+// BattleNetRunnerUmu and BattleNetRunnerWine are launch.battlenet.runner's
+// two values: umu-run (a Proton prefix, as umu-launcher makes) and a plain
+// wine (any other prefix).
+const (
+	BattleNetRunnerUmu  = "umu"
+	BattleNetRunnerWine = "wine"
+)
+
+// BattleNetLaunch is games.yaml's `launch.battlenet:` block (#545).
+type BattleNetLaunch struct {
+	// Prefix is the Wine prefix Battle.net is installed in - the directory
+	// holding drive_c. Absolute, or starting with ~/. Required.
+	Prefix string
+	// Product is the code Battle.net's --exec="launch <code>" takes, e.g.
+	// "WoW" for World of Warcraft (retail). Empty opens the Battle.net
+	// client and leaves the user to press Play: the launch codes are not
+	// the product codes detection reads, and lmm only fills in one it
+	// knows.
+	Product string
+	// Runner is BattleNetRunnerUmu or BattleNetRunnerWine. Empty picks
+	// umu for a Proton prefix and wine for any other.
+	Runner string
+	// Proton is umu-run's PROTONPATH - a Proton name umu knows
+	// ("GE-Proton") or a path. Empty is umu's own default. umu only.
+	Proton string
+}
+
+// battleNetLaunchCodePattern is a Battle.net launch code: letters, digits,
+// underscores and hyphens - it lands inside one argv element, but a code
+// with a space or a quote in it is a typo, not a code.
+var battleNetLaunchCodePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // ErrInvalidLaunch reports a games.yaml `launch:` block lmm refuses to
 // load: an unknown placeholder, an empty program, `via: command` with no
@@ -58,10 +97,24 @@ var launchViaPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // it is core's, asked when it resolves the launch - so a games.yaml
 // naming a method a later build ships still loads.
 func NewGameLaunch(via, steamAppID string, command []string) (*GameLaunch, error) {
+	return NewGameLaunchWithBattleNet(via, steamAppID, command, nil)
+}
+
+// NewGameLaunchWithBattleNet is NewGameLaunch with a `battlenet:` block
+// (#545), validated the same way: `via: battlenet` needs the block, the
+// block needs a prefix, and every refusal names its key.
+func NewGameLaunchWithBattleNet(via, steamAppID string, command []string, bn *BattleNetLaunch) (*GameLaunch, error) {
 	via = strings.TrimSpace(via)
 	steamAppID = strings.TrimSpace(steamAppID)
-	if via == "" && steamAppID == "" && len(command) == 0 {
+	if via == "" && steamAppID == "" && len(command) == 0 && bn == nil {
 		return nil, nil
+	}
+	if via == LaunchViaBattleNet && bn == nil {
+		return nil, fmt.Errorf("%w: launch.battlenet.prefix is required with via: battlenet", ErrInvalidLaunch)
+	}
+	bn, err := validBattleNetLaunch(bn)
+	if err != nil {
+		return nil, err
 	}
 	if via != "" && !launchViaPattern.MatchString(via) {
 		return nil, fmt.Errorf("%w: launch.via %q is not a launch method name (lower-case letters, digits and single interior hyphens)", ErrInvalidLaunch, via)
@@ -86,7 +139,34 @@ func NewGameLaunch(via, steamAppID string, command []string) (*GameLaunch, error
 			}
 		}
 	}
-	return &GameLaunch{Via: via, SteamAppID: steamAppID, Command: append([]string(nil), command...)}, nil
+	return &GameLaunch{Via: via, SteamAppID: steamAppID, Command: append([]string(nil), command...), BattleNet: bn}, nil
+}
+
+// validBattleNetLaunch trims and checks a `battlenet:` block, returning a
+// copy the game owns; nil stays nil.
+func validBattleNetLaunch(bn *BattleNetLaunch) (*BattleNetLaunch, error) {
+	if bn == nil {
+		return nil, nil
+	}
+	out := BattleNetLaunch{
+		Prefix:  strings.TrimSpace(bn.Prefix),
+		Product: strings.TrimSpace(bn.Product),
+		Runner:  strings.ToLower(strings.TrimSpace(bn.Runner)),
+		Proton:  strings.TrimSpace(bn.Proton),
+	}
+	switch {
+	case out.Prefix == "":
+		return nil, fmt.Errorf("%w: launch.battlenet.prefix is required: the Wine prefix Battle.net is installed in", ErrInvalidLaunch)
+	case !strings.HasPrefix(out.Prefix, "/") && !strings.HasPrefix(out.Prefix, "~/"):
+		return nil, fmt.Errorf("%w: launch.battlenet.prefix %q is a relative path: give an absolute one, or one starting with ~/", ErrInvalidLaunch, out.Prefix)
+	case out.Runner != "" && out.Runner != BattleNetRunnerUmu && out.Runner != BattleNetRunnerWine:
+		return nil, fmt.Errorf("%w: launch.battlenet.runner %q is not %s or %s", ErrInvalidLaunch, out.Runner, BattleNetRunnerUmu, BattleNetRunnerWine)
+	case out.Proton != "" && out.Runner == BattleNetRunnerWine:
+		return nil, fmt.Errorf("%w: launch.battlenet.proton is umu-run's PROTONPATH; it does nothing with runner: wine", ErrInvalidLaunch)
+	case out.Product != "" && !battleNetLaunchCodePattern.MatchString(out.Product):
+		return nil, fmt.Errorf("%w: launch.battlenet.product %q is not a Battle.net launch code (letters, digits, _ and -, e.g. WoW)", ErrInvalidLaunch, out.Product)
+	}
+	return &out, nil
 }
 
 // isRelativeProgramPath reports whether prog is a path relative to

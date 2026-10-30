@@ -138,3 +138,33 @@ func TestSaveGameKeepsAHandWrittenLaunchBlock(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"~/bin/wrap.sh", "{install_path}"}, games["valheim"].Launch.Command)
 }
+
+// #545: the `launch.battlenet:` block reads, refuses what NewGameLaunch
+// refuses, and round-trips through SaveGame with its "~" as written.
+func TestGamesYAMLBattleNetLaunchBlock(t *testing.T) {
+	dir := t.TempDir()
+	block := "    launch:\n      via: battlenet\n      battlenet:\n        prefix: ~/Games/battlenet\n        product: WoW\n        runner: umu\n        proton: GE-Proton\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "games.yaml"), []byte(launchGamesYAML(dir, block)), 0o644))
+
+	games, err := config.LoadGames(dir)
+	require.NoError(t, err)
+	want := &domain.GameLaunch{Via: "battlenet", BattleNet: &domain.BattleNetLaunch{
+		Prefix: "~/Games/battlenet", Product: "WoW", Runner: "umu", Proton: "GE-Proton",
+	}}
+	assert.Equal(t, want, games["valheim"].Launch)
+
+	saved := t.TempDir()
+	require.NoError(t, config.SaveGame(saved, games["valheim"]))
+	data, err := os.ReadFile(filepath.Join(saved, "games.yaml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "prefix: ~/Games/battlenet")
+	reloaded, err := config.LoadGames(saved)
+	require.NoError(t, err)
+	assert.Equal(t, want, reloaded["valheim"].Launch)
+
+	bad := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bad, "games.yaml"), []byte(launchGamesYAML(bad, "    launch:\n      via: battlenet\n")), 0o644))
+	_, err = config.LoadGames(bad)
+	require.ErrorIs(t, err, domain.ErrInvalidLaunch)
+	assert.Contains(t, err.Error(), "launch.battlenet.prefix")
+}
