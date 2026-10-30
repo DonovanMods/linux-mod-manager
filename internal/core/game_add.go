@@ -264,6 +264,13 @@ type GameSpec struct {
 	// left to a follow-up `game edit` so a BepInEx game is configured in
 	// one step, by either frontend.
 	Loader *LoaderSpec
+	// CurseForge is #544's flavor setting, already validated - which only
+	// detection prefills (#545: a WoW flavor's gameVersionTypeId), so it
+	// is a domain value rather than a spec to parse. nil writes no block.
+	CurseForge *domain.GameCurseForge
+	// Launch is #501's `launch:` block, which likewise only detection
+	// prefills (#545: a Battle.net game's prefix). nil writes none.
+	Launch *domain.GameLaunch
 }
 
 // AddGame validates spec, then - under the Service's single mutation slot -
@@ -624,6 +631,8 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 		DeployMode:  deployMode,
 		Adapter:     adapterName,
 		Loader:      loader,
+		CurseForge:  cloneCurseForge(spec.CurseForge),
+		Launch:      cloneLaunch(spec.Launch),
 	}, nil
 }
 

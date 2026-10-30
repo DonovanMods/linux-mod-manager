@@ -1,6 +1,10 @@
 package domain
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
 
 // LinkMethod determines how mods are deployed to game directories
 type LinkMethod int
@@ -174,14 +178,36 @@ func (m *DeployMode) UnmarshalText(b []byte) error {
 	return nil
 }
 
-// DetectedGame is a Steam game found on disk that lmm knows how to
-// configure. Moved verbatim from internal/source/steam.DetectedGame (v2
-// Phase 2 Task 21, Ruling 8): app.DetectGames wraps the Steam-specific scan
-// and returns this domain type so core can consume detected games (via
-// GameFromDetected) without importing a concrete source. steam keeps
-// DetectedGame as a type alias for this.
+// DetectorSteam and DetectorBattleNet name the detectors app.DetectGames
+// runs (#545): DetectedGame.Detector, and the part before the colon of a
+// DetectedGame.Ref.
+const (
+	DetectorSteam     = "steam"
+	DetectorBattleNet = "battlenet"
+)
+
+// DetectedGame is an installed game found on disk - by the Steam library
+// scan, or by the Battle.net prefix scan (#545). Moved from
+// internal/source/steam.DetectedGame (v2 Phase 2 Task 21, Ruling 8):
+// app.DetectGames wraps the concrete scans and returns this domain type so
+// core can consume detected games (via GameFromDetected) without importing
+// a concrete source. steam keeps DetectedGame as a type alias for this.
 type DetectedGame struct {
-	SteamAppID  string `json:"steam_app_id"`          // Steam App ID
+	// Detector names the scan that found the game (DetectorSteam,
+	// DetectorBattleNet), and DetectorID is that scan's own id for it: the
+	// Steam app id, or the Battle.net product code (#545). Together they
+	// are the row's identity - Ref - which `lmm game add --from-detected`
+	// and POST /api/v1/games' from_detected name.
+	//
+	// Always present, so a client never has to infer the detector from
+	// which other members a row happens to carry.
+	Detector   string `json:"detector"`
+	DetectorID string `json:"detector_id"`
+	// SteamAppID is a Steam row's app id - DetectorID again, kept under the
+	// name every detect document has carried since #206 so a client that
+	// reads it, and from_steam_app_id, go on working. A row from any other
+	// detector has none, and carries no member at all.
+	SteamAppID  string `json:"steam_app_id,omitempty"`
 	Slug        string `json:"slug"`                  // lmm game ID (from known games list)
 	Name        string `json:"name"`                  // Display name
 	InstallPath string `json:"install_path"`          // Absolute path to game install (e.g. .../common/Skyrim Special Edition)
@@ -241,6 +267,79 @@ type DetectedGame struct {
 	// shipped catalog today - carries no member at all, so every detect
 	// document recorded before this field existed is byte-identical.
 	Loader *GameLoader `json:"loader,omitempty"`
+	// WinePrefix is the Wine prefix a Battle.net game was found in (#545):
+	// the directory holding drive_c and system.reg. A frontend shows it so
+	// a user with two prefixes can tell their rows apart. A native Steam
+	// row carries none, and no member at all.
+	WinePrefix string `json:"wine_prefix,omitempty"`
+	// CurseForge is the catalog's CurseForge flavor setting (#544) - for a
+	// World of Warcraft flavor, the gameVersionTypeId of its files - carried
+	// into the Game this candidate configures, so a Classic install is
+	// never offered a Retail addon. Only a curated entry carries one.
+	CurseForge *GameCurseForge `json:"curseforge,omitempty"`
+	// Launch is how the configured game is started (#501), when detection
+	// knows - a Battle.net game is started through its prefix's Battle.net
+	// client (#545). Never on the wire, for domain.Game.Launch's reason:
+	// the argv comes only from games.yaml, and a request re-scans rather
+	// than sending a candidate back.
+	Launch *GameLaunch `json:"-"`
+}
+
+// ErrInvalidDetectedRef reports a --from-detected / from_detected value
+// that is neither a Steam app id nor "<detector>:<id>".
+var ErrInvalidDetectedRef = errors.New("invalid detected game reference")
+
+// Ref is the row's identity as one string, "<detector>:<id>" (#545) - what
+// ParseDetectedRef reads back. A row built with only a SteamAppID, the
+// only identity there was before the Battle.net detector, is a Steam row.
+// Empty when the row names no id at all.
+func (g DetectedGame) Ref() string {
+	detector, id := g.identity()
+	if id == "" {
+		return ""
+	}
+	return detector + ":" + id
+}
+
+// identity is the row's detector and id, defaulting to Steam's.
+func (g DetectedGame) identity() (detector, id string) {
+	if g.Detector != "" && g.DetectorID != "" {
+		return g.Detector, g.DetectorID
+	}
+	if g.SteamAppID != "" {
+		return DetectorSteam, g.SteamAppID
+	}
+	return g.Detector, g.DetectorID
+}
+
+// ParseDetectedRef splits a reference to a detected game into its detector
+// and id: "<detector>:<id>" ("battlenet:wow_classic", "steam:489830"), or a
+// bare Steam app id ("489830") - what `lmm game add --from-detected` has
+// taken since #206. The detector is lower-cased; whether it names one that
+// exists is the scan's question, not this one's. A Steam id must be digits.
+// Both halves are lower-cased, as detection reads product codes.
+func ParseDetectedRef(s string) (detector, id string, err error) {
+	s = strings.TrimSpace(s)
+	detector, id, found := strings.Cut(s, ":")
+	if !found {
+		detector, id = DetectorSteam, s
+	}
+	// Both halves lower-cased: detectors name product codes as detection
+	// read them, lower-case, and a Steam id is digits either way.
+	detector = strings.ToLower(strings.TrimSpace(detector))
+	id = strings.ToLower(strings.TrimSpace(id))
+	switch {
+	case s == "":
+		return "", "", fmt.Errorf("%w: it is empty", ErrInvalidDetectedRef)
+	case detector == "" || id == "":
+		return "", "", fmt.Errorf("%w: %q - give <detector>:<id>, e.g. battlenet:wow, or a Steam app id", ErrInvalidDetectedRef, s)
+	case detector == DetectorSteam && strings.Trim(id, "0123456789") != "":
+		if !found {
+			return "", "", fmt.Errorf("%w: %q is not a Steam app id - give <detector>:<id>, e.g. battlenet:wow, or a Steam app id", ErrInvalidDetectedRef, s)
+		}
+		return "", "", fmt.Errorf("%w: %q - a Steam app id is digits only", ErrInvalidDetectedRef, s)
+	}
+	return detector, id, nil
 }
 
 // Listable reports whether a detect LISTING shows this candidate without

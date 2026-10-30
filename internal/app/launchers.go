@@ -17,10 +17,14 @@ import (
 // The lookup is the cached steam.InstallAppIndex, one per Service:
 // GameStatus asks it for every Steam game on every read, which is the web
 // UI's hot path, and an uncached answer scans every app manifest.
+//
+// It also registers core's battlenet launch method (#545), which the
+// launch registry runs after the built-in command and steam methods.
 func RegisterLaunchers(svc *core.Service) {
 	idx := &steam.InstallAppIndex{}
 	svc.SetLauncher(core.NewLauncher(func(installPath string) (core.SteamApp, bool) {
 		app, ok := idx.Lookup(installPath)
 		return core.SteamApp{AppID: app.AppID, Flatpak: app.Flatpak}, ok
 	}))
+	svc.RegisterLaunchMethod(core.BattleNetLaunchMethod())
 }

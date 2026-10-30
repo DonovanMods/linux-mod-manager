@@ -1,6 +1,8 @@
 {
   "games": [
     {
+      "detector": "steam",
+      "detector_id": "1716740",
       "steam_app_id": "1716740",
       "slug": "starrupture",
       "name": "Star Rupture",
@@ -11,6 +13,8 @@
       "index": 1
     },
     {
+      "detector": "steam",
+      "detector_id": "526870",
       "steam_app_id": "526870",
       "slug": "satisfactory",
       "name": "Satisfactory",

@@ -407,6 +407,8 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 					slug := uniqueSlug(name, manifest.AppID, takenSlugs)
 					takenSlugs[slug] = true
 					found = append(found, withWorkshopPrefill(DetectedGame{
+						Detector:    domain.DetectorSteam,
+						DetectorID:  manifest.AppID,
 						SteamAppID:  manifest.AppID,
 						Slug:        slug,
 						Name:        name,
@@ -420,6 +422,8 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 				}
 				seen[info.Slug] = true
 				found = append(found, withWorkshopPrefill(DetectedGame{
+					Detector:    domain.DetectorSteam,
+					DetectorID:  manifest.AppID,
 					SteamAppID:  manifest.AppID,
 					Slug:        info.Slug,
 					Name:        info.Name,

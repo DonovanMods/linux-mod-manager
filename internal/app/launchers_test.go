@@ -32,6 +32,24 @@ func TestRegisterLaunchers_RegistersALauncher(t *testing.T) {
 	assert.Equal(t, []string{"/opt/game/run", "g"}, argv)
 }
 
+// #545: RegisterLaunchers registers the battlenet method too, so a game
+// whose launch names a Battle.net prefix resolves through it. Resolving
+// starts nothing; which runner it picks depends on this machine's PATH, so
+// only the method and the reason's subject are pinned.
+func TestRegisterLaunchers_RegistersTheBattleNetMethod(t *testing.T) {
+	svc := newTestService(t)
+	root := t.TempDir()
+	game := &domain.Game{ID: "wow", InstallPath: root, ModPath: root, Launch: &domain.GameLaunch{
+		Via: "battlenet", BattleNet: &domain.BattleNetLaunch{Prefix: filepath.Join(root, "prefix")},
+	}}
+
+	RegisterLaunchers(svc)
+	info, argv, err := svc.ResolveLaunch(context.Background(), game, "default")
+	require.NoError(t, err)
+	assert.Nil(t, argv)
+	assert.Contains(t, info.Reason, "no Battle.net client", "the battlenet method resolved it, and found no client in the empty prefix")
+}
+
 // The launcher's Steam lookup is steam.AppIDForInstallPath: a game in a
 // (sandboxed) Steam library resolves to Steam with no launch block. Which
 // client opens the URL depends on what is on this machine's PATH, so the

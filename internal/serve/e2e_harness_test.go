@@ -175,6 +175,9 @@ func sandboxE2EEnv(t *testing.T) {
 	for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
 		t.Setenv(key, t.TempDir())
 	}
+	// #545: detection also scans $WINEPREFIX, which no HOME sandbox
+	// covers - a developer's own prefix must not reach a test's listing.
+	t.Setenv("WINEPREFIX", "")
 }
 
 // e2eFixture is one browser test's world: a real listening server over a

@@ -664,8 +664,9 @@ func TestServeJSONGoldens(t *testing.T) {
 		{
 			// #307/#333's game-add body: core.GameSpec's wire fields, so a
 			// core.GameSpecError's "field" member points straight at the
-			// input that produced it. game_id, mod_path and (#206)
-			// from_steam_app_id are the optional members - all populated
+			// input that produced it. game_id, mod_path, (#206)
+			// from_steam_app_id and (#545) from_detected are the optional
+			// members - all populated
 			// here, since the golden's job is to pin every key's shape, not
 			// one plausible request.
 			"game_add_request",
@@ -677,6 +678,7 @@ func TestServeJSONGoldens(t *testing.T) {
 				InstallPath:    "/games/minecraft",
 				ModPath:        "/games/minecraft/mods",
 				FromSteamAppID: "526870",
+				FromDetected:   "battlenet:wow_classic",
 			},
 		},
 		{

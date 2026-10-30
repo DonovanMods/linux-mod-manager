@@ -73,9 +73,9 @@ func TestNewGameLaunch_BracesThatAreNotPlaceholdersPass(t *testing.T) {
 // via names a method this layer does not know - whether it EXISTS is core's
 // question, as with adapter: (a future method must load).
 func TestNewGameLaunch_ViaIsSyntaxOnly(t *testing.T) {
-	launch, err := domain.NewGameLaunch("battlenet", "", nil)
+	launch, err := domain.NewGameLaunch("heroic", "", nil)
 	require.NoError(t, err)
-	assert.Equal(t, "battlenet", launch.Via)
+	assert.Equal(t, "heroic", launch.Via)
 }
 
 func TestExpandLaunchPlaceholders(t *testing.T) {
@@ -88,4 +88,50 @@ func TestExpandLaunchPlaceholders(t *testing.T) {
 func TestLaunchPlaceholdersUsed(t *testing.T) {
 	assert.Equal(t, []string{"steam_app_id", "profile"}, domain.LaunchPlaceholdersUsed([]string{"x{steam_app_id}", "{profile}", "{steam_app_id}"}))
 	assert.Empty(t, domain.LaunchPlaceholdersUsed([]string{"x"}))
+}
+
+// #545: a Battle.net game is started through its prefix's Battle.net
+// client. The block names the prefix (required), the launch code
+// (optional: none opens the client) and the runner.
+func TestNewGameLaunchWithBattleNet(t *testing.T) {
+	launch, err := domain.NewGameLaunchWithBattleNet("battlenet", "", nil, &domain.BattleNetLaunch{
+		Prefix: "~/Games/battlenet", Product: "WoW", Runner: "umu", Proton: "GE-Proton",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, launch.BattleNet)
+	assert.Equal(t, "battlenet", launch.Via)
+	assert.Equal(t, domain.BattleNetLaunch{Prefix: "~/Games/battlenet", Product: "WoW", Runner: "umu", Proton: "GE-Proton"}, *launch.BattleNet)
+
+	// The block alone is a launch, as command alone is.
+	launch, err = domain.NewGameLaunchWithBattleNet("", "", nil, &domain.BattleNetLaunch{Prefix: "/games/bnet"})
+	require.NoError(t, err)
+	require.NotNil(t, launch)
+	assert.Equal(t, "/games/bnet", launch.BattleNet.Prefix)
+
+	// No block at all is NewGameLaunch exactly.
+	launch, err = domain.NewGameLaunchWithBattleNet("", "", nil, nil)
+	require.NoError(t, err)
+	assert.Nil(t, launch)
+}
+
+func TestNewGameLaunchWithBattleNet_Refusals(t *testing.T) {
+	cases := map[string]struct {
+		via string
+		bn  *domain.BattleNetLaunch
+		key string
+	}{
+		"via battlenet without a block": {"battlenet", nil, "launch.battlenet.prefix"},
+		"no prefix":                     {"battlenet", &domain.BattleNetLaunch{Product: "WoW"}, "launch.battlenet.prefix"},
+		"relative prefix":               {"", &domain.BattleNetLaunch{Prefix: "Games/battlenet"}, "launch.battlenet.prefix"},
+		"unknown runner":                {"", &domain.BattleNetLaunch{Prefix: "/p", Runner: "lutris"}, "launch.battlenet.runner"},
+		"proton with wine":              {"", &domain.BattleNetLaunch{Prefix: "/p", Runner: "wine", Proton: "GE-Proton"}, "launch.battlenet.proton"},
+		"launch code with a space":      {"", &domain.BattleNetLaunch{Prefix: "/p", Product: "WoW --x"}, "launch.battlenet.product"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := domain.NewGameLaunchWithBattleNet(tc.via, "", nil, tc.bn)
+			require.ErrorIs(t, err, domain.ErrInvalidLaunch)
+			assert.Contains(t, err.Error(), tc.key)
+		})
+	}
 }

@@ -142,6 +142,19 @@ type GameLaunchYAML struct {
 	// rather than a decoder error that names no key.
 	SteamAppID string   `yaml:"steam_app_id,omitempty"`
 	Command    []string `yaml:"command,omitempty,flow"`
+	// BattleNet is the `battlenet:` block (#545). A pointer, so a launch
+	// that sets none gains no key on a re-marshal.
+	BattleNet *GameBattleNetLaunchYAML `yaml:"battlenet,omitempty"`
+}
+
+// GameBattleNetLaunchYAML is `launch.battlenet:` (#545): the Wine prefix
+// whose Battle.net client starts the game. Validated through
+// domain.NewGameLaunchWithBattleNet.
+type GameBattleNetLaunchYAML struct {
+	Prefix  string `yaml:"prefix,omitempty"`
+	Product string `yaml:"product,omitempty"`
+	Runner  string `yaml:"runner,omitempty"`
+	Proton  string `yaml:"proton,omitempty"`
 }
 
 // GameCurseForgeYAML is the YAML representation of a game's CurseForge
@@ -240,7 +253,11 @@ func parseGames(gamesPath string, data []byte) (map[string]*domain.Game, error) 
 		}
 		var launch *domain.GameLaunch
 		if cfg.Launch != nil {
-			if launch, err = domain.NewGameLaunch(cfg.Launch.Via, cfg.Launch.SteamAppID, cfg.Launch.Command); err != nil {
+			var bn *domain.BattleNetLaunch
+			if b := cfg.Launch.BattleNet; b != nil {
+				bn = &domain.BattleNetLaunch{Prefix: b.Prefix, Product: b.Product, Runner: b.Runner, Proton: b.Proton}
+			}
+			if launch, err = domain.NewGameLaunchWithBattleNet(cfg.Launch.Via, cfg.Launch.SteamAppID, cfg.Launch.Command, bn); err != nil {
 				return nil, fmt.Errorf("games.yaml: game %q: %w", id, err)
 			}
 		}
@@ -431,6 +448,9 @@ func gameConfigOf(game *domain.Game) GameConfig {
 			Via:        game.Launch.Via,
 			SteamAppID: game.Launch.SteamAppID,
 			Command:    game.Launch.Command,
+		}
+		if b := game.Launch.BattleNet; b != nil {
+			cfg.Launch.BattleNet = &GameBattleNetLaunchYAML{Prefix: b.Prefix, Product: b.Product, Runner: b.Runner, Proton: b.Proton}
 		}
 	}
 	return cfg

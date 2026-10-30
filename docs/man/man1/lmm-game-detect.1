@@ -2,7 +2,7 @@
 .TH "LMM" "1" "Oct 2026" "lmm 2.2.0" "User Commands"
 
 .SH NAME
-lmm-game-detect - Detect Steam games and add them to config
+lmm-game-detect - Detect installed Steam and Battle.net games and add them to config
 
 
 .SH SYNOPSIS
@@ -10,7 +10,19 @@ lmm-game-detect - Detect Steam games and add them to config
 
 
 .SH DESCRIPTION
-Scan Steam libraries for moddable games and optionally add them to games.yaml.
+Scan Steam libraries and Wine prefixes for moddable games and optionally add them to games.yaml.
+
+.PP
+Battle.net games are found in every Wine prefix lmm can see - $WINEPREFIX,
+~/.wine, Lutris' ~/Games/\fI, Bottles (native and Flatpak) and Steam's
+compatdata/\fP/pfx - and confirmed by the product code in each game's
+\&.build.info (#545). Each World of Warcraft flavor (Retail, Classic,
+Classic Era, ...) is its own game, with its own AddOns folder and its
+CurseForge flavor already set. Competitive titles with anti-cheat
+(Overwatch, Hearthstone, Heroes of the Storm, Call of Duty) are never
+listed, not even with --include-unknown. A Battle.net row prints its
+reference (battlenet:<product>) where a Steam row prints its app id, and
+the prompt and --select take it the same way.
 
 .PP
 Prompts for which games to add (e.g. 1,2 or all or none). Every listed

@@ -30,6 +30,48 @@ Steam starts the game, so lmm finishes as soon as Steam has the request.
 If you use the Flatpak version of Steam, lmm notices which Steam a game is
 installed in and asks that one.
 
+## Battle.net games
+
+A Battle.net game lmm [detected](add-a-game.md#battlenet-games) is started
+through the Battle.net client in its Wine prefix. lmm writes this for you
+when it adds the game:
+
+```yaml
+launch:
+  via: battlenet
+  battlenet:
+    prefix: ~/Games/battlenet  # the Wine prefix Battle.net is installed in
+    product: WoW               # optional: which game Battle.net launches
+    runner: umu                # optional: umu or wine
+    proton: GE-Proton          # optional: the Proton umu-run uses
+```
+
+With `product`, lmm asks Battle.net to launch that game, the same as
+`Battle.net Launcher.exe --exec="launch WoW"`. Without it, Play opens the
+Battle.net client and you press Play there. lmm only fills in `WoW`, for
+World of Warcraft Retail: Battle.net's launch codes aren't the product codes
+lmm detects, so for the Classic flavors and Forever it leaves `product`
+out. If you know a flavor's launch code, add it yourself.
+
+A prefix made by umu-launcher or Steam (a Proton prefix) runs with
+`umu-run`, the way `omarchy-launch-battlenet` and similar launchers start
+it. lmm sets `WINEPREFIX`, `GAMEID=umu-battlenet`, `PROTON_VERB=run` and,
+when you set `proton`, `PROTONPATH`. If the prefix was last run by
+GE-Proton, lmm sets `proton` to that exact build (say `GE-Proton11-11`)
+when it adds the game, so the prefix keeps running on the Proton that made
+it. When that build isn't installed where `umu-run` looks for it
+(`~/.local/share/Steam/compatibilitytools.d` or
+`~/.local/share/umu/compatibilitytools`), lmm sets `proton: GE-Proton`,
+which `umu-run` takes to mean the newest GE-Proton, and detection says so:
+a newer Proton may upgrade the prefix, so install the build or set `proton`
+yourself. Any other
+prefix runs with `wine` and `WINEPREFIX`. `runner` overrides the choice. If
+`umu-run` isn't installed, lmm won't start a Proton prefix with plain Wine:
+it says so, and you install umu-launcher or set `runner: wine`.
+
+Battle.net starts the game, so lmm finishes as soon as Battle.net has the
+request.
+
 ## Any other game: tell lmm what to run
 
 For a game lmm can't start through Steam (a Lutris, Heroic or Bottles game,

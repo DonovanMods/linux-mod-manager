@@ -644,6 +644,32 @@ the install directory — stays **detect-only**: `lmm game detect
 still configure it by hand. That is the honest answer, and it is preferred
 over a guessed path.
 
+## battlenet-games.yaml (optional)
+
+**`<config>/battlenet-games.yaml`** is `steam-games.yaml`'s counterpart for
+Battle.net games (#545), merged over the embedded
+`internal/source/battlenet/data/battlenet-games.yaml` the same way. Keys are
+**product codes**: the `Product` column of the `.build.info` file in the
+game's install folder (`wow`, `wow_classic`, `wow_classic_era`, `wowf`).
+
+| Field                           | Meaning                                                                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `slug`, `name`                  | The game id and display name, as in `steam-games.yaml`. Required.                                                                 |
+| `install_dir`                   | The folder under the product's install folder the game lives in: World of Warcraft's flavor folder (`_classic_`). Empty is the install folder itself. It becomes the game's `install_path`, so every flavor is its own game. |
+| `mod_path`                      | Relative to `install_dir`.                                                                                                        |
+| `sources`                       | The game's complete source map. Required.                                                                                         |
+| `curseforge.game_version_types` | The game's [CurseForge flavor](guide/add-a-game.md#pick-a-curseforge-game-flavor) (#544), written into the generated entry's `curseforge:` block.                       |
+| `launch_code`                   | What Battle.net's `--exec="launch <code>"` takes, written into the generated `launch.battlenet.product`. Omit it unless you know it: without it, Play opens the Battle.net client. |
+
+Detection looks for prefixes in `$WINEPREFIX`, `~/.wine`, `~/Games/*`,
+both Bottles locations and every Steam library's `compatdata/*/pfx`, then
+for game folders in each prefix's `system.reg` Uninstall keys and directly
+under its `drive_c/Program Files` folders. Overwatch, Hearthstone, Heroes
+of the Storm and Call of Duty are never detected, whatever this file says:
+they are competitive titles with anti-cheat. A file lmm cannot read or
+parse is a detection warning, not a failure: Battle.net games are then
+detected from the embedded catalog alone, and Steam's are unaffected.
+
 ## File locations
 
 `<config>` is `$XDG_CONFIG_HOME/lmm` (default `~/.config/lmm`); `<data>` is `$XDG_DATA_HOME/lmm` (default `~/.local/share/lmm`).

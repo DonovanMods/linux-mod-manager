@@ -411,8 +411,8 @@ func TestJSONGolden_GameDetect(t *testing.T) {
 		out := runJSONCommand(t, func() error {
 			return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc,
 				[]steam.DetectedGame{
-					{SteamAppID: "1716740", Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", ModPath: "/games/starrupture/Mods", NexusID: "starrupture", Known: true},
-					{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/satisfactory"},
+					{Detector: "steam", DetectorID: "1716740", SteamAppID: "1716740", Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", ModPath: "/games/starrupture/Mods", NexusID: "starrupture", Known: true},
+					{Detector: "steam", DetectorID: "526870", SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/satisfactory"},
 				},
 				[]string{"steam library at /nowhere is unreadable"})
 		})

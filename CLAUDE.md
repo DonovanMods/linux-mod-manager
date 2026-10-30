@@ -77,6 +77,7 @@ internal/
 │   ├── custom/           # User-defined sources (directory, manifest, api)
 │   ├── steamworkshop/    # Steam Workshop (#269): Tier 1 tracks the Steam client's own items, Tier 3 downloads them (legacy file_url, or an anonymous steamcmd shell-out in steamcmd.go)
 │   ├── steam/            # Steam library scanning (for 'lmm game detect')
+│   ├── battlenet/        # Battle.net games in Wine/Proton prefixes (#545): prefix discovery, system.reg Uninstall keys, .build.info product codes, battlenet-games.yaml, the anti-cheat deny-list
 │   └── httpclient/       # Shared HTTP client (timeouts, size caps, redirects)
 ├── storage/
 │   ├── db/               # SQLite (mod metadata, auth tokens)
