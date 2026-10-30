@@ -1,12 +1,19 @@
 package serve
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
+
+// launchTimeout bounds a launch handleAPIGameLaunch starts: the drift check
+// and the systemd-run that starts the game's unit, which returns once the
+// unit has started rather than when the game exits.
+const launchTimeout = 30 * time.Second
 
 // gameLaunchRequest is POST /api/v1/games/{id}/launch's body (#501): which
 // profile, and whether to launch past undeployed changes. That is ALL a
@@ -32,6 +39,11 @@ type gameLaunchRequest struct {
 // takes the mutation slot itself, so a launch cannot start the game while a
 // deploy job is changing its files (409, ErrOperationInProgress).
 //
+// The launch runs on the server's own context (the job registry's root, as
+// every job does), bounded by launchTimeout, never on the request's: Run
+// starts systemd-run with exec.CommandContext, so a tab closed while the
+// unit was starting would otherwise kill systemd-run part-way.
+//
 // AllowDetached stays false: a game this process started itself would sit
 // in lmm-serve.service's cgroup and die with it, so a host with no systemd
 // user manager is refused (422) rather than given that.
@@ -46,7 +58,9 @@ func (s *Server) handleAPIGameLaunch(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusNotFound, err)
 		return
 	}
-	result, err := s.svc.Launch(r.Context(), game, core.LaunchOptions{Profile: req.Profile, Force: req.Force})
+	ctx, cancel := context.WithTimeout(s.jobs.rootCtx, launchTimeout)
+	defer cancel()
+	result, err := s.svc.Launch(ctx, game, core.LaunchOptions{Profile: req.Profile, Force: req.Force})
 	if err != nil {
 		s.writeAPIError(w, launchErrorStatus(err), err)
 		return

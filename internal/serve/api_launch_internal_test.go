@@ -10,6 +10,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"sync"
 	"testing"
@@ -31,6 +32,10 @@ type fakeLaunchRecorder struct {
 	runs   [][]string
 	noUser bool   // no systemd user manager answers
 	appID  string // the Steam app id found; "" finds none
+	// runCtxErr and runDeadline are what Run's ctx said when it was
+	// called: whether it was already cancelled, and whether it is bounded.
+	runCtxErr   error
+	runDeadline bool
 }
 
 func (f *fakeLaunchRecorder) launcher() *core.Launcher {
@@ -55,9 +60,11 @@ func (f *fakeLaunchRecorder) launcher() *core.Launcher {
 			}
 			return map[string]bool{}, nil
 		},
-		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
+			f.runCtxErr = ctx.Err()
+			_, f.runDeadline = ctx.Deadline()
 			f.runs = append(f.runs, append([]string{name}, args...))
 			return nil, nil
 		},
@@ -112,6 +119,28 @@ func TestAPIGameLaunch_StartsTheGameAsASystemdUnit(t *testing.T) {
 	assert.Equal(t, "systemd-run", runs[0][0])
 	assert.Equal(t, []string{"--", "/usr/bin/steam", "steam://rungameid/" + launchAppID}, runs[0][len(runs[0])-3:])
 	assert.Equal(t, result.Command, runs[0], "the document names the command that ran")
+}
+
+// A request whose context is cancelled - the tab closed while systemd-run
+// was still starting the unit - does not cancel the launch: Run gets a
+// context rooted at the server, not the request, bounded by its own
+// timeout.
+func TestAPIGameLaunch_ClosedRequestDoesNotCancelTheLaunch(t *testing.T) {
+	s, _, game, f := newLaunchServer(t)
+	deployFixtureProfile(t, s, game)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	req := apiRequest(s, http.MethodPost, launchPath(game), `{"profile":"default"}`).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	require.Len(t, f.recorded(), 1)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	assert.NoError(t, f.runCtxErr, "the request's cancellation never reaches systemd-run")
+	assert.True(t, f.runDeadline, "systemd-run is still bounded by a timeout")
 }
 
 // An empty body is the active profile, launched without force.
