@@ -1165,6 +1165,18 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #582: a version check the source refused for want of a key
+			// names that source, so a frontend can link to where its key
+			// is set. omitzero, so every other row carries no key at all.
+			"verify_finding_auth_required",
+			core.VerifyFinding{
+				ModID: "8939586", ModName: "Auctionator", Status: "skipped",
+				Note:          "could not check version: getting mod files: authentication required: CurseForge API key required",
+				FixableReason: "CurseForge needs an API key",
+				AuthSource:    "curseforge",
+			},
+		},
+		{
 			// #517: a row a --fix run repaired to "ok" says how, so the web
 			// UI can tell it from an untouched one. omitzero, so every
 			// other row carries no key at all.
@@ -1220,6 +1232,13 @@ func TestJSONGoldens(t *testing.T) {
 			// reaches the wire even when populated.
 			"source_warning",
 			core.SourceWarning{SourceID: "curseforge", ErrorMessage: "search request timed out", Err: errors.New("search request timed out")},
+		},
+		{
+			// #582: a refusal for want of a key is marked, so a frontend
+			// can link to where the key is set. omitzero, so the plain
+			// warning above carries no key at all.
+			"source_warning_auth_required",
+			core.SourceWarning{SourceID: "curseforge", ErrorMessage: "authentication required: CurseForge API key required", AuthRequired: true},
 		},
 		{
 			// SkippedUnauthenticated is populated (#383, F1) to pin the key
@@ -1595,6 +1614,20 @@ func TestJSONGoldens(t *testing.T) {
 				CatalogMissing: []core.CatalogModRef{
 					{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Bear Mount"},
 				},
+			},
+		},
+		{
+			// #582: a check a source refused for want of a key names that
+			// source beside the error text, so a frontend can link to where
+			// its key is set.
+			"update_check_report_auth_required",
+			core.UpdateCheckReport{
+				GameID:       "wow",
+				Profile:      "default",
+				Updates:      []domain.Update{},
+				Skipped:      core.UpdateSkips{},
+				ErrorMessage: "update check had 1 source error(s): source curseforge: authentication required: CurseForge API key required",
+				AuthRequired: []string{"curseforge"},
 			},
 		},
 		{

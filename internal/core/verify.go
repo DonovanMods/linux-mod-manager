@@ -172,6 +172,9 @@ type VerifyFinding struct {
 	// FixableReason is the ENGINE's own reason this finding will not be
 	// repaired, or empty when Fixable is true (or when the row is not a
 	// problem at all - an "ok" or "skipped" row has nothing to explain).
+	// The one "skipped" row that does carry one is a check the source
+	// refused for want of a key (AuthSource, #582): "<Source> needs an API
+	// key" is the honest reason no repair is on offer.
 	// #334: it exists so a frontend offering a per-finding "Repair"
 	// affordance can say WHY the button is absent without reimplementing
 	// the question - the web UI carried a hand-maintained status->sentence
@@ -220,6 +223,16 @@ type VerifyFinding struct {
 	// opens the finished job. The "fixed_*" statuses are self-describing
 	// (their Note says what was done) and leave it empty.
 	Repair string `json:"repair,omitzero"`
+
+	// AuthSource names the source that refused this row's check for want of
+	// a credential (#582): a "skipped" version check whose GetModFiles
+	// answered domain.ErrAuthRequired. A frontend links it to where that
+	// source's key is configured - the web UI's Setup > Authentication,
+	// `lmm auth login <source>` - and FixableReason says what is missing in
+	// the source's own name. Most often it is a key set only in a login
+	// shell, which `lmm serve` under its systemd unit never sees. omitzero,
+	// so every other row is unchanged.
+	AuthSource string `json:"auth_source,omitzero"`
 
 	// External marks a row about a Steam Workshop item lmm tracks but never
 	// deployed (#429): an "ok" row naming a present item, which the
@@ -1677,7 +1690,12 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		sourceFiles, err := r.svc.GetModFiles(r.ctx, r.game, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
 		if err != nil {
 			r.result.Warnings++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "skipped", Note: fmt.Sprintf("could not check version: %v", err)}, VerifyEvent{})
+			f := VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "skipped", Note: fmt.Sprintf("could not check version: %v", err)}
+			if errors.Is(err, domain.ErrAuthRequired) {
+				f.AuthSource = mod.SourceID
+				f.FixableReason = r.svc.sourceDisplayName(mod.SourceID) + " needs an API key"
+			}
+			r.finding(f, VerifyEvent{})
 			continue
 		}
 

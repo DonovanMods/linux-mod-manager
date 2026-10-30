@@ -1,0 +1,13 @@
+{
+  "game_id": "wow",
+  "profile": "default",
+  "updates": [],
+  "skipped": {
+    "pinned": 0,
+    "local": 0
+  },
+  "error": "update check had 1 source error(s): source curseforge: authentication required: CurseForge API key required",
+  "auth_required": [
+    "curseforge"
+  ]
+}
