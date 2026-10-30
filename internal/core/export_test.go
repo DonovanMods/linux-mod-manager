@@ -31,6 +31,17 @@ func (s *Service) DownloadModForTest(ctx context.Context, sourceID string, game 
 	return s.downloadMod(ctx, sourceID, game, mod, file, sink)
 }
 
+// NewDownloaderWithoutBackoffForTest is NewDownloader with the retry backoff
+// skipped (#576): a test that drives the retries end to end against a real
+// server pays nothing for the 1 s + 2 s waits between attempts, which
+// downloader_retry_internal_test.go asserts on their own. Cancellation is
+// still honoured, so the retry loop's ctx exit behaves as in production.
+func NewDownloaderWithoutBackoffForTest(httpClient *http.Client) *Downloader {
+	d := NewDownloader(httpClient)
+	d.sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+	return d
+}
+
 // GetInstallerForTest exposes getInstaller, unexported by Phase 3 Ruling 10:
 // every production flow builds its own installer internally, but core's own
 // fixtures hand-drive an *Installer to deploy a mod without going through a

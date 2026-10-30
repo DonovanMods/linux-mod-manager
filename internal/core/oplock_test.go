@@ -30,12 +30,27 @@ func newLockedOpsService(t *testing.T, lockPath string) *Service {
 	return svc
 }
 
+// useShortOpLockWait shortens opLockWait for one test (#576), so a mutation
+// refused by a held lock is refused in a quarter of a second rather than
+// two, and restores it when the test ends. The refusal path is unchanged:
+// the wait is still ten polls long, so contention is still retried before
+// it is reported. Call it before the test starts anything that could call
+// beginOp from a goroutine; core's tests do not run in parallel.
+func useShortOpLockWait(t *testing.T) {
+	t.Helper()
+	old := opLockWait
+	opLockWait = 250 * time.Millisecond
+	t.Cleanup(func() { opLockWait = old })
+	require.Greater(t, opLockWait, 4*opLockPoll, "the shortened wait must still poll the lock more than once")
+}
+
 // TestBeginOp_CrossProcessLockRefusesASecondHolder is #317: within one
 // process beginOp's semaphore serializes mutations, but a CLI mutation
 // racing `lmm serve`'s had nothing but SQLite's own locking between them -
 // the deploy-tree operations could interleave. The second holder now fails
 // with a typed error naming the first.
 func TestBeginOp_CrossProcessLockRefusesASecondHolder(t *testing.T) {
+	useShortOpLockWait(t)
 	lockPath := filepath.Join(t.TempDir(), ".oplock")
 	first := newLockedOpsService(t, lockPath)
 	second := newLockedOpsService(t, lockPath)
@@ -153,6 +168,7 @@ func TestAcquireOpLock_ContentionRespectsContextCancellation(t *testing.T) {
 // newLockedOpsService gives: flock is per open file description, so one
 // process holding it twice contends exactly as two processes would.
 func TestBeginOp_SnapshotMutationsTakeTheCrossProcessLock(t *testing.T) {
+	useShortOpLockWait(t)
 	lockPath := filepath.Join(t.TempDir(), ".oplock")
 	holder := newLockedOpsService(t, lockPath)
 	other := newLockedOpsService(t, lockPath)

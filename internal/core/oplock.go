@@ -19,7 +19,10 @@ import (
 // second lmm invocation says something rather than appearing to hang. A
 // deploy of a large profile can hold it for much longer than this, which
 // is the case the refusal exists to report, not to wait out.
-const opLockWait = 2 * time.Second
+//
+// A var, not a const, only so the contention tests can be refused in
+// milliseconds (#576); nothing in production assigns it.
+var opLockWait = 2 * time.Second
 
 // opLockPoll is how often the wait retries. flock has no timed variant, so
 // the bounded wait is a poll; 25ms is far below the wait itself and far
