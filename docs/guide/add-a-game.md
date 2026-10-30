@@ -6,8 +6,9 @@ nav_order: 4
 # Adding a game by hand
 
 lmm works with almost any game that loads mods from a folder. Automatic
-detection only covers Steam, so a game from GOG, Heroic, Lutris, the Epic
-store or a plain folder needs adding by hand. It takes a minute.
+detection covers Steam and [Battle.net](#battlenet-games), so a game from
+GOG, Heroic, the Epic store or a plain folder needs adding by hand. It takes
+a minute.
 
 ## What lmm needs to know
 
@@ -132,8 +133,76 @@ ask for it with your API key (the game id is the one in the game's
 `curseforge` source, `1` for World of Warcraft):
 `curl -s -H "x-api-key: $CURSEFORGE_API_KEY" https://api.curseforge.com/v1/games/1/version-types`
 
+## Battle.net games
+
+lmm finds Battle.net games installed under Wine or Proton, and lists them
+with your Steam games in **⚙ Setup → Games** and in `lmm game detect`. For
+now that means **World of Warcraft**.
+
+lmm looks in every Wine prefix it can find:
+
+- `$WINEPREFIX` and `~/.wine`
+- Lutris prefixes, and any other prefix folder, in `~/Games/`
+- Bottles, both the normal and the Flatpak version
+- prefixes Steam made for a non-Steam game (`steamapps/compatdata/*/pfx`)
+
+Inside each, it reads the game's own `.build.info` file to see which
+products are installed. World of Warcraft keeps every flavor in one folder,
+with a subfolder for each, and each flavor you have is its own game:
+
+| Flavor      | Folder           | lmm game id       | CurseForge flavor |
+| ----------- | ---------------- | ----------------- | ----------------- |
+| Retail      | `_retail_`       | `wow`             | `517`             |
+| Classic     | `_classic_`      | `wow-classic`     | `79434`           |
+| Classic Era | `_classic_era_`  | `wow-classic-era` | `67408`           |
+| Forever     | `_forever_`      | `wow-forever`     | not set yet       |
+
+Each one's mods go in its own `Interface/AddOns` folder and come from
+CurseForge, already set to the [game flavor](#pick-a-curseforge-game-flavor),
+so a Classic game is never offered a Retail addon. The Forever flavor
+doesn't have a CurseForge flavor id yet, so it takes every file; set one
+with `lmm game edit wow-forever --curseforge-version-type <id>` when you
+know it.
+
+In the terminal, a Battle.net game is named by `battlenet:` and its product
+code, where a Steam game shows its app id:
+
+```bash
+lmm game detect
+lmm game add --from-detected battlenet:wow_classic
+```
+
+If you already added the game by hand, lmm recognises it by its folder and
+marks it **configured** rather than offering it twice.
+
+A game lmm adds this way can also be started from lmm, through Battle.net:
+see [Battle.net games](launch.md#battlenet-games) on the launching page.
+
+{: .warning }
+lmm never lists Overwatch, Hearthstone, Heroes of the Storm or Call of
+Duty, not even with `--include-unknown`. These are competitive games with
+anti-cheat, and lmm won't offer to put files into them.
+
+To teach lmm another Battle.net game, or change one it knows, add it to
+`~/.config/lmm/battlenet-games.yaml`, keyed by its product code:
+
+```yaml
+wow_classic:
+  slug: wow-classic
+  name: World of Warcraft Classic
+  install_dir: _classic_       # the folder under the install the game lives in
+  mod_path: Interface/AddOns   # relative to install_dir
+  sources:
+    curseforge: "1"
+  curseforge:
+    game_version_types: [79434]
+```
+
+An entry may also set `launch_code`, the code Battle.net's
+`--exec="launch <code>"` takes, so Play launches the game rather than
+opening the Battle.net client (see the launching page).
+
 ## Games from other stores
 
-Automatic detection for Battle.net games is planned. Until then, and for
-every other store, adding the game by hand works the same as for any other
-game.
+For every other store, adding the game by hand works the same as for any
+other game.

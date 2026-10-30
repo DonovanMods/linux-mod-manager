@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Battle.net games are detected, World of Warcraft first (#545).**
+  `lmm game detect`, `lmm game add --from-detected`, `lmm init` and the web
+  UI's Setup → Games find Battle.net games installed under Wine or Proton:
+  in `$WINEPREFIX`, `~/.wine`, Lutris' `~/Games/*`, Bottles (native and
+  Flatpak) and Steam's `compatdata/*/pfx`. A game is confirmed by the
+  product code in its `.build.info`, found through the prefix's Uninstall
+  keys or directly under its Program Files. Each World of Warcraft flavor
+  (Retail `wow`, Classic `wow_classic`, Classic Era `wow_classic_era`,
+  Forever `wowf`) is its own game at its own flavor folder, with mods in
+  `Interface/AddOns` from CurseForge and its CurseForge flavor (#544)
+  already set. A flavor you already added by hand is recognised by its
+  install or mod folder and marked configured, not offered twice. The
+  catalog is extensible in `~/.config/lmm/battlenet-games.yaml`. Overwatch,
+  Hearthstone, Heroes of the Storm and Call of Duty are never listed, not
+  even with `--include-unknown`. A detected game launches through the
+  Battle.net client in its prefix: a new `battlenet` launch method
+  (`launch.battlenet` in `games.yaml`, prefilled when the game is added)
+  runs a Proton prefix with `umu-run` and any other with `wine`, and asks
+  Battle.net to launch World of Warcraft Retail directly or opens the
+  client for the rest. A detected game is now named by its detector and
+  id: detect documents gain `detector` and `detector_id`, a Battle.net row
+  is `battlenet:<product>` on the CLI, and `POST /api/v1/games` takes
+  `from_detected`. `steam_app_id` and `from_steam_app_id` work as before.
 - **`lmm launch` starts the game (#501).** It launches the active profile's
   game through `launch.command` in `games.yaml` when one is set, else
   through Steam by the game's app id, which lmm finds in the Steam library
