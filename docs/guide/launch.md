@@ -72,6 +72,32 @@ it says so, and you install umu-launcher or set `runner: wine`.
 Battle.net starts the game, so lmm finishes as soon as Battle.net has the
 request.
 
+### Diablo II: Resurrected
+
+Diablo II: Resurrected loads a mod only when it's started with
+`-mod <name> -txt`, and Battle.net doesn't pass extra arguments on when
+another program asks it to launch a game. You set them once, in Battle.net
+itself:
+
+1. In Battle.net, select Diablo II: Resurrected.
+2. Click the gear beside **Play** and choose **Game Settings**.
+3. Tick **Additional command line arguments** and enter the line lmm gave
+   you, for example `-mod LootFilter -txt`.
+
+lmm gives you that line after every deploy and every launch, named after
+the mod's folder:
+
+```text
+Warning: Diablo II: Resurrected loads Loot Filter only when started with "-mod LootFilter -txt": in Battle.net, open the game's settings (the gear beside Play) > Game Settings, tick "Additional command line arguments" and enter: -mod LootFilter -txt
+```
+
+The game loads one mod at a time. With several enabled, lmm names the one
+last in the load order, the one that wins when mods overlap, and warns that
+the others won't load: disable them, or move the one you
+want to the end (`lmm profile reorder`, or **Resolve…** on the web UI's
+Conflicts card). When you change mods, check the line still matches. To
+play without mods, untick the setting.
+
 ## Any other game: tell lmm what to run
 
 For a game lmm can't start through Steam (a Lutris, Heroic or Bottles game,
