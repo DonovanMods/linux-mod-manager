@@ -68,6 +68,24 @@ removed: lmm uninstall dLs3nvmWj5uOPnXxezGe -s icarus
 
 If the mod was removed for good, uninstall it.
 
+Icarus is different. Its catalog gives a mod a new id whenever the mod is
+removed and added again, which happens routinely, so lmm does not wait
+for you there. When it finds exactly one match, and the match is not an
+older version, lmm re-links the mod itself the next time it checks for
+updates: when you run `lmm update`, or when the web UI checks. The
+Updates card and the Health card say so, and the activity tray shows the
+re-link as an automatic job:
+
+```text
+Bear Mount moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)
+```
+
+The mod keeps its files and its version. If the new id has a newer
+version, it shows up as an ordinary update. lmm leaves a locked mod
+alone, and it waits while another job is running or the game is running.
+`lmm update --dry-run` only prints the suggestion. If lmm finds several
+matches, it still leaves the choice to you.
+
 ## Updating lmm itself
 
 Once a day, lmm asks GitHub whether a newer version of lmm is out. The first

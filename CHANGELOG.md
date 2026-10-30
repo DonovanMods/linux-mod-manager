@@ -20,9 +20,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lmm mod edit … --to-source-id <new-id>`, and the web UI's Updates card
   and Health row offer **Re-link to &lt;new-id&gt;**. The button opens
   the existing re-link preview (#326) with the new ID filled in. Several
-  matches are all listed, and none is picked. Nothing re-links by itself. The update check's `catalog_missing`
-  entries and the new Health finding carry the candidates as `successors`
-  (`mod_id`, `name`, `author`, `version`).
+  matches are all listed, and none is picked. Only a source whose IDs can
+  change re-links by itself (next entry). The update check's
+  `catalog_missing` entries and the new Health finding carry the
+  candidates as `successors` (`mod_id`, `name`, `author`, `version`).
+
+- **A moved Icarus mod is re-linked to its new ID automatically (#590).**
+  Icarus's catalog sync deletes a mod and adds it again under a new ID, so
+  an installed mod can drop out of the catalog while it is still there. A
+  source can now declare that its IDs can change, and Icarus does. For
+  such a source, when exactly one mod in it has the missing mod's name and
+  author, and it is not an older version, lmm re-links the mod itself. The
+  files lmm already has move with it, so nothing reads as missing
+  afterwards, and a newer version is then offered as an ordinary update.
+  It happens only where the automatic updates (#587) happen: `lmm update`
+  (not `--dry-run`, and not a `--json` check without `--all`), and the web
+  UI's own update check. It never waits behind a running job, never runs
+  while the game is running, touches only the active profile, and leaves a
+  locked mod alone. Each re-link reads "Bear Mount moved to a new ID in
+  Icarus (Project Daedalus); re-linked (<old> -> <new>)" in `lmm update`,
+  on the Updates card and Health card, and in the activity tray, where the
+  re-link is an automatic `catalog_relink` job. The update report carries
+  it as `auto_relink`. Several matches, no match, or a source whose IDs
+  are stable (NexusMods, CurseForge, Steam Workshop, custom sources) still
+  only get the suggestion and the **Re-link to** button.
 
 - **Battle.net detection finds Diablo II: Resurrected, Warcraft III:
   Reforged and StarCraft II (#546).** Warcraft III (`w3`, game id

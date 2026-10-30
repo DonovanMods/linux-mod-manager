@@ -82,6 +82,7 @@ const mutationKindLabels = {
   disable: "Disabling",
   snapshot_restore: "Restoring snapshot",
   mod_copy: "Copying to profile",
+  catalog_relink: "Re-linking",
 };
 
 /** mutationLabel names a running job's KIND in words, falling back to the
@@ -93,6 +94,10 @@ export function mutationLabel(kind, origin) {
   // issue 587: the automatic update pass is an ordinary updates job that
   // no one clicked for, so it says so.
   if (kind === "updates" && origin === "auto") return "Updating automatically";
+  // issue 590: the automatic re-link of a mod whose source gave it a new ID.
+  if (kind === "catalog_relink" && origin === "auto") {
+    return "Re-linking automatically";
+  }
   return mutationKindLabels[kind] ?? humanizePhase(kind);
 }
 
@@ -233,6 +238,12 @@ export function resultTallyLabel(tally) {
     if (failed > 0) parts.push(`${failed} failed`);
     if ((tally.warnings ?? 0) > 0) parts.push(`${tally.warnings} warnings`);
     return parts.join(" · ");
+  }
+  if (tally.kind === "catalog_relink") {
+    // issue 590: "n re-linked", and the failures when there are any.
+    const parts = [`${tally.applied ?? 0} re-linked`];
+    if (failed > 0) parts.push(`${failed} failed`);
+    return parts.join(" / ");
   }
   const parts = [`${tally.applied ?? 0} applied`];
   if (failed > 0 || skipped === 0) {

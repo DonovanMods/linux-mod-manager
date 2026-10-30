@@ -295,6 +295,18 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
           </ul>
         `
       }
+      ${
+        // issue 590: an automatic re-link says what moved, as the Updates
+        // card does - the tally alone ("1 re-linked") names no mod.
+        (tally?.notes ?? []).length > 0 &&
+        html`
+          <ul class="tray__notes" data-job=${job.id}>
+            ${tally.notes.map(
+              (note) => html`<li key=${note} class="tray__note">${note}</li>`,
+            )}
+          </ul>
+        `
+      }
       ${expanded && html`<${JobEventStream} jobID=${job.id} />`}
     </li>
   `;
