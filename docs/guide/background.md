@@ -145,5 +145,10 @@ you trust: anyone who can reach the address can manage your mods.
   one. After storing a key, run `systemctl --user restart lmm-serve`. lmm
   never copies a key into the service file, which anyone who can read your
   files could read.
+- A game you start with **Play** in the web interface runs as its own
+  systemd user service, not as part of lmm's. Restarting `lmm-serve` (an
+  update does) leaves the game running. The game needs your desktop's
+  display settings, which the service may not have: see
+  ["No display to launch the game on"](launch.md#no-display-to-launch-the-game-on).
 - If your computer doesn't use systemd, `lmm service` says so and changes
   nothing. Run `lmm serve` in a terminal instead.

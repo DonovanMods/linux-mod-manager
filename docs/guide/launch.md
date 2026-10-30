@@ -16,8 +16,9 @@ In the terminal:
 lmm launch
 ```
 
-Add `--game <game-id>` if you mod more than one game. A **Play** button in
-the web interface is coming next.
+Add `--game <game-id>` if you mod more than one game. In the web
+interface, press **Play** in the top bar, next to **Deploy** (see
+[In the web interface](#in-the-web-interface)).
 
 ## Steam games need nothing set up
 
@@ -93,6 +94,32 @@ needs attention, the warning says what to change.
 Only the active profile can be launched, because it's the one whose mods
 are in the game folder. To play with another profile, switch to it first
 with `lmm profile switch <name>`.
+
+## In the web interface
+
+**Play** in the top bar launches the game you're looking at, with its
+active profile. When lmm has asked Steam to start it, a message says
+"Launch requested". If lmm can't launch the game, **Play** is greyed out;
+point at it to see why, which usually means adding a `launch` block as
+above.
+
+If some mods aren't deployed, **Play** asks before it starts anything:
+
+- **Deploy & launch** deploys the profile, as **Deploy** does, and
+  launches once the deploy has finished. It is offered only when a deploy
+  fixes everything.
+- **Launch anyway** starts the game with the mods as they are.
+
+When a deploy can't fix it (a mod you disabled is still deployed, or the
+mods folder needs attention), the message says what to do instead, such as
+**Apply profile…** on the Profile card.
+
+If the Health card says BepInEx hasn't run since you deployed new plugins
+("launch the game once to confirm"), that row has a **Play** button too.
+
+The web interface only launches games through systemd, so that the game
+keeps running when `lmm serve` restarts. On a computer without it, use
+`lmm launch` in a terminal instead.
 
 ## Check what lmm would run
 

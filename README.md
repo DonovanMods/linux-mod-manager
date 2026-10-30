@@ -1911,6 +1911,10 @@ PUT    /api/v1/games/{id}     {"loader","loader_set"}
                                              carrying both is refused)
 POST   /api/v1/games/{id}/set-default     -> the new default (core.SettingsResult)
 DELETE /api/v1/games/default              -> the default cleared (core.SettingsResult)
+POST   /api/v1/games/{id}/launch  {"profile"?,"force"?}
+                                          -> what was started (core.LaunchResult);
+                                             undeployed changes are a 409 with
+                                             core.LaunchDriftError's details
 POST   /api/v1/games/detect   {"select"}  -> what was added (index or slug)
 POST   /api/v1/auth/{source}  {"api_key"} -> the authentication report
 DELETE /api/v1/auth/{source}              -> the authentication report
