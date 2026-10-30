@@ -805,7 +805,7 @@ function notInstalledCount(state, mods) {
  * no_changes - the same "already in sync" the CLI reported at that moment.
  *
  * Exported for the browser unit test that pins exactly that
- * (TestNotListedCount_IgnoresDisabledRows); nothing else imports it. */
+ * (TestE2E_NotListedCount_IgnoresDisabledRows); nothing else imports it. */
 export function notListedCount(state, mods) {
   const summary = (state?.status?.profiles ?? []).find(
     (p) => p.name === state?.route?.profile,

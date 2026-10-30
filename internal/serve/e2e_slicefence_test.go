@@ -21,16 +21,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSliceFence_TheOlderAnswerIsDropped is the race at store level: two
+// TestE2E_SliceFence_TheOlderAnswerIsDropped is the race at store level: two
 // loads of the same slice, the first one resolving LAST. Without the fence
 // both commit and the store keeps whichever landed last - the older
 // document. With it, the load that was issued last owns the slice and the
 // late answer is dropped.
 //
 // Run against the real modules in a real browser (the same dynamic-import
-// pattern TestSortRows_RecentToleratesMissingInstalledAt uses) because
+// pattern TestE2E_SortRows_RecentToleratesMissingInstalledAt uses) because
 // there is no other runtime for this application's JavaScript.
-func TestSliceFence_TheOlderAnswerIsDropped(t *testing.T) {
+func TestE2E_SliceFence_TheOlderAnswerIsDropped(t *testing.T) {
 	f := newE2EFixture(t)
 
 	var got struct {
@@ -86,7 +86,7 @@ func TestSliceFence_TheOlderAnswerIsDropped(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestSliceFence_AnAbandonedClaimReleasesItsSlice is the other half of the
+// TestE2E_SliceFence_AnAbandonedClaimReleasesItsSlice is the other half of the
 // rule: a load that will write nothing must not keep the answers it
 // superseded out for good. Without the release, a slice whose newest claim
 // was abandoned (a failed re-hydrate, an answer for a page the user has
@@ -96,7 +96,7 @@ func TestSliceFence_TheOlderAnswerIsDropped(t *testing.T) {
 //
 // The second half pins the limit that keeps the release from reopening the
 // race: a claim that has ALREADY been superseded releases nothing.
-func TestSliceFence_AnAbandonedClaimReleasesItsSlice(t *testing.T) {
+func TestE2E_SliceFence_AnAbandonedClaimReleasesItsSlice(t *testing.T) {
 	f := newE2EFixture(t)
 
 	var got struct {

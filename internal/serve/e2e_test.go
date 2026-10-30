@@ -485,7 +485,7 @@ func TestE2E_LibrarySortReordersRowsByName(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestSortRows_RecentToleratesMissingInstalledAt guards Minor 10:
+// TestE2E_SortRows_RecentToleratesMissingInstalledAt guards Minor 10:
 // modrows.js#sortRows's "recent" comparator used to be a bare
 // `new Date(x) - new Date(y)`, which is NaN for a missing or unparsable
 // installed_at, and Array.prototype.sort's behavior on a NaN-returning
@@ -494,7 +494,7 @@ func TestE2E_LibrarySortReordersRowsByName(t *testing.T) {
 // module the library component runs), rather than through the table -
 // there is no installed_mods row that reaches the wire without an
 // installed_at today, so this proves the guard rather than a live bug.
-func TestSortRows_RecentToleratesMissingInstalledAt(t *testing.T) {
+func TestE2E_SortRows_RecentToleratesMissingInstalledAt(t *testing.T) {
 	f := newE2EFixture(t)
 
 	var order []string
@@ -7357,7 +7357,7 @@ func TestE2E_FetchRefusalRendersItsExplainerAndKeepsTheInstallOffered(t *testing
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestNotListedCount_IgnoresDisabledRows is issue 378. The Profile card is
+// TestE2E_NotListedCount_IgnoresDisabledRows is issue 378. The Profile card is
 // a subtraction of two documents rather than a plan: GET /api/v1/mods
 // lists EVERY installed row, disabled ones included, while
 // ProfileSummary.mod_count is the profile YAML's load order, which carries
@@ -7370,9 +7370,9 @@ func TestE2E_FetchRefusalRendersItsExplainerAndKeepsTheInstallOffered(t *testing
 //
 // cards.js has no DOM in this function, so it is exercised directly here
 // through a dynamic import in a real browser, the same module Mission
-// Control runs - the pattern TestSortRows_RecentToleratesMissingInstalledAt
+// Control runs - the pattern TestE2E_SortRows_RecentToleratesMissingInstalledAt
 // established.
-func TestNotListedCount_IgnoresDisabledRows(t *testing.T) {
+func TestE2E_NotListedCount_IgnoresDisabledRows(t *testing.T) {
 	f := newE2EFixture(t)
 
 	var counts []float64
