@@ -188,6 +188,33 @@ func TestVerifyFix_NoChecksum_AdoptedInPlaceMod_FillsWithoutDownloading(t *testi
 	assert.NotEmpty(t, storedChecksum(t, svc, game.ID, "msrc", "8939586", "1"))
 }
 
+// #516: a mod recorded manual-only (#543's "the source will not serve this
+// file") is the case #514's cache-first fill was written for. Once the
+// source has refused it, the next --fix fills from a complete cache entry
+// without asking the source again.
+func TestVerifyFix_NoChecksum_ManualOnlyMod_FillsWithoutDownloading(t *testing.T) {
+	svc, game, src := seedManualOnlyMod(t, false, false)
+	ctx := context.Background()
+
+	_, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Fix: true}, nil)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), src.urlCalls.Load(), "the refusal is what records the mod manual-only")
+	row, err := svc.GetInstalledMod(ctx, "msrc", "8939586", game.ID, "default")
+	require.NoError(t, err)
+	require.True(t, row.ManualOnly)
+	require.False(t, row.AdoptedInPlace, "a refusal says nothing about how the mod was installed")
+
+	mod := row.Mod
+	require.NoError(t, svc.MarkImportedFileCompleteForTest(ctx, game, &mod, "1"))
+	result, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, int32(1), src.urlCalls.Load(), "a manual-only mod is not re-downloaded")
+	assert.Zero(t, result.Warnings)
+	assert.Equal(t, "ok", findingFor(t, result, "8939586").Status)
+	assert.NotEmpty(t, storedChecksum(t, svc, game.ID, "msrc", "8939586", "1"))
+}
+
 // #516: the split must not make a manual-only mod read as adopted in place.
 // It has a real cache entry and a queryable source, so verify still calls a
 // gone entry missing - the silent loss #516 was filed to prevent. The row

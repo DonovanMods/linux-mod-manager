@@ -90,8 +90,9 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 func (r *verifyRun) populateChecksum(mod *domain.InstalledMod, fileID string, ref *domain.ModReference) (persisted, fromCache bool, err error) {
 	// #516: the flag #514 read was installed_mods.manual_download, which
 	// only ever meant "adopted in place"; that row keeps the cache-first
-	// fill it had.
-	cacheFirst := mod.AdoptedInPlace
+	// fill it had. The fact #514 meant - the source will not serve the
+	// file - is Mod.ManualOnly (#543), recorded by an earlier refusal.
+	cacheFirst := mod.AdoptedInPlace || mod.ManualOnly
 	if cacheFirst {
 		if filled, ferr := r.fillChecksumFromCache(mod, fileID); filled || ferr != nil {
 			return filled, filled, ferr

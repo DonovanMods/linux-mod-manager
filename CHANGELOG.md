@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`lmm verify --fix` fills a manual-only mod's missing checksum from the
+  cache without asking the source again (#516).** #514's cache-first fill
+  keyed on the adopted-in-place flag. A mod the source has refused to serve
+  (`manual_only`) now gets it too, instead of a download the source refuses
+  every time.
 - **A source that needs an API key says so, and links to where it goes
   (#582).** `lmm-serve.service` doesn't inherit a login shell's
   environment, so a key exported only there (`CURSEFORGE_API_KEY`,
