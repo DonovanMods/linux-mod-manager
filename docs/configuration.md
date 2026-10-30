@@ -142,9 +142,7 @@ under the web UI's **Setup > Updates**). The trigger is the daily
   background, detached from the terminal (its output goes to
   `<data dir>/auto-update.log`), and the command exits as it would have. A
   script, a pipe or `--json` never triggers one;
-- a running `lmm serve` installs it from its background refresh, then
-  restarts itself if it runs as `lmm-serve.service`. A `lmm serve` you
-  started yourself shows "restart `lmm serve` to use it" instead;
+- a running `lmm serve` installs it from its background refresh;
 - `lmm-update.timer` (`lmm service install --auto-update`) runs it daily
   too, which is only worth having on a machine where lmm rarely runs.
 
@@ -154,10 +152,15 @@ build, is never replaced. Every update is verified against the lmm release
 key before it is installed, exactly as `lmm self-update` does; only one runs
 at a time, and a release whose update failed is left alone for a day. A
 release check that fails (offline, GitHub erroring) backs off from an hour,
-doubling up to a day. No update installs, and `lmm-serve.service` is not
-restarted, while any lmm operation is running - a CLI command or a web UI
-job; a restart waits up to ten minutes for one to finish and is otherwise
-left to you. The outcome is kept in `<data dir>/auto-update.json`, and the
+doubling up to a day. No update installs while any lmm operation is
+running - a CLI command or a web UI job. None of them restarts
+`lmm-serve.service`, nor does `lmm self-update`: they replace the binary
+and stop. With `auto_update` on, `lmm serve` running as `lmm-serve.service`
+looks at its binary every minute and, once it finds a newer one, restarts
+itself when none of its jobs is running, waiting up to ten minutes for one
+and otherwise leaving the restart to you. A `lmm serve` you started
+yourself, or any with `auto_update: false`, shows "restart `lmm serve` to
+use it" instead. The outcome is kept in `<data dir>/auto-update.json`, and the
 next interactive command or the web UI, whichever comes first, says once
 that lmm updated itself. With
 `update_check: false` nothing learns of a new release, so only the timer

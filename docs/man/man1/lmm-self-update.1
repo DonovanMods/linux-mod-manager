@@ -27,9 +27,11 @@ you the command. You need write access to the directory lmm is in; lmm never
 uses sudo.
 
 .PP
-If lmm-serve.service (see 'lmm service') is running, it is restarted onto the
-new version. An 'lmm serve' you started yourself keeps running the old one
-until you restart it; its web UI says so.
+self-update never restarts lmm-serve.service (see 'lmm service'): it cannot
+see the web UI's running jobs. With automatic updates on, lmm-serve.service
+notices the new binary within a minute and restarts itself once no job is
+running. Otherwise, or for an 'lmm serve' you started yourself, it keeps
+running the old version until you restart it; its web UI says so.
 
 .PP
 Without --yes, lmm asks before it replaces the binary. --json never asks:

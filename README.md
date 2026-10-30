@@ -2818,7 +2818,9 @@ lmm self-update --yes     # no question; --json without --yes prints the plan
 3. It extracts only the `lmm` binary (a regular file, no path tricks) into a
    temporary file beside the running one, with its mode, and renames it over
    it, so a crash leaves one whole binary or the other.
-4. If `lmm-serve.service` is running, it restarts it (`try-restart`).
+4. It restarts nothing: it cannot see `lmm serve`'s running jobs. With
+   `auto_update` on, `lmm-serve.service` notices the new binary within a
+   minute and restarts itself once none of its jobs runs (#586).
 
 A binary a package manager owns is refused, with the upgrade command to run
 instead, and so is a development build. lmm needs write access to the
@@ -2829,7 +2831,9 @@ own, such as `~/.local/bin`, if it is not.
 when the daily release check finds a newer release, an interactive command
 starts `lmm self-update --auto` detached (output in
 `<data dir>/auto-update.log`), and `lmm serve` installs it from its
-background refresh, restarting itself when it runs as `lmm-serve.service`.
+background refresh. Every updater only replaces the binary; `lmm serve`
+running as `lmm-serve.service` restarts itself onto a newer binary, whoever
+installed it, once none of its jobs runs.
 Each run takes the self-update lock and verifies the release as above; a
 release whose update failed waits a day. `auto_update: false` in
 `config.yaml`, or **Setup > Updates** in the web UI, turns them off; a
@@ -2840,9 +2844,9 @@ also installs `lmm-update.timer` (daily, `Persistent=true`,
 `lmm service uninstall` removes them. The first automatic update is
 announced once with how to turn them off, later ones in one line.
 
-A `lmm serve` you started yourself keeps running the old binary after an
-update; its banner says "lmm vX is installed; restart `lmm serve` to use
-it". lmm never restarts it, and does not treat `SIGHUP` as a restart: the
+A `lmm serve` you started yourself, or any with `auto_update: false`, keeps
+running the old binary after an update; its banner says "lmm vX is
+installed; restart `lmm serve` to use it". lmm never restarts it, and does not treat `SIGHUP` as a restart: the
 terminal sends one when it closes.
 
 How releases are signed, and how the key is rotated, is in

@@ -79,11 +79,16 @@ download really is an lmm release: it must carry the lmm release
 signature, and the file must match its published checksum. If either check
 fails, lmm stops and leaves your copy alone.
 
-If the background web interface is running (see
-[Run the web UI in the background](background.md)), lmm restarts it so it
-uses the new version straight away. If you started `lmm serve` yourself in a
-terminal, it keeps running the old version, and the browser shows a notice
-asking you to restart it: stop it with **Ctrl+C** and run `lmm serve` again.
+`lmm self-update` replaces the `lmm` program and stops there: it never
+restarts the background web interface (see
+[Run the web UI in the background](background.md)), because it can't see
+what's running in the browser. With automatic updates on (the default), the
+background web interface notices the new version within a minute and
+restarts itself onto it once nothing is running in it. Otherwise, or if you
+started `lmm serve` yourself in a terminal, it keeps running the old
+version, and the browser shows a notice asking you to restart it: run
+`systemctl --user restart lmm-serve`, or for one you started yourself, stop
+it with **Ctrl+C** and run `lmm serve` again.
 
 Only one update runs at a time. If you start `lmm self-update` while
 another is already running (the automatic one, for example), it says so and
@@ -113,17 +118,21 @@ match its published checksum, or nothing changes.
 - **In the terminal**, lmm starts the update in the background after the
   command you ran, and says so. Your command isn't slowed down, and closing
   the terminal doesn't stop the update. A script never starts one.
-- **In the browser**, the background web interface installs the update and
-  restarts itself onto it. If you started `lmm serve` yourself in a
-  terminal, it asks you to restart it instead.
+- **In the browser**, the background web interface installs the update
+  itself.
+
+Whichever of them installed it - the terminal, the browser, or the daily
+timer - only replaces the `lmm` program. The background web interface
+notices the new version within a minute and restarts itself onto it. If you
+started `lmm serve` yourself in a terminal, it asks you to restart it
+instead.
 
 An update never starts while lmm is busy with something else, such as a
 deploy or an install in the terminal or the browser; it waits and tries
-again later. Once it has installed the new version, the background web
-interface restarts only when nothing is running in it, and starts no new
-work while it restarts. If something is still running after ten minutes,
-it doesn't restart at all, and the browser asks you to restart it when
-you're ready.
+again later. The background web interface restarts only when nothing is
+running in it, and starts no new work while it restarts. If something is
+still running after ten minutes, it doesn't restart at all, and the browser
+asks you to restart it when you're ready.
 
 The first time lmm updates itself, it tells you once, in whichever you use
 next, the terminal or the browser:

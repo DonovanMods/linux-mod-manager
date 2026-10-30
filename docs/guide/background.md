@@ -62,10 +62,11 @@ move the `lmm` program, rewrites the service file and restarts the service.
 
 lmm already installs new versions of itself, after a command or from the
 background web interface (see
-[Update lmm automatically](updates.md#update-lmm-automatically)), and the
-service restarts onto the new version by itself. On a machine where you
-rarely use lmm, you can add a daily timer that does the same with
-`--auto-update`:
+[Update lmm automatically](updates.md#update-lmm-automatically)). Whatever
+installed the new version only replaces the `lmm` program; the service
+notices it within a minute and restarts itself onto it once nothing is
+running in the web interface. On a machine where you rarely use lmm, you can
+add a daily timer that installs updates too, with `--auto-update`:
 
 ```bash
 lmm service install --auto-update
