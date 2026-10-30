@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-29
+
+The web UI can run in the background as a systemd user service, lmm says
+when a new release of itself is out, and an lmm you installed yourself can
+update itself with `lmm self-update`, which installs only a release signed
+by the lmm release key. This is the first release published with a signed
+`checksums.txt.sig`.
+
 ### Added
 
 - **Run the web UI in the background (#567).** `lmm serve` can now run as
@@ -6336,7 +6344,8 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.1...v2.0.0
