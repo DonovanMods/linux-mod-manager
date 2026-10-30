@@ -19,7 +19,9 @@ import (
 // UI's hot path, and an uncached answer scans every app manifest.
 //
 // It also registers core's battlenet launch method (#545), which the
-// launch registry runs after the built-in command and steam methods.
+// launch registry runs after the built-in command and steam methods, and
+// the machine's GameProbe (#587) - how lmm tells a game it launched, or
+// any other process under the game's install path, is still running.
 func RegisterLaunchers(svc *core.Service) {
 	idx := &steam.InstallAppIndex{}
 	svc.SetLauncher(core.NewLauncher(func(installPath string) (core.SteamApp, bool) {
@@ -27,4 +29,5 @@ func RegisterLaunchers(svc *core.Service) {
 		return core.SteamApp{AppID: app.AppID, Flatpak: app.Flatpak}, ok
 	}))
 	svc.RegisterLaunchMethod(core.BattleNetLaunchMethod())
+	svc.SetGameProbe(core.NewGameProbe())
 }
