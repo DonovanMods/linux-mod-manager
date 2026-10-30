@@ -67,6 +67,14 @@ type Options struct {
 	// no request, which is what keeps this package's tests off GitHub.
 	ReleaseChecker *core.ReleaseChecker
 
+	// AutoUpdater installs a newer lmm release by itself (#586): when the
+	// background refresh finds one, auto_update is on and the install is
+	// self-managed, it runs in this process - and restarts
+	// lmm-serve.service when this server is that service. nil (every test
+	// that does not set one) never updates anything. Only consulted
+	// alongside a ReleaseChecker.
+	AutoUpdater AutoUpdater
+
 	// Notices receives the lines a person running the server should read
 	// - the release check's one-time first-run notice - beside the
 	// "listening on" line; nil discards them.
@@ -146,6 +154,9 @@ type Server struct {
 	// releases is Options.ReleaseChecker (api_release.go); nil when the
 	// server was built without one.
 	releases *core.ReleaseChecker
+	// autoUpdater is Options.AutoUpdater (api_release.go); nil when the
+	// server never updates lmm.
+	autoUpdater AutoUpdater
 	// notices is Options.Notices, never nil.
 	notices io.Writer
 }
@@ -193,6 +204,7 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		draining:       make(chan struct{}),
 		version:        opts.Version,
 		releases:       opts.ReleaseChecker,
+		autoUpdater:    opts.AutoUpdater,
 		notices:        opts.Notices,
 	}
 	if s.notices == nil {

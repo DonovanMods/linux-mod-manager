@@ -226,8 +226,10 @@ func TestReleaseCheck_TheTestBinaryCannotReachGitHub(t *testing.T) {
 func TestServeReleaseChecker_OnlyInTheArmedBinary(t *testing.T) {
 	cliReleaseServer(t, "v2.1.0")
 	assert.Nil(t, serveReleaseChecker())
+	assert.Nil(t, serveAutoUpdater(), "nor does a test's server ever update lmm (#586)")
 	armReleaseNotice(t, false)
 	assert.NotNil(t, serveReleaseChecker())
+	assert.NotNil(t, serveAutoUpdater())
 }
 
 // hangGitHub points the checker at a server that never answers, for the

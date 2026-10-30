@@ -282,6 +282,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// PUT /api/v1/settings/auto-update's body (#586): Setup >
+			// Updates' switch.
+			"auto_update_request",
+			autoUpdateRequest{Enabled: new(false)},
+		},
+		{
 			"job_start_response",
 			newJobStartResponse("fedcba9876543210fedcba9876543210"),
 		},

@@ -9,6 +9,13 @@
 // `lmm serve` started by hand - so the notice asks for a restart instead.
 // That one is local, so it shows whether or not the GitHub check is on, and
 // its dismissal is remembered as "installed:<version>".
+//
+// Its third state (issue 586) is lmm having updated itself: the status's
+// auto_update.last names an automatic update to the version this server
+// runs, and the notice says so once - dismissed as "auto:<version>" - with
+// how to turn automatic updates off after the first one. When the update
+// replaced the binary under a hand-started server, the restart notice says
+// it was automatic instead.
 // Every failure (the fetch, unreadable storage) degrades to showing nothing
 // or to a dismissal that lasts only this page view.
 
@@ -51,9 +58,14 @@ export function ReleaseBanner() {
   }, []);
 
   if (!status) return null;
+  const last = status.auto_update?.last;
+  const optOut = last?.first
+    ? html` To turn this off: <code>auto_update: false</code> in config.yaml, or Setup > Updates.`
+    : "";
   if (status.installed) {
     const key = `installed:${status.installed}`;
     if (dismissed === key) return null;
+    const automatic = last && last.to === status.installed;
     return html`
       <section
         class="release-banner"
@@ -62,13 +74,43 @@ export function ReleaseBanner() {
         data-state="installed"
       >
         <p class="release-banner__text">
-          lmm v${status.installed} is installed; restart${" "}
-          <code>lmm serve</code> to use it.
+          ${
+            automatic
+              ? html`lmm updated itself to v${status.installed}; restart${" "}
+                  <code>lmm serve</code> to use it.${optOut}`
+              : html`lmm v${status.installed} is installed; restart${" "}
+                  <code>lmm serve</code> to use it.`
+          }
         </p>
         <button
           type="button"
           class="button button--quiet button--icon release-banner__dismiss"
           aria-label=${`Dismiss the lmm ${status.installed} restart notice`}
+          data-action="dismiss-release-banner"
+          onClick=${() => {
+            writeDismissed(key);
+            setDismissed(key);
+          }}
+        >
+          ✕
+        </button>
+      </section>
+    `;
+  }
+  if (last && last.to === status.current && dismissed !== `auto:${last.to}`) {
+    const key = `auto:${last.to}`;
+    return html`
+      <section
+        class="release-banner"
+        aria-label="lmm updated itself"
+        data-testid="release-banner"
+        data-state="auto-updated"
+      >
+        <p class="release-banner__text">lmm updated itself to v${last.to}.${optOut}</p>
+        <button
+          type="button"
+          class="button button--quiet button--icon release-banner__dismiss"
+          aria-label=${`Dismiss the lmm ${last.to} update notice`}
           data-action="dismiss-release-banner"
           onClick=${() => {
             writeDismissed(key);

@@ -338,10 +338,11 @@ func (c ServiceConfig) SetAutoUpdate(ctx context.Context, enabled bool) error {
 	return saveAutoUpdate(c.ConfigDir, enabled)
 }
 
-// AutoUpdateStatus is ServiceConfig.AutoUpdateStatus for this Service's
-// directories.
-func (s *Service) AutoUpdateStatus(install InstallMethod) AutoUpdateStatus {
-	return ServiceConfig{ConfigDir: s.configDir, DataDir: s.dataDir}.AutoUpdateStatus(install)
+// AutoUpdateStatus is ServiceConfig.AutoUpdateStatus for the checker's
+// directories - `lmm serve`'s GET /api/v1/updates/lmm, beside the release
+// status it reads from the same data dir.
+func (r *ReleaseChecker) AutoUpdateStatus(install InstallMethod) AutoUpdateStatus {
+	return ServiceConfig{ConfigDir: r.opts.ConfigDir, DataDir: r.opts.DataDir}.AutoUpdateStatus(install)
 }
 
 // SetAutoUpdate writes config.yaml's auto_update - the web UI's "Update

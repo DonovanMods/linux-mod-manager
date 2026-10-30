@@ -623,3 +623,8 @@ export const deleteUpload = (uploadID) =>
  * server's cached answer about a newer lmm (never a request to GitHub of its
  * own, and never scoped to a game). */
 export const getLmmRelease = () => get("/api/v1/updates/lmm");
+
+/** putAutoUpdate writes config.yaml's auto_update (issue 586) and answers
+ * the same core.ReleaseStatus getLmmRelease reads, after the write. */
+export const putAutoUpdate = (enabled) =>
+  put("/api/v1/settings/auto-update", { enabled });

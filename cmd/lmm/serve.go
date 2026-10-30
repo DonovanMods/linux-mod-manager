@@ -67,12 +67,16 @@ func doServe(ctx context.Context, cmd *cobra.Command, svc *core.Service) error {
 		return err
 	}
 
-	srv := serve.New(ctx, svc, svc.Logger(), serve.Options{
+	opts := serve.Options{
 		Addr:           serveAddr,
 		Version:        computeDisplayVersion(version, buildDescribe),
 		ReleaseChecker: serveReleaseChecker(),
 		Notices:        cmd.OutOrStdout(),
-	})
+	}
+	if u := serveAutoUpdater(); u != nil {
+		opts.AutoUpdater = u
+	}
+	srv := serve.New(ctx, svc, svc.Logger(), opts)
 	addr, err := srv.Listen()
 	if err != nil {
 		return err
@@ -104,6 +108,20 @@ func serveReleaseChecker() *core.ReleaseChecker {
 		return nil
 	}
 	return rc
+}
+
+// serveAutoUpdater is the updater `lmm serve` installs a newer release
+// through when auto_update is on (#586), restarting lmm-serve.service
+// after it; nil, as for the checker, in a binary Execute did not arm.
+func serveAutoUpdater() *core.SelfUpdater {
+	if !releaseCheckArmed {
+		return nil
+	}
+	u, err := newSelfUpdater()
+	if err != nil {
+		return nil
+	}
+	return u
 }
 
 // warnIfNonLoopback prints the loud, undismissable warning
