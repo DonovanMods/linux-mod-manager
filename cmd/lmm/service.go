@@ -63,9 +63,12 @@ tells you the systemctl command that turns it on. A unit file lmm did not
 write is left alone.
 
 --auto-update also installs lmm-update.timer, which runs 'lmm self-update
---auto' once a day. That installs a new lmm release only while config.yaml
-says 'auto_update: true', so the setting turns updates on and off without
-touching the units. Later installs keep the timer; 'lmm service uninstall'
+--auto' once a day. You do not need it for automatic updates: lmm already
+updates itself after a command, or from 'lmm serve', once it learns of a new
+release. The timer is for a machine where lmm rarely runs. Like every
+automatic update, it installs nothing while config.yaml says
+'auto_update: false', so the setting turns updates off without touching the
+units. Later installs keep the timer; 'lmm service uninstall'
 removes it. It is refused for an lmm a package manager installed, which
 'lmm self-update' never replaces.
 
@@ -117,7 +120,7 @@ Examples:
 
 func init() {
 	serviceInstallCmd.Flags().StringVar(&serviceAddr, "addr", "", "address 'lmm serve' listens on (host:port; default "+defaultServeAddr+")")
-	serviceInstallCmd.Flags().BoolVar(&serviceAutoUpdate, "auto-update", false, "also install lmm-update.timer, which runs 'lmm self-update' daily while auto_update is true in config.yaml")
+	serviceInstallCmd.Flags().BoolVar(&serviceAutoUpdate, "auto-update", false, "also install lmm-update.timer, which runs 'lmm self-update --auto' daily (for a machine where lmm rarely runs)")
 	serviceCmd.AddCommand(serviceInstallCmd, serviceUninstallCmd, serviceStatusCmd)
 	rootCmd.AddCommand(serviceCmd)
 }
@@ -319,7 +322,7 @@ func doServiceStatus(ctx context.Context) error {
 }
 
 // printAutoUpdateState says whether the timer will install anything: it
-// does only while config.yaml says auto_update: true.
+// does unless config.yaml says auto_update: false.
 func printAutoUpdateState() {
 	cfgDir := configDir
 	if cfg, err := getServiceConfig(); err == nil {
@@ -330,7 +333,7 @@ func printAutoUpdateState() {
 		fmt.Println("  lmm updates itself daily: auto_update is on.")
 		return
 	}
-	fmt.Printf("  It checks daily, but installs nothing until you add 'auto_update: true' to %s\n", filepath.Join(cfgDir, "config.yaml"))
+	fmt.Printf("  It checks daily, but installs nothing while %s says 'auto_update: false'\n", filepath.Join(cfgDir, "config.yaml"))
 }
 
 // printLingerHint tells a user without lingering how to start at boot. It

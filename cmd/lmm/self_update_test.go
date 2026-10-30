@@ -161,17 +161,43 @@ func TestSelfUpdateCmd_WithoutYesOffATerminalRefuses(t *testing.T) {
 	assert.Equal(t, "old lmm", f.installed(t))
 }
 
-func TestSelfUpdateCmd_AutoDoesNothingUnlessAutoUpdateIsOn(t *testing.T) {
+func TestSelfUpdateCmd_AutoInstallsUnlessAutoUpdateIsOff(t *testing.T) {
 	f := newCLISelfUpdate(t)
 	selfUpdate.auto = true
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("auto_update: false\n"), 0o644))
 	out := captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
-	assert.Contains(t, out, "auto_update")
+	assert.Contains(t, out, "auto_update is off")
 	assert.Equal(t, "old lmm", f.installed(t))
 	assert.Zero(t, f.downloads)
 
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("auto_update: true\n"), 0o644))
-	captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
-	assert.Equal(t, "new lmm 2.2.0", f.installed(t), "--auto needs no --yes")
+	require.NoError(t, os.Remove(filepath.Join(configDir, "config.yaml")))
+	out = captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
+	assert.Equal(t, "new lmm 2.2.0", f.installed(t), "on by default (#586), and --auto needs no --yes")
+	assert.Contains(t, out, "Updated lmm 2.1.0 to")
+	cfg, err := getServiceConfig()
+	require.NoError(t, err)
+	rec, ok := cfg.PendingAutoUpdateNotice()
+	require.True(t, ok, "the next command announces it")
+	assert.Equal(t, "2.2.0", rec.To)
+}
+
+// A package's lmm is never auto-updated, and that is no failure for
+// lmm-update.timer to retry.
+func TestSelfUpdateCmd_AutoStepsAsideForAPackage(t *testing.T) {
+	f := newCLISelfUpdate(t)
+	selfUpdate.auto = true
+	releaseInstallProbe.LookPath = func(name string) (string, error) {
+		if name == "dpkg" {
+			return "/usr/bin/dpkg", nil
+		}
+		return "", os.ErrNotExist
+	}
+	releaseInstallProbe.Run = func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("lmm:amd64: " + f.exe + "\n"), nil
+	}
+	out := captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
+	assert.Contains(t, out, "not updating")
+	assert.Equal(t, "old lmm", f.installed(t))
 }
 
 func TestSelfUpdateCmd_RefusesAPackageOwnedBinary(t *testing.T) {
@@ -212,7 +238,7 @@ func TestServiceInstall_AutoUpdate(t *testing.T) {
 	assert.FileExists(t, filepath.Join(unitDir, "lmm-update.timer"))
 	assert.FileExists(t, filepath.Join(unitDir, "lmm-update.service"))
 	assert.Contains(t, out, "lmm-update.timer")
-	assert.Contains(t, out, "auto_update: true", "it says how to switch updates on")
+	assert.Contains(t, out, "auto_update is on", "on by default (#586)")
 
 	releaseInstallProbe.LookPath = func(name string) (string, error) {
 		if name == "pacman" {
@@ -253,7 +279,6 @@ func TestSelfUpdateCmd_AnotherRunHoldsTheLock(t *testing.T) {
 	assert.Zero(t, f.downloads)
 
 	selfUpdate = selfUpdateFlags{auto: true}
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("auto_update: true\n"), 0o644))
 	out := captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
 	assert.Contains(t, out, "another self-update is running")
 	assert.Equal(t, "old lmm", f.installed(t))

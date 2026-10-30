@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -62,7 +63,22 @@ func TestMain(m *testing.M) {
 	// sandbox floor, and tests point them at their own temp dirs freely.
 	flagsBefore := snapshotFlags(rootCmd)
 
+	// #586: automatic updates are on by default, so nothing in this binary
+	// may start a detached `lmm self-update --auto` - the test binary would
+	// be running itself. A test that wants to see the start replaces this
+	// with its own recorder and restores it.
+	var unexpectedSpawns []string
+	spawnAutoUpdate = func(exe string, args []string, _ string) error {
+		unexpectedSpawns = append(unexpectedSpawns, exe+" "+strings.Join(args, " "))
+		return errors.New("TestMain: no test may start an automatic update")
+	}
+
 	code := m.Run()
+
+	if len(unexpectedSpawns) > 0 {
+		fmt.Fprintf(os.Stderr, "FAIL: the test suite tried to start an automatic update:\n  %s\n", strings.Join(unexpectedSpawns, "\n  "))
+		code = 1
+	}
 
 	if leaks := leakedFlags(flagsBefore, snapshotFlags(rootCmd),
 		rootCmd.PersistentFlags().Lookup("config"), rootCmd.PersistentFlags().Lookup("data")); len(leaks) > 0 {

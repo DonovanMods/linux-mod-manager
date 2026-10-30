@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 
@@ -62,9 +61,13 @@ until you restart it; its web UI says so.
 Without --yes, lmm asks before it replaces the binary. --json never asks:
 without --yes it prints the plan and changes nothing.
 
---auto is what lmm-update.timer runs ('lmm service install --auto-update'):
-it does nothing unless config.yaml says 'auto_update: true', and needs no
---yes.
+--auto is the automatic update: what lmm starts in the background after a
+command once it knows of a newer release, and what lmm-update.timer runs
+('lmm service install --auto-update'). It needs no --yes, and does nothing
+when config.yaml says 'auto_update: false', when another self-update is
+running, or for a release whose automatic update failed in the last day.
+Automatic updates are on by default for a self-managed lmm; a package's lmm
+is never updated by lmm itself.
 
 Examples:
   lmm self-update --check
@@ -79,7 +82,7 @@ Examples:
 func init() {
 	selfUpdateCmd.Flags().BoolVar(&selfUpdate.check, "check", false, "only report whether a newer release exists")
 	selfUpdateCmd.Flags().BoolVarP(&selfUpdate.yes, "yes", "y", false, "install without asking")
-	selfUpdateCmd.Flags().BoolVar(&selfUpdate.auto, "auto", false, "run as the unattended timer does: update only when auto_update is true in config.yaml")
+	selfUpdateCmd.Flags().BoolVar(&selfUpdate.auto, "auto", false, "run as an automatic update: no --yes, nothing when auto_update is false in config.yaml")
 	rootCmd.AddCommand(selfUpdateCmd)
 }
 
@@ -113,25 +116,13 @@ func runSelfUpdate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if selfUpdate.auto && !u.AutoUpdateEnabled() {
-		if jsonOutput {
-			return emitJSON(core.SelfUpdateResult{Previous: version, Version: version})
-		}
-		fmt.Println("auto_update is off in config.yaml; not updating.")
-		return nil
+	if selfUpdate.auto && !selfUpdate.check {
+		return runAutoUpdate(ctx, u)
 	}
 	// One run at a time, held from the plan through the install. --check
-	// only reads, so it takes no lock. The timer's run steps aside for one
-	// already under way: that is not a failure for systemd to retry.
+	// only reads, so it takes no lock.
 	if !selfUpdate.check {
 		unlock, err := u.Lock()
-		if errors.Is(err, core.ErrSelfUpdateRunning) && selfUpdate.auto {
-			if jsonOutput {
-				return emitJSON(core.SelfUpdateResult{Previous: version, Version: version})
-			}
-			fmt.Println(err.Error() + "; not updating.")
-			return nil
-		}
 		if err != nil {
 			return err
 		}
@@ -141,7 +132,7 @@ func runSelfUpdate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	yes := selfUpdate.yes || selfUpdate.auto
+	yes := selfUpdate.yes
 	if plan.UpToDate || selfUpdate.check || (jsonOutput && !yes) {
 		if jsonOutput {
 			return emitJSON(plan)
@@ -169,6 +160,33 @@ func runSelfUpdate(ctx context.Context) error {
 	if jsonOutput {
 		return emitJSON(res)
 	}
+	printSelfUpdateResult(res, plan.ReleaseURL)
+	return nil
+}
+
+// runAutoUpdate is --auto: core's RunAuto, which the detached run a CLI
+// command starts and lmm-update.timer's both are (#586). A run that steps
+// aside - turned off, a package's binary, another run under way, a
+// release backed off after a failure - says why and succeeds, so systemd
+// does not retry it.
+func runAutoUpdate(ctx context.Context, u *core.SelfUpdater) error {
+	out, err := u.RunAuto(ctx)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return emitJSON(out.Result)
+	}
+	if out.Skipped != "" {
+		fmt.Println(out.Skipped + "; not updating.")
+		return nil
+	}
+	printSelfUpdateResult(out.Result, "")
+	return nil
+}
+
+// printSelfUpdateResult is the text after an install.
+func printSelfUpdateResult(res core.SelfUpdateResult, releaseURL string) {
 	fmt.Printf("Updated lmm %s to %s (%s).\n", res.Previous, colorBold(res.Version), res.Executable)
 	switch {
 	case res.ServeRestarted:
@@ -177,10 +195,9 @@ func runSelfUpdate(ctx context.Context) error {
 		fmt.Fprintf(os.Stderr, "%s lmm-serve.service still runs %s: restarting it failed (%s); restart it with: systemctl --user restart lmm-serve\n",
 			colorYellow("!"), res.Previous, res.ServeRestartError)
 	}
-	if plan.ReleaseURL != "" {
-		fmt.Println(colorDim("Release notes: " + plan.ReleaseURL))
+	if releaseURL != "" {
+		fmt.Println(colorDim("Release notes: " + releaseURL))
 	}
-	return nil
 }
 
 // printSelfUpdatePlan is --check's text, and the up-to-date answer.
