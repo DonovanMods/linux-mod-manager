@@ -696,10 +696,16 @@ func (b *e2eSharedBrowser) acquire(t *testing.T, binary string) context.Context 
 	cancel := func() {
 		// chromedp.Cancel, not the bare context cancel: it closes the
 		// browser AND WAITS for the process to exit, so nothing of it is
-		// left running once the test binary is done with it.
-		if err := chromedp.Cancel(ctx); err != nil {
+		// left running once the test binary is done with it. Bounded,
+		// because this is also how a browser that stopped answering is
+		// replaced (discard), and a graceful close waits for a reply such
+		// a browser never sends; the bare cancels below then kill it.
+		closing, cancelClosing := context.WithTimeout(ctx, e2eShutdownGrace)
+		if err := chromedp.Cancel(closing); err != nil {
 			cancelCtx()
 		}
+		cancelClosing()
+		cancelCtx()
 		cancelAlloc()
 		_ = os.RemoveAll(home)
 	}
