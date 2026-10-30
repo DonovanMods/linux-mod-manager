@@ -464,6 +464,8 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 		return gameUpdateCheck{drift: drift}, err
 	}
 	updates, catalogMissing, checkErr := s.NewUpdater().checkUpdates(ctx, game, drift.overlay(installed), sink, opts)
+	// #590: each gone mod's likely new identity, one search apiece.
+	s.fillCatalogSuccessors(ctx, game.ID, installed, catalogMissing)
 	carryManualOnly(updates, installed) // #543
 
 	staleUpd, staleErr := s.CheckMergedPakStaleness(ctx, game, profileName)

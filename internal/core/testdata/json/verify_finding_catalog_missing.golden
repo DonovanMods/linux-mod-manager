@@ -1,0 +1,16 @@
+{
+  "mod_id": "dLs3nvmWj5uOPnXxezGe",
+  "mod_name": "Larger Resource Stacks",
+  "status": "catalog_missing",
+  "note": "no longer in Icarus's catalog (removed, or republished under a new ID)",
+  "fixable_reason": "the mod has left its source's catalog - re-link it to its new ID if it moved, or uninstall it",
+  "source_id": "icarus",
+  "successors": [
+    {
+      "mod_id": "8m1z04vNo2CCdKcD2C0H",
+      "name": "Larger Resource Stacks",
+      "author": "Donovan",
+      "version": "1.2.0"
+    }
+  ]
+}

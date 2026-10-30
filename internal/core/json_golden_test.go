@@ -1177,6 +1177,18 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #590: a version check whose source's catalog no longer has
+			// the mod says so, names the source and suggests the new ID.
+			"verify_finding_catalog_missing",
+			core.VerifyFinding{
+				ModID: "dLs3nvmWj5uOPnXxezGe", ModName: "Larger Resource Stacks", Status: core.VerifyStatusCatalogMissing,
+				Note:          "no longer in Icarus's catalog (removed, or republished under a new ID)",
+				FixableReason: "the mod has left its source's catalog - re-link it to its new ID if it moved, or uninstall it",
+				SourceID:      "icarus",
+				Successors:    []core.CatalogSuccessor{{ModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks", Author: "Donovan", Version: "1.2.0"}},
+			},
+		},
+		{
 			// #517: a row a --fix run repaired to "ok" says how, so the web
 			// UI can tell it from an untouched one. omitzero, so every
 			// other row carries no key at all.
@@ -1679,6 +1691,16 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			"catalog_mod_ref",
 			core.CatalogModRef{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Bear Mount"},
+		},
+		{
+			// #590: a gone mod with the likely new ID of it republished.
+			"catalog_mod_ref_successors",
+			core.CatalogModRef{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Larger Resource Stacks",
+				Successors: []core.CatalogSuccessor{{ModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks", Author: "Donovan", Version: "1.2.0"}}},
+		},
+		{
+			"catalog_successor",
+			core.CatalogSuccessor{ModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks", Author: "Donovan", Version: "1.2.0"},
 		},
 		{
 			"update_skips",
