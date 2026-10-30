@@ -302,3 +302,27 @@ func TestVerify_MemoMissDoesNotShareWhatItStores(t *testing.T) {
 	assert.NotEqual(t, "clobbered", hit.Findings[0].Status, "the memo kept its own findings")
 	assert.NotEqual(t, 4242, hit.Issues, "and its own struct, not just the slice")
 }
+
+// TestVerifyReportWithProgress_ObservesARunButKeepsTheMemo is issue 583: the
+// web UI's Health card asks to watch the verify behind an ordinary hydrate.
+// Watching must not cost the walk the memo exists to save - a run that
+// happens reports its progress, and a memo hit answers at once with nothing
+// to report.
+func TestVerifyReportWithProgress_ObservesARunButKeepsTheMemo(t *testing.T) {
+	svc, game := newVerifyTestServiceWithFiles(t, 3)
+
+	sink, events := core.RecordEvents()
+	first, err := svc.VerifyReportWithProgress(context.Background(), game, "default", core.VerifyOptions{}, sink)
+	require.NoError(t, err)
+	assert.False(t, first.Result.Cached, "the first run is a real one")
+	assert.NotEmpty(t, *events, "a run that happens reports as it goes")
+
+	sink, events = core.RecordEvents()
+	second, err := svc.VerifyReportWithProgress(context.Background(), game, "default", core.VerifyOptions{}, sink)
+	require.NoError(t, err)
+	assert.True(t, second.Result.Cached, "watching must not opt out of the memo")
+	assert.Empty(t, *events, "a memo hit has no run to report")
+
+	// And a run it watched is the memo's answer for an unwatched caller.
+	assert.True(t, verifyOnce(t, svc, game, core.VerifyOptions{}).Cached)
+}

@@ -409,6 +409,11 @@ func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	token, ok := s.progressToken(w, r)
+	if !ok {
+		return
+	}
+
 	ctx := r.Context()
 	// #538: record the revision Steam has installed for every tracked
 	// Workshop item first, so the library and the mod page read the real
@@ -429,7 +434,10 @@ func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
 	// Workshop source caches Valve's keyless answers for hours, so the web
 	// UI's explicit refresh action needs a way to say "ask again".
 	opts := core.UpdateCheckOptions{Refresh: r.URL.Query().Get("refresh") == "1"}
-	report, _ := s.svc.CheckGameUpdateReport(ctx, sel.Game, sel.Profile, installed, nil, opts)
+	// ?progress= (#583) asks for read_progress frames as the check walks the
+	// mods (read_progress.go).
+	report, _ := s.svc.CheckGameUpdateReport(ctx, sel.Game, sel.Profile, installed,
+		s.readProgressSink(token, readUpdates, sel), opts)
 	s.writeJSON(w, http.StatusOK, report)
 }
 
@@ -508,8 +516,14 @@ func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	// that exact value counts, so a hydrate cannot accidentally spell the
 	// expensive request.
 	force := r.URL.Query().Get("force") == "1"
-	report, err := s.svc.VerifyReport(r.Context(), sel.Game, sel.Profile,
-		core.VerifyOptions{Tier: core.VerifyFull, Force: force}, nil)
+	// ?progress= (#583) watches the run if there is one; it never opts out
+	// of the memo (core.VerifyReportWithProgress).
+	token, ok := s.progressToken(w, r)
+	if !ok {
+		return
+	}
+	report, err := s.svc.VerifyReportWithProgress(r.Context(), sel.Game, sel.Profile,
+		core.VerifyOptions{Tier: core.VerifyFull, Force: force}, s.readProgressSink(token, readHealth, sel))
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return

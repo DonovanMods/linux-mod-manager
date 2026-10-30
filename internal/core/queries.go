@@ -889,3 +889,14 @@ func (s *Service) VerifyReport(ctx context.Context, game *domain.Game, profileNa
 	}
 	return &VerifyReport{GameID: game.ID, Profile: profileName, Result: result}, nil
 }
+
+// VerifyReportWithProgress is VerifyReport for a caller that wants to watch
+// the run without asking for one (#583): progress receives the run's events
+// if the tier really runs, and an unchanged installation is still answered
+// from the memo (#336), with nothing reported. VerifyReport's own non-nil
+// sink always runs the tier, which is right for `lmm verify` and wrong for
+// the web UI's ordinary Mission Control hydrate.
+func (s *Service) VerifyReportWithProgress(ctx context.Context, game *domain.Game, profileName string, opts VerifyOptions, progress EventSink) (*VerifyReport, error) {
+	opts.observe = true
+	return s.VerifyReport(ctx, game, profileName, opts, progress)
+}
