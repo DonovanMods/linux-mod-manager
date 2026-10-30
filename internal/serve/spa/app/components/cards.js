@@ -29,6 +29,7 @@ import { relativeTime } from "../relativetime.js";
 import { navigate, modPathEditPath } from "../router.js";
 import { codeSpans } from "../errortext.js";
 import { conflictLabel } from "../conflicts.js";
+import { PlayButton } from "./playbutton.js";
 
 // UPDATES_BATCH_ORIGIN is the Updates card's own "Update selected" control -
 // distinct from a single-mod update's own "mod:{source}/{id}:update"
@@ -738,11 +739,21 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                                   state=${state}
                                   sourceID=${f.auth_source}
                                 />`
-                              : // issue 585: nothing. "Not fixable: ..."
-                                // said what `lmm verify --fix` would not
-                                // do, which a person here cannot run - the
-                                // finding's own words are what to act on.
-                                ""
+                              : f.status === "loader_stale_log"
+                                ? // issue 501: the finding asks for the
+                                  // game to be launched once - so offer it.
+                                  html`<${PlayButton}
+                                    state=${state}
+                                    status=${state.status}
+                                    actions=${actions}
+                                    action="play-loader"
+                                    small
+                                  />`
+                                : // issue 585: nothing. "Not fixable: ..."
+                                  // said what `lmm verify --fix` would not
+                                  // do, which a person here cannot run - the
+                                  // finding's own words are what to act on.
+                                  ""
                       }
                     </li>
                   `,

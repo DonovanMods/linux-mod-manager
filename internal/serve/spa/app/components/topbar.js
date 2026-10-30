@@ -19,6 +19,7 @@ import { currentTheme, cycleTheme } from "../theme.js";
 import { resolveGamePath } from "../navigation.js";
 import { countUndeployed } from "../modrows.js";
 import { InlineJob } from "./jobprogress.js";
+import { PlayButton } from "./playbutton.js";
 import { ActivityBell } from "./tray.js";
 import { useDismissOnOutsideOrEscape } from "../dismiss.js";
 import { useMenuPlacement } from "../menuplacement.js";
@@ -26,7 +27,9 @@ import { useMenuPlacement } from "../menuplacement.js";
 // DEPLOY_ORIGIN is the key the top bar's Deploy control morphs on. Origins
 // are stable strings, one per control (jobprogress.js) - a later unit's
 // per-mod controls use "install:fake/123" and friends.
-const DEPLOY_ORIGIN = "deploy";
+// Exported for the drift modal's Deploy & launch (main.js#deployAndLaunch),
+// which runs this same control's deploy job.
+export const DEPLOY_ORIGIN = "deploy";
 
 // SWITCH_ORIGIN is the "Switch and deploy…" control's own origin. ONE
 // origin rather than one per profile row: the menu closes the instant a
@@ -218,6 +221,7 @@ export function TopBar({
           Deploy
         </button>
       <//>
+      <${PlayButton} state=${state} status=${status} actions=${actions} />
       <div class="app-bar__search" role="search">
         <span class="omnibar__sizer" aria-hidden="true"
           >${OMNIBAR_PLACEHOLDER}</span
