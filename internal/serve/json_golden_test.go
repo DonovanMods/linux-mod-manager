@@ -750,6 +750,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			gameDetectSelectRequest{Select: []string{"1", "valheim"}},
 		},
 		{
+			// The Play button's body (#501, api_launch.go): a profile and
+			// force, and nothing else - no member can name what runs.
+			"game_launch_request",
+			gameLaunchRequest{Profile: "default", Force: true},
+		},
+		{
 			// The credential body (api_auth.go). One member: the source is
 			// named in the PATH, never here, so "authenticate THIS source"
 			// cannot be retargeted by the body. The value is a dummy - a

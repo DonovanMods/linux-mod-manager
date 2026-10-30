@@ -2123,7 +2123,8 @@ single trusted user on their own machine:
 
 - Binds to `127.0.0.1:7420` by default. Binding a non-loopback address (a
   LAN IP, `0.0.0.0`) prints a loud warning on every startup: anyone who can
-  reach that address can drive `lmm` exactly as you can.
+  reach that address can drive `lmm` exactly as you can, and launch
+  programs (the web UI's **Play** button starts your games).
 - Every request's `Host` header is checked against an allow-list built from
   the bind address (plus `localhost`, for a loopback bind) — a
   DNS-rebinding guard. A **wildcard bind** (`0.0.0.0`, `[::]`, or a bare

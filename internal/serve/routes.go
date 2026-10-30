@@ -79,6 +79,9 @@ func (s *Server) routes() {
 	// `lmm game set-default`/`clear-default --json` already emit.
 	s.mux.Handle("POST /api/v1/games/{id}/set-default", s.wrap(s.handleAPIGameSetDefault))
 	s.mux.Handle("DELETE /api/v1/games/default", s.wrap(s.handleAPIGameClearDefault))
+	// The Play button (#501, api_launch.go): a single-step call, not a job -
+	// core.Service.Launch returns once the game's systemd unit has started.
+	s.mux.Handle("POST /api/v1/games/{id}/launch", s.wrap(s.handleAPIGameLaunch))
 	// The Setup surface's custom-source half (api_sources.go): the editor's
 	// list, one definition's raw YAML, a draft's validation, and the two
 	// writes - which answer with the SAME list document the GET returns,

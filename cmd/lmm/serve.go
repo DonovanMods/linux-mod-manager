@@ -27,7 +27,8 @@ database and profiles the CLI uses.
 
 Binds to 127.0.0.1:7420 by default - local-only, no authentication in this
 release. Binding a non-loopback address prints a warning: anyone who can
-reach that address can drive lmm exactly as you can.
+reach that address can drive lmm exactly as you can, and launch programs
+(the Play button starts your games on this machine).
 
 Opens the default browser automatically unless --no-open is given.
 
@@ -116,7 +117,7 @@ func warnIfNonLoopback(cmd *cobra.Command, addr string) error {
 	}
 	if !loopback {
 		_, err := fmt.Fprintf(cmd.ErrOrStderr(),
-			"%s lmm serve is bound to %s, which is reachable from outside this machine. There is no authentication in this release - anyone who can reach it can drive lmm exactly as you can. Only do this on a trusted network.\n",
+			"%s lmm serve is bound to %s, which is reachable from outside this machine. There is no authentication in this release - anyone who can reach it can drive lmm exactly as you can, and launch programs. Only do this on a trusted network.\n",
 			colorRed("WARNING:"), addr)
 		return err
 	}
