@@ -69,6 +69,7 @@ import {
   ModSettingsControls,
   ManagedBySteam,
   findingsFor,
+  findingsHeading,
   conflictsFor,
 } from "./modpanel.js";
 
@@ -376,8 +377,14 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
       ${
         findings.length > 0 &&
         html`
-          <section class="mod-page__section" data-testid="mod-page-findings">
-            <h2 class="plan__heading">Findings (${findings.length})</h2>
+          <section
+            class="mod-page__section"
+            data-testid="mod-page-findings"
+            data-deferred=${state.health?.result?.deferred ? "true" : undefined}
+          >
+            <h2 class="plan__heading">
+              ${findingsHeading(state.health, findings.length)}
+            </h2>
             <ul class="plan__paths">
               ${findings.map(
                 (f) =>

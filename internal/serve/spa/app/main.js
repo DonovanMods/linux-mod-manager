@@ -223,6 +223,9 @@ function commitSlices(seq, claim, patch, errors) {
  */
 async function hydrate(route, { rehydrate = false } = {}) {
   const seq = beginHydration();
+  // A pending re-read of deferred health belongs to the page it was armed
+  // on; the reads below arm a fresh one if this route's answer is deferred.
+  cancelDeferredHealthRetry();
   // A read that can settle this context's toggle requests begins here - the
   // status pair below is part of it (toggleack.js#rereading).
   toggles.rereading(route);
@@ -498,15 +501,26 @@ let deferredHealthRetry;
  * finds the answer replaced, or Mission Control left, does nothing.
  */
 function retryDeferredHealth(value) {
-  clearTimeout(deferredHealthRetry);
-  deferredHealthRetry = undefined;
+  cancelDeferredHealthRetry();
   if (!value?.result?.deferred || store.get().health !== value) return;
   deferredHealthRetry = setTimeout(() => {
     deferredHealthRetry = undefined;
     const { route, health } = store.get();
-    if (health !== value || route.view !== "home") return;
+    if (health !== value || !healthRetryViews.has(route.view)) return;
     reload("health", "/api/v1/health");
   }, deferredHealthRetryMillis);
+}
+
+// healthRetryViews are the routes that show health: Mission Control, and
+// the full mod page's findings (issue 588 review), which loads health
+// through hydrateModPage rather than loadSlice.
+const healthRetryViews = new Set(["home", "mod"]);
+
+/** cancelDeferredHealthRetry drops a pending re-read of deferred health -
+ * on every navigation (hydrate), so it never outlives its page. */
+function cancelDeferredHealthRetry() {
+  clearTimeout(deferredHealthRetry);
+  deferredHealthRetry = undefined;
 }
 
 /**
@@ -703,6 +717,9 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
       conflicts: failureMessage(conflicts),
     },
   );
+  // issue 588 review: the same bounded re-read Mission Control's loadSlice
+  // arms, for a deferred answer this page committed.
+  retryDeferredHealth(settled(health));
 }
 
 /**
