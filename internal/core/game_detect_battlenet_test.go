@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,7 +59,7 @@ func TestGameFromDetected_CarriesTheFlavorAndTheLaunch(t *testing.T) {
 // The from-detected add carries them too, and writes them to games.yaml.
 func TestAddGameFromDetected_WritesTheFlavorAndTheLaunch(t *testing.T) {
 	svc := newGameAddService(t)
-	row := battleNetRow(wowRoot(t, "_retail_"), "wow", "wow", "_retail_")
+	row := battleNetRow(wowRoot(t, "_retail_"), "wow", "wow-retail", "_retail_")
 	row.Launch.BattleNet.Product = "WoW"
 
 	spec, err := svc.PrefillGameSpecFromDetected(row, core.GameSpec{})
@@ -68,10 +69,10 @@ func TestAddGameFromDetected_WritesTheFlavorAndTheLaunch(t *testing.T) {
 
 	saved, err := svc.LoadGamesFromDisk()
 	require.NoError(t, err)
-	require.Contains(t, saved, "wow")
-	assert.Equal(t, []int{79434}, saved["wow"].CurseForgeVersionTypes())
-	require.NotNil(t, saved["wow"].Launch)
-	assert.Equal(t, row.Launch.BattleNet, saved["wow"].Launch.BattleNet)
+	require.Contains(t, saved, "wow-retail")
+	assert.Equal(t, []int{79434}, saved["wow-retail"].CurseForgeVersionTypes())
+	require.NotNil(t, saved["wow-retail"].Launch)
+	assert.Equal(t, row.Launch.BattleNet, saved["wow-retail"].Launch.BattleNet)
 }
 
 // #545: the owner's case. A WoW flavor already configured - under any id,
@@ -137,4 +138,140 @@ func TestConfiguredGameFor_ModPathMatchOnlyBelowTheConfiguredInstall(t *testing.
 	got := core.ConfiguredGameFor(existing, row)
 	require.NotNil(t, got)
 	assert.Equal(t, "wow", got.ID)
+}
+
+// ownersWoW is the owner's games.yaml: World of Warcraft - Forever added by
+// hand, before detection, under the generic id "wow", at the _forever_
+// flavor folder.
+func ownersWoW(t *testing.T, svc *core.Service, root string) {
+	t.Helper()
+	_, err := svc.AddGame(context.Background(), core.GameSpec{
+		ID: "wow", Name: "World of Warcraft - Forever",
+		InstallPath: filepath.Join(root, "_forever_"), ModPath: filepath.Join(root, "_forever_", "Interface", "AddOns"),
+		SourceID: "curseforge", Identifier: "1",
+	})
+	require.NoError(t, err)
+}
+
+// #545 review: the owner's exact setup, with retail installed beside
+// Forever. The path decides which row is the configured game, never the
+// slug - so even a retail row slugged "wow" (the catalog's slug before it
+// became wow-retail, or a user's override) is not the owner's "wow": that
+// game is Forever, and selecting retail must never move its paths.
+func TestConfiguredGameFor_OwnersWoWIsForeverWhateverRetailIsCalled(t *testing.T) {
+	for _, retailSlug := range []string{"wow-retail", "wow"} {
+		t.Run(retailSlug, func(t *testing.T) {
+			svc := newGameAddService(t)
+			root := wowRoot(t, "_retail_", "_forever_")
+			ownersWoW(t, svc, root)
+			retail := battleNetRow(root, "wow", retailSlug, "_retail_")
+			forever := battleNetRow(root, "wowf", "wow-forever", "_forever_")
+
+			listing, err := svc.GameDetectListing(context.Background(), []domain.DetectedGame{retail, forever}, nil, core.GameDetectListingOptions{})
+			require.NoError(t, err)
+			require.Len(t, listing.Games, 2)
+			assert.False(t, listing.Games[0].AlreadyConfigured, "retail is a new game, not the owner's wow")
+			assert.True(t, listing.Games[1].AlreadyConfigured, "the owner's wow is Forever")
+
+			existing, err := svc.LoadGamesFromDisk()
+			require.NoError(t, err)
+			assert.Nil(t, core.ConfiguredGameFor(existing, retail))
+			got := core.ConfiguredGameFor(existing, forever)
+			require.NotNil(t, got)
+			assert.Equal(t, "wow", got.ID)
+
+			_, _, err = svc.ApplyDetectSelection(context.Background(), []domain.DetectedGame{retail, forever})
+			if retailSlug == "wow" {
+				// Retail cannot be added under an id Forever already has: it
+				// is refused, never written over Forever.
+				require.Error(t, err)
+				assert.True(t, errors.Is(err, core.ErrGameExists), err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			saved, err := svc.LoadGamesFromDisk()
+			require.NoError(t, err)
+			assert.Equal(t, filepath.Join(root, "_forever_"), saved["wow"].InstallPath, "nothing ever moves wow")
+			assert.Equal(t, filepath.Join(root, "_forever_", "Interface", "AddOns"), saved["wow"].ModPath)
+			if retailSlug == "wow-retail" {
+				require.Contains(t, saved, "wow-retail", "retail is its own new game")
+				assert.Equal(t, filepath.Join(root, "_retail_"), saved["wow-retail"].InstallPath)
+				assert.NotContains(t, saved, "wow-forever", "Forever repaired the owner's wow rather than adding a second game")
+			}
+		})
+	}
+}
+
+// Path matches win over slug matches for every detector: a row whose slug
+// is one game's id but whose install path is ANOTHER game's is that other
+// game - the directory is the identity.
+func TestConfiguredGameFor_APathMatchWinsOverASlugMatch(t *testing.T) {
+	here, there := t.TempDir(), t.TempDir()
+	existing := map[string]*domain.Game{
+		"skyrim":       {ID: "skyrim", InstallPath: there, ModPath: there},
+		"skyrim-steam": {ID: "skyrim-steam", InstallPath: here, ModPath: here},
+	}
+	row := domain.DetectedGame{Detector: domain.DetectorSteam, DetectorID: "1", Slug: "skyrim", InstallPath: here}
+	got := core.ConfiguredGameFor(existing, row)
+	require.NotNil(t, got)
+	assert.Equal(t, "skyrim-steam", got.ID)
+
+	// A Steam row matching nothing by path still matches by slug - the
+	// repair of a game whose library moved.
+	delete(existing, "skyrim-steam")
+	got = core.ConfiguredGameFor(existing, row)
+	require.NotNil(t, got)
+	assert.Equal(t, "skyrim", got.ID)
+
+	// A Battle.net row never does: its flavors share one root, so a slug
+	// is no evidence of which flavor a configured game is.
+	bnet := battleNetRow(wowRoot(t, "_classic_"), "wow_classic", "skyrim", "_classic_")
+	assert.Nil(t, core.ConfiguredGameFor(existing, bnet))
+}
+
+// #545 review: a repair carries the catalog's CurseForge flavor and the
+// launch prefill to a configured game that has neither...
+func TestApplyDetectSelection_RepairGainsTheFlavorAndTheLaunch(t *testing.T) {
+	svc := newGameAddService(t)
+	root := wowRoot(t, "_classic_")
+	_, err := svc.AddGame(context.Background(), core.GameSpec{
+		ID: "classic", Name: "Classic", InstallPath: filepath.Join(root, "_classic_"),
+		ModPath: filepath.Join(root, "_classic_", "Interface", "AddOns"), SourceID: "curseforge", Identifier: "1",
+	})
+	require.NoError(t, err)
+	row := battleNetRow(root, "wow_classic", "wow-classic", "_classic_")
+
+	_, _, err = svc.ApplyDetectSelection(context.Background(), []domain.DetectedGame{row})
+	require.NoError(t, err)
+	saved, err := svc.LoadGamesFromDisk()
+	require.NoError(t, err)
+	require.NotContains(t, saved, "wow-classic")
+	assert.Equal(t, []int{79434}, saved["classic"].CurseForgeVersionTypes())
+	require.NotNil(t, saved["classic"].Launch)
+	assert.Equal(t, row.Launch.BattleNet, saved["classic"].Launch.BattleNet)
+}
+
+// ...and never overwrites the user's own: a launch block or CurseForge
+// setting the configured game already has is theirs.
+func TestApplyDetectSelection_RepairKeepsTheUsersFlavorAndLaunch(t *testing.T) {
+	svc := newGameAddService(t)
+	root := wowRoot(t, "_classic_")
+	install := filepath.Join(root, "_classic_")
+	_, err := svc.AddGame(context.Background(), core.GameSpec{
+		ID: "classic", Name: "Classic", InstallPath: install,
+		ModPath: filepath.Join(install, "Interface", "AddOns"), SourceID: "curseforge", Identifier: "1",
+		CurseForge: &domain.GameCurseForge{GameVersionTypes: []int{67408}},
+		Launch:     &domain.GameLaunch{Command: []string{"my-wow-launcher"}},
+	})
+	require.NoError(t, err)
+
+	_, _, err = svc.ApplyDetectSelection(context.Background(), []domain.DetectedGame{battleNetRow(root, "wow_classic", "wow-classic", "_classic_")})
+	require.NoError(t, err)
+	saved, err := svc.LoadGamesFromDisk()
+	require.NoError(t, err)
+	assert.Equal(t, []int{67408}, saved["classic"].CurseForgeVersionTypes())
+	require.NotNil(t, saved["classic"].Launch)
+	assert.Equal(t, []string{"my-wow-launcher"}, saved["classic"].Launch.Command)
+	assert.Nil(t, saved["classic"].Launch.BattleNet)
 }

@@ -191,7 +191,8 @@ func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
 // ALREADY configures it, or nil.
 //
 // The id match is the obvious half: a candidate whose slug is a games.yaml
-// key is that game. The INSTALL-PATH match is what keeps a curation wave
+// key is that game - unless a path says otherwise (below). The INSTALL-PATH
+// match is what keeps a curation wave
 // from orphaning a game the user already has (#406 review F1). A curated
 // entry's slug is hand-written and need not equal the one
 // steam.deriveSlug produces from the Steam title - six of #406's entries
@@ -215,13 +216,31 @@ func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
 // Ties (two games.yaml entries at one install path - only reachable by
 // hand-editing) resolve to the lowest id, so the answer never depends on
 // map iteration order.
+//
+// The paths are asked FIRST, and a path match wins over a slug match: a row
+// whose slug is one game's id and whose directory is another game's is the
+// other game, and resolving it by the slug would repair the first game onto
+// the second one's directory. The slug is the fallback - a Steam game whose
+// library moved is still the game with its id - except for a Battle.net row
+// (#545 review): every WoW flavor lives under one root, and a user who added
+// one by hand will have called it "wow" whichever it is (the owner's "wow"
+// is Forever), so a slug says nothing about which flavor a configured game
+// is, and only its paths decide.
 func ConfiguredGameFor(existing map[string]*domain.Game, detected domain.DetectedGame) *domain.Game {
-	if game, ok := existing[detected.Slug]; ok {
-		return game
-	}
 	if match := configuredAt(existing, detected.InstallPath, func(g *domain.Game) string { return g.InstallPath }); match != nil {
 		return match
 	}
+	if match := configuredBelow(existing, detected); match != nil {
+		return match
+	}
+	if detected.Detector == domain.DetectorBattleNet {
+		return nil
+	}
+	return existing[detected.Slug]
+}
+
+// configuredBelow is ConfiguredGameFor's mod-path match.
+func configuredBelow(existing map[string]*domain.Game, detected domain.DetectedGame) *domain.Game {
 	// #545: a WoW root holds a folder per flavor, and a game added by hand
 	// before detection may name the ROOT as its install path - then its
 	// mod path is the only thing that says which flavor it is. So a game
@@ -512,6 +531,13 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 		// profiles, mods and deployed links already hang off, rather than a
 		// second game over the same directory.
 		prior := ConfiguredGameFor(existing, g)
+		if other, taken := existing[game.ID]; prior == nil && taken && other != nil {
+			// The row's slug is a game it is NOT (a Battle.net flavor whose
+			// slug a hand-added game of another flavor took, #545 review):
+			// saving it would overwrite that game wholesale.
+			return refused, fmt.Errorf("%w: %s is already the id of the game at %s, which is not %s; add it under another id with `lmm game add --from-detected %s --game-id <id>`",
+				ErrGameExists, game.ID, other.InstallPath, g.InstallPath, g.Ref())
+		}
 		var reroot *ledgerReroot
 		if prior != nil {
 			var notice string
@@ -625,6 +651,16 @@ func repairedGame(prior, detected *domain.Game) (*domain.Game, string) {
 		repaired.SourceIDs = make(map[string]string, len(detected.SourceIDs))
 	}
 	maps.Copy(repaired.SourceIDs, detected.SourceIDs)
+
+	// The catalog's CurseForge flavor (#544) and launch prefill (#545) fill
+	// a gap and nothing more: a game that already sets either keeps its
+	// own, which is a choice the user made.
+	if repaired.CurseForge == nil {
+		repaired.CurseForge = cloneCurseForge(detected.CurseForge)
+	}
+	if repaired.Launch == nil {
+		repaired.Launch = cloneLaunch(detected.Launch)
+	}
 
 	var notice string
 	if prior.DeployMode != detected.DeployMode {
