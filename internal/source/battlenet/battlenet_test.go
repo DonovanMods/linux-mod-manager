@@ -243,7 +243,7 @@ func TestDetectGames_DenyListIsNeverReturned(t *testing.T) {
 	}
 	// An unknown code whose display name is a denied title is denied too.
 	writeFile(t, filepath.Join(pf, "Overwatch Beta", ".build.info"), header+"us|1|prob2\n")
-	writeFile(t, filepath.Join(pf, "Diablo II Resurrected", ".build.info"), header+"us|1|osi\n")
+	writeFile(t, filepath.Join(pf, "Some Strategy Game", ".build.info"), header+"us|1|zzrts\n")
 	configDir := t.TempDir()
 	writeFile(t, filepath.Join(configDir, "battlenet-games.yaml"), "pro:\n  slug: overwatch\n  name: Overwatch 2\n  mod_path: mods\n  sources: {nexusmods: overwatch}\n")
 
@@ -253,7 +253,7 @@ func TestDetectGames_DenyListIsNeverReturned(t *testing.T) {
 	for _, g := range games {
 		refs = append(refs, g.Ref())
 	}
-	assert.ElementsMatch(t, []string{"battlenet:zzcod", "battlenet:osi"}, refs,
+	assert.ElementsMatch(t, []string{"battlenet:zzcod", "battlenet:zzrts"}, refs,
 		"only the two titles nothing denies are listed, and only as unknown rows")
 	for _, g := range games {
 		assert.False(t, g.Known)
@@ -424,4 +424,202 @@ func TestDetectGames_EveryUnknownProductInARoot(t *testing.T) {
 		refs = append(refs, g.Ref())
 	}
 	assert.Equal(t, []string{"battlenet:aaa", "battlenet:bbb"}, refs)
+}
+
+// mapGameBuildInfo is a .build.info naming one product - synthetic: lmm's
+// owner has none of #546's games, so their rows are built from the
+// documented format, as multiFlavorBuildInfo is.
+func mapGameBuildInfo(product string) string {
+	return "Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|Version!STRING:0|Product!STRING:0\n" +
+		"us|1||1.0.0.1|" + product + "\n"
+}
+
+// shellFolders is a user.reg whose Shell Folders key names Personal - the
+// Documents folder Wine expanded for the prefix's user.
+func shellFolders(personal string) string {
+	return "WINE REGISTRY Version 2\n;; All keys relative to REGISTRY\\\\User\\\\S-1-5-21-0-0-0-1000\n\n#arch=win64\n\n" +
+		"[Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\Shell Folders] 1790095745\n" +
+		"#time=1dd4ab2475962f8\n" +
+		"\"Desktop\"=\"C:\\\\users\\\\x\\\\Desktop\"\n" +
+		"\"Personal\"=\"" + strings.ReplaceAll(personal, `\`, `\\`) + "\"\n\n"
+}
+
+// mapGamePrefix makes a plain Wine prefix holding Warcraft III: Reforged
+// and StarCraft II in their default folders, and the prefix users named.
+func mapGamePrefix(t *testing.T, prefix string, users ...string) {
+	t.Helper()
+	winePrefix(t, prefix)
+	pf := filepath.Join(prefix, "drive_c", "Program Files (x86)")
+	writeFile(t, filepath.Join(pf, "Warcraft III", ".build.info"), mapGameBuildInfo("w3"))
+	writeFile(t, filepath.Join(pf, "StarCraft II", ".build.info"), mapGameBuildInfo("s2"))
+	for _, u := range users {
+		require.NoError(t, os.MkdirAll(filepath.Join(prefix, "drive_c", "users", u, "Documents"), 0o755))
+	}
+}
+
+// detectBySlug runs a known-only scan and indexes its games by slug.
+func detectBySlug(t *testing.T) (map[string]domain.DetectedGame, []string) {
+	t.Helper()
+	games, warnings, err := DetectGames(t.TempDir(), DetectOptions{})
+	require.NoError(t, err)
+	out := map[string]domain.DetectedGame{}
+	for _, g := range games {
+		out[g.Slug] = g
+	}
+	return out, warnings
+}
+
+// #546: Warcraft III and StarCraft II keep their maps in the prefix user's
+// Documents, not under the install. With one user besides Public, that is
+// the user.
+func TestDetectGames_DocumentsModPath_OnlyUser(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, ".wine")
+	mapGamePrefix(t, prefix, "alice", "Public")
+
+	games, warnings := detectBySlug(t)
+	assert.Empty(t, warnings)
+	docs := filepath.Join(prefix, "drive_c", "users", "alice", "Documents")
+	require.Contains(t, games, "warcraft3")
+	assert.Equal(t, filepath.Join(docs, "Warcraft III", "Maps"), games["warcraft3"].ModPath)
+	assert.Equal(t, filepath.Join(prefix, "drive_c", "Program Files (x86)", "Warcraft III"), games["warcraft3"].InstallPath)
+	require.Contains(t, games, "starcraft2")
+	assert.Equal(t, filepath.Join(docs, "StarCraft II", "Maps"), games["starcraft2"].ModPath)
+}
+
+// Several users: the one whose Documents already holds the game's folder
+// wins - a game that has run once made it - per game.
+func TestDetectGames_DocumentsModPath_UserWithTheGameFolder(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, ".wine")
+	mapGamePrefix(t, prefix, "dyoung", "steamuser", "Public")
+	users := filepath.Join(prefix, "drive_c", "users")
+	require.NoError(t, os.MkdirAll(filepath.Join(users, "dyoung", "Documents", "Warcraft III"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(users, "steamuser", "Documents", "StarCraft II"), 0o755))
+
+	games, warnings := detectBySlug(t)
+	assert.Empty(t, warnings)
+	assert.Equal(t, filepath.Join(users, "dyoung", "Documents", "Warcraft III", "Maps"), games["warcraft3"].ModPath)
+	assert.Equal(t, filepath.Join(users, "steamuser", "Documents", "StarCraft II", "Maps"), games["starcraft2"].ModPath)
+}
+
+// Several users, no game folder yet: the prefix's own user, from the
+// Personal folder its user.reg names.
+func TestDetectGames_DocumentsModPath_UserRegNamesTheUser(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, ".wine")
+	mapGamePrefix(t, prefix, "dyoung", "steamuser", "Public")
+	writeFile(t, filepath.Join(prefix, "user.reg"), shellFolders(`C:\users\dyoung\Documents`))
+
+	games, warnings := detectBySlug(t)
+	assert.Empty(t, warnings)
+	assert.Equal(t, filepath.Join(prefix, "drive_c", "users", "dyoung", "Documents", "Warcraft III", "Maps"), games["warcraft3"].ModPath)
+}
+
+// Several users, no game folder, no user.reg: a Proton prefix's user is
+// steamuser, whatever the host user is called.
+func TestDetectGames_DocumentsModPath_ProtonIsSteamuser(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, "Games", "battlenet")
+	mapGamePrefix(t, prefix, "dyoung", "steamuser", "Public")
+	writeFile(t, filepath.Join(prefix, "version"), "GE-Proton\n")
+	require.NoError(t, os.Symlink(".", filepath.Join(prefix, "pfx")))
+
+	games, warnings := detectBySlug(t)
+	assert.Empty(t, warnings)
+	assert.Equal(t, filepath.Join(prefix, "drive_c", "users", "steamuser", "Documents", "StarCraft II", "Maps"), games["starcraft2"].ModPath)
+}
+
+// Several users and nothing to choose between them: the scan says so and
+// configures neither game, rather than guess. Public is never a candidate,
+// even as the only user.
+func TestDetectGames_DocumentsModPath_AmbiguousWarns(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, ".wine")
+	mapGamePrefix(t, prefix, "alice", "bob", "Public")
+
+	games, warnings := detectBySlug(t)
+	assert.NotContains(t, games, "warcraft3")
+	assert.NotContains(t, games, "starcraft2")
+	require.Len(t, warnings, 2)
+	for _, w := range warnings {
+		assert.Contains(t, w, "alice")
+		assert.Contains(t, w, "bob")
+		assert.Contains(t, w, "lmm game add")
+	}
+
+	home = sandbox(t)
+	prefix = filepath.Join(home, ".wine")
+	mapGamePrefix(t, prefix, "Public")
+	require.NoError(t, os.MkdirAll(filepath.Join(prefix, "drive_c", "users", "Public", "Documents", "Warcraft III"), 0o755))
+	games, warnings = detectBySlug(t)
+	assert.Empty(t, games, "Public is the shared profile, never a game's user")
+	assert.Len(t, warnings, 2)
+}
+
+// Wine may link a user's Documents to the host's ~/Documents: the mod path
+// is stored through the link, where the files really are.
+func TestDetectGames_DocumentsModPath_SymlinkedDocuments(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, ".wine")
+	mapGamePrefix(t, prefix)
+	hostDocs := filepath.Join(home, "Documents")
+	require.NoError(t, os.MkdirAll(hostDocs, 0o755))
+	user := filepath.Join(prefix, "drive_c", "users", "alice")
+	require.NoError(t, os.MkdirAll(user, 0o755))
+	require.NoError(t, os.Symlink(hostDocs, filepath.Join(user, "Documents")))
+
+	games, warnings := detectBySlug(t)
+	assert.Empty(t, warnings)
+	real, err := filepath.EvalSymlinks(hostDocs)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(real, "Warcraft III", "Maps"), games["warcraft3"].ModPath)
+}
+
+// Diablo II: Resurrected (#546) deploys into <install>/mods through the d2r
+// adapter, from NexusMods, and is launched as OSI.
+func TestDetectGames_DiabloIIResurrected(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, ".wine")
+	winePrefix(t, prefix, regKey("Diablo II Resurrected", "Diablo II: Resurrected", `C:\Program Files (x86)\Diablo II Resurrected`))
+	root := filepath.Join(prefix, "drive_c", "Program Files (x86)", "Diablo II Resurrected")
+	writeFile(t, filepath.Join(root, ".build.info"), mapGameBuildInfo("osi"))
+
+	games, warnings := detectBySlug(t)
+	assert.Empty(t, warnings)
+	g, ok := games["diablo2resurrected"]
+	require.True(t, ok)
+	assert.Equal(t, "Diablo II: Resurrected", g.Name)
+	assert.Equal(t, root, g.InstallPath)
+	assert.Equal(t, filepath.Join(root, "mods"), g.ModPath)
+	assert.Equal(t, "d2r", g.Adapter)
+	assert.Equal(t, map[string]string{"nexusmods": "diablo2resurrected"}, g.Sources)
+	assert.Equal(t, "OSI", g.Launch.BattleNet.Product)
+}
+
+// The catalog's #546 entries, and its mod_path_base vocabulary.
+func TestLoadKnownGames_Issue546Entries(t *testing.T) {
+	games, err := LoadKnownGames(t.TempDir())
+	require.NoError(t, err)
+	for code, want := range map[string]GameInfo{
+		"w3":  {Slug: "warcraft3", ModPathBase: ModPathBaseDocuments, ModPath: "Warcraft III/Maps", Sources: map[string]string{"nexusmods": "warcraft3reforged"}, LaunchCode: "W3"},
+		"s2":  {Slug: "starcraft2", ModPathBase: ModPathBaseDocuments, ModPath: "StarCraft II/Maps", Sources: map[string]string{"nexusmods": "starcraftII"}, LaunchCode: "S2"},
+		"osi": {Slug: "diablo2resurrected", ModPath: "mods", Adapter: "d2r", Sources: map[string]string{"nexusmods": "diablo2resurrected"}, LaunchCode: "OSI"},
+	} {
+		got, ok := games[code]
+		require.True(t, ok, code)
+		got.Name = ""
+		assert.Equal(t, want, got, code)
+	}
+	for _, code := range []string{"d3", "fenris", "s1"} {
+		assert.NotContains(t, games, code, "Diablo III, Diablo IV and StarCraft: Remastered stay out (#546)")
+	}
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "battlenet-games.yaml"), "x1:\n  slug: x\n  name: X\n  mod_path_base: desktop\n  mod_path: Maps\n  sources: {nexusmods: x}\n")
+	_, err = LoadKnownGames(dir)
+	assert.ErrorContains(t, err, "mod_path_base")
+	writeFile(t, filepath.Join(dir, "battlenet-games.yaml"), "x1:\n  slug: x\n  name: X\n  mod_path_base: documents\n  mod_path: ''\n  sources: {nexusmods: x}\n")
+	_, err = LoadKnownGames(dir)
+	assert.ErrorContains(t, err, "mod_path", "a Documents-relative mod path must name the game's folder")
 }

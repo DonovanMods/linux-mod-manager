@@ -326,7 +326,8 @@ func DetectGames(configDir string, opts DetectOptions) (games []domain.DetectedG
 }
 
 // detected builds one candidate for product code in root. ok is false when
-// its install folder is gone - which warns for a known game, the one the
+// its install folder is gone, or its Documents-relative mod path names no
+// one user's Documents (#546) - which warns for a known game, the one the
 // user means to configure, and is skipped silently otherwise.
 func detected(prefix, root, code, name string, info GameInfo, known bool) (domain.DetectedGame, bool, string) {
 	g := domain.DetectedGame{
@@ -340,8 +341,17 @@ func detected(prefix, root, code, name string, info GameInfo, known bool) (domai
 	if st, err := os.Stat(g.InstallPath); err != nil || !st.IsDir() {
 		return g, false, fmt.Sprintf("%s: %s is listed in .build.info but its folder %s is missing", root, code, g.InstallPath)
 	}
+	base := g.InstallPath
+	if info.ModPathBase == ModPathBaseDocuments {
+		docs, err := documentsDir(prefix, documentsGameFolder(info.ModPath))
+		if err != nil {
+			return g, false, fmt.Sprintf("%s: %s keeps its mods in a prefix user's Documents, but %v", root, info.Name, err)
+		}
+		base = docs
+	}
 	g.Slug, g.Name, g.Known = info.Slug, info.Name, true
-	g.ModPath = filepath.Join(g.InstallPath, filepath.FromSlash(info.ModPath))
+	g.ModPath = filepath.Join(base, filepath.FromSlash(info.ModPath))
+	g.Adapter = info.Adapter
 	g.Sources = make(map[string]string, len(info.Sources))
 	for k, v := range info.Sources {
 		g.Sources[k] = v
