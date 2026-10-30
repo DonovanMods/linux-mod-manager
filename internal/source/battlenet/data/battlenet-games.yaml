@@ -18,8 +18,12 @@
 #
 # Competitive titles with anti-cheat (Overwatch, Hearthstone, Heroes of the
 # Storm, Call of Duty) are never detected, whatever this file says.
+#
+# Retail's slug is wow-retail, not wow, like every other flavor's
+# wow-<flavor>: wow is the id a user picks by hand for whichever flavor
+# they play, and a catalog slug equal to it would read as that game.
 wow:
-  slug: wow
+  slug: wow-retail
   name: World of Warcraft
   install_dir: _retail_
   mod_path: Interface/AddOns

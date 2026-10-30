@@ -94,3 +94,36 @@ func TestDetectGames_BattleNetSlugsNeverCollideWithSteams(t *testing.T) {
 	assert.Equal(t, "starcraft", merged[0].Slug)
 	assert.Equal(t, "starcraft-battlenet", merged[1].Slug)
 }
+
+// A battlenet-games.yaml lmm cannot parse costs the user's own Battle.net
+// entries and nothing else: the scan warns, Steam's rows are all there,
+// and Battle.net detection carries on from the built-in catalog.
+func TestDetectGames_BadBattleNetOverrideNeverFailsTheScan(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("STEAM_ROOT", "")
+	t.Setenv("WINEPREFIX", "")
+	t.Setenv("XDG_DATA_HOME", "")
+
+	steamapps := filepath.Join(home, ".steam", "steam", "steamapps")
+	require.NoError(t, os.MkdirAll(filepath.Join(steamapps, "common", "Skyrim Special Edition"), 0o755))
+	writeTestFile(t, filepath.Join(steamapps, "appmanifest_489830.acf"),
+		"\"AppState\"\n{\n\t\"appid\"\t\t\"489830\"\n\t\"name\"\t\t\"Skyrim Special Edition\"\n\t\"installdir\"\t\t\"Skyrim Special Edition\"\n}\n")
+	prefix := filepath.Join(home, "Games", "battlenet")
+	writeTestFile(t, filepath.Join(prefix, "system.reg"), "WINE REGISTRY Version 2\n")
+	root := filepath.Join(prefix, "drive_c", "Program Files (x86)", "World of Warcraft")
+	writeTestFile(t, filepath.Join(root, ".build.info"), "Branch!STRING:0|Active!DEC:1|Product!STRING:0\nus|1|wow\n")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "_retail_"), 0o755))
+	configDir := t.TempDir()
+	writeTestFile(t, filepath.Join(configDir, "battlenet-games.yaml"), "wow: [not, a, map\n")
+
+	games, warnings, err := DetectGames(context.Background(), configDir, DetectOptions{})
+	require.NoError(t, err)
+	var refs []string
+	for _, g := range games {
+		refs = append(refs, g.Ref())
+	}
+	assert.Equal(t, []string{"steam:489830", "battlenet:wow"}, refs)
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "battlenet-games.yaml")
+}

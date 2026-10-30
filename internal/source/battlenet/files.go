@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf16"
 )
 
 // uninstallEntry is the part of one Uninstall key lmm reads.
@@ -88,7 +90,8 @@ func regStringValue(line string) (name, value string, ok bool) {
 
 // regQuoted decodes a quoted string whose opening quote is already
 // consumed, returning it and what follows the closing quote. Wine writes
-// \\, \", \n, \r, \t, \0 and \xHHHH (a UTF-16 code unit) escapes.
+// \\, \", \n, \r, \t, \0 and \xHHHH escapes - UTF-16 code
+// units, so a character outside the BMP is a surrogate pair of them.
 func regQuoted(s string) (string, string, bool) {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
@@ -110,22 +113,50 @@ func regQuoted(s string) (string, string, bool) {
 			case '0':
 				b.WriteByte(0)
 			case 'x':
-				j := i + 1
-				for j < len(s) && j < i+5 && strings.ContainsRune("0123456789abcdefABCDEF", rune(s[j])) {
-					j++
-				}
-				if n, err := strconv.ParseUint(s[i+1:j], 16, 32); err == nil && j > i+1 {
-					b.WriteRune(rune(n))
-					i = j - 1
-				} else {
+				unit, next, ok := regHexUnit(s, i+1)
+				if !ok {
 					b.WriteByte('x')
+					break
 				}
+				i = next - 1
+				r := rune(unit)
+				if utf16.IsSurrogate(r) {
+					// A pair is two escapes in a row; anything else
+					// leaves a lone half, which names no character.
+					r = unicode.ReplacementChar
+					if strings.HasPrefix(s[next:], `\x`) {
+						if low, after, ok := regHexUnit(s, next+2); ok {
+							if pair := utf16.DecodeRune(rune(unit), rune(low)); pair != unicode.ReplacementChar {
+								r, i = pair, after-1
+							}
+						}
+					}
+				}
+				b.WriteRune(r)
 			default:
 				b.WriteByte(s[i])
 			}
 		}
 	}
 	return "", "", false
+}
+
+// regHexUnit reads the up to four hex digits of a \x escape starting at
+// s[start], returning the UTF-16 code unit and the index after its last
+// digit; ok is false when there are none.
+func regHexUnit(s string, start int) (unit uint16, next int, ok bool) {
+	next = start
+	for next < len(s) && next < start+4 && strings.ContainsRune("0123456789abcdefABCDEF", rune(s[next])) {
+		next++
+	}
+	if next == start {
+		return 0, start, false
+	}
+	n, err := strconv.ParseUint(s[start:next], 16, 16)
+	if err != nil {
+		return 0, start, false
+	}
+	return uint16(n), next, true
 }
 
 // readBuildInfoProducts reads the product codes a game root's .build.info

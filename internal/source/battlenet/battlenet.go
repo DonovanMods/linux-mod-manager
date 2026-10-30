@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -208,7 +209,7 @@ func unixPath(prefix, winPath string) string {
 	letter := strings.ToLower(winPath[:1])
 	rest := filepath.FromSlash(strings.Trim(strings.ReplaceAll(winPath[2:], `\`, "/"), "/"))
 	// A path that climbs out of its drive names nothing in the prefix.
-	if rest == ".." || strings.HasPrefix(filepath.Clean(rest), ".."+string(filepath.Separator)) {
+	if clean := filepath.Clean(rest); clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return ""
 	}
 	if letter == "c" {
@@ -237,9 +238,12 @@ func unixPath(prefix, winPath string) string {
 // its own game at its own flavor folder (GameInfo.InstallDir), so no two
 // share an install path.
 func DetectGames(configDir string, opts DetectOptions) (games []domain.DetectedGame, warnings []string, err error) {
-	catalog, err := LoadKnownGames(configDir)
+	catalog, warning, err := loadCatalog(configDir)
 	if err != nil {
 		return nil, nil, err
+	}
+	if warning != "" {
+		warnings = append(warnings, warning)
 	}
 	takenSlugs := make(map[string]bool, len(catalog))
 	for code, info := range catalog {
@@ -254,6 +258,7 @@ func DetectGames(configDir string, opts DetectOptions) (games []domain.DetectedG
 	home, _ := os.UserHomeDir()
 	seenSlug := make(map[string]bool)
 	seenInstall := make(map[string]bool)
+	protonWarned := make(map[string]bool)
 	for _, prefix := range FindPrefixes() {
 		roots, err := gameRoots(prefix)
 		if err != nil {
@@ -307,7 +312,12 @@ func DetectGames(configDir string, opts DetectOptions) (games []domain.DetectedG
 					g.Slug = uniqueSlug(name, code, takenSlugs)
 					takenSlugs[g.Slug] = true
 				}
-				g.Launch = launchFor(prefix, home, info.LaunchCode)
+				var protonWarning string
+				g.Launch, protonWarning = launchFor(prefix, home, info.LaunchCode)
+				if protonWarning != "" && !protonWarned[prefix] {
+					protonWarned[prefix] = true
+					warnings = append(warnings, protonWarning)
+				}
 				games = append(games, g)
 			}
 		}
@@ -346,9 +356,9 @@ func detected(prefix, root, code, name string, info GameInfo, known bool) (domai
 // Battle.net client in its prefix (domain.LaunchViaBattleNet), with the
 // launch code the catalog knows. A prefix under the home directory is
 // written with ~/, as a user would. A Proton prefix last run by GE-Proton
-// keeps GE-Proton, umu's name for the newest one installed: running a
-// prefix with a different Proton than made it upgrades or downgrades it.
-func launchFor(prefix, home, launchCode string) *domain.GameLaunch {
+// keeps the build that made it (protonFor); warning is non-empty when it
+// cannot.
+func launchFor(prefix, home, launchCode string) (launch *domain.GameLaunch, warning string) {
 	path := prefix
 	if home != "" {
 		if rel, err := filepath.Rel(home, prefix); err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
@@ -356,10 +366,55 @@ func launchFor(prefix, home, launchCode string) *domain.GameLaunch {
 		}
 	}
 	bn := &domain.BattleNetLaunch{Prefix: path, Product: launchCode}
-	if version, ok := protonVersion(prefix); ok && strings.HasPrefix(version, "GE-Proton") {
-		bn.Proton = "GE-Proton"
+	bn.Proton, warning = protonFor(prefix, home)
+	return &domain.GameLaunch{Via: domain.LaunchViaBattleNet, BattleNet: bn}, warning
+}
+
+// protonFor is the PROTONPATH a GE-Proton prefix is prefilled with: the
+// exact build named in its version file ("GE-Proton11-11") when that build
+// is installed where umu-run looks for one by name, since running a prefix
+// with a different Proton than made it upgrades or downgrades it. A build
+// umu-run cannot find falls back to "GE-Proton" - umu's name for the
+// NEWEST GE-Proton, which it downloads - and warning says so. "" for a
+// plain Wine prefix or one another Proton made: umu-run's own default.
+func protonFor(prefix, home string) (proton, warning string) {
+	version, ok := protonVersion(prefix)
+	if !ok || !strings.HasPrefix(version, "GE-Proton") {
+		return "", ""
 	}
-	return &domain.GameLaunch{Via: domain.LaunchViaBattleNet, BattleNet: bn}
+	if version == "GE-Proton" {
+		return version, ""
+	}
+	// A build name is one path element; anything else names no build.
+	if filepath.Base(version) == version && version != ".." {
+		for _, dir := range protonToolDirs(home) {
+			if st, err := os.Stat(filepath.Join(dir, version)); err == nil && st.IsDir() {
+				return version, ""
+			}
+		}
+	}
+	return "GE-Proton", fmt.Sprintf("%s: made by %s, which is not installed where umu-run looks for it (%s); launch.battlenet.proton is prefilled as GE-Proton, the newest GE-Proton, which may upgrade the prefix - install %s there or set launch.battlenet.proton yourself",
+		prefix, version, strings.Join(protonToolDirs(home), ", "), version)
+}
+
+// protonToolDirs are the folders umu-run finds a Proton build named in
+// PROTONPATH in: umu's own compatibilitytools and Steam's
+// compatibilitytools.d, under the XDG data home and under ~/.local/share.
+func protonToolDirs(home string) []string {
+	var dataHomes []string
+	if d := os.Getenv("XDG_DATA_HOME"); d != "" {
+		dataHomes = append(dataHomes, d)
+	}
+	if home != "" {
+		if d := filepath.Join(home, ".local", "share"); !slices.Contains(dataHomes, d) {
+			dataHomes = append(dataHomes, d)
+		}
+	}
+	var out []string
+	for _, d := range dataHomes {
+		out = append(out, filepath.Join(d, "umu", "compatibilitytools"), filepath.Join(d, "Steam", "compatibilitytools.d"))
+	}
+	return out
 }
 
 // protonVersion is the Proton build that last ran prefix, from the version

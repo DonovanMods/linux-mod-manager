@@ -19,7 +19,15 @@ func sandbox(t *testing.T) string {
 	t.Setenv("HOME", home)
 	t.Setenv("WINEPREFIX", "")
 	t.Setenv("STEAM_ROOT", "")
+	t.Setenv("XDG_DATA_HOME", "")
 	return home
+}
+
+// installProton makes an installed Proton build where umu-run looks for
+// one by name: Steam's compatibilitytools.d under the data home.
+func installProton(t *testing.T, home, name string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".local", "share", "Steam", "compatibilitytools.d", name), 0o755))
 }
 
 // copyFixture copies testdata/<name> to dst.
@@ -88,6 +96,7 @@ func TestDetectGames_OwnersUmuPrefix(t *testing.T) {
 	home := sandbox(t)
 	prefix := filepath.Join(home, "Games", "battlenet")
 	wowRoot := umuPrefix(t, prefix)
+	installProton(t, home, "GE-Proton11-11")
 
 	games, warnings, err := DetectGames(t.TempDir(), DetectOptions{})
 	require.NoError(t, err)
@@ -108,8 +117,48 @@ func TestDetectGames_OwnersUmuPrefix(t *testing.T) {
 	assert.Equal(t, prefix, g.WinePrefix)
 	require.NotNil(t, g.Launch)
 	assert.Equal(t, domain.LaunchViaBattleNet, g.Launch.Via)
-	assert.Equal(t, &domain.BattleNetLaunch{Prefix: "~/Games/battlenet", Proton: "GE-Proton"}, g.Launch.BattleNet,
-		"no launch code is known for wowf, so Play opens the client; the GE-Proton prefix keeps its Proton")
+	assert.Equal(t, &domain.BattleNetLaunch{Prefix: "~/Games/battlenet", Proton: "GE-Proton11-11"}, g.Launch.BattleNet,
+		"no launch code is known for wowf, so Play opens the client; the prefix keeps the exact Proton build that made it")
+}
+
+// A prefix made by a GE-Proton build umu-run cannot find by name falls
+// back to GE-Proton - umu's newest GE - and the scan says so, since that
+// runs the prefix under a different build than made it. The build is found
+// in umu's own compatibilitytools folder as well as Steam's.
+func TestDetectGames_ProtonBuildNotInstalledFallsBackOutLoud(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, "Games", "battlenet")
+	umuPrefix(t, prefix)
+
+	games, warnings, err := DetectGames(t.TempDir(), DetectOptions{})
+	require.NoError(t, err)
+	require.Len(t, games, 1)
+	assert.Equal(t, "GE-Proton", games[0].Launch.BattleNet.Proton)
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "GE-Proton11-11")
+	assert.Contains(t, warnings[0], "launch.battlenet.proton")
+
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".local", "share", "umu", "compatibilitytools", "GE-Proton11-11"), 0o755))
+	games, warnings, err = DetectGames(t.TempDir(), DetectOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	assert.Equal(t, "GE-Proton11-11", games[0].Launch.BattleNet.Proton)
+}
+
+// A version file naming something that is not a plain build name is never
+// joined onto a path: it falls back like a build that is not installed.
+func TestProtonFor_RefusesAPathInTheVersionFile(t *testing.T) {
+	home := sandbox(t)
+	// Where "GE-Proton/../../x" lands when joined onto Steam's folder.
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".local", "share", "Steam", "x"), 0o755))
+	for _, version := range []string{"GE-Proton/../../x", "GE-Proton.."} {
+		prefix := t.TempDir()
+		require.NoError(t, os.Symlink(".", filepath.Join(prefix, "pfx")))
+		writeFile(t, filepath.Join(prefix, "version"), version+"\n")
+		proton, warning := protonFor(prefix, home)
+		assert.Equal(t, "GE-Proton", proton, version)
+		assert.NotEmpty(t, warning, version)
+	}
 }
 
 // One root, several flavors: a game per .build.info row, each at its own
@@ -140,7 +189,7 @@ func TestDetectGames_OneRootManyFlavors(t *testing.T) {
 		flavor string
 		types  []int
 	}{
-		"wow":             {"_retail_", []int{517}},
+		"wow-retail":      {"_retail_", []int{517}},
 		"wow-classic":     {"_classic_", []int{79434}},
 		"wow-classic-era": {"_classic_era_", []int{67408}},
 	} {
@@ -152,7 +201,7 @@ func TestDetectGames_OneRootManyFlavors(t *testing.T) {
 		require.NotNil(t, g.Launch, slug)
 		assert.Empty(t, g.Launch.BattleNet.Proton, "a plain Wine prefix has no Proton")
 	}
-	assert.Equal(t, "WoW", bySlug["wow"].Launch.BattleNet.Product, "retail is the one launch code lmm fills in")
+	assert.Equal(t, "WoW", bySlug["wow-retail"].Launch.BattleNet.Product, "retail is the one launch code lmm fills in")
 	assert.Empty(t, bySlug["wow-classic"].Launch.BattleNet.Product)
 }
 
@@ -169,7 +218,7 @@ func TestDetectGames_MissingFlavorFolderWarns(t *testing.T) {
 	games, warnings, err := DetectGames(t.TempDir(), DetectOptions{})
 	require.NoError(t, err)
 	require.Len(t, games, 1)
-	assert.Equal(t, "wow", games[0].Slug)
+	assert.Equal(t, "wow-retail", games[0].Slug)
 	assert.Len(t, warnings, 2)
 }
 
@@ -299,6 +348,7 @@ func TestDetectGames_UnreadableRegistryStillScansProgramFiles(t *testing.T) {
 	home := sandbox(t)
 	prefix := filepath.Join(home, "Games", "battlenet")
 	umuPrefix(t, prefix)
+	installProton(t, home, "GE-Proton11-11")
 	writeFile(t, filepath.Join(prefix, "system.reg"), "WINE REGISTRY Version 2\n\""+strings.Repeat("x", 5*1024*1024)+"\n")
 
 	games, warnings, err := DetectGames(t.TempDir(), DetectOptions{})
@@ -314,6 +364,48 @@ func TestUnixPath_StaysInTheDrive(t *testing.T) {
 	assert.Equal(t, filepath.Join(prefix, "drive_c", "Games", "WoW"), unixPath(prefix, `C:\Games\WoW`))
 	assert.Empty(t, unixPath(prefix, `C:\..\..\etc`))
 	assert.Empty(t, unixPath(prefix, `C:\Games\..\..\..\etc`))
+	assert.Empty(t, unixPath(prefix, `C:\a\..\..`), "climbs to exactly the drive's parent")
+	assert.Empty(t, unixPath(prefix, `C:\a\b\..\..\..`))
+	assert.Equal(t, filepath.Join(prefix, "drive_c"), unixPath(prefix, `C:\a\..`), "the drive's own root is in the drive")
+}
+
+// The retail flavor's slug is wow-retail, like every other flavor's
+// wow-<flavor>: "wow" is the id a user picks by hand for whichever flavor
+// they play, and a catalog slug equal to it reads as that game (#545).
+func TestLoadKnownGames_RetailIsWowRetail(t *testing.T) {
+	games, err := LoadKnownGames(t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, "wow-retail", games["wow"].Slug)
+	for code, info := range games {
+		assert.NotEqual(t, "wow", info.Slug, code)
+	}
+}
+
+// A battlenet-games.yaml lmm cannot read or parse is a warning, not a
+// failed scan: detection carries on with the embedded catalog.
+func TestDetectGames_BadOverrideFallsBackToTheEmbeddedCatalog(t *testing.T) {
+	for name, write := range map[string]func(t *testing.T, path string){
+		"unparsable": func(t *testing.T, path string) { writeFile(t, path, "wowf: [not, a, map\n") },
+		"invalid entry": func(t *testing.T, path string) {
+			writeFile(t, path, "wow:\n  slug: mine\n  name: Mine\n  mod_path: x\n  sources: {curseforge: \"1\"}\nwowf:\n  slug: ''\n")
+		},
+		"unreadable": func(t *testing.T, path string) { require.NoError(t, os.MkdirAll(path, 0o755)) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := sandbox(t)
+			umuPrefix(t, filepath.Join(home, "Games", "battlenet"))
+			installProton(t, home, "GE-Proton11-11")
+			configDir := t.TempDir()
+			write(t, filepath.Join(configDir, "battlenet-games.yaml"))
+
+			games, warnings, err := DetectGames(configDir, DetectOptions{})
+			require.NoError(t, err)
+			require.Len(t, games, 1)
+			assert.Equal(t, "wow-forever", games[0].Slug, "the embedded catalog's entry, not a half-merged override")
+			require.Len(t, warnings, 1)
+			assert.Contains(t, warnings[0], "battlenet-games.yaml")
+		})
+	}
 }
 
 // Under IncludeUnknown, every product a root's .build.info names is a row,

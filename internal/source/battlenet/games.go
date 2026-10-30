@@ -3,6 +3,7 @@ package battlenet
 import (
 	"embed"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,8 +86,38 @@ func (e gameYAML) gameInfo(origin, code string) (GameInfo, error) {
 // LoadKnownGames returns the known product code -> GameInfo map: the
 // embedded catalog, then configDir/battlenet-games.yaml merged over it when
 // present - steam.LoadKnownGames' arrangement, so a game can be added or
-// corrected without rebuilding. Product codes are matched lower-cased.
+// corrected without rebuilding. Product codes are matched lower-cased. An
+// override it cannot read or parse is an error; DetectGames, which must not
+// fail a whole scan over it, uses loadCatalog instead.
 func LoadKnownGames(configDir string) (map[string]GameInfo, error) {
+	out, err := embeddedGames()
+	if err != nil {
+		return nil, err
+	}
+	if err := mergeOverride(out, configDir); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// loadCatalog is LoadKnownGames for a scan: an override it cannot read or
+// parse is warning, and the catalog is the embedded one alone - never a
+// half-merged override - so a typo in battlenet-games.yaml costs the
+// user's own entries, not Battle.net detection, and never Steam's.
+func loadCatalog(configDir string) (catalog map[string]GameInfo, warning string, err error) {
+	out, err := embeddedGames()
+	if err != nil {
+		return nil, "", err
+	}
+	merged := maps.Clone(out)
+	if err := mergeOverride(merged, configDir); err != nil {
+		return out, fmt.Sprintf("%v; ignoring %s and detecting Battle.net games from the built-in catalog", err, overrideFile), nil
+	}
+	return merged, "", nil
+}
+
+// embeddedGames parses the embedded catalog.
+func embeddedGames() (map[string]GameInfo, error) {
 	data, err := defaultGamesFS.ReadFile(defaultGamesPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading embedded battlenet-games: %w", err)
@@ -95,18 +126,21 @@ func LoadKnownGames(configDir string) (map[string]GameInfo, error) {
 	if err := mergeGames(out, data, "battlenet-games.yaml"); err != nil {
 		return nil, err
 	}
+	return out, nil
+}
+
+// mergeOverride merges configDir/battlenet-games.yaml into out, when the
+// file exists.
+func mergeOverride(out map[string]GameInfo, configDir string) error {
 	overridePath := filepath.Join(configDir, overrideFile)
-	overrideData, err := os.ReadFile(overridePath)
+	data, err := os.ReadFile(overridePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return out, nil
+			return nil
 		}
-		return nil, fmt.Errorf("reading %s: %w", overridePath, err)
+		return fmt.Errorf("reading %s: %w", overridePath, err)
 	}
-	if err := mergeGames(out, overrideData, overridePath); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return mergeGames(out, data, overridePath)
 }
 
 // mergeGames parses one catalog file into out.
