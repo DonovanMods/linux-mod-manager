@@ -94,7 +94,8 @@ func TestE2E_AuthHint_HealthRowLinksToTheSourcesKey(t *testing.T) {
 		chromedp.Evaluate(`location.search`, &search),
 	)
 	assert.Contains(t, rowText, "Keyed Mod")
-	assert.Contains(t, rowText, "Keyless Source needs an API key")
+	// The fixture holds a key the source refuses, so it was rejected.
+	assert.Contains(t, rowText, "Keyless Source rejected its API key")
 	assert.Contains(t, rowText, "Add API key…")
 	assert.NotContains(t, rowText, "Not fixable")
 	assert.Equal(t, f.ContextPath()+"/setup", path)
@@ -139,5 +140,28 @@ func TestE2E_AuthHint_SearchWarningLinksToTheSourcesKey(t *testing.T) {
 		pollUntil(focusedKeylessKeyInput),
 	)
 	assert.Contains(t, warningText, "keyless")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_AuthHint_AnAuthenticatedRowIsFocusedNotItsLogOut: a key the
+// source REJECTED still shows its row as authenticated, whose only control
+// is "Log out" - focusing the row's first control would put one Enter
+// between the user and deleting the key. The deep link focuses the row
+// itself instead.
+func TestE2E_AuthHint_AnAuthenticatedRowIsFocusedNotItsLogOut(t *testing.T) {
+	f := newE2EFixtureWithAKeylessSource(t)
+	require.NoError(t, f.Svc.SaveSourceToken(t.Context(), "keyless", "rejected-key-0123456789"))
+
+	const rowSel = `.setup-auth__row[data-source="keyless"]`
+	var focusedTag string
+	var hasInput bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+f.ContextPath()+"/setup?section=auth&source=keyless"),
+		pollUntil(fmt.Sprintf(`document.activeElement === document.querySelector(%q)`, rowSel)),
+		chromedp.Evaluate(`document.activeElement.tagName`, &focusedTag),
+		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q + ' input') !== null`, rowSel), &hasInput),
+	)
+	assert.Equal(t, "LI", focusedTag)
+	assert.False(t, hasInput, "the row is the authenticated one, with Log out and no key field")
 	assert.Empty(t, f.BrowserErrors())
 }

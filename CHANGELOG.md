@@ -24,7 +24,8 @@ status` now warn about each source whose key comes only from its
   an **Add API key…** button, and the Updates card (which showed nothing
   for a refused check), search warnings and the search page's
   skipped-source notice offer the same button; it opens Setup >
-  Authentication focused on that source. `lmm verify` prints `could not
+  Authentication focused on that source's key field, or on its row when it
+  already has a key (never on its **Log out** button). `lmm verify` prints `could not
 check version: CurseForge needs an API key (run: lmm auth login
 curseforge)` instead of "source unreachable"; a key the source refused
   reads "CurseForge rejected its API key", and when that key comes from

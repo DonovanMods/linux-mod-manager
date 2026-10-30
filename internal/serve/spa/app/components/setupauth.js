@@ -41,7 +41,7 @@ function keyLabel(row) {
 /** SetupAuth is the section. focusSource is the ?source= deep link (issue
  * 582): an "Add API key…" action elsewhere names the source that refused,
  * and its row is scrolled into view with focus in its key field - or on
- * its first control, for a row that has a key - once the list has loaded.
+ * the row itself, for a row that has a key - once the list has loaded.
  * Once per source, so a reload after logging in does not steal focus. */
 export function SetupAuth({ focusSource = "" } = {}) {
   const [report, setReport] = useState(null);
@@ -57,7 +57,10 @@ export function SetupAuth({ focusSource = "" } = {}) {
     if (!row) return;
     focused.current = focusSource;
     row.scrollIntoView({ block: "center" });
-    (row.querySelector("input, button") ?? row).focus();
+    // The key field, or the row itself - never its first button: a row
+    // whose key the source rejected still reads as authenticated, and its
+    // only control is "Log out", one Enter from deleting that key.
+    (row.querySelector("input") ?? row).focus();
   }, [focusSource, report]);
 
   async function reload() {
@@ -179,7 +182,7 @@ function AuthSourceRow({ source, onChanged }) {
   }
 
   return html`
-    <li class="setup-auth__row" data-source=${source.id}>
+    <li class="setup-auth__row" data-source=${source.id} tabindex="-1">
       <span class="setup-auth__name">${source.name}</span>
       <span class="setup-auth__status">
         ${
