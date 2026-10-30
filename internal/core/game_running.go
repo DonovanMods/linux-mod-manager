@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -69,7 +70,16 @@ type GameProbe struct {
 	Processes func() ([]ProcessInfo, error)
 	// UnitPIDs lists the processes in a user unit's control group.
 	UnitPIDs func(ctx context.Context, unit string) ([]int, error)
+	// ProbeTimeout bounds the launch-unit check's systemctl calls, so a
+	// user bus that never answers cannot hold an update check: a call that
+	// runs out is "can't tell", and the process scan answers alone. Zero
+	// means defaultGameProbeTimeout.
+	ProbeTimeout time.Duration
 }
+
+// defaultGameProbeTimeout is GameProbe.ProbeTimeout's default: a healthy
+// user bus answers in milliseconds.
+const defaultGameProbeTimeout = 2 * time.Second
 
 // NewGameProbe returns a GameProbe for this machine: systemctl for the
 // launch units, /proc for the processes, and the unified cgroup hierarchy
@@ -104,8 +114,8 @@ func (s *Service) GameRunning(ctx context.Context, game *domain.Game) GameRunnin
 	if p == nil || game == nil || p.Processes == nil {
 		return GameRunningStatus{}
 	}
-	root, ok := installRoot(game.InstallPath)
-	if !ok {
+	roots := installRoots(game.InstallPath)
+	if len(roots) == 0 {
 		return GameRunningStatus{}
 	}
 	procs, err := p.Processes()
@@ -113,8 +123,14 @@ func (s *Service) GameRunning(ctx context.Context, game *domain.Game) GameRunnin
 		return GameRunningStatus{}
 	}
 	if p.Run != nil && p.UnitPIDs != nil {
-		for _, unit := range activeLaunchUnits(ctx, p.Run, game.ID) {
-			pids, err := p.UnitPIDs(ctx, unit)
+		timeout := p.ProbeTimeout
+		if timeout <= 0 {
+			timeout = defaultGameProbeTimeout
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		for _, unit := range activeLaunchUnits(probeCtx, p.Run, game.ID) {
+			pids, err := p.UnitPIDs(probeCtx, unit)
 			if err != nil {
 				continue
 			}
@@ -122,12 +138,12 @@ func (s *Service) GameRunning(ctx context.Context, game *domain.Game) GameRunnin
 			for _, pid := range pids {
 				inUnit[pid] = true
 			}
-			if _, ok := processUnder(procs, root, func(pid int) bool { return inUnit[pid] }); ok {
+			if _, ok := processUnder(procs, roots, func(pid int) bool { return inUnit[pid] }); ok {
 				return GameRunningStatus{Running: true, Signal: GameRunningLaunchUnit, Detail: unit}
 			}
 		}
 	}
-	if path, ok := processUnder(procs, root, func(int) bool { return true }); ok {
+	if path, ok := processUnder(procs, roots, func(int) bool { return true }); ok {
 		return GameRunningStatus{Running: true, Signal: GameRunningProcess, Detail: path}
 	}
 	return GameRunningStatus{}
@@ -138,6 +154,9 @@ func (s *Service) GameRunning(ctx context.Context, game *domain.Game) GameRunnin
 // game "g1-extra"'s units - so each name is held to launchUnitName's exact
 // shape: the game's own prefix, then one hex suffix as randomUnitSuffix
 // makes it.
+//
+// ctx is the caller's bounded one (GameProbe.ProbeTimeout): a call that
+// runs out is an error here, so no unit - the process scan answers.
 func activeLaunchUnits(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), gameID string) []string {
 	prefix := launchUnitName(gameID, "")
 	out, err := run(ctx, "systemctl", "--user", "list-units", "--type=service", "--state=active",
@@ -207,30 +226,39 @@ func isHexSuffix(s string) bool {
 	return true
 }
 
-// installRoot is the install path GameRunning matches processes against,
-// and false when it cannot tell anything: empty, relative, or the root,
+// installRoots are the install paths GameRunning matches processes
+// against: the configured one, and - when it reaches the game through a
+// symlink (~/Games/X -> /mnt/ssd/X) - the path it resolves to, since
+// /proc/<pid>/exe is always the resolved one while a command line may name
+// either. None when it cannot tell anything: empty, relative, or the root,
 // which would match every process.
-func installRoot(installPath string) (string, bool) {
+func installRoots(installPath string) []string {
 	root := filepath.Clean(installPath)
 	if installPath == "" || !filepath.IsAbs(root) || root == "/" {
-		return "", false
+		return nil
 	}
-	return root, true
+	roots := []string{root}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil && resolved != root && resolved != "/" {
+		roots = append(roots, resolved)
+	}
+	return roots
 }
 
 // processUnder returns the path of the first process, among those pick
-// accepts, whose executable or a path its command line names is under
-// root. lmm's own process is never one.
-func processUnder(procs []ProcessInfo, root string, pick func(pid int) bool) (string, bool) {
+// accepts, whose executable or a path its command line names is under one
+// of roots. lmm's own process is never one.
+func processUnder(procs []ProcessInfo, roots []string, pick func(pid int) bool) (string, bool) {
 	self := os.Getpid()
-	driveC := prefixDriveC(root)
 	for _, p := range procs {
 		if p.PID == self || !pick(p.PID) {
 			continue
 		}
-		for _, candidate := range append([]string{p.Exe}, p.Cmdline...) {
-			if path := unixPathOf(candidate, driveC); path != "" && pathUnder(path, root) {
-				return path, true
+		for _, root := range roots {
+			driveC := prefixDriveC(root)
+			for _, candidate := range append([]string{p.Exe}, p.Cmdline...) {
+				if path := unixPathOf(candidate, driveC); path != "" && pathUnder(path, root) {
+					return path, true
+				}
 			}
 		}
 	}

@@ -234,7 +234,7 @@ leave the card. A few things hold it back:
   check after the game closes installs it. lmm knows a game is running when
   a program from the game's folder is running, whether you started it with
   **Play**, `lmm launch` or anything else (Steam, Proton and Wine games
-  included). A launcher left open after the game closes, such as Battle.net
+  included, and a game folder that is a symlink to another drive). A launcher left open after the game closes, such as Battle.net
   or Steam, doesn't count. When lmm can't tell, it installs the update.
 - **Something else is running.** If a deploy, install or other job is under
   way, lmm leaves the update for the next check rather than queueing it.

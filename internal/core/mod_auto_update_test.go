@@ -3,7 +3,11 @@ package core_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -320,6 +324,91 @@ func TestGameRunning(t *testing.T) {
 		}})
 		assert.False(t, svc.GameRunning(ctx, &domain.Game{ID: "g1", InstallPath: "/"}).Running)
 		assert.False(t, svc.GameRunning(ctx, &domain.Game{ID: "g1"}).Running)
+	})
+
+	t.Run("a symlinked install path matches the resolved executable", func(t *testing.T) {
+		// /proc/<pid>/exe is always resolved, so ~/Games/X -> /mnt/ssd/X must
+		// match a process under /mnt/ssd/X - and a command line naming the
+		// configured, unresolved path must still match too.
+		dir, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		target := filepath.Join(dir, "ssd", "Thing")
+		require.NoError(t, os.MkdirAll(target, 0o755))
+		link := filepath.Join(dir, "Games-Thing")
+		require.NoError(t, os.Symlink(target, link))
+		linked := &domain.Game{ID: "g1", InstallPath: link}
+
+		svc := newFlowsTestService(t)
+		svc.SetGameProbe(&core.GameProbe{Run: noUnits, Processes: func() ([]core.ProcessInfo, error) {
+			return []core.ProcessInfo{{PID: 50, Exe: target + "/bin/thing", Cmdline: []string{"thing"}}}, nil
+		}})
+		got := svc.GameRunning(ctx, linked)
+		assert.True(t, got.Running, "the resolved executable is under the symlink's target")
+		assert.Equal(t, target+"/bin/thing", got.Detail)
+
+		svc.SetGameProbe(&core.GameProbe{Run: noUnits, Processes: func() ([]core.ProcessInfo, error) {
+			return []core.ProcessInfo{{PID: 51, Exe: "/usr/bin/wine64-preloader", Cmdline: []string{link + "/Game.exe"}}}, nil
+		}})
+		assert.True(t, svc.GameRunning(ctx, linked).Running, "a command line naming the configured path matches it")
+
+		svc.SetGameProbe(launchedGameProbe("lmm-launch-g1-deadbeef.service", target+"/bin/thing"))
+		got = svc.GameRunning(ctx, linked)
+		assert.True(t, got.Running)
+		assert.Equal(t, core.GameRunningLaunchUnit, got.Signal, "the launch-unit check resolves the root too")
+	})
+
+	t.Run("a hung systemctl is bounded and falls through to the process scan", func(t *testing.T) {
+		svc := newFlowsTestService(t)
+		var deadlines []bool
+		var mu sync.Mutex
+		svc.SetGameProbe(&core.GameProbe{
+			ProbeTimeout: 20 * time.Millisecond,
+			Run: func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+				_, ok := ctx.Deadline()
+				mu.Lock()
+				deadlines = append(deadlines, ok)
+				mu.Unlock()
+				<-ctx.Done() // a user bus that never answers
+				return nil, ctx.Err()
+			},
+			UnitPIDs: func(context.Context, string) ([]int, error) {
+				t.Error("no unit was listed, so none is read")
+				return nil, nil
+			},
+			Processes: func() ([]core.ProcessInfo, error) {
+				return []core.ProcessInfo{{PID: 60, Exe: "/games/Thing/thing", Cmdline: []string{"/games/Thing/thing"}}}, nil
+			},
+		})
+		done := make(chan core.GameRunningStatus, 1)
+		go func() { done <- svc.GameRunning(ctx, game) }()
+		select {
+		case got := <-done:
+			assert.True(t, got.Running, "can't-tell from systemd leaves the process scan to answer")
+			assert.Equal(t, core.GameRunningProcess, got.Signal)
+		case <-time.After(5 * time.Second):
+			t.Fatal("GameRunning waited on a hung systemctl")
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		assert.Equal(t, []bool{true}, deadlines, "the probe's systemctl call carries its own deadline")
+	})
+
+	t.Run("an unset probe timeout bounds systemctl at two seconds", func(t *testing.T) {
+		svc := newFlowsTestService(t)
+		var left time.Duration
+		svc.SetGameProbe(&core.GameProbe{
+			Run: func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+				deadline, ok := ctx.Deadline()
+				require.True(t, ok)
+				left = time.Until(deadline)
+				return nil, nil
+			},
+			UnitPIDs:  func(context.Context, string) ([]int, error) { return nil, nil },
+			Processes: func() ([]core.ProcessInfo, error) { return nil, nil },
+		})
+		svc.GameRunning(ctx, game)
+		assert.Greater(t, left, time.Second)
+		assert.LessOrEqual(t, left, 2*time.Second)
 	})
 
 	t.Run("a failing process scan is unknown, so not running", func(t *testing.T) {
