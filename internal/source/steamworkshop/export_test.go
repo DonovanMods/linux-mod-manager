@@ -50,3 +50,14 @@ func SetTimeoutForTest(t *testing.T, d time.Duration) {
 	steamcmdTimeout = d
 	t.Cleanup(func() { steamcmdTimeout = previous })
 }
+
+// SkipRetryBackoffForTest makes every Source built for the rest of the test
+// retry at once instead of waiting out its backoff, and restores the real
+// sleep when the test ends (#576). The attempts, the breaker and the errors
+// they produce are untouched; transport_internal_test.go asserts the backoff
+// policy itself. A cancelled ctx still ends the retries.
+func SkipRetryBackoffForTest(t *testing.T) {
+	previous := retrySleep
+	retrySleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+	t.Cleanup(func() { retrySleep = previous })
+}

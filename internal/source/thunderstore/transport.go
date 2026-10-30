@@ -118,8 +118,14 @@ func newRetryTransport(base http.RoundTripper, now func() time.Time, holds *hold
 	if holds == nil {
 		holds = newHoldStore("", now)
 	}
-	return &retryTransport{base: base, now: now, sleep: sleepCtx, holds: holds}
+	return &retryTransport{base: base, now: now, sleep: retrySleep, holds: holds}
 }
+
+// retrySleep is the sleep every new retryTransport takes: sleepCtx. A var
+// only so the package's external tests can build a Source whose retries
+// skip their backoff (SkipRetryBackoffForTest, #576); it is read once, at
+// construction, so a test's change never reaches a transport already built.
+var retrySleep = sleepCtx
 
 // RoundTrip implements http.RoundTripper.
 func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
