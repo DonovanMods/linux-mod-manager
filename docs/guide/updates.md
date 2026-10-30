@@ -104,27 +104,70 @@ instead:
 
 ### Update lmm automatically
 
-lmm can also install new versions on its own, once a day. This is off unless
-you turn it on, in two steps. First, set up the daily timer (this also sets
-up the background web interface):
+If you installed lmm from the `.tar.gz` download, or built it yourself, lmm
+updates itself. You don't need to set anything up. When the daily check
+finds a new version, lmm installs it by itself, with the same checks as
+`lmm self-update`: the download must carry the lmm release signature and
+match its published checksum, or nothing changes.
+
+- **In the terminal**, lmm starts the update in the background after the
+  command you ran, and says so. Your command isn't slowed down, and closing
+  the terminal doesn't stop the update. A script never starts one.
+- **In the browser**, the background web interface installs the update and
+  restarts itself onto it. If you started `lmm serve` yourself in a
+  terminal, it asks you to restart it instead.
+
+The first time lmm updates itself, it tells you, once, in the terminal and
+in the browser:
+
+> lmm updated itself to v2.4.0. To turn this off: auto_update: false in
+> config.yaml, or Setup > Updates.
+
+Later updates get a one-line notice. Only one update runs at a time. If an
+update fails, lmm waits a day before it tries that version again; the
+terminal's background update writes what happened to
+`~/.local/share/lmm/auto-update.log`.
+
+To turn automatic updates off, add this line to `~/.config/lmm/config.yaml`:
+
+```yaml
+auto_update: false
+```
+
+Or, in the browser, open **Setup** (the ⚙ in the top bar), choose
+**Updates**, and turn off **Update automatically**. That page also shows
+the version you have, the newest release, how lmm was installed, and the
+last automatic update. lmm still tells you about new versions while
+automatic updates are off; you install them with `lmm self-update`.
+
+lmm never updates itself when your package manager installed it, or when
+it's a development build. Setup > Updates says so, and the switch is off.
+It also can't update itself from a folder you can't write to, such as
+`/usr/local/bin` (see above). If you turned off the daily check
+(`update_check: false`), lmm never hears about a new version, so it doesn't
+update itself either.
+
+{: .note }
+lmm 2.2.0 had automatic updates off unless you turned them on. If you have
+2.2.0, run `lmm self-update` once by hand to get the version that turns
+them on.
+
+#### A daily timer, for computers where you rarely use lmm
+
+lmm only learns about a new version when you use it. On a computer where
+you rarely do, set up a daily timer (this also sets up the background web
+interface):
 
 ```bash
 lmm service install --auto-update
 ```
 
-Then add this line to `~/.config/lmm/config.yaml`:
-
-```yaml
-auto_update: true
-```
-
 The timer runs once a day at a random time in the first hour after
-midnight, or the next time you log in if your computer was off. To stop
-automatic updates, change that line to `auto_update: false` or remove it;
-the timer keeps running but does nothing. If an automatic update fails,
-for example because your network isn't up yet, it tries again five minutes
-later, up to three more times. `lmm service uninstall` removes
-the timer along with the background web interface.
+midnight, or the next time you log in if your computer was off. It obeys
+`auto_update: false` too. If its update fails, for example because your
+network isn't up yet, it tries again five minutes later, up to three more
+times. `lmm service uninstall` removes the timer along with the background
+web interface.
 
 ## Going back to an older version
 

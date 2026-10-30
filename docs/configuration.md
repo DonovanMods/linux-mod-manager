@@ -18,7 +18,7 @@ Global application settings. Optional; defaults apply if the file is missing.
 | `auto_snapshot`       | bool   | `false`   | Record a snapshot before every deploy, profile switch and update (see below)                         |
 | `auto_snapshot_keep`  | int    | `10`      | How many AUTOMATIC snapshots to keep per game; `0` means unlimited (see below)                       |
 | `update_check`        | bool   | `true`    | Check GitHub once a day for a newer lmm release and say so (see below)                               |
-| `auto_update`         | bool   | `false`   | Let `lmm-update.timer` install a new lmm release unattended (see below)                              |
+| `auto_update`         | bool   | `true`    | Let lmm install a new lmm release by itself; self-managed installs only (see below)                  |
 
 ### `auto_snapshot`
 
@@ -132,14 +132,34 @@ the automatic check off; `lmm version --check` still asks when you run it.
 
 ### `auto_update`
 
-With `auto_update: true`, the daily `lmm-update.timer` installed by
-`lmm service install --auto-update` runs `lmm self-update --auto`, which
-installs a new release unattended. It is **off by default**, and the timer's
-run does nothing while it is off, so setting it back to `false` stops
-updates without touching the unit. It applies only to an lmm you manage
-yourself (the release tarball, `go install`, `make install`): a package
-manager's binary is never replaced. Every update is verified against the
-lmm release key before it is installed; see `lmm self-update`.
+lmm installs a new release by itself: automatic updates are **on by
+default**, and `auto_update: false` turns them off (an explicit `false`
+survives every save lmm makes to `config.yaml`; you can also turn it off
+under the web UI's **Setup > Updates**). The trigger is the daily
+`update_check`: when it finds a newer release,
+
+- after an interactive command, lmm starts `lmm self-update --auto` in the
+  background, detached from the terminal (its output goes to
+  `<data dir>/auto-update.log`), and the command exits as it would have. A
+  script, a pipe or `--json` never triggers one;
+- a running `lmm serve` installs it from its background refresh, then
+  restarts itself if it runs as `lmm-serve.service`. A `lmm serve` you
+  started yourself shows "restart `lmm serve` to use it" instead;
+- `lmm-update.timer` (`lmm service install --auto-update`) runs it daily
+  too, which is only worth having on a machine where lmm rarely runs.
+
+It applies only to an lmm you manage yourself (the release tarball,
+`go install`, `make install`): a package manager's binary, or a development
+build, is never replaced. Every update is verified against the lmm release
+key before it is installed, exactly as `lmm self-update` does; only one runs
+at a time, and a release whose update failed is left alone for a day. The
+outcome is kept in `<data dir>/auto-update.json`, and the next interactive
+command (and the web UI) says once that lmm updated itself. With
+`update_check: false` nothing learns of a new release, so only the timer
+still updates lmm.
+
+An lmm older than the release that made this the default (v2.2.0) treats a
+missing `auto_update` as off: update it once by hand with `lmm self-update`.
 
 ## games.yaml
 
