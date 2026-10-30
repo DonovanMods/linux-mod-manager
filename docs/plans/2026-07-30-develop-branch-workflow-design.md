@@ -17,19 +17,19 @@ release points.
   `~DEFAULT_BRANCH` still resolves to main).
 - **`develop`** — integration branch, created from current `main`. All story
   work merges here first.
-- **Story branches** (`feat/…`, `fix/…`) — fork from `develop`, PR back into
-  `develop` with an explicit `--base develop`. A forgotten flag targets
-  protected `main` and gets caught there.
+- **Story branches** (`feat/…`, `fix/…`) — fork from `develop` and merge
+  back into it locally with `git merge --no-ff`, no PR (see the 2026-10-30
+  amendment below).
 - **`release/vX.Y.Z`** — short-lived, one per release; deleted after merge.
 - No other long-lived branches; this is git-flow-lite, not full git-flow.
 
-## Story PR Flow (into develop)
+## Story PR Flow (into develop) — superseded, see the amendment below
 
 Identical to the previous flow except for the base branch and versioning:
 
 - Copilot review + triage rounds, merge
   commits — all unchanged.
-- **No version bump** in story PRs. The `version` variable in
+- **No version bump** in story branches. The `version` variable in
   `cmd/lmm/root.go` stays at the last released version between releases.
 - CHANGELOG entries accumulate under `[Unreleased]`.
 
@@ -69,9 +69,8 @@ work:
 ## GitHub Setup
 
 - Create `develop` from current `main` and push it.
-- Add a **"Protect Develop"** ruleset targeting `refs/heads/develop`:
-  - pull request required (same merge methods as main),
-  - Copilot code review on push,
+- Add a **"Protect Develop"** ruleset targeting `refs/heads/develop`
+  (the PR and Copilot rules it started with were removed on 2026-10-30):
   - deletion blocked,
   - non-fast-forward (force-push) blocked,
   - **bypass: repository admin, always** — the escape hatch.
@@ -112,3 +111,19 @@ The bypass exists for three uses, in expected order of frequency:
 - `release/*` as long-lived stabilization branches.
 - Changing the default branch to develop.
 - Any CI changes beyond the one-line `test.yml` trigger addition.
+
+## Amendment (2026-10-30): no PRs into develop
+
+Story branches no longer PR into `develop`. The pull request and Copilot
+review rules were removed from "Protect Develop"; it keeps deletion and
+non-fast-forward protection and the admin bypass. The PR round trip slowed
+every story down, and what it bought was Copilot review, which hits its
+rate limit in a busy session. A story branch now:
+
+1. passes `make test` on the branch,
+2. gets an independent review of its diff (a subagent, in Copilot's place),
+3. merges into `develop` locally with `git merge --no-ff` and is pushed;
+   CI runs on that push, and a red run is fixed forward on `develop`.
+
+The "Story PR Flow" section above is historical. Releases and hotfixes are
+unchanged: they still PR into `main`, which keeps its PR and Copilot rules.
