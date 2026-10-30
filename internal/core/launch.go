@@ -576,7 +576,7 @@ func (s *Service) Launch(ctx context.Context, game *domain.Game, opts LaunchOpti
 
 	// #546: a game that loads its mods only when started a way lmm cannot
 	// arrange says how, on every launch.
-	result.Warnings = append(result.Warnings, s.launchAdvice(ctx, game, profile)...)
+	result.Warnings = append(result.Warnings, s.launchAdvice(ctx, game, profile, false)...)
 
 	// A command starts in the game's folder, as a Wine or EXE-style
 	// command expects; Steam needs no directory.

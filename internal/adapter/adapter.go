@@ -496,15 +496,30 @@ type DeployedMod struct {
 	Files []string
 }
 
+// Advice is a LaunchAdvisor's answer: what the user must do, in words, and
+// the launch arguments those words tell them to set.
+type Advice struct {
+	// Args is the argument string the advice tells the user to set for
+	// the game ("-mod Loot -txt"), or "" when it tells them to set none.
+	// Core records it per game and hands it back as the next call's
+	// previous, so the advice can say to remove what is no longer needed.
+	Args string
+	// Lines is the advice, one sentence per entry, in the order to show.
+	Lines []string
+}
+
 // LaunchAdvisor is the optional capability of an adapter whose game loads
 // deployed mods only when it is started in a way lmm cannot arrange itself
 // (#546: Diablo II: Resurrected's `-mod <name> -txt`, which only
 // Battle.net's own per-game setting can pass). Its advice is what the user
-// must do, in words; core shows it after a deploy and on a launch.
+// must do, in words; core shows it after a deploy - a profile switch's and
+// a profile apply's too - and on a launch.
 type LaunchAdvisor interface {
 	// LaunchAdvice reads the profile's deployed mods, in load order (first
-	// is lowest priority). It is pure: it touches no disk.
-	LaunchAdvice(g *domain.Game, mods []DeployedMod) []string
+	// is lowest priority), and previous: the Advice.Args lmm last told the
+	// user to set for this game, "" for none. It is pure: it touches no
+	// disk.
+	LaunchAdvice(g *domain.Game, mods []DeployedMod, previous string) Advice
 }
 
 // Route classifies one deployable file: an adapter that implements no
@@ -539,12 +554,12 @@ func Verify(ctx context.Context, a GameAdapter, req VerifyRequest) ([]Finding, e
 
 // LaunchAdvice returns the adapter's launch advice, or none when it has no
 // LaunchAdvisor.
-func LaunchAdvice(a GameAdapter, g *domain.Game, mods []DeployedMod) []string {
+func LaunchAdvice(a GameAdapter, g *domain.Game, mods []DeployedMod, previous string) Advice {
 	la, ok := a.(LaunchAdvisor)
 	if !ok {
-		return nil
+		return Advice{}
 	}
-	return la.LaunchAdvice(g, mods)
+	return la.LaunchAdvice(g, mods, previous)
 }
 
 // Compiler reports whether the adapter is the compile capability, and

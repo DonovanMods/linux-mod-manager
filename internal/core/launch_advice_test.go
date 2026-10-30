@@ -79,3 +79,66 @@ func TestD2R_NoAdviceWithoutAMod(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, launched.Warnings)
 }
+
+// #546: the deploy that drops the last D2R mod says to take the -mod the
+// previous one advised back out of Battle.net's settings - once: the next
+// deploy, with nothing advised since, says nothing.
+func TestD2R_DeployWithoutTheModSaysToRemoveIt(t *testing.T) {
+	svc, _, game := d2rFixture(t, [2]string{"Loot Filter", "Loot"})
+	ctx := context.Background()
+
+	res, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.Len(t, res.Warnings, 1)
+	assert.Contains(t, res.Warnings[0], "-mod Loot -txt")
+
+	_, err = svc.DisableMod(ctx, game, "default", "src", "Loot Filter")
+	require.NoError(t, err)
+	res, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.Len(t, res.Warnings, 1)
+	assert.Contains(t, res.Warnings[0], "remove -mod Loot -txt")
+
+	res, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, res.Warnings)
+}
+
+// #546: a profile apply and a profile switch deploy too, so they end with
+// the same advice a deploy does.
+func TestD2R_ProfileApplyAndSwitchAdviseTheModArgument(t *testing.T) {
+	svc, _, game := d2rFixture(t, [2]string{"Loot Filter", "Loot"})
+	ctx := context.Background()
+
+	// The mod is off, and the profile document - the desired state - is
+	// edited back to on: the apply enables and deploys it.
+	_, err := svc.DisableMod(ctx, game, "default", "src", "Loot Filter")
+	require.NoError(t, err)
+	p, err := config.LoadProfile(svc.ConfigDir(), game.ID, "default")
+	require.NoError(t, err)
+	p.Mods = []domain.ModReference{{SourceID: "src", ModID: "Loot Filter", Version: "1"}}
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), p))
+
+	plan, err := svc.PlanProfileApply(ctx, game, "default")
+	require.NoError(t, err)
+	applied, err := svc.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+	assert.True(t, containsLine(applied.Warnings, "-mod Loot -txt"), "%v", applied.Warnings)
+
+	// A second profile holding a different D2R mod: switching to it says
+	// what to enter now, in place of the -mod the apply advised.
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "Stash Tabs", "1", "Stash/Stash.mpq/modinfo.json", []byte("{}")))
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "Stash Tabs", SourceID: "src", Name: "Stash Tabs", Version: "1", GameID: game.ID},
+		ProfileName: "other", UpdatePolicy: domain.UpdateNotify, Enabled: true,
+	}))
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), &domain.Profile{
+		Name: "other", GameID: game.ID,
+		Mods: []domain.ModReference{{SourceID: "src", ModID: "Stash Tabs", Version: "1"}},
+	}))
+	switchPlan, err := svc.PlanProfileSwitch(ctx, game, "other")
+	require.NoError(t, err)
+	switched, err := svc.ApplyProfileSwitch(ctx, game, switchPlan, nil)
+	require.NoError(t, err)
+	assert.True(t, containsLine(switched.Warnings, "-mod Stash -txt", "in place of -mod Loot -txt"), "%v", switched.Warnings)
+}

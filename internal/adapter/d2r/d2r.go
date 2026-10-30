@@ -13,15 +13,20 @@
 //	                  them in Battle.net's "Additional command line
 //	                  arguments", and lmm says exactly what to enter
 //
-// D2R loads one mod at a time, so the advice names the mod last in load
-// order - the one that wins every conflict - and says so when several are
-// enabled.
+// D2R loads one mod folder at a time, so the advice names the folder of the
+// mod last in load order - the one that wins every conflict - and says so
+// when mods in other folders are enabled. Mods that carry the same
+// <name>.mpq deploy into one folder, merged under the usual conflict rules,
+// and load together; the advice says that too. A mod whose name has a
+// space is refused at ingest: Battle.net splits its arguments on
+// whitespace, so no -mod could ever name it.
 package d2r
 
 import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -66,7 +71,8 @@ func mpqFolder(member string) (int, string) {
 // its path inside it; any other member moves into <name>/ beside it,
 // relative to the folder that holds the .mpq (the archive root when the
 // member is not under it). An archive with no .mpq folder, or with
-// several, is left as packaged and warned about.
+// several, is left as packaged and warned about. One whose <name> holds
+// whitespace is refused: it could never be loaded (see the package doc).
 func (*Adapter) NormalizeArchive(req adapter.NormalizeRequest) (adapter.Layout, error) {
 	var names []string
 	parent := ""
@@ -93,6 +99,11 @@ func (*Adapter) NormalizeArchive(req adapter.NormalizeRequest) (adapter.Layout, 
 	}
 
 	name := names[0]
+	if strings.ContainsFunc(name, unicode.IsSpace) {
+		fixed := strings.Join(strings.Fields(name), "_")
+		return adapter.Layout{}, fmt.Errorf("the mod folder %q has a space in its name, and Diablo II: Resurrected loads a mod only through -mod %s, which Battle.net's \"Additional command line arguments\" split on spaces - so this mod could never load; repack it with both folders renamed without spaces (for example %s/%s.mpq/) and add it with lmm import <archive>",
+			name+".mpq", name, fixed, fixed)
+	}
 	rewrites := make(map[string]string)
 	for _, m := range req.Members {
 		var dest string
@@ -114,10 +125,12 @@ func (*Adapter) NormalizeArchive(req adapter.NormalizeRequest) (adapter.Layout, 
 }
 
 // LaunchAdvice says what to enter in Battle.net's "Additional command line
-// arguments" for the deployed profile: -mod with the folder name of the
-// last mod in load order that has one, and, when several do, that only
-// that one loads.
-func (*Adapter) LaunchAdvice(g *domain.Game, mods []adapter.DeployedMod) []string {
+// arguments" for the deployed profile: -mod with the folder of the last
+// mod in load order that has one. It says when several mods share that
+// folder (merged, loaded together) and when mods in other folders are
+// enabled (they do not load). With no such mod but a previous -mod, it
+// says to remove that.
+func (*Adapter) LaunchAdvice(g *domain.Game, mods []adapter.DeployedMod, previous string) adapter.Advice {
 	type found struct{ mod, folder string }
 	var all []found
 	for _, m := range mods {
@@ -133,19 +146,35 @@ func (*Adapter) LaunchAdvice(g *domain.Game, mods []adapter.DeployedMod) []strin
 		}
 	}
 	if len(all) == 0 {
-		return nil
-	}
-	pick := all[len(all)-1]
-	args := "-mod " + pick.folder + " -txt"
-	advice := []string{fmt.Sprintf("%s loads %s only when started with %q: in Battle.net, open the game's settings (the gear beside Play) > Game Settings, tick \"Additional command line arguments\" and enter: %s",
-		g.Name, pick.mod, args, args)}
-	if len(all) > 1 {
-		var names []string
-		for _, f := range all {
-			names = append(names, f.mod)
+		if previous == "" {
+			return adapter.Advice{}
 		}
-		advice = append(advice, fmt.Sprintf("%d mods are enabled (%s), but %s loads one mod at a time: %s, the last in load order; disable the others, or move the one you want last",
-			len(all), strings.Join(names, ", "), g.Name, pick.mod))
+		return adapter.Advice{Lines: []string{fmt.Sprintf("no mod is enabled for %s now: in Battle.net, open the game's settings (the gear beside Play) > Game Settings and remove %s from \"Additional command line arguments\", so the game starts unmodded",
+			g.Name, previous)}}
 	}
-	return advice
+	folder := all[len(all)-1].folder
+	var loaded, unloaded []string
+	for _, f := range all {
+		if strings.EqualFold(f.folder, folder) {
+			loaded = append(loaded, f.mod)
+		} else {
+			unloaded = append(unloaded, fmt.Sprintf("%s (mods/%s/)", f.mod, f.folder))
+		}
+	}
+	args := "-mod " + folder + " -txt"
+	instead := ""
+	if previous != "" && previous != args {
+		instead = ", in place of " + previous
+	}
+	lines := []string{fmt.Sprintf("%s loads %s only when started with %q: in Battle.net, open the game's settings (the gear beside Play) > Game Settings, tick \"Additional command line arguments\" and enter: %s%s",
+		g.Name, strings.Join(loaded, " and "), args, args, instead)}
+	if len(loaded) > 1 {
+		lines = append(lines, fmt.Sprintf("%s all deploy into mods/%s/: lmm merges them into that one folder, and where two carry the same file the later in load order wins; %s loads them together, as the one mod %s",
+			strings.Join(loaded, ", "), folder, g.Name, folder))
+	}
+	if len(unloaded) > 0 {
+		lines = append(lines, fmt.Sprintf("%d mods are enabled, but %s loads one mod at a time: mods/%s/ (%s), the last in load order; %s will not load - disable them, or move the one you want last",
+			len(all), g.Name, folder, strings.Join(loaded, ", "), strings.Join(unloaded, ", ")))
+	}
+	return adapter.Advice{Args: args, Lines: lines}
 }

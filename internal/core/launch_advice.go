@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -16,7 +18,12 @@ import (
 // no advice, which costs nothing more than resolving the adapter; and
 // none, rather than an error, when anything cannot be read - advice is
 // never what fails a deploy or a launch.
-func (s *Service) launchAdvice(ctx context.Context, game *domain.Game, profile string) []string {
+//
+// The adapter is handed the arguments lmm last told the user to set for
+// the game (launchArgsFile), so a deploy that drops the last mod can say
+// to remove them. A deploy - record - stores what this advice says to set
+// in their place; a launch only reads.
+func (s *Service) launchAdvice(ctx context.Context, game *domain.Game, profile string, record bool) []string {
 	a, err := s.AdapterFor(game)
 	if err != nil {
 		return nil
@@ -43,5 +50,55 @@ func (s *Service) launchAdvice(ctx context.Context, game *domain.Game, profile s
 		}
 		deployed = append(deployed, adapter.DeployedMod{Name: m.Name, Files: files})
 	}
-	return adapter.LaunchAdvice(a, game, deployed)
+	advice := adapter.LaunchAdvice(a, game, deployed, s.launchArgs(game.ID))
+	if record {
+		s.recordLaunchArgs(game.ID, advice.Args)
+	}
+	return advice.Lines
+}
+
+// launchArgsDir holds, per game, the launch arguments lmm last told the
+// user to set (#546): <DataDir>/launch-args/<game-id>, one line, absent
+// for none.
+const launchArgsDir = "launch-args"
+
+// launchArgsFile is game's record, or "" for a game ID that cannot be a
+// file name.
+func (s *Service) launchArgsFile(gameID string) string {
+	if gameID == "" || gameID == "." || gameID == ".." || strings.ContainsAny(gameID, `/\`) {
+		return ""
+	}
+	return filepath.Join(s.dataDir, launchArgsDir, gameID)
+}
+
+// launchArgs is the arguments lmm last told the user to set for the game,
+// "" when it told them none or the record cannot be read.
+func (s *Service) launchArgs(gameID string) string {
+	path := s.launchArgsFile(gameID)
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// recordLaunchArgs stores args as the game's record, removing it for "".
+// Best effort, like the advice itself: a record that cannot be written
+// costs at most one "remove" line later.
+func (s *Service) recordLaunchArgs(gameID, args string) {
+	path := s.launchArgsFile(gameID)
+	if path == "" || s.launchArgs(gameID) == args {
+		return
+	}
+	if args == "" {
+		_ = os.Remove(path)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(path, []byte(args+"\n"), 0o644)
 }
