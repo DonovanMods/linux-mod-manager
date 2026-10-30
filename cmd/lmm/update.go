@@ -327,6 +327,13 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// fetch) plus, for DeployCompile games, merged-pak staleness (#196/#197) -
 	// CheckGameUpdates is the single seam the CLI checks through.
 	report, checkErr := service.CheckGameUpdateReport(ctx, game, profileName, installed, sink, core.UpdateCheckOptions{Refresh: updateRefresh})
+	// #590: before anything is applied, a gone mod of a source whose IDs can
+	// change is re-linked to its one successor, and the check re-run over
+	// it. A dry run and a --json check apply nothing, so they re-link
+	// nothing either.
+	if !updateDryRun && (!jsonOutput || updateAll) {
+		report, installed, checkErr = autoRelinkGone(ctx, service, game, profileName, installed, report, checkErr, sink)
+	}
 	updates := report.Updates
 	if checkErr != nil {
 		if errors.Is(checkErr, domain.ErrAuthRequired) {
@@ -754,6 +761,48 @@ func printExternalMissing(report *core.UpdateCheckReport) {
 	fmt.Println("Resubscribe in the Steam client, or run 'lmm uninstall <id>' to stop tracking them.")
 }
 
+// autoRelinkGone runs the automatic re-link over report's gone mods (#590)
+// and prints each re-link it made. When it made any, the installed set is
+// read again and the check re-run, so the moved mods are checked under
+// their new IDs; the new report carries the re-links as auto_relink. A
+// failure to re-link is a warning: the check's own report stands.
+func autoRelinkGone(ctx context.Context, service *core.Service, game *domain.Game, profileName string, installed []domain.InstalledMod, report *core.UpdateCheckReport, checkErr error, sink core.EventSink) (*core.UpdateCheckReport, []domain.InstalledMod, error) {
+	result, err := service.AutoRelink(ctx, game, profileName, installed, report.CatalogMissing, nil)
+	if err != nil {
+		if !jsonOutput {
+			fmt.Fprintf(os.Stderr, "Warning: re-linking moved mods: %v\n", err)
+		}
+		return report, installed, checkErr
+	}
+	if result == nil {
+		return report, installed, checkErr
+	}
+	if !jsonOutput {
+		for _, r := range result.Relinked {
+			fmt.Println(r.Message)
+			for _, w := range r.Warnings {
+				fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
+			}
+		}
+		for _, f := range result.Failed {
+			fmt.Fprintf(os.Stderr, "Warning: could not re-link %s to %s: %s\n", cmp.Or(f.Name, f.Mod), f.ToModID, f.Error)
+		}
+	}
+	if len(result.Relinked) == 0 {
+		return report, installed, checkErr
+	}
+	reread, err := service.GetInstalledMods(ctx, game.ID, profileName)
+	if err != nil {
+		if !jsonOutput {
+			fmt.Fprintf(os.Stderr, "Warning: re-reading installed mods: %v\n", err)
+		}
+		return report, installed, checkErr
+	}
+	again, againErr := service.CheckGameUpdateReport(ctx, game, profileName, reread, sink, core.UpdateCheckOptions{Refresh: updateRefresh})
+	again.AutoRelink = &core.CatalogAutoRelink{Relinked: result.Relinked}
+	return again, reread, againErr
+}
+
 // printCatalogMissing names the installed mods their source's catalog no
 // longer has (#539), each with the two ways out: relink it if the mod was
 // republished under a new ID, or uninstall it. They were not updates and
@@ -770,9 +819,37 @@ func printCatalogMissing(service *core.Service, report *core.UpdateCheckReport) 
 			sourceName = src.Name()
 		}
 		fmt.Printf("  %s (%s, %s)\n", cmp.Or(m.Name, m.ModID), m.ModID, sourceName)
-		fmt.Printf("    moved:   lmm mod edit %s -s %s --to-source-id <new-id>\n", m.ModID, m.SourceID)
-		fmt.Printf("    removed: lmm uninstall %s -s %s\n", m.ModID, m.SourceID)
+		printCatalogMissingRemedy("    ", m.SourceID, m.ModID, m.Successors)
 	}
+}
+
+// printCatalogMissingRemedy prints a gone mod's two ways out, each line
+// indented by indent: re-link it - to its likely new ID when core found
+// exactly one (#590), or naming every candidate when it found several - or
+// uninstall it. `lmm update` and `lmm verify` share it, so both say the
+// same thing about the same mod.
+func printCatalogMissingRemedy(indent, sourceID, modID string, successors []core.CatalogSuccessor) {
+	relink := func(target string) string {
+		return fmt.Sprintf("lmm mod edit %s -s %s --to-source-id %s", modID, sourceID, target)
+	}
+	switch len(successors) {
+	case 0:
+		fmt.Printf("%smoved:   %s\n", indent, relink("<new-id>"))
+	case 1:
+		fmt.Printf("%smoved?   looks like %s (same name and author): %s\n", indent, successors[0].ModID, relink(successors[0].ModID))
+	default:
+		candidates := make([]string, 0, len(successors))
+		for _, c := range successors {
+			if c.Version != "" {
+				candidates = append(candidates, fmt.Sprintf("%s (%s)", c.ModID, c.Version))
+			} else {
+				candidates = append(candidates, c.ModID)
+			}
+		}
+		fmt.Printf("%smoved?   several mods have the same name and author: %s\n", indent, strings.Join(candidates, ", "))
+		fmt.Printf("%s         %s\n", indent, relink("<one of them>"))
+	}
+	fmt.Printf("%sremoved: lmm uninstall %s -s %s\n", indent, modID, sourceID)
 }
 
 // printUpdateChangelogs prints the changelog block the bulk check shows -

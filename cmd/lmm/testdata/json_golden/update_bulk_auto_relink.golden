@@ -1,0 +1,20 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "updates": [],
+  "skipped": {
+    "pinned": 0,
+    "local": 0
+  },
+  "auto_relink": {
+    "relinked": [
+      {
+        "source_id": "test-src",
+        "from_mod_id": "dLs3nvmWj5uOPnXxezGe",
+        "to_mod_id": "8m1z04vNo2CCdKcD2C0H",
+        "name": "Bear Mount",
+        "message": "Bear Mount moved to a new ID in Fake Update Source; re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)"
+      }
+    ]
+  }
+}
