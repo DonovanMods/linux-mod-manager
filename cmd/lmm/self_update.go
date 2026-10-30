@@ -55,9 +55,11 @@ tarball, 'go install' or 'make install'. An lmm a package manager installed
 you the command. You need write access to the directory lmm is in; lmm never
 uses sudo.
 
-If lmm-serve.service (see 'lmm service') is running, it is restarted onto the
-new version. An 'lmm serve' you started yourself keeps running the old one
-until you restart it; its web UI says so.
+self-update never restarts lmm-serve.service (see 'lmm service'): it cannot
+see the web UI's running jobs. With automatic updates on, lmm-serve.service
+notices the new binary within a minute and restarts itself once no job is
+running. Otherwise, or for an 'lmm serve' you started yourself, it keeps
+running the old version until you restart it; its web UI says so.
 
 Without --yes, lmm asks before it replaces the binary. --json never asks:
 without --yes it prints the plan and changes nothing.
@@ -88,12 +90,22 @@ func init() {
 }
 
 // newSelfUpdater builds the updater for the --config/--data the flags
-// select, restarting lmm-serve.service through the same systemd seam
-// `lmm service` uses.
+// select. It restarts nothing: neither `lmm self-update` nor an automatic
+// update run from the CLI or lmm-update.timer can see `lmm serve`'s jobs,
+// so lmm serve restarts itself (serveAutoUpdater, #586).
 func newSelfUpdater() (*core.SelfUpdater, error) {
-	cfg, err := getServiceConfig()
+	opts, err := selfUpdateOptions()
 	if err != nil {
 		return nil, err
+	}
+	return core.NewSelfUpdater(opts), nil
+}
+
+// selfUpdateOptions is newSelfUpdater's options.
+func selfUpdateOptions() (core.SelfUpdateOptions, error) {
+	cfg, err := getServiceConfig()
+	if err != nil {
+		return core.SelfUpdateOptions{}, err
 	}
 	opts := core.SelfUpdateOptions{
 		ConfigDir:    cfg.ConfigDir,
@@ -105,16 +117,12 @@ func newSelfUpdater() (*core.SelfUpdater, error) {
 		Probe:        releaseInstallProbe,
 		TrustedKeys:  releaseTrustedKeys,
 	}
-	if units, err := newUserUnits(); err == nil {
-		opts.Restarter = units
-	}
 	// The mutation lock every lmm command and `lmm serve` takes: an
-	// automatic update neither installs nor restarts lmm-serve.service
-	// while it is held (#586).
+	// automatic update does not install while it is held (#586).
 	if p, err := app.ResolvePaths(app.Options{ConfigDir: configDir, DataDir: dataDir}); err == nil {
 		opts.OpLockPath = app.OpLockPath(p)
 	}
-	return core.NewSelfUpdater(opts), nil
+	return opts, nil
 }
 
 // runSelfUpdate is `lmm self-update`.
@@ -167,7 +175,7 @@ func runSelfUpdate(ctx context.Context) error {
 	if jsonOutput {
 		return emitJSON(res)
 	}
-	printSelfUpdateResult(res, plan.ReleaseURL)
+	printSelfUpdateResult(res, plan.ReleaseURL, u.AutoUpdateEnabled())
 	return nil
 }
 
@@ -188,19 +196,21 @@ func runAutoUpdate(ctx context.Context, u *core.SelfUpdater) error {
 		fmt.Println(out.Skipped + "; not updating.")
 		return nil
 	}
-	printSelfUpdateResult(out.Result, "")
+	printSelfUpdateResult(out.Result, "", true)
 	return nil
 }
 
-// printSelfUpdateResult is the text after an install.
-func printSelfUpdateResult(res core.SelfUpdateResult, releaseURL string) {
+// printSelfUpdateResult is the text after an install, saying what becomes
+// of a running lmm serve: with auto_update on, lmm-serve.service restarts
+// itself once idle; otherwise it waits for the person.
+func printSelfUpdateResult(res core.SelfUpdateResult, releaseURL string, autoUpdate bool) {
 	fmt.Printf("Updated lmm %s to %s (%s).\n", res.Previous, colorBold(res.Version), res.Executable)
-	switch {
-	case res.ServeRestarted:
-		fmt.Println("Restarted lmm-serve.service, which now runs " + res.Version + ".")
-	case res.ServeRestartError != "":
-		fmt.Fprintf(os.Stderr, "%s lmm-serve.service still runs %s: restarting it failed (%s); restart it with: systemctl --user restart lmm-serve\n",
-			colorYellow("!"), res.Previous, res.ServeRestartError)
+	if res.Updated {
+		if autoUpdate {
+			fmt.Println(colorDim("If lmm-serve.service is running, lmm serve restarts itself onto " + res.Version + " once no job is running."))
+		} else {
+			fmt.Println(colorDim("A running lmm serve keeps " + res.Previous + " until you restart it: systemctl --user restart lmm-serve"))
+		}
 	}
 	if releaseURL != "" {
 		fmt.Println(colorDim("Release notes: " + releaseURL))

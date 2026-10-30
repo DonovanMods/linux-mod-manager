@@ -124,3 +124,115 @@ func TestAPIAutoUpdateNotice_MarksItToldForEveryFrontend(t *testing.T) {
 	_, pending := core.ServiceConfig{ConfigDir: svc.ConfigDir(), DataDir: dataDir}.PendingAutoUpdateNotice()
 	assert.False(t, pending, "the CLI does not tell it again")
 }
+
+// countingRestarter counts the restarts of lmm-serve.service asked for.
+type countingRestarter struct{ calls atomic.Int32 }
+
+func (r *countingRestarter) RestartServeIfActive(context.Context) (bool, error) {
+	r.calls.Add(1)
+	return true, nil
+}
+
+// selfRestartFixture is a server running from a binary a test can replace
+// with lmm 2.2.0, as lmm-update.timer or the CLI's detached update does,
+// and whose updater restarts lmm-serve.service through restarts.
+type selfRestartFixture struct {
+	srv      *Server
+	restarts *countingRestarter
+	replace  func()
+}
+
+func newSelfRestartFixture(t *testing.T, ctx context.Context) *selfRestartFixture {
+	t.Helper()
+	svc, _ := newDeployFixtureService(t)
+	exe := filepath.Join(t.TempDir(), "lmm")
+	require.NoError(t, os.WriteFile(exe, []byte("2.0.1"), 0o755))
+	probe := &core.InstallProbe{
+		Executable: func() (string, error) { return exe, nil },
+		LookPath:   func(string) (string, error) { return "", os.ErrNotExist },
+		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name == exe && len(args) == 1 && args[0] == "--version" {
+				return []byte("lmm version 2.2.0\n"), nil
+			}
+			return nil, os.ErrNotExist
+		},
+	}
+	dataDir := t.TempDir()
+	// Up to date by GitHub's answer: no automatic update of its own runs,
+	// only the restart onto what another process installed.
+	rc := releaseCheckerAt(t, svc.ConfigDir(), dataDir, "2.0.1", probe)
+	restarts := &countingRestarter{}
+	au := core.NewSelfUpdater(core.SelfUpdateOptions{
+		ConfigDir: svc.ConfigDir(), DataDir: dataDir, Version: "2.0.1",
+		APIBase: "http://127.0.0.1:0", DownloadBase: "http://127.0.0.1:0",
+		Probe: probe, Restarter: restarts,
+	})
+	srv := New(ctx, svc, slog.New(slog.DiscardHandler), Options{Addr: "127.0.0.1:0", ReleaseChecker: rc, AutoUpdater: au})
+	return &selfRestartFixture{srv: srv, restarts: restarts, replace: func() {
+		require.NoError(t, os.WriteFile(exe, []byte("2.2.0"), 0o755))
+		later := time.Now().Add(time.Minute)
+		require.NoError(t, os.Chtimes(exe, later, later))
+	}}
+}
+
+// TestServe_RestartsItselfOntoANewerBinaryOnceItsJobEnds (#586 review):
+// the timer and the CLI replace the binary and stop; lmm serve sees it and
+// restarts itself, but only once its running job has ended.
+func TestServe_RestartsItselfOntoANewerBinaryOnceItsJobEnds(t *testing.T) {
+	f := newSelfRestartFixture(t, t.Context())
+	gate := make(chan struct{})
+	_, err := f.srv.jobs.Start("deploy", func(context.Context, core.EventSink) (any, error) {
+		<-gate
+		return nil, nil
+	})
+	require.NoError(t, err)
+	f.replace()
+
+	done := make(chan struct{})
+	go func() { defer close(done); f.srv.restartOntoInstalled(t.Context()) }()
+	time.Sleep(300 * time.Millisecond)
+	assert.Zero(t, f.restarts.calls.Load(), "never restarted under the running deploy")
+
+	close(gate)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the restart did not follow the job's end")
+	}
+	assert.Equal(t, int32(1), f.restarts.calls.Load())
+	_, err = f.srv.jobs.Start("deploy", func(context.Context, core.EventSink) (any, error) { return nil, nil })
+	assert.ErrorIs(t, err, errRegistryRestarting, "no job starts while the restart arrives")
+}
+
+// TestServe_NoticesTheReplacedBinaryOnItsOwnAndRestartsWhenIdle: Serve
+// looks at its binary often, so the restart follows the replacement
+// within its check interval, not the next day's release check.
+func TestServe_NoticesTheReplacedBinaryOnItsOwnAndRestartsWhenIdle(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	f := newSelfRestartFixture(t, ctx)
+	f.srv.installedCheckEvery = 20 * time.Millisecond
+	_, err := f.srv.Listen()
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() { done <- f.srv.Serve(ctx) }()
+
+	time.Sleep(100 * time.Millisecond)
+	assert.Zero(t, f.restarts.calls.Load(), "nothing replaced: nothing restarted")
+	f.replace()
+	require.Eventually(t, func() bool { return f.restarts.calls.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, int32(1), f.restarts.calls.Load(), "asked once for that binary")
+	cancel()
+	require.NoError(t, <-done)
+}
+
+// TestServe_DoesNotRestartItselfWhenAutoUpdateIsOff: with auto_update off
+// the replacement was the person's own, and the banner asks them.
+func TestServe_DoesNotRestartItselfWhenAutoUpdateIsOff(t *testing.T) {
+	f := newSelfRestartFixture(t, t.Context())
+	require.NoError(t, os.WriteFile(filepath.Join(f.srv.svc.ConfigDir(), "config.yaml"), []byte("auto_update: false\n"), 0o644))
+	f.replace()
+	f.srv.restartOntoInstalled(t.Context())
+	assert.Zero(t, f.restarts.calls.Load())
+	assert.Equal(t, "2.2.0", f.srv.releases.InstalledNewer(t.Context()), "the banner still says so")
+}

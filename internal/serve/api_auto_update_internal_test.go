@@ -56,6 +56,12 @@ func (f *fakeAutoUpdater) RunAuto(ctx context.Context, opts core.AutoRunOptions)
 	return outcome, err
 }
 
+func (f *fakeAutoUpdater) AutoUpdateEnabled() bool { return true }
+
+func (f *fakeAutoUpdater) RestartServeWhenIdle(context.Context, core.AutoRunOptions) (bool, error) {
+	return false, nil
+}
+
 func (f *fakeAutoUpdater) counts() (asked, runs int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -114,7 +120,7 @@ func serveUntil(t *testing.T, rc *core.ReleaseChecker, au AutoUpdater, notices i
 func TestServe_RunsADueAutomaticUpdateAfterTheRefresh(t *testing.T) {
 	rc := releaseChecker(t, "2.1.0", selfManagedProbe())
 	au := &fakeAutoUpdater{due: true, outcome: core.AutoUpdateOutcome{Result: core.SelfUpdateResult{
-		Updated: true, Previous: "2.0.1", Version: "2.1.0", ServeRestarted: true,
+		Updated: true, Previous: "2.0.1", Version: "2.1.0",
 	}}}
 	var notices bytes.Buffer
 	serveUntil(t, rc, au, &notices, func() bool { _, runs := au.counts(); return runs == 1 })

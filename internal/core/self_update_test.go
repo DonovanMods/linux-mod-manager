@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -203,7 +202,10 @@ func goodTarball(t *testing.T) []byte {
 	)
 }
 
-func TestSelfUpdate_ReplacesTheBinaryAtomicallyAndRestartsServe(t *testing.T) {
+// Apply replaces the binary and stops there (#586 review): it cannot see
+// lmm serve's jobs, so lmm-serve.service restarts itself
+// (RestartServeWhenIdle) rather than being restarted under one.
+func TestSelfUpdate_ReplacesTheBinaryAtomicallyAndLeavesServeAlone(t *testing.T) {
 	f := newSelfUpdateFixture(t)
 	f.restarts.restarted = true
 	srv := newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t)
@@ -222,8 +224,8 @@ func TestSelfUpdate_ReplacesTheBinaryAtomicallyAndRestartsServe(t *testing.T) {
 	assert.True(t, res.Updated)
 	assert.Equal(t, "2.1.0", res.Previous)
 	assert.Equal(t, "2.2.0", res.Version)
-	assert.True(t, res.ServeRestarted)
-	assert.Equal(t, 1, f.restarts.calls)
+	assert.False(t, res.ServeRestarted)
+	assert.Zero(t, f.restarts.calls, "lmm serve restarts itself once it is idle")
 
 	data, err := os.ReadFile(f.exe)
 	require.NoError(t, err)
@@ -238,20 +240,6 @@ func TestSelfUpdate_ReplacesTheBinaryAtomicallyAndRestartsServe(t *testing.T) {
 	assert.Len(t, entries, 1)
 	staged, _ := os.ReadDir(filepath.Join(f.opts.DataDir, "downloads"))
 	assert.Empty(t, staged)
-}
-
-func TestSelfUpdate_AServeRestartFailureIsReportedNotFatal(t *testing.T) {
-	f := newSelfUpdateFixture(t)
-	f.restarts.err = errors.New("systemctl --user try-restart: boom")
-	srv := newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t)
-	u := f.updater(srv)
-	plan, err := u.Plan(context.Background())
-	require.NoError(t, err)
-	res, err := u.Apply(context.Background(), plan)
-	require.NoError(t, err)
-	assert.True(t, res.Updated)
-	assert.False(t, res.ServeRestarted)
-	assert.Contains(t, res.ServeRestartError, "boom")
 }
 
 func TestSelfUpdate_UpToDateIsANoOp(t *testing.T) {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -23,6 +22,12 @@ import (
 // Plan and Apply's verified path, and leaves its outcome in
 // <DataDir>/auto-update.json: the update the frontends announce once, and
 // the failure that holds the same release off for a day.
+//
+// None of them restarts lmm-serve.service: only `lmm serve` can see its own
+// jobs, and a job holds the cross-process mutation lock for only part of
+// its life (an install's download runs outside it). The updater replaces
+// the binary and stops; `lmm serve` notices the newer binary under it and
+// restarts itself once no job runs (RestartServeWhenIdle).
 
 // autoUpdateFile is the state file, under the data dir.
 const autoUpdateFile = "auto-update.json"
@@ -44,8 +49,8 @@ const autoUpdateFailureBackoff = 24 * time.Hour
 // doubling with each failure in a row up to autoUpdateFailureBackoff.
 const autoUpdateCheckBackoff = time.Hour
 
-// autoUpdateRestartWait is how long an automatic update waits for a running
-// mutation before restarting lmm-serve.service, when the caller sets no
+// autoUpdateRestartWait is how long `lmm serve` waits for its running jobs
+// before restarting itself onto a newer binary, when the caller sets no
 // AutoRunOptions.RestartWait: long enough for a large deploy, and once it
 // passes the restart is left to the person (the web UI's banner asks).
 const autoUpdateRestartWait = 10 * time.Minute
@@ -96,6 +101,15 @@ type AutoUpdateFailure struct {
 	RetryAt time.Time `json:"retry_at"`
 }
 
+// retryAt is RetryAt, or a day after At for a failure an earlier build
+// recorded without one: never at once.
+func (f AutoUpdateFailure) retryAt() time.Time {
+	if f.RetryAt.IsZero() {
+		return f.At.Add(autoUpdateFailureBackoff)
+	}
+	return f.RetryAt
+}
+
 // AutoUpdateStatus is what the web UI's Setup > Updates shows of automatic
 // updates: GET /api/v1/updates/lmm's auto_update.
 type AutoUpdateStatus struct {
@@ -134,9 +148,15 @@ type AutoUpdateOutcome struct {
 // autoUpdateState is the state file's document.
 type autoUpdateState struct {
 	// AttemptedAt is the last automatic update started, finished or not.
-	AttemptedAt time.Time          `json:"attempted_at,omitzero"`
-	Failure     *AutoUpdateFailure `json:"failure,omitempty"`
-	Last        *AutoUpdateRecord  `json:"last,omitempty"`
+	AttemptedAt time.Time `json:"attempted_at,omitzero"`
+	// Failure is the last release whose install failed, which holds that
+	// release off for a day. A release check's failure never replaces it,
+	// nor does a release check that succeeds clear it.
+	Failure *AutoUpdateFailure `json:"failure,omitempty"`
+	// CheckFailure is the last release check that failed, which holds off
+	// every release until its back-off passes.
+	CheckFailure *AutoUpdateFailure `json:"check_failure,omitempty"`
+	Last         *AutoUpdateRecord  `json:"last,omitempty"`
 	// Updates counts the automatic updates made, which makes the first
 	// one First.
 	Updates int `json:"updates,omitempty"`
@@ -152,12 +172,13 @@ type AutoRunOptions struct {
 	// Quiesce is `lmm serve`'s: it holds off new jobs in this process and
 	// reports whether none is running, and resume lets them start again.
 	// RunAuto asks it before it installs anything, resuming at once, and
-	// before it restarts lmm-serve.service, resuming only when nothing was
-	// restarted. nil (the CLI, the timer) is a process with no jobs of its
-	// own; the cross-process mutation lock covers the rest.
+	// RestartServeWhenIdle before it restarts lmm-serve.service, resuming
+	// only when nothing was restarted. nil (the CLI, the timer) is a
+	// process with no jobs of its own; the cross-process mutation lock
+	// covers the rest of the install's guard.
 	Quiesce func() (resume func(), idle bool)
-	// RestartWait bounds how long the restart waits for running mutations;
-	// zero is autoUpdateRestartWait.
+	// RestartWait bounds how long RestartServeWhenIdle waits for Quiesce
+	// to answer idle; zero is autoUpdateRestartWait.
 	RestartWait time.Duration
 }
 
@@ -171,6 +192,13 @@ func loadAutoUpdateState(dataDir string) autoUpdateState {
 	}
 	if err := json.Unmarshal(data, &st); err != nil {
 		return autoUpdateState{}
+	}
+	// An earlier build kept a release check's failure in Failure.
+	if st.Failure != nil && st.Failure.Version == "" {
+		if st.CheckFailure == nil {
+			st.CheckFailure = st.Failure
+		}
+		st.Failure = nil
 	}
 	return st
 }
@@ -253,9 +281,9 @@ func (u *SelfUpdater) autoUpdateBlocked(st autoUpdateState, latest string) strin
 	if why := u.checkBackedOff(st); why != "" {
 		return why
 	}
-	if f := st.Failure; f != nil && f.Version == latest && u.now().Before(f.RetryAt) {
+	if f := st.Failure; f != nil && f.Version == latest && u.now().Before(f.retryAt()) {
 		return fmt.Sprintf("the automatic update to %s failed at %s (%s); lmm tries it again after %s",
-			latest, f.At.Local().Format("2006-01-02 15:04"), f.Error, f.RetryAt.Local().Format("2006-01-02 15:04"))
+			latest, f.At.Local().Format("2006-01-02 15:04"), f.Error, f.retryAt().Local().Format("2006-01-02 15:04"))
 	}
 	return ""
 }
@@ -263,16 +291,17 @@ func (u *SelfUpdater) autoUpdateBlocked(st autoUpdateState, latest string) strin
 // checkBackedOff is why no automatic update may ask GitHub yet: the last
 // release check failed and its back-off has not passed; "" when it may.
 func (u *SelfUpdater) checkBackedOff(st autoUpdateState) string {
-	if f := st.Failure; f != nil && f.Version == "" && u.now().Before(f.RetryAt) {
+	if f := st.CheckFailure; f != nil && u.now().Before(f.retryAt()) {
 		return fmt.Sprintf("the automatic update's release check failed at %s (%s); lmm tries again after %s",
-			f.At.Local().Format("2006-01-02 15:04"), f.Error, f.RetryAt.Local().Format("2006-01-02 15:04"))
+			f.At.Local().Format("2006-01-02 15:04"), f.Error, f.retryAt().Local().Format("2006-01-02 15:04"))
 	}
 	return ""
 }
 
 // recordCheckFailure records a release check (Plan) that failed: a day's
 // back-off for a failure that will not pass by itself, otherwise one that
-// starts at an hour and doubles with each failure in a row.
+// starts at an hour and doubles with each failure in a row. It is kept
+// apart from a release's failed install, which it never replaces.
 func (u *SelfUpdater) recordCheckFailure(err error) {
 	at := u.now()
 	var unknown *InstallMethodUnknownError
@@ -288,53 +317,51 @@ func (u *SelfUpdater) recordCheckFailure(err error) {
 			}
 			wait = min(wait, autoUpdateFailureBackoff)
 		}
-		s.Failure = &AutoUpdateFailure{At: at, Error: err.Error(), RetryAt: at.Add(wait)}
+		s.CheckFailure = &AutoUpdateFailure{At: at, Error: err.Error(), RetryAt: at.Add(wait)}
 	})
 }
 
 // mutationsIdle takes the cross-process mutation lock and asks
-// opts.Quiesce, and reports whether both say no lmm mutation is running;
-// release lets both go - the lock always, and Quiesce's hold unless
-// keepHold says this process is about to be restarted. A lock that cannot
-// even be opened answers not idle: nothing is installed or restarted on a
-// guess.
-func (u *SelfUpdater) mutationsIdle(ctx context.Context, opts AutoRunOptions) (release func(keepHold bool), idle bool) {
-	var lock *opLock
+// opts.Quiesce, and reports whether both say no lmm mutation is running,
+// letting both go before it returns: RunAuto's guard before it installs
+// anything. A lock that cannot even be opened answers not idle: nothing is
+// installed on a guess.
+func (u *SelfUpdater) mutationsIdle(ctx context.Context, opts AutoRunOptions) bool {
 	if u.opts.OpLockPath != "" {
-		l, err := acquireOpLock(ctx, u.opts.OpLockPath, 0)
+		lock, err := acquireOpLock(ctx, u.opts.OpLockPath, 0)
 		if err != nil {
-			return func(bool) {}, false
+			return false
 		}
-		lock = l
+		defer lock.release()
 	}
-	resume := func() {}
-	if opts.Quiesce != nil {
-		r, ok := opts.Quiesce()
-		if r != nil {
-			resume = r
-		}
-		if !ok {
-			resume()
-			lock.release()
-			return func(bool) {}, false
-		}
+	if opts.Quiesce == nil {
+		return true
 	}
-	return func(keepHold bool) {
-		lock.release()
-		if !keepHold {
-			resume()
-		}
-	}, true
+	resume, idle := opts.Quiesce()
+	if resume != nil {
+		resume()
+	}
+	return idle
 }
 
-// errMutationRunning is the step aside, and the restart left undone, while
-// an lmm mutation runs.
+// errMutationRunning is the step aside while an lmm mutation runs.
 var errMutationRunning = fmt.Errorf("%w; the automatic update waits for it to finish", ErrOperationInProgress)
 
-// restartServe restarts lmm-serve.service once no lmm mutation is running,
-// waiting up to opts.RestartWait for one to finish and holding new ones off
-// while it asks; past the wait it restarts nothing, and says so in res.
-func (u *SelfUpdater) restartServe(ctx context.Context, opts AutoRunOptions, res *SelfUpdateResult) {
+// RestartServeWhenIdle restarts lmm-serve.service, through the configured
+// Restarter, once opts.Quiesce says none of this server's jobs runs: `lmm
+// serve` restarting itself onto a newer binary an update installed under
+// it (#586). It waits up to opts.RestartWait for a running job, holding new
+// ones off only while it asks, and keeps that hold when the restart was
+// queued - this process is about to go down. It takes no mutation lock: a
+// CLI command's mutation is no business of this server's restart, and
+// nothing is held while systemctl runs. Without a Restarter (an lmm serve
+// started by hand) it restarts nothing; the web UI's banner asks instead.
+// It reports whether lmm-serve.service was restarted; past the wait it
+// restarts nothing and says so.
+func (u *SelfUpdater) RestartServeWhenIdle(ctx context.Context, opts AutoRunOptions) (bool, error) {
+	if u.opts.Restarter == nil {
+		return false, nil
+	}
 	wait := opts.RestartWait
 	if wait <= 0 {
 		wait = autoUpdateRestartWait
@@ -342,24 +369,29 @@ func (u *SelfUpdater) restartServe(ctx context.Context, opts AutoRunOptions, res
 	poll := min(autoUpdateRestartPoll, wait/4)
 	deadline := time.Now().Add(wait)
 	for {
-		release, idle := u.mutationsIdle(ctx, opts)
+		resume, idle := func() {}, true
+		if opts.Quiesce != nil {
+			r, ok := opts.Quiesce()
+			if r != nil {
+				resume = r
+			}
+			idle = ok
+		}
 		if idle {
 			restarted, err := u.opts.Restarter.RestartServeIfActive(ctx)
-			res.ServeRestarted = restarted && err == nil
-			if err != nil {
-				res.ServeRestartError = err.Error()
+			if !restarted || err != nil {
+				resume()
+				return false, err
 			}
-			release(res.ServeRestarted)
-			return
+			return true, nil
 		}
+		resume()
 		if !time.Now().Before(deadline) {
-			res.ServeRestartError = fmt.Sprintf("an lmm operation was still running after %s, so lmm-serve.service was not restarted under it", wait)
-			return
+			return false, fmt.Errorf("an lmm operation was still running after %s, so lmm-serve.service was not restarted under it", wait)
 		}
 		select {
 		case <-ctx.Done():
-			res.ServeRestartError = ctx.Err().Error()
-			return
+			return false, ctx.Err()
 		case <-time.After(poll):
 		}
 	}
@@ -381,11 +413,11 @@ func (u *SelfUpdater) RecordAutoUpdateAttempt() error {
 // lock, and opts.Quiesce in `lmm serve`), the binary is a package's or a
 // development build, lmm is up to date, or the release is one it already
 // installed or that is backed off after a failure. Otherwise it installs
-// the release through the same verified path as `lmm self-update --yes`,
-// records the update the frontends announce once, and only then restarts
-// lmm-serve.service - which may end the very process running this - once
-// no mutation is running (restartServe). A failure, of the install or of
-// the release check before it, is recorded with a back-off; a run its
+// the release through the same verified path as `lmm self-update --yes`
+// and records the update the frontends announce once. It never restarts
+// lmm-serve.service: `lmm serve` restarts itself onto the new binary
+// (RestartServeWhenIdle). A failure, of the install or of the release
+// check before it, is recorded with a back-off of its own; a run its
 // context cancelled records none.
 func (u *SelfUpdater) RunAuto(ctx context.Context, opts AutoRunOptions) (AutoUpdateOutcome, error) {
 	out := AutoUpdateOutcome{Result: SelfUpdateResult{Previous: u.opts.Version, Version: u.opts.Version}}
@@ -406,9 +438,7 @@ func (u *SelfUpdater) RunAuto(ctx context.Context, opts AutoRunOptions) (AutoUpd
 		out.Skipped = why
 		return out, nil
 	}
-	release, idle := u.mutationsIdle(ctx, opts)
-	release(false)
-	if !idle {
+	if !u.mutationsIdle(ctx, opts) {
 		out.Skipped = errMutationRunning.Error()
 		return out, nil
 	}
@@ -428,9 +458,7 @@ func (u *SelfUpdater) RunAuto(ctx context.Context, opts AutoRunOptions) (AutoUpd
 	}
 	_ = updateAutoUpdateState(u.opts.DataDir, func(s *autoUpdateState) {
 		s.CheckFailures = 0
-		if s.Failure != nil && s.Failure.Version == "" {
-			s.Failure = nil
-		}
+		s.CheckFailure = nil
 	})
 	out.Result.Executable = plan.Executable
 	if plan.UpToDate {
@@ -458,11 +486,8 @@ func (u *SelfUpdater) RunAuto(ctx context.Context, opts AutoRunOptions) (AutoUpd
 		s.Last = &AutoUpdateRecord{From: res.Previous, To: res.Version, At: at, First: s.Updates == 0}
 		s.Updates++
 		s.Noticed = false
-		s.Failure = nil
+		s.Failure, s.CheckFailure = nil, nil
 	})
-	if u.opts.Restarter != nil {
-		u.restartServe(ctx, opts, &out.Result)
-	}
 	return out, nil
 }
 
@@ -492,6 +517,9 @@ func (c ServiceConfig) AutoUpdateStatus(install InstallMethod) AutoUpdateStatus 
 		Last:    st.Last,
 		Failure: st.Failure,
 		Noticed: st.Noticed,
+	}
+	if f := st.CheckFailure; f != nil && (out.Failure == nil || f.At.After(out.Failure.At)) {
+		out.Failure = f
 	}
 	switch install.Method {
 	case InstallSelfManaged:
@@ -530,20 +558,19 @@ func (r *ReleaseChecker) MarkAutoUpdateNoticed() error {
 // SetAutoUpdate writes config.yaml's auto_update - the web UI's "Update
 // automatically" switch. It is a config.yaml write, not a mutation of
 // anything a deploy touches, so it takes no mutation slot and never waits
-// behind a running job; configWriteMu keeps it from losing a concurrent
-// config.yaml write in this process.
+// behind a running job; the config dir's own lock (lockConfig) keeps it
+// from losing a concurrent config.yaml write, from this process or another.
 func (s *Service) SetAutoUpdate(ctx context.Context, enabled bool) error {
 	return saveAutoUpdate(s.configDir, enabled)
 }
 
-// configWriteMu serializes this process's read-modify-writes of
-// config.yaml, which are not all behind the mutation slot.
-var configWriteMu sync.Mutex
-
 // saveAutoUpdate writes auto_update into configDir's config.yaml.
 func saveAutoUpdate(configDir string, enabled bool) error {
-	configWriteMu.Lock()
-	defer configWriteMu.Unlock()
+	unlock, err := lockConfig(configDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	cfg, err := config.Load(configDir)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)

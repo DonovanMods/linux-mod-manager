@@ -109,7 +109,11 @@ func (f *cliSelfUpdate) installed(t *testing.T) string {
 	return string(data)
 }
 
-func TestSelfUpdateCmd_YesInstallsAndRestartsServe(t *testing.T) {
+// A manual self-update replaces the binary and leaves lmm-serve.service
+// alone (#586 review): this process cannot see lmm serve's jobs, so a
+// restart from here could cut one short. lmm serve restarts itself once
+// idle, or its banner asks.
+func TestSelfUpdateCmd_YesInstallsAndLeavesServeToRestartItself(t *testing.T) {
 	f := newCLISelfUpdate(t)
 	f.systemd.enabled, f.systemd.active = true, true
 	selfUpdate.yes = true
@@ -118,7 +122,51 @@ func TestSelfUpdateCmd_YesInstallsAndRestartsServe(t *testing.T) {
 	assert.Equal(t, "new lmm 2.2.0", f.installed(t))
 	assert.Contains(t, out, "2.2.0")
 	assert.Contains(t, out, f.exe)
-	assert.Contains(t, out, "lmm-serve.service")
+	assert.Contains(t, out, "lmm serve restarts itself")
+	for _, call := range f.systemd.calls {
+		assert.NotContains(t, call, "restart", "lmm-serve.service is not restarted from here")
+	}
+}
+
+// The timer's run and the CLI's detached one never restart
+// lmm-serve.service either, run under systemd or not.
+func TestSelfUpdateCmd_AutoNeverRestartsServe(t *testing.T) {
+	f := newCLISelfUpdate(t)
+	f.systemd.enabled, f.systemd.active = true, true
+	selfUpdate.auto = true
+	t.Setenv("INVOCATION_ID", "lmm-update.service")
+
+	captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
+	assert.Equal(t, "new lmm 2.2.0", f.installed(t))
+	for _, call := range f.systemd.calls {
+		assert.NotContains(t, call, "restart")
+	}
+}
+
+// lmm serve restarts itself through systemd only when systemd runs it:
+// one started by hand has no unit to restart, and its banner asks.
+func TestServeAutoUpdater_RestartsServeOnlyUnderItsUnit(t *testing.T) {
+	f := newCLISelfUpdate(t)
+	f.systemd.enabled, f.systemd.active = true, true
+	old := releaseCheckArmed
+	releaseCheckArmed = true
+	t.Cleanup(func() { releaseCheckArmed = old })
+	idle := core.AutoRunOptions{Quiesce: func() (func(), bool) { return func() {}, true }}
+
+	t.Setenv("INVOCATION_ID", "")
+	u := serveAutoUpdater()
+	require.NotNil(t, u)
+	restarted, err := u.RestartServeWhenIdle(context.Background(), idle)
+	require.NoError(t, err)
+	assert.False(t, restarted)
+	assert.NotContains(t, strings.Join(f.systemd.calls, "\n"), "restart", "started by hand: nothing to restart")
+
+	t.Setenv("INVOCATION_ID", "lmm-serve.service")
+	u = serveAutoUpdater()
+	require.NotNil(t, u)
+	restarted, err = u.RestartServeWhenIdle(context.Background(), idle)
+	require.NoError(t, err)
+	assert.True(t, restarted)
 	assert.Contains(t, strings.Join(f.systemd.calls, "\n"), "systemctl --user try-restart lmm-serve.service")
 }
 

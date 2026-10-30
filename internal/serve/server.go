@@ -69,10 +69,12 @@ type Options struct {
 
 	// AutoUpdater installs a newer lmm release by itself (#586): when the
 	// background refresh finds one, auto_update is on and the install is
-	// self-managed, it runs in this process - and restarts
-	// lmm-serve.service when this server is that service. nil (every test
-	// that does not set one) never updates anything. Only consulted
-	// alongside a ReleaseChecker.
+	// self-managed, it runs in this process. With auto_update on, this
+	// server also restarts itself onto a newer binary installed under it -
+	// by that update, lmm-update.timer's or the CLI's - once no job runs,
+	// when the AutoUpdater can restart lmm-serve.service (this server is
+	// that service). nil (every test that does not set one) never updates
+	// or restarts anything. Only consulted alongside a ReleaseChecker.
 	AutoUpdater AutoUpdater
 
 	// Notices receives the lines a person running the server should read
@@ -159,6 +161,12 @@ type Server struct {
 	autoUpdater AutoUpdater
 	// notices is Options.Notices, never nil.
 	notices io.Writer
+	// installedCheckEvery is how often Serve looks for a newer binary
+	// installed under it: installedCheckEvery, shorter in a test.
+	installedCheckEvery time.Duration
+	// restartAsked is the installed version restartOntoInstalled last
+	// asked to restart onto; only the refresh goroutine touches it.
+	restartAsked string
 }
 
 // New builds a Server over svc. log receives request-level diagnostics at
@@ -206,6 +214,8 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		releases:       opts.ReleaseChecker,
 		autoUpdater:    opts.AutoUpdater,
 		notices:        opts.Notices,
+
+		installedCheckEvery: installedCheckEvery,
 	}
 	if s.notices == nil {
 		s.notices = io.Discard

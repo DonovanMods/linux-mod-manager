@@ -2,10 +2,10 @@ package core_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -91,92 +91,136 @@ func TestRunAuto_StepsAsideWhileThisServerRunsAJob(t *testing.T) {
 	assert.Nil(t, autoStatus(f).Failure)
 }
 
-func TestRunAuto_RecordsTheUpdateBeforeTheRestart(t *testing.T) {
-	f, _, _ := guardFixture(t)
-	f.restarts.restarted = true
-	cfg := core.ServiceConfig{ConfigDir: f.opts.ConfigDir, DataDir: f.opts.DataDir}
-	var recorded bool
-	f.restarts.onRestart = func() { _, recorded = cfg.PendingAutoUpdateNotice() }
-	u := f.updater(newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t))
-
-	out, err := u.RunAuto(context.Background(), core.AutoRunOptions{})
-	require.NoError(t, err)
-	require.True(t, out.Result.ServeRestarted)
-	assert.True(t, recorded, "a restarted lmm serve may exit before RunAuto returns: the record is already written")
+// TestRunAuto_NeverRestartsServe (#586 review): lmm-update.timer's run and
+// the CLI's detached one see only the cross-process mutation lock, which a
+// serve job holds for part of its life - an install's download runs outside
+// it - so no RunAuto restarts lmm-serve.service. It replaces the binary and
+// stops; lmm serve sees the newer binary and restarts itself
+// (RestartServeWhenIdle).
+func TestRunAuto_NeverRestartsServe(t *testing.T) {
+	for name, opts := range map[string]core.AutoRunOptions{
+		"the timer, or the CLI's detached run": {},
+		"lmm serve's own run":                  {Quiesce: func() (func(), bool) { return func() {}, true }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, _, _ := guardFixture(t)
+			f.restarts.restarted = true
+			out, err := f.updater(newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t)).RunAuto(context.Background(), opts)
+			require.NoError(t, err)
+			assert.True(t, out.Result.Updated)
+			assert.Zero(t, f.restarts.calls, "the binary is replaced; lmm-serve.service is not restarted")
+			assert.False(t, out.Result.ServeRestarted)
+			_, ok := core.ServiceConfig{ConfigDir: f.opts.ConfigDir, DataDir: f.opts.DataDir}.PendingAutoUpdateNotice()
+			assert.True(t, ok, "recorded")
+		})
+	}
 }
 
-func TestRunAuto_TheRestartWaitsForAMutationThatStartedDuringTheInstall(t *testing.T) {
-	t.Run("it finishes in time", func(t *testing.T) {
-		f, _, lock := guardFixture(t)
-		f.restarts.restarted = true
-		rel := newSignedRelease(t, "2.2.0", f.priv, goodTarball(t))
-		var lockedAtRestart bool
-		f.restarts.onRestart = func() { lockedAtRestart = !lockFree(lock) }
-		rel.onAsset = func(name string) {
-			if strings.HasSuffix(name, ".tar.gz") {
-				release := holdMutationLock(t, lock)
-				time.AfterFunc(100*time.Millisecond, release)
-			}
-		}
-		out, err := f.updater(rel.serve(t)).RunAuto(context.Background(), core.AutoRunOptions{RestartWait: 5 * time.Second})
-		require.NoError(t, err)
-		assert.True(t, out.Result.Updated)
-		assert.True(t, out.Result.ServeRestarted, "restarted once the mutation let go")
-		assert.True(t, lockedAtRestart, "the update holds the lock itself while it asks for the restart")
-	})
-	t.Run("it does not", func(t *testing.T) {
-		f, _, lock := guardFixture(t)
-		f.restarts.restarted = true
-		rel := newSignedRelease(t, "2.2.0", f.priv, goodTarball(t))
-		rel.onAsset = func(name string) {
-			if strings.HasSuffix(name, ".tar.gz") {
-				holdMutationLock(t, lock)
-			}
-		}
-		out, err := f.updater(rel.serve(t)).RunAuto(context.Background(), core.AutoRunOptions{RestartWait: 150 * time.Millisecond})
-		require.NoError(t, err, "the update itself succeeded")
-		assert.True(t, out.Result.Updated)
-		assert.Zero(t, f.restarts.calls, "never restarted under a running mutation")
-		assert.False(t, out.Result.ServeRestarted)
-		assert.Contains(t, out.Result.ServeRestartError, "operation")
-		_, ok := core.ServiceConfig{ConfigDir: f.opts.ConfigDir, DataDir: f.opts.DataDir}.PendingAutoUpdateNotice()
-		assert.True(t, ok, "recorded all the same")
-	})
+// restartUpdater is an updater whose only use is RestartServeWhenIdle: it
+// asks nothing of GitHub.
+func restartUpdater(f *selfUpdateFixture) *core.SelfUpdater {
+	opts := f.opts
+	opts.APIBase, opts.DownloadBase = "http://127.0.0.1:0", "http://127.0.0.1:0"
+	return core.NewSelfUpdater(opts)
 }
 
-func TestRunAuto_TheRestartWaitsForThisServersJobs(t *testing.T) {
-	run := func(t *testing.T, idleAtRestart, restarted bool) (*selfUpdateFixture, core.AutoUpdateOutcome, int) {
+// TestRestartServeWhenIdle_WaitsForThisServersJobs: lmm serve restarting
+// itself onto a binary replaced under it asks systemd only once none of its
+// jobs runs, keeping new ones off while it asks, and gives up after the
+// wait.
+func TestRestartServeWhenIdle_WaitsForThisServersJobs(t *testing.T) {
+	run := func(t *testing.T, idleAfter int, restarted bool) (*selfUpdateFixture, bool, error, int) {
 		f, _, _ := guardFixture(t)
 		f.restarts.restarted = restarted
 		calls, resumed := 0, 0
-		out, err := f.updater(newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t)).RunAuto(context.Background(), core.AutoRunOptions{
+		ok, err := restartUpdater(f).RestartServeWhenIdle(context.Background(), core.AutoRunOptions{
 			RestartWait: 150 * time.Millisecond,
 			Quiesce: func() (func(), bool) {
 				calls++
-				return func() { resumed++ }, calls == 1 || idleAtRestart
+				idle := idleAfter >= 0 && calls > idleAfter
+				// Counts the resumes of a hold that was taken: idle.
+				return func() {
+					if idle {
+						resumed++
+					}
+				}, idle
 			},
 		})
-		require.NoError(t, err)
-		return f, out, resumed
+		return f, ok, err, resumed
 	}
-	t.Run("a job is running", func(t *testing.T) {
-		f, out, _ := run(t, false, true)
-		assert.True(t, out.Result.Updated)
-		assert.Zero(t, f.restarts.calls)
-		assert.NotEmpty(t, out.Result.ServeRestartError)
+	t.Run("a job runs past the wait", func(t *testing.T) {
+		f, ok, err, _ := run(t, -1, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "operation")
+		assert.False(t, ok)
+		assert.Zero(t, f.restarts.calls, "never restarted under a running job")
 	})
-	t.Run("idle, and this server is the service", func(t *testing.T) {
-		f, out, resumed := run(t, true, true)
+	t.Run("the job ends in time", func(t *testing.T) {
+		f, ok, err, resumed := run(t, 2, true)
+		require.NoError(t, err)
+		assert.True(t, ok)
 		assert.Equal(t, 1, f.restarts.calls)
-		assert.True(t, out.Result.ServeRestarted)
-		assert.Equal(t, 1, resumed, "the pre-install check resumes; the restart's hold is kept, the server is going down")
+		assert.Zero(t, resumed, "the restart's hold is kept: the server is going down")
 	})
 	t.Run("idle, and this server is not the service", func(t *testing.T) {
-		f, out, resumed := run(t, true, false)
+		f, ok, err, resumed := run(t, 0, false)
+		require.NoError(t, err)
+		assert.False(t, ok)
 		assert.Equal(t, 1, f.restarts.calls)
-		assert.False(t, out.Result.ServeRestarted)
-		assert.Equal(t, 2, resumed, "nothing restarted: jobs may start again")
+		assert.Equal(t, 1, resumed, "nothing restarted: jobs may start again")
 	})
+	t.Run("systemctl fails", func(t *testing.T) {
+		f, _, _ := guardFixture(t)
+		f.restarts.err = errors.New("systemctl --user try-restart: boom")
+		resumed := 0
+		ok, err := restartUpdater(f).RestartServeWhenIdle(context.Background(), core.AutoRunOptions{
+			Quiesce: func() (func(), bool) { return func() { resumed++ }, true },
+		})
+		require.ErrorContains(t, err, "boom")
+		assert.False(t, ok)
+		assert.Equal(t, 1, resumed)
+	})
+}
+
+// TestRestartServeWhenIdle_NeverHoldsTheMutationLock (#586 review): another
+// lmm's mutation is not this server's to wait for - restarting lmm serve
+// does not touch it - and no restart holds the mutation lock while it asks
+// systemd, which would leave a waiting stop to wait behind it.
+func TestRestartServeWhenIdle_NeverHoldsTheMutationLock(t *testing.T) {
+	f, _, lock := guardFixture(t)
+	f.restarts.restarted = true
+	var freeAtRestart bool
+	f.restarts.onRestart = func() { freeAtRestart = lockFree(lock) }
+	ok, err := restartUpdater(f).RestartServeWhenIdle(context.Background(), core.AutoRunOptions{
+		RestartWait: 150 * time.Millisecond,
+		Quiesce:     func() (func(), bool) { return func() {}, true },
+	})
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.True(t, freeAtRestart, "the mutation lock is not taken around systemctl")
+
+	release := holdMutationLock(t, lock)
+	defer release()
+	f.restarts.calls = 0
+	ok, err = restartUpdater(f).RestartServeWhenIdle(context.Background(), core.AutoRunOptions{
+		RestartWait: 150 * time.Millisecond,
+		Quiesce:     func() (func(), bool) { return func() {}, true },
+	})
+	require.NoError(t, err, "a CLI command's mutation does not hold off this server's restart")
+	assert.True(t, ok)
+	assert.Equal(t, 1, f.restarts.calls)
+}
+
+// TestRestartServeWhenIdle_WithoutARestarterRestartsNothing: an lmm serve
+// started by hand has none; its banner asks for the restart.
+func TestRestartServeWhenIdle_WithoutARestarterRestartsNothing(t *testing.T) {
+	f, _, _ := guardFixture(t)
+	f.opts.Restarter = nil
+	ok, err := restartUpdater(f).RestartServeWhenIdle(context.Background(), core.AutoRunOptions{
+		Quiesce: func() (func(), bool) { t.Fatal("nothing to quiesce for"); return nil, false },
+	})
+	require.NoError(t, err)
+	assert.False(t, ok)
 }
 
 // lockFree reports whether path's lock can be taken right now.
@@ -280,4 +324,71 @@ func TestAutoUpdateNotice_IsToldOnceWhicheverFrontendTellsIt(t *testing.T) {
 	assert.True(t, autoStatus(f).Noticed)
 	_, ok := core.ServiceConfig{ConfigDir: f.opts.ConfigDir, DataDir: f.opts.DataDir}.PendingAutoUpdateNotice()
 	assert.False(t, ok, "so the CLI does not tell it again")
+}
+
+// TestAutoUpdateDue_AFailureWithoutRetryAtBacksOffADayFromIt (#586
+// review): an earlier build recorded a failed update with no retry_at; it
+// is held off a day from its At, not retried at once.
+func TestAutoUpdateDue_AFailureWithoutRetryAtBacksOffADayFromIt(t *testing.T) {
+	f, c, _ := guardFixture(t)
+	t0 := c.now
+	require.NoError(t, os.WriteFile(filepath.Join(f.opts.DataDir, "auto-update.json"),
+		[]byte(`{"failure":{"version":"2.2.0","at":"`+t0.Format(time.RFC3339)+`","error":"checksum mismatch"}}`), 0o644))
+	rel := newSignedRelease(t, "2.2.0", f.priv, goodTarball(t))
+	u := f.updater(rel.serve(t))
+
+	c.now = t0.Add(2 * time.Hour)
+	assert.False(t, u.AutoUpdateDue("2.2.0"))
+	out, err := u.RunAuto(context.Background(), core.AutoRunOptions{})
+	require.NoError(t, err)
+	assert.Contains(t, out.Skipped, "failed")
+	assert.Equal(t, "old lmm", readFile(t, f.exe))
+
+	c.now = t0.Add(25 * time.Hour)
+	assert.True(t, u.AutoUpdateDue("2.2.0"))
+}
+
+// TestRunAuto_ACheckFailureNeverClearsAReleaseFailure (#586 review): a
+// release whose update failed stays held off its day, through a release
+// check that fails after it and one that then succeeds.
+func TestRunAuto_ACheckFailureNeverClearsAReleaseFailure(t *testing.T) {
+	f, c, _ := guardFixture(t)
+	t0 := c.now
+	rel := newSignedRelease(t, "2.2.0", f.priv, goodTarball(t))
+	u := f.updater(rel.serve(t))
+	// The install fails: lmm's directory is not writable.
+	require.NoError(t, os.Chmod(filepath.Dir(f.exe), 0o500))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(f.exe), 0o700) })
+	_, err := u.RunAuto(context.Background(), core.AutoRunOptions{})
+	require.Error(t, err)
+	require.NotNil(t, autoStatus(f).Failure)
+	require.Equal(t, "2.2.0", autoStatus(f).Failure.Version)
+	require.NoError(t, os.Chmod(filepath.Dir(f.exe), 0o700))
+
+	c.now = t0.Add(2 * time.Hour)
+	rel.latestStatus = http.StatusBadGateway
+	_, err = u.RunAuto(context.Background(), core.AutoRunOptions{})
+	require.Error(t, err, "the release check fails")
+
+	c.now = t0.Add(4 * time.Hour)
+	rel.latestStatus = 0
+	out, err := u.RunAuto(context.Background(), core.AutoRunOptions{})
+	require.NoError(t, err)
+	assert.Contains(t, out.Skipped, "failed", "the release's own failure still holds it off")
+	assert.Equal(t, "old lmm", readFile(t, f.exe))
+	assert.False(t, u.AutoUpdateDue("2.2.0"))
+
+	c.now = t0.Add(25 * time.Hour)
+	require.True(t, u.AutoUpdateDue("2.2.0"))
+	out, err = u.RunAuto(context.Background(), core.AutoRunOptions{})
+	require.NoError(t, err)
+	assert.True(t, out.Result.Updated, "after its day it is tried again")
+	assert.Nil(t, autoStatus(f).Failure)
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return string(data)
 }

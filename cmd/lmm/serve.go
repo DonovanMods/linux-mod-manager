@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -111,17 +112,26 @@ func serveReleaseChecker() *core.ReleaseChecker {
 }
 
 // serveAutoUpdater is the updater `lmm serve` installs a newer release
-// through when auto_update is on (#586), restarting lmm-serve.service
-// after it; nil, as for the checker, in a binary Execute did not arm.
+// through when auto_update is on (#586). Under systemd it also restarts
+// lmm-serve.service - this very server, once none of its jobs runs - onto
+// a newer binary installed under it, by its own update or another
+// process's; an lmm serve started by hand has no unit to restart, and its
+// banner asks instead. nil, as for the checker, in a binary Execute did
+// not arm.
 func serveAutoUpdater() *core.SelfUpdater {
 	if !releaseCheckArmed {
 		return nil
 	}
-	u, err := newSelfUpdater()
+	opts, err := selfUpdateOptions()
 	if err != nil {
 		return nil
 	}
-	return u
+	if os.Getenv("INVOCATION_ID") != "" {
+		if units, err := newUserUnits(); err == nil {
+			opts.Restarter = units
+		}
+	}
+	return core.NewSelfUpdater(opts)
 }
 
 // warnIfNonLoopback prints the loud, undismissable warning

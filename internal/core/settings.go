@@ -2,7 +2,11 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"syscall"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
@@ -34,8 +38,11 @@ func loadDefaultGame(configDir string) (string, error) {
 // always surfaced ("loading config: %w" / "saving config: %w") so callers
 // don't need to (and can't collapse the two into one label by re-wrapping).
 func saveDefaultGame(configDir, id string) error {
-	configWriteMu.Lock()
-	defer configWriteMu.Unlock()
+	unlock, err := lockConfig(configDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	cfg, err := config.Load(configDir)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -89,4 +96,37 @@ func (c ServiceConfig) SetDefaultGame(ctx context.Context, id string) error {
 // Service.
 func (c ServiceConfig) ClearDefaultGame(ctx context.Context) error {
 	return c.SetDefaultGame(ctx, "")
+}
+
+// configLockFile is the lock, in the config dir, every read-modify-write of
+// config.yaml holds (#586 review). It is its own lock, not the mutation
+// lock: a config write must never wait behind a deploy.
+const configLockFile = ".config.yaml.lock"
+
+// lockConfig takes configDir's config.yaml lock, waiting for whichever lmm
+// process - a CLI command, `lmm serve` - holds it; a write holds it for
+// only its read and its write. flock locks an open file, not a process, so
+// two writers in one process exclude each other too.
+func lockConfig(configDir string) (unlock func(), err error) {
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating config dir: %w", err)
+	}
+	f, err := os.OpenFile(filepath.Join(configDir, configLockFile), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("opening the config lock: %w", err)
+	}
+	for {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+		if !errors.Is(err, syscall.EINTR) {
+			break
+		}
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("locking config.yaml: %w", err)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
