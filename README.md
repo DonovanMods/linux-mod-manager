@@ -947,10 +947,12 @@ An optional **`launch:`** block says how `lmm launch` starts the game
 finds in its Steam library (or its `steamworkshop` source). `command` is an
 argv list - never a shell string - run in preference to Steam; its
 arguments may use `{game_id}`, `{install_path}`, `{mod_path}`, `{profile}`
-and `{steam_app_id}`, and its program may start with `~/`. `via: steam` or
+and `{steam_app_id}`; its program is a name looked up on `PATH` or a path
+starting with `/`, `~/`, `{install_path}` or `{mod_path}`, and it runs in
+the game's install folder. `via: steam` or
 `via: command` picks one method; `steam_app_id` (digits only) overrides the
 id lmm would find. An unknown placeholder, an empty program, `via: command`
-with no command or a non-numeric app id fails the load naming the game. The
+with no command, a relative program path or a non-numeric app id fails the load naming the game. The
 web UI never writes `command`. See the
 [user guide](docs/guide/launch.md).
 

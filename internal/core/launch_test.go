@@ -24,10 +24,12 @@ type fakeLauncher struct {
 	noUser  bool              // ManagerEnv fails: no user manager
 	steam   *core.SteamApp    // SteamApp's answer for any install path
 	runErr  error
+	scans   int // SteamApp calls
 
 	runs     [][]string // name + args of each Run
 	detached [][]string // argv of each Detach
 	detEnv   [][]string
+	detDirs  []string
 }
 
 func newFakeLauncher() *fakeLauncher {
@@ -62,12 +64,14 @@ func (f *fakeLauncher) launcher() *core.Launcher {
 			f.runs = append(f.runs, append([]string{name}, args...))
 			return nil, f.runErr
 		},
-		Detach: func(argv, env []string) error {
+		Detach: func(argv, env []string, dir string) error {
 			f.detached = append(f.detached, argv)
+			f.detDirs = append(f.detDirs, dir)
 			f.detEnv = append(f.detEnv, env)
 			return nil
 		},
 		SteamApp: func(string) (core.SteamApp, bool) {
+			f.scans++
 			if f.steam == nil {
 				return core.SteamApp{}, false
 			}
@@ -142,7 +146,7 @@ func TestLaunch_ForwardsTheSessionVariablesItHas(t *testing.T) {
 	f.env = map[string]string{
 		"DISPLAY": ":1", "WAYLAND_DISPLAY": "wayland-1", "XDG_RUNTIME_DIR": "/run/user/1000",
 		"DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus", "XDG_CURRENT_DESKTOP": "Hyprland",
-		"HOME": "/home/u", "NEXUSMODS_API_KEY": "secret",
+		"XAUTHORITY": "/run/user/1000/xauth_x", "HOME": "/home/u", "NEXUSMODS_API_KEY": "secret",
 	}
 
 	_, err := svc.Launch(context.Background(), mustGame(t, svc, "valheim"), core.LaunchOptions{})
@@ -157,6 +161,7 @@ func TestLaunch_ForwardsTheSessionVariablesItHas(t *testing.T) {
 	assert.Equal(t, []string{
 		"--setenv=DISPLAY=:1", "--setenv=WAYLAND_DISPLAY=wayland-1", "--setenv=XDG_RUNTIME_DIR=/run/user/1000",
 		"--setenv=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", "--setenv=XDG_CURRENT_DESKTOP=Hyprland",
+		"--setenv=XAUTHORITY=/run/user/1000/xauth_x",
 	}, setenv)
 }
 
@@ -497,4 +502,47 @@ func TestGameStatus_Launch(t *testing.T) {
 	st, err = svc.GameStatus(context.Background(), mustGame(t, svc, "g"))
 	require.NoError(t, err)
 	assert.Equal(t, core.LaunchInfo{Method: "steam"}, st.Launch)
+}
+
+// systemd expands $VAR in a service's command line; lmm passes the argv as
+// written, so every "$" reaches systemd-run doubled. Argv keeps the
+// user's own spelling.
+func TestLaunch_DollarSignsSurviveSystemd(t *testing.T) {
+	g := launchGame("g")
+	g.Launch = &domain.GameLaunch{Command: []string{"/bin/sh", "-c", `exec "$0" "$@"`, "/opt/$game"}}
+	svc, f := launchFixture(t, g)
+	res, err := svc.Launch(context.Background(), mustGame(t, svc, "g"), core.LaunchOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/bin/sh", "-c", `exec "$0" "$@"`, "/opt/$game"}, res.Argv)
+	require.Len(t, f.runs, 1)
+	assert.Equal(t, []string{"--", "/bin/sh", "-c", `exec "$$0" "$$@"`, "/opt/$$game"}, f.runs[0][len(f.runs[0])-5:])
+}
+
+// A command starts in the game's install folder - what a Wine or EXE-style
+// command expects - under systemd and detached alike.
+func TestLaunch_CommandWorkingDirectory(t *testing.T) {
+	g := launchGame("g")
+	g.Launch = &domain.GameLaunch{Command: []string{"/bin/run"}}
+	svc, f := launchFixture(t, g)
+	game := mustGame(t, svc, "g")
+	_, err := svc.Launch(context.Background(), game, core.LaunchOptions{})
+	require.NoError(t, err)
+	require.Len(t, f.runs, 1)
+	assert.Contains(t, f.runs[0], "--working-directory="+game.InstallPath)
+
+	delete(f.path, "systemd-run")
+	_, err = svc.Launch(context.Background(), game, core.LaunchOptions{AllowDetached: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{game.InstallPath}, f.detDirs)
+}
+
+// The Steam library scan runs only when an answer needs it: not for a
+// command that uses no app id - GameStatus resolves on every read.
+func TestLaunch_SteamScanOnlyWhenNeeded(t *testing.T) {
+	g := launchGame("g")
+	g.Launch = &domain.GameLaunch{Command: []string{"/bin/run", "{profile}"}}
+	svc, f := launchFixture(t, g)
+	_, _, err := svc.ResolveLaunch(context.Background(), mustGame(t, svc, "g"), "default")
+	require.NoError(t, err)
+	assert.Zero(t, f.scans)
 }

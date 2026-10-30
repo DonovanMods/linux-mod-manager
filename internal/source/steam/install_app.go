@@ -18,11 +18,10 @@ type InstalledApp struct {
 // FlatpakSteamRoots returns the Flatpak Steam's installation roots that
 // exist, in search order: today's layout, then the older data/ one.
 func FlatpakSteamRoots() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
+	base := flatpakSteamBase()
+	if base == "" {
 		return nil
 	}
-	base := filepath.Join(home, ".var", "app", "com.valvesoftware.Steam")
 	var out []string
 	for _, p := range []string{filepath.Join(base, ".local", "share", "Steam"), filepath.Join(base, "data", "Steam")} {
 		if info, err := os.Stat(p); err == nil && info.IsDir() {
@@ -30,6 +29,16 @@ func FlatpakSteamRoots() []string {
 		}
 	}
 	return out
+}
+
+// flatpakSteamBase is the Flatpak Steam's per-app data directory, or ""
+// with no home directory.
+func flatpakSteamBase() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".var", "app", "com.valvesoftware.Steam")
 }
 
 // AppIDForInstallPath finds the Steam app whose appmanifest_*.acf names
@@ -51,8 +60,11 @@ func AppIDForInstallPath(installPath string) (InstalledApp, bool) {
 		flatpak bool
 	}
 	var roots []steamRoot
+	// A native-looking root (~/.steam/steam) can be a symlink into the
+	// Flatpak's data; it is the Flatpak Steam all the same.
+	flatpakBase := realDir(flatpakSteamBase()) + string(filepath.Separator)
 	for _, r := range FindSteamRoots() {
-		roots = append(roots, steamRoot{r, false})
+		roots = append(roots, steamRoot{r, strings.HasPrefix(realDir(r)+string(filepath.Separator), flatpakBase)})
 	}
 	for _, r := range FlatpakSteamRoots() {
 		roots = append(roots, steamRoot{r, true})

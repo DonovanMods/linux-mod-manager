@@ -38,6 +38,7 @@ func TestNewGameLaunch_Refusals(t *testing.T) {
 		{"unknown placeholder", "", "", []string{"run", "{game}"}, "launch.command[1]"},
 		{"unknown placeholder in argv0", "", "", []string{"{nope}/run"}, "launch.command[0]"},
 		{"empty argv0", "", "", []string{"  ", "x"}, "launch.command[0]"},
+		{"relative argv0 path", "", "", []string{"bin/run.sh"}, "launch.command[0]"},
 		{"via command without a command", "command", "", nil, "launch.command"},
 		{"non-numeric app id", "", "48a", nil, "launch.steam_app_id"},
 		{"negative-looking app id", "", "-1", nil, "launch.steam_app_id"},
@@ -50,6 +51,15 @@ func TestNewGameLaunch_Refusals(t *testing.T) {
 			assert.ErrorIs(t, err, domain.ErrInvalidLaunch)
 			assert.Contains(t, err.Error(), tc.field)
 		})
+	}
+}
+
+// A program is absolute, ~/-relative or a bare name looked up on PATH; a
+// relative path would depend on whichever directory lmm runs in.
+func TestNewGameLaunch_ProgramForms(t *testing.T) {
+	for _, prog := range []string{"/opt/run", "~/run.sh", "lutris", "{install_path}/run.sh"} {
+		_, err := domain.NewGameLaunch("", "", []string{prog})
+		assert.NoError(t, err, prog)
 	}
 }
 

@@ -2444,6 +2444,11 @@ func copyGame(game *domain.Game) *domain.Game {
 	if game.CurseForge != nil {
 		copy.CurseForge = &domain.GameCurseForge{GameVersionTypes: append([]int(nil), game.CurseForge.GameVersionTypes...)}
 	}
+	if game.Launch != nil {
+		launch := *game.Launch
+		launch.Command = append([]string(nil), game.Launch.Command...)
+		copy.Launch = &launch
+	}
 	return &copy
 }
 

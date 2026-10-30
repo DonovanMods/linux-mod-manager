@@ -18,11 +18,15 @@ import (
 // cliLauncher is core's Launcher seam with nothing real behind it (#501):
 // no test here starts a program. runs records each systemd-run.
 type cliLauncher struct {
-	runs [][]string
+	runs    [][]string
+	noSteam bool // neither steam nor xdg-open: the game cannot launch
 }
 
 func (f *cliLauncher) launcher() *core.Launcher {
 	paths := map[string]string{"systemd-run": "/usr/bin/systemd-run", "steam": "/usr/bin/steam"}
+	if f.noSteam {
+		delete(paths, "steam")
+	}
 	env := map[string]string{"DISPLAY": ":0"}
 	return &core.Launcher{
 		LookPath: func(file string) (string, error) {
@@ -37,7 +41,7 @@ func (f *cliLauncher) launcher() *core.Launcher {
 			f.runs = append(f.runs, append([]string{name}, args...))
 			return nil, nil
 		},
-		Detach:     func([]string, []string) error { return errors.New("detach not expected") },
+		Detach:     func([]string, []string, string) error { return errors.New("detach not expected") },
 		SteamApp:   func(string) (core.SteamApp, bool) { return core.SteamApp{AppID: "892970"}, true },
 		UnitSuffix: func() string { return "abcd1234" },
 	}
@@ -129,6 +133,36 @@ func TestDoLaunch_DeployFirst(t *testing.T) {
 	assert.Len(t, f.runs, 1)
 }
 
+// --deploy checks the launch first: a game that cannot launch is not
+// deployed for nothing.
+func TestDoLaunch_DeployIsSkippedWhenTheLaunchCannotHappen(t *testing.T) {
+	svc, game, f := setupLaunchTest(t)
+	f.noSteam = true
+	svc.SetLauncher(f.launcher())
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+	launchDeploy = true
+
+	err := doLaunch(context.Background(), svc, game)
+	var unconfigured *core.LaunchUnconfiguredError
+	require.ErrorAs(t, err, &unconfigured)
+	_, statErr := os.Lstat(filepath.Join(game.ModPath, "a.esp"))
+	assert.True(t, os.IsNotExist(statErr), "nothing was deployed")
+	assert.Empty(t, f.runs)
+}
+
+// A dry run with --deploy previews the launch the deploy makes possible,
+// so --strict has no drift to refuse.
+func TestDoLaunch_DeployDryRunStrict(t *testing.T) {
+	svc, game, f := setupLaunchTest(t)
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+	launchDeploy, launchStrict, launchDryRun = true, true, true
+
+	out := captureStdout(t, func() error { return doLaunch(context.Background(), svc, game) })
+	assert.Contains(t, out, "Would deploy the profile first.")
+	assert.Contains(t, out, "Would launch Valheim")
+	assert.Empty(t, f.runs)
+}
+
 // Only the active profile launches.
 func TestDoLaunch_InactiveProfile(t *testing.T) {
 	svc, game, f := setupLaunchTest(t)
@@ -166,7 +200,7 @@ func TestReportError_JSON_LaunchDriftError(t *testing.T) {
 	out := captureStdout(t, func() error { reportError(err); return nil })
 
 	assert.Equal(t, "{\n"+
-		"  \"error\": \"2 mod change(s) in profile \\\"default\\\" of valheim are not deployed; deploy first (`lmm deploy --game valheim`, or `lmm launch --deploy`) or launch anyway\",\n"+
+		"  \"error\": \"2 mod change(s) in profile \\\"default\\\" of valheim are not deployed; deploy first (`lmm launch --deploy`, or `lmm profile apply --game valheim`, which also takes down mods the profile disabled) or launch anyway\",\n"+
 		"  \"details\": {\n"+
 		"    \"game_id\": \"valheim\",\n"+
 		"    \"profile\": \"default\",\n"+

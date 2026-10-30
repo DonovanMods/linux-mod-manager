@@ -106,3 +106,17 @@ func TestAppIDForInstallPath_FlatpakLibrary(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, InstalledApp{AppID: "1149460"}, app)
 }
+
+// ~/.steam/steam pointing into the Flatpak's data is still the Flatpak
+// Steam: the root is judged by where it really is, not by its name.
+func TestAppIDForInstallPath_NativeRootLinkedIntoTheFlatpak(t *testing.T) {
+	home := installAppHome(t)
+	flatpak := filepath.Join(home, ".var", "app", "com.valvesoftware.Steam", ".local", "share", "Steam")
+	steamLibrary(t, flatpak, "appmanifest_892970.acf")
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".steam"), 0o755))
+	require.NoError(t, os.Symlink(flatpak, filepath.Join(home, ".steam", "steam")))
+
+	app, ok := AppIDForInstallPath(filepath.Join(home, ".steam", "steam", "steamapps", "common", "Valheim"))
+	require.True(t, ok)
+	assert.Equal(t, InstalledApp{AppID: "892970", Flatpak: true}, app)
+}

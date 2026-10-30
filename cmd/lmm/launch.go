@@ -85,7 +85,18 @@ func doLaunch(ctx context.Context, service *core.Service, game *domain.Game) err
 	}
 
 	if launchDeploy {
+		// Everything but the drift is checked before the deploy changes
+		// the game folder: a game that cannot launch is not deployed for
+		// nothing.
+		check := opts
+		check.Force, check.DryRun = true, true
+		if _, err := service.Launch(ctx, game, check); err != nil {
+			return err
+		}
 		if launchDryRun {
+			// The deploy is what answers the drift this dry run would
+			// otherwise report.
+			opts.Force = true
 			if !jsonOutput {
 				fmt.Println("Would deploy the profile first.")
 			}

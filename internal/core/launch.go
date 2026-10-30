@@ -117,7 +117,7 @@ type LaunchDriftError struct {
 
 // Error names the drift and both ways on.
 func (e *LaunchDriftError) Error() string {
-	return fmt.Sprintf("%s; deploy first (`lmm deploy --game %s`, or `lmm launch --deploy`) or launch anyway", e.drift(), ShellQuoteArg(e.GameID))
+	return fmt.Sprintf("%s; deploy first (`lmm launch --deploy`, or `lmm profile apply --game %s`, which also takes down mods the profile disabled) or launch anyway", e.drift(), ShellQuoteArg(e.GameID))
 }
 
 // drift is the sentence saying what is out of step.
@@ -173,8 +173,9 @@ type Launcher struct {
 	// the unit has started.
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
 	// Detach starts argv in its own session with stdio on /dev/null, with
-	// env added to lmm's environment, and does not wait for it.
-	Detach func(argv, env []string) error
+	// env added to lmm's environment, in dir when it is not empty, and
+	// does not wait for it.
+	Detach func(argv, env []string, dir string) error
 	// SteamApp finds the Steam app installed at an install path; nil finds
 	// none.
 	SteamApp func(installPath string) (SteamApp, bool)
@@ -201,7 +202,7 @@ func NewLauncher(steamApp func(installPath string) (SteamApp, bool)) *Launcher {
 }
 
 // detach is Launcher.Detach's real implementation.
-func detach(argv, env []string) error {
+func detach(argv, env []string, dir string) error {
 	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
 		return err
@@ -209,6 +210,7 @@ func detach(argv, env []string) error {
 	defer devNull.Close() //nolint:errcheck // the child has its own copy
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), env...)
+	cmd.Dir = dir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = devNull, devNull, devNull
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -244,17 +246,30 @@ type LaunchMethod struct {
 	// Requests is true when the argv only asks another program to start
 	// the game (LaunchResult.Requested).
 	Requests bool
-	Resolve  func(req LaunchRequest) (argv []string, ok bool, err error)
+	Resolve  func(req *LaunchRequest) (argv []string, ok bool, err error)
 }
 
 // LaunchRequest is what a LaunchMethod resolves from.
 type LaunchRequest struct {
 	Game    *domain.Game
 	Profile string
-	// Steam is the game's Steam app; AppID is empty when none is known.
-	Steam SteamApp
 	// LookPath finds a program on lmm's PATH.
 	LookPath func(file string) (string, error)
+
+	launcher *Launcher
+	steam    *SteamApp
+}
+
+// Steam is the game's Steam app; AppID is empty when none is known. It is
+// found on first use - the library scan reads every app manifest, and a
+// command that uses no app id never needs it (GameStatus resolves on every
+// read).
+func (r *LaunchRequest) Steam() SteamApp {
+	if r.steam == nil {
+		app := r.launcher.steamApp(r.Game)
+		r.steam = &app
+	}
+	return *r.steam
 }
 
 // builtinLaunchMethods are the methods lmm tries, in order, when games.yaml
@@ -281,20 +296,21 @@ func (s *Service) allLaunchMethods() []LaunchMethod {
 
 // resolveCommandLaunch is the `command` method: games.yaml's
 // launch.command, with its placeholders expanded and its program found.
-func resolveCommandLaunch(req LaunchRequest) ([]string, bool, error) {
+func resolveCommandLaunch(req *LaunchRequest) ([]string, bool, error) {
 	if req.Game.Launch == nil || len(req.Game.Launch.Command) == 0 {
 		return nil, false, nil
 	}
 	cmd := req.Game.Launch.Command
-	if req.Steam.AppID == "" && slices.Contains(domain.LaunchPlaceholdersUsed(cmd), "steam_app_id") {
-		return nil, true, errors.New("launch.command uses {steam_app_id}, but lmm knows no Steam app id for it; set launch.steam_app_id")
-	}
 	values := map[string]string{
 		"game_id":      req.Game.ID,
 		"install_path": req.Game.InstallPath,
 		"mod_path":     req.Game.ModPath,
 		"profile":      req.Profile,
-		"steam_app_id": req.Steam.AppID,
+	}
+	if slices.Contains(domain.LaunchPlaceholdersUsed(cmd), "steam_app_id") {
+		if values["steam_app_id"] = req.Steam().AppID; values["steam_app_id"] == "" {
+			return nil, true, errors.New("launch.command uses {steam_app_id}, but lmm knows no Steam app id for it; set launch.steam_app_id")
+		}
 	}
 	argv := make([]string, len(cmd))
 	for i, arg := range cmd {
@@ -316,12 +332,13 @@ func resolveCommandLaunch(req LaunchRequest) ([]string, bool, error) {
 // resolveSteamLaunch is the `steam` method: steam://rungameid/<id>, handed
 // to the Flatpak Steam for a game in its library, else to the steam
 // binary, else to xdg-open.
-func resolveSteamLaunch(req LaunchRequest) ([]string, bool, error) {
-	if req.Steam.AppID == "" {
+func resolveSteamLaunch(req *LaunchRequest) ([]string, bool, error) {
+	app := req.Steam()
+	if app.AppID == "" {
 		return nil, false, nil
 	}
-	url := "steam://rungameid/" + req.Steam.AppID
-	if req.Steam.Flatpak {
+	url := "steam://rungameid/" + app.AppID
+	if app.Flatpak {
 		if path, err := req.LookPath("flatpak"); err == nil {
 			return []string{path, "run", "com.valvesoftware.Steam", url}, true, nil
 		}
@@ -332,7 +349,7 @@ func resolveSteamLaunch(req LaunchRequest) ([]string, bool, error) {
 			return []string{path, url}, true, nil
 		}
 	}
-	return nil, true, errors.New("its Steam app id is " + req.Steam.AppID + ", but neither steam nor xdg-open is on PATH")
+	return nil, true, errors.New("its Steam app id is " + app.AppID + ", but neither steam nor xdg-open is on PATH")
 }
 
 // steamApp is game's Steam app: its id from launch.steam_app_id, else the
@@ -361,7 +378,7 @@ type resolvedLaunch struct {
 // resolveLaunch picks game's launch method: the one launch.via names, or
 // the first in order that applies.
 func (s *Service) resolveLaunch(l *Launcher, game *domain.Game, profile string) resolvedLaunch {
-	req := LaunchRequest{Game: game, Profile: profile, Steam: l.steamApp(game), LookPath: l.LookPath}
+	req := &LaunchRequest{Game: game, Profile: profile, LookPath: l.LookPath, launcher: l}
 	methods := s.allLaunchMethods()
 	refuse := func(reason string) resolvedLaunch {
 		return resolvedLaunch{err: &LaunchUnconfiguredError{GameID: game.ID, Reason: reason}}
@@ -416,7 +433,9 @@ func (s *Service) ResolveLaunch(ctx context.Context, game *domain.Game, profile 
 // launchForwardedEnv is every variable lmm hands the game's unit from its
 // own environment, when it has it: what a desktop program needs to find
 // the session.
-var launchForwardedEnv = []string{"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_CURRENT_DESKTOP"}
+// XAUTHORITY matters on an X11 session whose display manager keeps the
+// cookie somewhere other than ~/.Xauthority: DISPLAY alone cannot connect.
+var launchForwardedEnv = []string{"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_CURRENT_DESKTOP", "XAUTHORITY"}
 
 // launchDisplayEnv are the variables of which at least one must reach the
 // game.
@@ -479,8 +498,12 @@ func (s *Service) Launch(ctx context.Context, game *domain.Game, opts LaunchOpti
 		result.Warnings = append(result.Warnings, "launching anyway: "+drift.drift())
 	}
 
+	// A command starts in the game's folder, as a Wine or EXE-style
+	// command expects; Steam needs no directory.
 	var gameEnv []string
+	var dir string
 	if r.method.Name == domain.LaunchViaCommand {
+		dir = game.InstallPath
 		gameEnv = []string{"LMM_GAME_ID=" + game.ID, "LMM_GAME_PATH=" + game.InstallPath, "LMM_MOD_PATH=" + game.ModPath, "LMM_PROFILE=" + profile}
 	}
 
@@ -497,7 +520,7 @@ func (s *Service) Launch(ctx context.Context, game *domain.Game, opts LaunchOpti
 		if opts.DryRun {
 			return result, nil
 		}
-		if err := l.Detach(r.argv, gameEnv); err != nil {
+		if err := l.Detach(r.argv, gameEnv, dir); err != nil {
 			return nil, fmt.Errorf("starting %s: %w", r.argv[0], err)
 		}
 		return result, nil
@@ -513,7 +536,15 @@ func (s *Service) Launch(ctx context.Context, game *domain.Game, opts LaunchOpti
 	for _, kv := range gameEnv {
 		args = append(args, "--setenv="+kv)
 	}
-	args = append(append(args, "--"), r.argv...)
+	if dir != "" {
+		args = append(args, "--working-directory="+dir)
+	}
+	// The service manager expands $VAR in a unit's command line; "$$" is
+	// a literal "$", so the game gets its argv as games.yaml wrote it.
+	args = append(args, "--")
+	for _, a := range r.argv {
+		args = append(args, strings.ReplaceAll(a, "$", "$$"))
+	}
 	result.Command = append([]string{"systemd-run"}, args...)
 	if opts.DryRun {
 		return result, nil

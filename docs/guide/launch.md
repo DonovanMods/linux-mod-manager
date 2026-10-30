@@ -46,7 +46,9 @@ games:
 
 `command` is a list: the program first, then each argument on its own.
 It is never run through a shell, so quotes and `$VARIABLES` are passed as
-they are. A program path may start with `~/`.
+they are. The program is either a name lmm finds on your `PATH`, or a full
+path, which may start with `~/` or `{install_path}`. The command starts in
+the game's install folder.
 
 Arguments may contain these placeholders, which lmm fills in:
 

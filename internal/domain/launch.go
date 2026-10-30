@@ -75,6 +75,9 @@ func NewGameLaunch(via, steamAppID string, command []string) (*GameLaunch, error
 	if len(command) > 0 && strings.TrimSpace(command[0]) == "" {
 		return nil, fmt.Errorf("%w: launch.command[0] is empty: it is the program to run", ErrInvalidLaunch)
 	}
+	if len(command) > 0 && isRelativeProgramPath(command[0]) {
+		return nil, fmt.Errorf("%w: launch.command[0] %q is a relative path: give an absolute one, one starting with ~/ or {install_path}, or a bare program name to look up on PATH", ErrInvalidLaunch, command[0])
+	}
 	for i, arg := range command {
 		for _, m := range placeholderPattern.FindAllStringSubmatch(arg, -1) {
 			if !isLaunchPlaceholder(m[1]) {
@@ -84,6 +87,22 @@ func NewGameLaunch(via, steamAppID string, command []string) (*GameLaunch, error
 		}
 	}
 	return &GameLaunch{Via: via, SteamAppID: steamAppID, Command: append([]string(nil), command...)}, nil
+}
+
+// isRelativeProgramPath reports whether prog is a path relative to
+// whichever directory lmm runs in: it names a directory, but starts with
+// none of /, ~/, {install_path} or {mod_path}. A bare name is not a path;
+// it is looked up on PATH.
+func isRelativeProgramPath(prog string) bool {
+	if !strings.Contains(prog, "/") {
+		return false
+	}
+	for _, root := range []string{"/", "~/", "{install_path}", "{mod_path}"} {
+		if strings.HasPrefix(prog, root) {
+			return false
+		}
+	}
+	return true
 }
 
 func isLaunchPlaceholder(name string) bool {
