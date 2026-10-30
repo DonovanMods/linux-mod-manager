@@ -38,7 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   looked frozen, and for that whole time the page kept showing the
   previous profile's mods under the new profile's name. Now each part of
   the page appears as soon as its own read answers. The previous context's
-  documents are dropped the moment you switch. Each slow read still running
+  documents, and the lines naming its reads still out, are dropped the
+  moment you switch. Each slow read still running
   names itself in place, with how far it has got once the server says:
   "Checking 42 mods for updates (17/42)…", "Verifying 14 mods (3/14)…". A
   read that answers within 180 ms shows nothing, and a loading line, once

@@ -356,12 +356,30 @@ let homeContext;
  * the page marked settled - for as long as the slowest read took. Called
  * before hydrate's first await, so not even the status round trip shows
  * them.
+ *
+ * Their loading entries go too: the left context's reads are still out,
+ * and their lines ("Checking 42 mods for updates (17/42)…") would
+ * otherwise stay until this context's own loads replaced them - never, if
+ * it does not reach them (its status read failing, a redirect) - and keep
+ * taking that read's progress frames, which activity.js accepts only for a
+ * token still held here. The left loads' own settleLoad then finds a
+ * newer owner, or none, and leaves the entry alone.
  */
 function dropStaleHomeSlices(context) {
   const gameProfile = `${context.game}:${context.profile}`;
   if (homeContext === gameProfile) return;
   homeContext = gameProfile;
+  const { loading, readProgress } = store.get();
+  const keptLoading = { ...loading };
+  const keptProgress = { ...readProgress };
+  for (const key of TRACKED_LOADS) {
+    const token = keptLoading[key]?.token;
+    if (token) delete keptProgress[token];
+    delete keptLoading[key];
+  }
   store.set({
+    loading: keptLoading,
+    readProgress: keptProgress,
     mods: null,
     updates: null,
     health: null,

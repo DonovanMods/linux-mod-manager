@@ -11,8 +11,11 @@ package serve_test
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -339,6 +342,87 @@ func assertShownWithinTheWindow(t *testing.T, seen []loadingAppearance, mark flo
 	delay := at - mark
 	assert.GreaterOrEqual(t, delay, 100.0, "the loading row waits out the show delay rather than flashing")
 	assert.Less(t, delay, 1500.0, "the loading row appears promptly")
+}
+
+// TestE2E_Loading_ASwitchDropsTheLeftContextsLoadingLine: switching away
+// while the update check is out takes that check's line with it at once,
+// and the check's later progress frames - it is still running server-side -
+// never reach the context switched to. The target's status read is held
+// so the window between the switch and the new context's own loads (which
+// used to overwrite the stale line, and forever never did when that status
+// read failed) stays open for as long as the scenario needs it.
+func TestE2E_Loading_ASwitchDropsTheLeftContextsLoadingLine(t *testing.T) {
+	f := newE2ELoadingFixture(t)
+	statusGate := make(chan struct{})
+	var openOnce sync.Once
+	openStatus := func() { openOnce.Do(func() { close(statusGate) }) }
+	t.Cleanup(openStatus)
+	f.BaseURL = startE2EDelayingProxy(t, f.BaseURL, 0, func(r *http.Request) bool {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/status" && r.URL.Query().Get("profile") == "other" {
+			select {
+			case <-statusGate:
+			case <-r.Context().Done():
+			}
+		}
+		return false
+	})
+	hold := f.Src.arm(t)
+
+	const oldUpdatesDone = `performance.getEntriesByType("resource").some((e) =>
+		e.name.includes("/api/v1/updates") && e.name.includes("profile=default") && e.name.includes("progress="))`
+	// Every text the update check's line paints from the switch on - not
+	// deduplicated against what it said before, because the stale line's
+	// failure mode is coming BACK, unchanged, once the remounted view's show
+	// delay has passed.
+	const recordUpdatesLineJS = `(() => {
+		window.__updatesLine = [];
+		let last = null;
+		const sample = () => {
+			const text = document.querySelector('[data-pending-read="updates"]')?.textContent.trim() ?? null;
+			if (text === last) return;
+			last = text;
+			if (text !== null) window.__updatesLine.push(text);
+		};
+		new MutationObserver(sample).observe(document.body,
+			{subtree: true, childList: true, characterData: true, attributes: true});
+	})()`
+	var painted, names []string
+	var lineWhileHeld string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`tr.mod-row`, chromedp.ByQuery),
+		chromedp.ActionFunc(func(context.Context) error { hold.releaseFirst(); return nil }),
+		pendingTextIncludes("updates", "(1/3)"),
+		chromedp.Click(`[data-picker="profile"]`, chromedp.ByQuery),
+		chromedp.Click(`li[data-profile="other"] .picker__item`, chromedp.ByQuery),
+		pollUntil(`location.pathname.endsWith("/other")`),
+		chromedp.Evaluate(recordUpdatesLineJS, nil),
+		// The new context's status read is held, so nothing of it has
+		// loaded: anything the line paints now is the left context's.
+		// Long enough to outlast the show delay the remounted view would
+		// wait before painting it again.
+		chromedp.Sleep(600*time.Millisecond),
+		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q)?.textContent ?? ""`, pendingReadSel("updates")), &lineWhileHeld),
+		// Now let the left context's check run on: its remaining frames
+		// and its answer arrive while the new context is still waiting.
+		chromedp.ActionFunc(func(context.Context) error { hold.releaseRest(); return nil }),
+		pollUntil(oldUpdatesDone),
+		// Its frames precede its response on the server but travel on the
+		// activity stream, so give that stream a moment to deliver them.
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.ActionFunc(func(context.Context) error { openStatus(); return nil }),
+		chromedp.WaitVisible(hydrated, chromedp.ByQuery),
+		chromedp.Evaluate(`[...document.querySelectorAll("tr.mod-row")].map((el) => el.textContent.trim())`, &names),
+		chromedp.Evaluate(`window.__updatesLine`, &painted),
+	)
+
+	assert.Empty(t, lineWhileHeld, "the left context's update-check line goes with the switch")
+	assert.Contains(t, fmt.Sprint(names), "Delta Mod")
+	for _, text := range painted {
+		assert.False(t, strings.Contains(text, "/3)") || strings.Contains(text, "3 mods"),
+			"the left context's check must not paint into the new one (painted: %q)", painted)
+	}
+	assert.Empty(t, f.BrowserErrors())
 }
 
 // TestE2E_Loading_AFastSwitchFlashesNothing is case (c): when every read
