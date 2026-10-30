@@ -132,6 +132,11 @@ type Service struct {
 	// Guarded by gamesMu, like games itself.
 	gamesStat gamesFileState
 	opSem     chan struct{}
+	// opHeld is true while a mutation holds BOTH halves of the slot (#588
+	// review) - the in-process semaphore and the cross-process lock - which
+	// is what a health check asks. The semaphore alone is also held for the
+	// instant a no-wait acquire spends being refused by the lock.
+	opHeld atomic.Bool
 	// launcherPtr is how this Service starts games (#501), nil until the
 	// composition root calls SetLauncher. Atomic: it is set once at
 	// startup and read by concurrent queries (GameStatus).

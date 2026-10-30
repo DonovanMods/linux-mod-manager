@@ -119,6 +119,15 @@ func (s *Service) acquireOpWithin(ctx context.Context, wait time.Duration) (rele
 		}
 	}
 
+	var lock *opLock
+	if s.opLockPath != "" {
+		var err error
+		if lock, err = acquireOpLock(ctx, s.opLockPath, wait); err != nil {
+			<-s.opSem // never hold the in-process slot for a mutation that is not happening
+			return nil, err
+		}
+	}
+
 	// #336: every mutation invalidates the verify memo. Done HERE, at the
 	// gate, rather than in each flow: a per-flow guess about what a given
 	// mutation could have changed is a guess a flow added later gets wrong,
@@ -129,20 +138,20 @@ func (s *Service) acquireOpWithin(ctx context.Context, wait time.Duration) (rele
 	// longer matching any installation, for a check that lands while this
 	// mutation runs to show as "the last check" instead of walking a
 	// half-written tree.
+	//
+	// #588 review: and only once BOTH halves are held. A no-wait acquire
+	// the lock refuses (the automatic update pass, the reconcile, the
+	// backfill - refused even by a health check's own probe) ran nothing,
+	// so it must not count as a mutation a concurrent check overlapped.
+	// opHeld is set first: a check that reads opGen before this bump then
+	// finds the slot held, and one that reads it after carries the bump.
+	s.opHeld.Store(true)
 	s.invalidateVerifyMemo()
-
-	var lock *opLock
-	if s.opLockPath != "" {
-		var err error
-		if lock, err = acquireOpLock(ctx, s.opLockPath, wait); err != nil {
-			<-s.opSem // never hold the in-process slot for a mutation that is not happening
-			return nil, err
-		}
-	}
 
 	var once sync.Once
 	return func() {
 		once.Do(func() {
+			s.opHeld.Store(false)
 			lock.release() // nil-safe: no lock path configured
 			<-s.opSem
 		})

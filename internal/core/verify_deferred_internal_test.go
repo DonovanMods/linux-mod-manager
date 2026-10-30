@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -74,4 +76,59 @@ func TestVerify_AnotherProcessMutatingDuringTheWalkDefersIt(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, next.Cached, "the overlapped walk was not memoised")
 	assert.Empty(t, next.Deferred)
+}
+
+// TestVerify_OnlyFailedTryBeginOpsDuringTheWalkAreNotAMutation (#588
+// review): the no-wait acquires - the automatic update pass, the external
+// revision reconcile, the startup backfill - run beside a page load's health
+// read and are refused whenever anything holds the lock, the check's own
+// probe included. A refused one ran nothing, so a walk it overlapped is an
+// answer, memoised like any other - not thrown away as deferred.
+func TestVerify_OnlyFailedTryBeginOpsDuringTheWalkAreNotAMutation(t *testing.T) {
+	_, svc, game := lockedVerifyPair(t)
+
+	// The other process holds the lock on a descriptor of its own for the
+	// instant of each refusal: no stamp, nothing run.
+	holder, err := os.OpenFile(svc.opLockPath, os.O_RDWR|os.O_CREATE, 0o600)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = holder.Close() })
+
+	var once sync.Once
+	result, err := svc.verifyGated(context.Background(), game, "default", VerifyOptions{Tier: VerifyLocal, observe: true}, func(Event) {
+		once.Do(func() {
+			require.NoError(t, syscall.Flock(int(holder.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+			for range 3 {
+				_, err := svc.tryBeginOp(context.Background())
+				require.ErrorIs(t, err, ErrOperationInProgress)
+			}
+			require.NoError(t, syscall.Flock(int(holder.Fd()), syscall.LOCK_UN))
+		})
+	})
+	require.NoError(t, err)
+	assert.Empty(t, result.Deferred, "refused acquires ran nothing")
+
+	next, err := svc.verifyGated(context.Background(), game, "default", VerifyOptions{Tier: VerifyLocal}, nil)
+	require.NoError(t, err)
+	assert.True(t, next.Cached, "the walk was memoised")
+}
+
+// TestVerify_ASucceededTryBeginOpDuringTheWalkDefersIt is the other half:
+// a no-wait acquire that got the slot is a mutation like any other.
+func TestVerify_ASucceededTryBeginOpDuringTheWalkDefersIt(t *testing.T) {
+	_, svc, game := lockedVerifyPair(t)
+
+	var once sync.Once
+	result, err := svc.verifyGated(context.Background(), game, "default", VerifyOptions{Tier: VerifyLocal, observe: true}, func(Event) {
+		once.Do(func() {
+			release, err := svc.tryBeginOp(context.Background())
+			require.NoError(t, err)
+			release()
+		})
+	})
+	require.NoError(t, err)
+	assert.Equal(t, VerifyDeferredJobRunning, result.Deferred)
+
+	next, err := svc.verifyGated(context.Background(), game, "default", VerifyOptions{Tier: VerifyLocal}, nil)
+	require.NoError(t, err)
+	assert.False(t, next.Cached, "the overlapped walk was not memoised")
 }

@@ -785,9 +785,9 @@ func (s *Service) verifyMemoized(ctx context.Context, game *domain.Game, profile
 // no mutation touched.
 func (s *Service) mutationMark() (mark mutationMark, busy bool) {
 	mark.gen = s.verifyMemoGen()
-	// A Service built as a struct literal (some internal tests) has no
-	// slot, so nothing can be running in it.
-	if s.opSem != nil && len(s.opSem) > 0 {
+	// opHeld, not the semaphore: a no-wait acquire the lock refuses holds
+	// the semaphore for an instant without running anything (#588 review).
+	if s.opHeld.Load() {
 		return mark, true
 	}
 	if s.opLockPath != "" {
