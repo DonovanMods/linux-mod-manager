@@ -439,6 +439,10 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 // fetch the right ones instead. A failed copy is a warning too: the re-link
 // itself still stands.
 func (s *Service) carryRelinkCache(ctx context.Context, game *domain.Game, oldSourceID, oldModID, oldVersion string, mod *domain.InstalledMod, warn func(string, ...any)) {
+	// No version names no entry: ModPath would be the mod's whole tree.
+	if oldVersion == "" {
+		return
+	}
 	gameCache := s.GetGameCache(game)
 	if !gameCache.Exists(game.ID, oldSourceID, oldModID, oldVersion) || gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
 		return
