@@ -35,6 +35,29 @@ lmm update <mod-id>
 `lmm update` on its own lists the mods that have updates. Give it a mod's id
 to update that mod. `lmm list` shows each mod's id.
 
+### A mod that left its site
+
+Sometimes a mod disappears from its site, or its author publishes it again
+under a new id. lmm can no longer check it for updates, so the Updates card
+names it as "no longer in its source's catalog", and the Health card says
+the same. lmm then looks on the same site for a mod with the same name and
+the same author. If it finds exactly one, both cards offer a **Re-link
+to** button naming the new id. That button opens the usual re-link preview with the new id
+already filled in, and nothing changes until you press **Re-link**. If it
+finds several, it lists them all and leaves the choice to you: open the
+mod's page and use **Re-link…**. A re-link keeps the files lmm already
+downloaded, so nothing has to be downloaded again.
+
+In the terminal, `lmm update` and `lmm verify` print the matching command,
+for example:
+
+```text
+moved?   looks like 8m1z04vNo2CCdKcD2C0H (same name and author): lmm mod edit dLs3nvmWj5uOPnXxezGe -s icarus --to-source-id 8m1z04vNo2CCdKcD2C0H
+removed: lmm uninstall dLs3nvmWj5uOPnXxezGe -s icarus
+```
+
+If the mod was removed for good, uninstall it.
+
 ## Updating lmm itself
 
 Once a day, lmm asks GitHub whether a newer version of lmm is out. The first

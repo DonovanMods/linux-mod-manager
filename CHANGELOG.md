@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A mod that left its source's catalog gets its likely new ID suggested
+  (#590).** When a mod was republished under a new ID, the update check
+  and Health now look in the same source for a mod with the same name and
+  the same author, compared ignoring case, spacing and punctuation. They
+  search once for each missing mod, and a source with a local index
+  answers from it. A candidate at the installed version or newer wins over
+  an older one. One match is offered as a suggestion: `lmm update` and
+  `lmm verify` print the ready-to-run
+  `lmm mod edit … --to-source-id <new-id>`, and the web UI's Updates card
+  and Health row offer **Re-link to &lt;new-id&gt;**. The button opens
+  the existing re-link preview (#326) with the new ID filled in. Several
+  matches are all listed, and none is picked. Nothing re-links by itself. The update check's `catalog_missing`
+  entries and the new Health finding carry the candidates as `successors`
+  (`mod_id`, `name`, `author`, `version`).
+
 - **Battle.net detection finds Diablo II: Resurrected, Warcraft III:
   Reforged and StarCraft II (#546).** Warcraft III (`w3`, game id
   `warcraft3`) and StarCraft II (`s2`, `starcraft2`) keep custom maps in
@@ -206,6 +221,24 @@ self-update --auto` and exits as it would have; a script or a pipe never
 
 ### Fixed
 
+- **Health says a mod has left its source's catalog instead of "could not
+  check version" (#590).** A mod whose source answers "not found" was a
+  Health row reading "could not check version: source "icarus": listing
+  files for …: not in the catalog (HTTP 404): mod not found". It now
+  reads "no longer in Icarus's catalog (removed, or republished under a new
+  ID)", the update check's wording from #539, with the same suggested new
+  ID. Health checks the same typed not-found condition as the update
+  check, not the error text. The finding's status is the new
+  `catalog_missing` (it was `skipped`); it still counts as a warning, and
+  it carries `source_id`.
+- **A re-link keeps the mod's cached files (#590).**
+  `lmm mod edit --to-source-id` (and the web UI's Re-link) moved the mod to its new ID
+  but left its cache entry under the old one. `lmm verify` then reported
+  every file MISSING, and `verify --fix` downloaded them all again. The
+  entry is now copied to the new ID before the mod moves. The old entry
+  stays, since another profile may still use the old ID. A re-link that
+  also changes the recorded version copies nothing, because the old files
+  are not that version's; it says to run `lmm verify --fix` instead.
 - **The Health card no longer reports lmm's own files as "not deployed"
   while a job is writing them (#588).** A health check that landed during
   a deploy, update or switch - routine since the automatic updates (#587)
