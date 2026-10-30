@@ -28,7 +28,6 @@ import {
 } from "../progress.js";
 import {
   useJobResultPurge,
-  useJobResultTally,
   useJobResultVerify,
   useJobResultFailures,
 } from "../jobresult.js";
@@ -214,10 +213,10 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
 function TrayRow({ job, frame, expanded, onToggle, actions }) {
   const label = jobStateLabel(job, frame);
   const fraction = progressFraction(frame);
-  // I3, unit 6 fix wave: called unconditionally (C1's own rule) - see
-  // jobprogress.js's identical use for why "succeeded" alone can lie about
-  // a batch that applied nothing.
-  const tally = useJobResultTally(job.id, job.state);
+  // I3, unit 6 fix wave: see jobprogress.js's identical use for why
+  // "succeeded" alone can lie about a batch that applied nothing. The tally
+  // is the summary's own (issue 364).
+  const tally = job.tally ?? null;
   const purgeResult = useJobResultPurge(job.id, job.state);
   const repairResult = useJobResultVerify(job.id, job.state);
   const batchFailures = useJobResultFailures(job.id, job.state);
@@ -273,10 +272,10 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
         // beside the tally that counts it - the CLI prints the same fact as
         // "1 locked mod(s) not applied: Mod A - unlock to update", and the
         // web UI said nothing at all before this.
-        (tally?.skippedNotes ?? []).length > 0 &&
+        (tally?.skipped_notes ?? []).length > 0 &&
         html`
           <ul class="tray__skips" data-job=${job.id}>
-            ${tally.skippedNotes.map(
+            ${tally.skipped_notes.map(
               (note) => html`<li key=${note} class="tray__skip">${note}</li>`,
             )}
           </ul>

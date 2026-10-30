@@ -2172,7 +2172,7 @@ async function onJobDone(summary) {
   // reads as one - the tally in its detail, and no timer taking it away.
   const read = await fetchJobResult(summary.id);
   const held = readoutHasNextStep(summary, read);
-  const tally = read?.tally;
+  const tally = summary.tally;
   pushToast({
     tone:
       held && tally && resultTallyTone(tally) !== "succeeded"

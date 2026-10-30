@@ -196,90 +196,17 @@ export function jobStateLabel(summary, frame) {
   return summary.state;
 }
 
-/**
- * resultTally reads a finished BATCH job's own RESULT document for an
- * honest outcome count (I3, unit 6 fix wave). A batch job's own `state` is
- * "succeeded" the instant its Apply returns without an ERROR - true for
- * "updates" (kind_updates.go's applyUpdatesKind) and "profile_import"
- * (core.ApplyImport) even when EVERY item inside them failed, because both
- * record per-item outcomes in their own result rather than returning one.
- * Two result shapes exist on the wire today, kept SEPARATE (N1, unit 6
- * re-review) rather than collapsed into one two-number tally: updates'
- * `{applied: [...]}` becomes `{kind: "updates", applied, failed, skipped,
- * skippedNotes}`, and profile_import's `{installed, failed, skipped, warnings}`
- * (core.ProfileImportResult) becomes `{kind: "profile_import", installed,
- * failed, skipped, warnings}` - Skipped stays its OWN term rather than
- * rolling into "failed", because core.ApplyImport sets it for the flow's
- * own documented default (leaving the plan's "Download and install"
- * checkbox unchecked - plan_profile_import.js's own note), not for
- * anything that went wrong. A kind with neither shape (a plain deploy, an
- * enable/disable/uninstall, a single install) returns null, which every
- * caller below reads as "say Done, not a tally" - this is deliberately
- * narrow rather than inferred from field COUNT, so it never misreads an
- * unrelated result that happens to carry similarly-named fields
- * (core.InstallResult's own `installed`/`failed` are ARRAYS, not this
- * shape, and are left alone on purpose).
- *
- * The updates discriminator is `applied` ALONE (I1, unit 8 gate review).
- * It used to require `failed` to be an array too, but
- * core.UpdateBatchResult.Failed is `json:"failed,omitzero"` - so the exact
- * document a locked-skip batch produces (applied rows, skipped rows, and no
- * `failed` key at all) fell through to null, and the control that started
- * the batch said a bare "Done" over a mod the engine had refused to touch.
- * `json:"applied"` (no omitzero) exists on no other core or serve type, so
- * the single key is a sound discriminator, and both omitzero lists default
- * to 0 rather than gating the whole read.
- *
- * An all-zero tally also returns null (N2, unit 6 re-review): a
- * profile_import whose every mod was already installed (Plan.Installed,
- * pending == 0) applies nothing and skips nothing, so its result is
- * {installed: 0, failed: 0, skipped: 0} - tally-shaped, but with nothing
- * honest left to report over the bare "Done" a job with no batch at all
- * would otherwise read.
- */
-export function resultTally(result) {
-  if (!result) return null;
-  if (Array.isArray(result.applied)) {
-    const applied = result.applied.length;
-    // Both lists are omitzero on the wire, so an absent key means zero -
-    // never "this is not a batch result".
-    const failed = Array.isArray(result.failed) ? result.failed.length : 0;
-    // core.UpdateBatchResult.Skipped (issue 324): the items the batch declined
-    // to attempt - the locked refs (#97) and, since issue 269, the external
-    // ones Steam updates itself. Kept its OWN term for the same reason
-    // profile_import's is: "we did not try, and here is why" is not a
-    // failure, and rolling it into one would turn the honest outcome of a
-    // locked mod red.
-    const skips = Array.isArray(result.skipped) ? result.skipped : [];
-    if (applied === 0 && failed === 0 && skips.length === 0) return null;
-    return {
-      kind: "updates",
-      applied,
-      failed,
-      skipped: skips.length,
-      skippedNotes: skips.map(skippedNote),
-    };
-  }
-  if (
-    typeof result.installed === "number" &&
-    typeof result.failed === "number"
-  ) {
-    const skipped = result.skipped ?? 0;
-    if (result.installed === 0 && result.failed === 0 && skipped === 0) {
-      return null;
-    }
-    return {
-      kind: "profile_import",
-      installed: result.installed,
-      failed: result.failed,
-      skipped,
-      warnings: Array.isArray(result.warnings) ? result.warnings.length : 0,
-    };
-  }
-  return null;
-}
+// A finished BATCH job's outcome tally is not derived here: the server
+// computes it from the job's own result and carries it on the job summary
+// (internal/serve/jobtally.go's jobTally, issue 364), so a control has it on
+// the same frame that says the job is over. A summary's `tally` is one of
+// two shapes, told apart by `kind` - "updates" {applied, failed, skipped,
+// skipped_notes} and "profile_import" {installed, failed, skipped, warnings}
+// - and is absent for a job with no batch outcome to report, which every
+// caller below reads as "say Done, not a tally". The kind-specific counts
+// are omitted on the wire when zero, so each is read with a 0 default.
 
-/** resultTallyLabel is resultTally's own words, read off a finished batch's
+/** resultTallyLabel is a summary tally's own words, read off a finished batch's
  * real outcome - replacing the bare "Done" a job's mere `state` would
  * otherwise print over a batch that applied nothing at all.
  *
@@ -296,33 +223,20 @@ export function resultTally(result) {
  * carries any (core.ProfileImportResult.Warnings, one entry per failed
  * mod). */
 export function resultTallyLabel(tally) {
+  const failed = tally.failed ?? 0;
+  const skipped = tally.skipped ?? 0;
   if (tally.kind === "profile_import") {
-    const parts = [`${tally.installed} installed`, `${tally.skipped} skipped`];
-    if (tally.failed > 0) parts.push(`${tally.failed} failed`);
-    if (tally.warnings > 0) parts.push(`${tally.warnings} warnings`);
+    const parts = [`${tally.installed ?? 0} installed`, `${skipped} skipped`];
+    if (failed > 0) parts.push(`${failed} failed`);
+    if ((tally.warnings ?? 0) > 0) parts.push(`${tally.warnings} warnings`);
     return parts.join(" · ");
   }
-  const parts = [`${tally.applied} applied`];
-  if (tally.failed > 0 || tally.skipped === 0) {
-    parts.push(`${tally.failed} failed`);
+  const parts = [`${tally.applied ?? 0} applied`];
+  if (failed > 0 || skipped === 0) {
+    parts.push(`${failed} failed`);
   }
-  if (tally.skipped > 0) parts.push(`${tally.skipped} skipped`);
+  if (skipped > 0) parts.push(`${skipped} skipped`);
   return parts.join(" / ");
-}
-
-/** skippedNote is one declined item in the engine's OWN words - the name a
- * user recognises plus core.UpdateApplyResult.Reason: for a locked ref (#97)
- * the refusal sentence naming the locked version and how to unlock it, and
- * for a Steam Workshop item (issue 269) the sentence saying Steam applies that
- * update itself. Rendering core's own wording is what lets a second kind of
- * skip arrive without a line of change here.
- *
- * The reason is what makes the count honest rather than merely present: "1
- * skipped" invites the reader to guess, and a lock is not a guessable
- * outcome. A row that somehow carries no reason still names itself. */
-function skippedNote(item) {
-  const name = item?.name || item?.mod?.mod_id || "a mod";
-  return item?.reason ? `${name} — ${item.reason}` : name;
 }
 
 /**
@@ -340,10 +254,10 @@ function skippedNote(item) {
  * has failed === 0 and is "succeeded", never "failed".
  */
 export function resultTallyTone(tally) {
-  if (tally.failed === 0) return "succeeded";
+  if ((tally.failed ?? 0) === 0) return "succeeded";
   const applied =
     tally.kind === "profile_import" ? tally.installed : tally.applied;
-  return applied === 0 ? "failed" : "mixed";
+  return (applied ?? 0) === 0 ? "failed" : "mixed";
 }
 
 /**
