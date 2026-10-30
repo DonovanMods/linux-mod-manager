@@ -1,6 +1,6 @@
 ---
 title: FAQ and glossary
-nav_order: 11
+nav_order: 12
 ---
 
 # FAQ and glossary
@@ -29,7 +29,9 @@ takes everything back out.
 
 ### Does lmm need to run while I play?
 
-No. Once mods are installed, start the game the way you normally do.
+No. Once mods are installed, start the game the way you normally do. If
+you'd like lmm to start it, `lmm launch` does; see
+[Launching your game](launch.md).
 
 ### Is the web interface on the internet?
 

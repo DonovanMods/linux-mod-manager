@@ -92,7 +92,9 @@ date.
 ## 6. Play
 
 Start the game the way you always do, through Steam or your launcher. lmm
-doesn't need to be running while you play.
+doesn't need to be running while you play. You can also start it from lmm
+with `lmm launch`, which checks your mods are deployed first; see
+[Launching your game](launch.md).
 
 ## In the terminal
 

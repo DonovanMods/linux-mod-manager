@@ -58,9 +58,13 @@ covers non-Steam games (Lutris, Heroic, Bottles, plain Wine), for example
   ≠ deployed, using the `countUndeployed` rule in `spa/app/modrows.js`, which
   moves into core. It also checks `ModPathError`. When anything is
   undeployed, Launch returns `LaunchDriftError`, whose `Details` carries the
-  undeployed count.
+  undeployed count, the disabled-but-deployed count (`still_deployed`) and
+  `deploy_clears`: a deploy is not a converge run, so it leaves a disabled
+  mod deployed, and it does not fix a mod_path. The refusal names the fix
+  for each cause.
 - **CLI:** prints a warning and launches anyway. `--deploy` runs
-  `PlanDeploy`/`ApplyDeploy` first. `--strict` refuses.
+  `PlanDeploy`/`ApplyDeploy` first. `--strict` refuses; with `--deploy`, it
+  refuses before deploying when `deploy_clears` is false.
 - **Web UI:** the 409 opens a choice between **Deploy & launch** (the
   existing deploy job, then the launch call) and **Launch anyway**.
 - **What it doesn't check:** there is no full verify on each launch, because
@@ -72,9 +76,20 @@ covers non-Steam games (Lutris, Heroic, Bottles, plain Wine), for example
 
 lmm always starts the game with:
 
-`systemd-run --user --collect --unit=lmm-launch-<game>-<rand> --description="lmm: <name>" [--setenv=K=V …] -- <argv>`
+`systemd-run --user --collect --service-type=exec --unit=lmm-launch-<game>-<rand> --description="lmm: <name>" [--setenv=K=V …] -- <argv>`
 
-It returns straight away and never waits. With Steam, success only means
+`Type=exec` (systemd 240; `--service-type=` itself is 211) makes systemd-run
+return once the program has been executed, so a missing program or working
+directory fails the launch instead of reporting a unit that died at once.
+Every `$` in argv[1:] is doubled for the manager's `$VAR` expansion;
+argv[0] is not expanded (systemd-run resolves it as written, which a
+doubled `$` breaks), so it goes as is. This works on every systemd, where
+`--expand-environment=no` needs 254. No credential variable is forwarded,
+and the detached fallback passes lmm's environment minus every source's API
+key variable (a deny-list: a game needs PATH, HOME, locale and Proton
+variables an allow-list could not name).
+
+It returns straight away and never waits for the game. With Steam, success only means
 "launch requested", and the result says so.
 
 Why not run the game as lmm's own child, or use `--scope`:

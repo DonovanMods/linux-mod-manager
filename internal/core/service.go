@@ -132,6 +132,14 @@ type Service struct {
 	// Guarded by gamesMu, like games itself.
 	gamesStat gamesFileState
 	opSem     chan struct{}
+	// launcherPtr is how this Service starts games (#501), nil until the
+	// composition root calls SetLauncher. Atomic: it is set once at
+	// startup and read by concurrent queries (GameStatus).
+	launcherPtr atomic.Pointer[Launcher]
+	// launchMu guards launchMethods, the launch methods registered after
+	// the built-in ones (RegisterLaunchMethod).
+	launchMu      sync.Mutex
+	launchMethods []LaunchMethod
 	// verifyMemo caches the last verify answer per (game, profile, tier),
 	// keyed on a cheap fingerprint of what a run actually reads (#336). Any
 	// mutation drops it - beginOp does that - and VerifyOptions.Force
@@ -2435,6 +2443,11 @@ func copyGame(game *domain.Game) *domain.Game {
 	}
 	if game.CurseForge != nil {
 		copy.CurseForge = &domain.GameCurseForge{GameVersionTypes: append([]int(nil), game.CurseForge.GameVersionTypes...)}
+	}
+	if game.Launch != nil {
+		launch := *game.Launch
+		launch.Command = append([]string(nil), game.Launch.Command...)
+		copy.Launch = &launch
 	}
 	return &copy
 }

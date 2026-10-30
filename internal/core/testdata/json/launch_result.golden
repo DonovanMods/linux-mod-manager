@@ -1,0 +1,27 @@
+{
+  "game": "valheim",
+  "profile": "default",
+  "method": "steam",
+  "argv": [
+    "/usr/bin/steam",
+    "steam://rungameid/892970"
+  ],
+  "command": [
+    "systemd-run",
+    "--user",
+    "--collect",
+    "--service-type=exec",
+    "--unit=lmm-launch-valheim-abcd1234",
+    "--description=lmm: Valheim",
+    "--setenv=DISPLAY=:0",
+    "--",
+    "/usr/bin/steam",
+    "steam://rungameid/892970"
+  ],
+  "unit": "lmm-launch-valheim-abcd1234",
+  "requested": true,
+  "undeployed": 2,
+  "warnings": [
+    "launching anyway: 2 enabled mod(s) in profile \"default\" of valheim are not deployed; deploy first (`lmm launch --deploy`)"
+  ]
+}
