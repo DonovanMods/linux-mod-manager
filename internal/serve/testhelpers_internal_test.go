@@ -175,8 +175,10 @@ func apiRequest(s *Server, method, target, body string) *http.Request {
 		reader = strings.NewReader(body)
 	}
 	req := httptest.NewRequest(method, "http://"+internalTestAddr+target, reader)
+	// The SPA sends its token on every request, reads included: a GET
+	// /api/v1/updates without it is read-only (#587).
+	req.Header.Set(csrfHeaderName, s.csrf.token)
 	if unsafeMethod(method) {
-		req.Header.Set(csrfHeaderName, s.csrf.token)
 		req.Header.Set("Content-Type", "application/json")
 	}
 	return req

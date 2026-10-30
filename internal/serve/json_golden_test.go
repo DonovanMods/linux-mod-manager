@@ -155,6 +155,24 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #587: the automatic update pass's job - an ordinary updates
+			// job that says no user started it.
+			"job_summary_auto",
+			jobSummary{
+				ID:        "0123456789abcdef0123456789abcdef",
+				Kind:      "updates",
+				Origin:    jobOriginAuto,
+				State:     jobSucceeded,
+				StartedAt: goldenTime,
+				EndedAt:   goldenTime.Add(2 * time.Second),
+				Tally: &jobTally{
+					Kind:    "updates",
+					Applied: 2,
+				},
+				EventCount: 9,
+			},
+		},
+		{
 			// The updates shape: applied/failed/skipped and the skipped
 			// items' own sentences.
 			"job_tally",

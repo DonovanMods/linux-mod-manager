@@ -136,6 +136,10 @@ type Service struct {
 	// composition root calls SetLauncher. Atomic: it is set once at
 	// startup and read by concurrent queries (GameStatus).
 	launcherPtr atomic.Pointer[Launcher]
+	// gameProbePtr is how this Service tells a running game (#587), nil
+	// until the composition root calls SetGameProbe. Atomic for the same
+	// reason as launcherPtr.
+	gameProbePtr atomic.Pointer[GameProbe]
 	// launchMu guards launchMethods, the launch methods registered after
 	// the built-in ones (RegisterLaunchMethod).
 	launchMu      sync.Mutex

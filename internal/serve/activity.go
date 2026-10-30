@@ -44,8 +44,11 @@ import (
 // running job that has emitted nothing yet has not started working. It is a
 // heuristic, and it is named here so the tray does not invent a worse one.
 type jobSummary struct {
-	ID        jobID     `json:"id"`
-	Kind      string    `json:"kind"`
+	ID   jobID  `json:"id"`
+	Kind string `json:"kind"`
+	// Origin is jobStatus's Origin unchanged: "auto" for the automatic
+	// update pass (#587), omitted for a job a user started.
+	Origin    string    `json:"origin,omitzero"`
 	State     jobState  `json:"state"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
@@ -84,6 +87,7 @@ func summarizeJobStatus(status jobStatus) jobSummary {
 	return jobSummary{
 		ID:            status.ID,
 		Kind:          status.Kind,
+		Origin:        status.Origin,
 		State:         status.State,
 		StartedAt:     status.StartedAt,
 		EndedAt:       status.EndedAt,

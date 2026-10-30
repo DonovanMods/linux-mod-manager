@@ -90,8 +90,12 @@ type jobID string
 // result document the CLI's --json would have printed) or Error (the
 // {"error","details"} envelope every other failure in this package uses).
 type jobStatus struct {
-	ID        jobID     `json:"id"`
-	Kind      string    `json:"kind"`
+	ID   jobID  `json:"id"`
+	Kind string `json:"kind"`
+	// Origin says who started the job when it was not a user: "auto" for
+	// the automatic update pass a check starts (#587, jobOriginAuto).
+	// Empty - omitted - for every job a user started.
+	Origin    string    `json:"origin,omitzero"`
 	State     jobState  `json:"state"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
@@ -133,6 +137,7 @@ type jobSub struct {
 type job struct {
 	id      jobID
 	kind    string
+	origin  string
 	ring    int
 	started time.Time
 	// finished is closed exactly once, by finish. done() hands it out as
@@ -183,6 +188,7 @@ func (j *job) status() jobStatus {
 	return jobStatus{
 		ID:            j.id,
 		Kind:          j.kind,
+		Origin:        j.origin,
 		State:         j.state,
 		StartedAt:     j.started,
 		EndedAt:       j.ended,
@@ -464,9 +470,20 @@ func newJobRegistry(ctx context.Context, log *slog.Logger, ring, retain int) *jo
 // very shutdown call it raced) or loses it (and never touches wg at all) -
 // never both, and never neither (task-6-review.md Important 1).
 func (r *jobRegistry) Start(kind string, run func(context.Context, core.EventSink) (any, error)) (jobID, error) {
+	return r.startWithOrigin(kind, "", run)
+}
+
+// jobOriginAuto is jobStatus.Origin for a job no user started: the
+// automatic update pass (#587).
+const jobOriginAuto = "auto"
+
+// startWithOrigin is Start for a job that records who started it
+// (jobStatus.Origin).
+func (r *jobRegistry) startWithOrigin(kind, origin string, run func(context.Context, core.EventSink) (any, error)) (jobID, error) {
 	j := &job{
 		id:       newJobID(),
 		kind:     kind,
+		origin:   origin,
 		ring:     r.ring,
 		started:  time.Now(),
 		finished: make(chan struct{}),

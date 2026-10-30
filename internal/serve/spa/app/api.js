@@ -3,8 +3,11 @@
 // Two rules it exists to keep in a single place:
 //
 //  1. CSRF. The token arrives in the shell's meta tag and goes back as
-//     X-CSRF-Token on every state-changing request - the same header the
-//     middleware has always accepted (middleware.go).
+//     X-CSRF-Token on every request - the same header the middleware has
+//     always accepted (middleware.go). A state-changing request needs it;
+//     a read sends it too, because GET /api/v1/updates starts the
+//     automatic update pass only for a request that proves it came from
+//     this page (issue 587) - a cross-site page cannot set a header.
 //  2. Failures are the CLI's {"error","details"} envelope. Every non-2xx
 //     answer under /api/v1 is that envelope, so it is decoded here once and
 //     thrown as an ApiError carrying both halves, rather than each caller
@@ -65,10 +68,7 @@ export class NoAnswerError extends Error {
 export const jobStartDeadlineMillis = 60_000;
 
 async function request(method, path, body, { deadlineMillis } = {}) {
-  const init = { method, headers: {} };
-  if (method !== "GET") {
-    init.headers["X-CSRF-Token"] = csrfToken;
-  }
+  const init = { method, headers: { "X-CSRF-Token": csrfToken } };
   if (body !== undefined) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);

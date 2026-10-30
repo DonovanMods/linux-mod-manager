@@ -2123,6 +2123,66 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #587: lmm serve's automatic pass, waiting for the game to
+			// close before applying the auto-policy update the check found.
+			"update_check_report_auto_update_waiting",
+			core.UpdateCheckReport{
+				GameID:  "wow",
+				Profile: "default",
+				Updates: []domain.Update{{
+					InstalledMod: domain.InstalledMod{
+						Mod:         domain.Mod{ID: "1234", SourceID: "curseforge", Name: "EllesmereUI", Version: "9.6.9", GameID: "wow"},
+						ProfileName: "default", Enabled: true, Deployed: true, InstalledAt: fixedTime, UpdatePolicy: domain.UpdateAuto,
+					},
+					NewVersion: "9.7.1",
+				}},
+				Skipped: core.UpdateSkips{},
+				AutoUpdate: &core.ModAutoUpdate{
+					State:      core.ModAutoUpdateWaitingForGame,
+					Mods:       []string{"curseforge:1234"},
+					GameName:   "World of Warcraft",
+					DetectedBy: core.GameRunningLaunchUnit,
+				},
+			},
+		},
+		{
+			// #587: the same pass, applying them in a job.
+			"mod_auto_update",
+			core.ModAutoUpdate{
+				State: core.ModAutoUpdateApplying,
+				Mods:  []string{"curseforge:1234", "curseforge:5678"},
+				JobID: "0f1e2d3c4b5a6978",
+			},
+		},
+		{
+			// #587: an automatic update that failed, held back until the
+			// user checks again - the card says so instead of listing it
+			// unexplained.
+			"mod_auto_update_failed",
+			core.ModAutoUpdate{
+				State: core.ModAutoUpdateFailed,
+				Mods:  []string{"curseforge:7"},
+				Failed: []core.ModAutoUpdateFailure{{
+					UpdateBatchFailure: core.UpdateBatchFailure{
+						Mod: "curseforge:7", Name: "Broken Mod", FromVersion: "1.2", ToVersion: "1.3",
+						Error: "download failed: 503 Service Unavailable",
+					},
+					JobID: "0f1e2d3c4b5a6978",
+				}},
+			},
+		},
+		{
+			"mod_auto_update_failure",
+			core.ModAutoUpdateFailure{
+				UpdateBatchFailure: core.UpdateBatchFailure{
+					Mod: "nexusmods:42", Name: "Manual Mod", FromVersion: "1.0", ToVersion: "1.1",
+					Error:  "nexusmods only serves this file through its website",
+					ModURL: "https://www.nexusmods.com/skyrimspecialedition/mods/42", ManualDownload: true,
+				},
+				JobID: "0f1e2d3c4b5a6978",
+			},
+		},
+		{
 			"update_batch_failure",
 			core.UpdateBatchFailure{
 				Mod:         "curseforge:7",

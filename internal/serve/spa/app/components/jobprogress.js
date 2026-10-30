@@ -321,5 +321,5 @@ const NO_NOTICES = [];
 function startingLabel(summary) {
   if (!summary) return "Starting…";
   if (jobStateLabel(summary) === "queued") return "Queued…";
-  return `${mutationLabel(summary.kind)}…`;
+  return `${mutationLabel(summary.kind, summary.origin)}…`;
 }

@@ -124,7 +124,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
   const liveActivity =
     runningJob && !rowClaimed
       ? [
-          mutationLabel(runningJob.kind),
+          mutationLabel(runningJob.kind, runningJob.origin),
           progressText(state.jobProgress?.[runningJob.id]),
         ]
           .filter(Boolean)

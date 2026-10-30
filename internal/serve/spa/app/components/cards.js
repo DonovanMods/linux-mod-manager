@@ -26,7 +26,7 @@ import {
 } from "./updatefromfile.js";
 import { displayVersion, displayUpdateTarget } from "../version.js";
 import { relativeTime } from "../relativetime.js";
-import { navigate, modPathEditPath } from "../router.js";
+import { navigate, modPathEditPath, contextPath } from "../router.js";
 import { codeSpans } from "../errortext.js";
 import { conflictLabel } from "../conflicts.js";
 import { PlayButton } from "./playbutton.js";
@@ -108,6 +108,10 @@ export function AttentionCards({
   // report's error was never rendered, so a refusal left the card silent;
   // each now names its source and links to its key.
   const authRequired = updates?.auth_required ?? [];
+  // issue 587: what the server is doing about the auto-policy updates -
+  // applying them in a job, waiting for the game to close, or holding back
+  // the ones that failed.
+  const autoUpdate = updates?.auto_update ?? null;
   const findings = (health?.result?.findings ?? []).filter(
     (f) => f.status !== "ok",
   );
@@ -150,6 +154,7 @@ export function AttentionCards({
           missing=${missingRows}
           gone=${goneRows}
           authRequired=${authRequired}
+          autoUpdate=${autoUpdate}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
           onRefresh=${actions.refreshUpdates}
@@ -287,12 +292,36 @@ function AuthRequiredNote({ sourceID }) {
   return `${name} needs an API key, so its mods were not checked.`;
 }
 
+/** autoUpdateNote is the updates card's line for issue 587's auto_update:
+ * the auto-policy updates the server is applying now, or holding until the
+ * game closes. Nothing for the user to do either way - it says why those
+ * rows are still listed. */
+/** autoUpdateFailedNote is one failed automatic update's line: which mod,
+ * which version, why, and what to do. The failed update stays on the card
+ * (the server holds it back rather than retrying it on every check), so
+ * without this line it would sit there unexplained. */
+function autoUpdateFailedNote(failure) {
+  const name = failure.name || failure.mod;
+  const target = failure.to_version ? ` ${failure.to_version}` : "";
+  const reason = failure.error ? ` - ${failure.error.replace(/\.$/, "")}` : "";
+  return `Automatic update failed for ${name}${target}${reason}. Check for updates to retry.`;
+}
+
+function autoUpdateNote(auto) {
+  const n = countOf(auto.mods.length, "automatic update");
+  if (auto.state === "waiting_for_game") {
+    return `${n} waiting for ${auto.game_name || "the game"} to close.`;
+  }
+  return `Applying ${n}…`;
+}
+
 function UpdatesCard({
   state,
   rows,
   missing = [],
   gone = [],
   authRequired = [],
+  autoUpdate = null,
   error,
   onRetry,
   onRefresh,
@@ -366,6 +395,41 @@ function UpdatesCard({
   return html`
     <div class="card card--updates">
       <h2 class="card__title">⬆ Updates (${rows.length})</h2>
+      ${
+        autoUpdate &&
+        autoUpdate.state !== "failed" &&
+        html`<p
+          class="card__meta"
+          data-testid="updates-auto"
+          data-state=${autoUpdate.state}
+        >
+          ${autoUpdateNote(autoUpdate)}
+        </p>`
+      }
+      ${(autoUpdate?.failed ?? []).map(
+        (failure) =>
+          html`<p
+            key=${failure.mod}
+            class="card__meta"
+            data-testid="updates-auto-failed"
+            data-mod=${failure.mod}
+          >
+            ${autoUpdateFailedNote(failure)}${" "}
+            ${
+              failure.job_id &&
+              html`<button
+                type="button"
+                class="button button--link"
+                onClick=${() =>
+                  navigate(
+                    `${contextPath(state.route.game, state.route.profile)}?job=${encodeURIComponent(failure.job_id)}`,
+                  )}
+              >
+                Show the job
+              </button>`
+            }
+          </p>`,
+      )}
       ${
         missing.length > 0 &&
         html`<p class="card__meta" data-testid="updates-external-missing">

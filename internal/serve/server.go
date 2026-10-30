@@ -114,6 +114,11 @@ type Server struct {
 	plans *planStore
 	jobs  *jobRegistry
 
+	// autoUpdates is the automatic update pass's state (#587,
+	// auto_updates.go): the job in flight per game/profile, and the
+	// updates it failed to apply. Process-lifetime, like jobs.
+	autoUpdates autoUpdater
+
 	// uploads indexes the archives a browser has streamed into the
 	// service's staging directory, awaiting an import (uploads.go). Like
 	// plans it is process-lifetime state with a TTL; unlike plans each

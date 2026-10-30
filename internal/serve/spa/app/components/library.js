@@ -122,7 +122,10 @@ function healthBadgeTone(row) {
 // otherwise - the region itself stays mounted either way (issue 442).
 function rowLiveText(mutation, togglePending, requested) {
   if (mutation) {
-    return [mutationLabel(mutation.summary.kind), progressText(mutation.frame)]
+    return [
+      mutationLabel(mutation.summary.kind, mutation.summary.origin),
+      progressText(mutation.frame),
+    ]
       .filter(Boolean)
       .join(" · ");
   }

@@ -297,6 +297,12 @@ type UpdateCheckReport struct {
 	// to where its key is configured. A key set only in a login shell is
 	// the usual cause under `lmm serve`'s systemd unit. omitempty.
 	AuthRequired []string `json:"auth_required,omitempty"`
+
+	// AutoUpdate is what `lmm serve` is doing about this check's
+	// auto-policy updates (#587): applying them in a job, or waiting for
+	// the game to close. Never set by `lmm update`, which applies them
+	// itself. omitempty.
+	AutoUpdate *ModAutoUpdate `json:"auto_update,omitempty"`
 }
 
 // CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
