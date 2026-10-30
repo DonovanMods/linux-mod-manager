@@ -153,6 +153,12 @@ type RelinkOptions struct {
 	Name    string
 	Version string
 	Author  string
+
+	// keepVersion keeps the recorded version through a re-link's metadata
+	// refresh instead of taking the target's: the automatic re-link's
+	// (#590, AutoRelinkRun.Apply), whose files in the cache are that
+	// version's.
+	keepVersion bool
 }
 
 // RelinkResult reports the outcome of ApplyRelinkMod.
@@ -312,7 +318,7 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 					mod.Author = fetched.Author
 					changes = append(changes, fmt.Sprintf("author -> %s (from %s)", fetched.Author, newSourceID))
 				}
-				if opts.Version == "" && fetched.Version != "" {
+				if opts.Version == "" && !opts.keepVersion && fetched.Version != "" {
 					mod.Version = fetched.Version
 					changes = append(changes, fmt.Sprintf("version -> %s (from %s)", fetched.Version, newSourceID))
 				}

@@ -303,6 +303,11 @@ type UpdateCheckReport struct {
 	// the game to close. Never set by `lmm update`, which applies them
 	// itself. omitempty.
 	AutoUpdate *ModAutoUpdate `json:"auto_update,omitempty"`
+	// AutoRelink is the automatic re-link's state (#590,
+	// catalog_relink.go): the gone mods of a source with unstable IDs
+	// being, or already, re-linked to their one successor. Set by the
+	// frontend that ran it; omitempty.
+	AutoRelink *CatalogAutoRelink `json:"auto_relink,omitempty"`
 }
 
 // CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
