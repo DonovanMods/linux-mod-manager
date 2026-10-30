@@ -177,6 +177,27 @@ type ServiceReport struct {
 	// Linger is true when the user manager runs from boot, without a
 	// login (`loginctl enable-linger`). lmm reports it and never sets it.
 	Linger bool `json:"linger"`
+	// EnvOnlyCredentials is every source whose API key, in the shell that
+	// ran the command, comes only from its environment variable, with no
+	// stored key (#582). A systemd user service does not inherit a login
+	// shell's exports, so lmm-serve runs without that key: the source then
+	// refuses update checks, verify's version check and searches. The fix
+	// is a stored key (`lmm auth login <source>`, or the web UI's Setup >
+	// Authentication) - lmm never copies a key into the unit file, which is
+	// plain text. Filled by install and status; omitempty.
+	EnvOnlyCredentials []EnvOnlyCredential `json:"env_only_credentials,omitempty"`
+}
+
+// EnvOnlyCredential names a source whose key comes only from its
+// environment variable (ServiceReport.EnvOnlyCredentials, #582). It never
+// carries the key, not even masked.
+type EnvOnlyCredential struct {
+	// SourceID is the source's id, as `lmm auth login` takes it.
+	SourceID string `json:"source_id"`
+	// Name is the source's display name.
+	Name string `json:"name"`
+	// EnvVar is the variable the key is read from.
+	EnvVar string `json:"env_var"`
 }
 
 // ServiceInstallOptions are `lmm service install`'s choices.

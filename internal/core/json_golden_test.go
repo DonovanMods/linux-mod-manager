@@ -2362,6 +2362,25 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #582: a source whose key lmm-serve will not see - it comes
+			// only from this shell's environment. Never the key itself.
+			"service_report_env_only_credentials",
+			core.ServiceReport{
+				Units: []core.UnitStatus{{
+					Name: "lmm-serve.service", Installed: true, Origin: core.UnitOriginUser,
+					Path:    "/home/user/.config/systemd/user/lmm-serve.service",
+					Enabled: true, Active: true, EnabledState: "enabled", ActiveState: "active",
+				}},
+				EnvOnlyCredentials: []core.EnvOnlyCredential{
+					{SourceID: "curseforge", Name: "CurseForge", EnvVar: "CURSEFORGE_API_KEY"},
+				},
+			},
+		},
+		{
+			"env_only_credential",
+			core.EnvOnlyCredential{SourceID: "nexusmods", Name: "Nexus Mods", EnvVar: "NEXUSMODS_API_KEY"},
+		},
+		{
 			// #333's source-removal refusal: the games that still map the
 			// source, so a frontend names them instead of saying "in use".
 			"source_in_use_error",

@@ -77,6 +77,10 @@ func useTestUserUnits(t *testing.T, fake *cliSystemd, edit ...func(*core.UserUni
 	oldConfig, oldData := configDir, dataDir
 	configDir, dataDir = "", ""
 	t.Cleanup(func() { newUserUnits, configDir, dataDir = old, oldConfig, oldData })
+	// With --config/--data cleared, the real auth-status read would open
+	// the developer's own installation; a test that wants warnings sets
+	// its own.
+	useEnvOnlyCredentials(t)
 	return filepath.Join(home, ".config", "systemd", "user", "lmm-serve.service")
 }
 
@@ -190,4 +194,63 @@ func TestServiceUninstall_SaysAPackagedUnitIsDisabledToo(t *testing.T) {
 	assert.NoFileExists(t, unitPath)
 	assert.Contains(t, out, "Removed")
 	assert.Contains(t, out, "systemctl --user enable --now lmm-serve", "how to turn the packaged one back on")
+}
+
+// useEnvOnlyCredentials stands in for the auth-status read `lmm service`
+// makes (#582), so the test never opens a real installation.
+func useEnvOnlyCredentials(t *testing.T, creds ...core.EnvOnlyCredential) {
+	t.Helper()
+	old := serviceEnvOnlyCredentials
+	serviceEnvOnlyCredentials = func(context.Context) []core.EnvOnlyCredential { return creds }
+	t.Cleanup(func() { serviceEnvOnlyCredentials = old })
+}
+
+var curseforgeEnvOnly = core.EnvOnlyCredential{SourceID: "curseforge", Name: "CurseForge", EnvVar: "CURSEFORGE_API_KEY"}
+
+// TestServiceInstall_WarnsAboutAKeyOnlyInTheEnvironment (#582): a systemd
+// user service does not inherit the login shell, so a key exported there
+// is a key lmm-serve will not have. Install says so, once per source, with
+// the fix - and never writes the key into the unit.
+func TestServiceInstall_WarnsAboutAKeyOnlyInTheEnvironment(t *testing.T) {
+	fake := &cliSystemd{}
+	unitPath := useTestUserUnits(t, fake)
+	useEnvOnlyCredentials(t, curseforgeEnvOnly)
+	t.Setenv("CURSEFORGE_API_KEY", "secret-key-value")
+
+	out := captureStdout(t, func() error { return doServiceInstall(context.Background(), serviceCmd, "") })
+	assert.Equal(t, 1, strings.Count(out, "CURSEFORGE_API_KEY"), out)
+	assert.Contains(t, out, "CurseForge's key comes only from $CURSEFORGE_API_KEY")
+	assert.Contains(t, out, "lmm auth login curseforge")
+	assert.Contains(t, out, "Setup > Authentication")
+
+	raw, err := os.ReadFile(unitPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "secret-key-value", "a key is never written into the unit")
+	assert.NotContains(t, string(raw), "CURSEFORGE_API_KEY")
+}
+
+func TestServiceStatus_WarnsAboutAKeyOnlyInTheEnvironment(t *testing.T) {
+	useTestUserUnits(t, &cliSystemd{})
+	useEnvOnlyCredentials(t, curseforgeEnvOnly)
+
+	out := captureStdout(t, func() error { return doServiceStatus(context.Background()) })
+	assert.Contains(t, out, "lmm auth login curseforge")
+}
+
+func TestServiceInstall_NoWarningWithoutAnEnvOnlyKey(t *testing.T) {
+	useTestUserUnits(t, &cliSystemd{})
+	useEnvOnlyCredentials(t)
+
+	out := captureStdout(t, func() error { return doServiceInstall(context.Background(), serviceCmd, "") })
+	assert.NotContains(t, out, "lmm auth login")
+}
+
+func TestJSONGolden_ServiceStatusEnvOnlyCredentials(t *testing.T) {
+	fake := &cliSystemd{}
+	unitPath := useTestUserUnits(t, fake)
+	useEnvOnlyCredentials(t, curseforgeEnvOnly)
+	withJSONOutput(t)
+
+	out := captureStdout(t, func() error { return doServiceStatus(context.Background()) })
+	assertJSONCLIGolden(t, "service_status_env_only_credentials", out, unitPath, "<UNIT-PATH>")
 }
