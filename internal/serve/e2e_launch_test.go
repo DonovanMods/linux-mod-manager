@@ -287,3 +287,117 @@ func TestE2E_Play_LoaderStaleFindingOffersPlay(t *testing.T) {
 	assert.Equal(t, steamURL("892970"), runs[0][len(runs[0])-1])
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// playNotActiveReason is the Play button's reason, and the 409's toast
+// detail, when the profile on screen is not the game's active one.
+const playNotActiveReason = `Switch to this profile to play it: "Switch and deploy…" in the profile menu.`
+
+// TestE2E_Play_DisabledWhileViewingAnotherProfile: picking a profile in the
+// top bar only views it, and only the active profile's mods are deployed -
+// so Play on a non-active profile is aria-disabled with the way to switch
+// as its reason, and a click on it sends nothing.
+func TestE2E_Play_DisabledWhileViewingAnotherProfile(t *testing.T) {
+	f := newE2EFixture(t)
+	_, err := f.Svc.NewProfileManager().Create(t.Context(), f.Game.ID, "other")
+	require.NoError(t, err)
+	l := &e2eLauncher{appID: "892970"}
+	l.install(f.Svc)
+
+	var tooltip, description string
+	var launchRequests int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/g/"+f.Game.ID+"/other"),
+		chromedp.WaitVisible(`[data-action="play"]`, chromedp.ByQuery),
+		pollUntil(`document.querySelector('[data-action="play"]').getAttribute("aria-disabled") === "true"`),
+		chromedp.AttributeValue(`[data-action="play"]`, "data-tooltip", &tooltip, nil, chromedp.ByQuery),
+		chromedp.Evaluate(`document.getElementById(document.querySelector('[data-action="play"]').getAttribute("aria-describedby")).textContent`, &description),
+		chromedp.Click(`[data-action="play"]`, chromedp.ByQuery),
+		chromedp.Sleep(200*time.Millisecond),
+		chromedp.Evaluate(`performance.getEntriesByType("resource").filter((e) => e.name.includes("/api/v1/games/") && e.name.endsWith("/launch")).length`, &launchRequests),
+	)
+
+	assert.Equal(t, playNotActiveReason, tooltip)
+	assert.Equal(t, tooltip, description)
+	assert.Zero(t, launchRequests, "a disabled Play sends nothing")
+	assert.Empty(t, l.recorded())
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Play_NotActiveRefusalSaysToSwitch: a page whose status still
+// names the profile active after another client switched away from it
+// launches, gets ErrProfileNotActive's 409, and says the same sentence the
+// disabled button would.
+func TestE2E_Play_NotActiveRefusalSaysToSwitch(t *testing.T) {
+	f := newE2EFixture(t)
+	pm := f.Svc.NewProfileManager()
+	_, err := pm.Create(t.Context(), f.Game.ID, "other")
+	require.NoError(t, err)
+	l := &e2eLauncher{appID: "892970"}
+	l.install(f.Svc)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		pollUntil(`document.querySelector('[data-action="play"]')?.getAttribute("aria-disabled") === null`),
+	)
+	require.NoError(t, pm.SetDefault(t.Context(), f.Game.ID, "other"))
+
+	var title, detail string
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="play"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.toast--failure`, chromedp.ByQuery),
+		textContent(`.toast--failure .toast__title`, &title),
+		textContent(`.toast--failure .toast__detail`, &detail),
+	)
+	assert.Equal(t, "Couldn't launch Fixture Game", title)
+	assert.Equal(t, playNotActiveReason, detail)
+	assert.Empty(t, l.recorded())
+	assertOnlyExpectedErrors(t, f.BrowserErrors(), "/api/v1/games/g1/launch")
+}
+
+// TestE2E_Play_HeldThroughDeployAndLaunch: from the drift modal's Deploy &
+// launch until the launch has answered, Play is aria-disabled and a click
+// on it launches nothing - the deploy phase included. The deploy waits on
+// a gate file, so the window is the test's to close, not a race.
+func TestE2E_Play_HeldThroughDeployAndLaunch(t *testing.T) {
+	f := newE2EFixture(t)
+	gate := filepath.Join(t.TempDir(), "gate")
+	script := filepath.Join(t.TempDir(), "gated-after-each")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nwhile [ ! -e '"+gate+"' ]; do sleep 0.05; done\n"), 0o755))
+	f.Game.Hooks.Install.AfterEach = script
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+	seedDeployableMods(t, f.Svc, f.Game)
+	t.Cleanup(func() { _ = os.WriteFile(gate, nil, 0o644) })
+	l := &e2eLauncher{appID: "892970"}
+	l.install(f.Svc)
+
+	var disabledDuringDeploy string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		pollUntil(`document.querySelector('[data-action="play"]')?.getAttribute("aria-disabled") === null`),
+		chromedp.Click(`[data-action="play"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-action="deploy-and-launch"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy-and-launch"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="launch-drift"]`),
+		pollUntil(`document.querySelector('[data-action="play"]').getAttribute("aria-disabled") === "true"`),
+		chromedp.AttributeValue(`[data-action="play"]`, "aria-disabled", &disabledDuringDeploy, nil, chromedp.ByQuery),
+		// A second Play while the deploy runs must not launch (or open
+		// the drift modal) on its own.
+		chromedp.Click(`[data-action="play"]`, chromedp.ByQuery),
+		chromedp.Sleep(200*time.Millisecond),
+	)
+	assert.Equal(t, "true", disabledDuringDeploy)
+
+	var modalOpen bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(`Boolean(document.querySelector('.modal[data-kind="launch-drift"]'))`, &modalOpen),
+	)
+	assert.False(t, modalOpen, "a click during the deploy opened nothing")
+
+	require.NoError(t, os.WriteFile(gate, nil, 0o644))
+	f.runInBrowser(t,
+		pollUntil(`[...document.querySelectorAll(".toast__title")].some((el) => el.textContent.startsWith("Launch requested"))`),
+		pollUntil(`document.querySelector('[data-action="play"]').getAttribute("aria-disabled") === null`),
+	)
+	assert.Len(t, l.recorded(), 1, "one launch: the click during the deploy launched nothing")
+	assertOnlyExpectedErrors(t, f.BrowserErrors(), "/api/v1/games/g1/launch")
+}

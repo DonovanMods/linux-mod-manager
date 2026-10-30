@@ -41,6 +41,7 @@ import {
   launchGame as apiLaunchGame,
 } from "./api.js";
 import { DEPLOY_ORIGIN } from "./components/topbar.js";
+import { PLAY_NOT_ACTIVE_REASON } from "./components/playbutton.js";
 import { updateFromFileInputID } from "./components/updatefromfile.js";
 import { copyReplaces } from "./components/plan_mod_copy.js";
 import {
@@ -2441,20 +2442,37 @@ function launchMethodLabel(method) {
  *
  * It is not a job: the server answers once the game's systemd unit has
  * started, so state.launching is the whole of its in-flight state, and the
- * Play button names it ("Starting Valheim…"). A launch already in flight
- * swallows a second click. Undeployed changes (409 with
- * core.LaunchDriftError's details) open the drift modal, which offers
- * Deploy & launch and Launch anyway (`force`); every other refusal is a
- * toast, in the server's words - each names its own fix.
+ * Play button names it ("Starting Valheim…"). A launch already in flight -
+ * or a Deploy & launch still deploying - swallows a second click.
  */
 async function launchGame({ force = false, target } = {}) {
   if (store.get().launching) return;
   const { route, status } = store.get();
   const game = target?.game ?? route.game;
-  const profile = target?.profile ?? route.profile;
-  const name =
-    target?.name ?? (status?.id === game && status.name ? status.name : game);
-  store.set({ launching: { game, name } });
+  const resolved = {
+    game,
+    profile: target?.profile ?? route.profile,
+    name:
+      target?.name ?? (status?.id === game && status.name ? status.name : game),
+  };
+  store.set({ launching: { game, name: resolved.name, phase: "launch" } });
+  try {
+    await requestLaunch(resolved, force);
+  } finally {
+    store.set({ launching: null });
+  }
+}
+
+/**
+ * requestLaunch is the launch POST itself, for a caller already holding
+ * state.launching. Undeployed changes (409 with core.LaunchDriftError's
+ * details) open the drift modal, which offers Deploy & launch and Launch
+ * anyway (`force`); a profile that is not the active one
+ * (core.ErrProfileNotActive's 409 - the page's status was out of date) says
+ * what the disabled Play button would; every other refusal is a toast, in
+ * the server's words - each names its own fix.
+ */
+async function requestLaunch({ game, profile, name }, force) {
   try {
     const result = await apiLaunchGame(game, {
       profile,
@@ -2482,13 +2500,19 @@ async function launchGame({ force = false, target } = {}) {
       });
       return;
     }
+    const notActive =
+      err instanceof ApiError &&
+      err.status === 409 &&
+      err.message.startsWith("profile is not active");
     pushToast({
       tone: "failure",
       title: `Couldn't launch ${name}`,
-      detail: err instanceof Error ? err.message : String(err),
+      detail: notActive
+        ? PLAY_NOT_ACTIVE_REASON
+        : err instanceof Error
+          ? err.message
+          : String(err),
     });
-  } finally {
-    store.set({ launching: null });
   }
 }
 
@@ -2498,38 +2522,53 @@ async function launchGame({ force = false, target } = {}) {
  * its progress, and - once it has succeeded - the launch again. A deploy
  * that fails reports as any deploy does (its origin is on screen), and
  * nothing is launched.
+ *
+ * state.launching is held from the first step to the last - phase "deploy"
+ * while the job runs, then "launch" - so Play stays disabled throughout,
+ * and is released however the sequence ends.
  */
 async function deployAndLaunch() {
   const modal = store.get().modal;
-  if (modal?.type !== "launch-drift") return;
+  if (modal?.type !== "launch-drift" || store.get().launching) return;
   const { target } = modal;
   closeModal();
-  let jobID = null;
-  await startBinding(DEPLOY_ORIGIN, async () => {
-    try {
-      const response = await planMutation(
-        "deploy",
-        {},
-        {
-          game: target.game,
-          profile: target.profile,
-        },
-      );
-      ({ id: jobID } = await startJob(response.plan_id));
-      store.set({
-        origins: { ...store.get().origins, [DEPLOY_ORIGIN]: jobID },
-      });
-    } catch (err) {
-      pushToast({
-        tone: "failure",
-        title: `Couldn't deploy ${target.name}`,
-        detail: err instanceof Error ? err.message : String(err),
-      });
-    }
+  store.set({
+    launching: { game: target.game, name: target.name, phase: "deploy" },
   });
-  if (!jobID) return;
-  const summary = await waitForJobDone(jobID);
-  if (summary.state === "succeeded") await launchGame({ target });
+  try {
+    let jobID = null;
+    await startBinding(DEPLOY_ORIGIN, async () => {
+      try {
+        const response = await planMutation(
+          "deploy",
+          {},
+          {
+            game: target.game,
+            profile: target.profile,
+          },
+        );
+        ({ id: jobID } = await startJob(response.plan_id));
+        store.set({
+          origins: { ...store.get().origins, [DEPLOY_ORIGIN]: jobID },
+        });
+      } catch (err) {
+        pushToast({
+          tone: "failure",
+          title: `Couldn't deploy ${target.name}`,
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+    if (!jobID) return;
+    const summary = await waitForJobDone(jobID);
+    if (summary.state !== "succeeded") return;
+    store.set({
+      launching: { game: target.game, name: target.name, phase: "launch" },
+    });
+    await requestLaunch(target, false);
+  } finally {
+    store.set({ launching: null });
+  }
 }
 
 /** launchAnyway is the drift modal's "Launch anyway": the same launch,

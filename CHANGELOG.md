@@ -29,9 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a **Play** button next to Deploy does the same
   (`POST /api/v1/games/{id}/launch`, whose body is only a profile and
   `force`); it is disabled, with the reason as its tooltip, for a game lmm
-  can't launch. Undeployed changes open a choice between **Deploy &
-  launch** and **Launch anyway**, and the Health card's BepInEx "launch the
-  game once to confirm" finding gets a Play button of its own. The web UI
+  can't launch, or while you are viewing a profile that isn't the active
+  one (its reason points at **Switch and deploy…**). Undeployed changes open
+  a choice between **Deploy & launch** and **Launch anyway** (Play stays
+  disabled until the deploy and the launch are done); a launch already
+  under way finishes even if its tab is closed. The Health card's BepInEx
+  "launch the game once to confirm" finding gets a Play button of its own. The web UI
   never starts a game without systemd, and `lmm serve` on a non-loopback
   address now warns that it can launch programs.
 

@@ -143,9 +143,11 @@ export function initialState() {
     // that is always the confirm-plan modal; a later unit's reorder or
     // profiles modal is another shape in this same slot, not another slot.
     modal: null,
-    // launching is the Play button's launch while its POST is out
-    // ({game, name}), null otherwise (issue 501). Not a job: the server
-    // answers once the game's unit has started.
+    // launching is the Play button's launch while it is under way
+    // ({game, name, phase}), null otherwise (issue 501). phase is "launch"
+    // while the POST is out - not a job: the server answers once the
+    // game's unit has started - or "deploy" while Deploy & launch's deploy
+    // job runs ahead of it.
     launching: null,
     error: null,
     // fetchErrors carries the rejection message for each of Mission

@@ -101,13 +101,15 @@ with `lmm profile switch <name>`.
 active profile. When lmm has asked Steam to start it, a message says
 "Launch requested". If lmm can't launch the game, **Play** is greyed out;
 point at it to see why, which usually means adding a `launch` block as
-above.
+above. Choosing another profile in the top bar only shows it, so **Play** is
+greyed out there too: use **Switch and deploy…** in the profile menu to make
+it the active profile first.
 
 If some mods aren't deployed, **Play** asks before it starts anything:
 
 - **Deploy & launch** deploys the profile, as **Deploy** does, and
   launches once the deploy has finished. It is offered only when a deploy
-  fixes everything.
+  fixes everything. **Play** stays greyed out until the game has started.
 - **Launch anyway** starts the game with the mods as they are.
 
 When a deploy can't fix it (a mod you disabled is still deployed, or the
