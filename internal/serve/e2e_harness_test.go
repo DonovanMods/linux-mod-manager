@@ -1961,24 +1961,81 @@ func clickWhenSettled(sel string) chromedp.Action {
 	}
 }
 
-// settleEffects gives Preact's hook effects time to run before the next
-// action depends on one having been attached.
+// settleEffects waits until Preact has flushed the effects of every render
+// queued so far and the DOM has stopped changing, before the next action
+// depends on one having been attached.
 //
-// Preact flushes effects after paint - requestAnimationFrame, with a
-// ~100ms setTimeout fallback for a browser that is not painting, which is
-// exactly what a headless one often is not. chromedp's own round trips are
-// single-digit milliseconds, so an action issued straight after a
-// WaitVisible routinely lands BEFORE the effect that installs the listener
-// it depends on. That is not a hypothetical: the picker's Escape handler
-// lives in such an effect, and without this the menu simply stayed open and
-// the wait for it to close ran out the harness's whole 30-second timeout -
-// deterministically under -race, intermittently without it.
+// Preact flushes effects after paint: hooks.module.js's afterPaint races a
+// requestAnimationFrame against a 35ms setTimeout and then runs the flush in
+// a setTimeout(0) of its own - and a headless page is often not painting.
+// chromedp's own round trips are single-digit milliseconds, so an action
+// issued straight after a WaitVisible routinely lands BEFORE the effect that
+// installs the listener it depends on. That is not a hypothetical: the
+// picker's Escape handler lives in such an effect, and without a settle the
+// menu simply stayed open and the wait for it to close ran out the harness's
+// whole timeout - deterministically under -race, intermittently without it.
 //
-// The same shape (and the same reasoning) as the `settle` closures the
-// profiles-modal scenarios already declare inline; this is that pattern
-// with one name and one explanation.
+// It used to be a fixed 300ms sleep (#576). settleEffectsJS waits on the
+// condition itself: it schedules the same race Preact does, AFTER whatever
+// Preact has already scheduled, so its own callback runs once Preact's
+// flush has; and it repeats that until a whole round passes with no DOM
+// mutation, so an effect that sets state - another render, more effects -
+// is waited for too. What it does not wait for is the network: a scenario
+// that needs a response to land polls for what the response renders, and
+// one asserting that something does NOT arrive holds quietWindow.
 func settleEffects() chromedp.Action {
-	return chromedp.Sleep(300 * time.Millisecond)
+	return chromedp.Evaluate(settleEffectsJS, nil, awaitPromise)
+}
+
+// settleEffectsJS resolves once a round of Preact's own after-paint
+// scheduling has passed with the DOM unchanged (at least two rounds, at
+// most settleEffectsMaxRounds, so a page that animates forever still
+// returns).
+var settleEffectsJS = fmt.Sprintf(`new Promise((resolve) => {
+	let changed = false;
+	const seen = new MutationObserver(() => { changed = true; });
+	seen.observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
+	let rounds = 0;
+	const round = () => {
+		changed = false;
+		let frame;
+		const done = () => {
+			clearTimeout(fallback);
+			cancelAnimationFrame(frame);
+			setTimeout(next);
+		};
+		const fallback = setTimeout(done, 35);
+		frame = requestAnimationFrame(done);
+	};
+	const next = () => {
+		rounds++;
+		if ((rounds >= 2 && !changed) || rounds >= %d) {
+			seen.disconnect();
+			resolve(true);
+			return;
+		}
+		round();
+	};
+	round();
+})`, settleEffectsMaxRounds)
+
+// settleEffectsMaxRounds bounds settleEffects on a page that never stops
+// changing (a running progress readout): 20 rounds is at most ~700ms.
+const settleEffectsMaxRounds = 20
+
+// e2eQuietWindow is how long quietWindow holds.
+const e2eQuietWindow = 300 * time.Millisecond
+
+// quietWindow is the one deliberate fixed wait left in the harness: a
+// scenario asserting that something does NOT happen - a request is not
+// sent, a row is not settled, a toast does not appear - in reaction to
+// something that travels the network (a stream frame, a response, a
+// request reaching the test's wire) has no condition to wait on, only a
+// window in which a wrong implementation would have acted. It is
+// settleEffects plus a bounded hold, so the page's own reaction is in by
+// the time the window opens.
+func quietWindow() chromedp.Action {
+	return chromedp.Tasks{settleEffects(), chromedp.Sleep(e2eQuietWindow), settleEffects()}
 }
 
 // focusableSelectorJS mirrors spa/app/focustrap.js's own FOCUSABLE list -
@@ -2278,10 +2335,13 @@ func startE2EDelayingProxy(t *testing.T, backend string, delay time.Duration, sh
 //
 // The mod-files read specifically, because it is hydrateModPage's PRIMARY
 // read - the one whose write resets detail, versions and updates to null.
-func startE2EProxyDelayingTheNthModFilesRead(t *testing.T, backend, profile string, n int, delay time.Duration) string {
+//
+// It also returns how many of those reads have reached it, so a scenario can
+// wait for the delayed one to be in flight rather than sleeping on it.
+func startE2EProxyDelayingTheNthModFilesRead(t *testing.T, backend, profile string, n int, delay time.Duration) (string, *atomic.Int64) {
 	t.Helper()
 
-	var seen atomic.Int64
+	seen := new(atomic.Int64)
 	return startE2EDelayingProxy(t, backend, delay, func(r *http.Request) bool {
 		if r.Method != http.MethodGet ||
 			!strings.HasPrefix(r.URL.Path, "/api/v1/mods/") ||
@@ -2290,7 +2350,7 @@ func startE2EProxyDelayingTheNthModFilesRead(t *testing.T, backend, profile stri
 			return false
 		}
 		return int(seen.Add(1)) == n
-	})
+	}), seen
 }
 
 // newE2EFixtureWithASwitchTargetAndSlowStaleReads is

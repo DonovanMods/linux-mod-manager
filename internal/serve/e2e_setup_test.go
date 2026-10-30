@@ -415,7 +415,7 @@ func TestE2E_FirstRunUncuratedGame_AddWithDetailsCatalogPick(t *testing.T) {
 	// races the injected click instead of proving it never happened.
 	var postCountBeforeClick int
 	f.runInBrowser(t,
-		chromedp.Sleep(300*time.Millisecond),
+		quietWindow(),
 		chromedp.Evaluate(`window.__gamePostCount`, &postCountBeforeClick),
 	)
 	assert.Equal(t, 0, postCountBeforeClick,

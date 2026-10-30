@@ -366,7 +366,7 @@ func TestE2E_LibraryRow_RetryAfterAFailedToggleIsAcknowledged(t *testing.T) {
 		// Long enough for any effect that WOULD settle the request to have
 		// run: the retry's own request is held, so nothing from the server
 		// can legitimately settle it inside this window.
-		settleEffects(),
+		quietWindow(),
 		chromedp.Evaluate(libraryRowStateJS("Gamma Mod"), &retry),
 	)
 	assert.True(t, retry.Pending,
@@ -429,7 +429,7 @@ func TestE2E_LibraryBatch_RetryAfterAFailedBatchIsAcknowledged(t *testing.T) {
 
 	var gamma, delta e2eRowToggleState
 	f.runInBrowser(t,
-		settleEffects(),
+		quietWindow(),
 		chromedp.Evaluate(libraryRowStateJS("Gamma Mod"), &gamma),
 		chromedp.Evaluate(libraryRowStateJS("Delta Mod"), &delta),
 	)
