@@ -18,6 +18,7 @@ Global application settings. Optional; defaults apply if the file is missing.
 | `auto_snapshot`       | bool   | `false`   | Record a snapshot before every deploy, profile switch and update (see below)                         |
 | `auto_snapshot_keep`  | int    | `10`      | How many AUTOMATIC snapshots to keep per game; `0` means unlimited (see below)                       |
 | `update_check`        | bool   | `true`    | Check GitHub once a day for a newer lmm release and say so (see below)                               |
+| `auto_update`         | bool   | `false`   | Let `lmm-update.timer` install a new lmm release unattended (see below)                              |
 
 ### `auto_snapshot`
 
@@ -128,6 +129,17 @@ only an `lmm/<version>` User-Agent; its answer is cached in
 `<data dir>/release-check.json`. The check adds at most a fraction of a
 second to a command, and never fails one. Set `update_check: false` to turn
 the automatic check off; `lmm version --check` still asks when you run it.
+
+### `auto_update`
+
+With `auto_update: true`, the daily `lmm-update.timer` installed by
+`lmm service install --auto-update` runs `lmm self-update --auto`, which
+installs a new release unattended. It is **off by default**, and the timer's
+run does nothing while it is off, so setting it back to `false` stops
+updates without touching the unit. It applies only to an lmm you manage
+yourself (the release tarball, `go install`, `make install`): a package
+manager's binary is never replaced. Every update is verified against the
+lmm release key before it is installed; see `lmm self-update`.
 
 ## games.yaml
 
