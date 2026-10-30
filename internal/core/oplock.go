@@ -227,3 +227,23 @@ func probeOpLock(path string) (held bool, stamp string) {
 		return false, stamp
 	}
 }
+
+// MutationInProgress reports a mutation running right now - in this
+// process, or in another lmm holding the operation lock - as the standard
+// *OperationInProgressError, naming the lock's holder as far as its stamp
+// says, or nil when none is (#588 review). It never waits. A frontend asks
+// it after a check came back deferred, to tell a mutation still running
+// (refuse, saying who) from one that overlapped the walk and has since
+// finished (nothing is running: check again).
+func (s *Service) MutationInProgress() error {
+	if s.opLockPath != "" {
+		if held, _ := probeOpLock(s.opLockPath); held {
+			pid, startedAt := readOpLockHolder(s.opLockPath)
+			return &OperationInProgressError{PID: pid, StartedAt: startedAt, Path: s.opLockPath}
+		}
+	}
+	if s.opHeld.Load() {
+		return &OperationInProgressError{PID: os.Getpid()}
+	}
+	return nil
+}

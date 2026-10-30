@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -33,11 +36,15 @@ func TestDoVerify_AnotherProcessMutatingRefusesRatherThanReporting(t *testing.T)
 	verifyProfile = "default"
 	t.Cleanup(func() { verifyProfile = "" })
 
-	// The other process: a descriptor of its own holding the lock.
+	// The other process: a descriptor of its own holding the lock, stamped
+	// as a holder stamps it.
 	holder, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0o600)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = holder.Close() })
 	require.NoError(t, syscall.Flock(int(holder.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+	started := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	_, err = fmt.Fprintf(holder, "4242\n%s\n", started.Format(time.RFC3339))
+	require.NoError(t, err)
 
 	oldJSON := jsonOutput
 	t.Cleanup(func() { jsonOutput = oldJSON })
@@ -47,8 +54,12 @@ func TestDoVerify_AnotherProcessMutatingRefusesRatherThanReporting(t *testing.T)
 			return doVerify(context.Background(), svc, game, nil)
 		})
 		require.Error(t, runErr, "json=%t", asJSON)
-		assert.ErrorIs(t, runErr, core.ErrOperationInProgress)
-		assert.Contains(t, runErr.Error(), "run `lmm verify` again once it finishes")
+		// #588 review: the standard refusal, naming the holder, so --json
+		// carries its pid and start as every other refusal does.
+		var opErr *core.OperationInProgressError
+		require.ErrorAs(t, runErr, &opErr, "json=%t", asJSON)
+		assert.Equal(t, 4242, opErr.PID)
+		assert.True(t, started.Equal(opErr.StartedAt))
 		assert.NotContains(t, out, "verified OK", "json=%t", asJSON)
 		assert.NotContains(t, out, "Nothing to report", "json=%t", asJSON)
 	}
@@ -59,4 +70,66 @@ func TestDoVerify_AnotherProcessMutatingRefusesRatherThanReporting(t *testing.T)
 		return doVerify(context.Background(), svc, game, nil)
 	})
 	assert.NoError(t, runErr, "with the lock free, verify runs")
+}
+
+// deferredReport is a VerifyReport core answered without walking (#588).
+func deferredReport() *core.VerifyReport {
+	return &core.VerifyReport{Result: &core.VerifyResult{Deferred: core.VerifyDeferredJobRunning}}
+}
+
+// TestVerifySettled_AnOverlapThatHasEndedChecksAgain (#588 review): a walk
+// another lmm's mutation overlapped, where that mutation has already
+// finished, is not "an operation in progress" - nothing is. The tree is
+// settled now, so verify walks it once more and reports that walk.
+func TestVerifySettled_AnOverlapThatHasEndedChecksAgain(t *testing.T) {
+	clean := &core.VerifyReport{Result: &core.VerifyResult{Checked: 3}}
+	answers := []*core.VerifyReport{deferredReport(), clean}
+	runs, retries := 0, 0
+	report, err := verifySettled(
+		func() (*core.VerifyReport, error) { runs++; return answers[runs-1], nil },
+		func() error { return nil },
+		func() { retries++ },
+	)
+	require.NoError(t, err)
+	assert.Same(t, clean, report)
+	assert.Equal(t, 2, runs)
+	assert.Equal(t, 1, retries, "the user is told it is checking again")
+}
+
+// TestVerifySettled_OverlappedTwiceRefuses: a second overlap is refused -
+// without claiming a job is running when none is.
+func TestVerifySettled_OverlappedTwiceRefuses(t *testing.T) {
+	runs := 0
+	_, err := verifySettled(
+		func() (*core.VerifyReport, error) { runs++; return deferredReport(), nil },
+		func() error { return nil },
+		func() {},
+	)
+	require.Error(t, err)
+	assert.Equal(t, 2, runs, "re-run once, not forever")
+	assert.NotErrorIs(t, err, core.ErrOperationInProgress, "nothing is in progress now")
+	assert.Contains(t, err.Error(), "run `lmm verify` again")
+}
+
+// TestVerifySettled_ARunningMutationRefusesAtOnce: one that is still
+// running is the standard refusal, and is not waited out by a re-run.
+func TestVerifySettled_ARunningMutationRefusesAtOnce(t *testing.T) {
+	running := &core.OperationInProgressError{PID: 4242}
+	runs := 0
+	_, err := verifySettled(
+		func() (*core.VerifyReport, error) { runs++; return deferredReport(), nil },
+		func() error { return running },
+		func() { t.Fatal("no re-run while it is still running") },
+	)
+	assert.Same(t, running, err)
+	assert.Equal(t, 1, runs)
+
+	// And a walk's own error is returned as it is.
+	boom := errors.New("boom")
+	_, err = verifySettled(
+		func() (*core.VerifyReport, error) { return nil, boom },
+		func() error { return running },
+		func() {},
+	)
+	assert.Same(t, boom, err)
 }

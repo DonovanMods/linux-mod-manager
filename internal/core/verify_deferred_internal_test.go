@@ -132,3 +132,20 @@ func TestVerify_ASucceededTryBeginOpDuringTheWalkDefersIt(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, next.Cached, "the overlapped walk was not memoised")
 }
+
+// TestMutationInProgress names a running mutation's holder and is nil
+// once it has finished (#588 review).
+func TestMutationInProgress(t *testing.T) {
+	other, svc, _ := lockedVerifyPair(t)
+	require.NoError(t, svc.MutationInProgress())
+
+	release, err := other.beginOp(context.Background())
+	require.NoError(t, err)
+	var opErr *OperationInProgressError
+	require.ErrorAs(t, svc.MutationInProgress(), &opErr)
+	assert.Equal(t, os.Getpid(), opErr.PID, "the holder's stamp")
+	assert.False(t, opErr.StartedAt.IsZero())
+	release()
+
+	require.NoError(t, svc.MutationInProgress())
+}
