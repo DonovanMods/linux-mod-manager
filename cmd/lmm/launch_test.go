@@ -18,8 +18,9 @@ import (
 // cliLauncher is core's Launcher seam with nothing real behind it (#501):
 // no test here starts a program. runs records each systemd-run.
 type cliLauncher struct {
-	runs    [][]string
-	noSteam bool // neither steam nor xdg-open: the game cannot launch
+	runs      [][]string
+	noSteam   bool // neither steam nor xdg-open: the game cannot launch
+	noDisplay bool // no DISPLAY: the game has nowhere to open
 }
 
 func (f *cliLauncher) launcher() *core.Launcher {
@@ -28,6 +29,9 @@ func (f *cliLauncher) launcher() *core.Launcher {
 		delete(paths, "steam")
 	}
 	env := map[string]string{"DISPLAY": ":0"}
+	if f.noDisplay {
+		delete(env, "DISPLAY")
+	}
 	return &core.Launcher{
 		LookPath: func(file string) (string, error) {
 			if p, ok := paths[file]; ok {
@@ -175,6 +179,27 @@ func TestDoLaunch_DeployStrictRefusesDriftADeployCannotClear(t *testing.T) {
 	_, statErr := os.Lstat(filepath.Join(game.ModPath, "a.esp"))
 	assert.True(t, os.IsNotExist(statErr), "nothing was deployed")
 	assert.Empty(t, f.runs)
+}
+
+// The check before --deploy's deploy runs everything after the drift too:
+// undeployed changes - why --deploy is given at all - do not hide a launch
+// that would fail for another reason once the deploy has changed the game
+// folder.
+func TestDoLaunch_DeployIsSkippedWhenADriftedLaunchCannotHappen(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		svc, game, f := setupLaunchTest(t)
+		f.noDisplay = true
+		svc.SetLauncher(f.launcher())
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		launchDeploy, launchStrict = true, strict
+
+		err := doLaunch(context.Background(), svc, game)
+		var env *core.LaunchEnvironmentError
+		require.ErrorAs(t, err, &env, "strict=%v", strict)
+		_, statErr := os.Lstat(filepath.Join(game.ModPath, "a.esp"))
+		assert.True(t, os.IsNotExist(statErr), "nothing was deployed (strict=%v)", strict)
+		assert.Empty(t, f.runs)
+	}
 }
 
 // A dry run with --deploy previews the launch the deploy makes possible,

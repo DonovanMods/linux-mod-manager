@@ -91,14 +91,18 @@ func doLaunch(ctx context.Context, service *core.Service, game *domain.Game) err
 		// Everything but the drift is checked before the deploy changes
 		// the game folder: a game that cannot launch is not deployed for
 		// nothing.
+		check := opts
+		check.Force, check.DryRun = true, true
+		if _, err := service.Launch(ctx, game, check); err != nil {
+			return err
+		}
 		// So is a --strict launch whose drift a deploy cannot clear (a
 		// disabled mod still deployed, a mod_path that needs the user):
 		// it would refuse after the deploy anyway.
-		check := opts
-		check.Force, check.DryRun = false, true
-		if _, err := service.Launch(ctx, game, check); err != nil {
+		if launchStrict {
+			check.Force = false
 			var drift *core.LaunchDriftError
-			if !errors.As(err, &drift) || launchStrict && !drift.DeployClears {
+			if _, err := service.Launch(ctx, game, check); errors.As(err, &drift) && !drift.DeployClears {
 				return err
 			}
 		}
