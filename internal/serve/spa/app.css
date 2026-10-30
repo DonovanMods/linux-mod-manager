@@ -18,6 +18,53 @@
  * design (owner decision, §Settled decisions).
  */
 
+/*
+ * The bundled faces (issue 523). Without them --font-sans was the host's own
+ * system-ui, so the page was drawn in Liberation Sans on one machine and in
+ * a tenth-wider DejaVu Sans on another. Both families are embedded in the
+ * binary and served from /vendor/ (vendor/FONTS.md has their provenance),
+ * which the Content-Security-Policy's default-src 'self' already admits.
+ *
+ * Inter is one variable face per style, so its whole weight axis is
+ * declared. JetBrains Mono ships no variable .woff2, so it is its two static
+ * weights; mono italic is left to the browser to slant.
+ *
+ * font-display: swap draws text in the fallback until a face arrives rather
+ * than hiding it; the shell preloads the upright Inter so, from a local
+ * server, the swap has normally happened before first paint.
+ */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/vendor/InterVariable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/vendor/InterVariable-Italic.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/vendor/JetBrainsMono-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/vendor/JetBrainsMono-Bold.woff2") format("woff2");
+}
+
 :root {
   color-scheme: light;
 
@@ -48,10 +95,11 @@
 
   /* Type. */
   --font-sans:
-    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
-    sans-serif;
+    "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
   --font-mono:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
 
   /* Rhythm. */
   --space-1: 0.25rem;
