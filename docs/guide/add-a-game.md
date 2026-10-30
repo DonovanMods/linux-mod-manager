@@ -182,7 +182,11 @@ NexusMods, into the `mods` folder of the install. The game loads a mod from
 `mods/<name>/<name>.mpq/`, so lmm puts each mod there, however its archive
 was packed: already in that shape, inside a `mods/` folder, or as the bare
 `<name>.mpq` folder. An archive with no `.mpq` folder, or with several, is
-deployed as packaged, with a warning.
+deployed as packaged, with a warning. An archive whose `<name>` has a space
+in it (`Loot v2.mpq`) is refused: Battle.net splits its arguments on
+spaces, so no `-mod` could ever name it. Repack it with both folders
+renamed without the space (`Loot_v2/Loot_v2.mpq/`) and add it with
+[`lmm import`](manual-mods.md).
 
 The game loads a mod only when it is started with `-mod <name> -txt`, and
 Battle.net can't be asked to pass that on. So after each deploy, and each
@@ -201,15 +205,19 @@ game:
 
 1. the user whose `Documents` already has the game's folder (the game
    makes it the first time it runs);
-2. otherwise the prefix's own user: the one its `user.reg` names, or
-   `steamuser` in a Proton prefix;
+2. otherwise the prefix's own user: the one whose Documents folder its
+   `user.reg` names, or `steamuser` in a Proton prefix;
 3. otherwise the only user there is.
 
 `Public` is never picked. If lmm still can't tell, it doesn't guess: the
 game isn't offered, and detection says why. Run the game once so it makes
 its folder, then detect again, or add the game by hand with
-[`lmm game add`](#in-the-terminal). When `Documents` is a link to your
-own `~/Documents`, as Wine sometimes makes it, lmm saves the real folder.
+[`lmm game add`](#in-the-terminal). Older prefixes call the folder
+`My Documents`; lmm uses whichever one `user.reg` names, and otherwise
+looks in both. When `Documents` is a link to your own `~/Documents` (or
+your home folder), as Wine makes it, lmm saves the real folder. A link
+that leads anywhere outside the prefix and your home folder is refused,
+with a detection warning: add the game by hand if you mean it.
 
 Both games come with their NexusMods source, but most custom maps are on
 community sites lmm has no source for, such as Hive Workshop and

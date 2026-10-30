@@ -159,7 +159,7 @@ adapter.
 | `Verifier` | `Verify(ctx, req) ([]Finding, error)` | `bepinex` | appends adapter findings to `lmm verify`'s result |
 | `MergeCompiler` | 11 methods | `icarus` | the whole merged-artifact compile path |
 | `Preconditioner` | `CheckPreconditions(g, mods) error` | *(none yet)* | refuses a flow before it starts |
-| `LaunchAdvisor` | `LaunchAdvice(g, mods) []string` | `d2r` | shows the advice as a warning after a deploy and on a launch |
+| `LaunchAdvisor` | `LaunchAdvice(g, mods, previous) Advice` | `d2r` | shows the advice as a warning after a deploy (a switch's and an apply's too) and on a launch |
 
 ### FileRouter
 
@@ -283,15 +283,21 @@ cannot arrange it itself (#546). Diablo II: Resurrected loads a mod only
 when started with `-mod <name> -txt`, Battle.net's `--exec` cannot pass
 game arguments on, and the name depends on which mods the profile has
 deployed and in what order. So `d2r`'s advice names the folder of the mod
-last in load order, and says when several compete, since the game loads
-one.
+last in load order, says when mods in other folders compete (the game
+loads one), and when several mods share that folder (merged, loaded
+together).
 
 Core hands it the profile's enabled, deployed mods in load order, each
 with its deployable files (mod-path-relative, slash-separated), and
-appends what it returns to `DeployResult.Warnings` (with a
-`DeployWarning` event, so both frontends show it) and
-`LaunchResult.Warnings`. Advice never fails a flow: anything core cannot
-read is skipped.
+`previous`: the `Advice.Args` it last returned for the game, which core
+records under `<DataDir>/launch-args/<game-id>` after every deploy. That
+is how a deploy that drops the last mod can say to remove the `-mod` line.
+Core appends `Advice.Lines` to `DeployResult.Warnings` (with a
+`DeployWarning` event), to `SwitchResult.Warnings` and
+`ProfileApplyResult.Warnings` (with a `SwitchInstallWarning` event), so
+both frontends show it, and to `LaunchResult.Warnings`; a launch reads the
+record but never writes it. Advice never fails a flow: anything core
+cannot read is skipped.
 
 This is not the setup advice the section above rules out. That advice is
 about the game's INSTALLATION (is the loader there, which launch option

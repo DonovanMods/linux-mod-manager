@@ -91,12 +91,22 @@ the mod's folder:
 Warning: Diablo II: Resurrected loads Loot Filter only when started with "-mod LootFilter -txt": in Battle.net, open the game's settings (the gear beside Play) > Game Settings, tick "Additional command line arguments" and enter: -mod LootFilter -txt
 ```
 
-The game loads one mod at a time. With several enabled, lmm names the one
-last in the load order, the one that wins when mods overlap, and warns that
-the others won't load: disable them, or move the one you
-want to the end (`lmm profile reorder`, or **Resolve…** on the web UI's
-Conflicts card). When you change mods, check the line still matches. To
-play without mods, untick the setting.
+lmm says it after a profile switch and a profile apply too, since both
+deploy.
+
+The game loads one mod folder at a time. With mods in several folders
+enabled, lmm names the folder of the one last in the load order, the one
+that wins when mods overlap, and warns that the others won't load: disable
+them, or move the one you want to the end (`lmm profile reorder`, or
+**Resolve…** on the web UI's Conflicts card). Two mods that carry the same
+`<name>.mpq` (an add-on for another mod, say) both deploy into the one
+`mods/<name>/` folder and load together; where they carry the same file,
+the later in the load order wins, and lmm says so.
+
+When the line changes, lmm says what to enter in place of the old one.
+When you disable or remove the last mod, the next deploy tells you to
+remove the `-mod` line from Battle.net's settings, so the game starts
+without mods.
 
 ## Any other game: tell lmm what to run
 

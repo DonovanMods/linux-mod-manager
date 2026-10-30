@@ -27,8 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-mod <name> -txt`, which Battle.net's `--exec` cannot pass, so every
   deploy and every `lmm launch` of it ends with the exact line to enter in
   Battle.net's "Additional command line arguments" - for the mod last in
-  load order, with a warning when several are enabled, since the game
-  loads one. The product codes, the launch codes (`OSI`, `W3`, `S2`) and
+  load order, with a warning when mods in other folders are enabled,
+  since the game loads one, and a note when several mods share that
+  folder: they are merged into it and load together, the later in load
+  order winning a conflict. A profile switch and a profile apply say it
+  too, and the deploy that drops the last mod says to remove the `-mod`
+  line. An archive whose `<name>` has a space is refused at import, since
+  Battle.net splits its arguments on spaces, with the rename that fixes
+  it. An older prefix's `My Documents` is found (from `user.reg`, or by
+  looking in both), and a Documents folder linked outside the prefix and
+  the home directory is refused with a detection warning. The product codes, the launch codes (`OSI`, `W3`, `S2`) and
   the Warcraft III and StarCraft II NexusMods ids are unverified until
   someone with a real install confirms them. Diablo III, Diablo IV and
   StarCraft: Remastered stay out. World of Warcraft's Forever flavor
