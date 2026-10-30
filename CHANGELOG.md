@@ -54,6 +54,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as before, and the Health card's verify is still answered from the
   unchanged-installation memo (#336).
 
+- **The web UI's Health card shows each finding in full, without the
+  CLI's "Not fixable" sentence (#585).** A row read "Not fixable: …", which
+  explained what `lmm verify --fix` would not do. Nobody can run that from a
+  browser, and the sentence took most of the row. The subject and the finding
+  were each cut to one line, so a loader-stale row read "loader stale l…"
+  and lost its remedy ("launch the game once to confirm…"). A row now wraps
+  so its whole text can be read, and it offers an action only where it has
+  one (**Repair**, **Set mod path…**, **Add API key…**). The engine's
+  reason stays on the wire as `fixable_reason`, stays in `lmm verify`'s
+  output, and shows as the row's tooltip.
+
 ### Fixed
 
 - **lmm refuses a database a newer lmm has migrated (#516).** This

@@ -1194,6 +1194,36 @@ input[type="search"]::-webkit-search-decoration {
   color: var(--text-secondary);
 }
 
+/* issue 585: a Health row is read in full. Its subject and the finding's own
+ * words wrap instead of being cut to one line - the remedy ("launch the game
+ * once to confirm...") is the part the ellipsis took, and a status standing
+ * in for a mod name read "loader stale l...". The row's action keeps the
+ * right edge, on the first line when it fits and its own when it does not. */
+.card__row--finding {
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+.card__row--finding > .card__row-name,
+.card__row--finding > .card__row-detail {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
+.card__row--finding > .card__row-name {
+  flex: 0 1 auto;
+}
+
+.card__row--finding > .card__row-detail {
+  flex: 1 1 12rem;
+}
+
+.card__row--finding > :last-child:not(span) {
+  margin-left: auto;
+}
+
 /* issue 542: the quiet "N skipped updates" line under the attention cards.
  * Not a card - nothing in it needs attention - so it spans the whole grid
  * row rather than taking a column, in secondary text, collapsed until
