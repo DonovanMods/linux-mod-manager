@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`lmm launch` starts the game (#501).** It launches the active profile's
+  game through `launch.command` in `games.yaml` when one is set, else
+  through Steam by the game's app id, which lmm finds in the Steam library
+  the game is installed in (the Flatpak Steam's included), so a game added
+  from Steam needs nothing configured. The game starts as a transient
+  systemd user service, so restarting `lmm serve` or closing the terminal
+  leaves it running. Undeployed changes print a warning and the game
+  launches anyway; `--deploy` deploys the profile first and `--strict`
+  refuses instead. `--dry-run` prints the full command line, and `--json`
+  emits it as a document. `lmm status --game <id> --json` gains a `launch`
+  member saying how the game would launch, or why it cannot. A Play button
+  in the web UI follows.
+
 ### Changed
 
 - **The web UI draws its text in the same face on every machine (#523).**
