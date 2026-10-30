@@ -1,0 +1,9 @@
+{
+  "kind": "updates",
+  "applied": 2,
+  "failed": 1,
+  "skipped": 1,
+  "skipped_notes": [
+    "Workshop Map — Steam updates this item itself"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "0123456789abcdef0123456789abcdef",
+  "kind": "updates",
+  "state": "succeeded",
+  "started_at": "2026-08-30T12:00:00Z",
+  "ended_at": "2026-08-30T12:00:02Z",
+  "tally": {
+    "kind": "updates",
+    "applied": 1,
+    "failed": 0,
+    "skipped": 1,
+    "skipped_notes": [
+      "Better Boots — Better Boots is locked at v1.0; run lmm mod unlock to update it"
+    ]
+  },
+  "event_count": 6,
+  "dropped_events": 0
+}
