@@ -1,0 +1,23 @@
+# Written by `lmm service install`; `lmm service uninstall` removes it.
+# lmm's unattended self-update (#569). lmm-update.timer starts it once a
+# day; it installs a new lmm release only while config.yaml says
+#   auto_update: true
+# and otherwise exits at once, so that setting turns updates off without
+# touching this file.
+
+[Unit]
+Description=lmm unattended self-update
+Documentation=https://donovanmods.github.io/linux-mod-manager/updates.html
+Documentation=man:lmm-self-update(1)
+# A failed run (most often a network that is not up yet) is tried again
+# five minutes later, up to three more times.
+StartLimitIntervalSec=1h
+StartLimitBurst=4
+
+[Service]
+Type=oneshot
+Environment="XDG_CONFIG_HOME=/home/u/cfg"
+ExecStart=/home/u/go/bin/lmm self-update --auto --data /home/u/data
+Restart=on-failure
+RestartSec=5min
+NoNewPrivileges=yes

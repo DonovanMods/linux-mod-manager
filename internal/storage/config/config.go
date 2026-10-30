@@ -51,6 +51,25 @@ type Config struct {
 	// the whole point of the automatic ones is that you do not think about
 	// them.
 	AutoSnapshotKeep int `yaml:"auto_snapshot_keep"`
+
+	// UpdateCheck turns lmm's once-a-day check for a newer lmm release on
+	// or off (#568). ON by default, so a pointer: nil (the key absent) is
+	// the default and is never written back, while an explicit
+	// `update_check: false` is the opt-out and survives every save. Read
+	// it through UpdateCheckEnabled.
+	UpdateCheck *bool `yaml:"update_check,omitempty"`
+
+	// AutoUpdate lets lmm-update.timer (`lmm service install
+	// --auto-update`) install a new lmm release unattended (#569). OFF by
+	// default, and the timer's run does nothing while it is off, so
+	// turning it off stops updates without touching a unit.
+	AutoUpdate bool `yaml:"auto_update,omitempty"`
+}
+
+// UpdateCheckEnabled reports whether lmm may check GitHub for a newer
+// release: true unless config.yaml says `update_check: false`.
+func (c *Config) UpdateCheckEnabled() bool {
+	return c.UpdateCheck == nil || *c.UpdateCheck
 }
 
 // DefaultAutoSnapshotKeep is AutoSnapshotKeep's value when config.yaml

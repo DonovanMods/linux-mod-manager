@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-29
+
+The web UI can run in the background as a systemd user service, lmm says
+when a new release of itself is out, and an lmm you installed yourself can
+update itself with `lmm self-update`, which installs only a release signed
+by the lmm release key. This is the first release published with a signed
+`checksums.txt.sig`.
+
+### Added
+
+- **Run the web UI in the background (#567).** `lmm serve` can now run as
+  the systemd user service `lmm-serve.service`, started at login (or at
+  boot, with `loginctl enable-linger`, which lmm prints but never runs).
+  The deb, rpm and apk packages and the AUR `PKGBUILD` install it to
+  `/usr/lib/systemd/user`, turned off: `systemctl --user enable --now
+lmm-serve` turns it on. For a tarball, `go install` or `make install`,
+  `lmm service install [--addr host:port]` writes it to
+  the directory the user manager loads units from, pointing at the
+  running binary (the `lmm` on `PATH` when it is the same file) and
+  carrying `--config`/`--data` and any differing `XDG_CONFIG_HOME`/
+  `XDG_DATA_HOME`, and starts it, then checks a moment later that it is
+  still running; `lmm service uninstall` removes it (only a unit file lmm
+  wrote is ever overwritten or removed), and `lmm service status` reports
+  whether it is installed, enabled and running and whether lingering is on
+  (all three take `--json`). A missing `systemctl` or user manager is a
+  clear error. The user guide has a new page, "Run the web UI in the
+  background".
+
+- **lmm says when a new release of itself is out (#568).** After an
+  interactive command, a one-line notice on stderr names the newer version
+  and how to get it: the package manager's upgrade command when one owns the
+  binary (`dpkg`, `rpm`, `apk` or `pacman` is asked), the release page
+  otherwise. `lmm serve` shows a dismissible banner linking the release
+  notes, dismissed per version. The new `lmm version` reports the running
+  version, the newest release and how lmm was installed (`--check` asks now,
+  `--json` for scripts; `GET /api/v1/updates/lmm` serves the same document).
+  lmm asks GitHub at most once a day, sending only an `lmm/<version>`
+  User-Agent, caches the answer (and a failure) under the data dir, backs
+  off to once a day on a network that never answers, ignores drafts and
+  prereleases, and never reports one for a dev build; no notice
+  is printed with `--json` or when stderr is not a terminal. It is on by
+  default and says so the first time; `update_check: false` in
+  `config.yaml` turns it off.
+
+- **`lmm self-update` installs a new release of itself, verified (#569).**
+  For an lmm you manage yourself (the release tarball, `go install`,
+  `make install`), `lmm self-update` downloads the latest release into the
+  staging directory, verifies `checksums.txt` against an ed25519 signature
+  by the release key built into lmm (a missing or invalid signature is
+  refused), then the tarball against its line there, extracts only the
+  `lmm` binary and renames it over the running one, keeping its mode; if
+  `lmm-serve.service` is running it is restarted onto the new version.
+  `--check` only reports, `--yes` skips the question, and `--json` never
+  asks: without `--yes` it prints the plan. A package-owned binary is
+  refused with its package manager's upgrade command, a dev build is
+  refused, and a directory you cannot write is a clear error that never
+  suggests `sudo`. Already up to date does nothing. Unattended updates are
+  opt-in: `lmm service install --auto-update` adds `lmm-update.timer`
+  (daily, `Persistent=true`, up to an hour's random delay) running
+  `lmm self-update --auto`, which installs nothing unless `config.yaml`
+  says `auto_update: true`; `lmm service uninstall` removes it. A
+  `lmm serve` started by hand, whose binary was replaced under it, shows
+  "lmm vX is installed; restart `lmm serve` to use it" in its banner
+  (`GET /api/v1/updates/lmm` gains `installed`). Releases now publish
+  `checksums.txt.sig`, signed in the release workflow;
+  `docs/release-signing.md` covers the key and its rotation.
+  An install method lmm cannot settle
+  (a package database that is locked or times out) is refused rather than
+  read as self-managed, by `lmm self-update` and by
+  `lmm service install --auto-update`; a release tag that is not exactly
+  `vX.Y.Z` is refused before it is used; one self-update runs at a time
+  (`<data dir>/self-update.lock`; a second is refused, and the timer's run
+  steps aside with exit 0); downloads follow redirects only over https to
+  GitHub's own hosts; `lmm-update.service` retries a failed run every five
+  minutes, up to three times, and no longer names `network-online.target`;
+  `lmm serve`'s replaced-binary check runs `<exe> --version` once for
+  concurrent requests and backs off five minutes after a failure. Signing
+  runs only in the `release` environment, for a tag whose commit is on
+  `main`.
+
+### Fixed
+
+- **A tooltip raised by keyboard focus stays up when the page scrolls to
+  the control (#572).** In a window narrow enough that a table runs past
+  its edge, tabbing to a control off to the right (the Setup Games table's
+  pencils at 700px) scrolls it into view, and the scroll took its tooltip
+  straight back down a frame after showing it. A focus-raised tooltip now
+  follows its control when the page scrolls, and hides only once the
+  control has scrolled out of view, on blur, on Escape or on a click.
+  A hovered tooltip still hides on scroll.
+
 ## [2.1.0] - 2026-10-29
 
 Profiles can be duplicated and mods copied between them, a CurseForge game
@@ -6253,7 +6344,8 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.1...v2.0.0

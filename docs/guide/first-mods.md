@@ -18,7 +18,9 @@ lmm serve
 
 Your browser opens on lmm's page. If it doesn't, open
 <http://127.0.0.1:7420/> yourself. The page only exists while that command is
-running, so leave the terminal open. Press **Ctrl+C** there to stop it.
+running, so leave the terminal open. Press **Ctrl+C** there to stop it. To
+keep it running without a terminal, see
+[Run the web UI in the background](background.md).
 
 {: .note }
 The page lives on your own computer. Nothing else on your network can reach

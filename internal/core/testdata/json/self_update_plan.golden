@@ -1,0 +1,8 @@
+{
+  "current": "2.1.0",
+  "latest": "2.2.0",
+  "up_to_date": false,
+  "executable": "/home/u/.local/bin/lmm",
+  "asset": "lmm_2.2.0_linux_amd64.tar.gz",
+  "release_url": "https://github.com/DonovanMods/linux-mod-manager/releases/tag/v2.2.0"
+}

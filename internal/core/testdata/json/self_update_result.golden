@@ -1,0 +1,8 @@
+{
+  "updated": true,
+  "previous": "2.1.0",
+  "version": "2.2.0",
+  "executable": "/home/u/.local/bin/lmm",
+  "serve_restarted": false,
+  "serve_restart_error": "systemctl --user try-restart lmm-serve.service: exit status 1"
+}

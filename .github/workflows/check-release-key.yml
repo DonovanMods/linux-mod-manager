@@ -1,0 +1,71 @@
+# Proves the LMM_RELEASE_SIGNING_KEY secret is the private half of a public
+# key compiled into lmm (#569): it signs a throwaway file with the secret and
+# verifies the signature against each key `releasekey trusted` prints. Run it
+# by hand, from main, after setting or rotating the secret;
+# docs/release-signing.md has the procedure. It prints OK or FAIL and nothing
+# else - never the key.
+name: Check release signing key
+
+on:
+  workflow_dispatch:
+
+# Nothing by default: each job names the access it needs.
+permissions: {}
+
+jobs:
+  # Dispatched from any other ref, the run fails here and the keyed job
+  # never starts. A branch can edit this file, so the release environment's
+  # deployment policy, which admits main and v* tags only, is what actually
+  # keeps the key from a branch; this makes a wrong ref fail loudly.
+  refuse:
+    name: Refuse a run from any ref but main
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Refuse
+        run: |
+          echo "::error::Run this workflow from main, not ${GITHUB_REF}; see docs/release-signing.md" >&2
+          exit 1
+
+  check:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The secret lives in the release environment (docs/release-signing.md).
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Sign a throwaway file and verify it against lmm's keys
+        env:
+          LMM_RELEASE_SIGNING_KEY: ${{ secrets.LMM_RELEASE_SIGNING_KEY }}
+        # Every command's own output goes to /dev/null: the script's only
+        # output is its verdict. An empty secret, a secret that cannot
+        # sign, and one no compiled-in key verifies all print FAIL.
+        run: |
+          tool="${RUNNER_TEMP}/releasekey"
+          probe="${RUNNER_TEMP}/key-check.txt"
+          if [ -z "${LMM_RELEASE_SIGNING_KEY}" ] ||
+            ! go build -o "$tool" ./tools/releasekey >/dev/null 2>&1 ||
+            ! printf 'lmm release signing key check, run %s\n' "${GITHUB_RUN_ID}" > "$probe" ||
+            ! "$tool" sign -in "$probe" -out "$probe.sig" >/dev/null 2>&1; then
+            echo "FAIL"
+            exit 1
+          fi
+          for pub in $("$tool" trusted 2>/dev/null); do
+            if "$tool" verify -pub "$pub" -in "$probe" -sig "$probe.sig" >/dev/null 2>&1; then
+              echo "OK"
+              exit 0
+            fi
+          done
+          echo "FAIL"
+          exit 1

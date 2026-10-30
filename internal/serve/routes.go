@@ -20,6 +20,8 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}/versions", s.wrap(s.handleAPIModVersions))
 	s.mux.Handle("GET /api/v1/search", s.wrap(s.handleAPISearch))
 	s.mux.Handle("GET /api/v1/updates", s.wrap(s.handleAPIUpdates))
+	// lmm's own release, not a mod's (#568, api_release.go).
+	s.mux.Handle("GET /api/v1/updates/lmm", s.wrap(s.handleAPIReleaseStatus))
 	s.mux.Handle("GET /api/v1/profiles", s.wrap(s.handleAPIProfiles))
 	s.mux.Handle("GET /api/v1/health", s.wrap(s.handleAPIHealth))
 	s.mux.Handle("GET /api/v1/conflicts", s.wrap(s.handleAPIConflicts))

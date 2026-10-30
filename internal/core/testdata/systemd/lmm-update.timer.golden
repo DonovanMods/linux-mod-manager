@@ -1,0 +1,14 @@
+# Written by `lmm service install`; `lmm service uninstall` removes it.
+# Starts lmm-update.service once a day (#569).
+
+[Unit]
+Description=Daily lmm self-update
+Documentation=https://donovanmods.github.io/linux-mod-manager/updates.html
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

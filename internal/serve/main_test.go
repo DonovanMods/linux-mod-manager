@@ -3,8 +3,11 @@ package serve
 import (
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/testutil"
 )
 
 // noCoreDumpLimit is the soft RLIMIT_CORE TestMain gives this test binary,
@@ -40,7 +43,16 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
-	os.Exit(m.Run())
+	// #568: a server built with a ReleaseChecker refreshes it in the
+	// background, so nothing here may reach api.github.com: a request is
+	// refused before it is sent, and any attempt fails the run.
+	githubAttempts := testutil.GuardGitHub()
+	code := m.Run()
+	if attempts := githubAttempts(); len(attempts) > 0 {
+		fmt.Fprintf(os.Stderr, "FAIL: the test suite tried to reach GitHub:\n  %s\n", strings.Join(attempts, "\n  "))
+		code = 1
+	}
+	os.Exit(code)
 }
 
 // TestMain_DisablesCoreDumps pins the limit TestMain sets (#561), so a

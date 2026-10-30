@@ -11,6 +11,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// defaultServeAddr is where `lmm serve` listens without --addr.
+const defaultServeAddr = "127.0.0.1:7420"
+
 var (
 	serveAddr   string
 	serveNoOpen bool
@@ -37,7 +40,7 @@ Examples:
 }
 
 func init() {
-	serveCmd.Flags().StringVar(&serveAddr, "addr", "127.0.0.1:7420", "address to listen on (host:port)")
+	serveCmd.Flags().StringVar(&serveAddr, "addr", defaultServeAddr, "address to listen on (host:port)")
 	serveCmd.Flags().BoolVar(&serveNoOpen, "no-open", false, "don't open a browser automatically")
 	rootCmd.AddCommand(serveCmd)
 }
@@ -64,8 +67,10 @@ func doServe(ctx context.Context, cmd *cobra.Command, svc *core.Service) error {
 	}
 
 	srv := serve.New(ctx, svc, svc.Logger(), serve.Options{
-		Addr:    serveAddr,
-		Version: computeDisplayVersion(version, buildDescribe),
+		Addr:           serveAddr,
+		Version:        computeDisplayVersion(version, buildDescribe),
+		ReleaseChecker: serveReleaseChecker(),
+		Notices:        cmd.OutOrStdout(),
 	})
 	addr, err := srv.Listen()
 	if err != nil {
@@ -83,6 +88,21 @@ func doServe(ctx context.Context, cmd *cobra.Command, svc *core.Service) error {
 	serveReady(addr.String())
 
 	return srv.Serve(ctx)
+}
+
+// serveReleaseChecker is the checker `lmm serve` refreshes and answers GET
+// /api/v1/updates/lmm from (#568), or nil - the check reported off - in a
+// binary Execute did not arm (every test) or when the paths cannot be
+// resolved, which the service itself would already have refused.
+func serveReleaseChecker() *core.ReleaseChecker {
+	if !releaseCheckArmed {
+		return nil
+	}
+	rc, err := newReleaseChecker()
+	if err != nil {
+		return nil
+	}
+	return rc
 }
 
 // warnIfNonLoopback prints the loud, undismissable warning

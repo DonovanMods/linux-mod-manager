@@ -17,6 +17,8 @@ Global application settings. Optional; defaults apply if the file is missing.
 | `hook_timeout`        | int    | 60        | Timeout in seconds for hook scripts                                                                  |
 | `auto_snapshot`       | bool   | `false`   | Record a snapshot before every deploy, profile switch and update (see below)                         |
 | `auto_snapshot_keep`  | int    | `10`      | How many AUTOMATIC snapshots to keep per game; `0` means unlimited (see below)                       |
+| `update_check`        | bool   | `true`    | Check GitHub once a day for a newer lmm release and say so (see below)                               |
+| `auto_update`         | bool   | `false`   | Let `lmm-update.timer` install a new lmm release unattended (see below)                              |
 
 ### `auto_snapshot`
 
@@ -117,6 +119,27 @@ stored copy is dropped only once the original is back in place. `lmm
 snapshot restore` remains the whole-state path, and the one that can put
 back everything at once.
 
+
+### `update_check`
+
+lmm checks GitHub for a newer lmm release at most once a day — after an
+interactive command, and while `lmm serve` runs — and prints a one-line
+notice (or shows a banner in the web UI) when one is out. The request sends
+only an `lmm/<version>` User-Agent; its answer is cached in
+`<data dir>/release-check.json`. The check adds at most a fraction of a
+second to a command, and never fails one. Set `update_check: false` to turn
+the automatic check off; `lmm version --check` still asks when you run it.
+
+### `auto_update`
+
+With `auto_update: true`, the daily `lmm-update.timer` installed by
+`lmm service install --auto-update` runs `lmm self-update --auto`, which
+installs a new release unattended. It is **off by default**, and the timer's
+run does nothing while it is off, so setting it back to `false` stops
+updates without touching the unit. It applies only to an lmm you manage
+yourself (the release tarball, `go install`, `make install`): a package
+manager's binary is never replaced. Every update is verified against the
+lmm release key before it is installed; see `lmm self-update`.
 
 ## games.yaml
 
