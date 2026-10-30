@@ -17,6 +17,8 @@ import {
   modKey,
 } from "../modrows.js";
 import { ModPageLink } from "./modpagelink.js";
+import { AddAPIKeyButton } from "./addapikey.js";
+import { useSourceName } from "../sourcenames.js";
 import {
   ManualBadge,
   UpdateFromFileButton,
@@ -104,6 +106,10 @@ export function AttentionCards({
   // issue 542: updates the user skipped. Not on the card - a card of only
   // skipped updates is not shown at all - but kept findable on a quiet line.
   const skippedRows = updates?.skipped_updates ?? [];
+  // issue 582: sources that refused the check for want of a key. The
+  // report's error was never rendered, so a refusal left the card silent;
+  // each now names its source and links to its key.
+  const authRequired = updates?.auth_required ?? [];
   const findings = (health?.result?.findings ?? []).filter(
     (f) => f.status !== "ok",
   );
@@ -121,6 +127,7 @@ export function AttentionCards({
     missingRows.length === 0 &&
     goneRows.length === 0 &&
     skippedRows.length === 0 &&
+    authRequired.length === 0 &&
     findings.length === 0 &&
     conflictRows.length === 0 &&
     notInstalled === 0 &&
@@ -137,12 +144,14 @@ export function AttentionCards({
         (updateRows.length > 0 ||
           missingRows.length > 0 ||
           goneRows.length > 0 ||
+          authRequired.length > 0 ||
           errors.updates) &&
         html`<${UpdatesCard}
           state=${state}
           rows=${updateRows}
           missing=${missingRows}
           gone=${goneRows}
+          authRequired=${authRequired}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
           onRefresh=${actions.refreshUpdates}
@@ -273,11 +282,19 @@ function catalogMissingNote(gone) {
   } moved to a new ID, use Re-link… on its mod page; otherwise uninstall it.`;
 }
 
+/** AuthRequiredNote is one refusing source's line on the updates card
+ * (issue 582), named the way the rest of the UI names it. */
+function AuthRequiredNote({ sourceID }) {
+  const name = useSourceName(sourceID);
+  return `${name} needs an API key, so its mods were not checked.`;
+}
+
 function UpdatesCard({
   state,
   rows,
   missing = [],
   gone = [],
+  authRequired = [],
   error,
   onRetry,
   onRefresh,
@@ -363,6 +380,18 @@ function UpdatesCard({
           ${catalogMissingNote(gone)}
         </p>`
       }
+      ${authRequired.map(
+        (id) =>
+          html`<p
+            key=${id}
+            class="card__meta"
+            data-testid="updates-auth-required"
+            data-source=${id}
+          >
+            <${AuthRequiredNote} sourceID=${id} />${" "}
+            <${AddAPIKeyButton} state=${state} sourceID=${id} />
+          </p>`,
+      )}
       ${
         error
           ? html`<${CardError}
@@ -660,7 +689,14 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                         }</span
                       >
                       <span class="card__row-detail" title=${findingLabel(f)}
-                        >${codeSpans(findingLabel(f))}</span
+                        >${
+                          // issue 582: a refused-for-want-of-a-key row
+                          // says only that - the source's error chain is
+                          // the title, for whoever wants it.
+                          f.auth_source
+                            ? f.fixable_reason
+                            : codeSpans(findingLabel(f))
+                        }</span
                       >
                       ${
                         f.fixable
@@ -694,11 +730,19 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                               >
                                 Set mod path…
                               </button>`
-                            : html`<span
-                                class="card__row-detail"
-                                title=${notFixableReason(f)}
-                                >Not fixable: ${notFixableReason(f)}</span
-                              >`
+                            : f.auth_source
+                              ? // issue 582: the source refused for want
+                                // of a key. Go to it - "Not fixable" was
+                                // true of --fix and no help to a person.
+                                html`<${AddAPIKeyButton}
+                                  state=${state}
+                                  sourceID=${f.auth_source}
+                                />`
+                              : html`<span
+                                  class="card__row-detail"
+                                  title=${notFixableReason(f)}
+                                  >Not fixable: ${notFixableReason(f)}</span
+                                >`
                       }
                     </li>
                   `,

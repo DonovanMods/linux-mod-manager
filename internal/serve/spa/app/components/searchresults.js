@@ -18,6 +18,7 @@ import { navigate } from "../router.js";
 import { codeSpans } from "../errortext.js";
 import { FinishedJobReadout, InlineJob } from "./jobprogress.js";
 import { ModPageLink } from "./modpagelink.js";
+import { AddAPIKeyButton } from "./addapikey.js";
 
 /** installOrigin is the stable per-mod control key an inline install job
  * morphs on - jobprogress.js's own documented convention
@@ -244,7 +245,7 @@ export function SourceResultsList({
             key=${`warn-${w.source_id}`}
             class="search-result search-result--warning"
           >
-            <${SearchWarning} warning=${w} />
+            <${SearchWarning} warning=${w} state=${state} />
           </li>
         `,
       )}
@@ -256,7 +257,7 @@ export function SourceResultsList({
  * id is per source: one list never names the same source twice, and the two
  * lists that render warnings (the omnibar's fan-out, the search page) are
  * never on screen together. */
-function SearchWarning({ warning }) {
+function SearchWarning({ warning, state }) {
   const titleID = `search-warning-${warning.source_id}`;
   return html`
     <section class="search-warning" aria-labelledby=${titleID}>
@@ -265,6 +266,15 @@ function SearchWarning({ warning }) {
         <span class="badge badge--warn">${warning.source_id}</span>
       </p>
       <p class="search-warning__detail">${codeSpans(warning.error)}</p>
+      ${
+        // issue 582: the source refused for want of a key (or rejected the
+        // one it has) - link to where that key is set.
+        warning.auth_required &&
+        html`<${AddAPIKeyButton}
+          state=${state}
+          sourceID=${warning.source_id}
+        />`
+      }
     </section>
   `;
 }
