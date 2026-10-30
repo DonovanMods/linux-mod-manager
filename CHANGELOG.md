@@ -42,14 +42,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **lmm now updates itself by default (#586).** Automatic updates are ON for
   a self-managed install (the release tarball, `go install`, `make
-  install`): when the once-a-day release check finds a newer signed release,
+install`): when the once-a-day release check finds a newer signed release,
   lmm installs it by itself through the same verified path as `lmm
-  self-update` (the release signature, then the checksum, then an atomic
+self-update` (the release signature, then the checksum, then an atomic
   replace). After an interactive command, the CLI starts a detached `lmm
-  self-update --auto` and exits as it would have; a script or a pipe never
+self-update --auto` and exits as it would have; a script or a pipe never
   triggers one. `lmm serve` installs it from its background refresh and,
   when it runs as `lmm-serve.service`, restarts itself onto it; a `lmm
-  serve` you started yourself asks you to restart it. Only one update runs
+serve` you started yourself asks you to restart it. Only one update runs
   at a time, and a release whose update failed is not tried again for a
   day; the CLI-started run logs to `<data dir>/auto-update.log`. The first
   automatic update says so once, with how to turn them off ("lmm updated
@@ -66,6 +66,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   optional, for a machine where lmm rarely runs. **An install of v2.2.0
   keeps v2.2.0's behaviour (automatic updates off) until it is updated once
   by hand** (`lmm self-update`) to the release that carries this change.
+  An automatic update never runs, and never restarts `lmm-serve.service`,
+  while an lmm operation is running in any lmm process (the cross-process
+  operation lock, and `lmm serve`'s own jobs); it tries again later, and a
+  restart that would cut a running job short waits for it (up to ten
+  minutes, holding new jobs off while it restarts) or is left to you. The
+  update is recorded before the restart, so a restarted `lmm serve` never
+  loses it. A release check that fails (offline, GitHub erroring or
+  rate-limiting) backs off from an hour, doubling up to a day; an install
+  lmm cannot settle or a release tag it refuses waits a day. The "updated
+  itself" notice is shown once overall, by the terminal or the web UI,
+  whichever comes first (`POST /api/v1/updates/lmm/notice`), and Setup >
+  Updates' switch no longer waits behind a running job.
 
 - **The web UI draws its text in the same face on every machine (#523).**
   It used the host's own `system-ui` font, so the page looked different, and

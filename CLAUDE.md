@@ -150,7 +150,7 @@ internal/
     ├── source_index_prune.go # ListSourceIndexes/PruneSourceIndexes (`lmm source index --all`/`prune`): the fail-closed prune policy
     ├── user_units.go      # UserUnits: lmm-serve.service (+ #569's lmm-update.timer/.service under --auto-update) install/uninstall/status behind a systemctl/loginctl seam (`lmm service`, #567); needs no Service
     ├── self_update.go     # SelfUpdater: `lmm self-update` (#569) - trusted release keys, signature then checksum verification, atomic binary replace, serve restart; needs no Service
-    ├── auto_update.go     # automatic updates (#586): RunAuto (lock, verified Plan/Apply, step-asides), AutoUpdateDue's back-off, <data>/auto-update.json (the update to announce once, the failure), AutoUpdateStatus, SetAutoUpdate
+    ├── auto_update.go     # automatic updates (#586): RunAuto (lock, verified Plan/Apply, step-asides incl. a running mutation via the op lock + serve's Quiesce, record-then-restart), AutoUpdateDue's back-offs (install failures, release-check failures), <data>/auto-update.json (the update to announce once, the failure), AutoUpdateStatus, SetAutoUpdate
     ├── source_notices.go  # WithSourceNotices: a source's throttle/suspension/cold-build notices as events (#436)
     └── verify_repair.go   # verify --fix repair actions: redownload, checksum backfill
 └── serve/                # `lmm serve` local web UI: an SPA over /api/v1; imports only app/core/domain (boundary_test.go)

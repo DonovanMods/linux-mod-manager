@@ -117,16 +117,25 @@ match its published checksum, or nothing changes.
   restarts itself onto it. If you started `lmm serve` yourself in a
   terminal, it asks you to restart it instead.
 
-The first time lmm updates itself, it tells you, once, in the terminal and
-in the browser:
+An update never starts while lmm is busy with something else, such as a
+deploy or an install in the terminal or the browser; it waits and tries
+again later. Once it has installed the new version, the background web
+interface restarts only when nothing is running in it, and starts no new
+work while it restarts. If something is still running after ten minutes,
+it doesn't restart at all, and the browser asks you to restart it when
+you're ready.
+
+The first time lmm updates itself, it tells you once, in whichever you use
+next, the terminal or the browser:
 
 > lmm updated itself to v2.4.0. To turn this off: auto_update: false in
 > config.yaml, or Setup > Updates.
 
 Later updates get a one-line notice. Only one update runs at a time. If an
-update fails, lmm waits a day before it tries that version again; the
-terminal's background update writes what happened to
-`~/.local/share/lmm/auto-update.log`.
+update fails, lmm waits a day before it tries that version again. If lmm
+can't reach GitHub to find out about new versions, it waits an hour before
+asking again, then two, and so on up to a day. The terminal's background
+update writes what happened to `~/.local/share/lmm/auto-update.log`.
 
 To turn automatic updates off, add this line to `~/.config/lmm/config.yaml`:
 

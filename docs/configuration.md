@@ -152,9 +152,14 @@ It applies only to an lmm you manage yourself (the release tarball,
 `go install`, `make install`): a package manager's binary, or a development
 build, is never replaced. Every update is verified against the lmm release
 key before it is installed, exactly as `lmm self-update` does; only one runs
-at a time, and a release whose update failed is left alone for a day. The
-outcome is kept in `<data dir>/auto-update.json`, and the next interactive
-command (and the web UI) says once that lmm updated itself. With
+at a time, and a release whose update failed is left alone for a day. A
+release check that fails (offline, GitHub erroring) backs off from an hour,
+doubling up to a day. No update installs, and `lmm-serve.service` is not
+restarted, while any lmm operation is running - a CLI command or a web UI
+job; a restart waits up to ten minutes for one to finish and is otherwise
+left to you. The outcome is kept in `<data dir>/auto-update.json`, and the
+next interactive command or the web UI, whichever comes first, says once
+that lmm updated itself. With
 `update_check: false` nothing learns of a new release, so only the timer
 still updates lmm.
 
