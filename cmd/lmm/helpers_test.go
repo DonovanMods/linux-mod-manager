@@ -353,6 +353,7 @@ func TestWithService_PropagatesFnError(t *testing.T) {
 }
 
 func TestWithGameService_UnknownGameWrapsErrGameNotFound(t *testing.T) {
+	restoreFlags(t)
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 	gameID = "no-such-game"
@@ -388,6 +389,7 @@ func TestWithGameService_RequiresGame(t *testing.T) {
 }
 
 func TestWithGameService_ResolvesGame(t *testing.T) {
+	restoreFlags(t)
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 	gameID = "testgame"

@@ -53,6 +53,7 @@ func TestUninstallCmd_NoGame(t *testing.T) {
 
 // TestUninstallCmd_NoModID tests uninstall without mod-id argument
 func TestUninstallCmd_NoModID(t *testing.T) {
+	restoreFlags(t)
 	gameID = "test-game"
 
 	cmd := &cobra.Command{Use: "test"}
@@ -84,6 +85,7 @@ func TestUninstallCmd_DefaultFlags(t *testing.T) {
 
 // TestUninstallCmd_GameNotFound tests uninstall with non-existent game
 func TestUninstallCmd_GameNotFound(t *testing.T) {
+	restoreFlags(t)
 	// Use temp directories
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
