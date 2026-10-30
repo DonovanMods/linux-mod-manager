@@ -1911,6 +1911,10 @@ PUT    /api/v1/games/{id}     {"loader","loader_set"}
                                              carrying both is refused)
 POST   /api/v1/games/{id}/set-default     -> the new default (core.SettingsResult)
 DELETE /api/v1/games/default              -> the default cleared (core.SettingsResult)
+POST   /api/v1/games/{id}/launch  {"profile"?,"force"?}
+                                          -> what was started (core.LaunchResult);
+                                             undeployed changes are a 409 with
+                                             core.LaunchDriftError's details
 POST   /api/v1/games/detect   {"select"}  -> what was added (index or slug)
 POST   /api/v1/auth/{source}  {"api_key"} -> the authentication report
 DELETE /api/v1/auth/{source}              -> the authentication report
@@ -2123,7 +2127,8 @@ single trusted user on their own machine:
 
 - Binds to `127.0.0.1:7420` by default. Binding a non-loopback address (a
   LAN IP, `0.0.0.0`) prints a loud warning on every startup: anyone who can
-  reach that address can drive `lmm` exactly as you can.
+  reach that address can drive `lmm` exactly as you can, and launch
+  programs (the web UI's **Play** button starts your games).
 - Every request's `Host` header is checked against an allow-list built from
   the bind address (plus `localhost`, for a loopback bind) — a
   DNS-rebinding guard. A **wildcard bind** (`0.0.0.0`, `[::]`, or a bare

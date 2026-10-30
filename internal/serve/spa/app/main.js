@@ -38,7 +38,10 @@ import {
   maxUploadBytes,
   ApiError,
   NoAnswerError,
+  launchGame as apiLaunchGame,
 } from "./api.js";
+import { DEPLOY_ORIGIN } from "./components/topbar.js";
+import { PLAY_NOT_ACTIVE_REASON } from "./components/playbutton.js";
 import { updateFromFileInputID } from "./components/updatefromfile.js";
 import { copyReplaces } from "./components/plan_mod_copy.js";
 import {
@@ -2418,6 +2421,165 @@ function originOf(jobID) {
   );
 }
 
+/** launchMethodLabel is how a launch toast names the way the game was
+ * started (core.LaunchResult.method). */
+function launchMethodLabel(method) {
+  switch (method) {
+    case "steam":
+      return "Steam";
+    case "command":
+      return "its launch command";
+    default:
+      return method;
+  }
+}
+
+/**
+ * launchGame is the Play button (issue 501): POST the launch for the
+ * selected game and profile, or for `target` ({game, profile, name}) when a
+ * caller - Deploy & launch - must launch what it deployed even if the page
+ * has moved on since.
+ *
+ * It is not a job: the server answers once the game's systemd unit has
+ * started, so state.launching is the whole of its in-flight state, and the
+ * Play button names it ("Starting Valheim…"). A launch already in flight -
+ * or a Deploy & launch still deploying - swallows a second click.
+ */
+async function launchGame({ force = false, target } = {}) {
+  if (store.get().launching) return;
+  const { route, status } = store.get();
+  const game = target?.game ?? route.game;
+  const resolved = {
+    game,
+    profile: target?.profile ?? route.profile,
+    name:
+      target?.name ?? (status?.id === game && status.name ? status.name : game),
+  };
+  store.set({ launching: { game, name: resolved.name, phase: "launch" } });
+  try {
+    await requestLaunch(resolved, force);
+  } finally {
+    store.set({ launching: null });
+  }
+}
+
+/**
+ * requestLaunch is the launch POST itself, for a caller already holding
+ * state.launching. Undeployed changes (409 with core.LaunchDriftError's
+ * details) open the drift modal, which offers Deploy & launch and Launch
+ * anyway (`force`); a profile that is not the active one
+ * (core.ErrProfileNotActive's 409 - the page's status was out of date) says
+ * what the disabled Play button would; every other refusal is a toast, in
+ * the server's words - each names its own fix.
+ */
+async function requestLaunch({ game, profile, name }, force) {
+  try {
+    const result = await apiLaunchGame(game, {
+      profile,
+      ...(force ? { force: true } : {}),
+    });
+    pushToast({
+      tone: "success",
+      title: result.requested
+        ? `Launch requested: ${name} (via ${launchMethodLabel(result.method)})`
+        : `Started ${name}`,
+      detail: (result.warnings ?? []).join(" ") || undefined,
+    });
+  } catch (err) {
+    if (
+      err instanceof ApiError &&
+      err.status === 409 &&
+      typeof err.details?.deploy_clears === "boolean"
+    ) {
+      store.set({
+        modal: {
+          type: "launch-drift",
+          drift: err.details,
+          target: { game, profile, name },
+        },
+      });
+      return;
+    }
+    const notActive =
+      err instanceof ApiError &&
+      err.status === 409 &&
+      err.message.startsWith("profile is not active");
+    pushToast({
+      tone: "failure",
+      title: `Couldn't launch ${name}`,
+      detail: notActive
+        ? PLAY_NOT_ACTIVE_REASON
+        : err instanceof Error
+          ? err.message
+          : String(err),
+    });
+  }
+}
+
+/**
+ * deployAndLaunch is the drift modal's "Deploy & launch": the top bar's own
+ * deploy job, bound to the Deploy control's origin so that control shows
+ * its progress, and - once it has succeeded - the launch again. A deploy
+ * that fails reports as any deploy does (its origin is on screen), and
+ * nothing is launched.
+ *
+ * state.launching is held from the first step to the last - phase "deploy"
+ * while the job runs, then "launch" - so Play stays disabled throughout,
+ * and is released however the sequence ends.
+ */
+async function deployAndLaunch() {
+  const modal = store.get().modal;
+  if (modal?.type !== "launch-drift" || store.get().launching) return;
+  const { target } = modal;
+  closeModal();
+  store.set({
+    launching: { game: target.game, name: target.name, phase: "deploy" },
+  });
+  try {
+    let jobID = null;
+    await startBinding(DEPLOY_ORIGIN, async () => {
+      try {
+        const response = await planMutation(
+          "deploy",
+          {},
+          {
+            game: target.game,
+            profile: target.profile,
+          },
+        );
+        ({ id: jobID } = await startJob(response.plan_id));
+        store.set({
+          origins: { ...store.get().origins, [DEPLOY_ORIGIN]: jobID },
+        });
+      } catch (err) {
+        pushToast({
+          tone: "failure",
+          title: `Couldn't deploy ${target.name}`,
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+    if (!jobID) return;
+    const summary = await waitForJobDone(jobID);
+    if (summary.state !== "succeeded") return;
+    store.set({
+      launching: { game: target.game, name: target.name, phase: "launch" },
+    });
+    await requestLaunch(target, false);
+  } finally {
+    store.set({ launching: null });
+  }
+}
+
+/** launchAnyway is the drift modal's "Launch anyway": the same launch,
+ * with force. */
+async function launchAnyway() {
+  const modal = store.get().modal;
+  if (modal?.type !== "launch-drift") return;
+  closeModal();
+  await launchGame({ force: true, target: modal.target });
+}
+
 /** The actions threaded down to the components: the four supplementary
  * documents' retry/re-run, and the mutation pipeline every mutation in this
  * application goes through (openPlan -> confirmPlan -> a job). */
@@ -2506,6 +2668,9 @@ const actions = {
   openUninstallBatchModal,
   startBatchToggle,
   startUninstallBatch,
+  launchGame: () => launchGame(),
+  deployAndLaunch,
+  launchAnyway,
 };
 
 // contextKey identifies the data a route needs, not the route itself: the

@@ -414,6 +414,13 @@ export const updateGame = (gameID, body) =>
 export const getGameDetail = (gameID) =>
   get(`/api/v1/games/${encodeURIComponent(gameID)}`);
 
+/** Launches gameID (issue 501): core.LaunchResult once the game's systemd
+ * unit has started. The body is {profile, force} - nothing else is
+ * accepted, and nothing in it chooses what runs. Undeployed changes are a
+ * 409 whose details are core.LaunchDriftError's. */
+export const launchGame = (gameID, body) =>
+  post(`/api/v1/games/${encodeURIComponent(gameID)}/launch`, body);
+
 /** Reads the version types sourceID publishes for one game (issue 563):
  * core.GameVersionTypesReport, each type by id, name and slug. A source
  * that publishes none is a 404, a game that does not map it a 400, and a

@@ -454,7 +454,7 @@ input[type="password"] {
   cursor: pointer;
 }
 
-.button:hover:not(:disabled) {
+.button:hover:not(:disabled):not([aria-disabled="true"]) {
   border-color: var(--accent);
 }
 
@@ -667,6 +667,7 @@ input[type="password"] {
    checkbox or radio keeps the browser's own disabled rendering. The
    borderless variants stay borderless: only their text dims. */
 .button:disabled,
+.button[aria-disabled="true"],
 input:disabled,
 select:disabled {
   border-color: var(--border-subtle);

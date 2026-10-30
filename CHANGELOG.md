@@ -25,8 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   API key variable reaches the game or its mods. `--dry-run` prints the full command line, and `--json`
   emits it as a document. `lmm status --game <id> --json` gains a `launch`
   member saying how the game would launch, or why it cannot. The Steam
-  library lookup behind it is cached until a library changes. A Play button
-  in the web UI follows.
+  library lookup behind it is cached until a library changes. In the web UI,
+  a **Play** button next to Deploy does the same
+  (`POST /api/v1/games/{id}/launch`, whose body is only a profile and
+  `force`); it is disabled, with the reason as its tooltip, for a game lmm
+  can't launch, or while you are viewing a profile that isn't the active
+  one (its reason points at **Switch and deploy…**). Undeployed changes open
+  a choice between **Deploy & launch** and **Launch anyway** (Play stays
+  disabled until the deploy and the launch are done); a launch already
+  under way finishes even if its tab is closed. The Health card's BepInEx
+  "launch the game once to confirm" finding gets a Play button of its own. The web UI
+  never starts a game without systemd, and `lmm serve` on a non-loopback
+  address now warns that it can launch programs.
 
 ### Changed
 
