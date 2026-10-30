@@ -19,7 +19,7 @@ status` now warn about each source whose key comes only from its
   environment variable, naming `lmm auth login <source>` and the web UI's
   Setup > Authentication (their `--json` documents carry the list as
   `env_only_credentials`); lmm never writes a key into the unit file. In
-  the web UI, the Health card's row reads "<Source> needs an API key" with
+  the web UI, the Health card's row reads "CurseForge needs an API key" with
   an **Add API key…** button, and the Updates card (which showed nothing
   for a refused check), search warnings and the search page's
   skipped-source notice offer the same button; it opens Setup >
