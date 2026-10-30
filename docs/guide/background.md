@@ -138,8 +138,10 @@ you trust: anyone who can reach the address can manage your mods.
   **Authentication**), and variables set in a file under
   `~/.config/environment.d/`. Without a key, a source such as CurseForge
   can't check for updates or verify versions. `lmm service install` and
-  `lmm service status` warn about each key that comes only from your shell,
-  and the web interface offers **Add API key…** wherever a source asks for
+  `lmm service status` warn about each key that comes only from your shell;
+  a variable the service already gets from systemd (an `environment.d`
+  file, or `systemctl --user import-environment`) doesn't count. The web
+  interface offers **Add API key…** wherever a source asks for
   one. After storing a key, run `systemctl --user restart lmm-serve`. lmm
   never copies a key into the service file, which anyone who can read your
   files could read.

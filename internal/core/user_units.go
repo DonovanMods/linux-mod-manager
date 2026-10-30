@@ -179,8 +179,9 @@ type ServiceReport struct {
 	Linger bool `json:"linger"`
 	// EnvOnlyCredentials is every source whose API key, in the shell that
 	// ran the command, comes only from its environment variable, with no
-	// stored key (#582). A systemd user service does not inherit a login
-	// shell's exports, so lmm-serve runs without that key: the source then
+	// stored key, and whose variable the user manager's own environment
+	// does not carry either (#582). A systemd user service does not inherit
+	// a login shell's exports, so lmm-serve runs without that key: the source then
 	// refuses update checks, verify's version check and searches. The fix
 	// is a stored key (`lmm auth login <source>`, or the web UI's Setup >
 	// Authentication) - lmm never copies a key into the unit file, which is
@@ -367,6 +368,47 @@ func (u *UserUnits) managerDirs(ctx context.Context) (managerDirs, error) {
 		return filepath.Join(append([]string{u.Home}, def...)...)
 	}
 	return managerDirs{configHome: dir("XDG_CONFIG_HOME", ".config"), dataHome: dir("XDG_DATA_HOME", ".local", "share")}, nil
+}
+
+// ManagerEnvironmentNames returns the name of every variable the user
+// manager hands its services with a non-empty value (`systemctl --user
+// show-environment`), so a caller can tell whether lmm-serve.service sees
+// a variable without ever holding its value (#582).
+func (u *UserUnits) ManagerEnvironmentNames(ctx context.Context) (map[string]bool, error) {
+	out, err := u.systemctl(ctx, "show-environment")
+	if err != nil {
+		return nil, fmt.Errorf("systemctl --user show-environment: %w", err)
+	}
+	names := map[string]bool{}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok && k != "" && v != "" {
+			names[k] = true
+		}
+	}
+	return names, nil
+}
+
+// WithoutManagerEnvironment drops from creds every source whose variable
+// the user manager's environment already carries (#582): lmm-serve.service
+// inherits it - from environment.d, a uwsm env file or `systemctl --user
+// import-environment` - so it has that key after all. When the manager
+// cannot be asked, creds come back unchanged: a warning that may be
+// spurious beats silence about a key the service lacks.
+func (u *UserUnits) WithoutManagerEnvironment(ctx context.Context, creds []EnvOnlyCredential) []EnvOnlyCredential {
+	if len(creds) == 0 {
+		return nil
+	}
+	names, err := u.ManagerEnvironmentNames(ctx)
+	if err != nil {
+		return creds
+	}
+	var out []EnvOnlyCredential
+	for _, c := range creds {
+		if !names[c.EnvVar] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // checkUnitPath confirms the user manager loads units from dir. A manager

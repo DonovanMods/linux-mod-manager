@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported each CurseForge mod as "could not check version: ... authentication
   required" and "Not fixable". `lmm service install` and `lmm service
 status` now warn about each source whose key comes only from its
-  environment variable, naming `lmm auth login <source>` and the web UI's
+  environment variable (and that the user manager's own environment
+  doesn't supply), naming `lmm auth login <source>` and the web UI's
   Setup > Authentication (their `--json` documents carry the list as
   `env_only_credentials`); lmm never writes a key into the unit file. In
   the web UI, the Health card's row reads "CurseForge needs an API key" with
