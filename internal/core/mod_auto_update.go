@@ -41,17 +41,32 @@ const (
 	// ModAutoUpdateWaitingForGame: the game is running, so they are
 	// applied at the first check after it closes.
 	ModAutoUpdateWaitingForGame ModAutoUpdateState = "waiting_for_game"
+	// ModAutoUpdateFailed: an automatic job tried them and they failed;
+	// they are held back - not retried by every check - until the source
+	// offers a newer version or the user checks for updates again.
+	ModAutoUpdateFailed ModAutoUpdateState = "failed"
 )
+
+// ModAutoUpdateFailure is one auto-policy update an automatic job tried
+// and failed (ModAutoUpdate.Failed): the batch's own account of it, and the
+// job whose result has the rest.
+type ModAutoUpdateFailure struct {
+	UpdateBatchFailure
+	// JobID is the frontend's job the update failed in.
+	JobID string `json:"job_id"`
+}
 
 // ModAutoUpdate is the automatic pass's state on an update check's report
 // (UpdateCheckReport.AutoUpdate, #587): which auto-policy updates it is
-// applying, or waiting to apply, and why. Only `lmm serve` sets it - `lmm
+// applying, waiting to apply, or failed to apply, and why. Only `lmm serve` sets it - `lmm
 // update` applies them in the same run and reports the result instead.
 type ModAutoUpdate struct {
-	// State is "applying" or "waiting_for_game".
+	// State is "applying", "waiting_for_game" or "failed". A failure is
+	// reported only when the pass is doing nothing else; Failed carries it
+	// either way.
 	State ModAutoUpdateState `json:"state"`
 	// Mods are the updates concerned, as domain.ModKey strings, in the
-	// check's order.
+	// check's order - for "failed", the failed ones.
 	Mods []string `json:"mods"`
 	// GameName names the game being waited for, for "waiting for <game>
 	// to close". Set only when State is waiting_for_game.
@@ -63,6 +78,11 @@ type ModAutoUpdate struct {
 	// JobID is the frontend's job applying them. Set only when State is
 	// applying.
 	JobID string `json:"job_id,omitzero"`
+	// Failed are the updates an automatic job tried and failed that the
+	// check still offers at the version that failed, held back until a
+	// newer one or an explicit check. Present in any state, so a failure is
+	// not hidden by a pass applying something else.
+	Failed []ModAutoUpdateFailure `json:"failed,omitzero"`
 }
 
 // AutoUpdateKeys returns the updates the automatic pass would apply, as

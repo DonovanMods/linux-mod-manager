@@ -18,7 +18,15 @@
 // autoUpdater remembers each target version a job attempted and holds it
 // back until the source offers a newer one or the user asks for a fresh
 // check (?refresh=1); it stays on the card for the user meanwhile, and the
-// job's result is in the tray.
+// job's result is in the tray. One that FAILED is not left there
+// unexplained: the report carries it (auto_update.failed), with the reason
+// and the job, until it is tried again.
+//
+// Only the SPA starts the pass. A GET needs no CSRF token, so any site
+// could make a browser fetch /api/v1/updates (an <img> will do); the pass
+// therefore runs only for a request carrying the token, which the SPA
+// sends on every request and a cross-site page cannot set. Without it the
+// check answers read-only.
 package serve
 
 import (
@@ -40,6 +48,9 @@ type autoUpdater struct {
 	// attempted is, per autoUpdateKey and then domain.ModKey, the target
 	// version an automatic job already tried.
 	attempted map[string]map[string]string
+	// failed is, keyed the same way, the attempts among those that failed:
+	// what the report says while they are held back.
+	failed map[string]map[string]core.ModAutoUpdateFailure
 }
 
 // autoUpdateJob is one automatic job in flight.
@@ -59,6 +70,7 @@ func (a *autoUpdater) retryable(key string, updates []domain.Update, refresh boo
 	defer a.mu.Unlock()
 	if refresh {
 		delete(a.attempted, key)
+		delete(a.failed, key)
 	}
 	attempted := a.attempted[key]
 	return slices.DeleteFunc(slices.Clone(updates), func(u domain.Update) bool {
@@ -70,10 +82,14 @@ func (a *autoUpdater) retryable(key string, updates []domain.Update, refresh boo
 // recordOutcome ends key's automatic job and remembers what it attempted:
 // every item it reached - applied, skipped or failed - at the target
 // version the check offered, or, for a job that failed outright, every
-// item it planned.
+// item it planned. The failed ones are also kept with their reason and the
+// job's id, for the report (failures).
 func (a *autoUpdater) recordOutcome(key string, planned []domain.Update, result *core.UpdateBatchResult, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// The job is entered in running under this lock before it can end (see
+	// autoApplyModUpdates), so its id is here to read.
+	job := string(a.running[key].id)
 	delete(a.running, key)
 	if a.attempted == nil {
 		a.attempted = map[string]map[string]string{}
@@ -81,21 +97,66 @@ func (a *autoUpdater) recordOutcome(key string, planned []domain.Update, result 
 	if a.attempted[key] == nil {
 		a.attempted[key] = map[string]string{}
 	}
+	if a.failed == nil {
+		a.failed = map[string]map[string]core.ModAutoUpdateFailure{}
+	}
+	if a.failed[key] == nil {
+		a.failed[key] = map[string]core.ModAutoUpdateFailure{}
+	}
 	reached := map[string]bool{}
+	failed := map[string]core.UpdateBatchFailure{}
 	if result != nil {
 		for _, r := range slices.Concat(result.Applied, result.Skipped) {
 			reached[domain.ModKey(r.Mod.SourceID, r.Mod.ModID)] = true
 		}
 		for _, f := range result.Failed {
 			reached[f.Mod] = true
+			failed[f.Mod] = f
 		}
 	}
 	for _, u := range planned {
 		mod := domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)
-		if err != nil || reached[mod] {
-			a.attempted[key][mod] = u.NewVersion
+		if err == nil && !reached[mod] {
+			continue
+		}
+		a.attempted[key][mod] = u.NewVersion
+		f, ok := failed[mod]
+		if err != nil {
+			f, ok = core.UpdateBatchFailure{
+				Mod: mod, Name: u.InstalledMod.Name,
+				FromVersion: u.InstalledMod.Version, ToVersion: u.NewVersion,
+				Error: err.Error(),
+			}, true
+		}
+		if ok {
+			a.failed[key][mod] = core.ModAutoUpdateFailure{UpdateBatchFailure: f, JobID: job}
+		} else {
+			delete(a.failed[key], mod)
 		}
 	}
+}
+
+// failures are the recorded failures still held back for key: each failed
+// update the check offers again at the version that failed, in the check's
+// order. One the source has moved past is not news any more - the next pass
+// tries the newer version - and nor is one the user has since taken off
+// the auto policy or locked (core.AutoUpdateKeys).
+func (a *autoUpdater) failures(key string, updates []domain.Update) []core.ModAutoUpdateFailure {
+	auto := core.AutoUpdateKeys(updates)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var out []core.ModAutoUpdateFailure
+	for _, u := range updates {
+		mod := domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)
+		if !slices.Contains(auto, mod) {
+			continue
+		}
+		f, ok := a.failed[key][mod]
+		if ok && a.attempted[key][mod] == u.NewVersion {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // checkModUpdates is the one update check this server makes, for
@@ -105,7 +166,10 @@ func (a *autoUpdater) recordOutcome(key string, planned []domain.Update, result 
 // checks on the server's own initiative calls it too. err is a failure to
 // read the installed set, which leaves no report at all; a partial check
 // failure is the report's own ErrorMessage, as ever.
-func (s *Server) checkModUpdates(ctx context.Context, game *domain.Game, profile string, sink core.EventSink, opts core.UpdateCheckOptions) (*core.UpdateCheckReport, error) {
+//
+// auto says the request may start the pass: only one that proved it comes
+// from the SPA (its CSRF token) does. Without it the check is read-only.
+func (s *Server) checkModUpdates(ctx context.Context, game *domain.Game, profile string, sink core.EventSink, opts core.UpdateCheckOptions, auto bool) (*core.UpdateCheckReport, error) {
 	// #538: record the revision Steam has installed for every tracked
 	// Workshop item first, so the library and the mod page read the real
 	// one. Never waits behind a running job and never fails the request:
@@ -120,7 +184,9 @@ func (s *Server) checkModUpdates(ctx context.Context, game *domain.Game, profile
 		return nil, err
 	}
 	report, _ := s.svc.CheckGameUpdateReport(ctx, game, profile, installed, sink, opts)
-	report.AutoUpdate = s.autoApplyModUpdates(ctx, game, profile, installed, report.Updates, opts.Refresh)
+	if auto {
+		report.AutoUpdate = s.autoApplyModUpdates(ctx, game, profile, installed, report.Updates, opts.Refresh)
+	}
 	return report, nil
 }
 
@@ -133,11 +199,35 @@ func (s *Server) checkModUpdates(ctx context.Context, game *domain.Game, profile
 func (s *Server) autoApplyModUpdates(ctx context.Context, game *domain.Game, profile string, installed []domain.InstalledMod, updates []domain.Update, refresh bool) *core.ModAutoUpdate {
 	key := autoUpdateKey(game.ID, profile)
 	a := &s.autoUpdates
+	retry := a.retryable(key, updates, refresh)
+	return withFailures(s.autoApplyRetryable(ctx, game, profile, installed, retry), a.failures(key, updates))
+}
+
+// withFailures puts failed - the held-back failures - on status, or makes
+// them the status when the pass is doing nothing else.
+func withFailures(status *core.ModAutoUpdate, failed []core.ModAutoUpdateFailure) *core.ModAutoUpdate {
+	if len(failed) == 0 {
+		return status
+	}
+	if status == nil {
+		status = &core.ModAutoUpdate{State: core.ModAutoUpdateFailed}
+		for _, f := range failed {
+			status.Mods = append(status.Mods, f.Mod)
+		}
+	}
+	status.Failed = failed
+	return status
+}
+
+// autoApplyRetryable is autoApplyModUpdates over the updates no recorded
+// attempt holds back.
+func (s *Server) autoApplyRetryable(ctx context.Context, game *domain.Game, profile string, installed []domain.InstalledMod, updates []domain.Update) *core.ModAutoUpdate {
+	key := autoUpdateKey(game.ID, profile)
+	a := &s.autoUpdates
 	if status := a.inFlight(key); status != nil {
 		return status
 	}
 
-	updates = a.retryable(key, updates, refresh)
 	plan, err := s.svc.PlanAutoUpdate(ctx, game, profile, installed, updates)
 	if err != nil {
 		s.log.Debug("serve: planning automatic updates", "game", game.ID, "profile", profile, "err", err)

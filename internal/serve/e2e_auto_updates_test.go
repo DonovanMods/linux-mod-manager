@@ -2,6 +2,7 @@ package serve_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"testing"
@@ -22,14 +23,18 @@ const (
 
 // newE2EFixtureWithAnAutoUpdate seeds both mods at 1.0, deployed, against
 // a source offering 2.0. gate, when set, holds the automatic job's download
-// open; probe, when set, is the Service's GameProbe.
-func newE2EFixtureWithAnAutoUpdate(t *testing.T, gate <-chan struct{}, probe *core.GameProbe) e2eFixture {
+// open; probe, when set, is the Service's GameProbe; tweak, when set,
+// changes the source before anything uses it.
+func newE2EFixtureWithAnAutoUpdate(t *testing.T, gate <-chan struct{}, probe *core.GameProbe, tweak func(*e2eSearchSource)) e2eFixture {
 	t.Helper()
 	sandboxE2EEnv(t)
 
 	src := newE2ESearchSource(t, "fake")
 	src.updatable = true
 	src.urlGate = gate
+	if tweak != nil {
+		tweak(src)
+	}
 	seeds := []struct {
 		id, name string
 		policy   domain.UpdatePolicy
@@ -114,7 +119,7 @@ func TestE2E_AutoUpdateShowsItsJobThenLeavesTheCard(t *testing.T) {
 	var once sync.Once
 	release := func() { once.Do(func() { close(gate) }) }
 	t.Cleanup(release)
-	f := newE2EFixtureWithAnAutoUpdate(t, gate, nil)
+	f := newE2EFixtureWithAnAutoUpdate(t, gate, nil, nil)
 
 	var applying, live, tray, card string
 	f.runInBrowser(t,
@@ -158,7 +163,7 @@ func TestE2E_AutoUpdateWaitsForTheGameToClose(t *testing.T) {
 			exe := installPath + "/game.bin"
 			return []core.ProcessInfo{{PID: 500, Exe: exe, Cmdline: []string{exe}}}, nil
 		},
-	})
+	}, nil)
 
 	installPath = f.Game.InstallPath
 	var waiting, card string
@@ -171,6 +176,34 @@ func TestE2E_AutoUpdateWaitsForTheGameToClose(t *testing.T) {
 
 	assert.Contains(t, waiting, "1 automatic update waiting for Fixture Game to close")
 	assert.Contains(t, card, "Auto Amulet", "a postponed update stays listed")
+	assert.Equal(t, "1.0", e2eInstalledVersion(t, f, e2eAutoModID))
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_AutoUpdateFailureIsShownNotHidden: an automatic update that
+// fails inside a batch which itself succeeds is held back, so it would
+// stay on the card with no word of why and the bell would stay silent. The
+// card says it failed and why, links to the job, and the bell counts it.
+func TestE2E_AutoUpdateFailureIsShownNotHidden(t *testing.T) {
+	f := newE2EFixtureWithAnAutoUpdate(t, nil, nil, func(src *e2eSearchSource) {
+		src.urlErrs = map[string]error{e2eAutoModID: errors.New("the source is down")}
+	})
+
+	var note, badge string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--updates [data-testid="updates-auto-failed"]`, chromedp.ByQuery),
+		chromedp.Text(`.card--updates [data-testid="updates-auto-failed"]`, &note, chromedp.ByQuery),
+		chromedp.WaitVisible(`.activity-bell__count--failed`, chromedp.ByQuery),
+		chromedp.Text(`.activity-bell__count--failed`, &badge, chromedp.ByQuery),
+		clickWhenSettled(`.card--updates [data-testid="updates-auto-failed"] button`),
+		chromedp.WaitVisible(`.tray__kind[data-origin="auto"]`, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, note, "Automatic update failed for Auto Amulet 2.0")
+	assert.Contains(t, note, "the source is down")
+	assert.Contains(t, note, "Check for updates to retry.")
+	assert.Equal(t, "1", badge, "the bell counts an automatic job with a failed item")
 	assert.Equal(t, "1.0", e2eInstalledVersion(t, f, e2eAutoModID))
 	assert.Empty(t, f.BrowserErrors())
 }

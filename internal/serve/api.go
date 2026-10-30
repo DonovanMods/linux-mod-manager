@@ -420,9 +420,10 @@ func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
 	opts := core.UpdateCheckOptions{Refresh: r.URL.Query().Get("refresh") == "1"}
 	// ?progress= (#583) asks for read_progress frames as the check walks the
 	// mods (read_progress.go). The check also applies the auto-policy
-	// updates it finds (#587, auto_updates.go).
+	// updates it finds (#587, auto_updates.go) - only for a request
+	// carrying the SPA's CSRF token, so no other site can start that.
 	report, err := s.checkModUpdates(r.Context(), sel.Game, sel.Profile,
-		s.readProgressSink(token, readUpdates, sel), opts)
+		s.readProgressSink(token, readUpdates, sel), opts, s.csrf.valid(r.Header.Get(csrfHeaderName)))
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return

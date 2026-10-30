@@ -7,8 +7,10 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 
@@ -22,7 +24,13 @@ import (
 // policy, u2 on auto but locked, and u3 left on notify - the control.
 func newAutoUpdatesFixtureServer(t *testing.T) (*Server, *core.Service, *domain.Game) {
 	t.Helper()
-	s, svc, game := newUpdatesFixtureServer(t)
+	return newAutoUpdatesFixtureServerWith(t, newUpdatesSource(t))
+}
+
+// newAutoUpdatesFixtureServerWith is newAutoUpdatesFixtureServer over src.
+func newAutoUpdatesFixtureServerWith(t *testing.T, src *updatesSource) (*Server, *core.Service, *domain.Game) {
+	t.Helper()
+	s, svc, game := newUpdatesFixtureServerWith(t, src)
 	ctx := t.Context()
 	for _, id := range []string{"u1", "u2"} {
 		_, err := svc.SetModUpdatePolicy(ctx, fixtureSourceID, id, game.ID, "default", domain.UpdateAuto)
@@ -196,6 +204,7 @@ func TestAutoUpdater_AnAttemptedUpdateIsNotRetriedUntilAskedTo(t *testing.T) {
 	}
 	planned := []domain.Update{update("a", "2"), update("b", "2"), update("c", "2"), update("d", "2")}
 
+	a.running = map[string]autoUpdateJob{key: {id: "j1"}}
 	a.recordOutcome(key, planned, &core.UpdateBatchResult{
 		Failed:  []core.UpdateBatchFailure{{Mod: "src:a", ToVersion: "2", Error: "boom"}},
 		Skipped: []core.UpdateApplyResult{{Mod: domain.ModReference{SourceID: "src", ModID: "b"}}},
@@ -203,14 +212,30 @@ func TestAutoUpdater_AnAttemptedUpdateIsNotRetriedUntilAskedTo(t *testing.T) {
 	}, nil)
 	got := a.retryable(key, planned, false)
 	assert.Equal(t, []string{"d"}, updateIDs(got), "failed, skipped and applied are held back; the one never reached is not")
+	assert.Equal(t, []core.ModAutoUpdateFailure{{
+		UpdateBatchFailure: core.UpdateBatchFailure{Mod: "src:a", ToVersion: "2", Error: "boom"},
+		JobID:              "j1",
+	}}, a.failures(key, planned), "only the failed one is reported, with the job it failed in")
+	assert.Empty(t, a.failures(key, []domain.Update{update("a", "3")}), "a failure at an older version is no longer the news")
+	notify := update("a", "2")
+	notify.InstalledMod.UpdatePolicy = domain.UpdateNotify
+	assert.Empty(t, a.failures(key, []domain.Update{notify}), "nor one the user took off the auto policy")
 
 	got = a.retryable(key, []domain.Update{update("a", "3")}, false)
 	assert.Equal(t, []string{"a"}, updateIDs(got), "a newer version is a new attempt")
 
+	a.running = map[string]autoUpdateJob{key: {id: "j2"}}
 	a.recordOutcome(key, planned, nil, errors.New("whole job failed"))
 	assert.Empty(t, a.retryable(key, planned, false), "a job that failed outright holds back all it planned")
+	failures := a.failures(key, planned)
+	require.Len(t, failures, 4, "and reports every one of them failed")
+	assert.Equal(t, core.ModAutoUpdateFailure{
+		UpdateBatchFailure: core.UpdateBatchFailure{Mod: "src:b", ToVersion: "2", Error: "whole job failed"},
+		JobID:              "j2",
+	}, failures[1])
 	assert.Len(t, a.retryable(key, planned, true), 4, "an explicit refresh asks again")
 	assert.Len(t, a.retryable(key, planned, false), 4, "and the refresh cleared the record")
+	assert.Empty(t, a.failures(key, planned), "failures included")
 }
 
 // TestAPIFlow_AutoUpdates_NeverForAnotherProfile is decision 3 over HTTP:
@@ -224,4 +249,80 @@ func TestAPIFlow_AutoUpdates_NeverForAnotherProfile(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.NotContains(t, rec.Body.String(), "auto_update")
 	assert.Empty(t, updatesJobs(s))
+}
+
+// TestAPIFlow_AutoUpdates_AFailureIsReportedNotHidden: an auto update that
+// fails inside a batch which itself ends "succeeded" is held back, so the
+// next check would list it with no word of why. The report says it failed,
+// why, and in which job - until an explicit check tries it again.
+func TestAPIFlow_AutoUpdates_AFailureIsReportedNotHidden(t *testing.T) {
+	src := newUpdatesSource(t)
+	src.failing.Store("u1", true)
+	s, svc, game := newAutoUpdatesFixtureServerWith(t, src)
+
+	report := getUpdatesReport(t, s, game)
+	require.NotNil(t, report.AutoUpdate)
+	require.Equal(t, core.ModAutoUpdateApplying, report.AutoUpdate.State)
+	first := jobID(report.AutoUpdate.JobID)
+	status := awaitJob(t, s, first).status()
+	require.Equal(t, jobSucceeded, status.State, "a batch with a failed item still succeeds as a job")
+	require.NotNil(t, status.Tally)
+	require.Equal(t, 1, status.Tally.Failed)
+
+	report = getUpdatesReport(t, s, game)
+	assert.Contains(t, updateIDs(report.Updates), "u1", "the failed update is still offered")
+	require.NotNil(t, report.AutoUpdate, "and the report says why it is still there")
+	assert.Equal(t, core.ModAutoUpdateFailed, report.AutoUpdate.State)
+	assert.Equal(t, []string{fixtureSourceID + ":u1"}, report.AutoUpdate.Mods)
+	require.Len(t, report.AutoUpdate.Failed, 1)
+	failure := report.AutoUpdate.Failed[0]
+	assert.Equal(t, fixtureSourceID+":u1", failure.Mod)
+	assert.Equal(t, "U1", failure.Name)
+	assert.Equal(t, updateToVersion, failure.ToVersion)
+	assert.NotEmpty(t, failure.Error)
+	assert.Equal(t, string(first), failure.JobID)
+	assert.Len(t, updatesJobs(s), 1, "a failure is reported, not retried")
+
+	src.failing.Delete("u1")
+	rec := doAPI(s, http.MethodGet, scoped("/api/v1/updates", game)+"&refresh=1", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var retried core.UpdateCheckReport
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &retried))
+	require.NotNil(t, retried.AutoUpdate)
+	require.Equal(t, core.ModAutoUpdateApplying, retried.AutoUpdate.State, "an explicit check tries it again")
+	assert.Empty(t, retried.AutoUpdate.Failed)
+	awaitJob(t, s, jobID(retried.AutoUpdate.JobID))
+	assert.Equal(t, updateToVersion, installedVersion(t, svc, game, "u1"))
+	assert.Nil(t, getUpdatesReport(t, s, game).AutoUpdate)
+}
+
+// TestAPIFlow_AutoUpdates_OnlyTheSPAStartsThePass: GET needs no CSRF token,
+// so a cross-site page could make the browser fetch /api/v1/updates (an
+// <img> tag will do) - and, were the pass run for any GET, start it. The
+// pass runs only for a request carrying the token the SPA sends, which a
+// cross-site page cannot set; without it the GET answers, read-only.
+func TestAPIFlow_AutoUpdates_OnlyTheSPAStartsThePass(t *testing.T) {
+	s, svc, game := newAutoUpdatesFixtureServer(t)
+
+	for name, token := range map[string]string{"no token": "", "a wrong token": "not-the-token"} {
+		req := httptest.NewRequest(http.MethodGet, "http://"+internalTestAddr+scoped("/api/v1/updates", game), nil)
+		if token != "" {
+			req.Header.Set(csrfHeaderName, token)
+		}
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "%s: the read itself still works: %s", name, rec.Body.String())
+		var report core.UpdateCheckReport
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &report))
+		assert.Contains(t, updateIDs(report.Updates), "u1", name)
+		assert.Nil(t, report.AutoUpdate, "%s: no automatic pass", name)
+	}
+	assert.Empty(t, updatesJobs(s))
+	assert.Equal(t, updateFromVersion, installedVersion(t, svc, game, "u1"))
+
+	report := getUpdatesReport(t, s, game) // the SPA's request: token attached
+	require.NotNil(t, report.AutoUpdate)
+	awaitJob(t, s, jobID(report.AutoUpdate.JobID))
+	assert.Equal(t, updateToVersion, installedVersion(t, svc, game, "u1"))
 }

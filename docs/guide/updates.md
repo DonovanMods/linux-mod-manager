@@ -239,8 +239,12 @@ leave the card. A few things hold it back:
 - **Something else is running.** If a deploy, install or other job is under
   way, lmm leaves the update for the next check rather than queueing it.
 - **The update failed.** lmm doesn't keep retrying a failed update. It stays
-  on the card for you to update by hand. lmm tries it again when a newer
-  version comes out, or when you click **Check for updates**.
+  on the card for you to update by hand, with a line saying why, for example
+  "Automatic update failed for EllesmereUI 9.7.1 - the download timed out.
+  Check for updates to retry.", and **Show the job** opens its result in the
+  activity tray. The activity bell counts it until you open the tray. lmm
+  tries it again when a newer version comes out, or when you click **Check
+  for updates**.
 - **Locked, manual-download or Steam Workshop mods** are never updated
   automatically, whatever their setting.
 - **Only the active profile** is updated: the one whose mods are in the game

@@ -215,7 +215,9 @@ self-update --auto` and exits as it would have; a script or a pipe never
   marked automatic, with its result. The server decides, so two open tabs
   or overlapping checks apply an update once. It never queues behind a
   running job (the next check tries again), never retries a failed update
-  until a newer version or an explicit check, leaves locked, manual-only
+  until a newer version or an explicit check (the card says "Automatic
+  update failed for <mod> - <reason>. Check for updates to retry." with a
+  link to the job, and the activity bell counts it), leaves locked, manual-only
   and Steam Workshop mods alone, and never updates a profile other than
   the deployed one. While the game is running (a process from the game's
   folder is running, in its `lmm launch` unit or not, Wine and Proton
@@ -223,9 +225,13 @@ self-update --auto` and exits as it would have; a script or a pipe never
   left open, such as Battle.net or Steam, does not count; a systemd user
   bus that does not answer within two seconds leaves the process check to
   decide) the update waits, and the Updates card says "waiting for
-  <game> to close". Nothing checks in the background, and `lmm update` is
-  unchanged. The update check document gains `auto_update`, and a job's
-  summary gains `origin: "auto"`.
+  <game> to close". Only the web UI's own requests start an automatic
+  update: a check must carry the page's CSRF token, so another website
+  making the browser fetch `/api/v1/updates` reads it and applies nothing.
+  Nothing checks in the background, and `lmm update` is unchanged. The
+  update check document gains `auto_update` (with `state` "applying",
+  "waiting_for_game" or "failed", and `failed`: each held-back failure with
+  its reason and `job_id`), and a job's summary gains `origin: "auto"`.
 
 - **A detected game matches the game configured at its folder before the
   one sharing its id (#545).** A detect row whose slug is one game's id and
