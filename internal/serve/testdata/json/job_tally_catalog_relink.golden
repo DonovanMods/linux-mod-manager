@@ -1,0 +1,9 @@
+{
+  "kind": "catalog_relink",
+  "applied": 1,
+  "failed": 0,
+  "skipped": 0,
+  "notes": [
+    "Bear Mount moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)"
+  ]
+}

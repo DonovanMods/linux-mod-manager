@@ -28,11 +28,15 @@ import "github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 //     Skipped and Warnings. Skipped is the flow's own documented default
 //     (the plan's "Download and install" left unchecked), not anything
 //     that went wrong.
+//   - "catalog_relink" (core.AutoRelinkResult, #590): Applied counts the
+//     re-links made, Failed the ones that failed, and Notes says each
+//     re-link in words.
 //
 // The shape-specific counts are omitzero, so a client reads an absent one
 // as zero; Failed and Skipped are common to both and always present.
 type jobTally struct {
-	// Kind is the result shape: "updates" or "profile_import".
+	// Kind is the result shape: "updates", "profile_import" or
+	// "catalog_relink".
 	Kind string `json:"kind"`
 
 	// Applied counts an update batch's completed items.
@@ -53,6 +57,11 @@ type jobTally struct {
 	// skipped" alone invites a guess; the note is what makes the count
 	// honest.
 	SkippedNotes []string `json:"skipped_notes,omitempty"`
+
+	// Notes is one sentence per item a "catalog_relink" job re-linked
+	// (#590): "<name> moved to a new ID in <source>; re-linked (<old> ->
+	// <new>)", core.CatalogRelinked's Message.
+	Notes []string `json:"notes,omitempty"`
 }
 
 // tallyOfResult is a finished job's result document's jobTally, or nil for
@@ -78,6 +87,15 @@ func tallyOfResult(result any) *jobTally {
 		}
 		for _, item := range r.Skipped {
 			tally.SkippedNotes = append(tally.SkippedNotes, skippedNote(item))
+		}
+		return tally
+	case *core.AutoRelinkResult:
+		if r == nil || len(r.Relinked)+len(r.Failed) == 0 {
+			return nil
+		}
+		tally := &jobTally{Kind: "catalog_relink", Applied: len(r.Relinked), Failed: len(r.Failed)}
+		for _, done := range r.Relinked {
+			tally.Notes = append(tally.Notes, done.Message)
 		}
 		return tally
 	case *core.ProfileImportResult:
