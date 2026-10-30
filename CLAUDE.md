@@ -36,6 +36,13 @@ go build -o lmm ./cmd/lmm
 make test
 make test-race
 
+# CI's two parallel test jobs (#576), which together are exactly make test-race:
+# `test` runs everything but internal/serve's headless-browser tests, `e2e`
+# runs only those. They split on the name: every browser test is TestE2E*,
+# and nothing else is - name a new one accordingly.
+make test-race-no-e2e
+make test-race-e2e
+
 # Run tests for a specific package (pass -timeout for a slow one)
 go test ./internal/storage/db/... -v
 
