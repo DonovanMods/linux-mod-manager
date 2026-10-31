@@ -694,3 +694,35 @@ func TestCache_CopyModAs_CarriesTheEntryToANewIdentity(t *testing.T) {
 	err = c.CopyModAs(context.Background(), "icarus", "icarus", "old", "icarus", "new", "1.0")
 	assert.ErrorIs(t, err, os.ErrExist, "an existing entry is never overwritten")
 }
+
+// TestCache_CopyModAs_LeftoverTempDirIsSwept (#590): CopyModAs builds its
+// copy in a .lmm-copy-* directory beside the version directories, and a
+// crash mid-copy leaves one behind. It is never taken for a version, the
+// next copy into the same mod sweeps it, and so does deleting the mod's
+// last version, which would otherwise leave the container behind.
+func TestCache_CopyModAs_LeftoverTempDirIsSwept(t *testing.T) {
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store("icarus", "icarus", "old", "1.0", "mod.pak", []byte("pak")))
+	require.NoError(t, c.Store("icarus", "icarus", "old", "2.0", "mod.pak", []byte("pak2")))
+	container := filepath.Dir(c.ModPath("icarus", "icarus", "new", "1.0"))
+	leftover := func() string {
+		t.Helper()
+		dir, err := os.MkdirTemp(container, ".lmm-copy-*")
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "half.pak"), []byte("ha"), 0o644))
+		return dir
+	}
+	require.NoError(t, os.MkdirAll(container, 0o755))
+	crashed := leftover()
+
+	require.NoError(t, c.CopyModAs(context.Background(), "icarus", "icarus", "old", "icarus", "new", "1.0"))
+	assert.NoDirExists(t, crashed, "the next copy into the mod sweeps a crashed one's temp dir")
+	entries, err := os.ReadDir(container)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "1.0", entries[0].Name())
+
+	leftover()
+	require.NoError(t, c.Delete("icarus", "icarus", "new", "1.0"))
+	assert.NoDirExists(t, container, "deleting the last version sweeps a leftover temp dir with the container")
+}

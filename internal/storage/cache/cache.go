@@ -644,6 +644,7 @@ func (c *Cache) Delete(gameID, sourceID, modID, version string) error {
 	if err := os.RemoveAll(modPath); err != nil {
 		return fmt.Errorf("deleting cached mod: %w", err)
 	}
+	c.sweepCopyLeftovers(filepath.Dir(modPath))
 	if err := removeIfEmpty(filepath.Dir(modPath)); err != nil {
 		return fmt.Errorf("removing empty mod cache directory: %w", err)
 	}
@@ -727,7 +728,8 @@ func (c *Cache) CopyModAs(ctx context.Context, gameID, sourceID, modID, destSour
 	if err := os.MkdirAll(parent, 0755); err != nil {
 		return fmt.Errorf("creating cache dir: %w", err)
 	}
-	tmp, err := os.MkdirTemp(parent, ".lmm-copy-*")
+	c.sweepCopyLeftovers(parent)
+	tmp, err := os.MkdirTemp(parent, copyTempPrefix+"*")
 	if err != nil {
 		return fmt.Errorf("creating cache copy: %w", err)
 	}
@@ -755,6 +757,32 @@ func (c *Cache) CopyModAs(ctx context.Context, gameID, sourceID, modID, destSour
 		return fmt.Errorf("publishing cache copy: %w", err)
 	}
 	return nil
+}
+
+// copyTempPrefix names the directory CopyModAs builds a copy in, beside
+// the mod's version directories. Reserved (.lmm-*), so no walker takes it
+// for content; a version is only ever reached by its own name, never by
+// listing the container, so it is never taken for a version either.
+const copyTempPrefix = ReservedPrefix + "copy-"
+
+// sweepCopyLeftovers removes the .lmm-copy-* directories a CopyModAs that
+// crashed mid-copy left in a mod's container (#590). No copy can be in
+// flight: cache mutations run one at a time, under the Service's
+// mutation slot. Best-effort: a sweep that fails leaves litter, never an
+// error.
+func (c *Cache) sweepCopyLeftovers(container string) {
+	entries, err := os.ReadDir(container)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), copyTempPrefix) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(container, e.Name())); err != nil {
+			c.log.Debug("sweeping a leftover cache copy failed", "path", filepath.Join(container, e.Name()), "err", err)
+		}
+	}
 }
 
 // Size returns the total size of cached files for a mod version. lmm's own
