@@ -112,8 +112,8 @@ type AutoRelinkPlan struct {
 // nil when there is nothing it would re-link, or this is not the moment.
 // A gone mod qualifies when its source declares unstable IDs, the check
 // found exactly one successor, that successor is not an older version, its
-// ID is not already installed, the source is mapped on the game, and the
-// mod is not locked or external. A profile that is not the game's active
+// ID is not already installed or claimed by another gone mod, the source is
+// mapped on the game, and the mod is not locked or external. A profile that is not the game's active
 // one plans nothing, and nor does a check made while the game runs.
 //
 // installed is the set the check ran against; it is the plan's freshness
@@ -121,15 +121,26 @@ type AutoRelinkPlan struct {
 // database; it changes nothing.
 func (s *Service) PlanAutoRelink(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, missing []CatalogModRef) (*AutoRelinkPlan, error) {
 	plan := &AutoRelinkPlan{gameID: game.ID, profile: profileName}
+	var items []autoRelinkItem
+	claims := map[string]int{}
 	for _, ref := range missing {
 		item, ok, err := s.autoRelinkItem(ctx, game, profileName, installed, ref)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
-			plan.items = append(plan.items, item)
-			plan.Mods = append(plan.Mods, domain.ModKey(item.sourceID, item.fromID))
+			items = append(items, item)
+			claims[domain.ModKey(item.sourceID, item.toID)]++
 		}
+	}
+	for _, item := range items {
+		// Two gone mods matching one successor: which of them moved is not
+		// known, so neither is re-linked.
+		if claims[domain.ModKey(item.sourceID, item.toID)] > 1 {
+			continue
+		}
+		plan.items = append(plan.items, item)
+		plan.Mods = append(plan.Mods, domain.ModKey(item.sourceID, item.fromID))
 	}
 	if len(plan.items) == 0 {
 		return nil, nil

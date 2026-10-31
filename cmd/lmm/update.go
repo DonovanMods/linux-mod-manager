@@ -798,7 +798,9 @@ func autoRelinkGone(ctx context.Context, service *core.Service, game *domain.Gam
 		}
 		return report, installed, checkErr
 	}
-	again, againErr := service.CheckGameUpdateReport(ctx, game, profileName, reread, sink, core.UpdateCheckOptions{Refresh: updateRefresh})
+	// The first check already asked the sources afresh when --refresh said
+	// to; this one only re-reads the moved mods.
+	again, againErr := service.CheckGameUpdateReport(ctx, game, profileName, reread, sink, core.UpdateCheckOptions{})
 	again.AutoRelink = &core.CatalogAutoRelink{Relinked: result.Relinked}
 	return again, reread, againErr
 }

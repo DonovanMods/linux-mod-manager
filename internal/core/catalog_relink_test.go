@@ -212,3 +212,21 @@ func TestBeginAutoRelink_ACheckOlderThanTheLastChangeStepsAside(t *testing.T) {
 	_, err = svc.BeginAutoRelink(ctx, game, plan)
 	require.ErrorIs(t, err, core.ErrStalePlan)
 }
+
+// Two gone mods that both match the one successor are ambiguous: which of
+// them moved is not known, so neither is re-linked.
+func TestAutoRelink_TwoGoneModsClaimingOneSuccessorAreLeftToTheUser(t *testing.T) {
+	svc, game := newUnstableService(t, true, catalogMod("new", "Mega Points", "Donovan", "1.0"))
+	ctx := context.Background()
+	src, err := svc.GetSource("gonecat")
+	require.NoError(t, err)
+	src.(unstableCatalogSource).gone["old2"] = true
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "old2", SourceID: "gonecat", Name: "Mega Points", Author: "Donovan", Version: "1.0", GameID: game.ID},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true, FileIDs: []string{"f1"},
+	}))
+	seedProfileWithMod(t, svc, game.ID, "default", "gonecat", "old2", "1.0")
+
+	assert.Nil(t, autoRelink(t, svc, game, "default"))
+	assert.ElementsMatch(t, []string{"old", "old2"}, installedIDs(t, svc, game))
+}
