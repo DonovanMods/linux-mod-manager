@@ -161,6 +161,45 @@ func TestInstallAppIndex_CachesUntilTheLibrariesChange(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// A filesystem with coarse timestamps can leave a directory's mtime
+// unchanged when a manifest lands in the same tick as the last scan - CI saw
+// exactly that. The index notices the new file by name, whatever the mtime
+// says, and an edited libraryfolders.vdf by its size.
+func TestInstallAppIndex_NoticesChangesTheMtimeMisses(t *testing.T) {
+	home := installAppHome(t)
+	root := filepath.Join(home, ".local", "share", "Steam")
+	second := filepath.Join(home, "games", "SteamLibrary")
+	steamLibrary(t, root, "appmanifest_892970.acf")
+	libraryFolders(t, root, root)
+	steamapps := filepath.Join(root, "steamapps")
+	vdf := filepath.Join(steamapps, "libraryfolders.vdf")
+
+	var idx InstallAppIndex
+	_, ok := idx.Lookup(filepath.Join(steamapps, "common", "Valheim"))
+	require.True(t, ok)
+
+	// keepMtime puts path's mtime back to what it was, as a same-tick
+	// write would leave it.
+	keepMtime := func(path string, write func()) {
+		t.Helper()
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		write()
+		require.NoError(t, os.Chtimes(path, info.ModTime(), info.ModTime()))
+	}
+
+	keepMtime(steamapps, func() { steamLibrary(t, root, "appmanifest_1149460.acf") })
+	app, ok := idx.Lookup(filepath.Join(steamapps, "common", "Icarus"))
+	require.True(t, ok, "a manifest added in the same mtime tick is still found")
+	assert.Equal(t, "1149460", app.AppID)
+
+	steamLibrary(t, second, "appmanifest_228980.acf")
+	keepMtime(vdf, func() { libraryFolders(t, root, root, second) })
+	app, ok = idx.Lookup(filepath.Join(second, "steamapps", "common", "Steamworks Shared"))
+	require.True(t, ok, "a library added in the same mtime tick is still scanned")
+	assert.Equal(t, "228980", app.AppID)
+}
+
 // One index serves concurrent readers (lmm serve's request goroutines).
 func TestInstallAppIndex_ConcurrentLookups(t *testing.T) {
 	home := installAppHome(t)

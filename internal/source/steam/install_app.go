@@ -64,9 +64,9 @@ func AppIDForInstallPath(installPath string) (InstalledApp, bool) {
 // (#501): GameStatus asks for every game on every read, which is the web
 // UI's hot path. The scan is reused while nothing it read has changed - the
 // Steam roots found, each root's libraryfolders.vdf, and each library's
-// steamapps directory, whose mtime moves when Steam adds, removes or
-// rewrites (by rename) an appmanifest. The zero value is ready to use and
-// safe for concurrent use.
+// steamapps directory, whose mtime and appmanifest names move when Steam
+// adds, removes or rewrites (by rename) a manifest (see pathStamp). The
+// zero value is ready to use and safe for concurrent use.
 type InstallAppIndex struct {
 	mu     sync.Mutex
 	built  bool
@@ -83,21 +83,40 @@ type steamRoot struct {
 	flatpak bool
 }
 
-// pathStamp is what a scan saw of one path: its mtime, or that it was
-// missing.
+// pathStamp is what a scan saw of one path: its mtime and size, or that it
+// was missing, and for a directory the names of the appmanifests in it. An
+// mtime alone is not enough: on a filesystem with coarse timestamps a
+// manifest added in the same tick as the last scan leaves the directory's
+// mtime unchanged, and so can an edit to libraryfolders.vdf - the names and
+// the size catch what the mtime misses.
 type pathStamp struct {
-	path    string
-	exists  bool
-	modTime time.Time
+	path      string
+	exists    bool
+	modTime   time.Time
+	size      int64
+	manifests string
 }
 
-// stampPath stats path.
+// stampPath stats path, and lists a directory's appmanifests.
 func stampPath(path string) pathStamp {
 	info, err := os.Stat(path)
 	if err != nil {
 		return pathStamp{path: path}
 	}
-	return pathStamp{path: path, exists: true, modTime: info.ModTime()}
+	st := pathStamp{path: path, exists: true, modTime: info.ModTime(), size: info.Size()}
+	if info.IsDir() {
+		st.size = 0 // a directory's size says nothing about its entries
+		if entries, err := os.ReadDir(path); err == nil {
+			var names []string
+			for _, e := range entries {
+				if name := e.Name(); strings.HasPrefix(name, "appmanifest_") && strings.HasSuffix(name, ".acf") {
+					names = append(names, name)
+				}
+			}
+			st.manifests = strings.Join(names, "\x00") // ReadDir sorts by name
+		}
+	}
+	return st
 }
 
 // Lookup is AppIDForInstallPath, scanning only when the libraries changed
