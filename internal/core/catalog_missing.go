@@ -2,6 +2,7 @@ package core
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 
@@ -16,6 +17,24 @@ type CatalogModRef struct {
 	SourceID string `json:"source_id"`
 	ModID    string `json:"mod_id"`
 	Name     string `json:"name,omitempty"`
+	// Successors are the mods in the same source that look like this one
+	// republished under a new ID (#590): see CatalogSuccessor. One is a
+	// suggestion; several are ambiguous, listed and none picked. Never acted
+	// on by core. omitempty.
+	Successors []CatalogSuccessor `json:"successors,omitempty"`
+}
+
+// CatalogSuccessor is one likely new identity of a mod its source's catalog
+// no longer has (#590): a mod in the same source with the same name and the
+// same author, both compared folded (case, spacing and punctuation aside).
+// A frontend offers it as the target of a re-link (`lmm mod edit
+// --to-source-id`, the web UI's mod_relink job); nothing re-links on its
+// own, because a name and an author are evidence, not proof.
+type CatalogSuccessor struct {
+	ModID   string `json:"mod_id"`
+	Name    string `json:"name,omitempty"`
+	Author  string `json:"author,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
 // ModNotInCatalogError reports that a source's catalog has no mod by ModID
@@ -97,4 +116,59 @@ func splitCatalogMissing(batch []domain.InstalledMod, err error) (map[string]boo
 		rest = errors.Join(append([]error{rest}, stray...)...)
 	}
 	return missing, rest
+}
+
+// catalogSuccessorSearchSize is how many hits the one successor search per
+// gone mod asks for: a name search ranks an exact name near the top, and a
+// candidate past this many same-named hits is not one to suggest anyway.
+const catalogSuccessorSearchSize = 50
+
+// catalogSuccessors looks in gone's own source for the mods that look like
+// gone republished under a new ID (#590): one name search (the source's own,
+// or its local index, #360/#410 - whatever SearchMods answers from), kept to
+// the hits with the same folded name and the same folded author. A gone mod
+// with no recorded name or author has no successor: "same name and author"
+// is the claim every frontend makes of one, and it must be true. When some
+// candidates carry the installed version or a newer one, an older copy is
+// dropped; otherwise every candidate stays. Best-effort: a failed search
+// suggests nothing, and the caller's report stands as it was.
+func (s *Service) catalogSuccessors(ctx context.Context, gameID string, gone domain.Mod) []CatalogSuccessor {
+	nameKey, authorKey := searchNameKey(gone.Name), searchNameKey(gone.Author)
+	if nameKey == "" || authorKey == "" {
+		return nil
+	}
+	result, err := s.SearchMods(ctx, gone.SourceID, gameID, gone.Name, "", nil, 0, catalogSuccessorSearchSize)
+	if err != nil {
+		return nil
+	}
+	var all, current []CatalogSuccessor
+	seen := make(map[string]bool)
+	for _, m := range result.Mods {
+		if m.ID == gone.ID || seen[m.ID] || searchNameKey(m.Name) != nameKey || searchNameKey(m.Author) != authorKey {
+			continue
+		}
+		seen[m.ID] = true
+		c := CatalogSuccessor{ModID: m.ID, Name: m.Name, Author: m.Author, Version: m.Version}
+		all = append(all, c)
+		if gone.Version == "" || m.Version == "" || domain.CompareVersions(m.Version, gone.Version) >= 0 {
+			current = append(current, c)
+		}
+	}
+	if len(current) > 0 {
+		return current
+	}
+	return all
+}
+
+// fillCatalogSuccessors stamps each of refs with its successors (#590),
+// reading the gone mod's name, author and version from installed.
+func (s *Service) fillCatalogSuccessors(ctx context.Context, gameID string, installed []domain.InstalledMod, refs []CatalogModRef) {
+	for i := range refs {
+		for j := range installed {
+			if installed[j].SourceID == refs[i].SourceID && installed[j].ID == refs[i].ModID {
+				refs[i].Successors = s.catalogSuccessors(ctx, gameID, installed[j].Mod)
+				break
+			}
+		}
+	}
 }

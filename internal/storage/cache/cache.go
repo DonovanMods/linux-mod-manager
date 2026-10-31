@@ -704,6 +704,59 @@ func (c *Cache) CloneMod(ctx context.Context, dest *Cache, gameID, sourceID, mod
 	return nil
 }
 
+// CopyModAs copies the cache entry of sourceID/modID at version to
+// destSourceID/destModID at the same version (#590: a re-link moves a mod to
+// a new identity, and the files it was installed from go with it). Like
+// CloneMod it carries lmm's .lmm-* markers, so the copy is as complete as
+// the original, and the original stays - another profile may still have the
+// old identity installed. Every file is copied, never hard-linked: Store
+// rewrites a file in place, which a shared inode would carry into the other
+// entry. The copy is built beside the destination and renamed into place,
+// so a failed one leaves no partial entry; an existing destination is never
+// overwritten (os.ErrExist).
+func (c *Cache) CopyModAs(ctx context.Context, gameID, sourceID, modID, destSourceID, destModID, version string) (err error) {
+	dst := c.ModPath(gameID, destSourceID, destModID, version)
+	if _, statErr := os.Lstat(dst); statErr == nil {
+		return fmt.Errorf("cache entry %s: %w", dst, os.ErrExist)
+	}
+	files, err := walkEntries(c.ModPath(gameID, sourceID, modID, version), true)
+	if err != nil {
+		return err
+	}
+	parent := filepath.Dir(dst)
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		return fmt.Errorf("creating cache dir: %w", err)
+	}
+	tmp, err := os.MkdirTemp(parent, ".lmm-copy-*")
+	if err != nil {
+		return fmt.Errorf("creating cache copy: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
+	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		dstPath := filepath.Join(tmp, file)
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+			return fmt.Errorf("creating destination dir: %w", err)
+		}
+		if err := copyFile(c.GetFilePath(gameID, sourceID, modID, version, file), dstPath); err != nil {
+			return err
+		}
+	}
+	if err := os.Chmod(tmp, 0755); err != nil {
+		return fmt.Errorf("opening cache copy: %w", err)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return fmt.Errorf("publishing cache copy: %w", err)
+	}
+	return nil
+}
+
 // Size returns the total size of cached files for a mod version. lmm's own
 // .lmm-* bookkeeping entries are excluded, same as in ListFiles.
 func (c *Cache) Size(gameID, sourceID, modID, version string) (int64, error) {

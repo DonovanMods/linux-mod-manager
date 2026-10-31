@@ -667,3 +667,30 @@ func TestPruneUnclaimed_KeepsUnclaimedFileMatchingRetainedSource(t *testing.T) {
 	assert.ElementsMatch(t, []string{"SuperMod_P.pak", "claimed.txt"}, files,
 		"the converted pak's deployable copy matches its retained source and must survive (#250); the same-size stale file must still be pruned")
 }
+
+// TestCache_CopyModAs_CarriesTheEntryToANewIdentity (#590): a re-link moves
+// a mod to a new id, and its cache entry is copied across - markers too, so
+// the copy is as complete as the original - while the original stays. A
+// copy, never a hard link: Store rewrites a file in place, and a shared
+// inode would carry a write to one entry into the other.
+func TestCache_CopyModAs_CarriesTheEntryToANewIdentity(t *testing.T) {
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store("icarus", "icarus", "old", "1.0", "sub/mod.pak", []byte("pak")))
+	require.NoError(t, cache.MarkFileComplete(c.ModPath("icarus", "icarus", "old", "1.0"), "pak"))
+
+	require.NoError(t, c.CopyModAs(context.Background(), "icarus", "icarus", "old", "icarus", "new", "1.0"))
+
+	files, err := c.ListFiles("icarus", "icarus", "new", "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, []string{filepath.Join("sub", "mod.pak")}, files)
+	assert.True(t, c.HasFileIDs("icarus", "icarus", "new", "1.0", []string{"pak"}))
+	assert.True(t, c.Exists("icarus", "icarus", "old", "1.0"), "the original entry stays")
+
+	require.NoError(t, c.Store("icarus", "icarus", "new", "1.0", "sub/mod.pak", []byte("changed")))
+	got, err := os.ReadFile(c.GetFilePath("icarus", "icarus", "old", "1.0", "sub/mod.pak"))
+	require.NoError(t, err)
+	assert.Equal(t, "pak", string(got), "the two entries share no file")
+
+	err = c.CopyModAs(context.Background(), "icarus", "icarus", "old", "icarus", "new", "1.0")
+	assert.ErrorIs(t, err, os.ErrExist, "an existing entry is never overwritten")
+}
