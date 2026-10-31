@@ -19,8 +19,10 @@
 //   - a locked mod is never re-linked: the lock is the user saying "leave
 //     it", so it keeps the suggestion and its Re-link button.
 //
-// Anything less certain - several candidates, an older copy, no candidate,
-// a source whose IDs are stable - stays the suggestion it was.
+// Anything less certain - several candidates (a current and an older copy
+// among them), a name or author that matches only once folded, a version
+// missing or not comparable, an older copy, no candidate, a source whose
+// IDs are stable - stays the suggestion it was.
 package core
 
 import (
@@ -111,7 +113,9 @@ type AutoRelinkPlan struct {
 // (UpdateCheckReport.CatalogMissing, successors filled in) for profileName:
 // nil when there is nothing it would re-link, or this is not the moment.
 // A gone mod qualifies when its source declares unstable IDs, the check
-// found exactly one successor, that successor is not an older version, its
+// found exactly one candidate - counted before versions are looked at -
+// with strictly the same name and author and a comparable version no older
+// than the installed one (catalogSuccessors' autoTarget), its
 // ID is not already installed or claimed by another gone mod, the source is
 // mapped on the game, and the mod is not locked or external. A profile that is not the game's active
 // one plans nothing, and nor does a check made while the game runs.
@@ -164,28 +168,26 @@ func (s *Service) PlanAutoRelink(ctx context.Context, game *domain.Game, profile
 
 // autoRelinkItem decides whether ref is one PlanAutoRelink re-links.
 func (s *Service) autoRelinkItem(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, ref CatalogModRef) (autoRelinkItem, bool, error) {
-	if len(ref.Successors) != 1 || !s.HasUnstableIDs(ref.SourceID) {
+	// autoTarget, not the suggestions: it is set only when the check found
+	// exactly one candidate, strictly the same name and author, at a known
+	// version no older than the installed one (catalogSuccessors).
+	if ref.autoTarget == "" || !s.HasUnstableIDs(ref.SourceID) {
 		return autoRelinkItem{}, false, nil
 	}
 	if _, mapped := game.SourceIDs[ref.SourceID]; !mapped {
 		return autoRelinkItem{}, false, nil
 	}
-	next := ref.Successors[0]
+	next := ref.autoTarget
 	var gone, taken *domain.InstalledMod
 	for i := range installed {
 		switch {
 		case installed[i].SourceID == ref.SourceID && installed[i].ID == ref.ModID:
 			gone = &installed[i]
-		case installed[i].SourceID == ref.SourceID && installed[i].ID == next.ModID:
+		case installed[i].SourceID == ref.SourceID && installed[i].ID == next:
 			taken = &installed[i]
 		}
 	}
 	if gone == nil || taken != nil || gone.External {
-		return autoRelinkItem{}, false, nil
-	}
-	// An older copy is a candidate only because nothing current was found:
-	// evidence enough to suggest, not to act on.
-	if gone.Version != "" && next.Version != "" && domain.CompareVersions(next.Version, gone.Version) < 0 {
 		return autoRelinkItem{}, false, nil
 	}
 	locked, _, err := s.lockState(ctx, game.ID, profileName, gone.SourceID, gone.ID)
@@ -195,7 +197,7 @@ func (s *Service) autoRelinkItem(ctx context.Context, game *domain.Game, profile
 	if locked {
 		return autoRelinkItem{}, false, nil
 	}
-	return autoRelinkItem{sourceID: gone.SourceID, fromID: gone.ID, toID: next.ModID, name: gone.Name}, true, nil
+	return autoRelinkItem{sourceID: gone.SourceID, fromID: gone.ID, toID: next, name: gone.Name}, true, nil
 }
 
 // AutoRelinkRun is a begun automatic re-link: it holds the mutation slot

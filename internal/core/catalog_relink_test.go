@@ -230,3 +230,73 @@ func TestAutoRelink_TwoGoneModsClaimingOneSuccessorAreLeftToTheUser(t *testing.T
 	assert.Nil(t, autoRelink(t, svc, game, "default"))
 	assert.ElementsMatch(t, []string{"old", "old2"}, installedIDs(t, svc, game))
 }
+
+// "Exactly one" counts every same-name, same-author candidate before any
+// version filtering: a current copy beside an older one is two candidates,
+// so nothing is re-linked, and both are offered.
+func TestAutoRelink_ACurrentAndAnOlderCandidateAreLeftToTheUser(t *testing.T) {
+	svc, game := newUnstableService(t, true,
+		catalogMod("older", "Mega Points", "Donovan", "0.9"),
+		catalogMod("current", "Mega Points", "Donovan", "1.0"),
+	)
+
+	assert.Nil(t, autoRelink(t, svc, game, "default"))
+	assert.Equal(t, []string{"old"}, installedIDs(t, svc, game))
+
+	report, err := svc.CheckGameUpdateReport(context.Background(), game, "default", installedFor(t, svc, game), nil, core.UpdateCheckOptions{})
+	require.NoError(t, err)
+	require.Len(t, report.CatalogMissing, 1)
+	ids := []string{}
+	for _, s := range report.CatalogMissing[0].Successors {
+		ids = append(ids, s.ModID)
+	}
+	assert.Equal(t, []string{"current", "older"}, ids, "both suggested, the current one first")
+}
+
+// A version that is missing, or not a version at all, cannot say the
+// candidate is current: it is suggested, never acted on.
+func TestAutoRelink_AnIncomparableVersionIsOnlySuggested(t *testing.T) {
+	for _, version := range []string{"", "beta"} {
+		t.Run("version="+version, func(t *testing.T) {
+			svc, game := newUnstableService(t, true, catalogMod("new", "Mega Points", "Donovan", version))
+
+			assert.Nil(t, autoRelink(t, svc, game, "default"))
+			assert.Equal(t, []string{"old"}, installedIDs(t, svc, game))
+			report, err := svc.CheckGameUpdateReport(context.Background(), game, "default", installedFor(t, svc, game), nil, core.UpdateCheckOptions{})
+			require.NoError(t, err)
+			require.Len(t, report.CatalogMissing, 1)
+			require.Len(t, report.CatalogMissing[0].Successors, 1, "still suggested")
+		})
+	}
+}
+
+// The automatic path compares names and authors strictly - case and
+// runs of spacing aside, punctuation and digits as they are - so "Mega
+// Points+" is not "Mega Points" and "MegaPoints" is not "Mega Points".
+// The loose comparison still suggests them.
+func TestAutoRelink_ALooseNameOrAuthorMatchIsOnlySuggested(t *testing.T) {
+	for _, tc := range []struct{ name, author string }{
+		{"Mega Points+", "Donovan"},
+		{"MegaPoints", "Donovan"},
+		{"Mega Points", "Don-ovan"},
+		{"Mega Points", "Don ovan"},
+	} {
+		t.Run(tc.name+"/"+tc.author, func(t *testing.T) {
+			svc, game := newUnstableService(t, true, catalogMod("new", tc.name, tc.author, "1.0"))
+
+			assert.Nil(t, autoRelink(t, svc, game, "default"))
+			assert.Equal(t, []string{"old"}, installedIDs(t, svc, game))
+		})
+	}
+}
+
+// Case and runs of whitespace are not what makes a mod a different one, on
+// the strict comparison either.
+func TestAutoRelink_CaseAndSpacingStillMatchStrictly(t *testing.T) {
+	svc, game := newUnstableService(t, true, catalogMod("new", "  mega   POINTS ", "DONOVAN", "1.0"))
+
+	result := autoRelink(t, svc, game, "default")
+	require.NotNil(t, result)
+	require.Len(t, result.Relinked, 1)
+	assert.Equal(t, []string{"new"}, installedIDs(t, svc, game))
+}

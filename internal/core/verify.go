@@ -1844,11 +1844,12 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 			// #590: the typed condition #539 reports, not a check that
 			// could not run - said as such, with the likely new ID.
 			r.result.Warnings++
+			successors, _ := r.svc.catalogSuccessors(r.ctx, r.game.ID, mod.Mod)
 			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: VerifyStatusCatalogMissing,
 				Note:          fmt.Sprintf("no longer in %s's catalog (removed, or republished under a new ID)", r.svc.sourceDisplayName(mod.SourceID)),
 				FixableReason: catalogMissingRemedy,
 				SourceID:      mod.SourceID,
-				Successors:    r.svc.catalogSuccessors(r.ctx, r.game.ID, mod.Mod)}, VerifyEvent{})
+				Successors:    successors}, VerifyEvent{})
 			continue
 		}
 		if err != nil {

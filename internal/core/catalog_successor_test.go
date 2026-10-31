@@ -118,17 +118,20 @@ func TestCheckGameUpdateReport_SeveralSuccessorsAreAllListed(t *testing.T) {
 	assert.ElementsMatch(t, []string{"new-a", "new-b"}, ids, "ambiguous: every candidate, none picked")
 }
 
-// "Ideally the same or a newer version": an older copy is only a candidate
-// when nothing same-or-newer is.
-func TestCheckGameUpdateReport_AnOlderCandidateYieldsToASameOrNewerOne(t *testing.T) {
+// "Ideally the same or a newer version": every candidate is listed - an
+// older copy beside a current one is still a candidate, and leaving it out
+// would make an ambiguous match look like a sure one - with the same or
+// newer ones first.
+func TestCheckGameUpdateReport_AnOlderCandidateIsListedAfterASameOrNewerOne(t *testing.T) {
 	svc, game, _ := newSuccessorService(t,
 		catalogMod("older", "Mega Points", "Donovan", "0.9"),
 		catalogMod("newer", "Mega Points", "Donovan", "1.1"),
 	)
 
 	report := checkReport(t, svc, game)
-	require.Len(t, report.CatalogMissing[0].Successors, 1)
+	require.Len(t, report.CatalogMissing[0].Successors, 2)
 	assert.Equal(t, "newer", report.CatalogMissing[0].Successors[0].ModID)
+	assert.Equal(t, "older", report.CatalogMissing[0].Successors[1].ModID)
 }
 
 func TestCheckGameUpdateReport_NoSuccessorLeavesTheReportAsItWas(t *testing.T) {

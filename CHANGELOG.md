@@ -14,8 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Health now look in the same source for a mod with the same name and
   the same author, compared ignoring case, spacing and punctuation. They
   search once for each missing mod, and a source with a local index
-  answers from it. A candidate at the installed version or newer wins over
-  an older one. One match is offered as a suggestion: `lmm update` and
+  answers from it. Every candidate is listed, the ones at the installed
+  version or newer first. One match is offered as a suggestion: `lmm update` and
   `lmm verify` print the ready-to-run
   `lmm mod edit … --to-source-id <new-id>`, and the web UI's Updates card
   and Health row offer **Re-link to &lt;new-id&gt;**. The button opens
@@ -30,7 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an installed mod can drop out of the catalog while it is still there. A
   source can now declare that its IDs can change, and Icarus does. For
   such a source, when exactly one mod in it has the missing mod's name and
-  author, and it is not an older version, lmm re-links the mod itself. The
+  author, lmm re-links the mod itself - but only when that one match has
+  exactly the same name and author (case and spacing aside: "Mod+" is not
+  "Mod", nor "Mod 2" "Mod2") and a version that is known and not older
+  than the installed one. A current copy beside an older one is two
+  matches, so neither is picked. The
   files lmm already has move with it, so nothing reads as missing
   afterwards, and a newer version is then offered as an ordinary update.
   It happens only where the automatic updates (#587) happen: `lmm update`
@@ -41,7 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Icarus (Project Daedalus); re-linked (<old> -> <new>)" in `lmm update`,
   on the Updates card and Health card, and in the activity tray, where the
   re-link is an automatic `catalog_relink` job. The update report carries
-  it as `auto_relink`. Several matches, no match, or a source whose IDs
+  it as `auto_relink`. Several matches, a looser match, a missing or
+  unreadable version, no match, or a source whose IDs
   are stable (NexusMods, CurseForge, Steam Workshop, custom sources) still
   only get the suggestion and the **Re-link to** button.
 

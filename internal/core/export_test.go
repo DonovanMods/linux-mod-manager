@@ -410,3 +410,11 @@ func (s *Service) RestoreOriginalsForTest(game *domain.Game) error {
 	}
 	return nil
 }
+
+// WithAutoTargetForTest returns ref with the successor the automatic
+// re-link may take set to modID, as a check's catalogSuccessors would have
+// set it (#590) - for a test that hand-builds the refs PlanAutoRelink reads.
+func WithAutoTargetForTest(ref CatalogModRef, modID string) CatalogModRef {
+	ref.autoTarget = modID
+	return ref
+}

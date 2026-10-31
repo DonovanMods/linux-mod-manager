@@ -162,7 +162,7 @@ var gatedPlans = []gatedPlan{
 			return err
 		}
 		_, err = svc.PlanAutoRelink(context.Background(), g, "default", installed, []core.CatalogModRef{
-			{SourceID: "acme", ModID: "m1", Name: "M1", Successors: []core.CatalogSuccessor{{ModID: "m3", Version: "1.0"}}},
+			core.WithAutoTargetForTest(core.CatalogModRef{SourceID: "acme", ModID: "m1", Name: "M1", Successors: []core.CatalogSuccessor{{ModID: "m3", Version: "1.0"}}}, "m3"),
 		})
 		return err
 	}},

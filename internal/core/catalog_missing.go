@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -22,6 +23,10 @@ type CatalogModRef struct {
 	// suggestion; several are ambiguous, listed and none picked. Never acted
 	// on by core. omitempty.
 	Successors []CatalogSuccessor `json:"successors,omitempty"`
+
+	// autoTarget is the successor the automatic re-link may take (see
+	// catalogSuccessors), or "". Not on the wire.
+	autoTarget string
 }
 
 // CatalogSuccessor is one likely new identity of a mod its source's catalog
@@ -128,36 +133,66 @@ const catalogSuccessorSearchSize = 50
 // or its local index, #360/#410 - whatever SearchMods answers from), kept to
 // the hits with the same folded name and the same folded author. A gone mod
 // with no recorded name or author has no successor: "same name and author"
-// is the claim every frontend makes of one, and it must be true. When some
-// candidates carry the installed version or a newer one, an older copy is
-// dropped; otherwise every candidate stays. Best-effort: a failed search
-// suggests nothing, and the caller's report stands as it was.
-func (s *Service) catalogSuccessors(ctx context.Context, gameID string, gone domain.Mod) []CatalogSuccessor {
+// is the claim every frontend makes of one, and it must be true. Every
+// candidate is listed, the ones at the installed version or a newer one
+// first. Best-effort: a failed search suggests nothing, and the caller's
+// report stands as it was.
+//
+// autoTarget is the one candidate the automatic re-link may act on
+// (autoRelinkItem), or "": set only when the search found exactly one
+// candidate at all - counted before any version is looked at - and it
+// matches gone strictly (strictNameKey: punctuation and digits as they
+// are), and both versions are known, comparable and the candidate's is
+// not older. Anything less is evidence for a suggestion, not for acting.
+func (s *Service) catalogSuccessors(ctx context.Context, gameID string, gone domain.Mod) (successors []CatalogSuccessor, autoTarget string) {
 	nameKey, authorKey := searchNameKey(gone.Name), searchNameKey(gone.Author)
 	if nameKey == "" || authorKey == "" {
-		return nil
+		return nil, ""
 	}
 	result, err := s.SearchMods(ctx, gone.SourceID, gameID, gone.Name, "", nil, 0, catalogSuccessorSearchSize)
 	if err != nil {
-		return nil
+		return nil, ""
 	}
-	var all, current []CatalogSuccessor
+	var current, older []CatalogSuccessor
+	var hits []domain.Mod
 	seen := make(map[string]bool)
 	for _, m := range result.Mods {
 		if m.ID == gone.ID || seen[m.ID] || searchNameKey(m.Name) != nameKey || searchNameKey(m.Author) != authorKey {
 			continue
 		}
 		seen[m.ID] = true
+		hits = append(hits, m)
 		c := CatalogSuccessor{ModID: m.ID, Name: m.Name, Author: m.Author, Version: m.Version}
-		all = append(all, c)
 		if gone.Version == "" || m.Version == "" || domain.CompareVersions(m.Version, gone.Version) >= 0 {
 			current = append(current, c)
+		} else {
+			older = append(older, c)
 		}
 	}
-	if len(current) > 0 {
-		return current
+	if len(hits) == 1 {
+		m := hits[0]
+		if strictNameKey(m.Name) == strictNameKey(gone.Name) && strictNameKey(m.Author) == strictNameKey(gone.Author) &&
+			versionComparable(gone.Version) && versionComparable(m.Version) && domain.CompareVersions(m.Version, gone.Version) >= 0 {
+			autoTarget = m.ID
+		}
 	}
-	return all
+	return append(current, older...), autoTarget
+}
+
+// strictNameKey is the automatic re-link's name and author comparison
+// (#590): lowercase, trimmed, every run of whitespace one space - and
+// nothing else folded. searchNameKey's "Mod+" is "Mod" and "Mod 2" is
+// "Mod2", close enough to suggest and too close to act on.
+func strictNameKey(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}
+
+// versionComparable reports whether v is a version CompareVersions can
+// order: one that starts with a number (an optional v aside). "" or
+// "beta" compares as 0 against anything, which says nothing.
+func versionComparable(v string) bool {
+	v = strings.TrimPrefix(strings.TrimPrefix(v, "v"), "V")
+	return v != "" && v[0] >= '0' && v[0] <= '9'
 }
 
 // fillCatalogSuccessors stamps each of refs with its successors (#590),
@@ -166,7 +201,7 @@ func (s *Service) fillCatalogSuccessors(ctx context.Context, gameID string, inst
 	for i := range refs {
 		for j := range installed {
 			if installed[j].SourceID == refs[i].SourceID && installed[j].ID == refs[i].ModID {
-				refs[i].Successors = s.catalogSuccessors(ctx, gameID, installed[j].Mod)
+				refs[i].Successors, refs[i].autoTarget = s.catalogSuccessors(ctx, gameID, installed[j].Mod)
 				break
 			}
 		}
