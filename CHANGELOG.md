@@ -44,7 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   locked mod alone. Each re-link reads "Bear Mount moved to a new ID in
   Icarus (Project Daedalus); re-linked (<old> -> <new>)" in `lmm update`,
   on the Updates card and Health card, and in the activity tray, where the
-  re-link is an automatic `catalog_relink` job. The update report carries
+  re-link is an automatic `catalog_relink` job named "Re-linking
+  automatically". The update report carries
   it as `auto_relink`. Several matches, a looser match, a missing or
   unreadable version, no match, or a source whose IDs
   are stable (NexusMods, CurseForge, Steam Workshop, custom sources) still
@@ -307,7 +308,7 @@ self-update --auto` and exits as it would have; a script or a pipe never
   install, which contradicted the guide. Every check the web UI makes (the
   main screen loading, **Check for updates**) now applies them through the
   same batch `lmm update` uses, as an ordinary job in the activity tray
-  marked automatic, with its result. The server decides, so two open tabs
+  named "Updating automatically", with its result. The server decides, so two open tabs
   or overlapping checks apply an update once. It never queues behind a
   running job (the next check tries again), never retries a failed update
   until a newer version or an explicit check (the card says "Automatic

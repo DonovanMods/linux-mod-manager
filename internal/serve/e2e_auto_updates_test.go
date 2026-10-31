@@ -138,7 +138,7 @@ func TestE2E_AutoUpdateShowsItsJobThenLeavesTheCard(t *testing.T) {
 	)
 
 	assert.Contains(t, live, "Updating automatically", "the running job names itself as automatic")
-	assert.Equal(t, "updates (automatic)", tray, "the tray row says no one clicked for it")
+	assert.Equal(t, "Updating automatically", tray, "the tray row says no one clicked for it, in words (mutationLabel)")
 	assert.Contains(t, applying, "Applying 1 automatic update")
 	assert.Contains(t, card, "Notify Necklace", "a notify update stays on the card for the user")
 	assert.Equal(t, "2.0", e2eInstalledVersion(t, f, e2eAutoModID))

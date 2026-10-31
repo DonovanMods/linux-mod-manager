@@ -98,7 +98,10 @@ export function mutationLabel(kind, origin) {
   if (kind === "catalog_relink" && origin === "auto") {
     return "Re-linking automatically";
   }
-  return mutationKindLabels[kind] ?? humanizePhase(kind);
+  const label = mutationKindLabels[kind] ?? humanizePhase(kind);
+  // An automatic job of a kind with no wording of its own above still
+  // says no one clicked for it.
+  return origin === "auto" ? `${label} (automatic)` : label;
 }
 
 /** formatBytes renders a byte count at the largest unit that keeps it

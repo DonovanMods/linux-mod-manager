@@ -71,7 +71,7 @@ func TestE2E_UpdatesCard_ReLinksAMovedModOnItsOwn(t *testing.T) {
 	assert.Contains(t, note, "Bear Mount moved to a new ID in")
 	assert.Contains(t, note, "re-linked ("+oldID+" -> "+newID+")")
 	assert.Equal(t, 0, buttons, "nothing is left to re-link by hand")
-	assert.Equal(t, "catalog_relink (automatic)", tray)
+	assert.Equal(t, "Re-linking automatically", tray, "the tray row names the job in words (mutationLabel), not its wire kind")
 	assert.Contains(t, notes, "re-linked ("+oldID+" -> "+newID+")")
 	relinkedTo(t, f, newID)
 	assert.Empty(t, f.BrowserErrors())

@@ -280,7 +280,7 @@ run, Auto mods wait for the next check.
 
 In the browser, the update runs like any other job. The **Updates** card says
 "Applying 1 automatic update…" while it works, and the activity tray lists it
-as an automatic update, with what it applied. When it is done, those mods
+as "Updating automatically", with what it applied. When it is done, those mods
 leave the card. A few things hold it back:
 
 - **The game is running.** lmm waits until the game closes, so it never

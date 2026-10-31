@@ -21,6 +21,7 @@ import { followJob } from "../sse.js";
 import {
   frameFromEvent,
   jobStateLabel,
+  mutationLabel,
   progressText,
   progressFraction,
   resultTallyLabel,
@@ -246,7 +247,7 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
         onClick=${onToggle}
       >
         <span class="tray__kind" data-origin=${job.origin || null}
-          >${job.origin === "auto" ? `${job.kind} (automatic)` : job.kind}</span
+          >${job.origin === "auto" ? mutationLabel(job.kind, job.origin) : job.kind}</span
         >
         <span class="tray__state tray__state--${tone}">${stateText}</span>
         <span class="tray__caret">${expanded ? "▾" : "▸"}</span>
