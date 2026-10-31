@@ -412,3 +412,13 @@ func TestFileNameFromURL(t *testing.T) {
 		})
 	}
 }
+
+// #590: the catalog sync re-adds a mod under a new Firestore ID, so Icarus
+// declares its IDs unstable and core may re-link a gone mod on its own.
+func TestIcarus_DeclaresUnstableIDs(t *testing.T) {
+	var src source.ModSource = New(http.DefaultClient, "p")
+	u, ok := src.(source.UnstableIDSource)
+	if !ok || !u.UnstableIDs() {
+		t.Fatal("Icarus must declare unstable IDs (source.UnstableIDSource)")
+	}
+}

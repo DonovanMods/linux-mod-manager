@@ -630,6 +630,12 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 			fmt.Printf("  %s\n", f.FixableReason)
 		}
 
+	case core.VerifyStatusCatalogMissing:
+		// #590: the source's catalog no longer has the mod - #539's
+		// wording and `lmm update`'s remedy lines, likely new ID included.
+		fmt.Printf("%s %s - %s\n", colorYellow("?"), cmp.Or(f.ModName, f.ModID), f.Note)
+		printCatalogMissingRemedy("  ", f.SourceID, f.ModID, f.Successors)
+
 	case "external_stale":
 		// #538: a record problem, not a file one - the note says what
 		// Steam did, and --fix records it.

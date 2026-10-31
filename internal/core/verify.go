@@ -152,6 +152,8 @@ type VerifyFinding struct {
 	//	                      deployed-file records no installed mod owns,
 	//	                      removing nothing (#469); another profile's
 	//	                      purge judges its own
+	//	catalog_missing       never: re-link or uninstall is the user's
+	//	                      call (#590), not --fix's
 	//	everything else       never - ok, skipped, file_count_mismatch,
 	//	                      missing_cache (no recorded file to download
 	//	                      again, #469),
@@ -218,6 +220,7 @@ type VerifyFinding struct {
 	// SourceID names the source ModURL is a page of (#517), set whenever
 	// ModURL is: a frontend names the link "Open on <source>", and the row
 	// carries no other source to name. Same key as DownloadError's details.
+	// A catalog_missing row (#590) sets it too: the source to re-link in.
 	SourceID string `json:"source_id,omitzero"`
 
 	// Repair is what a --fix run did to make this row healthy, in the
@@ -246,6 +249,13 @@ type VerifyFinding struct {
 	// presence check is ALL lmm can verify about it, or its
 	// "external_missing" row. omitzero, so every other row is unchanged.
 	External bool `json:"external,omitzero"`
+
+	// Successors are a catalog_missing row's likely new identities (#590),
+	// exactly as UpdateCheckReport.CatalogMissing carries them: one is a
+	// suggested re-link target, several are ambiguous. SourceID names the
+	// source on such a row, so a frontend can re-link from the row alone.
+	// omitempty.
+	Successors []CatalogSuccessor `json:"successors,omitempty"`
 }
 
 // notFixableLocal is the reason shared by every repair gated on
@@ -977,6 +987,18 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 // every deploy leaves it, so --fix does too: the row is never fixable, and its
 // note says how to take the mod's version back.
 const VerifyStatusDeployedModified = "deployed_modified"
+
+// VerifyStatusCatalogMissing is the status of a version-check row whose
+// source's catalog no longer has the mod (#590): its files lookup answered
+// domain.ErrModNotFound - the same typed condition the update check reports
+// in UpdateCheckReport.CatalogMissing (#539), worded the same way. It is a
+// warning, never fixable: re-linking the mod to its new ID (Successors
+// suggests one) or uninstalling it is the remedy, and neither is --fix's to
+// choose.
+const VerifyStatusCatalogMissing = "catalog_missing"
+
+// catalogMissingRemedy is a catalog_missing row's FixableReason.
+const catalogMissingRemedy = "the mod has left its source's catalog - re-link it to its new ID if it moved, or uninstall it"
 
 // deployedModifiedRemedy is VerifyStatusDeployedModified's remedy: delete
 // the file and redeploy, or - for a hard link that is still the mod's
@@ -1818,6 +1840,18 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		ref := prof.FindRef(mod.SourceID, mod.ID)
 
 		sourceFiles, err := r.svc.GetModFiles(r.ctx, r.game, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
+		if err != nil && errors.Is(err, domain.ErrModNotFound) {
+			// #590: the typed condition #539 reports, not a check that
+			// could not run - said as such, with the likely new ID.
+			r.result.Warnings++
+			successors, _ := r.svc.catalogSuccessors(r.ctx, r.game.ID, mod.Mod)
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: VerifyStatusCatalogMissing,
+				Note:          fmt.Sprintf("no longer in %s's catalog (removed, or republished under a new ID)", r.svc.sourceDisplayName(mod.SourceID)),
+				FixableReason: catalogMissingRemedy,
+				SourceID:      mod.SourceID,
+				Successors:    successors}, VerifyEvent{})
+			continue
+		}
 		if err != nil {
 			r.result.Warnings++
 			f := VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "skipped", Note: fmt.Sprintf("could not check version: %v", err)}

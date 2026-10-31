@@ -1177,6 +1177,18 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #590: a version check whose source's catalog no longer has
+			// the mod says so, names the source and suggests the new ID.
+			"verify_finding_catalog_missing",
+			core.VerifyFinding{
+				ModID: "dLs3nvmWj5uOPnXxezGe", ModName: "Larger Resource Stacks", Status: core.VerifyStatusCatalogMissing,
+				Note:          "no longer in Icarus's catalog (removed, or republished under a new ID)",
+				FixableReason: "the mod has left its source's catalog - re-link it to its new ID if it moved, or uninstall it",
+				SourceID:      "icarus",
+				Successors:    []core.CatalogSuccessor{{ModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks", Author: "Donovan", Version: "1.2.0"}},
+			},
+		},
+		{
 			// #517: a row a --fix run repaired to "ok" says how, so the web
 			// UI can tell it from an untouched one. omitzero, so every
 			// other row carries no key at all.
@@ -1679,6 +1691,45 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			"catalog_mod_ref",
 			core.CatalogModRef{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Bear Mount"},
+		},
+		{
+			// #590: a gone mod with the likely new ID of it republished.
+			"catalog_mod_ref_successors",
+			core.CatalogModRef{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Larger Resource Stacks",
+				Successors: []core.CatalogSuccessor{{ModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks", Author: "Donovan", Version: "1.2.0"}}},
+		},
+		{
+			"catalog_successor",
+			core.CatalogSuccessor{ModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks", Author: "Donovan", Version: "1.2.0"},
+		},
+		{
+			// #590: a gone mod of a source with unstable IDs, re-linked on
+			// its own to its one successor.
+			"catalog_relinked",
+			core.CatalogRelinked{SourceID: "icarus", FromModID: "dLs3nvmWj5uOPnXxezGe", ToModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks",
+				Message:  "Larger Resource Stacks moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)",
+				Warnings: []string{"could not sync merged pak: game running"}},
+		},
+		{
+			// #590: the automatic re-link on a check's report - one
+			// running in a job, one already made.
+			"catalog_auto_relink",
+			core.CatalogAutoRelink{JobID: "j-1", Mods: []string{"icarus:aaaa"},
+				Relinked: []core.CatalogRelinked{{SourceID: "icarus", FromModID: "dLs3nvmWj5uOPnXxezGe", ToModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks",
+					Message: "Larger Resource Stacks moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)"}}},
+		},
+		{
+			"auto_relink_failure",
+			core.AutoRelinkFailure{Mod: "icarus:bbbb", Name: "Bear Mount", ToModID: "cccc", Error: "moving installed record: database is locked"},
+		},
+		{
+			// #590: the automatic re-link job's result.
+			"auto_relink_result",
+			core.AutoRelinkResult{
+				Relinked: []core.CatalogRelinked{{SourceID: "icarus", FromModID: "dLs3nvmWj5uOPnXxezGe", ToModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks",
+					Message: "Larger Resource Stacks moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)"}},
+				Failed: []core.AutoRelinkFailure{{Mod: "icarus:bbbb", Name: "Bear Mount", ToModID: "cccc", Error: "source \"icarus\" is not configured for Icarus"}},
+			},
 		},
 		{
 			"update_skips",

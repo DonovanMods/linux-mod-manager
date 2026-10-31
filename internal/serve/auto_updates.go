@@ -185,6 +185,10 @@ func (s *Server) checkModUpdates(ctx context.Context, game *domain.Game, profile
 	}
 	report, _ := s.svc.CheckGameUpdateReport(ctx, game, profile, installed, sink, opts)
 	if auto {
+		// #590 first: a moved mod is re-linked before its updates are
+		// looked at, and a re-link job running makes the update pass below
+		// step aside until the check its completion causes.
+		report.AutoRelink = s.autoRelinkGone(ctx, game, profile, installed, report.CatalogMissing, opts.Refresh)
 		report.AutoUpdate = s.autoApplyModUpdates(ctx, game, profile, installed, report.Updates, opts.Refresh)
 	}
 	return report, nil

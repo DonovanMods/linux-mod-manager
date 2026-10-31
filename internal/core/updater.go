@@ -303,6 +303,11 @@ type UpdateCheckReport struct {
 	// the game to close. Never set by `lmm update`, which applies them
 	// itself. omitempty.
 	AutoUpdate *ModAutoUpdate `json:"auto_update,omitempty"`
+	// AutoRelink is the automatic re-link's state (#590,
+	// catalog_relink.go): the gone mods of a source with unstable IDs
+	// being, or already, re-linked to their one successor. Set by the
+	// frontend that ran it; omitempty.
+	AutoRelink *CatalogAutoRelink `json:"auto_relink,omitempty"`
 }
 
 // CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
@@ -464,6 +469,8 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 		return gameUpdateCheck{drift: drift}, err
 	}
 	updates, catalogMissing, checkErr := s.NewUpdater().checkUpdates(ctx, game, drift.overlay(installed), sink, opts)
+	// #590: each gone mod's likely new identity, one search apiece.
+	s.fillCatalogSuccessors(ctx, game.ID, installed, catalogMissing)
 	carryManualOnly(updates, installed) // #543
 
 	staleUpd, staleErr := s.CheckMergedPakStaleness(ctx, game, profileName)

@@ -45,6 +45,51 @@ rebuild. If a mod's files are missing from lmm's cache, the rebuild stops
 and names that mod: run `lmm verify --fix` to download it again, or
 reinstall it from a downloaded file with `lmm update <mod-id> --from-file`.
 
+### A mod that left its site
+
+Sometimes a mod disappears from its site, or its author publishes it again
+under a new id. lmm can no longer check it for updates, so the Updates card
+names it as "no longer in its source's catalog", and the Health card says
+the same. lmm then looks on the same site for a mod with the same name and
+the same author. If it finds exactly one, both cards offer a **Re-link
+to** button naming the new id. That button opens the usual re-link preview with the new id
+already filled in, and nothing changes until you press **Re-link**. If it
+finds several, it lists them all and leaves the choice to you: open the
+mod's page and use **Re-link…**. A re-link keeps the files lmm already
+downloaded, so nothing has to be downloaded again.
+
+In the terminal, `lmm update` and `lmm verify` print the matching command,
+for example:
+
+```text
+moved?   looks like 8m1z04vNo2CCdKcD2C0H (same name and author): lmm mod edit dLs3nvmWj5uOPnXxezGe -s icarus --to-source-id 8m1z04vNo2CCdKcD2C0H
+removed: lmm uninstall dLs3nvmWj5uOPnXxezGe -s icarus
+```
+
+If the mod was removed for good, uninstall it.
+
+Icarus is different. Its catalog gives a mod a new id whenever the mod is
+removed and added again, which happens routinely, so lmm does not wait
+for you there. When it finds exactly one match, with exactly the same
+name and author (only case and spacing may differ) and a version that is
+not older than yours, lmm re-links the mod itself the next time it checks for
+updates: when you run `lmm update`, or when the web UI checks. The
+Updates card and the Health card say so, and the activity tray shows the
+re-link as an automatic job:
+
+```text
+Bear Mount moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)
+```
+
+The mod keeps its files and its version. If the new id has a newer
+version, it shows up as an ordinary update. lmm leaves a locked mod
+alone, and it waits while another job is running or the game is running.
+Anything less certain - two matches, even if one of them is an older
+copy, a name that matches only once punctuation is ignored, or a match
+whose version is missing - gets the **Re-link to** button instead.
+`lmm update --dry-run` only prints the suggestion. If lmm finds several
+matches, it still leaves the choice to you.
+
 ## Updating lmm itself
 
 Once a day, lmm asks GitHub whether a newer version of lmm is out. The first
@@ -235,7 +280,7 @@ run, Auto mods wait for the next check.
 
 In the browser, the update runs like any other job. The **Updates** card says
 "Applying 1 automatic update…" while it works, and the activity tray lists it
-as an automatic update, with what it applied. When it is done, those mods
+as "Updating automatically", with what it applied. When it is done, those mods
 leave the card. A few things hold it back:
 
 - **The game is running.** lmm waits until the game closes, so it never

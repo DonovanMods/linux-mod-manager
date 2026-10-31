@@ -384,6 +384,15 @@ type CapabilityReporter interface {
 	Capabilities() Capabilities
 }
 
+// UnstableIDSource is implemented by sources whose catalog can give the
+// same mod a new ID (#590): Icarus, whose catalog sync deletes a mod and
+// re-adds it under a new Firestore document ID. When such a source's
+// catalog no longer has an installed mod and exactly one mod in it has the
+// same name and author, core re-links the installed mod to it on its own
+// (core.Service.AutoRelink); for any other source that one match is only a
+// suggestion. Absent, or false: the source's IDs are stable.
+type UnstableIDSource interface{ UnstableIDs() bool }
+
 // EnvKeyProvider names the environment variable consulted for this source's
 // API key. Absent: the derived LMM_<ID>_API_KEY convention applies.
 type EnvKeyProvider interface{ EnvKey() string }

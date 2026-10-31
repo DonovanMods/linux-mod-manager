@@ -466,3 +466,40 @@ func TestService_ApplyRelinkMod_EmitsProgressEvents(t *testing.T) {
 	assert.Contains(t, phases, core.RelinkFetching)
 	assert.Contains(t, phases, core.RelinkWarning)
 }
+
+// #590: a re-link moves the mod's identity, and the cache entry it was
+// installed from goes with it. The entry stayed under <source>-<old-id>,
+// so `lmm verify` reported every file MISSING right after a re-link - the
+// Re-link a gone mod's successor is offered would have left the user with a
+// red Health card. The old entry is kept (another profile may still have
+// the old id installed), and the new one carries the same files.
+func TestService_ApplyRelinkMod_CarriesTheCacheEntryToTheNewID(t *testing.T) {
+	ctx := context.Background()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	seedInstalledMod(t, svc, game, domain.SourceLocal, "old", "1.0", true, map[string][]byte{
+		"first.esp": []byte("first"), "sub/second.esp": []byte("second"),
+	})
+	seedProfileWithMod(t, svc, game.ID, "default", domain.SourceLocal, "old", "1.0")
+	require.NoError(t, svc.GetInstallerForTest(game).Install(ctx, game,
+		&domain.Mod{ID: "old", SourceID: domain.SourceLocal, Version: "1.0", GameID: game.ID}, "default"))
+
+	plan, err := svc.PlanRelinkMod(ctx, game, "default", domain.SourceLocal, "old", "", "new")
+	require.NoError(t, err)
+	_, err = svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.NoError(t, err)
+
+	gameCache := svc.GetGameCache(game)
+	require.True(t, gameCache.Exists(game.ID, domain.SourceLocal, "new", "1.0"), "the new id has the cache entry")
+	got, err := os.ReadFile(gameCache.GetFilePath(game.ID, domain.SourceLocal, "new", "1.0", "sub/second.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, "second", string(got))
+	assert.True(t, gameCache.Exists(game.ID, domain.SourceLocal, "old", "1.0"), "the old entry is kept, and the deployed links into it stay valid")
+
+	result, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, nil)
+	require.NoError(t, err)
+	for _, f := range result.Findings {
+		assert.NotEqual(t, "missing", f.Status, "nothing is missing right after a re-link: %+v", f)
+	}
+	assert.Zero(t, result.Issues)
+}

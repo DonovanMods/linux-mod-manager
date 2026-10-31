@@ -21,6 +21,7 @@ import { followJob } from "../sse.js";
 import {
   frameFromEvent,
   jobStateLabel,
+  mutationLabel,
   progressText,
   progressFraction,
   resultTallyLabel,
@@ -246,7 +247,7 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
         onClick=${onToggle}
       >
         <span class="tray__kind" data-origin=${job.origin || null}
-          >${job.origin === "auto" ? `${job.kind} (automatic)` : job.kind}</span
+          >${job.origin === "auto" ? mutationLabel(job.kind, job.origin) : job.kind}</span
         >
         <span class="tray__state tray__state--${tone}">${stateText}</span>
         <span class="tray__caret">${expanded ? "▾" : "▸"}</span>
@@ -291,6 +292,18 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
           <ul class="tray__skips" data-job=${job.id}>
             ${tally.skipped_notes.map(
               (note) => html`<li key=${note} class="tray__skip">${note}</li>`,
+            )}
+          </ul>
+        `
+      }
+      ${
+        // issue 590: an automatic re-link says what moved, as the Updates
+        // card does - the tally alone ("1 re-linked") names no mod.
+        (tally?.notes ?? []).length > 0 &&
+        html`
+          <ul class="tray__notes" data-job=${job.id}>
+            ${tally.notes.map(
+              (note) => html`<li key=${note} class="tray__note">${note}</li>`,
             )}
           </ul>
         `

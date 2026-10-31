@@ -1,0 +1,6 @@
+{
+  "mod": "icarus:bbbb",
+  "name": "Bear Mount",
+  "to_mod_id": "cccc",
+  "error": "moving installed record: database is locked"
+}

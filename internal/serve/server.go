@@ -118,6 +118,10 @@ type Server struct {
 	// auto_updates.go): the job in flight per game/profile, and the
 	// updates it failed to apply. Process-lifetime, like jobs.
 	autoUpdates autoUpdater
+	// autoRelinks is the automatic re-link's state (#590, auto_relink.go):
+	// the job in flight per game/profile, the re-links made and the ones
+	// that failed. Process-lifetime, like jobs.
+	autoRelinks autoRelinker
 
 	// uploads indexes the archives a browser has streamed into the
 	// service's staging directory, awaiting an import (uploads.go). Like

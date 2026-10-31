@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A mod that left its source's catalog gets its likely new ID suggested
+  (#590).** When a mod was republished under a new ID, the update check
+  and Health now look in the same source for a mod with the same name and
+  the same author, compared ignoring case, spacing and punctuation. They
+  search once for each missing mod, and a source with a local index
+  answers from it. Every candidate is listed, the ones at the installed
+  version or newer first. One match is offered as a suggestion: `lmm update` and
+  `lmm verify` print the ready-to-run
+  `lmm mod edit … --to-source-id <new-id>`, and the web UI's Updates card
+  and Health row offer **Re-link to &lt;new-id&gt;**. The button opens
+  the existing re-link preview (#326) with the new ID filled in. Several
+  matches are all listed, and none is picked. Only a source whose IDs can
+  change re-links by itself (next entry). The update check's
+  `catalog_missing` entries and the new Health finding carry the
+  candidates as `successors` (`mod_id`, `name`, `author`, `version`).
+
+- **A moved Icarus mod is re-linked to its new ID automatically (#590).**
+  Icarus's catalog sync deletes a mod and adds it again under a new ID, so
+  an installed mod can drop out of the catalog while it is still there. A
+  source can now declare that its IDs can change, and Icarus does. For
+  such a source, when exactly one mod in it has the missing mod's name and
+  author, lmm re-links the mod itself - but only when that one match has
+  exactly the same name and author (case and spacing aside: "Mod+" is not
+  "Mod", nor "Mod 2" "Mod2") and a version that is known and not older
+  than the installed one. A current copy beside an older one is two
+  matches, so neither is picked. The
+  files lmm already has move with it, so nothing reads as missing
+  afterwards, and a newer version is then offered as an ordinary update.
+  It happens only where the automatic updates (#587) happen: `lmm update`
+  (not `--dry-run`, and not a `--json` check without `--all`), and the web
+  UI's own update check. It never waits behind a running job, never runs
+  while the game is running, touches only the active profile, and leaves a
+  locked mod alone. Each re-link reads "Bear Mount moved to a new ID in
+  Icarus (Project Daedalus); re-linked (<old> -> <new>)" in `lmm update`,
+  on the Updates card and Health card, and in the activity tray, where the
+  re-link is an automatic `catalog_relink` job named "Re-linking
+  automatically". The update report carries
+  it as `auto_relink`. Several matches, a looser match, a missing or
+  unreadable version, no match, or a source whose IDs
+  are stable (NexusMods, CurseForge, Steam Workshop, custom sources) still
+  only get the suggestion and the **Re-link to** button.
+
 - **Battle.net detection finds Diablo II: Resurrected, Warcraft III:
   Reforged and StarCraft II (#546).** Warcraft III (`w3`, game id
   `warcraft3`) and StarCraft II (`s2`, `starcraft2`) keep custom maps in
@@ -206,6 +248,24 @@ self-update --auto` and exits as it would have; a script or a pipe never
 
 ### Fixed
 
+- **Health says a mod has left its source's catalog instead of "could not
+  check version" (#590).** A mod whose source answers "not found" was a
+  Health row reading "could not check version: source "icarus": listing
+  files for …: not in the catalog (HTTP 404): mod not found". It now
+  reads "no longer in Icarus's catalog (removed, or republished under a new
+  ID)", the update check's wording from #539, with the same suggested new
+  ID. Health checks the same typed not-found condition as the update
+  check, not the error text. The finding's status is the new
+  `catalog_missing` (it was `skipped`); it still counts as a warning, and
+  it carries `source_id`.
+- **A re-link keeps the mod's cached files (#590).**
+  `lmm mod edit --to-source-id` (and the web UI's Re-link) moved the mod to its new ID
+  but left its cache entry under the old one. `lmm verify` then reported
+  every file MISSING, and `verify --fix` downloaded them all again. The
+  entry is now copied to the new ID before the mod moves. The old entry
+  stays, since another profile may still use the old ID. A re-link that
+  also changes the recorded version copies nothing, because the old files
+  are not that version's; it says to run `lmm verify --fix` instead.
 - **Updating the Icarus merged pak from the Updates card no longer fails
   with "mod not found" (#589).** The card's recompile row (`[recompile]`
   in `lmm update`) stands for the profile's merged pak, not an installed
@@ -248,7 +308,7 @@ self-update --auto` and exits as it would have; a script or a pipe never
   install, which contradicted the guide. Every check the web UI makes (the
   main screen loading, **Check for updates**) now applies them through the
   same batch `lmm update` uses, as an ordinary job in the activity tray
-  marked automatic, with its result. The server decides, so two open tabs
+  named "Updating automatically", with its result. The server decides, so two open tabs
   or overlapping checks apply an update once. It never queues behind a
   running job (the next check tries again), never retries a failed update
   until a newer version or an explicit check (the card says "Automatic

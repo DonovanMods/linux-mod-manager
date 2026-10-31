@@ -153,6 +153,12 @@ type RelinkOptions struct {
 	Name    string
 	Version string
 	Author  string
+
+	// keepVersion keeps the recorded version through a re-link's metadata
+	// refresh instead of taking the target's: the automatic re-link's
+	// (#590, AutoRelinkRun.Apply), whose files in the cache are that
+	// version's.
+	keepVersion bool
 }
 
 // RelinkResult reports the outcome of ApplyRelinkMod.
@@ -312,7 +318,7 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 					mod.Author = fetched.Author
 					changes = append(changes, fmt.Sprintf("author -> %s (from %s)", fetched.Author, newSourceID))
 				}
-				if opts.Version == "" && fetched.Version != "" {
+				if opts.Version == "" && !opts.keepVersion && fetched.Version != "" {
 					mod.Version = fetched.Version
 					changes = append(changes, fmt.Sprintf("version -> %s (from %s)", fetched.Version, newSourceID))
 				}
@@ -331,6 +337,14 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		changes = append(changes, fmt.Sprintf("source -> %s (was %s)", newSourceID, oldSourceID))
 		if newModID != oldModID {
 			changes = append(changes, fmt.Sprintf("id -> %s (was %s)", newModID, oldModID))
+		}
+
+		// #590: the files the mod was installed from move with it. Left
+		// under the old id, every file read MISSING right after the
+		// re-link, and a merged-pak resync below found no input.
+		s.carryRelinkCache(ctx, game, oldSourceID, oldModID, plan.Mod.Version, &mod, warn)
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
 		}
 
 		if err := s.db.RelinkInstalledMod(ctx, oldSourceID, oldModID, &mod); err != nil {
@@ -419,4 +433,31 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 	result.Mod = mod
 	result.Changes = changes
 	return result, nil
+}
+
+// carryRelinkCache copies the cache entry a re-linked mod was installed from
+// (oldSourceID/oldModID at oldVersion) to its new identity (#590), before the
+// identity moves. The old entry stays: another profile may still have the old
+// id installed, and the deployed links point into it. Nothing is copied when
+// there is nothing to copy, when the new identity already has an entry, or
+// when the re-link changed the recorded version - the old files are not that
+// version's, and labelling them so would be a lie; the warning says how to
+// fetch the right ones instead. A failed copy is a warning too: the re-link
+// itself still stands.
+func (s *Service) carryRelinkCache(ctx context.Context, game *domain.Game, oldSourceID, oldModID, oldVersion string, mod *domain.InstalledMod, warn func(string, ...any)) {
+	// No version names no entry: ModPath would be the mod's whole tree.
+	if oldVersion == "" {
+		return
+	}
+	gameCache := s.GetGameCache(game)
+	if !gameCache.Exists(game.ID, oldSourceID, oldModID, oldVersion) || gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+		return
+	}
+	if mod.Version != oldVersion {
+		warn("the cache has no files for %s %s yet - run 'lmm verify --fix' to download them", mod.ID, mod.Version)
+		return
+	}
+	if err := gameCache.CopyModAs(ctx, game.ID, oldSourceID, oldModID, mod.SourceID, mod.ID, mod.Version); err != nil && ctx.Err() == nil {
+		warn("could not copy the cached files to %s: %v - run 'lmm verify --fix' to download them again", mod.ID, err)
+	}
 }

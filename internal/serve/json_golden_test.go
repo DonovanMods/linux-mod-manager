@@ -185,6 +185,16 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// The catalog_relink shape (#590): the re-links made, and each
+			// one in words.
+			"job_tally_catalog_relink",
+			jobTally{
+				Kind:    "catalog_relink",
+				Applied: 1,
+				Notes:   []string{"Bear Mount moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)"},
+			},
+		},
+		{
 			// The profile_import shape: installed/failed/skipped and a
 			// warnings count, with no applied member at all.
 			"job_tally_profile_import",
