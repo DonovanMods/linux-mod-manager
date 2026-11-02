@@ -127,9 +127,9 @@ var serviceRestartCmd = &cobra.Command{
 	Long: `Restart lmm-serve.service, or start it if it is stopped, and say whether
 it is running a moment later. Nothing is reinstalled or rewritten, so it
 works the same for a unit 'lmm service install' wrote and for one your lmm
-package installed. It does not turn on a service that is turned off: it runs
-until you log out, and 'systemctl --user enable lmm-serve' makes it start at
-login again.
+package installed. It does not turn on a service that is turned off, so it
+will not start at your next login; 'systemctl --user enable lmm-serve' turns
+it on.
 
 Restart the service after a change it only reads when it starts, such as a
 key you stored with 'lmm auth login' or a PATH you changed with

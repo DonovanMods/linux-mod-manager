@@ -890,6 +890,7 @@ func TestUserUnits_Restart(t *testing.T) {
 		_, err := units.Restart(ctx)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "systemctl --user restart "+systemd.ServeUnitName)
+		assert.Contains(t, err.Error(), "journalctl --user -u lmm-serve", "the log is where the reason is")
 	})
 	t.Run("no systemd", func(t *testing.T) {
 		units, _ := newTestUserUnits(t, &fakeSystemd{missing: true}, "/usr/bin/lmm")

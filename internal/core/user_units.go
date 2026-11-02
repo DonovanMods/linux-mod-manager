@@ -639,7 +639,9 @@ func (u *UserUnits) Status(ctx context.Context) (ServiceReport, error) {
 // not enable a disabled unit. A moment later it asks again whether the
 // service is running, as Install does, so one that exits at once is
 // reported as not running. A unit installed nowhere systemd looks is
-// ErrServiceNotInstalled, and nothing is run.
+// ErrServiceNotInstalled, and nothing is run. "Installed" means what
+// Status reports: the user's unit directory or a packaged one, the
+// directories lmm itself installs to and defers to.
 func (u *UserUnits) Restart(ctx context.Context) (ServiceReport, error) {
 	if err := u.checkSystemd(ctx); err != nil {
 		return ServiceReport{}, err
@@ -653,7 +655,7 @@ func (u *UserUnits) Restart(ctx context.Context) (ServiceReport, error) {
 		return ServiceReport{}, ErrServiceNotInstalled
 	}
 	if _, err := u.systemctl(ctx, "restart", systemd.ServeUnitName); err != nil {
-		return ServiceReport{}, fmt.Errorf("systemctl --user restart %s: %w", systemd.ServeUnitName, err)
+		return ServiceReport{}, fmt.Errorf("systemctl --user restart %s: %w (see: journalctl --user -u lmm-serve)", systemd.ServeUnitName, err)
 	}
 	if u.Sleep != nil {
 		u.Sleep(ctx, settleTime)

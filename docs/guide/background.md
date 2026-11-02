@@ -100,6 +100,12 @@ put it there), whether it starts when you log in, whether it is running
 now, and whether it starts at boot. Add `--json` for a version a script can
 read.
 
+If it isn't running, its log says why:
+
+```bash
+journalctl --user -u lmm-serve
+```
+
 ## Restarting it
 
 ```bash
@@ -115,13 +121,8 @@ the service, and it is the same as `systemctl --user restart lmm-serve`.
 
 A restart stops anything the web interface is in the middle of, as closing
 `lmm serve` would, so wait until it has finished. It doesn't turn the
-service on: if you turned it off, it runs until you log out.
-
-If it isn't running, its log says why:
-
-```bash
-journalctl --user -u lmm-serve
-```
+service on: if you turned it off, it won't start again the next time you log
+in.
 
 ## Starting at boot, without logging in
 
