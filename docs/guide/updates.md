@@ -142,7 +142,7 @@ background web interface notices the new version within a minute and
 restarts itself onto it once nothing is running in it. Otherwise, or if you
 started `lmm serve` yourself in a terminal, it keeps running the old
 version, and the browser shows a notice asking you to restart it: run
-`systemctl --user restart lmm-serve`, or for one you started yourself, stop
+`lmm service restart`, or for one you started yourself, stop
 it with **Ctrl+C** and run `lmm serve` again.
 
 Only one update runs at a time. If you start `lmm self-update` while

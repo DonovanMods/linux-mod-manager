@@ -106,6 +106,24 @@ If it isn't running, its log says why:
 journalctl --user -u lmm-serve
 ```
 
+## Restarting it
+
+```bash
+lmm service restart
+```
+
+This stops the service and starts it again, or just starts it if it was
+stopped, then tells you whether it is running. You don't need to uninstall
+and install it again to restart it. Restart it after you change something
+the service only reads when it starts, such as an API key you stored or its
+`PATH` (see below). It works the same whether lmm or a package installed
+the service, and it is the same as `systemctl --user restart lmm-serve`.
+
+A restart stops anything the web interface is in the middle of, as closing
+`lmm serve` would, so wait until it has finished. It doesn't turn the
+service on: if you turned it off, it won't start again the next time you log
+in.
+
 ## Starting at boot, without logging in
 
 The service starts when you log in. If you want it running from the moment
@@ -136,7 +154,7 @@ you trust: anyone who can reach the address can manage your mods.
   only on your shell's `PATH` (say, added in `~/.bashrc`), set `PATH` in a
   file under `~/.config/environment.d/`, which takes effect the next time
   you log in; or, for now, `systemctl --user set-environment PATH=...`
-  followed by `systemctl --user restart lmm-serve`.
+  followed by `lmm service restart`.
 - The service doesn't see API keys you `export` in your shell, such as
   `CURSEFORGE_API_KEY` or `NEXUSMODS_API_KEY`. It sees keys you stored with
   `lmm auth login <source>` or in the web interface (**Setup** >
@@ -147,7 +165,7 @@ you trust: anyone who can reach the address can manage your mods.
   a variable the service already gets from systemd (an `environment.d`
   file, or `systemctl --user import-environment`) doesn't count. The web
   interface offers **Add API key…** wherever a source asks for
-  one. After storing a key, run `systemctl --user restart lmm-serve`. lmm
+  one. After storing a key, run `lmm service restart`. lmm
   never copies a key into the service file, which anyone who can read your
   files could read.
 - A game you start with **Play** in the web interface runs as its own

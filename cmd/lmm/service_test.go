@@ -287,3 +287,52 @@ func TestJSONGolden_ServiceStatusEnvOnlyCredentials(t *testing.T) {
 	out := captureStdout(t, func() error { return doServiceStatus(context.Background()) })
 	assertJSONCLIGolden(t, "service_status_env_only_credentials", out, unitPath, "<UNIT-PATH>")
 }
+
+// `lmm service restart` restarts the service without reinstalling it
+// (#591), and says whether it came back up.
+func TestServiceRestart_Human(t *testing.T) {
+	fake := &cliSystemd{}
+	unitPath := useTestUserUnits(t, fake)
+	captureStdout(t, func() error { return doServiceInstall(context.Background(), serviceCmd, "") })
+	before, err := os.ReadFile(unitPath)
+	require.NoError(t, err)
+	fake.calls = nil
+
+	out := captureStdout(t, func() error { return doServiceRestart(context.Background()) })
+	assert.Contains(t, out, "Restarted")
+	assert.Contains(t, out, "lmm-serve.service")
+	assert.Contains(t, out, "running")
+	assert.Contains(t, fake.calls, "systemctl --user restart lmm-serve.service")
+	after, err := os.ReadFile(unitPath)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "a restart rewrites nothing")
+}
+
+func TestServiceRestart_ReportsAServiceThatDidNotStayUp(t *testing.T) {
+	fake := &cliSystemd{}
+	useTestUserUnits(t, fake, func(u *core.UserUnits) {
+		u.Sleep = func(context.Context, time.Duration) { fake.active = false }
+	})
+	captureStdout(t, func() error { return doServiceInstall(context.Background(), serviceCmd, "") })
+
+	out := captureStdout(t, func() error { return doServiceRestart(context.Background()) })
+	assert.Contains(t, out, "is not running")
+	assert.Contains(t, out, "journalctl --user -u lmm-serve")
+}
+
+func TestServiceRestart_NotInstalled(t *testing.T) {
+	useTestUserUnits(t, &cliSystemd{})
+	err := doServiceRestart(context.Background())
+	require.ErrorIs(t, err, core.ErrServiceNotInstalled)
+	assert.Contains(t, err.Error(), "lmm service install")
+}
+
+func TestJSONGolden_ServiceRestart(t *testing.T) {
+	fake := &cliSystemd{}
+	unitPath := useTestUserUnits(t, fake)
+	captureStdout(t, func() error { return doServiceInstall(context.Background(), serviceCmd, "") })
+	withJSONOutput(t)
+
+	out := captureStdout(t, func() error { return doServiceRestart(context.Background()) })
+	assertJSONCLIGolden(t, "service_restart", out, unitPath, "<UNIT-PATH>")
+}

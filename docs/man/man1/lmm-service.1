@@ -23,6 +23,10 @@ already installed, turned off; turn it on with:
 it writes the unit to ~/.config/systemd/user, pointing at this lmm binary.
 
 .PP
+\&'lmm service restart' restarts the service, whichever way it was
+installed; you never need to uninstall and reinstall it to restart it.
+
+.PP
 The service starts when you log in. To start it at boot without a login,
 run 'loginctl enable-linger $USER' once; lmm never runs it for you.
 
@@ -66,7 +70,7 @@ run 'loginctl enable-linger $USER' once; lmm never runs it for you.
 
 
 .SH SEE ALSO
-\fBlmm(1)\fP, \fBlmm-service-install(1)\fP, \fBlmm-service-status(1)\fP, \fBlmm-service-uninstall(1)\fP
+\fBlmm(1)\fP, \fBlmm-service-install(1)\fP, \fBlmm-service-restart(1)\fP, \fBlmm-service-status(1)\fP, \fBlmm-service-uninstall(1)\fP
 
 
 .SH HISTORY

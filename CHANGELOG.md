@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`lmm service restart` (#591).** Restarts the background web UI's
+  `lmm-serve.service`, or starts it if it was stopped, without reinstalling
+  it, and says a moment later whether it is running. It works for a unit
+  `lmm service install` wrote and for one a package installed, and `--json`
+  prints the same report as `lmm service status`. The hints that said
+  `systemctl --user restart lmm-serve` (after storing an API key the
+  service could not see, and after `lmm self-update`) now name it.
+
 - **A mod that left its source's catalog gets its likely new ID suggested
   (#590).** When a mod was republished under a new ID, the update check
   and Health now look in the same source for a mod with the same name and

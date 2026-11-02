@@ -45,6 +45,11 @@ func (e *SystemdUnavailableError) Unwrap() error { return e.Err }
 // Is reports whether target is ErrSystemdUnavailable.
 func (e *SystemdUnavailableError) Is(target error) bool { return target == ErrSystemdUnavailable }
 
+// ErrServiceNotInstalled is `lmm service restart`'s answer when
+// lmm-serve.service is installed nowhere systemd looks (#591): there is
+// nothing to restart, and the message names the command that installs it.
+var ErrServiceNotInstalled = errors.New(systemd.ServeUnitName + " is not installed; install it with: lmm service install")
+
 // PackagedUnitError refuses to install or uninstall a unit that a package
 // already installed (#567): a second copy under ~/.config would shadow the
 // package's, and removing the package's file is the package manager's job.
@@ -232,6 +237,10 @@ type userUnit struct {
 	// disabling it.
 	static bool
 }
+
+// ServeUnitName is lmm-serve.service, the web UI's unit (#567), for a
+// frontend that may not import packaging/systemd itself.
+const ServeUnitName = systemd.ServeUnitName
 
 // UpdateServiceName and UpdateTimerName are the unattended self-update's
 // units (#569): the timer starts the oneshot service once a day.
@@ -622,6 +631,36 @@ func (u *UserUnits) Status(ctx context.Context) (ServiceReport, error) {
 		return ServiceReport{}, err
 	}
 	return u.report(ctx, mgr.unitDir(), false, nil), nil
+}
+
+// Restart restarts lmm-serve.service (#591), starting it when it was
+// stopped, whether `lmm service install` or a package installed it: a
+// restart changes no file, so whose unit it is does not matter. It does
+// not enable a disabled unit. A moment later it asks again whether the
+// service is running, as Install does, so one that exits at once is
+// reported as not running. A unit installed nowhere systemd looks is
+// ErrServiceNotInstalled, and nothing is run. "Installed" means what
+// Status reports: the user's unit directory or a packaged one, the
+// directories lmm itself installs to and defers to.
+func (u *UserUnits) Restart(ctx context.Context) (ServiceReport, error) {
+	if err := u.checkSystemd(ctx); err != nil {
+		return ServiceReport{}, err
+	}
+	mgr, err := u.managerDirs(ctx)
+	if err != nil {
+		return ServiceReport{}, err
+	}
+	dir := mgr.unitDir()
+	if !fileExists(filepath.Join(dir, systemd.ServeUnitName)) && u.packagedPath(systemd.ServeUnitName) == "" {
+		return ServiceReport{}, ErrServiceNotInstalled
+	}
+	if _, err := u.systemctl(ctx, "restart", systemd.ServeUnitName); err != nil {
+		return ServiceReport{}, fmt.Errorf("systemctl --user restart %s: %w (see: journalctl --user -u lmm-serve)", systemd.ServeUnitName, err)
+	}
+	if u.Sleep != nil {
+		u.Sleep(ctx, settleTime)
+	}
+	return u.report(ctx, dir, false, nil), nil
 }
 
 // RestartServeIfActive restarts lmm-serve.service with try-restart when it
