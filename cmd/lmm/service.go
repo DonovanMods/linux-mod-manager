@@ -39,6 +39,9 @@ already installed, turned off; turn it on with:
 'lmm service install' is for a tarball, 'go install' or 'make install':
 it writes the unit to ~/.config/systemd/user, pointing at this lmm binary.
 
+'lmm service restart' restarts the service, whichever way it was
+installed; you never need to uninstall and reinstall it to restart it.
+
 The service starts when you log in. To start it at boot without a login,
 run 'loginctl enable-linger $USER' once; lmm never runs it for you.`,
 }
@@ -118,10 +121,37 @@ Examples:
 	},
 }
 
+var serviceRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Restart lmm-serve.service, starting it if it is stopped",
+	Long: `Restart lmm-serve.service, or start it if it is stopped, and say whether
+it is running a moment later. Nothing is reinstalled or rewritten, so it
+works the same for a unit 'lmm service install' wrote and for one your lmm
+package installed. It does not turn on a service that is turned off: it runs
+until you log out, and 'systemctl --user enable lmm-serve' makes it start at
+login again.
+
+Restart the service after a change it only reads when it starts, such as a
+key you stored with 'lmm auth login' or a PATH you changed with
+'systemctl --user set-environment'. It is the same as:
+  systemctl --user restart lmm-serve
+
+A restart stops any job the web UI is running, as stopping 'lmm serve'
+would.
+
+Examples:
+  lmm service restart
+  lmm service restart --json`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		return doServiceRestart(cmd.Context())
+	},
+}
+
 func init() {
 	serviceInstallCmd.Flags().StringVar(&serviceAddr, "addr", "", "address 'lmm serve' listens on (host:port; default "+defaultServeAddr+")")
 	serviceInstallCmd.Flags().BoolVar(&serviceAutoUpdate, "auto-update", false, "also install lmm-update.timer, which runs 'lmm self-update --auto' daily (for a machine where lmm rarely runs)")
-	serviceCmd.AddCommand(serviceInstallCmd, serviceUninstallCmd, serviceStatusCmd)
+	serviceCmd.AddCommand(serviceInstallCmd, serviceUninstallCmd, serviceRestartCmd, serviceStatusCmd)
 	rootCmd.AddCommand(serviceCmd)
 }
 
@@ -159,7 +189,7 @@ func serviceMissingCredentials(ctx context.Context, units *core.UserUnits) []cor
 func printEnvOnlyCredentials(creds []core.EnvOnlyCredential) {
 	for _, c := range creds {
 		fmt.Printf("%s %s's key comes only from $%s, which lmm-serve.service will not see.\n", colorYellow("!"), c.Name, c.EnvVar)
-		fmt.Printf("  Store it with: lmm auth login %s (or the web UI's Setup > Authentication), then: systemctl --user restart lmm-serve\n", c.SourceID)
+		fmt.Printf("  Store it with: lmm auth login %s (or the web UI's Setup > Authentication), then: lmm service restart\n", c.SourceID)
 	}
 }
 
@@ -273,6 +303,37 @@ func doServiceUninstall(ctx context.Context) error {
 		if u.Origin == core.UnitOriginPackage {
 			fmt.Printf("  Your lmm package's %s (%s) is disabled too; turn it on with: systemctl --user enable --now %s\n",
 				u.Name, u.Path, strings.TrimSuffix(u.Name, ".service"))
+		}
+	}
+	return nil
+}
+
+// doServiceRestart restarts lmm-serve.service (#591) and says whether it
+// came back up.
+func doServiceRestart(ctx context.Context) error {
+	units, err := newUserUnits()
+	if err != nil {
+		return err
+	}
+	report, err := units.Restart(ctx)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return emitJSON(report)
+	}
+	for _, u := range report.Units {
+		if u.Name != core.ServeUnitName {
+			continue
+		}
+		if !u.Active {
+			fmt.Printf("%s %s restarted but is not running (%s); see: journalctl --user -u %s\n",
+				colorYellow("!"), colorBold(u.Name), u.ActiveState, strings.TrimSuffix(u.Name, ".service"))
+			continue
+		}
+		fmt.Printf("Restarted %s; it is running.\n", colorBold(u.Name))
+		if !u.Enabled {
+			fmt.Println(colorDim("  It is turned off, so it will not start when you next log in; turn it on with: systemctl --user enable " + u.Name))
 		}
 	}
 	return nil

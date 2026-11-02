@@ -825,3 +825,75 @@ func TestUserUnits_WithoutManagerEnvironment(t *testing.T) {
 	assert.Equal(t, creds, u.WithoutManagerEnvironment(context.Background(), creds), "a failure falls back to warning")
 	assert.Nil(t, u.WithoutManagerEnvironment(context.Background(), nil))
 }
+
+// Restart restarts lmm-serve.service whoever installed it (#591), starting
+// it when it was stopped, and reports its state after a moment, so one that
+// exits at once is reported as not running.
+func TestUserUnits_Restart(t *testing.T) {
+	ctx := context.Background()
+	t.Run("lmm's own unit, running", func(t *testing.T) {
+		fake := &fakeSystemd{enabled: true, active: true}
+		units, unitPath := newTestUserUnits(t, fake, "/usr/local/bin/lmm")
+		require.NoError(t, os.MkdirAll(filepath.Dir(unitPath), 0o755))
+		raw, err := core.RenderServeUnit("/usr/local/bin/lmm", core.ServiceInstallOptions{})
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(unitPath, raw, 0o644))
+
+		report, err := units.Restart(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"restart " + systemd.ServeUnitName}, fake.verbs())
+		assert.False(t, report.Changed, "a restart writes no file")
+		require.Len(t, report.Units, 1)
+		assert.True(t, report.Units[0].Active)
+		assert.Equal(t, core.UnitOriginUser, report.Units[0].Origin)
+		got, err := os.ReadFile(unitPath)
+		require.NoError(t, err)
+		assert.Equal(t, raw, got, "the unit file is untouched")
+	})
+	t.Run("a packaged unit, stopped", func(t *testing.T) {
+		fake := &fakeSystemd{}
+		units, _ := newTestUserUnits(t, fake, "/usr/bin/lmm")
+		packaged := filepath.Join(units.PackagedDirs[0], systemd.ServeUnitName)
+		require.NoError(t, os.WriteFile(packaged, systemd.ServeUnit, 0o644))
+
+		report, err := units.Restart(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"restart " + systemd.ServeUnitName}, fake.verbs())
+		assert.True(t, report.Units[0].Active, "restart starts a stopped service")
+		assert.False(t, report.Units[0].Enabled, "and does not enable it")
+		assert.Equal(t, core.UnitOriginPackage, report.Units[0].Origin)
+	})
+	t.Run("checks again after a moment", func(t *testing.T) {
+		fake := &fakeSystemd{}
+		units, _ := newTestUserUnits(t, fake, "/usr/bin/lmm")
+		require.NoError(t, os.WriteFile(filepath.Join(units.PackagedDirs[0], systemd.ServeUnitName), systemd.ServeUnit, 0o644))
+		waited := false
+		units.Sleep = func(context.Context, time.Duration) { waited, fake.active = true, false }
+
+		report, err := units.Restart(ctx)
+		require.NoError(t, err)
+		assert.True(t, waited)
+		assert.False(t, report.Units[0].Active, "it exited straight after the restart")
+	})
+	t.Run("not installed", func(t *testing.T) {
+		fake := &fakeSystemd{}
+		units, _ := newTestUserUnits(t, fake, "/usr/local/bin/lmm")
+		_, err := units.Restart(ctx)
+		require.ErrorIs(t, err, core.ErrServiceNotInstalled)
+		assert.Contains(t, err.Error(), "lmm service install")
+		assert.Empty(t, fake.verbs(), "nothing is run")
+	})
+	t.Run("restart fails", func(t *testing.T) {
+		fake := &fakeSystemd{failVerb: "restart"}
+		units, _ := newTestUserUnits(t, fake, "/usr/bin/lmm")
+		require.NoError(t, os.WriteFile(filepath.Join(units.PackagedDirs[0], systemd.ServeUnitName), systemd.ServeUnit, 0o644))
+		_, err := units.Restart(ctx)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "systemctl --user restart "+systemd.ServeUnitName)
+	})
+	t.Run("no systemd", func(t *testing.T) {
+		units, _ := newTestUserUnits(t, &fakeSystemd{missing: true}, "/usr/bin/lmm")
+		_, err := units.Restart(ctx)
+		assert.ErrorIs(t, err, core.ErrSystemdUnavailable)
+	})
+}

@@ -209,7 +209,7 @@ func printSelfUpdateResult(res core.SelfUpdateResult, releaseURL string, autoUpd
 		if autoUpdate {
 			fmt.Println(colorDim("If lmm-serve.service is running, lmm serve restarts itself onto " + res.Version + " once no job is running."))
 		} else {
-			fmt.Println(colorDim("A running lmm serve keeps " + res.Previous + " until you restart it: systemctl --user restart lmm-serve"))
+			fmt.Println(colorDim("A running lmm serve keeps " + res.Previous + " until you restart it: lmm service restart"))
 		}
 	}
 	if releaseURL != "" {
