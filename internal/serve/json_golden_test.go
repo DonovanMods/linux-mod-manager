@@ -402,6 +402,16 @@ func TestServeJSONGoldens(t *testing.T) {
 			modLockRequest{Version: "1.2.0"},
 		},
 		{
+			// #592: the mod panel's category Save; "" clears.
+			"mod_category_request",
+			modCategoryRequest{Category: "Weapons"},
+		},
+		{
+			// #592: the category picker's suggestions.
+			"categories_document",
+			categoriesDocument{Categories: []string{"armour", "Weapons"}},
+		},
+		{
 			// #542: the Updates card's Skip sends the row's own new_version.
 			"mod_skip_update_request",
 			modSkipUpdateRequest{Version: "2.0"},
