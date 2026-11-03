@@ -16,8 +16,15 @@ import {
   buildRows,
   filterRows,
   sortRows,
+  groupRowsByCategory,
   runningMutations,
 } from "../modrows.js";
+import {
+  readGroupByCategory,
+  writeGroupByCategory,
+  readCollapsedGroups,
+  writeCollapsedGroups,
+} from "../libraryprefs.js";
 import { TopBar } from "./topbar.js";
 import { AttentionCards } from "./cards.js";
 import { Library } from "./library.js";
@@ -43,6 +50,38 @@ export function MissionControl({ state, onThemeChange, actions }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [sort, setSort] = useState("load-order");
+  // issue 592: "Group by category", and the groups collapsed in this game's
+  // library - per viewer, remembered across reloads (libraryprefs.js). They
+  // live here with filter/sort because they decide the ORDER the table
+  // shows, which is the order the slide-over's ←/→ steps through.
+  const [grouped, setGroupedState] = useState(readGroupByCategory);
+  const gameID = state.route?.game ?? "";
+  const [collapsedState, setCollapsedState] = useState(() => ({
+    game: gameID,
+    names: readCollapsedGroups(gameID),
+  }));
+  // A game switch reads that game's own collapsed set; memoised so the set
+  // is one object per game, not a new one on every render.
+  const collapsed = useMemo(
+    () =>
+      collapsedState.game === gameID
+        ? collapsedState.names
+        : readCollapsedGroups(gameID),
+    [collapsedState, gameID],
+  );
+
+  function setGrouped(on) {
+    writeGroupByCategory(on);
+    setGroupedState(on);
+  }
+
+  function toggleGroup(name) {
+    const next = new Set(collapsed);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    writeCollapsedGroups(gameID, next);
+    setCollapsedState({ game: gameID, names: next });
+  }
 
   const {
     route,
@@ -78,9 +117,26 @@ export function MissionControl({ state, onThemeChange, actions }) {
     return q ? rows.filter((r) => r.name.toLowerCase().includes(q)) : rows;
   }, [rows, query]);
 
-  const visible = useMemo(
+  const sorted = useMemo(
     () => sortRows(filterRows(matched, filter), sort),
     [matched, filter, sort],
+  );
+
+  // issue 592: grouping applies AFTER the search, filter and sort - a group
+  // holds the rows those left, in their order - and `visible` is then the
+  // rows in the order the grouped table draws them, minus a collapsed
+  // group's: what is on screen, which is what select-all takes and ←/→
+  // steps through.
+  const groups = useMemo(
+    () => (grouped ? groupRowsByCategory(sorted) : null),
+    [grouped, sorted],
+  );
+  const visible = useMemo(
+    () =>
+      groups
+        ? groups.flatMap((g) => (collapsed.has(g.name) ? [] : g.rows))
+        : sorted,
+    [groups, sorted, collapsed],
   );
 
   // The mods currently being mutated as far as THIS session's own controls
@@ -220,6 +276,12 @@ export function MissionControl({ state, onThemeChange, actions }) {
           mods=${mods}
           rows=${rows}
           visible=${visible}
+          shownCount=${sorted.length}
+          groups=${groups}
+          collapsedGroups=${collapsed}
+          onToggleGroup=${toggleGroup}
+          grouped=${grouped}
+          onGroupedChange=${setGrouped}
           filter=${filter}
           sort=${sort}
           onFilterChange=${setFilter}
