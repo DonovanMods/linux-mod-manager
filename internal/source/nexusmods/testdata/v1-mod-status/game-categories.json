@@ -1,0 +1,14 @@
+{
+  "id": 1704,
+  "name": "Skyrim Special Edition",
+  "domain_name": "skyrimspecialedition",
+  "categories": [
+    {
+      "category_id": 1,
+      "name": "Skyrim Special Edition",
+      "parent_category": false
+    },
+    { "category_id": 42, "name": "User Interface", "parent_category": 1 },
+    { "category_id": 54, "name": "Armour", "parent_category": 1 }
+  ]
+}

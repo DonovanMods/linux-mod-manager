@@ -37,6 +37,31 @@ type Client struct {
 	// 404 from a mod endpoint is checked against its game once (#540).
 	knownGamesMu sync.Mutex
 	knownGames   map[string]bool
+
+	// categories caches each game domain's category id -> name list
+	// (#592), read from the same games endpoint gameExists asks: one fetch
+	// per domain for the client's lifetime. categoryMisses holds when a
+	// domain's fetch last failed, so a failing endpoint is not asked again
+	// on every GetMod of an update check (see categoryRetryAfter).
+	categories     map[string]map[int]string
+	categoryMisses map[string]time.Time
+	now            func() time.Time
+}
+
+// categoryRetryAfter is how long a game domain whose category list could not
+// be fetched is left alone before it is asked again: long enough that an
+// update check over hundreds of mods costs one failed request, short enough
+// that a long-running `lmm serve` recovers from a transient outage.
+const categoryRetryAfter = 10 * time.Minute
+
+// gameResponse is the part of GET /v1/games/{domain}.json lmm reads: the
+// game's category list. parent_category is false or an id, so it is not
+// decoded.
+type gameResponse struct {
+	Categories []struct {
+		CategoryID int    `json:"category_id"`
+		Name       string `json:"name"`
+	} `json:"categories"`
 }
 
 // NewClient creates a new NexusMods API client
@@ -179,22 +204,80 @@ func (c *Client) gameExists(ctx context.Context, gameDomain string) (bool, error
 		return true, nil
 	}
 
-	var game struct{}
-	err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/v1/games/%s.json", gameDomain), &game)
+	_, err := c.fetchGame(ctx, gameDomain)
 	switch {
 	case isStatus(err, http.StatusNotFound):
 		return false, nil
 	case err != nil:
 		return false, err
 	}
+	return true, nil
+}
+
+// fetchGame reads gameDomain from the games endpoint, remembering both that
+// the game exists and its category names, so gameExists and CategoryName
+// share one request per domain.
+func (c *Client) fetchGame(ctx context.Context, gameDomain string) (map[int]string, error) {
+	var game gameResponse
+	if err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/v1/games/%s.json", gameDomain), &game); err != nil {
+		return nil, err
+	}
+	names := make(map[int]string, len(game.Categories))
+	for _, cat := range game.Categories {
+		if cat.Name != "" {
+			names[cat.CategoryID] = cat.Name
+		}
+	}
 
 	c.knownGamesMu.Lock()
+	defer c.knownGamesMu.Unlock()
 	if c.knownGames == nil {
 		c.knownGames = make(map[string]bool)
 	}
 	c.knownGames[gameDomain] = true
+	if c.categories == nil {
+		c.categories = make(map[string]map[int]string)
+	}
+	c.categories[gameDomain] = names
+	delete(c.categoryMisses, gameDomain)
+	return names, nil
+}
+
+// CategoryName is the name of categoryID in gameDomain's category list
+// (#592), or "" when the id is not in it or the list could not be read. The
+// list is fetched once per domain for the client's lifetime; a failed fetch
+// is not retried for categoryRetryAfter. It never returns an error: a
+// category name is display metadata, and no caller may fail over it.
+func (c *Client) CategoryName(ctx context.Context, gameDomain string, categoryID int) string {
+	if categoryID <= 0 || gameDomain == "" {
+		return ""
+	}
+	clock := c.now
+	if clock == nil {
+		clock = time.Now
+	}
+	c.knownGamesMu.Lock()
+	names, cached := c.categories[gameDomain]
+	missed, failed := c.categoryMisses[gameDomain]
 	c.knownGamesMu.Unlock()
-	return true, nil
+	if cached {
+		return names[categoryID]
+	}
+	if failed && clock().Sub(missed) < categoryRetryAfter {
+		return ""
+	}
+
+	names, err := c.fetchGame(ctx, gameDomain)
+	if err != nil {
+		c.knownGamesMu.Lock()
+		if c.categoryMisses == nil {
+			c.categoryMisses = make(map[string]time.Time)
+		}
+		c.categoryMisses[gameDomain] = clock()
+		c.knownGamesMu.Unlock()
+		return ""
+	}
+	return names[categoryID]
 }
 
 // GetMod fetches a mod by ID. A mod NexusMods has no record of is

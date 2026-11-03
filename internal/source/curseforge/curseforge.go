@@ -561,6 +561,7 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 			skipped = append(skipped, reason)
 			continue
 		}
+		source.ReportFetchedMod(ctx, modToDomain(data, inst.GameID, types)) // #592: core backfills the category name
 
 		latest, err := c.latestUpdate(ctx, data, inst, types)
 		if err != nil {
@@ -607,6 +608,23 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 	return updates, nil
 }
 
+// primaryCategoryName is the name of data's primary category (#592), read
+// from the categories the mod response already embeds: the one whose id is
+// primaryCategoryId, else the first that has a name, else empty.
+func primaryCategoryName(data Mod) string {
+	for _, c := range data.Categories {
+		if c.ID == data.PrimaryCategoryID && c.Name != "" {
+			return c.Name
+		}
+	}
+	for _, c := range data.Categories {
+		if c.Name != "" {
+			return c.Name
+		}
+	}
+	return ""
+}
+
 // modToDomain converts a CurseForge Mod to domain.Mod. types are the game
 // version types the game accepts (#544), nil for every one: the version shown
 // is the newest of those files'.
@@ -645,6 +663,7 @@ func modToDomain(data Mod, gameID string, types flavorSet) domain.Mod {
 		// render the same text twice (#235).
 		GameID:       gameID,
 		Category:     category,
+		CategoryName: primaryCategoryName(data),
 		Downloads:    data.DownloadCount,
 		SourceURL:    data.Links.WebsiteURL,
 		Endorsements: int64Ptr(int64(data.ThumbsUpCount)),

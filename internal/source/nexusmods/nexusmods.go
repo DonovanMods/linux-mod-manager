@@ -159,6 +159,10 @@ func (n *NexusMods) GetMod(ctx context.Context, gameID, modID string) (*domain.M
 	}
 
 	mod := modDataToDomain(*data, gameID)
+	// #592: the REST mod carries only category_id; the name comes from the
+	// game's category list, fetched once per game. A failed lookup leaves
+	// it empty rather than failing the read.
+	mod.CategoryName = n.client.CategoryName(ctx, gameID, data.CategoryID)
 	return &mod, nil
 }
 
@@ -367,6 +371,7 @@ func (n *NexusMods) CheckUpdatesWithProgress(ctx context.Context, installed []do
 			fetchErrs = append(fetchErrs, checkError(inst, err))
 			continue
 		}
+		source.ReportFetchedMod(ctx, *remoteMod) // #592: core backfills the category name
 
 		modID, err := strconv.Atoi(inst.ID)
 		if err != nil {
