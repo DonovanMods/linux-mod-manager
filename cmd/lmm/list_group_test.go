@@ -82,6 +82,20 @@ func TestList_GroupByCategory_OrdersGroupsWithUncategorizedLast(t *testing.T) {
 	assert.NotContains(t, out, "\x1b[", "plain output must never contain ANSI escapes")
 }
 
+// TestList_GroupByCategory_Verbose: the verbose table groups the same way,
+// its wider rows under the same headings.
+func TestList_GroupByCategory_Verbose(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedGroupFixture(t, svc, game)
+	withListGroupBy(t, "category")
+
+	out := listVerbose(t, svc, game, false)
+
+	assert.Contains(t, out, "ID  NAME   VERSION  AUTHOR  SOURCE  ENABLED  DEPLOYED  METHOD   POLICY  LOCKED  CONVERT\n")
+	assert.Contains(t, out, "\nUncategorized (1)\na   Mod A  1.0      -       src     yes      no        symlink  notify  -       -\n")
+	assert.Less(t, strings.Index(out, "Weapons (2)"), strings.Index(out, "Uncategorized (1)"))
+}
+
 // TestList_GroupByCategory_HeadingsBoldWhenColored: a heading is bold and
 // each row keeps its state tint.
 func TestList_GroupByCategory_HeadingsBoldWhenColored(t *testing.T) {

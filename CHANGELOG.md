@@ -17,8 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mod your own category, which is stored in the profile (it travels with
   export, import, duplicate and copy) and overrides the source's. Each
   entry in the mod list now carries its effective category, and core has
-  one grouping rule for the frontends to share. The commands and the web
-  UI controls come in later changes.
+  one grouping rule for the frontends to share. The web UI controls come
+  in a later change.
+
+- **Mod categories in the terminal (#592).** `lmm list --group-by category`
+  lists the mods under one heading per category, sorted by name, with the
+  mods that have none last under "Uncategorized"; each group keeps the
+  load order, and `--json` still prints the flat list (each mod carries
+  `effective_category` and `category_source`).
+  `lmm mod set-category <mod-id> <name>` gives a mod your own category,
+  and `--clear` removes it; `--json` prints the mod-setting result. `lmm mod show` names the mod's
+  category and whether it is yours or the source's.
 
 - **`lmm service restart` (#591).** Restarts the background web UI's
   `lmm-serve.service`, or starts it if it was stopped, without reinstalling

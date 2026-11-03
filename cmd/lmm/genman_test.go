@@ -153,9 +153,9 @@ func TestGenManTree_AngleBracketArgsSurviveForEveryCommand(t *testing.T) {
 	// <mod-id>`, `lmm mod unskip-update <mod-id>`), +1 since #438 (`lmm
 	// profile duplicate <source> <new>`), +1 since #437 (`lmm mod copy
 	// [<mod-id>] --to <profile>`), +1 since #563 (`lmm game version-types
-	// <game-id>`).
-	assert.Equal(t, 30, checked,
-		"expected exactly 30 commands with angle-bracket Use args; update this count if the command tree changed")
+	// <game-id>`), +1 since #592 (`lmm mod set-category <mod-id> [name]`).
+	assert.Equal(t, 31, checked,
+		"expected exactly 31 commands with angle-bracket Use args; update this count if the command tree changed")
 }
 
 // TestGenManTree_AngleBracketPlaceholdersSurviveInLongHelp is the same
