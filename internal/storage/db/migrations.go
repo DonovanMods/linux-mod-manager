@@ -51,6 +51,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		d.migrateV19,
 		migrateV20,
 		migrateV21,
+		migrateV22,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -594,5 +595,22 @@ func migrateV21(ctx context.Context, d migrationExec) error {
 			PRIMARY KEY (game_id, source_id, mod_id)
 		)
 	`)
+	return err
+}
+
+// migrateV22 adds installed_mods.category_name (#592): the source's
+// human-readable category for the mod, recorded on install and update and
+// backfilled by the update check, so a mod list can group by category with
+// no network read. NULL until a fetch records one. Guarded like
+// migrateV20, so a database that already has the column is left alone.
+func migrateV22(ctx context.Context, q migrationExec) error {
+	var have int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('installed_mods') WHERE name = 'category_name'`).Scan(&have); err != nil {
+		return fmt.Errorf("inspecting installed_mods: %w", err)
+	}
+	if have > 0 {
+		return nil
+	}
+	_, err := q.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN category_name TEXT`)
 	return err
 }
