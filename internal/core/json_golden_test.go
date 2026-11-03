@@ -1362,6 +1362,44 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #592: the effective category beside the embedded Mod's own
+			// category (the source's id) and category_name.
+			"mod_listing_category",
+			core.ModListing{
+				InstalledMod: domain.InstalledMod{
+					Mod:          domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", Category: "54", CategoryName: "Armour"},
+					ProfileName:  "default",
+					UpdatePolicy: domain.UpdateNotify,
+					InstalledAt:  fixedTime,
+					LinkMethod:   domain.LinkSymlink,
+					Enabled:      true,
+				},
+				EffectiveCategory: "Favourites",
+				CategorySource:    core.CategorySourceUser,
+			},
+		},
+		{
+			// #592: GroupModListByCategory's group; Name is "" for the
+			// uncategorised group.
+			"mod_category_group",
+			core.ModCategoryGroup{Name: "Armour", Mods: []core.ModListing{{
+				InstalledMod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", CategoryName: "Armour"},
+					ProfileName: "default", UpdatePolicy: domain.UpdateNotify, InstalledAt: fixedTime, LinkMethod: domain.LinkSymlink,
+				},
+				EffectiveCategory: "Armour",
+				CategorySource:    core.CategorySourceSource,
+			}}},
+		},
+		{
+			// #592: the category on the installed block of `lmm mod show`.
+			"installed_detail_category",
+			core.InstalledDetail{
+				Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateNotify,
+				EffectiveCategory: "Armour", CategorySource: core.CategorySourceSource,
+			},
+		},
+		{
 			// Mods is deliberately left nil (no `omitempty` on the tag) to
 			// pin that an empty listing marshals as "[]", not "null".
 			"mod_list",
@@ -2343,6 +2381,11 @@ func TestJSONGoldens(t *testing.T) {
 				Locked: true, Disabled: true, AlreadyListed: true, ExistingVersion: "1.2.2"},
 		},
 		{
+			// #592: the user category a copy carries.
+			"copy_mod_entry_category",
+			core.CopyModEntry{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3", Category: "Favourites"},
+		},
+		{
 			"copy_mod_skip",
 			core.CopyModSkip{SourceID: "steamworkshop", ModID: "7", Name: "Workshop Item", Reason: core.ReasonExternalNoCopy},
 		},
@@ -2372,6 +2415,19 @@ func TestJSONGoldens(t *testing.T) {
 				LockedVersion: "1.2.3",
 				UpdatePolicy:  domain.UpdateAuto,
 				ConvertPaks:   boolPtr(true),
+			},
+		},
+		{
+			// #592: SetModCategory's result.
+			"mod_setting_result_category",
+			core.ModSettingResult{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", CategoryName: "Armour"},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				UpdatePolicy:      domain.UpdateNotify,
+				EffectiveCategory: "Favourites",
+				CategorySource:    core.CategorySourceUser,
 			},
 		},
 		{

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mod categories, below the frontends (#592).** Installed mods now keep
+  their source's category name: CurseForge's primary category, and the
+  NexusMods category resolved through the game's category list (one lookup
+  per game). The name is recorded on install and update, and the update
+  check fills it in for mods installed before this. You can also give a
+  mod your own category, which is stored in the profile (it travels with
+  export, import, duplicate and copy) and overrides the source's. Each
+  entry in the mod list now carries its effective category, and core has
+  one grouping rule for the frontends to share. The commands and the web
+  UI controls come in later changes.
+
 - **`lmm service restart` (#591).** Restarts the background web UI's
   `lmm-serve.service`, or starts it if it was stopped, without reinstalling
   it, and says a moment later whether it is running. It works for a unit

@@ -1154,6 +1154,15 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 		return fmt.Errorf("updating database: %w", err)
 	}
 
+	// #592: the new version's source category name, when it has one the row
+	// does not - applyModUpdate writes only the version columns. Best-effort:
+	// the update has already landed, and a display name must not undo it.
+	if newMod.CategoryName != "" && newMod.CategoryName != mod.CategoryName {
+		if err := s.db.SetModCategoryName(ctx, mod.SourceID, mod.ID, game.ID, profileName, newMod.CategoryName); err != nil {
+			s.logger().Debug("recording category name", "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
+		}
+	}
+
 	// #372: applyModUpdate has just rewritten the installed_mod_files rows,
 	// so this is the first moment the checksums have somewhere to live.
 	for _, msg := range s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, profileName, checksums) {

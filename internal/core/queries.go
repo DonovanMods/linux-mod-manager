@@ -47,6 +47,16 @@ type ModListing struct {
 	Locked        bool   `json:"locked"`
 	LockedVersion string `json:"locked_version,omitempty"`
 	ConvertPaks   *bool  `json:"convert_paks,omitempty"`
+	// EffectiveCategory is the category the mod is grouped under (#592):
+	// the user's category on the profile ref when set, else the source's
+	// category name (InstalledMod.CategoryName), else empty - which a
+	// frontend labels "Uncategorized". CategorySource says which of the two
+	// it is: CategorySourceUser, CategorySourceSource, or empty. Not named
+	// Category: the embedded Mod.Category already owns that key (the
+	// source's own category id). GroupModListByCategory groups by it; the
+	// listing itself stays in load order.
+	EffectiveCategory string `json:"effective_category,omitempty"`
+	CategorySource    string `json:"category_source,omitempty"`
 }
 
 // ModList is everything `lmm list` renders: the mods installed in one
@@ -95,6 +105,7 @@ func (s *Service) ListMods(ctx context.Context, game *domain.Game, profileName s
 	// copy, the one the update gate enforces (#457) - firstRefs is FindRef's
 	// map form.
 	lockedByKey := map[string]domain.ModReference{}
+	userCats := userCategories(profile) // #592
 	if profile != nil {
 		for key, ref := range firstRefs(profile.Mods) {
 			if ref.Locked {
@@ -108,6 +119,7 @@ func (s *Service) ListMods(ctx context.Context, game *domain.Game, profileName s
 	for i := range ordered {
 		mod := ordered[i]
 		row := ModListing{InstalledMod: mod}
+		row.EffectiveCategory, row.CategorySource = effectiveCategory(userCats[domain.ModKey(mod.SourceID, mod.ID)], mod.CategoryName)
 		if ref, ok := lockedByKey[domain.ModKey(mod.SourceID, mod.ID)]; ok {
 			row.Locked = true
 			row.LockedVersion = ref.Version
