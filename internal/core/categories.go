@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -256,7 +257,7 @@ func (f *fetchedCategories) observe(mod domain.Mod) {
 // the check fetched anyway.
 func (s *Service) backfillCategoryNames(ctx context.Context, gameID string, installed []domain.InstalledMod, fetched *fetchedCategories) {
 	fetched.mu.Lock()
-	names := fetched.names
+	names := maps.Clone(fetched.names) // a source may still be reporting
 	fetched.mu.Unlock()
 	if len(names) == 0 || ctx.Err() != nil {
 		return

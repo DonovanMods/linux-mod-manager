@@ -280,3 +280,33 @@ func TestModDetail_CarriesTheEffectiveCategory(t *testing.T) {
 	assert.Equal(t, "Mine", detail.Installed.EffectiveCategory)
 	assert.Equal(t, core.CategorySourceUser, detail.Installed.CategorySource)
 }
+
+// A re-link keeps the user's category (it is intent about the mod, not the
+// identity) and takes the new identity's source category name, clearing the
+// old one when the new source has none.
+func TestApplyRelinkMod_KeepsUserCategoryAndRefreshesTheName(t *testing.T) {
+	for name, fresh := range map[string]string{"new name": "Maps", "no name": ""} {
+		t.Run(name, func(t *testing.T) {
+			svc, game, src := newModDetailTestService(t)
+			game.SourceIDs["src"] = game.ID
+			seedCategorised(t, svc, game, "a", "Armour")
+			src.AddMod(game.ID, &domain.Mod{ID: "b", SourceID: "src", Name: "Mod b", Version: "1.0", GameID: game.ID, CategoryName: fresh})
+			ctx := context.Background()
+			_, err := svc.SetModCategory(ctx, "src", "a", game.ID, "default", "Mine")
+			require.NoError(t, err)
+
+			plan, err := svc.PlanRelinkMod(ctx, game, "default", "src", "a", "src", "b")
+			require.NoError(t, err)
+			_, err = svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+			require.NoError(t, err)
+
+			prof, err := svc.NewProfileManager().Get(ctx, game.ID, "default")
+			require.NoError(t, err)
+			require.NotNil(t, prof.FindRef("src", "b"))
+			assert.Equal(t, "Mine", prof.FindRef("src", "b").Category)
+			row, err := svc.GetInstalledMod(ctx, "src", "b", game.ID, "default")
+			require.NoError(t, err)
+			assert.Equal(t, fresh, row.CategoryName, "the old identity's source name does not survive")
+		})
+	}
+}
