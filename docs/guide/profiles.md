@@ -82,6 +82,31 @@ In the browser, choose **Copy to profile…** from a mod's menu in the
 library, or on the mod's panel, and pick the profile to copy it to. If that
 profile already has the mod, the confirm button reads **Replace**.
 
+## Grouping mods by category
+
+Every mod can have a category. Mods from NexusMods and CurseForge come with
+the category the site files them under. You can give any mod a category of
+your own, which replaces the site's. Your categories are saved in the
+profile, so they go with it when you duplicate, copy, export or import it.
+A mod installed before lmm knew about categories gets its site's category
+at the next update check.
+
+In the browser, tick **Group by category** above the library. The table
+then shows one group per category, sorted by name, with the mods that have
+no category last, under **Uncategorized**. Click a group's heading to fold
+it away. The search box, Filter and Sort still apply: they choose which mods
+are shown and in what order, and the groups are made from those. lmm
+remembers both the setting and the groups you folded, in this browser.
+
+Groups are only a way of looking at the list. They don't change the load
+order, and **Reorder…** always shows the full list in load order.
+
+To set a mod's category, open the mod's panel, or choose **Set category…**
+from its menu in the library. Type a name or pick one of the categories
+already in use, then **Save**. The line under the field says where the
+category comes from: the mod's site, or your own. **Clear** removes your
+own category, so the site's applies again.
+
 ## Sharing a profile
 
 Exporting a profile saves it as a small text file. Send it to a friend, or

@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one grouping rule for the frontends to share. The commands and the web
   UI controls come in later changes.
 
+- **Group the web UI's library by category (#592).** A **Group by
+  category** switch above the library shows one group per category, sorted
+  by name with **Uncategorized** last. The search, Filter and Sort apply
+  first, and each group's heading folds it away. The browser remembers the
+  switch and the folded groups. A mod's panel has a category field, which
+  suggests the categories already in use and says whether the category
+  came from the mod's site or from you. **Clear** goes back to the site's
+  category. **Set category…** in a library row's menu opens the panel at
+  that field. Grouping never changes the load order, and **Reorder…** stays
+  a flat list. Behind it, `POST /api/v1/mods/{source}/{id}/category` sets
+  or clears a mod's category, and `GET /api/v1/categories` lists the ones
+  in use.
+
 - **`lmm service restart` (#591).** Restarts the background web UI's
   `lmm-serve.service`, or starts it if it was stopped, without reinstalling
   it, and says a moment later whether it is running. It works for a unit
