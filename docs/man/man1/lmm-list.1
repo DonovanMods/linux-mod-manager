@@ -30,13 +30,26 @@ a STATE column; the column appears only when there is such a mod, and
 Use --profiles to list profile names for the game instead of mods.
 
 .PP
+--group-by category puts the mods under one heading per category: your
+own category for a mod ('lmm mod set-category'), else its source's.
+Categories are sorted by name, and mods with none come last under
+"Uncategorized". Inside a category the mods keep their load order, but
+the groups are not the load order. --json still prints the flat list;
+each mod in it carries its effective_category.
+
+.PP
 Examples:
   lmm list --game skyrim-se
   lmm list --game skyrim-se --profile survival
+  lmm list --game skyrim-se --group-by category
   lmm list --game skyrim-se --profiles
 
 
 .SH OPTIONS
+\fB--group-by\fP=""
+	group the mods under headings: "category" (--json stays a flat list)
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for list
 
