@@ -82,6 +82,31 @@ In the browser, choose **Copy to profile…** from a mod's menu in the
 library, or on the mod's panel, and pick the profile to copy it to. If that
 profile already has the mod, the confirm button reads **Replace**.
 
+## Grouping mods by category
+
+Mods from NexusMods and CurseForge come with the category the site gives
+them, such as "Weapons" or "User Interface". You can give a mod your own
+category instead, and it's kept in the profile, so it goes with the
+profile when you export, duplicate or copy it.
+
+```bash
+lmm mod set-category 12345 Gameplay
+lmm mod set-category 12345 --clear
+lmm list --group-by category
+```
+
+`--clear` removes your category, and the site's applies again.
+`lmm list --group-by category` lists the mods under one heading per
+category, sorted by name, with the mods that have none last, under
+"Uncategorized". Inside a category the mods are in load order, but the
+groups themselves aren't the load order. `lmm mod show` says which
+category a mod has and whether it's yours or the site's. With `--json`,
+`lmm list` still prints one flat list, and each mod in it carries its
+category.
+
+A mod installed before lmm recorded categories gets the site's category
+the next time lmm checks it for updates.
+
 ## Sharing a profile
 
 Exporting a profile saves it as a small text file. Send it to a friend, or

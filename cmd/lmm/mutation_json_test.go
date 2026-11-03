@@ -288,6 +288,22 @@ func TestJSONGolden_ModSettings(t *testing.T) {
 		assertJSONCLIGolden(t, "mod_set_update_result", out)
 	})
 
+	// #592: the user's category over the source's.
+	t.Run("set_category", func(t *testing.T) {
+		svc, game, _ := setupDoModLockTest(t)
+		seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
+		mod, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
+		require.NoError(t, err)
+		mod.CategoryName = "Weapons"
+		require.NoError(t, svc.SaveInstalledMod(context.Background(), mod))
+		withSetCategoryClear(t, false)
+
+		out := runJSONCommand(t, func() error {
+			return doModSetCategory(context.Background(), svc, game, "a", "Gameplay")
+		})
+		assertJSONCLIGolden(t, "mod_set_category_result", out)
+	})
+
 	t.Run("convert", func(t *testing.T) {
 		svc, game, _ := setupDoModConvertTest(t)
 		// Saved so modSettingResult's own GetGame finds the compile-mode

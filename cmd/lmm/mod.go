@@ -20,6 +20,8 @@ var (
 	modSetAuto   bool
 	modSetNotify bool
 	modSetPin    bool
+
+	modSetCategoryClear bool
 )
 
 var modCmd = &cobra.Command{
@@ -83,6 +85,29 @@ Examples:
   lmm mod unlock 12345 --game skyrim-se`,
 	Args: cobra.ExactArgs(1),
 	RunE: runModUnlock,
+}
+
+var modSetCategoryCmd = &cobra.Command{
+	Use:   "set-category <mod-id> [name]",
+	Short: "Give a mod your own category, or clear it",
+	Long: `Set the category a mod is grouped under, or clear it with --clear.
+
+Your category overrides the one the mod's source gives it. It is stored
+in the profile, so it travels with 'lmm profile export', import, duplicate
+and 'lmm mod copy'. After --clear the mod is grouped under its source's
+category again, if the source has one. 'lmm list --group-by category'
+shows the mods grouped.
+
+A name is at most 64 characters, with surrounding spaces trimmed and no
+control characters. Names are compared exactly: "UI" and "ui" are two
+categories.
+
+Examples:
+  lmm mod set-category 12345 Gameplay --game skyrim-se
+  lmm mod set-category 12345 "User Interface" --game skyrim-se
+  lmm mod set-category 12345 --clear --game skyrim-se`,
+	Args: cobra.RangeArgs(1, 2),
+	RunE: runModSetCategory,
 }
 
 var modEnableCmd = &cobra.Command{
@@ -173,7 +198,10 @@ func init() {
 	modSetUpdateCmd.Flags().BoolVar(&modSetNotify, "notify", false, "notify only (default)")
 	modSetUpdateCmd.Flags().BoolVar(&modSetPin, "pin", false, "mute update checks for this mod (to hold an exact version, use 'lmm mod lock')")
 
+	modSetCategoryCmd.Flags().BoolVar(&modSetCategoryClear, "clear", false, "remove your category, so the source's applies again")
+
 	modCmd.AddCommand(modSetUpdateCmd)
+	modCmd.AddCommand(modSetCategoryCmd)
 	modCmd.AddCommand(modLockCmd)
 	modCmd.AddCommand(modUnlockCmd)
 	modCmd.AddCommand(modEnableCmd)
@@ -261,6 +289,91 @@ func doModSetUpdate(ctx context.Context, service *core.Service, game *domain.Gam
 	}
 	fmt.Println()
 
+	return nil
+}
+
+func runModSetCategory(cmd *cobra.Command, args []string) error {
+	// Validate before initialising the service so bad CLI usage fails fast.
+	if err := validateModSetCategoryArgs(args); err != nil {
+		return err
+	}
+	name := ""
+	if len(args) > 1 {
+		name = args[1]
+	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doModSetCategory(ctx, service, game, args[0], name)
+	})
+}
+
+// validateModSetCategoryArgs requires exactly one of a category name or
+// --clear, and a name core.NormalizeCategory accepts - its refusal is
+// returned as is, so it stays errors.Is core.ErrInvalidCategory. A name
+// that trims to nothing is refused rather than read as a clear: clearing
+// is what --clear is for.
+func validateModSetCategoryArgs(args []string) error {
+	hasName := len(args) > 1
+	switch {
+	case hasName && modSetCategoryClear:
+		return fmt.Errorf("specify a category name or --clear, not both")
+	case !hasName && !modSetCategoryClear:
+		return fmt.Errorf("specify a category name, or --clear to remove it")
+	case modSetCategoryClear:
+		return nil
+	}
+	name, err := core.NormalizeCategory(args[1])
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return fmt.Errorf("the category name is empty; use --clear to remove it")
+	}
+	return nil
+}
+
+// doModSetCategory sets modID's user category to name, or clears it when
+// name is empty (--clear) - core.Service.SetModCategory (#592).
+func doModSetCategory(ctx context.Context, service *core.Service, game *domain.Game, modID, name string) error {
+	profileName, err := resolveModTarget(ctx, service, game, modID)
+	if err != nil {
+		return err
+	}
+
+	if _, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName); err != nil {
+		return fmt.Errorf("mod not found: %s", modID)
+	}
+	// Whether there is a category of the user's to clear, so --clear on a
+	// mod with none says so rather than "cleared".
+	hadOwn := false
+	if profile, err := service.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
+		if ref := profile.FindRef(modSource, modID); ref != nil {
+			hadOwn = ref.Category != ""
+		}
+	}
+
+	result, err := service.SetModCategory(ctx, modSource, modID, game.ID, profileName, name)
+	if err != nil {
+		return err
+	}
+
+	// Ruling 15: the ModSettingResult document.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
+	if result.CategorySource == core.CategorySourceUser {
+		fmt.Printf("%s %s category: %s\n", colorGreen("✓"), result.Mod.Name, result.EffectiveCategory)
+		return nil
+	}
+	if hadOwn {
+		fmt.Printf("%s %s category cleared", colorGreen("✓"), result.Mod.Name)
+	} else {
+		fmt.Printf("%s %s has no category of yours to clear", colorGreen("✓"), result.Mod.Name)
+	}
+	if result.EffectiveCategory != "" {
+		fmt.Printf(" (source category: %s)", result.EffectiveCategory)
+	}
+	fmt.Println()
 	return nil
 }
 
@@ -831,6 +944,14 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			fmt.Printf("  Lock: %s\n", colorYellow(lockLine))
 		} else {
 			fmt.Println("  Lock: none")
+		}
+		// #592: the category `lmm list --group-by category` files it
+		// under, and whose it is. No line when it has none.
+		switch installedInfo.CategorySource {
+		case core.CategorySourceUser:
+			fmt.Printf("  Category: %s (yours)\n", installedInfo.EffectiveCategory)
+		case core.CategorySourceSource:
+			fmt.Printf("  Category: %s (from the source)\n", installedInfo.EffectiveCategory)
 		}
 		if installedInfo.ConvertPaks != nil {
 			convertState := "on"
