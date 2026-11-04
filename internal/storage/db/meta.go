@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // db_meta is the one-row-per-key store migrateV14 added for facts about the
@@ -155,6 +157,7 @@ func (d *DB) DisabledModRows(ctx context.Context) ([]DisabledModRow, error) {
 		if err := rows.Scan(&r.GameID, &r.ProfileName, &r.SourceID, &r.ModID, &r.Name, &r.Deployed, &r.External); err != nil {
 			return nil, fmt.Errorf("scanning disabled installed mod: %w", err)
 		}
+		r.Name = domain.SanitizeLine(r.Name) // #594
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
