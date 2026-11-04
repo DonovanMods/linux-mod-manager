@@ -269,6 +269,11 @@ func (c *Client) CategoryName(ctx context.Context, gameDomain string, categoryID
 
 	names, err := c.fetchGame(ctx, gameDomain)
 	if err != nil {
+		if ctx.Err() != nil {
+			// The caller gave up (a closed tab, a Ctrl-C): that says
+			// nothing about NexusMods, so it starts no back-off.
+			return ""
+		}
 		c.knownGamesMu.Lock()
 		if c.categoryMisses == nil {
 			c.categoryMisses = make(map[string]time.Time)

@@ -97,3 +97,22 @@ func TestNexusMods_CheckUpdates_ReportsFetchedMods(t *testing.T) {
 	require.Len(t, seen, 1)
 	assert.Equal(t, "User Interface", seen[0].CategoryName)
 }
+
+// A lookup the CALLER abandoned (a closed browser tab, a Ctrl-C) says nothing
+// about NexusMods, so it must not start the back-off: the next read with a
+// live context fetches the list at once.
+func TestNexusMods_CategoryName_CancelledLookupIsNotAMiss(t *testing.T) {
+	nm, hits := statusServer(t, map[string]recorded{
+		sse + ".json": {http.StatusOK, "game-categories.json"},
+	})
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	nm.client.now = func() time.Time { return now }
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.Empty(t, nm.client.CategoryName(cancelled, "skyrimspecialedition", 42))
+
+	assert.Equal(t, "User Interface", nm.client.CategoryName(context.Background(), "skyrimspecialedition", 42),
+		"a cancelled lookup does not hold back the next one")
+	assert.Equal(t, int32(1), hits[sse+".json"].Load())
+}

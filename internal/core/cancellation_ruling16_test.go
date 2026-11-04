@@ -387,3 +387,56 @@ func TestService_ApplySnapshotRestore_CancellationBetweenPurgeAndProfileWrite(t 
 	assert.Same(t, result, partial.Result,
 		"the returned result and the error's are the same document")
 }
+
+// cancelAtProfileReadAfterMove cancels on the first cancellation check core
+// itself makes once the re-link's DB move has committed (the new identity's
+// row exists): the window #592's category carry reads the old ref in. Only
+// a core caller triggers it - never database/sql's own watcher, which may
+// hold the connection the moved() probe needs.
+type cancelAtProfileReadAfterMove struct {
+	context.Context
+	cancel context.CancelFunc
+	moved  func() bool
+	fired  atomic.Bool
+}
+
+func (c *cancelAtProfileReadAfterMove) Err() error {
+	if pc, _, _, ok := runtime.Caller(1); ok &&
+		strings.Contains(runtime.FuncForPC(pc).Name(), "/internal/core.") &&
+		!c.fired.Load() && c.moved() && c.fired.CompareAndSwap(false, true) {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+// TestService_ApplyRelinkMod_CancellationAfterDBMoveKeepsUserCategory: once
+// the DB row has moved, Ruling 16 (A) finishes the profile pair under
+// WithoutCancel - so the read that carries the user's category onto the new
+// ref has to finish too, or the pair writes the new ref without it.
+func TestService_ApplyRelinkMod_CancellationAfterDBMoveKeepsUserCategory(t *testing.T) {
+	svc, game, _ := newModDetailTestService(t)
+	seedModDetailInstalled(t, svc, game, "a", "1.5")
+	game.SourceIDs["src"] = game.ID
+	_, err := svc.SetModCategory(context.Background(), "src", "a", game.ID, "default", "Gameplay")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanRelinkMod(context.Background(), game, "default", "src", "a", "src", "b")
+	require.NoError(t, err)
+
+	inner, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := &cancelAtProfileReadAfterMove{Context: inner, cancel: cancel, moved: func() bool {
+		_, gerr := svc.GetInstalledMod(context.Background(), "src", "b", game.ID, "default")
+		return gerr == nil
+	}}
+
+	_, err = svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.True(t, ctx.fired.Load(), "the cancellation must land after the DB move")
+	assert.ErrorIs(t, err, context.Canceled)
+
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	ref := prof.FindRef("src", "b")
+	require.NotNil(t, ref, "the new profile ref must exist, agreeing with the DB")
+	assert.Equal(t, "Gameplay", ref.Category, "the user's category must survive a cancelled re-link")
+}

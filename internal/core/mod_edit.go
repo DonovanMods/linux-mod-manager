@@ -358,7 +358,9 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 			s.recordManualOnly(ctx, game.ID, mod.SourceID, mod.ID)
 		}
 		mod.CategoryName = newCategoryName
-		if err := s.db.SetModCategoryName(ctx, mod.SourceID, mod.ID, game.ID, profileName, newCategoryName); err != nil {
+		// The row has moved: finish its category column with it, even if
+		// the caller is cancelling now, rather than leave the old id's name.
+		if err := s.db.SetModCategoryName(context.WithoutCancel(ctx), mod.SourceID, mod.ID, game.ID, profileName, newCategoryName); err != nil {
 			s.logger().Debug("recording category name", "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
 		}
 		if mod.Enabled {
@@ -369,9 +371,11 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		// complete both profile writes even if the caller is cancelled now.
 		pm := s.NewProfileManager()
 		// #592: the user category is intent about the mod, so it moves with
-		// it to the new identity's ref.
+		// it to the new identity's ref. Read under WithoutCancel: the pair
+		// below finishes regardless of cancellation (Ruling 16 (A)), so a
+		// read cancelled here would write the new ref without the category.
 		userCategory := ""
-		if prof, perr := pm.Get(ctx, game.ID, profileName); perr == nil {
+		if prof, perr := pm.Get(context.WithoutCancel(ctx), game.ID, profileName); perr == nil {
 			if ref := prof.FindRef(oldSourceID, oldModID); ref != nil {
 				userCategory = ref.Category
 			}
