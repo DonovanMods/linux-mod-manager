@@ -140,7 +140,7 @@ func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed
 		} else {
 			updates, err = src.CheckUpdates(ctx, mods)
 		}
-		allUpdates = append(allUpdates, updates...)
+		allUpdates = append(allUpdates, sanitizeSourceUpdates(updates)...) // #594
 		missing, err := splitCatalogMissing(mods, err)
 		for id := range missing {
 			catalogMissing[domain.ModKey(sourceID, id)] = true

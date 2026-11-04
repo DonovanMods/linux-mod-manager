@@ -328,6 +328,8 @@ func (s *Service) describeWorkshopItems(ctx context.Context, scanner source.Work
 	}
 	out := make(map[string]source.ModDescription, len(described))
 	for _, d := range described {
+		d.Mod = *sanitizeSourceMod(&d.Mod) // #594
+		d.Note = domain.SanitizeLine(d.Note)
 		out[d.ModID] = d
 	}
 	return out

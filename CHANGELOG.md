@@ -289,6 +289,17 @@ self-update --auto` and exits as it would have; a script or a pipe never
 
 ### Fixed
 
+- **Text a mod source supplies can no longer drive the terminal (#594).**
+  A mod's name, author, summary, version, category, file names, description
+  or changelog came from its source verbatim, so an ESC sequence in a mod
+  page's metadata (clearing the screen, moving the cursor, setting the
+  window title, an OSC 8 link) or a bidi override reached `lmm list`,
+  `lmm mod show`, `lmm search` and the plan output raw. Core now strips
+  C0/C1 control characters and bidi override/isolate controls from every
+  source result as it arrives (single-line fields also turn tabs and line
+  breaks into a space), and the installed-mod reads clean rows stored before
+  this fix, without rewriting the database. Other Unicode is untouched.
+
 - **Health says a mod has left its source's catalog instead of "could not
   check version" (#590).** A mod whose source answers "not found" was a
   Health row reading "could not check version: source "icarus": listing

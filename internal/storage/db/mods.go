@@ -279,6 +279,7 @@ func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (
 			_ = rows.Close()
 			return nil, err
 		}
+		mod.SanitizeSourceText() // #594: a row stored before ingestion cleaned it
 		mods = append(mods, mod)
 	}
 
@@ -354,6 +355,8 @@ func (d *DB) ModVersionRows(ctx context.Context, sourceID, modID string) (out []
 		if err := rows.Scan(&row.GameID, &row.Profile, &row.Version, &row.PreviousVersion); err != nil {
 			return nil, fmt.Errorf("scanning a row of %s:%s: %w", sourceID, modID, err)
 		}
+		row.Version = domain.SanitizeLine(row.Version) // #594
+		row.PreviousVersion = domain.SanitizeLine(row.PreviousVersion)
 		out = append(out, row)
 	}
 	return out, rows.Err()
@@ -596,6 +599,7 @@ func (d *DB) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profi
 	if err != nil {
 		return nil, err
 	}
+	mod.SanitizeSourceText() // #594: a row stored before ingestion cleaned it
 
 	// Fetch file IDs
 	fileIDs, err := d.GetModFileIDs(ctx, sourceID, modID, gameID, profileName)
