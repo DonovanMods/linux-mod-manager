@@ -1514,6 +1514,31 @@ input[type="search"]::-webkit-search-decoration {
   background: var(--surface-sunken);
 }
 
+/* A category group's heading row (issue 592): the whole row is its collapse
+ * toggle, set apart from the mod rows under it by the sunken surface. */
+.library__group-header th {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  letter-spacing: normal;
+  text-align: left;
+  text-transform: none;
+}
+
+.library__group-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+
+.library__group-count {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
 .mod-row--selected {
   background: var(--surface-overlay);
 }
@@ -1899,6 +1924,27 @@ a.row-menu__item.mod-page-link {
   gap: var(--space-2);
   color: var(--text-secondary);
   font-size: 0.9em;
+}
+
+/* The category editor (issue 592): field, Save, Clear on one line, and
+ * where the category comes from on its own line under them. */
+.slide-over__category {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.slide-over__category input {
+  width: 12rem;
+}
+
+.slide-over__category-origin {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.85em;
 }
 
 /* Wraps, and lines its controls up at the top (issue 530): an installed

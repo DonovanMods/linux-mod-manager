@@ -84,10 +84,19 @@ profile already has the mod, the confirm button reads **Replace**.
 
 ## Grouping mods by category
 
-Mods from NexusMods and CurseForge come with the category the site gives
-them, such as "Weapons" or "User Interface". You can give a mod your own
-category instead, and it's kept in the profile, so it goes with the
-profile when you export, duplicate or copy it.
+Every mod can have a category. Mods from NexusMods and CurseForge come with
+the category the site files them under, such as "Weapons" or "User
+Interface". You can give any mod a category of your own, which replaces the
+site's. Your categories are saved in the profile, so they go with it when
+you duplicate, copy, export or import it. A mod installed before lmm knew
+about categories gets its site's category at the next update check.
+
+Groups are only a way of looking at the list. They are sorted by name, with
+the mods that have no category last, under **Uncategorized**. They don't
+change the load order: inside a group the mods keep their load order, and
+**Reorder…** always shows the full list in load order.
+
+In the terminal:
 
 ```bash
 lmm mod set-category 12345 Gameplay
@@ -97,15 +106,21 @@ lmm list --group-by category
 
 `--clear` removes your category, and the site's applies again.
 `lmm list --group-by category` lists the mods under one heading per
-category, sorted by name, with the mods that have none last, under
-"Uncategorized". Inside a category the mods are in load order, but the
-groups themselves aren't the load order. `lmm mod show` says which
-category a mod has and whether it's yours or the site's. With `--json`,
-`lmm list` still prints one flat list, and each mod in it carries its
-category.
+category. `lmm mod show` says which category a mod has and whether it's
+yours or the site's. With `--json`, `lmm list` still prints one flat list,
+and each mod in it carries its category.
 
-A mod installed before lmm recorded categories gets the site's category
-the next time lmm checks it for updates.
+In the browser, tick **Group by category** above the library. Click a
+group's heading to fold it away. The search box, Filter and Sort still
+apply: they choose which mods are shown and in what order, and the groups
+are made from those. lmm remembers both the setting and the groups you
+folded, in this browser.
+
+To set a mod's category, open the mod's panel, or choose **Set category…**
+from its menu in the library. Type a name or pick one of the categories
+already in use, then **Save**. The line under the field says where the
+category comes from: the mod's site, or your own. **Clear** removes your
+own category, so the site's applies again.
 
 ## Sharing a profile
 

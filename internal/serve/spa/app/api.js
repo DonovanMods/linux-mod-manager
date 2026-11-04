@@ -237,6 +237,19 @@ export const setModUpdatePolicy = (sourceID, modID, policy, context) =>
 export const setModConvert = (sourceID, modID, enabled, context) =>
   post(scoped(`${modPath(sourceID, modID)}/convert`, context), { enabled });
 
+/** Sets sourceID/modID's user category (issue 592); "" clears it, so the mod
+ * falls back to its source's category name. Returns core.ModSettingResult
+ * directly - a single-step write beside lock/unlock/update-policy, not a
+ * job. A name core refuses (too long, control characters) is a 400. */
+export const setModCategory = (sourceID, modID, category, context) =>
+  post(scoped(`${modPath(sourceID, modID)}/category`, context), { category });
+
+/** Reads the profile's effective categories (issue 592) - the suggestions the
+ * slide-over's category field offers - as {categories: [...]}, sorted the
+ * way the library's groups are. */
+export const getCategories = (context) =>
+  get(scoped("/api/v1/categories", context));
+
 /** Skips sourceID/modID's pending update at version without pinning the mod
  * (issue 542: `lmm mod skip-update`); an empty version skips whatever the
  * source offers now. Returns core.ModSettingResult directly. */

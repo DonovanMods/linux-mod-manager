@@ -18,6 +18,8 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}", s.wrap(s.handleAPIModDetail))
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}/files", s.wrap(s.handleAPIModFiles))
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}/versions", s.wrap(s.handleAPIModVersions))
+	// The mod panel's category picker suggestions (#592, api_mod_category.go).
+	s.mux.Handle("GET /api/v1/categories", s.wrap(s.handleAPICategories))
 	s.mux.Handle("GET /api/v1/search", s.wrap(s.handleAPISearch))
 	s.mux.Handle("GET /api/v1/updates", s.wrap(s.handleAPIUpdates))
 	// lmm's own release, not a mod's (#568, api_release.go).
@@ -45,6 +47,8 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/unlock", s.wrap(s.handleAPIModUnlock))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/update-policy", s.wrap(s.handleAPIModUpdatePolicy))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/convert", s.wrap(s.handleAPIModConvert))
+	// #592: a mod's user category - the same single-step settings shape.
+	s.mux.Handle("POST /api/v1/mods/{source}/{id}/category", s.wrap(s.handleAPIModCategory))
 	// #542: skip one pending update without pinning, and undo it - the
 	// same single-step settings shape as the four above.
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/skip-update", s.wrap(s.handleAPIModSkipUpdate))
