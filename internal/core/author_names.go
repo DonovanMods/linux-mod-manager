@@ -50,7 +50,7 @@ func (s *Service) stampCachedAuthorNames(rows []domain.InstalledMod) {
 		}
 		names := cache.CachedAuthorNames(authors)
 		for _, i := range idx {
-			rows[i].AuthorName = names[rows[i].Author]
+			rows[i].AuthorName = domain.SanitizeLine(names[rows[i].Author]) // #594
 		}
 	}
 }
@@ -66,7 +66,7 @@ func stampCachedAuthorName(src source.ModSource, mod *domain.Mod) {
 	if !ok {
 		return
 	}
-	mod.AuthorName = cache.CachedAuthorNames([]string{mod.Author})[mod.Author]
+	mod.AuthorName = domain.SanitizeLine(cache.CachedAuthorNames([]string{mod.Author})[mod.Author]) // #594
 }
 
 // resolveAuthorNames completes a detail read when the source offers live
@@ -82,4 +82,7 @@ func (s *Service) resolveAuthorNames(ctx context.Context, sourceID string, mod *
 		return
 	}
 	resolver.ResolveAuthorNames(ctx, []*domain.Mod{mod})
+	if mod != nil {
+		mod.AuthorName = domain.SanitizeLine(mod.AuthorName) // #594
+	}
 }

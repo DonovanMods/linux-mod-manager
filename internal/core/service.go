@@ -710,6 +710,7 @@ func (s *Service) searchSource(ctx context.Context, sourceID, gameID, query stri
 		PageSize: pageSize,
 		Sort:     sortBy,
 	})
+	result.Mods = sanitizeSourceMods(result.Mods) // #594
 	return result, classifyIndexError(sourceID, sourceGameID, err)
 }
 
@@ -1481,8 +1482,9 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 	if err != nil {
 		// #539: a source's "no such mod" reads as a fact about its catalog
 		// (*ModNotInCatalogError), not as its raw transport error.
-		return mod, s.classifyNotInCatalog(sourceID, modID, classifyIndexError(sourceID, sourceGameID, err))
+		return sanitizeSourceMod(mod), s.classifyNotInCatalog(sourceID, modID, classifyIndexError(sourceID, sourceGameID, err))
 	}
+	mod = sanitizeSourceMod(mod) // #594
 	stampCachedAuthorName(src, mod)
 	return mod, nil
 }
@@ -1497,7 +1499,8 @@ func (s *Service) GetModFiles(ctx context.Context, game *domain.Game, sourceID s
 		return nil, err
 	}
 
-	return src.GetModFiles(source.WithGame(ctx, game), mod)
+	files, err := src.GetModFiles(source.WithGame(ctx, game), mod)
+	return sanitizeSourceFiles(files), err // #594
 }
 
 // gameOrNil is the configured game id names, nil when there is none.
@@ -3085,7 +3088,8 @@ func (s *Service) GetDependencies(ctx context.Context, sourceID string, mod *dom
 	if err != nil {
 		return nil, err
 	}
-	return src.GetDependencies(ctx, mod)
+	refs, err := src.GetDependencies(ctx, mod)
+	return sanitizeSourceRefs(refs), err // #594
 }
 
 // copyFileStreaming copies a file using streaming to avoid loading it all into memory

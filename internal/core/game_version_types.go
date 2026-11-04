@@ -93,7 +93,7 @@ func (s *Service) gameVersionTypes(ctx context.Context, gameID, sourceID string,
 	}
 	report := &GameVersionTypesReport{GameID: gameID, SourceID: sourceID, Types: make([]GameVersionType, len(rows))}
 	for i, r := range rows {
-		report.Types[i] = GameVersionType{ID: r.ID, Name: r.Name, Slug: r.Slug}
+		report.Types[i] = GameVersionType{ID: r.ID, Name: domain.SanitizeLine(r.Name), Slug: domain.SanitizeLine(r.Slug)} // #594
 	}
 	slices.SortStableFunc(report.Types, func(a, b GameVersionType) int {
 		return cmp.Or(cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)), cmp.Compare(a.ID, b.ID))

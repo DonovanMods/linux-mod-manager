@@ -151,6 +151,8 @@ func (s *Service) SearchGameCatalog(ctx context.Context, sourceID, query string)
 	needle := strings.ToLower(query)
 	report := &GameCatalogReport{SourceID: sourceID, Query: query, Matches: []GameCatalogMatch{}}
 	for _, e := range entries {
+		// #594: the catalog's name and slug are display text; ID is a key.
+		e.Name, e.Slug = domain.SanitizeLine(e.Name), domain.SanitizeLine(e.Slug)
 		if !strings.Contains(strings.ToLower(e.Name), needle) && !strings.Contains(strings.ToLower(e.Slug), needle) {
 			continue
 		}

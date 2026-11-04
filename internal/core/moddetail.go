@@ -220,7 +220,7 @@ func (s *Service) fillModDescription(ctx context.Context, sourceID string, game 
 			"source_id", sourceID, "mod_id", mod.ID, "err", err)
 		return
 	}
-	mod.Description = description
+	mod.Description = domain.SanitizeText(description) // #594
 }
 
 // modChangelog best-effort fetches modID's changelog text from sourceID's
@@ -250,5 +250,5 @@ func (s *Service) modChangelog(ctx context.Context, sourceID string, game *domai
 	if err != nil {
 		return "", []string{fmt.Sprintf("changelog unavailable: %v", err)}
 	}
-	return changelog, nil
+	return domain.SanitizeText(changelog), nil // #594
 }
