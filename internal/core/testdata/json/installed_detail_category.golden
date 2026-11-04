@@ -1,0 +1,8 @@
+{
+  "version": "1.2.3",
+  "profile": "default",
+  "update_policy": "notify",
+  "locked": false,
+  "effective_category": "Armour",
+  "category_source": "source"
+}

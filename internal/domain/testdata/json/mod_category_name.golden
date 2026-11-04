@@ -1,0 +1,17 @@
+{
+  "id": "12345",
+  "source_id": "nexusmods",
+  "name": "Sample Mod",
+  "version": "2.0.0",
+  "author": "",
+  "summary": "",
+  "description": "",
+  "game_id": "skyrimspecialedition",
+  "category": "42",
+  "category_name": "User Interface",
+  "downloads": 0,
+  "picture_url": "",
+  "source_url": "",
+  "files": [],
+  "dependencies": []
+}

@@ -1887,13 +1887,20 @@ POST   /api/v1/mods/{source}/{id}/convert   {"enabled"} -> the mod's settings
 POST   /api/v1/mods/{source}/{id}/skip-update {"version"}
                                                        -> the mod's settings
 POST   /api/v1/mods/{source}/{id}/unskip-update        -> the mod's settings
+POST   /api/v1/mods/{source}/{id}/category {"category"}
+                                                       -> the mod's settings
+GET    /api/v1/categories?game=&profile=   -> {"categories": [...]}
 ```
 
-Those six are `lmm mod lock`/`unlock`/`set-update`/`convert`/
-`skip-update`/`unskip-update`, each answering the `core.ModSettingResult`
+The first seven are `lmm mod lock`/`unlock`/`set-update`/`convert`/
+`skip-update`/`unskip-update`/`set-category`, each answering the `core.ModSettingResult`
 document its `--json` twin prints.
 `convert` is the pak-conversion toggle for a compile-mode game (Icarus); a
 mod with no convertible `.pak` is a 400, the same refusal the CLI gives.
+`category` sets the mod's own category (#592); `""` clears it, and a name that is
+empty after trimming, longer than 64 characters or holds control characters is
+a 400. `GET /api/v1/categories` lists the categories in use in the profile, for
+the web UI's suggestions.
 
 ```text
 POST   /api/v1/profiles                     {"name"}   -> the profile created

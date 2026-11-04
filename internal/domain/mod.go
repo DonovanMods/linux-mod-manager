@@ -155,6 +155,17 @@ type ModReference struct {
 	// byte-identical until a mod is actually disabled.
 	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitzero"`
 
+	// Category is the user's category for the mod in this profile (#592),
+	// which overrides the source's own (Mod.CategoryName) wherever the mod
+	// list is grouped. One per mod. It follows Disabled's rules exactly: it
+	// is user intent, so it lives in the profile document and travels with
+	// export/import/duplicate/copy; it is set and cleared only by
+	// Service.SetModCategory, and UpsertMod preserves it, so no
+	// install/update/converge write can drop it. ABSENT MEANS NONE, and
+	// both tags omit the empty string, so every profile file and document
+	// written before the field existed is byte-identical.
+	Category string `yaml:"category,omitempty" json:"category,omitempty"`
+
 	// External and UpdatedAt are DISPLAY facts a plan document carries so a
 	// renderer never has to print Version raw (#365, part of #269).
 	//
@@ -194,11 +205,20 @@ type Mod struct {
 	// resolves to its persona name). Empty when Author is already a name
 	// or no name resolved - a surface shows AuthorName when set and Author
 	// otherwise. Never stored.
-	AuthorName   string         `json:"author_name,omitempty"`
-	Summary      string         `json:"summary"`
-	Description  string         `json:"description"`
-	GameID       string         `json:"game_id"`
-	Category     string         `json:"category"`
+	AuthorName  string `json:"author_name,omitempty"`
+	Summary     string `json:"summary"`
+	Description string `json:"description"`
+	GameID      string `json:"game_id"`
+	Category    string `json:"category"`
+	// CategoryName is the source's category for the mod as a person reads
+	// it (#592): CurseForge's primary category name, NexusMods' category_id
+	// resolved through the game's category list. Category keeps its
+	// historical meaning (the source's own id for it, numeric for both), so
+	// every document that already carried it reads the same. Empty when
+	// the source has no category or no name resolved. Unlike AuthorName it
+	// IS stored (installed_mods.category_name), so a mod list can group by
+	// it with no network read.
+	CategoryName string         `json:"category_name,omitempty"`
 	Downloads    int64          `json:"downloads"`
 	Endorsements *int64         `json:"endorsements,omitempty"`
 	PictureURL   string         `json:"picture_url"` // Main image URL (e.g. NexusMods picture_url)

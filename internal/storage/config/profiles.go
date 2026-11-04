@@ -52,6 +52,9 @@ type ModReferenceConfig struct {
 	FileIDs  []string `yaml:"file_ids,omitempty"`
 	Locked   bool     `yaml:"locked,omitempty"`
 	Disabled bool     `yaml:"disabled,omitempty"`
+	// Category is the #592 user category; `omitempty` for the same reason
+	// as Disabled - a file with no user category is unchanged.
+	Category string `yaml:"category,omitempty"`
 }
 
 // parseProfileHooks converts YAML hooks to domain types, tracking which were explicitly set
@@ -237,6 +240,7 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 			FileIDs:  m.FileIDs,
 			Locked:   m.Locked,
 			Disabled: m.Disabled,
+			Category: m.Category,
 		}
 	}
 

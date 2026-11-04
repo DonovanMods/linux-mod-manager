@@ -83,6 +83,18 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #592: the user category, omitted when empty (mod_reference
+			// above), present when set.
+			"mod_reference_category",
+			domain.ModReference{SourceID: "nexusmods", ModID: "12345", Version: "2.0.0", Category: "User Interface"},
+		},
+		{
+			// #592: the source's category id (category) beside its name.
+			"mod_category_name",
+			domain.Mod{ID: "12345", SourceID: "nexusmods", Name: "Sample Mod", Version: "2.0.0", GameID: "skyrimspecialedition",
+				Category: "42", CategoryName: "User Interface"},
+		},
+		{
 			// Dependencies is deliberately left nil (no `omitempty` on the
 			// tag) to pin that a nil slice marshals as "[]", not "null".
 			"mod",

@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mod categories, below the frontends (#592).** Installed mods now keep
+  their source's category name: CurseForge's primary category, and the
+  NexusMods category resolved through the game's category list (one lookup
+  per game). The name is recorded on install and update, and the update
+  check fills it in for mods installed before this. You can also give a
+  mod your own category, which is stored in the profile (it travels with
+  export, import, duplicate and copy) and overrides the source's. Each
+  entry in the mod list now carries its effective category, and core has
+  one grouping rule for the frontends to share. The web UI controls come
+  in a later change.
+
+- **Mod categories in the terminal (#592).** `lmm list --group-by category`
+  lists the mods under one heading per category, sorted by name, with the
+  mods that have none last under "Uncategorized"; each group keeps the
+  load order, and `--json` still prints the flat list (each mod carries
+  `effective_category` and `category_source`).
+  `lmm mod set-category <mod-id> <name>` gives a mod your own category,
+  and `--clear` removes it; `--json` prints the mod-setting result. `lmm mod show` names the mod's
+  category and whether it is yours or the source's.
+
+- **Group the web UI's library by category (#592).** A **Group by
+  category** switch above the library shows one group per category, sorted
+  by name with **Uncategorized** last. The search, Filter and Sort apply
+  first, and each group's heading folds it away. The browser remembers the
+  switch and the folded groups. A mod's panel has a category field, which
+  suggests the categories already in use and says whether the category
+  came from the mod's site or from you. **Clear** goes back to the site's
+  category. **Set category…** in a library row's menu opens the panel at
+  that field. Grouping never changes the load order, and **Reorder…** stays
+  a flat list. Behind it, `POST /api/v1/mods/{source}/{id}/category` sets
+  or clears a mod's category, and `GET /api/v1/categories` lists the ones
+  in use.
+
 - **`lmm service restart` (#591).** Restarts the background web UI's
   `lmm-serve.service`, or starts it if it was stopped, without reinstalling
   it, and says a moment later whether it is running. It works for a unit

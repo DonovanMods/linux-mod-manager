@@ -418,3 +418,9 @@ func WithAutoTargetForTest(ref CatalogModRef, modID string) CatalogModRef {
 	ref.autoTarget = modID
 	return ref
 }
+
+// SetModCategoryNameForTest writes an installed row's source category name
+// (#592) directly, as the update check's backfill does.
+func (s *Service) SetModCategoryNameForTest(ctx context.Context, sourceID, modID, gameID, profileName, name string) error {
+	return s.db.SetModCategoryName(ctx, sourceID, modID, gameID, profileName, name)
+}

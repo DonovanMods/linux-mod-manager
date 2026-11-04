@@ -18,7 +18,9 @@ import { html, useEffect, useMemo, useRef, useState } from "../render.js";
 import { trapFocus } from "../focustrap.js";
 import { exitMillis } from "../motion.js";
 import { navigate } from "../router.js";
-import { getModDetail, ApiError } from "../api.js";
+import { getModDetail, getCategories, ApiError } from "../api.js";
+import { takePanelFocus } from "../panelfocus.js";
+import { useSourceName } from "../sourcenames.js";
 import { findingLabel } from "../verify.js";
 import { healthLabel } from "../modrows.js";
 import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
@@ -177,7 +179,15 @@ export function ModPanel({
     // Input.dispatchKeyEvent with nothing in the page focused does not
     // reliably reach a bare document-level listener the way a real
     // keypress does once something holds focus.
-    panelRef.current?.focus();
+    //
+    // issue 592: unless the row menu's "Set category…" opened it, which asks
+    // for the category field instead (panelfocus.js) - the panel is still
+    // the fallback when the row has not arrived to draw one.
+    const target =
+      takePanelFocus(modKey) === "category"
+        ? panelRef.current?.querySelector('[data-testid="category-input"]')
+        : null;
+    (target ?? panelRef.current)?.focus();
     // Keyboard containment, matching the modal's (issue 334's a11y pass):
     // this panel has a scrim over the page too, and nothing but this told
     // the Tab key so.
@@ -455,6 +465,7 @@ export function ModPanel({
           actions=${actions}
           panelRef=${panelRef}
         />
+        <${CategoryControl} row=${row} route=${route} actions=${actions} />
 
         ${
           row.summary && html`<p class="slide-over__summary">${row.summary}</p>`
@@ -818,6 +829,146 @@ export function ModSettingsControls({ row, actions, panelRef }) {
       }
       ${state.error && html`<p class="empty-state__hint">${state.error}</p>`}
     </div>
+  `;
+}
+
+/** categoryOrigin is the line under the category field saying where the
+ * mod's category comes from (issue 592): the user's own, the source's, or
+ * none. */
+function categoryOrigin(row, sourceName) {
+  switch (row.category_source) {
+    case "user":
+      return "Custom category";
+    case "source":
+      return `From ${sourceName}`;
+    default:
+      return "No category";
+  }
+}
+
+/** CategoryControl is the slide-over's category editor (issue 592): a text
+ * field suggesting the profile's existing categories (GET /api/v1/categories,
+ * in a <datalist>), Save, and Clear - which drops the user's own category so
+ * the source's applies again, and so is offered only while there is one. A
+ * write is a single step like lock/policy (api_mod_category.go); the mods
+ * list is then re-read (main.js#setModCategory), so a grouped library moves the row.
+ *
+ * The field starts on the EFFECTIVE category, whichever of the two it came
+ * from - the name the library groups the mod under - and resets whenever
+ * that changes or the panel steps to another mod. */
+export function CategoryControl({ row, route, actions }) {
+  const effective = row.effective_category ?? "";
+  // The field edits the USER'S OWN category. A site's category is shown as
+  // the placeholder, not prefilled: prefilled, the Enter that "Set
+  // category…" leaves under the user's finger would pin the site's name as
+  // their own, and the mod would stop following the site's recategorising.
+  const own = row.category_source === "user" ? effective : "";
+  const [value, setValue] = useState(own);
+  const [state, setState] = useState({ busy: false, error: "" });
+  const [suggestions, setSuggestions] = useState([]);
+  const inputRef = useRef(null);
+  const sourceName = useSourceName(
+    row.source_id,
+    row.category_source === "source",
+  );
+
+  useEffect(() => {
+    setValue(own);
+    setState({ busy: false, error: "" });
+  }, [row.key, own]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getCategories({ game: route.game, profile: route.profile })
+      .then((doc) => {
+        if (!cancelled) setSuggestions(doc?.categories ?? []);
+      })
+      // Suggestions are a convenience: without them the field still works.
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [route.game, route.profile, effective]);
+
+  async function save(category) {
+    setState({ busy: true, error: "" });
+    try {
+      await actions.setModCategory(row.source_id, row.id, category);
+      setState({ busy: false, error: "" });
+    } catch (err) {
+      setState({
+        busy: false,
+        error: err instanceof ApiError ? err.message : String(err),
+      });
+    } finally {
+      inputRef.current?.focus();
+    }
+  }
+
+  function submit(e) {
+    e.preventDefault();
+    // Enter submits even while Save is disabled: refuse the no-op here too.
+    if (unchanged || state.busy) return;
+    save(value);
+  }
+
+  // Nothing to save: the user's own category, unchanged (an empty field
+  // when they have none). Typing the SITE's name and saving is a real
+  // change (it pins that name as the user's own), so it stays allowed.
+  const unchanged = value.trim() === own;
+  const listID = `category-suggestions-${row.key}`;
+  return html`
+    <form class="slide-over__category" onSubmit=${submit}>
+      <label class="slide-over__setting">
+        Category
+        <input
+          ref=${inputRef}
+          type="text"
+          name="category"
+          data-testid="category-input"
+          list=${listID}
+          maxlength="64"
+          autocomplete="off"
+          placeholder=${row.category_source === "source" ? effective : ""}
+          value=${value}
+          onInput=${(e) => {
+            setValue(e.currentTarget.value);
+            if (state.error) setState({ busy: false, error: "" });
+          }}
+        />
+      </label>
+      <datalist id=${listID}>
+        ${suggestions.map((name) => html`<option value=${name}></option>`)}
+      </datalist>
+      <button
+        type="submit"
+        class="button"
+        data-action="save-category"
+        disabled=${state.busy || unchanged}
+      >
+        Save
+      </button>
+      ${
+        row.category_source === "user" &&
+        html`<button
+          type="button"
+          class="button"
+          data-action="clear-category"
+          disabled=${state.busy}
+          title="Drop your own category - the source's applies again, if it has one"
+          onClick=${() => save("")}
+        >
+          Clear
+        </button>`
+      }
+      <p class="slide-over__category-origin" data-testid="category-origin">
+        ${categoryOrigin(row, sourceName)}
+      </p>
+      ${
+        state.error &&
+        html`<p class="empty-state__hint" role="alert">${state.error}</p>`
+      }
+    </form>
   `;
 }
 

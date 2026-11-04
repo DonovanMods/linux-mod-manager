@@ -468,7 +468,11 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 	if err != nil {
 		return gameUpdateCheck{drift: drift}, err
 	}
-	updates, catalogMissing, checkErr := s.NewUpdater().checkUpdates(ctx, game, drift.overlay(installed), sink, opts)
+	// #592: the sources report every mod they fetch, and the names they
+	// report are recorded on the rows - the backfill costs no request.
+	checkCtx, fetched := withFetchedCategories(ctx)
+	updates, catalogMissing, checkErr := s.NewUpdater().checkUpdates(checkCtx, game, drift.overlay(installed), sink, opts)
+	s.backfillCategoryNames(ctx, game.ID, installed, fetched)
 	// #590: each gone mod's likely new identity, one search apiece.
 	s.fillCatalogSuccessors(ctx, game.ID, installed, catalogMissing)
 	carryManualOnly(updates, installed) // #543

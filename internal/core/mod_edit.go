@@ -298,6 +298,9 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		// #543: the old id's manual-only record is not the new one's; only
 		// the new source's own classification is recorded for it.
 		sourceManualOnly := false
+		// #592: the old identity's source category name is not the new
+		// one's either - set below from the new source's mod, or cleared.
+		newCategoryName := ""
 
 		if newSourceID != domain.SourceLocal {
 			cfGameID, ok := game.SourceIDs[newSourceID]
@@ -327,6 +330,7 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 				mod.PictureURL = fetched.PictureURL
 				mod.AdoptedInPlace = false // now linked, updates may work
 				sourceManualOnly = fetched.ManualOnly
+				newCategoryName = fetched.CategoryName
 			}
 		}
 
@@ -353,6 +357,12 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		if sourceManualOnly {
 			s.recordManualOnly(ctx, game.ID, mod.SourceID, mod.ID)
 		}
+		mod.CategoryName = newCategoryName
+		// The row has moved: finish its category column with it, even if
+		// the caller is cancelling now, rather than leave the old id's name.
+		if err := s.db.SetModCategoryName(context.WithoutCancel(ctx), mod.SourceID, mod.ID, game.ID, profileName, newCategoryName); err != nil {
+			s.logger().Debug("recording category name", "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
+		}
 		if mod.Enabled {
 			s.supersedePendingProfileBackfill(ctx, mod.GameID, mod.ProfileName, mod.SourceID, mod.ID)
 		}
@@ -360,12 +370,22 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		// Ruling 16 (A): the DB identity and ledger have moved together;
 		// complete both profile writes even if the caller is cancelled now.
 		pm := s.NewProfileManager()
+		// #592: the user category is intent about the mod, so it moves with
+		// it to the new identity's ref. Read under WithoutCancel: the pair
+		// below finishes regardless of cancellation (Ruling 16 (A)), so a
+		// read cancelled here would write the new ref without the category.
+		userCategory := ""
+		if prof, perr := pm.Get(context.WithoutCancel(ctx), game.ID, profileName); perr == nil {
+			if ref := prof.FindRef(oldSourceID, oldModID); ref != nil {
+				userCategory = ref.Category
+			}
+		}
 		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
 			return pm.RemoveMod(ctx, game.ID, profileName, oldSourceID, oldModID)
 		}); err != nil && ctx.Err() == nil {
 			note("Warning: could not remove old profile entry: %v", err)
 		}
-		modRef := domain.ModReference{SourceID: newSourceID, ModID: newModID, Version: mod.Version}
+		modRef := domain.ModReference{SourceID: newSourceID, ModID: newModID, Version: mod.Version, Category: userCategory}
 		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
 			return pm.UpsertMod(ctx, game.ID, profileName, modRef)
 		}); err != nil && ctx.Err() == nil {

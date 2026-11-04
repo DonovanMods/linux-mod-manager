@@ -12,6 +12,10 @@ import (
 
 var listProfile string
 var listProfiles bool
+var listGroupBy string
+
+// listGroupByCategory is the one --group-by value (#592).
+const listGroupByCategory = "category"
 
 var listCmd = &cobra.Command{
 	Use:   "list",
@@ -32,9 +36,17 @@ a STATE column; the column appears only when there is such a mod, and
 
 Use --profiles to list profile names for the game instead of mods.
 
+--group-by category puts the mods under one heading per category: your
+own category for a mod ('lmm mod set-category'), else its source's.
+Categories are sorted by name, and mods with none come last under
+"Uncategorized". Inside a category the mods keep their load order, but
+the groups are not the load order. --json still prints the flat list;
+each mod in it carries its effective_category.
+
 Examples:
   lmm list --game skyrim-se
   lmm list --game skyrim-se --profile survival
+  lmm list --game skyrim-se --group-by category
   lmm list --game skyrim-se --profiles`,
 	RunE: runList,
 }
@@ -42,14 +54,33 @@ Examples:
 func init() {
 	listCmd.Flags().StringVarP(&listProfile, "profile", "p", "", "profile to list (default: active profile)")
 	listCmd.Flags().BoolVar(&listProfiles, "profiles", false, "list profile names for the game instead of mods")
+	listCmd.Flags().StringVar(&listGroupBy, "group-by", "", `group the mods under headings: "category" (--json stays a flat list)`)
 
 	rootCmd.AddCommand(listCmd)
 }
 
 func runList(cmd *cobra.Command, args []string) error {
+	// Validate flags before initialising the service so bad CLI usage fails fast.
+	if err := validateListFlags(); err != nil {
+		return err
+	}
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
 		return doList(ctx, cmd, service, game)
 	})
+}
+
+// validateListFlags refuses a --group-by value other than "category", and
+// --group-by with --profiles, which lists no mods to group (#592).
+func validateListFlags() error {
+	switch listGroupBy {
+	case "", listGroupByCategory:
+	default:
+		return fmt.Errorf("--group-by: unknown value %q (the only one is %q)", listGroupBy, listGroupByCategory)
+	}
+	if listGroupBy != "" && listProfiles {
+		return fmt.Errorf("--group-by cannot be used with --profiles")
+	}
+	return nil
 }
 
 func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game *domain.Game) error {
@@ -160,7 +191,8 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 		return fmt.Errorf("writing separator: %w", err)
 	}
 
-	for _, mod := range mods {
+	// modRow is one mod's table row, tab-separated.
+	modRow := func(mod core.ModListing) string {
 		author := core.AuthorText(&mod.Mod) // #420
 		if author == "" {
 			author = "-"
@@ -243,7 +275,47 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 			}
 			row += "\t" + marker
 		}
-		if _, err := fmt.Fprintln(w, row); err != nil {
+		return row
+	}
+
+	// The data lines under the header, each with its colour. Ungrouped,
+	// they are the mods in load order. Grouped (#592), each group is a
+	// heading line and its mods, with a blank line between groups; a line
+	// with no tab takes no part in the column widths, so the columns stay
+	// one table across the groups.
+	var lines []string
+	var lineColors []func(string) string
+	addMod := func(mod core.ModListing) {
+		lines = append(lines, modRow(mod))
+		// Row tinting reflects each mod's actual enabled/deployed state
+		// regardless of --verbose: the non-verbose table doesn't SHOW the
+		// ENABLED/DEPLOYED columns, but the mod's health is exactly as
+		// real there as in the verbose table, and a user comparing `lmm
+		// list` against `lmm list -v` should see the identical color for
+		// the identical mod (#193 round 2 - the row-tint decision had only
+		// ever been wired up on the verbose branch, so plain `lmm list`
+		// stayed uncolored while `-v` wasn't).
+		lineColors = append(lineColors, modRowColor(mod.Enabled, mod.Deployed))
+	}
+	if listGroupBy == listGroupByCategory {
+		for i, group := range core.GroupModListByCategory(mods) {
+			if i > 0 {
+				lines = append(lines, "")
+				lineColors = append(lineColors, nil)
+			}
+			lines = append(lines, fmt.Sprintf("%s (%d)", categoryHeading(group.Name), len(group.Mods)))
+			lineColors = append(lineColors, colorBold)
+			for _, mod := range group.Mods {
+				addMod(mod)
+			}
+		}
+	} else {
+		for _, mod := range mods {
+			addMod(mod)
+		}
+	}
+	for _, line := range lines {
+		if _, err := fmt.Fprintln(w, line); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}
@@ -251,19 +323,11 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 		return fmt.Errorf("flushing output: %w", err)
 	}
 
-	// Row tinting reflects each mod's actual enabled/deployed state
-	// regardless of --verbose: the non-verbose table doesn't SHOW the
-	// ENABLED/DEPLOYED columns, but the mod's health is exactly as real
-	// there as in the verbose table, and a user comparing `lmm list` against
-	// `lmm list -v` should see the identical color for the identical mod
-	// (#193 round 2 - the row-tint decision had only ever been wired up on
-	// the verbose branch, so plain `lmm list` stayed uncolored while `-v`
-	// wasn't).
 	rowColor := func(i int) func(string) string {
-		if i < 0 || i >= len(mods) {
+		if i < 0 || i >= len(lineColors) {
 			return nil
 		}
-		return modRowColor(mods[i].Enabled, mods[i].Deployed)
+		return lineColors[i]
 	}
 	if err := printTable(&buf, 2, rowColor); err != nil {
 		return fmt.Errorf("writing table: %w", err)
@@ -271,6 +335,15 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	printDisabledNotInstalled(game.ID, profileName, list.DisabledNotInstalled)
 
 	return nil
+}
+
+// categoryHeading is a category group's heading in `lmm list --group-by
+// category`: its name, or "Uncategorized" for the mods with none (#592).
+func categoryHeading(name string) string {
+	if name == "" {
+		return "Uncategorized"
+	}
+	return name
 }
 
 // printDisabledNotInstalled lists the refs the profile marks disabled and

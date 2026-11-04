@@ -29,6 +29,7 @@ import {
   clearModLock as apiClearModLock,
   setModUpdatePolicy as apiSetModUpdatePolicy,
   setModConvert as apiSetModConvert,
+  setModCategory as apiSetModCategory,
   getModDetail,
   getModFiles,
   getModVersions,
@@ -2066,6 +2067,18 @@ async function setModConvert(sourceID, modID, enabled) {
   await refreshAfterModSetting(sourceID, modID);
 }
 
+/** setModCategory is issue 592's user category - the same single-step shape as
+ * the settings above. The mods list is re-read on success, so a grouped
+ * library moves the row to its new group. */
+async function setModCategory(sourceID, modID, category) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await apiSetModCategory(sourceID, modID, category, context);
+  await refreshAfterModSetting(sourceID, modID);
+}
+
 /** skipModUpdate/unskipModUpdate are issue 542's "skip this version" and its
  * undo - the same single-step shape as the settings above. A skip moves a
  * row between the updates report's "updates" and "skipped_updates", which
@@ -2694,6 +2707,7 @@ const actions = {
   clearModLock,
   setModUpdatePolicy,
   setModConvert,
+  setModCategory,
   skipModUpdate,
   unskipModUpdate,
   clearOrigin,

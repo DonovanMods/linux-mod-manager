@@ -333,3 +333,51 @@ export function formatDate(value) {
     day: "numeric",
   });
 }
+
+/** The label the library shows for the group of mods with no category
+ * (issue 592) - core.ModCategoryGroup's empty Name. */
+export const UNCATEGORIZED_LABEL = "Uncategorized";
+
+/** Compares two strings by UTF-16 code unit, the way Go's cmp.Compare
+ * compares strings by byte - the two orders agree everywhere outside the
+ * astral planes, which no category name in practice reaches into. Not
+ * localeCompare: that would be a different rule from the CLI's. */
+function compareExact(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Groups rows by their effective_category (issue 592), for the library's "Group
+ * by category" view: [{name, rows}], in display order.
+ *
+ * The JavaScript twin of core.GroupModListByCategory
+ * (internal/core/categories.go), which `lmm list --group-by category` uses -
+ * the same rule, so the web and the CLI group a profile identically, and a
+ * change to one is a change to both:
+ *   - rows keep the order they arrive in inside their group (here, whatever
+ *     the filter/sort/search already made of them);
+ *   - groups sort by name case-insensitively, ties broken by the exact name;
+ *   - the group with no category (name "") comes last - the caller labels it
+ *     UNCATEGORIZED_LABEL;
+ *   - names are compared exactly, so "UI" and "ui" are two groups.
+ * An empty input gives no groups at all: a group only exists for a row in it.
+ */
+export function groupRowsByCategory(rows) {
+  const byName = new Map();
+  for (const row of rows ?? []) {
+    const name = row.effective_category ?? "";
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(row);
+  }
+  return [...byName]
+    .map(([name, groupRows]) => ({ name, rows: groupRows }))
+    .sort((a, b) => {
+      if (a.name === "" || b.name === "") {
+        return (a.name === "" ? 1 : 0) - (b.name === "" ? 1 : 0);
+      }
+      return (
+        compareExact(a.name.toLowerCase(), b.name.toLowerCase()) ||
+        compareExact(a.name, b.name)
+      );
+    });
+}
