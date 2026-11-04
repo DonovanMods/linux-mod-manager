@@ -19,7 +19,7 @@ const (
 
 // saveProfileFile plans and writes one save, reporting the path it took.
 func saveProfileFile(from, to string, profile *domain.Profile) (saveOutcome, error) {
-	save, err := planProfileSave(from, to, profile)
+	save, err := planProfileSave(from, to, profile, nil)
 	if err != nil {
 		return 0, err
 	}
