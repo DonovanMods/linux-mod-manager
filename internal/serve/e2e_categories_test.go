@@ -159,3 +159,39 @@ func TestE2E_SetCategory_FromTheRowMenuMovesTheRow(t *testing.T) {
 	assert.NotContains(t, string(raw), "category: Weapons", "the cleared category is gone from the profile")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_SetCategory_SourceCategoryIsNotOneKeypressFromPinned: a mod whose
+// category is the SITE's opens the editor empty, with the site's name as the
+// placeholder and Save disabled - so the Enter that "Set category…" puts
+// right under the user's finger cannot pin the site's name as their own
+// (it would stop following the site's recategorisation). Typing the name is
+// still a deliberate way to pin it.
+func TestE2E_SetCategory_SourceCategoryIsNotOneKeypressFromPinned(t *testing.T) {
+	f := newE2EFixtureWithCategories(t)
+	profilePath := filepath.Join(f.Svc.ConfigDir(), "games", f.Game.ID, "profiles", f.Profile+".yaml")
+
+	var value, placeholder string
+	var saveDisabled bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 3`),
+		chromedp.Click(`tr[data-mod="fake:z"] [data-action="row-menu"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.row-menu [data-action="set-category"]`, chromedp.ByQuery),
+		chromedp.Click(`.row-menu [data-action="set-category"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="category-input"]`, chromedp.ByQuery),
+		pollUntil(`document.activeElement?.dataset.testid === "category-input"`),
+		chromedp.Evaluate(`document.querySelector('[data-testid="category-input"]').value`, &value),
+		chromedp.Evaluate(`document.querySelector('[data-testid="category-input"]').placeholder`, &placeholder),
+		chromedp.Evaluate(`document.querySelector('[data-action="save-category"]').disabled`, &saveDisabled),
+		chromedp.SendKeys(`[data-testid="category-input"]`, "\r", chromedp.ByQuery),
+	)
+
+	assert.Empty(t, value, "the site's category is not prefilled as an edit")
+	assert.Equal(t, "Weapons", placeholder, "the site's category shows as the placeholder")
+	assert.True(t, saveDisabled, "nothing to save until the user types")
+
+	raw, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "category: Weapons", "Enter on the untouched field pins nothing")
+	assert.Empty(t, f.BrowserErrors())
+}

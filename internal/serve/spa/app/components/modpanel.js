@@ -858,7 +858,12 @@ function categoryOrigin(row, sourceName) {
  * that changes or the panel steps to another mod. */
 export function CategoryControl({ row, route, actions }) {
   const effective = row.effective_category ?? "";
-  const [value, setValue] = useState(effective);
+  // The field edits the USER'S OWN category. A site's category is shown as
+  // the placeholder, not prefilled: prefilled, the Enter that "Set
+  // category…" leaves under the user's finger would pin the site's name as
+  // their own, and the mod would stop following the site's recategorising.
+  const own = row.category_source === "user" ? effective : "";
+  const [value, setValue] = useState(own);
   const [state, setState] = useState({ busy: false, error: "" });
   const [suggestions, setSuggestions] = useState([]);
   const inputRef = useRef(null);
@@ -868,9 +873,9 @@ export function CategoryControl({ row, route, actions }) {
   );
 
   useEffect(() => {
-    setValue(effective);
+    setValue(own);
     setState({ busy: false, error: "" });
-  }, [row.key, effective]);
+  }, [row.key, own]);
 
   useEffect(() => {
     let cancelled = false;
@@ -902,15 +907,15 @@ export function CategoryControl({ row, route, actions }) {
 
   function submit(e) {
     e.preventDefault();
+    // Enter submits even while Save is disabled: refuse the no-op here too.
+    if (unchanged || state.busy) return;
     save(value);
   }
 
-  // Nothing to save: the user's own category, unchanged - or, with none of
-  // the user's own, an empty field. Typing the SITE's name and saving is a
-  // real change (it pins that name as the user's own), so it stays allowed.
-  const trimmed = value.trim();
-  const unchanged =
-    row.category_source === "user" ? trimmed === effective : trimmed === "";
+  // Nothing to save: the user's own category, unchanged (an empty field
+  // when they have none). Typing the SITE's name and saving is a real
+  // change (it pins that name as the user's own), so it stays allowed.
+  const unchanged = value.trim() === own;
   const listID = `category-suggestions-${row.key}`;
   return html`
     <form class="slide-over__category" onSubmit=${submit}>
@@ -924,6 +929,7 @@ export function CategoryControl({ row, route, actions }) {
           list=${listID}
           maxlength="64"
           autocomplete="off"
+          placeholder=${row.category_source === "source" ? effective : ""}
           value=${value}
           onInput=${(e) => {
             setValue(e.currentTarget.value);
