@@ -993,6 +993,25 @@ func (pm *ProfileManager) RemoveMod(ctx context.Context, gameID, profileName, so
 	return pm.save(profile)
 }
 
+// RenameModRef renames gameID/profileName's reference to
+// fromSourceID/fromModID in place to toSourceID/toModID at version - the
+// profile half of a re-link (#593). The reference keeps its load-order
+// position and every other field (FileIDs, Disabled, Category, ...), and
+// the file keeps its comments and layout; see config.RenameProfileModRef,
+// whose domain.ErrModNotFound (the old identity is not listed) and
+// config.ErrModRefExists (the new one already is) it returns unwritten.
+func (pm *ProfileManager) RenameModRef(ctx context.Context, gameID, profileName, fromSourceID, fromModID, toSourceID, toModID, version string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	report, err := config.RenameProfileModRef(pm.configDir, gameID, profileName, config.ModRefRename{
+		FromSourceID: fromSourceID, FromModID: fromModID,
+		ToSourceID: toSourceID, ToModID: toModID, Version: version,
+	})
+	pm.report(report)
+	return err
+}
+
 // ReorderMods updates the load order of mods in a profile
 func (pm *ProfileManager) ReorderMods(ctx context.Context, gameID, profileName string, mods []domain.ModReference) error {
 	if err := ctx.Err(); err != nil {

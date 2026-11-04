@@ -13,10 +13,12 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // RelinkPlan is the pure, displayable result of PlanRelinkMod - what
@@ -368,28 +370,32 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		}
 
 		// Ruling 16 (A): the DB identity and ledger have moved together;
-		// complete both profile writes even if the caller is cancelled now.
+		// complete the profile write even if the caller is cancelled now.
+		//
+		// #593: the ref is renamed where it stands - same load-order index,
+		// so merge/deploy precedence is unchanged - and carries every intent
+		// field: Disabled (#431), Category (#592), and FileIDs, which
+		// RelinkInstalledMod carries verbatim onto the new identity's row
+		// too (a re-link changes which mod the files belong to, never which
+		// files are installed). Locked never reaches here: a re-link of a
+		// locked mod is refused above.
 		pm := s.NewProfileManager()
-		// #592: the user category is intent about the mod, so it moves with
-		// it to the new identity's ref. Read under WithoutCancel: the pair
-		// below finishes regardless of cancellation (Ruling 16 (A)), so a
-		// read cancelled here would write the new ref without the category.
-		userCategory := ""
-		if prof, perr := pm.Get(context.WithoutCancel(ctx), game.ID, profileName); perr == nil {
-			if ref := prof.FindRef(oldSourceID, oldModID); ref != nil {
-				userCategory = ref.Category
-			}
-		}
-		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-			return pm.RemoveMod(ctx, game.ID, profileName, oldSourceID, oldModID)
-		}); err != nil && ctx.Err() == nil {
-			note("Warning: could not remove old profile entry: %v", err)
-		}
-		modRef := domain.ModReference{SourceID: newSourceID, ModID: newModID, Version: mod.Version, Category: userCategory}
-		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-			return pm.UpsertMod(ctx, game.ID, profileName, modRef)
-		}); err != nil && ctx.Err() == nil {
-			note("Warning: could not update profile: %v", err)
+		renameErr := completeProfileWrite(ctx, func(ctx context.Context) error {
+			return pm.RenameModRef(ctx, game.ID, profileName, oldSourceID, oldModID, newSourceID, newModID, mod.Version)
+		})
+		switch {
+		case renameErr == nil:
+		case errors.Is(renameErr, domain.ErrModNotFound) || errors.Is(renameErr, config.ErrModRefExists):
+			// The profile does not list the old identity (an installed row
+			// it never listed), or already lists the new one (a hand edit -
+			// the DB refused a target that is installed). Either way there
+			// is no single ref to rename: as before #593, drop the old ref
+			// if any and record the new identity with a fresh one - or, if
+			// it is listed, where that one stands.
+			s.relinkProfileFallback(ctx, pm, game.ID, profileName, oldSourceID, oldModID,
+				domain.ModReference{SourceID: newSourceID, ModID: newModID, Version: mod.Version}, note)
+		case ctx.Err() == nil:
+			note("Warning: could not update profile: %v", renameErr)
 		}
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, cerr
@@ -453,6 +459,24 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 	result.Mod = mod
 	result.Changes = changes
 	return result, nil
+}
+
+// relinkProfileFallback is applyRelinkMod's profile write when there is no
+// single ref to rename in place (#593): the old identity's refs, if any,
+// are removed, and ref is upserted - appended when the profile does not
+// list its identity, updated where it stands when it does. Like the rename
+// it replaces, it completes under a cancelled ctx (Ruling 16 (A)).
+func (s *Service) relinkProfileFallback(ctx context.Context, pm *ProfileManager, gameID, profileName, oldSourceID, oldModID string, ref domain.ModReference, note func(string, ...any)) {
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.RemoveMod(ctx, gameID, profileName, oldSourceID, oldModID)
+	}); err != nil && !errors.Is(err, domain.ErrModNotFound) && ctx.Err() == nil {
+		note("Warning: could not remove old profile entry: %v", err)
+	}
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.UpsertMod(ctx, gameID, profileName, ref)
+	}); err != nil && ctx.Err() == nil {
+		note("Warning: could not update profile: %v", err)
+	}
 }
 
 // carryRelinkCache copies the cache entry a re-linked mod was installed from
