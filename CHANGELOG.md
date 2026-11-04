@@ -300,6 +300,16 @@ self-update --auto` and exits as it would have; a script or a pipe never
   breaks into a space), and the installed-mod reads clean rows stored before
   this fix, without rewriting the database. Other Unicode is untouched.
 
+- **A re-link keeps the mod's place and settings in the profile (#593).**
+  `lmm mod edit --to-source/--to-source-id` (and **Re-link…** in the web
+  UI) moved the re-linked mod to the end of the load order, which changes
+  which mod's files win, and dropped what the profile recorded about it:
+  a disabled mod came back enabled, so the next `lmm profile apply`
+  deployed it again, and its file IDs were lost. The profile entry is now
+  renamed where it stands, keeping its position, its disabled state, its
+  file IDs and your category, and the profile file keeps its comments and
+  layout. A mod the profile did not list is added at the end, as before.
+
 - **Health says a mod has left its source's catalog instead of "could not
   check version" (#590).** A mod whose source answers "not found" was a
   Health row reading "could not check version: source "icarus": listing
