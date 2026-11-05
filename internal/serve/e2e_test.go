@@ -1316,7 +1316,7 @@ func TestE2E_TrayShowsARunningJobWithProgress(t *testing.T) {
 // core.EventSink at all, so once it does start running it STILL never gets
 // a frame, staying "queued" by the same heuristic for its whole (otherwise
 // near-instant) life - which is what makes the assertion window here the
-// deploy's AfterEach sleep (newE2EFixtureWithQueuedToggle), not a race
+// deploy's held AfterEach hook (newE2EFixtureWithQueuedToggle), not a race
 // against the enable itself.
 func TestE2E_QueuedJobDoesNotRenderRunningProgress(t *testing.T) {
 	f := newE2EFixtureWithQueuedToggle(t)
@@ -1334,10 +1334,14 @@ func TestE2E_QueuedJobDoesNotRenderRunningProgress(t *testing.T) {
 		// intercepted by the scrim instead of landing on the element
 		// underneath it (observed: the bell click silently opened nothing).
 		waitGone(`.modal`),
-		// The deploy now holds core's one mutation slot until the test ends
-		// (holdDeployAfterEach). Start a second, wholly independent job while
-		// it does - the only way this enable can be blocked in beginOp,
-		// which is the real (not simulated) condition "queued" exists for.
+		// A real frame means the deploy has core's one mutation slot, which
+		// it now keeps until the test ends (holdDeployAfterEach): the modal
+		// closing only proves the job was accepted, and an enable that got
+		// to the slot first would finish at once and never queue.
+		chromedp.WaitVisible(`.job-progress__bar:not(.job-progress__bar--indeterminate)`, chromedp.ByQuery),
+		// Start a second, wholly independent job while it does - the only
+		// way this enable can be blocked in beginOp, which is the real (not
+		// simulated) condition "queued" exists for.
 		chromedp.ActionFunc(func(context.Context) error {
 			jobID = startEnableFromAnotherClient(t, f, "fake", "c")
 			return nil
@@ -1347,9 +1351,8 @@ func TestE2E_QueuedJobDoesNotRenderRunningProgress(t *testing.T) {
 	)
 
 	// Scoped by the enable job's OWN id rather than "the first queued row":
-	// the slow deploy can still be queued too at this instant (it has not
-	// necessarily emitted its own first event yet), and row order is an
-	// implementation detail this assertion should not depend on.
+	// row order is an implementation detail this assertion should not depend
+	// on.
 	rowSel := `.tray__row[data-job="` + jobID + `"]`
 	var kind, rowText, sectionTitle string
 	var progressBlocks int

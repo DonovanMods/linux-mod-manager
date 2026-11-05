@@ -508,7 +508,7 @@ func recordRunningLabelsJS(container string) string {
 // first paint it says what is running - "Starting…" or the job's own name -
 // never an anonymous "Working…", then the phase and position core reports.
 func TestE2E_Loading_AJobNamesItselfFromItsFirstFrame(t *testing.T) {
-	f := newE2EFixtureWithSlowDeploy(t)
+	f, release := newE2EFixtureWithHeldDeploy(t)
 
 	var labels []string
 	f.runInBrowser(t,
@@ -520,6 +520,7 @@ func TestE2E_Loading_AJobNamesItselfFromItsFirstFrame(t *testing.T) {
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		pollUntil(`window.__runningLabels.some((l) => l.includes("of 2"))`),
 		chromedp.Evaluate(`window.__runningLabels`, &labels),
+		chromedp.ActionFunc(func(context.Context) error { release(); return nil }),
 		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 

@@ -976,49 +976,28 @@ func newE2EFixtureWithDeployableMods(t *testing.T) e2eFixture {
 	return f
 }
 
-// newE2EFixtureWithSlowDeploy is newE2EFixtureWithDeployableMods plus an
-// install.after_each hook that sleeps, which is what gives the browser a
-// deterministic window in which a deploy job is genuinely IN FLIGHT.
-//
-// Without it every scenario about a running job would be a race against a
-// deploy of two local files, which finishes in milliseconds: "open the tray
-// during a job" would pass or fail on machine speed. A hook is the honest
-// lever for this - it is a real, supported way for a deploy to take time -
-// and it runs AFTER the first mod's DeployDeployed event, so the job is not
-// merely running but running WITH PROGRESS already reported.
-//
-// The window is about two seconds, so this suits a test that keeps a record
-// of what it saw from before the job starts. A test that waits for a running
-// state to be on screen holds the deploy instead (holdDeployAfterEach, #584).
-func newE2EFixtureWithSlowDeploy(t *testing.T) e2eFixture {
-	t.Helper()
-	f := newE2EFixture(t)
-
-	script := filepath.Join(t.TempDir(), "slow-after-each")
-	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 1\n"), 0o755))
-	f.Game.Hooks.Install.AfterEach = script
-	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
-
-	seedDeployableMods(t, f.Svc, f.Game)
-	return f
-}
-
 // holdDeployAfterEach makes the fixture's deploy wait in its first
 // install.after_each hook until the returned release is called, or the test
-// ends. A test that WAITS FOR a state only a running deploy can show holds it
-// this way rather than with newE2EFixtureWithSlowDeploy: a sleep gives the
-// browser a window of about two seconds, a starved CI runner can spend longer
-// than that between two actions, and the state is then gone for good. The
-// wait fails on the whole harness budget, naming a selector that is correct
+// ends, which gives the browser a window in which a deploy job is genuinely IN
+// FLIGHT. Without it every scenario about a running job would be a race
+// against a deploy of two local files, which finishes in milliseconds. A hook
+// is the honest lever for this - a real, supported way for a deploy to take
+// time - and it runs AFTER the first mod's DeployDeployed event, so the job is
+// not merely running but running WITH PROGRESS already reported.
+//
+// It is a gate rather than a sleep because a sleep's window can be lost: two
+// seconds of it, and a starved CI runner can spend longer than that between
+// two browser actions, after which the state is gone for good. The wait fails on the whole harness budget, naming a selector that is correct
 // (#584). With a gate the window is the test's to close, so its length is not
-// a thing a slow machine can lose to. Releasing twice is harmless, and the
-// hook's own timeout bounds a gate nobody opens.
+// a thing a slow machine can lose to. Releasing twice is harmless. The script
+// gives up after about two minutes by itself, because the hook runner's
+// timeout dies with a killed test binary and would leave it polling forever.
 func holdDeployAfterEach(t *testing.T, f e2eFixture) (release func()) {
 	t.Helper()
 	dir := t.TempDir()
 	gate := filepath.Join(dir, "gate")
 	script := filepath.Join(dir, "held-after-each")
-	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nwhile [ ! -e '"+gate+"' ]; do sleep 0.05; done\n"), 0o755))
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\ni=0\nwhile [ ! -e '"+gate+"' ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done\n"), 0o755))
 	f.Game.Hooks.Install.AfterEach = script
 	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
 	release = func() {
@@ -1091,7 +1070,7 @@ func seedDeployableMods(t *testing.T, svc *core.Service, game *domain.Game) {
 // usual two, since the sequencing property this exists to pin needs a
 // window a concurrent poller can actually sample more than once or twice
 // in - plus an uninstall.before_each hook that sleeps briefly per mod, the
-// same lever newE2EFixtureWithSlowDeploy uses for install.
+// same kind of lever holdDeployAfterEach uses for install.
 func newE2EFixtureWithSlowUninstallAndFourMods(t *testing.T) e2eFixture {
 	t.Helper()
 	f := newE2EFixture(t)
