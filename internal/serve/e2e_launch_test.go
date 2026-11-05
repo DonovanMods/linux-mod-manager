@@ -360,13 +360,8 @@ func TestE2E_Play_NotActiveRefusalSaysToSwitch(t *testing.T) {
 // a gate file, so the window is the test's to close, not a race.
 func TestE2E_Play_HeldThroughDeployAndLaunch(t *testing.T) {
 	f := newE2EFixture(t)
-	gate := filepath.Join(t.TempDir(), "gate")
-	script := filepath.Join(t.TempDir(), "gated-after-each")
-	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nwhile [ ! -e '"+gate+"' ]; do sleep 0.05; done\n"), 0o755))
-	f.Game.Hooks.Install.AfterEach = script
-	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+	release := holdDeployAfterEach(t, f)
 	seedDeployableMods(t, f.Svc, f.Game)
-	t.Cleanup(func() { _ = os.WriteFile(gate, nil, 0o644) })
 	l := &e2eLauncher{appID: "892970"}
 	l.install(f.Svc)
 
@@ -393,7 +388,7 @@ func TestE2E_Play_HeldThroughDeployAndLaunch(t *testing.T) {
 	)
 	assert.False(t, modalOpen, "a click during the deploy opened nothing")
 
-	require.NoError(t, os.WriteFile(gate, nil, 0o644))
+	release()
 	f.runInBrowser(t,
 		pollUntil(`[...document.querySelectorAll(".toast__title")].some((el) => el.textContent.startsWith("Launch requested"))`),
 		pollUntil(`document.querySelector('[data-action="play"]').getAttribute("aria-disabled") === null`),

@@ -7,6 +7,7 @@ package serve_test
 // WCAG AA.
 
 import (
+	"context"
 	"testing"
 
 	"github.com/chromedp/chromedp"
@@ -63,7 +64,7 @@ func TestE2E_LibraryRowBadges_HaveAccessibleNames(t *testing.T) {
 // region - then carries the job's words: a region created alongside its
 // text would have lost the mark.
 func TestE2E_LibraryLiveLine_IsPresentBeforeItSpeaks(t *testing.T) {
-	f := newE2EFixtureWithSlowDeploy(t)
+	f, release := newE2EFixtureWithHeldDeploy(t)
 
 	var before struct {
 		Role string `json:"role"`
@@ -90,6 +91,7 @@ func TestE2E_LibraryLiveLine_IsPresentBeforeItSpeaks(t *testing.T) {
 		pollUntil(`document.querySelector('[data-testid="library-live"]').textContent.includes("Deploying")`),
 		textContent(`[data-testid="library-live"]`, &live),
 		chromedp.Evaluate(`document.querySelector('[data-testid="library-live"]').dataset.e2eMark ?? ""`, &mark),
+		chromedp.ActionFunc(func(context.Context) error { release(); return nil }),
 		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 	assert.Contains(t, live, "Deploying")

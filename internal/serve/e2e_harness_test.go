@@ -976,44 +976,64 @@ func newE2EFixtureWithDeployableMods(t *testing.T) e2eFixture {
 	return f
 }
 
-// newE2EFixtureWithSlowDeploy is newE2EFixtureWithDeployableMods plus an
-// install.after_each hook that sleeps, which is what gives the browser a
-// deterministic window in which a deploy job is genuinely IN FLIGHT.
+// holdDeployAfterEach makes the fixture's deploy wait in its first
+// install.after_each hook until the returned release is called, or the test
+// ends, which gives the browser a window in which a deploy job is genuinely IN
+// FLIGHT. Without it every scenario about a running job would be a race
+// against a deploy of two local files, which finishes in milliseconds. A hook
+// is the honest lever for this - a real, supported way for a deploy to take
+// time - and it runs AFTER the first mod's DeployDeployed event, so the job is
+// not merely running but running WITH PROGRESS already reported.
 //
-// Without it every scenario about a running job would be a race against a
-// deploy of two local files, which finishes in milliseconds: "open the tray
-// during a job" would pass or fail on machine speed. A hook is the honest
-// lever for this - it is a real, supported way for a deploy to take time -
-// and it runs AFTER the first mod's DeployDeployed event, so the job is not
-// merely running but running WITH PROGRESS already reported.
-func newE2EFixtureWithSlowDeploy(t *testing.T) e2eFixture {
+// It is a gate rather than a sleep because a sleep's window can be lost: two
+// seconds of it, and a starved CI runner can spend longer than that between
+// two browser actions, after which the state is gone for good. The wait fails on the whole harness budget, naming a selector that is correct
+// (#584). With a gate the window is the test's to close, so its length is not
+// a thing a slow machine can lose to. Releasing twice is harmless. The script
+// gives up after about two minutes by itself, because the hook runner's
+// timeout dies with a killed test binary and would leave it polling forever.
+func holdDeployAfterEach(t *testing.T, f e2eFixture) (release func()) {
 	t.Helper()
-	f := newE2EFixture(t)
-
-	script := filepath.Join(t.TempDir(), "slow-after-each")
-	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 1\n"), 0o755))
+	dir := t.TempDir()
+	gate := filepath.Join(dir, "gate")
+	script := filepath.Join(dir, "held-after-each")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\ni=0\nwhile [ ! -e '"+gate+"' ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done\n"), 0o755))
 	f.Game.Hooks.Install.AfterEach = script
 	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
-
-	seedDeployableMods(t, f.Svc, f.Game)
-	return f
+	release = func() {
+		if err := os.WriteFile(gate, nil, 0o644); err != nil {
+			t.Errorf("opening the deploy's gate: %v", err)
+		}
+	}
+	t.Cleanup(release)
+	return release
 }
 
-// newE2EFixtureWithQueuedToggle is newE2EFixtureWithSlowDeploy plus a third,
+// newE2EFixtureWithHeldDeploy is newE2EFixtureWithDeployableMods with its
+// deploy held by holdDeployAfterEach.
+func newE2EFixtureWithHeldDeploy(t *testing.T) (f e2eFixture, release func()) {
+	t.Helper()
+	f = newE2EFixture(t)
+	release = holdDeployAfterEach(t, f)
+	seedDeployableMods(t, f.Svc, f.Game)
+	return f, release
+}
+
+// newE2EFixtureWithQueuedToggle is newE2EFixtureWithHeldDeploy plus a third,
 // disabled mod ("Gamma Mod") that is never added to the profile - it exists
 // only so a concurrently-started enable job (startEnableFromAnotherClient)
-// has something valid to act on, entirely independent of what the slow
+// has something valid to act on, entirely independent of what the held
 // deploy is doing to Alpha/Beta.
 //
-// The slow deploy's AfterEach hook holds core's one mutation slot for the
-// whole time it sleeps, so an enable job started while it runs sits blocked
-// in beginOp: registered, state "running", zero events, no frame - exactly
-// jobStateLabel's "queued" heuristic (progress.js) - for a window a browser
-// can actually be driven through, rather than a race against a toggle that
-// would otherwise complete in microseconds.
+// The held deploy's AfterEach hook keeps core's one mutation slot until the
+// test ends, so an enable job started while it runs sits blocked in beginOp:
+// registered, state "running", zero events, no frame - exactly
+// jobStateLabel's "queued" heuristic (progress.js) - for as long as a browser
+// takes to get there, rather than a race against a toggle that would
+// otherwise complete in microseconds.
 func newE2EFixtureWithQueuedToggle(t *testing.T) e2eFixture {
 	t.Helper()
-	f := newE2EFixtureWithSlowDeploy(t)
+	f, _ := newE2EFixtureWithHeldDeploy(t)
 	seedInstalledMod(t, f.Svc, f.Game,
 		domain.Mod{ID: "c", SourceID: "fake", Name: "Gamma Mod", Version: "1.0", GameID: f.Game.ID},
 		false, nil)
@@ -1050,7 +1070,7 @@ func seedDeployableMods(t *testing.T, svc *core.Service, game *domain.Game) {
 // usual two, since the sequencing property this exists to pin needs a
 // window a concurrent poller can actually sample more than once or twice
 // in - plus an uninstall.before_each hook that sleeps briefly per mod, the
-// same deterministic lever newE2EFixtureWithSlowDeploy uses for install.
+// same kind of lever holdDeployAfterEach uses for install.
 func newE2EFixtureWithSlowUninstallAndFourMods(t *testing.T) e2eFixture {
 	t.Helper()
 	f := newE2EFixture(t)
@@ -1331,24 +1351,15 @@ func newE2EFixtureWithThreeVersionsAndACheckedUpdate(t *testing.T) e2eFixture {
 	return f
 }
 
-// newE2EFixtureWithDrillInModsAndSlowDeploy is newE2EFixtureWithDrillInMods
-// plus an install.after_each hook that sleeps - the same lever
-// newE2EFixtureWithSlowDeploy uses, applied to the drill-in catalog/fixture
-// pair, so a deploy started against it (startDeployFromAnotherClient) holds
-// core's one mutation slot long enough for a per-mod job started from the
-// slide-over to sit genuinely "running" (queued in beginOp) for a window a
-// browser can be driven through - M3's own row-level live-line scenario
-// needs exactly that, or it is a race against a toggle that finishes in
-// microseconds.
-func newE2EFixtureWithDrillInModsAndSlowDeploy(t *testing.T) e2eFixture {
+// newE2EFixtureWithDrillInModsAndHeldDeploy is newE2EFixtureWithDrillInMods
+// with its deploy held by holdDeployAfterEach until the test ends, so a job
+// queued behind it stays queued for as long as a browser takes to look - M3's
+// own row-level live-line scenario needs exactly that, or it is a race
+// against a toggle that finishes in microseconds.
+func newE2EFixtureWithDrillInModsAndHeldDeploy(t *testing.T) e2eFixture {
 	t.Helper()
 	f := newE2EFixtureWithDrillInMods(t)
-
-	script := filepath.Join(t.TempDir(), "slow-after-each")
-	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 1\n"), 0o755))
-	f.Game.Hooks.Install.AfterEach = script
-	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
-
+	holdDeployAfterEach(t, f)
 	return f
 }
 
