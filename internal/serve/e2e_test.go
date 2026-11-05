@@ -969,11 +969,12 @@ func TestE2E_ConfirmModalRendersAPlanFailureHonestly(t *testing.T) {
 //
 // The end state is asserted on DISK as well as on screen: a green progress
 // bar over a game directory with nothing in it would be the worst possible
-// pass. The fixture's deploy is slowed by a real install.after_each hook,
-// which is what makes "while it is running" a window a browser can be
-// driven through rather than a race (newE2EFixtureWithSlowDeploy).
+// pass. The fixture's deploy is held by a real install.after_each hook until
+// the running state has been read, which is what makes "while it is running"
+// a window a browser can be driven through rather than a race
+// (holdDeployAfterEach).
 func TestE2E_DeployRunsAsAJobAndMorphsTheControl(t *testing.T) {
-	f := newE2EFixtureWithSlowDeploy(t)
+	f, release := newE2EFixtureWithHeldDeploy(t)
 
 	var running, finished, indicator string
 	var toasts int
@@ -992,6 +993,7 @@ func TestE2E_DeployRunsAsAJobAndMorphsTheControl(t *testing.T) {
 		// anything at all, so waiting on this is waiting on the stream.
 		chromedp.WaitVisible(`.job-progress__bar:not(.job-progress__bar--indeterminate)`, chromedp.ByQuery),
 		textContent(`.job-progress__text`, &running),
+		chromedp.ActionFunc(func(context.Context) error { release(); return nil }),
 		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 		textContent(`.job-progress__text`, &finished),
 		chromedp.WaitVisible(`.deploy-indicator:not(.deploy-indicator--pending)`, chromedp.ByQuery),
@@ -1275,7 +1277,7 @@ func TestE2E_ResultTallyLabelReadsTheWireTally(t *testing.T) {
 // show live counts"), asserted here because the two read the same frame and
 // a divergence between them is the bug worth catching.
 func TestE2E_TrayShowsARunningJobWithProgress(t *testing.T) {
-	f := newE2EFixtureWithSlowDeploy(t)
+	f, _ := newE2EFixtureWithHeldDeploy(t)
 
 	var badge, kind, detail, live string
 	f.runInBrowser(t,
@@ -1332,8 +1334,8 @@ func TestE2E_QueuedJobDoesNotRenderRunningProgress(t *testing.T) {
 		// intercepted by the scrim instead of landing on the element
 		// underneath it (observed: the bell click silently opened nothing).
 		waitGone(`.modal`),
-		// The deploy now holds core's one mutation slot for the duration of
-		// its AfterEach sleep. Start a second, wholly independent job while
+		// The deploy now holds core's one mutation slot until the test ends
+		// (holdDeployAfterEach). Start a second, wholly independent job while
 		// it does - the only way this enable can be blocked in beginOp,
 		// which is the real (not simulated) condition "queued" exists for.
 		chromedp.ActionFunc(func(context.Context) error {
@@ -2289,12 +2291,12 @@ func TestE2E_FullModPage_RollbackHiddenWithNoPreviousVersion(t *testing.T) {
 // library while open" (issue 330 carry-3's own note) leaves unreachable
 // any other way.
 func TestE2E_SlideOver_ClosingMidJobLeavesTheRowsLiveLine(t *testing.T) {
-	f := newE2EFixtureWithDrillInModsAndSlowDeploy(t)
+	f := newE2EFixtureWithDrillInModsAndHeldDeploy(t)
 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		// Holds core's one mutation slot for the AfterEach sleep - the same
+		// Holds core's one mutation slot until the test ends - the same
 		// lever newE2EFixtureWithQueuedToggle uses to make "running with no
 		// progress" a real, driveable window rather than a race against a
 		// toggle that finishes in microseconds.
