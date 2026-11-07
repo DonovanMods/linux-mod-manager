@@ -221,16 +221,17 @@ export function filterRows(rows, filter) {
 // this control moves in a local install's own timeline.
 const sortComparators = {
   name: (a, b) => a.name.localeCompare(b.name),
+  // issue 596: when lmm last changed the installed version - the date a
+  // reader looks for, so it is offered before "recent". The same NaN
+  // guard as "recent".
+  updated: (a, b) =>
+    (Date.parse(lastUpdated(b)) || 0) - (Date.parse(lastUpdated(a)) || 0),
   // Date.parse(...) || 0 rather than bare `new Date(...) - new Date(...)`:
   // an absent or unparsable installed_at parses to NaN, and Array.sort with
   // a NaN comparator result gives an arbitrary order - falling back to the
   // epoch keeps every undated row sorted (last, under "descending").
   recent: (a, b) =>
     (Date.parse(b.installed_at) || 0) - (Date.parse(a.installed_at) || 0),
-  // issue 596: when lmm last changed the installed version, the same NaN
-  // guard as "recent".
-  updated: (a, b) =>
-    (Date.parse(lastUpdated(b)) || 0) - (Date.parse(lastUpdated(a)) || 0),
 };
 
 /**
