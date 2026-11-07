@@ -17,6 +17,7 @@ import { navigate } from "../router.js";
 import { ApiError } from "../api.js";
 import {
   formatDate,
+  lastUpdated,
   countExternal,
   countOf,
   healthBadge,
@@ -48,6 +49,7 @@ const SORT_LABELS = {
   "load-order": "Load order",
   name: "Name",
   recent: "Recently installed",
+  updated: "Recently updated",
 };
 
 /** NoMatches is the library's narrowed-to-nothing state (issue 334's empty-
@@ -1036,6 +1038,7 @@ export function Library({
         <td class="col--order mono">${row.loadOrder}</td>
         <td class="col--method mono">${row.link_method}</td>
         <td class="col--installed">${formatDate(row.installed_at)}</td>
+        <td class="col--updated">${formatDate(lastUpdated(row))}</td>
         <td class="col--menu row-menu-cell">
           ${
             // issue 417: the per-mod Update, in the open.
@@ -1250,6 +1253,12 @@ export function Library({
                     </th>
                     <th class="col--method">Method</th>
                     <th class="col--installed">Installed</th>
+                    <th
+                      class="col--updated"
+                      title="When lmm last changed this mod's installed version"
+                    >
+                      Updated
+                    </th>
                     <th class="col--menu">
                       <span class="visually-hidden">Actions</span>
                     </th>
@@ -1267,7 +1276,7 @@ export function Library({
                             data-group=${group.name}
                           >
                             <tr class="library__group-header">
-                              <th colspan="11" scope="rowgroup">
+                              <th colspan="12" scope="rowgroup">
                                 <button
                                   type="button"
                                   class="button button--link library__group-toggle"

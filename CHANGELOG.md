@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An "Updated" date in the web library (#596).** Next to **Installed**,
+  the library now shows when lmm last changed each mod's installed version:
+  an update, a rollback, an update from a file, or Steam updating a
+  Workshop item it manages. **Sort → Recently updated** orders the library
+  by it. The date is stored in a new `installed_mods.last_updated_at`
+  column, and the mod list documents carry it as `last_updated_at`. Mods
+  installed before this show their install date until their next version
+  change.
+
 - **Mod categories, below the frontends (#592).** Installed mods now keep
   their source's category name: CurseForge's primary category, and the
   NexusMods category resolved through the game's category list (one lookup

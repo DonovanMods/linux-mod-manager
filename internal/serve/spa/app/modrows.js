@@ -227,7 +227,23 @@ const sortComparators = {
   // epoch keeps every undated row sorted (last, under "descending").
   recent: (a, b) =>
     (Date.parse(b.installed_at) || 0) - (Date.parse(a.installed_at) || 0),
+  // issue 596: when lmm last changed the installed version, the same NaN
+  // guard as "recent".
+  updated: (a, b) =>
+    (Date.parse(lastUpdated(b)) || 0) - (Date.parse(lastUpdated(a)) || 0),
 };
+
+/**
+ * The row's "Updated" date (issue 596): domain.InstalledMod's
+ * last_updated_at, when lmm last changed the installed version. Core
+ * stamps it on every row, and it starts equal to installed_at, so the
+ * fallback only covers an older lmm serving the document - where "never
+ * updated since it was installed" is what its absence means. Not
+ * updated_at: that is when the SOURCE published the version.
+ */
+export function lastUpdated(row) {
+  return row.last_updated_at || row.installed_at;
+}
 
 /** The sort control's options, in display order. */
 export const SORT_NAMES = ["load-order", ...Object.keys(sortComparators)];
@@ -319,7 +335,7 @@ export function runningMutations(jobsIndex, jobProgress, origins) {
 
 /**
  * Renders an ISO timestamp as a short local date for the library's
- * "Installed" column, or an em dash when there is nothing parsable to
+ * "Installed" and "Updated" columns, or an em dash when there is nothing parsable to
  * render. The dash matters: a blank cell under a heading reads as a
  * rendering bug, while "—" says the document carries no date - which is a
  * real state (an adopted mod whose installed_at was never recorded).

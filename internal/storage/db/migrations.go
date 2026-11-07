@@ -52,6 +52,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV20,
 		migrateV21,
 		migrateV22,
+		migrateV23,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -612,5 +613,29 @@ func migrateV22(ctx context.Context, q migrationExec) error {
 		return nil
 	}
 	_, err := q.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN category_name TEXT`)
+	return err
+}
+
+// migrateV23 adds installed_mods.last_updated_at (#596): when lmm last
+// changed the row's installed version, as distinct from installed_at (when
+// the row was first written, which the upsert never moves) and updated_at
+// (when the source published the version). Every existing row is
+// backfilled from installed_at - nothing is known about an earlier change,
+// and "updated when installed" keeps Updated >= Installed for every row.
+//
+// Guarded like migrateV20, and the backfill touches only NULLs, so the
+// timestamp migration's tests (which re-run every migration from 19 on)
+// re-apply it cleanly.
+func migrateV23(ctx context.Context, q migrationExec) error {
+	var have int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('installed_mods') WHERE name = 'last_updated_at'`).Scan(&have); err != nil {
+		return fmt.Errorf("inspecting installed_mods: %w", err)
+	}
+	if have == 0 {
+		if _, err := q.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN last_updated_at DATETIME`); err != nil {
+			return err
+		}
+	}
+	_, err := q.ExecContext(ctx, `UPDATE installed_mods SET last_updated_at = installed_at WHERE last_updated_at IS NULL`)
 	return err
 }

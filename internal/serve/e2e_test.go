@@ -523,6 +523,36 @@ func TestE2E_SortRows_RecentToleratesMissingInstalledAt(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_SortRows_UpdatedOrdersByLastUpdatedAt pins #596's "updated" sort:
+// most recently updated first, by last_updated_at - so a mod installed long
+// ago but updated yesterday leads one installed last week and never
+// touched since. A row with no last_updated_at (an older lmm serving the
+// document) sorts by its installed_at, which is what that date means.
+func TestE2E_SortRows_UpdatedOrdersByLastUpdatedAt(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var order []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { sortRows, SORT_NAMES } = await import("/static/app/modrows.js");
+			if (!SORT_NAMES.includes("updated")) return ["no updated sort"];
+			const rows = [
+				{ name: "Untouched", installed_at: "2025-06-01T00:00:00Z", last_updated_at: "2025-06-01T00:00:00Z" },
+				{ name: "OldButUpdated", installed_at: "2020-01-01T00:00:00Z", last_updated_at: "2025-09-01T00:00:00Z" },
+				{ name: "OlderLmm", installed_at: "2025-07-01T00:00:00Z" },
+			];
+			return sortRows(rows, "updated").map((r) => r.name);
+		})()`, &order, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+
+	assert.Equal(t, []string{"OldButUpdated", "OlderLmm", "Untouched"}, order)
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_OpeningSlideOverDoesNotRehydrateMissionControl guards the unit 2
 // gate's I2 finding, updated for issue 330's real slide-over: opening or
 // closing the ?mod= annotation dispatches a popstate, and main.js#go used
@@ -808,7 +838,7 @@ func TestE2E_LibraryColumnsProgressivelyRevealOnWideScreens(t *testing.T) {
 func TestE2E_WideColumnsCarryTheDocumentsOwnData(t *testing.T) {
 	f := newE2EFixtureWithLibrarySample(t)
 
-	var author, source, method, installed string
+	var author, source, method, installed, updated, updatedHead string
 	f.runInBrowser(t,
 		chromedp.EmulateViewport(1920, 1080),
 		chromedp.Navigate(f.HomePath()),
@@ -817,6 +847,8 @@ func TestE2E_WideColumnsCarryTheDocumentsOwnData(t *testing.T) {
 		textContent(`.mod-row td.col--source`, &source),
 		textContent(`.mod-row td.col--method`, &method),
 		textContent(`.mod-row td.col--installed`, &installed),
+		textContent(`.mod-row td.col--updated`, &updated),
+		textContent(`.library__table th.col--updated`, &updatedHead),
 	)
 
 	assert.Equal(t, "Ada Lovelace", author)
@@ -824,6 +856,9 @@ func TestE2E_WideColumnsCarryTheDocumentsOwnData(t *testing.T) {
 	assert.Equal(t, "symlink", method)
 	assert.NotEmpty(t, installed)
 	assert.NotEqual(t, "—", installed, "the seeded mods all carry an installed_at")
+	// #596: a freshly installed row's Updated is its Installed.
+	assert.Equal(t, "Updated", updatedHead)
+	assert.Equal(t, installed, updated, "a mod never updated shows its install date as Updated")
 	assert.Empty(t, f.BrowserErrors())
 }
 

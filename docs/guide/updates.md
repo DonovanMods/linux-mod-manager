@@ -17,6 +17,13 @@ Each mod in the library also gets an **Update** button when it has one
 waiting. **Check for updates** in the library toolbar asks the mod sites
 again right away.
 
+On a wide enough window (1440 pixels or more) the library shows two dates
+for each mod. **Installed** is when the mod was added to the profile.
+**Updated** is when lmm last changed its installed version, whether by an
+update, a rollback or an update from a file. A mod that has never been
+updated shows its install date in both. Choose **Sort → Recently updated**
+to put the most recently updated mods first.
+
 Checking asks each mod's site in turn, so on a big profile it can take a
 few seconds. The rest of the page doesn't wait for it. While the check
 runs, a line above the cards says what it is doing and how far it has got,
