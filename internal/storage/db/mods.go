@@ -773,9 +773,10 @@ func (d *DB) UpdateModVersion(ctx context.Context, sourceID, modID, gameID, prof
 	}
 	result, err := d.ExecContext(ctx, `
 		UPDATE installed_mods
-		SET previous_version = version, previous_file_ids = ?, version = ?
+		SET previous_version = version, previous_file_ids = ?, version = ?,
+			last_updated_at = CASE WHEN version IS NOT ? THEN ? ELSE last_updated_at END
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
-	`, prevFileIDs, newVersion, sourceID, modID, gameID, profileName)
+	`, prevFileIDs, newVersion, newVersion, formatTime(d.clock()), sourceID, modID, gameID, profileName)
 	if err != nil {
 		return fmt.Errorf("updating mod version: %w", err)
 	}
@@ -854,9 +855,10 @@ func (d *DB) ApplyModUpdate(ctx context.Context, sourceID, modID, gameID, profil
 
 	_, err = tx.ExecContext(ctx, `
 		UPDATE installed_mods
-		SET previous_version = ?, previous_file_ids = ?, version = ?, skipped_version = NULL
+		SET previous_version = ?, previous_file_ids = ?, version = ?, skipped_version = NULL,
+			last_updated_at = CASE WHEN version IS NOT ? THEN ? ELSE last_updated_at END
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
-	`, currentVersion, prevFileIDs, newVersion, sourceID, modID, gameID, profileName)
+	`, currentVersion, prevFileIDs, newVersion, newVersion, formatTime(d.clock()), sourceID, modID, gameID, profileName)
 	if err != nil {
 		return fmt.Errorf("updating mod version: %w", err)
 	}
@@ -910,9 +912,10 @@ func (d *DB) SwapModVersions(ctx context.Context, sourceID, modID, gameID, profi
 
 	_, err = tx.ExecContext(ctx, `
 		UPDATE installed_mods
-		SET version = ?, previous_version = ?, previous_file_ids = ?
+		SET version = ?, previous_version = ?, previous_file_ids = ?,
+			last_updated_at = CASE WHEN version IS NOT ? THEN ? ELSE last_updated_at END
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
-	`, prevVal, version, currentFileIDsRaw, sourceID, modID, gameID, profileName)
+	`, prevVal, version, currentFileIDsRaw, prevVal, formatTime(d.clock()), sourceID, modID, gameID, profileName)
 	if err != nil {
 		return fmt.Errorf("swapping mod versions: %w", err)
 	}

@@ -143,3 +143,40 @@ func TestMigrateV23_BackfillsLastUpdatedFromInstalledAt(t *testing.T) {
 	_, updated = getLastUpdated(t, d)
 	assert.True(t, updated.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), "a re-run keeps a stamped row")
 }
+
+// TestLastUpdatedAt_UpdateAndRollbackMoveIt covers the writes `lmm update`
+// and `lmm update rollback` actually use - ApplyModUpdate, SwapModVersions
+// and UpdateModVersion - which bypass the upsert (#596 review).
+func TestLastUpdatedAt_UpdateAndRollbackMoveIt(t *testing.T) {
+	ctx := context.Background()
+	d, now := lastUpdatedFixture(t)
+	t0 := *now
+
+	m := lastUpdatedMod("1.0")
+	m.FileIDs = []string{"f1"}
+	require.NoError(t, d.SaveInstalledMod(ctx, m))
+
+	t1 := t0.Add(time.Hour)
+	*now = t1
+	require.NoError(t, d.ApplyModUpdate(ctx, "s", "m", "g", "default", "2.0", []string{"f2"}))
+	installed, updated := getLastUpdated(t, d)
+	assert.True(t, installed.Equal(t0), "installed_at never moves")
+	assert.True(t, updated.Equal(t1), "ApplyModUpdate moves Updated")
+
+	t2 := t0.Add(2 * time.Hour)
+	*now = t2
+	require.NoError(t, d.SwapModVersions(ctx, "s", "m", "g", "default"))
+	_, updated = getLastUpdated(t, d)
+	assert.True(t, updated.Equal(t2), "a rollback moves Updated")
+
+	t3 := t0.Add(3 * time.Hour)
+	*now = t3
+	require.NoError(t, d.UpdateModVersion(ctx, "s", "m", "g", "default", "3.0"))
+	_, updated = getLastUpdated(t, d)
+	assert.True(t, updated.Equal(t3), "UpdateModVersion moves Updated")
+
+	*now = t0.Add(4 * time.Hour)
+	require.NoError(t, d.ApplyModUpdate(ctx, "s", "m", "g", "default", "3.0", []string{"f3"}))
+	_, updated = getLastUpdated(t, d)
+	assert.True(t, updated.Equal(t3), "re-applying the installed version keeps Updated")
+}
