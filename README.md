@@ -1568,7 +1568,7 @@ it, a toast says the mod's current state could not be read and the row shows
 the last state the server reported.
 
 Filter (all/enabled/updatable/unhealthy) and sort (load order/name/recently
-installed) narrow it. The header checkbox selects **everything in view**
+updated/recently installed) narrow it. The header checkbox selects **everything in view**
 — after the filter and whatever the omnibar is narrowing by — skipping rows
 the batch actions cannot apply to, and reads back as checked, empty or
 partial; `a` does the same from the keyboard anywhere on Mission Control

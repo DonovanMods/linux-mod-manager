@@ -1465,6 +1465,9 @@ input[type="search"]::-webkit-search-decoration {
  *   >= 1440px   author + install date
  *   >= 1920px   source + link method
  *
+ * The "Updated" date (issue 596) is not among them: it is the date a
+ * reader scans for, so it shows at every width.
+ *
  * Hidden by default and revealed upward, rather than the reverse: the
  * unqualified rule is the one a browser with no media-query support (or a
  * print stylesheet) falls back to, and the narrow table is the safe
@@ -1474,7 +1477,6 @@ input[type="search"]::-webkit-search-decoration {
  */
 .library__table .col--author,
 .library__table .col--installed,
-.library__table .col--updated,
 .library__table .col--source,
 .library__table .col--method {
   display: none;
@@ -1482,8 +1484,7 @@ input[type="search"]::-webkit-search-decoration {
 
 @media (min-width: 1440px) {
   .library__table .col--author,
-  .library__table .col--installed,
-  .library__table .col--updated {
+  .library__table .col--installed {
     display: table-cell;
   }
 }

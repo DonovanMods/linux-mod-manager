@@ -801,11 +801,17 @@ func TestE2E_LibraryCheckboxColumnsAreLabelled(t *testing.T) {
 func TestE2E_LibraryColumnsProgressivelyRevealOnWideScreens(t *testing.T) {
 	f := newE2EFixtureWithLibrarySample(t)
 
+	// #596: Updated is the date a reader scans for, so it shows at every
+	// width; Installed is the extra that arrives with author.
+	var updatedAll []bool
 	shown := func(width int, wide, xwide *bool) chromedp.Tasks {
+		var updated bool
 		return chromedp.Tasks{
 			chromedp.EmulateViewport(int64(width), 1080),
 			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-			chromedp.Evaluate(`getComputedStyle(document.querySelector(".library__table th.col--author")).display !== "none"`, wide),
+			chromedp.Evaluate(`getComputedStyle(document.querySelector(".library__table th.col--updated")).display !== "none"`, &updated),
+			chromedp.ActionFunc(func(context.Context) error { updatedAll = append(updatedAll, updated); return nil }),
+			chromedp.Evaluate(`getComputedStyle(document.querySelector(".library__table th.col--author")).display !== "none" && getComputedStyle(document.querySelector(".library__table th.col--installed")).display !== "none"`, wide),
 			chromedp.Evaluate(`getComputedStyle(document.querySelector(".library__table th.col--source")).display !== "none"`, xwide),
 		}
 	}
@@ -828,6 +834,23 @@ func TestE2E_LibraryColumnsProgressivelyRevealOnWideScreens(t *testing.T) {
 	assert.True(t, xwide1920, "source arrives at >= 1920px")
 	assert.True(t, wide2560)
 	assert.True(t, xwide2560)
+	assert.Equal(t, []bool{true, true, true, true}, updatedAll, "Updated shows at every width")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryUpdatedPrecedesInstalled: the more useful date comes
+// first in the row (#596).
+func TestE2E_LibraryUpdatedPrecedesInstalled(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	var order []string
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1920, 1080),
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`[...document.querySelectorAll(".library__table thead th")].map((th) => th.className).filter((c) => c === "col--updated" || c === "col--installed")`, &order),
+	)
+	assert.Equal(t, []string{"col--updated", "col--installed"}, order)
 	assert.Empty(t, f.BrowserErrors())
 }
 

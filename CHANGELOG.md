@@ -9,11 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **An "Updated" date in the web library (#596).** Next to **Installed**,
-  the library now shows when lmm last changed each mod's installed version:
-  an update, a rollback, an update from a file, or Steam updating a
-  Workshop item it manages. **Sort → Recently updated** orders the library
-  by it. The date is stored in a new `installed_mods.last_updated_at`
+- **An "Updated" date in the web library (#596).** The library now shows
+  when lmm last changed each mod's installed version: an update, a
+  rollback, an update from a file, or Steam updating a Workshop item it
+  manages. It shows at every window width, ahead of **Installed** (which
+  still appears from 1440px), and **Sort → Recently updated** orders the
+  library by it. The date is stored in a new `installed_mods.last_updated_at`
   column, and the mod list documents carry it as `last_updated_at`. Mods
   installed before this show their install date until their next version
   change.
