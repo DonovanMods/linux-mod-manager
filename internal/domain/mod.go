@@ -251,15 +251,22 @@ type Mod struct {
 // InstalledMod tracks a mod installed in a profile
 type InstalledMod struct {
 	Mod
-	ProfileName     string       `json:"profile_name"`
-	UpdatePolicy    UpdatePolicy `json:"update_policy"`
-	InstalledAt     time.Time    `json:"installed_at"`
-	Enabled         bool         `json:"enabled"`                     // User intent: wants this mod active
-	Deployed        bool         `json:"deployed"`                    // Current state: files are in game directory
-	PreviousVersion string       `json:"previous_version,omitempty"`  // Version before last update (for rollback)
-	PreviousFileIDs []string     `json:"previous_file_ids,omitempty"` // File IDs before last update (for rollback)
-	LinkMethod      LinkMethod   `json:"link_method"`                 // How the mod was deployed (symlink, hardlink, copy)
-	FileIDs         []string     `json:"file_ids,omitempty"`          // Source-specific file IDs that were downloaded
+	ProfileName  string       `json:"profile_name"`
+	UpdatePolicy UpdatePolicy `json:"update_policy"`
+	InstalledAt  time.Time    `json:"installed_at"`
+	// LastUpdatedAt is when lmm last changed this row's installed version
+	// (#596): stamped at insert, so it starts equal to InstalledAt, and moved
+	// by every write that changes Version - an update, a rollback, an update
+	// from file, a relink to another version, Steam updating a Workshop item
+	// it owns. InstalledAt never moves after the insert. Not UpdatedAt,
+	// which is when the SOURCE published the installed version.
+	LastUpdatedAt   time.Time  `json:"last_updated_at,omitzero"`
+	Enabled         bool       `json:"enabled"`                     // User intent: wants this mod active
+	Deployed        bool       `json:"deployed"`                    // Current state: files are in game directory
+	PreviousVersion string     `json:"previous_version,omitempty"`  // Version before last update (for rollback)
+	PreviousFileIDs []string   `json:"previous_file_ids,omitempty"` // File IDs before last update (for rollback)
+	LinkMethod      LinkMethod `json:"link_method"`                 // How the mod was deployed (symlink, hardlink, copy)
+	FileIDs         []string   `json:"file_ids,omitempty"`          // Source-specific file IDs that were downloaded
 	// AdoptedInPlace marks a mod `lmm import` scan mode adopted where it
 	// sat in the game directory (#516): lmm never downloaded it, so on a
 	// game not in copy mode it has no cache entry, and verify neither calls

@@ -161,6 +161,7 @@ func TestJSONGoldens(t *testing.T) {
 				ProfileName:     "default",
 				UpdatePolicy:    domain.UpdateAuto,
 				InstalledAt:     fixedTime,
+				LastUpdatedAt:   fixedTime.AddDate(0, 1, 0), // #596
 				Enabled:         true,
 				Deployed:        true,
 				PreviousVersion: "1.2.2",

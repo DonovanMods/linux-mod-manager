@@ -1395,10 +1395,18 @@ input[type="search"]::-webkit-search-decoration {
 }
 
 .library__table th.col--version,
-.library__table td.col--version,
-.library__table th.col--installed,
-.library__table td.col--installed {
+.library__table td.col--version {
   width: 8%;
+}
+
+/* The two dates (issue 596 added "Updated" beside "Installed") take 7%
+ * each rather than the 8% Installed had alone, so the name column keeps
+ * its slack at 1920px with every progressive column showing. */
+.library__table th.col--installed,
+.library__table td.col--installed,
+.library__table th.col--updated,
+.library__table td.col--updated {
+  width: 7%;
 }
 
 .library__table th.col--author,
@@ -1466,6 +1474,7 @@ input[type="search"]::-webkit-search-decoration {
  */
 .library__table .col--author,
 .library__table .col--installed,
+.library__table .col--updated,
 .library__table .col--source,
 .library__table .col--method {
   display: none;
@@ -1473,7 +1482,8 @@ input[type="search"]::-webkit-search-decoration {
 
 @media (min-width: 1440px) {
   .library__table .col--author,
-  .library__table .col--installed {
+  .library__table .col--installed,
+  .library__table .col--updated {
     display: table-cell;
   }
 }
