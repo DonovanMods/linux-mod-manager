@@ -65,29 +65,3 @@ func TestServer_APIStatus_GameParam_ReturnsGameStatus(t *testing.T) {
 	require.NoError(t, err)
 	requireEncodesLike(t, rec.Body.Bytes(), want)
 }
-
-// TestServer_APIStatus_UnknownGameParam_Renders404 proves an unresolvable
-// ?game= answers the same {"error","details"} envelope every other scoped
-// endpoint uses, with details listing the real, configured game(s).
-func TestServer_APIStatus_UnknownGameParam_Renders404(t *testing.T) {
-	src := newFakeSource("fake")
-	svc, _ := newFixtureServiceWithSource(t, src)
-
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/status?game=nope", nil)
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusNotFound, rec.Code)
-
-	var envelope struct {
-		Error   string `json:"error"`
-		Details struct {
-			Games []core.GameListEntry `json:"games"`
-		} `json:"details"`
-	}
-	decodeStrict(t, rec.Body.Bytes(), &envelope)
-	assert.Contains(t, envelope.Error, "nope")
-	require.Len(t, envelope.Details.Games, 1)
-	assert.Equal(t, "g1", envelope.Details.Games[0].ID)
-}

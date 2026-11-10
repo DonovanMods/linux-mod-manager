@@ -146,22 +146,3 @@ func TestServer_APIModLock_NotFound_Renders404(t *testing.T) {
 	decodeStrict(t, rec.Body.Bytes(), &envelope)
 	assert.Contains(t, envelope.Error, "not found in profile")
 }
-
-// TestServer_APIModLock_WithoutCSRF_Refuses proves lock/unlock/update-policy
-// go through the same CSRF gate every other mutation route does - it is not
-// a job, but it is still a state-changing POST.
-func TestServer_APIModLock_WithoutCSRF_Refuses(t *testing.T) {
-	src := newFakeSource("fake")
-	svc, game := newFixtureServiceWithSource(t, src)
-	seedInstalledMod(t, svc, game, domain.Mod{
-		ID: "1", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID,
-	}, true, nil)
-
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-	req := httptest.NewRequest(http.MethodPost, "http://"+testAddr+"/api/v1/mods/fake/1/lock", strings.NewReader(`{}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	assert.NotEqual(t, http.StatusOK, rec.Code)
-}

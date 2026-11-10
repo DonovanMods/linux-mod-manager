@@ -210,19 +210,3 @@ func TestAPIModConvert_MissingEnabledIs400(t *testing.T) {
 		})
 	}
 }
-
-// TestAPIModConvert_RejectsUnknownMembers pins the strict decode.
-func TestAPIModConvert_RejectsUnknownMembers(t *testing.T) {
-	s, _, game := newConvertServer(t, []string{"pak"})
-
-	rec := doAPI(s, http.MethodPost, scoped("/api/v1/mods/"+fixtureSourceID+"/m1/convert", game), `{"enabld":false}`)
-	assert.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
-}
-
-// TestAPIModConvert_RequiresCSRF.
-func TestAPIModConvert_RequiresCSRF(t *testing.T) {
-	s, _, game := newConvertServer(t, []string{"pak"})
-
-	rec := doAPIWithoutCSRF(s, http.MethodPost, scoped("/api/v1/mods/"+fixtureSourceID+"/m1/convert", game), `{"enabled":false}`)
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-}

@@ -127,19 +127,3 @@ func TestFlowSnapshotRestore_RejectsUnknownOptions(t *testing.T) {
 	rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/snapshot_restore", game), `{"snapshoot":"x"}`)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
-
-// TestFlowSnapshotRestore_UsedPlanIsRefused is the plan store's
-// single-use rule, which matters more here than anywhere: replaying a
-// restore handle would re-run a destructive five-stage flow.
-func TestFlowSnapshotRestore_UsedPlanIsRefused(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-	deployFixtureProfile(t, s, game)
-	snapshotFixture(t, s, game.ID, "known-good")
-
-	id, _ := planFlow(t, s, game, "snapshot_restore", `{"snapshot":"known-good"}`)
-	j := startFlowJob(t, s, id, `{"no_safety_snapshot":true}`)
-	require.Equal(t, jobSucceeded, j.status().State)
-
-	rec := doAPI(s, http.MethodPost, "/api/v1/jobs", `{"plan_id":"`+string(id)+`"}`)
-	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
-}

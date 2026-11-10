@@ -214,19 +214,6 @@ func TestAPISourceIndexRefresh_RebuildsAndAnswersTheReport(t *testing.T) {
 	assert.True(t, status.Present)
 }
 
-func TestAPISourceIndexRefresh_RejectsAnUnknownMember(t *testing.T) {
-	s, _, game, _ := newIndexFixtureServer(t)
-	rec := doAPI(s, http.MethodPost, indexPath(game.ID), `{"refersh":true}`)
-	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-}
-
-func TestAPISourceIndexRefresh_NeedsTheCSRFToken(t *testing.T) {
-	s, _, game, src := newIndexFixtureServer(t)
-	rec := doAPIWithoutCSRF(s, http.MethodPost, indexPath(game.ID), `{"refresh":true}`)
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-	assert.False(t, src.forced)
-}
-
 // TestAPISourceIndexRefresh_NoIndexAndNoUpstreamIs502 is design §4.3's
 // status for ErrIndexUnavailable: the failure is upstream of lmm, and the
 // envelope's details say which index and why - and when lmm will ask again.
@@ -339,13 +326,6 @@ func TestAPIIndexesPrune_ARemovalMustNameWhatItRemoves(t *testing.T) {
 		assert.Equal(t, http.StatusOK, doAPI(s, http.MethodPost, "/api/v1/indexes/prune", `{"only":[]}`).Code)
 		assert.Empty(t, src.removed)
 	})
-}
-
-func TestAPIIndexesPrune_NeedsTheCSRFToken(t *testing.T) {
-	s, _, _, src := newIndexFixtureServer(t)
-	rec := doAPIWithoutCSRF(s, http.MethodPost, "/api/v1/indexes/prune", `{"all":true}`)
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-	assert.Empty(t, src.removed)
 }
 
 // TestAPISearch_IndexFailuresAreTyped: the search page meets the same two

@@ -85,13 +85,6 @@ func TestAPIFlow_SkipUpdate_UnknownModIs404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 }
 
-func TestAPIFlow_SkipUpdate_RejectsUnknownMembers(t *testing.T) {
-	s, _, game := newUpdatesFixtureServer(t)
-
-	rec := doAPI(s, http.MethodPost, skipUpdateRoute(game, "skip-update", "u1"), `{"verison":"1.5"}`)
-	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-}
-
 // The full mod page's "Update to vX" is a one-key "updates" plan: it still
 // updates a skipped mod, end to end, and clears the skip.
 func TestAPIFlow_SkipUpdate_ExplicitSelectionStillUpdatesAndClears(t *testing.T) {

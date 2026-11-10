@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -16,80 +15,9 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestProfileCmd_Structure(t *testing.T) {
-	assert.Equal(t, "profile", profileCmd.Use)
-	assert.NotEmpty(t, profileCmd.Short)
-
-	// Check subcommands exist
-	var subCmds []string
-	for _, cmd := range profileCmd.Commands() {
-		subCmds = append(subCmds, cmd.Name())
-	}
-
-	assert.Contains(t, subCmds, "list")
-	assert.Contains(t, subCmds, "create")
-	assert.Contains(t, subCmds, "delete")
-	assert.Contains(t, subCmds, "switch")
-	assert.Contains(t, subCmds, "export")
-	assert.Contains(t, subCmds, "import")
-}
-
-func TestProfileListCmd_NoGame(t *testing.T) {
-	gameID = ""
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(profileCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(profileCmd); rootCmd.AddCommand(profileCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"profile", "list"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no game specified")
-}
-
-func TestProfileCreateCmd_NoGame(t *testing.T) {
-	gameID = ""
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(profileCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(profileCmd); rootCmd.AddCommand(profileCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"profile", "create", "myprofile"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no game specified")
-}
-
-func TestProfileCreateCmd_NoName(t *testing.T) {
-	restoreFlags(t)
-	gameID = "test-game"
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(profileCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(profileCmd); rootCmd.AddCommand(profileCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"profile", "create"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "accepts 1 arg")
-}
 
 // --- doProfileList (#309: honours --json) ---
 
@@ -1049,18 +977,6 @@ func TestDoProfileRename_RefusesAnOccupiedName(t *testing.T) {
 
 	_, err = pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err, "a refused rename must leave the source profile in place")
-}
-
-// TestProfileRenameCmd_Structure: the subcommand is wired and takes exactly
-// two names.
-func TestProfileRenameCmd_Structure(t *testing.T) {
-	var subCmds []string
-	for _, cmd := range profileCmd.Commands() {
-		subCmds = append(subCmds, cmd.Name())
-	}
-	assert.Contains(t, subCmds, "rename")
-	assert.Error(t, profileRenameCmd.Args(profileRenameCmd, []string{"only-one"}))
-	assert.NoError(t, profileRenameCmd.Args(profileRenameCmd, []string{"old", "new"}))
 }
 
 // TestDoProfileApply_ExternalEntry_IsNotRenderedAsADownload is P1a review

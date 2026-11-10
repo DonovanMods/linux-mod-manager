@@ -24,10 +24,11 @@ import (
 // run; each needs its own line. Walks the directory itself (rather than
 // parser.ParseDir, deprecated since Go 1.25) so it stays plain stdlib with
 // no new dependency on golang.org/x/tools/go/packages — same approach as
-// JSONTaggedExportedStructs. Shared by internal/core, internal/domain, and
-// internal/app's own doc-comment ratchets (v2 Phase 3 Task 20 review,
-// Important #1 / #305) — a copy of this helper existed in each package
-// before it moved here.
+// JSONTaggedExportedStructs. The doc-comment ratchet
+// (doccomment_test.go's TestExportedIdentifiersHaveDocComments) runs it
+// over every listed package as one table (#600); before that each package
+// carried its own copy of the test, and before v2 Phase 3 Task 20 review,
+// Important #1 / #305, its own copy of this helper.
 func UndocumentedExports(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

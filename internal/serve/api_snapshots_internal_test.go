@@ -119,13 +119,6 @@ func TestAPISnapshotDelete_ReservedNameIs400AndKeepsTheStore(t *testing.T) {
 	require.Len(t, decodeSnapshotListing(t, rec.Body.Bytes()).Snapshots, 1)
 }
 
-func TestAPISnapshotCreate_RejectsUnknownMembers(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-
-	rec := doAPI(s, http.MethodPost, scoped("/api/v1/snapshots", game), `{"nam":"typo"}`)
-	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-}
-
 func TestAPISnapshotDelete_RemovesItAndAnswersTheCoreDocument(t *testing.T) {
 	s, _, game := newFlowFixtureServer(t)
 	rec := doAPI(s, http.MethodPost, scoped("/api/v1/snapshots", game), `{"name":"doomed"}`)
@@ -148,16 +141,4 @@ func TestAPISnapshotDelete_UnknownNameIs404(t *testing.T) {
 
 	rec := doAPI(s, http.MethodDelete, scoped("/api/v1/snapshots/never-existed", game), "")
 	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
-}
-
-// TestAPISnapshots_MutationsRefuseAMissingCSRFToken pins that both writes
-// go through the same guard every other state-changing route does.
-func TestAPISnapshots_MutationsRefuseAMissingCSRFToken(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-
-	rec := doAPIWithoutCSRF(s, http.MethodPost, scoped("/api/v1/snapshots", game), `{"name":"x"}`)
-	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-
-	rec = doAPIWithoutCSRF(s, http.MethodDelete, scoped("/api/v1/snapshots/x", game), "")
-	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 }

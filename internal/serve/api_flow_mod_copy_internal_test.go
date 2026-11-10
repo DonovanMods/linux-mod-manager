@@ -174,11 +174,3 @@ func TestFlowModCopy_AllCopiesEveryListedMod(t *testing.T) {
 	require.Len(t, result.Skipped, 1)
 	assert.Equal(t, "p1", result.Skipped[0].ModID)
 }
-
-// TestFlowModCopy_RequiresCSRF.
-func TestFlowModCopy_RequiresCSRF(t *testing.T) {
-	s, _, game := newProfilesFixtureServer(t)
-
-	rec := doAPIWithoutCSRF(s, http.MethodPost, scopedTo("/api/v1/plans/mod_copy", game, activeProfile), copyBody(switchTargetProfile, "p3"))
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-}

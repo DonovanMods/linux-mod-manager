@@ -549,8 +549,7 @@ func TestService_PlanInstall_AuthRequiredSourceWrapsErrAuthRequired(t *testing.T
 // attempt would 404 and surface as an error, failing this test outright.
 func TestService_PlanInstall_PerformsZeroMutations(t *testing.T) {
 	svc := newFlowsTestService(t)
-	gameDir := t.TempDir()
-	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(context.Background(), game.ID, "default")
@@ -568,28 +567,12 @@ func TestService_PlanInstall_PerformsZeroMutations(t *testing.T) {
 		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}})
 	mock.AddMod("g1", &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "1.0", GameID: "g1"})
 
-	beforeMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, err)
-
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
-	require.NoError(t, err)
-	require.NotNil(t, plan)
-
-	afterMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, err)
-	assert.Equal(t, beforeMods, afterMods, "DB rows must be untouched after planning")
-
-	gameCache := svc.GetGameCache(game)
-	assert.False(t, gameCache.Exists("g1", "src", "mod1", "1.0"), "planning must not download/cache the target mod")
-	assert.False(t, gameCache.Exists("g1", "src", "dep1", "1.0"), "planning must not download/cache dependencies")
-
-	entries, err := os.ReadDir(gameDir)
-	require.NoError(t, err)
-	names := make([]string, len(entries))
-	for i, e := range entries {
-		names[i] = e.Name()
-	}
-	assert.Equal(t, []string{"existing.esp"}, names, "planning must not deploy any files")
+	assertPlanIsPure(t, svc, game, func() error {
+		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+		require.NoError(t, err)
+		require.NotNil(t, plan)
+		return err
+	})
 }
 
 // --- ApplyInstall (Phase 5b Task 2) ---

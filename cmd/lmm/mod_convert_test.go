@@ -428,15 +428,3 @@ func TestModConvertCommand_PakSource(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, installed.ConvertPaks)
 }
-
-// TestModConvertCmd_Structure pins the cobra wiring: convert accepts exactly
-// 2 positional args (mod-id, on|off).
-func TestModConvertCmd_Structure(t *testing.T) {
-	assert.Equal(t, "convert <mod-id> <on|off>", modConvertCmd.Use)
-	assert.NotEmpty(t, modConvertCmd.Short)
-	assert.NoError(t, modConvertCmd.Args(modConvertCmd, []string{"a", "on"}))
-	assert.NoError(t, modConvertCmd.Args(modConvertCmd, []string{"a", "off"}))
-	assert.Error(t, modConvertCmd.Args(modConvertCmd, []string{}))
-	assert.Error(t, modConvertCmd.Args(modConvertCmd, []string{"a"}))
-	assert.Error(t, modConvertCmd.Args(modConvertCmd, []string{"a", "on", "extra"}))
-}

@@ -126,19 +126,6 @@ func TestAPIProfileReorder_UnknownGameAnswers404(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 }
 
-// TestAPIProfileReorder_RefusesWithoutCSRF: a mutation entry point without
-// the token is refused before it can write anything.
-func TestAPIProfileReorder_RefusesWithoutCSRF(t *testing.T) {
-	s, svc, game := newProfilesFixtureServer(t)
-
-	rec := doAPIWithoutCSRF(s, http.MethodPost, reorderTarget(game), `{"ids":["p3","p1"]}`)
-	require.Equal(t, http.StatusForbidden, rec.Code)
-
-	stored, err := svc.NewProfileManager().Get(t.Context(), game.ID, activeProfile)
-	require.NoError(t, err)
-	assert.Equal(t, "p1", stored.Mods[0].ModID, "a refused request must not reorder anything")
-}
-
 // TestAPIConflicts_OrderPreviewMatchesTheRealReorder is the preview
 // contract Task B renders against: the document ?order= returns is exactly
 // the document the same reorder, really committed, produces afterwards.

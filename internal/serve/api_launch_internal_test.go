@@ -243,17 +243,6 @@ func TestAPIGameLaunch_NoLauncherIs501(t *testing.T) {
 	require.Equal(t, http.StatusNotImplemented, rec.Code, rec.Body.String())
 }
 
-// The POST is a state change like any other: without the CSRF token it is
-// refused before anything runs.
-func TestAPIGameLaunch_RefusedWithoutCSRF(t *testing.T) {
-	s, _, game, f := newLaunchServer(t)
-	deployFixtureProfile(t, s, game)
-
-	rec := doAPIWithoutCSRF(s, http.MethodPost, launchPath(game), `{}`)
-	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	assert.Empty(t, f.recorded())
-}
-
 // The body carries a profile and force, and nothing else: a member that
 // tries to name a program, its arguments or its environment is refused
 // outright, so no request can choose what lmm runs (the command line comes

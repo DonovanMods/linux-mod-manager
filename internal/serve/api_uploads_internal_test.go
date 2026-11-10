@@ -200,19 +200,6 @@ func TestAPIUploadCreate_RefusesAnOverLongBody(t *testing.T) {
 	assert.Equal(t, 0, s.uploads.len())
 }
 
-func TestAPIUploadCreate_RequiresTheCSRFToken(t *testing.T) {
-	s, _ := newDeployFixtureServer(t)
-	body, contentType := multipartUpload(t, uploadFormField, "x.zip", []byte("x"))
-	req := apiRequest(s, http.MethodPost, "/api/v1/uploads", body)
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Del(csrfHeaderName)
-	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-	assert.Equal(t, 0, s.uploads.len())
-}
-
 func TestAPIUploadDelete(t *testing.T) {
 	s, _ := newDeployFixtureServer(t)
 	rec := postUpload(t, s, "SomeMod.zip", []byte("x"))

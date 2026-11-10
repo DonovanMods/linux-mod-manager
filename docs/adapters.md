@@ -486,9 +486,9 @@ invisible — it simply stops being asked.
 returns a `Layout`, so the whole rule surface is testable with no
 filesystem: name the exact destination each member takes, because the cache
 entry's layout *is* the game directory's layout and a wrong prefix is a mod
-the game never sees. Add the package's own `doc_comment_test.go` (copy
-`internal/adapter/bepinex/doc_comment_test.go`) — every exported identifier
-needs a doc comment.
+the game never sees. Add the package's directory as a row in the doc-comment ratchet
+(`internal/testutil/doccomment_test.go`) — every exported identifier needs
+a doc comment.
 
 **4. Register it.** One line in `internal/app/adapters.go`:
 

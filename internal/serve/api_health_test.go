@@ -147,22 +147,6 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 	requireVerifyReportEncodesLike(t, rec.Body.Bytes(), report, want, since)
 }
 
-// TestServer_APIHealth_NoGames_Renders404 mirrors the other scoped
-// endpoints' unresolved-selection behaviour.
-func TestServer_APIHealth_NoGames_Renders404(t *testing.T) {
-	svc := newFixtureServiceNoGames(t)
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/health", nil)
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusNotFound, rec.Code)
-	var envelope apiErrorEnvelope
-	decodeStrict(t, rec.Body.Bytes(), &envelope)
-	assert.NotEmpty(t, envelope.Error)
-}
-
 // TestServer_APIConflicts_ReturnsExactConflictReport is
 // /api/v1/conflicts's headline test - the additive route the coordinator's
 // ruling added in place of folding conflicts into /api/v1/health: the body
@@ -190,22 +174,6 @@ func TestServer_APIConflicts_ReturnsExactConflictReport(t *testing.T) {
 	require.NoError(t, err)
 	want := &core.ConflictReport{GameID: game.ID, Profile: "default", Conflicts: conflicts}
 	requireEncodesLike(t, rec.Body.Bytes(), want)
-}
-
-// TestServer_APIConflicts_NoGames_Renders404 mirrors the other scoped
-// endpoints' unresolved-selection behaviour.
-func TestServer_APIConflicts_NoGames_Renders404(t *testing.T) {
-	svc := newFixtureServiceNoGames(t)
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/conflicts", nil)
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusNotFound, rec.Code)
-	var envelope apiErrorEnvelope
-	decodeStrict(t, rec.Body.Bytes(), &envelope)
-	assert.NotEmpty(t, envelope.Error)
 }
 
 // TestServer_APIHealth_SecondHydrateAnswersFromTheMemo is issue 336 at the

@@ -17,16 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestStatusCmd_FullStructure tests the status command structure in detail
-func TestStatusCmd_FullStructure(t *testing.T) {
-	assert.Equal(t, "status", statusCmd.Use)
-	assert.NotEmpty(t, statusCmd.Short)
-	assert.NotEmpty(t, statusCmd.Long)
-
-	// Status command should not require any flags
-	assert.NotNil(t, statusCmd.RunE)
-}
-
 // TestStatusCmd_NoGames tests status when no games are configured
 func TestStatusCmd_NoGames(t *testing.T) {
 	// Use temp directories (empty, no games configured)

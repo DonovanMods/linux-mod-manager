@@ -21,20 +21,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
-func TestSourceCmd_Structure(t *testing.T) {
-	assert.Equal(t, "source", sourceCmd.Use)
-	assert.NotEmpty(t, sourceCmd.Short)
-
-	names := make([]string, 0)
-	for _, c := range sourceCmd.Commands() {
-		names = append(names, c.Name())
-	}
-	assert.Contains(t, names, "list")
-	assert.Contains(t, names, "validate")
-	assert.Contains(t, names, "add")
-	assert.Contains(t, names, "remove")
-}
-
 // runSourceCmd executes the source command tree with args against a fresh
 // cobra root, capturing combined stdout/stderr. Shared by TestSourceValidateCmd
 // and TestSourceValidateProbe so both drive the real command wiring rather

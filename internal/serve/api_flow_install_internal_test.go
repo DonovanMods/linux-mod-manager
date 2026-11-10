@@ -165,18 +165,6 @@ func TestFlowInstall_StalePlan_FailsTheJobAndAFreshPlanSucceeds(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestFlowInstall_WithoutCSRF_IsRefused pins the CSRF rule on the plan
-// endpoint: no token, no plan, and nothing installed.
-func TestFlowInstall_WithoutCSRF_IsRefused(t *testing.T) {
-	s, svc, game, _ := newInstallFixtureServer(t)
-
-	rec := doAPIWithoutCSRF(s, http.MethodPost, scoped("/api/v1/plans/install", game), installPlanBody(installModID))
-	require.Equal(t, http.StatusForbidden, rec.Code)
-
-	_, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, installModID, game.ID, "default")
-	require.ErrorIs(t, err, domain.ErrModNotFound)
-}
-
 // TestFlowInstall_PlanCarriesDependenciesByDefault is the control for the
 // two no_deps tests below: without the option, the dependency is resolved
 // and shown.

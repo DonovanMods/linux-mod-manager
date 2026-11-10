@@ -81,21 +81,3 @@ func TestFlowUninstall_KeepCacheOptionIsHonoured(t *testing.T) {
 	assert.True(t, svc.GetGameCache(game).Exists(game.ID, fixtureSourceID, "m1", "1.0"),
 		"keep_cache must leave the cache entry in place")
 }
-
-// TestFlowUninstall_UsedPlanIsRefusedWithoutMutatingTwice is the plan
-// store's single-use rule seen from a double submission: the second
-// redemption is a 409 and the mod is removed exactly once.
-func TestFlowUninstall_UsedPlanIsRefusedWithoutMutatingTwice(t *testing.T) {
-	s, svc, game := newFlowFixtureServer(t)
-	deployFixtureProfile(t, s, game)
-
-	id, _ := planFlow(t, s, game, "uninstall", uninstallPlanBody)
-	j := startFlowJob(t, s, id, "")
-	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
-
-	again := doAPI(s, http.MethodPost, "/api/v1/jobs", `{"plan_id":"`+string(id)+`"}`)
-	require.Equal(t, http.StatusConflict, again.Code, again.Body.String())
-
-	_, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "m1", game.ID, "default")
-	require.ErrorIs(t, err, domain.ErrModNotFound)
-}

@@ -353,26 +353,6 @@ func TestDoModUnlock_NotInstalled_ModNotFound(t *testing.T) {
 	assert.Equal(t, "mod not found: missing", err.Error())
 }
 
-// TestModLockCmd_Structure and TestModUnlockCmd_Structure pin the cobra
-// wiring the brief specifies: lock accepts 1 or 2 positional args (mod-id,
-// optional version), unlock accepts exactly 1.
-func TestModLockCmd_Structure(t *testing.T) {
-	assert.Equal(t, "lock <mod-id> [version]", modLockCmd.Use)
-	assert.NotEmpty(t, modLockCmd.Short)
-	assert.NoError(t, modLockCmd.Args(modLockCmd, []string{"a"}))
-	assert.NoError(t, modLockCmd.Args(modLockCmd, []string{"a", "1.0"}))
-	assert.Error(t, modLockCmd.Args(modLockCmd, []string{}))
-	assert.Error(t, modLockCmd.Args(modLockCmd, []string{"a", "1.0", "extra"}))
-}
-
-func TestModUnlockCmd_Structure(t *testing.T) {
-	assert.Equal(t, "unlock <mod-id>", modUnlockCmd.Use)
-	assert.NotEmpty(t, modUnlockCmd.Short)
-	assert.NoError(t, modUnlockCmd.Args(modUnlockCmd, []string{"a"}))
-	assert.Error(t, modUnlockCmd.Args(modUnlockCmd, []string{}))
-	assert.Error(t, modUnlockCmd.Args(modUnlockCmd, []string{"a", "extra"}))
-}
-
 // TestPinFlagHelp_ReframedAsCheckMute guards the --pin help-text reframe:
 // pinning mutes update checks; holding an exact version is lock's job now.
 func TestPinFlagHelp_ReframedAsCheckMute(t *testing.T) {

@@ -135,16 +135,12 @@ func TestService_PlanRollback_PerformsZeroMutations(t *testing.T) {
 		map[string][]byte{"mod1-old.esp": []byte("old-content")},
 		map[string][]byte{"mod1-new.esp": []byte("new-content")})
 
-	beforeMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, err)
-
-	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
-	require.NoError(t, err)
-	require.NotNil(t, plan)
-
-	afterMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, err)
-	assert.Equal(t, beforeMods, afterMods, "DB rows must be untouched after planning")
+	assertPlanIsPure(t, svc, game, func() error {
+		plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+		require.NoError(t, err)
+		require.NotNil(t, plan)
+		return err
+	})
 }
 
 // TestService_ApplyRollback_ErrStalePlan guards Ruling 5: a plan computed

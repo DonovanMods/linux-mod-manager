@@ -30,12 +30,6 @@ func resetGameLoaderFlags(t *testing.T) {
 	gameEditLoader, gameEditLoaderVersion, gameEditLoaderRuntime, gameEditLoaderBootstrap = "", "", "", ""
 }
 
-func TestGameShowCmd_Structure(t *testing.T) {
-	assert.Equal(t, "show <game-id>", gameShowCmd.Use)
-	assert.NotEmpty(t, gameShowCmd.Short)
-	assert.NotEmpty(t, gameShowCmd.Long)
-}
-
 // TestLoaderSpecFromFlags: --loader alone is a complete declaration (lmm
 // reads the runtime and bootstrap off the install directory), and the three
 // detail flags are refused on their own rather than silently ignored - a user

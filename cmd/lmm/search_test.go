@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +10,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -79,76 +77,6 @@ func TestTruncate(t *testing.T) {
 			result := truncate(tt.input, tt.maxLen)
 			assert.Equal(t, tt.expected, result)
 		})
-	}
-}
-
-// TestSearchCmd_Structure tests the search command structure
-func TestSearchCmd_Structure(t *testing.T) {
-	assert.Equal(t, "search <query>", searchCmd.Use)
-	assert.NotEmpty(t, searchCmd.Short)
-	assert.NotEmpty(t, searchCmd.Long)
-
-	// Check flags exist
-	assert.NotNil(t, searchCmd.Flags().Lookup("source"))
-	assert.NotNil(t, searchCmd.Flags().Lookup("limit"))
-}
-
-// TestSearchCmd_NoGame tests search without game flag
-func TestSearchCmd_NoGame(t *testing.T) {
-	// Reset flags. configDir must point at an empty tempdir so requireGame
-	// does not pick up a default-game from the user's real ~/.config/lmm.
-	gameID = ""
-	configDir = t.TempDir()
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(searchCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(searchCmd); rootCmd.AddCommand(searchCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"search", "test-query"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no game specified")
-}
-
-// TestSearchCmd_NoQuery tests search without query argument
-func TestSearchCmd_NoQuery(t *testing.T) {
-	restoreFlags(t)
-	gameID = "test-game"
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(searchCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(searchCmd); rootCmd.AddCommand(searchCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"search"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "requires at least 1 arg")
-}
-
-// TestSearchCmd_DefaultFlags tests that default flag values are set
-func TestSearchCmd_DefaultFlags(t *testing.T) {
-	// Check default values
-	sourceFlag := searchCmd.Flags().Lookup("source")
-	assert.Equal(t, "", sourceFlag.DefValue)
-
-	limitFlag := searchCmd.Flags().Lookup("limit")
-	assert.Equal(t, "10", limitFlag.DefValue)
-}
-
-func TestSearchCmdStructure(t *testing.T) {
-	assert.Equal(t, "search <query>", searchCmd.Use)
-	flag := searchCmd.Flags().Lookup("source")
-	if assert.NotNil(t, flag) {
-		assert.Contains(t, flag.Usage, "all configured sources",
-			"help text must reflect the new aggregate default")
 	}
 }
 

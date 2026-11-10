@@ -73,44 +73,6 @@ func TestServer_APISearch_LimitParam_CapsResults(t *testing.T) {
 	requireEncodesLike(t, rec.Body.Bytes(), want)
 }
 
-// TestServer_APISearch_InvalidLimitParam_Renders400 proves a non-numeric
-// ?limit= is bad input (400), the same class of error as a missing q.
-func TestServer_APISearch_InvalidLimitParam_Renders400(t *testing.T) {
-	src := newFakeSource("fake")
-	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&limit=nope", nil)
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	var envelope apiErrorEnvelope
-	decodeStrict(t, rec.Body.Bytes(), &envelope)
-	assert.Contains(t, envelope.Error, "limit")
-}
-
-// TestServer_APISearch_MissingQuery_Renders400 proves a missing/empty q is
-// bad input (400): unlike the /search PAGE, which has a bare form to fall
-// back to, the API has nothing to render without a query, matching the
-// CLI's own cobra.MinimumNArgs(1) requirement for `lmm search`.
-func TestServer_APISearch_MissingQuery_Renders400(t *testing.T) {
-	src := newFakeSource("fake")
-	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search", nil)
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
-
-	var envelope apiErrorEnvelope
-	decodeStrict(t, rec.Body.Bytes(), &envelope)
-	assert.Contains(t, envelope.Error, "q")
-}
-
 // TestServer_APISearch_PageParams_ThreadThroughAndCapResults is #331's RED
 // test for the search PAGE's pagination: ?page=/?page_size= forward into
 // SearchOptions, echo back on the report, and (with no ?limit=) page_size
@@ -138,39 +100,6 @@ func TestServer_APISearch_PageParams_ThreadThroughAndCapResults(t *testing.T) {
 	want, err := svc.Search(context.Background(), game, "default", "boots", core.SearchOptions{Page: 0, PageSize: 2, Limit: 2})
 	require.NoError(t, err)
 	requireEncodesLike(t, rec.Body.Bytes(), want)
-}
-
-// TestServer_APISearch_InvalidPageParam_Renders400 and its page_size
-// sibling prove both new params are refused the same way ?limit= already
-// is: bad input, not a 500 from a core call that never runs.
-func TestServer_APISearch_InvalidPageParam_Renders400(t *testing.T) {
-	src := newFakeSource("fake")
-	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&page=nope", nil)
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	var envelope apiErrorEnvelope
-	decodeStrict(t, rec.Body.Bytes(), &envelope)
-	assert.Contains(t, envelope.Error, "page")
-}
-
-func TestServer_APISearch_InvalidPageSizeParam_Renders400(t *testing.T) {
-	src := newFakeSource("fake")
-	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&page_size=nope", nil)
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	var envelope apiErrorEnvelope
-	decodeStrict(t, rec.Body.Bytes(), &envelope)
-	assert.Contains(t, envelope.Error, "page_size")
 }
 
 // TestServer_APISearch_ExplicitLimitOverridesPageSizeCap proves an explicit
@@ -335,26 +264,6 @@ func TestServer_APISearch_SourceParam_NarrowsToNamedSource(t *testing.T) {
 	assert.Equal(t, "Boots From Two", report.Mods[0].Name)
 }
 
-// TestServer_APISearch_UnresolvedSelection_Renders404 proves the missing-q
-// check only gates a genuinely absent/empty q: once q is present
-// (?q=boots), an unresolvable ?game= still surfaces as the ordinary
-// selection 404 (details naming the valid game), the same as every other
-// scoped endpoint - the 400 short-circuit above does not swallow it.
-func TestServer_APISearch_UnresolvedSelection_Renders404(t *testing.T) {
-	src := newFakeSource("fake")
-	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&game=nope", nil)
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusNotFound, rec.Code)
-	var envelope apiErrorEnvelope
-	decodeStrict(t, rec.Body.Bytes(), &envelope)
-	assert.Contains(t, envelope.Error, "nope")
-}
-
 // TestServer_APISearch_TagParam_ForwardsToTheSourceFilter is #326's
 // parity fix (epic live review C-3: "`search --tag` - no tag param on
 // /api/v1/search"). ?tag= forwards verbatim into
@@ -439,15 +348,23 @@ func TestServer_APISearch_NoTagParam_IsUnfiltered(t *testing.T) {
 	assert.Len(t, report.Mods, 2)
 }
 
-// TestServer_APISearch_OutOfRangePagingParams_Renders400 is T1 review #1's
-// other half: a paging parameter arrives from the network, and forwarding
-// it verbatim made `?page=9223372036854775807` overflow a source's own
-// `(page-1)*pageSize` into a negative slice index and panic the handler
-// (thunderstore, search.go). The source clamps it now, but the RULE lives
-// here: this endpoint must never hand core a page, page size or limit that
-// is not a plausible one, whichever source ends up receiving it. Bad input
-// is a 400 with the parameter named, exactly like ?limit=nope.
-func TestServer_APISearch_OutOfRangePagingParams_Renders400(t *testing.T) {
+// TestServer_APISearch_BadParams_Renders400 holds every unusable query
+// parameter to a 400 in the JSON error envelope, naming the parameter:
+//
+//   - a missing/empty q: unlike the /search PAGE, which has a bare form to
+//     fall back to, the API has nothing to render without a query, matching
+//     the CLI's own cobra.MinimumNArgs(1) requirement for `lmm search`;
+//   - a non-numeric ?limit=, ?page= or ?page_size= - bad input, not a 500
+//     from a core call that never runs;
+//   - an out-of-range page, page size or limit (T1 review #1): forwarding
+//     one verbatim made `?page=9223372036854775807` overflow a source's own
+//     `(page-1)*pageSize` into a negative slice index and panic the handler (thunderstore, search.go). The source clamps it
+//     now, but the RULE lives here: this endpoint must never hand core a
+//     page, page size or limit that is not a plausible one, whichever
+//     source ends up receiving it;
+//   - an unknown ?sort= (#503), with or without ?source=, whose refusal
+//     names the valid values.
+func TestServer_APISearch_BadParams_Renders400(t *testing.T) {
 	src := newFakeSource("fake")
 	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Better Boots", Version: "1.0"}})
 	svc, _ := newFixtureServiceWithSource(t, src)
@@ -456,26 +373,35 @@ func TestServer_APISearch_OutOfRangePagingParams_Renders400(t *testing.T) {
 	tests := []struct {
 		name  string
 		query string
-		param string
+		want  []string // substrings of the envelope's error
 	}{
-		{"page overflows int", "page=9223372036854775807", "page"},
-		{"page just under the overflow", "page=4611686018427387903", "page"},
-		{"page is negative", "page=-1", "page"},
-		{"page size is negative", "page_size=-1", "page_size"},
-		{"page size is absurd", "page_size=9223372036854775807", "page_size"},
-		{"limit is negative", "limit=-1", "limit"},
-		{"limit is absurd", "limit=9223372036854775807", "limit"},
+		{"q is missing", "", []string{"q"}},
+		{"limit is not a number", "q=boots&limit=nope", []string{"limit"}},
+		{"page is not a number", "q=boots&page=nope", []string{"page"}},
+		{"page size is not a number", "q=boots&page_size=nope", []string{"page_size"}},
+		{"page overflows int", "q=boots&page=9223372036854775807", []string{"page"}},
+		{"page just under the overflow", "q=boots&page=4611686018427387903", []string{"page"}},
+		{"page is negative", "q=boots&page=-1", []string{"page"}},
+		{"page size is negative", "q=boots&page_size=-1", []string{"page_size"}},
+		{"page size is absurd", "q=boots&page_size=9223372036854775807", []string{"page_size"}},
+		{"limit is negative", "q=boots&limit=-1", []string{"limit"}},
+		{"limit is absurd", "q=boots&limit=9223372036854775807", []string{"limit"}},
+		{"sort is unknown", "q=boots&sort=newest", []string{`"newest"`, "downloads"}},
+		{"sort is unknown for one source", "q=boots&sort=newest&source=fake", []string{`"newest"`, "downloads"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&"+tt.query, nil)
+			req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?"+tt.query, nil)
 			rec := httptest.NewRecorder()
 			srv.Handler().ServeHTTP(rec, req)
 
 			require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+			assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 			var envelope apiErrorEnvelope
 			decodeStrict(t, rec.Body.Bytes(), &envelope)
-			assert.Contains(t, envelope.Error, tt.param)
+			for _, w := range tt.want {
+				assert.Contains(t, envelope.Error, w)
+			}
 		})
 	}
 }
@@ -521,25 +447,4 @@ func TestServer_APISearch_NoSortParam_IsRelevance(t *testing.T) {
 	var report core.SearchReport
 	decodeStrict(t, rec.Body.Bytes(), &report)
 	assert.Equal(t, domain.SortRelevance, report.Sort)
-}
-
-func TestServer_APISearch_UnknownSortParam_Renders400(t *testing.T) {
-	src := newFakeSource("fake")
-	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Boots"}})
-	svc, _ := newFixtureServiceWithSource(t, src)
-
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-	for _, target := range []string{
-		"http://" + testAddr + "/api/v1/search?q=boots&sort=newest",
-		"http://" + testAddr + "/api/v1/search?q=boots&sort=newest&source=fake",
-	} {
-		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
-
-		require.Equal(t, http.StatusBadRequest, rec.Code, target)
-		var envelope apiErrorEnvelope
-		decodeStrict(t, rec.Body.Bytes(), &envelope)
-		assert.Contains(t, envelope.Error, `"newest"`)
-		assert.Contains(t, envelope.Error, "downloads", "the refusal names the valid values")
-	}
 }

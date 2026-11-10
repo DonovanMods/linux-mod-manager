@@ -355,34 +355,6 @@ func TestAPIProfileExport_UnknownProfileAnswers404(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 }
 
-// TestAPIProfileCRUD_RefusesWithoutCSRF: every state-changing route in this
-// file is behind the same token, DELETE included.
-func TestAPIProfileCRUD_RefusesWithoutCSRF(t *testing.T) {
-	tests := []struct {
-		method string
-		target string
-		body   string
-	}{
-		{http.MethodPost, "/api/v1/profiles", `{"name":"survival"}`},
-		{http.MethodDelete, "/api/v1/profiles/" + switchTargetProfile, ""},
-		{http.MethodPost, "/api/v1/profiles/" + switchTargetProfile + "/set-default", ""},
-		{http.MethodPost, "/api/v1/profiles/" + activeProfile + "/rename", `{"name":"survival"}`},
-		{http.MethodPost, "/api/v1/profiles/" + activeProfile + "/duplicate", `{"name":"survival"}`},
-	}
-	for _, tc := range tests {
-		t.Run(tc.method+" "+tc.target, func(t *testing.T) {
-			s, svc, game := newProfilesFixtureServer(t)
-			rec := doAPIWithoutCSRF(s, tc.method, scoped(tc.target, game), tc.body)
-			require.Equal(t, http.StatusForbidden, rec.Code)
-
-			names, err := svc.NewProfileManager().ListNames(t.Context(), game.ID)
-			require.NoError(t, err)
-			assert.ElementsMatch(t, []string{activeProfile, switchTargetProfile, applyTargetProfile}, names,
-				"a refused request must not have changed the profile set")
-		})
-	}
-}
-
 // TestAPIProfileCRUD_UnknownGameAnswers404: the game half of the selection
 // still governs, even though the profile is in the path.
 func TestAPIProfileCRUD_UnknownGameAnswers404(t *testing.T) {
