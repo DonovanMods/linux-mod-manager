@@ -109,10 +109,7 @@ func deployRecordingProgress(t *testing.T, svc *core.Service, game *domain.Game)
 // literal) and carrying the participant count, and the same readout on
 // DeployResult for progress-less callers.
 func TestDeployProfile_Compile_ClassifiesModsAndEmitsMergeSynced(t *testing.T) {
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	registerCompileSource(svc, &fakeCompilerSource{})
 	game := setupCompileReadoutGame(t, svc)
 
@@ -159,10 +156,7 @@ func TestDeployProfile_Compile_ClassifiesModsAndEmitsMergeSynced(t *testing.T) {
 // failed ... deploying raw" warning carries the correction, and the
 // DeployMergeSynced footer reports the raw fallback count accurately.
 func TestDeployProfile_Compile_ConversionFailure_ReportsRawFallback(t *testing.T) {
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	registerCompileSource(svc, &pakConversionOutcomeSource{
 		fakeCompilerSource: &fakeCompilerSource{},
 		failRefs:           map[string]string{"fake-compiler:flaky-pak": "irreconcilable"},
@@ -222,15 +216,12 @@ func TestDeployProfile_Compile_ConversionFailure_ReportsRawFallback(t *testing.T
 // game's deploy must carry no classification and no merge event - its output
 // contract is byte-identical to before #255.
 func TestDeployProfile_NonCompile_NoMergeReadout(t *testing.T) {
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	game := &domain.Game{ID: "plain", Name: "Plain", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(context.Background(), game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "a", "1.0", "a.esp", []byte("data")))

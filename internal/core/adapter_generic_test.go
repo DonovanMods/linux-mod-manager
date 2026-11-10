@@ -17,16 +17,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newAdapterTestService is newPlanTestService with an adapter registry the
+// newAdapterTestService is newBareService with an adapter registry the
 // test can add to. Everything else about the Service is the default, which
 // is the point: the registry a Service builds for itself already holds the
 // generic identity.
 func newAdapterTestService(t *testing.T) *Service {
 	t.Helper()
-	svc, err := NewService(ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	return svc
+	return newBareService(t)
 }
 
 // compileStub is the smallest adapter that satisfies adapter.MergeCompiler,

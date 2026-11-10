@@ -31,6 +31,16 @@ func (s *versionedFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) 
 	}, nil
 }
 
+// newBareService returns a Service over three fresh temp directories, with
+// nothing seeded and no source registered, closed when the test ends.
+func newBareService(t *testing.T) *core.Service {
+	t.Helper()
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	return svc
+}
+
 // createTestScript creates an executable script in the temp directory.
 // Shared by every hook-lifecycle test across this package (flows_test.go,
 // flows_install_test.go, flows_update_test.go, flows_rollback_test.go,

@@ -11,14 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newPlanTestService(t *testing.T) *Service {
-	t.Helper()
-	svc, err := NewService(ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	return svc
-}
-
 func seedPlanTestMod(t *testing.T, svc *Service, gameID, profileName, sourceID, modID, version string, enabled bool) {
 	t.Helper()
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
@@ -38,7 +30,7 @@ func seedPlanTestMod(t *testing.T, svc *Service, gameID, profileName, sourceID, 
 // TestCheckPlanFresh_EqualSnapshotsPass pins that a plan whose recorded
 // snapshot still matches the current installed-mod set is not stale.
 func TestCheckPlanFresh_EqualSnapshotsPass(t *testing.T) {
-	svc := newPlanTestService(t)
+	svc := newBareService(t)
 	ctx := context.Background()
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
 
@@ -51,7 +43,7 @@ func TestCheckPlanFresh_EqualSnapshotsPass(t *testing.T) {
 // TestCheckPlanFresh_VersionBumpIsStale pins that a version change between
 // plan and apply is caught.
 func TestCheckPlanFresh_VersionBumpIsStale(t *testing.T) {
-	svc := newPlanTestService(t)
+	svc := newBareService(t)
 	ctx := context.Background()
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
 
@@ -68,7 +60,7 @@ func TestCheckPlanFresh_VersionBumpIsStale(t *testing.T) {
 // TestCheckPlanFresh_EnableFlipIsStale pins that an enable/disable flip
 // between plan and apply is caught.
 func TestCheckPlanFresh_EnableFlipIsStale(t *testing.T) {
-	svc := newPlanTestService(t)
+	svc := newBareService(t)
 	ctx := context.Background()
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
 
@@ -85,7 +77,7 @@ func TestCheckPlanFresh_EnableFlipIsStale(t *testing.T) {
 // TestCheckPlanFresh_AddedModIsStale pins that a mod installed after the
 // plan was computed is caught.
 func TestCheckPlanFresh_AddedModIsStale(t *testing.T) {
-	svc := newPlanTestService(t)
+	svc := newBareService(t)
 	ctx := context.Background()
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
 
@@ -102,7 +94,7 @@ func TestCheckPlanFresh_AddedModIsStale(t *testing.T) {
 // TestCheckPlanFresh_RemovedModIsStale pins that a mod uninstalled after the
 // plan was computed is caught.
 func TestCheckPlanFresh_RemovedModIsStale(t *testing.T) {
-	svc := newPlanTestService(t)
+	svc := newBareService(t)
 	ctx := context.Background()
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod2", "1.0", true)

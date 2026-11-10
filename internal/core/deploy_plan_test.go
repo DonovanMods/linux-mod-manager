@@ -268,10 +268,7 @@ func TestPlanDeploy_Purge_LinkAndRemove_MatchWhatApplyDeployThenDid(t *testing.T
 // created paths are covered by Link UNION {Merged.Artifact}, never by Link
 // alone.
 func TestPlanDeploy_Compile_LinkAndRemove_MatchWhatApplyDeployThenDid(t *testing.T) {
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	registerCompileSource(svc, &fakeCompilerSource{})
 	game := setupCompileReadoutGame(t, svc)
 
@@ -531,10 +528,7 @@ func TestApplyDeploy_NilPlan_IsRefused(t *testing.T) {
 // rides it, and RawFallbacks names the ConvertPaks-opted-out paks that
 // deploy raw instead.
 func TestPlanDeploy_Compile_MergePlanNamesArtifactSourcesAndRawFallbacks(t *testing.T) {
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	registerCompileSource(svc, &fakeCompilerSource{})
 	game := setupCompileReadoutGame(t, svc)
 
