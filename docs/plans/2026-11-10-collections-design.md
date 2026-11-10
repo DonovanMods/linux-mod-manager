@@ -1,6 +1,6 @@
 # NexusMods Collections, FOMOD and plugin order — design (#597, #354, #355)
 
-**Date:** 2026-11-10 · **Status:** For review · **Issues:** [#597](https://github.com/DonovanMods/linux-mod-manager/issues/597) (Collections), [#354](https://github.com/DonovanMods/linux-mod-manager/issues/354) (FOMOD), [#355](https://github.com/DonovanMods/linux-mod-manager/issues/355) (plugin order)
+**Date:** 2026-11-10 · **Status:** Approved (owner rulings below; stories #601–#619) · **Issues:** [#597](https://github.com/DonovanMods/linux-mod-manager/issues/597) (Collections), [#354](https://github.com/DonovanMods/linux-mod-manager/issues/354) (FOMOD), [#355](https://github.com/DonovanMods/linux-mod-manager/issues/355) (plugin order)
 **Inputs:** the three spikes in [2026-11-10-collections-spike-findings.md](2026-11-10-collections-spike-findings.md) (every external fact below is theirs, with its VERIFIED/INFERRED/UNVERIFIED tag there), the game-adapter seam ([2026-09-10-game-adapter-design.md](2026-09-10-game-adapter-design.md)), the Steam Workshop collection path ([2026-09-09-steam-workshop-design.md](2026-09-09-steam-workshop-design.md) §4), the manual-download flow (#543), and the v2 rules (Plan/Apply, typed errors, thin frontends, additive JSON) in [2026-08-27-v2-core-refactor-design.md](2026-08-27-v2-core-refactor-design.md).
 
 No code in this unit. Each numbered section is a decision, not a menu; §11 holds the genuine forks.
@@ -513,8 +513,40 @@ These are the genuine forks; everything above is decided unless a reviewer reope
 
 1. **Free accounts and the recipe — needs a real key.** Can a free account fetch the collection archive (`/v2/collections/{id}/revisions/{id}/download_link`)? Vortex's comments suggest yes; nobody has tested it. If no, free users get list-only imports (`manifest_unavailable`, Apply refused) and C3's value drops sharply. **Ask:** one `curl` with a free-account key and one with a Premium key, recorded into C1's and C2's fixtures. The Nexus ToS wording on automating free downloads was not found either; lmm's no-automation stance stands regardless.
 2. **Real `collection.json` samples.** The spike read Vortex's types but no real manifests, and found the plugin-rule generator and parser disagreeing on key names. C2 should start by downloading three or four real ones (one Skyrim SE with FOMOD and plugin rules, one non-Bethesda, one with bundled files or patches) as fixtures. That needs a key, so it goes with Q1.
-3. **Plugins.txt ownership.** Decided above: lmm writes the whole file from the profile, re-reads it before each write, and keeps plugins it did not deploy (hand-installed, or added by the game's own Creations menu) in place. The alternative is a stricter "lmm's file is the whole truth" mode that deactivates anything the profile does not name. That fits lmm's reproducibility promise better, but it would silently switch off a Creation bought in-game. Reviewer's call.
-4. **Optional collection mods default.** Decided: off, opt-in (`--with-optional`, or per item in the SPA plan). Vortex asks the user. The alternative is on by default, which matches what the curator shipped as the "full" experience.
+3. **Plugins.txt ownership.** **Ruled 2026-11-10: preserve external plugins.** Decided above: lmm writes the whole file from the profile, re-reads it before each write, and keeps plugins it did not deploy (hand-installed, or added by the game's own Creations menu) in place. The alternative is a stricter "lmm's file is the whole truth" mode that deactivates anything the profile does not name. That fits lmm's reproducibility promise better, but it would silently switch off a Creation bought in-game. Reviewer's call.
+4. **Optional collection mods default.** **Ruled 2026-11-10: off, opt-in.** Decided: off, opt-in (`--with-optional`, or per item in the SPA plan). Vortex asks the user. The alternative is on by default, which matches what the curator shipped as the "full" experience.
 5. **Old binaries dropping new profile keys.** Accepted above (self-update makes downgrades rare). The alternative is a `requires_lmm: ">=2.N"` profile key that older binaries refuse to rewrite. That only protects binaries released *after* it, so it is cheap insurance for the next feature rather than this one.
-6. **FOMOD placement in core** reverses #354's text ("lives in a bethesda adapter"). Decided above with reasons (§4); recorded here because it changes an issue's stated plan.
+6. **FOMOD placement in core** (**ruled 2026-11-10: core, all games**) reverses #354's text ("lives in a bethesda adapter"). Decided above with reasons (§4); recorded here because it changes an issue's stated plan.
 7. **`gameDependency` and script-extender versions** evaluate as satisfied, with a warning (§4). Reading a Windows executable's version resource would answer them properly (`debug/pe` parses the headers; walking the resource section is the extra work). Deferred, not rejected: it becomes worth doing if real FOMODs turn out to gate on it often.
+
+---
+
+## Decisions log
+
+**Owner rulings, 2026-11-10:**
+
+- FOMOD lives in core, for every game (§4, Q6). #354 has a comment recording the change of placement.
+- `Plugins.txt`: preserve plugins lmm did not deploy (§5, Q3).
+- Optional collection mods: off by default, opt-in (§3, Q4).
+- File the stories now: done, as below.
+
+**Story issues:**
+
+| Story | Issue | Story | Issue | Story | Issue |
+|---|---|---|---|---|---|
+| C1 | #601 | C5 | #610 | F2 | #614 |
+| A1 | #602 | C6 | #611 | F3 | #615 |
+| C2 | #607 | C7 | #612 | P1 | #605 |
+| C3 | #608 | C8 | #613 | P2 | #606 |
+| C4 | #609 | F0 | #603 | P3 | #616 |
+| | | F1 | #604 | P4 | #617 |
+| | | | | P5 | #618 |
+| | | | | P6 | #619 |
+
+**First real collection, 2026-11-10.** The owner supplied `cyberpunk2077/iszwwe` ("Welcome to Night City 2.5"). Queried anonymously:
+
+- Revision 484 (id 833991), collection id 11525: 364 items, about 491 MB, no external resources, no optional items, every `updatePolicy` `exact`.
+- The `downloadLink` is `/v2/collections/11525/revisions/833991/download_link`. It is keyed by numeric ids, which confirms `Collection.Handle` (§2).
+- 116 of the pinned files are not the mod's primary file, 13 are `OLD_VERSION` and 3 are `ARCHIVED`. C2 must install by exact file id, including archived files. Whether the API serves download links for archived files is unverified, and is now part of #607.
+- Its `collection.json` (FOMOD choices, mod rules, bundled files) needs an API key and has not been read yet (Q1/Q2).
+
