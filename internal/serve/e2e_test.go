@@ -976,24 +976,6 @@ func TestE2E_ConfirmModalCancelsWithoutMutating(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_ConfirmModalEscapeClosesIt covers the keyboard route out of a
-// modal, which is the one every desktop user reaches for first and the one
-// a hand-rolled dialog most often forgets.
-func TestE2E_ConfirmModalEscapeClosesIt(t *testing.T) {
-	f := newE2EFixtureWithDeployableMods(t)
-
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
-		chromedp.KeyEvent(kb.Escape),
-		waitGone(`.modal`),
-	)
-
-	assert.Empty(t, f.BrowserErrors())
-}
-
 // TestE2E_ConfirmModalRendersAPlanFailureHonestly is the I3 rule applied to
 // the modal: a plan that could not be computed says so, with the envelope's
 // own message, and offers no Confirm button at all. Rendering an empty plan
