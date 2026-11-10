@@ -23,7 +23,7 @@ import (
 
 func TestProfileApply_AFailedModMakesTheApplyIncomplete(t *testing.T) {
 	ctx := context.Background()
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	svc.RegisterSource(newTwoVersionSource(t))
 
@@ -84,7 +84,7 @@ func TestProfileApply_AFailedModMakesTheApplyIncomplete(t *testing.T) {
 
 func TestProfileApply_AnApplyWithNoFailureIsNotAnError(t *testing.T) {
 	ctx := context.Background()
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	seedInstalledMod(t, svc, game, "src", "on", "1.0", false, map[string][]byte{"on.esp": []byte("on")})
 	require.NoError(t, svc.NewProfileManager().AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "on", Version: "1.0"}))
 	plan, err := svc.PlanProfileApply(ctx, game, "default")

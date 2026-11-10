@@ -41,6 +41,22 @@ func newBareService(t *testing.T) *core.Service {
 	return svc
 }
 
+// newDefaultProfileService builds a service plus a game with an empty
+// "default" profile set as the game's default - the shape the profile apply
+// and sync flow tests start from. The game is deliberately NOT registered
+// with the service (no SaveGame): a test that needs it registered says so.
+func newDefaultProfileService(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	return svc, game
+}
+
 // createTestScript creates an executable script in the temp directory.
 // Shared by every hook-lifecycle test across this package (flows_test.go,
 // flows_install_test.go, flows_update_test.go, flows_rollback_test.go,

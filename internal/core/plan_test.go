@@ -57,56 +57,42 @@ func TestCheckPlanFresh_VersionBumpIsStale(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrStalePlan))
 }
 
-// TestCheckPlanFresh_EnableFlipIsStale pins that an enable/disable flip
-// between plan and apply is caught.
-func TestCheckPlanFresh_EnableFlipIsStale(t *testing.T) {
-	svc := newBareService(t)
-	ctx := context.Background()
-	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
+// TestCheckPlanFresh_ChangedInstallIsStale pins that a change to the
+// installed set between plan and apply is caught: an enable/disable flip, a
+// mod installed after the plan was computed, and a mod uninstalled after it.
+// Every row starts from mod1 and mod2 installed and enabled.
+func TestCheckPlanFresh_ChangedInstallIsStale(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, svc *Service)
+	}{
+		{"enable flip", func(t *testing.T, svc *Service) {
+			seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", false)
+		}},
+		{"added mod", func(t *testing.T, svc *Service) {
+			seedPlanTestMod(t, svc, "g1", "default", "src", "mod3", "1.0", true)
+		}},
+		{"removed mod", func(t *testing.T, svc *Service) {
+			require.NoError(t, svc.DeleteInstalledMod(context.Background(), "src", "mod2", "g1", "default"))
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newBareService(t)
+			ctx := context.Background()
+			seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
+			seedPlanTestMod(t, svc, "g1", "default", "src", "mod2", "1.0", true)
 
-	want, err := svc.currentInstalledSnapshot(ctx, "g1", "default")
-	require.NoError(t, err)
+			want, err := svc.currentInstalledSnapshot(ctx, "g1", "default")
+			require.NoError(t, err)
 
-	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", false)
+			tt.mutate(t, svc)
 
-	err = svc.checkPlanFresh(ctx, "g1", "default", want)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrStalePlan))
-}
-
-// TestCheckPlanFresh_AddedModIsStale pins that a mod installed after the
-// plan was computed is caught.
-func TestCheckPlanFresh_AddedModIsStale(t *testing.T) {
-	svc := newBareService(t)
-	ctx := context.Background()
-	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
-
-	want, err := svc.currentInstalledSnapshot(ctx, "g1", "default")
-	require.NoError(t, err)
-
-	seedPlanTestMod(t, svc, "g1", "default", "src", "mod2", "1.0", true)
-
-	err = svc.checkPlanFresh(ctx, "g1", "default", want)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrStalePlan))
-}
-
-// TestCheckPlanFresh_RemovedModIsStale pins that a mod uninstalled after the
-// plan was computed is caught.
-func TestCheckPlanFresh_RemovedModIsStale(t *testing.T) {
-	svc := newBareService(t)
-	ctx := context.Background()
-	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
-	seedPlanTestMod(t, svc, "g1", "default", "src", "mod2", "1.0", true)
-
-	want, err := svc.currentInstalledSnapshot(ctx, "g1", "default")
-	require.NoError(t, err)
-
-	require.NoError(t, svc.DeleteInstalledMod(ctx, "src", "mod2", "g1", "default"))
-
-	err = svc.checkPlanFresh(ctx, "g1", "default", want)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrStalePlan))
+			err = svc.checkPlanFresh(ctx, "g1", "default", want)
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, ErrStalePlan))
+		})
+	}
 }
 
 // TestMergedArtifactAction_TextRoundTrip pins the typed enum's wire
