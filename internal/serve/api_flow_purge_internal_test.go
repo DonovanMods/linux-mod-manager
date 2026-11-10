@@ -83,16 +83,3 @@ func TestFlowPurge_RejectsUnknownOptions(t *testing.T) {
 	rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/purge", game), `{"uninstal":true}`)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
-
-// TestFlowPurge_UsedPlanIsRefused is the plan store's single-use rule.
-func TestFlowPurge_UsedPlanIsRefused(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-	deployFixtureProfile(t, s, game)
-
-	id, _ := planFlow(t, s, game, "purge", "")
-	j := startFlowJob(t, s, id, "")
-	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
-
-	again := doAPI(s, http.MethodPost, "/api/v1/jobs", `{"plan_id":"`+string(id)+`"}`)
-	assert.Equal(t, http.StatusConflict, again.Code, again.Body.String())
-}

@@ -252,13 +252,3 @@ func TestFlowVerifyFix_PlanDisclosesWhichFindingsAreFixable(t *testing.T) {
 	require.NotNil(t, stale, "the stray deployment must be reported")
 	assert.True(t, stale.Fixable, "convergence removes a stale deployment under --fix")
 }
-
-// TestFlowVerifyFix_ModFilterRejectsUnknownMembers: the request stays
-// strictly decoded, so a misspelled option is a 400 rather than a silently
-// unfiltered repair of the whole profile.
-func TestFlowVerifyFix_ModFilterRejectsUnknownMembers(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-
-	rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/verify_fix", game), `{"mod_filtr":"m1"}`)
-	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-}

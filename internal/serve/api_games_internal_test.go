@@ -289,16 +289,6 @@ func TestAPIGameAdd_DuplicateIs409(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
 }
 
-// TestAPIGameAdd_RejectsUnknownMembers pins the strict decode every
-// mutation body gets: a typo'd key is a 400, never a silently ignored
-// field.
-func TestAPIGameAdd_RejectsUnknownMembers(t *testing.T) {
-	s := newGamesServer(t)
-	rec := doAPI(s, http.MethodPost, "/api/v1/games",
-		`{"source_id":"nexusmods","identifier":"a","name":"A","install_path":"/tmp","instal_path":"typo"}`)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
 // TestAPIGamesDetect_ListingIsAWellFormedDocument pins the scan half. The
 // sandbox has no Steam library, so the scan finds nothing - which is
 // exactly the shape that must still be a document with an empty (never

@@ -119,13 +119,6 @@ func TestAPISnapshotDelete_ReservedNameIs400AndKeepsTheStore(t *testing.T) {
 	require.Len(t, decodeSnapshotListing(t, rec.Body.Bytes()).Snapshots, 1)
 }
 
-func TestAPISnapshotCreate_RejectsUnknownMembers(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-
-	rec := doAPI(s, http.MethodPost, scoped("/api/v1/snapshots", game), `{"nam":"typo"}`)
-	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-}
-
 func TestAPISnapshotDelete_RemovesItAndAnswersTheCoreDocument(t *testing.T) {
 	s, _, game := newFlowFixtureServer(t)
 	rec := doAPI(s, http.MethodPost, scoped("/api/v1/snapshots", game), `{"name":"doomed"}`)

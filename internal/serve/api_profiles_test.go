@@ -61,24 +61,6 @@ func TestServer_APIProfiles_UnknownProfileParam_StillSucceeds(t *testing.T) {
 	decodeStrict(t, rec.Body.Bytes(), &listing)
 }
 
-// TestServer_APIProfiles_UnknownGameParam_Renders404 proves the game half
-// still gates the endpoint: an unresolvable ?game= answers the envelope at
-// 404.
-func TestServer_APIProfiles_UnknownGameParam_Renders404(t *testing.T) {
-	src := newFakeSource("fake")
-	svc, _ := newFixtureServiceWithSource(t, src)
-
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/profiles?game=nope", nil)
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusNotFound, rec.Code)
-	var envelope apiErrorEnvelope
-	decodeStrict(t, rec.Body.Bytes(), &envelope)
-	assert.Contains(t, envelope.Error, "nope")
-}
-
 // TestServer_APIProfiles_InternalFailure_Renders500 is the task-5 gate
 // review's Minor 2 fix: ListProfiles' 500 branch (api.go's
 // handleAPIProfiles) was untested - the package's only 500 case lived on

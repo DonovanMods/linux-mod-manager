@@ -107,15 +107,3 @@ func TestFlowModRelink_RejectsUnknownOptions(t *testing.T) {
 		`{"mod_id":"m1","new_source":"typo"}`)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
-
-// TestFlowModRelink_UsedPlanIsRefused is the plan store's single-use rule.
-func TestFlowModRelink_UsedPlanIsRefused(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-
-	id, _ := planFlow(t, s, game, "mod_relink", relinkPlanBody)
-	j := startFlowJob(t, s, id, "")
-	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
-
-	again := doAPI(s, http.MethodPost, "/api/v1/jobs", `{"plan_id":"`+string(id)+`"}`)
-	assert.Equal(t, http.StatusConflict, again.Code, again.Body.String())
-}

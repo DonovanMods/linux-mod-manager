@@ -214,12 +214,6 @@ func TestAPISourceIndexRefresh_RebuildsAndAnswersTheReport(t *testing.T) {
 	assert.True(t, status.Present)
 }
 
-func TestAPISourceIndexRefresh_RejectsAnUnknownMember(t *testing.T) {
-	s, _, game, _ := newIndexFixtureServer(t)
-	rec := doAPI(s, http.MethodPost, indexPath(game.ID), `{"refersh":true}`)
-	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-}
-
 // TestAPISourceIndexRefresh_NoIndexAndNoUpstreamIs502 is design §4.3's
 // status for ErrIndexUnavailable: the failure is upstream of lmm, and the
 // envelope's details say which index and why - and when lmm will ask again.

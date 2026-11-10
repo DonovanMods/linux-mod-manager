@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/serve"
 	"github.com/stretchr/testify/assert"
@@ -85,24 +86,6 @@ func TestServer_APISelection_UnknownGameParam_NamesTheValidGames(t *testing.T) {
 	assert.Contains(t, names, "Fixture Game")
 }
 
-// TestServer_APISelection_UnknownProfileParam_KeepsTheResolvedGame proves an
-// explicit ?profile= naming a profile the resolved game doesn't have is
-// refused the same way, while keeping the resolved game - so the details
-// can still list that game's valid profiles.
-func TestServer_APISelection_UnknownProfileParam_KeepsTheResolvedGame(t *testing.T) {
-	src := newFakeSource("fake")
-	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-
-	code, envelope := getSelection(t, srv, "?profile=nope")
-
-	require.Equal(t, http.StatusNotFound, code)
-	assert.Contains(t, envelope.Error, "unknown profile")
-	assert.Contains(t, envelope.Error, "nope")
-	assert.Contains(t, envelope.Details.Profiles, "default",
-		"the resolved game's valid profiles must be offered")
-}
-
 // TestServer_APISelection_NoDefaultGame_OffersTheConfiguredGame proves a
 // game configured but with no default game SET (`lmm game set-default`
 // never run) is refused rather than resolved arbitrarily - and that the
@@ -145,4 +128,79 @@ func TestServer_APISelection_DefaultSelection_ResolvesGameAndProfile(t *testing.
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	assert.Equal(t, "g1", list.GameID)
 	assert.Equal(t, "default", list.Profile)
+}
+
+// TestServer_APIScopedEndpoints_UnresolvedSelection_Renders404 holds every
+// scoped GET endpoint to the Task 5 ruling: unlike the old pages (which
+// degraded to a 200 friendly empty state), the API has no page to degrade
+// to, so an unresolved selection answers the {"error","details"} envelope
+// at 404 with details listing the valid choices. Each endpoint resolves
+// through the one resolveSelection, so each row is a wiring check: zero
+// games configured (the choices are empty), an explicit ?game= naming an
+// unconfigured game (the warning names the value; the choices are the real
+// game), and on /mods an explicit ?profile= naming an unconfigured profile
+// (the task-5 gate review's Minor 3: the resolved game is kept, so the
+// choices are its real profiles). /search carries q=boots so the row
+// proves its missing-q 400 does not swallow the selection 404.
+func TestServer_APIScopedEndpoints_UnresolvedSelection_Renders404(t *testing.T) {
+	noGames := func(t *testing.T) *serve.Server {
+		return serve.New(t.Context(), newFixtureServiceNoGames(t), slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	}
+	oneGame := func(t *testing.T) *serve.Server {
+		svc, _ := newFixtureServiceWithSource(t, newFakeSource("fake"))
+		return serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	}
+
+	tests := []struct {
+		name         string
+		server       func(t *testing.T) *serve.Server
+		target       string
+		wantError    []string
+		wantGames    []string // IDs; nil means none offered
+		wantProfiles []string
+	}{
+		{"mods, no games", noGames, "/api/v1/mods", nil, nil, nil},
+		{"health, no games", noGames, "/api/v1/health", nil, nil, nil},
+		{"conflicts, no games", noGames, "/api/v1/conflicts", nil, nil, nil},
+		{"mods, unknown game", oneGame, "/api/v1/mods?game=nope", []string{"nope"}, []string{"g1"}, nil},
+		{"status, unknown game", oneGame, "/api/v1/status?game=nope", []string{"nope"}, []string{"g1"}, nil},
+		{"profiles, unknown game", oneGame, "/api/v1/profiles?game=nope", []string{"nope"}, []string{"g1"}, nil},
+		{"search, unknown game", oneGame, "/api/v1/search?q=boots&game=nope", []string{"nope"}, []string{"g1"}, nil},
+		{"mods, unknown profile", oneGame, "/api/v1/mods?profile=nope", []string{"unknown profile", "nope"}, []string{"g1"}, []string{"default"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := tt.server(t)
+			req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+tt.target, nil)
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+			assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+			var envelope struct {
+				Error   string `json:"error"`
+				Details struct {
+					Games    []core.GameListEntry `json:"games"`
+					Profiles []string             `json:"profiles"`
+				} `json:"details"`
+			}
+			decodeStrict(t, rec.Body.Bytes(), &envelope)
+			assert.NotEmpty(t, envelope.Error)
+			for _, w := range tt.wantError {
+				assert.Contains(t, envelope.Error, w)
+			}
+			if tt.wantGames != nil {
+				ids := make([]string, 0, len(envelope.Details.Games))
+				for _, g := range envelope.Details.Games {
+					ids = append(ids, g.ID)
+				}
+				assert.Equal(t, tt.wantGames, ids)
+			} else {
+				assert.Empty(t, envelope.Details.Games)
+			}
+			if tt.wantProfiles != nil {
+				assert.Equal(t, tt.wantProfiles, envelope.Details.Profiles)
+			}
+		})
+	}
 }
