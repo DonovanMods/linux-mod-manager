@@ -145,8 +145,11 @@ These are deliberate omissions, tracked so they are not mistaken for oversights:
   ordering itself is a shipped feature (`lmm profile reorder`, the web UI's
   reorder modal, and precedence at merge and deploy time); it is the
   _automatic_ sorting that is out of scope for 2.0
-- **Nexus Collections** — no tracking issue; a Steam Workshop collection
-  already imports as a profile, and the Nexus equivalent is not planned for 2.0
+- **Nexus Collections** —
+  [#597](https://github.com/DonovanMods/linux-mod-manager/issues/597), blocked
+  on the two above: most collections lean on FOMOD choices and plugin order,
+  so importing one without them would install a setup that plays wrong. A
+  Steam Workshop collection already imports as a profile
 - **A separate native desktop application** — the graphical frontend is
   `lmm serve`, and it is a first-class one: a full web UI over the same `core`
   package the CLI calls, in the same binary, with no Node, no bundler and no
