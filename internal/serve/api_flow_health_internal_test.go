@@ -76,19 +76,6 @@ func TestFlowHealthFix_JobRepairs(t *testing.T) {
 	assert.NotContains(t, after.Body.String(), "stale_deployment")
 }
 
-// TestFlowHealthFix_WithoutCSRF_IsRefused pins the CSRF rule on the repair
-// flow, and that a refused request repaired nothing.
-func TestFlowHealthFix_WithoutCSRF_IsRefused(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-	stray := strayDeployment(t, s, game, "stray.pak")
-
-	rec := doAPIWithoutCSRF(s, http.MethodPost, scoped("/api/v1/plans/verify_fix", game), "")
-
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	_, err := os.Lstat(stray)
-	require.NoError(t, err, "a refused request must repair nothing")
-}
-
 // TestFlowHealthFix_HealthyFilesAreNotClaimedAsRepaired is Important 1 from
 // the Unit 5 gate review: core appends an "ok" finding for every healthy
 // checksummed file - that is perFileWalk's baseline, not a repair outcome

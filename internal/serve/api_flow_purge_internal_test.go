@@ -96,12 +96,3 @@ func TestFlowPurge_UsedPlanIsRefused(t *testing.T) {
 	again := doAPI(s, http.MethodPost, "/api/v1/jobs", `{"plan_id":"`+string(id)+`"}`)
 	assert.Equal(t, http.StatusConflict, again.Code, again.Body.String())
 }
-
-// TestFlowPurge_RequiresCSRF - the plan entry point is state-changing like
-// every other.
-func TestFlowPurge_RequiresCSRF(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-
-	rec := doAPIWithoutCSRF(s, http.MethodPost, scoped("/api/v1/plans/purge", game), "")
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-}

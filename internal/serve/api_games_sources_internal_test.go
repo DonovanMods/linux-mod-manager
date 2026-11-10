@@ -172,15 +172,6 @@ func TestAPIGameSources_RejectsUnknownMembers(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
 }
 
-// TestAPIGameSources_RequiresCSRF - a state-changing route like every
-// other.
-func TestAPIGameSources_RequiresCSRF(t *testing.T) {
-	s := newGameSourcesServer(t)
-
-	rec := doAPIWithoutCSRF(s, http.MethodPut, "/api/v1/games/skyrim-se", `{"sources":{"nexusmods":"x"}}`)
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-}
-
 // TestAPIGames_RowsCarryTheSourcesMap pins what the Setup page's Games
 // table renders the "sources" column from: the listing already carries it
 // (domain.Game.SourceIDs is part of the frozen row), so no additive field

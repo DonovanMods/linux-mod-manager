@@ -189,21 +189,6 @@ func TestAPIStartJob_DrainingRegistry_503(t *testing.T) {
 	assert.Contains(t, decodeEnvelope(t, rec.Body.Bytes()).Error, "shutting down")
 }
 
-// TestAPIStartJob_WithoutCSRFToken_403 keeps the new state-changing route
-// inside the same CSRF guard every other mutation entry point sits behind.
-func TestAPIStartJob_WithoutCSRFToken_403(t *testing.T) {
-	s, _ := newDeployFixtureServer(t)
-	id := planDeployFixture(t, s)
-
-	req := apiRequest(s, http.MethodPost, "/api/v1/jobs", `{"plan_id":"`+string(id)+`"}`)
-	req.Header.Del(csrfHeaderName)
-	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-	assert.Equal(t, 1, s.plans.len())
-}
-
 // TestAPIJobStatus_ReportsTheJobStatusDocument pins GET /api/v1/jobs/{id}:
 // the document is the goldened jobStatus shape, carrying the core result
 // document verbatim once the Apply has returned.

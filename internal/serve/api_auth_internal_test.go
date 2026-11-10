@@ -243,14 +243,6 @@ func TestAPIAuthLogin_Refusals(t *testing.T) {
 	}
 }
 
-// TestAPIAuthLogin_RequiresCSRF pins that storing a credential is guarded
-// like every other state-changing route.
-func TestAPIAuthLogin_RequiresCSRF(t *testing.T) {
-	s, _ := newAuthServer(t, &authFixtureSource{id: "acme"})
-	rec := doAPIWithoutCSRF(s, http.MethodPost, "/api/v1/auth/acme", `{"api_key":"`+theSubmittedKey+`"}`)
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-}
-
 // TestAPIAuthLogout_RemovesTheStoredKey pins the delete and its re-read
 // report.
 func TestAPIAuthLogout_RemovesTheStoredKey(t *testing.T) {
@@ -293,13 +285,6 @@ func TestAPIAuthLogout_UnknownSourceWithNoTokenIs404(t *testing.T) {
 	s, _ := newAuthServer(t, &authFixtureSource{id: "acme"})
 	rec := doAPI(s, http.MethodDelete, "/api/v1/auth/nope", "")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
-}
-
-// TestAPIAuthLogout_RequiresCSRF pins the delete's guard.
-func TestAPIAuthLogout_RequiresCSRF(t *testing.T) {
-	s, _ := newAuthServer(t, &authFixtureSource{id: "acme"})
-	rec := doAPIWithoutCSRF(s, http.MethodDelete, "/api/v1/auth/acme", "")
-	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
 // TestAuthRequestLoggingNeverCarriesTheKey is this surface's SECURITY

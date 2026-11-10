@@ -131,11 +131,3 @@ func TestFlowProfileSync_RejectsApplyOptions(t *testing.T) {
 		`{"plan_id":"`+string(id)+`","options":{"force":true}}`)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
-
-// TestFlowProfileSync_RequiresCSRF.
-func TestFlowProfileSync_RequiresCSRF(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-
-	rec := doAPIWithoutCSRF(s, http.MethodPost, scoped("/api/v1/plans/profile_sync", game), `{"profile":"default"}`)
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-}

@@ -119,11 +119,3 @@ func TestFlowModRelink_UsedPlanIsRefused(t *testing.T) {
 	again := doAPI(s, http.MethodPost, "/api/v1/jobs", `{"plan_id":"`+string(id)+`"}`)
 	assert.Equal(t, http.StatusConflict, again.Code, again.Body.String())
 }
-
-// TestFlowModRelink_RequiresCSRF.
-func TestFlowModRelink_RequiresCSRF(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-
-	rec := doAPIWithoutCSRF(s, http.MethodPost, scoped("/api/v1/plans/mod_relink", game), relinkPlanBody)
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-}

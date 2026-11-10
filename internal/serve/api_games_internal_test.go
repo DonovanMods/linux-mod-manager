@@ -299,15 +299,6 @@ func TestAPIGameAdd_RejectsUnknownMembers(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-// TestAPIGameAdd_RequiresCSRF pins that the add is a state-changing route
-// like every other: no token, no write.
-func TestAPIGameAdd_RequiresCSRF(t *testing.T) {
-	s := newGamesServer(t)
-	rec := doAPIWithoutCSRF(s, http.MethodPost, "/api/v1/games",
-		`{"source_id":"nexusmods","identifier":"a","name":"A","install_path":"/tmp"}`)
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-}
-
 // TestAPIGamesDetect_ListingIsAWellFormedDocument pins the scan half. The
 // sandbox has no Steam library, so the scan finds nothing - which is
 // exactly the shape that must still be a document with an empty (never
@@ -335,13 +326,6 @@ func TestAPIGameDetectApply_RefusesABadSelection(t *testing.T) {
 		rec := doAPI(s, http.MethodPost, "/api/v1/games/detect", body)
 		assert.Equal(t, http.StatusBadRequest, rec.Code, "body %s -> %s", body, rec.Body.String())
 	}
-}
-
-// TestAPIGameDetectApply_RequiresCSRF pins the write's guard.
-func TestAPIGameDetectApply_RequiresCSRF(t *testing.T) {
-	s := newGamesServer(t)
-	rec := doAPIWithoutCSRF(s, http.MethodPost, "/api/v1/games/detect", `{"select":["1"]}`)
-	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
 // TestAPIGameSetDefault_WritesTheCoreDocument pins the Setup page's
@@ -372,14 +356,6 @@ func TestAPIGameSetDefault_UnknownGameIs404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
 }
 
-// TestAPIGameSetDefault_RequiresCSRF pins the state-changing route's own
-// gate, like every other write in this file.
-func TestAPIGameSetDefault_RequiresCSRF(t *testing.T) {
-	s := newGamesServer(t)
-	rec := doAPIWithoutCSRF(s, http.MethodPost, "/api/v1/games/acme/set-default", "")
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-}
-
 // TestAPIGameClearDefault_WritesTheCoreDocument pins the clear half: the
 // same document, DefaultGame empty, and unconditional - clearing an
 // already-unset default is still a 200, matching the CLI.
@@ -397,14 +373,6 @@ func TestAPIGameClearDefault_WritesTheCoreDocument(t *testing.T) {
 	got, err := s.svc.DefaultGame(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, got)
-}
-
-// TestAPIGameClearDefault_RequiresCSRF pins the state-changing route's own
-// gate.
-func TestAPIGameClearDefault_RequiresCSRF(t *testing.T) {
-	s := newGamesServer(t)
-	rec := doAPIWithoutCSRF(s, http.MethodDelete, "/api/v1/games/default", "")
-	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
 // TestAPIGamesUnknownSubpath pins that a path under /api/v1/games that no

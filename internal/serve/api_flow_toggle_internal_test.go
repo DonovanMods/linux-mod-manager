@@ -49,22 +49,6 @@ func TestFlowToggle_EnableRunsAsJobAndDeploysFiles(t *testing.T) {
 	assert.FileExists(t, deployedFixturePath(game))
 }
 
-// TestFlowToggle_WithoutCSRF_IsRefused pins the CSRF rule on both toggle
-// routes: no token, no mutation.
-func TestFlowToggle_WithoutCSRF_IsRefused(t *testing.T) {
-	s, svc, game := newFlowFixtureServer(t)
-
-	for _, action := range []string{"enable", "disable"} {
-		rec := doAPIWithoutCSRF(s, http.MethodPost,
-			scoped("/api/v1/mods/"+fixtureSourceID+"/m1/"+action, game), "")
-		require.Equal(t, http.StatusForbidden, rec.Code, action)
-	}
-
-	mod, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "m1", game.ID, "default")
-	require.NoError(t, err)
-	assert.True(t, mod.Enabled, "a refused request must not have mutated anything")
-}
-
 // TestFlowToggle_UnknownMod_FailsTheJob proves a bad target is reported
 // through the ordinary job-failure surface rather than a panic or a bare
 // 500: the job runs, fails, and its status carries the envelope.

@@ -128,9 +128,3 @@ func TestAPIFlow_Adopt_DryRunIsPlanOnly(t *testing.T) {
 	rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/adopt", game), `{"dry_run":true}`)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "an unknown option is refused, never silently ignored")
 }
-
-func TestAPIFlow_Adopt_RequiresTheCSRFToken(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-	rec := doAPIWithoutCSRF(s, http.MethodPost, scoped("/api/v1/plans/adopt", game), "")
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-}

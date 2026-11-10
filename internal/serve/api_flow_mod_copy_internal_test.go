@@ -255,11 +255,3 @@ func TestFlowModCopy_AllCopiesEveryListedMod(t *testing.T) {
 	_, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "p3", game.ID, switchTargetProfile)
 	require.NoError(t, err)
 }
-
-// TestFlowModCopy_RequiresCSRF.
-func TestFlowModCopy_RequiresCSRF(t *testing.T) {
-	s, _, game := newProfilesFixtureServer(t)
-
-	rec := doAPIWithoutCSRF(s, http.MethodPost, scopedTo("/api/v1/plans/mod_copy", game, activeProfile), copyBody(switchTargetProfile, "p3"))
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-}

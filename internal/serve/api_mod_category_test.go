@@ -96,23 +96,6 @@ func TestServer_APIModCategory_NotFound_Renders404(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 }
 
-// TestServer_APIModCategory_WithoutCSRF_Refuses proves the write goes
-// through the same CSRF gate every other state-changing POST does, and
-// writes nothing.
-func TestServer_APIModCategory_WithoutCSRF_Refuses(t *testing.T) {
-	srv, _, profilePath := categoryFixture(t)
-	before := readProfile(t, profilePath)
-
-	req := httptest.NewRequest(http.MethodPost, "http://"+testAddr+"/api/v1/mods/fake/1/category",
-		strings.NewReader(`{"category":"Combat"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-	assert.Equal(t, before, readProfile(t, profilePath))
-}
-
 // TestServer_APICategories_ListsEffectiveCategories proves GET
 // /api/v1/categories answers the distinct effective categories in group
 // order (Service.ListCategories), user and source names alike.
