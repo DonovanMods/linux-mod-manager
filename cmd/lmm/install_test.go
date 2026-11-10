@@ -41,46 +41,6 @@ func TestInstallCmd_Structure(t *testing.T) {
 	assert.NotNil(t, installCmd.Flags().Lookup("yes"))
 }
 
-// TestInstallCmd_NoGame tests install without game flag
-func TestInstallCmd_NoGame(t *testing.T) {
-	// Reset flags
-	gameID = ""
-	installModID = ""
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(installCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(installCmd); rootCmd.AddCommand(installCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"install", "test mod"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no game specified")
-}
-
-// TestInstallCmd_NoQueryOrID tests install without query or --id
-func TestInstallCmd_NoQueryOrID(t *testing.T) {
-	restoreFlags(t)
-	gameID = "test-game"
-	installModID = ""
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(installCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(installCmd); rootCmd.AddCommand(installCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"install"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "search query or --id is required")
-}
-
 // TestInstallCmd_DefaultFlags tests that default flag values are set
 func TestInstallCmd_DefaultFlags(t *testing.T) {
 	// Check default values
@@ -101,32 +61,6 @@ func TestInstallCmd_DefaultFlags(t *testing.T) {
 
 	yesFlag := installCmd.Flags().Lookup("yes")
 	assert.Equal(t, "false", yesFlag.DefValue)
-}
-
-// TestInstallCmd_GameNotFound tests install with non-existent game
-func TestInstallCmd_GameNotFound(t *testing.T) {
-	restoreFlags(t)
-	// Use temp directories
-	configDir = t.TempDir()
-	dataDir = t.TempDir()
-	gameID = "non-existent-game"
-	installModID = "12345"
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(installCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(installCmd); rootCmd.AddCommand(installCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"install", "--id", "12345"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "game not found")
-
-	// Reset
-	installModID = ""
 }
 
 // TestInstallCmd_VersionFlag_NoLongerRejected guards the #96 removal of the

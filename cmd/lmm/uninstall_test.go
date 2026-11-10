@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"io"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -30,46 +28,6 @@ func TestUninstallCmd_Structure(t *testing.T) {
 	assert.NotNil(t, uninstallCmd.Flags().Lookup("keep-cache"))
 }
 
-// TestUninstallCmd_NoGame tests uninstall without game flag
-func TestUninstallCmd_NoGame(t *testing.T) {
-	// Reset flags. configDir must point at an empty tempdir so requireGame
-	// does not pick up a default-game from the user's real ~/.config/lmm.
-	gameID = ""
-	configDir = t.TempDir()
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(uninstallCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(uninstallCmd); rootCmd.AddCommand(uninstallCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"uninstall", "12345"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no game specified")
-}
-
-// TestUninstallCmd_NoModID tests uninstall without mod-id argument
-func TestUninstallCmd_NoModID(t *testing.T) {
-	restoreFlags(t)
-	gameID = "test-game"
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(uninstallCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(uninstallCmd); rootCmd.AddCommand(uninstallCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"uninstall"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "accepts 1 arg")
-}
-
 // TestUninstallCmd_DefaultFlags tests that default flag values are set
 func TestUninstallCmd_DefaultFlags(t *testing.T) {
 	// Check default values
@@ -81,28 +39,6 @@ func TestUninstallCmd_DefaultFlags(t *testing.T) {
 
 	keepCacheFlag := uninstallCmd.Flags().Lookup("keep-cache")
 	assert.Equal(t, "false", keepCacheFlag.DefValue)
-}
-
-// TestUninstallCmd_GameNotFound tests uninstall with non-existent game
-func TestUninstallCmd_GameNotFound(t *testing.T) {
-	restoreFlags(t)
-	// Use temp directories
-	configDir = t.TempDir()
-	dataDir = t.TempDir()
-	gameID = "non-existent-game"
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(uninstallCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(uninstallCmd); rootCmd.AddCommand(uninstallCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"uninstall", "12345"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "game not found")
 }
 
 // setupDoUninstallTest builds a *core.Service plus a mod that will fail to

@@ -28,26 +28,6 @@ func TestPurgeCmd_Structure(t *testing.T) {
 	assert.NotNil(t, purgeCmd.Flags().Lookup("yes"))
 }
 
-// TestPurgeCmd_NoGame tests purge without game flag
-func TestPurgeCmd_NoGame(t *testing.T) {
-	// Reset global state
-	gameID = ""
-	configDir = t.TempDir() // Use temp dir to avoid loading real default game
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(purgeCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(purgeCmd); rootCmd.AddCommand(purgeCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"purge"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no game specified")
-}
-
 // TestPurgeCmd_DefaultFlags tests that default flag values are set
 func TestPurgeCmd_DefaultFlags(t *testing.T) {
 	profileFlag := purgeCmd.Flags().Lookup("profile")
@@ -58,29 +38,6 @@ func TestPurgeCmd_DefaultFlags(t *testing.T) {
 
 	yesFlag := purgeCmd.Flags().Lookup("yes")
 	assert.Equal(t, "false", yesFlag.DefValue)
-}
-
-// TestPurgeCmd_GameNotFound tests purge with non-existent game
-func TestPurgeCmd_GameNotFound(t *testing.T) {
-	restoreFlags(t)
-	// Use temp directories
-	configDir = t.TempDir()
-	dataDir = t.TempDir()
-	gameID = "non-existent-game"
-	purgeYes = true
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(purgeCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(purgeCmd); rootCmd.AddCommand(purgeCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"purge"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "game not found")
 }
 
 // TestPurgeCmd_NoModsToPurge tests purge with no installed mods

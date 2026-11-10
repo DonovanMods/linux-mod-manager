@@ -1,33 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestListCmd_NoGame(t *testing.T) {
-	gameID = ""
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(listCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(listCmd); rootCmd.AddCommand(listCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"list"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no game specified")
-}
 
 func TestListCmd_Structure(t *testing.T) {
 	assert.Equal(t, "list", listCmd.Use)

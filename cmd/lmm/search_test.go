@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,7 +13,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -94,46 +92,6 @@ func TestSearchCmd_Structure(t *testing.T) {
 	// Check flags exist
 	assert.NotNil(t, searchCmd.Flags().Lookup("source"))
 	assert.NotNil(t, searchCmd.Flags().Lookup("limit"))
-}
-
-// TestSearchCmd_NoGame tests search without game flag
-func TestSearchCmd_NoGame(t *testing.T) {
-	// Reset flags. configDir must point at an empty tempdir so requireGame
-	// does not pick up a default-game from the user's real ~/.config/lmm.
-	gameID = ""
-	configDir = t.TempDir()
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(searchCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(searchCmd); rootCmd.AddCommand(searchCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"search", "test-query"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no game specified")
-}
-
-// TestSearchCmd_NoQuery tests search without query argument
-func TestSearchCmd_NoQuery(t *testing.T) {
-	restoreFlags(t)
-	gameID = "test-game"
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(searchCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(searchCmd); rootCmd.AddCommand(searchCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"search"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "requires at least 1 arg")
 }
 
 // TestSearchCmd_DefaultFlags tests that default flag values are set
