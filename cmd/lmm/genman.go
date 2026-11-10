@@ -18,10 +18,9 @@ import (
 // produces identical output.
 //
 // Bump it in the release-prep commit, alongside `version` in root.go and
-// the CHANGELOG's dated section, then re-run `make man`. That is not a
-// convention anyone has to remember: TestGenManDateIsNotOlderThanTheNewestRelease
-// fails whenever the newest dated CHANGELOG section is later than this,
-// which is what stopped 2.0.0's pages from shipping dated "Jul 2026" (#401).
+// the CHANGELOG's dated section, then re-run `make man` - the release
+// checklist in CLAUDE.md's Versioning section names this step, since a
+// stale date is how 2.0.0's pages nearly shipped dated "Jul 2026" (#401).
 var genManDate = time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
 
 // defaultManDir is where `make man` and the goreleaser build expect the

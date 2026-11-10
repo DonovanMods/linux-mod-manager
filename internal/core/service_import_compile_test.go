@@ -26,10 +26,7 @@ func newImportCompileTestGame(t *testing.T) (*core.Service, *fakeCompilerSource,
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
 	writeFakeBasePak(t, basePak)
 
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	src := &fakeCompilerSource{}
 	registerCompileSource(svc, src)

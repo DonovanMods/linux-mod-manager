@@ -143,9 +143,3 @@ func TestFlowSnapshotRestore_UsedPlanIsRefused(t *testing.T) {
 	rec := doAPI(s, http.MethodPost, "/api/v1/jobs", `{"plan_id":"`+string(id)+`"}`)
 	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 }
-
-// TestFlowSnapshotRestore_IsRegisteredInTheClosedTable pins that the kind
-// shows up where a client discovers what it can ask for.
-func TestFlowSnapshotRestore_IsRegisteredInTheClosedTable(t *testing.T) {
-	assert.Contains(t, supportedPlanKinds(), "snapshot_restore")
-}

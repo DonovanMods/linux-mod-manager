@@ -19,9 +19,7 @@ import (
 // orders its result by game ID, not whatever order Go's games map iteration
 // happens to produce this run. IDs are seeded deliberately out of order.
 func TestService_ListGames_OrderedByGameID(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	ctx := context.Background()
 
 	for _, id := range []string{"zulu", "mike", "alpha", "yankee", "bravo"} {
@@ -40,9 +38,7 @@ func TestService_ListGames_OrderedByGameID(t *testing.T) {
 // Public game values must not expose the Service's published configuration,
 // including its map and optional loader pointer.
 func TestService_GameQueriesAndSaveGameOwnIndependentCopies(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	ctx := context.Background()
 	original := &domain.Game{ID: "g", Name: "Game", ModPath: t.TempDir(),
 		SourceIDs: map[string]string{"nexus": "game"}, Loader: &domain.GameLoader{Kind: "bepinex"}}
@@ -89,9 +85,7 @@ func TestService_GameQueriesAndSaveGameOwnIndependentCopies(t *testing.T) {
 // TestService_SaveGame_ConcurrentWithReaders pins the games-map contract: a
 // writer and many readers may interleave freely (run with -race).
 func TestService_SaveGame_ConcurrentWithReaders(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	ctx := context.Background()
 
 	errs := make(chan error, 8)

@@ -184,9 +184,7 @@ func TestJudge_OnARealVfatMount(t *testing.T) {
 // TestBeginOp_AFlowsKeptFilesEndWithIt (#466 review D3): what one flow's
 // removals kept is not handed to the next flow, which would write it back.
 func TestBeginOp_AFlowsKeptFilesEndWithIt(t *testing.T) {
-	svc, err := NewService(ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	store := svc.originalsStoreFor("g")
 	require.NotNil(t, store)
 

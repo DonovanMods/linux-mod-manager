@@ -9,18 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newOpsService(t *testing.T) *Service {
-	t.Helper()
-	svc, err := NewService(ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	return svc
-}
-
 // TestBeginOp_SecondMutationBlocksUntilRelease pins service-wide
 // serialization of mutations.
 func TestBeginOp_SecondMutationBlocksUntilRelease(t *testing.T) {
-	svc := newOpsService(t)
+	svc := newBareService(t)
 	ctx := context.Background()
 
 	release, err := svc.beginOp(ctx)
@@ -54,7 +46,7 @@ func TestBeginOp_SecondMutationBlocksUntilRelease(t *testing.T) {
 // TestBeginOp_WaiterIsCancellable pins that a caller waiting for the slot
 // returns ctx.Err() without ever acquiring.
 func TestBeginOp_WaiterIsCancellable(t *testing.T) {
-	svc := newOpsService(t)
+	svc := newBareService(t)
 	release, err := svc.beginOp(context.Background())
 	require.NoError(t, err)
 	defer release()
@@ -74,7 +66,7 @@ func TestBeginOp_WaiterIsCancellable(t *testing.T) {
 // original holder (#279 Unit B final review finding I1; a coverage run
 // showed the <-ctx.Done() arm at ops.go:20-21 was never executed).
 func TestBeginOp_BlockedWaiterIsCancellable(t *testing.T) {
-	svc := newOpsService(t)
+	svc := newBareService(t)
 	release, err := svc.beginOp(context.Background())
 	require.NoError(t, err)
 
@@ -115,7 +107,7 @@ func TestBeginOp_BlockedWaiterIsCancellable(t *testing.T) {
 // the slot free, a done ctx must always lose rather than racing the free
 // slot 50/50 (v2 Phase 1 Task 6 fix round 1, #279 review finding I1).
 func TestBeginOp_PreCancelledCtxNeverAcquires(t *testing.T) {
-	svc := newOpsService(t)
+	svc := newBareService(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -135,7 +127,7 @@ func TestBeginOp_PreCancelledCtxNeverAcquires(t *testing.T) {
 // receive would consume whichever later caller currently holds the slot,
 // freeing it out from under them and letting two mutations run concurrently.
 func TestBeginOp_ReleaseIsIdempotent(t *testing.T) {
-	svc := newOpsService(t)
+	svc := newBareService(t)
 	ctx := context.Background()
 
 	release1, err := svc.beginOp(ctx)

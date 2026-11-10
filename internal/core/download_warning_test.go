@@ -9,9 +9,7 @@ package core_test
 // under the flow's scope, as a WarningEvent with Phase DownloadWarning.
 
 import (
-	"archive/zip"
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -107,7 +105,7 @@ func TestDownloadWarning_ReachesTheSinkFromADirectorySource(t *testing.T) {
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	modsDir := t.TempDir()
-	writeZip(t, filepath.Join(modsDir, "Jotunn.zip"), map[string]string{"Jotunn/Jotunn.dll": "assembly"})
+	createImportTestZip(t, filepath.Join(modsDir, "Jotunn.zip"), map[string]string{"Jotunn/Jotunn.dll": "assembly"})
 	src, err := custom.New(custom.SourceDefinition{
 		ID: "my-mods", Name: "My Mods", Type: custom.TypeDirectory,
 		Directory: &custom.DirectoryConfig{Path: modsDir},
@@ -198,20 +196,4 @@ func TestDownloadWarning_AVerifyFixChecksumRepairSaysItUnderItsRow(t *testing.T)
 	assert.Equal(t, notice, got[0].Message)
 	assert.Equal(t, core.OpVerify, got[0].Op)
 	assert.Equal(t, fixture.mod.Name, got[0].ModName)
-}
-
-// writeZip writes a zip of members at path.
-func writeZip(t *testing.T, path string, members map[string]string) {
-	t.Helper()
-	f, err := os.Create(path)
-	require.NoError(t, err)
-	zw := zip.NewWriter(f)
-	for name, body := range members {
-		w, err := zw.Create(name)
-		require.NoError(t, err)
-		_, err = w.Write([]byte(body))
-		require.NoError(t, err)
-	}
-	require.NoError(t, zw.Close())
-	require.NoError(t, f.Close())
 }

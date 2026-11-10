@@ -16,15 +16,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestProfileManager_Create(t *testing.T) {
-	dir := t.TempDir()
+// newPM returns a ProfileManager over configDir, backed by an in-memory
+// database that is closed when the test ends.
+func newPM(t *testing.T, configDir string) *core.ProfileManager {
+	t.Helper()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	return core.NewProfileManager(configDir, database)
+}
 
-	pm := core.NewProfileManager(dir, database)
+func TestProfileManager_Create(t *testing.T) {
+	dir := t.TempDir()
+	pm := newPM(t, dir)
 
 	profile, err := pm.Create(context.Background(), "skyrim-se", "survival")
 	require.NoError(t, err)
@@ -34,15 +38,9 @@ func TestProfileManager_Create(t *testing.T) {
 
 func TestProfileManager_Create_DuplicateName(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "survival")
+	_, err := pm.Create(context.Background(), "skyrim-se", "survival")
 	require.NoError(t, err)
 
 	_, err = pm.Create(context.Background(), "skyrim-se", "survival")
@@ -54,11 +52,7 @@ func TestProfileManager_Create_DuplicateName(t *testing.T) {
 // mods, same as pm.Create would produce for a brand-new game.
 func TestProfileManager_CreateOrResetDefault_CreatesWhenAbsent(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, database.Close()) })
-
-	pm := core.NewProfileManager(dir, database)
+	pm := newPM(t, dir)
 
 	profile, err := pm.CreateOrResetDefault(context.Background(), "skyrim-se")
 	require.NoError(t, err)
@@ -81,13 +75,9 @@ func TestProfileManager_CreateOrResetDefault_CreatesWhenAbsent(t *testing.T) {
 // loses them.
 func TestProfileManager_CreateOrResetDefault_ResetsExisting(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.CreateOrResetDefault(context.Background(), "skyrim-se")
+	_, err := pm.CreateOrResetDefault(context.Background(), "skyrim-se")
 	require.NoError(t, err)
 	require.NoError(t, pm.UpsertMod(context.Background(), "skyrim-se", "default", domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.0"}))
 
@@ -129,15 +119,9 @@ func TestProfileManager_Create_RejectsPathTraversalName(t *testing.T) {
 			tempDir := t.TempDir()
 			configDir := filepath.Join(tempDir, "deep", "nested", "config")
 			require.NoError(t, os.MkdirAll(configDir, 0755))
-			database, err := db.New(":memory:")
-			require.NoError(t, err)
-			t.Cleanup(func() {
-				require.NoError(t, database.Close())
-			})
+			pm := newPM(t, configDir)
 
-			pm := core.NewProfileManager(configDir, database)
-
-			_, err = pm.Create(context.Background(), "skyrim-se", makeName(tempDir))
+			_, err := pm.Create(context.Background(), "skyrim-se", makeName(tempDir))
 			require.Error(t, err)
 			assert.ErrorIs(t, err, domain.ErrInvalidProfileName)
 			// The validation error is the user-facing message; it must not be
@@ -168,15 +152,9 @@ func TestProfileManager_Import_RejectsPathTraversalGameID(t *testing.T) {
 	tempDir := t.TempDir()
 	configDir := filepath.Join(tempDir, "deep", "nested", "config")
 	require.NoError(t, os.MkdirAll(configDir, 0755))
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, configDir)
 
-	pm := core.NewProfileManager(configDir, database)
-
-	_, err = pm.Import(context.Background(), []byte("name: innocent\ngame_id: ../../../evil\nmods: []\n"))
+	_, err := pm.Import(context.Background(), []byte("name: innocent\ngame_id: ../../../evil\nmods: []\n"))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, domain.ErrInvalidGameID)
 
@@ -196,30 +174,18 @@ func TestProfileManager_Import_RejectsPathTraversalGameID(t *testing.T) {
 
 func TestProfileManager_Delete_RejectsPathTraversalName(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	err = pm.Delete(context.Background(), "skyrim-se", "../evil")
+	err := pm.Delete(context.Background(), "skyrim-se", "../evil")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, domain.ErrInvalidProfileName)
 }
 
 func TestProfileManager_List(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "survival")
+	_, err := pm.Create(context.Background(), "skyrim-se", "survival")
 	require.NoError(t, err)
 	_, err = pm.Create(context.Background(), "skyrim-se", "combat")
 	require.NoError(t, err)
@@ -237,15 +203,9 @@ func TestProfileManager_List(t *testing.T) {
 // config.LoadProfile call.
 func TestProfileManager_ListNames(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "survival")
+	_, err := pm.Create(context.Background(), "skyrim-se", "survival")
 	require.NoError(t, err)
 	_, err = pm.Create(context.Background(), "skyrim-se", "combat")
 	require.NoError(t, err)
@@ -261,14 +221,8 @@ func TestProfileManager_ListNames(t *testing.T) {
 // it (List's own loop: `if err != nil { continue }`).
 func TestProfileManager_ListNames_SurvivesUnparseableProfile(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	pm := core.NewProfileManager(dir, database)
-	_, err = pm.Create(context.Background(), "skyrim-se", "survival")
+	pm := newPM(t, dir)
+	_, err := pm.Create(context.Background(), "skyrim-se", "survival")
 	require.NoError(t, err)
 
 	profileDir := filepath.Join(dir, "games", "skyrim-se", "profiles")
@@ -285,15 +239,9 @@ func TestProfileManager_ListNames_SurvivesUnparseableProfile(t *testing.T) {
 
 func TestProfileManager_Get(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "survival")
+	_, err := pm.Create(context.Background(), "skyrim-se", "survival")
 	require.NoError(t, err)
 
 	profile, err := pm.Get(context.Background(), "skyrim-se", "survival")
@@ -303,15 +251,9 @@ func TestProfileManager_Get(t *testing.T) {
 
 func TestProfileManager_Get_NotFound(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Get(context.Background(), "skyrim-se", "nonexistent")
+	_, err := pm.Get(context.Background(), "skyrim-se", "nonexistent")
 	assert.ErrorIs(t, err, domain.ErrProfileNotFound)
 }
 
@@ -322,32 +264,20 @@ func TestProfileManager_Get_NotFound(t *testing.T) {
 // the guard returned before Get ever touched disk.
 func TestProfileManager_Get_HonoursCancellation(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	pm := core.NewProfileManager(dir, database)
+	pm := newPM(t, dir)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = pm.Get(ctx, "skyrim-se", "nonexistent")
+	_, err := pm.Get(ctx, "skyrim-se", "nonexistent")
 	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestProfileManager_Delete(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "survival")
+	_, err := pm.Create(context.Background(), "skyrim-se", "survival")
 	require.NoError(t, err)
 
 	err = pm.Delete(context.Background(), "skyrim-se", "survival")
@@ -359,15 +289,9 @@ func TestProfileManager_Delete(t *testing.T) {
 
 func TestProfileManager_SetDefault(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "profile1")
+	_, err := pm.Create(context.Background(), "skyrim-se", "profile1")
 	require.NoError(t, err)
 	_, err = pm.Create(context.Background(), "skyrim-se", "profile2")
 	require.NoError(t, err)
@@ -382,15 +306,9 @@ func TestProfileManager_SetDefault(t *testing.T) {
 
 func TestProfileManager_AddMod(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "survival")
+	_, err := pm.Create(context.Background(), "skyrim-se", "survival")
 	require.NoError(t, err)
 
 	modRef := domain.ModReference{
@@ -410,15 +328,9 @@ func TestProfileManager_AddMod(t *testing.T) {
 
 func TestProfileManager_RemoveMod(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "survival")
+	_, err := pm.Create(context.Background(), "skyrim-se", "survival")
 	require.NoError(t, err)
 
 	modRef := domain.ModReference{
@@ -439,16 +351,10 @@ func TestProfileManager_RemoveMod(t *testing.T) {
 
 func TestProfileManager_ExportImport(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	pm := core.NewProfileManager(dir, database)
+	pm := newPM(t, dir)
 
 	// Create a profile with mods
-	_, err = pm.Create(context.Background(), "skyrim-se", "original")
+	_, err := pm.Create(context.Background(), "skyrim-se", "original")
 	require.NoError(t, err)
 
 	err = pm.AddMod(context.Background(), "skyrim-se", "original", domain.ModReference{
@@ -483,16 +389,10 @@ func TestProfileManager_ExportImport(t *testing.T) {
 func TestProfileManager_UpsertMod(t *testing.T) {
 	dir := t.TempDir()
 
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	pm := core.NewProfileManager(dir, database)
+	pm := newPM(t, dir)
 
 	// Create a profile
-	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	_, err := pm.Create(context.Background(), "skyrim-se", "test")
 	require.NoError(t, err)
 
 	// Upsert a new mod (should add it)
@@ -557,16 +457,10 @@ func TestProfileManager_UpsertMod(t *testing.T) {
 func TestProfileManager_UpsertMod_PreservesLockedMarker(t *testing.T) {
 	dir := t.TempDir()
 
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	pm := core.NewProfileManager(dir, database)
+	pm := newPM(t, dir)
 
 	// Create a profile and add a locked mod
-	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	_, err := pm.Create(context.Background(), "skyrim-se", "test")
 	require.NoError(t, err)
 
 	lockedModRef := domain.ModReference{
@@ -618,15 +512,9 @@ func TestProfileManager_UpsertMod_PreservesLockedMarker(t *testing.T) {
 func TestProfileManager_UpsertMod_PreservesHooks(t *testing.T) {
 	dir := t.TempDir()
 
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	_, err := pm.Create(context.Background(), "skyrim-se", "test")
 	require.NoError(t, err)
 
 	profilePath := filepath.Join(dir, "games", "skyrim-se", "profiles", "test.yaml")
@@ -668,15 +556,9 @@ hooks:
 func TestProfileManager_UpsertMod_LockedRefRefusesVersionMove(t *testing.T) {
 	dir := t.TempDir()
 
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	_, err := pm.Create(context.Background(), "skyrim-se", "test")
 	require.NoError(t, err)
 
 	err = pm.UpsertMod(context.Background(), "skyrim-se", "test", domain.ModReference{
@@ -718,16 +600,10 @@ func TestProfileManager_UpsertMod_LockedRefRefusesVersionMove(t *testing.T) {
 func TestProfileManager_ReorderMods_PreservesLockedMarker(t *testing.T) {
 	dir := t.TempDir()
 
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	pm := core.NewProfileManager(dir, database)
+	pm := newPM(t, dir)
 
 	// Create a profile and add two mods, one locked
-	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	_, err := pm.Create(context.Background(), "skyrim-se", "test")
 	require.NoError(t, err)
 
 	err = pm.AddMod(context.Background(), "skyrim-se", "test", domain.ModReference{
@@ -775,15 +651,9 @@ func TestProfileManager_ReorderMods_PreservesLockedMarker(t *testing.T) {
 // the installed-version record are the same field, #97).
 func TestProfileManager_SetModLock(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	_, err := pm.Create(context.Background(), "skyrim-se", "test")
 	require.NoError(t, err)
 
 	require.NoError(t, pm.AddMod(context.Background(), "skyrim-se", "test", domain.ModReference{
@@ -810,23 +680,32 @@ func TestProfileManager_SetModLock(t *testing.T) {
 	assert.Equal(t, "2.0.0", profile.Mods[0].Version, "a non-empty version moves the lock target")
 }
 
-// TestProfileManager_SetModLock_NotInProfile pins the not-found error message.
-func TestProfileManager_SetModLock_NotInProfile(t *testing.T) {
-	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+// TestProfileManager_ModLock_NotInProfile pins the not-found error message
+// both lock writes give for a mod the profile does not hold.
+func TestProfileManager_ModLock_NotInProfile(t *testing.T) {
+	tests := []struct {
+		name  string
+		write func(pm *core.ProfileManager) error
+	}{
+		{"SetModLock", func(pm *core.ProfileManager) error {
+			return pm.SetModLock(context.Background(), "skyrim-se", "test", "nexusmods", "12345", "")
+		}},
+		{"ClearModLock", func(pm *core.ProfileManager) error {
+			return pm.ClearModLock(context.Background(), "skyrim-se", "test", "nexusmods", "12345")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pm := newPM(t, t.TempDir())
 
-	pm := core.NewProfileManager(dir, database)
+			_, err := pm.Create(context.Background(), "skyrim-se", "test")
+			require.NoError(t, err)
 
-	_, err = pm.Create(context.Background(), "skyrim-se", "test")
-	require.NoError(t, err)
-
-	err = pm.SetModLock(context.Background(), "skyrim-se", "test", "nexusmods", "12345", "")
-	require.Error(t, err)
-	assert.EqualError(t, err, `mod nexusmods:12345 not found in profile "test"`)
+			err = tt.write(pm)
+			require.Error(t, err)
+			assert.EqualError(t, err, `mod nexusmods:12345 not found in profile "test"`)
+		})
+	}
 }
 
 // TestProfileManager_ClearModLock covers the unlock write: only the marker
@@ -834,15 +713,9 @@ func TestProfileManager_SetModLock_NotInProfile(t *testing.T) {
 // record, not lock-only data, #97).
 func TestProfileManager_ClearModLock(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	_, err := pm.Create(context.Background(), "skyrim-se", "test")
 	require.NoError(t, err)
 
 	require.NoError(t, pm.AddMod(context.Background(), "skyrim-se", "test", domain.ModReference{
@@ -859,25 +732,6 @@ func TestProfileManager_ClearModLock(t *testing.T) {
 	require.Len(t, profile.Mods, 1)
 	assert.False(t, profile.Mods[0].Locked, "locked marker should be cleared")
 	assert.Equal(t, "1.0.0", profile.Mods[0].Version, "version stays - it is the record, not lock-only data")
-}
-
-// TestProfileManager_ClearModLock_NotInProfile pins the not-found error message.
-func TestProfileManager_ClearModLock_NotInProfile(t *testing.T) {
-	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "test")
-	require.NoError(t, err)
-
-	err = pm.ClearModLock(context.Background(), "skyrim-se", "test", "nexusmods", "12345")
-	require.Error(t, err)
-	assert.EqualError(t, err, `mod nexusmods:12345 not found in profile "test"`)
 }
 
 // TestProfileManager_Mutators_HonourCancellation is the mutator half of
@@ -947,12 +801,8 @@ func TestProfileManager_Mutators_HonourCancellation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			database, err := db.New(":memory:")
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, database.Close()) })
-
-			pm := core.NewProfileManager(dir, database)
-			_, err = pm.Create(context.Background(), gameID, profileName)
+			pm := newPM(t, dir)
+			_, err := pm.Create(context.Background(), gameID, profileName)
 			require.NoError(t, err)
 			require.NoError(t, pm.AddMod(context.Background(), gameID, profileName, seeded))
 
@@ -981,15 +831,9 @@ func TestProfileManager_Mutators_HonourCancellation(t *testing.T) {
 // doing so, the load-order position and the pinned Version.
 func TestProfileManager_SetModDisabled(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
-	pm := core.NewProfileManager(dir, database)
-
-	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	_, err := pm.Create(context.Background(), "skyrim-se", "test")
 	require.NoError(t, err)
 	require.NoError(t, pm.AddMod(context.Background(), "skyrim-se", "test", domain.ModReference{SourceID: "src", ModID: "first", Version: "1.0.0"}))
 	require.NoError(t, pm.AddMod(context.Background(), "skyrim-se", "test", domain.ModReference{SourceID: "src", ModID: "second", Version: "2.0.0", Locked: true}))
@@ -1021,14 +865,8 @@ func TestProfileManager_SetModDisabled(t *testing.T) {
 // enable/disable flows treat as "nothing to record", not as a failure.
 func TestProfileManager_SetModDisabled_NotInProfile(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	pm := core.NewProfileManager(dir, database)
-	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	pm := newPM(t, dir)
+	_, err := pm.Create(context.Background(), "skyrim-se", "test")
 	require.NoError(t, err)
 
 	err = pm.SetModDisabled(context.Background(), "skyrim-se", "test", "src", "missing", true)
@@ -1041,11 +879,7 @@ func TestProfileManager_SetModDisabled_NotInProfile(t *testing.T) {
 // own formatting, comments and key order.
 func TestProfileManager_SetModDisabled_NoOpLeavesTheFileUntouched(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
+	pm := newPM(t, dir)
 
 	profileDir := filepath.Join(dir, "games", "skyrim-se", "profiles")
 	require.NoError(t, os.MkdirAll(profileDir, 0755))
@@ -1053,7 +887,6 @@ func TestProfileManager_SetModDisabled_NoOpLeavesTheFileUntouched(t *testing.T) 
 	handEdited := "# my notes\nname: test\ngame_id: skyrim-se\nmods:\n  - source_id: src\n    mod_id: m1\n    version: 1.0.0\n"
 	require.NoError(t, os.WriteFile(path, []byte(handEdited), 0644))
 
-	pm := core.NewProfileManager(dir, database)
 	require.NoError(t, pm.SetModDisabled(context.Background(), "skyrim-se", "test", "src", "m1", false))
 
 	after, err := os.ReadFile(path)
@@ -1067,14 +900,8 @@ func TestProfileManager_SetModDisabled_NoOpLeavesTheFileUntouched(t *testing.T) 
 // reinstall switch a mod the user turned off back on.
 func TestProfileManager_UpsertMod_PreservesDisabledMarker(t *testing.T) {
 	dir := t.TempDir()
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	pm := core.NewProfileManager(dir, database)
-	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	pm := newPM(t, dir)
+	_, err := pm.Create(context.Background(), "skyrim-se", "test")
 	require.NoError(t, err)
 	require.NoError(t, pm.AddMod(context.Background(), "skyrim-se", "test", domain.ModReference{SourceID: "src", ModID: "m1", Version: "1.0.0"}))
 	require.NoError(t, pm.SetModDisabled(context.Background(), "skyrim-se", "test", "src", "m1", true))
