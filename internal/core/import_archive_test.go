@@ -221,6 +221,10 @@ func TestImportArchive_CacheRenameFailure_NotesAndCascadesToDeploymentFailure(t 
 	require.NoError(t, rErr, "a failed rename must leave the original cache directory untouched")
 	assert.Equal(t, "data", string(data))
 
+	blocker, rErr := os.ReadFile(newPath)
+	require.NoError(t, rErr, "a failed rename must leave the blocking path untouched too")
+	assert.Equal(t, "blocker", string(blocker))
+
 	mods, mErr := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, mErr)
 	assert.Empty(t, mods, "Install failing must leave nothing installed")
