@@ -147,9 +147,10 @@ These are deliberate omissions, tracked so they are not mistaken for oversights:
   _automatic_ sorting that is out of scope for 2.0
 - **Nexus Collections** —
   [#597](https://github.com/DonovanMods/linux-mod-manager/issues/597), blocked
-  on the two above: most collections lean on FOMOD choices and plugin order,
-  so importing one without them would install a setup that plays wrong. A
-  Steam Workshop collection already imports as a profile
+  on the two above: most collections are for Bethesda games and lean on
+  FOMOD choices and plugin order, so importing one without them would install
+  a setup that plays wrong. A Steam Workshop collection already imports as a
+  profile
 - **A separate native desktop application** — the graphical frontend is
   `lmm serve`, and it is a first-class one: a full web UI over the same `core`
   package the CLI calls, in the same binary, with no Node, no bundler and no
