@@ -425,16 +425,23 @@ var e2eAllSorts = []domain.SearchSort{domain.SortUpdated, domain.SortDownloads, 
 // TestE2E_SearchSortSelectOffersOnlySortsTheReportListsAsAvailable is the
 // "never a dead option" rule: relevance is always there, and each other sort
 // only when some source that answered can order by it.
+//
+// The "every sort" case also carries what was
+// TestE2E_SearchSortSelectIsLabelledAndHasNoPageLocalWording (#600, on the
+// same fixture): the a11y shape (the select is inside a label that names it,
+// like the other filters) and that the "(on this page)" caveat - true only of
+// the old client-side sort - is gone.
 func TestE2E_SearchSortSelectOffersOnlySortsTheReportListsAsAvailable(t *testing.T) {
 	cases := []struct {
-		name   string
-		sorts  []domain.SearchSort
-		expect []string // nil: no select at all
+		name     string
+		sorts    []domain.SearchSort
+		expect   []string // nil: no select at all
+		labelled bool     // also check the select's label
 	}{
-		{"every sort", e2eAllSorts, []string{"relevance=Relevance", "updated=Last updated", "downloads=Most downloaded", "popular=Popular"}},
-		{"downloads only", []domain.SearchSort{domain.SortDownloads}, []string{"relevance=Relevance", "downloads=Most downloaded"}},
-		{"updated and popular", []domain.SearchSort{domain.SortPopular, domain.SortUpdated}, []string{"relevance=Relevance", "updated=Last updated", "popular=Popular"}},
-		{"none: relevance alone is no choice, so no select", nil, nil},
+		{"every sort", e2eAllSorts, []string{"relevance=Relevance", "updated=Last updated", "downloads=Most downloaded", "popular=Popular"}, true},
+		{"downloads only", []domain.SearchSort{domain.SortDownloads}, []string{"relevance=Relevance", "downloads=Most downloaded"}, false},
+		{"updated and popular", []domain.SearchSort{domain.SortPopular, domain.SortUpdated}, []string{"relevance=Relevance", "updated=Last updated", "popular=Popular"}, false},
+		{"none: relevance alone is no choice, so no select", nil, nil, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -452,6 +459,20 @@ func TestE2E_SearchSortSelectOffersOnlySortsTheReportListsAsAvailable(t *testing
 			if tc.expect != nil {
 				assert.Equal(t, "relevance", selected, "a search with no ?sort= shows relevance selected")
 			}
+			if tc.labelled {
+				var label string
+				var labelled bool
+				f.runInBrowser(t,
+					chromedp.WaitVisible(`.search-page select[name="sort"]`, chromedp.ByQuery),
+					chromedp.Evaluate(`(() => {
+						const s = document.querySelector('.search-page select[name="sort"]');
+						return s.labels.length === 1 && s.closest("label").classList.contains("library__control");
+					})()`, &labelled),
+					chromedp.Evaluate(`document.querySelector('.search-page select[name="sort"]').labels[0].firstChild.textContent.trim()`, &label),
+				)
+				assert.True(t, labelled, "the sort select must be labelled, like the category and source selects")
+				assert.Equal(t, "Sort", label)
+			}
 			assert.Empty(t, f.BrowserErrors())
 		})
 	}
@@ -462,29 +483,6 @@ func nilIfEmpty(s []string) []string {
 		return nil
 	}
 	return s
-}
-
-// TestE2E_SearchSortSelectIsLabelledAndHasNoPageLocalWording pins the a11y
-// shape (the select is inside a label that names it, like the other filters)
-// and that the "(on this page)" caveat - true only of the old client-side sort
-// - is gone.
-func TestE2E_SearchSortSelectIsLabelledAndHasNoPageLocalWording(t *testing.T) {
-	f := newE2EFixtureWithSortableSearch(t, e2eAllSorts)
-
-	var label string
-	var labelled bool
-	f.runInBrowser(t,
-		chromedp.Navigate(f.SearchPagePath("item", "")),
-		chromedp.WaitVisible(`.search-page select[name="sort"]`, chromedp.ByQuery),
-		chromedp.Evaluate(`(() => {
-			const s = document.querySelector('.search-page select[name="sort"]');
-			return s.labels.length === 1 && s.closest("label").classList.contains("library__control");
-		})()`, &labelled),
-		chromedp.Evaluate(`document.querySelector('.search-page select[name="sort"]').labels[0].firstChild.textContent.trim()`, &label),
-	)
-	assert.True(t, labelled, "the sort select must be labelled, like the category and source selects")
-	assert.Equal(t, "Sort", label)
-	assert.Empty(t, f.BrowserErrors())
 }
 
 // TestE2E_SearchSortRequeriesPageZeroServerSide is the heart of #503: choosing

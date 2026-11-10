@@ -74,79 +74,80 @@ func newE2EFixtureWithAKeylessSource(t *testing.T) e2eFixture {
 // source's API key field on Setup > Authentication.
 const focusedKeylessKeyInput = `document.activeElement === document.querySelector('.setup-auth__row[data-source="keyless"] input[type="password"]')`
 
-// TestE2E_AuthHint_HealthRowLinksToTheSourcesKey: the health card's row
-// for a version check the source refused names the missing key and offers
-// "Add API key…" in place of the dead "Not fixable", and the link lands on
-// that source's key field.
-func TestE2E_AuthHint_HealthRowLinksToTheSourcesKey(t *testing.T) {
+// TestE2E_AuthHint_LinksToTheSourcesKey follows each surface's "Add API key…"
+// link for a source that refused its key. Every subtest navigates fresh and
+// only follows a link, so they share one fixture (#600).
+func TestE2E_AuthHint_LinksToTheSourcesKey(t *testing.T) {
 	f := newE2EFixtureWithAKeylessSource(t)
 
-	const row = `.card--health [data-status="skipped"]`
-	var rowText, detailTitle, path, search string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		pollUntil(fmt.Sprintf(`document.querySelector(%q) !== null`, row+` [data-action="add-api-key"]`)),
-		textContent(row, &rowText),
-		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).getAttribute("title") || ""`, row+` .card__row-detail`), &detailTitle),
-		clickWhenSettled(row+` [data-action="add-api-key"]`),
-		pollUntil(focusedKeylessKeyInput),
-		chromedp.Evaluate(`location.pathname`, &path),
-		chromedp.Evaluate(`location.search`, &search),
-	)
-	assert.Contains(t, rowText, "Keyed Mod")
-	// The fixture holds a key the source refuses, so it was rejected.
-	assert.Contains(t, rowText, "Keyless Source rejected its API key")
-	assert.Contains(t, rowText, "Add API key…")
-	assert.NotContains(t, rowText, "Not fixable")
-	// The row's text is the short sentence; the source's own error chain -
-	// what a person debugging the key actually needs - is the detail's
-	// title, and nowhere else on the card.
-	assert.Contains(t, detailTitle, "API key required",
-		"the source's error chain must stay reachable as the detail's tooltip")
-	assert.Equal(t, f.ContextPath()+"/setup", path)
-	assert.Contains(t, search, "section=auth")
-	assert.Contains(t, search, "source=keyless")
-	assert.Empty(t, f.BrowserErrors())
-}
+	// TestE2E_AuthHint_HealthRowLinksToTheSourcesKey: the health card's row
+	// for a version check the source refused names the missing key and offers
+	// "Add API key…" in place of the dead "Not fixable", and the link lands on
+	// that source's key field.
+	t.Run("TestE2E_AuthHint_HealthRowLinksToTheSourcesKey", func(t *testing.T) {
+		const row = `.card--health [data-status="skipped"]`
+		var rowText, detailTitle, path, search string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+			pollUntil(fmt.Sprintf(`document.querySelector(%q) !== null`, row+` [data-action="add-api-key"]`)),
+			textContent(row, &rowText),
+			chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).getAttribute("title") || ""`, row+` .card__row-detail`), &detailTitle),
+			clickWhenSettled(row+` [data-action="add-api-key"]`),
+			pollUntil(focusedKeylessKeyInput),
+			chromedp.Evaluate(`location.pathname`, &path),
+			chromedp.Evaluate(`location.search`, &search),
+		)
+		assert.Contains(t, rowText, "Keyed Mod")
+		// The fixture holds a key the source refuses, so it was rejected.
+		assert.Contains(t, rowText, "Keyless Source rejected its API key")
+		assert.Contains(t, rowText, "Add API key…")
+		assert.NotContains(t, rowText, "Not fixable")
+		// The row's text is the short sentence; the source's own error chain -
+		// what a person debugging the key actually needs - is the detail's
+		// title, and nowhere else on the card.
+		assert.Contains(t, detailTitle, "API key required",
+			"the source's error chain must stay reachable as the detail's tooltip")
+		assert.Equal(t, f.ContextPath()+"/setup", path)
+		assert.Contains(t, search, "section=auth")
+		assert.Contains(t, search, "source=keyless")
+		assert.Empty(t, f.BrowserErrors())
+	})
 
-// TestE2E_AuthHint_UpdatesCardLinksToTheSourcesKey: an update check the
-// source refused used to leave the card silent - the report's error was
-// never rendered. It now names the source and links to its key.
-func TestE2E_AuthHint_UpdatesCardLinksToTheSourcesKey(t *testing.T) {
-	f := newE2EFixtureWithAKeylessSource(t)
+	// TestE2E_AuthHint_UpdatesCardLinksToTheSourcesKey: an update check the
+	// source refused used to leave the card silent - the report's error was
+	// never rendered. It now names the source and links to its key.
+	t.Run("TestE2E_AuthHint_UpdatesCardLinksToTheSourcesKey", func(t *testing.T) {
+		const note = `.card--updates [data-testid="updates-auth-required"]`
+		var noteText string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+			pollUntil(fmt.Sprintf(`document.querySelector(%q) !== null`, note+` [data-action="add-api-key"]`)),
+			textContent(note, &noteText),
+			clickWhenSettled(note+` [data-action="add-api-key"]`),
+			pollUntil(focusedKeylessKeyInput),
+		)
+		assert.Contains(t, noteText, "Keyless Source")
+		assert.Contains(t, noteText, "API key")
+		assert.Empty(t, f.BrowserErrors())
+	})
 
-	const note = `.card--updates [data-testid="updates-auth-required"]`
-	var noteText string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		pollUntil(fmt.Sprintf(`document.querySelector(%q) !== null`, note+` [data-action="add-api-key"]`)),
-		textContent(note, &noteText),
-		clickWhenSettled(note+` [data-action="add-api-key"]`),
-		pollUntil(focusedKeylessKeyInput),
-	)
-	assert.Contains(t, noteText, "Keyless Source")
-	assert.Contains(t, noteText, "API key")
-	assert.Empty(t, f.BrowserErrors())
-}
-
-// TestE2E_AuthHint_SearchWarningLinksToTheSourcesKey: a search the source
-// refused for its key keeps its warning row, which now offers the link.
-func TestE2E_AuthHint_SearchWarningLinksToTheSourcesKey(t *testing.T) {
-	f := newE2EFixtureWithAKeylessSource(t)
-
-	const warning = `.search-result--warning`
-	var warningText string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.BaseURL+f.ContextPath()+"/search?q=anything"),
-		pollUntil(fmt.Sprintf(`document.querySelector(%q) !== null`, warning+` [data-action="add-api-key"]`)),
-		textContent(warning, &warningText),
-		clickWhenSettled(warning+` [data-action="add-api-key"]`),
-		pollUntil(focusedKeylessKeyInput),
-	)
-	assert.Contains(t, warningText, "keyless")
-	assert.Empty(t, f.BrowserErrors())
+	// TestE2E_AuthHint_SearchWarningLinksToTheSourcesKey: a search the source
+	// refused for its key keeps its warning row, which now offers the link.
+	t.Run("TestE2E_AuthHint_SearchWarningLinksToTheSourcesKey", func(t *testing.T) {
+		const warning = `.search-result--warning`
+		var warningText string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.BaseURL+f.ContextPath()+"/search?q=anything"),
+			pollUntil(fmt.Sprintf(`document.querySelector(%q) !== null`, warning+` [data-action="add-api-key"]`)),
+			textContent(warning, &warningText),
+			clickWhenSettled(warning+` [data-action="add-api-key"]`),
+			pollUntil(focusedKeylessKeyInput),
+		)
+		assert.Contains(t, warningText, "keyless")
+		assert.Empty(t, f.BrowserErrors())
+	})
 }
 
 // TestE2E_AuthHint_AnAuthenticatedRowIsFocusedNotItsLogOut: a key the

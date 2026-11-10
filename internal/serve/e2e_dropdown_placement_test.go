@@ -64,72 +64,75 @@ func openMenuAt(t *testing.T, f e2eMultiGameFixture, width int, url, owner, trig
 	return box
 }
 
-// The away header (setup) puts the bell near the left; its tray must not run
-// off the left edge.
-func TestE2E_Dropdown_AwayHeaderBellTrayStaysInViewport(t *testing.T) {
+// TestE2E_Dropdown_Placement measures where each dropdown opens. Every subtest
+// sets its own viewport and navigates fresh (openMenuAt), so they share one
+// fixture (#600); the resize case runs last because it leaves the window at
+// 400px.
+func TestE2E_Dropdown_Placement(t *testing.T) {
 	f := newE2EMultiGameFixture(t)
-	setup := f.BaseURL + "/g/game-a/default/setup?section=archive"
-	box := openMenuAt(t, f, 1006, setup, ".activity-bell", ".activity-bell__trigger")
-	assert.True(t, box.inViewport(),
-		"the tray (%.0f..%.0f) lies inside the %.0fpx viewport", box.Left, box.Right, box.Viewport)
-	assertNoUncaughtErrors(t, f.BrowserErrors())
-}
 
-// The home top bar's bell is at the far right: no regression there.
-func TestE2E_Dropdown_HomeBellTrayStaysInViewport(t *testing.T) {
-	f := newE2EMultiGameFixture(t)
-	box := openMenuAt(t, f, 1006, f.BaseURL+"/g/game-a/default", ".activity-bell", ".activity-bell__trigger")
-	assert.True(t, box.inViewport(),
-		"the tray (%.0f..%.0f) lies inside the %.0fpx viewport", box.Left, box.Right, box.Viewport)
-	assertNoUncaughtErrors(t, f.BrowserErrors())
-}
-
-// A phone-width window: every dropdown still fits.
-func TestE2E_Dropdown_NarrowViewportKeepsEveryMenuInside(t *testing.T) {
-	f := newE2EMultiGameFixture(t)
-	home := f.BaseURL + "/g/game-a/default"
-	setup := home + "/setup?section=archive"
-	for name, tc := range map[string]struct{ url, owner, trigger string }{
-		"home bell tray":   {home, ".activity-bell", ".activity-bell__trigger"},
-		"away bell tray":   {setup, ".activity-bell", ".activity-bell__trigger"},
-		"home game picker": {home, ".game-picker", ".game-picker__trigger"},
-		"profile picker":   {home, ".profile-picker", ".profile-picker__trigger"},
-	} {
-		box := openMenuAt(t, f, 400, tc.url, tc.owner, tc.trigger)
+	// The away header (setup) puts the bell near the left; its tray must not run
+	// off the left edge.
+	t.Run("TestE2E_Dropdown_AwayHeaderBellTrayStaysInViewport", func(t *testing.T) {
+		setup := f.BaseURL + "/g/game-a/default/setup?section=archive"
+		box := openMenuAt(t, f, 1006, setup, ".activity-bell", ".activity-bell__trigger")
 		assert.True(t, box.inViewport(),
-			"%s (%.0f..%.0f) lies inside the %.0fpx viewport", name, box.Left, box.Right, box.Viewport)
-	}
-	assertNoUncaughtErrors(t, f.BrowserErrors())
-}
+			"the tray (%.0f..%.0f) lies inside the %.0fpx viewport", box.Left, box.Right, box.Viewport)
+		assertNoUncaughtErrors(t, f.BrowserErrors())
+	})
 
-// A picker that already fits keeps opening rightward from its trigger.
-func TestE2E_Dropdown_PickerThatFitsKeepsItsSide(t *testing.T) {
-	f := newE2EMultiGameFixture(t)
-	home := f.BaseURL + "/g/game-a/default"
-	for name, owner := range map[string]string{
-		"game picker":    ".game-picker",
-		"profile picker": ".profile-picker",
-	} {
-		box := openMenuAt(t, f, 1006, home, owner, owner+"__trigger")
-		require.True(t, box.inViewport(), name)
-		assert.InDelta(t, box.TriggerLeft, box.Left, 1,
-			"%s opens flush with its trigger's left edge when it fits", name)
-	}
-	assertNoUncaughtErrors(t, f.BrowserErrors())
-}
+	// The home top bar's bell is at the far right: no regression there.
+	t.Run("TestE2E_Dropdown_HomeBellTrayStaysInViewport", func(t *testing.T) {
+		box := openMenuAt(t, f, 1006, f.BaseURL+"/g/game-a/default", ".activity-bell", ".activity-bell__trigger")
+		assert.True(t, box.inViewport(),
+			"the tray (%.0f..%.0f) lies inside the %.0fpx viewport", box.Left, box.Right, box.Viewport)
+		assertNoUncaughtErrors(t, f.BrowserErrors())
+	})
 
-// A menu that is open when the window shrinks is placed again.
-func TestE2E_Dropdown_ResizeWhileOpenReplacesTheMenu(t *testing.T) {
-	f := newE2EMultiGameFixture(t)
-	setup := f.BaseURL + "/g/game-a/default/setup?section=archive"
-	openMenuAt(t, f, 1006, setup, ".activity-bell", ".activity-bell__trigger")
-	var box menuBox
-	f.runInBrowser(t,
-		chromedp.EmulateViewport(400, 700),
-		settleEffects(),
-		chromedp.Evaluate(fmt.Sprintf(menuBoxJS, ".activity-bell"), &box),
-	)
-	assert.True(t, box.inViewport(),
-		"the open tray (%.0f..%.0f) follows the window down to %.0fpx", box.Left, box.Right, box.Viewport)
-	assertNoUncaughtErrors(t, f.BrowserErrors())
+	// A phone-width window: every dropdown still fits.
+	t.Run("TestE2E_Dropdown_NarrowViewportKeepsEveryMenuInside", func(t *testing.T) {
+		home := f.BaseURL + "/g/game-a/default"
+		setup := home + "/setup?section=archive"
+		for name, tc := range map[string]struct{ url, owner, trigger string }{
+			"home bell tray":   {home, ".activity-bell", ".activity-bell__trigger"},
+			"away bell tray":   {setup, ".activity-bell", ".activity-bell__trigger"},
+			"home game picker": {home, ".game-picker", ".game-picker__trigger"},
+			"profile picker":   {home, ".profile-picker", ".profile-picker__trigger"},
+		} {
+			box := openMenuAt(t, f, 400, tc.url, tc.owner, tc.trigger)
+			assert.True(t, box.inViewport(),
+				"%s (%.0f..%.0f) lies inside the %.0fpx viewport", name, box.Left, box.Right, box.Viewport)
+		}
+		assertNoUncaughtErrors(t, f.BrowserErrors())
+	})
+
+	// A picker that already fits keeps opening rightward from its trigger.
+	t.Run("TestE2E_Dropdown_PickerThatFitsKeepsItsSide", func(t *testing.T) {
+		home := f.BaseURL + "/g/game-a/default"
+		for name, owner := range map[string]string{
+			"game picker":    ".game-picker",
+			"profile picker": ".profile-picker",
+		} {
+			box := openMenuAt(t, f, 1006, home, owner, owner+"__trigger")
+			require.True(t, box.inViewport(), name)
+			assert.InDelta(t, box.TriggerLeft, box.Left, 1,
+				"%s opens flush with its trigger's left edge when it fits", name)
+		}
+		assertNoUncaughtErrors(t, f.BrowserErrors())
+	})
+
+	// A menu that is open when the window shrinks is placed again.
+	t.Run("TestE2E_Dropdown_ResizeWhileOpenReplacesTheMenu", func(t *testing.T) {
+		setup := f.BaseURL + "/g/game-a/default/setup?section=archive"
+		openMenuAt(t, f, 1006, setup, ".activity-bell", ".activity-bell__trigger")
+		var box menuBox
+		f.runInBrowser(t,
+			chromedp.EmulateViewport(400, 700),
+			settleEffects(),
+			chromedp.Evaluate(fmt.Sprintf(menuBoxJS, ".activity-bell"), &box),
+		)
+		assert.True(t, box.inViewport(),
+			"the open tray (%.0f..%.0f) follows the window down to %.0fpx", box.Left, box.Right, box.Viewport)
+		assertNoUncaughtErrors(t, f.BrowserErrors())
+	})
 }

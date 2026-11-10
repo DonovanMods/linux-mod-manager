@@ -171,109 +171,185 @@ func TestE2E_Workshop_LibraryRowCarriesTheSteamBadge(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_Workshop_ModPanelHidesTheActionsLmmCannotPerform is the assertion
-// the design's §2 table turns into a UI promise: deploy/enable/disable and
-// the update action are ABSENT for an external mod, not present-and-refused,
-// and uninstall is reworded to what it actually does.
-func TestE2E_Workshop_ModPanelHidesTheActionsLmmCannotPerform(t *testing.T) {
+// TestE2E_Workshop_ModPanel covers the slide-over of an external (Steam
+// Workshop) mod: what it hides, the policies it offers, its meta line and the
+// Stop tracking confirmation. Every subtest is a read (opening the confirm
+// modal starts no job) and navigates fresh, so they share one fixture (#600).
+func TestE2E_Workshop_ModPanel(t *testing.T) {
 	f := newE2EWorkshopFixture(t)
 
-	var actions, managed string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
-		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
-		chromedp.Evaluate(`document.querySelector(".slide-over__actions").textContent;`, &actions),
-		chromedp.Evaluate(`document.querySelector('[data-testid="managed-by-steam"]').textContent;`, &managed),
-	)
-	assert.NotContains(t, actions, "Disable", "lmm cannot disable a Steam Workshop item")
-	assert.NotContains(t, actions, "Enable")
-	assert.NotContains(t, actions, "Update")
-	assert.Contains(t, actions, "Stop tracking", "uninstall says what it really does")
-	assert.Contains(t, managed, "Steam owns its files")
-	assert.Empty(t, f.BrowserErrors())
+	// TestE2E_Workshop_ModPanelHidesTheActionsLmmCannotPerform is the assertion
+	// the design's §2 table turns into a UI promise: deploy/enable/disable and
+	// the update action are ABSENT for an external mod, not present-and-refused,
+	// and uninstall is reworded to what it actually does.
+	t.Run("TestE2E_Workshop_ModPanelHidesTheActionsLmmCannotPerform", func(t *testing.T) {
+		var actions, managed string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
+			chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+			chromedp.Evaluate(`document.querySelector(".slide-over__actions").textContent;`, &actions),
+			chromedp.Evaluate(`document.querySelector('[data-testid="managed-by-steam"]').textContent;`, &managed),
+		)
+		assert.NotContains(t, actions, "Disable", "lmm cannot disable a Steam Workshop item")
+		assert.NotContains(t, actions, "Enable")
+		assert.NotContains(t, actions, "Update")
+		assert.Contains(t, actions, "Stop tracking", "uninstall says what it really does")
+		assert.Contains(t, managed, "Steam owns its files")
+		assert.Empty(t, f.BrowserErrors())
+	})
+
+	// TestE2E_Workshop_ModPanelOffersNoAutoUpdatePolicy is the same rule applied
+	// to the settings block: "auto" is refused server-side, so offering it could
+	// only produce an inline error - and this panel's own ManagedBySteam
+	// comment states the principle it follows, "not shown at all rather than
+	// shown-and-refused".
+	t.Run("TestE2E_Workshop_ModPanelOffersNoAutoUpdatePolicy", func(t *testing.T) {
+		var options []string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
+			chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+			chromedp.WaitVisible(`.slide-over__settings select`, chromedp.ByQuery),
+			chromedp.Evaluate(`
+				Array.from(document.querySelectorAll(".slide-over__settings select option"))
+					.map((o) => o.value);
+			`, &options),
+		)
+		assert.Equal(t, []string{"notify", "pinned"}, options,
+			"the two policies that mean something for an item Steam owns")
+		assert.Empty(t, f.BrowserErrors())
+	})
+
+	// TestE2E_Workshop_ModPanelMetaShowsTheRevisionDate is the slide-over's half
+	// of the approval note's version DISPLAY rule (docs/plans/2026-09-09-steam-
+	// workshop-design.md, "Approved with notes"): no human-facing surface prints
+	// the 19-digit manifest as a version - it shows the item's revision date, and
+	// only the labelled "Steam content id" block underneath names the manifest.
+	//
+	// The panel's meta line printed row.version, so the content id appeared
+	// TWICE on this screen: once unlabelled where a version goes, and once
+	// correctly labelled by ManagedBySteam. The unlabelled one is the violation.
+	t.Run("TestE2E_Workshop_ModPanelMetaShowsTheRevisionDate", func(t *testing.T) {
+		var meta, managed string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
+			chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+			textContent(`.slide-over__meta`, &meta),
+			textContent(`[data-testid="managed-by-steam"]`, &managed),
+		)
+		assert.Contains(t, meta, e2eWorkshopRevisionDate, "the meta line shows the revision date")
+		assert.NotContains(t, meta, e2eWorkshopManifest,
+			"the version DISPLAY rule: never the content id in the slot a version goes")
+		assert.Contains(t, managed, "Steam content id: "+e2eWorkshopManifest,
+			"the manifest still appears once, labelled, where the design put it")
+		assert.Empty(t, f.BrowserErrors())
+	})
+
+	// TestE2E_Workshop_StopTrackingConfirmSaysOnlyWhatItReallyDoes closes the
+	// gap between that button and the modal it opens: the confirmation used to
+	// read "Not currently deployed - nothing to remove" (contradicting
+	// Deployed: true, which the design makes load-bearing) and "The cached
+	// download is deleted too", and still offered "Keep the cached download" -
+	// so the body and the button disagreed on the same screen.
+	t.Run("TestE2E_Workshop_StopTrackingConfirmSaysOnlyWhatItReallyDoes", func(t *testing.T) {
+		var body string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
+			chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+			chromedp.Click(`.slide-over__actions .button--danger`, chromedp.ByQuery),
+			chromedp.WaitVisible(`.modal[data-kind="uninstall"] .plan`, chromedp.ByQuery),
+			textContent(`.modal[data-kind="uninstall"]`, &body),
+		)
+		assert.Contains(t, body, core.UninstallExternalNote)
+		assert.NotContains(t, body, "The cached download is deleted too",
+			"there is no cache entry for a Steam-owned item")
+		assert.NotContains(t, body, "Keep the cached download",
+			"an option that can do nothing is not offered")
+		assert.NotContains(t, body, "Not currently deployed",
+			"it IS deployed - by Steam, which is the whole point")
+		assert.Empty(t, f.BrowserErrors())
+	})
+
+	// TestE2E_Workshop_StopTrackingConfirmOmitsTheContentID: the confirm modal's
+	// own summary line read "Uninstalling Sample Workshop Item
+	// 7987119735124793734 from profile default", printing Steam's content id in
+	// the slot a version goes. core.UninstallPlan carries no timestamp to show a
+	// date instead and the header already names the mod, so the span is simply
+	// omitted - exactly what plan_deploy.js now does for its external row.
+	t.Run("TestE2E_Workshop_StopTrackingConfirmOmitsTheContentID", func(t *testing.T) {
+		var summary, body string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
+			chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+			chromedp.Click(`.slide-over__actions .button--danger`, chromedp.ByQuery),
+			chromedp.WaitVisible(`.modal[data-kind="uninstall"] .plan`, chromedp.ByQuery),
+			textContent(`.modal[data-kind="uninstall"] .plan__summary`, &summary),
+			textContent(`.modal[data-kind="uninstall"]`, &body),
+		)
+		assert.Contains(t, summary, "Uninstalling Sample Workshop Item from profile default.")
+		assert.NotContains(t, body, e2eWorkshopManifest,
+			"the version DISPLAY rule: no human surface prints Steam's content id as a version")
+		assert.Empty(t, f.BrowserErrors())
+	})
 }
 
-// TestE2E_Workshop_ModPanelOffersNoAutoUpdatePolicy is the same rule applied
-// to the settings block: "auto" is refused server-side, so offering it could
-// only produce an inline error - and this panel's own ManagedBySteam
-// comment states the principle it follows, "not shown at all rather than
-// shown-and-refused".
-func TestE2E_Workshop_ModPanelOffersNoAutoUpdatePolicy(t *testing.T) {
+// TestE2E_Workshop_FullModPage covers the full mod page of an external (Steam
+// Workshop) mod. Both subtests are reads that navigate fresh, so they share
+// one fixture (#600).
+func TestE2E_Workshop_FullModPage(t *testing.T) {
 	f := newE2EWorkshopFixture(t)
 
-	var options []string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
-		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.slide-over__settings select`, chromedp.ByQuery),
-		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll(".slide-over__settings select option"))
-				.map((o) => o.value);
-		`, &options),
-	)
-	assert.Equal(t, []string{"notify", "pinned"}, options,
-		"the two policies that mean something for an item Steam owns")
-	assert.Empty(t, f.BrowserErrors())
-}
+	// TestE2E_Workshop_FullModPageHidesRelinkAndRollback covers the other
+	// drill-in surface: the same rules, the two actions only that page offers.
+	t.Run("TestE2E_Workshop_FullModPageHidesRelinkAndRollback", func(t *testing.T) {
+		var page string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.ModPagePath(e2eWorkshopSourceID, e2eWorkshopFileID)),
+			chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+			chromedp.WaitVisible(`.mod-page .slide-over__settings select`, chromedp.ByQuery),
+			chromedp.Evaluate(`document.querySelector(".mod-page").textContent;`, &page),
+		)
+		assert.Contains(t, page, "Managed by Steam")
+		assert.NotContains(t, page, "Re-link…", "there is no link to move")
+		assert.NotContains(t, page, "Roll back", "lmm never held a previous copy")
 
-// TestE2E_Workshop_StopTrackingConfirmSaysOnlyWhatItReallyDoes closes the
-// gap between that button and the modal it opens: the confirmation used to
-// read "Not currently deployed - nothing to remove" (contradicting
-// Deployed: true, which the design makes load-bearing) and "The cached
-// download is deleted too", and still offered "Keep the cached download" -
-// so the body and the button disagreed on the same screen.
-func TestE2E_Workshop_StopTrackingConfirmSaysOnlyWhatItReallyDoes(t *testing.T) {
-	f := newE2EWorkshopFixture(t)
+		// N2: the same rule the slide-over already keeps for the SAME mod. This
+		// page builds its own settingsRow literal rather than a modrows.js row,
+		// so it never carried `external` and went on offering an "Auto" update
+		// policy SetModUpdatePolicy refuses server-side - the present-and-refused
+		// shape this page's own ManagedBySteam block argues against.
+		var options []string
+		f.runInBrowser(t,
+			chromedp.Evaluate(`
+				Array.from(document.querySelectorAll(".mod-page .slide-over__settings select option"))
+					.map((o) => o.value);
+			`, &options),
+		)
+		assert.Equal(t, []string{"notify", "pinned"}, options,
+			"the two policies that mean something for an item Steam owns")
+		assert.Empty(t, f.BrowserErrors())
+	})
 
-	var body string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
-		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
-		chromedp.Click(`.slide-over__actions .button--danger`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.modal[data-kind="uninstall"] .plan`, chromedp.ByQuery),
-		textContent(`.modal[data-kind="uninstall"]`, &body),
-	)
-	assert.Contains(t, body, core.UninstallExternalNote)
-	assert.NotContains(t, body, "The cached download is deleted too",
-		"there is no cache entry for a Steam-owned item")
-	assert.NotContains(t, body, "Keep the cached download",
-		"an option that can do nothing is not offered")
-	assert.NotContains(t, body, "Not currently deployed",
-		"it IS deployed - by Steam, which is the whole point")
-	assert.Empty(t, f.BrowserErrors())
-}
-
-// TestE2E_Workshop_FullModPageHidesRelinkAndRollback covers the other
-// drill-in surface: the same rules, the two actions only that page offers.
-func TestE2E_Workshop_FullModPageHidesRelinkAndRollback(t *testing.T) {
-	f := newE2EWorkshopFixture(t)
-
-	var page string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.ModPagePath(e2eWorkshopSourceID, e2eWorkshopFileID)),
-		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.mod-page .slide-over__settings select`, chromedp.ByQuery),
-		chromedp.Evaluate(`document.querySelector(".mod-page").textContent;`, &page),
-	)
-	assert.Contains(t, page, "Managed by Steam")
-	assert.NotContains(t, page, "Re-link…", "there is no link to move")
-	assert.NotContains(t, page, "Roll back", "lmm never held a previous copy")
-
-	// N2: the same rule the slide-over already keeps for the SAME mod. This
-	// page builds its own settingsRow literal rather than a modrows.js row,
-	// so it never carried `external` and went on offering an "Auto" update
-	// policy SetModUpdatePolicy refuses server-side - the present-and-refused
-	// shape this page's own ManagedBySteam block argues against.
-	var options []string
-	f.runInBrowser(t,
-		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll(".mod-page .slide-over__settings select option"))
-				.map((o) => o.value);
-		`, &options),
-	)
-	assert.Equal(t, []string{"notify", "pinned"}, options,
-		"the two policies that mean something for an item Steam owns")
-	assert.Empty(t, f.BrowserErrors())
+	// TestE2E_Workshop_FullModPageMetaShowsTheRevisionDate is the same rule on
+	// the drill-in page the design names by hand: "lmm mod show and the mod page
+	// show the date and, beneath it, the manifest labelled as such". This page
+	// builds its own meta line off core.ModFilesReport.Mod rather than a library
+	// row, so it printed the content id where a version goes - twice on screen,
+	// exactly as the slide-over did.
+	t.Run("TestE2E_Workshop_FullModPageMetaShowsTheRevisionDate", func(t *testing.T) {
+		var meta, managed string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.ModPagePath(e2eWorkshopSourceID, e2eWorkshopFileID)),
+			chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+			textContent(`.mod-page__meta`, &meta),
+			textContent(`[data-testid="managed-by-steam"]`, &managed),
+		)
+		assert.Contains(t, meta, e2eWorkshopRevisionDate+" installed")
+		assert.NotContains(t, meta, e2eWorkshopManifest,
+			"the version DISPLAY rule: never the content id in the slot a version goes")
+		assert.Contains(t, managed, "Steam content id: "+e2eWorkshopManifest,
+			"the labelled block underneath is where the manifest belongs")
+		assert.Empty(t, f.BrowserErrors())
+	})
 }
 
 // TestE2E_Workshop_DeployPlanShowsTheExternalRowAsUntouched is the SPA half
@@ -405,81 +481,6 @@ func TestE2E_Workshop_AdoptPlanModalRendersItsOwnPreview(t *testing.T) {
 	assert.Contains(t, modal, "To track (1)")
 	assert.Contains(t, modal, "2025-09-16", "the revision date, never the content id")
 	assert.NotContains(t, modal, "1122334455667788990")
-	assert.Empty(t, f.BrowserErrors())
-}
-
-// TestE2E_Workshop_ModPanelMetaShowsTheRevisionDate is the slide-over's half
-// of the approval note's version DISPLAY rule (docs/plans/2026-09-09-steam-
-// workshop-design.md, "Approved with notes"): no human-facing surface prints
-// the 19-digit manifest as a version - it shows the item's revision date, and
-// only the labelled "Steam content id" block underneath names the manifest.
-//
-// The panel's meta line printed row.version, so the content id appeared
-// TWICE on this screen: once unlabelled where a version goes, and once
-// correctly labelled by ManagedBySteam. The unlabelled one is the violation.
-func TestE2E_Workshop_ModPanelMetaShowsTheRevisionDate(t *testing.T) {
-	f := newE2EWorkshopFixture(t)
-
-	var meta, managed string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
-		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
-		textContent(`.slide-over__meta`, &meta),
-		textContent(`[data-testid="managed-by-steam"]`, &managed),
-	)
-	assert.Contains(t, meta, e2eWorkshopRevisionDate, "the meta line shows the revision date")
-	assert.NotContains(t, meta, e2eWorkshopManifest,
-		"the version DISPLAY rule: never the content id in the slot a version goes")
-	assert.Contains(t, managed, "Steam content id: "+e2eWorkshopManifest,
-		"the manifest still appears once, labelled, where the design put it")
-	assert.Empty(t, f.BrowserErrors())
-}
-
-// TestE2E_Workshop_FullModPageMetaShowsTheRevisionDate is the same rule on
-// the drill-in page the design names by hand: "lmm mod show and the mod page
-// show the date and, beneath it, the manifest labelled as such". This page
-// builds its own meta line off core.ModFilesReport.Mod rather than a library
-// row, so it printed the content id where a version goes - twice on screen,
-// exactly as the slide-over did.
-func TestE2E_Workshop_FullModPageMetaShowsTheRevisionDate(t *testing.T) {
-	f := newE2EWorkshopFixture(t)
-
-	var meta, managed string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.ModPagePath(e2eWorkshopSourceID, e2eWorkshopFileID)),
-		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
-		textContent(`.mod-page__meta`, &meta),
-		textContent(`[data-testid="managed-by-steam"]`, &managed),
-	)
-	assert.Contains(t, meta, e2eWorkshopRevisionDate+" installed")
-	assert.NotContains(t, meta, e2eWorkshopManifest,
-		"the version DISPLAY rule: never the content id in the slot a version goes")
-	assert.Contains(t, managed, "Steam content id: "+e2eWorkshopManifest,
-		"the labelled block underneath is where the manifest belongs")
-	assert.Empty(t, f.BrowserErrors())
-}
-
-// TestE2E_Workshop_StopTrackingConfirmOmitsTheContentID: the confirm modal's
-// own summary line read "Uninstalling Sample Workshop Item
-// 7987119735124793734 from profile default", printing Steam's content id in
-// the slot a version goes. core.UninstallPlan carries no timestamp to show a
-// date instead and the header already names the mod, so the span is simply
-// omitted - exactly what plan_deploy.js now does for its external row.
-func TestE2E_Workshop_StopTrackingConfirmOmitsTheContentID(t *testing.T) {
-	f := newE2EWorkshopFixture(t)
-
-	var summary, body string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
-		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
-		chromedp.Click(`.slide-over__actions .button--danger`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.modal[data-kind="uninstall"] .plan`, chromedp.ByQuery),
-		textContent(`.modal[data-kind="uninstall"] .plan__summary`, &summary),
-		textContent(`.modal[data-kind="uninstall"]`, &body),
-	)
-	assert.Contains(t, summary, "Uninstalling Sample Workshop Item from profile default.")
-	assert.NotContains(t, body, e2eWorkshopManifest,
-		"the version DISPLAY rule: no human surface prints Steam's content id as a version")
 	assert.Empty(t, f.BrowserErrors())
 }
 
