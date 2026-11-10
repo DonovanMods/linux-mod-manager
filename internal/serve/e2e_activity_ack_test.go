@@ -92,64 +92,74 @@ func navigatedTo(path, marker string) chromedp.Tasks {
 	}
 }
 
-func TestE2E_ActivityBell_AcknowledgementSurvivesNavigation(t *testing.T) {
+// TestE2E_ActivityBell_AcknowledgementSurvives checks that an acknowledgement
+// outlives the bell that took it, across a client-side navigation and then a
+// reload. They share one fixture (#600): each subtest fails a NEW deploy and
+// acknowledges it before asserting, so the reload subtest starts from the
+// same all-acknowledged bell a fresh fixture would show, with one more
+// acknowledged failure behind it that must stay acknowledged too.
+//
+// The subtests are ORDER-DEPENDENT: if the navigation one fails before it
+// acknowledges, the reload one sees an extra unacknowledged failure and times
+// out. Read the first failure, not the second.
+func TestE2E_ActivityBell_AcknowledgementSurvives(t *testing.T) {
 	f := newE2EFixtureWithDrillInModsAndFailingDeploy(t)
 
-	var onHome, afterModPage, afterSearch, afterSetup, backHome string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		failADeploy("1"),
-		textContent(`.activity-bell__count`, &onHome),
-		openAndCloseTheBell(),
-		bellCountIs(""),
+	t.Run("TestE2E_ActivityBell_AcknowledgementSurvivesNavigation", func(t *testing.T) {
+		var onHome, afterModPage, afterSearch, afterSetup, backHome string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+			failADeploy("1"),
+			textContent(`.activity-bell__count`, &onHome),
+			openAndCloseTheBell(),
+			bellCountIs(""),
 
-		navigatedTo(f.ContextPath()+"/mod/fake/a", `.app-bar--away .activity-bell`),
-		chromedp.WaitVisible(`.mod-page__title`, chromedp.ByQuery),
-		chromedp.Evaluate(`(document.querySelector(".activity-bell__count")?.textContent ?? "").trim()`, &afterModPage),
+			navigatedTo(f.ContextPath()+"/mod/fake/a", `.app-bar--away .activity-bell`),
+			chromedp.WaitVisible(`.mod-page__title`, chromedp.ByQuery),
+			chromedp.Evaluate(`(document.querySelector(".activity-bell__count")?.textContent ?? "").trim()`, &afterModPage),
 
-		navigatedTo(f.ContextPath()+"/search?q=alpha", `.search-page`),
-		chromedp.Evaluate(`(document.querySelector(".activity-bell__count")?.textContent ?? "").trim()`, &afterSearch),
+			navigatedTo(f.ContextPath()+"/search?q=alpha", `.search-page`),
+			chromedp.Evaluate(`(document.querySelector(".activity-bell__count")?.textContent ?? "").trim()`, &afterSearch),
 
-		navigatedTo(f.ContextPath()+"/setup", `[data-testid="setup-page"]`),
-		chromedp.Evaluate(`(document.querySelector(".activity-bell__count")?.textContent ?? "").trim()`, &afterSetup),
+			navigatedTo(f.ContextPath()+"/setup", `[data-testid="setup-page"]`),
+			chromedp.Evaluate(`(document.querySelector(".activity-bell__count")?.textContent ?? "").trim()`, &afterSetup),
 
-		navigatedTo(f.ContextPath(), `.mission-control`),
-		chromedp.Evaluate(`(document.querySelector(".activity-bell__count")?.textContent ?? "").trim()`, &backHome),
-	)
+			navigatedTo(f.ContextPath(), `.mission-control`),
+			chromedp.Evaluate(`(document.querySelector(".activity-bell__count")?.textContent ?? "").trim()`, &backHome),
+		)
 
-	assert.Equal(t, "1", onHome, "a failed job raises the badge")
-	assert.Empty(t, afterModPage, "the acknowledged failure stays acknowledged on the full mod page's own bell")
-	assert.Empty(t, afterSearch, "...and on the search page's")
-	assert.Empty(t, afterSetup, "...and on setup's")
-	assert.Empty(t, backHome, "...and back on Mission Control's, which remounted too")
-	assert.Empty(t, f.BrowserErrors())
-}
+		assert.Equal(t, "1", onHome, "a failed job raises the badge")
+		assert.Empty(t, afterModPage, "the acknowledged failure stays acknowledged on the full mod page's own bell")
+		assert.Empty(t, afterSearch, "...and on the search page's")
+		assert.Empty(t, afterSetup, "...and on setup's")
+		assert.Empty(t, backHome, "...and back on Mission Control's, which remounted too")
+		assert.Empty(t, f.BrowserErrors())
+	})
 
-func TestE2E_ActivityBell_AcknowledgementSurvivesAReload(t *testing.T) {
-	f := newE2EFixtureWithDrillInModsAndFailingDeploy(t)
+	t.Run("TestE2E_ActivityBell_AcknowledgementSurvivesAReload", func(t *testing.T) {
+		var afterReload string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+			failADeploy("1"),
+			openAndCloseTheBell(),
+			bellCountIs(""),
 
-	var afterReload string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		failADeploy("1"),
-		openAndCloseTheBell(),
-		bellCountIs(""),
+			chromedp.Reload(),
+			chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+			// A reload re-seeds the bell from the stream's snapshot, which says
+			// nothing until it arrives; a NEW failure queues behind that snapshot
+			// on the same stream, so once it is on screen the old one has been
+			// weighed too. The badge then counts the new one alone.
+			failADeploy(""),
+			textContent(`.activity-bell__count`, &afterReload),
+		)
 
-		chromedp.Reload(),
-		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		// A reload re-seeds the bell from the stream's snapshot, which says
-		// nothing until it arrives; a NEW failure queues behind that snapshot
-		// on the same stream, so once it is on screen the old one has been
-		// weighed too. The badge then counts the new one alone.
-		failADeploy(""),
-		textContent(`.activity-bell__count`, &afterReload),
-	)
-
-	assert.Equal(t, "1", afterReload,
-		"after a reload the earlier failure is still acknowledged - only the new one counts")
-	assert.Empty(t, f.BrowserErrors())
+		assert.Equal(t, "1", afterReload,
+			"after a reload the earlier failure is still acknowledged - only the new one counts")
+		assert.Empty(t, f.BrowserErrors())
+	})
 }
 
 func TestE2E_ActivityBell_OnlyFailuresAfterTheAcknowledgementCount(t *testing.T) {

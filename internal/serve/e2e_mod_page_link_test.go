@@ -142,89 +142,86 @@ func assertModPageLink(t *testing.T, got *e2eLink, href, modName string) {
 	assert.Contains(t, got.Label, "Open on "+e2eSourceName, "the accessible name contains the visible text")
 }
 
-func TestE2E_ModPageLink_SlideOverOfAnInstalledMod(t *testing.T) {
+// TestE2E_ModPageLink_EverySurface checks the mod's page link on each surface
+// that shows a mod. Every subtest only reads and navigates fresh, so they share
+// one fixture (#600).
+func TestE2E_ModPageLink_EverySurface(t *testing.T) {
 	f := newE2EFixtureWithModPages(t)
 
-	var link *e2eLink
-	f.runInBrowser(t,
-		chromedp.Navigate(f.SlideOverPath("fake", "linked")),
-		chromedp.WaitVisible(`.slide-over__panel`, chromedp.ByQuery),
-		pollUntil(`document.querySelector(".slide-over a.mod-page-link")?.textContent.includes("E2E Search Source")`),
-		linkIn(".slide-over", &link),
-	)
-	assertModPageLink(t, link, e2eLinkedPage, "Linked Mod")
-	assert.Empty(t, f.BrowserErrors())
-}
+	t.Run("TestE2E_ModPageLink_SlideOverOfAnInstalledMod", func(t *testing.T) {
+		var link *e2eLink
+		f.runInBrowser(t,
+			chromedp.Navigate(f.SlideOverPath("fake", "linked")),
+			chromedp.WaitVisible(`.slide-over__panel`, chromedp.ByQuery),
+			pollUntil(`document.querySelector(".slide-over a.mod-page-link")?.textContent.includes("E2E Search Source")`),
+			linkIn(".slide-over", &link),
+		)
+		assertModPageLink(t, link, e2eLinkedPage, "Linked Mod")
+		assert.Empty(t, f.BrowserErrors())
+	})
 
-func TestE2E_ModPageLink_SlideOverOfASearchResult(t *testing.T) {
-	f := newE2EFixtureWithModPages(t)
+	t.Run("TestE2E_ModPageLink_SlideOverOfASearchResult", func(t *testing.T) {
+		var link *e2eLink
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+			chromedp.SendKeys(`.omnibar`, "found mod", chromedp.ByQuery),
+			chromedp.KeyEvent(kb.Enter),
+			chromedp.WaitVisible(searchResultRow("fake", "found"), chromedp.ByQuery),
+			chromedp.Click(searchResultRow("fake", "found")+" .search-result__name", chromedp.ByQuery),
+			chromedp.WaitVisible(`.slide-over__panel`, chromedp.ByQuery),
+			pollUntil(`document.querySelector(".slide-over a.mod-page-link")?.textContent.includes("E2E Search Source")`),
+			linkIn(".slide-over", &link),
+		)
+		assertModPageLink(t, link, e2eFoundPage, "Found Mod")
+		assert.Empty(t, f.BrowserErrors())
+	})
 
-	var link *e2eLink
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		chromedp.SendKeys(`.omnibar`, "found mod", chromedp.ByQuery),
-		chromedp.KeyEvent(kb.Enter),
-		chromedp.WaitVisible(searchResultRow("fake", "found"), chromedp.ByQuery),
-		chromedp.Click(searchResultRow("fake", "found")+" .search-result__name", chromedp.ByQuery),
-		chromedp.WaitVisible(`.slide-over__panel`, chromedp.ByQuery),
-		pollUntil(`document.querySelector(".slide-over a.mod-page-link")?.textContent.includes("E2E Search Source")`),
-		linkIn(".slide-over", &link),
-	)
-	assertModPageLink(t, link, e2eFoundPage, "Found Mod")
-	assert.Empty(t, f.BrowserErrors())
-}
+	t.Run("TestE2E_ModPageLink_FullModPage", func(t *testing.T) {
+		var link *e2eLink
+		f.runInBrowser(t,
+			chromedp.Navigate(f.ModPagePath("fake", "linked")),
+			chromedp.WaitVisible(`.mod-page__title`, chromedp.ByQuery),
+			pollUntil(`document.querySelector(".mod-page a.mod-page-link")?.textContent.includes("E2E Search Source")`),
+			linkIn(".mod-page", &link),
+		)
+		assertModPageLink(t, link, e2eLinkedPage, "Linked Mod")
+		assert.Empty(t, f.BrowserErrors())
+	})
 
-func TestE2E_ModPageLink_FullModPage(t *testing.T) {
-	f := newE2EFixtureWithModPages(t)
+	t.Run("TestE2E_ModPageLink_SearchPageAndOmnibarRows", func(t *testing.T) {
+		var omnibar, page *e2eLink
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+			chromedp.SendKeys(`.omnibar`, "found mod", chromedp.ByQuery),
+			chromedp.KeyEvent(kb.Enter),
+			chromedp.WaitVisible(`.omnibar-results `+searchResultRow("fake", "found"), chromedp.ByQuery),
+			pollUntil(`document.querySelector('.omnibar-results .search-result[data-mod="fake/found"] a.mod-page-link')?.textContent.includes("E2E Search Source")`),
+			linkIn(`.omnibar-results `+searchResultRow("fake", "found"), &omnibar),
+			chromedp.Navigate(f.SearchPagePath("found mod")),
+			chromedp.WaitVisible(`.search-page[data-hydrated="true"] `+searchResultRow("fake", "found"), chromedp.ByQuery),
+			pollUntil(`document.querySelector('.search-page .search-result[data-mod="fake/found"] a.mod-page-link')?.textContent.includes("E2E Search Source")`),
+			linkIn(`.search-page `+searchResultRow("fake", "found"), &page),
+		)
+		assertModPageLink(t, omnibar, e2eFoundPage, "Found Mod")
+		assertModPageLink(t, page, e2eFoundPage, "Found Mod")
+		assert.Empty(t, f.BrowserErrors())
+	})
 
-	var link *e2eLink
-	f.runInBrowser(t,
-		chromedp.Navigate(f.ModPagePath("fake", "linked")),
-		chromedp.WaitVisible(`.mod-page__title`, chromedp.ByQuery),
-		pollUntil(`document.querySelector(".mod-page a.mod-page-link")?.textContent.includes("E2E Search Source")`),
-		linkIn(".mod-page", &link),
-	)
-	assertModPageLink(t, link, e2eLinkedPage, "Linked Mod")
-	assert.Empty(t, f.BrowserErrors())
-}
-
-func TestE2E_ModPageLink_SearchPageAndOmnibarRows(t *testing.T) {
-	f := newE2EFixtureWithModPages(t)
-
-	var omnibar, page *e2eLink
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		chromedp.SendKeys(`.omnibar`, "found mod", chromedp.ByQuery),
-		chromedp.KeyEvent(kb.Enter),
-		chromedp.WaitVisible(`.omnibar-results `+searchResultRow("fake", "found"), chromedp.ByQuery),
-		pollUntil(`document.querySelector('.omnibar-results .search-result[data-mod="fake/found"] a.mod-page-link')?.textContent.includes("E2E Search Source")`),
-		linkIn(`.omnibar-results `+searchResultRow("fake", "found"), &omnibar),
-		chromedp.Navigate(f.SearchPagePath("found mod")),
-		chromedp.WaitVisible(`.search-page[data-hydrated="true"] `+searchResultRow("fake", "found"), chromedp.ByQuery),
-		pollUntil(`document.querySelector('.search-page .search-result[data-mod="fake/found"] a.mod-page-link')?.textContent.includes("E2E Search Source")`),
-		linkIn(`.search-page `+searchResultRow("fake", "found"), &page),
-	)
-	assertModPageLink(t, omnibar, e2eFoundPage, "Found Mod")
-	assertModPageLink(t, page, e2eFoundPage, "Found Mod")
-	assert.Empty(t, f.BrowserErrors())
-}
-
-func TestE2E_ModPageLink_LibraryRowMenu(t *testing.T) {
-	f := newE2EFixtureWithModPages(t)
-
-	var link *e2eLink
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		chromedp.Click(`.library__table tr[data-mod="fake:linked"] [data-action="row-menu"]`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
-		pollUntil(`document.querySelector(".row-menu a.mod-page-link")?.textContent.includes("E2E Search Source")`),
-		linkIn(".row-menu", &link),
-	)
-	assertModPageLink(t, link, e2eLinkedPage, "Linked Mod")
-	assert.Empty(t, f.BrowserErrors())
+	t.Run("TestE2E_ModPageLink_LibraryRowMenu", func(t *testing.T) {
+		var link *e2eLink
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+			chromedp.Click(`.library__table tr[data-mod="fake:linked"] [data-action="row-menu"]`, chromedp.ByQuery),
+			chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
+			pollUntil(`document.querySelector(".row-menu a.mod-page-link")?.textContent.includes("E2E Search Source")`),
+			linkIn(".row-menu", &link),
+		)
+		assertModPageLink(t, link, e2eLinkedPage, "Linked Mod")
+		assert.Empty(t, f.BrowserErrors())
+	})
 }
 
 // TestE2E_ModPageLink_UnsafeURLsRenderNoLink: a source's URL is data. A
