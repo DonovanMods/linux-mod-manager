@@ -133,7 +133,7 @@ type CollectionManifestFetcher interface {
 
 `CollectionManifest` is source-neutral: per-item installer choices (a neutral `InstallerChoices` type, §4), exact file lists with hashes, patches, phase, `fileOverrides`, instructions; collection-level mod rules, plugin list and plugin rules; and `Unknown` — every manifest key the parser did not recognise, with the item it was found on (or none, for a top-level key). The parser holds an allowlist of keys known to be informational at every nesting level (`author`, `details`, `source.tag`, `source.adultContent`, …), so a harmless key does not block anything. An unrecognised key is a feature lmm cannot replay, so it joins the gate (§3). Vortex's `collection.json` is a moving format (the spike found the rule generator and parser disagreeing on key names); fail-closed on the unknown is what makes that safe.
 
-**Core owns the fetch and the extraction.** The source supplies the URL and the parse; core downloads with the existing downloader and extracts with the existing extractor (the archive is 7z), into a cache entry of its own: `<cache>/<game>/collections/nexusmods-<slug>/<revision>/`. It is kept, because `bundled/` and `patches/` are needed at install time, and a re-plan of the same revision is then free. lmm has no cache-prune command, so removal is explicit: the entry goes when the last profile whose `collection` provenance names that revision is deleted or synced to another revision (C8), and purge leaves it alone (it is not deployed content).
+**Core owns the fetch and the extraction.** The source supplies the URL and the parse; core downloads with the existing downloader and extracts with the existing extractor. The archive is always `.7z`, so a collection import needs the system `7z` lmm already needs for `.7z` mods, and the plan says so plainly when it is missing, into a cache entry of its own: `<cache>/<game>/collections/nexusmods-<slug>/<revision>/`. It is kept, because `bundled/` and `patches/` are needed at install time, and a re-plan of the same revision is then free. lmm has no cache-prune command, so removal is explicit: the entry goes when the last profile whose `collection` provenance names that revision is deleted or synced to another revision (C8), and purge leaves it alone (it is not deployed content).
 
 The `collectionRevision` query gets the same `schema_contract_test.go` treatment the `ModsFilter` query has: a recorded introspection of `Collection`, `CollectionRevision`, `CollectionRevisionMod` and `ExternalResource`, so a Nexus schema change fails a test rather than a user's import.
 
@@ -157,7 +157,7 @@ The plan derives a **feature set** from the manifest, and the acquire phase (§1
 | `list` | always | C2 |
 | `external` | a `direct`/`browse`/`manual` source or an `externalResources` entry | C2 — listed with its URL and instructions, never fetched (Nexus's own collection installer asks the user to fetch these too) |
 | `mod_rules` | `modRules` with `before`/`after` whose references all resolve to items | C2 — a topological sort onto the profile's mod order, stable on the collection's own order |
-| `mod_rule_unresolved` | a `before`/`after` rule whose reference matches no item (rules reference mods by `IModReference`: `fileExpression`, `logicalFileName`, `md5Hint`, … — that field list is UNVERIFIED) | never, until C2's fixtures show what real rules carry |
+| `mod_rule_unresolved` | a `before`/`after` rule whose reference matches no item. Rules reference mods as `{fileExpression, fileMD5, versionMatch, logicalFileName}` (VERIFIED in the first sample, where all 27 rules resolve by `fileMD5` = `source.md5`); resolve by `fileMD5`, then `logicalFileName` + `versionMatch` | never |
 | `optional` | any `optional: true` item | C2 — opt-in (§11 Q4) |
 | `phase` | any `phase > 0` | C2 — honoured as install order (cheap); its effect on FOMOD evaluation arrives with C4 |
 | `fomod` | an item with `choices.type == "fomod"` (recorded choices, replayable) | C4 |
@@ -168,7 +168,8 @@ The plan derives a **feature set** from the manifest, and the acquire phase (§1
 | `bundled` | a `bundle` source | C5 |
 | `patches` | an item with `patches` | C5 (BSDIFF40 only; any other patch format stays unsupported) |
 | `plugin_order` | top-level `plugins` or `pluginRules` | C6 |
-| `manifest:<key>` | a manifest key the parser did not recognise and does not allowlist | never, until a story names it |
+| `file_load_order:<id>` | a non-empty `fbLoadOrders` entry (Vortex's file-based load order: the first sample orders 275 Cyberpunk `.archive` files under `cyberpunk2077-archive`) | C9 (#620), one id at a time |
+| `manifest:<key>` | a manifest key the parser did not recognise and does not allowlist. An **empty** value (`loadOrder: []`, `tools: []`, an `fbLoadOrders` entry with no entries) is treated as absent and raises nothing | never, until a story names it |
 | `manifest_unavailable` | the recipe could not be fetched | never |
 
 `modRules` of type `requires`/`recommends`/`conflicts`/`provides` are informational for lmm's purposes (the list already *is* the requirement set) and raise no feature; they are shown in the plan.
@@ -436,6 +437,7 @@ Story issues, each a `feat/…` branch off `develop`, each with its CHANGELOG en
 - **C5 — Exact file lists, bundled files, binary patches.** The `files:` field; the `lmm-collection` synthetic source; the BSDIFF40 applier; adds `file_list`, `bundled`, `patches`. ← C2, F2 (cache variants).
 - **C6 — Collection plugin order.** `plugins`/`pluginRules` to the profile's plugin list, both rule-key spellings; adds `plugin_order`. ← C2, P3.
 - **C7 — README/CLAUDE.md: Collections is no longer a non-goal.** Docs only, once C4, C6, F3 and P4 have merged (the point at which a typical Skyrim collection imports, if §11 Q2's survey agrees that it is).
+- **C9 — File-based load orders (`fbLoadOrders`), Cyberpunk archive order first.** An optional `FileLoadOrderer` adapter capability (pure rule table per load-order id), the core write with originals capture, a per-profile list; adds `file_load_order:cyberpunk2077-archive`. Where the game reads the order (`archive/pc/mod/modlist.txt`) is UNVERIFIED and is the story's first task. ← C2. (#620)
 - **C8 — Revision updates** (`profile sync` for collection-provenance profiles, the `from_collection` lock bypass, obsolete-member review, collection cache-entry removal). ← C2.
 
 ### FOMOD
@@ -458,7 +460,8 @@ A1 ─────┼──► C2 ──┬──► C3
         │         ├──► C8
         │         ├──────────────► C4 ◄── F2
         │         ├──────────────► C5 ◄── F2
-        │         └──────────────► C6 ◄── P3
+        │         ├──────────────► C6 ◄── P3
+        │         └──────────────► C9
 F0 ─┐   │
 F1 ─┼───┴──► F2 ──► F3
 A1 ─┘         └──────► P5 ◄── P3
@@ -512,7 +515,7 @@ C1, A1, F0, F1, P1 and P2 have no parents and can run as six parallel worktrees.
 These are the genuine forks; everything above is decided unless a reviewer reopens it.
 
 1. **Free accounts and the recipe — needs a real key.** Can a free account fetch the collection archive (`/v2/collections/{id}/revisions/{id}/download_link`)? Vortex's comments suggest yes; nobody has tested it. If no, free users get list-only imports (`manifest_unavailable`, Apply refused) and C3's value drops sharply. **Ask:** one `curl` with a free-account key and one with a Premium key, recorded into C1's and C2's fixtures. The Nexus ToS wording on automating free downloads was not found either; lmm's no-automation stance stands regardless.
-2. **Real `collection.json` samples.** The spike read Vortex's types but no real manifests, and found the plugin-rule generator and parser disagreeing on key names. C2 should start by downloading three or four real ones (one Skyrim SE with FOMOD and plugin rules, one non-Bethesda, one with bundled files or patches) as fixtures. That needs a key, so it goes with Q1.
+2. **Real `collection.json` samples.** *Partly answered 2026-11-10: one Cyberpunk sample read (Decisions log).* Still wanted: a Skyrim SE sample with plugin rules, and one with bundled files or patches. The spike read Vortex's types but no real manifests, and found the plugin-rule generator and parser disagreeing on key names. C2 should start by downloading three or four real ones (one Skyrim SE with FOMOD and plugin rules, one non-Bethesda, one with bundled files or patches) as fixtures. That needs a key, so it goes with Q1.
 3. **Plugins.txt ownership.** **Ruled 2026-11-10: preserve external plugins.** Decided above: lmm writes the whole file from the profile, re-reads it before each write, and keeps plugins it did not deploy (hand-installed, or added by the game's own Creations menu) in place. The alternative is a stricter "lmm's file is the whole truth" mode that deactivates anything the profile does not name. That fits lmm's reproducibility promise better, but it would silently switch off a Creation bought in-game. Reviewer's call.
 4. **Optional collection mods default.** **Ruled 2026-11-10: off, opt-in.** Decided: off, opt-in (`--with-optional`, or per item in the SPA plan). Vortex asks the user. The alternative is on by default, which matches what the curator shipped as the "full" experience.
 5. **Old binaries dropping new profile keys.** Accepted above (self-update makes downgrades rare). The alternative is a `requires_lmm: ">=2.N"` profile key that older binaries refuse to rewrite. That only protects binaries released *after* it, so it is cheap insurance for the next feature rather than this one.
@@ -539,7 +542,7 @@ These are the genuine forks; everything above is decided unless a reviewer reope
 | C2 | #607 | C7 | #612 | P1 | #605 |
 | C3 | #608 | C8 | #613 | P2 | #606 |
 | C4 | #609 | F0 | #603 | P3 | #616 |
-| | | F1 | #604 | P4 | #617 |
+| C9 | #620 | F1 | #604 | P4 | #617 |
 | | | | | P5 | #618 |
 | | | | | P6 | #619 |
 
@@ -548,5 +551,5 @@ These are the genuine forks; everything above is decided unless a reviewer reope
 - Revision 484 (id 833991), collection id 11525: 364 items, about 491 MB, no external resources, no optional items, every `updatePolicy` `exact`.
 - The `downloadLink` is `/v2/collections/11525/revisions/833991/download_link`. It is keyed by numeric ids, which confirms `Collection.Handle` (§2).
 - 116 of the pinned files are not the mod's primary file, 13 are `OLD_VERSION` and 3 are `ARCHIVED`. C2 must install by exact file id, including archived files. Whether the API serves download links for archived files is unverified, and is now part of #607.
-- Its `collection.json` (FOMOD choices, mod rules, bundled files) needs an API key and has not been read yet (Q1/Q2).
-
+- Its `collection.json` was then fetched with the owner's stored key (a **Premium** account, so Q1's free-account question is still open). Facts are in the spike findings (Part 4) and on #607. In short: 1 FOMOD item, 11 replicate-mode (`hashes`) items, 27 `before`/`after` rules all resolving by `fileMD5`, phases 0–3, no optional items, no patches, no bundled files, and an `fbLoadOrders` key the design had not anticipated (now C9, #620).
+- **Consequence:** this collection needs C2 + C4 + C5 + C9. C2 alone does not import it. That is one sample, from a non-Bethesda game, and it already uses FOMOD (which supports core placement, §4) and replicate mode. C5 is likely on the critical path for real collections, not an afterthought; revisit the milestone order once a Bethesda sample is in.

@@ -489,3 +489,42 @@ Open risks / questions
 - Whether Skyrim SE under Proton honours a Linux-written `Plugins.txt` in a case-sensitive FS: Wine is case-insensitive for lookups inside the prefix but a file we create as `plugins.txt` vs existing `Plugins.txt` may produce duplicates on a case-sensitive FS; match the existing file's case, else use `Plugins.txt` (LLO comment: game reads `Plugins.txt`). INFERRED.
 - Starfield's blueprint masters need mtime control (LLO sets timestamps), another reason for a Tier 1 that excludes Starfield blueprint plugins.
 - #355 label says post-v2.0 / milestone v2.1; it blocks #597.
+
+---
+
+## Part 4 — First real manifest (2026-11-10)
+
+`cyberpunk2077/iszwwe`, "Welcome to Night City 2.5", supplied by the owner. All VERIFIED (read this session).
+
+### The list (GraphQL, anonymous)
+
+- Collection id 11525, latest published revision 484 (revision id 833991), 364 items, `totalSize` about 491 MB, `adultContent` false, no `externalResources`, `installationInfo` empty.
+- Every `modFiles[].updatePolicy` is `exact`, and none is optional.
+- File categories: MAIN 337, OLD_VERSION 13, OPTIONAL 11, ARCHIVED 3. 116 files are not the mod's primary file.
+- `downloadLink` = `/v2/collections/11525/revisions/833991/download_link`, keyed by the numeric collection and revision ids.
+
+### The archive (Premium key)
+
+- `download_link` returned 200 with `{"download_links": [{name, short_name, URI}]}`; the URI is a signed `premium-files.nexus-cdn.com` URL with 3 query parameters.
+- The account behind the key is Premium (`/v1/users/validate.json`: `is_premium: true`), so this says nothing about free accounts.
+- The archive is a 54 KB 7z holding `collection.json` (388 KB) plus empty `bundled/` and `patches/` directories.
+
+### `collection.json`
+
+- Top-level keys: `info`, `mods`, `modRules`, `collectionConfig` (`recommendNewProfile: false`, `referenceTagScheme: "v1"`), `loadOrder` (empty), `tools` (empty), `fbLoadOrders`.
+- `info` keys: `author`, `authorUrl`, `description`, `domainName`, `gameVersions` (`["2.5.0.0"]`), `installInstructions` (1,272 characters), `name`.
+- Each mod has `name`, `version`, `optional`, `domainName`, `source`, `author`, `details` (`{type: ""}`) and `phase`. 11 also have `hashes` and 1 has `choices`. None has `instructions`, `fileOverrides` or `patches`.
+- Each `source` has `type` (always `nexus`), `modId`, `fileId`, `md5`, `fileSize`, `logicalFilename`, `updatePolicy` (always `exact`) and `tag`.
+- Phases: 0 ×16, 1 ×297, 2 ×50, 3 ×1.
+- `choices` (one mod): `{"type":"fomod","options":[{"name":"Introduction","groups":[{"name":"Intro","choices":[{"name":" Spicy Clean Hacking Screen","idx":0}]}]},…]}`. Note the leading space in a choice name: matching must not trim.
+- `hashes` (11 mods, 1–370 entries each): `{path, md5}` only, no `xxh64`. Paths use backslashes and are relative to the game root (`r6\scripts\BrowserExtension\…`). The mod with `choices` has no `hashes`, which confirms that a mod carries one or the other.
+- `modRules` (27): 18 `after`, 9 `before`. Each side is `{fileExpression, fileMD5, versionMatch, logicalFileName}`, and all 54 references resolve to an item by `fileMD5` = `source.md5`.
+- `fbLoadOrders`:
+  - `cyberpunk2077-archive`: 275 entries, each `{id, name, enabled, modId}`. `id` and `name` are `.archive` file names, all entries are enabled, and the list is ordered.
+  - `cyberpunk2077-redmod`: no entries.
+  - `modId` is Vortex-internal (`<logical name> <nexus modId> <version> <date> <tag>`); 181 of the 275 embed a collection item's Nexus mod id.
+- Where Cyberpunk reads archive order from (`archive/pc/mod/modlist.txt`) is UNVERIFIED.
+
+### Environment
+
+There was no `7z` on the development machine. lmm's extractor shells out to it for `.7z`, so it was installed (`7zip` 26.04) to read the archive.
