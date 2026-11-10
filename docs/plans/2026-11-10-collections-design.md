@@ -1,6 +1,6 @@
 # NexusMods Collections, FOMOD and plugin order — design (#597, #354, #355)
 
-**Date:** 2026-11-10 · **Status:** Approved (owner rulings below; stories #601–#619) · **Issues:** [#597](https://github.com/DonovanMods/linux-mod-manager/issues/597) (Collections), [#354](https://github.com/DonovanMods/linux-mod-manager/issues/354) (FOMOD), [#355](https://github.com/DonovanMods/linux-mod-manager/issues/355) (plugin order)
+**Date:** 2026-11-10 · **Status:** Approved (owner rulings below; stories #601–#624) · **Issues:** [#597](https://github.com/DonovanMods/linux-mod-manager/issues/597) (Collections), [#354](https://github.com/DonovanMods/linux-mod-manager/issues/354) (FOMOD), [#355](https://github.com/DonovanMods/linux-mod-manager/issues/355) (plugin order)
 **Inputs:** the three spikes in [2026-11-10-collections-spike-findings.md](2026-11-10-collections-spike-findings.md) (every external fact below is theirs, with its VERIFIED/INFERRED/UNVERIFIED tag there), the game-adapter seam ([2026-09-10-game-adapter-design.md](2026-09-10-game-adapter-design.md)), the Steam Workshop collection path ([2026-09-09-steam-workshop-design.md](2026-09-09-steam-workshop-design.md) §4), the manual-download flow (#543), and the v2 rules (Plan/Apply, typed errors, thin frontends, additive JSON) in [2026-08-27-v2-core-refactor-design.md](2026-08-27-v2-core-refactor-design.md).
 
 No code in this unit. Each numbered section is a decision, not a menu; §11 holds the genuine forks.
@@ -16,7 +16,8 @@ This design keeps that promise without waiting for everything:
 1. **The gate is the collection's own manifest, and it fails closed.** Core reads `collection.json`, derives the set of *features* the collection needs (`fomod`, `plugin_order`, `patches`, `bundled`, `file_list`, …), and refuses to apply an import whose features are not all in lmm's supported set. Nothing is special-cased by game: a Stardew collection with no installer choices imports on day one; a Skyrim collection waits for the features it actually uses. Each later story *adds a feature to the supported set*, and that is the whole release mechanism. The manifest is not the only witness: an archive that turns out to contain a FOMOD the manifest recorded no choices for raises `fomod` too, at acquire time, before anything is written (§1, §3).
 2. **FOMOD is a core install step, not a Bethesda-adapter capability.** FOMOD is an archive format detected from the archive (`fomod/ModuleConfig.xml`), used by Cyberpunk, Witcher 3, BG3 and Mount & Blade mods as much as Skyrim's. #354's text puts it in a `bethesda` adapter; this design moves it to core, with adapters supplying only what is game-specific (plugin state for `fileDependency`). See §4.
 3. **Plugin order is a `bethesda` adapter capability plus a per-profile plugin list.** The adapter is a pure rule table (where the list file lives, its format, implicit plugins, header flag bits, limits); core reads plugin headers, sorts, and writes `Plugins.txt` into the game's Proton prefix — a location lmm does not model today and gains here. Tier 1 is the text-file games (Skyrim SE/AE/VR, Fallout 4/VR, Starfield, Skyrim LE). The timestamp-ordered games are deferred. See §5.
-4. **No new dependencies.** FOMOD is `encoding/xml` + `unicode/utf16` + a 32-entry Windows-1252 table; plugin headers are `encoding/binary`; BSDIFF40 patches are `compress/bzip2`. Nothing GPL is linked (lmm is MIT; Vortex, libloot, libloadorder and esplugin are GPL — read for behaviour, never ported).
+4. **lmm has a collection format of its own, and Nexus is one input to it** (§12, owner direction 2026-11-10). The format is the next version of `lmm profile export`: a versioned, source-neutral, shareable document that declares the features it needs, so the gate above is a property of the format and not of Nexus. A Nexus collection is *converted* into it and imported as an ordinary profile, and any profile exports back out as one, to be shared as a file or a URL outside Nexus.
+5. **No new dependencies.** FOMOD is `encoding/xml` + `unicode/utf16` + a 32-entry Windows-1252 table; plugin headers are `encoding/binary`; BSDIFF40 patches are `compress/bzip2`. Nothing GPL is linked (lmm is MIT; Vortex, libloot, libloadorder and esplugin are GPL — read for behaviour, never ported).
 
 ---
 
@@ -429,16 +430,23 @@ Story issues, each a `feat/…` branch off `develop`, each with its CHANGELOG en
 - **P1 — Game prefix.** `prefix:` / `prefix_user:` on games.yaml and `domain.Game`, Steam compatdata derivation across all libraries, the user-directory rule, detect prefill, `game edit --prefix`, the SPA game editor field.
 - **P2 — TES4 header reader + `bethesda` adapter.** The `PluginOrderer` capability and its rule tables for the Tier 1 games; `FileRoute.Root` and the game-root routing table (SKSE, ENB), once P2 confirms no existing route covers it; Skyrim VR / Fallout 4 VR detection entries; the detection prefill and the "suggest `adapter: bethesda`" finding; the header reader (fuzzed, fixtures from `Ortham/testing-plugins` if its license allows, else synthesised).
 
+### lmm collection format (§12)
+
+- **L1 — lmm collection format v1.** The `.lmmc` container (zip: `collection.yaml`, reserved `.sig`; `-o`, the TTY refusal, `--plain`, import by sniffing first bytes, the zip-bomb and path rules) and the version-1 document (`lmm_collection: 1`, `id`/`version`, metadata, portable `game:`, `requires`, `origin`, external items, reserved `signer`/`.sig`); reader and writer with version-0 compatibility; `requires` derived on export and gated on import; local-game matching and `--game`; the untrusted-input rules (hooks opt-in on export and local import only, overrides contained and listed, never `link_method`/default, sanitising and caps); `lmm profile export` writes it (metadata flags), `lmm profile import <file>` reads it through `ApplyCollectionImport` on A1; goldens; the format spec in `docs/collection-format.md`. ← A1.
+- **L2 — Import from an HTTPS URL.** `lmm profile import https://…` and the SPA's import input, through the shared HTTP client; the URL is recorded as `origin`. ← L1.
+- **L3 — Bundled files.** `files/<item>/…` inside the `.lmmc` container, the `lmm-collection` synthetic source, and export with `--bundle <dir>` for an author's own files. ← L1.
+- **L4 — Signatures** (later, demand-gated). Verify the `.sig` sidecar and show the signer; signing on export. ← L1.
+
 ### Collections
 
-- **C2 — Collection import, list + gate (Level 1).** `GameCollectionResolver`, `CollectionItem`, `Handle` and `CollectionManifestFetcher` on the source seam; the `collectionRevision` query with its schema-contract test; fetching, caching and extracting the recipe archive; `ParseManifest` with its allowlist and `Unknown`; feature derivation and the gate (manifest and acquire-time, including `fomod_unanswered` and `fomod_scripted` detection, which needs only a file-presence check and not F1); `ApplyCollectionImport` on A1; the `CollectionImport` document and goldens; the `collection:` provenance field and `from_collection`; the mod-rule sort; phase as install order; optional opt-in; `CollectionUnsupportedError`; `--nexus-collection` and the SPA profile-import input. Supported set: `list`, `external`, `mod_rules`, `optional`, `phase`. **Starts with the fixture survey of §11 Q2.** ← C1, A1.
+- **C2 — Collection import, list + gate (Level 1).** *Re-scoped by §12: the Nexus manifest is **converted to an lmm collection document** and imported through L1; the gate of §3 is applied during conversion.* `GameCollectionResolver`, `CollectionItem`, `Handle` and `CollectionManifestFetcher` on the source seam; the `collectionRevision` query with its schema-contract test; fetching, caching and extracting the recipe archive; `ParseManifest` with its allowlist and `Unknown`; feature derivation and the gate (manifest and acquire-time, including `fomod_unanswered` and `fomod_scripted` detection, which needs only a file-presence check and not F1); `ApplyCollectionImport` on A1; the `CollectionImport` document and goldens; the `collection:` provenance field and `from_collection`; the mod-rule sort; phase as install order; optional opt-in; `CollectionUnsupportedError`; `--nexus-collection` and the SPA profile-import input. Supported set: `list`, `external`, `mod_rules`, `optional`, `phase`. **Starts with the fixture survey of §11 Q2.** ← C1, A1, L1.
 - **C3 — `lmm profile fill`.** md5 matching of downloaded archives against pending pins (CLI + SPA drop zone), installing through A1. ← C2.
 - **C4 — Collection FOMOD replay.** `choices` to `ModReference.fomod`, the md5 pre-check, phase-aware `FileStates`; adds `fomod`. `fomod_unanswered` becomes supported once both C4 and F3 have merged. ← C2, F2.
-- **C5 — Exact file lists, bundled files, binary patches.** The `files:` field; the `lmm-collection` synthetic source; the BSDIFF40 applier; adds `file_list`, `bundled`, `patches`. ← C2, F2 (cache variants).
+- **C5 — Exact file lists, bundled files, binary patches.** The `files:` field; Nexus `bundled/` mapped onto L3's bundle mechanism; the BSDIFF40 applier; adds `file_list`, `bundled`, `patches`. ← C2, F2 (cache variants), L3.
 - **C6 — Collection plugin order.** `plugins`/`pluginRules` to the profile's plugin list, both rule-key spellings; adds `plugin_order`. ← C2, P3.
 - **C7 — README/CLAUDE.md: Collections is no longer a non-goal.** Docs only, once C4, C6, F3 and P4 have merged (the point at which a typical Skyrim collection imports, if §11 Q2's survey agrees that it is).
 - **C9 — File-based load orders (`fbLoadOrders`), Cyberpunk archive order first.** An optional `FileLoadOrderer` adapter capability (pure rule table per load-order id), the core write with originals capture, a per-profile list; adds `file_load_order:cyberpunk2077-archive`. Where the game reads the order (`archive/pc/mod/modlist.txt`) is UNVERIFIED and is the story's first task. ← C2. (#620)
-- **C8 — Revision updates** (`profile sync` for collection-provenance profiles, the `from_collection` lock bypass, obsolete-member review, collection cache-entry removal). ← C2.
+- **C8 — Updates from origin** (`profile sync` for collection-provenance profiles: a newer Nexus revision, or a re-fetched URL compared by `id`/`version`, the `from_collection` lock bypass, obsolete-member review, collection cache-entry removal). ← C2, L2.
 
 ### FOMOD
 
@@ -455,6 +463,10 @@ Story issues, each a `feat/…` branch off `develop`, each with its CHANGELOG en
 ### Order and parallelism
 
 ```text
+A1 ──► L1 ──┬──► L2 ──► (C8)
+            ├──► L3 ──► (C5)
+            ├──► L4 (later)
+            └──► (C2)
 C1 ─────┐
 A1 ─────┼──► C2 ──┬──► C3
         │         ├──► C8
@@ -524,6 +536,106 @@ These are the genuine forks; everything above is decided unless a reviewer reope
 
 ---
 
+## 12. lmm's own collection format
+
+**Owner direction, 2026-11-10:** lmm must be able to make and share collections of its own, outside NexusMods. Nexus import therefore *converts* a Nexus collection into lmm's format rather than being a path of its own.
+
+### One format: the profile export, versioned
+
+A collection is a shareable profile, and `lmm profile export` already writes a portable profile document (`domain.ExportedProfile`: name, game, ordered mod references with pins and locks, overrides, hooks). **The lmm collection format is that document's version 1** (owner ruling: evolve the profile export rather than add a second format):
+
+- A version-1 document starts with `lmm_collection: 1`. A document without the key is version 0, today's export, and stays importable exactly as now.
+- `lmm profile export` writes version 1. `lmm profile import` reads version 0, version 1, a local file or an **HTTPS URL** (owner ruling: file and URL in the first version; git is not), and `--nexus-collection` / `--workshop-collection` refs.
+- The file on disk is a compressed `.lmmc` container by default (below). Everything F2, P3, C5 and C9 add to a profile (`fomod:`, `files:`, `plugins:`, load orders) is profile state, so it is in the format automatically, with no separate collection schema to keep in step.
+
+```yaml
+lmm_collection: 1
+id: 2f8c7a3e-…            # stable across versions of one collection
+version: 3                # bumped by the author on each publish
+name: Welcome to Night City
+author: …
+description: …
+install_instructions: …   # shown in the plan
+game:                     # portable identity, never the author's local game id
+  name: Cyberpunk 2077
+  steam_app_id: "1091500"
+  sources: { nexusmods: cyberpunk2077 }
+  versions: ["2.5.0.0"]
+requires: [fomod, file_list, "file_load_order:cyberpunk2077-archive"]
+origin:                   # present when converted from elsewhere; carried through re-export
+  source_id: nexusmods
+  slug: iszwwe
+  revision: 484
+  url: https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe
+  author: …
+mods:
+  - source_id: nexusmods
+    mod_id: "…"
+    name: Much Better Ammo        # display: a recipient without the source still sees what it is
+    version: 1.8.0
+    file_ids: ["…"]
+    files: [{ id: "…", md5: 25aa…, size: 1234567 }]   # verification, and profile fill (C3)
+    locked: true
+    phase: 1
+    fomod: { … }                  # F2's shape
+  - kind: external                # not fetchable by lmm: a URL and what to do
+    name: …
+    url: https://…
+    instructions: …
+plugins: { order: […], rules: { … } }   # P3's shape
+load_orders: { cyberpunk2077-archive: […] }   # C9's shape
+overrides: { "engine/config/user.ini": "…" }
+```
+
+### Decisions
+
+- **`requires` is the gate, and it is part of the format.** The exporter derives it from the content and never accepts it hand-written. The importer refuses a document requiring any feature outside its supported set, with `CollectionUnsupportedError` (§3). That is what makes the format forward-compatible: a newer lmm adds semantics only by adding a feature name, so an older lmm refuses what it cannot replay instead of half-installing it. A key an importer does not recognise and that `requires` does not name is informational and is ignored. The Nexus-specific gate of §3 becomes the *converter's* job: Nexus features with no lmm representation yet raise their feature name during conversion, exactly as before.
+- **References, never redistribution.** A document points at each mod on its source, and the recipient downloads it with their own account. A collection may bundle only its author's own files (§12, the container). That keeps sharing within Nexus's and CurseForge's terms, and lets a collection live anywhere: a file, a gist, a raw file in a git repository.
+- **Portable game identity.** `game_id` in today's export is the author's local name for the game. Version 1 replaces it with `game:` (Steam app id, per-source game ids, display name, tested game versions), and the importer matches a local game by Steam app id, then by source ids. No match, or several, needs `--game`. Version 0 keeps `game_id`.
+- **Documents from others are untrusted input.**
+  - **Hooks are code.** A hook is a script path lmm executes, and #296 made hooks survive an export/import round trip. Version-1 export omits hooks unless `--include-hooks` is given. Import never applies hooks from a URL, and applies them from a local file only with `--with-hooks`, after the plan lists them. That changes #296's behaviour for version-1 documents. Version 0 keeps its round trip.
+  - **Overrides** (INI tweaks) are legitimate collection content, as Vortex's are. They stay, confined to the game directory (`overrides.go`'s containment, unchanged), and the plan shows each one.
+  - The local `link_method` and the profile's default flag are machine preferences and are never exported.
+  - Strings are sanitised (`domain.SanitizeLine`, #594); the document, items and strings are size-capped; a URL fetch uses the shared HTTP client's caps, timeouts and redirect rules.
+  - Sources the recipient does not have (a custom source, or a source without a key): the item is listed with its name and the remedy, as Workshop items are. A shared document never carries a custom source's definition: those can make HTTP calls with the user's credentials.
+- **Re-export keeps the credit** (owner ruling). A profile imported from a Nexus collection exports like any other profile, with its `origin` (curator, slug, revision, link) carried through. The CLI and the SPA say once, at export, that republishing someone else's collection is the user's call.
+- **Updates come from `origin`.** C8's revision sync generalises: a profile whose origin is a Nexus collection syncs from the newest revision; one imported from a URL re-fetches that URL and compares `id` and `version`. The `from_collection` lock rule (§1) is unchanged.
+- **Signatures: room now, code later** (owner ruling). Version 1 reserves a detached `<document>.sig` sidecar (ed25519, the `internal/releasesig` primitives) and a `signer` field, and importers ignore both. A later story verifies them and shows the signer in the plan.
+
+### The container: `.lmmc`, compressed by default
+
+**Owner direction, 2026-11-10: the export is a compressed file.** Today `lmm profile export` prints plain YAML to stdout. A version-1 export is an **`.lmmc` file**: a zip (stdlib `archive/zip`, deflate; no `7z` needed to make or read one) holding:
+
+```text
+collection.yaml            the version-1 document above
+files/<item>/…             optional: the author's own files (bundled items)
+collection.yaml.sig        reserved for L4's signature; ignored until then
+```
+
+- **One container for every case.** A list-only collection is a zip holding just `collection.yaml`, and one that bundles files adds `files/`. Bundles are not a separate format.
+- **Export:**
+  - `lmm profile export <name> -o survival.lmmc` writes the container.
+  - Without `-o`, the zip goes to stdout only when stdout is not a terminal; at a terminal it refuses with a hint rather than spray binary.
+  - `--plain` writes the bare version-1 YAML, for a diff, a git repository or a gist.
+  - `--json` keeps its existing contract (#309), unchanged.
+  - The SPA's export downloads a `.lmmc`.
+- **Import** sniffs the first bytes (`PK\x03\x04` means a container, anything else is YAML of either version), from a file or a URL, so a plain document, a container and a version-0 export all import with the same command.
+- **Untrusted zip rules:** every member path is sanitised with the extractor's existing zip-slip and reserved-name guards; the member count and the compressed and uncompressed sizes (and so the compression ratio) are capped against zip bombs; only `collection.yaml`, `collection.yaml.sig` and `files/` are read, and anything else is ignored with a warning.
+- Bundled items use the `lmm-collection` synthetic source of §6, ingested like an archive import. Nexus's `bundled/` (C5) maps onto the same mechanism.
+
+### The pipeline
+
+```text
+Nexus collection.json ──convert──┐
+Workshop collection ─────────────┼─► lmm collection document ─► PlanCollectionImport / ApplyCollectionImport (A1) ─► profile
+local file / HTTPS URL ──parse───┘                       ▲
+profile ──────────────────────────── lmm profile export ─┘
+```
+
+Core owns every arrow, and the converters are pure (manifest → document). The Workshop collection import (#269 W2) keeps its own path until a story moves it onto this pipeline. That move is worthwhile, because it would give Workshop collections export and sharing for free, but it is not needed.
+
+---
+
 ## Decisions log
 
 **Owner rulings, 2026-11-10:**
@@ -532,6 +644,12 @@ These are the genuine forks; everything above is decided unless a reviewer reope
 - `Plugins.txt`: preserve plugins lmm did not deploy (§5, Q3).
 - Optional collection mods: off by default, opt-in (§3, Q4).
 - File the stories now: done, as below.
+- lmm gets a shareable collection format of its own; Nexus collections are converted into it and import as an ordinary profile (§12).
+- The format is the versioned profile export, not a second format.
+- Re-export of a converted Nexus collection is allowed, with the origin credit kept.
+- Signatures: room reserved now, implementation later (L4).
+- Import sources in the first version: a local file and an HTTPS URL (no git).
+- The export is a compressed `.lmmc` file by default; `--plain` writes bare YAML.
 
 **Story issues:**
 
@@ -544,7 +662,8 @@ These are the genuine forks; everything above is decided unless a reviewer reope
 | C4 | #609 | F0 | #603 | P3 | #616 |
 | C9 | #620 | F1 | #604 | P4 | #617 |
 | | | | | P5 | #618 |
-| | | | | P6 | #619 |
+| L1 | #621 | L3 | #623 | P6 | #619 |
+| L2 | #622 | L4 | #624 | | |
 
 **First real collection, 2026-11-10.** The owner supplied `cyberpunk2077/iszwwe` ("Welcome to Night City 2.5"). Queried anonymously:
 
