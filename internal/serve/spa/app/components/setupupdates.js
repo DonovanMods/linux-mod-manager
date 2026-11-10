@@ -19,7 +19,7 @@ import { getLmmRelease, putAutoUpdate } from "../api.js";
 /** INSTALL_LABELS names core.InstallKind for a person. */
 const INSTALL_LABELS = {
   "self-managed":
-    "Self-managed (a release download, go install or make install)",
+    "Self-managed (a release download, go install, or make install of a release tag)",
   package: "Package",
   dev: "Development build",
 };

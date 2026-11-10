@@ -147,8 +147,9 @@ under the web UI's **Setup > Updates**). The trigger is the daily
   too, which is only worth having on a machine where lmm rarely runs.
 
 It applies only to an lmm you manage yourself (the release tarball,
-`go install`, `make install`): a package manager's binary, or a development
-build, is never replaced. Every update is verified against the lmm release
+`go install`, or `make install` of a release tag): a package manager's
+binary, or a development build (any other `make install`), is never
+replaced. Every update is verified against the lmm release
 key before it is installed, exactly as `lmm self-update` does; only one runs
 at a time, and a release whose update failed is left alone for a day. A
 release check that fails (offline, GitHub erroring) backs off from an hour,

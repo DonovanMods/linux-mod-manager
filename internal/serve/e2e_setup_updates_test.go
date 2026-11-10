@@ -84,6 +84,10 @@ func TestE2E_SetupUpdatesShowsTheFactsAndTheSwitchWritesAutoUpdate(t *testing.T)
 	assert.Contains(t, current, "2.0.1")
 	assert.Contains(t, latest, "2.1.0")
 	assert.Contains(t, install, "Self-managed")
+	// #599: an untagged `make install` is a development build, never
+	// self-managed - only one of a release tag is.
+	assert.Contains(t, install, "make install of a release tag")
+	assert.NotRegexp(t, `make install\)`, install)
 	assert.Contains(t, check, "On")
 	assert.True(t, checked, "on by default")
 	assert.False(t, disabled)

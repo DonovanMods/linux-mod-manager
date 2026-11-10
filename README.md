@@ -2812,7 +2812,8 @@ reads the same document from `GET /api/v1/updates/lmm`.
 ### Updating lmm itself
 
 `lmm self-update` replaces an lmm you manage yourself — the release tarball,
-`go install` or `make install` — with the latest release (#569):
+`go install`, or `make install` of a release tag — with the latest release
+(#569). Any other `make install` is a development build, which it refuses:
 
 ```bash
 lmm self-update --check   # report only

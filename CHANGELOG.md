@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Setup no longer says `make install` gives a self-updating lmm (#599).**
+  The Updates tab, `lmm self-update --help`, the README and the
+  configuration guide listed `make install` as self-managed. Only a
+  `make install` of a release tag is; any other is a development build,
+  which never updates itself.
+
 ## [2.3.0] - 2026-11-10
 
 ### Added
