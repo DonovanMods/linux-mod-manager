@@ -27,6 +27,22 @@ func TestCommandFlags_Contracts(t *testing.T) {
 		{cmd: searchCmd, flag: "limit", def: "10", shorthand: "l"},
 		// The aggregate default: no --source searches every source.
 		{cmd: searchCmd, flag: "source", def: "", shorthand: "s", usage: "all configured sources"},
+		// The destructive paths default to the safe side: nothing is skipped
+		// past a confirmation, records are kept, and the cache is cleaned up
+		// only on purpose (#600: these were pinned by the deleted DefaultFlags
+		// tests, and a `make man` regeneration would carry a flipped default).
+		{cmd: installCmd, flag: "yes", def: "false", shorthand: "y"},
+		{cmd: installCmd, flag: "force", def: "false", shorthand: "f"},
+		{cmd: installCmd, flag: "source", def: "", shorthand: "s"},
+		{cmd: installCmd, flag: "profile", def: "", shorthand: "p"},
+		{cmd: uninstallCmd, flag: "keep-cache", def: "false"},
+		{cmd: uninstallCmd, flag: "force", def: "false", shorthand: "f"},
+		{cmd: uninstallCmd, flag: "source", def: "", shorthand: "s"},
+		{cmd: uninstallCmd, flag: "profile", def: "", shorthand: "p"},
+		{cmd: purgeCmd, flag: "yes", def: "false", shorthand: "y"},
+		{cmd: purgeCmd, flag: "uninstall", def: "false"},
+		{cmd: purgeCmd, flag: "force", def: "false", shorthand: "f"},
+		{cmd: purgeCmd, flag: "profile", def: "", shorthand: "p"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.cmd.Name()+" --"+tc.flag, func(t *testing.T) {
