@@ -50,9 +50,10 @@ archive must match its line there. A release that fails either check is
 refused, and nothing is installed.
 
 self-update only replaces a copy of lmm you manage yourself: the release
-tarball, 'go install' or 'make install'. An lmm a package manager installed
-(deb, rpm, apk, the AUR) is upgraded with that package manager, and lmm tells
-you the command. You need write access to the directory lmm is in; lmm never
+tarball, 'go install', or 'make install' of a release tag. Any other 'make
+install' is a development build, which it never replaces. An lmm a package
+manager installed (deb, rpm, apk, the AUR) is upgraded with that package
+manager, and lmm tells you the command. You need write access to the directory lmm is in; lmm never
 uses sudo.
 
 self-update never restarts lmm-serve.service (see 'lmm service'): it cannot

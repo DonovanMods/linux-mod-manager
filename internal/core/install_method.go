@@ -23,8 +23,9 @@ const (
 	// with that manager, never by replacing the file.
 	InstallPackage InstallKind = "package"
 	// InstallSelfManaged is a binary no package manager claims - a release
-	// download, `make install`, `go install` - which the user upgrades by
-	// replacing it themselves.
+	// download, `go install`, or a `make install` of a release tag - which the
+	// user upgrades by replacing it themselves. Any other `make install` is
+	// InstallDev (#599).
 	InstallSelfManaged InstallKind = "self-managed"
 	// InstallDev is a development build (one not made from a release tag):
 	// it never reports an update, and lmm asks no package manager about it.
