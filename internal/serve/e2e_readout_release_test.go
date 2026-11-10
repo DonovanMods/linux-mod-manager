@@ -6,7 +6,9 @@ package serve_test
 // say - an update batch whose items failed, a repair that left a mod still
 // failing, a profile switch's recovery notice - and each readout below
 // carried its next step for four seconds and then took it away. Each test
-// holds the readout on screen well past the release.
+// holds the readout on screen well past the release - with the harness's
+// own hold lifted (#595), or every readout would stay and none of these
+// would test anything.
 
 import (
 	"errors"
@@ -34,6 +36,7 @@ func TestE2E_ReadoutRelease_FailedUpdateBatchStaysUntilDismissed(t *testing.T) {
 	const readout = `.library__toolbar .job-progress[data-state="succeeded"]`
 	f.runInBrowser(t,
 		scaleUITimers(),
+		releaseSucceededReadouts(),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
 		pollUntil(`document.querySelector('.library__toolbar [data-action="update-all"]')?.textContent.includes("1")`),
@@ -55,7 +58,7 @@ func TestE2E_ReadoutRelease_FailedUpdateBatchStaysUntilDismissed(t *testing.T) {
 func TestE2E_ReadoutRelease_VerifyFixResultStaysUntilDismissed(t *testing.T) {
 	f := newE2EFixtureWithRepairableMods(t)
 
-	f.runInBrowser(t, scaleUITimers())
+	f.runInBrowser(t, scaleUITimers(), releaseSucceededReadouts())
 	f.runInBrowser(t, repairAllFromHealthCard(f)...)
 	f.runInBrowser(t,
 		chromedp.WaitVisible(`.card--health [data-testid="verify-fix-result"]`, chromedp.ByQuery),
@@ -74,6 +77,7 @@ func TestE2E_ReadoutRelease_FlagOnlySwitchNoticeStaysUntilDismissed(t *testing.T
 
 	f.runInBrowser(t,
 		scaleUITimers(),
+		releaseSucceededReadouts(),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		clickWhenSettled(`.profile-picker__trigger`),
