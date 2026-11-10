@@ -17,6 +17,21 @@ Each mod in the library also gets an **Update** button when it has one
 waiting. **Check for updates** in the library toolbar asks the mod sites
 again right away.
 
+The library's **Updated** column shows when lmm last changed each mod's
+installed version, whether by an update, a rollback or an update from a
+file. On a wide enough window (1440 pixels or more) an **Installed** column
+beside it shows when the mod was added to the profile. A mod that has never
+been updated shows its install date in both. Choose **Sort → Recently updated**
+to put the most recently updated mods first.
+
+Checking asks each mod's site in turn, so on a big profile it can take a
+few seconds. The rest of the page doesn't wait for it. While the check
+runs, a line above the cards says what it is doing and how far it has got,
+for example "Checking 42 mods for updates (17/42)…". The Updates card
+appears when the check finishes. The verify behind the **Health** card
+shows the same kind of line ("Verifying 42 mods…"). Switching game or
+profile shows these lines too, under the new profile's own library.
+
 In the terminal:
 
 ```bash
@@ -26,6 +41,61 @@ lmm update <mod-id>
 
 `lmm update` on its own lists the mods that have updates. Give it a mod's id
 to update that mod. `lmm list` shows each mod's id.
+
+In Icarus, lmm merges your mods into one pak. When the game patches its
+own pak, or you change which mods are on, the Updates card lists that
+merged pak (**Icarus Merged Pak**) and `lmm update` marks it
+`[recompile]`. Updating it rebuilds the pak from the mod files lmm already
+has, without asking any mod site, so it works even for a mod the site no
+longer lists. The Health card's **Repair** for the same pak does the same
+rebuild. If a mod's files are missing from lmm's cache, the rebuild stops
+and names that mod: run `lmm verify --fix` to download it again, or
+reinstall it from a downloaded file with `lmm update <mod-id> --from-file`.
+
+### A mod that left its site
+
+Sometimes a mod disappears from its site, or its author publishes it again
+under a new id. lmm can no longer check it for updates, so the Updates card
+names it as "no longer in its source's catalog", and the Health card says
+the same. lmm then looks on the same site for a mod with the same name and
+the same author. If it finds exactly one, both cards offer a **Re-link
+to** button naming the new id. That button opens the usual re-link preview with the new id
+already filled in, and nothing changes until you press **Re-link**. If it
+finds several, it lists them all and leaves the choice to you: open the
+mod's page and use **Re-link…**. A re-link keeps the files lmm already
+downloaded, so nothing has to be downloaded again.
+
+In the terminal, `lmm update` and `lmm verify` print the matching command,
+for example:
+
+```text
+moved?   looks like 8m1z04vNo2CCdKcD2C0H (same name and author): lmm mod edit dLs3nvmWj5uOPnXxezGe -s icarus --to-source-id 8m1z04vNo2CCdKcD2C0H
+removed: lmm uninstall dLs3nvmWj5uOPnXxezGe -s icarus
+```
+
+If the mod was removed for good, uninstall it.
+
+Icarus is different. Its catalog gives a mod a new id whenever the mod is
+removed and added again, which happens routinely, so lmm does not wait
+for you there. When it finds exactly one match, with exactly the same
+name and author (only case and spacing may differ) and a version that is
+not older than yours, lmm re-links the mod itself the next time it checks for
+updates: when you run `lmm update`, or when the web UI checks. The
+Updates card and the Health card say so, and the activity tray shows the
+re-link as an automatic job:
+
+```text
+Bear Mount moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)
+```
+
+The mod keeps its files and its version. If the new id has a newer
+version, it shows up as an ordinary update. lmm leaves a locked mod
+alone, and it waits while another job is running or the game is running.
+Anything less certain - two matches, even if one of them is an older
+copy, a name that matches only once punctuation is ignored, or a match
+whose version is missing - gets the **Re-link to** button instead.
+`lmm update --dry-run` only prints the suggestion. If lmm finds several
+matches, it still leaves the choice to you.
 
 ## Updating lmm itself
 
@@ -71,11 +141,16 @@ download really is an lmm release: it must carry the lmm release
 signature, and the file must match its published checksum. If either check
 fails, lmm stops and leaves your copy alone.
 
-If the background web interface is running (see
-[Run the web UI in the background](background.md)), lmm restarts it so it
-uses the new version straight away. If you started `lmm serve` yourself in a
-terminal, it keeps running the old version, and the browser shows a notice
-asking you to restart it: stop it with **Ctrl+C** and run `lmm serve` again.
+`lmm self-update` replaces the `lmm` program and stops there: it never
+restarts the background web interface (see
+[Run the web UI in the background](background.md)), because it can't see
+what's running in the browser. With automatic updates on (the default), the
+background web interface notices the new version within a minute and
+restarts itself onto it once nothing is running in it. Otherwise, or if you
+started `lmm serve` yourself in a terminal, it keeps running the old
+version, and the browser shows a notice asking you to restart it: run
+`lmm service restart`, or for one you started yourself, stop
+it with **Ctrl+C** and run `lmm serve` again.
 
 Only one update runs at a time. If you start `lmm self-update` while
 another is already running (the automatic one, for example), it says so and
@@ -96,27 +171,83 @@ instead:
 
 ### Update lmm automatically
 
-lmm can also install new versions on its own, once a day. This is off unless
-you turn it on, in two steps. First, set up the daily timer (this also sets
-up the background web interface):
+If you installed lmm from the `.tar.gz` download, or built it yourself, lmm
+updates itself. You don't need to set anything up. When the daily check
+finds a new version, lmm installs it by itself, with the same checks as
+`lmm self-update`: the download must carry the lmm release signature and
+match its published checksum, or nothing changes.
+
+- **In the terminal**, lmm starts the update in the background after the
+  command you ran, and says so. Your command isn't slowed down, and closing
+  the terminal doesn't stop the update. A script never starts one.
+- **In the browser**, the background web interface installs the update
+  itself.
+
+Whichever of them installed it - the terminal, the browser, or the daily
+timer - only replaces the `lmm` program. The background web interface
+notices the new version within a minute and restarts itself onto it. If you
+started `lmm serve` yourself in a terminal, it asks you to restart it
+instead.
+
+An update never starts while lmm is busy with something else, such as a
+deploy or an install in the terminal or the browser; it waits and tries
+again later. The background web interface restarts only when nothing is
+running in it, and starts no new work while it restarts. If something is
+still running after ten minutes, it doesn't restart at all, and the browser
+asks you to restart it when you're ready.
+
+The first time lmm updates itself, it tells you once, in whichever you use
+next, the terminal or the browser:
+
+> lmm updated itself to v2.4.0. To turn this off: auto_update: false in
+> config.yaml, or Setup > Updates.
+
+Later updates get a one-line notice. Only one update runs at a time. If an
+update fails, lmm waits a day before it tries that version again. If lmm
+can't reach GitHub to find out about new versions, it waits an hour before
+asking again, then two, and so on up to a day. The terminal's background
+update writes what happened to `~/.local/share/lmm/auto-update.log`.
+
+To turn automatic updates off, add this line to `~/.config/lmm/config.yaml`:
+
+```yaml
+auto_update: false
+```
+
+Or, in the browser, open **Setup** (the ⚙ in the top bar), choose
+**Updates**, and turn off **Update automatically**. That page also shows
+the version you have, the newest release, how lmm was installed, and the
+last automatic update. lmm still tells you about new versions while
+automatic updates are off; you install them with `lmm self-update`.
+
+lmm never updates itself when your package manager installed it, or when
+it's a development build. Setup > Updates says so, and the switch is off.
+It also can't update itself from a folder you can't write to, such as
+`/usr/local/bin` (see above). If you turned off the daily check
+(`update_check: false`), lmm never hears about a new version, so it doesn't
+update itself either.
+
+{: .note }
+lmm 2.2.0 had automatic updates off unless you turned them on. If you have
+2.2.0, run `lmm self-update` once by hand to get the version that turns
+them on.
+
+#### A daily timer, for computers where you rarely use lmm
+
+lmm only learns about a new version when you use it. On a computer where
+you rarely do, set up a daily timer (this also sets up the background web
+interface):
 
 ```bash
 lmm service install --auto-update
 ```
 
-Then add this line to `~/.config/lmm/config.yaml`:
-
-```yaml
-auto_update: true
-```
-
 The timer runs once a day at a random time in the first hour after
-midnight, or the next time you log in if your computer was off. To stop
-automatic updates, change that line to `auto_update: false` or remove it;
-the timer keeps running but does nothing. If an automatic update fails,
-for example because your network isn't up yet, it tries again five minutes
-later, up to three more times. `lmm service uninstall` removes
-the timer along with the background web interface.
+midnight, or the next time you log in if your computer was off. It obeys
+`auto_update: false` too. If its update fails, for example because your
+network isn't up yet, it tries again five minutes later, up to three more
+times. `lmm service uninstall` removes the timer along with the background
+web interface.
 
 ## Going back to an older version
 
@@ -145,6 +276,44 @@ lmm mod set-update <mod-id> --auto
 lmm mod set-update <mod-id> --notify
 lmm mod set-update <mod-id> --pin
 ```
+
+### When Auto mods update
+
+lmm checks for updates when the main screen loads in the browser, when you
+click **Check for updates**, and when you run `lmm update`. Each of those
+checks installs the updates of your **Auto** mods straight away. Nothing
+checks in the background, so with the browser closed and no `lmm update`
+run, Auto mods wait for the next check.
+
+In the browser, the update runs like any other job. The **Updates** card says
+"Applying 1 automatic update…" while it works, and the activity tray lists it
+as "Updating automatically", with what it applied. When it is done, those mods
+leave the card. A few things hold it back:
+
+- **The game is running.** lmm waits until the game closes, so it never
+  replaces files the game is using. The card then says, for example,
+  "1 automatic update waiting for World of Warcraft to close". The first
+  check after the game closes installs it. lmm knows a game is running when
+  a program from the game's folder is running, whether you started it with
+  **Play**, `lmm launch` or anything else (Steam, Proton and Wine games
+  included, and a game folder that is a symlink to another drive). A launcher left open after the game closes, such as Battle.net
+  or Steam, doesn't count. When lmm can't tell, it installs the update.
+- **Something else is running.** If a deploy, install or other job is under
+  way, lmm leaves the update for the next check rather than queueing it.
+- **The update failed.** lmm doesn't keep retrying a failed update. It stays
+  on the card for you to update by hand, with a line saying why, for example
+  "Automatic update failed for EllesmereUI 9.7.1 - the download timed out.
+  Check for updates to retry.", and **Show the job** opens its result in the
+  activity tray. The activity bell counts it until you open the tray. lmm
+  tries it again when a newer version comes out, or when you click **Check
+  for updates**.
+- **Locked, manual-download or Steam Workshop mods** are never updated
+  automatically, whatever their setting.
+- **Only the active profile** is updated: the one whose mods are in the game
+  folder. Looking at another profile's updates never installs them.
+
+`lmm update` in a terminal installs Auto mods' updates as it always has, with
+or without the game running.
 
 ## Skipping one update
 

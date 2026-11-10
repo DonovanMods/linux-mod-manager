@@ -66,6 +66,11 @@ func (s *Icarus) Capabilities() source.Capabilities {
 
 func (s *Icarus) TypeLabel() string { return "built-in" }
 
+// UnstableIDs: a mod's ID is its Firestore document ID, and the catalog
+// sync that feeds the collection deletes a mod and re-adds it under a new
+// one (#590), so the same mod can turn up under a new ID.
+func (s *Icarus) UnstableIDs() bool { return true }
+
 // Search fetches the whole mods collection and filters client-side — this
 // catalog has no server-side query support to speak of, matching
 // project_daedalus's own ModsController#find_mods approach.

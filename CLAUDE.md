@@ -6,15 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Work is tracked via GitHub Issues.** All development tasks should reference or originate from a GitHub issue. When starting work, check for relevant open issues first.
 
-**Branch model (git-flow-lite):** `main` holds released, tagged states only. `develop` is the integration branch — story branches (`feat/…`, `fix/…`) fork from `develop` and PR back into `develop` with an explicit `--base develop` (`main` is still the default branch, so a forgotten flag targets protected `main` and gets caught). Both branches are protected: PRs required, Copilot review, no force-push/deletion; the develop ruleset has a repository-admin bypass reserved for post-release fast-forward syncs, trivial hotfix back-merges, and (last resort) history repair. Full release and hotfix flows are documented in [docs/plans/2026-07-30-develop-branch-workflow-design.md](docs/plans/2026-07-30-develop-branch-workflow-design.md).
+**Branch model (git-flow-lite):** `main` holds released, tagged states only. `develop` is the integration branch — story branches (`feat/…`, `fix/…`) fork from `develop` and merge back into it **locally, without a PR**: `git merge --no-ff <branch>` on `develop`, then push (since 2026-10-30; the PR round trip into `develop` cost time and bought only Copilot review, which is rate-limited). Before that merge the branch passes `make test`, and gets an independent review (a subagent reading the diff, in Copilot's place); CI runs on the push to `develop`, and a red run is fixed forward. Releases still PR into `main`. `main` is protected by PRs, Copilot review and no force-push/deletion; `develop` only by no force-push/deletion, with a repository-admin bypass kept for (last resort) history repair. Full release and hotfix flows are documented in [docs/plans/2026-07-30-develop-branch-workflow-design.md](docs/plans/2026-07-30-develop-branch-workflow-design.md).
 
-**v2 line (2026-08-27 to v2.0.0, ended):** the core refactor was built on a long-lived `v2` branch, cut from `develop` at 9729783, with story branches merged back locally by `git merge --no-ff`. v2.0.0 merged `v2` into `main`, so `main` and `develop` carry v2 now and work PRs into `develop` again, as above. The `v1` tag marks the last 1.x state (v1.30.1). The `v2` branch is kept for history; ruleset "Protect v2" blocks its deletion.
+**v2 line (2026-08-27 to v2.0.0, ended):** the core refactor was built on a long-lived `v2` branch, cut from `develop` at 9729783, with story branches merged back locally by `git merge --no-ff`. v2.0.0 merged `v2` into `main`, so `main` and `develop` carry v2 now and work merges into `develop` again, as above. The `v1` tag marks the last 1.x state (v1.30.1). The `v2` branch is kept for history; ruleset "Protect v2" blocks its deletion.
 
 **Remotes:** GitHub is the primary (`origin`): rulesets, Copilot review, CI and releases all live there. The homelab Forgejo at git.nerdwerx.io is a read-only pull mirror of GitHub that syncs hourly. Never push to it.
 
 **Issues close on merge into `develop`, not at release.** The tracker answers "what's left to build," so an issue whose work is merged is done — holding it open until the release tag would surface finished work on every "check for relevant open issues first" pass. Release traceability lives in `CHANGELOG.md` instead: entries carry their issue number and move from `[Unreleased]` into a dated `vX.Y.Z` section at release, which makes it a complete issue→release index. Don't duplicate that in issue state or milestones.
 
-Because `main` is the default branch, a PR's `Fixes #N` will **not** auto-close on a merge into `develop` — **close the issue manually**, with a comment naming the merge commit and noting it is merged but not yet released (e.g. "Fixed in #229, merged to `develop` as 2a791cb. Ships with the next release batch."). Revisit this policy if the project starts taking bug reports from other people: for an external reporter, "closed" reads as "I can go download it," and closing at the `develop` merge sends them hunting through a release that doesn't have the fix.
+A merge into `develop` never auto-closes an issue (there is no PR, and `Fixes #N` in a commit only closes on the default branch, `main`) — **close the issue manually**, with a comment naming the merge commit and noting it is merged but not yet released (e.g. "Merged to `develop` as 2a791cb. Ships with the next release batch."). Revisit this policy if the project starts taking bug reports from other people: for an external reporter, "closed" reads as "I can go download it," and closing at the `develop` merge sends them hunting through a release that doesn't have the fix.
 
 ## Before Development
 
@@ -35,6 +35,13 @@ go build -o lmm ./cmd/lmm
 # internal/core and internal/serve each take under -race)
 make test
 make test-race
+
+# CI's two parallel test jobs (#576), which together are exactly make test-race:
+# `test` runs everything but internal/serve's headless-browser tests, `e2e`
+# runs only those. They split on the name: every browser test is TestE2E*,
+# and nothing else is - name a new one accordingly.
+make test-race-no-e2e
+make test-race-e2e
 
 # Run tests for a specific package (pass -timeout for a slow one)
 go test ./internal/storage/db/... -v
@@ -70,6 +77,7 @@ internal/
 │   ├── custom/           # User-defined sources (directory, manifest, api)
 │   ├── steamworkshop/    # Steam Workshop (#269): Tier 1 tracks the Steam client's own items, Tier 3 downloads them (legacy file_url, or an anonymous steamcmd shell-out in steamcmd.go)
 │   ├── steam/            # Steam library scanning (for 'lmm game detect')
+│   ├── battlenet/        # Battle.net games in Wine/Proton prefixes (#545): prefix discovery, system.reg Uninstall keys, .build.info product codes, battlenet-games.yaml, the anti-cheat deny-list
 │   └── httpclient/       # Shared HTTP client (timeouts, size caps, redirects)
 ├── storage/
 │   ├── db/               # SQLite (mod metadata, auth tokens)
@@ -142,7 +150,8 @@ internal/
     ├── source_index.go    # the local-index surface (#360/#410): SourceIndexStatus/RefreshSourceIndex, IndexStatus/IndexReport
     ├── source_index_prune.go # ListSourceIndexes/PruneSourceIndexes (`lmm source index --all`/`prune`): the fail-closed prune policy
     ├── user_units.go      # UserUnits: lmm-serve.service (+ #569's lmm-update.timer/.service under --auto-update) install/uninstall/status behind a systemctl/loginctl seam (`lmm service`, #567); needs no Service
-    ├── self_update.go     # SelfUpdater: `lmm self-update` (#569) - trusted release keys, signature then checksum verification, atomic binary replace, serve restart; needs no Service
+    ├── self_update.go     # SelfUpdater: `lmm self-update` (#569) - trusted release keys, signature then checksum verification, atomic binary replace (never a serve restart: serve restarts itself, #586); needs no Service
+    ├── auto_update.go     # automatic updates (#586): RunAuto (lock, verified Plan/Apply, step-asides incl. a running mutation via the op lock + serve's Quiesce; replaces the binary, never restarts serve), RestartServeWhenIdle (serve restarting itself, Quiesce only, no op lock), AutoUpdateDue's back-offs (install failures and release-check failures, kept apart), <data>/auto-update.json (the update to announce once, the failure), AutoUpdateStatus, SetAutoUpdate
     ├── source_notices.go  # WithSourceNotices: a source's throttle/suspension/cold-build notices as events (#436)
     └── verify_repair.go   # verify --fix repair actions: redownload, checksum backfill
 └── serve/                # `lmm serve` local web UI: an SPA over /api/v1; imports only app/core/domain (boundary_test.go)
@@ -150,13 +159,14 @@ internal/
     ├── middleware.go      # Host allow-list (DNS-rebinding guard), Origin/CSRF checks, security headers, request logging
     ├── routes.go          # Registers the SPA routes (spa.go) and every /api/v1 route on the mux
     ├── spa.go             # The SPA shell (a template: it carries the CSRF token), its embedded asset trees, the CSP hash, the legacy 301s
-    ├── spa/               # index.html shell (+ skip link, the one inline theme script) + app.css (Launcher tokens dark+light, motion tokens, prefers-reduced-motion) + app/*.js (ES modules: render/router/store/api/sse/theme/main, activity+progress+failures+jobhistory+jobresult for the job layer, modrows/navigation/verify/conflicts/shortcuts/relativetime/motion/focustrap/dismiss/slicefence/version/indexnotice, + components/: app, missioncontrol, topbar, awaybar, arrow, cards, library, gamechooser, modpanel, fullmodpage, searchpage, omnibarresults, searchresults, tray, modal, confirmplan, errordetails, planrenderers, planoptions, plan_{deploy,install,uninstall,rollback,updates,verify_fix,profile_import,import_archive,update_from_archive,adopt,switch,profile_apply,purge,profile_sync,mod_relink,mod_copy}, updatefromfile, reordermodal, profilesmodal, shortcutsmodal, uninstallbatchmodal, setup{,adopt,auth,games,import,sources}, sourceindexes, sourcesmap, gameadd, documentview, jobprogress, toasts, releasebanner)
-    ├── vendor/            # preact.module.js, hooks.module.js, htm.module.js - pinned, doc-commented, NEVER fetched by any build
+    ├── spa/               # index.html shell (+ skip link, the one inline theme script) + app.css (Launcher tokens dark+light, motion tokens, prefers-reduced-motion) + app/*.js (ES modules: render/router/store/api/sse/theme/main, activity+progress+failures+jobhistory+jobresult for the job layer, modrows/navigation/verify/conflicts/shortcuts/relativetime/motion/timers/focustrap/dismiss/slicefence/version/indexnotice, + components/: app, missioncontrol, topbar, awaybar, arrow, cards, library, gamechooser, modpanel, fullmodpage, searchpage, omnibarresults, searchresults, tray, modal, confirmplan, errordetails, planrenderers, planoptions, plan_{deploy,install,uninstall,rollback,updates,verify_fix,profile_import,import_archive,update_from_archive,adopt,switch,profile_apply,purge,profile_sync,mod_relink,mod_copy}, updatefromfile, addapikey, reordermodal, profilesmodal, shortcutsmodal, uninstallbatchmodal, setup{,adopt,auth,games,import,sources,updates}, sourceindexes, sourcesmap, gameadd, documentview, jobprogress, toasts, releasebanner)
+    ├── vendor/            # preact.module.js, hooks.module.js, htm.module.js + the UI fonts (Inter, JetBrains Mono .woff2, OFL-1.1, provenance + sha256 in FONTS.md, #523) - pinned, doc-commented, NEVER fetched by any build
     ├── selection.go       # ?game/?profile resolution shared by every scoped /api/v1 endpoint and the 301s
     ├── api.go             # GET /api/v1/{status,mods,updates,profiles,health,conflicts,search,mods/{source}/{id}}
     ├── api_jobs.go        # POST /api/v1/plans/{kind}, POST /api/v1/jobs, GET .../jobs/{id}[/events]
     ├── activity.go        # the tray's surface: jobSummary/jobsIndex/jobProgressFrame + the registry's activity bus & frame vocabulary
     ├── api_activity.go    # GET /api/v1/jobs (index), GET /api/v1/events (one multiplexed lifecycle stream)
+    ├── jobtally.go        # jobTally: a finished batch job's outcome count (updates/profile_import), carried on jobSummary/jobStatus (#364)
     ├── plans.go           # Server-side plan store: single-use Take, ~10-min TTL sweep
     ├── jobs.go            # Job registry: goroutine-per-Apply on the server's own ctx, event ring buffer, SSE fanout
     ├── sse.go             # SSE framing: one JSON frame per core event, ~15s heartbeats, terminal "done" frame
@@ -182,7 +192,7 @@ internal/
     ├── api_games.go       # game add/detect/set-default (#307/#333) + PUT /api/v1/games/{id} sources (#326)
     ├── api_auth.go        # per-source credential store + the live re-key (restart_required)
     ├── api_sources.go     # the custom-source editor: list/definition/validate/save/delete
-    ├── api_release.go     # GET /api/v1/updates/lmm (core.ReleaseStatus, + #569's installed: a newer binary replaced under this server) + the running server's background release refresh (#568)
+    ├── api_release.go     # GET /api/v1/updates/lmm (core.ReleaseStatus, + #569's installed: a newer binary replaced under this server, + #586's auto_update) + the running server's background release refresh, in-process automatic update and self-restart onto a newer installed binary (#568/#586) + PUT /api/v1/settings/auto-update
     ├── api_version_types.go # GET /api/v1/sources/{id}/version-types?game=: the game editor's CurseForge picker (#563)
     ├── api_source_index.go # the local-index routes (#410): GET/POST /api/v1/sources/{id}/index, GET /api/v1/indexes, POST /api/v1/indexes/prune
     ├── api_mod_settings.go # mod lock/unlock/update-policy/convert - single DB writes, no job
@@ -250,9 +260,9 @@ Core types in `internal/domain/` have no external dependencies:
 
 ## Versioning
 
-**This project uses [Semantic Versioning](https://semver.org/).** Versions are bumped **at release time, not per story PR**:
+**This project uses [Semantic Versioning](https://semver.org/).** Versions are bumped **at release time, not per story**:
 
-- **Story PRs into `develop`**: no version bump. Add CHANGELOG entries under `[Unreleased]`. When a change alters something the user guide in `docs/guide/` describes (a command, a flag, a web UI control or flow), update the guide in the same PR; `cmd/lmm/guide_test.go` catches a command or flag that no longer exists, but not a changed behaviour. The `version` variable in `cmd/lmm/root.go` stays at the last released version between releases.
+- **Story merges into `develop`**: no version bump. Add CHANGELOG entries under `[Unreleased]`. When a change alters something the user guide in `docs/guide/` describes (a command, a flag, a web UI control or flow), update the guide on the same branch; `cmd/lmm/guide_test.go` catches a command or flag that no longer exists, but not a changed behaviour. The `version` variable in `cmd/lmm/root.go` stays at the last released version between releases.
 - **Releases (develop → main)**: cut `release/vX.Y.Z` from `develop` with a single prep commit — bump `version` in `cmd/lmm/root.go`, bump `genManDate` in `cmd/lmm/genman.go` to the release date, move `[Unreleased]` to a dated `vX.Y.Z` section, add the comparison link, and run `make man` and `make notices` (the genman drift test enforces the man regeneration, `TestGenManDateIsNotOlderThanTheNewestRelease` the date bump, and `internal/notices`' drift test the regenerated `THIRD_PARTY_NOTICES` when a dependency changed). PR it into `main` titled `release: vX.Y.Z`, merge with a merge commit, tag `vX.Y.Z` on the merge commit, then fast-forward develop (`git push origin main:develop`) and delete the release branch.
 - **Hotfixes**: branch from `main`, PR back into `main` with its own PATCH bump + `genManDate` bump + CHANGELOG section + `make man` + `make notices`, tag on the merge commit, then merge `main` back into `develop`.
 

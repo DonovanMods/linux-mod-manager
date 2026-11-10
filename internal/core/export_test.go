@@ -31,6 +31,17 @@ func (s *Service) DownloadModForTest(ctx context.Context, sourceID string, game 
 	return s.downloadMod(ctx, sourceID, game, mod, file, sink)
 }
 
+// NewDownloaderWithoutBackoffForTest is NewDownloader with the retry backoff
+// skipped (#576): a test that drives the retries end to end against a real
+// server pays nothing for the 1 s + 2 s waits between attempts, which
+// downloader_retry_internal_test.go asserts on their own. Cancellation is
+// still honoured, so the retry loop's ctx exit behaves as in production.
+func NewDownloaderWithoutBackoffForTest(httpClient *http.Client) *Downloader {
+	d := NewDownloader(httpClient)
+	d.sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+	return d
+}
+
 // GetInstallerForTest exposes getInstaller, unexported by Phase 3 Ruling 10:
 // every production flow builds its own installer internally, but core's own
 // fixtures hand-drive an *Installer to deploy a mod without going through a
@@ -80,6 +91,13 @@ func (s *Service) SetRelayoutPlaceFileForTest(fn func(src, dst string) error) {
 // can fall through to it for the members it does not mean to fail.
 func LinkOrCopyFileForTest(src, dst string) error {
 	return linkOrCopyFile(src, dst)
+}
+
+// SetAfterDeployLinkForTest arms the Installer's seam between placing a
+// deployed file and recording its deployed_files row (#588), so a test can
+// look at the game directory while a deploy is half-written.
+func (s *Service) SetAfterDeployLinkForTest(fn func(file string)) {
+	s.afterDeployLink = fn
 }
 
 // SetAfterInstallSaveForTest arms the BATCH install engine's
@@ -391,4 +409,18 @@ func (s *Service) RestoreOriginalsForTest(game *domain.Game) error {
 		}
 	}
 	return nil
+}
+
+// WithAutoTargetForTest returns ref with the successor the automatic
+// re-link may take set to modID, as a check's catalogSuccessors would have
+// set it (#590) - for a test that hand-builds the refs PlanAutoRelink reads.
+func WithAutoTargetForTest(ref CatalogModRef, modID string) CatalogModRef {
+	ref.autoTarget = modID
+	return ref
+}
+
+// SetModCategoryNameForTest writes an installed row's source category name
+// (#592) directly, as the update check's backfill does.
+func (s *Service) SetModCategoryNameForTest(ctx context.Context, sourceID, modID, gameID, profileName, name string) error {
+	return s.db.SetModCategoryName(ctx, sourceID, modID, gameID, profileName, name)
 }

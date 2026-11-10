@@ -1,0 +1,18 @@
+{
+  "findings": [
+    {
+      "mod_id": "42",
+      "mod_name": "Example",
+      "file_id": "Data/a.esp",
+      "status": "missing",
+      "note": "Data/a.esp: missing"
+    }
+  ],
+  "issues": 1,
+  "warnings": 0,
+  "checked": 4,
+  "has_files": true,
+  "mods": 2,
+  "checked_at": "2026-08-27T12:00:00Z",
+  "deferred": "job_running"
+}

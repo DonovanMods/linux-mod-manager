@@ -255,6 +255,26 @@ func AuthStatus(ctx context.Context, svc *core.Service) (*AuthStatusReport, erro
 	return report, nil
 }
 
+// EnvOnlyCredentials picks out of report every source whose ACTIVE key is
+// its environment variable with no stored key behind it (#582) - the keys a
+// process that does not inherit this environment, such as `lmm serve` under
+// its systemd user unit, will not have. A shadowed stored key still reaches
+// such a process, so it does not count; neither does a source with no key
+// at all, which that process is not missing compared to this one. nil when
+// there is none.
+func EnvOnlyCredentials(report *AuthStatusReport) []core.EnvOnlyCredential {
+	if report == nil {
+		return nil
+	}
+	var out []core.EnvOnlyCredential
+	for _, row := range report.Sources {
+		if row.Via == "env" && !row.StoredKeyShadowed {
+			out = append(out, core.EnvOnlyCredential{SourceID: row.ID, Name: row.Name, EnvVar: row.EnvVar})
+		}
+	}
+	return out
+}
+
 // MaskAPIKey returns a masked version of an API key (shows first 3 and last
 // 3 chars). Keys of 8 characters or fewer are fully masked instead: showing
 // 6 of 7-8 characters exposes most of the key, defeating the point of

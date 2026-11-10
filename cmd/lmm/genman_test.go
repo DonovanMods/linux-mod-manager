@@ -77,6 +77,20 @@ func TestGenManTree_MatchesCommittedPages(t *testing.T) {
 	}
 }
 
+// TestGenManTree_RootPageListsVersionFlag pins #581: cobra adds root's
+// --version flag lazily, the first time the root command itself executes,
+// so lmm.1 listed it or not depending on whether anything had run `lmm`
+// before generation - `make man` never had, a test binary that ran
+// `lmm --version` first had. genManTree must add it itself.
+func TestGenManTree_RootPageListsVersionFlag(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, genManTree(dir))
+
+	page, err := os.ReadFile(filepath.Join(dir, "lmm.1"))
+	require.NoError(t, err)
+	assert.Contains(t, string(page), `\fB--version\fP`, "lmm.1 must document lmm --version")
+}
+
 // TestGenManTree_SynopsisPreservesAngleBracketArgs pins the fix for a
 // blackfriday/md2man quirk: Cobra's man doc generator renders each
 // command's Use line through Markdown before emitting roff, and a bare
@@ -139,9 +153,9 @@ func TestGenManTree_AngleBracketArgsSurviveForEveryCommand(t *testing.T) {
 	// <mod-id>`, `lmm mod unskip-update <mod-id>`), +1 since #438 (`lmm
 	// profile duplicate <source> <new>`), +1 since #437 (`lmm mod copy
 	// [<mod-id>] --to <profile>`), +1 since #563 (`lmm game version-types
-	// <game-id>`).
-	assert.Equal(t, 30, checked,
-		"expected exactly 30 commands with angle-bracket Use args; update this count if the command tree changed")
+	// <game-id>`), +1 since #592 (`lmm mod set-category <mod-id> [name]`).
+	assert.Equal(t, 31, checked,
+		"expected exactly 31 commands with angle-bracket Use args; update this count if the command tree changed")
 }
 
 // TestGenManTree_AngleBracketPlaceholdersSurviveInLongHelp is the same
@@ -180,8 +194,8 @@ func TestGenManTree_AngleBracketPlaceholdersSurviveInLongHelp(t *testing.T) {
 	}
 	walk(rootCmd)
 
-	assert.Equal(t, 7, checked,
-		"expected exactly 7 commands whose Long/Short help spells an angle-bracket placeholder (game detect, game edit, auth login, verify, snapshot, update, mod skip-update); update this count if the help text changed")
+	assert.Equal(t, 8, checked,
+		"expected exactly 8 commands whose Long/Short help spells an angle-bracket placeholder (game detect, game edit, auth login, verify, snapshot, update, mod skip-update, launch); update this count if the help text changed")
 }
 
 // TestGenManTree_UnderscoredNamesSurviveMarkdown is the same generator

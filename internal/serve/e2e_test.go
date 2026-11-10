@@ -227,9 +227,9 @@ func TestE2E_OnlyOnePickerDropdownOpenAtATime(t *testing.T) {
 
 	var afterEscape int
 	f.runInBrowser(t,
-		chromedp.Sleep(200*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.Sleep(200*time.Millisecond),
+		settleEffects(),
 		chromedp.Evaluate(`document.querySelectorAll(".picker__menu").length`, &afterEscape),
 	)
 	assert.Zero(t, afterEscape, "Escape must close whichever picker is open")
@@ -240,16 +240,16 @@ func TestE2E_OnlyOnePickerDropdownOpenAtATime(t *testing.T) {
 	// the LISTENER's outside-of-header check without depending on layout.
 	// The preact/hooks vendor batches useEffect through its own
 	// requestAnimationFrame-driven flush (measured empirically at up to a
-	// handful of frames in a headless browser), so the sleeps give both the
-	// listener's attachment and its resulting re-render room to land before
-	// each half is asserted.
+	// handful of frames in a headless browser), so settleEffects waits for
+	// both the listener's attachment and its resulting re-render before each
+	// half is asserted.
 	var afterOutsideClick int
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
-		chromedp.Sleep(200*time.Millisecond),
+		settleEffects(),
 		chromedp.Evaluate(`document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))`, nil),
-		chromedp.Sleep(200*time.Millisecond),
+		settleEffects(),
 		chromedp.Evaluate(`document.querySelectorAll(".picker__menu").length`, &afterOutsideClick),
 	)
 	assert.Zero(t, afterOutsideClick, "a click outside every picker must close the open one")
@@ -485,7 +485,7 @@ func TestE2E_LibrarySortReordersRowsByName(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestSortRows_RecentToleratesMissingInstalledAt guards Minor 10:
+// TestE2E_SortRows_RecentToleratesMissingInstalledAt guards Minor 10:
 // modrows.js#sortRows's "recent" comparator used to be a bare
 // `new Date(x) - new Date(y)`, which is NaN for a missing or unparsable
 // installed_at, and Array.prototype.sort's behavior on a NaN-returning
@@ -494,7 +494,7 @@ func TestE2E_LibrarySortReordersRowsByName(t *testing.T) {
 // module the library component runs), rather than through the table -
 // there is no installed_mods row that reaches the wire without an
 // installed_at today, so this proves the guard rather than a live bug.
-func TestSortRows_RecentToleratesMissingInstalledAt(t *testing.T) {
+func TestE2E_SortRows_RecentToleratesMissingInstalledAt(t *testing.T) {
 	f := newE2EFixture(t)
 
 	var order []string
@@ -520,6 +520,36 @@ func TestSortRows_RecentToleratesMissingInstalledAt(t *testing.T) {
 		"the two real dates must still sort correctly relative to each other")
 	assert.ElementsMatch(t, []string{"Missing", "Malformed"}, order[2:],
 		"an absent/unparsable installed_at must fall back to the epoch, not produce an arbitrary position")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SortRows_UpdatedOrdersByLastUpdatedAt pins #596's "updated" sort:
+// most recently updated first, by last_updated_at - so a mod installed long
+// ago but updated yesterday leads one installed last week and never
+// touched since. A row with no last_updated_at (an older lmm serving the
+// document) sorts by its installed_at, which is what that date means.
+func TestE2E_SortRows_UpdatedOrdersByLastUpdatedAt(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var order []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { sortRows, SORT_NAMES } = await import("/static/app/modrows.js");
+			if (!SORT_NAMES.includes("updated")) return ["no updated sort"];
+			const rows = [
+				{ name: "Untouched", installed_at: "2025-06-01T00:00:00Z", last_updated_at: "2025-06-01T00:00:00Z" },
+				{ name: "OldButUpdated", installed_at: "2020-01-01T00:00:00Z", last_updated_at: "2025-09-01T00:00:00Z" },
+				{ name: "OlderLmm", installed_at: "2025-07-01T00:00:00Z" },
+			];
+			return sortRows(rows, "updated").map((r) => r.name);
+		})()`, &order, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+
+	assert.Equal(t, []string{"OldButUpdated", "OlderLmm", "Untouched"}, order)
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -771,11 +801,17 @@ func TestE2E_LibraryCheckboxColumnsAreLabelled(t *testing.T) {
 func TestE2E_LibraryColumnsProgressivelyRevealOnWideScreens(t *testing.T) {
 	f := newE2EFixtureWithLibrarySample(t)
 
+	// #596: Updated is the date a reader scans for, so it shows at every
+	// width; Installed is the extra that arrives with author.
+	var updatedAll []bool
 	shown := func(width int, wide, xwide *bool) chromedp.Tasks {
+		var updated bool
 		return chromedp.Tasks{
 			chromedp.EmulateViewport(int64(width), 1080),
 			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-			chromedp.Evaluate(`getComputedStyle(document.querySelector(".library__table th.col--author")).display !== "none"`, wide),
+			chromedp.Evaluate(`getComputedStyle(document.querySelector(".library__table th.col--updated")).display !== "none"`, &updated),
+			chromedp.ActionFunc(func(context.Context) error { updatedAll = append(updatedAll, updated); return nil }),
+			chromedp.Evaluate(`getComputedStyle(document.querySelector(".library__table th.col--author")).display !== "none" && getComputedStyle(document.querySelector(".library__table th.col--installed")).display !== "none"`, wide),
 			chromedp.Evaluate(`getComputedStyle(document.querySelector(".library__table th.col--source")).display !== "none"`, xwide),
 		}
 	}
@@ -798,6 +834,23 @@ func TestE2E_LibraryColumnsProgressivelyRevealOnWideScreens(t *testing.T) {
 	assert.True(t, xwide1920, "source arrives at >= 1920px")
 	assert.True(t, wide2560)
 	assert.True(t, xwide2560)
+	assert.Equal(t, []bool{true, true, true, true}, updatedAll, "Updated shows at every width")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryUpdatedPrecedesInstalled: the more useful date comes
+// first in the row (#596).
+func TestE2E_LibraryUpdatedPrecedesInstalled(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	var order []string
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1920, 1080),
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`[...document.querySelectorAll(".library__table thead th")].map((th) => th.className).filter((c) => c === "col--updated" || c === "col--installed")`, &order),
+	)
+	assert.Equal(t, []string{"col--updated", "col--installed"}, order)
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -808,7 +861,7 @@ func TestE2E_LibraryColumnsProgressivelyRevealOnWideScreens(t *testing.T) {
 func TestE2E_WideColumnsCarryTheDocumentsOwnData(t *testing.T) {
 	f := newE2EFixtureWithLibrarySample(t)
 
-	var author, source, method, installed string
+	var author, source, method, installed, updated, updatedHead string
 	f.runInBrowser(t,
 		chromedp.EmulateViewport(1920, 1080),
 		chromedp.Navigate(f.HomePath()),
@@ -817,6 +870,8 @@ func TestE2E_WideColumnsCarryTheDocumentsOwnData(t *testing.T) {
 		textContent(`.mod-row td.col--source`, &source),
 		textContent(`.mod-row td.col--method`, &method),
 		textContent(`.mod-row td.col--installed`, &installed),
+		textContent(`.mod-row td.col--updated`, &updated),
+		textContent(`.library__table th.col--updated`, &updatedHead),
 	)
 
 	assert.Equal(t, "Ada Lovelace", author)
@@ -824,6 +879,9 @@ func TestE2E_WideColumnsCarryTheDocumentsOwnData(t *testing.T) {
 	assert.Equal(t, "symlink", method)
 	assert.NotEmpty(t, installed)
 	assert.NotEqual(t, "—", installed, "the seeded mods all carry an installed_at")
+	// #596: a freshly installed row's Updated is its Installed.
+	assert.Equal(t, "Updated", updatedHead)
+	assert.Equal(t, installed, updated, "a mod never updated shows its install date as Updated")
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -969,11 +1027,12 @@ func TestE2E_ConfirmModalRendersAPlanFailureHonestly(t *testing.T) {
 //
 // The end state is asserted on DISK as well as on screen: a green progress
 // bar over a game directory with nothing in it would be the worst possible
-// pass. The fixture's deploy is slowed by a real install.after_each hook,
-// which is what makes "while it is running" a window a browser can be
-// driven through rather than a race (newE2EFixtureWithSlowDeploy).
+// pass. The fixture's deploy is held by a real install.after_each hook until
+// the running state has been read, which is what makes "while it is running"
+// a window a browser can be driven through rather than a race
+// (holdDeployAfterEach).
 func TestE2E_DeployRunsAsAJobAndMorphsTheControl(t *testing.T) {
-	f := newE2EFixtureWithSlowDeploy(t)
+	f, release := newE2EFixtureWithHeldDeploy(t)
 
 	var running, finished, indicator string
 	var toasts int
@@ -992,6 +1051,7 @@ func TestE2E_DeployRunsAsAJobAndMorphsTheControl(t *testing.T) {
 		// anything at all, so waiting on this is waiting on the stream.
 		chromedp.WaitVisible(`.job-progress__bar:not(.job-progress__bar--indeterminate)`, chromedp.ByQuery),
 		textContent(`.job-progress__text`, &running),
+		chromedp.ActionFunc(func(context.Context) error { release(); return nil }),
 		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 		textContent(`.job-progress__text`, &finished),
 		chromedp.WaitVisible(`.deploy-indicator:not(.deploy-indicator--pending)`, chromedp.ByQuery),
@@ -1208,19 +1268,18 @@ func TestE2E_ProgressVocabularyIsHumanized(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_ResultTallyReadsAnOmittedFailedList pins progress.js#resultTally
-// against the wire shape core actually emits, in the browser (the only
-// runner this application has).
+// TestE2E_ResultTallyLabelReadsTheWireTally pins progress.js's
+// resultTallyLabel/resultTallyTone against the tally document the server
+// actually emits on a job summary (jobtally.go's jobTally, issue 364), in
+// the browser (the only runner this application has).
 //
-// The bug this exists for: resultTally discriminated a batch result on
-// `applied` AND `failed` both being arrays, while
-// core.UpdateBatchResult.Failed is `json:"failed,omitzero"` - so the exact
-// document a locked-skip batch produces (applied rows, skipped rows, NO
-// `failed` key at all) fell through to null, and the control that started
-// the batch said a bare "Done" over a mod the engine had refused. The
-// discriminator is `applied` alone: `json:"applied"` exists on no other
-// core or serve type, and both omitzero lists default to 0.
-func TestE2E_ResultTallyReadsAnOmittedFailedList(t *testing.T) {
+// Which results tally at all - including the locked-skip document with no
+// `failed` key that once fell through to a bare "Done" (I1, unit 8 gate
+// review) - is decided server-side now and pinned by TestTallyOfResult.
+// What stays here is the reading: a kind-specific count is omitted on the
+// wire when it is zero (`applied`, `installed`, `warnings` are omitzero), so
+// an absent one must read as 0 rather than as "undefined applied".
+func TestE2E_ResultTallyLabelReadsTheWireTally(t *testing.T) {
 	f := newE2EFixture(t)
 
 	var got []string
@@ -1228,41 +1287,41 @@ func TestE2E_ResultTallyReadsAnOmittedFailedList(t *testing.T) {
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`(async () => {
-			const { resultTally, resultTallyLabel, resultTallyTone } =
+			const { resultTallyLabel, resultTallyTone } =
 				await import("/static/app/progress.js");
-			// The shape cmd/lmm/testdata/json_golden/update_bulk_all.golden
-			// carries: one applied row, one locked skip, and no "failed" key.
+			// testdata/json/job_summary_tally.golden's shape: one applied
+			// row and one locked skip.
 			const lockedSkip = {
-				applied: [{ name: "Mod B", status: "updated" }],
-				skipped: [{ name: "Mod A", status: "skipped", reason: "Mod A is locked at v1.0" }],
+				kind: "updates", applied: 1, failed: 0, skipped: 1,
+				skipped_notes: ["Mod A — Mod A is locked at v1.0"],
 			};
-			const allApplied = { applied: [{ name: "Mod B", status: "updated" }] };
-			const oneFailed = {
-				applied: [],
-				failed: [{ mod: "test-src:modA", name: "Mod A", error: "boom" }],
-			};
-			const notABatch = { deployed: 3 };
-			const describe = (r) => {
-				const tally = resultTally(r);
-				if (!tally) return "null";
-				const notes = (tally.skippedNotes ?? []).join("; ");
-				return resultTallyLabel(tally) + " [" + resultTallyTone(tally) + "] {" + notes + "}";
-			};
-			return [describe(lockedSkip), describe(allApplied), describe(oneFailed), describe(notABatch)];
+			const allApplied = { kind: "updates", applied: 1, failed: 0, skipped: 0 };
+			// applied omitted: zero.
+			const oneFailed = { kind: "updates", failed: 1, skipped: 0 };
+			const mixed = { kind: "updates", applied: 2, failed: 1, skipped: 1, skipped_notes: ["x"] };
+			// installed omitted: the flow's own default, every pending mod skipped.
+			const importSkipped = { kind: "profile_import", failed: 0, skipped: 2 };
+			const importFailed = { kind: "profile_import", installed: 1, failed: 1, skipped: 0, warnings: 1 };
+			const describe = (tally) =>
+				resultTallyLabel(tally) + " [" + resultTallyTone(tally) + "]";
+			return [lockedSkip, allApplied, oneFailed, mixed, importSkipped, importFailed].map(describe);
 		})()`, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
 			return p.WithAwaitPromise(true)
 		}),
 	)
 
-	require.Len(t, got, 4)
-	assert.Equal(t, "1 applied / 1 skipped [succeeded] {Mod A — Mod A is locked at v1.0}", got[0],
-		"a batch with no `failed` key must still tally, must call a lock a SKIP rather than a failure, and must carry the engine's own refusal sentence")
-	assert.Equal(t, "1 applied / 0 failed [succeeded] {}", got[1],
-		"an all-success batch reads exactly as it did before this fix")
-	assert.Equal(t, "0 applied / 1 failed [failed] {}", got[2],
-		"a real failure is still a failure, and a batch that applied nothing is not `mixed`")
-	assert.Equal(t, "null", got[3],
-		"a result that is not a batch at all still says Done rather than inventing a tally")
+	require.Len(t, got, 6)
+	assert.Equal(t, "1 applied / 1 skipped [succeeded]", got[0],
+		"a lock is a SKIP, not a failure, and pairs with no \"0 failed\"")
+	assert.Equal(t, "1 applied / 0 failed [succeeded]", got[1],
+		"an all-success batch reads exactly as it always has")
+	assert.Equal(t, "0 applied / 1 failed [failed]", got[2],
+		"an omitted applied count is zero, and a batch that applied nothing is not `mixed`")
+	assert.Equal(t, "2 applied / 1 failed / 1 skipped [mixed]", got[3],
+		"a batch that both failed and skipped names all three counts")
+	assert.Equal(t, "0 installed · 2 skipped [succeeded]", got[4],
+		"an import that installed nothing by the flow's own default is not a failure")
+	assert.Equal(t, "1 installed · 0 skipped · 1 failed · 1 warnings [mixed]", got[5])
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -1276,7 +1335,7 @@ func TestE2E_ResultTallyReadsAnOmittedFailedList(t *testing.T) {
 // show live counts"), asserted here because the two read the same frame and
 // a divergence between them is the bug worth catching.
 func TestE2E_TrayShowsARunningJobWithProgress(t *testing.T) {
-	f := newE2EFixtureWithSlowDeploy(t)
+	f, _ := newE2EFixtureWithHeldDeploy(t)
 
 	var badge, kind, detail, live string
 	f.runInBrowser(t,
@@ -1287,7 +1346,7 @@ func TestE2E_TrayShowsARunningJobWithProgress(t *testing.T) {
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.job-progress__bar:not(.job-progress__bar--indeterminate)`, chromedp.ByQuery),
 		textContent(`.activity-bell__count`, &badge),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="running"]`, chromedp.ByQuery),
 		textContent(`.tray__row[data-state="running"] .tray__kind`, &kind),
 		textContent(`.tray__row[data-state="running"] .tray__detail`, &detail),
@@ -1315,7 +1374,7 @@ func TestE2E_TrayShowsARunningJobWithProgress(t *testing.T) {
 // core.EventSink at all, so once it does start running it STILL never gets
 // a frame, staying "queued" by the same heuristic for its whole (otherwise
 // near-instant) life - which is what makes the assertion window here the
-// deploy's AfterEach sleep (newE2EFixtureWithQueuedToggle), not a race
+// deploy's held AfterEach hook (newE2EFixtureWithQueuedToggle), not a race
 // against the enable itself.
 func TestE2E_QueuedJobDoesNotRenderRunningProgress(t *testing.T) {
 	f := newE2EFixtureWithQueuedToggle(t)
@@ -1333,22 +1392,25 @@ func TestE2E_QueuedJobDoesNotRenderRunningProgress(t *testing.T) {
 		// intercepted by the scrim instead of landing on the element
 		// underneath it (observed: the bell click silently opened nothing).
 		waitGone(`.modal`),
-		// The deploy now holds core's one mutation slot for the duration of
-		// its AfterEach sleep. Start a second, wholly independent job while
-		// it does - the only way this enable can be blocked in beginOp,
-		// which is the real (not simulated) condition "queued" exists for.
+		// A real frame means the deploy has core's one mutation slot, which
+		// it now keeps until the test ends (holdDeployAfterEach): the modal
+		// closing only proves the job was accepted, and an enable that got
+		// to the slot first would finish at once and never queue.
+		chromedp.WaitVisible(`.job-progress__bar:not(.job-progress__bar--indeterminate)`, chromedp.ByQuery),
+		// Start a second, wholly independent job while it does - the only
+		// way this enable can be blocked in beginOp, which is the real (not
+		// simulated) condition "queued" exists for.
 		chromedp.ActionFunc(func(context.Context) error {
 			jobID = startEnableFromAnotherClient(t, f, "fake", "c")
 			return nil
 		}),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="queued"]`, chromedp.ByQuery),
 	)
 
 	// Scoped by the enable job's OWN id rather than "the first queued row":
-	// the slow deploy can still be queued too at this instant (it has not
-	// necessarily emitted its own first event yet), and row order is an
-	// implementation detail this assertion should not depend on.
+	// row order is an implementation detail this assertion should not depend
+	// on.
 	rowSel := `.tray__row[data-job="` + jobID + `"]`
 	var kind, rowText, sectionTitle string
 	var progressBlocks int
@@ -1387,9 +1449,16 @@ func TestE2E_TrayEntryExpandsToTheEventStream(t *testing.T) {
 		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		// #584: both clicks are spelled clickWhenSettled. The tray drops in
+		// (menu-drop) and re-places itself as it grows, and the page re-reads
+		// its documents once the deploy is done - a click measured before
+		// any of that moves the row and dispatched after it lands beside it,
+		// with no error. The aria-expanded wait then names a click that did
+		// not take, rather than leaving the events wait to time out on it.
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="succeeded"] .tray__summary`, chromedp.ByQuery),
-		chromedp.Click(`.tray__row[data-state="succeeded"] .tray__summary`, chromedp.ByQuery),
+		clickWhenSettled(`.tray__row[data-state="succeeded"] .tray__summary`),
+		chromedp.WaitVisible(`.tray__row[data-state="succeeded"] .tray__summary[aria-expanded="true"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.tray__event:not(.tray__event--empty)`, chromedp.ByQuery),
 		chromedp.Evaluate(`Array.from(document.querySelectorAll(".tray__event")).map(e => e.textContent.trim())`, &events),
 	)
@@ -1466,7 +1535,7 @@ func TestE2E_FailedJobSurfacesInPlaceAndInTheTray(t *testing.T) {
 		chromedp.WaitVisible(`.job-progress[data-state="failed"]`, chromedp.ByQuery),
 		textContent(`.job-progress__text`, &inline),
 		textContent(`.activity-bell__count`, &badge),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="failed"]`, chromedp.ByQuery),
 		textContent(`.tray__failure-message`, &trayMessage),
 		chromedp.Evaluate(`document.querySelectorAll('[data-action="overwrite"]').length`, &overwrites),
@@ -2243,7 +2312,7 @@ func TestE2E_FullModPage_JobCompletionDoesNotDropToLoading(t *testing.T) {
 		// onJobDone's own re-hydrate is a real (if fast) network round trip
 		// against the in-process test server - this waits it out; the
 		// MutationObserver above is what actually catches a flash.
-		chromedp.Sleep(300*time.Millisecond),
+		quietWindow(),
 		chromedp.Evaluate(`window.__modPageFlashed`, &flashed),
 	)
 	assert.False(t, flashed, "a job completion must not blank the full mod page back to its Loading state")
@@ -2283,12 +2352,12 @@ func TestE2E_FullModPage_RollbackHiddenWithNoPreviousVersion(t *testing.T) {
 // library while open" (issue 330 carry-3's own note) leaves unreachable
 // any other way.
 func TestE2E_SlideOver_ClosingMidJobLeavesTheRowsLiveLine(t *testing.T) {
-	f := newE2EFixtureWithDrillInModsAndSlowDeploy(t)
+	f := newE2EFixtureWithDrillInModsAndHeldDeploy(t)
 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		// Holds core's one mutation slot for the AfterEach sleep - the same
+		// Holds core's one mutation slot until the test ends - the same
 		// lever newE2EFixtureWithQueuedToggle uses to make "running with no
 		// progress" a real, driveable window rather than a race against a
 		// toggle that finishes in microseconds.
@@ -2741,7 +2810,7 @@ func TestE2E_ConflictOverwriteRoundTripSucceeds(t *testing.T) {
 	assert.Equal(t, "alpha content", string(current), "a refused conflict must not have touched the deployed file")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
 		chromedp.Click(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
@@ -2826,7 +2895,7 @@ func TestE2E_OverwriteButtonAfterReloadIsHonestlyDisabled(t *testing.T) {
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
 	)
 
@@ -2842,7 +2911,7 @@ func TestE2E_OverwriteButtonAfterReloadIsHonestlyDisabled(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Reload(),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
 	)
 
@@ -3093,10 +3162,10 @@ func TestE2E_ProfileSwitchClearsStaleOmnibarSearch(t *testing.T) {
 // the first is still genuinely in flight - bindingJobs (main.js) is now a
 // Map keyed by origin for exactly this reason.
 //
-// The install's own POST /api/v1/jobs is deliberately delayed (the fixture's
-// startE2EServerWithDelayedJobStart), so its origin binding is a real,
+// The install's own POST /api/v1/jobs is held at a gate (the fixture's
+// startE2EServerWithGatedJobStart), so its origin binding is a real,
 // observable in-flight promise - not a race against microsecond-fast local
-// HTTP round trips - for the whole window in which the toggle starts and
+// HTTP round trips - for the whole time in which the toggle starts and
 // finishes. The proof is END STATE, not timing: each origin's own outcome
 // must land on ITS OWN mod, not be lost or attributed to the other.
 //
@@ -3105,12 +3174,13 @@ func TestE2E_ProfileSwitchClearsStaleOmnibarSearch(t *testing.T) {
 // the install's start slow and the toggle's fast, every assertion below
 // passes unchanged under either implementation - verified by reverting
 // bindingJobs to a single slot in a scratch copy and re-running, 6/6 green.
-// The toggle's own start is now ALSO delayed (startE2EServerWithDelayedJob
-// Start), and window.__lmmBindingJobsSize() (main.js, test-only
-// introspection) is sampled while both starts are genuinely still
-// in-flight at once - the one thing a single slot cannot ever report as 2.
+// The toggle's own start is ALSO held, and window.__lmmBindingJobsSize()
+// (main.js, test-only introspection) is sampled once both have reached the
+// proxy and neither has been let through - the one thing a single slot
+// cannot ever report as 2. #595: these were fixed 600ms/200ms delays, and
+// the sample landed inside them only if the runner did not stall.
 func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
-	f := newE2EFixtureWithSearchableModsAndDelayedJobStart(t, 600*time.Millisecond, 200*time.Millisecond)
+	f, jobs, toggles := newE2EFixtureWithSearchableModsAndGatedJobStart(t)
 
 	row := searchResultRow("fake", e2eSearchInstallModID)
 	f.runInBrowser(t,
@@ -3122,8 +3192,9 @@ func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
 		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		// The install's own start call is now sleeping server-side (still
-		// unresolved in bindingJobs); the modal's own busy state proves it.
+		// The install's own start call is now held at the proxy (still
+		// unresolved in bindingJobs); the modal's own busy state shows it.
+		jobs.awaitArrival("the install's job start"),
 		chromedp.WaitVisible(`.modal [data-action="confirm"][disabled]`, chromedp.ByQuery),
 		// Clear the omnibar's own live filter - it still reads "boots" from
 		// the fan-out above, which would filter Gamma Mod (an installed
@@ -3150,13 +3221,12 @@ func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
 		// bindingJobs' overlap, not about whether a modal's scrim can be
 		// clicked through - a separate, real UX question of its own.
 		chromedp.Evaluate(`document.querySelector(".slide-over__actions button").click()`, nil),
+		toggles.awaitArrival("the toggle's start"),
 	)
 
-	// Both starts are now genuinely in flight: the install's from its own
-	// slow POST /api/v1/jobs, the toggle's own start just issued and (like
-	// the install's) sleeping server-side behind the same delaying proxy.
-	// This is the window Important 2's fix targets - sampled immediately,
-	// before either can possibly have resolved.
+	// Both starts are now genuinely in flight, each held at its own gate.
+	// This is the window Important 2's fix targets, and it stays open until
+	// the test releases a gate.
 	var concurrentBindings int
 	f.runInBrowser(t,
 		chromedp.Evaluate(`window.__lmmBindingJobsSize()`, &concurrentBindings),
@@ -3165,10 +3235,14 @@ func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
 		"both the install's and the toggle's own starts must be tracked while genuinely overlapping - "+
 			"a single module-level slot can never report more than 1 here")
 
+	// The toggle goes first and FINISHES before the install's start is let
+	// through: the staleness conflict below depends on that order.
+	toggles.Release()
 	f.runInBrowser(t,
 		chromedp.WaitVisible(`.slide-over .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelector(".slide-over__close").click()`, nil),
 	)
+	jobs.Release()
 
 	// Re-fan-out for "boots": clearing the omnibar above hid the search row
 	// entirely (OmnibarResults only renders while its own query still
@@ -3449,7 +3523,7 @@ func TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape(t *testing.T) {
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
 		openMenu,
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.Click(`.section-header`, chromedp.ByQuery),
 		waitGone(`.row-menu`),
 	)
@@ -3462,7 +3536,7 @@ func TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape(t *testing.T) {
 		// menu's own DOM appearance by a handful of animation frames in a
 		// headless browser; WaitVisible above only proves the DOM is there,
 		// not that the effect has run yet.
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		waitGone(`.row-menu`),
 	)
@@ -3603,7 +3677,7 @@ func TestE2E_UpdatesCard_FailedBatchReportsAnHonestTally(t *testing.T) {
 	assert.Contains(t, cardText, "1.0 → 2.0", "the update must still be listed as pending - it was never actually applied")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
 	)
 	var trayText string
@@ -3642,7 +3716,7 @@ func TestE2E_LibraryBatchBar_CancelKeepsTheSelectionAndReturnsFocus(t *testing.T
 		// lag the modal's own DOM appearance by a handful of animation
 		// frames in a headless browser (this suite's own established
 		// pattern - see TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape).
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		waitGone(`.modal[data-kind="uninstall-batch"]`),
 		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? document.activeElement?.tagName`, &activeAction),
@@ -3688,7 +3762,7 @@ func TestE2E_ProfilesModal_EscapeReturnsFocusToThePickerTrigger(t *testing.T) {
 		// frames in a headless browser (this suite's own established
 		// pattern - see TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape's
 		// identical note); WaitVisible above only proves the DOM is there.
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		waitGone(`[data-testid="profiles-list"]`),
 		chromedp.Evaluate(`document.activeElement?.className ?? ""`, &activeClass),
@@ -3838,18 +3912,18 @@ func TestE2E_LibraryBatchBar_UninstallSequencesOneJobAtATime(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_HealthCard_NotFixableRowNamesTheReason is m3's own scenario (unit
-// 6 gate review): "Not fixable" used to say only that, with a tooltip that
-// restated the same bare sentence. A LOCKED ref's version_mismatch is the
-// most common not-fixable case in practice (verify.go's own Fixable table:
-// "a non-local source AND an UNLOCKED ref").
+// TestE2E_HealthCard_NotFixableRowNamesTheReason began as m3's own scenario
+// (unit 6 gate review), when a not-fixable row read "Not fixable: <the
+// engine's FixableReason>". A LOCKED ref's version_mismatch is the most
+// common not-fixable case in practice (verify.go's own Fixable table: "a
+// non-local source AND an UNLOCKED ref").
 //
-// Issue 334 moved the sentence to where the decision is made: the card
-// renders core.VerifyFinding.FixableReason verbatim, instead of the
-// hand-maintained table plus a lock guess cross-referenced from the
-// already-fetched library rows. So this asserts the ENGINE's wording now -
-// which names the locked version, something the client-side guess never
-// could.
+// Issue 585 took that text out of the web UI: FixableReason explains what
+// `lmm verify --fix` would or would not do, which a person in a browser
+// cannot run. The row now says the finding, and offers an action only where
+// it has one; the engine's sentence stays on the wire (and in `lmm verify`),
+// and here only as the row's tooltip - so this asserts it is there, and
+// nowhere a reader has to read past it.
 func TestE2E_HealthCard_NotFixableRowNamesTheReason(t *testing.T) {
 	src := newFakeSource("fake")
 	src.addMod(fakeSourceMod{
@@ -3878,11 +3952,15 @@ func TestE2E_HealthCard_NotFixableRowNamesTheReason(t *testing.T) {
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.card--health`, chromedp.ByQuery),
 	)
-	var rowText string
-	f.runInBrowser(t, textContent(`.card--health .card__row`, &rowText))
-	assert.Contains(t, rowText, "Not fixable", "a locked ref's version_mismatch must still say it is not fixable")
-	assert.Contains(t, rowText, "locked at v1.0", "and now say WHY, in the engine's own words - the finding IS a locked version_mismatch")
-	assert.Contains(t, rowText, "unlock it first")
+	var rowText, rowTitle string
+	f.runInBrowser(t,
+		textContent(`.card--health .card__row`, &rowText),
+		chromedp.AttributeValue(`.card--health .card__row`, "title", &rowTitle, nil, chromedp.ByQuery),
+	)
+	assert.Contains(t, rowText, "version mismatch", "the row says the finding")
+	assert.NotContains(t, rowText, "Not fixable", "issue 585: the CLI's --fix verdict is not body text in the web UI")
+	assert.NotContains(t, rowText, "--fix")
+	assert.Contains(t, rowTitle, "locked at v1.0", "the engine's own reason survives as the row's tooltip")
 	assert.NotContains(t, rowText, "Repair", "no Repair control may render for a not-fixable row")
 
 	assert.Empty(t, f.BrowserErrors())
@@ -4128,7 +4206,7 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 	// this modal's own mount effect additionally kicks off an async
 	// reloadProfiles() fetch. Cheap insurance once the ACTUAL bug this
 	// scenario tripped over (below) was found and fixed.
-	settle := func() { time.Sleep(300 * time.Millisecond) }
+	settle := func() { f.runInBrowser(t, settleEffects()) }
 
 	openProfilesModal := func() {
 		f.runInBrowser(t,
@@ -4350,7 +4428,7 @@ mods:
 	importPath := filepath.Join(t.TempDir(), "imported.yaml")
 	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
 
-	settle := func() { time.Sleep(300 * time.Millisecond) }
+	settle := func() { f.runInBrowser(t, settleEffects()) }
 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
@@ -4389,7 +4467,7 @@ mods:
 	}, 5*time.Second, 20*time.Millisecond, "the import job must succeed and save the profile even though nothing was installed")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
 	)
 	var trayText string
@@ -4438,7 +4516,7 @@ mods:
 	importPath := filepath.Join(t.TempDir(), "imported.yaml")
 	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
 
-	settle := func() { time.Sleep(300 * time.Millisecond) }
+	settle := func() { f.runInBrowser(t, settleEffects()) }
 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
@@ -4496,7 +4574,7 @@ mods:
 	assert.Empty(t, list.Mods, "no_install must have stopped anything from actually installing, even though Install was checked")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
 	)
 	var trayText string
@@ -4517,10 +4595,10 @@ mods:
 // read as a tally-shaped
 // result, replacing the tray's usual bare state word with an honest-looking
 // but empty "0 installed · 0 skipped" - worse copy for a batch that did
-// not, in truth, batch anything. resultTally now returns null for an
-// all-zero result, same as a kind with no tally shape at all, so every
-// caller's own existing "no tally" fallback applies - the tray's own bare
-// state word here (jobprogress.js's InlineJob, the only surface that
+// not, in truth, batch anything. The job summary carries no tally for an
+// all-zero result (jobtally.go's tallyOfResult, since issue 364), same as
+// a kind with no tally shape at all, so every caller's own existing "no
+// tally" fallback applies - the tray's own bare state word here (jobprogress.js's InlineJob, the only surface that
 // renders the literal word "Done", never mounts for profile_import: it has
 // no owning mod row to attach to).
 // It used to reach that all-zero result by importing a profile whose every
@@ -4537,7 +4615,7 @@ mods: []
 	importPath := filepath.Join(t.TempDir(), "reimport.yaml")
 	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
 
-	settle := func() { time.Sleep(300 * time.Millisecond) }
+	settle := func() { f.runInBrowser(t, settleEffects()) }
 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
@@ -4575,7 +4653,7 @@ mods: []
 	}, 5*time.Second, 20*time.Millisecond, "the import job must succeed and save the profile")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
 	)
 	var trayText string
@@ -4632,7 +4710,7 @@ func TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelec
 	// effect-attached Escape listener lagging the DOM by a frame or two)
 	// even though the WaitVisible above already did real async work.
 	f.runInBrowser(t,
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		waitGone(`.modal[data-kind="uninstall-batch"]`),
 	)
@@ -4706,7 +4784,7 @@ func TestE2E_ReorderModal_EscapeDiscardsTheEditOnReopen(t *testing.T) {
 	// first - this suite's own established pattern against modal.js's
 	// effect-attached Escape listener lagging the DOM by a frame or two.
 	f.runInBrowser(t,
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		waitGone(`[data-testid="reorder-list"]`),
 	)
@@ -4752,7 +4830,7 @@ func TestE2E_ProfilesModal_ReopenDoesNotResumeAHalfTypedRename(t *testing.T) {
 	// picker's outside-click/Escape state and this modal's own mount effect
 	// both flush on requestAnimationFrame, up to a handful of frames in a
 	// headless browser - real insurance, not superstition, once observed.
-	settle := func() { time.Sleep(300 * time.Millisecond) }
+	settle := func() { f.runInBrowser(t, settleEffects()) }
 	openProfilesModal := func() {
 		f.runInBrowser(t,
 			chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
@@ -5034,7 +5112,7 @@ mods: []
 	importPath := filepath.Join(t.TempDir(), "imported.yaml")
 	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
 
-	settle := func() { time.Sleep(300 * time.Millisecond) }
+	settle := func() { f.runInBrowser(t, settleEffects()) }
 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
@@ -5337,31 +5415,14 @@ func TestE2E_LockedUpdateIsReportedAsASkipNotAsDone(t *testing.T) {
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		waitGone(`.modal`),
 		chromedp.WaitVisible(`.card--updates .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
-		// issue 344: the terminal STATE and the terminal LABEL do not arrive
-		// together. jobprogress.js renders the outcome the instant the job
-		// summary says "succeeded", while the tally behind "1 applied / 1
-		// skipped" is a SECOND read (jobresult.js -> GET
-		// /api/v1/jobs/{id}), so the control carries a bare "Done" for the
-		// frames in between. Reading the text straight after the state wait
-		// therefore sampled whichever label happened to be there, which is
-		// what made this test fail once in a full -race suite run.
-		//
-		// The label is waited out rather than the render deferred: holding
-		// the terminal render until the tally settles was tried, and it
-		// loses the outcome entirely on any control whose CONTAINER
-		// unmounts on completion (Mission Control's profile attention card
-		// disappears the moment the profile is applied). Carrying the tally
-		// on the job SUMMARY - so the first terminal render already has it -
-		// is the regression-free fix, and is filed as #364 (post-v2.0).
-		chromedp.Poll(
-			`(() => {
-				const el = document.querySelector(".card--updates .job-progress__text");
-				return Boolean(el) && el.textContent.trim() !== "" && el.textContent.trim() !== "Done";
-			})()`, nil,
-			chromedp.WithPollingInterval(50*time.Millisecond),
-		),
+		// issue 344 waited the label out here, because the terminal STATE
+		// arrived before the tally behind its LABEL (a second read of the
+		// job's result). Since issue 364 the tally is on the job summary,
+		// so the label is read straight after the state wait: a "Done" here
+		// would be that bug back (TestE2E_JobTerminalLabelIsTheTallyOnItsFirstFrame
+		// pins it frame by frame).
 		textContent(`.card--updates .job-progress__text`, &inline),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row .tray__skips`, chromedp.ByQuery),
 		textContent(`.tray__row .tray__state`, &trayState),
 		textContent(`.tray__row .tray__skips`, &traySkips),
@@ -5632,21 +5693,23 @@ func TestE2E_SlideOverFindingsReadAsProse(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_HealthCardTruncatesTheDetailBeforeTheName is M3 of the unit-8
+// TestE2E_HealthCardTruncatesNeitherHalfOfARow is M3 of the unit-8
 // gate review. Both halves of a card row shrank at the same rate, so at
 // 1280px a Health row read "Better …  version mismatch (recorded 1.0, so…"
 // - both cut. The name is the identifier: a truncated detail still explains
-// a mod you can name, while a truncated name explains nothing at all. Only
-// the not-fixable branch carried a title, so a fixable row's cut text was
-// unrecoverable without resizing the window.
+// a mod you can name, while a truncated name explains nothing at all.
+//
+// Issue 585 went the rest of the way: a Health row now wraps rather than
+// cutting either half, so neither needs a tooltip to be read - the detail
+// is where the remedy was, and the ellipsis was taking exactly that.
 //
 // Measured in the browser rather than asserted against the stylesheet: a
 // truncation is what a layout engine DOES with a rule, and scrollWidth
 // versus clientWidth is the only place that fact exists.
-func TestE2E_HealthCardTruncatesTheDetailBeforeTheName(t *testing.T) {
+func TestE2E_HealthCardTruncatesNeitherHalfOfARow(t *testing.T) {
 	f := newE2EFixtureWithAttention(t)
 
-	var nameCut, detailPresent, titled bool
+	var nameCut, detailCut, detailPresent bool
 	f.runInBrowser(t,
 		chromedp.EmulateViewport(1280, 900),
 		chromedp.Navigate(f.HomePath()),
@@ -5656,18 +5719,13 @@ func TestE2E_HealthCardTruncatesTheDetailBeforeTheName(t *testing.T) {
 			return n.scrollWidth > n.clientWidth;
 		})()`, &nameCut),
 		chromedp.Evaluate(`Boolean(document.querySelector(".card--health .card__row-detail"))`, &detailPresent),
-		chromedp.Evaluate(`(() => {
-			const row = document.querySelector(".card--health .card__row");
-			return Array.from(row.querySelectorAll(".card__row-name, .card__row-detail"))
-				.every((el) => (el.title ?? "") !== "");
-		})()`, &titled),
+		chromedp.Evaluate(`[...document.querySelectorAll(".card--health .card__row-detail")]
+			.some((d) => d.scrollWidth > d.clientWidth)`, &detailCut),
 	)
 
 	assert.True(t, detailPresent, "the row must actually carry both halves, or this proves nothing")
-	assert.False(t, nameCut,
-		"at 1280px the mod name must not be truncated - the detail gives up the room first")
-	assert.True(t, titled,
-		"both halves must carry their own full text as a title, so nothing cut is unrecoverable")
+	assert.False(t, nameCut, "at 1280px the mod name must not be truncated")
+	assert.False(t, detailCut, "issue 585: the finding's own words wrap rather than being cut")
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -5750,13 +5808,15 @@ func TestE2E_ASlowStaleHydrationCannotRepaintTheProfileSwitchedTo(t *testing.T) 
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// succeededOriginReleaseBudget is main.js#succeededOriginReleaseMillis, as
+// succeededOriginReleaseBudget is timers.js#succeededOriginReleaseMillis, as
 // the two I-2 scenarios below need to reason about it: long enough that a
 // pinned failure is provably pinned, short enough that a released success
-// does not stretch the suite. Kept as a Go constant rather than read out of
+// does not stretch the suite. Kept as a Go value rather than read out of
 // the module, because a scenario that derived its own budget from the code
-// under test could not fail if that code changed.
-const succeededOriginReleaseBudget = 4 * time.Second
+// under test could not fail if that code changed. Both scenarios run the
+// page's timers at scaleUITimers' scale, so the budget is scaled with them
+// (#576).
+var succeededOriginReleaseBudget = scaledUITimer(4 * time.Second)
 
 // searchRefreshedAfterTheJob is the poll every C-2 scenario uses to sample
 // the toast decision at a point where it has definitely been made.
@@ -5855,6 +5915,8 @@ func TestE2E_SucceededDeployReleasesTheButtonOnItsOwn(t *testing.T) {
 	f := newE2EFixtureWithDeployableMods(t)
 
 	f.runInBrowser(t,
+		scaleUITimers(),
+		releaseSucceededReadouts(), // #595: this scenario IS the release
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
@@ -5883,6 +5945,7 @@ func TestE2E_FailedDeployStaysPinnedUntilDismissed(t *testing.T) {
 
 	var stillFailed, deployButtonBack bool
 	f.runInBrowser(t,
+		scaleUITimers(),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
@@ -6307,7 +6370,8 @@ func TestE2E_ASlowStaleModPageHydrationCannotBlankTheOneOnScreen(t *testing.T) {
 	// The SECOND read scoped to "default" is the delayed one: the first is
 	// the cold load that puts the page on screen, and the second belongs to
 	// the job's re-hydrate - the one this scenario makes stale.
-	f.BaseURL = startE2EProxyDelayingTheNthModFilesRead(t, f.BaseURL, "default", 2, 2*time.Second)
+	var staleReads *atomic.Int64
+	f.BaseURL, staleReads = startE2EProxyDelayingTheNthModFilesRead(t, f.BaseURL, "default", 2, 2*time.Second)
 
 	modPage := func(profile string) string {
 		return f.BaseURL + "/g/" + f.Game.ID + "/" + profile + "/mod/fake/boots"
@@ -6324,7 +6388,8 @@ func TestE2E_ASlowStaleModPageHydrationCannotBlankTheOneOnScreen(t *testing.T) {
 	// A job finishing anywhere re-hydrates the route on screen, and THAT
 	// hydration's files read is the delayed one.
 	startEnableFromAnotherClient(t, f, "fake", "x")
-	time.Sleep(300 * time.Millisecond)
+	require.Eventually(t, func() bool { return staleReads.Load() >= 2 }, e2eTimeout, e2ePollInterval,
+		"the job's re-hydrate must have issued the delayed read before the page moves on")
 
 	// Move to the other profile's copy of this page while that is still
 	// fetching - the same two calls router.js's own navigate() makes, so
@@ -6337,13 +6402,18 @@ func TestE2E_ASlowStaleModPageHydrationCannotBlankTheOneOnScreen(t *testing.T) {
 			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
 	)
 
-	// Long enough for the delayed read to have landed and repainted. The
-	// Changelog and Versions SECTIONS are the observable: both are gated on
-	// modPage.detail / modPage.versions being non-null, so a write that
-	// resets them to null takes the headings off the page entirely.
+	// Until the delayed read has landed (the browser's own resource timing
+	// records it once its response is complete) and whatever it would
+	// repaint has. The Changelog and Versions SECTIONS are the observable:
+	// both are gated on modPage.detail / modPage.versions being non-null, so
+	// a write that resets them to null takes the headings off the page
+	// entirely.
 	var headings []string
 	f.runInBrowser(t,
-		chromedp.Sleep(3*time.Second),
+		pollUntil(`performance.getEntriesByType("resource")
+			.filter((e) => e.name.includes("/api/v1/mods/fake/boots/files") && e.name.includes("profile=default"))
+			.length >= 2`),
+		quietWindow(),
 		headingTexts(".mod-page h2", &headings),
 	)
 
@@ -6385,7 +6455,7 @@ func TestE2E_EveryRouteKeepsTheActivityBellAndTheShortcutsHelp(t *testing.T) {
 		f.runInBrowser(t,
 			chromedp.Navigate(route.path),
 			chromedp.WaitVisible(route.ready, chromedp.ByQuery),
-			chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+			clickWhenSettled(`.activity-bell__trigger`),
 			chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
 			chromedp.Evaluate(`document.querySelectorAll('[data-action="shortcuts"]').length`, &shortcutsButtons),
 			// Escape closes it and hands the keyboard back to the trigger -
@@ -7357,7 +7427,7 @@ func TestE2E_FetchRefusalRendersItsExplainerAndKeepsTheInstallOffered(t *testing
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestNotListedCount_IgnoresDisabledRows is issue 378. The Profile card is
+// TestE2E_NotListedCount_IgnoresDisabledRows is issue 378. The Profile card is
 // a subtraction of two documents rather than a plan: GET /api/v1/mods
 // lists EVERY installed row, disabled ones included, while
 // ProfileSummary.mod_count is the profile YAML's load order, which carries
@@ -7370,9 +7440,9 @@ func TestE2E_FetchRefusalRendersItsExplainerAndKeepsTheInstallOffered(t *testing
 //
 // cards.js has no DOM in this function, so it is exercised directly here
 // through a dynamic import in a real browser, the same module Mission
-// Control runs - the pattern TestSortRows_RecentToleratesMissingInstalledAt
+// Control runs - the pattern TestE2E_SortRows_RecentToleratesMissingInstalledAt
 // established.
-func TestNotListedCount_IgnoresDisabledRows(t *testing.T) {
+func TestE2E_NotListedCount_IgnoresDisabledRows(t *testing.T) {
 	f := newE2EFixture(t)
 
 	var counts []float64

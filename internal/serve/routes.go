@@ -18,10 +18,18 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}", s.wrap(s.handleAPIModDetail))
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}/files", s.wrap(s.handleAPIModFiles))
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}/versions", s.wrap(s.handleAPIModVersions))
+	// The mod panel's category picker suggestions (#592, api_mod_category.go).
+	s.mux.Handle("GET /api/v1/categories", s.wrap(s.handleAPICategories))
 	s.mux.Handle("GET /api/v1/search", s.wrap(s.handleAPISearch))
 	s.mux.Handle("GET /api/v1/updates", s.wrap(s.handleAPIUpdates))
 	// lmm's own release, not a mod's (#568, api_release.go).
 	s.mux.Handle("GET /api/v1/updates/lmm", s.wrap(s.handleAPIReleaseStatus))
+	// Setup > Updates' "Update automatically" switch (#586): a
+	// single-step config.yaml write, answered with the status above.
+	s.mux.Handle("PUT /api/v1/settings/auto-update", s.wrap(s.handleAPIAutoUpdateSetting))
+	// The web UI showed the automatic update's notice (#586): told once,
+	// for every frontend.
+	s.mux.Handle("POST /api/v1/updates/lmm/notice", s.wrap(s.handleAPIAutoUpdateNotice))
 	s.mux.Handle("GET /api/v1/profiles", s.wrap(s.handleAPIProfiles))
 	s.mux.Handle("GET /api/v1/health", s.wrap(s.handleAPIHealth))
 	s.mux.Handle("GET /api/v1/conflicts", s.wrap(s.handleAPIConflicts))
@@ -39,6 +47,8 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/unlock", s.wrap(s.handleAPIModUnlock))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/update-policy", s.wrap(s.handleAPIModUpdatePolicy))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/convert", s.wrap(s.handleAPIModConvert))
+	// #592: a mod's user category - the same single-step settings shape.
+	s.mux.Handle("POST /api/v1/mods/{source}/{id}/category", s.wrap(s.handleAPIModCategory))
 	// #542: skip one pending update without pinning, and undo it - the
 	// same single-step settings shape as the four above.
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/skip-update", s.wrap(s.handleAPIModSkipUpdate))
@@ -79,6 +89,9 @@ func (s *Server) routes() {
 	// `lmm game set-default`/`clear-default --json` already emit.
 	s.mux.Handle("POST /api/v1/games/{id}/set-default", s.wrap(s.handleAPIGameSetDefault))
 	s.mux.Handle("DELETE /api/v1/games/default", s.wrap(s.handleAPIGameClearDefault))
+	// The Play button (#501, api_launch.go): a single-step call, not a job -
+	// core.Service.Launch returns once the game's systemd unit has started.
+	s.mux.Handle("POST /api/v1/games/{id}/launch", s.wrap(s.handleAPIGameLaunch))
 	// The Setup surface's custom-source half (api_sources.go): the editor's
 	// list, one definition's raw YAML, a draft's validation, and the two
 	// writes - which answer with the SAME list document the GET returns,

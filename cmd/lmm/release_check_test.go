@@ -64,7 +64,7 @@ func armReleaseNotice(t *testing.T, tty bool) {
 	stderrIsTerminal = func() bool { return tty }
 	t.Cleanup(func() {
 		releaseCheckArmed, stderrIsTerminal = oldArmed, oldTTY
-		pendingRelease = nil
+		pendingRelease, autoUpdateNoticeDue = nil, false
 	})
 }
 
@@ -112,6 +112,9 @@ func TestJSONGolden_Version(t *testing.T) {
 
 func TestReleaseNotice_FirstRunThenTheUpdateLine(t *testing.T) {
 	hits := cliReleaseServer(t, "v2.1.0")
+	// The plain update line: with auto_update on, a self-managed lmm
+	// installs the release instead (auto_update_test.go).
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("auto_update: false\n"), 0o644))
 	armReleaseNotice(t, true)
 
 	notice := afterCommand(t, "game", "list")
@@ -223,8 +226,10 @@ func TestReleaseCheck_TheTestBinaryCannotReachGitHub(t *testing.T) {
 func TestServeReleaseChecker_OnlyInTheArmedBinary(t *testing.T) {
 	cliReleaseServer(t, "v2.1.0")
 	assert.Nil(t, serveReleaseChecker())
+	assert.Nil(t, serveAutoUpdater(), "nor does a test's server ever update lmm (#586)")
 	armReleaseNotice(t, false)
 	assert.NotNil(t, serveReleaseChecker())
+	assert.NotNil(t, serveAutoUpdater())
 }
 
 // hangGitHub points the checker at a server that never answers, for the
@@ -276,14 +281,19 @@ func TestReleaseNotice_TheExitPathIsBounded(t *testing.T) {
 		},
 	}
 	armReleaseNotice(t, true)
+	spawns := recordSpawns(t)
 	runLMM(t, "game", "list")
 
 	var notice bytes.Buffer
 	start := time.Now()
 	finishReleaseCheck(context.Background(), &notice)
 	assert.Less(t, time.Since(start), 3*time.Second)
+	// Detection did not finish, so the notice reads the binary as
+	// self-managed - and starts the automatic update, whose own run asks
+	// again, definitively, and steps aside for a package's lmm (#586).
+	assert.Len(t, spawns.args, 1)
 	assert.Contains(t, notice.String(),
-		"lmm 2.1.0 is available (you have 2.0.0): https://github.com/DonovanMods/linux-mod-manager/releases/tag/v2.1.0\n")
+		"lmm 2.1.0 is available (you have 2.0.0); lmm is installing it in the background\n")
 }
 
 // TestReleaseNotice_CtrlCEndsTheWait: the exit path waits on the command's

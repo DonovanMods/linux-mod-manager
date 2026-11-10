@@ -159,12 +159,12 @@ func initStepGames(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader
 		cmd.Printf("Already configured: %s\n", gameLabelList(existing))
 	}
 
-	if !askInitYes(cmd, reader, "Scan Steam for moddable games?", true) {
+	if !askInitYes(cmd, reader, "Scan for moddable games (Steam, Battle.net)?", true) {
 		cmd.Println("  Skipped. ('lmm game detect' when you want it.)")
 		return existing, nil
 	}
 
-	cmd.Println("  Scanning Steam libraries...")
+	cmd.Println("  Scanning Steam libraries and Wine prefixes...")
 	// IncludeUnknown, always: a game lmm has no curated entry for is still
 	// the game the user came here to mod, and #206's whole point is that
 	// they should at least see it and its app id rather than be told
@@ -187,11 +187,13 @@ func initStepGames(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader
 		return existing, nil
 	}
 
-	configured := configuredSlugs(existing)
+	// core's rule, not a slug lookup: a game configured under another id
+	// at the same install or mod path is this game (#406 F1, #545).
+	configured := configuredGameMap(existing)
 	cmd.Printf("  Found %d moddable game(s):\n", len(known))
 	for i, g := range known {
 		marker := ""
-		if configured[g.Slug] {
+		if core.ConfiguredGameFor(configured, g) != nil {
 			marker = " [already configured]"
 		}
 		cmd.Printf("    %d. %s (%s)%s\n", i+1, g.Name, g.Slug, marker)
@@ -199,7 +201,7 @@ func initStepGames(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader
 	}
 	if len(unknown) > 0 {
 		cmd.Printf("  %d more installed game(s) have no built-in configuration.\n", len(unknown))
-		cmd.Println("  Add one with 'lmm game add --from-detected <steam-app-id>' - see 'lmm game detect --include-unknown'.")
+		cmd.Println("  Add one with 'lmm game add --from-detected <app-id or battlenet:product>' - see 'lmm game detect --include-unknown'.")
 	}
 
 	cmd.Printf("  Add which? [1-%d/all/none]: ", len(known))
@@ -277,9 +279,9 @@ func printInitNoCuratedGames(cmd *cobra.Command, unknown []domain.DetectedGame) 
 	}
 	cmd.Printf("  Found %d installed game(s), none with a built-in configuration:\n", len(unknown))
 	for _, g := range unknown {
-		cmd.Printf("    %s (app id %s)\n", g.Name, g.SteamAppID)
+		cmd.Printf("    %s (%s)\n", g.Name, detectedHandleLabel(g))
 	}
-	cmd.Println("  Add one with 'lmm game add --from-detected <steam-app-id>'.")
+	cmd.Println("  Add one with 'lmm game add --from-detected <app-id or battlenet:product>'.")
 }
 
 // initStepDefaultGame offers to set the default game, and returns the
@@ -588,16 +590,6 @@ func gameLabelList(games []*domain.Game) string {
 		labels[i] = fmt.Sprintf("%s (%s)", g.Name, g.ID)
 	}
 	return strings.Join(labels, ", ")
-}
-
-// configuredSlugs indexes the configured games by id, for the "[already
-// configured]" marker in step 1's listing.
-func configuredSlugs(games []*domain.Game) map[string]bool {
-	out := make(map[string]bool, len(games))
-	for _, g := range games {
-		out[g.ID] = true
-	}
-	return out
 }
 
 // configuredGameMap rebuilds the map gameDetectSelectionIndices takes -

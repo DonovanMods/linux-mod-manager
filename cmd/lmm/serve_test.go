@@ -69,6 +69,8 @@ func TestRunServe_NonLoopbackAddr_PrintsWarningAndDrainsOnCancel(t *testing.T) {
 	}
 
 	assert.Contains(t, stderr.String(), "WARNING")
+	// #501: the web UI's Play button starts programs on this machine.
+	assert.Contains(t, stderr.String(), "and launch programs")
 	assert.Contains(t, stdout.String(), "lmm serve listening on")
 }
 

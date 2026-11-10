@@ -24,7 +24,7 @@ func TestRegisterAdapters_RegistersEveryConcreteAdapterBesideTheIdentity(t *test
 	svc := newTestService(t)
 	RegisterAdapters(svc)
 
-	assert.ElementsMatch(t, []string{adapter.GenericID, "icarus", "bepinex"}, svc.ListAdapters(),
+	assert.ElementsMatch(t, []string{adapter.GenericID, "icarus", "bepinex", "d2r"}, svc.ListAdapters(),
 		"internal/app registers every concrete adapter; the identity is the registry's own built-in")
 }
 

@@ -318,14 +318,12 @@ exit 1`)
 // before_each are fatal-by-default (nothing accumulated yet when they
 // abort) unless Force is set, in which case their failures become Warnings
 // and execution continues - and DeleteInstalledMod is the sole remaining
-// fatal step downstream of that. This test forces it to fail by holding a
-// real write lock on the same SQLite file - a dedicated second connection
-// issues "BEGIN IMMEDIATE" directly (a plain sql.Tx's default deferred
-// BEGIN does NOT take a lock until its first statement runs, so it doesn't
-// work here) and never commits, for the call's duration. WAL-mode readers
-// (GetInstalledMod) proceed unaffected, but the writer (DeleteInstalledMod)
-// deterministically gets SQLITE_BUSY (busy_timeout defaults to 0, so it's
-// an immediate error, not a timing-dependent race).
+// fatal step downstream of that. This test forces it to fail with a
+// trigger, installed through a second connection to the same SQLite file,
+// that aborts every DELETE from installed_mods: the failure is immediate
+// and deterministic. It used to hold a write lock instead, which made
+// the uninstall wait out the database's real 5 s busy_timeout - 10 s in
+// all - before failing (#576).
 func TestService_UninstallMod_FatalErrorAfterAccumulatedDiagnostic_ReturnsPartialResult(t *testing.T) {
 	dataDir := t.TempDir()
 	svc, err := core.NewService(core.ServiceConfig{
@@ -351,27 +349,32 @@ echo "boom" >&2
 exit 1`)
 	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failScript}})
 
-	dbPath := filepath.Join(dataDir, "lmm.db")
-	locker, err := sql.Open("sqlite", dbPath)
-	require.NoError(t, err)
-	defer locker.Close() //nolint:errcheck // best-effort cleanup
-	locker.SetMaxOpenConns(1)
-	conn, err := locker.Conn(context.Background())
-	require.NoError(t, err)
-	defer conn.Close() //nolint:errcheck // best-effort cleanup
-	_, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE")
-	require.NoError(t, err)
-	defer conn.ExecContext(context.Background(), "ROLLBACK") //nolint:errcheck // best-effort cleanup
+	refuseInstalledModDeletes(t, filepath.Join(dataDir, "lmm.db"))
 
 	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{
 		Force: true,
 	})
-	require.Error(t, err, "DeleteInstalledMod must fail while another writer holds the file lock")
+	require.Error(t, err, "DeleteInstalledMod must fail while the database refuses the delete")
 	assert.Contains(t, err.Error(), "failed to remove mod record")
 	require.NotNil(t, result, "the result accumulated before the fatal error must not be discarded")
 	require.Len(t, result.Warnings, 1, "the forced before_each hook failure must have been recorded before the later fatal error")
 	assert.Contains(t, result.Warnings[0], "uninstall.before_each hook failed")
 	assert.Contains(t, result.Warnings[0], "forced")
+}
+
+// refuseInstalledModDeletes makes every DELETE from installed_mods in the
+// database at dbPath fail at once, through a trigger installed over a
+// connection of its own, so a test can reach a flow's fatal
+// DeleteInstalledMod error without waiting on a lock.
+func refuseInstalledModDeletes(t *testing.T, dbPath string) {
+	t.Helper()
+	conn, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	defer conn.Close() //nolint:errcheck // best-effort cleanup
+	_, err = conn.ExecContext(context.Background(), `
+		CREATE TRIGGER refuse_installed_mod_deletes BEFORE DELETE ON installed_mods
+		BEGIN SELECT RAISE(ABORT, 'deletes refused by the test'); END`)
+	require.NoError(t, err)
 }
 
 func TestService_UninstallMod_UnknownModReturnsErrModNotFound(t *testing.T) {

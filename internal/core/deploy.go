@@ -711,6 +711,15 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 	return s.applyDeploy(ctx, game, plan, opts, sink)
 }
 
+// adviseLaunch appends the game adapter's launch advice (#546) to a
+// deploy's result, each line a warning event too.
+func (s *Service) adviseLaunch(ctx context.Context, game *domain.Game, profileName string, result *DeployResult, emit func(Event)) {
+	for _, w := range s.launchAdvice(ctx, game, profileName, true) {
+		result.Warnings = append(result.Warnings, w)
+		emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: w})
+	}
+}
+
 func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions, sink EventSink) (*DeployResult, error) {
 	result := &DeployResult{}
 	emit := func(e Event) {
@@ -856,6 +865,9 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 	}
 
 	if len(modsToDeploy) == 0 {
+		// #546: a deploy of nothing still says what the launch needs - the
+		// -mod the last deploy advised, now to be removed.
+		s.adviseLaunch(ctx, game, profileName, result, emit)
 		return result, nil
 	}
 
@@ -990,6 +1002,11 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		// it (result fields + one DeployMergeSynced event).
 		s.recordMergeOutcome(ctx, game, profileName, OpDeploy, result, emit)
 	}
+
+	// #546: what the user must still do for the deployed mods to load -
+	// Diablo II: Resurrected's -mod argument - at default verbosity, as a
+	// warning, in both frontends.
+	s.adviseLaunch(ctx, game, profileName, result, emit)
 
 	// Review finding 5: any capture the deploy loop or the overrides above
 	// could not take becomes a result warning here - visible at default

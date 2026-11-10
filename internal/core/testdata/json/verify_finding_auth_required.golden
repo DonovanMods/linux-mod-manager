@@ -1,0 +1,8 @@
+{
+  "mod_id": "8939586",
+  "mod_name": "Auctionator",
+  "status": "skipped",
+  "note": "could not check version: getting mod files: authentication required: CurseForge API key required",
+  "fixable_reason": "CurseForge needs an API key",
+  "auth_source": "curseforge"
+}

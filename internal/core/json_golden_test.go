@@ -106,7 +106,7 @@ var (
 			LinkMethod: domain.LinkSymlink,
 			Adapter:    "bepinx",
 		},
-		AdapterError: `game "valheim": unknown adapter "bepinx" (registered: bepinex, generic-files, icarus)`,
+		AdapterError: `game "valheim": unknown adapter "bepinx" (registered: bepinex, d2r, generic-files, icarus)`,
 	}
 
 	goldenGameDetailEntry = core.GameListEntry{
@@ -1165,6 +1165,30 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #582: a version check the source refused for want of a key
+			// names that source, so a frontend can link to where its key
+			// is set. omitzero, so every other row carries no key at all.
+			"verify_finding_auth_required",
+			core.VerifyFinding{
+				ModID: "8939586", ModName: "Auctionator", Status: "skipped",
+				Note:          "could not check version: getting mod files: authentication required: CurseForge API key required",
+				FixableReason: "CurseForge needs an API key",
+				AuthSource:    "curseforge",
+			},
+		},
+		{
+			// #590: a version check whose source's catalog no longer has
+			// the mod says so, names the source and suggests the new ID.
+			"verify_finding_catalog_missing",
+			core.VerifyFinding{
+				ModID: "dLs3nvmWj5uOPnXxezGe", ModName: "Larger Resource Stacks", Status: core.VerifyStatusCatalogMissing,
+				Note:          "no longer in Icarus's catalog (removed, or republished under a new ID)",
+				FixableReason: "the mod has left its source's catalog - re-link it to its new ID if it moved, or uninstall it",
+				SourceID:      "icarus",
+				Successors:    []core.CatalogSuccessor{{ModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks", Author: "Donovan", Version: "1.2.0"}},
+			},
+		},
+		{
 			// #517: a row a --fix run repaired to "ok" says how, so the web
 			// UI can tell it from an untouched one. omitzero, so every
 			// other row carries no key at all.
@@ -1182,6 +1206,19 @@ func TestJSONGoldens(t *testing.T) {
 			// the key, and a real run omits it entirely.
 			"verify_result",
 			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true, CheckedAt: fixedTime, Cached: true},
+		},
+		{
+			// #588: a check deferred while a mutation runs, with no last
+			// check to show - nothing walked, so no checked_at either.
+			"verify_result_deferred",
+			core.VerifyResult{Deferred: core.VerifyDeferredJobRunning},
+		},
+		{
+			// #588: the same, showing the last check - dated when it ran,
+			// and not "cached": the installation is changing.
+			"verify_result_deferred_last_check",
+			core.VerifyResult{Issues: 1, Checked: 4, HasFiles: true, Mods: 2, CheckedAt: fixedTime, Deferred: core.VerifyDeferredJobRunning,
+				Findings: []core.VerifyFinding{{ModID: "42", ModName: "Example", FileID: "Data/a.esp", Status: "missing", Note: "Data/a.esp: missing"}}},
 		},
 		{
 			// #429: a profile with nothing checksummed is not empty - the
@@ -1220,6 +1257,13 @@ func TestJSONGoldens(t *testing.T) {
 			// reaches the wire even when populated.
 			"source_warning",
 			core.SourceWarning{SourceID: "curseforge", ErrorMessage: "search request timed out", Err: errors.New("search request timed out")},
+		},
+		{
+			// #582: a refusal for want of a key is marked, so a frontend
+			// can link to where the key is set. omitzero, so the plain
+			// warning above carries no key at all.
+			"source_warning_auth_required",
+			core.SourceWarning{SourceID: "curseforge", ErrorMessage: "authentication required: CurseForge API key required", AuthRequired: true},
 		},
 		{
 			// SkippedUnauthenticated is populated (#383, F1) to pin the key
@@ -1315,6 +1359,44 @@ func TestJSONGoldens(t *testing.T) {
 					Deployed:     true,
 				},
 				ConvertPaks: nil,
+			},
+		},
+		{
+			// #592: the effective category beside the embedded Mod's own
+			// category (the source's id) and category_name.
+			"mod_listing_category",
+			core.ModListing{
+				InstalledMod: domain.InstalledMod{
+					Mod:          domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", Category: "54", CategoryName: "Armour"},
+					ProfileName:  "default",
+					UpdatePolicy: domain.UpdateNotify,
+					InstalledAt:  fixedTime,
+					LinkMethod:   domain.LinkSymlink,
+					Enabled:      true,
+				},
+				EffectiveCategory: "Favourites",
+				CategorySource:    core.CategorySourceUser,
+			},
+		},
+		{
+			// #592: GroupModListByCategory's group; Name is "" for the
+			// uncategorised group.
+			"mod_category_group",
+			core.ModCategoryGroup{Name: "Armour", Mods: []core.ModListing{{
+				InstalledMod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", CategoryName: "Armour"},
+					ProfileName: "default", UpdatePolicy: domain.UpdateNotify, InstalledAt: fixedTime, LinkMethod: domain.LinkSymlink,
+				},
+				EffectiveCategory: "Armour",
+				CategorySource:    core.CategorySourceSource,
+			}}},
+		},
+		{
+			// #592: the category on the installed block of `lmm mod show`.
+			"installed_detail_category",
+			core.InstalledDetail{
+				Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateNotify,
+				EffectiveCategory: "Armour", CategorySource: core.CategorySourceSource,
 			},
 		},
 		{
@@ -1430,6 +1512,21 @@ func TestJSONGoldens(t *testing.T) {
 				InstalledModCount:   3,
 				EnabledModCount:     3,
 				ExternalCount:       2,
+			},
+		},
+		{
+			// #501: GameStatus with the launch member a Service with a
+			// Launcher stamps - the Play button's source.
+			"game_status_launch",
+			core.GameStatus{
+				Game:                jsonGoldenGame,
+				LinkMethod:          domain.LinkSymlink,
+				EffectiveLinkMethod: domain.LinkSymlink,
+				LinkMethodSource:    "global",
+				ResolvedCachePath:   "/home/user/.local/share/lmm",
+				Profiles:            []core.ProfileSummary{{Name: "default", ModCount: 0, IsDefault: true}},
+				ActiveProfile:       "default",
+				Launch:              core.LaunchInfo{Method: "steam"},
 			},
 		},
 		{
@@ -1598,6 +1695,20 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #582: a check a source refused for want of a key names that
+			// source beside the error text, so a frontend can link to where
+			// its key is set.
+			"update_check_report_auth_required",
+			core.UpdateCheckReport{
+				GameID:       "wow",
+				Profile:      "default",
+				Updates:      []domain.Update{},
+				Skipped:      core.UpdateSkips{},
+				ErrorMessage: "update check had 1 source error(s): source curseforge: authentication required: CurseForge API key required",
+				AuthRequired: []string{"curseforge"},
+			},
+		},
+		{
 			// #542: an update the user skipped is reported apart from the
 			// updates offered, and counted in skipped.updates.
 			"update_check_report_skipped_updates",
@@ -1618,6 +1729,45 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			"catalog_mod_ref",
 			core.CatalogModRef{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Bear Mount"},
+		},
+		{
+			// #590: a gone mod with the likely new ID of it republished.
+			"catalog_mod_ref_successors",
+			core.CatalogModRef{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Larger Resource Stacks",
+				Successors: []core.CatalogSuccessor{{ModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks", Author: "Donovan", Version: "1.2.0"}}},
+		},
+		{
+			"catalog_successor",
+			core.CatalogSuccessor{ModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks", Author: "Donovan", Version: "1.2.0"},
+		},
+		{
+			// #590: a gone mod of a source with unstable IDs, re-linked on
+			// its own to its one successor.
+			"catalog_relinked",
+			core.CatalogRelinked{SourceID: "icarus", FromModID: "dLs3nvmWj5uOPnXxezGe", ToModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks",
+				Message:  "Larger Resource Stacks moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)",
+				Warnings: []string{"could not sync merged pak: game running"}},
+		},
+		{
+			// #590: the automatic re-link on a check's report - one
+			// running in a job, one already made.
+			"catalog_auto_relink",
+			core.CatalogAutoRelink{JobID: "j-1", Mods: []string{"icarus:aaaa"},
+				Relinked: []core.CatalogRelinked{{SourceID: "icarus", FromModID: "dLs3nvmWj5uOPnXxezGe", ToModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks",
+					Message: "Larger Resource Stacks moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)"}}},
+		},
+		{
+			"auto_relink_failure",
+			core.AutoRelinkFailure{Mod: "icarus:bbbb", Name: "Bear Mount", ToModID: "cccc", Error: "moving installed record: database is locked"},
+		},
+		{
+			// #590: the automatic re-link job's result.
+			"auto_relink_result",
+			core.AutoRelinkResult{
+				Relinked: []core.CatalogRelinked{{SourceID: "icarus", FromModID: "dLs3nvmWj5uOPnXxezGe", ToModID: "8m1z04vNo2CCdKcD2C0H", Name: "Larger Resource Stacks",
+					Message: "Larger Resource Stacks moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)"}},
+				Failed: []core.AutoRelinkFailure{{Mod: "icarus:bbbb", Name: "Bear Mount", ToModID: "cccc", Error: "source \"icarus\" is not configured for Icarus"}},
+			},
 		},
 		{
 			"update_skips",
@@ -2075,6 +2225,66 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #587: lmm serve's automatic pass, waiting for the game to
+			// close before applying the auto-policy update the check found.
+			"update_check_report_auto_update_waiting",
+			core.UpdateCheckReport{
+				GameID:  "wow",
+				Profile: "default",
+				Updates: []domain.Update{{
+					InstalledMod: domain.InstalledMod{
+						Mod:         domain.Mod{ID: "1234", SourceID: "curseforge", Name: "EllesmereUI", Version: "9.6.9", GameID: "wow"},
+						ProfileName: "default", Enabled: true, Deployed: true, InstalledAt: fixedTime, UpdatePolicy: domain.UpdateAuto,
+					},
+					NewVersion: "9.7.1",
+				}},
+				Skipped: core.UpdateSkips{},
+				AutoUpdate: &core.ModAutoUpdate{
+					State:      core.ModAutoUpdateWaitingForGame,
+					Mods:       []string{"curseforge:1234"},
+					GameName:   "World of Warcraft",
+					DetectedBy: core.GameRunningLaunchUnit,
+				},
+			},
+		},
+		{
+			// #587: the same pass, applying them in a job.
+			"mod_auto_update",
+			core.ModAutoUpdate{
+				State: core.ModAutoUpdateApplying,
+				Mods:  []string{"curseforge:1234", "curseforge:5678"},
+				JobID: "0f1e2d3c4b5a6978",
+			},
+		},
+		{
+			// #587: an automatic update that failed, held back until the
+			// user checks again - the card says so instead of listing it
+			// unexplained.
+			"mod_auto_update_failed",
+			core.ModAutoUpdate{
+				State: core.ModAutoUpdateFailed,
+				Mods:  []string{"curseforge:7"},
+				Failed: []core.ModAutoUpdateFailure{{
+					UpdateBatchFailure: core.UpdateBatchFailure{
+						Mod: "curseforge:7", Name: "Broken Mod", FromVersion: "1.2", ToVersion: "1.3",
+						Error: "download failed: 503 Service Unavailable",
+					},
+					JobID: "0f1e2d3c4b5a6978",
+				}},
+			},
+		},
+		{
+			"mod_auto_update_failure",
+			core.ModAutoUpdateFailure{
+				UpdateBatchFailure: core.UpdateBatchFailure{
+					Mod: "nexusmods:42", Name: "Manual Mod", FromVersion: "1.0", ToVersion: "1.1",
+					Error:  "nexusmods only serves this file through its website",
+					ModURL: "https://www.nexusmods.com/skyrimspecialedition/mods/42", ManualDownload: true,
+				},
+				JobID: "0f1e2d3c4b5a6978",
+			},
+		},
+		{
 			"update_batch_failure",
 			core.UpdateBatchFailure{
 				Mod:         "curseforge:7",
@@ -2171,6 +2381,11 @@ func TestJSONGoldens(t *testing.T) {
 				Locked: true, Disabled: true, AlreadyListed: true, ExistingVersion: "1.2.2"},
 		},
 		{
+			// #592: the user category a copy carries.
+			"copy_mod_entry_category",
+			core.CopyModEntry{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3", Category: "Favourites"},
+		},
+		{
 			"copy_mod_skip",
 			core.CopyModSkip{SourceID: "steamworkshop", ModID: "7", Name: "Workshop Item", Reason: core.ReasonExternalNoCopy},
 		},
@@ -2200,6 +2415,19 @@ func TestJSONGoldens(t *testing.T) {
 				LockedVersion: "1.2.3",
 				UpdatePolicy:  domain.UpdateAuto,
 				ConvertPaks:   boolPtr(true),
+			},
+		},
+		{
+			// #592: SetModCategory's result.
+			"mod_setting_result_category",
+			core.ModSettingResult{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", CategoryName: "Armour"},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				UpdatePolicy:      domain.UpdateNotify,
+				EffectiveCategory: "Favourites",
+				CategorySource:    core.CategorySourceUser,
 			},
 		},
 		{
@@ -2329,6 +2557,25 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #582: a source whose key lmm-serve will not see - it comes
+			// only from this shell's environment. Never the key itself.
+			"service_report_env_only_credentials",
+			core.ServiceReport{
+				Units: []core.UnitStatus{{
+					Name: "lmm-serve.service", Installed: true, Origin: core.UnitOriginUser,
+					Path:    "/home/user/.config/systemd/user/lmm-serve.service",
+					Enabled: true, Active: true, EnabledState: "enabled", ActiveState: "active",
+				}},
+				EnvOnlyCredentials: []core.EnvOnlyCredential{
+					{SourceID: "curseforge", Name: "CurseForge", EnvVar: "CURSEFORGE_API_KEY"},
+				},
+			},
+		},
+		{
+			"env_only_credential",
+			core.EnvOnlyCredential{SourceID: "nexusmods", Name: "Nexus Mods", EnvVar: "NEXUSMODS_API_KEY"},
+		},
+		{
 			// #333's source-removal refusal: the games that still map the
 			// source, so a frontend names them instead of saying "in use".
 			"source_in_use_error",
@@ -2340,6 +2587,48 @@ func TestJSONGoldens(t *testing.T) {
 			// UpdateGameSources was asked to drop from the map.
 			"game_source_in_use_error",
 			core.GameSourceInUseError{SourceID: "nexusmods", GameID: "skyrim-se", Count: 1, Mods: []string{"nexusmods:m1"}},
+		},
+		{
+			// #501: `lmm launch --json` for a Steam game started as a
+			// transient systemd user service, with a Force launch's drift
+			// warning - every optional key populated.
+			"launch_result",
+			core.LaunchResult{
+				Game: "valheim", Profile: "default", Method: "steam",
+				Argv: []string{"/usr/bin/steam", "steam://rungameid/892970"},
+				Command: []string{"systemd-run", "--user", "--collect", "--service-type=exec", "--unit=lmm-launch-valheim-abcd1234", "--description=lmm: Valheim",
+					"--setenv=DISPLAY=:0", "--", "/usr/bin/steam", "steam://rungameid/892970"},
+				Unit: "lmm-launch-valheim-abcd1234", Requested: true, Undeployed: 2,
+				Warnings: []string{"launching anyway: 2 enabled mod(s) in profile \"default\" of valheim are not deployed; deploy first (`lmm launch --deploy`)"},
+			},
+		},
+		{
+			// #501: a dry run of a launch.command game started detached
+			// (no systemd): no unit, Command is Argv, nothing requested.
+			"launch_result_dry_run_detached",
+			core.LaunchResult{
+				Game: "wow", Profile: "default", Method: "command",
+				Argv:    []string{"/usr/bin/lutris", "lutris:rungame/wow"},
+				Command: []string{"/usr/bin/lutris", "lutris:rungame/wow"},
+				DryRun:  true,
+			},
+		},
+		{
+			// #501: GameStatus.launch for a game that can launch.
+			"launch_info",
+			core.LaunchInfo{Method: "steam"},
+		},
+		{
+			// #501: GameStatus.launch for one that cannot: the reason is
+			// the Play button's tooltip.
+			"launch_info_reason",
+			core.LaunchInfo{Reason: "it has no launch.command in games.yaml and lmm found no Steam app id for it"},
+		},
+		{
+			// #501: the drift refusal's Details - what the web UI's
+			// Deploy & launch choice renders from.
+			"launch_drift_error",
+			core.LaunchDriftError{GameID: "valheim", Profile: "default", Undeployed: 2, StillDeployed: 1, ModPathError: "mod_path /g/mods does not exist"},
 		},
 		{
 			// #427: a mod_path lmm deployed into that has gone, with the
@@ -2585,7 +2874,7 @@ func TestJSONGoldens(t *testing.T) {
 			"game_detect_entry",
 			core.GameDetectEntry{
 				DetectedGame: domain.DetectedGame{
-					SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
+					Detector: domain.DetectorSteam, DetectorID: "489830", SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
 					InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data",
 					NexusID: "skyrimspecialedition", Known: true,
 				},
@@ -2602,7 +2891,7 @@ func TestJSONGoldens(t *testing.T) {
 			"game_detect_entry_unknown",
 			core.GameDetectEntry{
 				DetectedGame: domain.DetectedGame{
-					SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory",
+					Detector: domain.DetectorSteam, DetectorID: "526870", SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory",
 					InstallPath: "/games/satisfactory",
 				},
 			},
@@ -2615,7 +2904,7 @@ func TestJSONGoldens(t *testing.T) {
 			core.GameDetectListing{
 				Games: []core.GameDetectEntry{{
 					DetectedGame: domain.DetectedGame{
-						SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
+						Detector: domain.DetectorSteam, DetectorID: "489830", SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
 						InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data",
 						NexusID: "skyrimspecialedition", Known: true,
 					},
@@ -2626,7 +2915,7 @@ func TestJSONGoldens(t *testing.T) {
 					// kinds in scan order; the known rows keep 1..N and the
 					// unknown ones carry no index at all (#206).
 					DetectedGame: domain.DetectedGame{
-						SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory",
+						Detector: domain.DetectorSteam, DetectorID: "526870", SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory",
 						InstallPath: "/games/satisfactory",
 					},
 				}},
@@ -2977,7 +3266,32 @@ func TestJSONGoldens(t *testing.T) {
 					UpgradeCommand: "sudo apt install --only-upgrade lmm",
 				},
 				Installed: "2.1.0",
+				AutoUpdate: &core.AutoUpdateStatus{
+					Enabled: true,
+					Reason:  "lmm was installed by the lmm package (dpkg), so your package manager updates it, never lmm itself: sudo apt install --only-upgrade lmm",
+				},
 			},
+		},
+		{
+			// GET /api/v1/updates/lmm's auto_update (#586), with an update
+			// made and a later one that failed, so every field is on the
+			// wire.
+			"auto_update_status",
+			core.AutoUpdateStatus{
+				Enabled:    true,
+				Applicable: true,
+				Last:       &core.AutoUpdateRecord{From: "2.2.0", To: "2.3.0", At: time.Date(2026, 10, 30, 3, 0, 0, 0, time.UTC), First: true},
+				Failure:    &core.AutoUpdateFailure{Version: "2.4.0", At: time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC), Error: "lmm 2.4.0 has no signature (checksums.txt.sig), so it cannot be verified; nothing was installed", RetryAt: time.Date(2026, 11, 3, 3, 0, 0, 0, time.UTC)},
+			},
+		},
+		{
+			"auto_update_record",
+			core.AutoUpdateRecord{From: "2.3.0", To: "2.4.0", At: time.Date(2026, 11, 3, 3, 0, 0, 0, time.UTC)},
+		},
+		{
+			"auto_update_failure",
+			// A release check that failed: no version, an hour's back-off.
+			core.AutoUpdateFailure{At: time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC), Error: "GitHub answered 503 Service Unavailable", RetryAt: time.Date(2026, 11, 2, 4, 0, 0, 0, time.UTC)},
 		},
 		{
 			// A never-checked, self-managed binary: the omitted fields.

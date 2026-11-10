@@ -94,13 +94,19 @@ type Options struct {
 // database FILE, not of a connection, so it is set once per open by
 // enableWAL - which has to retry it, and a DSN pragma cannot.
 func dsnFor(path string) string {
-	const pragmas = "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+	pragmas := fmt.Sprintf("_pragma=foreign_keys(1)&_pragma=busy_timeout(%d)", busyTimeout.Milliseconds())
 	if path == ":memory:" {
 		return "file::memory:?" + pragmas
 	}
 	u := url.URL{Scheme: "file", Path: path, RawQuery: pragmas}
 	return u.String()
 }
+
+// busyTimeout is SQLite's busy_timeout: how long a statement waits for a
+// lock another connection holds before it answers SQLITE_BUSY. A var, not a
+// const, only so the contention tests can wait it out in milliseconds
+// rather than seconds (#576); nothing in production assigns it.
+var busyTimeout = 5 * time.Second
 
 // walBudget bounds enableWAL's retries: as long as busy_timeout would have
 // waited, had SQLite consulted it.
@@ -221,10 +227,16 @@ func OpenWithOptions(path string, opts Options) (*DB, error) {
 	}
 
 	if err := database.migrate(openCtx); err != nil {
-		if closeErr := sqlDB.Close(); closeErr != nil {
-			return nil, fmt.Errorf("running migrations: %w (closing database: %v)", err, closeErr)
+		closeErr := sqlDB.Close()
+		// A newer schema is a refusal, not a migration that failed: its
+		// own sentence is the whole answer.
+		if !errors.Is(err, ErrSchemaTooNew) {
+			err = fmt.Errorf("running migrations: %w", err)
 		}
-		return nil, fmt.Errorf("running migrations: %w", err)
+		if closeErr != nil {
+			return nil, fmt.Errorf("%w (closing database: %v)", err, closeErr)
+		}
+		return nil, err
 	}
 
 	// #431: whether the profile-document backfill is owed, read once here

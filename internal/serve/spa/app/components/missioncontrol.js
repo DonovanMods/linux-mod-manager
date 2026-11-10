@@ -16,8 +16,15 @@ import {
   buildRows,
   filterRows,
   sortRows,
+  groupRowsByCategory,
   runningMutations,
 } from "../modrows.js";
+import {
+  readGroupByCategory,
+  writeGroupByCategory,
+  readCollapsedGroups,
+  writeCollapsedGroups,
+} from "../libraryprefs.js";
 import { TopBar } from "./topbar.js";
 import { AttentionCards } from "./cards.js";
 import { Library } from "./library.js";
@@ -25,6 +32,7 @@ import { ModPanel } from "./modpanel.js";
 import { OmnibarResults } from "./omnibarresults.js";
 import { SnapshotsCard } from "./snapshots.js";
 import { ModPathWarning } from "./modpath.js";
+import { PendingReads } from "./pendingreads.js";
 
 /** goToChooser is the error state's escape hatch: a click, not just advice
  * to edit the URL bar, back to a context that does resolve. */
@@ -42,6 +50,38 @@ export function MissionControl({ state, onThemeChange, actions }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [sort, setSort] = useState("load-order");
+  // issue 592: "Group by category", and the groups collapsed in this game's
+  // library - per viewer, remembered across reloads (libraryprefs.js). They
+  // live here with filter/sort because they decide the ORDER the table
+  // shows, which is the order the slide-over's ←/→ steps through.
+  const [grouped, setGroupedState] = useState(readGroupByCategory);
+  const gameID = state.route?.game ?? "";
+  const [collapsedState, setCollapsedState] = useState(() => ({
+    game: gameID,
+    names: readCollapsedGroups(gameID),
+  }));
+  // A game switch reads that game's own collapsed set; memoised so the set
+  // is one object per game, not a new one on every render.
+  const collapsed = useMemo(
+    () =>
+      collapsedState.game === gameID
+        ? collapsedState.names
+        : readCollapsedGroups(gameID),
+    [collapsedState, gameID],
+  );
+
+  function setGrouped(on) {
+    writeGroupByCategory(on);
+    setGroupedState(on);
+  }
+
+  function toggleGroup(name) {
+    const next = new Set(collapsed);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    writeCollapsedGroups(gameID, next);
+    setCollapsedState({ game: gameID, names: next });
+  }
 
   const {
     route,
@@ -65,8 +105,9 @@ export function MissionControl({ state, onThemeChange, actions }) {
         // issue 418: whether the verify has actually run. A failed or
         // not-yet-landed /api/v1/health read leaves findings empty, which is
         // indistinguishable from a clean bill of health unless the rows are
-        // told which it is.
-        Boolean(health?.result),
+        // told which it is. Issue 588: so is a check deferred while a job
+        // changes the game - nothing was read off the disk for it.
+        Boolean(health?.result) && !health.result.deferred,
       ),
     [mods, updates, health, conflicts],
   );
@@ -76,9 +117,26 @@ export function MissionControl({ state, onThemeChange, actions }) {
     return q ? rows.filter((r) => r.name.toLowerCase().includes(q)) : rows;
   }, [rows, query]);
 
-  const visible = useMemo(
+  const sorted = useMemo(
     () => sortRows(filterRows(matched, filter), sort),
     [matched, filter, sort],
+  );
+
+  // issue 592: grouping applies AFTER the search, filter and sort - a group
+  // holds the rows those left, in their order - and `visible` is then the
+  // rows in the order the grouped table draws them, minus a collapsed
+  // group's: what is on screen, which is what select-all takes and ←/→
+  // steps through.
+  const groups = useMemo(
+    () => (grouped ? groupRowsByCategory(sorted) : null),
+    [grouped, sorted],
+  );
+  const visible = useMemo(
+    () =>
+      groups
+        ? groups.flatMap((g) => (collapsed.has(g.name) ? [] : g.rows))
+        : sorted,
+    [groups, sorted, collapsed],
   );
 
   // The mods currently being mutated as far as THIS session's own controls
@@ -123,7 +181,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
   const liveActivity =
     runningJob && !rowClaimed
       ? [
-          mutationLabel(runningJob.kind),
+          mutationLabel(runningJob.kind, runningJob.origin),
           progressText(state.jobProgress?.[runningJob.id]),
         ]
           .filter(Boolean)
@@ -131,12 +189,17 @@ export function MissionControl({ state, onThemeChange, actions }) {
       : "";
 
   // issue 498: hydrated means the home view's reads have SETTLED, not merely
-  // that status arrived. main.js commits mods/updates/health/conflicts/
-  // snapshots together, after status, so a settled mods read (a list, or its
-  // failure) is the proof the whole batch landed. Raising the marker on
-  // status alone let a test - or a fast user - act on a top bar whose layout
-  // was still about to change when the mod list arrived.
-  const homeSettled = mods !== null || Boolean(fetchErrors?.mods);
+  // that status arrived. Raising the marker on status alone let a test - or
+  // a fast user - act on a top bar whose layout was still about to change
+  // when the mod list arrived. Since issue 583 each read lands on its own,
+  // so settled means every one of them has: a document, or its failure.
+  const homeSettled = [
+    "mods",
+    "updates",
+    "health",
+    "conflicts",
+    "snapshots",
+  ].every((key) => state[key] !== null || Boolean(fetchErrors?.[key]));
 
   return html`
     <div
@@ -193,6 +256,12 @@ export function MissionControl({ state, onThemeChange, actions }) {
           gameID=${route.game}
           route=${route}
         />
+        ${
+          /* issue 583: every slow read still out names itself here, in
+          place of the card it will become - rather than the page saying
+          nothing until the slowest has answered. */ ""
+        }
+        <${PendingReads} state=${state} mods=${mods} />
         <${AttentionCards}
           state=${state}
           updates=${updates}
@@ -207,6 +276,12 @@ export function MissionControl({ state, onThemeChange, actions }) {
           mods=${mods}
           rows=${rows}
           visible=${visible}
+          shownCount=${sorted.length}
+          groups=${groups}
+          collapsedGroups=${collapsed}
+          onToggleGroup=${toggleGroup}
+          grouped=${grouped}
+          onGroupedChange=${setGrouped}
           filter=${filter}
           sort=${sort}
           onFilterChange=${setFilter}

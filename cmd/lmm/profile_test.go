@@ -75,6 +75,7 @@ func TestProfileCreateCmd_NoGame(t *testing.T) {
 }
 
 func TestProfileCreateCmd_NoName(t *testing.T) {
+	restoreFlags(t)
 	gameID = "test-game"
 
 	cmd := &cobra.Command{Use: "test"}

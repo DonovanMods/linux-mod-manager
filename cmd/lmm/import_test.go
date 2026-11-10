@@ -630,7 +630,7 @@ func TestRunImportScan_MatchedSource_ResolvesFileIDAndStampsMarker(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"77"}, installed.FileIDs,
 		"the resolved source file ID must be recorded on the DB row")
-	assert.True(t, installed.ManualDownload,
+	assert.True(t, installed.AdoptedInPlace,
 		"scan imports keep their manual-download semantics regardless of file resolution")
 
 	assert.True(t, svc.GetGameCache(game).HasFileIDs("g1", "acme-source", "42", installed.Version, []string{"77"}),

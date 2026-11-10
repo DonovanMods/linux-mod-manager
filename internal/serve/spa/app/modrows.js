@@ -141,8 +141,11 @@ export function buildRows(mods, updates, findings, conflicts, verified) {
   const updateByKey = new Map(
     (updates ?? []).map((u) => [modKey(u.installed_mod), u]),
   );
+  // issue 588: findings without `verified` are a deferred check's last
+  // answer, read before the running job changed things - they make no row
+  // "issues", so they offer no Repair and match no "Unhealthy" filter.
   const problems = new Map();
-  for (const f of findings ?? []) {
+  for (const f of verified ? (findings ?? []) : []) {
     if (f.status === "ok") continue;
     problems.set(f.mod_id, (problems.get(f.mod_id) ?? 0) + 1);
   }
@@ -218,6 +221,11 @@ export function filterRows(rows, filter) {
 // this control moves in a local install's own timeline.
 const sortComparators = {
   name: (a, b) => a.name.localeCompare(b.name),
+  // issue 596: when lmm last changed the installed version - the date a
+  // reader looks for, so it is offered before "recent". The same NaN
+  // guard as "recent".
+  updated: (a, b) =>
+    (Date.parse(lastUpdated(b)) || 0) - (Date.parse(lastUpdated(a)) || 0),
   // Date.parse(...) || 0 rather than bare `new Date(...) - new Date(...)`:
   // an absent or unparsable installed_at parses to NaN, and Array.sort with
   // a NaN comparator result gives an arbitrary order - falling back to the
@@ -225,6 +233,18 @@ const sortComparators = {
   recent: (a, b) =>
     (Date.parse(b.installed_at) || 0) - (Date.parse(a.installed_at) || 0),
 };
+
+/**
+ * The row's "Updated" date (issue 596): domain.InstalledMod's
+ * last_updated_at, when lmm last changed the installed version. Core
+ * stamps it on every row, and it starts equal to installed_at, so the
+ * fallback only covers an older lmm serving the document - where "never
+ * updated since it was installed" is what its absence means. Not
+ * updated_at: that is when the SOURCE published the version.
+ */
+export function lastUpdated(row) {
+  return row.last_updated_at || row.installed_at;
+}
 
 /** The sort control's options, in display order. */
 export const SORT_NAMES = ["load-order", ...Object.keys(sortComparators)];
@@ -316,7 +336,7 @@ export function runningMutations(jobsIndex, jobProgress, origins) {
 
 /**
  * Renders an ISO timestamp as a short local date for the library's
- * "Installed" column, or an em dash when there is nothing parsable to
+ * "Installed" and "Updated" columns, or an em dash when there is nothing parsable to
  * render. The dash matters: a blank cell under a heading reads as a
  * rendering bug, while "—" says the document carries no date - which is a
  * real state (an adopted mod whose installed_at was never recorded).
@@ -329,4 +349,52 @@ export function formatDate(value) {
     month: "short",
     day: "numeric",
   });
+}
+
+/** The label the library shows for the group of mods with no category
+ * (issue 592) - core.ModCategoryGroup's empty Name. */
+export const UNCATEGORIZED_LABEL = "Uncategorized";
+
+/** Compares two strings by UTF-16 code unit, the way Go's cmp.Compare
+ * compares strings by byte - the two orders agree everywhere outside the
+ * astral planes, which no category name in practice reaches into. Not
+ * localeCompare: that would be a different rule from the CLI's. */
+function compareExact(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Groups rows by their effective_category (issue 592), for the library's "Group
+ * by category" view: [{name, rows}], in display order.
+ *
+ * The JavaScript twin of core.GroupModListByCategory
+ * (internal/core/categories.go), which `lmm list --group-by category` uses -
+ * the same rule, so the web and the CLI group a profile identically, and a
+ * change to one is a change to both:
+ *   - rows keep the order they arrive in inside their group (here, whatever
+ *     the filter/sort/search already made of them);
+ *   - groups sort by name case-insensitively, ties broken by the exact name;
+ *   - the group with no category (name "") comes last - the caller labels it
+ *     UNCATEGORIZED_LABEL;
+ *   - names are compared exactly, so "UI" and "ui" are two groups.
+ * An empty input gives no groups at all: a group only exists for a row in it.
+ */
+export function groupRowsByCategory(rows) {
+  const byName = new Map();
+  for (const row of rows ?? []) {
+    const name = row.effective_category ?? "";
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(row);
+  }
+  return [...byName]
+    .map(([name, groupRows]) => ({ name, rows: groupRows }))
+    .sort((a, b) => {
+      if (a.name === "" || b.name === "") {
+        return (a.name === "" ? 1 : 0) - (b.name === "" ? 1 : 0);
+      }
+      return (
+        compareExact(a.name.toLowerCase(), b.name.toLowerCase()) ||
+        compareExact(a.name, b.name)
+      );
+    });
 }

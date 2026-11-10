@@ -1,4 +1,4 @@
-.PHONY: all build run install test test-race test-verbose coverage fmt vet lint clean help man notices
+.PHONY: all build run install test test-race test-race-no-e2e test-race-e2e test-verbose coverage fmt vet lint clean help man notices
 
 # Build variables
 BINARY_NAME := lmm
@@ -52,9 +52,24 @@ TEST_TIMEOUT ?= 60m
 test:
 	@GOCACHE=$(GOCACHE_LOCAL) go test -timeout $(TEST_TIMEOUT) ./...
 
-## test-race: Run tests with the race detector (matches CI)
+## test-race: Run all tests with the race detector (CI runs it as test-race-no-e2e + test-race-e2e)
 test-race:
 	@GOCACHE=$(GOCACHE_LOCAL) go test -race -timeout $(TEST_TIMEOUT) ./...
+
+# E2E_PATTERN selects internal/serve's headless-browser tests, every one of
+# which is named TestE2E* (and nothing else is). The two targets below split
+# test-race along it so CI can run the halves as parallel jobs: -run and
+# -skip take the same pattern, so together they run every test exactly once
+# (#576).
+E2E_PATTERN := ^TestE2E
+
+## test-race-no-e2e: Run every test except the browser E2E tests, with the race detector (CI's test job)
+test-race-no-e2e:
+	@GOCACHE=$(GOCACHE_LOCAL) go test -race -timeout $(TEST_TIMEOUT) -skip '$(E2E_PATTERN)' ./...
+
+## test-race-e2e: Run only the serve browser E2E tests, with the race detector (CI's e2e job)
+test-race-e2e:
+	@GOCACHE=$(GOCACHE_LOCAL) go test -race -timeout $(TEST_TIMEOUT) -run '$(E2E_PATTERN)' ./internal/serve/
 
 ## test-verbose: Run tests with verbose output
 test-verbose:

@@ -17,8 +17,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/releasesig"
 
@@ -107,7 +109,11 @@ func (f *cliSelfUpdate) installed(t *testing.T) string {
 	return string(data)
 }
 
-func TestSelfUpdateCmd_YesInstallsAndRestartsServe(t *testing.T) {
+// A manual self-update replaces the binary and leaves lmm-serve.service
+// alone (#586 review): this process cannot see lmm serve's jobs, so a
+// restart from here could cut one short. lmm serve restarts itself once
+// idle, or its banner asks.
+func TestSelfUpdateCmd_YesInstallsAndLeavesServeToRestartItself(t *testing.T) {
 	f := newCLISelfUpdate(t)
 	f.systemd.enabled, f.systemd.active = true, true
 	selfUpdate.yes = true
@@ -116,7 +122,51 @@ func TestSelfUpdateCmd_YesInstallsAndRestartsServe(t *testing.T) {
 	assert.Equal(t, "new lmm 2.2.0", f.installed(t))
 	assert.Contains(t, out, "2.2.0")
 	assert.Contains(t, out, f.exe)
-	assert.Contains(t, out, "lmm-serve.service")
+	assert.Contains(t, out, "lmm serve restarts itself")
+	for _, call := range f.systemd.calls {
+		assert.NotContains(t, call, "restart", "lmm-serve.service is not restarted from here")
+	}
+}
+
+// The timer's run and the CLI's detached one never restart
+// lmm-serve.service either, run under systemd or not.
+func TestSelfUpdateCmd_AutoNeverRestartsServe(t *testing.T) {
+	f := newCLISelfUpdate(t)
+	f.systemd.enabled, f.systemd.active = true, true
+	selfUpdate.auto = true
+	t.Setenv("INVOCATION_ID", "lmm-update.service")
+
+	captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
+	assert.Equal(t, "new lmm 2.2.0", f.installed(t))
+	for _, call := range f.systemd.calls {
+		assert.NotContains(t, call, "restart")
+	}
+}
+
+// lmm serve restarts itself through systemd only when systemd runs it:
+// one started by hand has no unit to restart, and its banner asks.
+func TestServeAutoUpdater_RestartsServeOnlyUnderItsUnit(t *testing.T) {
+	f := newCLISelfUpdate(t)
+	f.systemd.enabled, f.systemd.active = true, true
+	old := releaseCheckArmed
+	releaseCheckArmed = true
+	t.Cleanup(func() { releaseCheckArmed = old })
+	idle := core.AutoRunOptions{Quiesce: func() (func(), bool) { return func() {}, true }}
+
+	t.Setenv("INVOCATION_ID", "")
+	u := serveAutoUpdater()
+	require.NotNil(t, u)
+	restarted, err := u.RestartServeWhenIdle(context.Background(), idle)
+	require.NoError(t, err)
+	assert.False(t, restarted)
+	assert.NotContains(t, strings.Join(f.systemd.calls, "\n"), "restart", "started by hand: nothing to restart")
+
+	t.Setenv("INVOCATION_ID", "lmm-serve.service")
+	u = serveAutoUpdater()
+	require.NotNil(t, u)
+	restarted, err = u.RestartServeWhenIdle(context.Background(), idle)
+	require.NoError(t, err)
+	assert.True(t, restarted)
 	assert.Contains(t, strings.Join(f.systemd.calls, "\n"), "systemctl --user try-restart lmm-serve.service")
 }
 
@@ -161,17 +211,43 @@ func TestSelfUpdateCmd_WithoutYesOffATerminalRefuses(t *testing.T) {
 	assert.Equal(t, "old lmm", f.installed(t))
 }
 
-func TestSelfUpdateCmd_AutoDoesNothingUnlessAutoUpdateIsOn(t *testing.T) {
+func TestSelfUpdateCmd_AutoInstallsUnlessAutoUpdateIsOff(t *testing.T) {
 	f := newCLISelfUpdate(t)
 	selfUpdate.auto = true
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("auto_update: false\n"), 0o644))
 	out := captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
-	assert.Contains(t, out, "auto_update")
+	assert.Contains(t, out, "auto_update is off")
 	assert.Equal(t, "old lmm", f.installed(t))
 	assert.Zero(t, f.downloads)
 
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("auto_update: true\n"), 0o644))
-	captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
-	assert.Equal(t, "new lmm 2.2.0", f.installed(t), "--auto needs no --yes")
+	require.NoError(t, os.Remove(filepath.Join(configDir, "config.yaml")))
+	out = captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
+	assert.Equal(t, "new lmm 2.2.0", f.installed(t), "on by default (#586), and --auto needs no --yes")
+	assert.Contains(t, out, "Updated lmm 2.1.0 to")
+	cfg, err := getServiceConfig()
+	require.NoError(t, err)
+	rec, ok := cfg.PendingAutoUpdateNotice()
+	require.True(t, ok, "the next command announces it")
+	assert.Equal(t, "2.2.0", rec.To)
+}
+
+// A package's lmm is never auto-updated, and that is no failure for
+// lmm-update.timer to retry.
+func TestSelfUpdateCmd_AutoStepsAsideForAPackage(t *testing.T) {
+	f := newCLISelfUpdate(t)
+	selfUpdate.auto = true
+	releaseInstallProbe.LookPath = func(name string) (string, error) {
+		if name == "dpkg" {
+			return "/usr/bin/dpkg", nil
+		}
+		return "", os.ErrNotExist
+	}
+	releaseInstallProbe.Run = func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("lmm:amd64: " + f.exe + "\n"), nil
+	}
+	out := captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
+	assert.Contains(t, out, "not updating")
+	assert.Equal(t, "old lmm", f.installed(t))
 }
 
 func TestSelfUpdateCmd_RefusesAPackageOwnedBinary(t *testing.T) {
@@ -212,7 +288,7 @@ func TestServiceInstall_AutoUpdate(t *testing.T) {
 	assert.FileExists(t, filepath.Join(unitDir, "lmm-update.timer"))
 	assert.FileExists(t, filepath.Join(unitDir, "lmm-update.service"))
 	assert.Contains(t, out, "lmm-update.timer")
-	assert.Contains(t, out, "auto_update: true", "it says how to switch updates on")
+	assert.Contains(t, out, "auto_update is on", "on by default (#586)")
 
 	releaseInstallProbe.LookPath = func(name string) (string, error) {
 		if name == "pacman" {
@@ -253,7 +329,6 @@ func TestSelfUpdateCmd_AnotherRunHoldsTheLock(t *testing.T) {
 	assert.Zero(t, f.downloads)
 
 	selfUpdate = selfUpdateFlags{auto: true}
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("auto_update: true\n"), 0o644))
 	out := captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
 	assert.Contains(t, out, "another self-update is running")
 	assert.Equal(t, "old lmm", f.installed(t))
@@ -284,4 +359,35 @@ func TestServiceInstall_AutoUpdateRefusesAnUndeterminedInstallMethod(t *testing.
 	var unknown *core.InstallMethodUnknownError
 	require.ErrorAs(t, err, &unknown)
 	assert.NoFileExists(t, filepath.Join(unitDir, "lmm-update.timer"))
+}
+
+// The detached run and the timer's both step aside while another lmm - a
+// CLI command, or `lmm serve`'s job - holds the mutation lock: lmm is not
+// replaced, nor lmm-serve.service restarted, under a running deploy, and
+// that is no failure to back off from (#586 review).
+func TestSelfUpdateCmd_AutoStepsAsideWhileAnLmmMutationRuns(t *testing.T) {
+	f := newCLISelfUpdate(t)
+	selfUpdate.auto = true
+	p, err := app.ResolvePaths(app.Options{ConfigDir: configDir, DataDir: dataDir})
+	require.NoError(t, err)
+	lock, err := os.OpenFile(app.OpLockPath(p), os.O_RDWR|os.O_CREATE, 0o600)
+	require.NoError(t, err)
+	defer func() { _ = lock.Close() }()
+	require.NoError(t, syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+
+	out := captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
+	assert.Contains(t, out, "another lmm operation is in progress")
+	assert.Contains(t, out, "not updating")
+	assert.Equal(t, "old lmm", f.installed(t))
+	assert.Zero(t, f.downloads)
+	for _, call := range f.systemd.calls {
+		assert.NotContains(t, call, "restart", "nor restarted")
+	}
+	cfg, err := getServiceConfig()
+	require.NoError(t, err)
+	assert.Nil(t, cfg.AutoUpdateStatus(core.InstallMethod{Method: core.InstallSelfManaged}).Failure)
+
+	require.NoError(t, syscall.Flock(int(lock.Fd()), syscall.LOCK_UN))
+	captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
+	assert.Equal(t, "new lmm 2.2.0", f.installed(t))
 }

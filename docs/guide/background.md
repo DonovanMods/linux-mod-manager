@@ -1,6 +1,6 @@
 ---
 title: Run the web UI in the background
-nav_order: 9
+nav_order: 10
 ---
 
 # Run the web UI in the background
@@ -60,8 +60,13 @@ lmm service install --addr 127.0.0.1:8080
 Running `lmm service install` again, say with a new address, or after you
 move the `lmm` program, rewrites the service file and restarts the service.
 
-To have lmm also install new versions of itself once a day, add
-`--auto-update` (see [Update lmm automatically](updates.md#update-lmm-automatically)):
+lmm already installs new versions of itself, after a command or from the
+background web interface (see
+[Update lmm automatically](updates.md#update-lmm-automatically)). Whatever
+installed the new version only replaces the `lmm` program; the service
+notices it within a minute and restarts itself onto it once nothing is
+running in the web interface. On a machine where you rarely use lmm, you can
+add a daily timer that installs updates too, with `--auto-update`:
 
 ```bash
 lmm service install --auto-update
@@ -101,6 +106,24 @@ If it isn't running, its log says why:
 journalctl --user -u lmm-serve
 ```
 
+## Restarting it
+
+```bash
+lmm service restart
+```
+
+This stops the service and starts it again, or just starts it if it was
+stopped, then tells you whether it is running. You don't need to uninstall
+and install it again to restart it. Restart it after you change something
+the service only reads when it starts, such as an API key you stored or its
+`PATH` (see below). It works the same whether lmm or a package installed
+the service, and it is the same as `systemctl --user restart lmm-serve`.
+
+A restart stops anything the web interface is in the middle of, as closing
+`lmm serve` would, so wait until it has finished. It doesn't turn the
+service on: if you turned it off, it won't start again the next time you log
+in.
+
 ## Starting at boot, without logging in
 
 The service starts when you log in. If you want it running from the moment
@@ -131,6 +154,24 @@ you trust: anyone who can reach the address can manage your mods.
   only on your shell's `PATH` (say, added in `~/.bashrc`), set `PATH` in a
   file under `~/.config/environment.d/`, which takes effect the next time
   you log in; or, for now, `systemctl --user set-environment PATH=...`
-  followed by `systemctl --user restart lmm-serve`.
+  followed by `lmm service restart`.
+- The service doesn't see API keys you `export` in your shell, such as
+  `CURSEFORGE_API_KEY` or `NEXUSMODS_API_KEY`. It sees keys you stored with
+  `lmm auth login <source>` or in the web interface (**Setup** >
+  **Authentication**), and variables set in a file under
+  `~/.config/environment.d/`. Without a key, a source such as CurseForge
+  can't check for updates or verify versions. `lmm service install` and
+  `lmm service status` warn about each key that comes only from your shell;
+  a variable the service already gets from systemd (an `environment.d`
+  file, or `systemctl --user import-environment`) doesn't count. The web
+  interface offers **Add API key…** wherever a source asks for
+  one. After storing a key, run `lmm service restart`. lmm
+  never copies a key into the service file, which anyone who can read your
+  files could read.
+- A game you start with **Play** in the web interface runs as its own
+  systemd user service, not as part of lmm's. Restarting `lmm-serve` (an
+  update does) leaves the game running. The game needs your desktop's
+  display settings, which the service may not have: see
+  ["No display to launch the game on"](launch.md#no-display-to-launch-the-game-on).
 - If your computer doesn't use systemd, `lmm service` says so and changes
   nothing. Run `lmm serve` in a terminal instead.

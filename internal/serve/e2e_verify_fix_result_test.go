@@ -174,7 +174,7 @@ func TestE2E_VerifyFixResult_InTheActivityTray(t *testing.T) {
 		linkIn(`.tray__row [data-mod="stuck"]`, &link),
 		// Expanded, the job's own stream reads the repair's sub-lines out
 		// the way it does every other kind's.
-		chromedp.Click(`.tray__row[data-state="succeeded"] .tray__summary`, chromedp.ByQuery),
+		clickWhenSettled(`.tray__row[data-state="succeeded"] .tray__summary`),
 		pollUntil(`document.querySelector(".tray__events")?.textContent.includes("Download it manually from")`),
 		textContent(`.tray__events`, &events),
 	)

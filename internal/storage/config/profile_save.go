@@ -31,7 +31,7 @@ const profileBackupSuffix = ".bak"
 // order, so a file lmm wrote stays exactly as a whole write would have it.
 var (
 	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides"}
-	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled"}
+	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category"}
 )
 
 // profileFileHookYAML is ProfileHookConfigYAML as a profile file is written:
@@ -97,6 +97,7 @@ func refConfigsOf(mods []domain.ModReference) []ModReferenceConfig {
 			FileIDs:  m.FileIDs,
 			Locked:   m.Locked,
 			Disabled: m.Disabled,
+			Category: m.Category,
 		}
 	}
 	return refs
@@ -147,7 +148,7 @@ func SaveProfileReporting(configDir string, profile *domain.Profile) (SaveReport
 	if err != nil {
 		return SaveReport{}, err
 	}
-	save, err := planProfileSave(path, path, profile)
+	save, err := planProfileSave(path, path, profile, nil)
 	if err != nil {
 		return SaveReport{Path: path}, err
 	}
@@ -165,7 +166,7 @@ func CheckProfileSave(configDir string, profile *domain.Profile) error {
 	if err != nil {
 		return err
 	}
-	save, err := planProfileSave(path, path, profile)
+	save, err := planProfileSave(path, path, profile, nil)
 	if err != nil {
 		return err
 	}
@@ -192,7 +193,7 @@ func SaveRenamedProfileReporting(configDir string, profile *domain.Profile, oldN
 	if err != nil {
 		return SaveReport{}, err
 	}
-	save, err := planProfileSave(from, to, profile)
+	save, err := planProfileSave(from, to, profile, nil)
 	if err != nil {
 		return SaveReport{Path: to}, err
 	}
@@ -248,8 +249,12 @@ type profileSave struct {
 }
 
 // planProfileSave decides how profile is written to the file at to, editing
-// the document at from (to itself, except for a rename). See SaveProfile.
-func planProfileSave(from, to string, profile *domain.Profile) (profileSave, error) {
+// the document at from (to itself, except for a rename). renames, when not
+// nil, maps a mod reference's old ModKey to the new one it was renamed to
+// (RenameProfileModRef), so the in-place edit rewrites that reference's
+// identity where it stands instead of dropping it and writing a new one.
+// See SaveProfile.
+func planProfileSave(from, to string, profile *domain.Profile, renames map[string]string) (profileSave, error) {
 	save := profileSave{from: from, to: to}
 	base, err := os.ReadFile(from)
 	if errors.Is(err, os.ErrNotExist) {
@@ -265,7 +270,7 @@ func planProfileSave(from, to string, profile *domain.Profile) (profileSave, err
 	}
 
 	fromName := strings.TrimSuffix(filepath.Base(from), ".yaml")
-	edited, editErr := editProfileDocument(base, fromName, profile)
+	edited, editErr := editProfileDocument(base, fromName, profile, renames)
 	if editErr == nil {
 		save.data, save.changed = edited, from != to || !bytes.Equal(edited, base)
 		return save, nil
@@ -434,8 +439,8 @@ func createProfileFileLike(like, path string, data []byte) error {
 
 // editProfileDocument returns base - the profile file named fromName -
 // edited in place so it reads back as want, or an error when its layout
-// does not allow that. See SaveProfile.
-func editProfileDocument(base []byte, fromName string, want *domain.Profile) (edited []byte, err error) {
+// does not allow that. renames is planProfileSave's. See SaveProfile.
+func editProfileDocument(base []byte, fromName string, want *domain.Profile, renames map[string]string) (edited []byte, err error) {
 	defer func() {
 		// A bug in the editor costs this save its in-place edit, never the
 		// save: the caller rewrites the file whole instead.
@@ -473,7 +478,7 @@ func editProfileDocument(base []byte, fromName string, want *domain.Profile) (ed
 			return nil, err
 		}
 	}
-	if err := e.editMods(have.Mods, want.Mods); err != nil {
+	if err := e.editMods(have.Mods, want.Mods, renames); err != nil {
 		return nil, err
 	}
 	if haveProfile.LinkMethodExplicit != want.LinkMethodExplicit || haveProfile.LinkMethod != want.LinkMethod {
@@ -563,7 +568,8 @@ func sameRefs(have []ModReferenceConfig, want []domain.ModReference) bool {
 
 func sameRef(a, b ModReferenceConfig) bool {
 	return a.SourceID == b.SourceID && a.ModID == b.ModID && a.Version == b.Version &&
-		slices.Equal(a.FileIDs, b.FileIDs) && a.Locked == b.Locked && a.Disabled == b.Disabled
+		slices.Equal(a.FileIDs, b.FileIDs) && a.Locked == b.Locked && a.Disabled == b.Disabled &&
+		a.Category == b.Category
 }
 
 // docEditor collects the text edits that turn a profile document into the
@@ -883,8 +889,10 @@ type modItem struct {
 // source and mod id (the n-th copy of a mod to its n-th copy), a matched
 // reference keeps its text and has only its changed keys edited, the list
 // is put in want's order, and a reference want does not list goes - with
-// the comments above it.
-func (e *docEditor) editMods(have []ModReferenceConfig, want []domain.ModReference) error {
+// the comments above it. A reference renames names (old ModKey -> new) is
+// matched under its new identity, so it keeps its text too and only its
+// source_id/mod_id (and whatever else changed) are edited (#593).
+func (e *docEditor) editMods(have []ModReferenceConfig, want []domain.ModReference, renames map[string]string) error {
 	if sameRefs(have, want) {
 		return nil
 	}
@@ -935,6 +943,9 @@ func (e *docEditor) editMods(have []ModReferenceConfig, want []domain.ModReferen
 	byKey := make(map[string][]int)
 	for j, ref := range have {
 		key := domain.ModKey(ref.SourceID, ref.ModID)
+		if renamed, ok := renames[key]; ok {
+			key = renamed
+		}
 		byKey[key] = append(byKey[key], j)
 	}
 	var out strings.Builder
@@ -967,7 +978,7 @@ func (e *docEditor) editMods(have []ModReferenceConfig, want []domain.ModReferen
 func refOf(c ModReferenceConfig) domain.ModReference {
 	return domain.ModReference{
 		SourceID: c.SourceID, ModID: c.ModID, Version: c.Version,
-		FileIDs: c.FileIDs, Locked: c.Locked, Disabled: c.Disabled,
+		FileIDs: c.FileIDs, Locked: c.Locked, Disabled: c.Disabled, Category: c.Category,
 	}
 }
 
@@ -1059,7 +1070,16 @@ func (e *docEditor) editItem(item modItem, have, want ModReferenceConfig) (strin
 		var err error
 		switch key {
 		case "source_id", "mod_id":
-			continue
+			// Only a rename (editMods' renames) matches a reference under
+			// another identity; anything else matched it by these two.
+			haveID, wantID := have.SourceID, want.SourceID
+			if key == "mod_id" {
+				haveID, wantID = have.ModID, want.ModID
+			}
+			if haveID == wantID {
+				continue
+			}
+			wantText, err = scalarText(wantID)
 		case "version":
 			if have.Version == want.Version {
 				continue
@@ -1084,6 +1104,12 @@ func (e *docEditor) editItem(item modItem, have, want ModReferenceConfig) (strin
 			}
 			zero = !want.Disabled
 			wantText = "true"
+		case "category":
+			if have.Category == want.Category {
+				continue
+			}
+			zero = want.Category == ""
+			wantText, err = scalarText(want.Category)
 		}
 		if err != nil {
 			return "", err
@@ -1143,7 +1169,7 @@ func (e *docEditor) setItemKey(item modItem, rank int, key, wantText string, zer
 		if flow || i == 0 {
 			// A key a line cannot be taken from: its value becomes the one
 			// that reads as absent.
-			zeroText := map[string]string{"version": `""`, "file_ids": "file_ids: []", "locked": "false", "disabled": "false"}[key]
+			zeroText := map[string]string{"version": `""`, "file_ids": "file_ids: []", "locked": "false", "disabled": "false", "category": `""`}[key]
 			if key == "file_ids" {
 				return e.replaceEntry(k, v, zeroText)
 			}

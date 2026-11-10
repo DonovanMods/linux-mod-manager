@@ -19,6 +19,7 @@
     "profile_name": "default",
     "update_policy": "notify",
     "installed_at": "<TIME>",
+    "last_updated_at": "<TIME>",
     "enabled": true,
     "deployed": true,
     "link_method": "symlink",

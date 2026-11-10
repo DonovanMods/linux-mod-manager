@@ -135,6 +135,18 @@ export function connectActivity(
       onJobDone?.(summary);
     },
 
+    // issue 583: kept only for a load this page is still waiting on - a
+    // frame for another tab's read, or one that lands after its own read
+    // has answered, names a token nothing here holds.
+    onReadProgress: (frame) => {
+      const { loading, readProgress } = store.get();
+      const waiting = Object.values(loading ?? {}).some(
+        (entry) => entry?.token === frame.token,
+      );
+      if (!waiting) return;
+      store.set({ readProgress: { ...readProgress, [frame.token]: frame } });
+    },
+
     onError: (message) => store.set({ activityError: message }),
   });
 }

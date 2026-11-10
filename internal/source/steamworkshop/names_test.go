@@ -259,6 +259,7 @@ func TestAuthorName_CacheHonoursTheMetadataTTLs(t *testing.T) {
 // failing name lookups on a cached item must leave GetPublishedFileDetails
 // reachable for the next one, and the key never reaches an error.
 func TestAuthorName_AFailingKeyedLookupNeverSuspendsMetadata(t *testing.T) {
+	steamworkshop.SkipRetryBackoffForTest(t) // every name lookup is a retried 503
 	okBody, err := os.ReadFile(filepath.Join("testdata", "api", "getpublishedfiledetails_ok.json"))
 	require.NoError(t, err)
 	var (

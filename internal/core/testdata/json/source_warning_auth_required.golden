@@ -1,0 +1,5 @@
+{
+  "source_id": "curseforge",
+  "error": "authentication required: CurseForge API key required",
+  "auth_required": true
+}

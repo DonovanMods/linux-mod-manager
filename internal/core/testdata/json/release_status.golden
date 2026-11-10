@@ -13,5 +13,11 @@
     "package": "lmm",
     "upgrade_command": "sudo apt install --only-upgrade lmm"
   },
-  "installed": "2.1.0"
+  "installed": "2.1.0",
+  "auto_update": {
+    "enabled": true,
+    "applicable": false,
+    "reason": "lmm was installed by the lmm package (dpkg), so your package manager updates it, never lmm itself: sudo apt install --only-upgrade lmm",
+    "noticed": false
+  }
 }

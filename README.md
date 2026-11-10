@@ -145,8 +145,12 @@ These are deliberate omissions, tracked so they are not mistaken for oversights:
   ordering itself is a shipped feature (`lmm profile reorder`, the web UI's
   reorder modal, and precedence at merge and deploy time); it is the
   _automatic_ sorting that is out of scope for 2.0
-- **Nexus Collections** — no tracking issue; a Steam Workshop collection
-  already imports as a profile, and the Nexus equivalent is not planned for 2.0
+- **Nexus Collections** —
+  [#597](https://github.com/DonovanMods/linux-mod-manager/issues/597), blocked
+  on the two above: most collections are for Bethesda games and lean on
+  FOMOD choices and plugin order, so importing one without them would install
+  a setup that plays wrong. A Steam Workshop collection already imports as a
+  profile
 - **A separate native desktop application** — the graphical frontend is
   `lmm serve`, and it is a first-class one: a full web UI over the same `core`
   package the CLI calls, in the same binary, with no Node, no bundler and no
@@ -242,11 +246,22 @@ Extract and install:
 
 ```bash
 tar -xzf lmm_*.tar.gz
-sudo mv lmm /usr/local/bin/
+mkdir -p ~/.local/bin && mv lmm ~/.local/bin/
 ```
+
+(`sudo mv lmm /usr/local/bin/` works too, but then lmm cannot update
+itself, since it never uses `sudo`.)
 
 The tarball also carries the man pages under `docs/man/man1/`; copy them to
 `/usr/share/man/man1` (or `~/.local/share/man/man1`) to get `man lmm`.
+
+An lmm installed this way (or with `go install`, or from source) **updates
+itself**: when its daily release check finds a new release, it installs it,
+verified against the lmm release key. To turn
+this off, set `auto_update: false` in `~/.config/lmm/config.yaml`, or use
+**Setup > Updates** in the web UI. An lmm a package manager installed is
+never updated by lmm itself. (An install of v2.2.0 needs one
+`lmm self-update` by hand to pick this up.)
 
 ### With Go Install
 
@@ -853,7 +868,7 @@ default_link_method: symlink # Global default: symlink, hardlink, or copy
 default_game: baldurs-gate-3 # Optional, set via 'lmm game set-default'
 cache_path: ~/.local/share/lmm/cache # Optional, defaults to <data_dir>/cache
 update_check: false # Optional: stop the once-a-day check for a new lmm release (on by default)
-auto_update: true # Optional: let lmm-update.timer install new lmm releases (off by default; see lmm self-update)
+auto_update: false # Optional: stop lmm installing new lmm releases by itself (on by default for a self-managed install)
 ```
 
 The `cache_path` setting allows you to store downloaded mod files in a custom location. This is useful if you want to:
@@ -941,6 +956,25 @@ positive integer fails the load naming the game. Set it with `lmm game edit
 `lmm game version-types <id>` lists the game's types by name, slug and id)
 or by ticking the game's types by name in the web UI's game editor; see the
 [user guide](docs/guide/add-a-game.md#pick-a-curseforge-game-flavor).
+
+An optional **`launch:`** block says how `lmm launch` starts the game
+(#501). Without one, a Steam game launches through Steam by the app id lmm
+finds in its Steam library (or its `steamworkshop` source). `command` is an
+argv list - never a shell string - run in preference to Steam; its
+arguments may use `{game_id}`, `{install_path}`, `{mod_path}`, `{profile}`
+and `{steam_app_id}`; its program is a name looked up on `PATH` or a path
+starting with `/`, `~/`, `{install_path}` or `{mod_path}`, and it runs in
+the game's install folder. `via: steam` or
+`via: command` picks one method; `steam_app_id` (digits only) overrides the
+id lmm would find. An unknown placeholder, an empty program, `via: command`
+with no command, a relative program path or a non-numeric app id fails the load naming the game. The
+web UI never writes `command`. See the
+[user guide](docs/guide/launch.md).
+
+```yaml
+launch:
+  command: ["lutris", "lutris:rungame/wow"]
+```
 
 `mod_path` may be **absolute, or relative to `install_path` — everywhere**. A relative value — `mod_path: Data` — is resolved against that game's `install_path`, never against your current working directory (`~` expands first, so `~/mods` is absolute, not relative). That rule is the same on every path that writes a game, not just for a hand-written `games.yaml`: `lmm game add`, `lmm game add --from-detected`, `lmm game detect`, `POST /api/v1/games` and the web UI's add-game form all accept `Data` and store the resolved absolute path, so what lmm writes reads back identically from any shell. A relative `mod_path` with no `install_path` to resolve it against is refused — naming the game and the field when `games.yaml` is read, and naming `install_path` (the value that is actually missing) at the prompt, the form and the API.
 
@@ -1538,7 +1572,7 @@ it, a toast says the mod's current state could not be read and the row shows
 the last state the server reported.
 
 Filter (all/enabled/updatable/unhealthy) and sort (load order/name/recently
-installed) narrow it. The header checkbox selects **everything in view**
+updated/recently installed) narrow it. The header checkbox selects **everything in view**
 — after the filter and whatever the omnibar is narrowing by — skipping rows
 the batch actions cannot apply to, and reads back as checked, empty or
 partial; `a` does the same from the keyboard anywhere on Mission Control
@@ -1763,11 +1797,11 @@ GET  /api/v1/mods/{source}/{id}
 GET  /api/v1/mods/{source}/{id}/files
 GET  /api/v1/mods/{source}/{id}/versions
 GET  /api/v1/search?q=&page=&page_size=&limit=&category=&source=&tag=
-GET  /api/v1/updates
+GET  /api/v1/updates?refresh=&progress=
 GET  /api/v1/updates/lmm
 GET  /api/v1/profiles
 GET  /api/v1/profiles/{name}/export
-GET  /api/v1/health
+GET  /api/v1/health?force=&progress=
 GET  /api/v1/conflicts?order=
 GET  /api/v1/games
 GET  /api/v1/games/catalog?source=&q=
@@ -1857,13 +1891,20 @@ POST   /api/v1/mods/{source}/{id}/convert   {"enabled"} -> the mod's settings
 POST   /api/v1/mods/{source}/{id}/skip-update {"version"}
                                                        -> the mod's settings
 POST   /api/v1/mods/{source}/{id}/unskip-update        -> the mod's settings
+POST   /api/v1/mods/{source}/{id}/category {"category"}
+                                                       -> the mod's settings
+GET    /api/v1/categories?game=&profile=   -> {"categories": [...]}
 ```
 
-Those six are `lmm mod lock`/`unlock`/`set-update`/`convert`/
-`skip-update`/`unskip-update`, each answering the `core.ModSettingResult`
+The first seven are `lmm mod lock`/`unlock`/`set-update`/`convert`/
+`skip-update`/`unskip-update`/`set-category`, each answering the `core.ModSettingResult`
 document its `--json` twin prints.
 `convert` is the pak-conversion toggle for a compile-mode game (Icarus); a
 mod with no convertible `.pak` is a 400, the same refusal the CLI gives.
+`category` sets the mod's own category (#592); `""` clears it, and a name that is
+empty after trimming, longer than 64 characters or holds control characters is
+a 400. `GET /api/v1/categories` lists the categories in use in the profile, for
+the web UI's suggestions.
 
 ```text
 POST   /api/v1/profiles                     {"name"}   -> the profile created
@@ -1892,6 +1933,10 @@ PUT    /api/v1/games/{id}     {"loader","loader_set"}
                                              carrying both is refused)
 POST   /api/v1/games/{id}/set-default     -> the new default (core.SettingsResult)
 DELETE /api/v1/games/default              -> the default cleared (core.SettingsResult)
+POST   /api/v1/games/{id}/launch  {"profile"?,"force"?}
+                                          -> what was started (core.LaunchResult);
+                                             undeployed changes are a 409 with
+                                             core.LaunchDriftError's details
 POST   /api/v1/games/detect   {"select"}  -> what was added (index or slug)
 POST   /api/v1/auth/{source}  {"api_key"} -> the authentication report
 DELETE /api/v1/auth/{source}              -> the authentication report
@@ -2086,6 +2131,17 @@ above for the full detail. The job index and the `job_done` frame both
 carry a failed job's `{"error", "details"}` envelope, but never its result
 document — read `GET /api/v1/jobs/{id}` for that.
 
+The same stream also carries `event: read_progress` frames, which belong to
+no job: they report how far an in-flight `GET /api/v1/updates` or
+`GET /api/v1/health` has got, for a request that named a
+`?progress=<token>` (1-64 letters, digits, `-` or `_`). Each frame is
+`{"token", "read", "game_id", "profile", "mod_name", "index", "total"}`,
+with `read` either `updates` or `health`, and at most one is sent per whole
+percent of a read. The GET's own response is the end of it. A request
+without a token publishes nothing, and asking to watch the verify never
+bypasses its unchanged-installation memo: an answer from the memo has no
+run to report.
+
 ### Security posture
 
 There is **no authentication** in this release. `lmm serve` is meant for a
@@ -2093,7 +2149,8 @@ single trusted user on their own machine:
 
 - Binds to `127.0.0.1:7420` by default. Binding a non-loopback address (a
   LAN IP, `0.0.0.0`) prints a loud warning on every startup: anyone who can
-  reach that address can drive `lmm` exactly as you can.
+  reach that address can drive `lmm` exactly as you can, and launch
+  programs (the web UI's **Play** button starts your games).
 - Every request's `Host` header is checked against an allow-list built from
   the bind address (plus `localhost`, for a loopback bind) — a
   DNS-rebinding guard. A **wildcard bind** (`0.0.0.0`, `[::]`, or a bare
@@ -2225,7 +2282,7 @@ shows up as a diff in review.
 | `lmm game list`                | `[]core.GameListEntry` — a top-level array                                                                                                                                                                                                                                                                                                                         |
 | `lmm game show-default`        | `core.DefaultGame` — `{set, id?, name?}`                                                                                                                                                                                                                                                                                                                           |
 | `lmm auth status`              | `app.AuthStatusReport` — `{sources[], orphaned[]}`                                                                                                                                                                                                                                                                                                                 |
-| `lmm update` (bulk check)      | `core.UpdateCheckReport` — `{game_id, profile, updates[], skipped{}, external?, external_missing[]?, warnings[]?, catalog_missing[]?, error?}`                                                                                                                                                                                                                     |
+| `lmm update` (bulk check)      | `core.UpdateCheckReport` — `{game_id, profile, updates[], skipped{}, external?, external_missing[]?, warnings[]?, catalog_missing[]?, auto_relink?, error?}`                                                                                                                                                                                                       |
 | `lmm update <mod-id>`          | `core.UpdateApplyResult` — `{mod{}, name, from_version, to_version, status, …}`                                                                                                                                                                                                                                                                                    |
 | `lmm update rollback <mod-id>` | `core.RollbackResult` — `{mod{}, mod_name, from_version, to_version, status, …}`                                                                                                                                                                                                                                                                                   |
 
@@ -2239,6 +2296,7 @@ that run would have applied:
 | `lmm import` (scan)                                         | `core.AdoptResult` — `{adopted, skipped, failed, backfilled?, warnings[]}` (`backfilled` is set only by a frontend that runs the metadata backfill in the same step — `lmm serve` does; the CLI reports it while rendering the scan)            |
 | `lmm import --dry-run` (scan)                               | `core.AdoptPlan`                                                                                                                                                                                                                                |
 | `lmm deploy`                                                | `core.DeployResult` / `core.DeployPlan` under `--dry-run`                                                                                                                                                                                       |
+| `lmm launch`                                                | `core.LaunchResult`, under `--dry-run` too (`dry_run: true`); a drift refusal under `--strict` is `core.LaunchDriftError` in the envelope's `details`                                                                                           |
 | `lmm uninstall <mod-id>`                                    | `core.UninstallResult` / `core.UninstallPlan`                                                                                                                                                                                                   |
 | `lmm purge`                                                 | `core.PurgeResult` / `core.PurgePlan`                                                                                                                                                                                                           |
 | `lmm profile apply`                                         | `core.ProfileApplyResult` / `core.ProfileApplyPlan`                                                                                                                                                                                             |
@@ -2414,14 +2472,14 @@ under its issue number:
 | `lmm game add --source <id> --id <identifier>`             | Name the mod source and this game's identifier with it (a NexusMods slug, a CurseForge game id, a custom source's key) instead of being prompted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `lmm game add --query <q> [--pick <n>]`                    | Search a source's game catalog instead of naming an identifier; without `--pick` the matches are printed (`core.GameCatalogReport` under `--json`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `lmm game add --name <n> --path <dir> [--mod-path <dir>]`  | Display name, install path (must exist) and mod directory (default `<install>/mods`, or the install path for a BepInEx game; absolute, or relative to the install path)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `lmm game add --from-detected <steam-app-id>`              | Prefill everything from an installed Steam game — name, install path, game id, mod path, and a known game's source map; every other flag still wins, and `--source` (with `--id`/`--query`/`--pick`) ADDS to a curated source map rather than replacing it — `--id`/`--query`/`--pick` alone need `--source`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `lmm game add --from-detected <steam-app-id>`              | Prefill everything from an installed Steam game — or a Battle.net one, named `battlenet:<product>` (#545) — name, install path, game id, mod path, and a known game's source map; every other flag still wins, and `--source` (with `--id`/`--query`/`--pick`) ADDS to a curated source map rather than replacing it — `--id`/`--query`/`--pick` alone need `--source`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `lmm game list`                                            | List configured games (ID, name, paths, adapter in use, deploy mode, sources; marks the default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `lmm game edit <game-id> --source <id>=<identifier>`       | Add or replace one of the game's source mappings (repeatable); the identifier may be empty for a source that needs none                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `lmm game edit <game-id> --remove-source <id>`             | Drop one source mapping (repeatable; removals apply before additions, and a game must keep at least one source)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `lmm game edit <game-id> --mod-path <dir>`                 | Set the directory mods deploy into — the repair for a mod path that no longer exists, which `lmm game show`, `lmm game list` and `lmm status` flag (relative to the install path unless absolute; refused while any profile has files deployed, naming the purge each needs; checked together with `--adapter`/`--source`, so a run applies all of its flags or none)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `lmm game edit <game-id> --install-path <dir>`             | Set the directory the game is installed in — a path mistyped at `lmm game add`, or a moved Steam library (must exist; `~/` expanded). A mod path inside it moves with it. With files deployed it is accepted only as a move of the whole folder (the old path gone, every recorded file at the new one, whose records then follow); otherwise the refusal names the purge each profile needs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `lmm game edit <game-id> --curseforge-version-type <id>`   | Accept only CurseForge files of this game version type (repeatable; replaces the list; `""` clears it) - how a WoW Classic game is never given a Retail addon file                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `lmm game detect`                                          | Scan Steam libraries for moddable games — every game in the known-games list (extend it via [`steam-games.yaml`](docs/configuration.md#steam-gamesyaml-optional)), plus any game with Steam Workshop items already downloaded. Rows are numbered continuously, curated first, each printing its Steam app id, and the prompt takes a row number **or** an app id — a bare number that is both a row number and another row's app id is refused rather than guessed at, so spell it `#3` (row 3) or `app:10` (Steam app id 10); if nothing is found but this machine has OTHER installed Steam games lmm has no known-games entry for, says how many and names `--include-unknown` instead of reporting nothing found                                                                                                                                                                                                                                                                                                                                                         |
+| `lmm game detect`                                          | Scan Steam libraries for moddable games — every game in the known-games list (extend it via [`steam-games.yaml`](docs/configuration.md#steam-gamesyaml-optional)), plus any game with Steam Workshop items already downloaded — and every Wine prefix for Battle.net games (World of Warcraft, a game per flavor; extend it via [`battlenet-games.yaml`](docs/configuration.md#battlenet-gamesyaml-optional)), which print `battlenet:<product>` where a Steam row prints its app id and never include an anti-cheat title. Rows are numbered continuously, curated first, each printing its Steam app id, and the prompt takes a row number **or** an app id — a bare number that is both a row number and another row's app id is refused rather than guessed at, so spell it `#3` (row 3) or `app:10` (Steam app id 10); if nothing is found but this machine has OTHER installed Steam games lmm has no known-games entry for, says how many and names `--include-unknown` instead of reporting nothing found                                                            |
 | `lmm game detect --all`                                    | Non-interactively select every not-yet-configured detected game (same set the "all" prompt answer picks); required under `--json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `lmm game detect --select <rows>`                          | Non-interactively select detected games by row number or Steam app id (e.g. `1,3` or `1,1133870`), or name one explicitly with `#3`/`app:10`; required under `--json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `lmm game detect --include-unknown`                        | Also list the remaining installed games with no known-games entry (the ones with no Workshop items either), with their Steam app ids for `lmm game add --from-detected` — selecting one here is refused with that pointer, since nothing tells lmm which mod source it belongs to; under `--json` (with no selection flag) emits the listing document, which only this flag produces: a plain `lmm game detect --json` emits **no** listing at all — with no `--all`/`--select` it refuses (nothing may prompt under `--json`), and with either one it emits the result document for what it added. What `--all`/`--select` choose from is the default listing, Workshop-bearing uncurated rows included. Steam's own tools (Proton, the Linux runtimes, the redistributables) are filtered out by a small deny-list, so a genuinely misidentified title never appears here — add it to your [`steam-games.yaml`](docs/configuration.md#steam-gamesyaml-optional) override to make it a known game (which skips the filter entirely), or fall back to a plain `lmm game add` |
@@ -2452,6 +2510,10 @@ under its issue number:
 | `lmm deploy --method hardlink`                             | Deploy using different link method                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `lmm deploy --purge`                                       | Purge then deploy all mods                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `lmm deploy --dry-run`                                     | Preview what a deploy would do                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `lmm launch`                                               | Launch the game for the active profile: `launch.command` from `games.yaml`, else Steam by app id (found from the game's Steam library when not configured). Starts it as a transient systemd user service; warns about undeployed changes and launches anyway. See the [user guide](docs/guide/launch.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `lmm launch --deploy`                                      | Deploy the active profile, then launch                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `lmm launch --strict`                                      | Refuse to launch when the profile has undeployed changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `lmm launch --dry-run`                                     | Print the launch method and full command line, starting nothing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `lmm purge`                                                | Remove all mods from game directory. For a profile that is not active (`-p`), only the files it recorded as deployed that nothing else still claims                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `lmm purge --dry-run`                                      | Preview what a purge would do (no confirmation prompt)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `lmm conflicts`                                            | Show file conflicts in current profile                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -2767,23 +2829,35 @@ lmm self-update --yes     # no question; --json without --yes prints the plan
 3. It extracts only the `lmm` binary (a regular file, no path tricks) into a
    temporary file beside the running one, with its mode, and renames it over
    it, so a crash leaves one whole binary or the other.
-4. If `lmm-serve.service` is running, it restarts it (`try-restart`).
+4. It restarts nothing: it cannot see `lmm serve`'s running jobs. With
+   `auto_update` on, `lmm-serve.service` notices the new binary within a
+   minute and restarts itself once none of its jobs runs (#586).
 
 A binary a package manager owns is refused, with the upgrade command to run
 instead, and so is a development build. lmm needs write access to the
 directory the binary is in, and never uses `sudo`: move lmm somewhere you
 own, such as `~/.local/bin`, if it is not.
 
-**Unattended updates** are opt-in. `lmm service install --auto-update` also
-installs `lmm-update.timer` (daily, `Persistent=true`,
+**Automatic updates** are on by default for a self-managed lmm (#586):
+when the daily release check finds a newer release, an interactive command
+starts `lmm self-update --auto` detached (output in
+`<data dir>/auto-update.log`), and `lmm serve` installs it from its
+background refresh. Every updater only replaces the binary; `lmm serve`
+running as `lmm-serve.service` restarts itself onto a newer binary, whoever
+installed it, once none of its jobs runs.
+Each run takes the self-update lock and verifies the release as above; a
+release whose update failed waits a day. `auto_update: false` in
+`config.yaml`, or **Setup > Updates** in the web UI, turns them off; a
+package's binary is never touched. `lmm service install --auto-update`
+also installs `lmm-update.timer` (daily, `Persistent=true`,
 `RandomizedDelaySec=1h`) and the oneshot `lmm-update.service`, which runs
-`lmm self-update --auto`. That does nothing unless `config.yaml` says
-`auto_update: true`, so the setting turns updates on and off without
-touching the units; `lmm service uninstall` removes them.
+`lmm self-update --auto`, for a machine where lmm rarely runs;
+`lmm service uninstall` removes them. The first automatic update is
+announced once with how to turn them off, later ones in one line.
 
-A `lmm serve` you started yourself keeps running the old binary after an
-update; its banner says "lmm vX is installed; restart `lmm serve` to use
-it". lmm never restarts it, and does not treat `SIGHUP` as a restart: the
+A `lmm serve` you started yourself, or any with `auto_update: false`, keeps
+running the old binary after an update; its banner says "lmm vX is
+installed; restart `lmm serve` to use it". lmm never restarts it, and does not treat `SIGHUP` as a restart: the
 terminal sends one when it closes.
 
 How releases are signed, and how the key is rotated, is in
@@ -3005,6 +3079,7 @@ internal/
 │   ├── icarus/           # Icarus: its mod catalog, plus the .pak/.exmodz merge compiler
 │   ├── custom/           # User-defined sources (directory, manifest, api)
 │   ├── steam/            # Steam library scanning (for `lmm game detect`)
+│   ├── battlenet/        # Battle.net games in Wine/Proton prefixes (for `lmm game detect`, #545)
 │   └── httpclient/       # Shared HTTP client (timeouts, size caps, redirect rules)
 ├── storage/
 │   ├── db/               # SQLite (mod metadata, encrypted auth tokens) — pure Go, no CGO

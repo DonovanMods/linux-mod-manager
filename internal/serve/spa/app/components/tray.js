@@ -21,6 +21,7 @@ import { followJob } from "../sse.js";
 import {
   frameFromEvent,
   jobStateLabel,
+  mutationLabel,
   progressText,
   progressFraction,
   resultTallyLabel,
@@ -28,7 +29,6 @@ import {
 } from "../progress.js";
 import {
   useJobResultPurge,
-  useJobResultTally,
   useJobResultVerify,
   useJobResultFailures,
 } from "../jobresult.js";
@@ -46,13 +46,26 @@ import { VerifyFixResult } from "./verifyfixresult.js";
 // newest are kept, which is the end a person reads first.
 const maxStreamedEvents = 200;
 
+/** needsAttention is a finished job the bell counts until the tray is
+ * opened: one that failed, or an automatic job (issue 587) whose batch
+ * failed an item - the job itself "succeeded", but no one clicked for it,
+ * so nothing else would tell the user an update of theirs did not apply. */
+function needsAttention(job) {
+  if (job.state === "failed") return true;
+  return (
+    job.origin === "auto" &&
+    job.state === "succeeded" &&
+    (job.tally?.failed ?? 0) > 0
+  );
+}
+
 /** newestFailureEnd is the latest ended_at, in epoch milliseconds, among the
  * failed jobs - 0 when none has a readable one. Date.parse of a missing
  * ended_at is NaN, which Math.max would poison; it is skipped instead. */
 function newestFailureEnd(jobs) {
   let newest = 0;
   for (const job of jobs) {
-    if (job.state !== "failed") continue;
+    if (!needsAttention(job)) continue;
     const ended = Date.parse(job.ended_at);
     if (ended > newest) newest = ended;
   }
@@ -65,7 +78,7 @@ function newestFailureEnd(jobs) {
  *
  * The badge counts what is HAPPENING (running and queued jobs). When
  * nothing is happening it falls back to counting failures the user has not
- * opened the tray since - because a finished-but-failed deploy that leaves
+ * opened the tray since (an automatic job with a failed item among them) - because a finished-but-failed deploy that leaves
  * a silent bell is exactly the outcome a bell exists to prevent.
  */
 export function ActivityBell({
@@ -87,8 +100,7 @@ export function ActivityBell({
     // honest default for a job whose ended_at cannot be read. An "|| 0"
     // fallback here would parse as "0", which V8 reads as 2000-01-01, a
     // large positive timestamp that always reads as "unseen".
-    (job) =>
-      job.state === "failed" && Date.parse(job.ended_at) > acknowledgedAt,
+    (job) => needsAttention(job) && Date.parse(job.ended_at) > acknowledgedAt,
   );
   const count = active.length || unseenFailures.length;
   const tone = active.length > 0 ? "active" : "failed";
@@ -214,10 +226,10 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
 function TrayRow({ job, frame, expanded, onToggle, actions }) {
   const label = jobStateLabel(job, frame);
   const fraction = progressFraction(frame);
-  // I3, unit 6 fix wave: called unconditionally (C1's own rule) - see
-  // jobprogress.js's identical use for why "succeeded" alone can lie about
-  // a batch that applied nothing.
-  const tally = useJobResultTally(job.id, job.state);
+  // I3, unit 6 fix wave: see jobprogress.js's identical use for why
+  // "succeeded" alone can lie about a batch that applied nothing. The tally
+  // is the summary's own (issue 364).
+  const tally = job.tally ?? null;
   const purgeResult = useJobResultPurge(job.id, job.state);
   const repairResult = useJobResultVerify(job.id, job.state);
   const batchFailures = useJobResultFailures(job.id, job.state);
@@ -234,7 +246,9 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
         aria-expanded=${expanded ? "true" : "false"}
         onClick=${onToggle}
       >
-        <span class="tray__kind">${job.kind}</span>
+        <span class="tray__kind" data-origin=${job.origin || null}
+          >${job.origin === "auto" ? mutationLabel(job.kind, job.origin) : job.kind}</span
+        >
         <span class="tray__state tray__state--${tone}">${stateText}</span>
         <span class="tray__caret">${expanded ? "▾" : "▸"}</span>
       </button>
@@ -273,11 +287,23 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
         // beside the tally that counts it - the CLI prints the same fact as
         // "1 locked mod(s) not applied: Mod A - unlock to update", and the
         // web UI said nothing at all before this.
-        (tally?.skippedNotes ?? []).length > 0 &&
+        (tally?.skipped_notes ?? []).length > 0 &&
         html`
           <ul class="tray__skips" data-job=${job.id}>
-            ${tally.skippedNotes.map(
+            ${tally.skipped_notes.map(
               (note) => html`<li key=${note} class="tray__skip">${note}</li>`,
+            )}
+          </ul>
+        `
+      }
+      ${
+        // issue 590: an automatic re-link says what moved, as the Updates
+        // card does - the tally alone ("1 re-linked") names no mod.
+        (tally?.notes ?? []).length > 0 &&
+        html`
+          <ul class="tray__notes" data-job=${job.id}>
+            ${tally.notes.map(
+              (note) => html`<li key=${note} class="tray__note">${note}</li>`,
             )}
           </ul>
         `

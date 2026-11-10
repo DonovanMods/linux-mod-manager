@@ -22,7 +22,7 @@ import (
 // convention anyone has to remember: TestGenManDateIsNotOlderThanTheNewestRelease
 // fails whenever the newest dated CHANGELOG section is later than this,
 // which is what stopped 2.0.0's pages from shipping dated "Jul 2026" (#401).
-var genManDate = time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+var genManDate = time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
 
 // defaultManDir is where `make man` and the goreleaser build expect the
 // generated pages to live.
@@ -77,6 +77,11 @@ func genManTree(dir string) error {
 	// executed rootCmd at all - without this, the page set generated
 	// depends on incidental call order.
 	rootCmd.InitDefaultCompletionCmd()
+	// The same holds for root's --version flag, which cobra adds only when
+	// the root command itself executes - never on the way to gen-man - so
+	// lmm.1 used to list it only when generated after something ran `lmm`
+	// (#581).
+	rootCmd.InitDefaultVersionFlag()
 
 	// Cobra's man doc generator renders each command's Use line (e.g.
 	// "install <query>") through Markdown before emitting roff, and a bare

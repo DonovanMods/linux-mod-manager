@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -51,6 +52,15 @@ func updatableContent(modID, version string) string { return modID + " " + versi
 // and re-deploys the new version.
 type updatesSource struct {
 	server *httptest.Server
+	// failing holds the mod ids whose downloads answer 503 - an update
+	// that fails inside a batch (#587).
+	failing sync.Map
+	// hold, when set, holds every download open until it is closed, and
+	// held is closed as the first one waits on it - a job mid-update for a
+	// test to look at (#588). Set both before anything downloads.
+	hold     <-chan struct{}
+	held     chan struct{}
+	heldOnce sync.Once
 }
 
 // newUpdatesSource starts the download server.
@@ -60,6 +70,14 @@ func newUpdatesSource(t *testing.T) *updatesSource {
 	s := &updatesSource{}
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		modID, fileID, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		if _, fail := s.failing.Load(modID); fail {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if s.hold != nil {
+			s.heldOnce.Do(func() { close(s.held) })
+			<-s.hold
+		}
 		version := strings.TrimPrefix(fileID, modID+"-")
 		w.Header().Set("Content-Type", "application/zip")
 		_, _ = w.Write(zipWith(updatableModFile(modID), updatableContent(modID, version)))
@@ -150,6 +168,13 @@ var _ source.ModSource = (*updatesSource)(nil)
 // the mod nobody ticked has all three to leave alone.
 func newUpdatesFixtureServer(t *testing.T) (*Server, *core.Service, *domain.Game) {
 	t.Helper()
+	return newUpdatesFixtureServerWith(t, newUpdatesSource(t))
+}
+
+// newUpdatesFixtureServerWith is newUpdatesFixtureServer over src, for a
+// test that changes how the source answers.
+func newUpdatesFixtureServerWith(t *testing.T, src *updatesSource) (*Server, *core.Service, *domain.Game) {
+	t.Helper()
 	sandboxEnv(t)
 
 	svc, err := core.NewService(core.ServiceConfig{
@@ -160,7 +185,7 @@ func newUpdatesFixtureServer(t *testing.T) (*Server, *core.Service, *domain.Game
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	svc.RegisterSource(newUpdatesSource(t))
+	svc.RegisterSource(src)
 
 	ctx := t.Context()
 	game := &domain.Game{

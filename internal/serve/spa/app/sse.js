@@ -17,6 +17,8 @@
 // frame is why a caller never has to race "the stream closed" against "go
 // fetch the final status".
 
+import { activityReopenMillis } from "./timers.js";
+
 /**
  * Follows one job to its terminal frame.
  *
@@ -87,11 +89,6 @@ export const jobEventTypes = [
   "verify",
 ];
 
-/** activityReopenMillis is how long a closed activity stream waits before
- * it is opened again - EventSource's own customary reconnection delay, so a
- * refused stream is retried no more eagerly than a dropped one. */
-const activityReopenMillis = 3000;
-
 /**
  * Follows the multiplexed session stream (GET /api/v1/events).
  *
@@ -129,6 +126,7 @@ export function followActivity({
   onStarted,
   onProgress,
   onDone,
+  onReadProgress,
   onError,
 } = {}) {
   let source = null;
@@ -147,6 +145,9 @@ export function followActivity({
     on("job_started", onStarted);
     on("job_progress", onProgress);
     on("job_done", onDone);
+    // issue 583: how far an in-flight READ has got (the update check, the
+    // verify) - not a job, so no other frame ever names it.
+    on("read_progress", onReadProgress);
 
     const opened = source;
     opened.onerror = () => {

@@ -418,6 +418,7 @@ func TestDoGameDetect_SelectFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing
 // definition: passing both --all and --select is a cobra flag-parse error,
 // not a runtime one.
 func TestGameDetectCmd_AllAndSelectAreMutuallyExclusive(t *testing.T) {
+	restoreFlags(t)
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(gameCmd)
 	t.Cleanup(func() { rootCmd.RemoveCommand(gameCmd); rootCmd.AddCommand(gameCmd) })

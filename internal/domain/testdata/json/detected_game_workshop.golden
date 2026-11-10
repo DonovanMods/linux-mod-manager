@@ -1,4 +1,6 @@
 {
+  "detector": "steam",
+  "detector_id": "1133870",
   "steam_app_id": "1133870",
   "slug": "space-engineers-2",
   "name": "Space Engineers 2",

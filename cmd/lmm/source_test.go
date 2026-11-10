@@ -101,6 +101,7 @@ directory:
 }
 
 func TestSourceValidateProbe(t *testing.T) {
+	restoreFlags(t)
 	t.Run("probe directory source reports mod count", func(t *testing.T) {
 		resetSourceProbeFlags(t)
 		t.Cleanup(func() { resetSourceProbeFlags(t) })
@@ -207,6 +208,7 @@ func runGoldenSourceValidate(t *testing.T, path string, probe bool) (stdout, std
 // (#309); the plain path's unaffected byte-for-byte behaviour is pinned
 // above by TestSourceValidateCmd/TestSourceValidateProbe.
 func TestSourceValidate_JSON(t *testing.T) {
+	restoreFlags(t)
 	t.Run("valid, no probe", func(t *testing.T) {
 		resetSourceProbeFlags(t)
 		t.Cleanup(func() { resetSourceProbeFlags(t) })
@@ -593,6 +595,7 @@ func TestSourceListCmd_ScopedByDefaultWhenGameResolvable(t *testing.T) {
 // belonging to the active game's SourceIDs are marked InUse — curseforge,
 // never added to this game, must NOT be marked.
 func TestSourceListCmd_AllFlagShowsFullRegistryWithInUseColumn(t *testing.T) {
+	restoreFlags(t)
 	resetSourceListGameFlags(t)
 	t.Cleanup(func() { resetSourceListGameFlags(t) })
 	setupSourceListGameTest(t, "my-directory", "nexusmods")
@@ -629,6 +632,7 @@ func TestSourceListCmd_AllFlagShowsFullRegistryWithInUseColumn(t *testing.T) {
 // or invent an IN USE column it has nothing to compute — same full-list
 // shape as no --all at all.
 func TestSourceListCmd_NoGameKeepsFullListShapeEvenWithAllFlag(t *testing.T) {
+	restoreFlags(t)
 	resetSourceListGameFlags(t)
 	t.Cleanup(func() { resetSourceListGameFlags(t) })
 	setupSourceListGameTest(t) // games.yaml declares no games at all in SourceIDs terms
@@ -768,6 +772,7 @@ func TestSourceListCmd_ScopedViewWithNothingMoreHasNoFooter(t *testing.T) {
 // TestSourceListCmd_AllViewHasNoFooter: --all IS the full registry, so
 // there is nothing left to point at.
 func TestSourceListCmd_AllViewHasNoFooter(t *testing.T) {
+	restoreFlags(t)
 	resetSourceListGameFlags(t)
 	t.Cleanup(func() { resetSourceListGameFlags(t) })
 	setupSourceListGameTest(t, "nexusmods")

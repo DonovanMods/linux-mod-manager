@@ -19,7 +19,7 @@
 // of - keeping it visible only in the one input the user is looking at
 // is not the same as it appearing anywhere ELSE in the page.
 
-import { html, useEffect, useState } from "../render.js";
+import { html, useEffect, useRef, useState } from "../render.js";
 import { ApiError, getAuthStatus, authLogin, authLogout } from "../api.js";
 
 /** How a credential is named on screen (#79). A stored key is encrypted at
@@ -38,9 +38,30 @@ function keyLabel(row) {
   return row.key_masked || row.key_fingerprint || "";
 }
 
-export function SetupAuth() {
+/** SetupAuth is the section. focusSource is the ?source= deep link (issue
+ * 582): an "Add API key…" action elsewhere names the source that refused,
+ * and its row is scrolled into view with focus in its key field - or on
+ * the row itself, for a row that has a key - once the list has loaded.
+ * Once per source, so a reload after logging in does not steal focus. */
+export function SetupAuth({ focusSource = "" } = {}) {
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
+  const listRef = useRef(null);
+  const focused = useRef("");
+
+  useEffect(() => {
+    if (!focusSource || !report || focused.current === focusSource) return;
+    const row = [
+      ...(listRef.current?.querySelectorAll(".setup-auth__row") ?? []),
+    ].find((r) => r.dataset.source === focusSource);
+    if (!row) return;
+    focused.current = focusSource;
+    row.scrollIntoView({ block: "center" });
+    // The key field, or the row itself - never its first button: a row
+    // whose key the source rejected still reads as authenticated, and its
+    // only control is "Log out", one Enter from deleting that key.
+    (row.querySelector("input") ?? row).focus();
+  }, [focusSource, report]);
 
   async function reload() {
     try {
@@ -72,7 +93,7 @@ export function SetupAuth() {
 
   return html`
     <div class="setup-section" data-testid="setup-auth">
-      <ul class="setup-auth__list">
+      <ul class="setup-auth__list" ref=${listRef}>
         ${sources.map(
           (s) =>
             html`<${AuthSourceRow}
@@ -161,7 +182,7 @@ function AuthSourceRow({ source, onChanged }) {
   }
 
   return html`
-    <li class="setup-auth__row" data-source=${source.id}>
+    <li class="setup-auth__row" data-source=${source.id} tabindex="-1">
       <span class="setup-auth__name">${source.name}</span>
       <span class="setup-auth__status">
         ${

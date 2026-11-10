@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -50,6 +51,8 @@ func (d *DB) migrate(ctx context.Context) error {
 		d.migrateV19,
 		migrateV20,
 		migrateV21,
+		migrateV22,
+		migrateV23,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -58,7 +61,10 @@ func (d *DB) migrate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if version >= len(migrations) {
+	if version > len(migrations) {
+		return d.schemaTooNew(version, len(migrations))
+	}
+	if version == len(migrations) {
 		return nil
 	}
 
@@ -90,6 +96,10 @@ func (d *DB) migrate(ctx context.Context) error {
 	if version, err = schemaVersion(ctx, conn); err != nil {
 		return err
 	}
+	if version > len(migrations) {
+		// A newer lmm migrated it while this one waited for the lock.
+		return d.schemaTooNew(version, len(migrations))
+	}
 	if version < len(migrations) {
 		d.log.Debug("running migrations", "from", version, "to", len(migrations))
 	}
@@ -108,6 +118,33 @@ func (d *DB) migrate(ctx context.Context) error {
 	}
 	committed = true
 	return nil
+}
+
+// ErrSchemaTooNew is what a *SchemaTooNewError matches with errors.Is.
+var ErrSchemaTooNew = errors.New("database schema is newer than this lmm")
+
+// SchemaTooNewError refuses a database whose recorded schema version is
+// past every migration this lmm knows: a newer lmm migrated it, and this
+// one (a downgrade, or an older copy still installed) cannot know what
+// those migrations changed. Carrying on would surface later as a query
+// against a column or table that no longer looks the way this binary
+// expects, so Open refuses it up front.
+type SchemaTooNewError struct {
+	Path      string // the database file
+	Version   int    // the schema version the database records
+	Supported int    // the newest schema version this lmm knows
+}
+
+func (e *SchemaTooNewError) Error() string {
+	return fmt.Sprintf("the database at %s was written by a newer lmm (schema version %d; this lmm reads up to %d): upgrade lmm to open it",
+		e.Path, e.Version, e.Supported)
+}
+
+// Is makes errors.Is(err, ErrSchemaTooNew) true for a *SchemaTooNewError.
+func (e *SchemaTooNewError) Is(target error) bool { return target == ErrSchemaTooNew }
+
+func (d *DB) schemaTooNew(version, supported int) error {
+	return &SchemaTooNewError{Path: d.path, Version: version, Supported: supported}
 }
 
 // schemaVersion is the highest migration recorded, read through q.
@@ -559,5 +596,46 @@ func migrateV21(ctx context.Context, d migrationExec) error {
 			PRIMARY KEY (game_id, source_id, mod_id)
 		)
 	`)
+	return err
+}
+
+// migrateV22 adds installed_mods.category_name (#592): the source's
+// human-readable category for the mod, recorded on install and update and
+// backfilled by the update check, so a mod list can group by category with
+// no network read. NULL until a fetch records one. Guarded like
+// migrateV20, so a database that already has the column is left alone.
+func migrateV22(ctx context.Context, q migrationExec) error {
+	var have int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('installed_mods') WHERE name = 'category_name'`).Scan(&have); err != nil {
+		return fmt.Errorf("inspecting installed_mods: %w", err)
+	}
+	if have > 0 {
+		return nil
+	}
+	_, err := q.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN category_name TEXT`)
+	return err
+}
+
+// migrateV23 adds installed_mods.last_updated_at (#596): when lmm last
+// changed the row's installed version, as distinct from installed_at (when
+// the row was first written, which the upsert never moves) and updated_at
+// (when the source published the version). Every existing row is
+// backfilled from installed_at - nothing is known about an earlier change,
+// and "updated when installed" keeps Updated >= Installed for every row.
+//
+// Guarded like migrateV20, and the backfill touches only NULLs, so the
+// timestamp migration's tests (which re-run every migration from 19 on)
+// re-apply it cleanly.
+func migrateV23(ctx context.Context, q migrationExec) error {
+	var have int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('installed_mods') WHERE name = 'last_updated_at'`).Scan(&have); err != nil {
+		return fmt.Errorf("inspecting installed_mods: %w", err)
+	}
+	if have == 0 {
+		if _, err := q.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN last_updated_at DATETIME`); err != nil {
+			return err
+		}
+	}
+	_, err := q.ExecContext(ctx, `UPDATE installed_mods SET last_updated_at = installed_at WHERE last_updated_at IS NULL`)
 	return err
 }

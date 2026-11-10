@@ -113,7 +113,7 @@ func TestDownloader_Download_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	downloader := core.NewDownloader(nil)
+	downloader := core.NewDownloaderWithoutBackoffForTest(nil)
 	destPath := filepath.Join(t.TempDir(), "test.txt")
 
 	_, err := downloader.Download(context.Background(), server.URL, destPath, nil)
@@ -151,7 +151,7 @@ func TestDownloader_Download_RetriesOnTransientError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	downloader := core.NewDownloader(nil)
+	downloader := core.NewDownloaderWithoutBackoffForTest(nil)
 	destPath := filepath.Join(t.TempDir(), "test.txt")
 
 	result, err := downloader.Download(context.Background(), server.URL, destPath, nil)
@@ -173,7 +173,7 @@ func TestDownloader_Download_RetriesExhausted(t *testing.T) {
 	}))
 	defer server.Close()
 
-	downloader := core.NewDownloader(nil)
+	downloader := core.NewDownloaderWithoutBackoffForTest(nil)
 	destPath := filepath.Join(t.TempDir(), "test.txt")
 
 	_, err := downloader.Download(context.Background(), server.URL, destPath, nil)
@@ -561,7 +561,7 @@ func (f *fakeTimeoutRoundTripper) RoundTrip(req *http.Request) (*http.Response, 
 func TestDownloadWithHeaders_RetriesOnWrappedNetTimeout(t *testing.T) {
 	rt := &fakeTimeoutRoundTripper{}
 	client := &http.Client{Transport: rt}
-	d := core.NewDownloader(client)
+	d := core.NewDownloaderWithoutBackoffForTest(client)
 	dest := filepath.Join(t.TempDir(), "out.bin")
 
 	_, err := d.DownloadWithHeaders(context.Background(), "http://example.invalid/file.zip?api_key=LEAKME123", dest, nil, nil)

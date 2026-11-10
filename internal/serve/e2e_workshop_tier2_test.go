@@ -334,9 +334,16 @@ func TestE2E_WorkshopTier2_ProfilesModalImportsACollection(t *testing.T) {
 				.find((b) => b.textContent.includes("Manage profiles"))?.click();
 		`, nil),
 		chromedp.WaitVisible(`[data-testid="collection-ref"]`, chromedp.ByQuery),
+		// #584: the modal opens on an EMPTY profile list and fills it when
+		// GET /api/v1/profiles answers, and the row it adds pushes this form
+		// down. A click measured before that and dispatched after it lands
+		// on the field above the button - on a loaded runner, recorded as a
+		// click whose target was the INPUT and no plan request at all - so
+		// the list has to be in, and the button still, before it is pressed.
+		chromedp.WaitVisible(`.profiles-row`, chromedp.ByQuery),
 		chromedp.SetValue(`[data-testid="collection-ref"]`, e2eWorkshopCollectionID, chromedp.ByQuery),
 		chromedp.SetValue(`[data-testid="collection-profile-name"]`, "my-ships", chromedp.ByQuery),
-		chromedp.Click(`.profiles-import__collection button[type="submit"]`, chromedp.ByQuery),
+		clickWhenSettled(`.profiles-import__collection button[type="submit"]`),
 		chromedp.WaitVisible(`[data-testid="collection-items"]`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="profile_import"]`, &modal),
 	)
@@ -435,11 +442,11 @@ func TestE2E_SearchWarningSetsABacktickedCommandAsCode(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestCodeSpans_LeavesAnythingItDoesNotUnderstandAlone pins errortext.js's
+// TestE2E_CodeSpans_LeavesAnythingItDoesNotUnderstandAlone pins errortext.js's
 // one safety rule directly (issue 402): a message it cannot read comes
 // through exactly as it was written, so the worst case is the old
 // behaviour rather than a half-transformed sentence.
-func TestCodeSpans_LeavesAnythingItDoesNotUnderstandAlone(t *testing.T) {
+func TestE2E_CodeSpans_LeavesAnythingItDoesNotUnderstandAlone(t *testing.T) {
 	f := newE2EFixture(t)
 
 	// tick is a single backtick. It cannot be written inline: this file's

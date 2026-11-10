@@ -36,7 +36,16 @@ game lives and where its mods go.
 
 Your other Steam games are listed too, with an **Add with details…** button
 instead of a tick box. lmm doesn't know where those games keep their mods, so
-it asks you. If your game isn't on Steam at all, see
+it asks you.
+
+lmm also looks for **World of Warcraft** installed through Battle.net under
+Wine or Proton (a Lutris, Bottles, umu or Steam "non-Steam game" prefix).
+Each flavor you have installed, such as Retail, Classic or Classic Era, is
+its own game, with its addon folder and its CurseForge flavor already set.
+It finds Diablo II: Resurrected, Warcraft III: Reforged and StarCraft II
+too. See [Battle.net games](add-a-game.md#battlenet-games).
+
+If your game isn't on Steam or Battle.net, see
 [Adding a game by hand](add-a-game.md).
 
 ## 3. Connect your mod sites
@@ -92,7 +101,9 @@ date.
 ## 6. Play
 
 Start the game the way you always do, through Steam or your launcher. lmm
-doesn't need to be running while you play.
+doesn't need to be running while you play. You can also start it from lmm
+with `lmm launch`, which checks your mods are deployed first; see
+[Launching your game](launch.md).
 
 ## In the terminal
 

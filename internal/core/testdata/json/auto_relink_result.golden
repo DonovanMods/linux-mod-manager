@@ -1,0 +1,19 @@
+{
+  "relinked": [
+    {
+      "source_id": "icarus",
+      "from_mod_id": "dLs3nvmWj5uOPnXxezGe",
+      "to_mod_id": "8m1z04vNo2CCdKcD2C0H",
+      "name": "Larger Resource Stacks",
+      "message": "Larger Resource Stacks moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)"
+    }
+  ],
+  "failed": [
+    {
+      "mod": "icarus:bbbb",
+      "name": "Bear Mount",
+      "to_mod_id": "cccc",
+      "error": "source \"icarus\" is not configured for Icarus"
+    }
+  ]
+}

@@ -1,4 +1,6 @@
 {
+  "detector": "steam",
+  "detector_id": "892970",
   "steam_app_id": "892970",
   "slug": "valheim",
   "name": "Valheim",

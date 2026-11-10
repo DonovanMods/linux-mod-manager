@@ -13,10 +13,12 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // RelinkPlan is the pure, displayable result of PlanRelinkMod - what
@@ -153,6 +155,12 @@ type RelinkOptions struct {
 	Name    string
 	Version string
 	Author  string
+
+	// keepVersion keeps the recorded version through a re-link's metadata
+	// refresh instead of taking the target's: the automatic re-link's
+	// (#590, AutoRelinkRun.Apply), whose files in the cache are that
+	// version's.
+	keepVersion bool
 }
 
 // RelinkResult reports the outcome of ApplyRelinkMod.
@@ -292,6 +300,9 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		// #543: the old id's manual-only record is not the new one's; only
 		// the new source's own classification is recorded for it.
 		sourceManualOnly := false
+		// #592: the old identity's source category name is not the new
+		// one's either - set below from the new source's mod, or cleared.
+		newCategoryName := ""
 
 		if newSourceID != domain.SourceLocal {
 			cfGameID, ok := game.SourceIDs[newSourceID]
@@ -312,15 +323,16 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 					mod.Author = fetched.Author
 					changes = append(changes, fmt.Sprintf("author -> %s (from %s)", fetched.Author, newSourceID))
 				}
-				if opts.Version == "" && fetched.Version != "" {
+				if opts.Version == "" && !opts.keepVersion && fetched.Version != "" {
 					mod.Version = fetched.Version
 					changes = append(changes, fmt.Sprintf("version -> %s (from %s)", fetched.Version, newSourceID))
 				}
 				mod.Summary = fetched.Summary
 				mod.SourceURL = fetched.SourceURL
 				mod.PictureURL = fetched.PictureURL
-				mod.ManualDownload = false // now linked, updates may work
+				mod.AdoptedInPlace = false // now linked, updates may work
 				sourceManualOnly = fetched.ManualOnly
+				newCategoryName = fetched.CategoryName
 			}
 		}
 
@@ -333,29 +345,57 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 			changes = append(changes, fmt.Sprintf("id -> %s (was %s)", newModID, oldModID))
 		}
 
+		// #590: the files the mod was installed from move with it. Left
+		// under the old id, every file read MISSING right after the
+		// re-link, and a merged-pak resync below found no input.
+		s.carryRelinkCache(ctx, game, oldSourceID, oldModID, plan.Mod.Version, &mod, warn)
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
+
 		if err := s.db.RelinkInstalledMod(ctx, oldSourceID, oldModID, &mod); err != nil {
 			return nil, fmt.Errorf("moving installed record: %w", err)
 		}
 		if sourceManualOnly {
 			s.recordManualOnly(ctx, game.ID, mod.SourceID, mod.ID)
 		}
+		mod.CategoryName = newCategoryName
+		// The row has moved: finish its category column with it, even if
+		// the caller is cancelling now, rather than leave the old id's name.
+		if err := s.db.SetModCategoryName(context.WithoutCancel(ctx), mod.SourceID, mod.ID, game.ID, profileName, newCategoryName); err != nil {
+			s.logger().Debug("recording category name", "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
+		}
 		if mod.Enabled {
 			s.supersedePendingProfileBackfill(ctx, mod.GameID, mod.ProfileName, mod.SourceID, mod.ID)
 		}
 
 		// Ruling 16 (A): the DB identity and ledger have moved together;
-		// complete both profile writes even if the caller is cancelled now.
+		// complete the profile write even if the caller is cancelled now.
+		//
+		// #593: the ref is renamed where it stands - same load-order index,
+		// so merge/deploy precedence is unchanged - and carries every intent
+		// field: Disabled (#431), Category (#592), and FileIDs, which
+		// RelinkInstalledMod carries verbatim onto the new identity's row
+		// too (a re-link changes which mod the files belong to, never which
+		// files are installed). Locked never reaches here: a re-link of a
+		// locked mod is refused above.
 		pm := s.NewProfileManager()
-		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-			return pm.RemoveMod(ctx, game.ID, profileName, oldSourceID, oldModID)
-		}); err != nil && ctx.Err() == nil {
-			note("Warning: could not remove old profile entry: %v", err)
-		}
-		modRef := domain.ModReference{SourceID: newSourceID, ModID: newModID, Version: mod.Version}
-		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-			return pm.UpsertMod(ctx, game.ID, profileName, modRef)
-		}); err != nil && ctx.Err() == nil {
-			note("Warning: could not update profile: %v", err)
+		renameErr := completeProfileWrite(ctx, func(ctx context.Context) error {
+			return pm.RenameModRef(ctx, game.ID, profileName, oldSourceID, oldModID, newSourceID, newModID, mod.Version)
+		})
+		switch {
+		case renameErr == nil:
+		case errors.Is(renameErr, domain.ErrModNotFound) || errors.Is(renameErr, config.ErrModRefExists):
+			// The profile does not list the old identity (an installed row
+			// it never listed), or already lists the new one (a hand edit -
+			// the DB refused a target that is installed). Either way there
+			// is no single ref to rename: as before #593, drop the old ref
+			// if any and record the new identity with a fresh one - or, if
+			// it is listed, where that one stands.
+			s.relinkProfileFallback(ctx, pm, game.ID, profileName, oldSourceID, oldModID,
+				domain.ModReference{SourceID: newSourceID, ModID: newModID, Version: mod.Version}, note)
+		case ctx.Err() == nil:
+			note("Warning: could not update profile: %v", renameErr)
 		}
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, cerr
@@ -419,4 +459,49 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 	result.Mod = mod
 	result.Changes = changes
 	return result, nil
+}
+
+// relinkProfileFallback is applyRelinkMod's profile write when there is no
+// single ref to rename in place (#593): the old identity's refs, if any,
+// are removed, and ref is upserted - appended when the profile does not
+// list its identity, updated where it stands when it does. Like the rename
+// it replaces, it completes under a cancelled ctx (Ruling 16 (A)).
+func (s *Service) relinkProfileFallback(ctx context.Context, pm *ProfileManager, gameID, profileName, oldSourceID, oldModID string, ref domain.ModReference, note func(string, ...any)) {
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.RemoveMod(ctx, gameID, profileName, oldSourceID, oldModID)
+	}); err != nil && !errors.Is(err, domain.ErrModNotFound) && ctx.Err() == nil {
+		note("Warning: could not remove old profile entry: %v", err)
+	}
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.UpsertMod(ctx, gameID, profileName, ref)
+	}); err != nil && ctx.Err() == nil {
+		note("Warning: could not update profile: %v", err)
+	}
+}
+
+// carryRelinkCache copies the cache entry a re-linked mod was installed from
+// (oldSourceID/oldModID at oldVersion) to its new identity (#590), before the
+// identity moves. The old entry stays: another profile may still have the old
+// id installed, and the deployed links point into it. Nothing is copied when
+// there is nothing to copy, when the new identity already has an entry, or
+// when the re-link changed the recorded version - the old files are not that
+// version's, and labelling them so would be a lie; the warning says how to
+// fetch the right ones instead. A failed copy is a warning too: the re-link
+// itself still stands.
+func (s *Service) carryRelinkCache(ctx context.Context, game *domain.Game, oldSourceID, oldModID, oldVersion string, mod *domain.InstalledMod, warn func(string, ...any)) {
+	// No version names no entry: ModPath would be the mod's whole tree.
+	if oldVersion == "" {
+		return
+	}
+	gameCache := s.GetGameCache(game)
+	if !gameCache.Exists(game.ID, oldSourceID, oldModID, oldVersion) || gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+		return
+	}
+	if mod.Version != oldVersion {
+		warn("the cache has no files for %s %s yet - run 'lmm verify --fix' to download them", mod.ID, mod.Version)
+		return
+	}
+	if err := gameCache.CopyModAs(ctx, game.ID, oldSourceID, oldModID, mod.SourceID, mod.ID, mod.Version); err != nil && ctx.Err() == nil {
+		warn("could not copy the cached files to %s: %v - run 'lmm verify --fix' to download them again", mod.ID, err)
+	}
 }

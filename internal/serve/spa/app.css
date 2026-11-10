@@ -18,6 +18,53 @@
  * design (owner decision, §Settled decisions).
  */
 
+/*
+ * The bundled faces (issue 523). Without them --font-sans was the host's own
+ * system-ui, so the page was drawn in Liberation Sans on one machine and in
+ * a tenth-wider DejaVu Sans on another. Both families are embedded in the
+ * binary and served from /vendor/ (vendor/FONTS.md has their provenance),
+ * which the Content-Security-Policy's default-src 'self' already admits.
+ *
+ * Inter is one variable face per style, so its whole weight axis is
+ * declared. JetBrains Mono ships no variable .woff2, so it is its two static
+ * weights; mono italic is left to the browser to slant.
+ *
+ * font-display: swap draws text in the fallback until a face arrives rather
+ * than hiding it; the shell preloads the upright Inter so, from a local
+ * server, the swap has normally happened before first paint.
+ */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/vendor/InterVariable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/vendor/InterVariable-Italic.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/vendor/JetBrainsMono-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/vendor/JetBrainsMono-Bold.woff2") format("woff2");
+}
+
 :root {
   color-scheme: light;
 
@@ -48,10 +95,11 @@
 
   /* Type. */
   --font-sans:
-    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
-    sans-serif;
+    "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
   --font-mono:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
 
   /* Rhythm. */
   --space-1: 0.25rem;
@@ -406,7 +454,7 @@ input[type="password"] {
   cursor: pointer;
 }
 
-.button:hover:not(:disabled) {
+.button:hover:not(:disabled):not([aria-disabled="true"]) {
   border-color: var(--accent);
 }
 
@@ -619,6 +667,7 @@ input[type="password"] {
    checkbox or radio keeps the browser's own disabled rendering. The
    borderless variants stay borderless: only their text dims. */
 .button:disabled,
+.button[aria-disabled="true"],
 input:disabled,
 select:disabled {
   border-color: var(--border-subtle);
@@ -960,6 +1009,31 @@ input[type="search"]::-webkit-search-decoration {
   margin-bottom: var(--space-6);
 }
 
+/* Issue 583: Mission Control's slow reads, named while they are out
+ * (pendingreads.js). One quiet line each - the card it becomes is what
+ * carries weight - with the inline job readout's own bar, so a read and a
+ * job look like the same kind of progress. */
+.pending-reads {
+  margin-bottom: var(--space-4);
+}
+
+.pending-reads__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pending-read {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
 .card {
   display: flex;
   flex-direction: column;
@@ -1119,6 +1193,36 @@ input[type="search"]::-webkit-search-decoration {
   white-space: nowrap;
   text-overflow: ellipsis;
   color: var(--text-secondary);
+}
+
+/* issue 585: a Health row is read in full. Its subject and the finding's own
+ * words wrap instead of being cut to one line - the remedy ("launch the game
+ * once to confirm...") is the part the ellipsis took, and a status standing
+ * in for a mod name read "loader stale l...". The row's action keeps the
+ * right edge, on the first line when it fits and its own when it does not. */
+.card__row--finding {
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+.card__row--finding > .card__row-name,
+.card__row--finding > .card__row-detail {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
+.card__row--finding > .card__row-name {
+  flex: 0 1 auto;
+}
+
+.card__row--finding > .card__row-detail {
+  flex: 1 1 12rem;
+}
+
+.card__row--finding > :last-child:not(span) {
+  margin-left: auto;
 }
 
 /* issue 542: the quiet "N skipped updates" line under the attention cards.
@@ -1291,10 +1395,18 @@ input[type="search"]::-webkit-search-decoration {
 }
 
 .library__table th.col--version,
-.library__table td.col--version,
-.library__table th.col--installed,
-.library__table td.col--installed {
+.library__table td.col--version {
   width: 8%;
+}
+
+/* The two dates (issue 596 added "Updated" beside "Installed") take 7%
+ * each rather than the 8% Installed had alone, so the name column keeps
+ * its slack at 1920px with every progressive column showing. */
+.library__table th.col--installed,
+.library__table td.col--installed,
+.library__table th.col--updated,
+.library__table td.col--updated {
+  width: 7%;
 }
 
 .library__table th.col--author,
@@ -1353,6 +1465,9 @@ input[type="search"]::-webkit-search-decoration {
  *   >= 1440px   author + install date
  *   >= 1920px   source + link method
  *
+ * The "Updated" date (issue 596) is not among them: it is the date a
+ * reader scans for, so it shows at every width.
+ *
  * Hidden by default and revealed upward, rather than the reverse: the
  * unqualified rule is the one a browser with no media-query support (or a
  * print stylesheet) falls back to, and the narrow table is the safe
@@ -1408,6 +1523,31 @@ input[type="search"]::-webkit-search-decoration {
 
 .mod-row:hover {
   background: var(--surface-sunken);
+}
+
+/* A category group's heading row (issue 592): the whole row is its collapse
+ * toggle, set apart from the mod rows under it by the sunken surface. */
+.library__group-header th {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  letter-spacing: normal;
+  text-align: left;
+  text-transform: none;
+}
+
+.library__group-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+
+.library__group-count {
+  color: var(--text-muted);
+  font-weight: 400;
 }
 
 .mod-row--selected {
@@ -1795,6 +1935,27 @@ a.row-menu__item.mod-page-link {
   gap: var(--space-2);
   color: var(--text-secondary);
   font-size: 0.9em;
+}
+
+/* The category editor (issue 592): field, Save, Clear on one line, and
+ * where the category comes from on its own line under them. */
+.slide-over__category {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.slide-over__category input {
+  width: 12rem;
+}
+
+.slide-over__category-origin {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.85em;
 }
 
 /* Wraps, and lines its controls up at the top (issue 530): an installed
@@ -2798,8 +2959,10 @@ a.row-menu__item.mod-page-link {
  * (I1, unit 8 gate review). Rendered unexpanded, directly under the row's
  * own tally: a lock refusal is a SKIP, not a failure, so it carries the
  * secondary text colour rather than --danger - the honest outcome of a
- * locked mod must not read as an alarm. */
-.tray__skips {
+ * locked mod must not read as an alarm. An automatic re-link's own lines
+ * (.tray__notes, issue 590) are the same quiet, secondary text. */
+.tray__skips,
+.tray__notes {
   margin: var(--space-1) 0 0;
   padding: 0 var(--space-2) 0 var(--space-4);
   color: var(--text-secondary);

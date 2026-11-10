@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 
 	"github.com/spf13/cobra"
@@ -37,6 +39,9 @@ already installed, turned off; turn it on with:
 'lmm service install' is for a tarball, 'go install' or 'make install':
 it writes the unit to ~/.config/systemd/user, pointing at this lmm binary.
 
+'lmm service restart' restarts the service, whichever way it was
+installed; you never need to uninstall and reinstall it to restart it.
+
 The service starts when you log in. To start it at boot without a login,
 run 'loginctl enable-linger $USER' once; lmm never runs it for you.`,
 }
@@ -61,9 +66,12 @@ tells you the systemctl command that turns it on. A unit file lmm did not
 write is left alone.
 
 --auto-update also installs lmm-update.timer, which runs 'lmm self-update
---auto' once a day. That installs a new lmm release only while config.yaml
-says 'auto_update: true', so the setting turns updates on and off without
-touching the units. Later installs keep the timer; 'lmm service uninstall'
+--auto' once a day. You do not need it for automatic updates: lmm already
+updates itself after a command, or from 'lmm serve', once it learns of a new
+release. The timer is for a machine where lmm rarely runs. Like every
+automatic update, it installs nothing while config.yaml says
+'auto_update: false', so the setting turns updates off without touching the
+units. Later installs keep the timer; 'lmm service uninstall'
 removes it. It is refused for an lmm a package manager installed, which
 'lmm self-update' never replaces.
 
@@ -113,11 +121,76 @@ Examples:
 	},
 }
 
+var serviceRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Restart lmm-serve.service, starting it if it is stopped",
+	Long: `Restart lmm-serve.service, or start it if it is stopped, and say whether
+it is running a moment later. Nothing is reinstalled or rewritten, so it
+works the same for a unit 'lmm service install' wrote and for one your lmm
+package installed. It does not turn on a service that is turned off, so it
+will not start at your next login; 'systemctl --user enable lmm-serve' turns
+it on.
+
+Restart the service after a change it only reads when it starts, such as a
+key you stored with 'lmm auth login' or a PATH you changed with
+'systemctl --user set-environment'. It is the same as:
+  systemctl --user restart lmm-serve
+
+A restart stops any job the web UI is running, as stopping 'lmm serve'
+would.
+
+Examples:
+  lmm service restart
+  lmm service restart --json`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		return doServiceRestart(cmd.Context())
+	},
+}
+
 func init() {
 	serviceInstallCmd.Flags().StringVar(&serviceAddr, "addr", "", "address 'lmm serve' listens on (host:port; default "+defaultServeAddr+")")
-	serviceInstallCmd.Flags().BoolVar(&serviceAutoUpdate, "auto-update", false, "also install lmm-update.timer, which runs 'lmm self-update' daily while auto_update is true in config.yaml")
-	serviceCmd.AddCommand(serviceInstallCmd, serviceUninstallCmd, serviceStatusCmd)
+	serviceInstallCmd.Flags().BoolVar(&serviceAutoUpdate, "auto-update", false, "also install lmm-update.timer, which runs 'lmm self-update --auto' daily (for a machine where lmm rarely runs)")
+	serviceCmd.AddCommand(serviceInstallCmd, serviceUninstallCmd, serviceRestartCmd, serviceStatusCmd)
 	rootCmd.AddCommand(serviceCmd)
+}
+
+// serviceEnvOnlyCredentials reads which sources' keys this shell holds only
+// in an environment variable (#582), for the warning install and status
+// print. It is a variable so a test never opens a real installation.
+var serviceEnvOnlyCredentials = realServiceEnvOnlyCredentials
+
+// realServiceEnvOnlyCredentials is serviceEnvOnlyCredentials' real
+// implementation. A failure to read them is not the command's failure -
+// the units are what it is about - so it reports none.
+func realServiceEnvOnlyCredentials(ctx context.Context) []core.EnvOnlyCredential {
+	svc, err := initServiceWith(ctx, app.Options{WarnWriter: io.Discard})
+	if err != nil {
+		return nil
+	}
+	defer closeService(svc)
+	report, err := app.AuthStatus(ctx, svc)
+	if err != nil {
+		return nil
+	}
+	return app.EnvOnlyCredentials(report)
+}
+
+// serviceMissingCredentials is every source whose key this shell has only
+// in an environment variable that the user manager does not hand
+// lmm-serve.service either (#582).
+func serviceMissingCredentials(ctx context.Context, units *core.UserUnits) []core.EnvOnlyCredential {
+	return units.WithoutManagerEnvironment(ctx, serviceEnvOnlyCredentials(ctx))
+}
+
+// printEnvOnlyCredentials warns once per source whose key lmm-serve will
+// not see (#582): the unit does not inherit this shell's exports, and lmm
+// never writes a key into the unit file.
+func printEnvOnlyCredentials(creds []core.EnvOnlyCredential) {
+	for _, c := range creds {
+		fmt.Printf("%s %s's key comes only from $%s, which lmm-serve.service will not see.\n", colorYellow("!"), c.Name, c.EnvVar)
+		fmt.Printf("  Store it with: lmm auth login %s (or the web UI's Setup > Authentication), then: lmm service restart\n", c.SourceID)
+	}
 }
 
 // doServiceInstall installs lmm-serve.service alone, as before
@@ -176,6 +249,7 @@ func doServiceInstallWith(ctx context.Context, cmd *cobra.Command, addr string, 
 	if err != nil {
 		return err
 	}
+	report.EnvOnlyCredentials = serviceMissingCredentials(ctx, units)
 	if jsonOutput {
 		return emitJSON(report)
 	}
@@ -202,6 +276,7 @@ func doServiceInstallWith(ctx context.Context, cmd *cobra.Command, addr string, 
 		}
 	}
 	printLingerHint(report.Linger, units.User)
+	printEnvOnlyCredentials(report.EnvOnlyCredentials)
 	return nil
 }
 
@@ -233,6 +308,37 @@ func doServiceUninstall(ctx context.Context) error {
 	return nil
 }
 
+// doServiceRestart restarts lmm-serve.service (#591) and says whether it
+// came back up.
+func doServiceRestart(ctx context.Context) error {
+	units, err := newUserUnits()
+	if err != nil {
+		return err
+	}
+	report, err := units.Restart(ctx)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return emitJSON(report)
+	}
+	for _, u := range report.Units {
+		if u.Name != core.ServeUnitName {
+			continue
+		}
+		if !u.Active {
+			fmt.Printf("%s %s restarted but is not running (%s); see: journalctl --user -u %s\n",
+				colorYellow("!"), colorBold(u.Name), u.ActiveState, strings.TrimSuffix(u.Name, ".service"))
+			continue
+		}
+		fmt.Printf("Restarted %s; it is running.\n", colorBold(u.Name))
+		if !u.Enabled {
+			fmt.Println(colorDim("  It is turned off, so it will not start when you next log in; turn it on with: systemctl --user enable " + u.Name))
+		}
+	}
+	return nil
+}
+
 // doServiceStatus prints each unit's state and whether lingering is on.
 func doServiceStatus(ctx context.Context) error {
 	units, err := newUserUnits()
@@ -243,6 +349,7 @@ func doServiceStatus(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	report.EnvOnlyCredentials = serviceMissingCredentials(ctx, units)
 	if jsonOutput {
 		return emitJSON(report)
 	}
@@ -267,15 +374,16 @@ func doServiceStatus(ctx context.Context) error {
 	}
 	if report.Linger {
 		fmt.Println("lingering:    on - your user services start at boot")
-		return nil
+	} else {
+		fmt.Println("lingering:    off - your user services start when you log in")
+		printLingerHint(false, units.User)
 	}
-	fmt.Println("lingering:    off - your user services start when you log in")
-	printLingerHint(false, units.User)
+	printEnvOnlyCredentials(report.EnvOnlyCredentials)
 	return nil
 }
 
 // printAutoUpdateState says whether the timer will install anything: it
-// does only while config.yaml says auto_update: true.
+// does unless config.yaml says auto_update: false.
 func printAutoUpdateState() {
 	cfgDir := configDir
 	if cfg, err := getServiceConfig(); err == nil {
@@ -286,7 +394,7 @@ func printAutoUpdateState() {
 		fmt.Println("  lmm updates itself daily: auto_update is on.")
 		return
 	}
-	fmt.Printf("  It checks daily, but installs nothing until you add 'auto_update: true' to %s\n", filepath.Join(cfgDir, "config.yaml"))
+	fmt.Printf("  It checks daily, but installs nothing while %s says 'auto_update: false'\n", filepath.Join(cfgDir, "config.yaml"))
 }
 
 // printLingerHint tells a user without lingering how to start at boot. It

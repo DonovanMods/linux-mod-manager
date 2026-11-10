@@ -24,7 +24,14 @@ func DetectSPDX(text string) []string {
 		strings.Contains(t, "licensed under the apache license, version 2.0") {
 		ids["Apache-2.0"] = true
 	}
-	if strings.Contains(t, "permission is hereby granted, free of charge, to any person obtaining a copy") {
+	// The OFL's grant opens with MIT's own words, so its sentence is taken
+	// out before MIT is looked for: a font is not MIT-licensed for saying
+	// "obtaining a copy of the font software".
+	if strings.Contains(t, "sil open font license") && strings.Contains(t, "version 1.1") {
+		ids["OFL-1.1"] = true
+	}
+	mit := strings.ReplaceAll(t, "obtaining a copy of the font software", "")
+	if strings.Contains(mit, "permission is hereby granted, free of charge, to any person obtaining a copy") {
 		ids["MIT"] = true
 	}
 	if strings.Contains(t, "redistribution and use in source and binary forms") &&

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 
 	"github.com/stretchr/testify/assert"
@@ -83,4 +84,64 @@ func TestRenderVerifySkipped_AnAdapterRowSaysItIsTheAdapter(t *testing.T) {
 		return nil
 	})
 	assert.Equal(t, "? Mod m1 - could not check file count: db locked\n", out)
+}
+
+// TestRenderVerifySkipped_AnAuthRefusalNamesTheKeyAndTheFix (#582): a
+// version check the source refused for want of a key printed "source
+// unreachable" - wrong, and with no next step. It names the missing key
+// and the command that stores one; a genuinely unreachable source keeps
+// its own line.
+func TestRenderVerifySkipped_AnAuthRefusalNamesTheKeyAndTheFix(t *testing.T) {
+	out := captureStdout(t, func() error {
+		renderVerifyFinding(core.VerifyEvent{Finding: core.VerifyFinding{
+			Status: "skipped", ModID: "m1", ModName: "Auctionator",
+			Note:          "could not check version: getting mod files: authentication required: CurseForge API key required",
+			FixableReason: "CurseForge needs an API key", AuthSource: "curseforge",
+		}})
+		return nil
+	})
+	assert.Equal(t, "? Auctionator - could not check version: CurseForge needs an API key (run: lmm auth login curseforge)\n", out)
+
+	out = captureStdout(t, func() error {
+		renderVerifyFinding(core.VerifyEvent{Finding: core.VerifyFinding{
+			Status: "skipped", ModID: "m2", ModName: "Other", Note: "could not check version: boom",
+		}})
+		return nil
+	})
+	assert.Equal(t, "? Other - could not check version (source unreachable)\n", out)
+}
+
+// TestRenderVerifySkipped_ARejectedEnvKeyNamesTheVariable (#582): when the
+// refused key comes from the source's environment variable, `lmm auth
+// login` cannot help - the variable outranks a stored key - so the line
+// says to check the variable instead. A stored key that was rejected still
+// points at auth login, which replaces it.
+func TestRenderVerifySkipped_ARejectedEnvKeyNamesTheVariable(t *testing.T) {
+	old := verifyAuthEnvVars
+	t.Cleanup(func() { verifyAuthEnvVars = old })
+	finding := core.VerifyEvent{Finding: core.VerifyFinding{
+		Status: "skipped", ModID: "m1", ModName: "Auctionator",
+		Note:          "could not check version: getting mod files: authentication required: access denied (check API key is valid)",
+		FixableReason: "CurseForge rejected its API key", AuthSource: "curseforge",
+	}}
+
+	verifyAuthEnvVars = map[string]string{"curseforge": "CURSEFORGE_API_KEY"}
+	out := captureStdout(t, func() error { renderVerifyFinding(finding); return nil })
+	assert.Equal(t, "? Auctionator - could not check version: CurseForge rejected its API key (check $CURSEFORGE_API_KEY)\n", out)
+
+	verifyAuthEnvVars = nil
+	out = captureStdout(t, func() error { renderVerifyFinding(finding); return nil })
+	assert.Equal(t, "? Auctionator - could not check version: CurseForge rejected its API key (run: lmm auth login curseforge)\n", out)
+}
+
+// TestVerifyAuthEnvVars (#582): the sources whose ACTIVE key is their
+// environment variable, read from the same auth status `lmm auth status`
+// prints.
+func TestVerifyAuthEnvVars(t *testing.T) {
+	assert.Equal(t, map[string]string{"curseforge": "CURSEFORGE_API_KEY"}, authEnvVars(&app.AuthStatusReport{Sources: []app.AuthSourceStatus{
+		{ID: "curseforge", Authenticated: true, Via: "env", EnvVar: "CURSEFORGE_API_KEY"},
+		{ID: "nexusmods", Authenticated: true, Via: "stored", EnvVar: "NEXUSMODS_API_KEY"},
+		{ID: "steamworkshop", EnvVar: "STEAM_API_KEY"},
+	}}))
+	assert.Nil(t, authEnvVars(nil))
 }

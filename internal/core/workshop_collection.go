@@ -131,6 +131,8 @@ func (s *Service) PlanWorkshopCollectionImport(ctx context.Context, game *domain
 	if err != nil {
 		return nil, err
 	}
+	collection.Name = domain.SanitizeLine(collection.Name) // #594
+	collection.URL = domain.SanitizeLine(collection.URL)
 	if len(collection.ItemIDs) == 0 {
 		return nil, fmt.Errorf("collection %s: %w: it lists no items", collection.ID, source.ErrInvalidReference)
 	}
@@ -236,7 +238,7 @@ func (s *Service) describeCollectionItems(ctx context.Context, game *domain.Game
 		if d.Unavailable {
 			continue
 		}
-		out[d.ModID] = d.Mod
+		out[d.ModID] = *sanitizeSourceMod(&d.Mod) // #594
 	}
 	return out
 }

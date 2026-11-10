@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -27,7 +28,8 @@ database and profiles the CLI uses.
 
 Binds to 127.0.0.1:7420 by default - local-only, no authentication in this
 release. Binding a non-loopback address prints a warning: anyone who can
-reach that address can drive lmm exactly as you can.
+reach that address can drive lmm exactly as you can, and launch programs
+(the Play button starts your games on this machine).
 
 Opens the default browser automatically unless --no-open is given.
 
@@ -66,12 +68,16 @@ func doServe(ctx context.Context, cmd *cobra.Command, svc *core.Service) error {
 		return err
 	}
 
-	srv := serve.New(ctx, svc, svc.Logger(), serve.Options{
+	opts := serve.Options{
 		Addr:           serveAddr,
 		Version:        computeDisplayVersion(version, buildDescribe),
 		ReleaseChecker: serveReleaseChecker(),
 		Notices:        cmd.OutOrStdout(),
-	})
+	}
+	if u := serveAutoUpdater(); u != nil {
+		opts.AutoUpdater = u
+	}
+	srv := serve.New(ctx, svc, svc.Logger(), opts)
 	addr, err := srv.Listen()
 	if err != nil {
 		return err
@@ -105,6 +111,29 @@ func serveReleaseChecker() *core.ReleaseChecker {
 	return rc
 }
 
+// serveAutoUpdater is the updater `lmm serve` installs a newer release
+// through when auto_update is on (#586). Under systemd it also restarts
+// lmm-serve.service - this very server, once none of its jobs runs - onto
+// a newer binary installed under it, by its own update or another
+// process's; an lmm serve started by hand has no unit to restart, and its
+// banner asks instead. nil, as for the checker, in a binary Execute did
+// not arm.
+func serveAutoUpdater() *core.SelfUpdater {
+	if !releaseCheckArmed {
+		return nil
+	}
+	opts, err := selfUpdateOptions()
+	if err != nil {
+		return nil
+	}
+	if os.Getenv("INVOCATION_ID") != "" {
+		if units, err := newUserUnits(); err == nil {
+			opts.Restarter = units
+		}
+	}
+	return core.NewSelfUpdater(opts)
+}
+
 // warnIfNonLoopback prints the loud, undismissable warning
 // (docs/plans/2026-08-30-serve-design.md §Security) when addr is not
 // loopback-only: there is no authentication in this release, so anything
@@ -116,7 +145,7 @@ func warnIfNonLoopback(cmd *cobra.Command, addr string) error {
 	}
 	if !loopback {
 		_, err := fmt.Fprintf(cmd.ErrOrStderr(),
-			"%s lmm serve is bound to %s, which is reachable from outside this machine. There is no authentication in this release - anyone who can reach it can drive lmm exactly as you can. Only do this on a trusted network.\n",
+			"%s lmm serve is bound to %s, which is reachable from outside this machine. There is no authentication in this release - anyone who can reach it can drive lmm exactly as you can, and launch programs. Only do this on a trusted network.\n",
 			colorRed("WARNING:"), addr)
 		return err
 	}

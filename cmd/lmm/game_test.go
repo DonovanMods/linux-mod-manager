@@ -386,6 +386,7 @@ func TestGameClearDefault_WithDefault(t *testing.T) {
 }
 
 func TestRequireGame_WithFlag(t *testing.T) {
+	restoreFlags(t)
 	gameID = "test-game"
 	err := requireGame(nil)
 	assert.NoError(t, err)
@@ -393,6 +394,7 @@ func TestRequireGame_WithFlag(t *testing.T) {
 }
 
 func TestRequireGame_WithDefault(t *testing.T) {
+	restoreFlags(t)
 	// Use temp directories
 	tmpDir := t.TempDir()
 	configDir = tmpDir

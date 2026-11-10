@@ -466,3 +466,134 @@ func TestService_ApplyRelinkMod_EmitsProgressEvents(t *testing.T) {
 	assert.Contains(t, phases, core.RelinkFetching)
 	assert.Contains(t, phases, core.RelinkWarning)
 }
+
+// #590: a re-link moves the mod's identity, and the cache entry it was
+// installed from goes with it. The entry stayed under <source>-<old-id>,
+// so `lmm verify` reported every file MISSING right after a re-link - the
+// Re-link a gone mod's successor is offered would have left the user with a
+// red Health card. The old entry is kept (another profile may still have
+// the old id installed), and the new one carries the same files.
+func TestService_ApplyRelinkMod_CarriesTheCacheEntryToTheNewID(t *testing.T) {
+	ctx := context.Background()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	seedInstalledMod(t, svc, game, domain.SourceLocal, "old", "1.0", true, map[string][]byte{
+		"first.esp": []byte("first"), "sub/second.esp": []byte("second"),
+	})
+	seedProfileWithMod(t, svc, game.ID, "default", domain.SourceLocal, "old", "1.0")
+	require.NoError(t, svc.GetInstallerForTest(game).Install(ctx, game,
+		&domain.Mod{ID: "old", SourceID: domain.SourceLocal, Version: "1.0", GameID: game.ID}, "default"))
+
+	plan, err := svc.PlanRelinkMod(ctx, game, "default", domain.SourceLocal, "old", "", "new")
+	require.NoError(t, err)
+	_, err = svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.NoError(t, err)
+
+	gameCache := svc.GetGameCache(game)
+	require.True(t, gameCache.Exists(game.ID, domain.SourceLocal, "new", "1.0"), "the new id has the cache entry")
+	got, err := os.ReadFile(gameCache.GetFilePath(game.ID, domain.SourceLocal, "new", "1.0", "sub/second.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, "second", string(got))
+	assert.True(t, gameCache.Exists(game.ID, domain.SourceLocal, "old", "1.0"), "the old entry is kept, and the deployed links into it stay valid")
+
+	result, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, nil)
+	require.NoError(t, err)
+	for _, f := range result.Findings {
+		assert.NotEqual(t, "missing", f.Status, "nothing is missing right after a re-link: %+v", f)
+	}
+	assert.Zero(t, result.Issues)
+}
+
+// TestService_ApplyRelinkMod_RenamesTheRefInPlace is #593: a re-link moves
+// the profile ref to its new identity where it stands. It used to remove the
+// old ref and upsert a fresh one, which appended the mod to the END of the
+// load order (a merge/deploy precedence change) and dropped the ref's
+// Disabled marker (#431) - desired state, so the next converge re-deployed a
+// mod the user had switched off - and its FileIDs.
+func TestService_ApplyRelinkMod_RenamesTheRefInPlace(t *testing.T) {
+	ctx := context.Background()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy}
+	for _, id := range []string{"first", "middle", "last"} {
+		seedInstalledMod(t, svc, game, domain.SourceLocal, id, "1.0", true, nil)
+		seedProfileWithMod(t, svc, game.ID, "default", domain.SourceLocal, id, "1.0")
+	}
+	pm := svc.NewProfileManager()
+	prof, err := pm.Get(ctx, game.ID, "default")
+	require.NoError(t, err)
+	refs := prof.Mods
+	refs[1].FileIDs = []string{"f1", "f2"}
+	refs[1].Category = "Textures"
+	refs[1].Disabled = true
+	require.NoError(t, pm.ReorderMods(ctx, game.ID, "default", refs))
+
+	plan, err := svc.PlanRelinkMod(ctx, game, "default", domain.SourceLocal, "middle", "", "renamed")
+	require.NoError(t, err)
+	_, err = svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.NoError(t, err)
+
+	prof, err = pm.Get(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, prof.Mods, 3)
+	got := prof.Mods[1]
+	assert.Equal(t, domain.ModReference{
+		SourceID: domain.SourceLocal, ModID: "renamed", Version: "1.0",
+		FileIDs: []string{"f1", "f2"}, Disabled: true, Category: "Textures",
+	}, got, "the renamed ref keeps its index and every intent field")
+	assert.Equal(t, "first", prof.Mods[0].ModID)
+	assert.Equal(t, "last", prof.Mods[2].ModID)
+
+	list, err := svc.ListMods(ctx, game, "default")
+	require.NoError(t, err)
+	var order []string
+	for _, m := range list.Mods {
+		order = append(order, m.ID)
+	}
+	assert.Equal(t, []string{"first", "renamed", "last"}, order, "the load order is unchanged")
+}
+
+// TestService_ApplyRelinkMod_UnlistedModGetsANewRef: with no ref to rename
+// (the row was installed but the profile never listed it), a re-link still
+// records the new identity in the profile, as it did before #593.
+func TestService_ApplyRelinkMod_UnlistedModGetsANewRef(t *testing.T) {
+	ctx := context.Background()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy}
+	seedInstalledMod(t, svc, game, domain.SourceLocal, "other", "1.0", true, nil)
+	seedProfileWithMod(t, svc, game.ID, "default", domain.SourceLocal, "other", "1.0")
+	seedInstalledMod(t, svc, game, domain.SourceLocal, "unlisted", "1.0", true, nil)
+
+	plan, err := svc.PlanRelinkMod(ctx, game, "default", domain.SourceLocal, "unlisted", "", "renamed")
+	require.NoError(t, err)
+	result, err := svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Notes, "a missing old ref is not a warning")
+
+	prof, err := svc.NewProfileManager().Get(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, prof.Mods, 2)
+	assert.Equal(t, domain.ModReference{SourceID: domain.SourceLocal, ModID: "renamed", Version: "1.0"}, prof.Mods[1])
+}
+
+// TestService_ApplyRelinkMod_TargetListedButNotInstalled: a profile that
+// already lists the new identity (a hand edit; the DB has no row for it, or
+// the plan would have refused) cannot take a rename onto it without listing
+// the mod twice, so the old ref goes and the listed one is kept where it is.
+func TestService_ApplyRelinkMod_TargetListedButNotInstalled(t *testing.T) {
+	ctx := context.Background()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy}
+	seedInstalledMod(t, svc, game, domain.SourceLocal, "old", "1.0", true, nil)
+	seedProfileWithMod(t, svc, game.ID, "default", domain.SourceLocal, "new", "0.9")
+	seedProfileWithMod(t, svc, game.ID, "default", domain.SourceLocal, "old", "1.0")
+
+	plan, err := svc.PlanRelinkMod(ctx, game, "default", domain.SourceLocal, "old", "", "new")
+	require.NoError(t, err)
+	require.False(t, plan.TargetInstalled)
+	_, err = svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.NoError(t, err)
+
+	prof, err := svc.NewProfileManager().Get(ctx, game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, []domain.ModReference{{SourceID: domain.SourceLocal, ModID: "new", Version: "1.0"}}, prof.Mods)
+}

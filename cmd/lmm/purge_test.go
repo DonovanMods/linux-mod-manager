@@ -62,6 +62,7 @@ func TestPurgeCmd_DefaultFlags(t *testing.T) {
 
 // TestPurgeCmd_GameNotFound tests purge with non-existent game
 func TestPurgeCmd_GameNotFound(t *testing.T) {
+	restoreFlags(t)
 	// Use temp directories
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
@@ -84,6 +85,7 @@ func TestPurgeCmd_GameNotFound(t *testing.T) {
 
 // TestPurgeCmd_NoModsToPurge tests purge with no installed mods
 func TestPurgeCmd_NoModsToPurge(t *testing.T) {
+	restoreFlags(t)
 	// Set up temp directories
 	tempDir := t.TempDir()
 	cfgDir := filepath.Join(tempDir, "config")

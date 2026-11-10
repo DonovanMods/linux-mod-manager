@@ -2,6 +2,7 @@ package app
 
 import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bepinex"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/d2r"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/icarus"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
@@ -33,7 +34,10 @@ import (
 // simply installed in its directory, resolves to it, and the archive-layout
 // rules, the config routing, the loader precondition and the loader verify
 // tier come with it. Nothing in games.yaml has to change for that either.
+// d2r is never derived: only Battle.net detection's catalog entry for
+// Diablo II: Resurrected (#546) names it.
 func RegisterAdapters(svc *core.Service) {
 	svc.RegisterAdapter(icarus.New())
 	svc.RegisterAdapter(bepinex.New())
+	svc.RegisterAdapter(d2r.New())
 }

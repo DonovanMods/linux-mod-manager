@@ -99,6 +99,9 @@ func eachKeyedCall(t *testing.T, baseURL string, check func(t *testing.T, err er
 }
 
 func TestNoErrorEverCarriesTheAPIKey_TransportFailure(t *testing.T) {
+	// A closed port fails every attempt; the retries still run, without the
+	// backoff between them.
+	steamworkshop.SkipRetryBackoffForTest(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	addr := ln.Addr().String()

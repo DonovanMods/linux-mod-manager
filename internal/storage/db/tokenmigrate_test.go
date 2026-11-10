@@ -195,6 +195,7 @@ func TestSaveToken_RecordsCreatedAtAndPreservesItAcrossUpdates(t *testing.T) {
 // What happens on the next open is
 // TestOpen_AFailedScrubIsRetriedOnTheNextOpen, which keeps a connection up.
 func TestOpen_ContendedMigrationFailsRatherThanLeavingPlaintextInTheWAL(t *testing.T) {
+	useShortContentionWaits(t)
 	dir := sandboxHome(t)
 	dbPath := filepath.Join(dir, "lmm.db")
 	keyPath := filepath.Join(dir, TokenKeyFileName)
@@ -302,6 +303,36 @@ func setScrubMarker(t *testing.T, d *DB) {
 	require.NoError(t, err)
 }
 
+// useShortContentionWaits scales the waits a contended open spends -
+// busyTimeout, the backoff between scrub attempts and the scrub's overall
+// budget - from seconds down to milliseconds for one test (#576), and puts
+// the real values back when it ends. Every contention path still runs: each
+// attempt still waits out a busy_timeout and gives up with SQLITE_BUSY, and
+// the budget keeps the margin TestScrubBudget_CoversEveryRetryWithRoomToSpare
+// pins for the real values, so it is the attempt count, not the deadline,
+// that ends the wait.
+//
+// Call it before the test opens anything: the busy timeout is baked into
+// the DSN at open. The package's tests do not run in parallel, so a plain
+// assignment is safe.
+func useShortContentionWaits(t *testing.T) {
+	t.Helper()
+	oldBusy, oldPause, oldBudget := busyTimeout, scrubRetryPause, scrubBudget
+	busyTimeout = 50 * time.Millisecond
+	scrubRetryPause = 5 * time.Millisecond
+	scrubBudget = 2 * time.Second
+	t.Cleanup(func() { busyTimeout, scrubRetryPause, scrubBudget = oldBusy, oldPause, oldBudget })
+	require.Greater(t, scrubBudget, scrubWorstCase(busyTimeout),
+		"the shortened budget must still outlast every retry, or the deadline would end the wait instead of the attempts")
+}
+
+// scrubWorstCase is how long the scrub's retries take when every attempt
+// waits out busy: two steps, scrubAttempts each, plus the doubling backoff
+// between them.
+func scrubWorstCase(busy time.Duration) time.Duration {
+	return 2 * (scrubAttempts*busy + scrubRetryPause + 2*scrubRetryPause)
+}
+
 // holdContention seeds a legacy plaintext row through a connection it leaves
 // open - so the plaintext frames stay in lmm.db-wal - and holds a read
 // transaction across it, which is exactly what a second lmm process (`lmm
@@ -341,6 +372,7 @@ func holdContention(t *testing.T, dbPath, legacyKey string) (seeder *DB, release
 // closing it would let SQLite's own last-connection checkpoint clean the WAL
 // and the assertion would pass without lmm scrubbing anything.
 func TestOpen_AFailedScrubIsRetriedOnTheNextOpen(t *testing.T) {
+	useShortContentionWaits(t)
 	dir := sandboxHome(t)
 	dbPath := filepath.Join(dir, "lmm.db")
 	keyPath := filepath.Join(dir, TokenKeyFileName)
@@ -380,6 +412,7 @@ func TestOpen_AFailedScrubIsRetriedOnTheNextOpen(t *testing.T) {
 // on the first, because the user has by then followed the remedy and
 // believes the plaintext is gone.
 func TestOpen_ASecondContendedOpenFailsAgainRatherThanReportingSuccess(t *testing.T) {
+	useShortContentionWaits(t)
 	dir := sandboxHome(t)
 	dbPath := filepath.Join(dir, "lmm.db")
 	keyPath := filepath.Join(dir, TokenKeyFileName)
@@ -487,6 +520,7 @@ func TestCheckpointWALOnce_ADatabaseWithNoWALHasNothingToCheckpoint(t *testing.T
 // when the wait starts, naming the cap, and one when it resolves or is
 // given up on.
 func TestOpen_AContendedScrubSaysSoWhileItWaits(t *testing.T) {
+	useShortContentionWaits(t)
 	dir := sandboxHome(t)
 	dbPath := filepath.Join(dir, "lmm.db")
 	keyPath := filepath.Join(dir, TokenKeyFileName)
@@ -520,9 +554,10 @@ func TestOpen_AContendedScrubSaysSoWhileItWaits(t *testing.T) {
 // that would have succeeded, too large and it stops being a cap.
 func TestScrubBudget_CoversEveryRetryWithRoomToSpare(t *testing.T) {
 	// Two steps, scrubAttempts each, every attempt waiting out the 5 s
-	// busy_timeout, plus the doubling backoff between them.
-	const busyTimeout = 5 * time.Second
-	worstCase := 2 * (scrubAttempts*busyTimeout + scrubRetryPause + 2*scrubRetryPause)
+	// busy_timeout, plus the doubling backoff between them. The real values:
+	// this test does not call useShortContentionWaits.
+	require.Equal(t, 5*time.Second, busyTimeout)
+	worstCase := scrubWorstCase(busyTimeout)
 
 	assert.Greater(t, scrubBudget, worstCase, "the cap must not preempt a retry that would have succeeded")
 	assert.Less(t, scrubBudget, time.Minute, "but it is a cap, not a licence to wait")

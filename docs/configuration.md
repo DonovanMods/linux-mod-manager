@@ -18,7 +18,7 @@ Global application settings. Optional; defaults apply if the file is missing.
 | `auto_snapshot`       | bool   | `false`   | Record a snapshot before every deploy, profile switch and update (see below)                         |
 | `auto_snapshot_keep`  | int    | `10`      | How many AUTOMATIC snapshots to keep per game; `0` means unlimited (see below)                       |
 | `update_check`        | bool   | `true`    | Check GitHub once a day for a newer lmm release and say so (see below)                               |
-| `auto_update`         | bool   | `false`   | Let `lmm-update.timer` install a new lmm release unattended (see below)                              |
+| `auto_update`         | bool   | `true`    | Let lmm install a new lmm release by itself; self-managed installs only (see below)                  |
 
 ### `auto_snapshot`
 
@@ -132,14 +132,42 @@ the automatic check off; `lmm version --check` still asks when you run it.
 
 ### `auto_update`
 
-With `auto_update: true`, the daily `lmm-update.timer` installed by
-`lmm service install --auto-update` runs `lmm self-update --auto`, which
-installs a new release unattended. It is **off by default**, and the timer's
-run does nothing while it is off, so setting it back to `false` stops
-updates without touching the unit. It applies only to an lmm you manage
-yourself (the release tarball, `go install`, `make install`): a package
-manager's binary is never replaced. Every update is verified against the
-lmm release key before it is installed; see `lmm self-update`.
+lmm installs a new release by itself: automatic updates are **on by
+default**, and `auto_update: false` turns them off (an explicit `false`
+survives every save lmm makes to `config.yaml`; you can also turn it off
+under the web UI's **Setup > Updates**). The trigger is the daily
+`update_check`: when it finds a newer release,
+
+- after an interactive command, lmm starts `lmm self-update --auto` in the
+  background, detached from the terminal (its output goes to
+  `<data dir>/auto-update.log`), and the command exits as it would have. A
+  script, a pipe or `--json` never triggers one;
+- a running `lmm serve` installs it from its background refresh;
+- `lmm-update.timer` (`lmm service install --auto-update`) runs it daily
+  too, which is only worth having on a machine where lmm rarely runs.
+
+It applies only to an lmm you manage yourself (the release tarball,
+`go install`, `make install`): a package manager's binary, or a development
+build, is never replaced. Every update is verified against the lmm release
+key before it is installed, exactly as `lmm self-update` does; only one runs
+at a time, and a release whose update failed is left alone for a day. A
+release check that fails (offline, GitHub erroring) backs off from an hour,
+doubling up to a day. No update installs while any lmm operation is
+running - a CLI command or a web UI job. None of them restarts
+`lmm-serve.service`, nor does `lmm self-update`: they replace the binary
+and stop. With `auto_update` on, `lmm serve` running as `lmm-serve.service`
+looks at its binary every minute and, once it finds a newer one, restarts
+itself when none of its jobs is running, waiting up to ten minutes for one
+and otherwise leaving the restart to you. A `lmm serve` you started
+yourself, or any with `auto_update: false`, shows "restart `lmm serve` to
+use it" instead. The outcome is kept in `<data dir>/auto-update.json`, and the
+next interactive command or the web UI, whichever comes first, says once
+that lmm updated itself. With
+`update_check: false` nothing learns of a new release, so only the timer
+still updates lmm.
+
+An lmm older than the release that made this the default (v2.2.0) treats a
+missing `auto_update` as off: update it once by hand with `lmm self-update`.
 
 ## games.yaml
 
@@ -643,6 +671,32 @@ the install directory — stays **detect-only**: `lmm game detect
 --include-unknown` still lists it with its app id, and `lmm game add` can
 still configure it by hand. That is the honest answer, and it is preferred
 over a guessed path.
+
+## battlenet-games.yaml (optional)
+
+**`<config>/battlenet-games.yaml`** is `steam-games.yaml`'s counterpart for
+Battle.net games (#545), merged over the embedded
+`internal/source/battlenet/data/battlenet-games.yaml` the same way. Keys are
+**product codes**: the `Product` column of the `.build.info` file in the
+game's install folder (`wow`, `wow_classic`, `wow_classic_era`, `wowf`).
+
+| Field                           | Meaning                                                                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `slug`, `name`                  | The game id and display name, as in `steam-games.yaml`. Required.                                                                 |
+| `install_dir`                   | The folder under the product's install folder the game lives in: World of Warcraft's flavor folder (`_classic_`). Empty is the install folder itself. It becomes the game's `install_path`, so every flavor is its own game. |
+| `mod_path`                      | Relative to `install_dir`.                                                                                                        |
+| `sources`                       | The game's complete source map. Required.                                                                                         |
+| `curseforge.game_version_types` | The game's [CurseForge flavor](guide/add-a-game.md#pick-a-curseforge-game-flavor) (#544), written into the generated entry's `curseforge:` block.                       |
+| `launch_code`                   | What Battle.net's `--exec="launch <code>"` takes, written into the generated `launch.battlenet.product`. Omit it unless you know it: without it, Play opens the Battle.net client. |
+
+Detection looks for prefixes in `$WINEPREFIX`, `~/.wine`, `~/Games/*`,
+both Bottles locations and every Steam library's `compatdata/*/pfx`, then
+for game folders in each prefix's `system.reg` Uninstall keys and directly
+under its `drive_c/Program Files` folders. Overwatch, Hearthstone, Heroes
+of the Storm and Call of Duty are never detected, whatever this file says:
+they are competitive titles with anti-cheat. A file lmm cannot read or
+parse is a detection warning, not a failure: Battle.net games are then
+detected from the embedded catalog alone, and Steam's are unaffected.
 
 ## File locations
 

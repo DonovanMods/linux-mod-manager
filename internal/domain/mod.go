@@ -155,6 +155,17 @@ type ModReference struct {
 	// byte-identical until a mod is actually disabled.
 	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitzero"`
 
+	// Category is the user's category for the mod in this profile (#592),
+	// which overrides the source's own (Mod.CategoryName) wherever the mod
+	// list is grouped. One per mod. It follows Disabled's rules exactly: it
+	// is user intent, so it lives in the profile document and travels with
+	// export/import/duplicate/copy; it is set and cleared only by
+	// Service.SetModCategory, and UpsertMod preserves it, so no
+	// install/update/converge write can drop it. ABSENT MEANS NONE, and
+	// both tags omit the empty string, so every profile file and document
+	// written before the field existed is byte-identical.
+	Category string `yaml:"category,omitempty" json:"category,omitempty"`
+
 	// External and UpdatedAt are DISPLAY facts a plan document carries so a
 	// renderer never has to print Version raw (#365, part of #269).
 	//
@@ -194,11 +205,20 @@ type Mod struct {
 	// resolves to its persona name). Empty when Author is already a name
 	// or no name resolved - a surface shows AuthorName when set and Author
 	// otherwise. Never stored.
-	AuthorName   string         `json:"author_name,omitempty"`
-	Summary      string         `json:"summary"`
-	Description  string         `json:"description"`
-	GameID       string         `json:"game_id"`
-	Category     string         `json:"category"`
+	AuthorName  string `json:"author_name,omitempty"`
+	Summary     string `json:"summary"`
+	Description string `json:"description"`
+	GameID      string `json:"game_id"`
+	Category    string `json:"category"`
+	// CategoryName is the source's category for the mod as a person reads
+	// it (#592): CurseForge's primary category name, NexusMods' category_id
+	// resolved through the game's category list. Category keeps its
+	// historical meaning (the source's own id for it, numeric for both), so
+	// every document that already carried it reads the same. Empty when
+	// the source has no category or no name resolved. Unlike AuthorName it
+	// IS stored (installed_mods.category_name), so a mod list can group by
+	// it with no network read.
+	CategoryName string         `json:"category_name,omitempty"`
 	Downloads    int64          `json:"downloads"`
 	Endorsements *int64         `json:"endorsements,omitempty"`
 	PictureURL   string         `json:"picture_url"` // Main image URL (e.g. NexusMods picture_url)
@@ -231,17 +251,36 @@ type Mod struct {
 // InstalledMod tracks a mod installed in a profile
 type InstalledMod struct {
 	Mod
-	ProfileName     string       `json:"profile_name"`
-	UpdatePolicy    UpdatePolicy `json:"update_policy"`
-	InstalledAt     time.Time    `json:"installed_at"`
-	Enabled         bool         `json:"enabled"`                     // User intent: wants this mod active
-	Deployed        bool         `json:"deployed"`                    // Current state: files are in game directory
-	PreviousVersion string       `json:"previous_version,omitempty"`  // Version before last update (for rollback)
-	PreviousFileIDs []string     `json:"previous_file_ids,omitempty"` // File IDs before last update (for rollback)
-	LinkMethod      LinkMethod   `json:"link_method"`                 // How the mod was deployed (symlink, hardlink, copy)
-	FileIDs         []string     `json:"file_ids,omitempty"`          // Source-specific file IDs that were downloaded
-	ManualDownload  bool         `json:"manual_download"`             // Adopted in place by `lmm import` scan mode (verify reads it so); the "source will not serve the file" fact is Mod.ManualOnly (#543)
-	ConvertPaks     bool         `json:"convert_paks"`                // #221: pak-to-exmod conversion enabled (default true; only meaningful for DeployCompile games)
+	ProfileName  string       `json:"profile_name"`
+	UpdatePolicy UpdatePolicy `json:"update_policy"`
+	InstalledAt  time.Time    `json:"installed_at"`
+	// LastUpdatedAt is when lmm last changed this row's installed version
+	// (#596): stamped at insert, so it starts equal to InstalledAt, and moved
+	// by every write that changes Version - an update, a rollback, an update
+	// from file, a relink to another version, Steam updating a Workshop item
+	// it owns. InstalledAt never moves after the insert. Not UpdatedAt,
+	// which is when the SOURCE published the installed version.
+	LastUpdatedAt   time.Time  `json:"last_updated_at,omitzero"`
+	Enabled         bool       `json:"enabled"`                     // User intent: wants this mod active
+	Deployed        bool       `json:"deployed"`                    // Current state: files are in game directory
+	PreviousVersion string     `json:"previous_version,omitempty"`  // Version before last update (for rollback)
+	PreviousFileIDs []string   `json:"previous_file_ids,omitempty"` // File IDs before last update (for rollback)
+	LinkMethod      LinkMethod `json:"link_method"`                 // How the mod was deployed (symlink, hardlink, copy)
+	FileIDs         []string   `json:"file_ids,omitempty"`          // Source-specific file IDs that were downloaded
+	// AdoptedInPlace marks a mod `lmm import` scan mode adopted where it
+	// sat in the game directory (#516): lmm never downloaded it, so on a
+	// game not in copy mode it has no cache entry, and verify neither calls
+	// that entry missing nor checks its version against the source. It is
+	// not "the source will not serve this file" - that is Mod.ManualOnly
+	// (#543).
+	//
+	// The wire name and the installed_mods column both keep the historical
+	// name manual_download, so every --json document and /api/v1 reader
+	// sees what it did before the Go rename, and an older lmm can still
+	// read the database.
+	AdoptedInPlace bool `json:"manual_download"`
+
+	ConvertPaks bool `json:"convert_paks"` // #221: pak-to-exmod conversion enabled (default true; only meaningful for DeployCompile games)
 
 	// External marks a mod lmm TRACKS but never deploys: another agent
 	// (today, the Steam client for a Workshop item) owns its files where

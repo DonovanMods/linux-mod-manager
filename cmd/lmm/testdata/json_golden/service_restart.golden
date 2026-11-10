@@ -1,0 +1,16 @@
+{
+  "changed": false,
+  "units": [
+    {
+      "name": "lmm-serve.service",
+      "installed": true,
+      "origin": "user",
+      "path": "<UNIT-PATH>",
+      "enabled": true,
+      "active": true,
+      "enabled_state": "enabled",
+      "active_state": "active"
+    }
+  ],
+  "linger": false
+}

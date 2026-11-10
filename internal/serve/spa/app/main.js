@@ -29,6 +29,7 @@ import {
   clearModLock as apiClearModLock,
   setModUpdatePolicy as apiSetModUpdatePolicy,
   setModConvert as apiSetModConvert,
+  setModCategory as apiSetModCategory,
   getModDetail,
   getModFiles,
   getModVersions,
@@ -38,10 +39,24 @@ import {
   maxUploadBytes,
   ApiError,
   NoAnswerError,
+  launchGame as apiLaunchGame,
 } from "./api.js";
+import { DEPLOY_ORIGIN } from "./components/topbar.js";
+import { PLAY_NOT_ACTIVE_REASON } from "./components/playbutton.js";
 import { updateFromFileInputID } from "./components/updatefromfile.js";
 import { copyReplaces } from "./components/plan_mod_copy.js";
-import { fetchJobResult, readoutHasNextStep } from "./jobresult.js";
+import {
+  fetchJobResult,
+  readoutHasNextStep,
+  resultMayHoldNextStep,
+} from "./jobresult.js";
+import {
+  deferredHealthRetryMillis,
+  succeededOriginReleaseMillis,
+  holdSucceededReadouts,
+  toastDismissMillis,
+  unreadRereadDelayMillis,
+} from "./timers.js";
 import { resultTallyLabel, resultTallyTone } from "./progress.js";
 import { resolveGamePath } from "./navigation.js";
 import { RELEVANCE, effectiveSort, knownSort } from "./searchsort.js";
@@ -210,6 +225,9 @@ function commitSlices(seq, claim, patch, errors) {
  */
 async function hydrate(route, { rehydrate = false } = {}) {
   const seq = beginHydration();
+  // A pending re-read of deferred health belongs to the page it was armed
+  // on; the reads below arm a fresh one if this route's answer is deferred.
+  cancelDeferredHealthRetry();
   // A read that can settle this context's toggle requests begins here - the
   // status pair below is part of it (toggleack.js#rereading).
   toggles.rereading(route);
@@ -242,6 +260,11 @@ async function hydrate(route, { rehydrate = false } = {}) {
   }
 
   const context = { game: route.game, profile: route.profile };
+  // The full mod page reads (and writes) the same slices for its own
+  // context, so arriving on one drops another context's just the same.
+  if ((route.view === "home" || route.view === "mod") && !rehydrate) {
+    dropStaleHomeSlices(context);
+  }
   const statusClaim = slices.claim(["status", "games"]);
   try {
     const [status, allStatus] = await Promise.all([
@@ -294,6 +317,14 @@ async function hydrate(route, { rehydrate = false } = {}) {
   // snapshot of every retained job and maintains it from there
   // (activity.js), so a per-route poll could only ever disagree with the
   // live stream about what the machine is doing.
+  //
+  // Issue 583: each document is committed the moment IT answers, not once
+  // the slowest has. The update check and the verify behind the Health
+  // card walk the profile's mods against their sources and took up to
+  // twelve seconds on a real setup, while the library answered in three
+  // milliseconds - and until the slowest answered, nothing changed on
+  // screen at all. (A context change has already dropped the previous
+  // context's documents: dropStaleHomeSlices, above.)
   const homeClaim = slices.claim([
     "mods",
     "updates",
@@ -301,36 +332,197 @@ async function hydrate(route, { rehydrate = false } = {}) {
     "conflicts",
     "snapshots",
   ]);
-  const [mods, updates, health, conflicts, snapshots] =
-    await Promise.allSettled([
-      get(scoped("/api/v1/mods", context)),
-      get(scoped("/api/v1/updates", context)),
-      get(scoped("/api/v1/health", context)),
-      get(scoped("/api/v1/conflicts", context)),
-      // issue 350: the Snapshots card's own read. Fetched here rather than
-      // lazily on card mount for the reason every other card's document
-      // is - one hydrate, one set of fetchErrors, and a card that can
-      // tell "no snapshots" from "couldn't list them".
-      get(scoped("/api/v1/snapshots", context)),
-    ]);
-  commitSlices(
-    seq,
-    homeClaim,
-    {
-      mods: settled(mods),
-      updates: settled(updates),
-      health: settled(health),
-      conflicts: settled(conflicts),
-      snapshots: settled(snapshots),
+  const load = (key, path, opts) =>
+    loadSlice(seq, homeClaim, key, path, context, {
+      ...opts,
+      // A failure here is the slice's answer (a card's explicit error
+      // state), so the document it replaces goes with it.
+      dropOnFailure: true,
+    });
+  await Promise.all([
+    load("mods", "/api/v1/mods"),
+    load("updates", "/api/v1/updates", { progress: true }),
+    load("health", "/api/v1/health", { progress: true }),
+    load("conflicts", "/api/v1/conflicts"),
+    // issue 350: the Snapshots card's own read. Fetched here rather than
+    // lazily on card mount for the reason every other card's document
+    // is - one hydrate, one set of fetchErrors, and a card that can
+    // tell "no snapshots" from "couldn't list them".
+    load("snapshots", "/api/v1/snapshots"),
+  ]);
+}
+
+// homeContext is the "game:profile" whose documents the home slices hold
+// (issue 583) - what tells hydrate() that it has arrived in a different
+// context and must not show the last one's documents meanwhile. Mission
+// Control and the full mod page both read those slices, so both claim it.
+let homeContext;
+
+/**
+ * dropStaleHomeSlices empties the home documents when they belong to a
+ * context other than `context` (issue 583). Left in place they rendered as
+ * this context's - another profile's mods under this profile's name, with
+ * the page marked settled - for as long as the slowest read took. Called
+ * before hydrate's first await, so not even the status round trip shows
+ * them.
+ *
+ * Their loading entries go too: the left context's reads are still out,
+ * and their lines ("Checking 42 mods for updates (17/42)…") would
+ * otherwise stay until this context's own loads replaced them - never, if
+ * it does not reach them (its status read failing, a redirect) - and keep
+ * taking that read's progress frames, which activity.js accepts only for a
+ * token still held here. The left loads' own settleLoad then finds a
+ * newer owner, or none, and leaves the entry alone.
+ */
+function dropStaleHomeSlices(context) {
+  const gameProfile = `${context.game}:${context.profile}`;
+  if (homeContext === gameProfile) return;
+  homeContext = gameProfile;
+  const { loading, readProgress } = store.get();
+  const keptLoading = { ...loading };
+  const keptProgress = { ...readProgress };
+  for (const key of TRACKED_LOADS) {
+    const token = keptLoading[key]?.token;
+    if (token) delete keptProgress[token];
+    delete keptLoading[key];
+  }
+  store.set({
+    loading: keptLoading,
+    readProgress: keptProgress,
+    mods: null,
+    updates: null,
+    health: null,
+    conflicts: null,
+    snapshots: null,
+    fetchErrors: {
+      ...store.get().fetchErrors,
+      mods: null,
+      updates: null,
+      health: null,
+      conflicts: null,
+      snapshots: null,
     },
-    {
-      mods: failureMessage(mods),
-      updates: failureMessage(updates),
-      health: failureMessage(health),
-      conflicts: failureMessage(conflicts),
-      snapshots: failureMessage(snapshots),
-    },
-  );
+  });
+}
+
+/** settleLoad drops a finished load's progress, and its loading entry while
+ * it is still the slice's newest - a newer load owns it otherwise. */
+function settleLoad(key, token) {
+  const { loading, readProgress } = store.get();
+  const patch = {};
+  if (token in readProgress) {
+    patch.readProgress = { ...readProgress };
+    delete patch.readProgress[token];
+  }
+  if (loading[key]?.token === token) {
+    patch.loading = { ...loading };
+    delete patch.loading[key];
+  }
+  if (Object.keys(patch).length > 0) store.set(patch);
+}
+
+// TRACKED_LOADS is every slice loadSlice holds a loading entry for: the
+// documents Mission Control's loading lines and settled marker read.
+const TRACKED_LOADS = new Set([
+  "mods",
+  "updates",
+  "health",
+  "conflicts",
+  "snapshots",
+]);
+
+// loadSeq numbers every slice load, so each has its own id (loading.js).
+let loadSeq = 0;
+
+/** withQueryParam is path with name=value added to its query string. */
+function withQueryParam(path, name, value) {
+  const url = new URL(path, window.location.origin);
+  url.searchParams.set(name, value);
+  return url.pathname + url.search;
+}
+
+/**
+ * loadSlice fetches one of Mission Control's documents into `key`, under
+ * both fences (commitSlices), and holds `loading[key]` while it is out so
+ * the page can say what it is waiting for (issue 583).
+ *
+ * progress asks the read to report how far it has got (the update check
+ * and the verify only: internal/serve/read_progress.go) - its token rides
+ * on the request and on every read_progress frame for it. dropOnFailure
+ * writes null over the slice when the read fails (hydrate's rule: the
+ * failure IS the answer); without it a failure leaves the document that
+ * was there (a retry's rule).
+ */
+async function loadSlice(
+  seq,
+  claim,
+  key,
+  path,
+  context,
+  { progress = false, dropOnFailure = false } = {},
+) {
+  loadSeq += 1;
+  const token = `r${loadSeq}-${Date.now().toString(36)}`;
+  // Only Mission Control's own documents name themselves while they load.
+  // Any other slice (the profiles modal's listing) is left out on purpose:
+  // its reload runs from a mount effect, where a synchronous store write
+  // re-renders the modal mid-commit and re-fires that same effect.
+  const tracked = TRACKED_LOADS.has(key);
+  if (tracked) {
+    store.set({ loading: { ...store.get().loading, [key]: { token } } });
+  }
+  try {
+    const value = await get(
+      scoped(
+        progress ? withQueryParam(path, "progress", token) : path,
+        context,
+      ),
+    );
+    commitSlices(seq, claim, { [key]: value }, { [key]: null });
+    if (key === "health") retryDeferredHealth(value);
+  } catch (err) {
+    const message = err instanceof ApiError ? err.message : String(err);
+    commitSlices(seq, claim, dropOnFailure ? { [key]: null } : {}, {
+      [key]: message,
+    });
+  } finally {
+    if (tracked) settleLoad(key, token);
+  }
+}
+
+// deferredHealthRetry is the pending re-read of a deferred health answer.
+let deferredHealthRetry;
+
+/**
+ * retryDeferredHealth asks for health again, after a while, when the answer
+ * just committed is deferred behind a running job (issue 588) - and cancels
+ * a pending re-read when it is not. A job in this server ends with
+ * onJobDone's re-hydrate anyway; the timer is for a change no job here
+ * announces (another lmm process holding the operation lock), so the card
+ * is never left waiting for an event that will not come. A re-read that
+ * finds the answer replaced, or Mission Control left, does nothing.
+ */
+function retryDeferredHealth(value) {
+  cancelDeferredHealthRetry();
+  if (!value?.result?.deferred || store.get().health !== value) return;
+  deferredHealthRetry = setTimeout(() => {
+    deferredHealthRetry = undefined;
+    const { route, health } = store.get();
+    if (health !== value || !healthRetryViews.has(route.view)) return;
+    reload("health", "/api/v1/health");
+  }, deferredHealthRetryMillis);
+}
+
+// healthRetryViews are the routes that show health: Mission Control, and
+// the full mod page's findings (issue 588 review), which loads health
+// through hydrateModPage rather than loadSlice.
+const healthRetryViews = new Set(["home", "mod"]);
+
+/** cancelDeferredHealthRetry drops a pending re-read of deferred health -
+ * on every navigation (hydrate), so it never outlives its page. */
+function cancelDeferredHealthRetry() {
+  clearTimeout(deferredHealthRetry);
+  deferredHealthRetry = undefined;
 }
 
 /**
@@ -527,6 +719,9 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
       conflicts: failureMessage(conflicts),
     },
   );
+  // issue 588 review: the same bounded re-read Mission Control's loadSlice
+  // arms, for a deferred answer this page committed.
+  retryDeferredHealth(settled(health));
 }
 
 /**
@@ -554,13 +749,11 @@ async function reload(key, path) {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
-  try {
-    const value = await get(scoped(path, context));
-    commitSlices(seq, claim, { [key]: value }, { [key]: null });
-  } catch (err) {
-    const message = err instanceof ApiError ? err.message : String(err);
-    commitSlices(seq, claim, {}, { [key]: message });
-  }
+  // issue 583: the update check and the verify report how far they have
+  // got, the explicit "Check for updates" and "Re-verify" included.
+  await loadSlice(seq, claim, key, path, context, {
+    progress: key === "updates" || key === "health",
+  });
 }
 
 /**
@@ -1529,12 +1722,6 @@ function toggleUnread(entry, reason) {
   });
 }
 
-/** unreadRereadDelayMillis is how long after a request settled unread the
- * page asks again (issue 454 N1). Long enough not to hammer a server that
- * is struggling, short enough that the row does not sit on a stale value
- * until some unrelated read. */
-const unreadRereadDelayMillis = 3_000;
-
 // unreadRereadEntries are the requests waiting on the one re-read already
 // scheduled - a batch whose reads all failed schedules one read, not one
 // per mod.
@@ -1881,6 +2068,18 @@ async function setModConvert(sourceID, modID, enabled) {
   await refreshAfterModSetting(sourceID, modID);
 }
 
+/** setModCategory is issue 592's user category - the same single-step shape as
+ * the settings above. The mods list is re-read on success, so a grouped
+ * library moves the row to its new group. */
+async function setModCategory(sourceID, modID, category) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await apiSetModCategory(sourceID, modID, category, context);
+  await refreshAfterModSetting(sourceID, modID);
+}
+
 /** skipModUpdate/unskipModUpdate are issue 542's "skip this version" and its
  * undo - the same single-step shape as the settings above. A skip moves a
  * row between the updates report's "updates" and "skipped_updates", which
@@ -2042,8 +2241,8 @@ function clearOrigin(origin) {
 // failed, and its readout then holds the failed item's way out - "Open on
 // <source>", "Update from file…" - which a timer took away a few seconds
 // after the user had been told to use it, mid-way through choosing the file.
-// jobresult.js#readoutHasNextStep says which readouts those are.
-const succeededOriginReleaseMillis = 4000;
+// jobresult.js#readoutHasNextStep says which readouts those are. The delay
+// is timers.js#succeededOriginReleaseMillis.
 
 /** releaseSucceededOrigin hands origin's control back once the job it is
  * showing has had its few seconds on screen - unless that readout is
@@ -2052,6 +2251,8 @@ const succeededOriginReleaseMillis = 4000;
  * the user has already started something else from must not be cleared out
  * from under the new job. */
 async function releaseSucceededOrigin(origin, summary) {
+  // issue 595: the E2E harness holds every succeeded readout (timers.js).
+  if (holdSucceededReadouts) return;
   const read = await fetchJobResult(summary.id);
   if (readoutHasNextStep(summary, read)) return;
   setTimeout(() => {
@@ -2061,7 +2262,6 @@ async function releaseSucceededOrigin(origin, summary) {
 }
 
 let toastSeq = 0;
-const toastDismissMillis = 8000;
 
 /** Pushes a toast. Successes clear themselves after a while; failures do
  * not - a failure nobody saw is the case toasts exist for. A `sticky` toast
@@ -2172,9 +2372,17 @@ async function onJobDone(summary) {
   // A job that succeeded can still have failed items (issue 531), and then
   // its toast is the failure's only trace once the page has moved on: it
   // reads as one - the tally in its detail, and no timer taking it away.
-  const read = await fetchJobResult(summary.id);
+  //
+  // Issue 583: the result document is read only for a kind whose RESULT can
+  // hold a next step the summary cannot show (resultMayHoldNextStep). A
+  // batch's failed items are already in its tally (issue 364), so every
+  // other toast goes up the moment the job ends instead of after a second
+  // round trip.
+  const read = resultMayHoldNextStep(summary)
+    ? await fetchJobResult(summary.id)
+    : null;
   const held = readoutHasNextStep(summary, read);
-  const tally = read?.tally;
+  const tally = summary.tally;
   pushToast({
     tone:
       held && tally && resultTallyTone(tally) !== "succeeded"
@@ -2272,6 +2480,165 @@ function originOf(jobID) {
   );
 }
 
+/** launchMethodLabel is how a launch toast names the way the game was
+ * started (core.LaunchResult.method). */
+function launchMethodLabel(method) {
+  switch (method) {
+    case "steam":
+      return "Steam";
+    case "command":
+      return "its launch command";
+    default:
+      return method;
+  }
+}
+
+/**
+ * launchGame is the Play button (issue 501): POST the launch for the
+ * selected game and profile, or for `target` ({game, profile, name}) when a
+ * caller - Deploy & launch - must launch what it deployed even if the page
+ * has moved on since.
+ *
+ * It is not a job: the server answers once the game's systemd unit has
+ * started, so state.launching is the whole of its in-flight state, and the
+ * Play button names it ("Starting Valheim…"). A launch already in flight -
+ * or a Deploy & launch still deploying - swallows a second click.
+ */
+async function launchGame({ force = false, target } = {}) {
+  if (store.get().launching) return;
+  const { route, status } = store.get();
+  const game = target?.game ?? route.game;
+  const resolved = {
+    game,
+    profile: target?.profile ?? route.profile,
+    name:
+      target?.name ?? (status?.id === game && status.name ? status.name : game),
+  };
+  store.set({ launching: { game, name: resolved.name, phase: "launch" } });
+  try {
+    await requestLaunch(resolved, force);
+  } finally {
+    store.set({ launching: null });
+  }
+}
+
+/**
+ * requestLaunch is the launch POST itself, for a caller already holding
+ * state.launching. Undeployed changes (409 with core.LaunchDriftError's
+ * details) open the drift modal, which offers Deploy & launch and Launch
+ * anyway (`force`); a profile that is not the active one
+ * (core.ErrProfileNotActive's 409 - the page's status was out of date) says
+ * what the disabled Play button would; every other refusal is a toast, in
+ * the server's words - each names its own fix.
+ */
+async function requestLaunch({ game, profile, name }, force) {
+  try {
+    const result = await apiLaunchGame(game, {
+      profile,
+      ...(force ? { force: true } : {}),
+    });
+    pushToast({
+      tone: "success",
+      title: result.requested
+        ? `Launch requested: ${name} (via ${launchMethodLabel(result.method)})`
+        : `Started ${name}`,
+      detail: (result.warnings ?? []).join(" ") || undefined,
+    });
+  } catch (err) {
+    if (
+      err instanceof ApiError &&
+      err.status === 409 &&
+      typeof err.details?.deploy_clears === "boolean"
+    ) {
+      store.set({
+        modal: {
+          type: "launch-drift",
+          drift: err.details,
+          target: { game, profile, name },
+        },
+      });
+      return;
+    }
+    const notActive =
+      err instanceof ApiError &&
+      err.status === 409 &&
+      err.message.startsWith("profile is not active");
+    pushToast({
+      tone: "failure",
+      title: `Couldn't launch ${name}`,
+      detail: notActive
+        ? PLAY_NOT_ACTIVE_REASON
+        : err instanceof Error
+          ? err.message
+          : String(err),
+    });
+  }
+}
+
+/**
+ * deployAndLaunch is the drift modal's "Deploy & launch": the top bar's own
+ * deploy job, bound to the Deploy control's origin so that control shows
+ * its progress, and - once it has succeeded - the launch again. A deploy
+ * that fails reports as any deploy does (its origin is on screen), and
+ * nothing is launched.
+ *
+ * state.launching is held from the first step to the last - phase "deploy"
+ * while the job runs, then "launch" - so Play stays disabled throughout,
+ * and is released however the sequence ends.
+ */
+async function deployAndLaunch() {
+  const modal = store.get().modal;
+  if (modal?.type !== "launch-drift" || store.get().launching) return;
+  const { target } = modal;
+  closeModal();
+  store.set({
+    launching: { game: target.game, name: target.name, phase: "deploy" },
+  });
+  try {
+    let jobID = null;
+    await startBinding(DEPLOY_ORIGIN, async () => {
+      try {
+        const response = await planMutation(
+          "deploy",
+          {},
+          {
+            game: target.game,
+            profile: target.profile,
+          },
+        );
+        ({ id: jobID } = await startJob(response.plan_id));
+        store.set({
+          origins: { ...store.get().origins, [DEPLOY_ORIGIN]: jobID },
+        });
+      } catch (err) {
+        pushToast({
+          tone: "failure",
+          title: `Couldn't deploy ${target.name}`,
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+    if (!jobID) return;
+    const summary = await waitForJobDone(jobID);
+    if (summary.state !== "succeeded") return;
+    store.set({
+      launching: { game: target.game, name: target.name, phase: "launch" },
+    });
+    await requestLaunch(target, false);
+  } finally {
+    store.set({ launching: null });
+  }
+}
+
+/** launchAnyway is the drift modal's "Launch anyway": the same launch,
+ * with force. */
+async function launchAnyway() {
+  const modal = store.get().modal;
+  if (modal?.type !== "launch-drift") return;
+  closeModal();
+  await launchGame({ force: true, target: modal.target });
+}
+
 /** The actions threaded down to the components: the four supplementary
  * documents' retry/re-run, and the mutation pipeline every mutation in this
  * application goes through (openPlan -> confirmPlan -> a job). */
@@ -2343,6 +2710,7 @@ const actions = {
   clearModLock,
   setModUpdatePolicy,
   setModConvert,
+  setModCategory,
   skipModUpdate,
   unskipModUpdate,
   clearOrigin,
@@ -2360,6 +2728,9 @@ const actions = {
   openUninstallBatchModal,
   startBatchToggle,
   startUninstallBatch,
+  launchGame: () => launchGame(),
+  deployAndLaunch,
+  launchAnyway,
 };
 
 // contextKey identifies the data a route needs, not the route itself: the

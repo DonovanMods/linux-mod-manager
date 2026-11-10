@@ -55,6 +55,7 @@ func setupConflictsCmdTest(t *testing.T) (*core.Service, *domain.Game) {
 // doConflicts) end to end against two non-overlapping installed, deployed
 // mods and checks the no-conflicts text path.
 func TestRunConflicts_ViaCommand_NoConflicts(t *testing.T) {
+	restoreFlags(t)
 	svc, game := setupConflictsCmdTest(t)
 	seedConflictMod(t, svc, game, "a", "Mod A", true, map[string][]byte{"a-only.esp": []byte("A")})
 	seedConflictMod(t, svc, game, "b", "Mod B", true, map[string][]byte{"b-only.esp": []byte("B")})
@@ -72,6 +73,7 @@ func TestRunConflicts_ViaCommand_NoConflicts(t *testing.T) {
 // against two mods that both ship shared.esp, deployed so Mod B (later in
 // load order) owns the path, and checks the rendered conflict text.
 func TestRunConflicts_ViaCommand_RealConflict_Text(t *testing.T) {
+	restoreFlags(t)
 	svc, game := setupConflictsCmdTest(t)
 	seedTwinConflictFixture(t, svc, game)
 	require.NoError(t, svc.Close())
@@ -91,6 +93,7 @@ func TestRunConflicts_ViaCommand_RealConflict_Text(t *testing.T) {
 // and asserts the decoded document's shape and field values, not just that
 // it parses.
 func TestRunConflicts_ViaCommand_JSON(t *testing.T) {
+	restoreFlags(t)
 	svc, game := setupConflictsCmdTest(t)
 	seedTwinConflictFixture(t, svc, game)
 	require.NoError(t, svc.Close())

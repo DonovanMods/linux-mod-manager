@@ -1,6 +1,6 @@
 ---
 title: When something goes wrong
-nav_order: 10
+nav_order: 11
 ---
 
 # When something goes wrong
@@ -31,6 +31,27 @@ The **Verify** button is in the library toolbar. In the terminal:
 lmm verify
 lmm verify --fix
 ```
+
+While a job is changing the game's files (an install, an update, a
+deploy, or the automatic updates), the Health card doesn't check them
+half-written: it says **Checking after the current job finishes…**, or
+shows the last check and says a job is changing the game, and checks again
+once the job is done. Until then the mod panel and the full mod page head
+those findings **Last check**, and the library doesn't offer **Repair…**
+or count them under the **Unhealthy** filter. `lmm verify` run while
+another lmm, such as `lmm serve`, is changing the files stops with a
+message naming that process instead of a report; run it again when that
+finishes. If the other lmm only changed the files during the check and has
+already finished, `lmm verify` says so and checks them again by itself.
+
+If a source needs an API key that lmm doesn't have, the Health card says so
+for each of its mods, with an **Add API key…** button that opens
+**Setup** > **Authentication** at that source. In the terminal, `lmm verify`
+names the command that stores the key, such as
+`lmm auth login curseforge`. If the source turned down a key you gave it,
+the line says the key was rejected; when that key comes from a variable
+such as `CURSEFORGE_API_KEY`, fix or unset the variable, since it wins over
+a key stored with `lmm auth login`.
 
 ## Turn one mod off
 
@@ -91,6 +112,14 @@ Your mods stay in lmm's library, so getting them back is one step:
 ```bash
 lmm deploy
 ```
+
+## "Written by a newer lmm"
+
+If you go back to an older lmm, for example by downgrading the package, it
+may refuse to start and say the database was written by a newer lmm. A
+newer lmm changed the database in a way the older one can't read, so the
+older one stops instead of getting your mods wrong. Install the newer lmm
+again; your mods and profiles are still there.
 
 ## Still stuck?
 

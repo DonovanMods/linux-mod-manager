@@ -86,6 +86,13 @@ type InstalledDetail struct {
 	// installed row's own field - so the full mod page can say so and offer
 	// Unskip. omitempty.
 	SkippedVersion string `json:"skipped_version,omitempty"`
+	// EffectiveCategory and CategorySource are the mod's category as the mod
+	// list groups it (#592, ModListing's pair): the profile ref's user
+	// category, else the installed row's stored source category name.
+	// ModDetail.Mod.CategoryName is the source's name as fetched just now,
+	// which a later update check records on the row. omitempty.
+	EffectiveCategory string `json:"effective_category,omitempty"`
+	CategorySource    string `json:"category_source,omitempty"`
 }
 
 // ModDetail fetches modID from sourceID and joins whatever local install
@@ -159,12 +166,17 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 	// Lock lives in the profile YAML, not the DB. A load failure degrades to
 	// "unlocked" rather than failing the call - same as doModShow, which
 	// ignores this error.
+	userCategory := ""
 	if prof, perr := config.LoadProfile(s.ConfigDir(), game.ID, profile); perr == nil {
-		if ref := prof.FindRef(sourceID, modID); ref != nil && ref.Locked {
-			info.Locked = true
-			info.LockedVersion = ref.Version
+		if ref := prof.FindRef(sourceID, modID); ref != nil {
+			if ref.Locked {
+				info.Locked = true
+				info.LockedVersion = ref.Version
+			}
+			userCategory = ref.Category
 		}
 	}
+	info.EffectiveCategory, info.CategorySource = effectiveCategory(userCategory, installed.CategoryName)
 	detail.Installed = info
 	return detail, nil
 }
@@ -208,7 +220,7 @@ func (s *Service) fillModDescription(ctx context.Context, sourceID string, game 
 			"source_id", sourceID, "mod_id", mod.ID, "err", err)
 		return
 	}
-	mod.Description = description
+	mod.Description = domain.SanitizeText(description) // #594
 }
 
 // modChangelog best-effort fetches modID's changelog text from sourceID's
@@ -238,5 +250,5 @@ func (s *Service) modChangelog(ctx context.Context, sourceID string, game *domai
 	if err != nil {
 		return "", []string{fmt.Sprintf("changelog unavailable: %v", err)}
 	}
-	return changelog, nil
+	return domain.SanitizeText(changelog), nil // #594
 }

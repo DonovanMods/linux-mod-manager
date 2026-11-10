@@ -3,10 +3,12 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
@@ -246,6 +248,29 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// verifyAuthEnvVars maps each source whose active key is its environment
+// variable to that variable, for the remedy a refused version check prints
+// (#582). doVerify fills it once per text-mode run.
+var verifyAuthEnvVars map[string]string
+
+// authEnvVars picks out of report every source whose active key comes from
+// its environment variable, or nil when there is none.
+func authEnvVars(report *app.AuthStatusReport) map[string]string {
+	if report == nil {
+		return nil
+	}
+	var out map[string]string
+	for _, row := range report.Sources {
+		if row.Via == "env" && row.EnvVar != "" {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[row.ID] = row.EnvVar
+		}
+	}
+	return out
+}
+
 // doVerify is a thin renderer over the core verify engine (#224 Task 7):
 // it resolves the profile/mod-filter, calls svc.Verify, and either streams
 // core.VerifyEvent progress through renderVerifyEvent (text mode) or maps
@@ -274,18 +299,29 @@ func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []
 	// even for the shape that would otherwise qualify. The memo exists for
 	// the web UI's repeated hydrates, not for a typed command.
 	opts := core.VerifyOptions{Tier: core.VerifyFull, Fix: verifyFix, ModFilter: modFilter, Force: true}
-	report, err := svc.VerifyReport(ctx, game, profile, opts, func(e core.Event) {
-		ev, ok := e.(core.VerifyEvent)
-		if !ok {
-			return
+	verifyAuthEnvVars = nil
+	if !jsonOutput {
+		if auth, authErr := app.AuthStatus(ctx, svc); authErr == nil {
+			verifyAuthEnvVars = authEnvVars(auth)
 		}
-		if jsonOutput {
-			if ev.Kind == core.VerifyEvSyncWarning {
-				fmt.Fprintf(os.Stderr, "Warning: %s\n", ev.Detail) // stderr never corrupts the JSON document
+	}
+	walk := func() (*core.VerifyReport, error) {
+		return svc.VerifyReport(ctx, game, profile, opts, func(e core.Event) {
+			ev, ok := e.(core.VerifyEvent)
+			if !ok {
+				return
 			}
-			return // rows come from result.Findings below
-		}
-		renderVerifyEvent(ev)
+			if jsonOutput {
+				if ev.Kind == core.VerifyEvSyncWarning {
+					fmt.Fprintf(os.Stderr, "Warning: %s\n", ev.Detail) // stderr never corrupts the JSON document
+				}
+				return // rows come from result.Findings below
+			}
+			renderVerifyEvent(ev)
+		})
+	}
+	report, err := verifySettled(walk, svc.MutationInProgress, func() {
+		fmt.Fprintln(os.Stderr, "Another lmm operation changed this game's files during the check; checking them again.")
 	})
 	if err != nil {
 		return err
@@ -414,6 +450,36 @@ func fixHintFor(result *core.VerifyResult) string {
 		return "Run with --fix to " + repairs[0] + "."
 	default:
 		return "Run with --fix to " + strings.Join(repairs[:len(repairs)-1], ", ") + " and " + repairs[len(repairs)-1] + "."
+	}
+}
+
+// verifySettled runs walk - one verify - and answers what it found, unless
+// core deferred it because another lmm process was changing this
+// installation (#588). Waiting is no answer - a deploy holds the lock for as
+// long as it takes - and reporting is worse: a half-written tree reads
+// lmm's own newly placed files as ones it "did not put", and no finding
+// class is safe from a file mid-replacement, so filtering some out would
+// only make a wrong answer look clean.
+//
+// So a mutation still running (inProgress) is refused as a CLI mutation is
+// refused there (#317): the standard OperationInProgressError, naming the
+// holder, which --json carries as details. One that merely overlapped the
+// walk and has finished leaves a settled tree, so the walk runs once more
+// (announced by onRetry, since text mode has printed rows from the first);
+// only a second overlap is refused, without claiming anything is running.
+func verifySettled(walk func() (*core.VerifyReport, error), inProgress func() error, onRetry func()) (*core.VerifyReport, error) {
+	for attempt := 0; ; attempt++ {
+		report, err := walk()
+		if err != nil || report.Result.Deferred == "" {
+			return report, err
+		}
+		if err := inProgress(); err != nil {
+			return nil, err
+		}
+		if attempt > 0 {
+			return nil, errors.New("other lmm operations kept changing this game's files while verify checked them; run `lmm verify` again once they finish")
+		}
+		onRetry()
 	}
 }
 
@@ -564,6 +630,12 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 			fmt.Printf("  %s\n", f.FixableReason)
 		}
 
+	case core.VerifyStatusCatalogMissing:
+		// #590: the source's catalog no longer has the mod - #539's
+		// wording and `lmm update`'s remedy lines, likely new ID included.
+		fmt.Printf("%s %s - %s\n", colorYellow("?"), cmp.Or(f.ModName, f.ModID), f.Note)
+		printCatalogMissingRemedy("  ", f.SourceID, f.ModID, f.Successors)
+
 	case "external_stale":
 		// #538: a record problem, not a file one - the note says what
 		// Steam did, and --fix records it.
@@ -676,6 +748,18 @@ func renderVerifySkipped(f core.VerifyFinding) {
 	// (originally doVerify's "Unknown mod %s - SKIPPED").
 	case f.Note == "" && f.FileID != "":
 		fmt.Printf("? Unknown mod %s - SKIPPED\n", f.ModID)
+
+	// versionPass: the source refused GetModFiles for want of a key
+	// (#582) - name the key and the command that stores one, not
+	// "unreachable", which it was not.
+	// A key from the source's environment variable outranks a stored
+	// one, so for it the fix is the variable, not auth login.
+	case f.AuthSource != "":
+		remedy := "run: lmm auth login " + f.AuthSource
+		if envVar := verifyAuthEnvVars[f.AuthSource]; envVar != "" {
+			remedy = "check $" + envVar
+		}
+		fmt.Printf("%s %s - could not check version: %s (%s)\n", colorYellow("?"), f.ModName, f.FixableReason, remedy)
 
 	// versionPass: GetModFiles failed (source unreachable) - text mode
 	// deliberately drops the error detail; --json's Note carries it.

@@ -1,0 +1,14 @@
+{
+  "game": "wow",
+  "profile": "default",
+  "method": "command",
+  "argv": [
+    "/usr/bin/lutris",
+    "lutris:rungame/wow"
+  ],
+  "command": [
+    "/usr/bin/lutris",
+    "lutris:rungame/wow"
+  ],
+  "dry_run": true
+}

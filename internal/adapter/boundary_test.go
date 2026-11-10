@@ -21,6 +21,7 @@ var adapterPackages = []string{
 	"internal/adapter",
 	"internal/adapter/bepinex",
 	"internal/adapter/icarus",
+	"internal/adapter/d2r",
 }
 
 // allowedImports are the intra-module packages an adapter package may

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -52,13 +53,47 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	// #545: game detection scans $WINEPREFIX, which no per-test HOME
+	// sandbox covers - a developer's own Battle.net prefix must not reach
+	// a detect listing a test asserts on.
+	if err := os.Unsetenv("WINEPREFIX"); err != nil {
+		fmt.Fprintf(os.Stderr, "unsetting WINEPREFIX: %v\n", err)
+		os.Exit(1)
+	}
+
 	// #568: the release check is on by default, so nothing in this
 	// binary may reach api.github.com - a request is refused before it is
 	// sent, and any attempt fails the run even when the code that made it
 	// swallowed the error (a release check never fails a command).
 	githubAttempts := testutil.GuardGitHub()
 
+	// #581: --config/--data are exempt - they are this function's own
+	// sandbox floor, and tests point them at their own temp dirs freely.
+	flagsBefore := snapshotFlags(rootCmd)
+
+	// #586: automatic updates are on by default, so nothing in this binary
+	// may start a detached `lmm self-update --auto` - the test binary would
+	// be running itself. A test that wants to see the start replaces this
+	// with its own recorder and restores it.
+	var unexpectedSpawns []string
+	spawnAutoUpdate = func(exe string, args []string, _ string) error {
+		unexpectedSpawns = append(unexpectedSpawns, exe+" "+strings.Join(args, " "))
+		return errors.New("TestMain: no test may start an automatic update")
+	}
+
 	code := m.Run()
+
+	if len(unexpectedSpawns) > 0 {
+		fmt.Fprintf(os.Stderr, "FAIL: the test suite tried to start an automatic update:\n  %s\n", strings.Join(unexpectedSpawns, "\n  "))
+		code = 1
+	}
+
+	if leaks := leakedFlags(flagsBefore, snapshotFlags(rootCmd),
+		rootCmd.PersistentFlags().Lookup("config"), rootCmd.PersistentFlags().Lookup("data")); len(leaks) > 0 {
+		fmt.Fprintf(os.Stderr, "FAIL: tests left command flags changed (#581) - restore them with setFlag or t.Cleanup:\n  %s\n",
+			strings.Join(leaks, "\n  "))
+		code = 1
+	}
 
 	if attempts := githubAttempts(); len(attempts) > 0 {
 		fmt.Fprintf(os.Stderr, "FAIL: the test suite tried to reach GitHub:\n  %s\n", strings.Join(attempts, "\n  "))

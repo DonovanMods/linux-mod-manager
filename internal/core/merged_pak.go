@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1117,6 +1118,9 @@ func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 	if err != nil {
 		return result, err
 	}
+	if err := s.checkMergeMembersCached(ctx, game, profileName, mc); err != nil {
+		return result, err
+	}
 	warnings, err := s.syncMergedPak(ctx, game, profileName)
 	if err != nil {
 		return result, err
@@ -1128,6 +1132,64 @@ func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 		sink(StepEvent{Scope: Scope{Op: OpMergeRegen}, Phase: UpdateDownloadDone})
 	}
 	return result, nil
+}
+
+// MergeMemberCacheMissingError reports that a merged-artifact rebuild was
+// refused because one of its members has no cache entry (#589). The rebuild
+// reads its members from the cache alone - it never asks a source, so a
+// member gone from its catalog still rebuilds - and syncMergedPak skips a
+// member it finds nothing retained for, so rebuilding without this one would
+// quietly drop the mod from the game.
+type MergeMemberCacheMissingError struct {
+	// Artifact is the merged artifact's display name ("Icarus Merged Pak").
+	Artifact string
+	SourceID string
+	ModID    string
+	// Name is the member's display name.
+	Name    string
+	Version string
+}
+
+// Error names the member and the two ways to restore its cached files.
+func (e *MergeMemberCacheMissingError) Error() string {
+	return fmt.Sprintf("cannot rebuild %s: the cached files of %s (%s %s) are missing; "+
+		"run \"lmm verify --fix\" to download them again, or, if its source no longer has it, "+
+		"reinstall it from a downloaded file with \"lmm update %s -s %s --from-file <archive>\"",
+		e.Artifact, cmp.Or(e.Name, e.ModID), domain.ModKey(e.SourceID, e.ModID), e.Version, e.ModID, e.SourceID)
+}
+
+// checkMergeMembersCached refuses an explicit rebuild of game+profileName's
+// merged artifact while an enabled member's cache entry is missing (#589):
+// see MergeMemberCacheMissingError. A member is judged the way
+// enabledMergeSources judges a retained file - by its file ids' merge
+// classification and the pak-conversion opt-outs - since with the cache
+// entry gone there is no retained file left to look at. An external mod is
+// never cache-backed, so it is never a member.
+func (s *Service) checkMergeMembersCached(ctx context.Context, game *domain.Game, profileName string, mc adapter.MergeCompiler) error {
+	mods, err := s.GetInstalledModsInProfileOrder(ctx, game.ID, profileName)
+	if err != nil {
+		return fmt.Errorf("loading profile mods: %w", err)
+	}
+	gameCache := s.GetGameCache(game)
+	for _, mod := range mods {
+		if !mod.Enabled || mod.External || gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+			continue
+		}
+		member := false
+		for _, fileID := range mod.FileIDs {
+			if _, convertible := mc.ClassifyMergeSource(fileID); !convertible || (game.ConvertPaks && mod.ConvertPaks) {
+				member = true
+				break
+			}
+		}
+		if member {
+			return &MergeMemberCacheMissingError{
+				Artifact: mc.MergedArtifactLabel(),
+				SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.Version,
+			}
+		}
+	}
+	return nil
 }
 
 // purgeMergedPak explicitly undeploys game+profileName's merged pak (#197

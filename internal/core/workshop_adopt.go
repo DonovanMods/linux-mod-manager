@@ -7,7 +7,7 @@
 // inside it. The mod_path adopt is filename-based end to end: it scans the
 // game's own mod directory, matches by NAME SEARCH across every searchable
 // source, copies into the cache for copy-mode games, and stamps
-// ManualDownload. A workshop adopt scans Steam's library tree, matches by
+// AdoptedInPlace. A workshop adopt scans Steam's library tree, matches by
 // EXACT published-file id (no search at all), must never write a cache
 // entry, and produces EXTERNAL rows lmm will never deploy. Threading four
 // conditionals through scanLocal -> matchUntracked -> adoptScannedMod would
@@ -328,6 +328,8 @@ func (s *Service) describeWorkshopItems(ctx context.Context, scanner source.Work
 	}
 	out := make(map[string]source.ModDescription, len(described))
 	for _, d := range described {
+		d.Mod = *sanitizeSourceMod(&d.Mod) // #594
+		d.Note = domain.SanitizeLine(d.Note)
 		out[d.ModID] = d
 	}
 	return out

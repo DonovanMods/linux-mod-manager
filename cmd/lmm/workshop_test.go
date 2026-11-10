@@ -281,6 +281,7 @@ func TestList_ExternalJSONGolden(t *testing.T) {
 }
 
 func TestModShow_RendersTheManagedBySteamBlock(t *testing.T) {
+	restoreFlags(t)
 	svc, game, _, steamDir := setupWorkshopCLI(t)
 	withWorkshopImportFlags(t, false, true)
 	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
@@ -307,6 +308,7 @@ func TestModShow_RendersTheManagedBySteamBlock(t *testing.T) {
 // creator whose persona name resolved is shown by name, with the steamid64
 // it names beside it.
 func TestModShow_NamesTheWorkshopAuthor(t *testing.T) {
+	restoreFlags(t)
 	svc, game, src, _ := setupWorkshopCLI(t)
 	withWorkshopImportFlags(t, false, true)
 	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
@@ -637,6 +639,7 @@ func TestProfileApply_NamesTheWorkshopItemsItLeavesActive(t *testing.T) {
 // there alongside the correctly labelled "Steam content id" line below, the
 // same twice-on-screen defect the mod panel and the mod page had.
 func TestModShow_HeaderShowsTheRevisionDateNotTheContentID(t *testing.T) {
+	restoreFlags(t)
 	showWorkshopItem := func(t *testing.T, svc *core.Service, game *domain.Game) string {
 		t.Helper()
 		old := modProfile
@@ -683,6 +686,7 @@ func TestModShow_HeaderShowsTheRevisionDateNotTheContentID(t *testing.T) {
 // `list -v` had already fixed its VERSION column and left LOCKED raw, so one
 // row disagreed with itself.
 func TestModShowAndList_ALockedExternalModNeverNamesTheContentID(t *testing.T) {
+	restoreFlags(t)
 	svc, game, _, _ := setupWorkshopCLI(t)
 	withWorkshopImportFlags(t, false, true)
 	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
@@ -711,6 +715,7 @@ func TestModShowAndList_ALockedExternalModNeverNamesTheContentID(t *testing.T) {
 // rule: the two commands that PUT a Workshop item into that state print their
 // own confirmation lines, and both wrapped the target in "v%s".
 func TestModLockAndPin_NeverEchoTheContentIDBack(t *testing.T) {
+	restoreFlags(t)
 	const contentID = "7987119735124793734"
 
 	setup := func(t *testing.T) (*core.Service, *domain.Game) {

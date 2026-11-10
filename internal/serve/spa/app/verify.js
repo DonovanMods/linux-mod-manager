@@ -7,6 +7,8 @@
 // still printing the raw status slug beside a card rendering the same
 // finding as prose.
 
+import { displayVersion } from "./version.js";
+
 /** findingSubject names what a finding is about: its mod, or - for a
  * game-level row with no mod (issue 460: `mod_path_missing`) - the game's
  * mod path. */
@@ -22,6 +24,15 @@ export function findingSubject(f) {
  * MISMATCH (recorded 1.0, source reports 2.0)". */
 export function findingLabel(f) {
   const label = f.note || f.status.replaceAll("_", " ");
+  // issue 590: a mod gone from its catalog names its likely new id, or
+  // every candidate when there are several - the Updates card's words.
+  const successors = f.successors ?? [];
+  if (successors.length === 1) {
+    return `${label} - looks like it moved to ${successors[0].mod_id} (same name and author)`;
+  }
+  if (successors.length > 1) {
+    return `${label} - several mods have the same name and author: ${successorList(successors)}`;
+  }
   if (f.recorded && f.effective) {
     return `${label} (recorded ${f.recorded}, source reports ${f.effective})`;
   }
@@ -60,4 +71,15 @@ export function repairOutcome(findings) {
  * `repair`, or - for a "fixed_*" row - its note. */
 export function repairNote(f) {
   return f.repair || f.note || "";
+}
+
+/** successorList names several likely new ids of a mod gone from its
+ * catalog (core.CatalogSuccessor, issue 590), each with its version. */
+export function successorList(successors) {
+  return successors
+    .map((c) => {
+      const version = displayVersion(c);
+      return version ? `${c.mod_id} (${version})` : c.mod_id;
+    })
+    .join(", ");
 }

@@ -1,11 +1,15 @@
 // api_release.go is lmm's own update notice in the web UI (#568): GET
 // /api/v1/updates/lmm answers the core.ReleaseStatus `lmm version --json`
-// emits, which the SPA's release banner reads, and a running server keeps
-// that answer fresh itself.
+// emits, which the SPA's release banner and Setup > Updates read, and a
+// running server keeps that answer fresh itself - and, since #586, installs
+// the release it finds when auto_update is on, and restarts itself onto a
+// newer binary installed under it once none of its jobs runs. PUT
+// /api/v1/settings/auto-update is Setup > Updates' switch.
 package serve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -17,6 +21,12 @@ import (
 // refresh. The checker itself asks GitHub at most once a day; this only
 // bounds how late after that day a long-running server notices.
 const releaseRefreshEvery = time.Hour
+
+// installedCheckEvery is how often a running server looks at the binary it
+// runs from (#586): lmm-update.timer and the CLI's automatic update replace
+// it and stop, and this server restarts itself onto it. A look is a stat;
+// `<exe> --version` runs once per replacement.
+const installedCheckEvery = time.Minute
 
 // releaseStatusInstallWait is the most a status request waits on install
 // detection still under way (Serve starts it in the background); past it,
@@ -45,11 +55,142 @@ func (s *Server) handleAPIReleaseStatus(w http.ResponseWriter, r *http.Request) 
 	vctx, vcancel := context.WithTimeout(r.Context(), releaseStatusVersionWait)
 	defer vcancel()
 	st.Installed = s.releases.InstalledNewer(vctx)
+	auto := s.releases.AutoUpdateStatus(st.Install)
+	st.AutoUpdate = &auto
 	s.writeJSON(w, http.StatusOK, st)
 }
 
+// autoUpdateRequest is PUT /api/v1/settings/auto-update's body.
+type autoUpdateRequest struct {
+	// Enabled is the auto_update to write. Required.
+	Enabled *bool `json:"enabled"`
+}
+
+// handleAPIAutoUpdateSetting answers PUT /api/v1/settings/auto-update: a
+// sanctioned single-step write of config.yaml's auto_update (#586), with
+// nothing to preview, answered with the release status the switch's page
+// re-renders from.
+func (s *Server) handleAPIAutoUpdateSetting(w http.ResponseWriter, r *http.Request) {
+	var req autoUpdateRequest
+	if err := decodeAPIBody(w, r, &req); err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Enabled == nil {
+		s.writeAPIError(w, http.StatusBadRequest, errors.New(`the body must say {"enabled": true} or {"enabled": false}`))
+		return
+	}
+	if err := s.svc.SetAutoUpdate(r.Context(), *req.Enabled); err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.handleAPIReleaseStatus(w, r)
+}
+
+// AutoUpdater is what `lmm serve` runs an automatic update through (#586):
+// *core.SelfUpdater, built by the composition root with the restart of
+// lmm-serve.service wired in when this server is that service.
+type AutoUpdater interface {
+	// AutoUpdateEnabled reports config.yaml's auto_update.
+	AutoUpdateEnabled() bool
+	// AutoUpdateDue reports whether an automatic update to latest should
+	// run now.
+	AutoUpdateDue(latest string) bool
+	// RunAuto runs one: verified, under the self-update lock, recorded,
+	// and never under a running mutation - opts.Quiesce is this server's
+	// jobs. It replaces the binary and restarts nothing.
+	RunAuto(ctx context.Context, opts core.AutoRunOptions) (core.AutoUpdateOutcome, error)
+	// RestartServeWhenIdle restarts lmm-serve.service once opts.Quiesce
+	// says no job runs, and reports whether it did.
+	RestartServeWhenIdle(ctx context.Context, opts core.AutoRunOptions) (bool, error)
+}
+
+// autoUpdate runs an automatic update when the checker's cache knows of a
+// newer release, the install is self-managed, the binary under this server
+// has not already been replaced, and the updater says one is due. It runs
+// on the refresh goroutine, never a request, and does not start while a
+// job runs (the registry's quiesce). It only replaces the binary: the
+// restart onto it is restartOntoInstalled's, as for a binary another
+// process replaced.
+func (s *Server) autoUpdate(ctx context.Context) {
+	if s.autoUpdater == nil {
+		return
+	}
+	st, ok := s.releases.PendingUpdate(ctx)
+	if !ok || st.Install.Method != core.InstallSelfManaged {
+		return
+	}
+	if s.releases.InstalledNewer(ctx) != "" || !s.autoUpdater.AutoUpdateDue(st.Latest) {
+		return
+	}
+	out, err := s.autoUpdater.RunAuto(ctx, core.AutoRunOptions{Quiesce: s.jobs.quiesce})
+	switch {
+	case err != nil:
+		if ctx.Err() == nil {
+			s.log.Warn("automatic lmm update failed", "release", st.Latest, "error", err)
+		}
+	case out.Skipped != "":
+		s.log.Debug("automatic lmm update skipped", "reason", out.Skipped)
+	case out.Result.Updated:
+		_, _ = fmt.Fprintf(s.notices, "lmm updated itself to v%s.\n", out.Result.Version)
+	}
+}
+
+// restartOntoInstalled restarts this server onto a newer lmm installed
+// under it - by its own automatic update, lmm-update.timer's, or the CLI's
+// (#586) - when auto_update is on: once no job runs, holding new ones off
+// while it asks, and through systemd, so only when this server is
+// lmm-serve.service (the composition root wires the restart in only then).
+// It asks once per installed version; a job still running after the wait,
+// or a server started by hand, leaves the restart to the person, whom the
+// banner asks. The restart arrives as the shutdown signal Serve already
+// handles gracefully, and Serve waits for this goroutine before it
+// returns.
+func (s *Server) restartOntoInstalled(ctx context.Context) {
+	if s.autoUpdater == nil || s.releases == nil {
+		return
+	}
+	installed := s.releases.InstalledNewer(ctx)
+	if installed == "" || installed == s.restartAsked || !s.autoUpdater.AutoUpdateEnabled() {
+		return
+	}
+	s.restartAsked = installed
+	restarted, err := s.autoUpdater.RestartServeWhenIdle(ctx, core.AutoRunOptions{Quiesce: s.jobs.quiesce})
+	switch {
+	case err != nil:
+		if ctx.Err() == nil {
+			s.log.Warn("lmm serve did not restart onto the newer lmm installed under it", "installed", installed, "error", err)
+		}
+	case restarted:
+		s.log.Info("lmm serve is restarting onto the newer lmm installed under it", "installed", installed)
+	}
+}
+
+// handleAPIAutoUpdateNotice answers POST /api/v1/updates/lmm/notice: the
+// web UI showed the automatic update's notice, so no frontend - this one
+// in another browser, or the CLI - shows it again (#586).
+func (s *Server) handleAPIAutoUpdateNotice(w http.ResponseWriter, _ *http.Request) {
+	if s.releases == nil {
+		s.writeAPIError(w, http.StatusNotFound, errors.New("this server does not track lmm's own releases"))
+		return
+	}
+	if err := s.releases.MarkAutoUpdateNoticed(); err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// refreshShutdownWait bounds how long Serve waits, after the drain, for
+// the refresh goroutine: an automatic update that just asked for this
+// server's restart is finishing its record and its log lines.
+const refreshShutdownWait = 5 * time.Second
+
 // refreshReleases runs for as long as Serve does: an unforced check now,
-// then one every releaseRefreshEvery. Each is a no-op inside the checker's
+// then one every releaseRefreshEvery, each followed by an automatic update
+// when one is due (autoUpdate); and, every installedCheckEvery and after
+// each update, the restart onto a newer binary installed under this server
+// (restartOntoInstalled). Each check is a no-op inside the checker's
 // 24 hours, when the user turned the check off, and for a dev build; a
 // failure is cached by the checker and only logged here. Before the first
 // check this data dir ever makes, it writes the same one-time notice the
@@ -57,7 +198,9 @@ func (s *Server) handleAPIReleaseStatus(w http.ResponseWriter, r *http.Request) 
 func (s *Server) refreshReleases(ctx context.Context) {
 	tick := time.NewTicker(releaseRefreshEvery)
 	defer tick.Stop()
-	for {
+	installed := time.NewTicker(s.installedCheckEvery)
+	defer installed.Stop()
+	refresh := func() {
 		if s.releases.RefreshDue() && s.releases.FirstRunNoticeDue() {
 			_, _ = fmt.Fprintln(s.notices, s.releases.FirstRunNotice())
 			_ = s.releases.RecordFirstRunNotice()
@@ -65,10 +208,18 @@ func (s *Server) refreshReleases(ctx context.Context) {
 		if err := s.releases.Refresh(ctx); err != nil && ctx.Err() == nil {
 			s.log.Debug("lmm release check failed", "error", err)
 		}
+		s.autoUpdate(ctx)
+		s.restartOntoInstalled(ctx)
+	}
+	refresh()
+	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+			refresh()
+		case <-installed.C:
+			s.restartOntoInstalled(ctx)
 		}
 	}
 }

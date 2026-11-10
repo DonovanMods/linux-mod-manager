@@ -86,3 +86,123 @@ func TestJSONGolden_UpdateBulkCatalogMissing(t *testing.T) {
 	out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
 	assertJSONCLIGolden(t, "update_bulk_catalog_missing", out)
 }
+
+// #590: a gone mod with one likely successor (same name and author) names
+// it with the ready-to-run re-link; several list every candidate and pick
+// none; none keeps the #539 placeholder.
+func TestPrintCatalogMissing_SuggestsTheSuccessor(t *testing.T) {
+	svc, _ := setupCatalogMissingTest(t)
+	gone := core.CatalogModRef{SourceID: "test-src", ModID: "old", Name: "Bear Mount"}
+
+	one := gone
+	one.Successors = []core.CatalogSuccessor{{ModID: "new", Name: "Bear Mount", Author: "Donovan", Version: "1.1"}}
+	out := captureStdout(t, func() error {
+		printCatalogMissing(svc, &core.UpdateCheckReport{CatalogMissing: []core.CatalogModRef{one}})
+		return nil
+	})
+	assert.Contains(t, out, "    moved?   looks like new (same name and author): lmm mod edit old -s test-src --to-source-id new\n")
+	assert.NotContains(t, out, "<new-id>")
+	assert.Contains(t, out, "lmm uninstall old -s test-src")
+
+	two := gone
+	two.Successors = []core.CatalogSuccessor{{ModID: "new-a", Version: "1.0"}, {ModID: "new-b", Version: "1.2"}}
+	out = captureStdout(t, func() error {
+		printCatalogMissing(svc, &core.UpdateCheckReport{CatalogMissing: []core.CatalogModRef{two}})
+		return nil
+	})
+	assert.Contains(t, out, "    moved?   several mods have the same name and author: new-a (1.0), new-b (1.2)\n")
+	assert.Contains(t, out, "             lmm mod edit old -s test-src --to-source-id <one of them>\n")
+
+	out = captureStdout(t, func() error {
+		printCatalogMissing(svc, &core.UpdateCheckReport{CatalogMissing: []core.CatalogModRef{gone}})
+		return nil
+	})
+	assert.Contains(t, out, "    moved:   lmm mod edit old -s test-src --to-source-id <new-id>\n")
+}
+
+// #590: Health's catalog_missing row says what #539 says, with the same
+// suggestion, instead of "could not check version (source unreachable)".
+func TestRenderVerifyFinding_CatalogMissingSuggestsTheSuccessor(t *testing.T) {
+	out := captureStdout(t, func() error {
+		renderVerifyFinding(core.VerifyEvent{Finding: core.VerifyFinding{
+			Status: core.VerifyStatusCatalogMissing, ModID: "old", ModName: "Bear Mount", SourceID: "icarus",
+			Note:       "no longer in Icarus's catalog (removed, or republished under a new ID)",
+			Successors: []core.CatalogSuccessor{{ModID: "new"}},
+		}})
+		return nil
+	})
+	assert.Equal(t, "? Bear Mount - no longer in Icarus's catalog (removed, or republished under a new ID)\n"+
+		"  moved?   looks like new (same name and author): lmm mod edit old -s icarus --to-source-id new\n"+
+		"  removed: lmm uninstall old -s icarus\n", out)
+}
+
+// unstableGoneSource is catalogGoneSource declaring unstable IDs (#590),
+// whose catalog a name search reads.
+type unstableGoneSource struct {
+	*catalogGoneSource
+	catalog []domain.Mod
+}
+
+func (s *unstableGoneSource) UnstableIDs() bool { return true }
+
+func (s *unstableGoneSource) Search(_ context.Context, q source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{Mods: s.catalog}, nil
+}
+
+// setupAutoRelinkTest is setupCatalogMissingTest over a source with
+// unstable IDs, whose catalog has Bear Mount (by Donovan) under a new ID,
+// and the gone mod's files in the cache.
+func setupAutoRelinkTest(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, game := setupCatalogMissingTest(t)
+	ctx := context.Background()
+	src, err := svc.GetSource("test-src")
+	require.NoError(t, err)
+	gone := src.(*catalogGoneSource)
+	im, err := svc.GetInstalledMod(ctx, "test-src", "dLs3nvmWj5uOPnXxezGe", game.ID, "default")
+	require.NoError(t, err)
+	im.Author = "Donovan"
+	require.NoError(t, svc.SaveInstalledMod(ctx, im))
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "dLs3nvmWj5uOPnXxezGe", "1.0", "bear.pak", []byte("pak")))
+	moved := domain.Mod{ID: "8m1z04vNo2CCdKcD2C0H", SourceID: "test-src", Name: "Bear Mount", Author: "Donovan", Version: "1.0", GameID: game.ID}
+	gone.AddMod(&moved, nil)
+	svc.RegisterSource(&unstableGoneSource{catalogGoneSource: gone, catalog: []domain.Mod{moved}})
+	return svc, game
+}
+
+// #590: `lmm update` re-links a gone mod of a source with unstable IDs to
+// its one successor before anything is applied, and says so; the mod is
+// then checked under its new ID.
+func TestDoUpdate_ReLinksAGoneModOfAnUnstableSource(t *testing.T) {
+	svc, game := setupAutoRelinkTest(t)
+
+	out, err := captureStdoutErr(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	assert.Contains(t, out, "Bear Mount moved to a new ID in Fake Update Source; re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)")
+	assert.NotContains(t, out, "no longer in their source's catalog", "the re-checked mod is not gone")
+	assert.Contains(t, out, "All mods are up to date.")
+	_, err = svc.GetInstalledMod(context.Background(), "test-src", "8m1z04vNo2CCdKcD2C0H", game.ID, "default")
+	require.NoError(t, err)
+}
+
+// A dry run changes nothing: the suggestion is printed instead.
+func TestDoUpdate_DryRunDoesNotReLink(t *testing.T) {
+	svc, game := setupAutoRelinkTest(t)
+	updateDryRun = true
+
+	out, err := captureStdoutErr(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	assert.NotContains(t, out, "re-linked")
+	assert.Contains(t, out, "lmm mod edit dLs3nvmWj5uOPnXxezGe -s test-src --to-source-id 8m1z04vNo2CCdKcD2C0H")
+	_, err = svc.GetInstalledMod(context.Background(), "test-src", "dLs3nvmWj5uOPnXxezGe", game.ID, "default")
+	require.NoError(t, err, "still under its old id")
+}
+
+func TestJSONGolden_UpdateBulkAutoRelink(t *testing.T) {
+	withJSONOutput(t)
+	svc, game := setupAutoRelinkTest(t)
+	updateAll = true
+
+	out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+	assertJSONCLIGolden(t, "update_bulk_auto_relink", out)
+}

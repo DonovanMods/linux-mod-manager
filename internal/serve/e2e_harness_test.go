@@ -49,9 +49,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/log"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/assert"
@@ -80,6 +83,9 @@ import (
 // restored, the reconnect this grace existed to absorb no longer happens:
 // 5s held green over 3 consecutive full `-race` E2E runs (unit3 fix wave,
 // #329) with room to spare (~37-38s total each), so it came back down.
+// Since #577 a test closes a tab and its browser context rather than a whole
+// browser (the suite shares one), and the wait for the page to be gone is
+// openE2ETab's closeTab.
 //
 // It is a TEST allowance and nothing else: Shutdown still returns the
 // instant the connection really closes (microseconds, in the ordinary
@@ -175,6 +181,9 @@ func sandboxE2EEnv(t *testing.T) {
 	for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
 		t.Setenv(key, t.TempDir())
 	}
+	// #545: detection also scans $WINEPREFIX, which no HOME sandbox
+	// covers - a developer's own prefix must not reach a test's listing.
+	t.Setenv("WINEPREFIX", "")
 }
 
 // e2eFixture is one browser test's world: a real listening server over a
@@ -309,6 +318,14 @@ func newE2EFixtureWithLibrarySample(t *testing.T) e2eFixture {
 // library and the cards both have real, non-trivial documents to render.
 func newE2EFixtureWithAttention(t *testing.T) e2eFixture {
 	t.Helper()
+	return newE2EFixtureWithAttentionLocked(t, "")
+}
+
+// newE2EFixtureWithAttentionLocked is newE2EFixtureWithAttention over a
+// cross-process operation lock at lockPath ("" for none) - #588's other lmm
+// process, holding it while the page reads health.
+func newE2EFixtureWithAttentionLocked(t *testing.T, lockPath string) e2eFixture {
+	t.Helper()
 	sandboxE2EEnv(t)
 
 	src := newFakeSource("fake")
@@ -316,7 +333,7 @@ func newE2EFixtureWithAttention(t *testing.T) e2eFixture {
 		Mod:   domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "2.0"},
 		Files: []domain.DownloadableFile{{ID: "f1", Version: "2.0", IsPrimary: true}},
 	})
-	svc, game := newFixtureServiceWithSource(t, src)
+	svc, game := newFixtureServiceWithLock(t, src, lockPath)
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
@@ -587,16 +604,81 @@ func newE2EFixtureWithFailingPath(t *testing.T, failPath string) (e2eFixture, fu
 	}, setFailing
 }
 
-// newE2EBrowser starts a headless browser and returns its chromedp context
-// plus an accessor for everything the browser has complained about.
+// e2eSharedBrowser is the one Chromium the package's browser tests share
+// (#577). Every test used to launch its own and wait for it to exit - about
+// 1.2s a test, eight minutes across the suite - when what a test actually
+// needs from "its own browser" is isolation, which a fresh browser context
+// gives: its own cookies, storage, cache and targets, disposed with it.
 //
-// The Log domain is enabled explicitly: a Content-Security-Policy refusal
-// is a `log.entryAdded` entry with source "security", NOT a
-// `Runtime.consoleAPICalled`, so without it the one browser-only failure
-// this harness exists to catch would be invisible to it.
-func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
+// It is started lazily, by the first test that asks for a browser, so a run
+// that selects no E2E test never launches one; and it is closed once every
+// test has finished (serve.RunAfterTests, main_test.go). A browser that has
+// died - Chromium does crash now and then under a loaded -race run - is
+// replaced by the next test that asks, so one crash costs at most the test
+// it happened in, never every test after it.
+type e2eSharedBrowser struct {
+	mu sync.Mutex
+	// ctx is the browser's root chromedp context: the browser exists once
+	// the first Run on it returns. nil until the first test asks.
+	ctx    context.Context
+	cancel context.CancelFunc
+	// home is the sandboxed HOME/XDG_* tree the browser runs under, since it
+	// outlives any one test's sandboxE2EEnv.
+	home string
+	// closeRegistered is set once close has been handed to RunAfterTests.
+	closeRegistered bool
+}
+
+// e2eBrowser is the package's shared browser.
+var e2eBrowser e2eSharedBrowser
+
+// browserAlive reports whether ctx's browser can still be driven: its
+// context is live and its DevTools connection has not dropped.
+func browserAlive(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	c := chromedp.FromContext(ctx)
+	if c == nil || c.Browser == nil {
+		return false
+	}
+	select {
+	case <-c.Browser.LostConnection:
+		return false
+	default:
+		return true
+	}
+}
+
+// acquire returns the shared browser's root context, starting the browser
+// if there is none yet or if the one there was has died.
+func (b *e2eSharedBrowser) acquire(t *testing.T, binary string) context.Context {
 	t.Helper()
-	binary := chromeBinary(t)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.ctx != nil && browserAlive(b.ctx) {
+		return b.ctx
+	}
+	b.closeLocked()
+	if !b.closeRegistered {
+		serve.RunAfterTests(b.close)
+		b.closeRegistered = true
+	}
+
+	home, err := os.MkdirTemp("", "lmm-e2e-browser-")
+	require.NoError(t, err)
+	// The same sandbox sandboxE2EEnv gives a test, for the browser that
+	// outlives it: nothing Chromium writes under HOME or XDG_* may reach the
+	// developer's real profile. FONTCONFIG_FILE and the rest of the
+	// environment still pass through, which is how a run reproduces CI's
+	// fonts.
+	env := []string{"HOME=" + home}
+	for _, key := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
+		dir := filepath.Join(home, strings.ToLower(key))
+		require.NoError(t, os.Mkdir(dir, 0o700))
+		env = append(env, key+"="+dir)
+	}
 
 	// A window the product actually supports (issue 334). Headless Chrome
 	// defaults to 800x600, which is BELOW this UI's own declared baseline -
@@ -607,7 +689,8 @@ func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
 	// activity bell at the left, where its right-anchored tray hangs off
 	// the side. 1280 is comfortably inside the supported range and still
 	// below the 1440px step at which the library reveals its extra
-	// columns, so every existing column assertion is unchanged.
+	// columns, so every existing column assertion is unchanged. A target
+	// created in a new browser context opens at the same size.
 	//
 	// WSURLReadTimeout (issue 508): chromedp gives Chromium 20s to print its
 	// DevTools WebSocket URL, and a hosted runner busy with the -race serve
@@ -616,41 +699,87 @@ func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
 	// takes longer to fail.
 	opts := append(slices.Clone(chromedp.DefaultExecAllocatorOptions[:]),
 		chromedp.ExecPath(binary), chromedp.WindowSize(1280, 900),
-		chromedp.WSURLReadTimeout(e2eBrowserLaunchTimeout))
-	// WithoutCancel, same reasoning as startE2EServer:331. t.Context() is
-	// cancelled when the test FUNCTION returns, which is BEFORE t.Cleanup
-	// runs - so deriving the allocator from it directly cancels ctx (below)
-	// before the cleanup's chromedp.Cancel(ctx) call ever runs. chromedp
-	// v0.16.0's Cancel takes its graceful path only when ctx is still live;
-	// on an already-cancelled ctx its first act (closing the browser)
-	// returns context.Canceled immediately, BEFORE the wait for the process
-	// to actually exit that is the entire reason to call Cancel instead of
-	// the bare context cancel - silently falling back to the non-waiting
-	// path it was meant to replace.
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.WithoutCancel(t.Context()), opts...)
-	t.Cleanup(cancelAlloc)
-
+		chromedp.WSURLReadTimeout(e2eBrowserLaunchTimeout),
+		chromedp.Env(env...))
+	// Background, not a test's context: the browser outlives every test
+	// that uses it, and a test's context is cancelled when that test ends.
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 	ctx, cancelCtx := chromedp.NewContext(allocCtx)
-	t.Cleanup(func() {
+	cancel := func() {
 		// chromedp.Cancel, not the bare context cancel: it closes the
-		// browser AND WAITS for the process to exit. Neither cancelCtx nor
-		// cancelAlloc waits (both return in microseconds), which leaves
-		// Chrome alive while the cleanups below shut the server down - and
-		// a live Chrome re-establishes the SPA's session-long EventSource
-		// (activity.js) every few seconds, so http.Server.Shutdown keeps
-		// finding an active request and eventually runs out its grace. That
-		// was the cause of an intermittent "shutting down: context deadline
-		// exceeded" across the browser fixtures.
-		if err := chromedp.Cancel(ctx); err != nil {
+		// browser AND WAITS for the process to exit, so nothing of it is
+		// left running once the test binary is done with it. Bounded,
+		// because this is also how a browser that stopped answering is
+		// replaced (discard), and a graceful close waits for a reply such
+		// a browser never sends; the bare cancels below then kill it.
+		closing, cancelClosing := context.WithTimeout(ctx, e2eShutdownGrace)
+		if err := chromedp.Cancel(closing); err != nil {
 			cancelCtx()
 		}
-	})
+		cancelClosing()
+		cancelCtx()
+		cancelAlloc()
+		_ = os.RemoveAll(home)
+	}
+	// The FIRST Run is what allocates the browser, and chromedp ties the
+	// browser's lifetime to the context that Run was given - so this one
+	// must be the long-lived ctx, never a timeout-wrapped child.
+	if err := chromedp.Run(ctx); err != nil {
+		cancel()
+		require.NoError(t, err, "starting %s", binary)
+	}
+	b.ctx, b.cancel, b.home = ctx, cancel, home
+	return ctx
+}
+
+// discard drops dead as the shared browser, if it still is, so the next
+// acquire starts another. A test whose tab could not be opened calls it;
+// anything else keeps the browser for the tests after it.
+func (b *e2eSharedBrowser) discard(dead context.Context) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.ctx == dead {
+		b.closeLocked()
+	}
+}
+
+// close shuts the shared browser down, if one is running.
+func (b *e2eSharedBrowser) close() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.closeLocked()
+}
+
+// closeLocked is close with mu already held.
+func (b *e2eSharedBrowser) closeLocked() {
+	if b.cancel != nil {
+		b.cancel()
+	}
+	b.ctx, b.cancel, b.home = nil, nil, ""
+}
+
+// newE2EBrowser opens a tab for t in a fresh browser context of the shared
+// browser, and returns its chromedp context plus an accessor for everything
+// the browser has complained about in it.
+//
+// Fresh per test, and closed at its end: what one test stored, cached or
+// left open is gone before the next one starts, and the error log below
+// listens to this test's tab only, so nothing one test's page logs can be
+// charged to another's.
+//
+// The Log domain is enabled explicitly: a Content-Security-Policy refusal
+// is a `log.entryAdded` entry with source "security", NOT a
+// `Runtime.consoleAPICalled`, so without it the one browser-only failure
+// this harness exists to catch would be invisible to it.
+func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
+	t.Helper()
+	binary := chromeBinary(t)
 
 	var (
 		mu     sync.Mutex
 		errors []string
 	)
-	chromedp.ListenTarget(ctx, func(ev any) {
+	listen := func(ev any) {
 		var message string
 		switch e := ev.(type) {
 		case *runtime.EventExceptionThrown:
@@ -666,22 +795,109 @@ func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
 		mu.Lock()
 		errors = append(errors, message)
 		mu.Unlock()
-	})
+	}
 
-	// The FIRST Run is what allocates the browser, and chromedp ties the
-	// browser's lifetime to the context that Run was given - so this one
-	// must be the long-lived ctx, never a timeout-wrapped child. Wrapping
-	// it kills the browser the instant the wrapper's cancel fires, which
-	// shows up as "context canceled" on the NEXT Run, several frames away
-	// from the cause. Per-action timeouts start from runInBrowser, once the
-	// browser exists.
-	require.NoError(t, chromedp.Run(ctx, log.Enable()), "starting %s", binary)
+	// Two attempts: a browser that died since the last test (or dies while
+	// this tab is opened) is replaced once, and only a second failure -
+	// which is no longer one unlucky crash - fails the test.
+	var ctx context.Context
+	for attempt := 1; ; attempt++ {
+		browserCtx := e2eBrowser.acquire(t, binary)
+		tabCtx, closeTab, err := openE2ETab(browserCtx, listen)
+		if err == nil {
+			// Closed before the server's own cleanup, registered earlier,
+			// shuts it down: the page - and the session-long EventSource it
+			// holds on GET /api/v1/events (activity.js) - is gone by then
+			// (startE2EServer's CLEANUP ORDER).
+			t.Cleanup(closeTab)
+			ctx = tabCtx
+			break
+		}
+		e2eBrowser.discard(browserCtx)
+		if attempt == 2 {
+			require.NoError(t, err, "opening a tab in %s", binary)
+		}
+		t.Logf("opening a tab failed (%v); restarting the shared browser", err)
+	}
 
 	return ctx, func() []string {
 		mu.Lock()
 		defer mu.Unlock()
 		return slices.Clone(errors)
 	}
+}
+
+// openE2ETab opens a tab in a new browser context of browserCtx's browser,
+// with listen attached to its events, and returns its chromedp context and
+// what closes it again: the tab, then the browser context with everything
+// the test's page stored in it.
+//
+// The context and target are created here rather than through chromedp's
+// WithNewBrowserContext, which asks for the target without a window of its
+// own: headless Chromium refuses that ("Failed to open new tab - no browser
+// is open") for any browser context but the default one. A target created
+// with newWindow opens at the browser's own window size, the same viewport
+// the browser's first tab has.
+func openE2ETab(browserCtx context.Context, listen func(any)) (context.Context, func(), error) {
+	browser := cdp.WithExecutor(browserCtx, chromedp.FromContext(browserCtx).Browser)
+	// Bounded, because a browser that accepts the connection and never
+	// answers would otherwise hang the test until the binary's own timeout.
+	setup, cancelSetup := context.WithTimeout(browser, e2eBrowserLaunchTimeout)
+	defer cancelSetup()
+
+	browserContext, err := target.CreateBrowserContext().Do(setup)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating a browser context: %w", err)
+	}
+	dispose := func() {
+		// The tab's context is already gone by the time this runs, and the
+		// browser's may be too (a crashed browser): a short budget of its
+		// own, so a dead browser cannot stall the cleanup.
+		done, cancel := context.WithTimeout(cdp.WithExecutor(context.Background(), chromedp.FromContext(browserCtx).Browser), time.Second)
+		defer cancel()
+		_ = target.DisposeBrowserContext(browserContext).Do(done)
+	}
+	targetID, err := target.CreateTarget("about:blank").
+		WithBrowserContextID(browserContext).WithNewWindow(true).Do(setup)
+	if err != nil {
+		dispose()
+		return nil, nil, fmt.Errorf("creating a tab: %w", err)
+	}
+
+	tabCtx, cancelTab := chromedp.NewContext(browserCtx, chromedp.WithTargetID(targetID))
+	chromedp.ListenTarget(tabCtx, listen)
+	// The first Run on tabCtx attaches to the tab, and chromedp ties the
+	// session to the context that Run was given - so, as for the browser
+	// itself, it must be tabCtx, never a timeout-wrapped child; a stuck
+	// attach is bounded by cancelling tabCtx instead.
+	stuck := time.AfterFunc(e2eBrowserLaunchTimeout, cancelTab)
+	err = chromedp.Run(tabCtx, log.Enable(), holdSucceededReadouts())
+	stuck.Stop()
+	// cancelTab detaches from the tab, closes it and waits for both.
+	closeTab := func() {
+		cancelTab()
+		dispose()
+	}
+	if err != nil {
+		closeTab()
+		return nil, nil, fmt.Errorf("attaching to the tab: %w", err)
+	}
+	return tabCtx, closeTab, nil
+}
+
+// holdSucceededReadoutsJS is what every tab this harness opens runs before
+// the page's own scripts (#595): no succeeded job's readout hands its
+// control back on a timer, so a test that waits for one - about 35 do - can
+// stall for as long as a starved runner makes it without the readout
+// disappearing first. releaseSucceededReadouts lifts it for a scenario
+// about the release itself.
+const holdSucceededReadoutsJS = `window.__lmmHoldSucceededReadouts = true;`
+
+func holdSucceededReadouts() chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		_, err := page.AddScriptToEvaluateOnNewDocument(holdSucceededReadoutsJS).Do(ctx)
+		return err
+	})
 }
 
 // ignorableBrowserError filters the one error every Chrome logs against a
@@ -776,44 +992,64 @@ func newE2EFixtureWithDeployableMods(t *testing.T) e2eFixture {
 	return f
 }
 
-// newE2EFixtureWithSlowDeploy is newE2EFixtureWithDeployableMods plus an
-// install.after_each hook that sleeps, which is what gives the browser a
-// deterministic window in which a deploy job is genuinely IN FLIGHT.
+// holdDeployAfterEach makes the fixture's deploy wait in its first
+// install.after_each hook until the returned release is called, or the test
+// ends, which gives the browser a window in which a deploy job is genuinely IN
+// FLIGHT. Without it every scenario about a running job would be a race
+// against a deploy of two local files, which finishes in milliseconds. A hook
+// is the honest lever for this - a real, supported way for a deploy to take
+// time - and it runs AFTER the first mod's DeployDeployed event, so the job is
+// not merely running but running WITH PROGRESS already reported.
 //
-// Without it every scenario about a running job would be a race against a
-// deploy of two local files, which finishes in milliseconds: "open the tray
-// during a job" would pass or fail on machine speed. A hook is the honest
-// lever for this - it is a real, supported way for a deploy to take time -
-// and it runs AFTER the first mod's DeployDeployed event, so the job is not
-// merely running but running WITH PROGRESS already reported.
-func newE2EFixtureWithSlowDeploy(t *testing.T) e2eFixture {
+// It is a gate rather than a sleep because a sleep's window can be lost: two
+// seconds of it, and a starved CI runner can spend longer than that between
+// two browser actions, after which the state is gone for good. The wait fails on the whole harness budget, naming a selector that is correct
+// (#584). With a gate the window is the test's to close, so its length is not
+// a thing a slow machine can lose to. Releasing twice is harmless. The script
+// gives up after about two minutes by itself, because the hook runner's
+// timeout dies with a killed test binary and would leave it polling forever.
+func holdDeployAfterEach(t *testing.T, f e2eFixture) (release func()) {
 	t.Helper()
-	f := newE2EFixture(t)
-
-	script := filepath.Join(t.TempDir(), "slow-after-each")
-	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 1\n"), 0o755))
+	dir := t.TempDir()
+	gate := filepath.Join(dir, "gate")
+	script := filepath.Join(dir, "held-after-each")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\ni=0\nwhile [ ! -e '"+gate+"' ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done\n"), 0o755))
 	f.Game.Hooks.Install.AfterEach = script
 	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
-
-	seedDeployableMods(t, f.Svc, f.Game)
-	return f
+	release = func() {
+		if err := os.WriteFile(gate, nil, 0o644); err != nil {
+			t.Errorf("opening the deploy's gate: %v", err)
+		}
+	}
+	t.Cleanup(release)
+	return release
 }
 
-// newE2EFixtureWithQueuedToggle is newE2EFixtureWithSlowDeploy plus a third,
+// newE2EFixtureWithHeldDeploy is newE2EFixtureWithDeployableMods with its
+// deploy held by holdDeployAfterEach.
+func newE2EFixtureWithHeldDeploy(t *testing.T) (f e2eFixture, release func()) {
+	t.Helper()
+	f = newE2EFixture(t)
+	release = holdDeployAfterEach(t, f)
+	seedDeployableMods(t, f.Svc, f.Game)
+	return f, release
+}
+
+// newE2EFixtureWithQueuedToggle is newE2EFixtureWithHeldDeploy plus a third,
 // disabled mod ("Gamma Mod") that is never added to the profile - it exists
 // only so a concurrently-started enable job (startEnableFromAnotherClient)
-// has something valid to act on, entirely independent of what the slow
+// has something valid to act on, entirely independent of what the held
 // deploy is doing to Alpha/Beta.
 //
-// The slow deploy's AfterEach hook holds core's one mutation slot for the
-// whole time it sleeps, so an enable job started while it runs sits blocked
-// in beginOp: registered, state "running", zero events, no frame - exactly
-// jobStateLabel's "queued" heuristic (progress.js) - for a window a browser
-// can actually be driven through, rather than a race against a toggle that
-// would otherwise complete in microseconds.
+// The held deploy's AfterEach hook keeps core's one mutation slot until the
+// test ends, so an enable job started while it runs sits blocked in beginOp:
+// registered, state "running", zero events, no frame - exactly
+// jobStateLabel's "queued" heuristic (progress.js) - for as long as a browser
+// takes to get there, rather than a race against a toggle that would
+// otherwise complete in microseconds.
 func newE2EFixtureWithQueuedToggle(t *testing.T) e2eFixture {
 	t.Helper()
-	f := newE2EFixtureWithSlowDeploy(t)
+	f, _ := newE2EFixtureWithHeldDeploy(t)
 	seedInstalledMod(t, f.Svc, f.Game,
 		domain.Mod{ID: "c", SourceID: "fake", Name: "Gamma Mod", Version: "1.0", GameID: f.Game.ID},
 		false, nil)
@@ -850,7 +1086,7 @@ func seedDeployableMods(t *testing.T, svc *core.Service, game *domain.Game) {
 // usual two, since the sequencing property this exists to pin needs a
 // window a concurrent poller can actually sample more than once or twice
 // in - plus an uninstall.before_each hook that sleeps briefly per mod, the
-// same deterministic lever newE2EFixtureWithSlowDeploy uses for install.
+// same kind of lever holdDeployAfterEach uses for install.
 func newE2EFixtureWithSlowUninstallAndFourMods(t *testing.T) e2eFixture {
 	t.Helper()
 	f := newE2EFixture(t)
@@ -1131,24 +1367,15 @@ func newE2EFixtureWithThreeVersionsAndACheckedUpdate(t *testing.T) e2eFixture {
 	return f
 }
 
-// newE2EFixtureWithDrillInModsAndSlowDeploy is newE2EFixtureWithDrillInMods
-// plus an install.after_each hook that sleeps - the same lever
-// newE2EFixtureWithSlowDeploy uses, applied to the drill-in catalog/fixture
-// pair, so a deploy started against it (startDeployFromAnotherClient) holds
-// core's one mutation slot long enough for a per-mod job started from the
-// slide-over to sit genuinely "running" (queued in beginOp) for a window a
-// browser can be driven through - M3's own row-level live-line scenario
-// needs exactly that, or it is a race against a toggle that finishes in
-// microseconds.
-func newE2EFixtureWithDrillInModsAndSlowDeploy(t *testing.T) e2eFixture {
+// newE2EFixtureWithDrillInModsAndHeldDeploy is newE2EFixtureWithDrillInMods
+// with its deploy held by holdDeployAfterEach until the test ends, so a job
+// queued behind it stays queued for as long as a browser takes to look - M3's
+// own row-level live-line scenario needs exactly that, or it is a race
+// against a toggle that finishes in microseconds.
+func newE2EFixtureWithDrillInModsAndHeldDeploy(t *testing.T) e2eFixture {
 	t.Helper()
 	f := newE2EFixtureWithDrillInMods(t)
-
-	script := filepath.Join(t.TempDir(), "slow-after-each")
-	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 1\n"), 0o755))
-	f.Game.Hooks.Install.AfterEach = script
-	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
-
+	holdDeployAfterEach(t, f)
 	return f
 }
 
@@ -1194,6 +1421,9 @@ type e2eSearchSource struct {
 	// an update to the file it maps to, and a row recording no file ID has
 	// none (#535).
 	fileIDUpdates map[string]string
+	// urlGate, when set, holds every GetDownloadURL until it is closed - a
+	// download a scenario keeps in flight while it looks at the page (#587).
+	urlGate <-chan struct{}
 }
 
 func newE2ESearchSource(t *testing.T, id string) *e2eSearchSource {
@@ -1289,8 +1519,15 @@ func (s *e2eSearchSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]dom
 // GetDownloadURL is the counted call: downloadModToCache asks for a URL only
 // when it has decided to actually fetch the file, so this counter is the
 // cache-warm oracle the conflict-overwrite scenario asserts on.
-func (s *e2eSearchSource) GetDownloadURL(_ context.Context, mod *domain.Mod, fileID string) (string, error) {
+func (s *e2eSearchSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	s.urlRequests.Add(1)
+	if s.urlGate != nil {
+		select {
+		case <-s.urlGate:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	if err := s.urlErrs[mod.ID]; err != nil {
 		return "", err
 	}
@@ -1503,34 +1740,60 @@ func (f e2eSearchFixture) SearchPagePath(query string) string {
 // clickable.
 const e2eManyResultsPageSize = 20
 
-// startE2EServerWithDelayedJobStart is startE2EServer plus a reverse proxy
-// that sleeps for delay before forwarding every POST /api/v1/jobs OR
-// POST .../enable|disable (the toggle's own plan-free start) - #331's
-// bindingJob carry-in ("installs can now start from multiple search rows
-// while a modal is open elsewhere - re-check the single-slot assumption
-// ... make it a map keyed by origin, with a test proving the overlap
-// case"): a deterministic window in which one origin's start call is
-// genuinely still in flight (bindingJobs still holds its promise), so a
-// SECOND origin's own start (issued through a completely different UI path
-// - a toggle, which needs no modal at all) is a real overlap rather than a
-// race against microsecond-fast local HTTP round trips that would pass or
-// fail on machine speed alone.
+// e2eJobStartGate holds one kind of job-start request open at the proxy
+// startE2EServerWithGatedJobStart puts in front of the server: Arrived
+// receives once per request that reached it, and Release lets every held
+// and later request through. Release is idempotent and also runs at
+// cleanup, so a failed test never leaves a handler blocked.
+type e2eJobStartGate struct {
+	Arrived chan struct{}
+	Release func()
+	open    chan struct{}
+}
+
+func newE2EJobStartGate(t *testing.T) *e2eJobStartGate {
+	g := &e2eJobStartGate{Arrived: make(chan struct{}, 8), open: make(chan struct{})}
+	g.Release = sync.OnceFunc(func() { close(g.open) })
+	t.Cleanup(g.Release)
+	return g
+}
+
+// awaitArrival is a browser action that waits, under the harness's own
+// budget, until a request has reached g.
+func (g *e2eJobStartGate) awaitArrival(what string) chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		select {
+		case <-g.Arrived:
+			return nil
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for %s to reach the proxy: %w", what, ctx.Err())
+		}
+	})
+}
+
+// startE2EServerWithGatedJobStart is startE2EServer plus a reverse proxy
+// that holds every POST /api/v1/jobs at jobs and every POST
+// .../enable|disable (the toggle's own plan-free start) at toggles, until
+// the test releases each - #331's bindingJob carry-in ("installs can now
+// start from multiple search rows while a modal is open elsewhere -
+// re-check the single-slot assumption ... make it a map keyed by origin,
+// with a test proving the overlap case"): one origin's start call is
+// genuinely still in flight (bindingJobs still holds its promise) while a
+// SECOND origin's own start - issued through a completely different UI
+// path, a toggle, which needs no modal at all - is too.
 //
-// Delaying the TOGGLE's own start too, by its own shorter toggleDelay (unit
-// 5 fix wave, Important 2), is what makes the overlap OBSERVABLE rather
-// than merely real: without it the toggle's start resolves in microseconds,
-// so by the time anything reads bindingJobs' size the toggle's own entry is
-// already gone and the window where both starts are genuinely tracked at
-// once has closed before a test could ever sample it. toggleDelay must stay
-// SHORTER than delay: the scenario's own staleness conflict depends on the
-// toggle's disable genuinely finishing (not just starting) before the
-// install's own Apply runs, which only holds if the toggle, started AFTER
-// the install, still resolves first.
-func startE2EServerWithDelayedJobStart(t *testing.T, svc *core.Service, delay, toggleDelay time.Duration) string {
+// Gates, not delays (#595): this proxy used to sleep a fixed 600ms and
+// 200ms, and the test sampled the overlap inside that window - a runner
+// that stalled past it sampled after it had closed. A gate stays shut for
+// as long as the test takes, and the order the scenario's staleness
+// conflict depends on (the toggle FINISHES before the install's Apply runs)
+// is now the order the test opens them in, not a race between two sleeps.
+func startE2EServerWithGatedJobStart(t *testing.T, svc *core.Service) (baseURL string, jobs, toggles *e2eJobStartGate) {
 	t.Helper()
 	backend := startE2EServer(t, svc)
 	backendURL, err := url.Parse(backend)
 	require.NoError(t, err)
+	jobs, toggles = newE2EJobStartGate(t), newE2EJobStartGate(t)
 
 	proxy := &httputil.ReverseProxy{
 		Transport: e2eProxyTransport(t),
@@ -1554,19 +1817,27 @@ func startE2EServerWithDelayedJobStart(t *testing.T, svc *core.Service, delay, t
 		},
 	}
 
-	sleepThenProxy := func(d time.Duration) http.HandlerFunc {
+	holdThenProxy := func(g *e2eJobStartGate) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			time.Sleep(d)
+			select {
+			case g.Arrived <- struct{}{}:
+			default:
+			}
+			select {
+			case <-g.open:
+			case <-r.Context().Done():
+				return
+			}
 			proxy.ServeHTTP(w, r)
 		}
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/jobs", sleepThenProxy(delay))
+	mux.HandleFunc("POST /api/v1/jobs", holdThenProxy(jobs))
 	mux.HandleFunc("POST /api/v1/mods/{source}/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
 		switch r.PathValue("action") {
 		case "enable", "disable":
-			sleepThenProxy(toggleDelay)(w, r)
+			holdThenProxy(toggles)(w, r)
 		default:
 			proxy.ServeHTTP(w, r)
 		}
@@ -1585,19 +1856,16 @@ func startE2EServerWithDelayedJobStart(t *testing.T, svc *core.Service, delay, t
 		}
 	})
 
-	return "http://" + ln.Addr().String()
+	return "http://" + ln.Addr().String(), jobs, toggles
 }
 
-// newE2EFixtureWithSearchableModsAndDelayedJobStart is
-// newE2EFixtureWithSearchableMods, routed through the job-start-delaying
-// proxy above, plus one extra ALREADY-INSTALLED, ENABLED mod ("Gamma Mod") -
-// the other half of the overlap scenario, reachable through the slide-over
-// (no modal, no lock) while the install's own confirm modal sits "starting"
-// for the whole delay window. toggleDelay is the SAME proxy's own shorter
-// delay on the toggle's start (see startE2EServerWithDelayedJobStart) - both
-// starts genuinely overlap, but the toggle still resolves (and finishes
-// disabling Gamma) before the install's own Apply runs.
-func newE2EFixtureWithSearchableModsAndDelayedJobStart(t *testing.T, delay, toggleDelay time.Duration) e2eSearchFixture {
+// newE2EFixtureWithSearchableModsAndGatedJobStart is
+// newE2EFixtureWithSearchableMods, routed through the job-start-gating proxy
+// above, plus one extra ALREADY-INSTALLED, ENABLED mod ("Gamma Mod") - the
+// other half of the overlap scenario, reachable through the slide-over (no
+// modal, no lock) while the install's own confirm modal sits "starting"
+// behind its gate. It returns the two gates with the fixture.
+func newE2EFixtureWithSearchableModsAndGatedJobStart(t *testing.T) (f e2eSearchFixture, jobs, toggles *e2eJobStartGate) {
 	t.Helper()
 	sandboxE2EEnv(t)
 
@@ -1640,7 +1908,7 @@ func newE2EFixtureWithSearchableModsAndDelayedJobStart(t *testing.T, delay, togg
 	seedInstalledMod(t, svc, game,
 		domain.Mod{ID: "gamma", SourceID: "fake", Name: "Gamma Mod", Version: "1.0", GameID: game.ID}, true, nil)
 
-	baseURL := startE2EServerWithDelayedJobStart(t, svc, delay, toggleDelay)
+	baseURL, jobs, toggles := startE2EServerWithGatedJobStart(t, svc)
 	ctx, browserErrors := newE2EBrowser(t)
 	return e2eSearchFixture{
 		e2eFixture: e2eFixture{
@@ -1648,7 +1916,7 @@ func newE2EFixtureWithSearchableModsAndDelayedJobStart(t *testing.T, delay, togg
 			BrowserErrors: browserErrors,
 		},
 		Src: src,
-	}
+	}, jobs, toggles
 }
 
 // newE2EFixtureWithManySearchResults seeds one source with
@@ -1961,24 +2229,81 @@ func clickWhenSettled(sel string) chromedp.Action {
 	}
 }
 
-// settleEffects gives Preact's hook effects time to run before the next
-// action depends on one having been attached.
+// settleEffects waits until Preact has flushed the effects of every render
+// queued so far and the DOM has stopped changing, before the next action
+// depends on one having been attached.
 //
-// Preact flushes effects after paint - requestAnimationFrame, with a
-// ~100ms setTimeout fallback for a browser that is not painting, which is
-// exactly what a headless one often is not. chromedp's own round trips are
-// single-digit milliseconds, so an action issued straight after a
-// WaitVisible routinely lands BEFORE the effect that installs the listener
-// it depends on. That is not a hypothetical: the picker's Escape handler
-// lives in such an effect, and without this the menu simply stayed open and
-// the wait for it to close ran out the harness's whole 30-second timeout -
-// deterministically under -race, intermittently without it.
+// Preact flushes effects after paint: hooks.module.js's afterPaint races a
+// requestAnimationFrame against a 35ms setTimeout and then runs the flush in
+// a setTimeout(0) of its own - and a headless page is often not painting.
+// chromedp's own round trips are single-digit milliseconds, so an action
+// issued straight after a WaitVisible routinely lands BEFORE the effect that
+// installs the listener it depends on. That is not a hypothetical: the
+// picker's Escape handler lives in such an effect, and without a settle the
+// menu simply stayed open and the wait for it to close ran out the harness's
+// whole timeout - deterministically under -race, intermittently without it.
 //
-// The same shape (and the same reasoning) as the `settle` closures the
-// profiles-modal scenarios already declare inline; this is that pattern
-// with one name and one explanation.
+// It used to be a fixed 300ms sleep (#576). settleEffectsJS waits on the
+// condition itself: it schedules the same race Preact does, AFTER whatever
+// Preact has already scheduled, so its own callback runs once Preact's
+// flush has; and it repeats that until a whole round passes with no DOM
+// mutation, so an effect that sets state - another render, more effects -
+// is waited for too. What it does not wait for is the network: a scenario
+// that needs a response to land polls for what the response renders, and
+// one asserting that something does NOT arrive holds quietWindow.
 func settleEffects() chromedp.Action {
-	return chromedp.Sleep(300 * time.Millisecond)
+	return chromedp.Evaluate(settleEffectsJS, nil, awaitPromise)
+}
+
+// settleEffectsJS resolves once a round of Preact's own after-paint
+// scheduling has passed with the DOM unchanged (at least two rounds, at
+// most settleEffectsMaxRounds, so a page that animates forever still
+// returns).
+var settleEffectsJS = fmt.Sprintf(`new Promise((resolve) => {
+	let changed = false;
+	const seen = new MutationObserver(() => { changed = true; });
+	seen.observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
+	let rounds = 0;
+	const round = () => {
+		changed = false;
+		let frame;
+		const done = () => {
+			clearTimeout(fallback);
+			cancelAnimationFrame(frame);
+			setTimeout(next);
+		};
+		const fallback = setTimeout(done, 35);
+		frame = requestAnimationFrame(done);
+	};
+	const next = () => {
+		rounds++;
+		if ((rounds >= 2 && !changed) || rounds >= %d) {
+			seen.disconnect();
+			resolve(true);
+			return;
+		}
+		round();
+	};
+	round();
+})`, settleEffectsMaxRounds)
+
+// settleEffectsMaxRounds bounds settleEffects on a page that never stops
+// changing (a running progress readout): 20 rounds is at most ~700ms.
+const settleEffectsMaxRounds = 20
+
+// e2eQuietWindow is how long quietWindow holds.
+const e2eQuietWindow = 300 * time.Millisecond
+
+// quietWindow is the one deliberate fixed wait left in the harness: a
+// scenario asserting that something does NOT happen - a request is not
+// sent, a row is not settled, a toast does not appear - in reaction to
+// something that travels the network (a stream frame, a response, a
+// request reaching the test's wire) has no condition to wait on, only a
+// window in which a wrong implementation would have acted. It is
+// settleEffects plus a bounded hold, so the page's own reaction is in by
+// the time the window opens.
+func quietWindow() chromedp.Action {
+	return chromedp.Tasks{settleEffects(), chromedp.Sleep(e2eQuietWindow), settleEffects()}
 }
 
 // focusableSelectorJS mirrors spa/app/focustrap.js's own FOCUSABLE list -
@@ -2278,10 +2603,13 @@ func startE2EDelayingProxy(t *testing.T, backend string, delay time.Duration, sh
 //
 // The mod-files read specifically, because it is hydrateModPage's PRIMARY
 // read - the one whose write resets detail, versions and updates to null.
-func startE2EProxyDelayingTheNthModFilesRead(t *testing.T, backend, profile string, n int, delay time.Duration) string {
+//
+// It also returns how many of those reads have reached it, so a scenario can
+// wait for the delayed one to be in flight rather than sleeping on it.
+func startE2EProxyDelayingTheNthModFilesRead(t *testing.T, backend, profile string, n int, delay time.Duration) (string, *atomic.Int64) {
 	t.Helper()
 
-	var seen atomic.Int64
+	seen := new(atomic.Int64)
 	return startE2EDelayingProxy(t, backend, delay, func(r *http.Request) bool {
 		if r.Method != http.MethodGet ||
 			!strings.HasPrefix(r.URL.Path, "/api/v1/mods/") ||
@@ -2290,7 +2618,7 @@ func startE2EProxyDelayingTheNthModFilesRead(t *testing.T, backend, profile stri
 			return false
 		}
 		return int(seen.Add(1)) == n
-	})
+	}), seen
 }
 
 // newE2EFixtureWithASwitchTargetAndSlowStaleReads is

@@ -94,6 +94,7 @@ func resetChangedFlags(cmd *cobra.Command) {
 // it wrote, both streams.
 func runLMM(t *testing.T, args ...string) (stdout, stderr string) {
 	t.Helper()
+	restoreFlags(t)
 	// A --config/--data some earlier test passed would otherwise be reset
 	// over the sandbox this test just pointed them at.
 	cfg, data := configDir, dataDir

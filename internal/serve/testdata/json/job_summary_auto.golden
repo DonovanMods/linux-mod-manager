@@ -1,0 +1,16 @@
+{
+  "id": "0123456789abcdef0123456789abcdef",
+  "kind": "updates",
+  "origin": "auto",
+  "state": "succeeded",
+  "started_at": "2026-08-30T12:00:00Z",
+  "ended_at": "2026-08-30T12:00:02Z",
+  "tally": {
+    "kind": "updates",
+    "applied": 2,
+    "failed": 0,
+    "skipped": 0
+  },
+  "event_count": 9,
+  "dropped_events": 0
+}

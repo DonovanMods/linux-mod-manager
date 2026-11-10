@@ -114,6 +114,12 @@ func (s *Server) catalogErrorStatus(sourceID string, err error) int {
 // never re-derives a slug, a mod path or a source map of its own: a known
 // game can be added with this member alone, and an unknown one needs only
 // the source pair on top.
+//
+// FromDetected is the same prefill for any detector (#545): a detect row's
+// "<detector>:<detector_id>" - "battlenet:wow_classic", or "steam:526870" -
+// or a bare Steam app id. It is how a Battle.net game, which has no app
+// id, is added; from_steam_app_id keeps working as it always has. A body
+// naming both is refused rather than guessed at.
 type gameAddRequest struct {
 	SourceID       string `json:"source_id"`
 	Identifier     string `json:"identifier"`
@@ -122,6 +128,7 @@ type gameAddRequest struct {
 	InstallPath    string `json:"install_path"`
 	ModPath        string `json:"mod_path,omitempty"`
 	FromSteamAppID string `json:"from_steam_app_id,omitempty"`
+	FromDetected   string `json:"from_detected,omitempty"`
 	// Adapter is games.yaml's `adapter:` key (#353). Absent or empty writes
 	// no key, so the game uses the adapter core derives for it - bepinex
 	// for a body declaring the BepInEx loader, icarus for a compile game,
@@ -171,7 +178,16 @@ func (s *Server) handleAPIGameAdd(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	spec := req.spec()
-	if req.FromSteamAppID != "" {
+	field, ref := "from_steam_app_id", req.FromSteamAppID
+	if req.FromDetected != "" {
+		if req.FromSteamAppID != "" {
+			s.writeAPIError(w, http.StatusBadRequest, &core.GameSpecError{Field: "from_detected", Value: req.FromDetected,
+				Reason: "give from_detected or from_steam_app_id, not both"})
+			return
+		}
+		field, ref = "from_detected", req.FromDetected
+	}
+	if ref != "" {
 		// Re-scans rather than trusting a client-supplied row, for the same
 		// reason POST /api/v1/games/detect does: the request names an app
 		// id, and the install path and source map behind it must come from
@@ -183,10 +199,11 @@ func (s *Server) handleAPIGameAdd(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
-		candidate, err := core.FindDetectedGame(detected, req.FromSteamAppID)
+		candidate, err := core.FindDetectedGameBy(detected, field, ref)
 		if err != nil {
-			// A GameSpecError naming from_steam_app_id, so the form marks
-			// the offending input like any other rejected field.
+			// A GameSpecError naming the field the reference came in, so
+			// the form marks the offending input like any other rejected
+			// field.
 			s.writeAPIError(w, gameAddErrorStatus(err), err)
 			return
 		}
@@ -483,7 +500,7 @@ func (s *Server) handleAPIGameDetectApply(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		if errors.Is(err, core.ErrUnknownDetectedGame) {
 			s.writeAPIError(w, http.StatusBadRequest,
-				fmt.Errorf("%w; add it with POST /api/v1/games, passing its from_steam_app_id", err))
+				fmt.Errorf("%w; add it with POST /api/v1/games, passing its from_detected reference (a Steam game's from_steam_app_id works too)", err))
 			return
 		}
 		s.writeAPIError(w, http.StatusBadRequest, err)

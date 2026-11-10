@@ -6,7 +6,7 @@
 // (issue 332) wires the per-row and batch actions themselves.
 
 import { html, useState } from "../render.js";
-import { findingLabel, findingSubject } from "../verify.js";
+import { findingLabel, findingSubject, successorList } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
 import { ListedOffList, listedOffRefs } from "./listedoff.js";
 import {
@@ -17,6 +17,8 @@ import {
   modKey,
 } from "../modrows.js";
 import { ModPageLink } from "./modpagelink.js";
+import { AddAPIKeyButton } from "./addapikey.js";
+import { useSourceName } from "../sourcenames.js";
 import {
   ManualBadge,
   UpdateFromFileButton,
@@ -24,9 +26,10 @@ import {
 } from "./updatefromfile.js";
 import { displayVersion, displayUpdateTarget } from "../version.js";
 import { relativeTime } from "../relativetime.js";
-import { navigate, modPathEditPath } from "../router.js";
+import { navigate, modPathEditPath, contextPath } from "../router.js";
 import { codeSpans } from "../errortext.js";
 import { conflictLabel } from "../conflicts.js";
+import { PlayButton } from "./playbutton.js";
 
 // UPDATES_BATCH_ORIGIN is the Updates card's own "Update selected" control -
 // distinct from a single-mod update's own "mod:{source}/{id}:update"
@@ -47,24 +50,21 @@ const PROFILE_APPLY_ORIGIN = "profile:apply";
 // PROFILE_SYNC_ORIGIN is the Profile card's "Sync…" control (C-3).
 const PROFILE_SYNC_ORIGIN = "profile:sync";
 
-/** notFixableReason names why a finding's own Repair is absent.
+/** rowReason is a Health row's tooltip: why the row offers no Repair, in
+ * the engine's own words (core.VerifyFinding.FixableReason, issue 334) - or
+ * nothing, for a row that does offer one.
  *
- * Since issue 334 this is the ENGINE's own sentence, read straight off the
- * finding (core.VerifyFinding.FixableReason), which replaced the
- * hand-maintained status->sentence table and the locked/unlocked guess that
- * used to live here. That guess read the lock off a separate library fetch
- * and could not see the local-source case at all, so a version_mismatch on
- * a locally imported mod got the generic sentence; the engine knows which
- * of its own decision points refused the repair and says so.
- *
- * The generic fallback survives for a row the engine had nothing to add
- * about - and for a finding decoded from an older document that carries no
- * such key. */
-function notFixableReason(f) {
-  return (
-    f.fixable_reason ||
-    "A verify --fix run would not attempt a repair for this finding"
-  );
+ * Issue 585 took this sentence out of the row's text. It explains what a
+ * `lmm verify --fix` run would or would not attempt, which is the right
+ * sentence for `lmm verify` and no use as body text to a person in a
+ * browser, who cannot run it - and it took most of the row, cutting off
+ * the finding's own remedy. It stays on the wire, and here, for whoever
+ * hovers to ask why there is no button. */
+function rowReason(f) {
+  // An auth row's visible text already IS its fixable_reason (issue 582);
+  // its detail carries the source's error chain as its own title instead.
+  if (f.fixable || f.auth_source) return undefined;
+  return f.fixable_reason || undefined;
 }
 
 /** repairOrigin is one finding's own per-mod "Repair" control - shared by
@@ -104,9 +104,24 @@ export function AttentionCards({
   // issue 542: updates the user skipped. Not on the card - a card of only
   // skipped updates is not shown at all - but kept findable on a quiet line.
   const skippedRows = updates?.skipped_updates ?? [];
+  // issue 582: sources that refused the check for want of a key. The
+  // report's error was never rendered, so a refusal left the card silent;
+  // each now names its source and links to its key.
+  const authRequired = updates?.auth_required ?? [];
+  // issue 587: what the server is doing about the auto-policy updates -
+  // applying them in a job, waiting for the game to close, or holding back
+  // the ones that failed.
+  const autoUpdate = updates?.auto_update ?? null;
+  // issue 590: the moved mods the server is re-linking to their new IDs on
+  // its own (a source whose IDs can change), and the ones it has.
+  const autoRelink = updates?.auto_relink ?? null;
+  const relinked = autoRelink?.relinked ?? [];
   const findings = (health?.result?.findings ?? []).filter(
     (f) => f.status !== "ok",
   );
+  // issue 588: the check did not walk the game because a job was changing
+  // it. The card says so, calmly, instead of reading as a clean bill.
+  const healthDeferred = Boolean(health?.result?.deferred);
   const conflictRows = conflicts?.conflicts ?? [];
   const hasError = Boolean(errors.updates || errors.health || errors.conflicts);
   // The profile count comes from status, but the installed set arrives in
@@ -121,7 +136,10 @@ export function AttentionCards({
     missingRows.length === 0 &&
     goneRows.length === 0 &&
     skippedRows.length === 0 &&
+    authRequired.length === 0 &&
+    !autoRelink &&
     findings.length === 0 &&
+    !healthDeferred &&
     conflictRows.length === 0 &&
     notInstalled === 0 &&
     notListed === 0 &&
@@ -137,12 +155,17 @@ export function AttentionCards({
         (updateRows.length > 0 ||
           missingRows.length > 0 ||
           goneRows.length > 0 ||
+          authRequired.length > 0 ||
+          autoRelink ||
           errors.updates) &&
         html`<${UpdatesCard}
           state=${state}
           rows=${updateRows}
           missing=${missingRows}
           gone=${goneRows}
+          authRequired=${authRequired}
+          autoUpdate=${autoUpdate}
+          autoRelink=${autoRelink}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
           onRefresh=${actions.refreshUpdates}
@@ -150,11 +173,12 @@ export function AttentionCards({
         />`
       }
       ${
-        (findings.length > 0 || errors.health) &&
+        (findings.length > 0 || errors.health || healthDeferred) &&
         html`<${HealthCard}
           state=${state}
           findings=${findings}
           result=${health?.result}
+          relinked=${relinked}
           error=${errors.health}
           onReverify=${actions.reloadHealth}
           actions=${actions}
@@ -273,16 +297,142 @@ function catalogMissingNote(gone) {
   } moved to a new ID, use Re-link… on its mod page; otherwise uninstall it.`;
 }
 
+/** successorOrigin is a gone mod's own "Re-link to <new-id>" control
+ * (issue 590) - shared by the Updates card's line and the mod's Health row,
+ * which name the same re-link, so either control morphs into the one job. */
+function successorOrigin(sourceID, modID) {
+  return `catalog:${sourceID}/${modID}:relink`;
+}
+
+/** RelinkSuccessorButton opens the existing mod_relink plan (issue 326)
+ * with the gone mod's likely new id already filled in (issue 590). The
+ * confirm modal previews the move and Confirm runs the job - nothing here
+ * re-links on its own. */
+function RelinkSuccessorButton({
+  sourceID,
+  modID,
+  name,
+  successor,
+  state,
+  actions,
+}) {
+  const origin = successorOrigin(sourceID, modID);
+  return html`<${InlineJob} origin=${origin} state=${state} actions=${actions}>
+    <button
+      type="button"
+      class="button button--small"
+      data-action="relink-successor"
+      onClick=${() =>
+        actions.openPlan({
+          kind: "mod_relink",
+          origin,
+          title: `Re-link ${name}`,
+          confirmLabel: "Re-link",
+          options: {
+            mod_id: modID,
+            source_id: sourceID,
+            new_mod_id: successor.mod_id,
+          },
+        })}
+    >
+      ${`Re-link to ${successor.mod_id}`}
+    </button>
+  <//>`;
+}
+
+/** CatalogSuccessorNote is the Updates card's line for one gone mod that
+ * core found a likely successor for (issue 590): one is named with a
+ * Re-link button; several are listed, and none is picked. */
+function CatalogSuccessorNote({ gone, state, actions }) {
+  const name = gone.name || gone.mod_id;
+  const successors = gone.successors;
+  if (successors.length === 1) {
+    return html`<p
+      class="card__meta"
+      data-testid="catalog-successor"
+      data-mod=${gone.mod_id}
+    >
+      ${`${name} looks like it moved to ${successors[0].mod_id} (same name and author).`}${" "}
+      <${RelinkSuccessorButton}
+        sourceID=${gone.source_id}
+        modID=${gone.mod_id}
+        name=${name}
+        successor=${successors[0]}
+        state=${state}
+        actions=${actions}
+      />
+    </p>`;
+  }
+  return html`<p
+    class="card__meta"
+    data-testid="catalog-successor"
+    data-mod=${gone.mod_id}
+  >
+    ${`${name} may have moved: ${successorList(successors)} have the same name and author. Use Re-link… on its mod page to pick one.`}
+  </p>`;
+}
+
+/** AuthRequiredNote is one refusing source's line on the updates card
+ * (issue 582), named the way the rest of the UI names it. */
+function AuthRequiredNote({ sourceID }) {
+  const name = useSourceName(sourceID);
+  return `${name} needs an API key, so its mods were not checked.`;
+}
+
+/** autoUpdateNote is the updates card's line for issue 587's auto_update:
+ * the auto-policy updates the server is applying now, or holding until the
+ * game closes. Nothing for the user to do either way - it says why those
+ * rows are still listed. */
+/** autoUpdateFailedNote is one failed automatic update's line: which mod,
+ * which version, why, and what to do. The failed update stays on the card
+ * (the server holds it back rather than retrying it on every check), so
+ * without this line it would sit there unexplained. */
+function autoUpdateFailedNote(failure) {
+  const name = failure.name || failure.mod;
+  const target = failure.to_version ? ` ${failure.to_version}` : "";
+  const reason = failure.error ? ` - ${failure.error.replace(/\.$/, "")}` : "";
+  return `Automatic update failed for ${name}${target}${reason}. Check for updates to retry.`;
+}
+
+function autoUpdateNote(auto) {
+  const n = countOf(auto.mods.length, "automatic update");
+  if (auto.state === "waiting_for_game") {
+    return `${n} waiting for ${auto.game_name || "the game"} to close.`;
+  }
+  return `Applying ${n}…`;
+}
+
+/** RelinkedNotes says each automatic re-link (issue 590) in core's own
+ * words: "<name> moved to a new ID in <source>; re-linked (<old> -> <new>)". */
+function RelinkedNotes({ relinked, testID = "updates-auto-relinked" }) {
+  return relinked.map(
+    (r) =>
+      html`<p
+        key=${`${r.source_id}:${r.from_mod_id}`}
+        class="card__meta"
+        data-testid=${testID}
+        data-mod=${r.from_mod_id}
+      >
+        ${r.message}
+      </p>`,
+  );
+}
+
 function UpdatesCard({
   state,
   rows,
   missing = [],
   gone = [],
+  authRequired = [],
+  autoUpdate = null,
+  autoRelink = null,
   error,
   onRetry,
   onRefresh,
   actions,
 }) {
+  // issue 590: a gone mod being re-linked on its own is offered no button.
+  const relinking = new Set(autoRelink?.job_id ? autoRelink.mods : []);
   const [selected, setSelected] = useState(() => new Set());
 
   function toggle(key) {
@@ -352,6 +502,52 @@ function UpdatesCard({
     <div class="card card--updates">
       <h2 class="card__title">⬆ Updates (${rows.length})</h2>
       ${
+        autoUpdate &&
+        autoUpdate.state !== "failed" &&
+        html`<p
+          class="card__meta"
+          data-testid="updates-auto"
+          data-state=${autoUpdate.state}
+        >
+          ${autoUpdateNote(autoUpdate)}
+        </p>`
+      }
+      ${(autoUpdate?.failed ?? []).map(
+        (failure) =>
+          html`<p
+            key=${failure.mod}
+            class="card__meta"
+            data-testid="updates-auto-failed"
+            data-mod=${failure.mod}
+          >
+            ${autoUpdateFailedNote(failure)}${" "}
+            ${
+              failure.job_id &&
+              html`<button
+                type="button"
+                class="button button--link"
+                onClick=${() =>
+                  navigate(
+                    `${contextPath(state.route.game, state.route.profile)}?job=${encodeURIComponent(failure.job_id)}`,
+                  )}
+              >
+                Show the job
+              </button>`
+            }
+          </p>`,
+      )}
+      ${
+        autoRelink?.job_id &&
+        html`<p
+          class="card__meta"
+          data-testid="updates-auto-relink"
+          data-state="relinking"
+        >
+          ${`Re-linking ${countOf(autoRelink.mods.length, "moved mod")} to ${autoRelink.mods.length === 1 ? "its" : "their"} new ID…`}
+        </p>`
+      }
+      <${RelinkedNotes} relinked=${autoRelink?.relinked ?? []} />
+      ${
         missing.length > 0 &&
         html`<p class="card__meta" data-testid="updates-external-missing">
           ${externalMissingNote(missing)}
@@ -363,6 +559,33 @@ function UpdatesCard({
           ${catalogMissingNote(gone)}
         </p>`
       }
+      ${gone
+        .filter(
+          (m) =>
+            (m.successors ?? []).length > 0 &&
+            !relinking.has(`${m.source_id}:${m.mod_id}`),
+        )
+        .map(
+          (m) =>
+            html`<${CatalogSuccessorNote}
+              key=${modKey({ source_id: m.source_id, id: m.mod_id })}
+              gone=${m}
+              state=${state}
+              actions=${actions}
+            />`,
+        )}
+      ${authRequired.map(
+        (id) =>
+          html`<p
+            key=${id}
+            class="card__meta"
+            data-testid="updates-auth-required"
+            data-source=${id}
+          >
+            <${AuthRequiredNote} sourceID=${id} />${" "}
+            <${AddAPIKeyButton} state=${state} sourceID=${id} />
+          </p>`,
+      )}
       ${
         error
           ? html`<${CardError}
@@ -577,7 +800,15 @@ function UpdatesCard({
 //
 // omitzero on the wire means a hand-built VerifyResult carries no such key
 // at all, so the line is omitted rather than rendered as an invalid date.
-function HealthCard({ state, findings, result, error, onReverify, actions }) {
+function HealthCard({
+  state,
+  findings,
+  result,
+  relinked = [],
+  error,
+  onReverify,
+  actions,
+}) {
   function repair(modID, name) {
     actions.openPlan({
       kind: "verify_fix",
@@ -616,12 +847,46 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
 
   const coverage = verifyCoverage(result);
 
+  // issue 588: core.VerifyResult.deferred says the check did not walk the
+  // game, because a job was changing it - a walk then reads lmm's own
+  // half-placed files as someone else's. With the last check's findings to
+  // show, they are shown as that, without the controls that act on them
+  // (the job may be changing exactly those files); with none, the card is
+  // one calm line. Either way the page asks again: main.js re-reads health
+  // when a job ends, and on a timer while it stays deferred.
+  const deferred = Boolean(result?.deferred);
+  if (deferred && findings.length === 0 && !error) {
+    return html`
+      <div class="card card--health" data-deferred="true">
+        <h2 class="card__title">Health</h2>
+        <p class="card__meta" data-testid="health-deferred">
+          Checking after the current job finishes…
+        </p>
+      </div>
+    `;
+  }
+
   return html`
-    <div class="card card--health">
+    <div
+      class="card card--health"
+      data-deferred=${deferred ? "true" : undefined}
+    >
       <h2 class="card__title">
         ⚠ Health${result ? ` (${result.issues + result.warnings})` : ""}
       </h2>
       ${
+        deferred &&
+        !error &&
+        html`<p class="card__meta" data-testid="health-deferred">
+          ${
+            checked
+              ? `Showing the last check (${checked}) — a job is changing this game`
+              : "Showing the last check — a job is changing this game"
+          }
+        </p>`
+      }
+      ${
+        !deferred &&
         lastVerified &&
         html`<p class="card__meta" data-testid="health-last-verified">
           ${lastVerified}
@@ -632,6 +897,14 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
         html`<p class="card__meta" data-testid="health-coverage">
           ${coverage}
         </p>`
+      }
+      ${
+        // issue 590: what the update check re-linked on its own, said here
+        // too - Health is where a moved mod used to read as missing.
+        html`<${RelinkedNotes}
+          relinked=${relinked}
+          testID="health-auto-relinked"
+        />`
       }
       ${
         error
@@ -646,10 +919,11 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                   (f, i) => html`
                     <li
                       key=${(f.mod_id || f.status) + "/" + (f.file_id || i)}
-                      class="card__row"
+                      class="card__row card__row--finding"
                       data-status=${f.status}
+                      title=${rowReason(f)}
                     >
-                      <span class="card__row-name" title=${findingSubject(f)}
+                      <span class="card__row-name"
                         >${findingSubject(f)}${
                           f.external &&
                           html` <span
@@ -659,72 +933,116 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                           >`
                         }</span
                       >
-                      <span class="card__row-detail" title=${findingLabel(f)}
-                        >${codeSpans(findingLabel(f))}</span
+                      <span
+                        class="card__row-detail"
+                        title=${f.auth_source ? findingLabel(f) : undefined}
+                        >${
+                          // issue 582: a refused-for-want-of-a-key row
+                          // says only that - the source's error chain is
+                          // the title, for whoever wants it.
+                          f.auth_source
+                            ? f.fixable_reason
+                            : codeSpans(findingLabel(f))
+                        }</span
                       >
                       ${
-                        f.fixable
-                          ? html`<${InlineJob}
-                              origin=${repairOrigin(f.mod_id)}
-                              state=${state}
-                              actions=${actions}
-                            >
-                              <button
-                                type="button"
-                                class="button button--small"
-                                data-action="repair"
-                                onClick=${() => repair(f.mod_id, f.mod_name)}
+                        deferred
+                          ? ""
+                          : f.fixable
+                            ? html`<${InlineJob}
+                                origin=${repairOrigin(f.mod_id)}
+                                state=${state}
+                                actions=${actions}
                               >
-                                Repair
-                              </button>
-                            <//>`
-                          : f.status === "mod_path_missing"
-                            ? html`<button
-                                type="button"
-                                class="button button--small"
-                                data-action="set-mod-path"
-                                onClick=${() =>
-                                  navigate(
-                                    modPathEditPath(
-                                      state.route.game,
-                                      state.route.profile,
-                                      state.route.game,
-                                    ),
-                                  )}
-                              >
-                                Set mod path…
-                              </button>`
-                            : html`<span
-                                class="card__row-detail"
-                                title=${notFixableReason(f)}
-                                >Not fixable: ${notFixableReason(f)}</span
-                              >`
+                                <button
+                                  type="button"
+                                  class="button button--small"
+                                  data-action="repair"
+                                  onClick=${() => repair(f.mod_id, f.mod_name)}
+                                >
+                                  Repair
+                                </button>
+                              <//>`
+                            : f.status === "mod_path_missing"
+                              ? html`<button
+                                  type="button"
+                                  class="button button--small"
+                                  data-action="set-mod-path"
+                                  onClick=${() =>
+                                    navigate(
+                                      modPathEditPath(
+                                        state.route.game,
+                                        state.route.profile,
+                                        state.route.game,
+                                      ),
+                                    )}
+                                >
+                                  Set mod path…
+                                </button>`
+                              : f.status === "catalog_missing" &&
+                                  f.successors?.length === 1
+                                ? // issue 590: the one likely new id -
+                                  // the same re-link the Updates card offers.
+                                  html`<${RelinkSuccessorButton}
+                                    sourceID=${f.source_id}
+                                    modID=${f.mod_id}
+                                    name=${f.mod_name || f.mod_id}
+                                    successor=${f.successors[0]}
+                                    state=${state}
+                                    actions=${actions}
+                                  />`
+                                : f.auth_source
+                                  ? // issue 582: the source refused for want
+                                    // of a key. Go to it - "Not fixable" was
+                                    // true of --fix and no help to a person.
+                                    html`<${AddAPIKeyButton}
+                                      state=${state}
+                                      sourceID=${f.auth_source}
+                                    />`
+                                  : f.status === "loader_stale_log"
+                                    ? // issue 501: the finding asks for the
+                                      // game to be launched once - so offer it.
+                                      html`<${PlayButton}
+                                        state=${state}
+                                        status=${state.status}
+                                        actions=${actions}
+                                        action="play-loader"
+                                        small
+                                      />`
+                                    : // issue 585: nothing. "Not fixable: ..."
+                                      // said what `lmm verify --fix` would not
+                                      // do, which a person here cannot run - the
+                                      // finding's own words are what to act on.
+                                      ""
                       }
                     </li>
                   `,
                 )}
               </ul>
-              <div class="card__actions">
-                <button type="button" class="button" onClick=${onReverify}>
-                  Re-verify
-                </button>
-                <${InlineJob}
-                  origin=${HEALTH_REPAIR_ALL_ORIGIN}
-                  state=${state}
-                  actions=${actions}
-                  keepControl
-                >
-                  <button
-                    type="button"
-                    class="button"
-                    data-action="repair-all"
-                    disabled=${!findings.some((f) => f.fixable)}
-                    onClick=${repairAll}
-                  >
-                    Repair all
+              ${
+                !deferred &&
+                html`<div class="card__actions">
+                  <button type="button" class="button" onClick=${onReverify}>
+                    Re-verify
                   </button>
-                <//>
-              </div>
+                  <${InlineJob}
+                    origin=${HEALTH_REPAIR_ALL_ORIGIN}
+                    state=${state}
+                    actions=${actions}
+                    keepControl
+                  >
+                    <button
+                      type="button"
+                      class="button"
+                      data-action="repair-all"
+                      disabled=${!findings.some((f) => f.fixable)}
+                      onClick=${repairAll}
+                    >
+                      Repair all
+                    </button>
+                  <//>
+                </div>`
+              }
             `
       }
     </div>
@@ -805,7 +1123,7 @@ function notInstalledCount(state, mods) {
  * no_changes - the same "already in sync" the CLI reported at that moment.
  *
  * Exported for the browser unit test that pins exactly that
- * (TestNotListedCount_IgnoresDisabledRows); nothing else imports it. */
+ * (TestE2E_NotListedCount_IgnoresDisabledRows); nothing else imports it. */
 export function notListedCount(state, mods) {
   const summary = (state?.status?.profiles ?? []).find(
     (p) => p.name === state?.route?.profile,

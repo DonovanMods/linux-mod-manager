@@ -73,6 +73,12 @@ type VerifyOptions struct {
 	// sets it for Re-verify and leaves it off for a plain hydrate, which is
 	// the case the memo exists for.
 	Force bool `json:"force,omitempty"`
+
+	// observe makes a non-nil sink a watcher of whatever run happens rather
+	// than a reason to run: the memo still answers (and stores) as if there
+	// were no sink, and a hit reports nothing. Set only by
+	// Service.VerifyReportWithProgress (#583).
+	observe bool
 }
 
 // VerifyFinding is one reported row - a per-file or per-mod outcome from a
@@ -146,6 +152,8 @@ type VerifyFinding struct {
 	//	                      deployed-file records no installed mod owns,
 	//	                      removing nothing (#469); another profile's
 	//	                      purge judges its own
+	//	catalog_missing       never: re-link or uninstall is the user's
+	//	                      call (#590), not --fix's
 	//	everything else       never - ok, skipped, file_count_mismatch,
 	//	                      missing_cache (no recorded file to download
 	//	                      again, #469),
@@ -172,6 +180,10 @@ type VerifyFinding struct {
 	// FixableReason is the ENGINE's own reason this finding will not be
 	// repaired, or empty when Fixable is true (or when the row is not a
 	// problem at all - an "ok" or "skipped" row has nothing to explain).
+	// The one "skipped" row that does carry one is a check the source
+	// refused for want of a key (AuthSource, #582): "<Source> needs an API
+	// key" is the honest reason no repair is on offer, or "<Source>
+	// rejected its API key" when the user has supplied one.
 	// #334: it exists so a frontend offering a per-finding "Repair"
 	// affordance can say WHY the button is absent without reimplementing
 	// the question - the web UI carried a hand-maintained status->sentence
@@ -208,6 +220,7 @@ type VerifyFinding struct {
 	// SourceID names the source ModURL is a page of (#517), set whenever
 	// ModURL is: a frontend names the link "Open on <source>", and the row
 	// carries no other source to name. Same key as DownloadError's details.
+	// A catalog_missing row (#590) sets it too: the source to re-link in.
 	SourceID string `json:"source_id,omitzero"`
 
 	// Repair is what a --fix run did to make this row healthy, in the
@@ -221,11 +234,28 @@ type VerifyFinding struct {
 	// (their Note says what was done) and leave it empty.
 	Repair string `json:"repair,omitzero"`
 
+	// AuthSource names the source that refused this row's check for want of
+	// a credential (#582): a "skipped" version check whose GetModFiles
+	// answered domain.ErrAuthRequired. A frontend links it to where that
+	// source's key is configured - the web UI's Setup > Authentication,
+	// `lmm auth login <source>` - and FixableReason says what is missing in
+	// the source's own name. Most often it is a key set only in a login
+	// shell, which `lmm serve` under its systemd unit never sees. omitzero,
+	// so every other row is unchanged.
+	AuthSource string `json:"auth_source,omitzero"`
+
 	// External marks a row about a Steam Workshop item lmm tracks but never
 	// deployed (#429): an "ok" row naming a present item, which the
 	// presence check is ALL lmm can verify about it, or its
 	// "external_missing" row. omitzero, so every other row is unchanged.
 	External bool `json:"external,omitzero"`
+
+	// Successors are a catalog_missing row's likely new identities (#590),
+	// exactly as UpdateCheckReport.CatalogMissing carries them: one is a
+	// suggested re-link target, several are ambiguous. SourceID names the
+	// source on such a row, so a frontend can re-link from the row alone.
+	// omitempty.
+	Successors []CatalogSuccessor `json:"successors,omitempty"`
 }
 
 // notFixableLocal is the reason shared by every repair gated on
@@ -305,7 +335,29 @@ type VerifyResult struct {
 	// produced before this field existed is byte-identical to what it is
 	// now.
 	Cached bool `json:"cached,omitzero"`
+
+	// Deferred is set when the check did not walk the installation because
+	// a mutation was changing it (#588): a deploy, update or switch in this
+	// process, or another lmm holding the cross-process operation lock. A
+	// tree walked halfway through a deploy holds files lmm has placed but
+	// not yet recorded, and verify would report lmm's own new files as
+	// "not deployed - lmm did not put what is there".
+	//
+	// The only value is VerifyDeferredJobRunning. With it, Findings and the
+	// counts are the last completed check of the same game, profile and tier
+	// - CheckedAt says when it ran - or, with no such check, empty with a
+	// zero CheckedAt. Either way nothing in it was read off the disk now; a
+	// surface says the check is waiting for the job and asks again once it
+	// is done. A walk a mutation overlapped is answered the same way and is
+	// never memoised.
+	//
+	// omitzero: a check that ran carries no key at all.
+	Deferred string `json:"deferred,omitzero"`
 }
+
+// VerifyDeferredJobRunning is VerifyResult.Deferred's one value: a mutation
+// was changing the installation, so the check did not walk it (#588).
+const VerifyDeferredJobRunning = "job_running"
 
 // VerifyEventKind identifies what a VerifyEvent carries.
 type VerifyEventKind int
@@ -612,15 +664,32 @@ func staleCompileRefusal(fixing bool) string {
 // Unexported (final review, Important #3 / #301): VerifyReport is the only
 // production entry point (cmd/lmm/verify.go calls it, not this), and core's
 // own tests drive verify through it too.
+//
+// #588: "concurrently with a mutation" must not mean "walking a tree the
+// mutation is half way through writing". A plain run therefore looks
+// before it walks - the in-process slot, and the cross-process lock by a
+// probe that never waits - and does not walk while a mutation is running;
+// it answers deferredVerify instead. It looks again afterwards, and a walk
+// a mutation overlapped is discarded the same way, never memoised.
 func (s *Service) verifyGated(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
+	var quiet func() bool
 	if opts.Fix {
 		release, err := s.beginOp(ctx)
 		if err != nil {
 			return nil, err
 		}
 		defer release()
+	} else {
+		before, busy := s.mutationMark()
+		if busy {
+			return s.deferredVerify(game.ID, profile, opts), nil
+		}
+		quiet = func() bool {
+			after, busy := s.mutationMark()
+			return !busy && after == before
+		}
 	}
-	result, err := s.verifyMemoized(ctx, game, profile, opts, sink)
+	result, err := s.verifyMemoized(ctx, game, profile, opts, sink, quiet)
 	if opts.Fix {
 		// A --fix repair removes and deploys through the Installer, which
 		// reports a file it left as the user's (#466) - and a path another
@@ -657,21 +726,36 @@ func (s *Service) verifyGated(ctx context.Context, game *domain.Game, profile st
 //   - ModFilter: a single-mod run is not the whole-profile answer, and
 //     storing it under the same key would let it stand in for one.
 //   - A non-nil sink: a memo hit has no run, so it has no progress events
-//     to emit. A caller that asked to watch gets something to watch.
+//     to emit. A caller that asked to watch gets something to watch -
+//     unless it asked only to observe a run that happens anyway
+//     (VerifyReportWithProgress, #583), which keeps the memo.
 //
 // A fingerprint that cannot be computed (an unreadable directory, a failed
 // DB read) is not a match and not an error: the run simply happens, which
 // is the behaviour that existed before the memo.
-func (s *Service) verifyMemoized(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
-	if opts.Fix || opts.ModFilter != "" || sink != nil {
-		return s.verify(ctx, game, profile, opts, sink)
+//
+// quiet, when non-nil (every run but Fix, which holds the slot itself),
+// reports whether no mutation has begun since the caller looked (#588). A
+// run it denies is answered by deferredVerify instead, and not memoised.
+func (s *Service) verifyMemoized(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink, quiet func() bool) (*VerifyResult, error) {
+	key := verifyMemoKey(game.ID, profile, opts.Tier)
+	// walk is verify, unless a mutation overlapped it.
+	walk := func() (*VerifyResult, error) {
+		result, err := s.verify(ctx, game, profile, opts, sink)
+		if err == nil && quiet != nil && !quiet() {
+			return s.deferredVerify(game.ID, profile, opts), nil
+		}
+		return result, err
+	}
+	if opts.Fix || opts.ModFilter != "" || (sink != nil && !opts.observe) {
+		return walk()
 	}
 
-	key := verifyMemoKey(game.ID, profile, opts.Tier)
+	gen := s.verifyMemoGen()
 	fingerprint, err := s.verifyFingerprint(ctx, game, profile)
 	if err != nil {
 		s.logger().Debug("verify memo disabled for this run", "game", game.ID, "profile", profile, "err", err)
-		return s.verify(ctx, game, profile, opts, sink)
+		return walk()
 	}
 
 	if !opts.Force {
@@ -690,12 +774,68 @@ func (s *Service) verifyMemoized(ctx context.Context, game *domain.Game, profile
 		}
 	}
 
-	result, err := s.verify(ctx, game, profile, opts, sink)
-	if err != nil {
-		return result, err // a partial (e.g. cancelled) result is never memoised
+	result, err := walk()
+	if err != nil || result.Deferred != "" {
+		return result, err // a partial (e.g. cancelled) or deferred result is never memoised
 	}
-	s.verifyMemoStore(key, fingerprint, result)
+	// The generation is read before the fingerprint, so a mutation that
+	// began anywhere from there to here - the fingerprint's own walk
+	// included - keeps this answer out of the memo even when quiet (a
+	// separate look, outside the memo's lock) passed it a moment ago.
+	if !s.verifyMemoStoreUnlessMutated(key, fingerprint, result, gen) {
+		return s.deferredVerify(game.ID, profile, opts), nil
+	}
 	return result, nil
+}
+
+// mutationMark is where mutations stand as a plain verify run begins and
+// ends (#588): mark identifies the last one begun - in this process
+// (opGen) and, by the lock file's stamp, in any process - and busy says
+// one is running now. Two marks that are equal and not busy bracket a walk
+// no mutation touched.
+func (s *Service) mutationMark() (mark mutationMark, busy bool) {
+	mark.gen = s.verifyMemoGen()
+	// opHeld, not the semaphore: a no-wait acquire the lock refuses holds
+	// the semaphore for an instant without running anything (#588 review).
+	if s.opHeld.Load() {
+		return mark, true
+	}
+	if s.opLockPath != "" {
+		busy, mark.lock = probeOpLock(s.opLockPath)
+	}
+	return mark, busy
+}
+
+// mutationMark is mutationMark's comparable answer.
+type mutationMark struct {
+	gen  uint64
+	lock string
+}
+
+// verifyMemoGen is opGen, read under the lock the gate bumps it under.
+func (s *Service) verifyMemoGen() uint64 {
+	s.verifyMemoMu.Lock()
+	defer s.verifyMemoMu.Unlock()
+	return s.opGen
+}
+
+// deferredVerify is a plain verify's answer while a mutation is changing
+// the installation (#588): the last check of this game, profile and tier,
+// marked deferred and dated when it ran, or an empty deferred result when
+// there is none - always empty for a single-mod run, which the
+// whole-profile answer cannot stand in for. It reads nothing off the disk,
+// and nothing that can block behind the mutation.
+func (s *Service) deferredVerify(gameID, profile string, opts VerifyOptions) *VerifyResult {
+	var result *VerifyResult
+	if opts.ModFilter == "" {
+		result = s.verifyMemoLast(verifyMemoKey(gameID, profile, opts.Tier))
+	}
+	if result == nil {
+		result = &VerifyResult{}
+	}
+	result.Cached = false
+	result.Deferred = VerifyDeferredJobRunning
+	return result
 }
 
 // verify runs the verify engine for game/profile per opts, reporting
@@ -847,6 +987,18 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 // every deploy leaves it, so --fix does too: the row is never fixable, and its
 // note says how to take the mod's version back.
 const VerifyStatusDeployedModified = "deployed_modified"
+
+// VerifyStatusCatalogMissing is the status of a version-check row whose
+// source's catalog no longer has the mod (#590): its files lookup answered
+// domain.ErrModNotFound - the same typed condition the update check reports
+// in UpdateCheckReport.CatalogMissing (#539), worded the same way. It is a
+// warning, never fixable: re-linking the mod to its new ID (Successors
+// suggests one) or uninstalling it is the remedy, and neither is --fix's to
+// choose.
+const VerifyStatusCatalogMissing = "catalog_missing"
+
+// catalogMissingRemedy is a catalog_missing row's FixableReason.
+const catalogMissingRemedy = "the mod has left its source's catalog - re-link it to its new ID if it moved, or uninstall it"
 
 // deployedModifiedRemedy is VerifyStatusDeployedModified's remedy: delete
 // the file and redeploy, or - for a hard link that is still the mod's
@@ -1202,7 +1354,20 @@ func externalContentPresent(path string) bool {
 // non-DeployCompile game, so this dials it unconditionally under --fix.
 // Only called when opts.Fix - a plain verify pass makes no changes for a
 // sync to react to.
+//
+// It is the Health card's Repair for a stale merged artifact, and the
+// Updates card's recompile is the same rebuild (applyMergedPakRegen), so it
+// refuses the same way while a member's cache entry is missing (#589),
+// rather than rebuilding without the member.
 func (r *verifyRun) syncMergedPakPass() {
+	if r.game.DeployMode == domain.DeployCompile {
+		if mc, err := r.svc.adapterCompiler(r.game); err == nil {
+			if err := r.svc.checkMergeMembersCached(r.ctx, r.game, r.profile, mc); err != nil {
+				r.emitEv(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: fmt.Sprintf("could not sync merged pak: %v", err)})
+				return
+			}
+		}
+	}
 	syncWarnings, err := r.svc.syncMergedPak(r.ctx, r.game, r.profile)
 	if err != nil {
 		r.emitEv(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: fmt.Sprintf("could not sync merged pak: %v", err)})
@@ -1662,22 +1827,44 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		if r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter {
 			continue
 		}
-		// Nothing to check against: local imports and manual downloads have
-		// no source to query, and a mod with no recorded file IDs predates
+		// Nothing to check against: local imports and mods adopted in place
+		// (#516) have no source to query, and a mod with no recorded file IDs predates
 		// even the buggy stamping this check exists to catch.
 		// #269: an external mod has no source file list to check a recorded
 		// version against - and no lmm-owned cache entry a repair could act
 		// on. Its own check is externalPresencePass.
-		if mod.SourceID == domain.SourceLocal || mod.ManualDownload || mod.External || len(mod.FileIDs) == 0 {
+		if mod.SourceID == domain.SourceLocal || mod.AdoptedInPlace || mod.External || len(mod.FileIDs) == 0 {
 			continue
 		}
 
 		ref := prof.FindRef(mod.SourceID, mod.ID)
 
 		sourceFiles, err := r.svc.GetModFiles(r.ctx, r.game, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
+		if err != nil && errors.Is(err, domain.ErrModNotFound) {
+			// #590: the typed condition #539 reports, not a check that
+			// could not run - said as such, with the likely new ID.
+			r.result.Warnings++
+			successors, _ := r.svc.catalogSuccessors(r.ctx, r.game.ID, mod.Mod)
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: VerifyStatusCatalogMissing,
+				Note:          fmt.Sprintf("no longer in %s's catalog (removed, or republished under a new ID)", r.svc.sourceDisplayName(mod.SourceID)),
+				FixableReason: catalogMissingRemedy,
+				SourceID:      mod.SourceID,
+				Successors:    successors}, VerifyEvent{})
+			continue
+		}
 		if err != nil {
 			r.result.Warnings++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "skipped", Note: fmt.Sprintf("could not check version: %v", err)}, VerifyEvent{})
+			f := VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "skipped", Note: fmt.Sprintf("could not check version: %v", err)}
+			if errors.Is(err, domain.ErrAuthRequired) {
+				f.AuthSource = mod.SourceID
+				f.FixableReason = r.svc.sourceDisplayName(mod.SourceID) + " needs an API key"
+				// A refusal despite a key means that key is expired,
+				// revoked or mistyped, not missing.
+				if src, srcErr := r.svc.GetSource(mod.SourceID); srcErr == nil && r.svc.sourceHasCredential(r.ctx, src, mod.SourceID) {
+					f.FixableReason = r.svc.sourceDisplayName(mod.SourceID) + " rejected its API key"
+				}
+			}
+			r.finding(f, VerifyEvent{})
 			continue
 		}
 

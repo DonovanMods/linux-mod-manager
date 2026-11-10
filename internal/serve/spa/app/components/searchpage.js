@@ -24,6 +24,7 @@ import { contextPath } from "../router.js";
 import { RELEVANCE, effectiveSort, offeredSorts } from "../searchsort.js";
 import { workshopCollectionRef } from "../workshopcollection.js";
 import { SourceResultsList, skippedSignInNotice } from "./searchresults.js";
+import { AddAPIKeyButton } from "./addapikey.js";
 import { ModPanel } from "./modpanel.js";
 import { AwayBar } from "./awaybar.js";
 import { codeSpans } from "../errortext.js";
@@ -221,7 +222,19 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
       ${
         hits.length === 0 &&
         skippedNotice !== "" &&
-        html`<p class="empty-state__hint">${skippedNotice}</p>`
+        html`<p class="empty-state__hint" data-testid="search-skipped-sign-in">
+          ${skippedNotice}${" "}
+          ${(report.skipped_unauthenticated ?? []).map(
+            // issue 582: each source left out for want of a key links to
+            // its own key field.
+            (id) =>
+              html`<${AddAPIKeyButton}
+                key=${id}
+                state=${state}
+                sourceID=${id}
+              />`,
+          )}
+        </p>`
       }
       ${
         skippedNotice === "" &&

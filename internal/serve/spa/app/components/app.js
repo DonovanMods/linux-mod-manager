@@ -21,6 +21,7 @@ import { ReorderModal } from "./reordermodal.js";
 import { ProfilesModal } from "./profilesmodal.js";
 import { UninstallBatchModal } from "./uninstallbatchmodal.js";
 import { ShortcutsModal } from "./shortcutsmodal.js";
+import { LaunchDriftModal } from "./launchmodal.js";
 import { Toasts } from "./toasts.js";
 import { ReleaseBanner } from "./releasebanner.js";
 import { FromFileInput } from "./updatefromfile.js";
@@ -139,6 +140,10 @@ export function App({ state, onThemeChange, actions }) {
     ${
       modalType === "shortcuts" &&
       html`<${ShortcutsModal} modal=${state.modal} actions=${actions} />`
+    }
+    ${
+      modalType === "launch-drift" &&
+      html`<${LaunchDriftModal} modal=${state.modal} actions=${actions} />`
     }
     ${
       modalType === "uninstall-batch" &&

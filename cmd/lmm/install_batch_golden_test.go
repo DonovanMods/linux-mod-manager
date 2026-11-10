@@ -60,7 +60,7 @@ type installBatchStateRow struct {
 	Enabled        bool     `json:"enabled"`
 	Deployed       bool     `json:"deployed"`
 	FileIDs        []string `json:"file_ids"`
-	ManualDownload bool     `json:"manual_download"`
+	AdoptedInPlace bool     `json:"manual_download"`
 }
 
 type installBatchStateRef struct {
@@ -96,7 +96,7 @@ func dumpInstallBatchState(t *testing.T, svc *core.Service, gameID, profileName 
 		rows = append(rows, installBatchStateRow{
 			SourceID: m.SourceID, ID: m.ID, Version: m.Version,
 			Enabled: m.Enabled, Deployed: m.Deployed,
-			FileIDs: fileIDs, ManualDownload: m.ManualDownload,
+			FileIDs: fileIDs, AdoptedInPlace: m.AdoptedInPlace,
 		})
 	}
 

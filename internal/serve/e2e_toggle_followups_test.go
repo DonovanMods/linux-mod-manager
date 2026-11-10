@@ -30,6 +30,11 @@ func TestE2E_FullModPage_AFailedSettlingReadShowsTheFresherFilesReport(t *testin
 	seedDeployableMods(t, f.Svc, f.Game)
 
 	f.runInBrowser(t,
+		// The re-read below is a timers.js timer; run it at the harness's
+		// scale rather than waiting the full 3s out (#576).
+		scaleUITimers(),
+		// #595: the toggle hands its button back through the release.
+		releaseSucceededReadouts(),
 		chromedp.Navigate(f.ModPagePath("fake", "a")),
 		pollUntil(modPageButtonJS+` === "Disable"`),
 		pollUntil(`document.querySelector('.mod-page__description, .mod-page__section') !== null`),

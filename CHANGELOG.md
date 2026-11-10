@@ -7,6 +7,458 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-10
+
+### Added
+
+- **An "Updated" date in the web library (#596).** The library now shows
+  when lmm last changed each mod's installed version: an update, a
+  rollback, an update from a file, or Steam updating a Workshop item it
+  manages. It shows at every window width, ahead of **Installed** (which
+  still appears from 1440px), and **Sort → Recently updated** orders the
+  library by it. The date is stored in a new `installed_mods.last_updated_at`
+  column, and the mod list documents carry it as `last_updated_at`. Mods
+  installed before this show their install date until their next version
+  change.
+
+- **Mod categories, below the frontends (#592).** Installed mods now keep
+  their source's category name: CurseForge's primary category, and the
+  NexusMods category resolved through the game's category list (one lookup
+  per game). The name is recorded on install and update, and the update
+  check fills it in for mods installed before this. You can also give a
+  mod your own category, which is stored in the profile (it travels with
+  export, import, duplicate and copy) and overrides the source's. Each
+  entry in the mod list now carries its effective category, and core has
+  one grouping rule for the frontends to share. The web UI controls come
+  in a later change.
+
+- **Mod categories in the terminal (#592).** `lmm list --group-by category`
+  lists the mods under one heading per category, sorted by name, with the
+  mods that have none last under "Uncategorized"; each group keeps the
+  load order, and `--json` still prints the flat list (each mod carries
+  `effective_category` and `category_source`).
+  `lmm mod set-category <mod-id> <name>` gives a mod your own category,
+  and `--clear` removes it; `--json` prints the mod-setting result. `lmm mod show` names the mod's
+  category and whether it is yours or the source's.
+
+- **Group the web UI's library by category (#592).** A **Group by
+  category** switch above the library shows one group per category, sorted
+  by name with **Uncategorized** last. The search, Filter and Sort apply
+  first, and each group's heading folds it away. The browser remembers the
+  switch and the folded groups. A mod's panel has a category field, which
+  suggests the categories already in use and says whether the category
+  came from the mod's site or from you. **Clear** goes back to the site's
+  category. **Set category…** in a library row's menu opens the panel at
+  that field. Grouping never changes the load order, and **Reorder…** stays
+  a flat list. Behind it, `POST /api/v1/mods/{source}/{id}/category` sets
+  or clears a mod's category, and `GET /api/v1/categories` lists the ones
+  in use.
+
+- **`lmm service restart` (#591).** Restarts the background web UI's
+  `lmm-serve.service`, or starts it if it was stopped, without reinstalling
+  it, and says a moment later whether it is running. It works for a unit
+  `lmm service install` wrote and for one a package installed, and `--json`
+  prints the same report as `lmm service status`. The hints that said
+  `systemctl --user restart lmm-serve` (after storing an API key the
+  service could not see, and after `lmm self-update`) now name it.
+
+- **A mod that left its source's catalog gets its likely new ID suggested
+  (#590).** When a mod was republished under a new ID, the update check
+  and Health now look in the same source for a mod with the same name and
+  the same author, compared ignoring case, spacing and punctuation. They
+  search once for each missing mod, and a source with a local index
+  answers from it. Every candidate is listed, the ones at the installed
+  version or newer first. One match is offered as a suggestion: `lmm update` and
+  `lmm verify` print the ready-to-run
+  `lmm mod edit … --to-source-id <new-id>`, and the web UI's Updates card
+  and Health row offer **Re-link to &lt;new-id&gt;**. The button opens
+  the existing re-link preview (#326) with the new ID filled in. Several
+  matches are all listed, and none is picked. Only a source whose IDs can
+  change re-links by itself (next entry). The update check's
+  `catalog_missing` entries and the new Health finding carry the
+  candidates as `successors` (`mod_id`, `name`, `author`, `version`).
+
+- **A moved Icarus mod is re-linked to its new ID automatically (#590).**
+  Icarus's catalog sync deletes a mod and adds it again under a new ID, so
+  an installed mod can drop out of the catalog while it is still there. A
+  source can now declare that its IDs can change, and Icarus does. For
+  such a source, when exactly one mod in it has the missing mod's name and
+  author, lmm re-links the mod itself - but only when that one match has
+  exactly the same name and author (case and spacing aside: "Mod+" is not
+  "Mod", nor "Mod 2" "Mod2") and a version that is known and not older
+  than the installed one. A current copy beside an older one is two
+  matches, so neither is picked. The
+  files lmm already has move with it, so nothing reads as missing
+  afterwards, and a newer version is then offered as an ordinary update.
+  It happens only where the automatic updates (#587) happen: `lmm update`
+  (not `--dry-run`, and not a `--json` check without `--all`), and the web
+  UI's own update check. It never waits behind a running job, never runs
+  while the game is running, touches only the active profile, and leaves a
+  locked mod alone. Each re-link reads "Bear Mount moved to a new ID in
+  Icarus (Project Daedalus); re-linked (<old> -> <new>)" in `lmm update`,
+  on the Updates card and Health card, and in the activity tray, where the
+  re-link is an automatic `catalog_relink` job named "Re-linking
+  automatically". The update report carries
+  it as `auto_relink`. Several matches, a looser match, a missing or
+  unreadable version, no match, or a source whose IDs
+  are stable (NexusMods, CurseForge, Steam Workshop, custom sources) still
+  only get the suggestion and the **Re-link to** button.
+
+- **Battle.net detection finds Diablo II: Resurrected, Warcraft III:
+  Reforged and StarCraft II (#546).** Warcraft III (`w3`, game id
+  `warcraft3`) and StarCraft II (`s2`, `starcraft2`) keep custom maps in
+  the prefix user's Documents, so the Battle.net catalog gains
+  `mod_path_base: documents`: the mod path is `Documents/Warcraft III/Maps`
+  or `Documents/StarCraft II/Maps` of the user whose Documents already
+  holds the game's folder, else the prefix's own user (its `user.reg`, or
+  `steamuser` in a Proton prefix), else the only one - never `Public`, and
+  never a guess: a prefix that leaves it ambiguous is a detection warning.
+  A Documents folder linked to `~/Documents` is stored by its real path.
+  Both map NexusMods; most maps come from Hive Workshop or SC2Mapster and
+  are added with `lmm import`. Diablo II: Resurrected (`osi`,
+  `diablo2resurrected`) takes NexusMods mods into its `mods` folder
+  through a new `d2r` game adapter, which lays every archive out as
+  `<name>/<name>.mpq/`. The game loads a mod only when started with
+  `-mod <name> -txt`, which Battle.net's `--exec` cannot pass, so every
+  deploy and every `lmm launch` of it ends with the exact line to enter in
+  Battle.net's "Additional command line arguments" - for the mod last in
+  load order, with a warning when mods in other folders are enabled,
+  since the game loads one, and a note when several mods share that
+  folder: they are merged into it and load together, the later in load
+  order winning a conflict. A profile switch and a profile apply say it
+  too, and the deploy that drops the last mod says to remove the `-mod`
+  line. An archive whose `<name>` has a space is refused at import, since
+  Battle.net splits its arguments on spaces, with the rename that fixes
+  it. An older prefix's `My Documents` is found (from `user.reg`, or by
+  looking in both), and a Documents folder linked outside the prefix and
+  the home directory is refused with a detection warning. The product codes, the launch codes (`OSI`, `W3`, `S2`) and
+  the Warcraft III and StarCraft II NexusMods ids are unverified until
+  someone with a real install confirms them. Diablo III, Diablo IV and
+  StarCraft: Remastered stay out. World of Warcraft's Forever flavor
+  (`wowf`, `wow-forever`) is now named "World of Warcraft: Forever", as
+  Blizzard names it, and carries its CurseForge flavor, `88568`, verified
+  from a real install, so it is offered only Forever addons.
+- **Battle.net games are detected, World of Warcraft first (#545).**
+  `lmm game detect`, `lmm game add --from-detected`, `lmm init` and the web
+  UI's Setup → Games find Battle.net games installed under Wine or Proton:
+  in `$WINEPREFIX`, `~/.wine`, Lutris' `~/Games/*`, Bottles (native and
+  Flatpak) and Steam's `compatdata/*/pfx`. A game is confirmed by the
+  product code in its `.build.info`, found through the prefix's Uninstall
+  keys or directly under its Program Files. Each World of Warcraft flavor
+  (Retail `wow`, Classic `wow_classic`, Classic Era `wow_classic_era`,
+  Forever `wowf`; game ids `wow-retail`, `wow-classic`, `wow-classic-era`,
+  `wow-forever`) is its own game at its own flavor folder, with mods in
+  `Interface/AddOns` from CurseForge and its CurseForge flavor (#544)
+  already set. A flavor you already added by hand is recognised by its
+  install or mod folder, never by its id, and marked configured, not
+  offered twice; adding it again fills in a flavor and launch the game
+  doesn't already set. The catalog is extensible in
+  `~/.config/lmm/battlenet-games.yaml`, and a broken one is a warning that
+  leaves the built-in catalog (and Steam detection) working. Overwatch,
+  Hearthstone, Heroes of the Storm and Call of Duty are never listed, not
+  even with `--include-unknown`. A detected game launches through the
+  Battle.net client in its prefix: a new `battlenet` launch method
+  (`launch.battlenet` in `games.yaml`, prefilled when the game is added,
+  with the exact GE-Proton build that made the prefix when it is installed)
+  runs a Proton prefix with `umu-run` and any other with `wine`, and asks
+  Battle.net to launch World of Warcraft Retail directly or opens the
+  client for the rest. A detected game is now named by its detector and
+  id: detect documents gain `detector` and `detector_id`, a Battle.net row
+  is `battlenet:<product>` on the CLI, and `POST /api/v1/games` takes
+  `from_detected`. `steam_app_id` and `from_steam_app_id` work as before.
+- **`lmm launch` starts the game (#501).** It launches the active profile's
+  game through `launch.command` in `games.yaml` when one is set, else
+  through Steam by the game's app id, which lmm finds in the Steam library
+  the game is installed in (the Flatpak Steam's included), so a game added
+  from Steam needs nothing configured. The game starts as a transient
+  systemd user service, so restarting `lmm serve` or closing the terminal
+  leaves it running. Undeployed changes print a warning and the game
+  launches anyway; `--deploy` deploys the profile first and `--strict`
+  refuses instead. The refusal names the fix for each kind of drift, and
+  `--deploy --strict` refuses before deploying when a deploy can't clear
+  it (a disabled mod still deployed needs `lmm profile apply`). A program
+  that cannot start fails the launch rather than printing "Started"
+  (systemd-run `--service-type=exec`, so systemd 240 or later). No source's
+  API key variable reaches the game or its mods. `--dry-run` prints the full command line, and `--json`
+  emits it as a document. `lmm status --game <id> --json` gains a `launch`
+  member saying how the game would launch, or why it cannot. The Steam
+  library lookup behind it is cached until a library changes. In the web UI,
+  a **Play** button next to Deploy does the same
+  (`POST /api/v1/games/{id}/launch`, whose body is only a profile and
+  `force`); it is disabled, with the reason as its tooltip, for a game lmm
+  can't launch, or while you are viewing a profile that isn't the active
+  one (its reason points at **Switch and deploy…**). Undeployed changes open
+  a choice between **Deploy & launch** and **Launch anyway** (Play stays
+  disabled until the deploy and the launch are done); a launch already
+  under way finishes even if its tab is closed. The Health card's BepInEx
+  "launch the game once to confirm" finding gets a Play button of its own. The web UI
+  never starts a game without systemd, and `lmm serve` on a non-loopback
+  address now warns that it can launch programs.
+
+### Changed
+
+- **lmm now updates itself by default (#586).** Automatic updates are ON for
+  a self-managed install (the release tarball, `go install`, `make
+install`): when the once-a-day release check finds a newer signed release,
+  lmm installs it by itself through the same verified path as `lmm
+self-update` (the release signature, then the checksum, then an atomic
+  replace). After an interactive command, the CLI starts a detached `lmm
+self-update --auto` and exits as it would have; a script or a pipe never
+  triggers one. `lmm serve` installs it from its background refresh. No
+  updater restarts `lmm-serve.service`, and neither does `lmm self-update`
+  any more: they replace the binary and stop, because only `lmm serve` can
+  see its own jobs. `lmm serve` running as `lmm-serve.service` looks at its
+  binary every minute and restarts itself onto a newer one once no job is
+  running; a `lmm serve` you started yourself, or any with
+  `auto_update: false`, asks you to restart it. Only one update runs
+  at a time, and a release whose update failed is not tried again for a
+  day; the CLI-started run logs to `<data dir>/auto-update.log`. The first
+  automatic update says so once, with how to turn them off ("lmm updated
+  itself to vX. To turn this off: `auto_update: false` in config.yaml, or
+  Setup > Updates."); later ones get a one-line notice. **To opt out**, set
+  `auto_update: false` in `config.yaml` (an explicit `false` survives every
+  save), or turn off **Update automatically** under the web UI's new
+  **Setup > Updates**, which also shows the installed version, the latest
+  release, the install method and the last automatic update
+  (`GET /api/v1/updates/lmm` gains `auto_update`; the switch is
+  `PUT /api/v1/settings/auto-update`). A package's lmm (deb, rpm, apk, AUR)
+  and a development build are never updated by lmm, and Setup > Updates says
+  why. `lmm-update.timer` (`lmm service install --auto-update`) is now
+  optional, for a machine where lmm rarely runs. **An install of v2.2.0
+  keeps v2.2.0's behaviour (automatic updates off) until it is updated once
+  by hand** (`lmm self-update`) to the release that carries this change.
+  An automatic update never runs while an lmm operation is running in any
+  lmm process (the cross-process operation lock, and `lmm serve`'s own
+  jobs); it tries again later. `lmm serve`'s restart onto a new binary
+  waits for its running jobs (up to ten minutes, holding new jobs off while
+  it restarts) or is left to you. A release check that fails (offline,
+  GitHub erroring or rate-limiting) backs off from an hour, doubling up to
+  a day, and never clears or replaces a release's own failed install,
+  which waits its day; an install lmm cannot settle or a release tag it
+  refuses waits a day. `config.yaml` writes (the default game, the
+  auto-update switch) now take a short lock of their own, so two lmm
+  processes writing it at once never lose either setting. The "updated
+  itself" notice is shown once overall, by the terminal or the web UI,
+  whichever comes first (`POST /api/v1/updates/lmm/notice`), and Setup >
+  Updates' switch no longer waits behind a running job.
+
+- **The web UI draws its text in the same face on every machine (#523).**
+  It used the host's own `system-ui` font, so the page looked different, and
+  laid out differently, from one machine to the next. `lmm serve` now
+  bundles [Inter](https://github.com/rsms/inter) 4.1 for text and
+  [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) 2.304 for
+  paths, ids and code, embedded in the binary and served from it like the
+  rest of the UI: nothing is fetched from the network or installed into
+  system font directories, and the system faces stay as fallbacks. Both are
+  SIL Open Font License 1.1, shipped unmodified; their license texts are in
+  `THIRD_PARTY_NOTICES`, and the AUR package's license list now names
+  `OFL-1.1`. The binary is about 0.9 MB larger.
+
+- **The installed-mod "adopted in place" flag is named for what it means
+  (#516).** `InstalledMod.ManualDownload` is now `AdoptedInPlace`: it was
+  only ever read as "adopted in place by `lmm import` scan mode, so it may
+  have no cache entry", while its name said "the source won't serve this
+  file", which is #543's separate manual-only record. The database column
+  keeps its historical name, `manual_download`, so an older lmm can still
+  read the database, and the `--json` and `/api/v1` field keeps that name
+  and its meaning too; `manual_only` is still the "download it by hand"
+  fact.
+
+- **The web UI says what it is waiting for (#583).** Mission Control used
+  to wait for its slowest read before anything changed on screen, and the
+  update check and the Health card's verify ask every mod's source, which
+  took up to twelve seconds on a real setup, so switching game or profile
+  looked frozen, and for that whole time the page kept showing the
+  previous profile's mods under the new profile's name. Now each part of
+  the page appears as soon as its own read answers. The previous context's
+  documents, and the lines naming its reads still out, are dropped the
+  moment you switch. Each slow read still running
+  names itself in place, with how far it has got once the server says:
+  "Checking 42 mods for updates (17/42)…", "Verifying 14 mods (3/14)…". A
+  read that answers within 180 ms shows nothing, and a loading line, once
+  shown, stays at least 300 ms so it doesn't flicker. The region is marked
+  `aria-busy`, a polite live region says when a slow read starts and
+  finishes, and focus is never moved. A job's control says what is running
+  from its first frame ("Starting…", then "Deploying…") instead of
+  "Working…", and a finished job's toast no longer waits on a second read
+  unless the job's result can hold a next step. On the wire,
+  `GET /api/v1/updates` and `GET /api/v1/health` take an optional
+  `?progress=<token>`, and a read that names one publishes `read_progress`
+  frames carrying it on `GET /api/v1/events`. Without a token they behave
+  as before, and the Health card's verify is still answered from the
+  unchanged-installation memo (#336).
+
+- **The web UI's Health card shows each finding in full, without the
+  CLI's "Not fixable" sentence (#585).** A row read "Not fixable: …", which
+  explained what `lmm verify --fix` would not do. Nobody can run that from a
+  browser, and the sentence took most of the row. The subject and the finding
+  were each cut to one line, so a loader-stale row read "loader stale l…"
+  and lost its remedy ("launch the game once to confirm…"). A row now wraps
+  so its whole text can be read, and it offers an action only where it has
+  one (**Repair**, **Set mod path…**, **Add API key…**). The engine's
+  reason stays on the wire as `fixable_reason`, stays in `lmm verify`'s
+  output, and shows as the row's tooltip.
+
+### Fixed
+
+- **Text a mod source supplies can no longer drive the terminal (#594).**
+  A mod's name, author, summary, version, category, file names, description
+  or changelog came from its source verbatim, so an ESC sequence in a mod
+  page's metadata (clearing the screen, moving the cursor, setting the
+  window title, an OSC 8 link) or a bidi override reached `lmm list`,
+  `lmm mod show`, `lmm search` and the plan output raw. Core now strips
+  C0/C1 control characters and bidi override/isolate controls from every
+  source result as it arrives (single-line fields also turn tabs and line
+  breaks into a space), and the installed-mod reads clean rows stored before
+  this fix, without rewriting the database. Other Unicode is untouched.
+
+- **A re-link keeps the mod's place and settings in the profile (#593).**
+  `lmm mod edit --to-source/--to-source-id` (and **Re-link…** in the web
+  UI) moved the re-linked mod to the end of the load order, which changes
+  which mod's files win, and dropped what the profile recorded about it:
+  a disabled mod came back enabled, so the next `lmm profile apply`
+  deployed it again, and its file IDs were lost. The profile entry is now
+  renamed where it stands, keeping its position, its disabled state, its
+  file IDs and your category, and the profile file keeps its comments and
+  layout. A mod the profile did not list is added at the end, as before.
+
+- **Health says a mod has left its source's catalog instead of "could not
+  check version" (#590).** A mod whose source answers "not found" was a
+  Health row reading "could not check version: source "icarus": listing
+  files for …: not in the catalog (HTTP 404): mod not found". It now
+  reads "no longer in Icarus's catalog (removed, or republished under a new
+  ID)", the update check's wording from #539, with the same suggested new
+  ID. Health checks the same typed not-found condition as the update
+  check, not the error text. The finding's status is the new
+  `catalog_missing` (it was `skipped`); it still counts as a warning, and
+  it carries `source_id`.
+- **A re-link keeps the mod's cached files (#590).**
+  `lmm mod edit --to-source-id` (and the web UI's Re-link) moved the mod to its new ID
+  but left its cache entry under the old one. `lmm verify` then reported
+  every file MISSING, and `verify --fix` downloaded them all again. The
+  entry is now copied to the new ID before the mod moves. The old entry
+  stays, since another profile may still use the old ID. A re-link that
+  also changes the recorded version copies nothing, because the old files
+  are not that version's; it says to run `lmm verify --fix` instead.
+- **Updating the Icarus merged pak from the Updates card no longer fails
+  with "mod not found" (#589).** The card's recompile row (`[recompile]`
+  in `lmm update`) stands for the profile's merged pak, not an installed
+  mod, but the update batch behind the card and `lmm update --all` looked
+  it up as one and failed it. It now goes straight to the rebuild, which
+  reads every member from the cache and asks no source, so it works with a
+  member that has left its catalog, and is reported under the name the
+  card offered. A member whose cached files are missing stops the rebuild,
+  instead of being left out of the pak, with an error naming the mod and
+  the fix (`lmm verify --fix`, or `lmm update <id> --from-file`). The
+  Health card's **Repair** for a stale merged pak runs the same rebuild and
+  stops the same way.
+
+- **The Health card no longer reports lmm's own files as "not deployed"
+  while a job is writing them (#588).** A health check that landed during
+  a deploy, update or switch - routine since the automatic updates (#587)
+  start from the same page load - walked the game folder halfway through
+  it, found files placed but not yet recorded, and reported each as "not
+  deployed - lmm did not put what is there"; the answer was then
+  remembered, so the false finding outlived the job. A check now looks for
+  a running mutation first - in this process, or another lmm holding the
+  operation lock, probed without waiting - and does not walk: the web UI
+  says **Checking after the current job finishes…**, or shows the last
+  check with a note that a job is changing the game, and checks again when
+  the job ends (or, for another process, a few seconds later - on the full
+  mod page too). Those last-check findings are labelled **Last check** in
+  the mod panel and on the full mod page, and offer no **Repair…** and match
+  no **Unhealthy** filter in the library. A walk a mutation overlapped is
+  discarded the same way and never remembered, and **Repair** waits for the
+  job too; a background step that tried for the lock and was refused does
+  not count as one. `/api/v1/health` carries it as
+  `"deferred": "job_running"`. `lmm verify` (with or without `--json`)
+  stops with the usual "another lmm operation is in progress" error, naming
+  the process, while one is running; if one only overlapped the check and
+  has finished, it says so and checks again.
+
+- **Mods set to update automatically are updated when the web UI checks
+  (#587).** Until now only `lmm update` in a terminal applied an Auto
+  mod's update; `lmm serve` listed it on the Updates card for a hand
+  install, which contradicted the guide. Every check the web UI makes (the
+  main screen loading, **Check for updates**) now applies them through the
+  same batch `lmm update` uses, as an ordinary job in the activity tray
+  named "Updating automatically", with its result. The server decides, so two open tabs
+  or overlapping checks apply an update once. It never queues behind a
+  running job (the next check tries again), never retries a failed update
+  until a newer version or an explicit check (the card says "Automatic
+  update failed for <mod> - <reason>. Check for updates to retry." with a
+  link to the job, and the activity bell counts it), leaves locked, manual-only
+  and Steam Workshop mods alone, and never updates a profile other than
+  the deployed one. While the game is running (a process from the game's
+  folder is running, in its `lmm launch` unit or not, Wine and Proton
+  games and a game folder reached through a symlink included; a launcher
+  left open, such as Battle.net or Steam, does not count; a systemd user
+  bus that does not answer within two seconds leaves the process check to
+  decide) the update waits, and the Updates card says "waiting for
+  <game> to close". Only the web UI's own requests start an automatic
+  update: a check must carry the page's CSRF token, so another website
+  making the browser fetch `/api/v1/updates` reads it and applies nothing.
+  Nothing checks in the background, and `lmm update` is unchanged. The
+  update check document gains `auto_update` (with `state` "applying",
+  "waiting_for_game" or "failed", and `failed`: each held-back failure with
+  its reason and `job_id`), and a job's summary gains `origin: "auto"`.
+
+- **A detected game matches the game configured at its folder before the
+  one sharing its id (#545).** A detect row whose slug is one game's id and
+  whose install path is another's is now the second game, so selecting it
+  can no longer repair the first game onto the second one's folder.
+
+- **lmm refuses a database a newer lmm has migrated (#516).** This
+  release and every later one guard against a downgrade; an lmm before it
+  opened such a database anyway, skipping the migrations it didn't know, so a
+  later schema change could break every command with an error like
+  "no such column". Now every command, `lmm serve` included, stops at
+  startup and says the database was written by a newer lmm and to upgrade
+  lmm. A database at the current schema opens as before.
+- **`lmm verify --fix` fills a manual-only mod's missing checksum from the
+  cache without asking the source again (#516).** #514's cache-first fill
+  keyed on the adopted-in-place flag. A mod the source has refused to serve
+  (`manual_only`) now gets it too, instead of a download the source refuses
+  every time.
+- **A source that needs an API key says so, and links to where it goes
+  (#582).** `lmm-serve.service` doesn't inherit a login shell's
+  environment, so a key exported only there (`CURSEFORGE_API_KEY`,
+  `NEXUSMODS_API_KEY`) never reached it, and the web UI's Health card
+  reported each CurseForge mod as "could not check version: ... authentication
+  required" and "Not fixable". `lmm service install` and `lmm service
+status` now warn about each source whose key comes only from its
+  environment variable (and that the user manager's own environment
+  doesn't supply), naming `lmm auth login <source>` and the web UI's
+  Setup > Authentication (their `--json` documents carry the list as
+  `env_only_credentials`); lmm never writes a key into the unit file. In
+  the web UI, the Health card's row reads "CurseForge needs an API key" with
+  an **Add API key…** button, and the Updates card (which showed nothing
+  for a refused check), search warnings and the search page's
+  skipped-source notice offer the same button; it opens Setup >
+  Authentication focused on that source's key field, or on its row when it
+  already has a key (never on its **Log out** button). `lmm verify` prints `could not
+check version: CurseForge needs an API key (run: lmm auth login
+curseforge)` instead of "source unreachable"; a key the source refused
+  reads "CurseForge rejected its API key", and when that key comes from
+  `CURSEFORGE_API_KEY` the line says to check the variable, which outranks
+  a stored key, instead of `lmm auth login`. On the wire,
+  `VerifyFinding.auth_source`, `UpdateCheckReport.auth_required` and
+  `SourceWarning.auth_required` carry the refusing source.
+- **A finished update batch's control no longer flashes "Done" before its
+  outcome (#364).** The web UI's job readout showed "Done" for a frame
+  and then corrected itself to the batch's real outcome ("1 applied / 1
+  skipped"), because that outcome came from a second request after the
+  job had ended. The server now carries the outcome count on the job
+  summary itself (`jobSummary.tally` on `GET /api/v1/jobs` and the
+  `/api/v1/events` stream, and `tally` on `GET /api/v1/jobs/{id}`), so an
+  update batch's or a profile import's control, its tray row and its toast
+  read it the moment the job finishes.
+
+- **`man lmm` lists `--version` (#581).** The root page's OPTIONS now
+  include `--version`, which `lmm --version` has always accepted; the page
+  generator only picked it up when something had already run `lmm` in the
+  same process, which `make man` never had.
+
 ## [2.2.0] - 2026-10-29
 
 The web UI can run in the background as a systemd user service, lmm says
@@ -6344,7 +6796,8 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.0...v2.0.1

@@ -140,7 +140,7 @@ func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed
 		} else {
 			updates, err = src.CheckUpdates(ctx, mods)
 		}
-		allUpdates = append(allUpdates, updates...)
+		allUpdates = append(allUpdates, sanitizeSourceUpdates(updates)...) // #594
 		missing, err := splitCatalogMissing(mods, err)
 		for id := range missing {
 			catalogMissing[domain.ModKey(sourceID, id)] = true
@@ -290,6 +290,24 @@ type UpdateCheckReport struct {
 	// <new-id>` if the mod moved, or `lmm uninstall`, is the remedy.
 	// omitempty.
 	CatalogMissing []CatalogModRef `json:"catalog_missing,omitempty"`
+
+	// AuthRequired names every source that refused the check for want of a
+	// credential (#582), sorted - the sources ErrorMessage's text mentions
+	// as "authentication required", as data, so a frontend can link each
+	// to where its key is configured. A key set only in a login shell is
+	// the usual cause under `lmm serve`'s systemd unit. omitempty.
+	AuthRequired []string `json:"auth_required,omitempty"`
+
+	// AutoUpdate is what `lmm serve` is doing about this check's
+	// auto-policy updates (#587): applying them in a job, or waiting for
+	// the game to close. Never set by `lmm update`, which applies them
+	// itself. omitempty.
+	AutoUpdate *ModAutoUpdate `json:"auto_update,omitempty"`
+	// AutoRelink is the automatic re-link's state (#590,
+	// catalog_relink.go): the gone mods of a source with unstable IDs
+	// being, or already, re-linked to their one successor. Set by the
+	// frontend that ran it; omitempty.
+	AutoRelink *CatalogAutoRelink `json:"auto_relink,omitempty"`
 }
 
 // CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
@@ -425,6 +443,7 @@ func (s *Service) CheckGameUpdateReport(ctx context.Context, game *domain.Game, 
 	report.Skipped.Updates = len(res.skipped)
 	if checkErr != nil {
 		report.ErrorMessage = checkErr.Error()
+		report.AuthRequired = AuthRequiredSources(checkErr)
 	}
 	return report, checkErr
 }
@@ -449,7 +468,13 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 	if err != nil {
 		return gameUpdateCheck{drift: drift}, err
 	}
-	updates, catalogMissing, checkErr := s.NewUpdater().checkUpdates(ctx, game, drift.overlay(installed), sink, opts)
+	// #592: the sources report every mod they fetch, and the names they
+	// report are recorded on the rows - the backfill costs no request.
+	checkCtx, fetched := withFetchedCategories(ctx)
+	updates, catalogMissing, checkErr := s.NewUpdater().checkUpdates(checkCtx, game, drift.overlay(installed), sink, opts)
+	s.backfillCategoryNames(ctx, game.ID, installed, fetched)
+	// #590: each gone mod's likely new identity, one search apiece.
+	s.fillCatalogSuccessors(ctx, game.ID, installed, catalogMissing)
 	carryManualOnly(updates, installed) // #543
 
 	staleUpd, staleErr := s.CheckMergedPakStaleness(ctx, game, profileName)

@@ -35,6 +35,12 @@ type ModSettingResult struct {
 	// SkippedVersion is the update version the user skipped (#542), the DB
 	// row's own Mod.SkippedVersion; empty when nothing is skipped.
 	SkippedVersion string `json:"skipped_version,omitempty"`
+	// EffectiveCategory and CategorySource are the mod's category as
+	// ModListing reports them (#592): the user's category from the profile
+	// ref when set (CategorySourceUser), else the row's source category name
+	// (CategorySourceSource), else both empty.
+	EffectiveCategory string `json:"effective_category,omitempty"`
+	CategorySource    string `json:"category_source,omitempty"`
 }
 
 // modSettingResult builds sourceID/modID's ModSettingResult in
@@ -47,9 +53,22 @@ func (s *Service) modSettingResult(ctx context.Context, sourceID, modID, gameID,
 		return nil, err
 	}
 
-	locked, lockedVersion, err := s.lockState(ctx, gameID, profileName, sourceID, modID)
-	if err != nil {
-		return nil, err
+	prof, readErr := s.NewProfileManager().Get(ctx, gameID, profileName)
+	if readErr != nil {
+		// lockState's rule: a profile that cannot be read has nothing
+		// locked and no user category - except under cancellation, which
+		// says nothing about either (Ruling 16 (C)).
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
+		prof = nil
+	}
+	locked, lockedVersion := lockStateFromProfile(prof, sourceID, modID)
+	userCategory := ""
+	if prof != nil {
+		if ref := prof.FindRef(sourceID, modID); ref != nil {
+			userCategory = ref.Category
+		}
 	}
 
 	result := &ModSettingResult{
@@ -59,6 +78,7 @@ func (s *Service) modSettingResult(ctx context.Context, sourceID, modID, gameID,
 		UpdatePolicy:   mod.UpdatePolicy,
 		SkippedVersion: mod.SkippedVersion,
 	}
+	result.EffectiveCategory, result.CategorySource = effectiveCategory(userCategory, mod.CategoryName)
 
 	if game, gerr := s.GetGame(gameID); gerr == nil && game.DeployMode == domain.DeployCompile && s.ModHasPakMergeSource(game, mod) {
 		v := mod.ConvertPaks

@@ -45,6 +45,11 @@ func (r refusingAdapter) CheckPreconditions(*domain.Game, []domain.InstalledMod)
 	return r.err
 }
 
+// unstableAdoptSource is adoptTestSource declaring unstable IDs (#590).
+type unstableAdoptSource struct{ *adoptTestSource }
+
+func (unstableAdoptSource) UnstableIDs() bool { return true }
+
 // gatedPlan is one Plan* entry point the adapter precondition gates, and a
 // call that reaches it.
 type gatedPlan struct {
@@ -128,6 +133,37 @@ var gatedPlans = []gatedPlan{
 	}},
 	{"PlanUpdateBatchFrom", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
 		_, err := svc.PlanUpdateBatchFrom(context.Background(), g, "default", []domain.Update{fx.update}, nil)
+		return err
+	}},
+	{"PlanAutoUpdate", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		// #587: the automatic pass's plan holds the snapshot of the set its
+		// check read, built where every other snapshot is.
+		installed, err := svc.GetInstalledMods(context.Background(), g.ID, "default")
+		if err != nil {
+			return err
+		}
+		auto := fx.update
+		auto.InstalledMod.UpdatePolicy = domain.UpdateAuto
+		_, err = svc.PlanAutoUpdate(context.Background(), g, "default", installed, []domain.Update{auto})
+		return err
+	}},
+	{"PlanAutoRelink", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		// #590: the automatic re-link's plan holds the snapshot of the set
+		// its check read, built where every other snapshot is. acme is
+		// re-registered declaring unstable IDs, so m1 - gone, with m3 its
+		// one successor - qualifies.
+		src, err := svc.GetSource("acme")
+		if err != nil {
+			return err
+		}
+		svc.RegisterSource(unstableAdoptSource{src.(*adoptTestSource)})
+		installed, err := svc.GetInstalledMods(context.Background(), g.ID, "default")
+		if err != nil {
+			return err
+		}
+		_, err = svc.PlanAutoRelink(context.Background(), g, "default", installed, []core.CatalogModRef{
+			core.WithAutoTargetForTest(core.CatalogModRef{SourceID: "acme", ModID: "m1", Name: "M1", Successors: []core.CatalogSuccessor{{ModID: "m3", Version: "1.0"}}}, "m3"),
+		})
 		return err
 	}},
 	{"PlanWorkshopAdopt", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {

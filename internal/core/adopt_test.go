@@ -487,7 +487,7 @@ func TestApplyAdopt_CopyMode_WritesCacheSavesRowAndProfile(t *testing.T) {
 	require.Len(t, mods, 1)
 	installed := mods[0]
 	assert.Equal(t, domain.SourceLocal, installed.SourceID)
-	assert.True(t, installed.ManualDownload)
+	assert.True(t, installed.AdoptedInPlace)
 	assert.True(t, installed.Deployed)
 	assert.True(t, installed.Enabled)
 	assert.Empty(t, installed.FileIDs)
@@ -529,7 +529,7 @@ func TestApplyAdopt_MatchedFile_RecordsFileIDsAndStampsMarker(t *testing.T) {
 	installed, gErr := svc.GetInstalledMod(context.Background(), "acme-source", "42", "g1", "default")
 	require.NoError(t, gErr)
 	assert.Equal(t, []string{"77"}, installed.FileIDs)
-	assert.True(t, installed.ManualDownload,
+	assert.True(t, installed.AdoptedInPlace,
 		"adoption keeps its manual-download semantics regardless of file resolution")
 	assert.True(t, svc.GetGameCache(game).HasFileIDs("g1", "acme-source", "42", installed.Version, []string{"77"}),
 		"the adoption-written cache entry must carry the resolved file's completion marker")

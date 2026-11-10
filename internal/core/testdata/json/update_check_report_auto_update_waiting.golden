@@ -1,0 +1,47 @@
+{
+  "game_id": "wow",
+  "profile": "default",
+  "updates": [
+    {
+      "installed_mod": {
+        "id": "1234",
+        "source_id": "curseforge",
+        "name": "EllesmereUI",
+        "version": "9.6.9",
+        "author": "",
+        "summary": "",
+        "description": "",
+        "game_id": "wow",
+        "category": "",
+        "downloads": 0,
+        "picture_url": "",
+        "source_url": "",
+        "files": [],
+        "dependencies": [],
+        "profile_name": "default",
+        "update_policy": "auto",
+        "installed_at": "2026-08-27T12:00:00Z",
+        "enabled": true,
+        "deployed": true,
+        "link_method": "symlink",
+        "manual_download": false,
+        "convert_paks": false
+      },
+      "new_version": "9.7.1",
+      "recompile_needed": false,
+      "locked": false
+    }
+  ],
+  "skipped": {
+    "pinned": 0,
+    "local": 0
+  },
+  "auto_update": {
+    "state": "waiting_for_game",
+    "mods": [
+      "curseforge:1234"
+    ],
+    "game_name": "World of Warcraft",
+    "detected_by": "launch_unit"
+  }
+}

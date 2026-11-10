@@ -68,8 +68,19 @@ Examples:
 
 var gameDetectCmd = &cobra.Command{
 	Use:   "detect",
-	Short: "Detect Steam games and add them to config",
-	Long: `Scan Steam libraries for moddable games and optionally add them to games.yaml.
+	Short: "Detect installed Steam and Battle.net games and add them to config",
+	Long: `Scan Steam libraries and Wine prefixes for moddable games and optionally add them to games.yaml.
+
+Battle.net games are found in every Wine prefix lmm can see - $WINEPREFIX,
+~/.wine, Lutris' ~/Games/*, Bottles (native and Flatpak) and Steam's
+compatdata/*/pfx - and confirmed by the product code in each game's
+.build.info (#545). Each World of Warcraft flavor (Retail, Classic,
+Classic Era, ...) is its own game, with its own AddOns folder and its
+CurseForge flavor already set. Competitive titles with anti-cheat
+(Overwatch, Hearthstone, Heroes of the Storm, Call of Duty) are never
+listed, not even with --include-unknown. A Battle.net row prints its
+reference (battlenet:<product>) where a Steam row prints its app id, and
+the prompt and --select take it the same way.
 
 Prompts for which games to add (e.g. 1,2 or all or none). Every listed
 row is numbered and prints its Steam app id, curated games first, and the
@@ -291,7 +302,7 @@ func runGameClearDefault(cmd *cobra.Command, args []string) error {
 
 func runGameDetect(cmd *cobra.Command, args []string) error {
 	if !jsonOutput {
-		cmd.Println("Scanning Steam libraries...")
+		cmd.Println("Scanning Steam libraries and Wine prefixes...")
 	}
 	svcCfg, err := getServiceConfig()
 	if err != nil {
@@ -630,7 +641,7 @@ func printDetectedGames(cmd *cobra.Command, listed []domain.DetectedGame, curate
 			if i > 0 {
 				cmd.Println()
 			}
-			cmd.Printf("Installed but not in the known-games list - pick one by number or app id here, or add it with `lmm game add --from-detected <app-id>`:\n")
+			cmd.Printf("Installed but not in the known-games list - pick one by number or app id here, or add it with `lmm game add --from-detected <app-id or battlenet:product>`:\n")
 		}
 		printDetectedGameRow(cmd, i+1, g, existingGames, needsRepair)
 	}
@@ -699,6 +710,10 @@ func printDetectedGameRow(cmd *cobra.Command, n int, g domain.DetectedGame, exis
 	appID := ""
 	if g.SteamAppID != "" {
 		appID = "  app id " + g.SteamAppID
+	} else if ref := g.Ref(); ref != "" {
+		// #545: a Battle.net row has no app id; its detector reference is
+		// the handle the prompt and --from-detected take instead.
+		appID = "  " + ref
 	}
 	cmd.Printf("  %d. %s (%s)%s%s\n", n, g.Name, g.Slug, appID, marker)
 	cmd.Printf("      Path: %s\n", g.InstallPath)
@@ -848,6 +863,15 @@ func gameDetectSelector(part string, games []domain.DetectedGame) (int, error) {
 		}
 		return gameDetectAddableRow(part, n, games)
 	}
+	// #545: "<detector>:<id>" - a Battle.net row's handle, or a Steam
+	// row's spelled "steam:<app-id>".
+	if strings.Contains(part, ":") {
+		n := gameDetectRowByRef(part, games)
+		if n == 0 {
+			return 0, gameDetectInvalidSelection(part, games)
+		}
+		return gameDetectAddableRow(part, n, games)
+	}
 
 	byNumber := 0
 	if n, err := strconv.Atoi(part); err == nil && n >= 1 && n <= len(games) {
@@ -883,14 +907,47 @@ func gameDetectRowByAppID(appID string, games []domain.DetectedGame) int {
 	return 0
 }
 
+// gameDetectRowByRef is the listed row a "<detector>:<id>" reference names
+// (#545), or 0.
+func gameDetectRowByRef(ref string, games []domain.DetectedGame) int {
+	detector, id, err := domain.ParseDetectedRef(ref)
+	if err != nil {
+		return 0
+	}
+	for i, g := range games {
+		if g.Ref() == detector+":"+id {
+			return i + 1
+		}
+	}
+	return 0
+}
+
 // gameDetectAddableRow returns row n, or the refusal that names the flow
 // which collects what this row is missing.
 func gameDetectAddableRow(part string, n int, games []domain.DetectedGame) (int, error) {
 	if g := games[n-1]; !g.Addable() {
-		return 0, fmt.Errorf("invalid selection: %q - %s (Steam app id %s) is not in the known-games list and detection found no mod source for it; add it with `lmm game add --from-detected %s`, which asks for the source",
-			part, g.Name, g.SteamAppID, g.SteamAppID)
+		return 0, fmt.Errorf("invalid selection: %q - %s (%s) is not in the known-games list and detection found no mod source for it; add it with `lmm game add --from-detected %s`, which asks for the source",
+			part, g.Name, detectedHandleLabel(g), detectedHandle(g))
 	}
 	return n, nil
+}
+
+// detectedHandle is the value `lmm game add --from-detected` takes for g:
+// a Steam row's bare app id, as it always was, else its "<detector>:<id>"
+// reference (#545).
+func detectedHandle(g domain.DetectedGame) string {
+	if g.SteamAppID != "" {
+		return g.SteamAppID
+	}
+	return g.Ref()
+}
+
+// detectedHandleLabel names detectedHandle for a sentence.
+func detectedHandleLabel(g domain.DetectedGame) string {
+	if g.SteamAppID != "" {
+		return "Steam app id " + g.SteamAppID
+	}
+	return "detected as " + g.Ref()
 }
 
 // gameDetectInvalidSelection is the one "that is not on this list" refusal,
@@ -909,6 +966,13 @@ func gameDetectInvalidSelection(part string, games []domain.DetectedGame) error 
 	if !gameDetectIncludeUnknown {
 		hint = " (pass --include-unknown to list the rest)"
 	}
-	return fmt.Errorf("invalid selection: %q (use a row number 1-%d or a Steam app id from the list above, all, or none)%s",
-		part, len(games), hint)
+	handles := "a Steam app id"
+	for _, g := range games {
+		if g.SteamAppID == "" && g.Ref() != "" {
+			handles = "a Steam app id or detected reference (such as " + g.Ref() + ")"
+			break
+		}
+	}
+	return fmt.Errorf("invalid selection: %q (use a row number 1-%d or %s from the list above, all, or none)%s",
+		part, len(games), handles, hint)
 }

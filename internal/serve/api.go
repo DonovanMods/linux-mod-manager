@@ -409,19 +409,8 @@ func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
-	// #538: record the revision Steam has installed for every tracked
-	// Workshop item first, so the library and the mod page read the real
-	// one. Never waits behind a running job and never fails the request:
-	// the check below reads Steam's manifest itself, so its answer is right
-	// either way, and the next hydrate reconciles. Logged, not surfaced.
-	if _, err := s.svc.ReconcileExternalMods(ctx, sel.Game, sel.Profile); err != nil {
-		s.log.Debug("serve: reconciling external revisions", "game", sel.Game.ID, "profile", sel.Profile, "err", err)
-	}
-
-	installed, err := s.svc.GetInstalledMods(ctx, sel.Game.ID, sel.Profile)
-	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, err)
+	token, ok := s.progressToken(w, r)
+	if !ok {
 		return
 	}
 
@@ -429,7 +418,16 @@ func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
 	// Workshop source caches Valve's keyless answers for hours, so the web
 	// UI's explicit refresh action needs a way to say "ask again".
 	opts := core.UpdateCheckOptions{Refresh: r.URL.Query().Get("refresh") == "1"}
-	report, _ := s.svc.CheckGameUpdateReport(ctx, sel.Game, sel.Profile, installed, nil, opts)
+	// ?progress= (#583) asks for read_progress frames as the check walks the
+	// mods (read_progress.go). The check also applies the auto-policy
+	// updates it finds (#587, auto_updates.go) - only for a request
+	// carrying the SPA's CSRF token, so no other site can start that.
+	report, err := s.checkModUpdates(r.Context(), sel.Game, sel.Profile,
+		s.readProgressSink(token, readUpdates, sel), opts, s.csrf.valid(r.Header.Get(csrfHeaderName)))
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
 	s.writeJSON(w, http.StatusOK, report)
 }
 
@@ -497,6 +495,11 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 // hydrate is exactly the repeated caller the memo exists for, and the
 // answer it gets carries `cached: true` plus the original `checked_at`, so
 // the card can say how old it is and offer a forced re-run.
+//
+// #588: while a mutation is running - a job here, or another lmm holding
+// the operation lock - core does not walk the game, forced or not, and the
+// answer carries `deferred: "job_running"` at once, never waiting for the
+// job. The SPA re-reads it when the job ends.
 func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveReadyAPISelection(w, r)
 	if !ok {
@@ -508,8 +511,14 @@ func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	// that exact value counts, so a hydrate cannot accidentally spell the
 	// expensive request.
 	force := r.URL.Query().Get("force") == "1"
-	report, err := s.svc.VerifyReport(r.Context(), sel.Game, sel.Profile,
-		core.VerifyOptions{Tier: core.VerifyFull, Force: force}, nil)
+	// ?progress= (#583) watches the run if there is one; it never opts out
+	// of the memo (core.VerifyReportWithProgress).
+	token, ok := s.progressToken(w, r)
+	if !ok {
+		return
+	}
+	report, err := s.svc.VerifyReportWithProgress(r.Context(), sel.Game, sel.Profile,
+		core.VerifyOptions{Tier: core.VerifyFull, Force: force}, s.readProgressSink(token, readHealth, sel))
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return

@@ -373,6 +373,29 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 
 		emit(ModEvent{Scope: scope, Phase: UpdateBatchItem, Version: upd.NewVersion})
 
+		// #589: the merged-pak row is synthetic - no installed row stands
+		// behind it, so PlanUpdateFrom's lookup would fail it as a bare
+		// "mod not found". It carries no lock, policy or version of its own
+		// to plan; the regen is the whole of applying it.
+		if isMergedPakRow(upd) {
+			applied, err := s.applyMergedPakRegen(ctx, game, plan.Profile, sink)
+			if err != nil {
+				fail(err)
+				if cerr := ctx.Err(); cerr != nil {
+					return result, cerr
+				}
+				if opts.StopOnError {
+					return result, err
+				}
+				continue
+			}
+			applied.Mod = domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}
+			applied.Name, applied.FromVersion, applied.ToVersion = mod.Name, mod.Version, upd.NewVersion
+			result.Applied = append(result.Applied, *applied)
+			emit(ModEvent{Scope: scope, Phase: UpdateBatchItemApplied, Version: applied.ToVersion})
+			continue
+		}
+
 		itemPlan, err := s.PlanUpdateFrom(ctx, game, plan.Profile, upd)
 		if err != nil {
 			fail(err)
@@ -436,6 +459,12 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 	}
 
 	return result, nil
+}
+
+// isMergedPakRow reports whether upd is the synthetic merged-pak recompile
+// row CheckMergedPakStaleness offers (#197), rather than a real mod's.
+func isMergedPakRow(upd domain.Update) bool {
+	return upd.RecompileNeeded && upd.InstalledMod.SourceID == domain.SourceMerged
 }
 
 // planUpdateSkip renders a locked item's refusal as the UpdateApplyResult a

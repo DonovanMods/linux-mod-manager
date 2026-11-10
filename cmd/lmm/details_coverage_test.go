@@ -62,6 +62,9 @@ var detailsCoverage = map[string]string{
 	"core.GameInstallPathInUseError": "TestReportError_JSON_GameInstallPathInUseError",
 	// #529: the folder chooser's refusal - the path and the reason as data.
 	"core.DirectoryListError": "TestReportError_JSON_DirectoryListError",
+	// #501: the launch refused for undeployed changes - the counts reach
+	// the envelope so the web UI can offer Deploy & launch.
+	"core.LaunchDriftError": "TestReportError_JSON_LaunchDriftError",
 	// #359's plan-time loader precondition: the setup steps reach the
 	// envelope as DATA, so the web UI renders the same sentences the
 	// terminal prints instead of carrying its own copy in JavaScript.

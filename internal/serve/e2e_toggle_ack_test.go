@@ -9,8 +9,8 @@ package serve_test
 //
 // The harness (e2e_harness_test.go) is shared with the rest of the suite;
 // what is new here is the GATED proxy below, which holds the toggle's own
-// POST open until the test lets it go. Every other in-flight scenario in
-// this suite buys its window with a sleeping hook or a fixed proxy delay,
+// POST open until the test lets it go. Most other in-flight scenarios in
+// this suite buy their window with a held hook or a fixed proxy delay,
 // which is fine for "a job is running" but not for this one: the window
 // #432 is about opens at the click and closes when the POST returns, so a
 // test that merely raced a timer against it would be asserting on the
@@ -366,7 +366,7 @@ func TestE2E_LibraryRow_RetryAfterAFailedToggleIsAcknowledged(t *testing.T) {
 		// Long enough for any effect that WOULD settle the request to have
 		// run: the retry's own request is held, so nothing from the server
 		// can legitimately settle it inside this window.
-		settleEffects(),
+		quietWindow(),
 		chromedp.Evaluate(libraryRowStateJS("Gamma Mod"), &retry),
 	)
 	assert.True(t, retry.Pending,
@@ -429,7 +429,7 @@ func TestE2E_LibraryBatch_RetryAfterAFailedBatchIsAcknowledged(t *testing.T) {
 
 	var gamma, delta e2eRowToggleState
 	f.runInBrowser(t,
-		settleEffects(),
+		quietWindow(),
 		chromedp.Evaluate(libraryRowStateJS("Gamma Mod"), &gamma),
 		chromedp.Evaluate(libraryRowStateJS("Delta Mod"), &delta),
 	)
@@ -540,6 +540,8 @@ func TestE2E_FullModPage_NavigatingAwayKeepsTheInFlightToggle(t *testing.T) {
 
 	var inFlight, back e2eToggleButton
 	f.runInBrowser(t,
+		// #595: the toggle hands its button back through the release.
+		releaseSucceededReadouts(),
 		chromedp.Navigate(f.ModPagePath("fake", "a")),
 		pollUntil(modPageToggleJS("Alpha Mod")+` !== null`),
 		chromedp.Evaluate(`document.querySelector('.mod-page [data-action="toggle"]').click()`, nil),

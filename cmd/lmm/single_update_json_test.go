@@ -210,6 +210,7 @@ func TestApplySingleUpdate_JSON(t *testing.T) {
 // (update.go ~:155-159), reached via a single mod-id argument rather than
 // applySingleUpdate directly.
 func TestDoUpdate_JSON_LocalMod(t *testing.T) {
+	restoreFlags(t)
 	withJSONOutput(t)
 	svc, game := localUpdateGame(t)
 	seedLocalMod(t, svc, game, "localA", "Local A")

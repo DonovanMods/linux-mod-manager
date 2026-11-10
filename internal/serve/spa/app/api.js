@@ -3,8 +3,11 @@
 // Two rules it exists to keep in a single place:
 //
 //  1. CSRF. The token arrives in the shell's meta tag and goes back as
-//     X-CSRF-Token on every state-changing request - the same header the
-//     middleware has always accepted (middleware.go).
+//     X-CSRF-Token on every request - the same header the middleware has
+//     always accepted (middleware.go). A state-changing request needs it;
+//     a read sends it too, because GET /api/v1/updates starts the
+//     automatic update pass only for a request that proves it came from
+//     this page (issue 587) - a cross-site page cannot set a header.
 //  2. Failures are the CLI's {"error","details"} envelope. Every non-2xx
 //     answer under /api/v1 is that envelope, so it is decoded here once and
 //     thrown as an ApiError carrying both halves, rather than each caller
@@ -65,10 +68,7 @@ export class NoAnswerError extends Error {
 export const jobStartDeadlineMillis = 60_000;
 
 async function request(method, path, body, { deadlineMillis } = {}) {
-  const init = { method, headers: {} };
-  if (method !== "GET") {
-    init.headers["X-CSRF-Token"] = csrfToken;
-  }
+  const init = { method, headers: { "X-CSRF-Token": csrfToken } };
   if (body !== undefined) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
@@ -236,6 +236,19 @@ export const setModUpdatePolicy = (sourceID, modID, policy, context) =>
  */
 export const setModConvert = (sourceID, modID, enabled, context) =>
   post(scoped(`${modPath(sourceID, modID)}/convert`, context), { enabled });
+
+/** Sets sourceID/modID's user category (issue 592); "" clears it, so the mod
+ * falls back to its source's category name. Returns core.ModSettingResult
+ * directly - a single-step write beside lock/unlock/update-policy, not a
+ * job. A name core refuses (too long, control characters) is a 400. */
+export const setModCategory = (sourceID, modID, category, context) =>
+  post(scoped(`${modPath(sourceID, modID)}/category`, context), { category });
+
+/** Reads the profile's effective categories (issue 592) - the suggestions the
+ * slide-over's category field offers - as {categories: [...]}, sorted the
+ * way the library's groups are. */
+export const getCategories = (context) =>
+  get(scoped("/api/v1/categories", context));
 
 /** Skips sourceID/modID's pending update at version without pinning the mod
  * (issue 542: `lmm mod skip-update`); an empty version skips whatever the
@@ -413,6 +426,13 @@ export const updateGame = (gameID, body) =>
  * deliberately does not write that string into Steam's own configuration. */
 export const getGameDetail = (gameID) =>
   get(`/api/v1/games/${encodeURIComponent(gameID)}`);
+
+/** Launches gameID (issue 501): core.LaunchResult once the game's systemd
+ * unit has started. The body is {profile, force} - nothing else is
+ * accepted, and nothing in it chooses what runs. Undeployed changes are a
+ * 409 whose details are core.LaunchDriftError's. */
+export const launchGame = (gameID, body) =>
+  post(`/api/v1/games/${encodeURIComponent(gameID)}/launch`, body);
 
 /** Reads the version types sourceID publishes for one game (issue 563):
  * core.GameVersionTypesReport, each type by id, name and slug. A source
@@ -616,3 +636,13 @@ export const deleteUpload = (uploadID) =>
  * server's cached answer about a newer lmm (never a request to GitHub of its
  * own, and never scoped to a game). */
 export const getLmmRelease = () => get("/api/v1/updates/lmm");
+
+/** putAutoUpdate writes config.yaml's auto_update (issue 586) and answers
+ * the same core.ReleaseStatus getLmmRelease reads, after the write. */
+export const putAutoUpdate = (enabled) =>
+  put("/api/v1/settings/auto-update", { enabled });
+
+/** postAutoUpdateNotice records that the web UI showed the automatic
+ * update's notice (issue 586), so neither another browser nor the CLI shows
+ * it again. */
+export const postAutoUpdateNotice = () => post("/api/v1/updates/lmm/notice");

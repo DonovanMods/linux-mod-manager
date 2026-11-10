@@ -45,6 +45,11 @@ func (e *SystemdUnavailableError) Unwrap() error { return e.Err }
 // Is reports whether target is ErrSystemdUnavailable.
 func (e *SystemdUnavailableError) Is(target error) bool { return target == ErrSystemdUnavailable }
 
+// ErrServiceNotInstalled is `lmm service restart`'s answer when
+// lmm-serve.service is installed nowhere systemd looks (#591): there is
+// nothing to restart, and the message names the command that installs it.
+var ErrServiceNotInstalled = errors.New(systemd.ServeUnitName + " is not installed; install it with: lmm service install")
+
 // PackagedUnitError refuses to install or uninstall a unit that a package
 // already installed (#567): a second copy under ~/.config would shadow the
 // package's, and removing the package's file is the package manager's job.
@@ -177,6 +182,28 @@ type ServiceReport struct {
 	// Linger is true when the user manager runs from boot, without a
 	// login (`loginctl enable-linger`). lmm reports it and never sets it.
 	Linger bool `json:"linger"`
+	// EnvOnlyCredentials is every source whose API key, in the shell that
+	// ran the command, comes only from its environment variable, with no
+	// stored key, and whose variable the user manager's own environment
+	// does not carry either (#582). A systemd user service does not inherit
+	// a login shell's exports, so lmm-serve runs without that key: the source then
+	// refuses update checks, verify's version check and searches. The fix
+	// is a stored key (`lmm auth login <source>`, or the web UI's Setup >
+	// Authentication) - lmm never copies a key into the unit file, which is
+	// plain text. Filled by install and status; omitempty.
+	EnvOnlyCredentials []EnvOnlyCredential `json:"env_only_credentials,omitempty"`
+}
+
+// EnvOnlyCredential names a source whose key comes only from its
+// environment variable (ServiceReport.EnvOnlyCredentials, #582). It never
+// carries the key, not even masked.
+type EnvOnlyCredential struct {
+	// SourceID is the source's id, as `lmm auth login` takes it.
+	SourceID string `json:"source_id"`
+	// Name is the source's display name.
+	Name string `json:"name"`
+	// EnvVar is the variable the key is read from.
+	EnvVar string `json:"env_var"`
 }
 
 // ServiceInstallOptions are `lmm service install`'s choices.
@@ -210,6 +237,10 @@ type userUnit struct {
 	// disabling it.
 	static bool
 }
+
+// ServeUnitName is lmm-serve.service, the web UI's unit (#567), for a
+// frontend that may not import packaging/systemd itself.
+const ServeUnitName = systemd.ServeUnitName
 
 // UpdateServiceName and UpdateTimerName are the unattended self-update's
 // units (#569): the timer starts the oneshot service once a day.
@@ -346,6 +377,47 @@ func (u *UserUnits) managerDirs(ctx context.Context) (managerDirs, error) {
 		return filepath.Join(append([]string{u.Home}, def...)...)
 	}
 	return managerDirs{configHome: dir("XDG_CONFIG_HOME", ".config"), dataHome: dir("XDG_DATA_HOME", ".local", "share")}, nil
+}
+
+// ManagerEnvironmentNames returns the name of every variable the user
+// manager hands its services with a non-empty value (`systemctl --user
+// show-environment`), so a caller can tell whether lmm-serve.service sees
+// a variable without ever holding its value (#582).
+func (u *UserUnits) ManagerEnvironmentNames(ctx context.Context) (map[string]bool, error) {
+	out, err := u.systemctl(ctx, "show-environment")
+	if err != nil {
+		return nil, fmt.Errorf("systemctl --user show-environment: %w", err)
+	}
+	names := map[string]bool{}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok && k != "" && v != "" {
+			names[k] = true
+		}
+	}
+	return names, nil
+}
+
+// WithoutManagerEnvironment drops from creds every source whose variable
+// the user manager's environment already carries (#582): lmm-serve.service
+// inherits it - from environment.d, a uwsm env file or `systemctl --user
+// import-environment` - so it has that key after all. When the manager
+// cannot be asked, creds come back unchanged: a warning that may be
+// spurious beats silence about a key the service lacks.
+func (u *UserUnits) WithoutManagerEnvironment(ctx context.Context, creds []EnvOnlyCredential) []EnvOnlyCredential {
+	if len(creds) == 0 {
+		return nil
+	}
+	names, err := u.ManagerEnvironmentNames(ctx)
+	if err != nil {
+		return creds
+	}
+	var out []EnvOnlyCredential
+	for _, c := range creds {
+		if !names[c.EnvVar] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // checkUnitPath confirms the user manager loads units from dir. A manager
@@ -561,10 +633,43 @@ func (u *UserUnits) Status(ctx context.Context) (ServiceReport, error) {
 	return u.report(ctx, mgr.unitDir(), false, nil), nil
 }
 
+// Restart restarts lmm-serve.service (#591), starting it when it was
+// stopped, whether `lmm service install` or a package installed it: a
+// restart changes no file, so whose unit it is does not matter. It does
+// not enable a disabled unit. A moment later it asks again whether the
+// service is running, as Install does, so one that exits at once is
+// reported as not running. A unit installed nowhere systemd looks is
+// ErrServiceNotInstalled, and nothing is run. "Installed" means what
+// Status reports: the user's unit directory or a packaged one, the
+// directories lmm itself installs to and defers to.
+func (u *UserUnits) Restart(ctx context.Context) (ServiceReport, error) {
+	if err := u.checkSystemd(ctx); err != nil {
+		return ServiceReport{}, err
+	}
+	mgr, err := u.managerDirs(ctx)
+	if err != nil {
+		return ServiceReport{}, err
+	}
+	dir := mgr.unitDir()
+	if !fileExists(filepath.Join(dir, systemd.ServeUnitName)) && u.packagedPath(systemd.ServeUnitName) == "" {
+		return ServiceReport{}, ErrServiceNotInstalled
+	}
+	if _, err := u.systemctl(ctx, "restart", systemd.ServeUnitName); err != nil {
+		return ServiceReport{}, fmt.Errorf("systemctl --user restart %s: %w (see: journalctl --user -u lmm-serve)", systemd.ServeUnitName, err)
+	}
+	if u.Sleep != nil {
+		u.Sleep(ctx, settleTime)
+	}
+	return u.report(ctx, dir, false, nil), nil
+}
+
 // RestartServeIfActive restarts lmm-serve.service with try-restart when it
-// is running, so it runs the binary `lmm self-update` just installed (#569),
-// and reports whether it did. A host without systemd, or a service that is
-// not running, is nothing to restart and no error.
+// is running, so it runs a newer binary installed under it, and reports
+// whether it did. Since #586 only lmm serve itself calls it, once none of
+// its jobs runs (SelfUpdater.RestartServeWhenIdle). A host without
+// systemd, or a service that is not running, is nothing to restart and no
+// error. From inside a unit (INVOCATION_ID set) the restart is queued, not
+// waited on.
 func (u *UserUnits) RestartServeIfActive(ctx context.Context) (bool, error) {
 	if err := u.checkSystemd(ctx); err != nil {
 		return false, nil
@@ -572,7 +677,14 @@ func (u *UserUnits) RestartServeIfActive(ctx context.Context) (bool, error) {
 	if u.query(ctx, "is-active", systemd.ServeUnitName, "inactive") != "active" {
 		return false, nil
 	}
-	if _, err := u.systemctl(ctx, "try-restart", systemd.ServeUnitName); err != nil {
+	args := []string{"try-restart", systemd.ServeUnitName}
+	if u.Getenv != nil && u.Getenv("INVOCATION_ID") != "" {
+		// Run by systemd - lmm-serve.service restarting itself (#586):
+		// queue the restart rather than wait on a job that first stops
+		// this very process.
+		args = []string{"try-restart", "--no-block", systemd.ServeUnitName}
+	}
+	if _, err := u.systemctl(ctx, args...); err != nil {
 		return false, fmt.Errorf("systemctl --user try-restart %s: %w", systemd.ServeUnitName, err)
 	}
 	return true, nil

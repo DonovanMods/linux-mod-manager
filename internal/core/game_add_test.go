@@ -672,6 +672,41 @@ func TestFindDetectedGame(t *testing.T) {
 		"the core message must not tell either frontend to run a specific command")
 }
 
+// #545: a detected game is named by "<detector>:<id>" as well as by a bare
+// Steam app id, so a Battle.net row - which has no app id - can be added
+// from the same flag and request field. The miss names the field the
+// caller says it read the value from.
+func TestFindDetectedGameBy_DetectorRef(t *testing.T) {
+	games := []domain.DetectedGame{
+		{Detector: domain.DetectorSteam, DetectorID: "489830", SteamAppID: "489830", Slug: "skyrim-se"},
+		{Detector: domain.DetectorBattleNet, DetectorID: "wow_classic", Slug: "wow-classic"},
+		{SteamAppID: "526870", Slug: "satisfactory"}, // a row built before #545: Steam by default
+	}
+	for ref, slug := range map[string]string{
+		"battlenet:wow_classic": "wow-classic",
+		"steam:489830":          "skyrim-se",
+		"489830":                "skyrim-se",
+		"steam:526870":          "satisfactory",
+	} {
+		got, err := core.FindDetectedGameBy(games, "from_detected", ref)
+		require.NoError(t, err, ref)
+		assert.Equal(t, slug, got.Slug, ref)
+	}
+
+	for _, ref := range []string{"battlenet:wow", "steam:1", "wow_classic"} {
+		_, err := core.FindDetectedGameBy(games, "from_detected", ref)
+		var specErr *core.GameSpecError
+		require.ErrorAs(t, err, &specErr, ref)
+		assert.Equal(t, "from_detected", specErr.Field)
+		assert.Equal(t, ref, specErr.Value)
+	}
+
+	// The pre-#545 entry point is the same lookup, naming from_steam_app_id.
+	got, err := core.FindDetectedGame(games, "battlenet:wow_classic")
+	require.NoError(t, err)
+	assert.Equal(t, "wow-classic", got.Slug)
+}
+
 // TestExactGameCatalogMatch is the auto-pick rule: a catalog search by the
 // detected game's NAME resolves itself only when exactly one match carries
 // that same name. Anything else - several matches, a near miss, two

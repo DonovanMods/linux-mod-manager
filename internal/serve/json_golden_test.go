@@ -134,6 +134,79 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Issue 364: a finished update batch's index row carries its
+			// outcome tally, so the control that started it renders the
+			// count on the same frame that says it is over. Succeeded, and
+			// still not all good - the reason the tally exists at all.
+			"job_summary_tally",
+			jobSummary{
+				ID:        "0123456789abcdef0123456789abcdef",
+				Kind:      "updates",
+				State:     jobSucceeded,
+				StartedAt: goldenTime,
+				EndedAt:   goldenTime.Add(2 * time.Second),
+				Tally: &jobTally{
+					Kind:         "updates",
+					Applied:      1,
+					Skipped:      1,
+					SkippedNotes: []string{"Better Boots — Better Boots is locked at v1.0; run lmm mod unlock to update it"},
+				},
+				EventCount: 6,
+			},
+		},
+		{
+			// #587: the automatic update pass's job - an ordinary updates
+			// job that says no user started it.
+			"job_summary_auto",
+			jobSummary{
+				ID:        "0123456789abcdef0123456789abcdef",
+				Kind:      "updates",
+				Origin:    jobOriginAuto,
+				State:     jobSucceeded,
+				StartedAt: goldenTime,
+				EndedAt:   goldenTime.Add(2 * time.Second),
+				Tally: &jobTally{
+					Kind:    "updates",
+					Applied: 2,
+				},
+				EventCount: 9,
+			},
+		},
+		{
+			// The updates shape: applied/failed/skipped and the skipped
+			// items' own sentences.
+			"job_tally",
+			jobTally{
+				Kind:         "updates",
+				Applied:      2,
+				Failed:       1,
+				Skipped:      1,
+				SkippedNotes: []string{"Workshop Map — Steam updates this item itself"},
+			},
+		},
+		{
+			// The catalog_relink shape (#590): the re-links made, and each
+			// one in words.
+			"job_tally_catalog_relink",
+			jobTally{
+				Kind:    "catalog_relink",
+				Applied: 1,
+				Notes:   []string{"Bear Mount moved to a new ID in Icarus (Project Daedalus); re-linked (dLs3nvmWj5uOPnXxezGe -> 8m1z04vNo2CCdKcD2C0H)"},
+			},
+		},
+		{
+			// The profile_import shape: installed/failed/skipped and a
+			// warnings count, with no applied member at all.
+			"job_tally_profile_import",
+			jobTally{
+				Kind:      "profile_import",
+				Installed: 3,
+				Failed:    1,
+				Skipped:   2,
+				Warnings:  1,
+			},
+		},
+		{
 			// GET /api/v1/jobs, newest first: one running job above one
 			// finished one, so the golden pins both row shapes and the
 			// order in the same document.
@@ -181,6 +254,21 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// One read_progress frame (#583): how far a GET that named a
+			// ?progress= token has got - the update check here, the Health
+			// card's verify the other Read value.
+			"read_progress_frame",
+			readProgressFrame{
+				Token:   "r1a2b3",
+				Read:    readUpdates,
+				GameID:  "g1",
+				Profile: "default",
+				ModName: "Mod One",
+				Index:   17,
+				Total:   42,
+			},
+		},
+		{
 			"plan_response",
 			planResponse{
 				PlanID: "0123456789abcdef0123456789abcdef",
@@ -220,6 +308,12 @@ func TestServeJSONGoldens(t *testing.T) {
 				PlanID:  "0123456789abcdef0123456789abcdef",
 				Options: jsontext.Value(`{"accept_conflicts":true}`),
 			},
+		},
+		{
+			// PUT /api/v1/settings/auto-update's body (#586): Setup >
+			// Updates' switch.
+			"auto_update_request",
+			autoUpdateRequest{Enabled: new(false)},
 		},
 		{
 			"job_start_response",
@@ -306,6 +400,16 @@ func TestServeJSONGoldens(t *testing.T) {
 			// empty one, which carries no json key and pins nothing new).
 			"mod_lock_request",
 			modLockRequest{Version: "1.2.0"},
+		},
+		{
+			// #592: the mod panel's category Save; "" clears.
+			"mod_category_request",
+			modCategoryRequest{Category: "Weapons"},
+		},
+		{
+			// #592: the category picker's suggestions.
+			"categories_document",
+			categoriesDocument{Categories: []string{"armour", "Weapons"}},
 		},
 		{
 			// #542: the Updates card's Skip sends the row's own new_version.
@@ -604,8 +708,9 @@ func TestServeJSONGoldens(t *testing.T) {
 		{
 			// #307/#333's game-add body: core.GameSpec's wire fields, so a
 			// core.GameSpecError's "field" member points straight at the
-			// input that produced it. game_id, mod_path and (#206)
-			// from_steam_app_id are the optional members - all populated
+			// input that produced it. game_id, mod_path, (#206)
+			// from_steam_app_id and (#545) from_detected are the optional
+			// members - all populated
 			// here, since the golden's job is to pin every key's shape, not
 			// one plausible request.
 			"game_add_request",
@@ -617,6 +722,7 @@ func TestServeJSONGoldens(t *testing.T) {
 				InstallPath:    "/games/minecraft",
 				ModPath:        "/games/minecraft/mods",
 				FromSteamAppID: "526870",
+				FromDetected:   "battlenet:wow_classic",
 			},
 		},
 		{
@@ -688,6 +794,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			// both, so the golden carries one of each).
 			"game_detect_select_request",
 			gameDetectSelectRequest{Select: []string{"1", "valheim"}},
+		},
+		{
+			// The Play button's body (#501, api_launch.go): a profile and
+			// force, and nothing else - no member can name what runs.
+			"game_launch_request",
+			gameLaunchRequest{Profile: "default", Force: true},
 		},
 		{
 			// The credential body (api_auth.go). One member: the source is

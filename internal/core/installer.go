@@ -50,6 +50,10 @@ type Installer struct {
 	// there, and the linker removes any symlink it is pointed at.
 	recordedOnly bool
 
+	// afterLink is Service.afterDeployLink (#588): a test-only seam between
+	// placing a file and recording it. Nil in production.
+	afterLink func(file string)
+
 	// keepReplacedLinks makes an uninstall leave, and stop recording, a
 	// regular file at a path a symlink deployment recorded - the user's
 	// replacement of lmm's link (#469). Set for `lmm purge`, whose record
@@ -722,6 +726,9 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 			return fmt.Errorf("deploying %s: %w", file, err)
 		}
 		deployed = append(deployed, file)
+		if i.afterLink != nil {
+			i.afterLink(file)
+		}
 
 		// Track file ownership in database (for conflict detection)
 		if i.db != nil {

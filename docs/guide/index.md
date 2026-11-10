@@ -40,6 +40,7 @@ Then read whichever of these you need:
 | Update mods, or go back to an older version  | [Updating, rolling back and locking](updates.md)        |
 | Use a mod I downloaded myself                | [Mods you downloaded yourself](manual-mods.md)          |
 | Mod a Unity game such as Valheim             | [Unity games and BepInEx](bepinex.md)                   |
+| Start the game from lmm                      | [Launching your game](launch.md)                        |
 | Keep the web interface running all the time  | [Run the web UI in the background](background.md)       |
 | Fix something, or get my game back to normal | [When something goes wrong](troubleshooting.md)         |
 | Look up a word or a quick answer             | [FAQ and glossary](faq.md)                              |

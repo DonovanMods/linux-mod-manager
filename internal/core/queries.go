@@ -47,6 +47,16 @@ type ModListing struct {
 	Locked        bool   `json:"locked"`
 	LockedVersion string `json:"locked_version,omitempty"`
 	ConvertPaks   *bool  `json:"convert_paks,omitempty"`
+	// EffectiveCategory is the category the mod is grouped under (#592):
+	// the user's category on the profile ref when set, else the source's
+	// category name (InstalledMod.CategoryName), else empty - which a
+	// frontend labels "Uncategorized". CategorySource says which of the two
+	// it is: CategorySourceUser, CategorySourceSource, or empty. Not named
+	// Category: the embedded Mod.Category already owns that key (the
+	// source's own category id). GroupModListByCategory groups by it; the
+	// listing itself stays in load order.
+	EffectiveCategory string `json:"effective_category,omitempty"`
+	CategorySource    string `json:"category_source,omitempty"`
 }
 
 // ModList is everything `lmm list` renders: the mods installed in one
@@ -95,6 +105,7 @@ func (s *Service) ListMods(ctx context.Context, game *domain.Game, profileName s
 	// copy, the one the update gate enforces (#457) - firstRefs is FindRef's
 	// map form.
 	lockedByKey := map[string]domain.ModReference{}
+	userCats := userCategories(profile) // #592
 	if profile != nil {
 		for key, ref := range firstRefs(profile.Mods) {
 			if ref.Locked {
@@ -108,6 +119,7 @@ func (s *Service) ListMods(ctx context.Context, game *domain.Game, profileName s
 	for i := range ordered {
 		mod := ordered[i]
 		row := ModListing{InstalledMod: mod}
+		row.EffectiveCategory, row.CategorySource = effectiveCategory(userCats[domain.ModKey(mod.SourceID, mod.ID)], mod.CategoryName)
 		if ref, ok := lockedByKey[domain.ModKey(mod.SourceID, mod.ID)]; ok {
 			row.Locked = true
 			row.LockedVersion = ref.Version
@@ -370,6 +382,10 @@ type GameStatus struct {
 	ConvertPaks        *bool      `json:"convert_paks,omitzero"`
 	// ModPathError is GameListEntry.ModPathError, for the same game (#427).
 	ModPathError string `json:"mod_path_error,omitempty"`
+	// Launch is how the game would launch for its active profile, or why
+	// it cannot (#501) - what the web UI's Play button reads. omitzero: a
+	// Service with no Launcher registered (SetLauncher) says nothing.
+	Launch LaunchInfo `json:"launch,omitzero"`
 }
 
 // Status summarizes every configured game, ordered by ID (ListGames').
@@ -485,6 +501,7 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		}
 		// No default profile: an ordinary state (a freshly added game), and
 		// the only thing it costs is the per-profile detail below.
+		s.stampLaunch(ctx, status, game, "")
 		return status, nil
 	}
 
@@ -528,7 +545,16 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		}
 	}
 
+	s.stampLaunch(ctx, status, game, active.Name)
 	return status, nil
+}
+
+// stampLaunch sets status.Launch from ResolveLaunch, when this Service
+// has a Launcher; with none it leaves the member absent.
+func (s *Service) stampLaunch(ctx context.Context, status *GameStatus, game *domain.Game, profile string) {
+	if info, _, err := s.ResolveLaunch(ctx, game, profile); err == nil {
+		status.Launch = *info
+	}
 }
 
 // SearchHit is one search result plus whether it is already installed in
@@ -888,4 +914,15 @@ func (s *Service) VerifyReport(ctx context.Context, game *domain.Game, profileNa
 		return nil, err
 	}
 	return &VerifyReport{GameID: game.ID, Profile: profileName, Result: result}, nil
+}
+
+// VerifyReportWithProgress is VerifyReport for a caller that wants to watch
+// the run without asking for one (#583): progress receives the run's events
+// if the tier really runs, and an unchanged installation is still answered
+// from the memo (#336), with nothing reported. VerifyReport's own non-nil
+// sink always runs the tier, which is right for `lmm verify` and wrong for
+// the web UI's ordinary Mission Control hydrate.
+func (s *Service) VerifyReportWithProgress(ctx context.Context, game *domain.Game, profileName string, opts VerifyOptions, progress EventSink) (*VerifyReport, error) {
+	opts.observe = true
+	return s.VerifyReport(ctx, game, profileName, opts, progress)
 }

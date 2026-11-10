@@ -1,0 +1,8 @@
+{
+  "game_id": "valheim",
+  "profile": "default",
+  "undeployed": 2,
+  "still_deployed": 1,
+  "mod_path_error": "mod_path /g/mods does not exist",
+  "deploy_clears": false
+}

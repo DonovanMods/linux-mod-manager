@@ -1,0 +1,3 @@
+{
+  "reason": "it has no launch.command in games.yaml and lmm found no Steam app id for it"
+}

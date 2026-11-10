@@ -12,17 +12,21 @@
 // rather than computing it.
 
 import { html, useEffect, useMemo, useRef, useState } from "../render.js";
+import { useShownWhile } from "../loading.js";
 import { navigate } from "../router.js";
 import { ApiError } from "../api.js";
 import {
   formatDate,
+  lastUpdated,
   countExternal,
   countOf,
   healthBadge,
   healthLabel,
   FILTER_NAMES,
   SORT_NAMES,
+  UNCATEGORIZED_LABEL,
 } from "../modrows.js";
+import { requestPanelFocus } from "../panelfocus.js";
 import { mutationLabel, progressText } from "../progress.js";
 import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
@@ -44,6 +48,7 @@ const FILTER_LABELS = {
 const SORT_LABELS = {
   "load-order": "Load order",
   name: "Name",
+  updated: "Recently updated",
   recent: "Recently installed",
 };
 
@@ -121,7 +126,10 @@ function healthBadgeTone(row) {
 // otherwise - the region itself stays mounted either way (issue 442).
 function rowLiveText(mutation, togglePending, requested) {
   if (mutation) {
-    return [mutationLabel(mutation.summary.kind), progressText(mutation.frame)]
+    return [
+      mutationLabel(mutation.summary.kind, mutation.summary.origin),
+      progressText(mutation.frame),
+    ]
       .filter(Boolean)
       .join(" · ");
   }
@@ -164,6 +172,12 @@ export function Library({
   mods,
   rows,
   visible,
+  shownCount = visible.length,
+  groups = null,
+  collapsedGroups = new Set(),
+  onToggleGroup,
+  grouped = false,
+  onGroupedChange,
   filter,
   sort,
   onFilterChange,
@@ -683,6 +697,24 @@ export function Library({
             Copy to profile…
           </button>`
         }
+        ${
+          // issue 592: the category is set in the slide-over, beside lock and
+          // policy - this opens it there with the field already focused,
+          // rather than growing a second editor.
+          ""
+        }
+        <button
+          type="button"
+          class="menu-item row-menu__item"
+          data-action="set-category"
+          onClick=${() => {
+            setMenuKey(null);
+            requestPanelFocus(`${row.source_id}/${row.id}`, "category");
+            openRow(row);
+          }}
+        >
+          Set category…
+        </button>
         <button
           type="button"
           class="menu-item row-menu__item"
@@ -714,6 +746,12 @@ export function Library({
     [selected],
   );
 
+  // issue 583: the library's own loading line follows the same timing as
+  // every other loading state (loading.js) - the library read usually
+  // answers in milliseconds, and a line painted for one frame of that is a
+  // flash, not information. A hook, so it is called above the returns.
+  const loadingShown = useShownWhile(mods === null && !error);
+
   if (mods === null) {
     if (error) {
       return html`
@@ -733,8 +771,13 @@ export function Library({
       `;
     }
     return html`
-      <section class="library">
-        <p class="app-booting">Loading your library…</p>
+      <section class="library" aria-busy="true">
+        ${
+          loadingShown &&
+          html`<p class="app-booting" data-testid="library-loading">
+            Loading your library…
+          </p>`
+        }
       </section>
     `;
   }
@@ -775,9 +818,13 @@ export function Library({
   // keep the section's usual "Library (n)" heading. Either way it counts
   // `visible`, not `rows` - M3: the header used to ignore the Filter
   // dropdown entirely, staying "Library (3)" under a filtered-to-one table.
+  //
+  // issue 592: shownCount, which is visible.length except while grouped: a
+  // collapsed group hides its rows, but they still match - the heading
+  // counts the library the controls narrowed to, not what is unfolded.
   const libraryLabel = (query ?? "").trim()
-    ? `In your library (${visible.length})`
-    : `Library (${visible.length})`;
+    ? `In your library (${shownCount})`
+    : `Library (${shownCount})`;
 
   // issue 269: reported separately from the library count, so "12 mods" is never
   // read as twelve deployments lmm made. Uses an existing class - the
@@ -803,6 +850,237 @@ export function Library({
     skipped > 0
       ? `${countOf(skipped, "row")} managed by Steam ${skipped === 1 ? "is" : "are"} not included — lmm cannot enable or disable ${skipped === 1 ? "it" : "them"}`
       : undefined;
+
+  // One library row - shared by the flat table and the grouped one (issue 592),
+  // which differ only in the <tbody>s around it.
+  function renderRow(row) {
+    // issue 330 carry-3's "move onto the rows it concerns":
+    // a mutation this session started against THIS mod
+    // (modrows.js#runningMutations, keyed the same
+    // "source:id" way modKey() is) shows its own live text
+    // here instead of the library's shared header line.
+    const mutation = mutations?.get(row.key);
+    // issue 432: what the user asked this row's toggle for
+    // and has not got yet (toggleack.js). While it is set the
+    // box renders the REQUESTED value rather than the
+    // server's, so the click lands visibly in the frame it
+    // was made in.
+    const requested = requestedFor(row);
+    const togglePending = requested !== undefined;
+    return html`
+      <tr
+        key=${row.key}
+        data-mod=${row.key}
+        class="mod-row ${selected.has(row.key) ? "mod-row--selected" : ""} ${togglePending ? "mod-row--pending" : ""}"
+      >
+        <td class="col--select">
+          <input
+            type="checkbox"
+            aria-label=${`Select ${row.name} for batch actions`}
+            checked=${selected.has(row.key)}
+            onClick=${(e) => e.stopPropagation()}
+            onChange=${() => toggleSelect(row.key)}
+          />
+        </td>
+        <td class="col--enabled">
+          <input
+            type="checkbox"
+            aria-label=${
+              // issue 379: an external row's box cannot
+              // act, so its accessible name must not offer
+              // an action - it states what IS, and the
+              // title carries the remedy.
+              row.isExternal
+                ? `${row.name} is managed by Steam`
+                : `${row.enabled ? "Disable" : "Enable"} ${row.name}`
+            }
+            checked=${togglePending ? requested.want : row.enabled}
+            disabled=${
+              // issue 379: EXTERNAL rows are gated here too,
+              // matching updatableSelectedRows and the row
+              // menu. Enable/disable is refused by core for
+              // a Steam Workshop item - Steam owns whether
+              // it loads - so a live checkbox on the primary
+              // screen could only ever start a job that
+              // fails, which is the same defect the deploy
+              // dry run had. Disabled-with-a-reason is the
+              // full mod page's rollback pattern.
+              //
+              // issue 432: the box is still frozen while the
+              // request is in flight - a second, contrary
+              // job over the same mod is not a thing to
+              // offer - but it is now frozen HOLDING THE
+              // REQUESTED VALUE, with the row saying what is
+              // happening, instead of frozen on the old one
+              // saying nothing at all.
+              Boolean(mutation) || togglePending || row.isExternal
+            }
+            aria-busy=${togglePending ? "true" : null}
+            title=${
+              row.isExternal
+                ? "Steam manages this item — unsubscribe in Steam, or use the game's own mod menu"
+                : undefined
+            }
+            onClick=${(e) => e.stopPropagation()}
+            onChange=${() => toggleEnabled(row)}
+          />
+          ${
+            togglePending &&
+            html`<span class="toggle-pending" aria-hidden="true"></span>`
+          }
+        </td>
+        <td class="col--name">
+          <button
+            type="button"
+            class="button button--link mod-row__name"
+            onClick=${() => openRow(row)}
+          >
+            ${row.name}
+          </button>
+          <span
+            class="mod-row__live"
+            role="status"
+            data-testid=${
+              !mutation && togglePending ? "toggle-pending" : undefined
+            }
+            >${
+              // The row's own live line: the running job's
+              // words once there IS a job, and - issue 432 -
+              // the requested change's own words for the
+              // window before that, which is exactly the
+              // window the user was clicking into. Issue
+              // 442: the region is always there and only
+              // this text changes, so its first words are
+              // announced.
+              rowLiveText(mutation, togglePending, requested)
+            }</span
+          >
+        </td>
+        <td class="col--version mono">
+          ${displayVersion(row)}${row.hasUpdate && html` → ${row.updateTarget}`}
+        </td>
+        <td class="col--author" title=${authorTitle(row)}>
+          ${displayAuthor(row) || "—"}
+        </td>
+        <td class="col--source mono">${row.source_id}</td>
+        <td class="col--badges mod-row__badges">
+          ${
+            row.hasUpdate &&
+            html`<span
+              class="badge badge--good"
+              data-testid="row-update"
+              role="img"
+              aria-label=${`Update available: ${row.updateTarget}`}
+              title="Update available"
+              >⬆</span
+            >`
+          }
+          ${
+            // issue 418: the row says its health state
+            // WHICHEVER state it is in. It used to carry a
+            // ⚠ when something was wrong and nothing at all
+            // otherwise - so "no badge" meant both "checked,
+            // fine" and "never checked", which are opposite
+            // things to tell someone about their install.
+            //
+            // role="img" with the sentence as its name: the
+            // glyph alone means nothing to a screen reader,
+            // and a role-less span exposes no name at all -
+            // `title` stays for the pointer, but it is
+            // neither a keyboard nor a touch affordance.
+            html`<span
+              class="badge ${healthBadgeTone(row)}"
+              data-testid="row-health"
+              data-health=${row.healthState}
+              role="img"
+              aria-label=${healthLabel(row)}
+              title=${healthLabel(row)}
+              >${healthBadge(row)}</span
+            >`
+          }
+          ${
+            row.hasConflict &&
+            html`<span
+              class="badge badge--danger"
+              data-testid="row-conflict"
+              role="img"
+              aria-label="File conflict"
+              title="File conflict"
+              >⇄</span
+            >`
+          }
+          ${
+            row.locked &&
+            html`<span
+              class="badge"
+              data-testid="row-locked"
+              role="img"
+              aria-label=${`Locked to ${row.locked_version}`}
+              title=${`Locked to ${row.locked_version}`}
+              >🔒</span
+            >`
+          }
+          ${
+            row.isExternal &&
+            html`<span
+              class="badge"
+              title="Tracked from your Steam subscription - Steam owns this item's files"
+              >Steam</span
+            >`
+          }
+          ${
+            // issue 543: the source will not serve this mod's
+            // files - it is updated from a downloaded file.
+            row.isManual && html`<${ManualBadge} testid="row-manual" />`
+          }
+          <span class="badge badge--policy">${row.update_policy}</span>
+        </td>
+        <td class="col--order mono">${row.loadOrder}</td>
+        <td class="col--method mono">${row.link_method}</td>
+        <td class="col--updated">${formatDate(lastUpdated(row))}</td>
+        <td class="col--installed">${formatDate(row.installed_at)}</td>
+        <td class="col--menu row-menu-cell">
+          ${
+            // issue 417: the per-mod Update, in the open.
+            // Not wrapped in InlineJob like the header's own
+            // "Update all" - this cell is too narrow for a
+            // progress bar, and the row already reports its
+            // own running job on the name column's live line
+            // (the library's established pattern for a
+            // row-level job). It is refused while one is
+            // running so a second cannot be stacked on it.
+            // Issue 543: not for a MANUAL-ONLY row, which
+            // the batch would only skip - its update is the
+            // ⋯ menu's "Update from file…".
+            row.hasUpdate &&
+            !row.isExternal &&
+            !row.isManual &&
+            html`<button
+              type="button"
+              class="button button--small button--primary"
+              data-action="row-update"
+              disabled=${Boolean(mutation)}
+              aria-label=${`Update ${row.name} to ${row.updateTarget}`}
+              onClick=${() => updateRow(row)}
+            >
+              Update
+            </button>`
+          }
+          <button
+            type="button"
+            class="button button--small"
+            data-action="row-menu"
+            aria-label=${`Actions for ${row.name}`}
+            aria-expanded=${menuKey === row.key ? "true" : "false"}
+            onClick=${() => setMenuKey(menuKey === row.key ? null : row.key)}
+          >
+            ⋯
+          </button>
+          ${menuKey === row.key && rowMenu(row)}
+        </td>
+      </tr>
+    `;
+  }
 
   return html`
     <section class="library">
@@ -855,6 +1133,22 @@ export function Library({
           >
             ${SORT_NAMES.map((s) => html`<option value=${s}>${SORT_LABELS[s]}</option>`)}
           </select>
+        </label>
+        ${
+          // issue 592: a view, not an order - the groups sort by name, which is
+          // not the load order, so the reorder modal stays the flat list it
+          // always was.
+          ""
+        }
+        <label class="library__control">
+          <input
+            type="checkbox"
+            name="group-by-category"
+            data-action="group-by-category"
+            checked=${grouped}
+            onChange=${(e) => onGroupedChange?.(e.currentTarget.checked)}
+          />
+          Group by category
         </label>
         <${AddModsMenu}
           route=${state.route}
@@ -912,7 +1206,7 @@ export function Library({
       </div>
 
       ${
-        visible.length === 0
+        shownCount === 0
           ? html`<${NoMatches}
               query=${query}
               filter=${filter}
@@ -958,256 +1252,60 @@ export function Library({
                       <span class="visually-hidden">Load order</span>
                     </th>
                     <th class="col--method">Method</th>
+                    <th
+                      class="col--updated"
+                      title="When lmm last changed this mod's installed version"
+                    >
+                      Updated
+                    </th>
                     <th class="col--installed">Installed</th>
                     <th class="col--menu">
                       <span class="visually-hidden">Actions</span>
                     </th>
                   </tr>
                 </thead>
-                <tbody>
-                  ${visible.map((row) => {
-                    // issue 330 carry-3's "move onto the rows it concerns":
-                    // a mutation this session started against THIS mod
-                    // (modrows.js#runningMutations, keyed the same
-                    // "source:id" way modKey() is) shows its own live text
-                    // here instead of the library's shared header line.
-                    const mutation = mutations?.get(row.key);
-                    // issue 432: what the user asked this row's toggle for
-                    // and has not got yet (toggleack.js). While it is set the
-                    // box renders the REQUESTED value rather than the
-                    // server's, so the click lands visibly in the frame it
-                    // was made in.
-                    const requested = requestedFor(row);
-                    const togglePending = requested !== undefined;
-                    return html`
-                      <tr
-                        key=${row.key}
-                        data-mod=${row.key}
-                        class="mod-row ${selected.has(row.key) ? "mod-row--selected" : ""} ${togglePending ? "mod-row--pending" : ""}"
-                      >
-                        <td class="col--select">
-                          <input
-                            type="checkbox"
-                            aria-label=${`Select ${row.name} for batch actions`}
-                            checked=${selected.has(row.key)}
-                            onClick=${(e) => e.stopPropagation()}
-                            onChange=${() => toggleSelect(row.key)}
-                          />
-                        </td>
-                        <td class="col--enabled">
-                          <input
-                            type="checkbox"
-                            aria-label=${
-                              // issue 379: an external row's box cannot
-                              // act, so its accessible name must not offer
-                              // an action - it states what IS, and the
-                              // title carries the remedy.
-                              row.isExternal
-                                ? `${row.name} is managed by Steam`
-                                : `${row.enabled ? "Disable" : "Enable"} ${row.name}`
-                            }
-                            checked=${togglePending ? requested.want : row.enabled}
-                            disabled=${
-                              // issue 379: EXTERNAL rows are gated here too,
-                              // matching updatableSelectedRows and the row
-                              // menu. Enable/disable is refused by core for
-                              // a Steam Workshop item - Steam owns whether
-                              // it loads - so a live checkbox on the primary
-                              // screen could only ever start a job that
-                              // fails, which is the same defect the deploy
-                              // dry run had. Disabled-with-a-reason is the
-                              // full mod page's rollback pattern.
-                              //
-                              // issue 432: the box is still frozen while the
-                              // request is in flight - a second, contrary
-                              // job over the same mod is not a thing to
-                              // offer - but it is now frozen HOLDING THE
-                              // REQUESTED VALUE, with the row saying what is
-                              // happening, instead of frozen on the old one
-                              // saying nothing at all.
-                              Boolean(mutation) ||
-                              togglePending ||
-                              row.isExternal
-                            }
-                            aria-busy=${togglePending ? "true" : null}
-                            title=${
-                              row.isExternal
-                                ? "Steam manages this item — unsubscribe in Steam, or use the game's own mod menu"
-                                : undefined
-                            }
-                            onClick=${(e) => e.stopPropagation()}
-                            onChange=${() => toggleEnabled(row)}
-                          />
-                          ${
-                            togglePending &&
-                            html`<span
-                              class="toggle-pending"
-                              aria-hidden="true"
-                            ></span>`
-                          }
-                        </td>
-                        <td class="col--name">
-                          <button
-                            type="button"
-                            class="button button--link mod-row__name"
-                            onClick=${() => openRow(row)}
+                ${
+                  groups
+                    ? groups.map((group) => {
+                        const open = !collapsedGroups.has(group.name);
+                        const label = group.name || UNCATEGORIZED_LABEL;
+                        return html`
+                          <tbody
+                            key=${`group:${group.name}`}
+                            class="library__group"
+                            data-group=${group.name}
                           >
-                            ${row.name}
-                          </button>
-                          <span
-                            class="mod-row__live"
-                            role="status"
-                            data-testid=${
-                              !mutation && togglePending
-                                ? "toggle-pending"
-                                : undefined
-                            }
-                            >${
-                              // The row's own live line: the running job's
-                              // words once there IS a job, and - issue 432 -
-                              // the requested change's own words for the
-                              // window before that, which is exactly the
-                              // window the user was clicking into. Issue
-                              // 442: the region is always there and only
-                              // this text changes, so its first words are
-                              // announced.
-                              rowLiveText(mutation, togglePending, requested)
-                            }</span
-                          >
-                        </td>
-                        <td class="col--version mono">
-                          ${displayVersion(row)}${
-                            row.hasUpdate && html` → ${row.updateTarget}`
-                          }
-                        </td>
-                        <td class="col--author" title=${authorTitle(row)}>
-                          ${displayAuthor(row) || "—"}
-                        </td>
-                        <td class="col--source mono">${row.source_id}</td>
-                        <td class="col--badges mod-row__badges">
-                          ${
-                            row.hasUpdate &&
-                            html`<span
-                              class="badge badge--good"
-                              data-testid="row-update"
-                              role="img"
-                              aria-label=${`Update available: ${row.updateTarget}`}
-                              title="Update available"
-                              >⬆</span
-                            >`
-                          }
-                          ${
-                            // issue 418: the row says its health state
-                            // WHICHEVER state it is in. It used to carry a
-                            // ⚠ when something was wrong and nothing at all
-                            // otherwise - so "no badge" meant both "checked,
-                            // fine" and "never checked", which are opposite
-                            // things to tell someone about their install.
-                            //
-                            // role="img" with the sentence as its name: the
-                            // glyph alone means nothing to a screen reader,
-                            // and a role-less span exposes no name at all -
-                            // `title` stays for the pointer, but it is
-                            // neither a keyboard nor a touch affordance.
-                            html`<span
-                              class="badge ${healthBadgeTone(row)}"
-                              data-testid="row-health"
-                              data-health=${row.healthState}
-                              role="img"
-                              aria-label=${healthLabel(row)}
-                              title=${healthLabel(row)}
-                              >${healthBadge(row)}</span
-                            >`
-                          }
-                          ${
-                            row.hasConflict &&
-                            html`<span
-                              class="badge badge--danger"
-                              data-testid="row-conflict"
-                              role="img"
-                              aria-label="File conflict"
-                              title="File conflict"
-                              >⇄</span
-                            >`
-                          }
-                          ${
-                            row.locked &&
-                            html`<span
-                              class="badge"
-                              data-testid="row-locked"
-                              role="img"
-                              aria-label=${`Locked to ${row.locked_version}`}
-                              title=${`Locked to ${row.locked_version}`}
-                              >🔒</span
-                            >`
-                          }
-                          ${
-                            row.isExternal &&
-                            html`<span
-                              class="badge"
-                              title="Tracked from your Steam subscription - Steam owns this item's files"
-                              >Steam</span
-                            >`
-                          }
-                          ${
-                            // issue 543: the source will not serve this mod's
-                            // files - it is updated from a downloaded file.
-                            row.isManual &&
-                            html`<${ManualBadge} testid="row-manual" />`
-                          }
-                          <span class="badge badge--policy"
-                            >${row.update_policy}</span
-                          >
-                        </td>
-                        <td class="col--order mono">${row.loadOrder}</td>
-                        <td class="col--method mono">${row.link_method}</td>
-                        <td class="col--installed">
-                          ${formatDate(row.installed_at)}
-                        </td>
-                        <td class="col--menu row-menu-cell">
-                          ${
-                            // issue 417: the per-mod Update, in the open.
-                            // Not wrapped in InlineJob like the header's own
-                            // "Update all" - this cell is too narrow for a
-                            // progress bar, and the row already reports its
-                            // own running job on the name column's live line
-                            // (the library's established pattern for a
-                            // row-level job). It is refused while one is
-                            // running so a second cannot be stacked on it.
-                            // Issue 543: not for a MANUAL-ONLY row, which
-                            // the batch would only skip - its update is the
-                            // ⋯ menu's "Update from file…".
-                            row.hasUpdate &&
-                            !row.isExternal &&
-                            !row.isManual &&
-                            html`<button
-                              type="button"
-                              class="button button--small button--primary"
-                              data-action="row-update"
-                              disabled=${Boolean(mutation)}
-                              aria-label=${`Update ${row.name} to ${row.updateTarget}`}
-                              onClick=${() => updateRow(row)}
-                            >
-                              Update
-                            </button>`
-                          }
-                          <button
-                            type="button"
-                            class="button button--small"
-                            data-action="row-menu"
-                            aria-label=${`Actions for ${row.name}`}
-                            aria-expanded=${menuKey === row.key ? "true" : "false"}
-                            onClick=${() =>
-                              setMenuKey(menuKey === row.key ? null : row.key)}
-                          >
-                            ⋯
-                          </button>
-                          ${menuKey === row.key && rowMenu(row)}
-                        </td>
-                      </tr>
-                    `;
-                  })}
-                </tbody>
+                            <tr class="library__group-header">
+                              <th colspan="12" scope="rowgroup">
+                                <button
+                                  type="button"
+                                  class="button button--link library__group-toggle"
+                                  data-action="toggle-group"
+                                  aria-expanded=${open ? "true" : "false"}
+                                  onClick=${() => onToggleGroup?.(group.name)}
+                                >
+                                  <span
+                                    class="library__group-chevron"
+                                    aria-hidden="true"
+                                    >${open ? "▾" : "▸"}</span
+                                  >
+                                  <span class="library__group-name"
+                                    >${label}</span
+                                  >
+                                  <span class="library__group-count"
+                                    >${`(${group.rows.length})`}</span
+                                  >
+                                </button>
+                              </th>
+                            </tr>
+                            ${open && group.rows.map(renderRow)}
+                          </tbody>
+                        `;
+                      })
+                    : html`<tbody>
+                        ${visible.map(renderRow)}
+                      </tbody>`
+                }
               </table>
             `
       }

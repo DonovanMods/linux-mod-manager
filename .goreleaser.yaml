@@ -128,7 +128,7 @@ aurs:
     # license=() element): lmm's own MIT plus every id in
     # THIRD_PARTY_NOTICES. internal/notices' TestGoreleaserShipsNotices
     # fails if it drifts from the generated set (#522).
-    license: Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause AND LicenseRef-PublicDomain AND MIT
+    license: Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause AND LicenseRef-PublicDomain AND MIT AND OFL-1.1
     private_key: "{{ .Env.AUR_KEY }}"
     git_url: ssh://aur@aur.archlinux.org/lmm-bin.git
     # A release without the AUR deploy key still has to succeed: the secret

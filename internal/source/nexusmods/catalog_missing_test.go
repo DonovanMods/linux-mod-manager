@@ -138,6 +138,7 @@ func TestNexusMods_GetMod_RemovedStatusesAreErrModNotFound(t *testing.T) {
 		t.Run(tc.status, func(t *testing.T) {
 			nm, _ := statusServer(t, map[string]recorded{
 				sse + "/mods/" + tc.id + ".json": {http.StatusOK, tc.fixture},
+				sse + ".json":                    gameOK, // #592: the category-name lookup
 			})
 
 			_, err := nm.GetMod(context.Background(), "skyrimspecialedition", tc.id)
@@ -159,6 +160,7 @@ func TestNexusMods_GetMod_TemporaryStatusesAreNotErrModNotFound(t *testing.T) {
 		t.Run(tc.fixture, func(t *testing.T) {
 			nm, _ := statusServer(t, map[string]recorded{
 				sse + "/mods/" + tc.id + ".json": {http.StatusOK, tc.fixture},
+				sse + ".json":                    gameOK, // #592: the category-name lookup
 			})
 
 			mod, err := nm.GetMod(context.Background(), "skyrimspecialedition", tc.id)

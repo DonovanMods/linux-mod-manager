@@ -7,13 +7,20 @@ package serve_test
 // runs in the face the developer happens to have proves the layout for that
 // face alone: #518's and #520's passed locally and failed on CI. So every
 // layout check runs again under a face no host can make narrower.
+//
+// #523 then bundled Inter as the first --font-sans, so the default pass now
+// measures the same face on every host. The wider passes stay: they are
+// the page a user gets if that face cannot load, and they keep the layout
+// honest about text it cannot predict.
 
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
 
@@ -25,7 +32,8 @@ type e2eFace struct {
 	family string
 }
 
-// e2eDefaultFace leaves the stylesheet's own --font-sans in place.
+// e2eDefaultFace leaves the stylesheet's own --font-sans in place: the
+// bundled Inter (#523).
 var e2eDefaultFace = e2eFace{name: "default"}
 
 // e2eWideFace is the platform's monospace: present on every host, and
@@ -37,7 +45,8 @@ var e2eWideFace = e2eFace{name: "wide", family: "monospace, monospace"}
 
 // e2eWideSansFace is the widest proportional sans the host has: DejaVu Sans
 // (hosted Ubuntu's own sans-serif), Verdana, then Noto Sans, then whatever
-// sans-serif resolves to. It is what a CI runner draws the page in.
+// sans-serif resolves to. It is what a CI runner drew the page in before
+// #523, and what it would fall back to without the bundled face.
 var e2eWideSansFace = e2eFace{name: "wide-sans", family: `"DejaVu Sans", Verdana, "Noto Sans", sans-serif`}
 
 // e2eLayoutFaces is the set every layout check is table-driven over.
@@ -77,17 +86,39 @@ func useFace(t *testing.T, browserCtx context.Context, face e2eFace) {
 
 // faceInEffect fails unless the page's body is drawn in face - so a stress
 // pass whose override silently did not apply cannot pass as the default one.
+//
+// The default face is the bundled Inter (#523), which arrives over the
+// network with font-display: swap, so the page can paint in the fallback
+// first. This waits for the page's font loads to settle and then requires
+// Inter to be the face in use, so the checks that follow measure Inter and
+// never a fallback caught mid-swap.
 func faceInEffect(face e2eFace) chromedp.Action {
 	return chromedp.ActionFunc(func(ctx context.Context) error {
-		var family string
-		if err := chromedp.Evaluate(`getComputedStyle(document.body).fontFamily`, &family).Do(ctx); err != nil {
+		var got struct {
+			Family string `json:"family"`
+			Inter  string `json:"inter"`
+		}
+		if err := chromedp.Evaluate(`(async () => {
+			await document.fonts.ready;
+			const inter = [...document.fonts].find((ff) =>
+				ff.family.replace(/"/g, "") === "Inter" && ff.style === "normal");
+			return {
+				family: getComputedStyle(document.body).fontFamily,
+				inter: inter ? inter.status : "undeclared",
+			};
+		})()`, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}).Do(ctx); err != nil {
 			return err
 		}
-		if face.family != "" && family != face.family {
-			return fmt.Errorf("the %s face is not in effect: body's font-family is %q", face.name, family)
+		if face.family != "" && got.Family != face.family {
+			return fmt.Errorf("the %s face is not in effect: body's font-family is %q", face.name, got.Family)
 		}
-		if face.family == "" && family == e2eWideFace.family {
-			return fmt.Errorf("the default face is not in effect: body's font-family is %q", family)
+		if face.family == "" && !strings.HasPrefix(strings.Trim(got.Family, `"`), "Inter") {
+			return fmt.Errorf("the default face is not in effect: body's font-family is %q", got.Family)
+		}
+		if face.family == "" && got.Inter != "loaded" {
+			return fmt.Errorf("the default face is not in effect: the bundled Inter is %s, so the page is drawn in a fallback", got.Inter)
 		}
 		return nil
 	})

@@ -28,8 +28,17 @@ import (
 //go:embed spa/index.html spa/app.css spa/favicon.svg spa/app/*.js spa/app/components/*.js
 var spaFS embed.FS
 
-//go:embed vendor/*.js
+// vendorFS is the pinned third-party code and the bundled UI fonts (#523,
+// provenance in vendor/FONTS.md): served from this binary, never fetched.
+//
+//go:embed vendor/*.js vendor/*.woff2
 var vendorFS embed.FS
+
+// fontContentType is the type a .woff2 is served as. It is set explicitly
+// because Go's built-in mime table has no entry for the extension, so
+// without it the header would come from whatever /etc/mime.types the host
+// has, or from sniffing.
+const fontContentType = "font/woff2"
 
 // shellTemplate is the parsed shell. It is parsed once at startup for the
 // same reason the page layer's templates were: a broken embedded template
@@ -178,6 +187,9 @@ func assetHandler(embedded fs.FS, dir string) http.Handler {
 			return
 		}
 		w.Header().Set("Cache-Control", "no-cache")
+		if path.Ext(p) == ".woff2" {
+			w.Header().Set("Content-Type", fontContentType)
+		}
 		if tag, ok := etags[p]; ok {
 			w.Header().Set("ETag", tag)
 		}
