@@ -117,8 +117,8 @@ func TestBeginOp_LockFileIsPrivate(t *testing.T) {
 // path (every core test that does not care, and any embedder that does not
 // supply one) keeps exactly the in-process behaviour it had.
 func TestBeginOp_WithoutALockPathIsUnchanged(t *testing.T) {
-	a := newOpsService(t)
-	b := newOpsService(t)
+	a := newBareService(t)
+	b := newBareService(t)
 
 	ra, err := a.beginOp(context.Background())
 	require.NoError(t, err)

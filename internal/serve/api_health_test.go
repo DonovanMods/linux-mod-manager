@@ -147,56 +147,6 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 	requireVerifyReportEncodesLike(t, rec.Body.Bytes(), report, want, since)
 }
 
-// TestServer_HealthSurfaces_APIAndCLIAgreeOnCounts is Important 2 (epic live
-// review): on the exact same state as TestServer_APIHealth_MatchesCLIVerifyTier
-// (a version_mismatch a VerifyLocal tier cannot see), GET /api/v1/health and
-// a direct core.VerifyReport(VerifyFull) call - the CLI's own tier - must
-// report the SAME issue count. Before the C1 fix this was a THREE-leg test
-// whose first leg was the /health PAGE, pinned to VerifyLocal: the page said
-// "0 issue(s)" while the API and the CLI-equivalent call both said "1". The
-// page went with the server-rendered layer
-// (docs/plans/2026-08-31-serve-spa-design.md); the third leg it stood for -
-// that the REPAIR's own tier agrees too, which is the plan/apply mismatch
-// kind_verify_fix.go's doc comment warns can resurrect the corruption - is
-// carried by TestFlowVerifyFixPlan_TierMatchesTheAPIAndTheCLI
-// (c1_verify_fix_tier_internal_test.go), which can reach the CSRF token a
-// POST needs.
-func TestServer_HealthSurfaces_APIAndCLIAgreeOnCounts(t *testing.T) {
-	src := newFakeSource("fake")
-	src.addMod(fakeSourceMod{
-		Mod:   domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "2.0"},
-		Files: []domain.DownloadableFile{{ID: "f1", Version: "2.0", IsPrimary: true}},
-	})
-	svc, game := newFixtureServiceWithSource(t, src)
-
-	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
-	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
-		Mod: domain.Mod{
-			ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID,
-		},
-		ProfileName:  "default",
-		Enabled:      true,
-		FileIDs:      []string{"f1"},
-		UpdatePolicy: domain.UpdateNotify,
-	}))
-
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-
-	apiReq := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/health", nil)
-	apiRec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(apiRec, apiReq)
-	require.Equal(t, http.StatusOK, apiRec.Code)
-	var apiReport core.VerifyReport
-	decodeStrict(t, apiRec.Body.Bytes(), &apiReport)
-
-	cliEquivalent, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull, Force: true}, nil)
-	require.NoError(t, err)
-
-	require.Equal(t, 1, apiReport.Result.Issues, "the API must see the version_mismatch, not report a clean sheet")
-	assert.Equal(t, apiReport.Result.Issues, cliEquivalent.Result.Issues, "API and the CLI's own tier must agree")
-}
-
 // TestServer_APIConflicts_ReturnsExactConflictReport is
 // /api/v1/conflicts's headline test - the additive route the coordinator's
 // ruling added in place of folding conflicts into /api/v1/health: the body

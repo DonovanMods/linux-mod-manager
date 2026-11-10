@@ -18,7 +18,7 @@ import (
 // is absent, the configured value otherwise.
 func TestHookRunner_HonoursConfigTimeout(t *testing.T) {
 	t.Run("default 60s when config.yaml is absent", func(t *testing.T) {
-		svc := newOpsService(t)
+		svc := newBareService(t)
 
 		runner, err := svc.hookRunner(context.Background())
 		require.NoError(t, err)
@@ -49,7 +49,7 @@ func TestHookRunner_HonoursConfigTimeout(t *testing.T) {
 // for Task 2), so seeding through it would silently produce an empty
 // profile-level override and defeat this test.
 func TestResolvedHooks_MergesGameAndProfile(t *testing.T) {
-	svc := newOpsService(t)
+	svc := newBareService(t)
 	game := &domain.Game{
 		ID: "g1", Name: "Game", ModPath: t.TempDir(),
 		Hooks: domain.GameHooks{Install: domain.HookConfig{BeforeAll: "game-before-all"}},
@@ -72,7 +72,7 @@ func TestResolvedHooks_MergesGameAndProfile(t *testing.T) {
 // CLI's getResolvedHooks exactly (it swallows ANY profile-load error, not
 // just domain.ErrProfileNotFound).
 func TestResolvedHooks_ToleratesMissingProfile(t *testing.T) {
-	svc := newOpsService(t)
+	svc := newBareService(t)
 	game := &domain.Game{
 		ID: "g1", Name: "Game", ModPath: t.TempDir(),
 		Hooks: domain.GameHooks{Install: domain.HookConfig{BeforeAll: "game-before-all"}},
@@ -88,7 +88,7 @@ func TestResolvedHooks_ToleratesMissingProfile(t *testing.T) {
 // CLI's profileName == "" short-circuit (getResolvedHooks never even
 // attempts a profile load in that case): game-level hooks only.
 func TestResolvedHooks_EmptyProfileNameSkipsProfileLoad(t *testing.T) {
-	svc := newOpsService(t)
+	svc := newBareService(t)
 	game := &domain.Game{
 		ID: "g1", Name: "Game", ModPath: t.TempDir(),
 		Hooks: domain.GameHooks{Install: domain.HookConfig{BeforeAll: "game-before-all"}},

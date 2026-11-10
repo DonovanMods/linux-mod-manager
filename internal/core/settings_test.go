@@ -14,9 +14,7 @@ import (
 )
 
 func TestService_DefaultGame_Unset(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	got, err := svc.DefaultGame(context.Background())
 	require.NoError(t, err)
@@ -24,9 +22,7 @@ func TestService_DefaultGame_Unset(t *testing.T) {
 }
 
 func TestService_SetDefaultGame_PersistsAndReads(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	require.NoError(t, svc.SetDefaultGame(context.Background(), "skyrim-se"))
 
@@ -36,9 +32,7 @@ func TestService_SetDefaultGame_PersistsAndReads(t *testing.T) {
 }
 
 func TestService_ClearDefaultGame(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	require.NoError(t, svc.SetDefaultGame(context.Background(), "skyrim-se"))
 	require.NoError(t, svc.ClearDefaultGame(context.Background()))

@@ -196,10 +196,7 @@ func TestGameFromDetected_Icarus_ProducesReadmeEquivalentValues(t *testing.T) {
 // unlike a struct literal) so ApplyGameDetect's beginOp doesn't panic.
 func newGameDetectTestService(t *testing.T) *core.Service {
 	t.Helper()
-	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	return svc
+	return newBareService(t)
 }
 
 // TestApplyGameDetect_SavesGamesAndCreatesDefaultProfiles pins the happy

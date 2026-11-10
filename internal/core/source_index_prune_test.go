@@ -410,9 +410,7 @@ func (s *holdingSource) Holds(context.Context) []source.Hold { return s.holds }
 // TestListSourceIndexes_ListsTheHoldsInForce is T3 review F10: the web UI's
 // setup card shows when lmm will next ask Thunderstore without asking it.
 func TestListSourceIndexes_ListsTheHoldsInForce(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	at := time.Date(2026, 9, 16, 12, 10, 0, 0, time.UTC)
 	svc.RegisterSource(&holdingSource{
 		inventorySource: &inventorySource{validatingIndexedSource: &validatingIndexedSource{indexedSource: newIndexedSource("ts")}},

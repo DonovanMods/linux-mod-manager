@@ -46,9 +46,7 @@ func (s *validatingIndexedSource) Search(ctx context.Context, q source.SearchQue
 
 func newValidatingIndexService(t *testing.T, mapping string) (*core.Service, *validatingIndexedSource) {
 	t.Helper()
-	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	src := &validatingIndexedSource{indexedSource: newIndexedSource("indexed")}
 	svc.RegisterSource(src)
 	svc.RegisterSource(newMockSource("other"))
@@ -178,9 +176,7 @@ func TestIndexUnavailableError_NamesTheIndexAndWhy(t *testing.T) {
 // half: the named-source search and the unscoped one both report a source's
 // own warnings beside its results.
 func TestSearch_AStaleIndexIsAWarningOnBothPaths(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	stale := &staleWarningSource{mockSource: newMockSource("indexed")}
 	svc.RegisterSource(stale)
 	game := &domain.Game{

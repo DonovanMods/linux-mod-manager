@@ -82,10 +82,7 @@ func TestAPISourceEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	src.(interface{ SetAPIKey(string) }).SetAPIKey("e2e-key")
 
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	svc.RegisterSource(src)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCopy}
