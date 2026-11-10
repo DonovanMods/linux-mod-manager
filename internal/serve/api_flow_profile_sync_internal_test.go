@@ -2,9 +2,9 @@ package serve
 
 // The profile-sync flow over /api/v1: POST /api/v1/plans/profile_sync ->
 // POST /api/v1/jobs (#326, epic live review C-3 - `lmm profile sync` had
-// no plan kind and no route). The end state asserted is the SYNCED
-// PROFILE'S INSTALLED SET: what the profile's own mod list holds once the
-// job has reconciled it against the database.
+// no plan kind and no route). What is asserted here is the wire: the plan
+// document, the job and the request's validation. How a sync classifies
+// and applies its diff is internal/core's profile_sync_test.go.
 
 import (
 	"net/http"
@@ -27,48 +27,25 @@ func dropFixtureProfileRef(t *testing.T, svc *core.Service, gameID string) {
 	require.Empty(t, profile.Mods, "the drift the test is about must actually exist")
 }
 
-// TestFlowProfileSync_PlanNamesTheDriftAndChangesNothing is the Plan half:
-// the diff is computed and rendered, and the profile is still wrong.
-func TestFlowProfileSync_PlanNamesTheDriftAndChangesNothing(t *testing.T) {
-	s, svc, game := newFlowFixtureServer(t)
-	dropFixtureProfileRef(t, svc, game.ID)
-
-	_, raw := planFlow(t, s, game, "profile_sync", `{"profile":"default"}`)
-	assert.Contains(t, string(raw), `"to_add"`)
-	assert.Contains(t, string(raw), `"m1"`)
-
-	profile, err := svc.NewProfileManager().Get(t.Context(), game.ID, "default")
-	require.NoError(t, err)
-	assert.Empty(t, profile.Mods, "planning must not write the profile")
-}
-
-// TestFlowProfileSync_JobRestoresTheProfilesInstalledSet is the Apply
-// half: the profile's mod list matches the database again.
+// TestFlowProfileSync_JobRestoresTheProfilesInstalledSet is the plan ->
+// job wiring: the plan names the drift without writing the profile, and
+// the job's result is core's ProfileSyncResult, counting the one add.
 func TestFlowProfileSync_JobRestoresTheProfilesInstalledSet(t *testing.T) {
 	s, svc, game := newFlowFixtureServer(t)
 	dropFixtureProfileRef(t, svc, game.ID)
 
-	j := runFlow(t, s, game, "profile_sync", `{"profile":"default"}`, "")
-	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
-
+	id, raw := planFlow(t, s, game, "profile_sync", `{"profile":"default"}`)
+	assert.Contains(t, string(raw), `"to_add"`)
+	assert.Contains(t, string(raw), `"m1"`)
 	profile, err := svc.NewProfileManager().Get(t.Context(), game.ID, "default")
 	require.NoError(t, err)
-	require.Len(t, profile.Mods, 1, "the sync must put the installed mod back in the profile")
-	assert.Equal(t, "m1", profile.Mods[0].ModID)
-	assert.Equal(t, fixtureSourceID, profile.Mods[0].SourceID)
-}
+	assert.Empty(t, profile.Mods, "planning must not write the profile")
 
-// TestFlowProfileSync_NoChangesIsStillASuccessfulJob: an already-correct
-// profile plans as no_changes and applies cleanly, which is what the
-// confirm modal needs in order to say "nothing to do" honestly.
-func TestFlowProfileSync_NoChangesIsStillASuccessfulJob(t *testing.T) {
-	s, _, game := newFlowFixtureServer(t)
-
-	_, raw := planFlow(t, s, game, "profile_sync", `{"profile":"default"}`)
-	assert.Contains(t, string(raw), `"no_changes": true`)
-
-	j := runFlow(t, s, game, "profile_sync", `{"profile":"default"}`, "")
-	assert.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	j := startFlowJob(t, s, id, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	result, ok := j.status().Result.(*core.ProfileSyncResult)
+	require.True(t, ok, "the job's result is core.ProfileSyncResult, got %T", j.status().Result)
+	assert.Equal(t, 1, result.Added)
 }
 
 // TestFlowProfileSync_UnknownProfileNamesAMissingProfile is M4 (coordinator
