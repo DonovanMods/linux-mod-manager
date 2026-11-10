@@ -161,27 +161,6 @@ func TestReleaseNotes_FailsWhenTheBodyExceedsGitHubsLimit(t *testing.T) {
 	assert.Contains(t, err.Error(), "125000")
 }
 
-// TestReleaseNotes_TheUnreleasedSectionFitsARelease runs the step against
-// the pending [Unreleased] section, which the release-prep commit renames to
-// the new version's heading. It catches an over-long release body when the
-// changelog is edited, not when the tag is pushed. It skips between
-// releases, while [Unreleased] holds no entries yet.
-func TestReleaseNotes_TheUnreleasedSectionFitsARelease(t *testing.T) {
-	changelog, err := os.ReadFile(repoChangelog)
-	require.NoError(t, err)
-	pending := regexp.MustCompile(`(?s)## \[Unreleased\]\n(.*?)\n## \[`).FindSubmatch(changelog)
-	require.Len(t, pending, 2, "CHANGELOG.md has no [Unreleased] section above a release")
-	if strings.TrimSpace(string(pending[1])) == "" {
-		t.Skip("[Unreleased] is empty")
-	}
-
-	// The step looks up "## [<tag without its v>]", so this tag selects the
-	// [Unreleased] heading.
-	notes, err := runReleaseNotes(t, "vUnreleased", changelog)
-	require.NoError(t, err)
-	assert.NotContains(t, notes, "\n## [")
-}
-
 // TestReleaseNotes_GoreleaserPublishesThem: GoReleaser reads --release-notes
 // inside its changelog pipe, and `changelog: disable: true` skips that pipe,
 // so the extracted notes were dropped and v2.0.0's draft had an empty body

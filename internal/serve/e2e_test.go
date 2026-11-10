@@ -5568,8 +5568,7 @@ func TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile(t *testing.T) {
 // Both routes in are driven - the `?` key from anywhere and the top bar's
 // own control - along with the two things every modal in this application
 // owes its user: Escape closes it, and focus comes back to what opened it.
-// The rows themselves are shortcuts.js's, pinned to the README by
-// TestSPAKeyboardShortcutsMatchTheREADME.
+// The rows themselves are shortcuts.js's.
 func TestE2E_KeyboardShortcutsHelpOpensAndReturnsFocus(t *testing.T) {
 	f := newE2EFixture(t)
 
