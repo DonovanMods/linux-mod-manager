@@ -402,7 +402,7 @@ func TestApplyProfileApply_CachedEntry_SkipsDownload(t *testing.T) {
 // Moved from cmd/lmm's TestDoProfileApply_PartialCacheEntry_StillDownloads
 // (#600).
 func TestApplyProfileApply_PartialCacheEntry_StillDownloads(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	mock := newTwoVersionSource(t)
 	svc.RegisterSource(mock)
@@ -440,7 +440,7 @@ func TestApplyProfileApply_PartialCacheEntry_StillDownloads(t *testing.T) {
 // (#600); TestPlanProfileApply_VersionDrift_RecordsReplaces pins the plan
 // half.
 func TestApplyProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	svc.RegisterSource(newTwoVersionSource(t))
 
