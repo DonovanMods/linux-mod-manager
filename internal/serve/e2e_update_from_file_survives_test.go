@@ -187,6 +187,8 @@ func survivesEveryTimer(t *testing.T, f e2eSearchFixture, reach chromedp.Action,
 
 	f.runInBrowser(t,
 		scaleUITimers(),
+		// #595: the release must be live for "survives" to mean anything.
+		releaseSucceededReadouts(),
 		interceptFileChooser(f.Ctx, chooser),
 		reach,
 		chromedp.Evaluate(tagFileInput, nil),

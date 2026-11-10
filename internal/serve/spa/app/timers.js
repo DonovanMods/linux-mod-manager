@@ -33,6 +33,16 @@ export const toastDismissMillis = 8000 * uiTimerScale;
  * next step (main.js#releaseSucceededOrigin, issue 531). */
 export const succeededOriginReleaseMillis = 4000 * uiTimerScale;
 
+/** holdSucceededReadouts is the browser E2E harness's other knob (issue
+ * 595): true only when it set window.__lmmHoldSucceededReadouts to true
+ * before the page's scripts ran, and then no succeeded readout hands its
+ * control back on a timer. The scale above can only shorten that timer, and
+ * a test waiting to look at the readout needs the opposite - a runner that
+ * stalls past the release must still find it. Anything but exactly true
+ * leaves the release on, so production never holds. */
+export const holdSucceededReadouts =
+  typeof window !== "undefined" && window.__lmmHoldSucceededReadouts === true;
+
 /** unreadRereadDelayMillis is how long after a request settled unread the
  * page asks again (issue 454 N1). Long enough not to hammer a server that
  * is struggling, short enough that the row does not sit on a stale value

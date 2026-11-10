@@ -3162,10 +3162,10 @@ func TestE2E_ProfileSwitchClearsStaleOmnibarSearch(t *testing.T) {
 // the first is still genuinely in flight - bindingJobs (main.js) is now a
 // Map keyed by origin for exactly this reason.
 //
-// The install's own POST /api/v1/jobs is deliberately delayed (the fixture's
-// startE2EServerWithDelayedJobStart), so its origin binding is a real,
+// The install's own POST /api/v1/jobs is held at a gate (the fixture's
+// startE2EServerWithGatedJobStart), so its origin binding is a real,
 // observable in-flight promise - not a race against microsecond-fast local
-// HTTP round trips - for the whole window in which the toggle starts and
+// HTTP round trips - for the whole time in which the toggle starts and
 // finishes. The proof is END STATE, not timing: each origin's own outcome
 // must land on ITS OWN mod, not be lost or attributed to the other.
 //
@@ -3174,12 +3174,13 @@ func TestE2E_ProfileSwitchClearsStaleOmnibarSearch(t *testing.T) {
 // the install's start slow and the toggle's fast, every assertion below
 // passes unchanged under either implementation - verified by reverting
 // bindingJobs to a single slot in a scratch copy and re-running, 6/6 green.
-// The toggle's own start is now ALSO delayed (startE2EServerWithDelayedJob
-// Start), and window.__lmmBindingJobsSize() (main.js, test-only
-// introspection) is sampled while both starts are genuinely still
-// in-flight at once - the one thing a single slot cannot ever report as 2.
+// The toggle's own start is ALSO held, and window.__lmmBindingJobsSize()
+// (main.js, test-only introspection) is sampled once both have reached the
+// proxy and neither has been let through - the one thing a single slot
+// cannot ever report as 2. #595: these were fixed 600ms/200ms delays, and
+// the sample landed inside them only if the runner did not stall.
 func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
-	f := newE2EFixtureWithSearchableModsAndDelayedJobStart(t, 600*time.Millisecond, 200*time.Millisecond)
+	f, jobs, toggles := newE2EFixtureWithSearchableModsAndGatedJobStart(t)
 
 	row := searchResultRow("fake", e2eSearchInstallModID)
 	f.runInBrowser(t,
@@ -3191,8 +3192,9 @@ func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
 		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		// The install's own start call is now sleeping server-side (still
-		// unresolved in bindingJobs); the modal's own busy state proves it.
+		// The install's own start call is now held at the proxy (still
+		// unresolved in bindingJobs); the modal's own busy state shows it.
+		jobs.awaitArrival("the install's job start"),
 		chromedp.WaitVisible(`.modal [data-action="confirm"][disabled]`, chromedp.ByQuery),
 		// Clear the omnibar's own live filter - it still reads "boots" from
 		// the fan-out above, which would filter Gamma Mod (an installed
@@ -3219,13 +3221,12 @@ func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
 		// bindingJobs' overlap, not about whether a modal's scrim can be
 		// clicked through - a separate, real UX question of its own.
 		chromedp.Evaluate(`document.querySelector(".slide-over__actions button").click()`, nil),
+		toggles.awaitArrival("the toggle's start"),
 	)
 
-	// Both starts are now genuinely in flight: the install's from its own
-	// slow POST /api/v1/jobs, the toggle's own start just issued and (like
-	// the install's) sleeping server-side behind the same delaying proxy.
-	// This is the window Important 2's fix targets - sampled immediately,
-	// before either can possibly have resolved.
+	// Both starts are now genuinely in flight, each held at its own gate.
+	// This is the window Important 2's fix targets, and it stays open until
+	// the test releases a gate.
 	var concurrentBindings int
 	f.runInBrowser(t,
 		chromedp.Evaluate(`window.__lmmBindingJobsSize()`, &concurrentBindings),
@@ -3234,10 +3235,14 @@ func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
 		"both the install's and the toggle's own starts must be tracked while genuinely overlapping - "+
 			"a single module-level slot can never report more than 1 here")
 
+	// The toggle goes first and FINISHES before the install's start is let
+	// through: the staleness conflict below depends on that order.
+	toggles.Release()
 	f.runInBrowser(t,
 		chromedp.WaitVisible(`.slide-over .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelector(".slide-over__close").click()`, nil),
 	)
+	jobs.Release()
 
 	// Re-fan-out for "boots": clearing the omnibar above hid the search row
 	// entirely (OmnibarResults only renders while its own query still
@@ -5911,6 +5916,7 @@ func TestE2E_SucceededDeployReleasesTheButtonOnItsOwn(t *testing.T) {
 
 	f.runInBrowser(t,
 		scaleUITimers(),
+		releaseSucceededReadouts(), // #595: this scenario IS the release
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
