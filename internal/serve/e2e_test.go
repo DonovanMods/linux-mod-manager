@@ -1867,7 +1867,8 @@ func TestE2E_SlideOver_LockAndPolicyEditsPersistThroughTheAPI(t *testing.T) {
 // on the slide-over and on the full mod page and pins each one's inline morph
 // to a succeeded readout. They share one fixture (#600) by toggling different
 // mods: the slide-over disables Alpha Mod, the full page Beta Mod, so neither
-// sees the other's job. The DB end state is the api_flow toggle tests'.
+// sees the other's job. Each also checks its own mod's row, which proves the
+// button sent the right mod - the api_flow toggle tests cannot.
 func TestE2E_EnableDisableMorphsOnBothDrillInSurfaces(t *testing.T) {
 	f := newE2EFixtureWithDrillInMods(t)
 
@@ -1895,8 +1896,11 @@ func TestE2E_EnableDisableMorphsOnBothDrillInSurfaces(t *testing.T) {
 			chromedp.Click(`.slide-over__actions button`, chromedp.ByQuery),
 			chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 		)
-		// That the job really disables the row is TestFlowToggle_DisableRunsAsJob
-		// AndFlipsTheRow's (api_flow_toggle_internal_test.go); this is the morph.
+		// The HTTP flow tests prove the endpoint flips a row; this proves the
+		// BUTTON asked for the right mod (#600 review).
+		mod, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, f.Profile)
+		require.NoError(t, err)
+		assert.False(t, mod.Enabled, "the slide-over's Disable must disable Alpha Mod")
 		assert.Empty(t, f.BrowserErrors())
 	})
 
@@ -1921,6 +1925,9 @@ func TestE2E_EnableDisableMorphsOnBothDrillInSurfaces(t *testing.T) {
 			clickWhenSettled(`.mod-page__section button`),
 			chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 		)
+		mod, err := f.Svc.GetInstalledMod(t.Context(), "fake", "b", f.Game.ID, f.Profile)
+		require.NoError(t, err)
+		assert.False(t, mod.Enabled, "the full page's Disable must disable Beta Mod")
 		assert.Empty(t, f.BrowserErrors())
 	})
 }

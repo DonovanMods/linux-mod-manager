@@ -98,6 +98,10 @@ func navigatedTo(path, marker string) chromedp.Tasks {
 // acknowledges it before asserting, so the reload subtest starts from the
 // same all-acknowledged bell a fresh fixture would show, with one more
 // acknowledged failure behind it that must stay acknowledged too.
+//
+// The subtests are ORDER-DEPENDENT: if the navigation one fails before it
+// acknowledges, the reload one sees an extra unacknowledged failure and times
+// out. Read the first failure, not the second.
 func TestE2E_ActivityBell_AcknowledgementSurvives(t *testing.T) {
 	f := newE2EFixtureWithDrillInModsAndFailingDeploy(t)
 
