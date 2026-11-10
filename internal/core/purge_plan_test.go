@@ -117,19 +117,10 @@ func TestPlanPurge_ChangesNothing(t *testing.T) {
 	_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 
-	gameBefore := deployedTree(t, game.ModPath)
-	cacheBefore := deployedTree(t, svc.GetGameCachePath(game))
-	modsBefore, err := svc.GetInstalledMods(ctx, game.ID, "default")
-	require.NoError(t, err)
-
-	_, err = svc.PlanPurge(ctx, game, "default", core.PurgeOptions{Uninstall: true})
-	require.NoError(t, err)
-
-	assert.Equal(t, gameBefore, deployedTree(t, game.ModPath))
-	assert.Equal(t, cacheBefore, deployedTree(t, svc.GetGameCachePath(game)))
-	modsAfter, err := svc.GetInstalledMods(ctx, game.ID, "default")
-	require.NoError(t, err)
-	assert.Equal(t, modsBefore, modsAfter)
+	assertPlanIsPure(t, svc, game, func() error {
+		_, err := svc.PlanPurge(ctx, game, "default", core.PurgeOptions{Uninstall: true})
+		return err
+	})
 }
 
 // TestApplyPurge_StalePlan_ReturnsErrStalePlan pins Ruling 5 for purge.

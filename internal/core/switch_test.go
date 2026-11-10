@@ -330,8 +330,7 @@ func TestService_PlanProfileSwitch_UnknownTargetProfileReturnsError(t *testing.T
 // byte-for-byte untouched.
 func TestService_PlanProfileSwitch_PerformsZeroMutations(t *testing.T) {
 	svc := newFlowsTestService(t)
-	gameDir := t.TempDir()
-	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(context.Background(), game.ID, "default")
@@ -346,33 +345,13 @@ func TestService_PlanProfileSwitch_PerformsZeroMutations(t *testing.T) {
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modB", Version: "1.0"}))
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modD", Version: "2.0"}))
 
-	defaultPath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
-	targetPath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "target.yaml")
-	beforeDefault, err := os.ReadFile(defaultPath)
-	require.NoError(t, err)
-	beforeTarget, err := os.ReadFile(targetPath)
-	require.NoError(t, err)
-	beforeMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, err)
-
-	plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
-	require.NoError(t, err)
-	require.NotNil(t, plan)
-	require.False(t, plan.NoChanges, "sanity: this scenario must exercise all three diff buckets")
-
-	afterDefault, err := os.ReadFile(defaultPath)
-	require.NoError(t, err)
-	afterTarget, err := os.ReadFile(targetPath)
-	require.NoError(t, err)
-	assert.Equal(t, beforeDefault, afterDefault, "profile YAML must be byte-for-byte unchanged after planning")
-	assert.Equal(t, beforeTarget, afterTarget, "profile YAML must be byte-for-byte unchanged after planning")
-
-	afterMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, err)
-	assert.Equal(t, beforeMods, afterMods, "DB rows must be untouched after planning")
-
-	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
-	assert.True(t, os.IsNotExist(err), "planning must not deploy any files")
+	assertPlanIsPure(t, svc, game, func() error {
+		plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
+		require.NoError(t, err)
+		require.NotNil(t, plan)
+		require.False(t, plan.NoChanges, "sanity: this scenario must exercise all three diff buckets")
+		return err
+	})
 }
 
 // TestApplyProfileSwitch_StalePlan_ReturnsErrStalePlan pins the phase-2-close

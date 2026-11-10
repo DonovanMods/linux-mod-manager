@@ -172,23 +172,12 @@ func TestService_PlanUpdate_PerformsZeroMutations(t *testing.T) {
 	seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
 	src.currentMod = &domain.Mod{ID: "mod1", Version: "2.0"}
 
-	beforeMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, err)
-	profilePath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
-	beforeProfileYAML, err := os.ReadFile(profilePath)
-	require.NoError(t, err)
-
-	plan, err := svc.PlanUpdate(context.Background(), game, "default", "src", "mod1")
-	require.NoError(t, err)
-	require.NotNil(t, plan)
-
-	afterMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, err)
-	assert.Equal(t, beforeMods, afterMods, "DB rows must be untouched after planning")
-
-	afterProfileYAML, err := os.ReadFile(profilePath)
-	require.NoError(t, err)
-	assert.Equal(t, beforeProfileYAML, afterProfileYAML, "profile YAML must be untouched after planning")
+	assertPlanIsPure(t, svc, game, func() error {
+		plan, err := svc.PlanUpdate(context.Background(), game, "default", "src", "mod1")
+		require.NoError(t, err)
+		require.NotNil(t, plan)
+		return err
+	})
 }
 
 // TestService_ApplyUpdate_ErrStalePlan guards Ruling 5: a plan computed

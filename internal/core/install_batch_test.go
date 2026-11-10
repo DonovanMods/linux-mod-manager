@@ -617,29 +617,12 @@ func TestService_PlanInstallMany_PerformsZeroMutations(t *testing.T) {
 	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "existing", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
 
-	beforeMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, err)
-
-	profilePath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
-	beforeProfileYAML, err := os.ReadFile(profilePath)
-	require.NoError(t, err)
-
-	beforeCache := cacheTreeSnapshot(t, svc.GetGameCachePath(game))
-
-	plan, err := svc.PlanInstallMany(context.Background(), game, "default", []*domain.Mod{modA, modB}, false)
-	require.NoError(t, err)
-	require.NotNil(t, plan)
-
-	afterMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, err)
-	assert.Equal(t, beforeMods, afterMods, "DB rows must be untouched after planning")
-
-	afterProfileYAML, err := os.ReadFile(profilePath)
-	require.NoError(t, err)
-	assert.Equal(t, beforeProfileYAML, afterProfileYAML, "profile YAML must be byte-identical after planning")
-
-	afterCache := cacheTreeSnapshot(t, svc.GetGameCachePath(game))
-	assert.Equal(t, beforeCache, afterCache, "planning must not touch the cache directory tree")
+	assertPlanIsPure(t, svc, game, func() error {
+		plan, err := svc.PlanInstallMany(context.Background(), game, "default", []*domain.Mod{modA, modB}, false)
+		require.NoError(t, err)
+		require.NotNil(t, plan)
+		return err
+	})
 }
 
 // cacheTreeSnapshot walks dir and returns relative-path -> content for every
