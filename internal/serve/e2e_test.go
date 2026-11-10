@@ -485,72 +485,75 @@ func TestE2E_LibrarySortReordersRowsByName(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_SortRows_RecentToleratesMissingInstalledAt guards Minor 10:
-// modrows.js#sortRows's "recent" comparator used to be a bare
-// `new Date(x) - new Date(y)`, which is NaN for a missing or unparsable
-// installed_at, and Array.prototype.sort's behavior on a NaN-returning
-// comparator is not spec-guaranteed. modrows.js has no DOM, so it is
-// exercised directly here via a dynamic import in a real browser (the same
-// module the library component runs), rather than through the table -
-// there is no installed_mods row that reaches the wire without an
-// installed_at today, so this proves the guard rather than a live bug.
-func TestE2E_SortRows_RecentToleratesMissingInstalledAt(t *testing.T) {
+// TestE2E_SortRows evaluates modrows.js#sortRows directly in a real browser:
+// modrows.js has no DOM, so each subtest is a pure import() evaluation and
+// they share one fixture (#600).
+func TestE2E_SortRows(t *testing.T) {
 	f := newE2EFixture(t)
 
-	var order []string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		chromedp.Evaluate(`(async () => {
-			const { sortRows } = await import("/static/app/modrows.js");
-			const rows = [
-				{ name: "Newer", installed_at: "2025-06-01T00:00:00Z" },
-				{ name: "Missing" },
-				{ name: "Older", installed_at: "2020-01-01T00:00:00Z" },
-				{ name: "Malformed", installed_at: "not-a-date" },
-			];
-			return sortRows(rows, "recent").map((r) => r.name);
-		})()`, &order, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
-			return p.WithAwaitPromise(true)
-		}),
-	)
+	// TestE2E_SortRows_RecentToleratesMissingInstalledAt guards Minor 10:
+	// modrows.js#sortRows's "recent" comparator used to be a bare
+	// `new Date(x) - new Date(y)`, which is NaN for a missing or unparsable
+	// installed_at, and Array.prototype.sort's behavior on a NaN-returning
+	// comparator is not spec-guaranteed. modrows.js has no DOM, so it is
+	// exercised directly here via a dynamic import in a real browser (the same
+	// module the library component runs), rather than through the table -
+	// there is no installed_mods row that reaches the wire without an
+	// installed_at today, so this proves the guard rather than a live bug.
+	t.Run("TestE2E_SortRows_RecentToleratesMissingInstalledAt", func(t *testing.T) {
+		var order []string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+			chromedp.Evaluate(`(async () => {
+				const { sortRows } = await import("/static/app/modrows.js");
+				const rows = [
+					{ name: "Newer", installed_at: "2025-06-01T00:00:00Z" },
+					{ name: "Missing" },
+					{ name: "Older", installed_at: "2020-01-01T00:00:00Z" },
+					{ name: "Malformed", installed_at: "not-a-date" },
+				];
+				return sortRows(rows, "recent").map((r) => r.name);
+			})()`, &order, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+				return p.WithAwaitPromise(true)
+			}),
+		)
 
-	require.Len(t, order, 4, "the guard must never drop a row")
-	assert.Equal(t, []string{"Newer", "Older"}, order[:2],
-		"the two real dates must still sort correctly relative to each other")
-	assert.ElementsMatch(t, []string{"Missing", "Malformed"}, order[2:],
-		"an absent/unparsable installed_at must fall back to the epoch, not produce an arbitrary position")
-	assert.Empty(t, f.BrowserErrors())
-}
+		require.Len(t, order, 4, "the guard must never drop a row")
+		assert.Equal(t, []string{"Newer", "Older"}, order[:2],
+			"the two real dates must still sort correctly relative to each other")
+		assert.ElementsMatch(t, []string{"Missing", "Malformed"}, order[2:],
+			"an absent/unparsable installed_at must fall back to the epoch, not produce an arbitrary position")
+		assert.Empty(t, f.BrowserErrors())
+	})
 
-// TestE2E_SortRows_UpdatedOrdersByLastUpdatedAt pins #596's "updated" sort:
-// most recently updated first, by last_updated_at - so a mod installed long
-// ago but updated yesterday leads one installed last week and never
-// touched since. A row with no last_updated_at (an older lmm serving the
-// document) sorts by its installed_at, which is what that date means.
-func TestE2E_SortRows_UpdatedOrdersByLastUpdatedAt(t *testing.T) {
-	f := newE2EFixture(t)
+	// TestE2E_SortRows_UpdatedOrdersByLastUpdatedAt pins #596's "updated" sort:
+	// most recently updated first, by last_updated_at - so a mod installed long
+	// ago but updated yesterday leads one installed last week and never
+	// touched since. A row with no last_updated_at (an older lmm serving the
+	// document) sorts by its installed_at, which is what that date means.
+	t.Run("TestE2E_SortRows_UpdatedOrdersByLastUpdatedAt", func(t *testing.T) {
+		var order []string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+			chromedp.Evaluate(`(async () => {
+				const { sortRows, SORT_NAMES } = await import("/static/app/modrows.js");
+				if (!SORT_NAMES.includes("updated")) return ["no updated sort"];
+				const rows = [
+					{ name: "Untouched", installed_at: "2025-06-01T00:00:00Z", last_updated_at: "2025-06-01T00:00:00Z" },
+					{ name: "OldButUpdated", installed_at: "2020-01-01T00:00:00Z", last_updated_at: "2025-09-01T00:00:00Z" },
+					{ name: "OlderLmm", installed_at: "2025-07-01T00:00:00Z" },
+				];
+				return sortRows(rows, "updated").map((r) => r.name);
+			})()`, &order, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+				return p.WithAwaitPromise(true)
+			}),
+		)
 
-	var order []string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		chromedp.Evaluate(`(async () => {
-			const { sortRows, SORT_NAMES } = await import("/static/app/modrows.js");
-			if (!SORT_NAMES.includes("updated")) return ["no updated sort"];
-			const rows = [
-				{ name: "Untouched", installed_at: "2025-06-01T00:00:00Z", last_updated_at: "2025-06-01T00:00:00Z" },
-				{ name: "OldButUpdated", installed_at: "2020-01-01T00:00:00Z", last_updated_at: "2025-09-01T00:00:00Z" },
-				{ name: "OlderLmm", installed_at: "2025-07-01T00:00:00Z" },
-			];
-			return sortRows(rows, "updated").map((r) => r.name);
-		})()`, &order, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
-			return p.WithAwaitPromise(true)
-		}),
-	)
-
-	assert.Equal(t, []string{"OldButUpdated", "OlderLmm", "Untouched"}, order)
-	assert.Empty(t, f.BrowserErrors())
+		assert.Equal(t, []string{"OldButUpdated", "OlderLmm", "Untouched"}, order)
+		assert.Empty(t, f.BrowserErrors())
+	})
 }
 
 // TestE2E_OpeningSlideOverDoesNotRehydrateMissionControl guards the unit 2
@@ -630,104 +633,114 @@ func assertNoUncaughtErrors(t *testing.T, errs []string) {
 	}
 }
 
-// TestE2E_FailedMods_RendersErrorStateNotEmpty guards the unit 2 gate's I3
-// finding for the library: mods === null used to render the same "Loading
-// library…" it shows while a fetch is still in flight, forever, with no
-// visible distinction from a genuine failure. It must instead say what
-// failed and offer a retry that recovers once the fault clears.
-func TestE2E_FailedMods_RendersErrorStateNotEmpty(t *testing.T) {
-	f, setFailing := newE2EFixtureWithFailingPath(t, "/api/v1/mods")
+// TestE2E_FailedFetch_RendersErrorState guards the unit 2 gate's I3 finding
+// for each of Mission Control's four documents: a failed fetch must say what
+// failed and offer a retry that recovers once the fault clears. One row per
+// document (#600); each gets its own fixture, because the failing path is
+// fixed when the proxy is built.
+func TestE2E_FailedFetch_RendersErrorState(t *testing.T) {
+	cases := []struct {
+		// name is the test this row used to be.
+		name     string
+		path     string
+		errorSel string
+		want     string
+		// notWant, when set, must not appear in the error text.
+		notWant string
+		// retrySel is the retry control.
+		retrySel string
+		// recovered waits for (and returns, through check) the state a
+		// successful retry leaves.
+		recovered func(rowCount *string) chromedp.Action
+		check     func(t *testing.T, rowCount string)
+	}{
+		// TestE2E_FailedMods_RendersErrorStateNotEmpty: mods === null used to
+		// render the same "Loading library…" it shows while a fetch is still in
+		// flight, forever, with no visible distinction from a genuine failure.
+		{
+			name:     "TestE2E_FailedMods_RendersErrorStateNotEmpty",
+			path:     "/api/v1/mods",
+			errorSel: `.empty-state--error`,
+			want:     "Couldn't load your library",
+			notWant:  "No mods installed yet",
+			retrySel: `.empty-state--error .button`,
+			recovered: func(rowCount *string) chromedp.Action {
+				return chromedp.Tasks{
+					chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+					chromedp.Evaluate(`document.querySelectorAll(".mod-row").length + ""`, rowCount),
+				}
+			},
+			check: func(t *testing.T, rowCount string) {
+				assert.Equal(t, "1", rowCount, "the retry must recover once the fault clears")
+			},
+		},
+		// TestE2E_FailedUpdates_RendersErrorStateNotAbsent: a failed fetch and
+		// "nothing to report" both leave `updates` null, and AttentionCards
+		// must tell them apart rather than rendering neither card nor section.
+		// No update is seeded, so a successful retry finds nothing to report
+		// either - the card (correctly) disappears again, same as the design's
+		// own all-clear rule; the assertion is that the ERROR half clears, not
+		// that a card stays.
+		{
+			name:      "TestE2E_FailedUpdates_RendersErrorStateNotAbsent",
+			path:      "/api/v1/updates",
+			errorSel:  `.card--updates .card__error`,
+			want:      "Couldn't check for updates",
+			retrySel:  `.card--updates .card__error + .button`,
+			recovered: func(*string) chromedp.Action { return waitGone(`.card--updates`) },
+		},
+		// TestE2E_FailedHealth_RendersErrorStateNotHealthy: /api/v1/health is
+		// the network-heavy full-tier verify and the endpoint most likely to
+		// fail in the field, and a swallowed failure used to read as "healthy"
+		// - the exact opposite of the truth.
+		{
+			name:      "TestE2E_FailedHealth_RendersErrorStateNotHealthy",
+			path:      "/api/v1/health",
+			errorSel:  `.card--health .card__error`,
+			want:      "Couldn't check health",
+			retrySel:  `.card--health .card__error + .button`,
+			recovered: func(*string) chromedp.Action { return waitGone(`.card--health`) },
+		},
+		// TestE2E_FailedConflicts_RendersErrorStateNotAbsent: the Conflicts
+		// card. No conflict is seeded, so - like Updates - a successful retry
+		// makes the card disappear rather than repopulate.
+		{
+			name:      "TestE2E_FailedConflicts_RendersErrorStateNotAbsent",
+			path:      "/api/v1/conflicts",
+			errorSel:  `.card--conflicts .card__error`,
+			want:      "Couldn't check for conflicts",
+			retrySel:  `.card--conflicts .card__error + .button`,
+			recovered: func(*string) chromedp.Action { return waitGone(`.card--conflicts`) },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, setFailing := newE2EFixtureWithFailingPath(t, tc.path)
 
-	var errorText string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.empty-state--error`, chromedp.ByQuery),
-		textContent(`.empty-state--error`, &errorText),
-	)
-	assert.Contains(t, errorText, "Couldn't load your library")
-	assert.NotContains(t, errorText, "No mods installed yet",
-		"a failed fetch must never render as the empty-library all-clear")
+			var errorText string
+			f.runInBrowser(t,
+				chromedp.Navigate(f.HomePath()),
+				chromedp.WaitVisible(tc.errorSel, chromedp.ByQuery),
+				textContent(tc.errorSel, &errorText),
+			)
+			assert.Contains(t, errorText, tc.want)
+			if tc.notWant != "" {
+				assert.NotContains(t, errorText, tc.notWant,
+					"a failed fetch must never render as the empty-library all-clear")
+			}
 
-	setFailing(false)
-	var rowCount string
-	f.runInBrowser(t,
-		chromedp.Click(`.empty-state--error .button`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		chromedp.Evaluate(`document.querySelectorAll(".mod-row").length + ""`, &rowCount),
-	)
-	assert.Equal(t, "1", rowCount, "the retry must recover once the fault clears")
-	assertNoUncaughtErrors(t, f.BrowserErrors())
-}
-
-// TestE2E_FailedUpdates_RendersErrorStateNotAbsent guards the same I3
-// finding for the Updates attention card: a failed fetch and "nothing to
-// report" both leave `updates` null, and AttentionCards must tell them
-// apart rather than rendering neither card nor section. No update is
-// seeded, so a successful retry finds nothing to report either - the card
-// (correctly) disappears again, same as the design's own all-clear rule;
-// the assertion is that the ERROR half clears, not that a card stays.
-func TestE2E_FailedUpdates_RendersErrorStateNotAbsent(t *testing.T) {
-	f, setFailing := newE2EFixtureWithFailingPath(t, "/api/v1/updates")
-
-	var errorText string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.card--updates .card__error`, chromedp.ByQuery),
-		textContent(`.card--updates .card__error`, &errorText),
-	)
-	assert.Contains(t, errorText, "Couldn't check for updates")
-
-	setFailing(false)
-	f.runInBrowser(t,
-		chromedp.Click(`.card--updates .card__error + .button`, chromedp.ByQuery),
-		waitGone(`.card--updates`),
-	)
-	assertNoUncaughtErrors(t, f.BrowserErrors())
-}
-
-// TestE2E_FailedHealth_RendersErrorStateNotHealthy guards I3's most
-// consequential case: /api/v1/health is the network-heavy full-tier verify
-// and the endpoint most likely to fail in the field, and a swallowed
-// failure used to read as "healthy" - the exact opposite of the truth.
-func TestE2E_FailedHealth_RendersErrorStateNotHealthy(t *testing.T) {
-	f, setFailing := newE2EFixtureWithFailingPath(t, "/api/v1/health")
-
-	var errorText string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.card--health .card__error`, chromedp.ByQuery),
-		textContent(`.card--health .card__error`, &errorText),
-	)
-	assert.Contains(t, errorText, "Couldn't check health")
-
-	setFailing(false)
-	f.runInBrowser(t,
-		chromedp.Click(`.card--health .card__error + .button`, chromedp.ByQuery),
-		waitGone(`.card--health`),
-	)
-	assertNoUncaughtErrors(t, f.BrowserErrors())
-}
-
-// TestE2E_FailedConflicts_RendersErrorStateNotAbsent is I3's fourth
-// scenario: the Conflicts card. No conflict is seeded, so - like Updates -
-// a successful retry makes the card disappear rather than repopulate.
-func TestE2E_FailedConflicts_RendersErrorStateNotAbsent(t *testing.T) {
-	f, setFailing := newE2EFixtureWithFailingPath(t, "/api/v1/conflicts")
-
-	var errorText string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.card--conflicts .card__error`, chromedp.ByQuery),
-		textContent(`.card--conflicts .card__error`, &errorText),
-	)
-	assert.Contains(t, errorText, "Couldn't check for conflicts")
-
-	setFailing(false)
-	f.runInBrowser(t,
-		chromedp.Click(`.card--conflicts .card__error + .button`, chromedp.ByQuery),
-		waitGone(`.card--conflicts`),
-	)
-	assertNoUncaughtErrors(t, f.BrowserErrors())
+			setFailing(false)
+			var rowCount string
+			f.runInBrowser(t,
+				chromedp.Click(tc.retrySel, chromedp.ByQuery),
+				tc.recovered(&rowCount),
+			)
+			if tc.check != nil {
+				tc.check(t, rowCount)
+			}
+			assertNoUncaughtErrors(t, f.BrowserErrors())
+		})
+	}
 }
 
 // TestE2E_AttentionCardsRenderFromSeededFixture is the "card presence"
@@ -1832,37 +1845,73 @@ func TestE2E_SlideOver_LockAndPolicyEditsPersistThroughTheAPI(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_SlideOver_EnableDisableMorphsInline proves the slide-over's
-// Enable/Disable toggle morphs to "Done" inline once the job succeeds -
-// pinning the fix for a real bug this unit's own gate found: the control's
-// origin used to be keyed on the CURRENT direction ("enable" vs "disable"),
-// which flips the instant the toggle succeeds and the row re-hydrates, so
-// the very next render looked up a DIFFERENT origin than the one the job
-// was bound to and never found it - the button silently reverted to idle
-// instead of showing its own outcome. The origin is a stable "toggle" now.
-func TestE2E_SlideOver_EnableDisableMorphsInline(t *testing.T) {
+// TestE2E_EnableDisableMorphsOnBothDrillInSurfaces drives the Disable toggle
+// on the slide-over and on the full mod page and pins each one's inline morph
+// to a succeeded readout. They share one fixture (#600) by toggling different
+// mods: the slide-over disables Alpha Mod, the full page Beta Mod, so neither
+// sees the other's job. Each also checks its own mod's row, which proves the
+// button sent the right mod - the api_flow toggle tests cannot.
+func TestE2E_EnableDisableMorphsOnBothDrillInSurfaces(t *testing.T) {
 	f := newE2EFixtureWithDrillInMods(t)
 
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		clickModRow("Alpha Mod"),
-		chromedp.WaitVisible(`.slide-over__nav`, chromedp.ByQuery),
-	)
+	// TestE2E_SlideOver_EnableDisableMorphsInline proves the slide-over's
+	// Enable/Disable toggle morphs to "Done" inline once the job succeeds -
+	// pinning the fix for a real bug this unit's own gate found: the control's
+	// origin used to be keyed on the CURRENT direction ("enable" vs "disable"),
+	// which flips the instant the toggle succeeds and the row re-hydrates, so
+	// the very next render looked up a DIFFERENT origin than the one the job
+	// was bound to and never found it - the button silently reverted to idle
+	// instead of showing its own outcome. The origin is a stable "toggle" now.
+	t.Run("TestE2E_SlideOver_EnableDisableMorphsInline", func(t *testing.T) {
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+			clickModRow("Alpha Mod"),
+			chromedp.WaitVisible(`.slide-over__nav`, chromedp.ByQuery),
+		)
 
-	var label string
-	f.runInBrowser(t, textContent(`.slide-over__actions button`, &label))
-	require.Equal(t, "Disable", label, "Alpha Mod is seeded enabled")
+		var label string
+		f.runInBrowser(t, textContent(`.slide-over__actions button`, &label))
+		require.Equal(t, "Disable", label, "Alpha Mod is seeded enabled")
 
-	f.runInBrowser(t,
-		chromedp.Click(`.slide-over__actions button`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
-	)
+		f.runInBrowser(t,
+			chromedp.Click(`.slide-over__actions button`, chromedp.ByQuery),
+			chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		)
+		// The HTTP flow tests prove the endpoint flips a row; this proves the
+		// BUTTON asked for the right mod (#600 review).
+		mod, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, f.Profile)
+		require.NoError(t, err)
+		assert.False(t, mod.Enabled, "the slide-over's Disable must disable Alpha Mod")
+		assert.Empty(t, f.BrowserErrors())
+	})
 
-	mod, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
-	require.NoError(t, err)
-	assert.False(t, mod.Enabled)
-	assert.Empty(t, f.BrowserErrors())
+	// TestE2E_FullModPage_EnableDisableWorks proves issue 330's explicit task
+	// brief - enable/disable are wired "from slide-over + full page" - holds
+	// on the full page too: a direct deep link into it can toggle the mod
+	// without a detour back through the slide-over.
+	t.Run("TestE2E_FullModPage_EnableDisableWorks", func(t *testing.T) {
+		var label string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.ModPagePath("fake", "b")),
+			chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+			textContent(`.mod-page__section button`, &label),
+		)
+		require.Equal(t, "Disable", label, "Beta Mod is seeded enabled")
+
+		f.runInBrowser(t,
+			// Settled, not merely visible (#521): the page's other sections
+			// land on their own reads and can still move the toggle when the
+			// click is dispatched, which under a loaded -race run sent it to
+			// whatever had taken the button's old spot.
+			clickWhenSettled(`.mod-page__section button`),
+			chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		)
+		mod, err := f.Svc.GetInstalledMod(t.Context(), "fake", "b", f.Game.ID, f.Profile)
+		require.NoError(t, err)
+		assert.False(t, mod.Enabled, "the full page's Disable must disable Beta Mod")
+		assert.Empty(t, f.BrowserErrors())
+	})
 }
 
 // TestE2E_SlideOver_UninstallThroughTheModal_RemovesFromDisk drives the
@@ -2048,36 +2097,6 @@ func TestE2E_FullModPage_RendersFilesAndVersions(t *testing.T) {
 	assert.Contains(t, versionsBody, "1.0")
 	assert.Contains(t, versionsBody, "2.0")
 	assert.Contains(t, versionsBody, "installed")
-	assert.Empty(t, f.BrowserErrors())
-}
-
-// TestE2E_FullModPage_EnableDisableWorks proves issue 330's explicit task
-// brief - enable/disable are wired "from slide-over + full page" - holds
-// on the full page too: a direct deep link into it can toggle the mod
-// without a detour back through the slide-over.
-func TestE2E_FullModPage_EnableDisableWorks(t *testing.T) {
-	f := newE2EFixtureWithDrillInMods(t)
-
-	var label string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.ModPagePath("fake", "a")),
-		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
-		textContent(`.mod-page__section button`, &label),
-	)
-	require.Equal(t, "Disable", label, "Alpha Mod is seeded enabled")
-
-	f.runInBrowser(t,
-		// Settled, not merely visible (#521): the page's other sections
-		// land on their own reads and can still move the toggle when the
-		// click is dispatched, which under a loaded -race run sent it to
-		// whatever had taken the button's old spot.
-		clickWhenSettled(`.mod-page__section button`),
-		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
-	)
-
-	mod, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
-	require.NoError(t, err)
-	assert.False(t, mod.Enabled, "the disable job must have reached the server")
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -3316,84 +3335,117 @@ func clickInRow(rowSelector, rowText, buttonText string) chromedp.Action {
 	`, rowSelector, rowText, buttonText), nil)
 }
 
-// TestE2E_LibraryRow_ToggleAndMenu proves the row's own enabled checkbox is
-// LIVE (no longer NOT_YET) and the ⋯ menu's Lock/Unlock/Uninstall actually
-// reach core, not just render.
-func TestE2E_LibraryRow_ToggleAndMenu(t *testing.T) {
+// TestE2E_LibraryRowMenu covers the library row's ⋯ menu on one fixture
+// (#600): closing it, then its Lock/Unlock/Uninstall actions. The close
+// subtest changes nothing and the actions subtest navigates fresh and leaves
+// Beta Mod as it found it (Lock, then Unlock; the uninstall modal is never
+// confirmed).
+func TestE2E_LibraryRowMenu(t *testing.T) {
 	f := newE2EFixtureWithDeployableMods(t)
 
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
-				.querySelector("td.col--enabled input").click();
-		`, nil),
-	)
-	require.Eventually(t, func() bool {
-		m, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
-		return err == nil && !m.Enabled
-	}, 5*time.Second, 20*time.Millisecond, "the row toggle must actually disable the mod")
-
-	openBetaMenu := chromedp.Tasks{
-		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Beta Mod"))
-				.querySelector("td.col--menu button").click();
-		`, nil),
-		chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
-	}
-
-	// A row's own lock badge (🔒) only appears once the reload that follows
-	// setModLock/clearModLock has landed - polled on the BROWSER'S state
-	// (not just the service's) before reopening the menu, since the click
-	// handler fires the mutation without awaiting it (library.js) and a
-	// same-instant re-open would otherwise race the reload that updates
-	// which label ("Lock" vs "Unlock") the menu is about to show.
-	betaLockBadge := `Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Beta Mod")).querySelector('.badge[title^="Locked"]')`
-
-	f.runInBrowser(t, openBetaMenu,
-		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Lock").click();
-		`, nil),
-		pollUntil(betaLockBadge+` !== null`),
-	)
-	p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
-	require.NoError(t, err)
-	var betaLocked bool
-	for _, ref := range p.Mods {
-		if ref.ModID == "b" {
-			betaLocked = ref.Locked
+	// TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape is m2's own scenario
+	// (unit 6 gate review): the ⋯ row menu used to close only by re-clicking
+	// ⋯, leaving it open over the rest of the page once the user had clearly
+	// moved on.
+	t.Run("TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape", func(t *testing.T) {
+		openMenu := chromedp.Tasks{
+			chromedp.Evaluate(`
+				Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
+					.querySelector("td.col--menu button").click();
+			`, nil),
+			chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
 		}
-	}
-	assert.True(t, betaLocked, "the menu's Lock action must actually lock the ref")
 
-	f.runInBrowser(t, openBetaMenu,
-		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Unlock").click();
-		`, nil),
-		pollUntil(betaLockBadge+` === null`),
-	)
-	p, err = f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
-	require.NoError(t, err)
-	for _, ref := range p.Mods {
-		if ref.ModID == "b" {
-			assert.False(t, ref.Locked, "the menu's Unlock action must actually unlock the ref")
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+			openMenu,
+			settleEffects(),
+			chromedp.Click(`.section-header`, chromedp.ByQuery),
+			waitGone(`.row-menu`),
+		)
+
+		f.runInBrowser(t,
+			openMenu,
+			// The listener this closes through is attached by an EFFECT, which
+			// (per this suite's own established pattern - see
+			// TestE2E_ProfilesModal_CRUDExportImport's settle()) can lag the
+			// menu's own DOM appearance by a handful of animation frames in a
+			// headless browser; WaitVisible above only proves the DOM is there,
+			// not that the effect has run yet.
+			settleEffects(),
+			chromedp.KeyEvent(kb.Escape),
+			waitGone(`.row-menu`),
+		)
+
+		assert.Empty(t, f.BrowserErrors())
+	})
+
+	// TestE2E_LibraryRowMenu_LockUnlockAndUninstall proves the ⋯ menu's
+	// Lock/Unlock/Uninstall actually reach core, not just render. It was
+	// TestE2E_LibraryRow_ToggleAndMenu until #600 dropped the halves pinned
+	// elsewhere: the row's enabled checkbox (the toggle_ack and toggle_ledger
+	// scenarios click it and wait for the real disable) and the Lock write's
+	// server state (TestE2E_TwoModSettingsInFlightKeepTheNewerLibrary drives the
+	// same menu item to the same badge). Unlock has no other browser scenario, so
+	// its server-side assertion stays.
+	t.Run("TestE2E_LibraryRowMenu_LockUnlockAndUninstall", func(t *testing.T) {
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		)
+
+		openBetaMenu := chromedp.Tasks{
+			chromedp.Evaluate(`
+				Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Beta Mod"))
+					.querySelector("td.col--menu button").click();
+			`, nil),
+			chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
 		}
-	}
 
-	// The menu's own Uninstall reaches the SAME single-mod confirm modal
-	// the slide-over's own Uninstall button opens.
-	f.runInBrowser(t, openBetaMenu,
-		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Uninstall").click();
-		`, nil),
-		chromedp.WaitVisible(`.modal[data-kind="uninstall"] .plan--uninstall`, chromedp.ByQuery),
-	)
-	var body string
-	f.runInBrowser(t, textContent(`.modal[data-kind="uninstall"]`, &body))
-	assert.Contains(t, body, "Beta Mod")
+		// A row's own lock badge (🔒) only appears once the reload that follows
+		// setModLock/clearModLock has landed - polled on the BROWSER'S state
+		// (not just the service's) before reopening the menu, since the click
+		// handler fires the mutation without awaiting it (library.js) and a
+		// same-instant re-open would otherwise race the reload that updates
+		// which label ("Lock" vs "Unlock") the menu is about to show.
+		betaLockBadge := `Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Beta Mod")).querySelector('.badge[title^="Locked"]')`
 
-	assert.Empty(t, f.BrowserErrors())
+		f.runInBrowser(t, openBetaMenu,
+			chromedp.Evaluate(`
+				Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Lock").click();
+			`, nil),
+			pollUntil(betaLockBadge+` !== null`),
+		)
+
+		f.runInBrowser(t, openBetaMenu,
+			chromedp.Evaluate(`
+				Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Unlock").click();
+			`, nil),
+			pollUntil(betaLockBadge+` === null`),
+		)
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
+		require.NoError(t, err)
+		for _, ref := range p.Mods {
+			if ref.ModID == "b" {
+				assert.False(t, ref.Locked, "the menu's Unlock action must actually unlock the ref")
+			}
+		}
+
+		// The menu's own Uninstall reaches the SAME single-mod confirm modal
+		// the slide-over's own Uninstall button opens.
+		f.runInBrowser(t, openBetaMenu,
+			chromedp.Evaluate(`
+				Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Uninstall").click();
+			`, nil),
+			chromedp.WaitVisible(`.modal[data-kind="uninstall"] .plan--uninstall`, chromedp.ByQuery),
+		)
+		var body string
+		f.runInBrowser(t, textContent(`.modal[data-kind="uninstall"]`, &body))
+		assert.Contains(t, body, "Beta Mod")
+
+		assert.Empty(t, f.BrowserErrors())
+	})
 }
 
 // TestE2E_LibraryBatchBar_EnableDisableUninstallToDisk drives the batch bar
@@ -3482,46 +3534,6 @@ func TestE2E_LibraryBatchBar_EnableDisableUninstallToDisk(t *testing.T) {
 		_, errB := f.Svc.GetInstalledMod(t.Context(), "fake", "b", f.Game.ID, "default")
 		return errors.Is(errA, domain.ErrModNotFound) && errors.Is(errB, domain.ErrModNotFound)
 	}, 5*time.Second, 20*time.Millisecond, "batch uninstall must remove both mods")
-
-	assert.Empty(t, f.BrowserErrors())
-}
-
-// TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape is m2's own scenario
-// (unit 6 gate review): the ⋯ row menu used to close only by re-clicking
-// ⋯, leaving it open over the rest of the page once the user had clearly
-// moved on.
-func TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape(t *testing.T) {
-	f := newE2EFixtureWithDeployableMods(t)
-
-	openMenu := chromedp.Tasks{
-		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
-				.querySelector("td.col--menu button").click();
-		`, nil),
-		chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
-	}
-
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		openMenu,
-		settleEffects(),
-		chromedp.Click(`.section-header`, chromedp.ByQuery),
-		waitGone(`.row-menu`),
-	)
-
-	f.runInBrowser(t,
-		openMenu,
-		// The listener this closes through is attached by an EFFECT, which
-		// (per this suite's own established pattern - see
-		// TestE2E_ProfilesModal_CRUDExportImport's settle()) can lag the
-		// menu's own DOM appearance by a handful of animation frames in a
-		// headless browser; WaitVisible above only proves the DOM is there,
-		// not that the effect has run yet.
-		settleEffects(),
-		chromedp.KeyEvent(kb.Escape),
-		waitGone(`.row-menu`),
-	)
 
 	assert.Empty(t, f.BrowserErrors())
 }
@@ -4385,18 +4397,11 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 	assert.Empty(t, unexpected)
 }
 
-// TestE2E_ProfilesModal_ImportWithoutInstallReportsSkippedNotFailed is N1's
-// own scenario (unit 6 re-review of the fix wave): the I3 fix folded
-// core.ProfileImportResult.Skipped into "failed", so a profile_import that
-// leaves the plan's own "Download and install" checkbox unchecked - the
-// flow's documented default (plan_profile_import.js's own note: "Left
-// unchecked, the profile is still saved and every pending mod is recorded
-// as skipped") - used to render as a total failure ("0 applied / 2 failed"
-// in the failure tone) even though the job succeeds and the profile is
-// created. Skipped is not failed.
-func TestE2E_ProfilesModal_ImportWithoutInstallReportsSkippedNotFailed(t *testing.T) {
-	f := newE2EFixture(t)
-
+// openProfileImportOfTwoPendingMods uploads a profile "imported" naming two
+// mods the fixture has not installed through the profiles modal's import
+// control, and waits for the profile_import plan modal it opens.
+func openProfileImportOfTwoPendingMods(t *testing.T, f e2eFixture) {
+	t.Helper()
 	doc := fmt.Sprintf(`name: imported
 game_id: %s
 mods:
@@ -4433,6 +4438,21 @@ mods:
 		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="profile_import"] .plan--profile-import`, chromedp.ByQuery),
 	)
+}
+
+// TestE2E_ProfilesModal_ImportWithoutInstallReportsSkippedNotFailed is N1's
+// own scenario (unit 6 re-review of the fix wave): the I3 fix folded
+// core.ProfileImportResult.Skipped into "failed", so a profile_import that
+// leaves the plan's own "Download and install" checkbox unchecked - the
+// flow's documented default (plan_profile_import.js's own note: "Left
+// unchecked, the profile is still saved and every pending mod is recorded
+// as skipped") - used to render as a total failure ("0 applied / 2 failed"
+// in the failure tone) even though the job succeeds and the profile is
+// created. Skipped is not failed.
+func TestE2E_ProfilesModal_ImportWithoutInstallReportsSkippedNotFailed(t *testing.T) {
+	f := newE2EFixture(t)
+
+	openProfileImportOfTwoPendingMods(t, f)
 	var planText string
 	f.runInBrowser(t, textContent(`.modal[data-kind="profile_import"]`, &planText))
 	require.Contains(t, planText, "Download and install", "the plan must offer the install checkbox - the one this scenario deliberately leaves unchecked")
@@ -4485,42 +4505,7 @@ mods:
 func TestE2E_ProfileImportNoInstallOverridesTheInstallCheckbox(t *testing.T) {
 	f := newE2EFixture(t)
 
-	doc := fmt.Sprintf(`name: imported
-game_id: %s
-mods:
-  - source_id: fake
-    mod_id: newmod1
-    version: "1.0"
-  - source_id: fake
-    mod_id: newmod2
-    version: "1.0"
-`, f.Game.ID)
-	importPath := filepath.Join(t.TempDir(), "imported.yaml")
-	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
-
-	settle := func() { f.runInBrowser(t, settleEffects()) }
-
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.profile-picker__trigger`, chromedp.ByQuery),
-		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
-	)
-	settle()
-	f.runInBrowser(t,
-		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll(".profile-picker__menu button"))
-				.find((b) => b.textContent.includes("Manage profiles"))?.click();
-		`, nil),
-	)
-	settle()
-	f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
-	settle()
-
-	f.runInBrowser(t,
-		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
-		chromedp.WaitVisible(`.modal[data-kind="profile_import"] .plan--profile-import`, chromedp.ByQuery),
-	)
+	openProfileImportOfTwoPendingMods(t, f)
 
 	var installChecked, noInstallVisible bool
 	f.runInBrowser(t,

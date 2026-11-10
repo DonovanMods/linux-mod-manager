@@ -1,9 +1,10 @@
 package serve
 
 // The rollback flow over /api/v1: PlanRollback -> POST /api/v1/jobs
-// (#330's new "rollback" plan kind, kind_rollback.go). Assertions are on the
-// end state - the database row and the deployed tree - the same convention
-// every other flow test in this file's siblings follows.
+// (#330's new "rollback" plan kind, kind_rollback.go). What is asserted
+// here is the wire: the plan document, the job's result and the HTTP status
+// of a plan core refuses. The swap itself - the DB row, the deployed tree,
+// a lock refusing even under Force - is internal/core's rollback_test.go.
 
 import (
 	"net/http"
@@ -73,22 +74,18 @@ func TestFlowRollback_PlanNamesFromAndToVersions(t *testing.T) {
 	assert.Equal(t, rollbackFixtureNewVersion, mod.Version, "planning must not move anything")
 }
 
-// TestFlowRollback_JobRestoresThePreviousVersion is the Apply half: the DB
-// row's version swaps back and the previous content is genuinely on disk
-// again.
+// TestFlowRollback_JobRestoresThePreviousVersion is the Apply half: the
+// job succeeds and its result is core's RollbackResult, naming the swap.
 func TestFlowRollback_JobRestoresThePreviousVersion(t *testing.T) {
-	s, svc, game := rollbackReadyFlowFixtureServer(t)
+	s, _, game := rollbackReadyFlowFixtureServer(t)
 
 	j := runFlow(t, s, game, "rollback", rollbackPlanBody, "")
 	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
 
-	mod, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "m1", game.ID, "default")
-	require.NoError(t, err)
-	assert.Equal(t, "1.0", mod.Version)
-	assert.Equal(t, rollbackFixtureNewVersion, mod.PreviousVersion,
-		"a rollback swaps the pair, it does not clear it")
-	assert.Equal(t, "pak bytes", deployedContent(t, game, deployFixtureFile),
-		"the game directory must carry the RESTORED version's content")
+	result, ok := j.status().Result.(*core.RollbackResult)
+	require.True(t, ok, "the job's result is core.RollbackResult, got %T", j.status().Result)
+	assert.Equal(t, rollbackFixtureNewVersion, result.FromVersion)
+	assert.Equal(t, "1.0", result.ToVersion)
 }
 
 // TestFlowRollback_NoPreviousVersion_PlanRefuses proves a mod that was

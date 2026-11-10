@@ -234,6 +234,19 @@ func TestShowGameStatusJSON_NeverDeployed_OmitsLastDeploy(t *testing.T) {
 // effective_link_method / link_method_source fields carry what the text
 // twin shows.
 
+// setProfileLinkMethodForTest stamps an explicit link_method on an existing
+// profile YAML - the cmd-package twin of internal/core's
+// setProfileLinkMethod test helper (deploy_test.go), for driving
+// GetEffectiveLinkMethod's profile-explicit branch.
+func setProfileLinkMethodForTest(t *testing.T, svc *core.Service, gameID, profileName string, method domain.LinkMethod) {
+	t.Helper()
+	p, err := config.LoadProfile(svc.ConfigDir(), gameID, profileName)
+	require.NoError(t, err)
+	p.LinkMethod = method
+	p.LinkMethodExplicit = true
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), p))
+}
+
 // TestShowGameStatusJSON_ProfileLinkMethodOverride_TextJSONParity is issue
 // #155's headline failing case: the game explicitly says symlink, the active
 // profile explicitly says copy. The text twin shows "copy (per-profile)";
@@ -245,7 +258,7 @@ func TestShowGameStatusJSON_ProfileLinkMethodOverride_TextJSONParity(t *testing.
 	game.LinkMethodExplicit = true
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
-	setVerifyProfileLinkMethod(t, svc, game.ID, "default", domain.LinkCopy)
+	setProfileLinkMethodForTest(t, svc, game.ID, "default", domain.LinkCopy)
 
 	textOut := captureStdout(t, func() error {
 		return showGameStatus(context.Background(), svc, game.ID)

@@ -2,13 +2,17 @@ package serve
 
 // The purge flow over /api/v1: POST /api/v1/plans/purge -> POST
 // /api/v1/jobs (#326, epic live review C-3 - `lmm purge` had no web path
-// at all). Every assertion is on the END STATE: the game directory, the DB
-// row and the profile's own mod list.
+// at all). What is asserted here is the wire: that planning applies
+// nothing, that the job runs the purge, and that each option reaches the
+// half that reads it. What a purge leaves behind - records kept or
+// removed, profile entries, the game directory - is internal/core's
+// purge_test.go.
 
 import (
 	"net/http"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,29 +31,27 @@ func TestFlowPurge_PlanListsWhatWouldGoAndChangesNothing(t *testing.T) {
 	assert.FileExists(t, deployedFixturePath(game), "planning must not undeploy anything")
 }
 
-// TestFlowPurge_JobEmptiesTheProfileOnDisk is the Apply half, and the
-// point of the whole flow: the game directory loses every deployed file,
-// while the records stay (so `lmm deploy` restores them).
+// TestFlowPurge_JobEmptiesTheProfileOnDisk is the Apply half: the job
+// succeeds, its result is core's PurgeResult, and the game directory has
+// lost the deployed file.
 func TestFlowPurge_JobEmptiesTheProfileOnDisk(t *testing.T) {
-	s, svc, game := newFlowFixtureServer(t)
+	s, _, game := newFlowFixtureServer(t)
 	deployFixtureProfile(t, s, game)
 
 	j := runFlow(t, s, game, "purge", "", "")
 	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
 
-	assert.NoFileExists(t, deployedFixturePath(game), "purge must undeploy the profile's files")
-
-	mod, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "m1", game.ID, "default")
-	require.NoError(t, err, "without --uninstall the record survives")
-	assert.False(t, mod.Deployed, "the record must be marked not-deployed")
-
-	profile, err := svc.NewProfileManager().Get(t.Context(), game.ID, "default")
-	require.NoError(t, err)
-	assert.Len(t, profile.Mods, 1, "the profile's load order is untouched without uninstall")
+	result, ok := j.status().Result.(*core.PurgeResult)
+	require.True(t, ok, "the job's result is core.PurgeResult, got %T", j.status().Result)
+	assert.Equal(t, 1, result.Purged)
+	assert.NoFileExists(t, deployedFixturePath(game), "the job ran the purge")
 }
 
 // TestFlowPurge_UninstallOptionRemovesTheRecords pins the apply-time
-// option: with it, the DB row and the profile ref go too.
+// option reaching Apply: Apply reads the job's own options, not the
+// plan's, and with uninstall the record goes. Core's
+// TestService_PurgeProfile_Uninstall_RemovesRecordsAndProfileEntries pins
+// the rest of what it removes.
 func TestFlowPurge_UninstallOptionRemovesTheRecords(t *testing.T) {
 	s, svc, game := newFlowFixtureServer(t)
 	deployFixtureProfile(t, s, game)
@@ -57,13 +59,8 @@ func TestFlowPurge_UninstallOptionRemovesTheRecords(t *testing.T) {
 	j := runFlow(t, s, game, "purge", `{"uninstall":true}`, `{"uninstall":true}`)
 	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
 
-	assert.NoFileExists(t, deployedFixturePath(game))
 	_, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "m1", game.ID, "default")
-	require.ErrorIs(t, err, domain.ErrModNotFound)
-
-	profile, err := svc.NewProfileManager().Get(t.Context(), game.ID, "default")
-	require.NoError(t, err)
-	assert.Empty(t, profile.Mods, "--uninstall removes the profile ref too")
+	require.ErrorIs(t, err, domain.ErrModNotFound, "the job's uninstall option reached Apply")
 }
 
 // TestFlowPurge_PlanEchoesTheUninstallOption pins that the preview tells

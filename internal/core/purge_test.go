@@ -52,12 +52,18 @@ func TestService_PurgeProfile_PurgesAll_MarksNotDeployed_EmitsPerModEvents(t *te
 
 	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true, map[string][]byte{"a.esp": []byte("a")})
 	seedNamedInstalledMod(t, svc, game, "src", "b", "Mod B", "1.0", true, map[string][]byte{"b.esp": []byte("b")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "a", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "b", "1.0")
 	installSeededMod(t, svc, game, "a")
 	installSeededMod(t, svc, game, "b")
 
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, mods, 2)
+
+	before, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	require.Len(t, before.Mods, 2, "the fixture lists both mods in the profile")
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{}, sink)
@@ -75,6 +81,11 @@ func TestService_PurgeProfile_PurgesAll_MarksNotDeployed_EmitsPerModEvents(t *te
 		require.NoError(t, err, "records must be preserved without Uninstall")
 		assert.False(t, mod.Deployed, "mod %s must be marked not deployed", id)
 	}
+	// Without Uninstall a purge only undeploys: the profile's mod list and
+	// load order are untouched (#600 moved this pin here from serve).
+	after, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, before.Mods, after.Mods, "a purge without Uninstall must leave the profile's mods as they were")
 
 	require.NotEmpty(t, *seen)
 	phases, flowEvents := phasesOf(*seen)

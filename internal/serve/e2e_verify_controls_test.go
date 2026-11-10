@@ -46,39 +46,70 @@ func rowHealthJS(name string) string {
 	})()`
 }
 
-// TestE2E_RowHealthStateIsReadableAtAGlance is issue 418's state half: a row
-// says which of the three things is true of it, rather than carrying a mark
-// for one of them and nothing for the other two.
-//
-// The fixture has both cases in one library: Better Boots records 1.0 while
-// its file now reports 2.0 (a version_mismatch finding), and the two
-// conflict mods are checked and clean.
-func TestE2E_RowHealthStateIsReadableAtAGlance(t *testing.T) {
+// TestE2E_RowHealth reads the per-row health badges (issue 418): their state
+// and their text alternative, on one fixture with both a finding and a clean
+// row. Both subtests only read and navigate fresh (#600).
+func TestE2E_RowHealth(t *testing.T) {
 	f := newE2EFixtureWithAttention(t)
 
-	var unhealthy, healthy e2eRowHealth
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		// The health read is one of Mission Control's supplementary
-		// documents, so the rows start as "unknown" and settle once it
-		// lands - which is itself the honest sequence.
-		pollUntil(`document.querySelector('[data-testid="row-health"][data-health="issues"]') !== null`),
-		chromedp.Evaluate(rowHealthJS("Better Boots"), &unhealthy),
-		chromedp.Evaluate(rowHealthJS("Mod X"), &healthy),
-	)
+	// TestE2E_RowHealthStateIsReadableAtAGlance is issue 418's state half: a row
+	// says which of the three things is true of it, rather than carrying a mark
+	// for one of them and nothing for the other two.
+	//
+	// The fixture has both cases in one library: Better Boots records 1.0 while
+	// its file now reports 2.0 (a version_mismatch finding), and the two
+	// conflict mods are checked and clean.
+	t.Run("TestE2E_RowHealthStateIsReadableAtAGlance", func(t *testing.T) {
+		var unhealthy, healthy e2eRowHealth
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+			// The health read is one of Mission Control's supplementary
+			// documents, so the rows start as "unknown" and settle once it
+			// lands - which is itself the honest sequence.
+			pollUntil(`document.querySelector('[data-testid="row-health"][data-health="issues"]') !== null`),
+			chromedp.Evaluate(rowHealthJS("Better Boots"), &unhealthy),
+			chromedp.Evaluate(rowHealthJS("Mod X"), &healthy),
+		)
 
-	assert.Equal(t, "issues", unhealthy.State)
-	assert.Contains(t, unhealthy.Title, "health finding",
-		"and the count is what the title says, not a bare word")
+		assert.Equal(t, "issues", unhealthy.State)
+		assert.Contains(t, unhealthy.Title, "health finding",
+			"and the count is what the title says, not a bare word")
 
-	require.NotEmpty(t, healthy.State, "a clean row carries a badge of its own now")
-	assert.Equal(t, "ok", healthy.State,
-		"a checked, clean mod says so - it used to be indistinguishable from one nothing had looked at")
-	assert.Contains(t, healthy.Title, "no issues")
-	assert.NotEqual(t, unhealthy.Badge, healthy.Badge,
-		"and the two states are not the same glyph")
-	assert.Empty(t, f.BrowserErrors())
+		require.NotEmpty(t, healthy.State, "a clean row carries a badge of its own now")
+		assert.Equal(t, "ok", healthy.State,
+			"a checked, clean mod says so - it used to be indistinguishable from one nothing had looked at")
+		assert.Contains(t, healthy.Title, "no issues")
+		assert.NotEqual(t, unhealthy.Badge, healthy.Badge,
+			"and the two states are not the same glyph")
+		assert.Empty(t, f.BrowserErrors())
+	})
+
+	// TestE2E_RowHealthBadgeHasATextAlternative is issue 418's a11y half. The
+	// per-row badge is a bare glyph - ?, ✓ or ⚠ - and it is on every row in
+	// every state, so it is the one badge whose meaning cannot live in a
+	// tooltip alone: a role-less span with only a title exposes no reliable
+	// name, and a title is neither a keyboard nor a touch affordance.
+	t.Run("TestE2E_RowHealthBadgeHasATextAlternative", func(t *testing.T) {
+		var unhealthy, healthy e2eAXNode
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+			pollUntil(`document.querySelector('[data-testid="row-health"][data-health="issues"]') !== null`),
+			accessibleNodeOf(`.mod-row[data-mod="fake:boots"] [data-testid="row-health"]`, &unhealthy),
+			accessibleNodeOf(`.mod-row[data-mod="fake:x"] [data-testid="row-health"]`, &healthy),
+		)
+
+		for label, node := range map[string]e2eAXNode{"issues": unhealthy, "ok": healthy} {
+			assert.False(t, node.Ignored, "%s: the badge is in the accessibility tree", label)
+			// Chrome's own name for the ARIA "img" role.
+			assert.Equal(t, "image", node.Role, "%s: exposed as an image of its state", label)
+		}
+		assert.Regexp(t, `^\d+ health findings?$`, unhealthy.Name,
+			"the name is the sentence, count included - not the glyph")
+		assert.Equal(t, "Verified — no issues found", healthy.Name)
+		assert.Empty(t, f.BrowserErrors())
+	})
 }
 
 // TestE2E_VerifyIsReachableFromTheLibraryHeader is the control half. The
@@ -222,32 +253,4 @@ func accessibleNodeOf(sel string, out *e2eAXNode) chromedp.Action {
 		}
 		return nil
 	})
-}
-
-// TestE2E_RowHealthBadgeHasATextAlternative is issue 418's a11y half. The
-// per-row badge is a bare glyph - ?, ✓ or ⚠ - and it is on every row in
-// every state, so it is the one badge whose meaning cannot live in a
-// tooltip alone: a role-less span with only a title exposes no reliable
-// name, and a title is neither a keyboard nor a touch affordance.
-func TestE2E_RowHealthBadgeHasATextAlternative(t *testing.T) {
-	f := newE2EFixtureWithAttention(t)
-
-	var unhealthy, healthy e2eAXNode
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		pollUntil(`document.querySelector('[data-testid="row-health"][data-health="issues"]') !== null`),
-		accessibleNodeOf(`.mod-row[data-mod="fake:boots"] [data-testid="row-health"]`, &unhealthy),
-		accessibleNodeOf(`.mod-row[data-mod="fake:x"] [data-testid="row-health"]`, &healthy),
-	)
-
-	for label, node := range map[string]e2eAXNode{"issues": unhealthy, "ok": healthy} {
-		assert.False(t, node.Ignored, "%s: the badge is in the accessibility tree", label)
-		// Chrome's own name for the ARIA "img" role.
-		assert.Equal(t, "image", node.Role, "%s: exposed as an image of its state", label)
-	}
-	assert.Regexp(t, `^\d+ health findings?$`, unhealthy.Name,
-		"the name is the sentence, count included - not the glyph")
-	assert.Equal(t, "Verified — no issues found", healthy.Name)
-	assert.Empty(t, f.BrowserErrors())
 }
