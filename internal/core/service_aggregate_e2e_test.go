@@ -69,10 +69,7 @@ mods:
 	})
 	require.NoError(t, err)
 
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	svc.RegisterSource(dirSrc)
 	svc.RegisterSource(manifestSrc)
@@ -157,10 +154,7 @@ func TestSearchAllSources_PageSizeAboveDefaultReturnsMoreThanDefaultCap(t *testi
 	})
 	require.NoError(t, err)
 
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	svc.RegisterSource(dirSrc)
 
 	game := &domain.Game{

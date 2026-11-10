@@ -16,22 +16,9 @@ import (
 )
 
 func createTestZip(t *testing.T, dir string, files map[string]string) string {
+	t.Helper()
 	zipPath := filepath.Join(dir, "test.zip")
-	f, err := os.Create(zipPath)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, f.Close())
-	}()
-
-	w := zip.NewWriter(f)
-	for name, content := range files {
-		fw, err := w.Create(name)
-		require.NoError(t, err)
-		_, err = fw.Write([]byte(content))
-		require.NoError(t, err)
-	}
-	require.NoError(t, w.Close())
-
+	createImportTestZip(t, zipPath, files)
 	return zipPath
 }
 

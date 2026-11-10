@@ -1,7 +1,6 @@
 package core_test
 
 import (
-	"archive/zip"
 	"context"
 	"os"
 	"path/filepath"
@@ -14,28 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// createImportTestZip creates a simple zip archive for testing
-func createImportTestZip(t *testing.T, path string, files map[string]string) {
-	t.Helper()
-	f, err := os.Create(path)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, f.Close())
-	}()
-
-	w := zip.NewWriter(f)
-	defer func() {
-		require.NoError(t, w.Close())
-	}()
-
-	for name, content := range files {
-		fw, err := w.Create(name)
-		require.NoError(t, err)
-		_, err = fw.Write([]byte(content))
-		require.NoError(t, err)
-	}
-}
 
 func TestImportMod_LocalArchive(t *testing.T) {
 	// Setup temp directories

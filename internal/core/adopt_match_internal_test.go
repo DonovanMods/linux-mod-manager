@@ -86,9 +86,7 @@ func (s *matchTestSource) CheckUpdates(ctx context.Context, installed []domain.I
 func newMatchTestService(t *testing.T) (*Service, *domain.Game) {
 	t.Helper()
 
-	svc, err := NewService(ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir()}
 	require.NoError(t, svc.SaveGame(context.Background(), game))

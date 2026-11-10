@@ -22,7 +22,6 @@ package core_test
 //     back without their fingerprints.
 
 import (
-	"archive/zip"
 	"context"
 	"os"
 	"path/filepath"
@@ -190,17 +189,7 @@ func userLinkState(t *testing.T, method domain.LinkMethod) (f *legacyFixture, pr
 func zipOf(t *testing.T, members map[string]string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "K-1.0.zip")
-	out, err := os.Create(path)
-	require.NoError(t, err)
-	w := zip.NewWriter(out)
-	for name, content := range members {
-		fw, err := w.Create(name)
-		require.NoError(t, err)
-		_, err = fw.Write([]byte(content))
-		require.NoError(t, err)
-	}
-	require.NoError(t, w.Close())
-	require.NoError(t, out.Close())
+	createImportTestZip(t, path, members)
 	return path
 }
 

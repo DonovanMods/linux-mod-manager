@@ -23,7 +23,7 @@ import (
 // create/delete/set-default call.
 func gatingFixture(t *testing.T) (*Service, *domain.Game) {
 	t.Helper()
-	svc := newOpsService(t)
+	svc := newBareService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "default")

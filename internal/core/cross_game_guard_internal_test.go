@@ -72,9 +72,7 @@ func readFile(t *testing.T, path string) string {
 // records it, when the file stays, is reported, and this stale record goes.
 func TestConverge_KeepsAFileAnotherGameRecords(t *testing.T) {
 	ctx := context.Background()
-	svc, err := NewService(ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 	shared := t.TempDir()
 	sky := &domain.Game{ID: "sky", Name: "Sky", ModPath: shared, LinkMethod: domain.LinkCopy, LinkMethodExplicit: true}
 	sky2 := &domain.Game{ID: "sky2", Name: "Sky 2", ModPath: shared, LinkMethod: domain.LinkCopy, LinkMethodExplicit: true}

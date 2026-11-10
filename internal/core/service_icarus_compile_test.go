@@ -142,10 +142,7 @@ func TestDownloadMod_DeployCompile_ValidatesAndRetainsNoPerModPak(t *testing.T) 
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
 	writeFakeBasePak(t, basePak)
 
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	src := &fakeCompilerSource{downloadURL: dlSrv.URL}
 	registerCompileSource(svc, src)
@@ -186,10 +183,7 @@ func TestDownloadMod_DeployCompile_MalformedExmodz_FailsLoudAtIngest(t *testing.
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
 	writeFakeBasePak(t, basePak)
 
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	src := &failingValidateCompilerSource{fakeCompilerSource: &fakeCompilerSource{downloadURL: dlSrv.URL}}
 	registerCompileSource(svc, src)
@@ -200,7 +194,7 @@ func TestDownloadMod_DeployCompile_MalformedExmodz_FailsLoudAtIngest(t *testing.
 	mod := &domain.Mod{ID: "bad-mount", SourceID: "fake-compiler", GameID: "icarus", Version: "1.0"}
 	file := &domain.DownloadableFile{ID: "exmodz", FileName: "Bad_Mount.exmodz"}
 
-	_, err = svc.DownloadModForTest(context.Background(), "fake-compiler", game, mod, file, nil)
+	_, err := svc.DownloadModForTest(context.Background(), "fake-compiler", game, mod, file, nil)
 	require.Error(t, err)
 
 	gameCache := svc.GetGameCache(game)
@@ -284,10 +278,7 @@ func TestDownloadPakRetainsAndDeploysRaw(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
 		writeFakeBasePak(t, basePak)
 
-		cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-		svc, err := core.NewService(cfg)
-		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, svc.Close()) })
+		svc := newBareService(t)
 
 		src := &fakeCompilerSource{downloadURL: dlSrv.URL}
 		registerCompileSource(svc, src)
@@ -371,10 +362,7 @@ func TestDownloadPak_NonCompilingAdapter_FallsThroughToLegacyPath(t *testing.T) 
 	}))
 	defer dlSrv.Close()
 
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	// A plain source, and - crucially - no compiling adapter registered.
 	src := &mockSourceWithFileURL{mockSource: newMockSource("plain-source"), fileURL: dlSrv.URL}
@@ -588,10 +576,7 @@ func TestDownloadPak_CompilingGame_ConvertsWhicheverSourceServedIt(t *testing.T)
 	}))
 	defer dlSrv.Close()
 
-	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	// The source serving the file implements NO compile capability; a
 	// separate, unmapped fake supplies the game's adapter.
@@ -608,7 +593,7 @@ func TestDownloadPak_CompilingGame_ConvertsWhicheverSourceServedIt(t *testing.T)
 	mod := &domain.Mod{ID: "cool-mod", SourceID: "foreign-source", GameID: "icarus", Version: "1.0"}
 	file := &domain.DownloadableFile{ID: "pak", FileName: "CoolMod.pak"}
 
-	_, err = svc.DownloadModForTest(context.Background(), "foreign-source", game, mod, file, nil)
+	_, err := svc.DownloadModForTest(context.Background(), "foreign-source", game, mod, file, nil)
 	require.NoError(t, err)
 
 	gameCache := svc.GetGameCache(game)

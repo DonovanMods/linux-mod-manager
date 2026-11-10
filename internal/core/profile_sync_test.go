@@ -18,20 +18,6 @@ import (
 // classification, the end state, the event stream and the plan-staleness
 // guard.
 
-// newSyncTestService builds a service plus a game with an empty "default"
-// profile - the shape every test below starts from.
-func newSyncTestService(t *testing.T) (*core.Service, *domain.Game) {
-	t.Helper()
-	svc := newFlowsTestService(t)
-	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
-
-	pm := svc.NewProfileManager()
-	_, err := pm.Create(context.Background(), game.ID, "default")
-	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
-	return svc, game
-}
-
 // seedSyncInstalledMod saves an installed-mod DB row with full control over
 // Name/ProfileName/FileIDs - the plan's diff and its Names map depend on all
 // three, unlike the package's generic seedInstalledMod (which always uses
@@ -48,7 +34,7 @@ func seedSyncInstalledMod(t *testing.T, svc *core.Service, game *domain.Game, so
 }
 
 func TestPlanProfileSync_NoChanges(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 
 	plan, err := svc.PlanProfileSync(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -64,7 +50,7 @@ func TestPlanProfileSync_NoChanges(t *testing.T) {
 // once: enabled-but-unlisted (add), listed-but-not-enabled (remove), and
 // listed-and-enabled but missing the profile-side FileIDs (update).
 func TestPlanProfileSync_ClassifiesAddRemoveUpdate(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 
 	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
@@ -97,7 +83,7 @@ func TestPlanProfileSync_ClassifiesAddRemoveUpdate(t *testing.T) {
 // ranging Go maps keyed by domain.ModKey, so the order was whatever that
 // run's map iteration produced.
 func TestPlanProfileSync_BucketsAreDeterministicallyOrdered(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 
 	// ToAdd: enabled, installed, not in the profile - seeded in a
@@ -142,7 +128,7 @@ func TestPlanProfileSync_BucketsAreDeterministicallyOrdered(t *testing.T) {
 // display name for ToAdd/ToUpdate entries only - doProfileSync never looked
 // up a name for a ToRemove entry (it only ever had the profile ref).
 func TestPlanProfileSync_Names_OnlyForAddAndUpdate(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 
 	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
@@ -161,7 +147,7 @@ func TestPlanProfileSync_Names_OnlyForAddAndUpdate(t *testing.T) {
 // create it (creation is ApplyProfileSync's job) - the diff is computed as
 // if the profile were empty.
 func TestPlanProfileSync_MissingProfile_ComputesAsEmptyWithoutCreating(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 	seedSyncInstalledMod(t, svc, game, "src", "auto1", "New Auto", "1.0", "newprof", true, nil)
 
 	pm := svc.NewProfileManager()
@@ -179,7 +165,7 @@ func TestPlanProfileSync_MissingProfile_ComputesAsEmptyWithoutCreating(t *testin
 }
 
 func TestApplyProfileSync_CreatesMissingProfileThenAdds(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 	seedSyncInstalledMod(t, svc, game, "src", "auto1", "New Auto", "1.0", "newprof", true, nil)
 
 	plan, err := svc.PlanProfileSync(context.Background(), game, "newprof")
@@ -203,7 +189,7 @@ func TestApplyProfileSync_CreatesMissingProfileThenAdds(t *testing.T) {
 // unconditionally, before it ever computed a diff, so cmd's early-return on
 // an empty plan must still be able to reach this creation.
 func TestApplyProfileSync_CreatesMissingProfile_EvenWithEmptyDiff(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 
 	plan, err := svc.PlanProfileSync(context.Background(), game, "newprof")
 	require.NoError(t, err)
@@ -226,7 +212,7 @@ func TestApplyProfileSync_CreatesMissingProfile_EvenWithEmptyDiff(t *testing.T) 
 // in each bucket through Apply and checks the resulting profile.yaml and
 // result counts.
 func TestApplyProfileSync_AppliesAllThreeBuckets(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 
 	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
@@ -267,7 +253,7 @@ func TestApplyProfileSync_AppliesAllThreeBuckets(t *testing.T) {
 // be. The FileIDs backfill still never happens, and the apply still counts
 // the mod as processed and completes without error.
 func TestApplyProfileSync_UpsertMod_LockedRefRefusalIsWarning(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 
 	seedSyncInstalledMod(t, svc, game, "src", "lock1", "Locked One", "2.0", "default", true, []string{"main"})
@@ -311,7 +297,7 @@ func TestApplyProfileSync_UpsertMod_LockedRefRefusalIsWarning(t *testing.T) {
 // never fails the apply, and is independent of the three loops' own
 // verbose-gated notes.
 func TestApplyProfileSync_MergedPakSyncFailure_IsAWarning(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 	game.DeployMode = domain.DeployCompile
 	game.InstallPath = t.TempDir()
 	game.SourceIDs = map[string]string{"fake-compiler": "external-icarus-id"}
@@ -343,7 +329,7 @@ func TestApplyProfileSync_MergedPakSyncFailure_IsAWarning(t *testing.T) {
 // empty diff must not touch the merged pak at all, exactly as
 // ApplyProfileApply's NoChanges guard already ensures.
 func TestApplyProfileSync_MissingProfileWithEmptyDiff_CreatesProfileWithoutSyncingMergedPak(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 	game.DeployMode = domain.DeployCompile
 	game.InstallPath = t.TempDir()
 	require.NoError(t, svc.SaveGame(context.Background(), game))
@@ -379,7 +365,7 @@ func TestApplyProfileSync_MissingProfileWithEmptyDiff_CreatesProfileWithoutSynci
 // installed-mod set that has since changed is refused, so a frontend that
 // held a plan across a mutation re-plans instead of applying a stale diff.
 func TestApplyProfileSync_StalePlan(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 
 	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
 
@@ -401,7 +387,7 @@ func TestApplyProfileSync_StalePlan(t *testing.T) {
 // the pinned version with it, and re-enabling the mod on the next converge.
 // A disabled ref that still has a row is deliberate, not stale.
 func TestPlanProfileSync_KeepsADisabledRef(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	ctx := context.Background()
 
@@ -422,7 +408,7 @@ func TestPlanProfileSync_KeepsADisabledRef(t *testing.T) {
 // file selection and load-order slot rather than treating the absent DB row as
 // a stale reference (#479).
 func TestProfileSync_KeepsAnExplicitlyDisabledNeverDownloadedRef(t *testing.T) {
-	svc, game := newSyncTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	ctx := context.Background()
 

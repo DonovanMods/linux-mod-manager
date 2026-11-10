@@ -571,56 +571,56 @@ func TestDoUpdate_DryRun_ZeroSideEffectsAndOutputUnchanged(t *testing.T) {
 	assert.NoError(t, err, "the old file must remain deployed")
 }
 
-// TestDoUpdate_Changelog_StripsHTMLForDisplay pins doUpdate's "Changelogs:"
-// block BEFORE stripHTMLForTerminal moves to core.CleanChangelog (Phase 6b
-// Task 7): a byte-identical baseline this test must keep passing, unmodified,
-// once the move lands (cmd/lmm/update.go's own call site switches to
-// core.CleanChangelog, but the printed output must not change at all).
-func TestDoUpdate_Changelog_StripsHTMLForDisplay(t *testing.T) {
-	svc, game, src := setupDoUpdateTest(t)
-	updateDryRun = true
+// TestUpdate_Changelog_StripsHTMLForDisplay pins both of update's changelog
+// renderers - doUpdate's "Changelogs:" block and applySingleUpdate's
+// "Changelog:" block, each with its own indent - against the same HTML
+// changelog. The stripping itself is core.CleanChangelog's (changelog_test.go);
+// this holds each call site to using it and printing the result unchanged.
+func TestUpdate_Changelog_StripsHTMLForDisplay(t *testing.T) {
+	tests := []struct {
+		name   string
+		render func(svc *core.Service, game *domain.Game, mod *domain.InstalledMod) error
+		header string
+		indent string
+	}{
+		{
+			name: "doUpdate",
+			render: func(svc *core.Service, game *domain.Game, _ *domain.InstalledMod) error {
+				return doUpdate(context.Background(), svc, game, nil)
+			},
+			header: "Mod One (1.0 → 2.0):\n",
+			indent: "    ",
+		},
+		{
+			name: "applySingleUpdate",
+			render: func(svc *core.Service, game *domain.Game, mod *domain.InstalledMod) error {
+				return applySingleUpdate(context.Background(), svc, game, mod, "default")
+			},
+			header: "Changelog:\n",
+			indent: "  ",
+		},
+	}
 
-	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
-		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
-	src.changelogs["mod1"] = "<p>Fixed some <b>bugs</b>.</p><p>Added &amp; improved textures.</p>"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, game, src := setupDoUpdateTest(t)
+			updateDryRun = true
 
-	out := captureStdout(t, func() error {
-		return doUpdate(context.Background(), svc, game, nil)
-	})
+			mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+			src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
+				[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
+			src.changelogs["mod1"] = "<p>Fixed some <b>bugs</b>.</p><p>Added &amp; improved textures.</p>"
 
-	assert.Contains(t, out, "Mod One (1.0 → 2.0):\n")
-	assert.Contains(t, out, "    Fixed some bugs.\n")
-	assert.Contains(t, out, "    Added & improved textures.\n")
-	assert.NotContains(t, out, "<p>")
-	assert.NotContains(t, out, "<b>")
-	assert.NotContains(t, out, "&amp;")
-}
+			out := captureStdout(t, func() error { return tt.render(svc, game, mod) })
 
-// TestApplySingleUpdate_Changelog_StripsHTMLForDisplay is
-// TestDoUpdate_Changelog_StripsHTMLForDisplay's analog for
-// applySingleUpdate's own "Changelog:" block - the second (and last)
-// stripHTMLForTerminal call site cmd/lmm/update.go had before Task 7 moved it
-// to core.CleanChangelog.
-func TestApplySingleUpdate_Changelog_StripsHTMLForDisplay(t *testing.T) {
-	svc, game, src := setupDoUpdateTest(t)
-	updateDryRun = true
-
-	mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
-		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
-	src.changelogs["mod1"] = "<p>Fixed some <b>bugs</b>.</p><p>Added &amp; improved textures.</p>"
-
-	out := captureStdout(t, func() error {
-		return applySingleUpdate(context.Background(), svc, game, mod, "default")
-	})
-
-	assert.Contains(t, out, "Changelog:\n")
-	assert.Contains(t, out, "  Fixed some bugs.\n")
-	assert.Contains(t, out, "  Added & improved textures.\n")
-	assert.NotContains(t, out, "<p>")
-	assert.NotContains(t, out, "<b>")
-	assert.NotContains(t, out, "&amp;")
+			assert.Contains(t, out, tt.header)
+			assert.Contains(t, out, tt.indent+"Fixed some bugs.\n")
+			assert.Contains(t, out, tt.indent+"Added & improved textures.\n")
+			assert.NotContains(t, out, "<p>")
+			assert.NotContains(t, out, "<b>")
+			assert.NotContains(t, out, "&amp;")
+		})
+	}
 }
 
 // TestApplySingleUpdate_AuthRequired_ShowsAuthPrompt guards the

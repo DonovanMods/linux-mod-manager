@@ -162,24 +162,6 @@ func TestE2E_ActivityBell_AcknowledgementSurvives(t *testing.T) {
 	})
 }
 
-func TestE2E_ActivityBell_ANewFailureRaisesTheBadgeAgain(t *testing.T) {
-	f := newE2EFixtureWithDrillInModsAndFailingDeploy(t)
-
-	var again string
-	f.runInBrowser(t,
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		failADeploy("1"),
-		openAndCloseTheBell(),
-		bellCountIs(""),
-		failADeploy("1"),
-		textContent(`.activity-bell__count`, &again),
-	)
-
-	assert.Equal(t, "1", again, "a failure that finishes after the acknowledgement raises the badge")
-	assert.Empty(t, f.BrowserErrors())
-}
-
 func TestE2E_ActivityBell_OnlyFailuresAfterTheAcknowledgementCount(t *testing.T) {
 	f := newE2EFixtureWithDrillInModsAndFailingDeploy(t)
 

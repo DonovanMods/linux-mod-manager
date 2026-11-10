@@ -187,6 +187,13 @@ func TestApplyRollback_LockedRefRefusesRollback(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, plan.Locked)
 
+	// Force overrides failing hooks, never a lock: the web UI's only escape
+	// hatch is {"force":true}, and the v1 final review caught rollback as a
+	// lock bypass (moved here from serve's TestFlowRollback_LockedMod_JobRefuses,
+	// #600).
+	_, err = svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{Force: true}, nil)
+	require.ErrorIs(t, err, core.ErrModLocked, "Force must not bypass the lock")
+
 	result, err := svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, core.ErrModLocked)

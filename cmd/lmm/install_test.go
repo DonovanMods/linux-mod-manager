@@ -129,41 +129,6 @@ func TestInstallCmd_GameNotFound(t *testing.T) {
 	installModID = ""
 }
 
-// TestInstallCmd_VersionFlag_NoLongerRejected guards the #96 removal of the
-// #93 interim guard (installVersionGuard): --version must now proceed past
-// its own validation into normal game resolution, rather than being
-// rejected up front with "not yet supported". gameID is left unset so the
-// only possible error here is game resolution's own ("no game specified"),
-// proving the old guard is gone. Real version->file resolution is exercised
-// against doInstall directly, below (setupDoInstallTest gives it a
-// configured game/source, which this command-level test deliberately does
-// not).
-func TestInstallCmd_VersionFlag_NoLongerRejected(t *testing.T) {
-	restoreFlags(t)
-	configDir = t.TempDir()
-	dataDir = t.TempDir()
-	gameID = ""
-	installModID = ""
-
-	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(installCmd)
-	t.Cleanup(func() { rootCmd.RemoveCommand(installCmd); rootCmd.AddCommand(installCmd) })
-
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"install", "test mod", "--version", "1.2.3"})
-
-	err := cmd.Execute()
-	installVersion = "" // reset package-level flag state for later tests
-
-	// The flag now proceeds past its own validation into normal game
-	// resolution (which fails here because no game is configured).
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "not yet supported")
-	assert.Contains(t, err.Error(), "no game specified")
-}
-
 // TestFormatSize tests the formatSize function
 func TestFormatSize(t *testing.T) {
 	tests := []struct {

@@ -15,7 +15,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -966,12 +965,11 @@ func TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing
 	assert.Equal(t, "1.0", installed2.Version)
 }
 
-// TestDoProfileApply_VersionDrift_SchedulesReinstall is the #96 convergence
-// guard for doProfileApply's diff loop: a mod installed+enabled at "1.5" but
-// pinned by the profile YAML at "1.0" must be classified into "Will
-// install" (a reinstall at the profile's version), not left alone as
-// already-satisfied. Declining the prompt proves classification alone
-// (no source/download plumbing needed) and that nothing mutates meanwhile.
+// TestDoProfileApply_VersionDrift_SchedulesReinstall: a mod installed at
+// "1.5" but pinned by the profile at "1.0" prints under "Will install" at
+// the profile's version, not as a plain enable. Core's
+// TestPlanProfileApply_VersionDrift_RecordsReplaces pins the
+// classification; declining the prompt stops before any download.
 func TestDoProfileApply_VersionDrift_SchedulesReinstall(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
@@ -994,17 +992,13 @@ func TestDoProfileApply_VersionDrift_SchedulesReinstall(t *testing.T) {
 	assert.Contains(t, out, "Will install 1 mod(s):\n")
 	assert.Contains(t, out, "src:mod1 v1.0")
 	assert.NotContains(t, out, "Will enable", "a version-drifted mod must not be classified as a plain enable")
-
-	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "default")
-	require.NoError(t, err)
-	assert.Equal(t, "1.5", installed.Version, "declining the prompt must not mutate anything")
 }
 
-// TestDoProfileApply_MatchingVersion_RemainsNoop is the regression guard for
-// the drift case's guard condition: when the profile ref's Version matches
-// the installed row's, doProfileApply must take its pre-#96 fast "already
-// matches" path - no prompt, no toInstall entry.
-func TestDoProfileApply_MatchingVersion_RemainsNoop(t *testing.T) {
+// TestDoProfileApply_NoChanges_PrintsAlreadyMatches pins the one line a
+// no-op apply prints, with no plan and no prompt. Core's
+// TestPlanProfileApply_MatchingVersion_IsNoop pins that a ref at the
+// installed version is a no-op.
+func TestDoProfileApply_NoChanges_PrintsAlreadyMatches(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
 
@@ -1016,237 +1010,6 @@ func TestDoProfileApply_MatchingVersion_RemainsNoop(t *testing.T) {
 	})
 
 	assert.Equal(t, "System already matches profile default.\n", out)
-}
-
-// TestDoProfileApply_VersionDrift_ReplacesDeployedMod_EndToEnd is the #96
-// full happy-path guard: mod1 is installed+enabled+DEPLOYED at 1.5 (file
-// "mod1.esp" symlinked into the game dir); the profile pins 1.0, served by a
-// distinct file ("mod1-old.esp"). Applying must download+cache the 1.0 file,
-// swap the deployment via Installer.Replace (not a bare Install, which would
-// leave the obsolete 1.5 file behind - mirrors ApplyUpdate's replace
-// semantics), and record the downgrade in the DB.
-func TestDoProfileApply_VersionDrift_ReplacesDeployedMod_EndToEnd(t *testing.T) {
-	svc, game := setupDoProfileSwitchTest(t)
-	pm := getProfileManager(svc)
-
-	src := newFakeInstallSource("test-src")
-	t.Cleanup(src.Close)
-	svc.RegisterSource(src)
-	game.SourceIDs = map[string]string{"test-src": game.ID}
-
-	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.5", GameID: game.ID},
-		[]domain.DownloadableFile{
-			{ID: "new", Name: "Main", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.5"},
-			{ID: "old", Name: "Old", FileName: "mod1-old.esp", Category: "ARCHIVED", Version: "1.0"},
-		})
-	src.AddDownload("new", []byte("new-payload"))
-	src.AddDownload("old", []byte("old-payload"))
-
-	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
-	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
-		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.5", GameID: game.ID},
-		ProfileName:  "default",
-		UpdatePolicy: domain.UpdateNotify,
-		Enabled:      true,
-		Deployed:     true,
-		FileIDs:      []string{"new"},
-	}))
-	deployInstalledMod(t, svc, game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.5", GameID: game.ID}, "default")
-	_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
-	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
-
-	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
-
-	origYes := profileApplyYes
-	profileApplyYes = true
-	t.Cleanup(func() { profileApplyYes = origYes })
-
-	out := captureStdout(t, func() error {
-		return doProfileApply(context.Background(), svc, game, nil)
-	})
-
-	assert.Contains(t, out, "✓ Installed: Mod One\n")
-
-	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
-	require.NoError(t, err)
-	assert.Equal(t, "1.0", installed.Version, "must record the pinned version, not the source's latest")
-	assert.Equal(t, []string{"old"}, installed.FileIDs, "must have selected the archived 1.0 file")
-	assert.True(t, installed.Deployed, "the row must record that files are actually live on disk (review finding 3)")
-
-	assert.True(t, svc.GetGameCache(game).Exists(game.ID, "test-src", "mod1", "1.0"), "the downgraded version must be cached")
-
-	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
-	assert.True(t, os.IsNotExist(err), "the obsolete 1.5 file must be removed by Replace, not left behind by a bare Install")
-	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
-	assert.NoError(t, err, "the new 1.0 file must be deployed")
-}
-
-// TestDoProfileApply_PartialCacheEntry_StillDownloads is the #96 review
-// round 1 finding 2 guard for the cmd twin: a version directory can exist on
-// disk (e.g. left behind by a previous download run that broke off before
-// any file was committed) without actually holding the expected file. The
-// cache-first guard must not mistake directory presence alone for "already
-// cached" - bare cache.Exists would report true here and silently skip the
-// download, leaving the mod stuck without its files despite doProfileApply
-// reporting success.
-func TestDoProfileApply_PartialCacheEntry_StillDownloads(t *testing.T) {
-	svc, game := setupDoProfileSwitchTest(t)
-	pm := getProfileManager(svc)
-
-	src := newFakeInstallSource("test-src")
-	t.Cleanup(src.Close)
-	svc.RegisterSource(src)
-	game.SourceIDs = map[string]string{"test-src": game.ID}
-
-	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: game.ID},
-		[]domain.DownloadableFile{
-			{ID: "main", Name: "Main", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN"},
-		})
-	src.AddDownload("main", []byte("plugin content"))
-
-	// Simulate a version directory left behind by a previously broken-off
-	// download run: the directory exists but holds none of the expected
-	// files.
-	gameCache := svc.GetGameCache(game)
-	require.NoError(t, os.MkdirAll(gameCache.ModPath(game.ID, "test-src", "mod1", "1.0"), 0755))
-	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "precondition: bare Exists must see the empty dir as already cached")
-
-	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
-
-	origYes := profileApplyYes
-	profileApplyYes = true
-	t.Cleanup(func() { profileApplyYes = origYes })
-
-	require.NoError(t, doProfileApply(context.Background(), svc, game, nil))
-
-	cached, err := gameCache.ListFiles(game.ID, "test-src", "mod1", "1.0")
-	require.NoError(t, err)
-	assert.Contains(t, cached, "mod1.esp", "the cache entry must actually contain the downloaded file, not just an empty directory")
-
-	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
-	assert.NoError(t, err, "the file must actually be deployed, not merely a DB row claiming so")
-
-	// The completed download must leave the entry MARKED, so a later apply
-	// over the same profile is a genuine cache hit.
-	assert.True(t, gameCache.HasFileIDs(game.ID, "test-src", "mod1", "1.0", []string{"main"}),
-		"a successful download must commit the per-file completion marker")
-	assert.Equal(t, 1, src.DownloadCount(), "exactly one download, not a retry loop")
-}
-
-// TestDoProfileApply_FullyMarkedCache_SkipsDownload is the #96 review round 2
-// guard for the cmd twin (mirrors internal/core/flows_test.go's
-// TestApplyProfileSwitch_FullyMarkedCache_SkipsDownload): the cache-first
-// guard must actually FIRE for a complete cache entry. Round 1 keyed the
-// check off DownloadableFile.FileName, but the default DeployExtract flow
-// stores an archive's extracted MEMBERS ("mod1.esp" here) rather than the
-// archive's own name ("mod1.zip") - so the guard read false for essentially
-// every archive-based mod and redownloaded despite a complete cache.
-func TestDoProfileApply_FullyMarkedCache_SkipsDownload(t *testing.T) {
-	svc, game := setupDoProfileSwitchTest(t)
-	pm := getProfileManager(svc)
-
-	src := newFakeInstallSource("test-src")
-	t.Cleanup(src.Close)
-	svc.RegisterSource(src)
-	game.SourceIDs = map[string]string{"test-src": game.ID}
-
-	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: game.ID},
-		[]domain.DownloadableFile{
-			{ID: "main", Name: "Main", FileName: "mod1.zip", IsPrimary: true, Category: "MAIN"},
-		})
-	src.AddDownload("main", []byte("archive bytes"))
-
-	// A COMPLETE cache entry as a real extract-mode download leaves it: the
-	// archive member on disk under a name that matches nothing about the
-	// DownloadableFile ("mod1.zip"), plus file "main"'s completion marker.
-	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("plugin content")))
-	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "test-src", "mod1", "1.0"), "main"))
-
-	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
-
-	origYes := profileApplyYes
-	profileApplyYes = true
-	t.Cleanup(func() { profileApplyYes = origYes })
-
-	out := captureStdout(t, func() error {
-		return doProfileApply(context.Background(), svc, game, nil)
-	})
-	assert.Contains(t, out, "✓ Installed: Mod One\n")
-
-	assert.Equal(t, 0, src.DownloadCount(),
-		"a fully-marked cache entry must be deployed from cache, not redownloaded")
-
-	_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
-	assert.NoError(t, err, "the cached file must still be deployed")
-}
-
-// TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace is
-// the #96 review round 2 guard for the cmd twin's missing Replace guard:
-// Installer.Replace reads the OLD version's cache entry to work out which
-// files to retire, and hard-fails with "old mod not in cache" when that entry
-// has been pruned. doProfileApply used to call Replace on prev.Deployed
-// alone, so a pruned old cache made profile apply fail to converge outright.
-// Core's ApplyProfileSwitch already guards on the old cache's presence and
-// falls back to Install; this pins the twin to the same shape.
-func TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *testing.T) {
-	svc, game := setupDoProfileSwitchTest(t)
-	pm := getProfileManager(svc)
-
-	src := newFakeInstallSource("test-src")
-	t.Cleanup(src.Close)
-	svc.RegisterSource(src)
-	game.SourceIDs = map[string]string{"test-src": game.ID}
-
-	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.5", GameID: game.ID},
-		[]domain.DownloadableFile{
-			{ID: "new", Name: "Main", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.5"},
-			{ID: "old", Name: "Old", FileName: "mod1-old.esp", Category: "ARCHIVED", Version: "1.0"},
-		})
-	src.AddDownload("new", []byte("new-payload"))
-	src.AddDownload("old", []byte("old-payload"))
-
-	// mod1 is installed, enabled and genuinely DEPLOYED at 1.5...
-	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
-	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
-		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.5", GameID: game.ID},
-		ProfileName:  "default",
-		UpdatePolicy: domain.UpdateNotify,
-		Enabled:      true,
-		Deployed:     true,
-		FileIDs:      []string{"new"},
-	}))
-	deployInstalledMod(t, svc, game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.5", GameID: game.ID}, "default")
-	_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
-	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
-
-	// ...but its 1.5 cache entry has since been pruned, so Replace has
-	// nothing to read the old file list from.
-	require.NoError(t, gameCache.Delete(game.ID, "test-src", "mod1", "1.5"))
-	require.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"), "precondition: the old cache entry must be gone")
-
-	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
-
-	origYes := profileApplyYes
-	profileApplyYes = true
-	t.Cleanup(func() { profileApplyYes = origYes })
-
-	out := captureStdout(t, func() error {
-		return doProfileApply(context.Background(), svc, game, nil)
-	})
-
-	assert.NotContains(t, out, "deploy failed", "a pruned old cache must not break convergence")
-	assert.Contains(t, out, "✓ Installed: Mod One\n")
-
-	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
-	require.NoError(t, err)
-	assert.Equal(t, "1.0", installed.Version, "convergence must still reach the profile's pinned version")
-	assert.Equal(t, []string{"old"}, installed.FileIDs)
-
-	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
-	assert.NoError(t, err, "the new 1.0 file must be deployed via the Install fallback")
 }
 
 // --- doProfileRename (#332) ---

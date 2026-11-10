@@ -63,10 +63,7 @@ var _ source.ModSource = (*swapTestSource)(nil)
 // literal) so its op semaphore is real - beginOp panics on a nil one.
 func newSwapTestService(t *testing.T) *Service {
 	t.Helper()
-	svc, err := NewService(ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	return svc
+	return newBareService(t)
 }
 
 func TestReplaceSource_SwapsTheLiveSourceWhenNothingIsInFlight(t *testing.T) {

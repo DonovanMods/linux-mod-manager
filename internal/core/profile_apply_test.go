@@ -20,20 +20,6 @@ import (
 // classification, the end state, the event stream and the plan-staleness
 // guard.
 
-// newApplyTestService builds a service plus a game with an empty "default"
-// profile - the shape every test below starts from.
-func newApplyTestService(t *testing.T) (*core.Service, *domain.Game) {
-	t.Helper()
-	svc := newFlowsTestService(t)
-	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
-
-	pm := svc.NewProfileManager()
-	_, err := pm.Create(context.Background(), game.ID, "default")
-	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
-	return svc, game
-}
-
 // applyModPhases returns the phase sequence of every mod-lifecycle event in
 // order, dropping DownloadEvent ticks (whose count depends on the transfer's
 // chunking, not on the flow).
@@ -51,7 +37,7 @@ func applyModPhases(events []core.Event) []core.DeployPhase {
 }
 
 func TestPlanProfileApply_ProfileNotFound(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 
 	_, err := svc.PlanProfileApply(context.Background(), game, "ghost")
 	require.Error(t, err)
@@ -61,7 +47,7 @@ func TestPlanProfileApply_ProfileNotFound(t *testing.T) {
 // TestPlanProfileApply_NoChanges: an installed+enabled mod at the profile's
 // own version needs nothing.
 func TestPlanProfileApply_NoChanges(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("x")})
@@ -82,7 +68,7 @@ func TestPlanProfileApply_NoChanges(t *testing.T) {
 // installed+disabled+cached and listed (enable), listed but not installed
 // (install).
 func TestPlanProfileApply_ClassifiesDisableEnableInstall(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	svc.RegisterSource(newMockSourceWithDownloads("src"))
 
@@ -109,7 +95,7 @@ func TestPlanProfileApply_ClassifiesDisableEnableInstall(t *testing.T) {
 // it becomes an install carrying the DB row's own FileIDs (not the
 // profile's, which may be empty or stale).
 func TestPlanProfileApply_DisabledModCacheGone_SchedulesInstallWithDBFileIDs(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	svc.RegisterSource(newTwoVersionSource(t))
 
@@ -142,7 +128,7 @@ func TestPlanProfileApply_DisabledModCacheGone_SchedulesInstallWithDBFileIDs(t *
 // included), and a live older deployment whose cache entry is intact is
 // recorded so the apply can Replace it rather than install over it.
 func TestPlanProfileApply_VersionDrift_RecordsReplaces(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	svc.RegisterSource(newTwoVersionSource(t))
 
@@ -183,7 +169,7 @@ func TestPlanProfileApply_VersionDrift_RecordsReplaces(t *testing.T) {
 // TestPlanProfileApply_MatchingVersion_IsNoop guards the drift check's guard
 // condition: a profile ref at the installed row's own version is satisfied.
 func TestPlanProfileApply_MatchingVersion_IsNoop(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.5", true, map[string][]byte{"mod1.esp": []byte("x")})
@@ -198,7 +184,7 @@ func TestPlanProfileApply_MatchingVersion_IsNoop(t *testing.T) {
 // install entry against its source (mod, selected files, the #94 effective
 // version) and records whether the cache already holds it.
 func TestPlanProfileApply_ResolvesModAndCacheState(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	svc.RegisterSource(newTwoVersionSource(t))
 
@@ -224,7 +210,7 @@ func TestPlanProfileApply_ResolvesModAndCacheState(t *testing.T) {
 // plan time fails that ONE entry (recorded as text, the error-as-text
 // convention) and leaves the rest of the plan intact.
 func TestPlanProfileApply_FetchFailure_RecordsEntryError(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	mock := newMockSourceWithDownloads("src")
 	t.Cleanup(mock.Close)
@@ -252,7 +238,7 @@ func TestPlanProfileApply_FetchFailure_RecordsEntryError(t *testing.T) {
 // (convergence, cache-miss redownloads) before the profile loop's brand-new
 // ones.
 func TestPlanProfileApply_OrdersBucketsByProfile(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	svc.RegisterSource(newMockSourceWithDownloads("src"))
 
@@ -288,7 +274,7 @@ func TestPlanProfileApply_OrdersBucketsByProfile(t *testing.T) {
 // enable loops: DB rows flip, the enabled mod is deployed, the disabled
 // one's files are gone, and both loops report through the event stream.
 func TestApplyProfileApply_DisableEnable_EndStateAndEvents(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 
 	seedInstalledMod(t, svc, game, "src", "gone", "1.0", true, map[string][]byte{"gone.esp": []byte("x")})
@@ -336,7 +322,7 @@ func TestApplyProfileApply_DisableEnable_EndStateAndEvents(t *testing.T) {
 // records the downloaded FileIDs, and the events run
 // Installing -> InstallingMod -> ... -> Installed.
 func TestApplyProfileApply_InstallLoop_DownloadsSavesAndUpserts(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	game.SourceIDs = map[string]string{"src": "external-id"}
 
@@ -383,7 +369,7 @@ func TestApplyProfileApply_InstallLoop_DownloadsSavesAndUpserts(t *testing.T) {
 // already holds in full deploys straight from cache, with no download and no
 // SwitchDownloadDone event (there is no progress readout to terminate).
 func TestApplyProfileApply_CachedEntry_SkipsDownload(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	mock := newTwoVersionSource(t)
 	svc.RegisterSource(mock)
@@ -408,11 +394,96 @@ func TestApplyProfileApply_CachedEntry_SkipsDownload(t *testing.T) {
 	assert.NoError(t, err, "the cached file must be deployed")
 }
 
+// TestApplyProfileApply_PartialCacheEntry_StillDownloads is the #96 review
+// round 1 finding 2 guard: a version directory can exist without holding
+// the expected file (a download that broke off before committing any). The
+// cache-first guard must not take directory presence alone for "cached" -
+// bare cache.Exists says true here - or the mod is left without its files.
+// Moved from cmd/lmm's TestDoProfileApply_PartialCacheEntry_StillDownloads
+// (#600).
+func TestApplyProfileApply_PartialCacheEntry_StillDownloads(t *testing.T) {
+	svc, game := newDefaultProfileService(t)
+	pm := svc.NewProfileManager()
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, os.MkdirAll(gameCache.ModPath(game.ID, "src", "mod1", "1.0"), 0o755))
+	require.True(t, gameCache.Exists(game.ID, "src", "mod1", "1.0"), "precondition: bare Exists sees the empty dir as cached")
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.Len(t, plan.ToInstall, 1)
+	assert.False(t, plan.ToInstall[0].Cached, "an empty version directory is not a cache hit")
+
+	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Installed)
+
+	cached, err := gameCache.ListFiles(game.ID, "src", "mod1", "1.0")
+	require.NoError(t, err)
+	assert.Contains(t, cached, "mod1-old.esp", "the entry holds the downloaded file, not just an empty directory")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the file is deployed, not merely a DB row claiming so")
+	assert.True(t, gameCache.HasFileIDs(game.ID, "src", "mod1", "1.0", []string{"9"}),
+		"the download commits its completion marker, so the next apply is a real cache hit")
+	assert.Equal(t, 1, mock.DownloadCount(), "exactly one download, not a retry loop")
+}
+
+// TestApplyProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace:
+// Installer.Replace reads the OLD version's cache entry to know which files
+// to retire, and fails outright when it has been pruned. Converging a
+// deployed 1.5 down to 1.0 with the 1.5 entry gone therefore installs
+// instead, and still reaches the profile's version. Moved from cmd/lmm's
+// TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace
+// (#600); TestPlanProfileApply_VersionDrift_RecordsReplaces pins the plan
+// half.
+func TestApplyProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *testing.T) {
+	svc, game := newDefaultProfileService(t)
+	pm := svc.NewProfileManager()
+	svc.RegisterSource(newTwoVersionSource(t))
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		FileIDs:      []string{"10"},
+	}))
+	installer, err := svc.GetInstallerForProfileForTest(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.NoError(t, installer.Install(context.Background(), game,
+		&domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	require.NoError(t, err, "precondition: 1.5 is deployed")
+	require.NoError(t, gameCache.Delete(game.ID, "src", "mod1", "1.5"))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
+	require.NoError(t, err)
+	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Failed, "a pruned old cache must not break convergence")
+	assert.Equal(t, 1, result.Installed)
+	assert.Equal(t, 0, result.Replaced)
+
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version, "convergence still reaches the profile's version")
+	assert.Equal(t, []string{"9"}, installed.FileIDs)
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the 1.0 file is deployed by the Install fallback")
+}
+
 // TestApplyProfileApply_VersionDrift_ReplacesLiveDeployment is the #96
 // end-to-end guard: converging a deployed 1.5 down to 1.0 must retire the
 // obsolete file via Installer.Replace, not leave it alongside the new one.
 func TestApplyProfileApply_VersionDrift_ReplacesLiveDeployment(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	svc.RegisterSource(newTwoVersionSource(t))
 
@@ -455,7 +526,7 @@ func TestApplyProfileApply_VersionDrift_ReplacesLiveDeployment(t *testing.T) {
 // failed to resolve is reported at its position in the loop (so the CLI can
 // print it under that mod's "Installing ..." line) and the loop carries on.
 func TestApplyProfileApply_EntryError_ReportsAndContinues(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	mock := newTwoVersionSource(t)
 	svc.RegisterSource(mock)
@@ -490,7 +561,7 @@ func TestApplyProfileApply_EntryError_ReportsAndContinues(t *testing.T) {
 // skip the mod entirely - a Note, no SwitchEnabled event, and the enabled
 // flag left false in the DB - exactly as doProfileApply's `continue` did.
 func TestApplyProfileApply_EnableLoop_InstallFailure_NotesAndSkipsEnable(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 
 	seedInstalledMod(t, svc, game, "src", "off", "1.0", false, map[string][]byte{"off.esp": []byte("x")})
@@ -534,7 +605,7 @@ func TestApplyProfileApply_EnableLoop_InstallFailure_NotesAndSkipsEnable(t *test
 // progress line, on the failure path too), the failed mod is recorded and
 // skipped, and the loop continues on to install a later healthy entry.
 func TestApplyProfileApply_InstallLoop_DownloadFailure_DownloadDoneFollowsFailure(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 
 	// perModFileSource keys its one downloadable file by the mod's own ID
@@ -584,7 +655,7 @@ func TestApplyProfileApply_InstallLoop_DownloadFailure_DownloadDoneFollowsFailur
 // the CLI prints it unconditionally - instead of the --verbose-only Note it
 // used to be. The mod still installs.
 func TestApplyProfileApply_LockedRef_UpsertRefusalIsWarning(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	svc.RegisterSource(newTwoVersionSource(t))
 
@@ -615,7 +686,7 @@ func TestApplyProfileApply_LockedRef_UpsertRefusalIsWarning(t *testing.T) {
 // installed-mod set that has since changed is refused, so a frontend that
 // held a plan across a mutation re-plans instead of applying a stale diff.
 func TestApplyProfileApply_StalePlan(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 
 	seedInstalledMod(t, svc, game, "src", "off", "1.0", false, map[string][]byte{"off.esp": []byte("x")})
@@ -693,7 +764,7 @@ func TestPlanProfileApply_ExternalRefIsRecordedNotFetched(t *testing.T) {
 // read as "should be enabled" - the profile document had no way to say
 // otherwise. A converge run must converge TO the document, marker included.
 func TestProfileApply_HonoursTheDisabledMarker(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	ctx := context.Background()
 
@@ -723,7 +794,7 @@ func TestProfileApply_HonoursTheDisabledMarker(t *testing.T) {
 // --force` and `snapshot restore` both replace the document under live
 // rows). The apply must undeploy it and clear the row.
 func TestProfileApply_DisabledMarkerConvergesAnEnabledRow(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	ctx := context.Background()
 
@@ -753,7 +824,7 @@ func TestProfileApply_DisabledMarkerConvergesAnEnabledRow(t *testing.T) {
 // document marks disabled with no installed row at all (a freshly imported
 // profile on a machine with no database) must not be fetched and deployed.
 func TestProfileApply_DisabledMarkerIsNotInstalled(t *testing.T) {
-	svc, game := newApplyTestService(t)
+	svc, game := newDefaultProfileService(t)
 	pm := svc.NewProfileManager()
 	ctx := context.Background()
 	svc.RegisterSource(newMockSourceWithDownloads("src"))

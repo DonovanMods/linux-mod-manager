@@ -14,9 +14,7 @@ import (
 )
 
 func TestGamesUsingSource(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	ctx := t.Context()
 	require.NoError(t, svc.SaveGame(ctx, &domain.Game{

@@ -17,13 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newDirsService(t *testing.T) *core.Service {
-	t.Helper()
-	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
-	require.NoError(t, err)
-	return svc
-}
-
 func mkdirs(t *testing.T, root string, names ...string) {
 	t.Helper()
 	for _, n := range names {
@@ -52,7 +45,7 @@ func TestListDirectories_ListsSubdirectoriesOnly(t *testing.T) {
 	mkdirs(t, root, "alpha", "beta")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "notes.txt"), []byte("x"), 0o644))
 
-	l, err := newDirsService(t).ListDirectories(context.Background(), root, core.ListDirectoriesOptions{})
+	l, err := newBareService(t).ListDirectories(context.Background(), root, core.ListDirectoriesOptions{})
 	require.NoError(t, err)
 
 	assert.Equal(t, root, l.Path)
@@ -70,7 +63,7 @@ func TestListDirectories_NeverReturnsRegularFiles(t *testing.T) {
 	require.NoError(t, os.Symlink(filepath.Join(root, "file"), filepath.Join(root, "link-to-file")))
 	require.NoError(t, os.Symlink(filepath.Join(root, "nowhere"), filepath.Join(root, "dangling")))
 
-	l, err := newDirsService(t).ListDirectories(context.Background(), root, core.ListDirectoriesOptions{Hidden: true})
+	l, err := newBareService(t).ListDirectories(context.Background(), root, core.ListDirectoriesOptions{Hidden: true})
 	require.NoError(t, err)
 	assert.Empty(t, l.Entries, "a file, a symlink to a file and a dangling link are not folders")
 	assert.NotNil(t, l.Entries, "the wire document says [] rather than null")
@@ -80,7 +73,7 @@ func TestListDirectories_SortsCaseInsensitively(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root, "banana", "Apple", "cherry", "Banana2", "apple2")
 
-	l, err := newDirsService(t).ListDirectories(context.Background(), root, core.ListDirectoriesOptions{})
+	l, err := newBareService(t).ListDirectories(context.Background(), root, core.ListDirectoriesOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Apple", "apple2", "banana", "Banana2", "cherry"}, entryNames(l))
 }
@@ -88,7 +81,7 @@ func TestListDirectories_SortsCaseInsensitively(t *testing.T) {
 func TestListDirectories_HiddenFoldersAreOptIn(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root, ".config", "visible")
-	svc := newDirsService(t)
+	svc := newBareService(t)
 
 	l, err := svc.ListDirectories(context.Background(), root, core.ListDirectoriesOptions{})
 	require.NoError(t, err)
@@ -106,7 +99,7 @@ func TestListDirectories_SymlinkedDirectoryIsMarkedAndNotRecursed(t *testing.T) 
 	mkdirs(t, root, "real/inner")
 	require.NoError(t, os.Symlink(filepath.Join(root, "real"), filepath.Join(root, "alias")))
 
-	l, err := newDirsService(t).ListDirectories(context.Background(), root, core.ListDirectoriesOptions{})
+	l, err := newBareService(t).ListDirectories(context.Background(), root, core.ListDirectoriesOptions{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"alias", "real"}, entryNames(l))
 	assert.True(t, l.Entries[0].Symlink)
@@ -120,7 +113,7 @@ func TestListDirectories_SymlinkLoopIsHarmless(t *testing.T) {
 	// root/loop -> root: listing it lists the same folder again, once per
 	// request; nothing here walks the tree.
 	require.NoError(t, os.Symlink(root, filepath.Join(root, "loop")))
-	svc := newDirsService(t)
+	svc := newBareService(t)
 
 	l, err := svc.ListDirectories(context.Background(), root, core.ListDirectoriesOptions{})
 	require.NoError(t, err)
@@ -136,7 +129,7 @@ func TestListDirectories_CleansThePath(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root, "a/b")
 
-	l, err := newDirsService(t).ListDirectories(context.Background(), root+"/a/../a//b/.", core.ListDirectoriesOptions{})
+	l, err := newBareService(t).ListDirectories(context.Background(), root+"/a/../a//b/.", core.ListDirectoriesOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(root, "a", "b"), l.Path)
 	assert.Equal(t, filepath.Join(root, "a"), l.Parent)
@@ -146,7 +139,7 @@ func TestListDirectories_ExpandsTilde(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	mkdirs(t, home, "Games/steam")
-	svc := newDirsService(t)
+	svc := newBareService(t)
 
 	l, err := svc.ListDirectories(context.Background(), "~", core.ListDirectoriesOptions{})
 	require.NoError(t, err)
@@ -159,14 +152,14 @@ func TestListDirectories_ExpandsTilde(t *testing.T) {
 }
 
 func TestListDirectories_RootHasNoParent(t *testing.T) {
-	l, err := newDirsService(t).ListDirectories(context.Background(), "/", core.ListDirectoriesOptions{})
+	l, err := newBareService(t).ListDirectories(context.Background(), "/", core.ListDirectoriesOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "/", l.Path)
 	assert.Empty(t, l.Parent)
 }
 
 func TestListDirectories_RefusesANonAbsolutePath(t *testing.T) {
-	svc := newDirsService(t)
+	svc := newBareService(t)
 	for _, p := range []string{"", "relative/dir", "./here", "~user/x"} {
 		_, err := svc.ListDirectories(context.Background(), p, core.ListDirectoriesOptions{})
 		requireDirError(t, err, core.DirectoryNotAbsolute)
@@ -178,7 +171,7 @@ func TestListDirectories_RefusesANonAbsolutePath(t *testing.T) {
 
 func TestListDirectories_RefusesAMissingPath(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope")
-	_, err := newDirsService(t).ListDirectories(context.Background(), missing, core.ListDirectoriesOptions{})
+	_, err := newBareService(t).ListDirectories(context.Background(), missing, core.ListDirectoriesOptions{})
 	requireDirError(t, err, core.DirectoryNotFound)
 	var de *core.DirectoryListError
 	require.ErrorAs(t, err, &de)
@@ -190,7 +183,7 @@ func TestListDirectories_RefusesAFile(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "f.txt")
 	require.NoError(t, os.WriteFile(file, nil, 0o644))
-	svc := newDirsService(t)
+	svc := newBareService(t)
 
 	_, err := svc.ListDirectories(context.Background(), file, core.ListDirectoriesOptions{})
 	requireDirError(t, err, core.DirectoryNotADirectory)
@@ -210,7 +203,7 @@ func TestListDirectories_RefusesAnUnreadableDirectory(t *testing.T) {
 	require.NoError(t, os.Chmod(locked, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
-	_, err := newDirsService(t).ListDirectories(context.Background(), locked, core.ListDirectoriesOptions{})
+	_, err := newBareService(t).ListDirectories(context.Background(), locked, core.ListDirectoriesOptions{})
 	requireDirError(t, err, core.DirectoryPermissionDenied)
 	assert.ErrorIs(t, err, fs.ErrPermission)
 }
@@ -226,7 +219,7 @@ func TestListDirectories_MarksAnUnreadableSubdirectory(t *testing.T) {
 	require.NoError(t, os.Chmod(locked, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
-	l, err := newDirsService(t).ListDirectories(context.Background(), root, core.ListDirectoriesOptions{})
+	l, err := newBareService(t).ListDirectories(context.Background(), root, core.ListDirectoriesOptions{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"locked", "open"}, entryNames(l))
 	assert.False(t, l.Entries[0].Readable)
@@ -236,7 +229,7 @@ func TestListDirectories_MarksAnUnreadableSubdirectory(t *testing.T) {
 func TestListDirectories_HonoursACancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := newDirsService(t).ListDirectories(ctx, t.TempDir(), core.ListDirectoriesOptions{})
+	_, err := newBareService(t).ListDirectories(ctx, t.TempDir(), core.ListDirectoriesOptions{})
 	assert.ErrorIs(t, err, context.Canceled)
 	var de *core.DirectoryListError
 	assert.False(t, errors.As(err, &de))
@@ -245,7 +238,7 @@ func TestListDirectories_HonoursACancelledContext(t *testing.T) {
 func TestListDirectories_NearestFallsBackToTheClosestExistingAncestor(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root, "games/steam")
-	svc := newDirsService(t)
+	svc := newBareService(t)
 
 	missing := filepath.Join(root, "games", "steam", "common", "Valheim")
 	l, err := svc.ListDirectories(context.Background(), missing, core.ListDirectoriesOptions{Nearest: true})
@@ -271,7 +264,7 @@ func TestListDirectories_NearestFallsBackToTheClosestExistingAncestor(t *testing
 func TestListDirectories_NearestStartsAtHomeWhenThereIsNothingUsable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	svc := newDirsService(t)
+	svc := newBareService(t)
 	for _, p := range []string{"", "relative/path", "   "} {
 		l, err := svc.ListDirectories(context.Background(), p, core.ListDirectoriesOptions{Nearest: true})
 		require.NoError(t, err, "path %q", p)
@@ -289,6 +282,6 @@ func TestListDirectories_NearestStillRefusesAnUnreadableDirectory(t *testing.T) 
 	require.NoError(t, os.Chmod(locked, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
-	_, err := newDirsService(t).ListDirectories(context.Background(), locked, core.ListDirectoriesOptions{Nearest: true})
+	_, err := newBareService(t).ListDirectories(context.Background(), locked, core.ListDirectoriesOptions{Nearest: true})
 	requireDirError(t, err, core.DirectoryPermissionDenied)
 }

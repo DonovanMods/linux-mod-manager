@@ -95,17 +95,7 @@ func TestNewService(t *testing.T) {
 }
 
 func TestService_RegisterSource(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	svc := newBareService(t)
 
 	mock := newMockSource("test")
 	svc.RegisterSource(mock)
@@ -116,17 +106,7 @@ func TestService_RegisterSource(t *testing.T) {
 }
 
 func TestService_SearchMods(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	svc := newBareService(t)
 
 	mock := newMockSource("test")
 	mock.AddMod("skyrim", &domain.Mod{
@@ -145,17 +125,7 @@ func TestService_SearchMods(t *testing.T) {
 }
 
 func TestService_GetMod(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	svc := newBareService(t)
 
 	mock := newMockSource("test")
 	mock.AddMod("skyrim", &domain.Mod{
@@ -172,87 +142,24 @@ func TestService_GetMod(t *testing.T) {
 	assert.Equal(t, "Test Mod", mod.Name)
 }
 
-func TestService_SaveSourceToken(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
+// TestService_SourceTokenLifecycle walks a source's credential through its
+// whole life: not authenticated before a token exists, authenticated once
+// one is saved, and not authenticated again once it is deleted.
+func TestService_SourceTokenLifecycle(t *testing.T) {
+	svc := newBareService(t)
+	ctx := context.Background()
 
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	assert.False(t, svc.IsSourceAuthenticated(ctx, "nexusmods"), "no token saved yet")
 
-	// Save a token
-	err = svc.SaveSourceToken(context.Background(), "nexusmods", "test-api-key")
-	require.NoError(t, err)
+	require.NoError(t, svc.SaveSourceToken(ctx, "nexusmods", "test-api-key"))
+	assert.True(t, svc.IsSourceAuthenticated(ctx, "nexusmods"), "a saved token authenticates the source")
 
-	// Verify it's saved
-	assert.True(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
-}
-
-func TestService_DeleteSourceToken(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
-
-	// Save a token
-	err = svc.SaveSourceToken(context.Background(), "nexusmods", "test-api-key")
-	require.NoError(t, err)
-	assert.True(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
-
-	// Delete it
-	err = svc.DeleteSourceToken(context.Background(), "nexusmods")
-	require.NoError(t, err)
-	assert.False(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
-}
-
-func TestService_IsSourceAuthenticated(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
-
-	// Not authenticated initially
-	assert.False(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
-
-	// Save a token
-	err = svc.SaveSourceToken(context.Background(), "nexusmods", "test-api-key")
-	require.NoError(t, err)
-
-	// Now authenticated
-	assert.True(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
+	require.NoError(t, svc.DeleteSourceToken(ctx, "nexusmods"))
+	assert.False(t, svc.IsSourceAuthenticated(ctx, "nexusmods"), "a deleted token no longer authenticates it")
 }
 
 func TestService_GetSourceToken(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	svc := newBareService(t)
 
 	// No token initially
 	token, err := svc.GetSourceToken(context.Background(), "nexusmods")
@@ -271,17 +178,7 @@ func TestService_GetSourceToken(t *testing.T) {
 }
 
 func TestService_GetModFiles(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	svc := newBareService(t)
 
 	mock := newMockSource("test")
 	mock.AddMod("skyrim", &domain.Mod{
@@ -307,17 +204,7 @@ func TestService_GetModFiles(t *testing.T) {
 }
 
 func TestService_GetModFiles_SourceNotFound(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	svc := newBareService(t)
 
 	mod := &domain.Mod{
 		ID:       "123",
@@ -325,22 +212,12 @@ func TestService_GetModFiles_SourceNotFound(t *testing.T) {
 		GameID:   "skyrim",
 	}
 
-	_, err = svc.GetModFiles(context.Background(), nil, "nonexistent", mod)
+	_, err := svc.GetModFiles(context.Background(), nil, "nonexistent", mod)
 	require.Error(t, err)
 }
 
 func TestService_UpdateModVersion(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	svc := newBareService(t)
 
 	// Create an installed mod
 	installedMod := &domain.InstalledMod{
@@ -355,7 +232,7 @@ func TestService_UpdateModVersion(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}
-	err = svc.SaveInstalledMod(context.Background(), installedMod)
+	err := svc.SaveInstalledMod(context.Background(), installedMod)
 	require.NoError(t, err)
 
 	// Update the version
@@ -370,17 +247,7 @@ func TestService_UpdateModVersion(t *testing.T) {
 }
 
 func TestService_SetModUpdatePolicy(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	svc := newBareService(t)
 
 	// Create an installed mod
 	installedMod := &domain.InstalledMod{
@@ -394,7 +261,7 @@ func TestService_SetModUpdatePolicy(t *testing.T) {
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 	}
-	err = svc.SaveInstalledMod(context.Background(), installedMod)
+	err := svc.SaveInstalledMod(context.Background(), installedMod)
 	require.NoError(t, err)
 
 	// Change policy to auto
@@ -419,17 +286,7 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 	// This test verifies that downloading multiple files for the same mod
 	// correctly adds all files to the cache (not just the first one).
 
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	svc := newBareService(t)
 
 	// Create a mock source that can provide download URLs
 	mock := newMockSourceWithDownloads("test")
@@ -443,7 +300,7 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 		Name:    "Test Game",
 		ModPath: gameDir,
 	}
-	err = svc.SaveGame(context.Background(), game)
+	err := svc.SaveGame(context.Background(), game)
 	require.NoError(t, err)
 
 	// Create a mod
@@ -535,13 +392,7 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 //   - Copy mode fallback (non-archive file): the manifest is the single
 //     stored FileName.
 func TestService_DownloadMod_RecordsMemberManifests(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	mock := newMockSourceWithDownloads("test")
 	defer mock.Close()
@@ -599,13 +450,7 @@ func TestService_DownloadMod_RecordsMemberManifests(t *testing.T) {
 // cleaned up the moment every marker in the entry becomes recorded - while
 // the retained source itself, being reserved bookkeeping, survives.
 func TestService_DownloadMod_PrunesUnclaimedStaleFiles(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	mock := newMockSourceWithDownloads("test")
 	defer mock.Close()
@@ -664,13 +509,7 @@ func TestService_DownloadMod_PrunesUnclaimedStaleFiles(t *testing.T) {
 // before #197 gets updated/re-downloaded after upgrading lmm, and the stale
 // per-mod pak its old commit produced must not linger forever.
 func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzRetain(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	mock := &compilerMockSource{mockSourceWithDownloads: newMockSourceWithDownloads("test-compiler")}
 	defer mock.Close()
@@ -686,7 +525,7 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 	// Generation 1: the honest pre-#197 shape - a real DownloadModToCache
 	// commit that claims a compiled pak for this file ID.
 	mock.AddDownload("file1", []byte("compiled pak bytes"))
-	_, err = svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod_P.pak"}, nil)
+	_, err := svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod_P.pak"}, nil)
 	require.NoError(t, err)
 
 	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
@@ -726,13 +565,7 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 // It is not stale: it is the designated raw-fallback artifact, and pruning
 // it left a later opt-out or failed merge deploying nothing, silently.
 func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	mock := &compilerMockSource{mockSourceWithDownloads: newMockSourceWithDownloads("test-compiler")}
 	defer mock.Close()
@@ -749,7 +582,7 @@ func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) 
 	// a retained source plus a claimed deployable copy (#221's raw-deploy
 	// default state).
 	mock.AddDownload("pak", []byte("prebuilt-pak-bytes"))
-	_, err = svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "pak", FileName: "Mod_P.pak"}, nil)
+	_, err := svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "pak", FileName: "Mod_P.pak"}, nil)
 	require.NoError(t, err)
 
 	manifests, err := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
@@ -787,13 +620,7 @@ func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) 
 // entirely and the mod deployed with a genuinely missing file, silently and
 // with no error.
 func TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	mock := newMockSourceWithDownloads("test")
 	defer mock.Close()
@@ -825,17 +652,7 @@ func TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected(t *testing.T) 
 }
 
 func TestService_DownloadMod_PathLikeFilename_ArchiveWithoutExtension(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	svc := newBareService(t)
 
 	mock := newMockSourceWithDownloads("test")
 	defer mock.Close()
@@ -846,7 +663,7 @@ func TestService_DownloadMod_PathLikeFilename_ArchiveWithoutExtension(t *testing
 		Name:    "Test Game",
 		ModPath: filepath.Join(t.TempDir(), "mods"),
 	}
-	err = svc.SaveGame(context.Background(), game)
+	err := svc.SaveGame(context.Background(), game)
 	require.NoError(t, err)
 
 	mod := &domain.Mod{
@@ -892,17 +709,7 @@ func TestService_DownloadMod_PathLikeFilename_ArchiveWithoutExtension(t *testing
 // other local path) must not let lmm read arbitrary files off disk into the
 // mod cache.
 func TestService_DownloadMod_RejectsFileURLFromNonDirectorySource(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	svc := newBareService(t)
 
 	secret := filepath.Join(t.TempDir(), "secret.txt")
 	require.NoError(t, os.WriteFile(secret, []byte("do not leak"), 0644))
@@ -916,7 +723,7 @@ func TestService_DownloadMod_RejectsFileURLFromNonDirectorySource(t *testing.T) 
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Sneaky Mod", Version: "1.0.0", GameID: "testgame"}
 	file := &domain.DownloadableFile{ID: "file1", Name: "File", FileName: "file1.zip"}
 
-	_, err = svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
+	_, err := svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
 	require.Error(t, err)
 	assert.EqualError(t, err, `source "test" returned a local file:// URL but is not a directory source`,
 		"the refusal text is frozen regardless of how the gate itself is implemented (#300: source.LocalFileServer, not a *custom.Directory type assertion)")
@@ -931,17 +738,7 @@ func TestService_DownloadMod_RejectsFileURLFromNonDirectorySource(t *testing.T) 
 // source.LocalFileServer but reports ServesLocalFiles() == false must be
 // refused exactly like a source that doesn't implement the interface at all.
 func TestService_DownloadMod_RejectsFileURLFromSourceDenyingLocalFiles(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	svc := newBareService(t)
 
 	secret := filepath.Join(t.TempDir(), "secret.txt")
 	require.NoError(t, os.WriteFile(secret, []byte("do not leak"), 0644))
@@ -957,7 +754,7 @@ func TestService_DownloadMod_RejectsFileURLFromSourceDenyingLocalFiles(t *testin
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Sneaky Mod", Version: "1.0.0", GameID: "testgame"}
 	file := &domain.DownloadableFile{ID: "file1", Name: "File", FileName: "file1.zip"}
 
-	_, err = svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
+	_, err := svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
 	require.Error(t, err)
 	assert.EqualError(t, err, `source "test" returned a local file:// URL but is not a directory source`)
 
@@ -1096,14 +893,7 @@ var _ adapter.MergeCompiler = (*compilerMockSource)(nil)
 // drive the full mod lifecycle via Service methods without ever reaching into
 // *db.DB or *source.Registry directly.
 func TestService_ModLifecycleFacade(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:      "g1",
@@ -1143,14 +933,7 @@ func TestService_ModLifecycleFacade(t *testing.T) {
 // signature: (sourceID, modID, found, err). Returns found=false (not an error)
 // when no record exists.
 func TestService_GetFileOwner_NotFound(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := newBareService(t)
 
 	sourceID, modID, found, err := svc.GetFileOwner(context.Background(), "g1", "default", "missing/path.txt")
 	require.NoError(t, err)

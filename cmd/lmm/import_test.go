@@ -19,37 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestImportCommand_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
-
-	// This is a placeholder for manual testing
-	// Full integration tests would require:
-	// 1. Setting up a test config directory
-	// 2. Creating a test game config
-	// 3. Running the import command
-	// 4. Verifying files are deployed
-
-	t.Log("Import command integration test - run manually with: ./lmm import testmod.zip -g testgame")
-}
-
-func TestCreateTestArchive_Helper(t *testing.T) {
-	// Verify the test helper works correctly
-	tempDir := t.TempDir()
-	archivePath := tempDir + "/test.zip"
-
-	createTestArchive(t, archivePath, map[string]string{
-		"file1.txt":     "content1",
-		"dir/file2.txt": "content2",
-	})
-
-	// Verify archive was created
-	info, err := os.Stat(archivePath)
-	require.NoError(t, err)
-	require.True(t, info.Size() > 0, "archive should not be empty")
-}
-
 // fakeMatchSource is a minimal source.ModSource test double for import's
 // scan-matching and --id default resolution tests. Duplicated rather than
 // shared with install_test.go's fakeInstallSource because this task's scope

@@ -3343,100 +3343,94 @@ func TestService_ApplyInstall_BatchPath_TargetFileIDs_DuplicatesDeduped(t *testi
 
 // --- resolveInstallDependencies game-ID threading (#230) ---
 
-// TestService_PlanInstall_DependencyFetchSurvivesGameIDNamespaceCollision is
-// the #230 regression test: dependency fetches must use the LMM game id (and
-// let Service.GetMod translate it) rather than feeding the SOURCE-DOMAIN id
-// the source stamped onto the target mod back into GetMod. The old code only
-// worked because s.games[<source-domain-id>] normally misses, letting the id
-// fall through untranslated - but LMM game ids are user-chosen in games.yaml,
-// so another game's LMM id can legally collide with this game's source-domain
-// id. Here "skyrimspecialedition" is BOTH skyrim's source-domain id on "src"
-// AND a second configured game's own LMM id: with the old code the dependency
-// fetch hit that second game's mapping ("other-domain") and silently looked
-// for the dependency in the wrong game.
-func TestService_PlanInstall_DependencyFetchSurvivesGameIDNamespaceCollision(t *testing.T) {
-	svc := newFlowsTestService(t)
+// TestService_PlanInstall_DependencyFetchGameID pins the #230 fix: a
+// dependency fetch uses the LMM game id and lets Service.GetMod translate
+// it, rather than feeding the SOURCE-DOMAIN id the source stamped onto the
+// target mod back into GetMod. Each row registers the mods ONLY under the id
+// the source should be asked with, so a fetch sent anywhere else misses.
+//
+//   - collision: the #230 regression. The old code only worked because
+//     s.games[<source-domain-id>] normally misses, letting the id fall
+//     through untranslated - but LMM game ids are user-chosen in games.yaml,
+//     so another game's LMM id can legally collide with this game's
+//     source-domain id. Here "skyrimspecialedition" is BOTH skyrim's
+//     source-domain id on "src" AND a second configured game's own LMM id:
+//     with the old code the dependency fetch hit that second game's mapping
+//     ("other-domain") and silently looked in the wrong game.
+//   - mapped: the ordinary, non-colliding path. With a real SourceIDs
+//     mapping the source must keep receiving its own domain id; the row
+//     fails if the fetch ever sends the raw LMM id ("skyrim").
+//   - empty mapping: a SourceIDs entry mapped to "" (e.g. directory sources:
+//     `donovan-mods: ""`) means "this source applies to any game" and must
+//     not blank the id GetMod sends - the fetch keeps using the LMM game id
+//     itself, exactly as the target-mod fetch does.
+func TestService_PlanInstall_DependencyFetchGameID(t *testing.T) {
+	tests := []struct {
+		name string
+		// gameID and sourceMapping configure the installing game.
+		gameID        string
+		sourceMapping string
+		// modGameID is the id the mods are registered (and stamped) under:
+		// the id the source must be queried with.
+		modGameID string
+		// collider, when set, is a second game whose LMM id equals the
+		// installing game's source-domain id.
+		collider *domain.Game
+		msg      string
+	}{
+		{
+			name:          "collision with another game's LMM id",
+			gameID:        "skyrim",
+			sourceMapping: "skyrimspecialedition",
+			modGameID:     "skyrimspecialedition",
+			collider: &domain.Game{ID: "skyrimspecialedition", Name: "Collider",
+				LinkMethod: domain.LinkSymlink, SourceIDs: map[string]string{"src": "other-domain"}},
+			msg: "dependency must be fetched from skyrim's own source domain, not the colliding game's mapping",
+		},
+		{
+			name:          "mapped game id is translated",
+			gameID:        "skyrim",
+			sourceMapping: "skyrimspecialedition",
+			modGameID:     "skyrimspecialedition",
+		},
+		{
+			name:          "empty mapping keeps the LMM game id",
+			gameID:        "g1",
+			sourceMapping: "",
+			modGameID:     "g1",
+		},
+	}
 
-	game := &domain.Game{ID: "skyrim", Name: "Skyrim", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
-		SourceIDs: map[string]string{"src": "skyrimspecialedition"}}
-	require.NoError(t, svc.SaveGame(context.Background(), game))
-	// The colliding game: its user-chosen LMM id equals skyrim's source-domain
-	// id, and it maps "src" to a different domain of its own.
-	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{ID: "skyrimspecialedition", Name: "Collider",
-		ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
-		SourceIDs: map[string]string{"src": "other-domain"}}))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newFlowsTestService(t)
 
-	mock := newMockSource("src")
-	svc.RegisterSource(mock)
-	// Both mods live under skyrim's SOURCE-DOMAIN id, and the source stamps
-	// that id onto what it returns (mirroring the real sources - e.g.
-	// internal/source/nexusmods stamps the id it was queried with).
-	mock.AddMod("skyrimspecialedition", &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One",
-		Version: "1.0", GameID: "skyrimspecialedition"})
-	mock.AddMod("skyrimspecialedition", &domain.Mod{ID: "root", SourceID: "src", Name: "Root",
-		Version: "1.0", GameID: "skyrimspecialedition",
-		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}})
+			game := &domain.Game{ID: tt.gameID, Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+				SourceIDs: map[string]string{"src": tt.sourceMapping}}
+			require.NoError(t, svc.SaveGame(context.Background(), game))
+			if tt.collider != nil {
+				collider := *tt.collider
+				collider.ModPath = t.TempDir()
+				require.NoError(t, svc.SaveGame(context.Background(), &collider))
+			}
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
-	require.NoError(t, err)
-	assert.Empty(t, plan.MissingDependencies,
-		"dependency must be fetched from skyrim's own source domain, not the colliding game's mapping")
-	require.Len(t, plan.Dependencies, 1)
-	assert.Equal(t, "dep1", plan.Dependencies[0].ID)
-}
+			mock := newMockSource("src")
+			svc.RegisterSource(mock)
+			// The source stamps the id it was queried with onto what it
+			// returns, mirroring the real sources (internal/source/nexusmods).
+			mock.AddMod(tt.modGameID, &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One",
+				Version: "1.0", GameID: tt.modGameID})
+			mock.AddMod(tt.modGameID, &domain.Mod{ID: "root", SourceID: "src", Name: "Root",
+				Version: "1.0", GameID: tt.modGameID,
+				Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}})
 
-// TestService_PlanInstall_DependencyFetchTranslatesMappedGameID pins the
-// ordinary, non-colliding path around the #230 fix: with a real SourceIDs
-// mapping the source must keep receiving its own domain id for dependency
-// fetches - previously via the stamped id falling through GetMod untranslated,
-// now via GetMod translating the LMM id. The mods are registered ONLY under
-// the source-domain id, so the test fails if the dependency fetch ever sends
-// the raw LMM id ("skyrim") to the source.
-func TestService_PlanInstall_DependencyFetchTranslatesMappedGameID(t *testing.T) {
-	svc := newFlowsTestService(t)
-
-	game := &domain.Game{ID: "skyrim", Name: "Skyrim", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
-		SourceIDs: map[string]string{"src": "skyrimspecialedition"}}
-	require.NoError(t, svc.SaveGame(context.Background(), game))
-
-	mock := newMockSource("src")
-	svc.RegisterSource(mock)
-	mock.AddMod("skyrimspecialedition", &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One",
-		Version: "1.0", GameID: "skyrimspecialedition"})
-	mock.AddMod("skyrimspecialedition", &domain.Mod{ID: "root", SourceID: "src", Name: "Root",
-		Version: "1.0", GameID: "skyrimspecialedition",
-		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}})
-
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
-	require.NoError(t, err)
-	assert.Empty(t, plan.MissingDependencies)
-	require.Len(t, plan.Dependencies, 1)
-	assert.Equal(t, "dep1", plan.Dependencies[0].ID)
-}
-
-// TestService_PlanInstall_DependencyFetchEmptyMappingKeepsLMMGameID pins the
-// empty-mapping nuance of the #230 fix: a SourceIDs entry mapped to "" (e.g.
-// directory sources: `donovan-mods: ""`) means "this source applies to any
-// game" and must not blank the id GetMod sends - dependency fetches keep
-// using the LMM game id itself, exactly as the target-mod fetch does.
-func TestService_PlanInstall_DependencyFetchEmptyMappingKeepsLMMGameID(t *testing.T) {
-	svc := newFlowsTestService(t)
-
-	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
-		SourceIDs: map[string]string{"src": ""}}
-	require.NoError(t, svc.SaveGame(context.Background(), game))
-
-	mock := newMockSource("src")
-	svc.RegisterSource(mock)
-	mock.AddMod("g1", &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "1.0", GameID: "g1"})
-	mock.AddMod("g1", &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1",
-		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}})
-
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
-	require.NoError(t, err)
-	assert.Empty(t, plan.MissingDependencies)
-	require.Len(t, plan.Dependencies, 1)
-	assert.Equal(t, "dep1", plan.Dependencies[0].ID)
+			plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+			require.NoError(t, err)
+			assert.Empty(t, plan.MissingDependencies, tt.msg)
+			require.Len(t, plan.Dependencies, 1)
+			assert.Equal(t, "dep1", plan.Dependencies[0].ID)
+		})
+	}
 }
 
 // --- Fix round 1: cancellation safety (task-3 review C1 / I2) ---

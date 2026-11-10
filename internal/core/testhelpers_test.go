@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"archive/zip"
 	"context"
 	"os"
 	"path/filepath"
@@ -29,6 +30,56 @@ func (s *versionedFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) 
 	return []domain.DownloadableFile{
 		{ID: "1", Name: "Main File", FileName: mod.ID + ".zip", Version: "1.0", IsPrimary: true},
 	}, nil
+}
+
+// newBareService returns a Service over three fresh temp directories, with
+// nothing seeded and no source registered, closed when the test ends.
+func newBareService(t *testing.T) *core.Service {
+	t.Helper()
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	return svc
+}
+
+// newDefaultProfileService builds a service plus a game with an empty
+// "default" profile set as the game's default - the shape the profile apply
+// and sync flow tests start from. The game is deliberately NOT registered
+// with the service (no SaveGame): a test that needs it registered says so.
+func newDefaultProfileService(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	return svc, game
+}
+
+// createImportTestZip writes a zip archive of files (member name -> content)
+// at path. It is core_test's one zip writer: zipOf and createTestZip only
+// choose a path and delegate here.
+func createImportTestZip(t *testing.T, path string, files map[string]string) {
+	t.Helper()
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, f.Close())
+	}()
+
+	w := zip.NewWriter(f)
+	defer func() {
+		require.NoError(t, w.Close())
+	}()
+
+	for name, content := range files {
+		fw, err := w.Create(name)
+		require.NoError(t, err)
+		_, err = fw.Write([]byte(content))
+		require.NoError(t, err)
+	}
 }
 
 // createTestScript creates an executable script in the temp directory.
