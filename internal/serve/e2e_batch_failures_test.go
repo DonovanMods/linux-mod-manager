@@ -265,28 +265,46 @@ func TestE2E_BatchFailures_EachFailedItemNamesItselfAndItsButtonsActOnIt(t *test
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
+// e2eReadoutLayoutCell is one (face, width) a readout's layout is checked in.
+type e2eReadoutLayoutCell struct {
+	face  e2eFace
+	width int64
+}
+
+// e2eReadoutLayoutCells are the cells the two batch readouts' layout checks
+// run in (#600). Face (font metrics) and width (viewport) are independent
+// axes, so the default face is checked at both widths and the two stress
+// faces only at the narrow one, where a wider face has the least room: four
+// cells rather than the full three-by-two grid's six.
+func e2eReadoutLayoutCells() []e2eReadoutLayoutCell {
+	cells := []e2eReadoutLayoutCell{{e2eDefaultFace, 1280}}
+	for _, face := range e2eLayoutFaces {
+		cells = append(cells, e2eReadoutLayoutCell{face, 720})
+	}
+	return cells
+}
+
 // TestE2E_BatchFailures_LayoutHoldsInEveryFace is #521's stress pass over the
-// owner's readout, at 1280 and 720: in every face the readout is inside the
-// card, no control intersects it, and a click at each control's centre
-// reaches that control.
+// owner's readout, in every face at 720 and the default face at 1280
+// (e2eReadoutLayoutCells): the readout is inside the card, no control
+// intersects it, and a click at each control's centre reaches that control.
 func TestE2E_BatchFailures_LayoutHoldsInEveryFace(t *testing.T) {
 	// The refusals are learned once (#543): after the first batch both mods
 	// are recorded manual-only and no later batch attempts them, so every
 	// (face, width) gets its own fixture, as the verify --fix readout's does.
-	for _, face := range e2eLayoutFaces {
-		for _, width := range []int64{1280, 720} {
-			t.Run(fmt.Sprintf("%s/%d", face.name, width), func(t *testing.T) {
-				f := newE2EFixtureWithTwoManualUpdates(t)
-				useFace(t, f.Ctx, face)
-				var view batchFailureView
-				runOwnersBatch(t, f, width, &view)
-				f.runInBrowser(t, faceInEffect(face))
+	for _, cell := range e2eReadoutLayoutCells() {
+		face, width := cell.face, cell.width
+		t.Run(fmt.Sprintf("%s/%d", face.name, width), func(t *testing.T) {
+			f := newE2EFixtureWithTwoManualUpdates(t)
+			useFace(t, f.Ctx, face)
+			var view batchFailureView
+			runOwnersBatch(t, f, width, &view)
+			f.runInBrowser(t, faceInEffect(face))
 
-				require.Len(t, view.Entries, 2, "%dpx", width)
-				assertReadoutLayout(t, fmt.Sprintf("%dpx", width), view.Layout, "check-updates", "update-all", "update-selected")
-				assertNoUncaughtErrors(t, f.BrowserErrors())
-			})
-		}
+			require.Len(t, view.Entries, 2, "%dpx", width)
+			assertReadoutLayout(t, fmt.Sprintf("%dpx", width), view.Layout, "check-updates", "update-all", "update-selected")
+			assertNoUncaughtErrors(t, f.BrowserErrors())
+		})
 	}
 }
 
@@ -295,40 +313,39 @@ func TestE2E_BatchFailures_LayoutHoldsInEveryFace(t *testing.T) {
 // --fix on the Health card. Each row names its mod and its link's accessible
 // name carries the mod, the readout takes its own row in the card, and the
 // card's footer (Re-verify, Repair all) stays visible and unobscured - at
-// 1280 and 720 in every layout face.
+// 720 in every layout face and 1280 in the default one (e2eReadoutLayoutCells).
 func TestE2E_VerifyFixResult_NamesItsModsAndKeepsTheHealthCardUsable(t *testing.T) {
 	// A repair is spent once it has run, so every (face, width) gets its own
 	// fixture rather than re-running one that has nothing left to repair.
-	for _, face := range e2eLayoutFaces {
-		for _, width := range []int64{1280, 720} {
-			t.Run(fmt.Sprintf("%s/%d", face.name, width), func(t *testing.T) {
-				f := newE2EFixtureWithRepairableMods(t)
-				useFace(t, f.Ctx, face)
-				var view *e2eVerifyResultView
-				var layout *readoutLayout
-				var link e2eAXNode
-				f.runInBrowser(t, chromedp.EmulateViewport(width, 900))
-				f.runInBrowser(t, repairAllFromHealthCard(f)...)
-				f.runInBrowser(t,
-					faceInEffect(face),
-					pollUntil(`document.querySelector('.card--health [data-testid="verify-fix-result"] a.mod-page-link')?.textContent.includes("E2E Search Source")`),
-					chromedp.Evaluate(resultRowsJS(".card--health"), &view),
-					chromedp.Evaluate(readoutLayoutJS(".card--health", `.card__actions > button`), &layout),
-					accessibleNodeOf(`.card--health [data-mod="stuck"] a.mod-page-link`, &link),
-				)
-				require.NotNil(t, view, "%dpx", width)
-				byMod := map[string]e2eVerifyResultRow{}
-				for _, r := range view.Rows {
-					byMod[r.Mod] = r
-				}
-				assert.Contains(t, byMod["stuck"].Text, "Stuck Mod", "%dpx: the entry names its mod", width)
-				assert.Contains(t, byMod["cached"].Text, "Cached Mod", "%dpx", width)
-				assert.Contains(t, link.Name, "Stuck Mod", "%dpx: the link's accessible name says which mod", width)
-				assert.Contains(t, link.Name, "Open on "+e2eSourceName, "%dpx", width)
-				assertReadoutLayout(t, fmt.Sprintf("%dpx", width), layout, "Re-verify", "repair-all")
-				assertNoUncaughtErrors(t, f.BrowserErrors())
-			})
-		}
+	for _, cell := range e2eReadoutLayoutCells() {
+		face, width := cell.face, cell.width
+		t.Run(fmt.Sprintf("%s/%d", face.name, width), func(t *testing.T) {
+			f := newE2EFixtureWithRepairableMods(t)
+			useFace(t, f.Ctx, face)
+			var view *e2eVerifyResultView
+			var layout *readoutLayout
+			var link e2eAXNode
+			f.runInBrowser(t, chromedp.EmulateViewport(width, 900))
+			f.runInBrowser(t, repairAllFromHealthCard(f)...)
+			f.runInBrowser(t,
+				faceInEffect(face),
+				pollUntil(`document.querySelector('.card--health [data-testid="verify-fix-result"] a.mod-page-link')?.textContent.includes("E2E Search Source")`),
+				chromedp.Evaluate(resultRowsJS(".card--health"), &view),
+				chromedp.Evaluate(readoutLayoutJS(".card--health", `.card__actions > button`), &layout),
+				accessibleNodeOf(`.card--health [data-mod="stuck"] a.mod-page-link`, &link),
+			)
+			require.NotNil(t, view, "%dpx", width)
+			byMod := map[string]e2eVerifyResultRow{}
+			for _, r := range view.Rows {
+				byMod[r.Mod] = r
+			}
+			assert.Contains(t, byMod["stuck"].Text, "Stuck Mod", "%dpx: the entry names its mod", width)
+			assert.Contains(t, byMod["cached"].Text, "Cached Mod", "%dpx", width)
+			assert.Contains(t, link.Name, "Stuck Mod", "%dpx: the link's accessible name says which mod", width)
+			assert.Contains(t, link.Name, "Open on "+e2eSourceName, "%dpx", width)
+			assertReadoutLayout(t, fmt.Sprintf("%dpx", width), layout, "Re-verify", "repair-all")
+			assertNoUncaughtErrors(t, f.BrowserErrors())
+		})
 	}
 }
 
