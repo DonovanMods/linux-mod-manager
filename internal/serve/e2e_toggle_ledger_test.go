@@ -1706,6 +1706,8 @@ func TestE2E_SlideOver_SteppingAcrossThreeModsWithTwoTogglesPending(t *testing.T
 
 	var gamma1, beta2, alpha2, gamma2 e2eToggleButton
 	f.runInBrowser(t,
+		// #595: each toggle hands its button back through the release.
+		releaseSucceededReadouts(),
 		chromedp.Navigate(f.SlideOverPath("fake", "a")),
 		pollUntil(slideOverOnJS("Alpha Mod")),
 		click,

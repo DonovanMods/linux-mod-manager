@@ -540,6 +540,8 @@ func TestE2E_FullModPage_NavigatingAwayKeepsTheInFlightToggle(t *testing.T) {
 
 	var inFlight, back e2eToggleButton
 	f.runInBrowser(t,
+		// #595: the toggle hands its button back through the release.
+		releaseSucceededReadouts(),
 		chromedp.Navigate(f.ModPagePath("fake", "a")),
 		pollUntil(modPageToggleJS("Alpha Mod")+` !== null`),
 		chromedp.Evaluate(`document.querySelector('.mod-page [data-action="toggle"]').click()`, nil),

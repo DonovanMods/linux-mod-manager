@@ -53,6 +53,7 @@ import {
 import {
   deferredHealthRetryMillis,
   succeededOriginReleaseMillis,
+  holdSucceededReadouts,
   toastDismissMillis,
   unreadRereadDelayMillis,
 } from "./timers.js";
@@ -2250,6 +2251,8 @@ function clearOrigin(origin) {
  * the user has already started something else from must not be cleared out
  * from under the new job. */
 async function releaseSucceededOrigin(origin, summary) {
+  // issue 595: the E2E harness holds every succeeded readout (timers.js).
+  if (holdSucceededReadouts) return;
   const read = await fetchJobResult(summary.id);
   if (readoutHasNextStep(summary, read)) return;
   setTimeout(() => {

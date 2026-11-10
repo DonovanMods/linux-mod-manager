@@ -129,3 +129,16 @@ func TestScaledE2EHoldsOutlastTheirTimers(t *testing.T) {
 	require.Greater(t, readoutReleaseWait, release+margin)
 	require.Greater(t, toastSurvivalWait, toast+margin)
 }
+
+// releaseSucceededReadouts lifts the harness's hold on succeeded readouts
+// (#595) from the next navigation on, for a scenario about the release
+// itself: the page then hands a succeeded job's control back after
+// timers.js#succeededOriginReleaseMillis, as it does in production. Scripts
+// added this way run in the order they were added, so this one runs after
+// the hold openE2ETab installs and overrides it.
+func releaseSucceededReadouts() chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		_, err := page.AddScriptToEvaluateOnNewDocument(`window.__lmmHoldSucceededReadouts = false;`).Do(ctx)
+		return err
+	})
+}
