@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"archive/zip"
 	"context"
 	"os"
 	"path/filepath"
@@ -55,6 +56,30 @@ func newDefaultProfileService(t *testing.T) (*core.Service, *domain.Game) {
 	require.NoError(t, err)
 	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 	return svc, game
+}
+
+// createImportTestZip writes a zip archive of files (member name -> content)
+// at path. It is core_test's one zip writer: zipOf and createTestZip only
+// choose a path and delegate here.
+func createImportTestZip(t *testing.T, path string, files map[string]string) {
+	t.Helper()
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, f.Close())
+	}()
+
+	w := zip.NewWriter(f)
+	defer func() {
+		require.NoError(t, w.Close())
+	}()
+
+	for name, content := range files {
+		fw, err := w.Create(name)
+		require.NoError(t, err)
+		_, err = fw.Write([]byte(content))
+		require.NoError(t, err)
+	}
 }
 
 // createTestScript creates an executable script in the temp directory.
