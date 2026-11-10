@@ -1270,6 +1270,13 @@ func TestVerify_Fix_VersionMismatch_LockedPrimary_RefusesRepair(t *testing.T) {
 	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"))
 	require.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "cache must not be renamed to the effective version for a locked mod")
 
+	profile, err := pm.Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	ref := profile.FindRef("test-src", "mod1")
+	require.NotNil(t, ref)
+	require.Equal(t, "1.5", ref.Version, "the profile ref (the lock's target) must not be rewritten")
+	require.True(t, ref.Locked, "the lock must remain set")
+
 	details := repairDetails(events)
 	require.Len(t, details, 1)
 	// #311 (review I1): the sixth hand-worded lock refusal now goes through
@@ -1296,6 +1303,8 @@ func TestVerify_Fix_VersionMismatch_LockedPrimary_RefusesRepair(t *testing.T) {
 func TestVerify_Fix_VersionMismatch_SiblingRepaired(t *testing.T) {
 	svc, game := newVersionRepairFixGame(t, false)
 	addVersionRepairSibling(t, svc, game, "second", "1.5", []string{"2"})
+	// "third" records a different version: not a candidate, left alone.
+	addVersionRepairSibling(t, svc, game, "third", "2.0", []string{"2"})
 
 	result, events := runVersionRepairFix(t, svc, game)
 
@@ -1312,6 +1321,15 @@ func TestVerify_Fix_VersionMismatch_SiblingRepaired(t *testing.T) {
 	secondRef := secondProfile.FindRef("test-src", "mod1")
 	require.NotNil(t, secondRef)
 	require.Equal(t, "1.0", secondRef.Version, "sibling profile YAML ref must be corrected")
+
+	thirdMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "third")
+	require.NoError(t, err)
+	require.Equal(t, "2.0", thirdMod.Version, "a sibling recording a different version must not be touched")
+	thirdProfile, err := pm.Get(context.Background(), game.ID, "third")
+	require.NoError(t, err)
+	thirdRef := thirdProfile.FindRef("test-src", "mod1")
+	require.NotNil(t, thirdRef)
+	require.Equal(t, "2.0", thirdRef.Version, "nor its profile YAML ref")
 
 	f := mismatchFinding(t, result.Findings)
 	require.Equal(t, "ok", f.Status)
@@ -1383,6 +1401,7 @@ func TestVerify_Fix_VersionMismatch_SiblingLocked_DeclinedWithWarning(t *testing
 	secondRef := secondProfile.FindRef("test-src", "mod1")
 	require.NotNil(t, secondRef)
 	require.True(t, secondRef.Locked, "the sibling must remain locked")
+	require.Equal(t, "1.5", secondRef.Version, "the locked sibling's profile YAML ref must be unchanged")
 
 	f := mismatchFinding(t, result.Findings)
 	wantNote := "locked in profile(s): second (move the lock or unlock instead)"
