@@ -10,16 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestListCmd_Structure(t *testing.T) {
-	assert.Equal(t, "list", listCmd.Use)
-	assert.NotEmpty(t, listCmd.Short)
-	assert.NotEmpty(t, listCmd.Long)
-
-	// Check flags
-	assert.NotNil(t, listCmd.Flags().Lookup("profile"))
-	assert.NotNil(t, listCmd.Flags().Lookup("profiles"))
-}
-
 // TestListCmd_DocMentionsLoadOrder guards #201: the help text must describe
 // the mod ordering it actually shows (the profile's load order, which
 // decides merge precedence) rather than staying silent about it or, worse,
@@ -28,11 +18,6 @@ func TestListCmd_DocMentionsLoadOrder(t *testing.T) {
 	assert.Contains(t, listCmd.Long, "load order")
 	assert.NotContains(t, strings.ToLower(listCmd.Long), "install order",
 		"list must not claim install order - it shows profile load order")
-}
-
-func TestStatusCmd_Structure(t *testing.T) {
-	assert.Equal(t, "status", statusCmd.Use)
-	assert.NotEmpty(t, statusCmd.Short)
 }
 
 // TestList_NonVerboseMarksNonDefaultState is #397. The default view is

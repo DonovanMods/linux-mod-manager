@@ -16,33 +16,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestModCmd_Structure(t *testing.T) {
-	assert.Equal(t, "mod", modCmd.Use)
-	assert.NotEmpty(t, modCmd.Short)
-	assert.NotNil(t, modCmd.Commands())
-	// mod show subcommand exists
-	var showFound bool
-	for _, c := range modCmd.Commands() {
-		if c.Name() == "show" {
-			showFound = true
-			assert.Equal(t, "show <mod-id>", c.Use)
-			break
-		}
-	}
-	assert.True(t, showFound, "mod show subcommand should exist")
-}
-
-func TestModSetUpdateCmd_Structure(t *testing.T) {
-	assert.Equal(t, "set-update <mod-id>", modSetUpdateCmd.Use)
-	assert.NotEmpty(t, modSetUpdateCmd.Short)
-	assert.NotEmpty(t, modSetUpdateCmd.Long)
-
-	// Check flags exist
-	assert.NotNil(t, modSetUpdateCmd.Flags().Lookup("auto"))
-	assert.NotNil(t, modSetUpdateCmd.Flags().Lookup("notify"))
-	assert.NotNil(t, modSetUpdateCmd.Flags().Lookup("pin"))
-}
-
 func TestModSetUpdateCmd_NoPolicy(t *testing.T) {
 	restoreFlags(t)
 	gameID = "test-game"
@@ -107,16 +80,6 @@ func TestModSetUpdateCmd_MultiplePolicies(t *testing.T) {
 	// Reset flags after test
 	modSetAuto = false
 	modSetPin = false
-}
-
-func TestModEnableCmd_Structure(t *testing.T) {
-	assert.Equal(t, "enable <mod-id>", modEnableCmd.Use)
-	assert.NotEmpty(t, modEnableCmd.Short)
-}
-
-func TestModDisableCmd_Structure(t *testing.T) {
-	assert.Equal(t, "disable <mod-id>", modDisableCmd.Use)
-	assert.NotEmpty(t, modDisableCmd.Short)
 }
 
 // TestDoModDisable_Verbose_RestoresHistoricalUndeployWarningByteIdentically

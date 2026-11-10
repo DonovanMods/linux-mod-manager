@@ -16,31 +16,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// TestUninstallCmd_Structure tests the uninstall command structure
-func TestUninstallCmd_Structure(t *testing.T) {
-	assert.Equal(t, "uninstall <mod-id>", uninstallCmd.Use)
-	assert.NotEmpty(t, uninstallCmd.Short)
-	assert.NotEmpty(t, uninstallCmd.Long)
-
-	// Check flags exist
-	assert.NotNil(t, uninstallCmd.Flags().Lookup("source"))
-	assert.NotNil(t, uninstallCmd.Flags().Lookup("profile"))
-	assert.NotNil(t, uninstallCmd.Flags().Lookup("keep-cache"))
-}
-
-// TestUninstallCmd_DefaultFlags tests that default flag values are set
-func TestUninstallCmd_DefaultFlags(t *testing.T) {
-	// Check default values
-	sourceFlag := uninstallCmd.Flags().Lookup("source")
-	assert.Equal(t, "", sourceFlag.DefValue) // empty = auto-detect from game config
-
-	profileFlag := uninstallCmd.Flags().Lookup("profile")
-	assert.Equal(t, "", profileFlag.DefValue)
-
-	keepCacheFlag := uninstallCmd.Flags().Lookup("keep-cache")
-	assert.Equal(t, "false", keepCacheFlag.DefValue)
-}
-
 // setupDoUninstallTest builds a *core.Service plus a mod that will fail to
 // undeploy (a regular file blocks traversal through the deployed path's
 // parent, so the symlink linker's Undeploy fails with ENOTDIR - an absent

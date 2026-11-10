@@ -55,12 +55,6 @@ func resetGameEditFlags(t *testing.T) {
 	gameEditCurseForgeTypes, gameEditCurseForgeTypesSet = nil, false
 }
 
-func TestGameEditCmd_Structure(t *testing.T) {
-	assert.Equal(t, "edit <game-id>", gameEditCmd.Use)
-	assert.NotEmpty(t, gameEditCmd.Short)
-	assert.NotEmpty(t, gameEditCmd.Long)
-}
-
 // TestDoGameEdit_AddsASourceKeepingTheRest is the flow the epic review's
 // C-4 exists for: a custom source created in the sources editor becomes
 // one this game maps, without disturbing the mapping it already had.

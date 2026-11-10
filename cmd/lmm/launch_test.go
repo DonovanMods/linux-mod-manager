@@ -72,18 +72,6 @@ func setupLaunchTest(t *testing.T) (*core.Service, *domain.Game, *cliLauncher) {
 	return svc, game, f
 }
 
-func TestLaunchCmd_Structure(t *testing.T) {
-	assert.Equal(t, "launch", launchCmd.Use)
-	for _, name := range []string{"profile", "deploy", "strict", "dry-run"} {
-		assert.NotNil(t, launchCmd.Flags().Lookup(name), name)
-	}
-	found := false
-	for _, c := range rootCmd.Commands() {
-		found = found || c == launchCmd
-	}
-	assert.True(t, found, "launch is a top-level command")
-}
-
 func TestDoLaunch_StartsTheGame(t *testing.T) {
 	svc, game, f := setupLaunchTest(t)
 

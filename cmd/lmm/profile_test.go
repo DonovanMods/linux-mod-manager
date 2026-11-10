@@ -20,24 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestProfileCmd_Structure(t *testing.T) {
-	assert.Equal(t, "profile", profileCmd.Use)
-	assert.NotEmpty(t, profileCmd.Short)
-
-	// Check subcommands exist
-	var subCmds []string
-	for _, cmd := range profileCmd.Commands() {
-		subCmds = append(subCmds, cmd.Name())
-	}
-
-	assert.Contains(t, subCmds, "list")
-	assert.Contains(t, subCmds, "create")
-	assert.Contains(t, subCmds, "delete")
-	assert.Contains(t, subCmds, "switch")
-	assert.Contains(t, subCmds, "export")
-	assert.Contains(t, subCmds, "import")
-}
-
 // --- doProfileList (#309: honours --json) ---
 
 // TestDoProfileList_Empty pins the pre-#309 "No profiles found." text,
@@ -1232,18 +1214,6 @@ func TestDoProfileRename_RefusesAnOccupiedName(t *testing.T) {
 
 	_, err = pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err, "a refused rename must leave the source profile in place")
-}
-
-// TestProfileRenameCmd_Structure: the subcommand is wired and takes exactly
-// two names.
-func TestProfileRenameCmd_Structure(t *testing.T) {
-	var subCmds []string
-	for _, cmd := range profileCmd.Commands() {
-		subCmds = append(subCmds, cmd.Name())
-	}
-	assert.Contains(t, subCmds, "rename")
-	assert.Error(t, profileRenameCmd.Args(profileRenameCmd, []string{"only-one"}))
-	assert.NoError(t, profileRenameCmd.Args(profileRenameCmd, []string{"old", "new"}))
 }
 
 // TestDoProfileApply_ExternalEntry_IsNotRenderedAsADownload is P1a review

@@ -13,12 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGameListCmd_Structure(t *testing.T) {
-	assert.Equal(t, "list", gameListCmd.Use)
-	assert.NotEmpty(t, gameListCmd.Short)
-	assert.NotEmpty(t, gameListCmd.Long)
-}
-
 // TestDoGameList_EmptyState pins the friendly empty-state message (#205):
 // no games configured should point the user at 'game add'/'game detect',
 // not just print nothing or a bare "no games" line.

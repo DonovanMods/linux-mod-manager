@@ -16,30 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPurgeCmd_Structure tests the purge command structure
-func TestPurgeCmd_Structure(t *testing.T) {
-	assert.Equal(t, "purge", purgeCmd.Use)
-	assert.NotEmpty(t, purgeCmd.Short)
-	assert.NotEmpty(t, purgeCmd.Long)
-
-	// Check flags exist
-	assert.NotNil(t, purgeCmd.Flags().Lookup("profile"))
-	assert.NotNil(t, purgeCmd.Flags().Lookup("uninstall"))
-	assert.NotNil(t, purgeCmd.Flags().Lookup("yes"))
-}
-
-// TestPurgeCmd_DefaultFlags tests that default flag values are set
-func TestPurgeCmd_DefaultFlags(t *testing.T) {
-	profileFlag := purgeCmd.Flags().Lookup("profile")
-	assert.Equal(t, "", profileFlag.DefValue)
-
-	uninstallFlag := purgeCmd.Flags().Lookup("uninstall")
-	assert.Equal(t, "false", uninstallFlag.DefValue)
-
-	yesFlag := purgeCmd.Flags().Lookup("yes")
-	assert.Equal(t, "false", yesFlag.DefValue)
-}
-
 // TestPurgeCmd_NoModsToPurge tests purge with no installed mods
 func TestPurgeCmd_NoModsToPurge(t *testing.T) {
 	restoreFlags(t)

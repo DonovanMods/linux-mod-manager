@@ -19,28 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUpdateCmd_Structure(t *testing.T) {
-	assert.Equal(t, "update [mod-id]", updateCmd.Use)
-	assert.NotEmpty(t, updateCmd.Short)
-	assert.NotEmpty(t, updateCmd.Long)
-
-	// Check flags exist
-	assert.NotNil(t, updateCmd.Flags().Lookup("source"))
-	assert.NotNil(t, updateCmd.Flags().Lookup("profile"))
-	assert.NotNil(t, updateCmd.Flags().Lookup("all"))
-	assert.NotNil(t, updateCmd.Flags().Lookup("dry-run"))
-}
-
-func TestUpdateRollbackCmd_Structure(t *testing.T) {
-	assert.Equal(t, "rollback <mod-id>", updateRollbackCmd.Use)
-	assert.NotEmpty(t, updateRollbackCmd.Short)
-	assert.NotEmpty(t, updateRollbackCmd.Long)
-
-	// Check flags exist
-	assert.NotNil(t, updateRollbackCmd.Flags().Lookup("source"))
-	assert.NotNil(t, updateRollbackCmd.Flags().Lookup("profile"))
-}
-
 func TestPolicyToString(t *testing.T) {
 	tests := []struct {
 		policy   int

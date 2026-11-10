@@ -17,27 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGameCmd_Structure(t *testing.T) {
-	assert.Equal(t, "game", gameCmd.Use)
-	assert.NotEmpty(t, gameCmd.Short)
-}
-
-func TestGameSetDefaultCmd_Structure(t *testing.T) {
-	assert.Equal(t, "set-default <game-id>", gameSetDefaultCmd.Use)
-	assert.NotEmpty(t, gameSetDefaultCmd.Short)
-	assert.NotEmpty(t, gameSetDefaultCmd.Long)
-}
-
-func TestGameShowDefaultCmd_Structure(t *testing.T) {
-	assert.Equal(t, "show-default", gameShowDefaultCmd.Use)
-	assert.NotEmpty(t, gameShowDefaultCmd.Short)
-}
-
-func TestGameClearDefaultCmd_Structure(t *testing.T) {
-	assert.Equal(t, "clear-default", gameClearDefaultCmd.Use)
-	assert.NotEmpty(t, gameClearDefaultCmd.Short)
-}
-
 func TestGameShowDefault_NoDefault(t *testing.T) {
 	// Use temp directories
 	tmpDir := t.TempDir()

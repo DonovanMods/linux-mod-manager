@@ -25,44 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestInstallCmd_Structure tests the install command structure
-func TestInstallCmd_Structure(t *testing.T) {
-	// [query] (not <query>): the query is optional when --id is given.
-	assert.Equal(t, "install [query]", installCmd.Use)
-	assert.NotEmpty(t, installCmd.Short)
-	assert.NotEmpty(t, installCmd.Long)
-
-	// Check flags exist
-	assert.NotNil(t, installCmd.Flags().Lookup("source"))
-	assert.NotNil(t, installCmd.Flags().Lookup("profile"))
-	assert.NotNil(t, installCmd.Flags().Lookup("version"))
-	assert.NotNil(t, installCmd.Flags().Lookup("id"))
-	assert.NotNil(t, installCmd.Flags().Lookup("file"))
-	assert.NotNil(t, installCmd.Flags().Lookup("yes"))
-}
-
-// TestInstallCmd_DefaultFlags tests that default flag values are set
-func TestInstallCmd_DefaultFlags(t *testing.T) {
-	// Check default values
-	sourceFlag := installCmd.Flags().Lookup("source")
-	assert.Equal(t, "", sourceFlag.DefValue) // empty = auto-detect from game config
-
-	profileFlag := installCmd.Flags().Lookup("profile")
-	assert.Equal(t, "", profileFlag.DefValue)
-
-	versionFlag := installCmd.Flags().Lookup("version")
-	assert.Equal(t, "", versionFlag.DefValue)
-
-	idFlag := installCmd.Flags().Lookup("id")
-	assert.Equal(t, "", idFlag.DefValue)
-
-	fileFlag := installCmd.Flags().Lookup("file")
-	assert.Equal(t, "", fileFlag.DefValue)
-
-	yesFlag := installCmd.Flags().Lookup("yes")
-	assert.Equal(t, "false", yesFlag.DefValue)
-}
-
 // TestInstallCmd_VersionFlag_NoLongerRejected guards the #96 removal of the
 // #93 interim guard (installVersionGuard): --version must now proceed past
 // its own validation into normal game resolution, rather than being

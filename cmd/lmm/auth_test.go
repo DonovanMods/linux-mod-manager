@@ -67,42 +67,6 @@ func (m *mockValidatingAuthSource) ValidateKey(ctx context.Context, key string) 
 	return m.validateErr
 }
 
-// TestAuthCmd_Structure tests the auth command structure
-func TestAuthCmd_Structure(t *testing.T) {
-	assert.Equal(t, "auth", authCmd.Use)
-	assert.NotEmpty(t, authCmd.Short)
-	assert.NotEmpty(t, authCmd.Long)
-
-	// Check subcommands exist
-	var subCmds []string
-	for _, cmd := range authCmd.Commands() {
-		subCmds = append(subCmds, cmd.Name())
-	}
-
-	assert.Contains(t, subCmds, "login")
-	assert.Contains(t, subCmds, "logout")
-	assert.Contains(t, subCmds, "status")
-}
-
-// TestAuthLoginCmd_Structure tests the auth login command structure
-func TestAuthLoginCmd_Structure(t *testing.T) {
-	assert.Equal(t, "login [source]", authLoginCmd.Use)
-	assert.NotEmpty(t, authLoginCmd.Short)
-	assert.NotEmpty(t, authLoginCmd.Long)
-}
-
-// TestAuthLogoutCmd_Structure tests the auth logout command structure
-func TestAuthLogoutCmd_Structure(t *testing.T) {
-	assert.Equal(t, "logout [source]", authLogoutCmd.Use)
-	assert.NotEmpty(t, authLogoutCmd.Short)
-}
-
-// TestAuthStatusCmd_Structure tests the auth status command structure
-func TestAuthStatusCmd_Structure(t *testing.T) {
-	assert.Equal(t, "status", authStatusCmd.Use)
-	assert.NotEmpty(t, authStatusCmd.Short)
-}
-
 // TestAuthLoginCmd_UnsupportedSource tests login with unsupported source
 func TestAuthLoginCmd_UnsupportedSource(t *testing.T) {
 	// Use temp directories

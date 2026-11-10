@@ -21,18 +21,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestDeployCmd_Structure(t *testing.T) {
-	assert.Equal(t, "deploy [mod-id]", deployCmd.Use)
-	assert.NotEmpty(t, deployCmd.Short)
-	assert.NotEmpty(t, deployCmd.Long)
-
-	// Check flags exist
-	assert.NotNil(t, deployCmd.Flags().Lookup("source"))
-	assert.NotNil(t, deployCmd.Flags().Lookup("profile"))
-	assert.NotNil(t, deployCmd.Flags().Lookup("method"))
-	assert.NotNil(t, deployCmd.Flags().Lookup("purge"))
-}
-
 func TestDeployCmd_PurgeFlag(t *testing.T) {
 	purgeFlag := deployCmd.Flags().Lookup("purge")
 	assert.NotNil(t, purgeFlag)

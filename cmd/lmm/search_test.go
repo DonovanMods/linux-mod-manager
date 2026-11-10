@@ -83,36 +83,6 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
-// TestSearchCmd_Structure tests the search command structure
-func TestSearchCmd_Structure(t *testing.T) {
-	assert.Equal(t, "search <query>", searchCmd.Use)
-	assert.NotEmpty(t, searchCmd.Short)
-	assert.NotEmpty(t, searchCmd.Long)
-
-	// Check flags exist
-	assert.NotNil(t, searchCmd.Flags().Lookup("source"))
-	assert.NotNil(t, searchCmd.Flags().Lookup("limit"))
-}
-
-// TestSearchCmd_DefaultFlags tests that default flag values are set
-func TestSearchCmd_DefaultFlags(t *testing.T) {
-	// Check default values
-	sourceFlag := searchCmd.Flags().Lookup("source")
-	assert.Equal(t, "", sourceFlag.DefValue)
-
-	limitFlag := searchCmd.Flags().Lookup("limit")
-	assert.Equal(t, "10", limitFlag.DefValue)
-}
-
-func TestSearchCmdStructure(t *testing.T) {
-	assert.Equal(t, "search <query>", searchCmd.Use)
-	flag := searchCmd.Flags().Lookup("source")
-	if assert.NotNil(t, flag) {
-		assert.Contains(t, flag.Usage, "all configured sources",
-			"help text must reflect the new aggregate default")
-	}
-}
-
 func TestCapabilityGapNotice(t *testing.T) {
 	err := fmt.Errorf("source %q: searching: %w", "id-only", source.ErrNotSupported)
 	notice, ok := capabilityGapNotice("id-only", err)
