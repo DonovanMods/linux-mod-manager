@@ -1,12 +1,15 @@
 package main
 
-// Task 17 (#291): capture tests for `lmm import` pinned on pre-lift code,
-// before Tasks 18-19 lift runImportScan/doImport into internal/core. These
-// tests are recorded ONCE and then frozen - a future diff here is a defect,
-// never a re-record (docs/plans/2026-08-28-v2-phase2-impl.md Global
-// Constraints). Every test asserts END STATE (DB rows, profile YAML,
-// cache tree) alongside console output, per Unit J's review finding that
-// stdout-only characterization missed a real state regression.
+// Output tests for `lmm import`: the exact console text runImportScan and
+// doImport print, which stream each line lands on, and the confirmation
+// prompts. Task 17 (#291) first recorded these on pre-lift code, asserting
+// end state (DB rows, profile YAML, cache tree) alongside the output so the
+// lift into internal/core (ScanLocal/PlanAdopt/ApplyAdopt,
+// PlanImportArchive/ApplyImportArchive) could not regress either. The lift
+// is done and core's adopt_test.go and import_archive_test.go now pin that
+// end state, so #600 dropped it here; what stays is the frontend's own job.
+// An end-state assertion remains only where core does not pin the case (a
+// declined prompt installing nothing, the convertible-pak import).
 //
 // Setup mirrors import_test.go's setupDoImportTest/newFakeMatchSource so
 // these tests share its fakes and globals-management convention exactly.
@@ -80,17 +83,13 @@ func TestRunImportScan_ExtractModeWarning_ExactOutput(t *testing.T) {
 		"\n" +
 		"All mods are already tracked!\n"
 	assert.Equal(t, expected, out)
-
-	mods, mErr := svc.GetInstalledMods(context.Background(), game.ID, "default")
-	require.NoError(t, mErr)
-	assert.Empty(t, mods, "an empty scan must leave nothing installed")
 }
 
-// TestRunImportScan_BackfillLoop_UpdatesMissingMetadataAndSavesToDB pins the
-// backfill loop's console output and its DB write: an already-installed,
-// source-linked mod missing Author/SourceURL gets them filled in from a
-// fresh GetMod call and saved back via SaveInstalledMod.
-func TestRunImportScan_BackfillLoop_UpdatesMissingMetadataAndSavesToDB(t *testing.T) {
+// TestRunImportScan_BackfillLoop_PrintsBackfillLines pins the backfill
+// loop's console output for an installed, source-linked mod missing
+// Author/SourceURL. Core's TestApplyAdoptBackfill_SavesFetchedMetadata pins
+// the DB write.
+func TestRunImportScan_BackfillLoop_PrintsBackfillLines(t *testing.T) {
 	svc, game := setupDoImportTest(t)
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	src := newFakeMatchSource("acme-source")
@@ -127,17 +126,13 @@ func TestRunImportScan_BackfillLoop_UpdatesMissingMetadataAndSavesToDB(t *testin
 		"\n" +
 		"All mods are already tracked!\n"
 	assert.Equal(t, expected, out)
-
-	updated, gErr := svc.GetInstalledMod(context.Background(), "acme-source", "77", "g1", "default")
-	require.NoError(t, gErr)
-	assert.Equal(t, "Jane Modder", updated.Author, "backfill must write the fetched Author to the DB row")
-	assert.Equal(t, "http://example.com/mod77", updated.SourceURL, "backfill must write the fetched SourceURL to the DB row")
 }
 
 // TestRunImportScan_BackfillLoop_SkipMatchHonored_NoBackfillAttempted is the
-// --skip-match twin: the same installed mod missing metadata is left
-// completely untouched - the backfill block never runs at all, not even the
-// "Backfilling..." announcement.
+// --skip-match twin: the backfill block never runs, not even its
+// "Backfilling..." announcement. Core's
+// TestPlanAdopt_SkipMatch_DropsBackfillAndRunsNoLookups pins that the row
+// is left alone.
 func TestRunImportScan_BackfillLoop_SkipMatchHonored_NoBackfillAttempted(t *testing.T) {
 	svc, game := setupDoImportTest(t)
 	require.NoError(t, svc.SaveGame(context.Background(), game))
@@ -172,17 +167,13 @@ func TestRunImportScan_BackfillLoop_SkipMatchHonored_NoBackfillAttempted(t *test
 		"\n" +
 		"All mods are already tracked!\n"
 	assert.Equal(t, expected, out, "--skip-match must skip the backfill block entirely, not just the source-matching block")
-
-	unchanged, gErr := svc.GetInstalledMod(context.Background(), "acme-source", "77", "g1", "default")
-	require.NoError(t, gErr)
-	assert.Empty(t, unchanged.Author, "--skip-match must leave the DB row's missing Author untouched")
-	assert.Empty(t, unchanged.SourceURL, "--skip-match must leave the DB row's missing SourceURL untouched")
 }
 
-// TestRunImportScan_DuplicateSkip_NoDBWriteNoCacheWrite pins FindDuplicateMod's
-// skip path: an untracked file whose detected name normalizes to match an
-// already-installed mod's name is neither saved nor cached.
-func TestRunImportScan_DuplicateSkip_NoDBWriteNoCacheWrite(t *testing.T) {
+// TestRunImportScan_DuplicateSkip_PrintsSkippedLine pins the readout for an
+// untracked file whose detected name normalizes to an installed mod's.
+// Core's TestApplyAdopt_Duplicate_SkippedWithoutDBOrCacheWrite pins that
+// nothing is saved or cached.
+func TestRunImportScan_DuplicateSkip_PrintsSkippedLine(t *testing.T) {
 	svc, game := setupDoImportTest(t)
 	game.DeployMode = domain.DeployCopy
 
@@ -216,15 +207,6 @@ func TestRunImportScan_DuplicateSkip_NoDBWriteNoCacheWrite(t *testing.T) {
 		"\n" +
 		"Imported: 0, Skipped: 1, Failed: 0\n"
 	assert.Equal(t, expected, out)
-
-	mods, mErr := svc.GetInstalledMods(context.Background(), game.ID, "default")
-	require.NoError(t, mErr)
-	require.Len(t, mods, 1, "the duplicate must not be saved - only the pre-existing row remains")
-	assert.Equal(t, "existing-id", mods[0].ID)
-
-	cacheMatches, gErr := filepath.Glob(filepath.Join(svc.GlobalCacheDir(), "g1", "local-*"))
-	require.NoError(t, gErr)
-	assert.Empty(t, cacheMatches, "a skipped duplicate must not write a cache entry")
 }
 
 // TestRunImportScan_ConfirmDecline_ReturnsErrCancelled pins the
@@ -298,11 +280,11 @@ func TestRunImportScan_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	assert.Empty(t, mods, "must leave nothing installed")
 }
 
-// TestRunImportScan_Force_SkipsConfirmPrompt_ImportsAndWritesCache pins
-// --force's behavior for the twin case: the confirm prompt line never
-// prints, the mod is actually imported, and (copy-mode) its cache entry is
-// written with the source file's own bytes.
-func TestRunImportScan_Force_SkipsConfirmPrompt_ImportsAndWritesCache(t *testing.T) {
+// TestRunImportScan_Force_SkipsConfirmPrompt pins --force's behavior for the
+// twin case: the confirm prompt line never prints and the import's lines
+// follow. Core's TestApplyAdopt_CopyMode_WritesCacheSavesRowAndProfile pins
+// the row and the cache entry it writes.
+func TestRunImportScan_Force_SkipsConfirmPrompt(t *testing.T) {
 	svc, game := setupDoImportTest(t)
 	game.DeployMode = domain.DeployCopy
 	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "LooseMod-1.0.zip"), []byte("loose-payload"), 0644))
@@ -327,58 +309,9 @@ func TestRunImportScan_Force_SkipsConfirmPrompt_ImportsAndWritesCache(t *testing
 		"\n" +
 		"Imported: 1, Skipped: 0, Failed: 0\n"
 	assert.Equal(t, expected, out, "--force must skip the confirm prompt entirely")
-
-	mods, mErr := svc.GetInstalledMods(context.Background(), game.ID, "default")
-	require.NoError(t, mErr)
-	require.Len(t, mods, 1)
-	installed := mods[0]
-	assert.Equal(t, domain.SourceLocal, installed.SourceID)
-	assert.True(t, installed.AdoptedInPlace, "scanned imports are always adopted in place")
-	assert.Empty(t, installed.FileIDs, "no source match means no resolved file ID")
-
-	cachePath := svc.GlobalCacheDir()
-	cachedFile := filepath.Join(cachePath, "g1", "local-"+installed.ID, "1.0", "LooseMod-1.0.zip")
-	data, rErr := os.ReadFile(cachedFile)
-	require.NoError(t, rErr, "copy-mode import must write the source file into the cache")
-	assert.Equal(t, "loose-payload", string(data))
 }
 
 // --- archive mode ---
-
-// TestDoImport_EnrichmentVersionChange_RenamesCacheEntryOnDisk asserts the
-// filesystem end state of the enrichment-triggered cache rename (import.go's
-// needsCacheRename block): the pre-enrichment ("unknown"-version) cache
-// directory is gone and the post-enrichment (real-version) directory holds
-// the extracted content, not just that the marker/FileIDs end up right
-// (already pinned by TestDoImport_ArchiveWithID_ResolvesFileIDAndStampsMarker).
-func TestDoImport_EnrichmentVersionChange_RenamesCacheEntryOnDisk(t *testing.T) {
-	svc, game := setupDoImportTest(t)
-	src := newFakeMatchSource("acme-source")
-	src.mods["999"] = &domain.Mod{ID: "999", SourceID: "acme-source", Name: "Acme Mod", Version: "2.0", GameID: "g1"}
-	svc.RegisterSource(src)
-	game.SourceIDs = map[string]string{"acme-source": "g1"}
-
-	archivePath := filepath.Join(t.TempDir(), "mymod.zip")
-	createTestArchive(t, archivePath, map[string]string{"mymod.esp": "data"})
-
-	importModID = "999"
-
-	_, err := captureStdoutErr(t, func() error {
-		return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
-	})
-	require.NoError(t, err)
-
-	gameCache := svc.GetGameCache(game)
-	oldPath := gameCache.ModPath("g1", "acme-source", "999", "unknown")
-	newPath := gameCache.ModPath("g1", "acme-source", "999", "2.0")
-
-	_, statErr := os.Stat(oldPath)
-	assert.True(t, os.IsNotExist(statErr), "the pre-enrichment cache directory must be gone after the rename")
-
-	data, rErr := os.ReadFile(filepath.Join(newPath, "mymod.esp"))
-	require.NoError(t, rErr, "the post-enrichment cache directory must hold the extracted content")
-	assert.Equal(t, "data", string(data))
-}
 
 // setupImportConflictTest builds two fake-source-linked mods, "First Mod"
 // (ID A1) and its archive, both resolved through the same sole configured
@@ -443,8 +376,10 @@ func expectedConflictBlockAndPromptFor(archiveBPath string) string {
 }
 
 // TestDoImport_ConflictPromptDecline_CancelsWithoutOverwriting pins the
-// decline path: the conflict block prints, "n" returns the plain cancelled
-// error, and - critically - mod A's deployed file is left untouched.
+// decline path: the conflict block prints, "n" returns the cancellation, and
+// the declined import installs nothing (the prompt is the CLI's own; core's
+// TestImportArchive_UnacceptedConflict_ReturnsConflictError pins the
+// untouched deployed file).
 func TestDoImport_ConflictPromptDecline_CancelsWithoutOverwriting(t *testing.T) {
 	svc, game, archiveBPath := setupImportConflictTest(t)
 	importForce = false
@@ -466,22 +401,19 @@ func TestDoImport_ConflictPromptDecline_CancelsWithoutOverwriting(t *testing.T) 
 	require.NoError(t, mErr)
 	require.Len(t, mods, 1, "a declined conflict must not install the second mod")
 	assert.Equal(t, "A1", mods[0].ID)
-
-	data, rErr := os.ReadFile(filepath.Join(game.ModPath, "shared.txt"))
-	require.NoError(t, rErr)
-	assert.Equal(t, "from-A", string(data), "a declined conflict must not overwrite the already-deployed file")
 }
 
-// TestDoImport_ConflictPromptAccept_OverwritesAndInstalls is the accept
-// twin: "y" proceeds through hooks/deploy/save, mod B ends up installed, and
-// the shared file's content is now B's.
+// TestDoImport_ConflictPromptAccept_PrintsDeployAfterThePrompt is the
+// accept twin: "y" proceeds straight to the deploy lines. Core's
+// TestImportArchive_AcceptConflicts_OverwritesAndInstalls pins that mod B is
+// installed over A's file.
 //
 // Ruling 18 delta (#314): accepting no longer re-runs anything. doImport
 // plans once, prompts from plan.Conflicts, and calls ApplyImportArchive with
 // AcceptConflicts set - so the readout that printed twice under Ruling 7
 // prints once, and "Deploying to game directory..." follows the prompt
 // directly.
-func TestDoImport_ConflictPromptAccept_OverwritesAndInstalls(t *testing.T) {
+func TestDoImport_ConflictPromptAccept_PrintsDeployAfterThePrompt(t *testing.T) {
 	svc, game, archiveBPath := setupImportConflictTest(t)
 	importForce = false
 
@@ -501,19 +433,11 @@ func TestDoImport_ConflictPromptAccept_OverwritesAndInstalls(t *testing.T) {
 		"  Added to profile: default\n"
 	assert.Equal(t, expected, out)
 	assert.Empty(t, errOut)
-
-	mods, mErr := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, mErr)
-	require.Len(t, mods, 2, "an accepted conflict must install the second mod alongside the first")
-
-	data, rErr := os.ReadFile(filepath.Join(game.ModPath, "shared.txt"))
-	require.NoError(t, rErr)
-	assert.Equal(t, "from-B", string(data), "an accepted conflict must overwrite the file with the new mod's content")
 }
 
 // TestDoImport_ForceSkipsConflictPromptEvenWithRealConflict pins --force's
-// archive-mode behavior: the conflict CHECK itself is skipped (not just the
-// prompt) - no "⚠" text ever prints - and the overwrite happens silently.
+// archive-mode output: no "⚠" conflict block ever prints. Core's
+// TestImportArchive_Force_SkipsTheConflictCheckEntirely pins the overwrite.
 func TestDoImport_ForceSkipsConflictPromptEvenWithRealConflict(t *testing.T) {
 	svc, game, archiveBPath := setupImportConflictTest(t)
 	importForce = true
@@ -537,10 +461,6 @@ func TestDoImport_ForceSkipsConflictPromptEvenWithRealConflict(t *testing.T) {
 	assert.Equal(t, expected, out)
 	assert.Empty(t, errOut)
 	assert.NotContains(t, out, "⚠", "--force must skip the conflict check entirely, not just the prompt")
-
-	data, rErr := os.ReadFile(filepath.Join(game.ModPath, "shared.txt"))
-	require.NoError(t, rErr)
-	assert.Equal(t, "from-B", string(data))
 }
 
 // setupImportHookTest builds a single fake-source-linked mod ("Hook Mod",
@@ -571,10 +491,10 @@ func writeFailingHookScript(t *testing.T) string {
 }
 
 // TestDoImport_HookWarnings_AfterEachAfterAll_AccumulateAndPrintToStderr
-// pins the non-fatal after_each/after_all hook path: both failures are
-// accumulated (not force-gated - after_each/after_all never abort) and
-// printed to stderr together, in call order, while the import itself still
-// succeeds and is saved.
+// pins where the non-fatal after_each/after_all hook failures print: both
+// to stderr, in call order, after a normal import readout on stdout. Core's
+// TestImportArchive_AfterHooksFail_AccumulateInHookWarnings pins that the
+// import is still saved.
 func TestDoImport_HookWarnings_AfterEachAfterAll_AccumulateAndPrintToStderr(t *testing.T) {
 	svc, game, archivePath := setupImportHookTest(t)
 	failScript := writeFailingHookScript(t)
@@ -602,15 +522,11 @@ func TestDoImport_HookWarnings_AfterEachAfterAll_AccumulateAndPrintToStderr(t *t
 	expectedStderr := "Warning: install.after_each hook failed: hook failed with exit code 1: " + failScript + "\n" +
 		"Warning: install.after_all hook failed: hook failed with exit code 1: " + failScript + "\n"
 	assert.Equal(t, expectedStderr, errOut)
-
-	mods, mErr := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, mErr)
-	require.Len(t, mods, 1, "a non-fatal hook warning must not block the install from being saved")
 }
 
 // TestDoImport_BeforeAllHookFails_Forced_WarnsToStderrAndContinues pins the
-// forced before_all path: the hook failure becomes a stderr warning (not a
-// fatal error) and the import proceeds to completion.
+// forced before_all path's output: the hook failure is a stderr warning and
+// the import's lines run to completion on stdout.
 func TestDoImport_BeforeAllHookFails_Forced_WarnsToStderrAndContinues(t *testing.T) {
 	svc, game, archivePath := setupImportHookTest(t)
 	failScript := writeFailingHookScript(t)
@@ -635,18 +551,13 @@ func TestDoImport_BeforeAllHookFails_Forced_WarnsToStderrAndContinues(t *testing
 		"  Added to profile: default\n"
 	assert.Equal(t, expected, out)
 	assert.Equal(t, "Warning: install.before_all hook failed (forced): hook failed with exit code 1: "+failScript+"\n", errOut)
-
-	mods, mErr := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, mErr)
-	require.Len(t, mods, 1)
 }
 
-// TestDoImport_BeforeAllHookFails_AbortsWithoutForce_NothingInstalled is the
-// non-forced twin: the whole import aborts before deploy/save, but the
-// cache write from Import() (which runs BEFORE hooks) is left behind - a
-// real, worth-pinning asymmetry between the cache and the DB/profile state
-// on this failure path.
-func TestDoImport_BeforeAllHookFails_AbortsWithoutForce_NothingInstalled(t *testing.T) {
+// TestDoImport_BeforeAllHookFails_AbortsWithoutForce is the non-forced
+// twin: the hook's error is returned, not printed, and stdout stops after
+// the readout. Core's TestImportArchive_BeforeAllFails_AbortsWithoutForce
+// pins that nothing is installed while the cache write survives.
+func TestDoImport_BeforeAllHookFails_AbortsWithoutForce(t *testing.T) {
 	svc, game, archivePath := setupImportHookTest(t)
 	failScript := writeFailingHookScript(t)
 	game.Hooks = domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}}
@@ -667,22 +578,17 @@ func TestDoImport_BeforeAllHookFails_AbortsWithoutForce_NothingInstalled(t *test
 		"  Files: 1\n"
 	assert.Equal(t, expected, out)
 	assert.Empty(t, errOut, "a fatal (non-forced) before_all failure returns its own error - nothing is printed to stderr for it")
-
-	mods, mErr := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, mErr)
-	assert.Empty(t, mods, "a fatal before_all hook must leave nothing installed")
-
-	gameCache := svc.GetGameCache(game)
-	assert.True(t, gameCache.Exists("g1", "acme-source", "H1", "1.0"),
-		"Import()'s cache write happens before hooks run, so it survives a later fatal hook abort")
 }
 
-// TestDoImport_VerboseCacheRenameFailure_CascadesToDeploymentFailure pins a
-// genuine cascade this characterization surfaced: when the enrichment
-// version-change rename fails (here, because something already occupies the
-// destination path as a non-directory), the only symptom under a NON-verbose
-// run would be a completely unexplained "deployment failed: mod not in
-// cache" - -v is what surfaces the real cause via two separate warnings.
+// TestDoImport_VerboseCacheRenameFailure_CascadesToDeploymentFailure pins
+// the -v output of a cascade this characterization surfaced: when the
+// enrichment version-change rename fails (here, because something already
+// occupies the destination path as a non-directory), the only symptom
+// under a NON-verbose run would be a completely unexplained "deployment
+// failed: mod not in cache" - -v is what surfaces the real cause via two
+// separate warnings. Core's
+// TestImportArchive_CacheRenameFailure_NotesAndCascadesToDeploymentFailure
+// pins the untouched cache and nothing installed.
 // The os.Rename error text itself is OS-dependent, so only its fixed
 // "Warning: could not rename cache entry: " prefix is pinned exactly; the
 // deterministic "mod not in cache" text (both the conflict-check warning and
@@ -710,9 +616,7 @@ func TestDoImport_VerboseCacheRenameFailure_CascadesToDeploymentFailure(t *testi
 	importModID = "999"
 	importForce = false
 
-	gameCache := svc.GetGameCache(game)
-	oldPath := gameCache.ModPath("g1", "acme-source", "999", "unknown")
-	newPath := gameCache.ModPath("g1", "acme-source", "999", "2.0")
+	newPath := svc.GetGameCache(game).ModPath("g1", "acme-source", "999", "2.0")
 	require.NoError(t, os.MkdirAll(filepath.Dir(newPath), 0755))
 	require.NoError(t, os.WriteFile(newPath, []byte("blocker"), 0644)) // a FILE, not a dir: os.Rename(dir, this) fails
 
@@ -737,18 +641,6 @@ func TestDoImport_VerboseCacheRenameFailure_CascadesToDeploymentFailure(t *testi
 		"#314 review I1 (Ruling 18): the readout, rendered from the plan before Apply runs, must print before Apply's own rename-failure warning")
 	assert.True(t, renameIdx < conflictIdx, "the rename-failure warning must print before the conflict-check warning")
 	assert.True(t, conflictIdx < deployIdx, "the conflict-check warning must print before the deploy announcement")
-
-	data, rErr := os.ReadFile(filepath.Join(oldPath, "mymod.esp"))
-	require.NoError(t, rErr, "a failed rename must leave the original cache directory - and its content - untouched")
-	assert.Equal(t, "data", string(data))
-
-	blocker, rErr := os.ReadFile(newPath)
-	require.NoError(t, rErr, "a failed rename must leave the blocking path untouched too")
-	assert.Equal(t, "blocker", string(blocker))
-
-	mods, mErr := svc.GetInstalledMods(context.Background(), "g1", "default")
-	require.NoError(t, mErr)
-	assert.Empty(t, mods, "Install failing must leave nothing installed")
 }
 
 // TestDoImport_DeployCompile_ConvertiblePak_PrintsFilesDeployedLine pins the

@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -67,11 +66,6 @@ func profileModFile(modID string) string { return "Mods/" + modID + ".pak" }
 type profilesSource struct {
 	server   *httptest.Server
 	versions map[string]string
-	// calls counts every request a flow makes of the source (search, mod,
-	// files, dependencies, download URL, update check, token exchange) - a
-	// mod copy's tests assert it never moves (#437: a copy contacts no
-	// source).
-	calls atomic.Int64
 }
 
 // newProfilesSource starts the download server.
@@ -105,17 +99,14 @@ func (*profilesSource) Name() string    { return "Profiles Fixture Source" }
 func (*profilesSource) AuthURL() string { return "" }
 
 func (s *profilesSource) ExchangeToken(context.Context, string) (*source.Token, error) {
-	s.calls.Add(1)
 	return nil, source.ErrNotSupported
 }
 
 func (s *profilesSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
-	s.calls.Add(1)
 	return source.SearchResult{}, nil
 }
 
 func (s *profilesSource) GetMod(_ context.Context, _, modID string) (*domain.Mod, error) {
-	s.calls.Add(1)
 	version, ok := s.versions[modID]
 	if !ok {
 		return nil, domain.ErrModNotFound
@@ -124,7 +115,6 @@ func (s *profilesSource) GetMod(_ context.Context, _, modID string) (*domain.Mod
 }
 
 func (s *profilesSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
-	s.calls.Add(1)
 	return nil, nil
 }
 
@@ -132,7 +122,6 @@ func (s *profilesSource) GetDependencies(context.Context, *domain.Mod) ([]domain
 // selectFilesForVersion falls through to the primary pick and the install
 // records the MOD's version, whatever a locked ref says.
 func (s *profilesSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
-	s.calls.Add(1)
 	if _, ok := s.versions[mod.ID]; !ok {
 		return nil, domain.ErrModNotFound
 	}
@@ -142,12 +131,10 @@ func (s *profilesSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]doma
 }
 
 func (s *profilesSource) GetDownloadURL(_ context.Context, mod *domain.Mod, fileID string) (string, error) {
-	s.calls.Add(1)
 	return s.server.URL + "/" + mod.ID + "/" + fileID, nil
 }
 
 func (s *profilesSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
-	s.calls.Add(1)
 	return nil, nil
 }
 
@@ -156,15 +143,6 @@ var _ source.ModSource = (*profilesSource)(nil)
 // newProfilesFixtureServer builds the three-profile world described at the
 // top of this file, with the active profile's two mods really deployed.
 func newProfilesFixtureServer(t *testing.T) (*Server, *core.Service, *domain.Game) {
-	t.Helper()
-	s, svc, game, _ := newProfilesFixtureServerWithSource(t)
-	return s, svc, game
-}
-
-// newProfilesFixtureServerWithSource is newProfilesFixtureServer that also
-// hands back the registered source, for a test that asserts what the flow
-// asked of it.
-func newProfilesFixtureServerWithSource(t *testing.T) (*Server, *core.Service, *domain.Game, *profilesSource) {
 	t.Helper()
 	sandboxEnv(t)
 
@@ -230,7 +208,7 @@ func newProfilesFixtureServerWithSource(t *testing.T) (*Server, *core.Service, *
 		require.FileExists(t, deployedPath(game, profileModFile(modID)),
 			"the active profile's mods start deployed")
 	}
-	return s, svc, game, src
+	return s, svc, game
 }
 
 // seedProfileMod installs modID under profileName with its file cached,

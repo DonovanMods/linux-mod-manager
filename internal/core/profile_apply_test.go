@@ -394,6 +394,91 @@ func TestApplyProfileApply_CachedEntry_SkipsDownload(t *testing.T) {
 	assert.NoError(t, err, "the cached file must be deployed")
 }
 
+// TestApplyProfileApply_PartialCacheEntry_StillDownloads is the #96 review
+// round 1 finding 2 guard: a version directory can exist without holding
+// the expected file (a download that broke off before committing any). The
+// cache-first guard must not take directory presence alone for "cached" -
+// bare cache.Exists says true here - or the mod is left without its files.
+// Moved from cmd/lmm's TestDoProfileApply_PartialCacheEntry_StillDownloads
+// (#600).
+func TestApplyProfileApply_PartialCacheEntry_StillDownloads(t *testing.T) {
+	svc, game := newApplyTestService(t)
+	pm := svc.NewProfileManager()
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, os.MkdirAll(gameCache.ModPath(game.ID, "src", "mod1", "1.0"), 0o755))
+	require.True(t, gameCache.Exists(game.ID, "src", "mod1", "1.0"), "precondition: bare Exists sees the empty dir as cached")
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.Len(t, plan.ToInstall, 1)
+	assert.False(t, plan.ToInstall[0].Cached, "an empty version directory is not a cache hit")
+
+	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Installed)
+
+	cached, err := gameCache.ListFiles(game.ID, "src", "mod1", "1.0")
+	require.NoError(t, err)
+	assert.Contains(t, cached, "mod1-old.esp", "the entry holds the downloaded file, not just an empty directory")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the file is deployed, not merely a DB row claiming so")
+	assert.True(t, gameCache.HasFileIDs(game.ID, "src", "mod1", "1.0", []string{"9"}),
+		"the download commits its completion marker, so the next apply is a real cache hit")
+	assert.Equal(t, 1, mock.DownloadCount(), "exactly one download, not a retry loop")
+}
+
+// TestApplyProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace:
+// Installer.Replace reads the OLD version's cache entry to know which files
+// to retire, and fails outright when it has been pruned. Converging a
+// deployed 1.5 down to 1.0 with the 1.5 entry gone therefore installs
+// instead, and still reaches the profile's version. Moved from cmd/lmm's
+// TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace
+// (#600); TestPlanProfileApply_VersionDrift_RecordsReplaces pins the plan
+// half.
+func TestApplyProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *testing.T) {
+	svc, game := newApplyTestService(t)
+	pm := svc.NewProfileManager()
+	svc.RegisterSource(newTwoVersionSource(t))
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		FileIDs:      []string{"10"},
+	}))
+	installer, err := svc.GetInstallerForProfileForTest(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.NoError(t, installer.Install(context.Background(), game,
+		&domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	require.NoError(t, err, "precondition: 1.5 is deployed")
+	require.NoError(t, gameCache.Delete(game.ID, "src", "mod1", "1.5"))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
+	require.NoError(t, err)
+	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Failed, "a pruned old cache must not break convergence")
+	assert.Equal(t, 1, result.Installed)
+	assert.Equal(t, 0, result.Replaced)
+
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version, "convergence still reaches the profile's version")
+	assert.Equal(t, []string{"9"}, installed.FileIDs)
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the 1.0 file is deployed by the Install fallback")
+}
+
 // TestApplyProfileApply_VersionDrift_ReplacesLiveDeployment is the #96
 // end-to-end guard: converging a deployed 1.5 down to 1.0 must retire the
 // obsolete file via Installer.Replace, not leave it alongside the new one.
