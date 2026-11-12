@@ -122,13 +122,15 @@ const ProtonUser = "steamuser"
 
 // User is FindUser's answer. Name is "" when no single user directory can
 // be told apart, and Candidates then lists the directories found (none, or
-// several), sorted - or, when the one directory the rules picked leaves the
-// prefix through a symlink (CheckUserDir), Outside names it.
+// several), sorted - or, when the one directory the rules picked fails
+// CheckUserDir (it leaves the prefix through a symlink, or could not be
+// checked at all), Refused names it and Err says why.
 type User struct {
 	Name       string
 	Rule       string
 	Candidates []string
-	Outside    string
+	Refused    string
+	Err        error
 }
 
 // FindUser picks the Windows user directory under prefix's drive_c/users
@@ -139,7 +141,8 @@ type User struct {
 // this package's to read.
 //
 // The directory picked must pass CheckUserDir: one that is a symlink out of
-// drive_c/users is never picked, and is reported in Outside instead.
+// drive_c/users is never picked, and neither is one that cannot be
+// checked: either is reported in Refused and Err instead (fail closed).
 func FindUser(prefix string) User {
 	users := filepath.Join(prefix, "drive_c", "users")
 	if _, proton := ProtonVersion(prefix); proton {
@@ -166,14 +169,20 @@ func FindUser(prefix string) User {
 	return User{Candidates: names}
 }
 
-// checked is FindUser's pick of name by rule, or Outside when the
-// directory leaves the prefix.
+// checked is FindUser's pick of name by rule, or - on ANY CheckUserDir
+// error, not only ErrUserOutsidePrefix - a refusal carrying it: a directory
+// lmm could not prove is inside the prefix is never picked.
 func checked(prefix, name, rule string) User {
-	if errors.Is(CheckUserDir(prefix, name), ErrUserOutsidePrefix) {
-		return User{Outside: name}
+	if err := checkUserDir(prefix, name); err != nil {
+		return User{Refused: name, Err: err}
 	}
 	return User{Name: name, Rule: rule}
 }
+
+// checkUserDir is CheckUserDir, behind a seam a test replaces to produce
+// the errors a temp tree cannot (an EvalSymlinks failure, a link swapped
+// mid-check).
+var checkUserDir = CheckUserDir
 
 // ErrNoUserDir and ErrUserOutsidePrefix are CheckUserDir's refusals: there
 // is no directory by that name under drive_c/users, or there is one but -

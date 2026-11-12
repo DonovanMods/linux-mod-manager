@@ -84,11 +84,16 @@ type PrefixStatus struct {
 	// UserOrigin is how User was picked: PrefixUserExplicit,
 	// PrefixUserProton or PrefixUserOnly.
 	UserOrigin string `json:"user_origin,omitempty"`
-	// UserPath is <Path>/drive_c/users/<User>, when Resolved. It is CHECKED
-	// (wineprefix.CheckUserDir): a directory that, symlinks resolved, is
-	// still inside the prefix's drive_c/users, so a writer into it cannot
-	// be sent out of the prefix by a user directory linked to the host's
-	// home. One that leaves is unresolved, and Problem says so.
+	// UserPath is <Path>/drive_c/users/<User>, when Resolved: the LEXICAL
+	// join, checked (wineprefix.CheckUserDir: symlinks resolved, still
+	// inside the prefix's drive_c/users) only at the moment ResolvePrefix
+	// ran. One that failed the check is unresolved, and Problem says why.
+	//
+	// It is NOT a capability to write through. The tree can change between
+	// resolving and writing - a user directory swapped for a link to the
+	// host's home - so a writer into the prefix (#616's Plugins.txt) must
+	// call wineprefix.CheckUserDir again immediately before it writes, and
+	// must never trust UserPath alone.
 	UserPath string `json:"user_path,omitempty"`
 	// Resolved reports that both the prefix and the user directory are
 	// usable: what a writer into the prefix requires.
@@ -237,9 +242,11 @@ func (s *Service) resolvePrefixUser(game *domain.Game, st *PrefixStatus) {
 		st.User, st.UserOrigin = found.Name, found.Rule
 		return
 	}
-	if found.Outside != "" {
-		st.Problem = fmt.Sprintf("%s: lmm will not write outside the prefix - make it a real directory, or set prefix_user: to another",
-			wineprefix.CheckUserDir(st.Path, found.Outside))
+	if found.Refused != "" {
+		// The error FindUser saw, never a fresh check: one that passed now
+		// would report nothing for a directory lmm refused.
+		st.Problem = fmt.Sprintf("%v: lmm uses a user directory only once it has checked that it is inside the prefix - make %s a real directory there, or set prefix_user: to another",
+			found.Err, found.Refused)
 		return
 	}
 	if len(found.Candidates) == 0 {

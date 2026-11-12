@@ -255,7 +255,7 @@ func TestCheckUserDir(t *testing.T) {
 }
 
 // FindUser applies the same rule to the directory it picks: one that
-// leaves the prefix is reported as Outside, never picked.
+// leaves the prefix is reported as Refused, never picked.
 func TestFindUser_RefusesAUserDirectoryOutsideThePrefix(t *testing.T) {
 	base := t.TempDir()
 	outside := filepath.Join(base, "home")
@@ -265,13 +265,15 @@ func TestFindUser_RefusesAUserDirectoryOutsideThePrefix(t *testing.T) {
 	require.NoError(t, os.Symlink(outside, filepath.Join(single, "drive_c", "users", "dyoung")))
 	got := wineprefix.FindUser(single)
 	assert.Empty(t, got.Name)
-	assert.Equal(t, "dyoung", got.Outside)
+	assert.Equal(t, "dyoung", got.Refused)
+	assert.ErrorIs(t, got.Err, wineprefix.ErrUserOutsidePrefix)
 
 	proton := makeCompatdata(t, filepath.Join(base, "lib"), "1", time.Now(), "Public")
 	require.NoError(t, os.Symlink(outside, filepath.Join(proton, "drive_c", "users", "steamuser")))
 	got = wineprefix.FindUser(proton)
 	assert.Empty(t, got.Name)
-	assert.Equal(t, "steamuser", got.Outside)
+	assert.Equal(t, "steamuser", got.Refused)
+	assert.ErrorIs(t, got.Err, wineprefix.ErrUserOutsidePrefix)
 
 	// A link that stays under drive_c/users is followed: here into a
 	// folder under Public, which is still inside the prefix.
@@ -280,5 +282,6 @@ func TestFindUser_RefusesAUserDirectoryOutsideThePrefix(t *testing.T) {
 	require.NoError(t, os.Symlink(filepath.Join("Public", "real"), filepath.Join(inside, "drive_c", "users", "dyoung")))
 	got = wineprefix.FindUser(inside)
 	assert.Equal(t, "dyoung", got.Name)
-	assert.Empty(t, got.Outside)
+	assert.Empty(t, got.Refused)
+	assert.NoError(t, got.Err)
 }
