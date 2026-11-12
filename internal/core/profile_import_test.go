@@ -560,7 +560,7 @@ func TestApplyImport_InstallLoop_RecordsFileVersion(t *testing.T) {
 	assert.Equal(t, "1.0", installed.Version, "DB row must record the selected file's version, not the mod's latest")
 
 	gameCache := svc.GetGameCache(game)
-	assert.True(t, gameCache.Exists("g1", "src", "mod1", "1.0"), "cache must be keyed by the installed file's version")
+	assert.True(t, gameCache.Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}), "cache must be keyed by the installed file's version")
 }
 
 // TestApplyImport_StoredIDsGone_HealsToRecordedVersion is #96's ApplyImport
@@ -740,7 +740,7 @@ func TestApplyImport_Downgrade_EndToEnd(t *testing.T) {
 	svc.RegisterSource(mock)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}, "mod1.esp", []byte("new-payload")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
@@ -780,7 +780,7 @@ func TestApplyImport_Downgrade_EndToEnd(t *testing.T) {
 	assert.Equal(t, []string{"9"}, installed.FileIDs, "must have selected the archived 1.0 file, not the primary 1.5 file")
 	assert.True(t, installed.Deployed, "the row must record that files are actually live on disk")
 
-	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "the downgraded version must be cached")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}), "the downgraded version must be cached")
 
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	assert.True(t, os.IsNotExist(err), "the obsolete 1.5 file must be removed by Replace, not left behind by a bare Install")
@@ -817,9 +817,9 @@ func TestApplyImport_FullyMarkedCache_SkipsDownload(t *testing.T) {
 	// cached as a real extract-mode download leaves it: the archive member on
 	// disk plus file "9"'s completion marker.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.0", "mod1-old.esp", []byte("old-payload")))
-	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "src", "mod1", "1.0"), "9"))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}, "mod1.esp", []byte("new-payload")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}, "mod1-old.esp", []byte("old-payload")))
+	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}), "9"))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
@@ -1158,8 +1158,8 @@ func TestPlanImport_CrossProfileMod_PartialCacheEntryIsNotAlreadyCached(t *testi
 	// The row records two files; only one ever finished downloading, so only
 	// its completion marker is on disk.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "alpha", "1.0.0", "one.esp", []byte("1")))
-	require.NoError(t, cache.MarkFileCompleteWithMembers(gameCache.ModPath(game.ID, "src", "alpha", "1.0.0"), "f1", []string{"one.esp"}))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "alpha", Version: "1.0.0"}, "one.esp", []byte("1")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "alpha", Version: "1.0.0"}), "f1", []string{"one.esp"}))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "alpha", SourceID: "src", Name: "Alpha", Version: "1.0.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -1215,7 +1215,7 @@ func TestApplyImport_CrossProfilePick_ReplacesTheLiveOlderDeployment(t *testing.
 	svc.RegisterSource(mock)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}, "mod1.esp", []byte("new-payload")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
@@ -1311,14 +1311,14 @@ func TestApplyImport_CrossProfile_OneVersionOnDisk(t *testing.T) {
 		{"cache complete", func(t *testing.T, svc *core.Service, game *domain.Game) {
 			t.Helper()
 			gc := svc.GetGameCache(game)
-			require.NoError(t, gc.Store(game.ID, "src", "mod1", wanted, "mod1-old.esp", []byte("old-payload")))
+			require.NoError(t, gc.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: wanted}, "mod1-old.esp", []byte("old-payload")))
 			require.NoError(t, cache.MarkFileCompleteWithMembers(
-				gc.ModPath(game.ID, "src", "mod1", wanted), "9", []string{"mod1-old.esp"}))
+				gc.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: wanted}), "9", []string{"mod1-old.esp"}))
 		}},
 		{"cache half-populated", func(t *testing.T, svc *core.Service, game *domain.Game) {
 			t.Helper()
 			// The payload without the marker: a broken-off download run.
-			require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "mod1", wanted, "mod1-old.esp", []byte("old-payload")))
+			require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: wanted}, "mod1-old.esp", []byte("old-payload")))
 		}},
 		{"cache absent", func(*testing.T, *core.Service, *domain.Game) {}},
 	}
@@ -1344,7 +1344,7 @@ func TestApplyImport_CrossProfile_OneVersionOnDisk(t *testing.T) {
 					gameCache := svc.GetGameCache(game)
 					// The live deployment's own cache entry: Install reads it
 					// now, and Replace reads it again to know what to remove.
-					require.NoError(t, gameCache.Store(game.ID, "src", "mod1", live, "mod1.esp", []byte("new-payload")))
+					require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: live}, "mod1.esp", []byte("new-payload")))
 					cs.store(t, svc, game)
 
 					for _, p := range others {
@@ -1432,8 +1432,8 @@ func TestApplyImport_TwoLiveOtherVersions_ConvergesTheFirstOnly(t *testing.T) {
 	// Two live deployments of one mod, at two versions, under two profiles.
 	// Each needs its own cache entry: Install reads it to deploy, and
 	// Replace reads it again to know what to remove.
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "2.0", "mod1-two.esp", []byte("two-payload")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}, "mod1.esp", []byte("new-payload")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "2.0"}, "mod1-two.esp", []byte("two-payload")))
 
 	live := map[string]string{"aaa": "1.5", "mmm": "2.0"}
 	fileIDs := map[string][]string{"1.5": {"10"}, "2.0": {"11"}}

@@ -24,6 +24,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -379,7 +380,7 @@ func TestProfileImport_ANonActiveProfileIsRecordedOnly(t *testing.T) {
 		require.NoError(t, os.Remove(filepath.Join(f.gameDir, "aonly.esp")))
 		_, err := f.svc.UninstallMod(ctx, f.game, "a", "src", "aonly", core.UninstallOptions{KeepCache: true})
 		require.NoError(t, err)
-		require.NoError(t, f.svc.GetGameCache(f.game).Store(f.game.ID, "src", "aonly", "1.0", "aonly.esp", []byte("aonly")))
+		require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: f.game.ID, SourceID: "src", ModID: "aonly", Version: "1.0"}, "aonly.esp", []byte("aonly")))
 		f.row(t, "b", "aonly", true, false)
 
 		plan, err := f.svc.PlanImport(ctx, f.game, doc("a"))

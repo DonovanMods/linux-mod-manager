@@ -19,6 +19,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,7 +39,7 @@ func mixedFlowServer(t *testing.T) (*Server, *core.Service, *domain.Game) {
 	deployFixtureProfile(t, s, game)
 	_, err := pm.Create(ctx, game.ID, "alt")
 	require.NoError(t, err)
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, fixtureSourceID, "m2", "1.0", altFile, []byte("alt bytes")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: "m2", Version: "1.0"}, altFile, []byte("alt bytes")))
 	for _, id := range []string{"m1", "m2"} {
 		require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 			Mod:          domain.Mod{ID: id, SourceID: fixtureSourceID, Name: "Mod " + id, Version: "1.0", GameID: game.ID},

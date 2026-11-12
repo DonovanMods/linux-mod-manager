@@ -307,7 +307,7 @@ func TestApplyProfileSync_MergedPakSyncFailure_IsAWarning(t *testing.T) {
 
 	const modID, version, fileID = "bear-mount", "1.0", "exmodz-file"
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, version, cache.RetainedSourceName(fileID), []byte("bear-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: modID, Version: version}, cache.RetainedSourceName(fileID), []byte("bear-bytes")))
 	seedSyncInstalledMod(t, svc, game, "fake-compiler", modID, "Bear Mount", version, "default", true, []string{fileID})
 
 	plan, err := svc.PlanProfileSync(context.Background(), game, "default")
@@ -338,7 +338,7 @@ func TestApplyProfileSync_MissingProfileWithEmptyDiff_CreatesProfileWithoutSynci
 	// core's private mergedPakModID/mergedPakVersion (same convention as
 	// merged_pak_hooks_test.go).
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, domain.SourceMerged, "merged-pak", "merged", "zzz_LMM_Merged_P.pak", []byte("merged-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: "merged-pak", Version: "merged"}, "zzz_LMM_Merged_P.pak", []byte("merged-bytes")))
 
 	plan, err := svc.PlanProfileSync(context.Background(), game, "fresh")
 	require.NoError(t, err)
@@ -357,7 +357,7 @@ func TestApplyProfileSync_MissingProfileWithEmptyDiff_CreatesProfileWithoutSynci
 	_, gErr := svc.NewProfileManager().Get(context.Background(), game.ID, "fresh")
 	require.NoError(t, gErr, "the missing profile is still created")
 
-	assert.True(t, gameCache.Exists(game.ID, domain.SourceMerged, "merged-pak", "merged"),
+	assert.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: "merged-pak", Version: "merged"}),
 		"an empty-diff sync must leave the merged pak alone")
 }
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -186,8 +187,8 @@ func TestRemoval_ACompileRefusalStillRoutesThroughBepInEx(t *testing.T) {
 	require.NoError(t, svc.ExecForTest(ctx,
 		`INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id) VALUES (?, ?, ?, ?, ?)`,
 		game.ID, "default", "BepInEx/config/recorded.cfg", mods[0].SourceID, mods[0].ID))
-	cache := svc.GetGameCache(game)
-	require.NoError(t, cache.Store(game.ID, mods[0].SourceID, mods[0].ID, mods[0].Version, "BepInEx/config/recorded.cfg", []byte("x")))
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: mods[0].SourceID, ModID: mods[0].ID, Version: mods[0].Version}, "BepInEx/config/recorded.cfg", []byte("x")))
 
 	game = refuse(t, svc, game, refusals["bepinex with compile mode"])
 	plan, err := svc.PlanPurge(ctx, game, "default", core.PurgeOptions{})

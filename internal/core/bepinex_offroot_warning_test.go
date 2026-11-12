@@ -21,6 +21,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -160,7 +161,7 @@ func TestOffRootBepInExArchive_Download(t *testing.T) {
 			require.NoError(t, err)
 			_, err = fixture.svc.ApplyInstall(ctx, fixture.game, plan, core.InstallOptions{}, nil)
 			require.NoError(t, err)
-			require.NoError(t, fixture.svc.GetGameCache(fixture.game).Delete(fixture.game.ID, fixture.mod.SourceID, fixture.mod.ID, fixture.mod.Version))
+			require.NoError(t, fixture.svc.GetGameCache(fixture.game).Delete(cache.Key{GameID: fixture.game.ID, SourceID: fixture.mod.SourceID, ModID: fixture.mod.ID, Version: fixture.mod.Version}))
 			live = nil
 			result, err := fixture.svc.DeployProfile(ctx, fixture.game, "default", core.DeployOptions{}, warningsIn(&live))
 			require.NoError(t, err)

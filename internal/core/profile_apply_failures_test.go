@@ -16,6 +16,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,7 +44,7 @@ func TestProfileApply_AFailedModMakesTheApplyIncomplete(t *testing.T) {
 	require.Len(t, plan.ToEnable, 2)
 	// gone's deploy fails at the enable: its cache entry is pruned after
 	// the plan.
-	require.NoError(t, svc.GetGameCache(game).Delete(game.ID, "src", "gone", "1.0"))
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: "src", ModID: "gone", Version: "1.0"}))
 
 	result, err := svc.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, nil)
 

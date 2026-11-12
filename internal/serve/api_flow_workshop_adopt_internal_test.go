@@ -17,6 +17,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -127,7 +128,7 @@ func TestAPIFlow_WorkshopAdopt_TracksTheItemAndWritesNoFiles(t *testing.T) {
 	assert.Equal(t, modPathBefore, dirEntryNames(t, game.ModPath),
 		"nothing may be written under the game's mod directory")
 	assert.False(t,
-		svc.GetGameCache(game).Exists(game.ID, workshopFixtureSourceID, "3617086610", "7987119735124793734"),
+		svc.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: workshopFixtureSourceID, ModID: "3617086610", Version: "7987119735124793734"}),
 		"lmm downloaded nothing, so it caches nothing")
 	assert.FileExists(t, filepath.Join(steamDir, "mod.pak"), "Steam's own file is untouched")
 }

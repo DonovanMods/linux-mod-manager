@@ -135,14 +135,14 @@ func (s *Service) applyAdapterCopyOnce(game *domain.Game, mods []*domain.Install
 // entry a prune removed), and reporting that here would duplicate the
 // per-file walk's own missing-file finding.
 func seedCopyOnceFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, sourceID, modID, version string) error {
-	files, err := gameCache.ListFiles(game.ID, sourceID, modID, version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return fmt.Errorf("listing cache files for %s: %w", domain.ModKey(sourceID, modID), err)
 	}
-	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 	for _, rel := range adapterCopyOnceFiles(a, game, files) {
 		// M2: the containment guard belongs BESIDE the write, the way
 		// applyProfileOverrides has one for an override path. Cache

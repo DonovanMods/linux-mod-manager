@@ -17,6 +17,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,7 @@ func TestProfileSwitch_AFailedModIsReportedAndFailsTheSwitch(t *testing.T) {
 	f.deployed(t, "default", "old", domain.LinkCopy, map[string]string{"old.esp": "old"}, nil)
 	cachedRow(t, f.svc, f.game, "default", "on", "unknown", map[string]string{"on.esp": "on"})
 	cachedRow(t, f.svc, f.game, "default", "bad", "unknown", map[string]string{"bad.esp": "bad"})
-	unreadable := f.svc.GetGameCache(f.game).GetFilePath("sky", "local", "bad", "unknown", "bad.esp")
+	unreadable := f.svc.GetGameCache(f.game).GetFilePath(cache.Key{GameID: "sky", SourceID: "local", ModID: "bad", Version: "unknown"}, "bad.esp")
 	require.NoError(t, os.Chmod(unreadable, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o644) })
 

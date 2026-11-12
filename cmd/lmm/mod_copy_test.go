@@ -7,6 +7,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ func setupDoModCopyTest(t *testing.T) (*core.Service, *domain.Game) {
 func seedCopyableMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, version string) {
 	t.Helper()
 	seedLockableMod(t, svc, game, modID, name, version)
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", modID, version, modID+".esp", []byte("data")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: modID, Version: version}, modID+".esp", []byte("data")))
 }
 
 func createCopyDest(t *testing.T, svc *core.Service, game *domain.Game, name string) {

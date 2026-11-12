@@ -37,6 +37,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
@@ -3927,7 +3928,7 @@ func TestE2E_HealthCard_NotFixableRowNamesTheReason(t *testing.T) {
 	svc, game := newFixtureServiceWithSource(t, src)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake", ModID: "boots", Version: "1.0"}, "f1", []byte("content")))
 	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -3989,7 +3990,7 @@ func newE2EFixtureWithTwoFixableFindings(t *testing.T) e2eFixture {
 		{"alpha", "Alpha Mod", "fa"}, {"beta", "Beta Mod", "fb"},
 	} {
 		gameCache := svc.GetGameCache(game)
-		require.NoError(t, gameCache.Store(game.ID, "fake", m.id, "1.0", m.fileID, []byte("content")))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake", ModID: m.id, Version: "1.0"}, m.fileID, []byte("content")))
 		require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
 			Mod:          domain.Mod{ID: m.id, SourceID: "fake", Name: m.name, Version: "1.0", GameID: game.ID},
 			ProfileName:  "default",
@@ -4713,7 +4714,7 @@ func TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelec
 	require.NoError(t, err, "Alpha - never selected the second time around - must NOT have been uninstalled")
 	assert.Equal(t, "1.0", alpha.Version)
 	gameCache := f.Svc.GetGameCache(f.Game)
-	assert.True(t, gameCache.Exists(f.Game.ID, "fake", "a", "1.0"), "Alpha's own cache entry must be untouched")
+	assert.True(t, gameCache.Exists(cache.Key{GameID: f.Game.ID, SourceID: "fake", ModID: "a", Version: "1.0"}), "Alpha's own cache entry must be untouched")
 
 	assert.Empty(t, f.BrowserErrors())
 }
@@ -6571,7 +6572,7 @@ func TestE2E_AdvancedOptionsReachTheFlow(t *testing.T) {
 		})
 	}, 10*time.Second, 100*time.Millisecond, "the uninstall must actually have run")
 
-	assert.True(t, f.Svc.GetGameCache(f.Game).Exists(f.Game.ID, "fake", "a", "1.0"),
+	assert.True(t, f.Svc.GetGameCache(f.Game).Exists(cache.Key{GameID: f.Game.ID, SourceID: "fake", ModID: "a", Version: "1.0"}),
 		"--keep-cache must have kept the cached download the default would have deleted")
 	assert.Empty(t, f.BrowserErrors())
 }

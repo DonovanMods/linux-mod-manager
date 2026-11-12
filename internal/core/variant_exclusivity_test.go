@@ -21,6 +21,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -155,7 +156,7 @@ func TestApplyInstall_StrictPath_TargetFileIDs_MixedVariants_Rejected(t *testing
 
 	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for a rejected mixed selection")
 	gameCache := svc.GetGameCache(game)
-	require.False(t, gameCache.Exists(game.ID, "mc", "mod1", "1.0"), "a rejected selection must leave no cache entry")
+	require.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "mc", ModID: "mod1", Version: "1.0"}), "a rejected selection must leave no cache entry")
 }
 
 // TestApplyInstall_StrictPath_CallerSuppliedMixedVariantFiles_Rejected is
@@ -180,7 +181,7 @@ func TestApplyInstall_StrictPath_CallerSuppliedMixedVariantFiles_Rejected(t *tes
 
 	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for a rejected mixed selection")
 	gameCache := svc.GetGameCache(game)
-	require.False(t, gameCache.Exists(game.ID, "mc", "mod1", "1.0"), "a rejected selection must leave no cache entry")
+	require.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "mc", ModID: "mod1", Version: "1.0"}), "a rejected selection must leave no cache entry")
 }
 
 // TestApplyInstall_BatchPath_TargetFileIDs_MixedVariants_Rejected is the
@@ -217,7 +218,7 @@ func TestApplyInstall_BatchPath_TargetFileIDs_MixedVariants_Rejected(t *testing.
 
 	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for a rejected mixed selection")
 	gameCache := svc.GetGameCache(game)
-	require.False(t, gameCache.Exists(game.ID, "mc", "mod1", "1.0"), "a rejected selection must leave no cache entry")
+	require.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "mc", ModID: "mod1", Version: "1.0"}), "a rejected selection must leave no cache entry")
 }
 
 // seedBeforeAllSentinelHook seeds game's install.before_all hook to touch

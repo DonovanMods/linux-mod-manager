@@ -12,6 +12,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -108,7 +109,7 @@ func TestDownloadMod_FallsBackToFetchWhenTheSourceServesNoURL(t *testing.T) {
 
 	// The bytes are in the cache, as an ORDINARY mod: nothing about the
 	// fetch path leaves a Workshop-shaped trace downstream.
-	cached, err := svc.GetGameCache(game).ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	cached, err := svc.GetGameCache(game).ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"mod.txt"}, cached)
 
@@ -145,7 +146,7 @@ func TestDownloadMod_RefusesAFetchedPathOutsideTheStagingDirectory(t *testing.T)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "outside the staging directory")
 
-	_, cacheErr := svc.GetGameCache(game).ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	_, cacheErr := svc.GetGameCache(game).ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	assert.Error(t, cacheErr, "nothing may be ingested from outside the staging directory")
 }
 
@@ -253,7 +254,7 @@ func TestDownloadMod_ExactFileSizerMismatchIsAHardFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "size mismatch")
 
-	_, cacheErr := svc.GetGameCache(game).ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	_, cacheErr := svc.GetGameCache(game).ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	assert.Error(t, cacheErr, "a size-mismatched download must not reach the cache")
 }
 

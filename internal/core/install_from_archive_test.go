@@ -9,6 +9,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -189,7 +190,7 @@ func TestInstallFromArchive_Mismatch_RefusedUntilAccepted(t *testing.T) {
 	assert.Contains(t, err.Error(), "install from it anyway with --accept-mismatch")
 	_, err = f.svc.GetInstalledMod(context.Background(), "msrc", "43", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "a refusal installs nothing")
-	assert.False(t, f.svc.GetGameCache(f.game).Exists("g1", "msrc", "43", "1.2c"), "and caches nothing")
+	assert.False(t, f.svc.GetGameCache(f.game).Exists(cache.Key{GameID: "g1", SourceID: "msrc", ModID: "43", Version: "1.2c"}), "and caches nothing")
 
 	plan = f.plan(t, archive, core.ImportArchiveOptions{ExpectedFileID: "300"})
 	_, err = f.apply(t, plan, core.ImportArchiveOptions{ExpectedFileID: "300", AcceptMismatch: true})

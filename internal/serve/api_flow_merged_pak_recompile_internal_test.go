@@ -96,7 +96,7 @@ func newStaleMergedPakServer(t *testing.T) (*Server, *core.Service, *domain.Game
 	require.NoError(t, svc.SetDefaultGame(ctx, game.ID))
 
 	for _, id := range []string{goneMemberID, "kept"} {
-		require.NoError(t, svc.GetGameCache(game).Store(game.ID, fixtureSourceID, id, "1.0",
+		require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: id, Version: "1.0"},
 			cache.RetainedSourceName("file.exmodz"), []byte(id+";")))
 		require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 			Mod:         domain.Mod{ID: id, SourceID: fixtureSourceID, Name: id, Version: "1.0", GameID: game.ID},

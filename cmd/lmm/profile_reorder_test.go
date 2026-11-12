@@ -247,8 +247,8 @@ func TestDoProfileReorder_DeployCompile_ResyncsMergedPak(t *testing.T) {
 	registerCompileSource(svc, compiler)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "bear-mount", "1.0", cache.RetainedSourceName("exmodz-a"), []byte("A")))
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "wolf-mount", "1.0", cache.RetainedSourceName("exmodz-b"), []byte("B")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "bear-mount", Version: "1.0"}, cache.RetainedSourceName("exmodz-a"), []byte("A")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "wolf-mount", Version: "1.0"}, cache.RetainedSourceName("exmodz-b"), []byte("B")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "bear-mount", SourceID: "fake-compiler", Name: "Bear Mount", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",

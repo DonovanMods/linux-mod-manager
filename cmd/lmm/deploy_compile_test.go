@@ -55,7 +55,7 @@ func seedCompileExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, mo
 	t.Helper()
 	ensureDefaultProfile(t, svc, game)
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, "1.0", cache.RetainedSourceName(fileID), []byte(name+"-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: modID, Version: "1.0"}, cache.RetainedSourceName(fileID), []byte(name+"-bytes")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -76,10 +76,10 @@ func seedCompilePakMod(t *testing.T, svc *core.Service, game *domain.Game, modID
 	ensureDefaultProfile(t, svc, game)
 	gameCache := svc.GetGameCache(game)
 	pakContent := []byte(name + "-pak-bytes")
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, "1.0", cache.RetainedSourceName(fileID), pakContent))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: modID, Version: "1.0"}, cache.RetainedSourceName(fileID), pakContent))
 	member := modID + ".pak"
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, "1.0", member, pakContent))
-	versionDir := gameCache.ModPath(game.ID, "fake-compiler", modID, "1.0")
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: modID, Version: "1.0"}, member, pakContent))
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: modID, Version: "1.0"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{member}))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: name, Version: "1.0", GameID: game.ID},

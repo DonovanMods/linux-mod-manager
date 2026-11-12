@@ -8,6 +8,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,7 +63,7 @@ func TestSaveGame_CachePathMoveRequiresPurgeBeforeRedeploy(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	assert.Equal(t, "user bytes", readLive(t, user))
 	require.NoError(t, f.svc.SaveGame(ctx, moved))
-	require.NoError(t, f.svc.GetGameCache(moved).Store("sky", "local", "a", "unknown", "Data/a.esp", []byte("mod a from new cache")))
+	require.NoError(t, f.svc.GetGameCache(moved).Store(cache.Key{GameID: "sky", SourceID: "local", ModID: "a", Version: "unknown"}, "Data/a.esp", []byte("mod a from new cache")))
 	_, err = f.svc.DeployProfile(ctx, moved, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 	info, err := os.Lstat(link)

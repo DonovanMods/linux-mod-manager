@@ -9,6 +9,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ func TestDoPurge_RemovesStrandedFilesWithNoModLeft(t *testing.T) {
 	game.InstallPath, game.ModPath = root, filepath.Join(root, "Data")
 	game.LinkMethod, game.LinkMethodExplicit = domain.LinkCopy, true
 	require.NoError(t, svc.SaveGame(ctx, game))
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "m", "1.0", "plugin.esp", []byte("mod")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "m", Version: "1.0"}, "plugin.esp", []byte("mod")))
 	seedSyncInstalledMod(t, svc, game, "src", "m", "Mod M", "1.0", "default", true, nil)
 	require.NoError(t, getProfileManager(svc).AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "m", Version: "1.0"}))
 	_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)

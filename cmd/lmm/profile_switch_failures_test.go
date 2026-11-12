@@ -8,6 +8,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ func profileSwitchWithAFailure(t *testing.T) (*core.Service, *domain.Game) {
 	pm := getProfileManager(svc)
 	_, err := pm.Create(ctx, game.ID, "alt")
 	require.NoError(t, err)
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "on", "1.0", "on.esp", []byte("on")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "on", Version: "1.0"}, "on.esp", []byte("on")))
 	seedSyncInstalledMod(t, svc, game, "src", "on", "Mod On", "1.0", "alt", false, nil)
 	require.NoError(t, pm.AddMod(ctx, game.ID, "alt", domain.ModReference{SourceID: "src", ModID: "on", Version: "1.0"}))
 	require.NoError(t, pm.AddMod(ctx, game.ID, "alt", domain.ModReference{SourceID: "local", ModID: "a", Version: "2.0"}))

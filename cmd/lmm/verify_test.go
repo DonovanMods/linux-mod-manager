@@ -13,6 +13,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -56,7 +57,7 @@ func setupDoVerifyVersionTest(t *testing.T, recordedVersion string, fileIDs []st
 	}))
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", recordedVersion, "mod1.esp", []byte("plugin content")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: recordedVersion}, "mod1.esp", []byte("plugin content")))
 	for _, id := range fileIDs {
 		require.NoError(t, svc.SaveFileChecksum(context.Background(), "test-src", "mod1", game.ID, "default", id, "deadbeef"))
 	}
@@ -276,7 +277,7 @@ func TestDoVerify_FileCountPrePass_ListFilesFails_SurfacedAsWarning(t *testing.T
 	})
 
 	gameCache := svc.GetGameCache(game)
-	modDir := gameCache.ModPath(game.ID, "test-src", "mod1", "1.0")
+	modDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"})
 	require.NoError(t, os.Chmod(modDir, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(modDir, 0o755) }) // restore before TempDir's own cleanup removes it
 
@@ -729,7 +730,7 @@ func TestDoVerify_Fix_NoChecksum_JSONNotesRedownloadFailure(t *testing.T) {
 	cmd, svc, game, _ := setupDoVerifyRedownloadTest(t)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("plugin content")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}, "mod1.esp", []byte("plugin content")))
 
 	oldJSON := jsonOutput
 	jsonOutput = true
@@ -884,7 +885,7 @@ func TestDoVerify_Fix_DirectorySource_ReingestDropsRemovedMember(t *testing.T) {
 		}, true)
 
 	gameCache := svc.GetGameCache(game)
-	files, err := gameCache.ListFiles(game.ID, "my-mods", "BiggerBackpack", "1.2.0")
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"})
 	require.NoError(t, err)
 	require.Contains(t, files, "stale.txt", "fixture: the member must be in the cache before the source shrinks")
 
@@ -895,7 +896,7 @@ func TestDoVerify_Fix_DirectorySource_ReingestDropsRemovedMember(t *testing.T) {
 	})
 	assert.Contains(t, out, "checksum populated")
 
-	files, err = gameCache.ListFiles(game.ID, "my-mods", "BiggerBackpack", "1.2.0")
+	files, err = gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"})
 	require.NoError(t, err)
 	assert.NotContains(t, files, "stale.txt", "#166: the re-ingest must drop the member deleted from the source")
 

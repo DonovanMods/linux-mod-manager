@@ -60,8 +60,8 @@ func newCrossProfileFixture(t *testing.T, lm domain.LinkMethod) crossProfileFixt
 
 	v1 := &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g"}
 	v2 := &domain.Mod{ID: "mod1", SourceID: "src", Version: "2.0", GameID: "g"}
-	require.NoError(t, modCache.Store("g", v1.SourceID, v1.ID, v1.Version, "Data/shared.esp", []byte("v1 bytes")))
-	require.NoError(t, modCache.Store("g", v2.SourceID, v2.ID, v2.Version, "Data/only-new.esp", []byte("v2 bytes")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: v1.SourceID, ModID: v1.ID, Version: v1.Version}, "Data/shared.esp", []byte("v1 bytes")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: v2.SourceID, ModID: v2.ID, Version: v2.Version}, "Data/only-new.esp", []byte("v2 bytes")))
 
 	svc := &Service{dataDir: dataDir}
 	store := svc.originalsStoreFor("g")

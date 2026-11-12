@@ -157,8 +157,8 @@ func TestDownloadIngest_BepInEx_WrappedPackageDropsTheMetadataInsideTheWrapper(t
 	}, true)
 	require.NoError(t, fixture.download(t))
 
-	cached, err := fixture.svc.GetGameCache(fixture.game).ListFiles(
-		fixture.game.ID, fixture.mod.SourceID, fixture.mod.ID, fixture.mod.Version)
+	cached, err := fixture.svc.GetGameCache(fixture.game).ListFiles(cache.Key{GameID: fixture.game.ID, SourceID: fixture.mod.SourceID, ModID: fixture.mod.ID, Version: fixture.mod.Version})
+
 	require.NoError(t, err)
 	slashed := make([]string, 0, len(cached))
 	for _, c := range cached {
@@ -192,8 +192,8 @@ func TestDownloadIngest_BepInEx_RefusedIngestKeepsTheArchiveForTheRetry(t *testi
 	require.ErrorAs(t, err, &loaderErr)
 	assert.Equal(t, int64(1), fixture.downloads.Load(), "the archive was fetched once")
 
-	assert.False(t, fixture.svc.GetGameCache(fixture.game).Exists(
-		fixture.game.ID, fixture.mod.SourceID, fixture.mod.ID, fixture.mod.Version),
+	assert.False(t, fixture.svc.GetGameCache(fixture.game).Exists(cache.Key{GameID: fixture.game.ID, SourceID: fixture.mod.SourceID, ModID: fixture.mod.ID, Version: fixture.mod.Version}),
+
 		"a refused ingest commits no cache entry")
 
 	// The user does what the error told them to.
@@ -208,8 +208,8 @@ func TestDownloadIngest_BepInEx_RefusedIngestKeepsTheArchiveForTheRetry(t *testi
 	assert.Equal(t, int64(1), fixture.downloads.Load(),
 		"the retry reuses the archive the refusal kept - no second download")
 
-	cached, err := fixture.svc.GetGameCache(fixture.game).ListFiles(
-		fixture.game.ID, fixture.mod.SourceID, fixture.mod.ID, fixture.mod.Version)
+	cached, err := fixture.svc.GetGameCache(fixture.game).ListFiles(cache.Key{GameID: fixture.game.ID, SourceID: fixture.mod.SourceID, ModID: fixture.mod.ID, Version: fixture.mod.Version})
+
 	require.NoError(t, err)
 	require.Len(t, cached, 1)
 	assert.Equal(t, filepath.FromSlash("BepInEx/plugins/Thing.dll"), cached[0])
@@ -343,8 +343,8 @@ func TestDownloadIngest_BepInEx_PluginFolderReachesTheCacheNormalised(t *testing
 	}, true)
 	require.NoError(t, fixture.download(t))
 
-	cached, err := fixture.svc.GetGameCache(fixture.game).ListFiles(
-		fixture.game.ID, fixture.mod.SourceID, fixture.mod.ID, fixture.mod.Version)
+	cached, err := fixture.svc.GetGameCache(fixture.game).ListFiles(cache.Key{GameID: fixture.game.ID, SourceID: fixture.mod.SourceID, ModID: fixture.mod.ID, Version: fixture.mod.Version})
+
 	require.NoError(t, err)
 	slashed := make([]string, 0, len(cached))
 	for _, c := range cached {
@@ -380,8 +380,8 @@ func TestDownloadIngest_BepInEx_DetectedInstallWidensTheGateAndSaysSo(t *testing
 		fixture.game, &fixture.mod, &fixture.file, sink)
 	require.NoError(t, err, "a detected install must not be refused as an undeclared game")
 
-	cached, err := fixture.svc.GetGameCache(fixture.game).ListFiles(
-		fixture.game.ID, fixture.mod.SourceID, fixture.mod.ID, fixture.mod.Version)
+	cached, err := fixture.svc.GetGameCache(fixture.game).ListFiles(cache.Key{GameID: fixture.game.ID, SourceID: fixture.mod.SourceID, ModID: fixture.mod.ID, Version: fixture.mod.Version})
+
 	require.NoError(t, err)
 	slashed := make([]string, 0, len(cached))
 	for _, c := range cached {
@@ -441,8 +441,8 @@ func TestDownloadIngest_BepInEx_ALooseDLLIsNamedAfterTheMod(t *testing.T) {
 	}, true)
 	require.NoError(t, fixture.download(t))
 
-	entry := fixture.svc.GetGameCache(fixture.game).ModPath(
-		fixture.game.ID, "bepinex-repo", fixture.mod.ID, fixture.file.Version)
+	entry := fixture.svc.GetGameCache(fixture.game).ModPath(cache.Key{GameID: fixture.game.ID, SourceID: "bepinex-repo", ModID: fixture.mod.ID, Version: fixture.file.Version})
+
 	assert.Equal(t, []string{
 		"BepInEx/plugins/Thing/Thing.dll",
 		"BepInEx/plugins/Thing/Thing.xml",

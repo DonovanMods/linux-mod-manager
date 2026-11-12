@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
@@ -351,7 +352,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			if prior.Version != ref.Version {
 				recordPrior(key, prior)
 			}
-		case !s.GetGameCache(game).Exists(game.ID, row.SourceID, row.ID, row.Version):
+		case !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version}):
 			// Cache missing - needs a redownload; preserve the installed
 			// mod's own FileIDs (not the profile YAML's, which may be
 			// empty or stale).
@@ -546,7 +547,7 @@ func (s *Service) switchReplacement(game *domain.Game, plan *SwitchPlan, key, ve
 	if !ok || !prior.Deployed || prior.Version == version {
 		return prior, false
 	}
-	return prior, s.GetGameCache(game).Exists(game.ID, prior.SourceID, prior.ID, prior.Version)
+	return prior, s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: prior.SourceID, ModID: prior.ID, Version: prior.Version})
 }
 
 // releaseReplacedRow records that prior - a row under a profile OTHER than
@@ -863,7 +864,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			// match no DownloadableFile, so a name-based check would miss
 			// every archive-based mod and redownload a complete cache.
 			var checksums []fileChecksum // #372 - saved after the DB row below
-			if !s.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
+			if !s.GetGameCache(game).HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, downloadedFileIDs) {
 				downloadFailed := false
 				for _, file := range filesToDownload {
 					progressFn := func(e Event) {

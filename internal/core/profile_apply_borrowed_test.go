@@ -21,6 +21,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,7 +43,7 @@ func borrowedFixture(t *testing.T, game *domain.Game, svc *core.Service, altExtr
 	dir := filepath.Join(svc.ConfigDir(), "games", game.ID, "profiles")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "alt.yaml"), []byte(
 		"name: alt\ngame_id: "+game.ID+"\nmods:\n    - source_id: local\n      mod_id: s\n      version: \"2.0\"\n"+altExtra+"is_default: true\n"), 0o644))
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "local", "s", "2.0", "Data/s.esp", []byte("s 2.0")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "local", ModID: "s", Version: "2.0"}, "Data/s.esp", []byte("s 2.0")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:             domain.Mod{ID: "s", SourceID: "local", Name: "Mod s", Version: "2.0", GameID: game.ID},
 		ProfileName:     "survival",

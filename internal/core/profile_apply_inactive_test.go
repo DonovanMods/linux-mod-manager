@@ -18,6 +18,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,7 +64,7 @@ func TestProfileApply_ANonActiveProfileIsRefused(t *testing.T) {
 		f.profile(t, "survival", false, "mod-s")
 		f.profile(t, "alt", false, "mod-s")
 		f.deployed(t, "default", "mod-a", domain.LinkSymlink, map[string]string{"Data/a.esp": "a"}, nil)
-		require.NoError(t, f.svc.GetGameCache(f.game).Store("sky", "local", "mod-s", "unknown", "Data/s.esp", []byte("s")))
+		require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: "sky", SourceID: "local", ModID: "mod-s", Version: "unknown"}, "Data/s.esp", []byte("s")))
 		require.NoError(t, f.svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 			Mod:         domain.Mod{ID: "mod-s", SourceID: "local", Name: "Mod s", Version: "unknown", GameID: "sky"},
 			ProfileName: "survival", UpdatePolicy: domain.UpdateNotify,

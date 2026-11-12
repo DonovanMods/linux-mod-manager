@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // #310 item 1: discardImportedCacheEntry is the whole of the conflict
@@ -37,7 +38,7 @@ func TestDiscardImportedCacheEntry_ReportsFailedDeletes(t *testing.T) {
 	// Both entries the discard touches: the one the ingest wrote (pre-enrich)
 	// and the one a successful enrichment rename moved it to.
 	for _, e := range []struct{ modID, version string }{{"B1", "unknown"}, {"B1", "1.0"}} {
-		dir := gameCache.ModPath("g1", "acme-source", e.modID, e.version)
+		dir := gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: e.modID, Version: e.version})
 		locked := filepath.Join(dir, "locked")
 		if err := os.MkdirAll(locked, 0o755); err != nil {
 			t.Fatal(err)
@@ -77,24 +78,24 @@ func TestDiscardImportedCacheEntry_QuietOnSuccessAndPreExisting(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir()}
 	mod := &domain.Mod{ID: "B1", SourceID: "acme-source", Version: "1.0", GameID: "g1"}
 	gameCache := svc.GetGameCache(game)
-	if err := gameCache.Store("g1", "acme-source", "B1", "unknown", "a.esp", []byte("a")); err != nil {
+	if err := gameCache.Store(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "B1", Version: "unknown"}, "a.esp", []byte("a")); err != nil {
 		t.Fatal(err)
 	}
 
 	if got := svc.discardImportedCacheEntry(game, &ImportArchiveResult{Mod: mod}, "B1", "unknown", false); got != nil {
 		t.Errorf("a successful cleanup must report nothing, got %v", got)
 	}
-	if gameCache.Exists("g1", "acme-source", "B1", "unknown") {
+	if gameCache.Exists(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "B1", Version: "unknown"}) {
 		t.Error("the entry this call created must be gone")
 	}
 
-	if err := gameCache.Store("g1", "acme-source", "B1", "unknown", "a.esp", []byte("a")); err != nil {
+	if err := gameCache.Store(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "B1", Version: "unknown"}, "a.esp", []byte("a")); err != nil {
 		t.Fatal(err)
 	}
 	if got := svc.discardImportedCacheEntry(game, &ImportArchiveResult{Mod: mod}, "B1", "unknown", true); got != nil {
 		t.Errorf("a pre-existing entry is not this call's to remove, got %v", got)
 	}
-	if !gameCache.Exists("g1", "acme-source", "B1", "unknown") {
+	if !gameCache.Exists(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "B1", Version: "unknown"}) {
 		t.Error("a pre-existing entry must be left alone")
 	}
 }

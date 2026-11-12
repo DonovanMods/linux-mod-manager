@@ -62,14 +62,14 @@ func TestImportMod_DeployCompile_ValidatesAndRetainsNoPerModPak(t *testing.T) {
 	require.Equal(t, 0, result.FilesExtracted)
 
 	gameCache := svc.GetGameCache(game)
-	files, err := gameCache.ListFiles(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version})
 	require.NoError(t, err)
 	require.Empty(t, files)
 
 	// Import has no real DownloadableFile.ID (see the field's own doc
 	// comment) - it keys the retained source by the ARCHIVE'S OWN filename
 	// instead, exactly as the #196-era destName-keying did.
-	retainedPath := gameCache.GetFilePath(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version, cache.RetainedSourceName("Bear_Mount.exmodz"))
+	retainedPath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version}, cache.RetainedSourceName("Bear_Mount.exmodz"))
 	data, err := os.ReadFile(retainedPath)
 	require.NoError(t, err)
 	require.Equal(t, "fake-exmodz-bytes", string(data))
@@ -99,19 +99,19 @@ func TestImportPakRetainsAndDeploysRaw(t *testing.T) {
 
 	gameCache := svc.GetGameCache(game)
 
-	retainedPath := gameCache.GetFilePath(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version, cache.RetainedSourceName("CoolMod.pak"))
+	retainedPath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version}, cache.RetainedSourceName("CoolMod.pak"))
 	retainedData, err := os.ReadFile(retainedPath)
 	require.NoError(t, err)
 	require.Equal(t, "fake-pak-bytes", string(retainedData), "the original pak bytes must be retained")
 
-	deployablePath := gameCache.GetFilePath(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version, "CoolMod.pak")
+	deployablePath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version}, "CoolMod.pak")
 	deployableData, err := os.ReadFile(deployablePath)
 	require.NoError(t, err)
 	require.Equal(t, "fake-pak-bytes", string(deployableData), "a deployable copy of the raw pak must also be staged")
 
 	require.NoError(t, svc.MarkImportedFileCompleteForTest(context.Background(), game, result.Mod, result.RetainedFileID))
 
-	manifests, err := gameCache.FileManifests(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+	manifests, err := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version})
 	require.NoError(t, err)
 	require.True(t, manifests["CoolMod.pak"].Recorded)
 	require.Equal(t, []string{"CoolMod.pak"}, manifests["CoolMod.pak"].Members, "raw-deploy default: the deployable copy is the sole member")

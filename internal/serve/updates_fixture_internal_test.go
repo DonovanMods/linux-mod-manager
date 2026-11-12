@@ -21,6 +21,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -203,7 +204,7 @@ func newUpdatesFixtureServerWith(t *testing.T, src *updatesSource) (*Server, *co
 
 	for _, modID := range updatableModIDs {
 		fileID := updatableFileID(modID, updateFromVersion)
-		require.NoError(t, svc.GetGameCache(game).Store(game.ID, fixtureSourceID, modID, updateFromVersion,
+		require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: modID, Version: updateFromVersion},
 			updatableModFile(modID), []byte(updatableContent(modID, updateFromVersion))))
 		require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 			Mod: domain.Mod{

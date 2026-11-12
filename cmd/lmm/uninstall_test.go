@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -44,7 +45,7 @@ func setupDoUninstallTest(t *testing.T) (*core.Service, *domain.Game) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	require.NoError(t, svc.GetGameCache(game).Store("g1", "src", "1", "1.0", "blocked/plugin.esp", []byte("data")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: "g1", SourceID: "src", ModID: "1", Version: "1.0"}, "blocked/plugin.esp", []byte("data")))
 	pm := svc.NewProfileManager()
 	_, err = pm.Create(context.Background(), "g1", "default")
 	require.NoError(t, err)
@@ -155,7 +156,7 @@ func TestDoUninstall_Verbose_PrintsAllThreeHistoricalNotesByteIdentically(t *tes
 
 	// Block the mod's cache directory with a regular file -> undeploy and
 	// cache-delete both fail deterministically (ENOTDIR, not permissions).
-	modPath := svc.GetGameCache(game).ModPath("g1", "src", "1", "1.0")
+	modPath := svc.GetGameCache(game).ModPath(cache.Key{GameID: "g1", SourceID: "src", ModID: "1", Version: "1.0"})
 	blockedParent := filepath.Dir(modPath)
 	require.NoError(t, os.MkdirAll(filepath.Dir(blockedParent), 0755))
 	require.NoError(t, os.WriteFile(blockedParent, []byte("blocked"), 0644))

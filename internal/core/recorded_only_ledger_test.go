@@ -18,6 +18,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,7 +65,7 @@ func recordedOnlyRemovals() []removalPath {
 		}},
 		{"verify --fix convergence", func(t *testing.T, f *legacyFixture) []string {
 			// The mod no longer ships Data/k.esp, so default's row is stale.
-			entry := f.svc.GetGameCache(f.game).ModPath(f.game.ID, "local", "k", "unknown")
+			entry := f.svc.GetGameCache(f.game).ModPath(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "unknown"})
 			require.NoError(t, os.Remove(filepath.Join(entry, "Data", "k.esp")))
 			report, err := f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Fix: true, Force: true}, nil)
 			require.NoError(t, err)
@@ -145,7 +146,7 @@ func TestVerifyFix_ANonActiveProfileKeepsAUserFileOnlyItRecorded(t *testing.T) {
 		t.Run(method.String(), func(t *testing.T) {
 			f := ledgerState(t, method)
 			f.demote(t)
-			entry := f.svc.GetGameCache(f.game).ModPath(f.game.ID, "local", "k", "unknown")
+			entry := f.svc.GetGameCache(f.game).ModPath(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "unknown"})
 			require.NoError(t, os.Remove(filepath.Join(entry, "Data", "k.esp")))
 			userEdits(method)[0].apply(t, f.kPath())
 

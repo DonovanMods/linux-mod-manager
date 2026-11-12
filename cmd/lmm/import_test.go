@@ -14,6 +14,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -341,7 +342,7 @@ func TestDoImport_ConflictDecline_LeavesAPreExistingCacheEntryIntact(t *testing.
 	createTestArchive(t, archiveBPath, map[string]string{"shared.txt": "from-B"})
 
 	// An entry already lives at exactly that identity.
-	require.NoError(t, svc.GetGameCache(game).Store("g1", "acme-source", "B1", "1.0", "shared.txt", []byte("pre-existing")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "B1", Version: "1.0"}, "shared.txt", []byte("pre-existing")))
 	before := dumpTree(t, svc.GetGameCachePath(game))
 
 	var err error
@@ -357,7 +358,7 @@ func TestDoImport_ConflictDecline_LeavesAPreExistingCacheEntryIntact(t *testing.
 	assert.Equal(t, before, dumpTree(t, svc.GetGameCachePath(game)),
 		"a declined conflict must leave the cache tree exactly as it found it")
 
-	entryDir := svc.GetGameCache(game).ModPath("g1", "acme-source", "B1", "1.0")
+	entryDir := svc.GetGameCache(game).ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "B1", Version: "1.0"})
 	cached, rErr := os.ReadFile(filepath.Join(entryDir, "shared.txt"))
 	require.NoError(t, rErr)
 	assert.Equal(t, "pre-existing", string(cached),
@@ -521,10 +522,10 @@ func TestDoImport_ArchiveWithID_ResolvesFileIDAndStampsMarker(t *testing.T) {
 		"the resolved source file ID must be recorded on the DB row")
 
 	gameCache := svc.GetGameCache(game)
-	assert.True(t, gameCache.HasFileIDs("g1", "acme-source", "999", "2.0", []string{"55"}),
+	assert.True(t, gameCache.HasFileIDs(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "2.0"}, []string{"55"}),
 		"the import-written cache entry must carry the resolved file's completion marker")
 
-	manifests, err := gameCache.FileManifests("g1", "acme-source", "999", "2.0")
+	manifests, err := gameCache.FileManifests(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "2.0"})
 	require.NoError(t, err)
 	require.Contains(t, manifests, "55")
 	assert.True(t, manifests["55"].Recorded, "the marker must carry a recorded member manifest")
@@ -602,6 +603,6 @@ func TestRunImportScan_MatchedSource_ResolvesFileIDAndStampsMarker(t *testing.T)
 	assert.True(t, installed.AdoptedInPlace,
 		"scan imports keep their manual-download semantics regardless of file resolution")
 
-	assert.True(t, svc.GetGameCache(game).HasFileIDs("g1", "acme-source", "42", installed.Version, []string{"77"}),
+	assert.True(t, svc.GetGameCache(game).HasFileIDs(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "42", Version: installed.Version}, []string{"77"}),
 		"the scan-written cache entry must carry the resolved file's completion marker")
 }

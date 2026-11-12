@@ -17,6 +17,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,7 +46,7 @@ func liveOtherVersionState(t *testing.T, altVersion string) (*legacyFixture, str
 		profile, version string
 		deployed         bool
 	}{{"p", "1.0", true}, {"q", "2.0", false}} {
-		require.NoError(t, f.svc.GetGameCache(f.game).Store("sky", "local", "k", row.version, "Data/k.esp", []byte("k "+row.version)))
+		require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: "sky", SourceID: "local", ModID: "k", Version: row.version}, "Data/k.esp", []byte("k "+row.version)))
 		require.NoError(t, f.svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 			Mod:         domain.Mod{ID: "k", SourceID: "local", Name: "K", Version: row.version, GameID: "sky"},
 			ProfileName: row.profile, UpdatePolicy: domain.UpdateNotify, Enabled: true, Deployed: row.deployed, LinkMethod: domain.LinkCopy,

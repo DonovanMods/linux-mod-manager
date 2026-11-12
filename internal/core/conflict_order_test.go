@@ -40,7 +40,7 @@ func TestGetConflictsSortedByOwningModThenPath(t *testing.T) {
 		{"aaa", []string{"b.txt", "d.txt"}},
 	} {
 		for _, f := range owner.files {
-			require.NoError(t, c.Store(game.ID, "nexusmods", owner.id, "1.0", f, []byte(owner.id)))
+			require.NoError(t, c.Store(cache.Key{GameID: game.ID, SourceID: "nexusmods", ModID: owner.id, Version: "1.0"}, f, []byte(owner.id)))
 		}
 		require.NoError(t, inst.Install(context.Background(), game,
 			&domain.Mod{SourceID: "nexusmods", ID: owner.id, Version: "1.0", GameID: game.ID}, "default"))
@@ -48,7 +48,7 @@ func TestGetConflictsSortedByOwningModThenPath(t *testing.T) {
 
 	// The incoming mod claims all four.
 	for _, f := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
-		require.NoError(t, c.Store(game.ID, "nexusmods", "new", "1.0", f, []byte("new")))
+		require.NoError(t, c.Store(cache.Key{GameID: game.ID, SourceID: "nexusmods", ModID: "new", Version: "1.0"}, f, []byte("new")))
 	}
 	conflicts, err := inst.GetConflicts(context.Background(), game,
 		&domain.Mod{SourceID: "nexusmods", ID: "new", Version: "1.0", GameID: game.ID}, "default")

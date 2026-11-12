@@ -201,11 +201,11 @@ func TestProfileImport_CrossProfileMod_CopiesTheChecksum(t *testing.T) {
 	require.NoError(t, err)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "alpha", "1.0.0", "alpha.esp", []byte("a")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "alpha", Version: "1.0.0"}, "alpha.esp", []byte("a")))
 	// The completion marker a real download leaves: without it the entry is
 	// only partially populated and belongs in NeedsRedownload (F6).
 	require.NoError(t, cache.MarkFileCompleteWithMembers(
-		gameCache.ModPath(game.ID, "src", "alpha", "1.0.0"), "f1", []string{"alpha.esp"}))
+		gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "alpha", Version: "1.0.0"}), "f1", []string{"alpha.esp"}))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "alpha", SourceID: "src", Name: "Alpha", Version: "1.0.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -254,9 +254,9 @@ func TestProfileImport_CrossProfileMod_NoChecksumToCopy_IsHonestlyEmpty(t *testi
 	require.NoError(t, err)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "alpha", "1.0.0", "alpha.esp", []byte("a")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "alpha", Version: "1.0.0"}, "alpha.esp", []byte("a")))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(
-		gameCache.ModPath(game.ID, "src", "alpha", "1.0.0"), "f1", []string{"alpha.esp"}))
+		gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "alpha", Version: "1.0.0"}), "f1", []string{"alpha.esp"}))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "alpha", SourceID: "src", Name: "Alpha", Version: "1.0.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -313,9 +313,9 @@ func TestProfileImport_CrossProfileMod_ChecksumReadFailure_IsReported(t *testing
 	require.NoError(t, err)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "alpha", "1.0.0", "alpha.esp", []byte("a")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "alpha", Version: "1.0.0"}, "alpha.esp", []byte("a")))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(
-		gameCache.ModPath(game.ID, "src", "alpha", "1.0.0"), "f1", []string{"alpha.esp"}))
+		gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "alpha", Version: "1.0.0"}), "f1", []string{"alpha.esp"}))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "alpha", SourceID: "src", Name: "Alpha", Version: "1.0.0", GameID: game.ID},
 		ProfileName:  "default",

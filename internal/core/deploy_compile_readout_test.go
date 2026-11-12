@@ -45,7 +45,7 @@ func setupCompileReadoutGame(t *testing.T, svc *core.Service) *domain.Game {
 func seedExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, fileID string) {
 	t.Helper()
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, "1.0", cache.RetainedSourceName(fileID), []byte(name+"-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: modID, Version: "1.0"}, cache.RetainedSourceName(fileID), []byte(name+"-bytes")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -61,7 +61,7 @@ func seedExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, modID, na
 // merge source): it deploys its own file individually even on a compile game.
 func seedLooseMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, fileName string) {
 	t.Helper()
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "fake-compiler", modID, "1.0", fileName, []byte("loose-data")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: modID, Version: "1.0"}, fileName, []byte("loose-data")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -224,7 +224,7 @@ func TestDeployProfile_NonCompile_NoMergeReadout(t *testing.T) {
 	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "a", "1.0", "a.esp", []byte("data")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "a", Version: "1.0"}, "a.esp", []byte("data")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",

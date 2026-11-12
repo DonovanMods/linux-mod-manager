@@ -43,7 +43,7 @@ func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *tes
 			if !strings.Contains(fileID, "exmodz") {
 				continue
 			}
-			require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(fileID), []byte("exmodz-"+modID+"-"+fileID)))
+			require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, cache.RetainedSourceName(fileID), []byte("exmodz-"+modID+"-"+fileID)))
 		}
 		require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 			Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID + " (display)", Version: version, GameID: game.ID},
@@ -108,7 +108,7 @@ func TestClassifyCompileDeployMods_UnreadableRetainedPathWarns(t *testing.T) {
 
 	gameCache := svc.GetGameCache(game)
 	fileID := "exmodz-file"
-	require.NoError(t, gameCache.Store(game.ID, "icarus", "mod1", "1.0", cache.RetainedSourceName(fileID), []byte("retained-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "icarus", ModID: "mod1", Version: "1.0"}, cache.RetainedSourceName(fileID), []byte("retained-bytes")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "icarus", Name: "Mod One", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -121,7 +121,7 @@ func TestClassifyCompileDeployMods_UnreadableRetainedPathWarns(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "mod1", Version: "1.0", FileIDs: []string{fileID}}))
 
-	versionDir := gameCache.ModPath(game.ID, "icarus", "mod1", "1.0")
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "icarus", ModID: "mod1", Version: "1.0"})
 	require.NoError(t, os.Chmod(versionDir, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(versionDir, 0o755) })
 
@@ -159,7 +159,7 @@ func TestClassifyCompileDeployMods_CompilerResolutionFailureWarns(t *testing.T) 
 
 	gameCache := svc.GetGameCache(game)
 	fileID := "exmodz-file"
-	require.NoError(t, gameCache.Store(game.ID, "icarus", "mod1", "1.0", cache.RetainedSourceName(fileID), []byte("retained-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "icarus", ModID: "mod1", Version: "1.0"}, cache.RetainedSourceName(fileID), []byte("retained-bytes")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "icarus", Name: "Mod One", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -219,7 +219,7 @@ func newMergedPakTestGame(t *testing.T) (*core.Service, *domain.Game, string) {
 func seedEnabledExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, version, fileID string, exmodzContent []byte) {
 	t.Helper()
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(fileID), exmodzContent))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, cache.RetainedSourceName(fileID), exmodzContent))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
 		ProfileName:  "default",
@@ -496,7 +496,7 @@ func TestReconcilePakManifests_ConvertedPath_UninstallFailureRetries(t *testing.
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "undeploying raw pak")
 
-	manifests, err := gameCache.FileManifests(game.ID, "fake-compiler", "goodmod", "1.0")
+	manifests, err := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "goodmod", Version: "1.0"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"goodmod.pak"}, manifests["pak"].Members,
 		"a failed Uninstall must NOT flip the manifest to merged-claimed (would be a double-apply)")
@@ -507,7 +507,7 @@ func TestReconcilePakManifests_ConvertedPath_UninstallFailureRetries(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, 2, faulty.undeployCalls, "the retry must call Undeploy again")
 
-	manifests, err = gameCache.FileManifests(game.ID, "fake-compiler", "goodmod", "1.0")
+	manifests, err = gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "goodmod", Version: "1.0"})
 	require.NoError(t, err)
 	require.Empty(t, manifests["pak"].Members, "the retry must converge to merged-claimed")
 }
@@ -545,12 +545,12 @@ func TestReconcilePakManifests_TwoPakFileIDs_EachClaimsOwnMember(t *testing.T) {
 	liteContent := []byte("lite-pak-bytes")
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(mainFileID), mainContent))
-	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, "MainMod.pak", mainContent))
-	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(liteFileID), liteContent))
-	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, "LiteMod.pak", liteContent))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, cache.RetainedSourceName(mainFileID), mainContent))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, "MainMod.pak", mainContent))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, cache.RetainedSourceName(liteFileID), liteContent))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, "LiteMod.pak", liteContent))
 
-	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, mainFileID, nil))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, liteFileID, nil))
 
@@ -569,7 +569,7 @@ func TestReconcilePakManifests_TwoPakFileIDs_EachClaimsOwnMember(t *testing.T) {
 	_, err := svc.ReconcilePakManifestsForTest(context.Background(), game, "default", inst, nil)
 	require.NoError(t, err)
 
-	manifests, err := gameCache.FileManifests(game.ID, sourceID, modID, version)
+	manifests, err := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 	require.NoError(t, err)
 	require.Equal(t, []string{"MainMod.pak"}, manifests[mainFileID].Members,
 		"each pak fileID's manifest must claim exactly its own member, not the entry-wide union (#241)")
@@ -660,8 +660,8 @@ func TestReconcilePakManifests_RawFallback_RestoresPrunedDeployableCopy(t *testi
 			pakBytes := []byte("prebuilt-pak-bytes")
 
 			gameCache := svc.GetGameCache(game)
-			require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(tc.fileID), pakBytes))
-			versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+			require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, cache.RetainedSourceName(tc.fileID), pakBytes))
+			versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 			// The #250 damaged shape: converted manifest, no deployable copy.
 			require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, tc.fileID, nil))
 
@@ -679,7 +679,7 @@ func TestReconcilePakManifests_RawFallback_RestoresPrunedDeployableCopy(t *testi
 			_, err := svc.ReconcilePakManifestsForTest(context.Background(), game, "default", inst, nil)
 			require.NoError(t, err)
 
-			manifests, err := gameCache.FileManifests(game.ID, sourceID, modID, version)
+			manifests, err := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 			require.NoError(t, err)
 			require.Equal(t, []string{tc.restoredName}, manifests[tc.fileID].Members,
 				"the healed manifest must claim the restored copy, never an empty member set (#250)")
@@ -695,7 +695,7 @@ func TestReconcilePakManifests_RawFallback_RestoresPrunedDeployableCopy(t *testi
 			// A second pass must converge as a no-op, not loop re-restoring.
 			_, err = svc.ReconcilePakManifestsForTest(context.Background(), game, "default", inst, nil)
 			require.NoError(t, err)
-			manifests, err = gameCache.FileManifests(game.ID, sourceID, modID, version)
+			manifests, err = gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 			require.NoError(t, err)
 			require.Equal(t, []string{tc.restoredName}, manifests[tc.fileID].Members, "the second pass must keep the healed claim stable")
 		})
@@ -725,16 +725,16 @@ func TestSyncMergedPak_OptOutAfterPrunedConvertedPak_RestoresRawDeploy(t *testin
 	pakBytes := []byte("prebuilt-pak-bytes")
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName("pak"), pakBytes))
-	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, cache.RetainedSourceName("pak"), pakBytes))
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "pak", nil))
 
 	// The prior successful merge's leftovers: a merged-pak cache entry and
 	// its deployed artifact (a symlink into the cache - the profile's
 	// effective link method here, matching what Install actually leaves).
-	require.NoError(t, gameCache.Store(game.ID, domain.SourceMerged, "merged-pak", "merged", "zzz_LMM_Merged_P.pak", []byte("merged-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: "merged-pak", Version: "merged"}, "zzz_LMM_Merged_P.pak", []byte("merged-bytes")))
 	mergedDeployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
-	require.NoError(t, os.Symlink(gameCache.GetFilePath(game.ID, domain.SourceMerged, "merged-pak", "merged", "zzz_LMM_Merged_P.pak"), mergedDeployedPath))
+	require.NoError(t, os.Symlink(gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: "merged-pak", Version: "merged"}, "zzz_LMM_Merged_P.pak"), mergedDeployedPath))
 
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},

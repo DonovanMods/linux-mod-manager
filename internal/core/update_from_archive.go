@@ -313,7 +313,7 @@ func (s *Service) PlanUpdateFromArchive(ctx context.Context, game *domain.Game, 
 	}
 
 	plan.Hooks = updateHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks)
-	plan.entryPreExists = s.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, plan.ToVersion)
+	plan.entryPreExists = s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: plan.ToVersion})
 	if plan.snapshot, err = s.currentInstalledSnapshot(ctx, game.ID, profileName); err != nil {
 		return nil, err
 	}
@@ -719,7 +719,7 @@ func (s *Service) discardUpdateArchiveEntry(game *domain.Game, plan *UpdateFromA
 	if row, err := s.GetInstalledMod(ctx, mod.SourceID, mod.ID, game.ID, mod.ProfileName); err != nil || row.Version == plan.ToVersion {
 		return
 	}
-	if err := s.GetGameCache(game).Delete(game.ID, mod.SourceID, mod.ID, plan.ToVersion); err != nil && !errors.Is(err, context.Canceled) {
+	if err := s.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: plan.ToVersion}); err != nil && !errors.Is(err, context.Canceled) {
 		s.logger().Warn("removing failed update's cache entry", "mod", mod.ID, "version", plan.ToVersion, "err", err)
 		warn("could not remove the failed update's cache entry %s@%s: %v", mod.ID, plan.ToVersion, err)
 	}

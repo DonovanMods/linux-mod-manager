@@ -47,7 +47,7 @@ func TestProfileApply_AModAnotherProfileHasIsDeployedFromItsCache(t *testing.T) 
 		// default's row names the archive it came from, complete in the
 		// cache, and carries its checksum.
 		cache := f.svc.GetGameCache(f.game)
-		require.NoError(t, cachepkg.MarkFileComplete(cache.ModPath("sky", "local", "a", "unknown"), "a.zip"))
+		require.NoError(t, cachepkg.MarkFileComplete(cache.ModPath(cachepkg.Key{GameID: "sky", SourceID: "local", ModID: "a", Version: "unknown"}), "a.zip"))
 		row, err := f.svc.GetInstalledMod(ctx, "local", "a", "sky", "default")
 		require.NoError(t, err)
 		row.FileIDs = []string{"a.zip"}
@@ -99,7 +99,7 @@ func TestProfileApply_AModAnotherProfileHasIsDeployedFromItsCache(t *testing.T) 
 
 	t.Run("a mod whose bytes are gone is still fetched", func(t *testing.T) {
 		f := l1Fixture(t)
-		require.NoError(t, os.RemoveAll(f.svc.GetGameCache(f.game).ModPath("sky", "local", "a", "unknown")))
+		require.NoError(t, os.RemoveAll(f.svc.GetGameCache(f.game).ModPath(cachepkg.Key{GameID: "sky", SourceID: "local", ModID: "a", Version: "unknown"})))
 
 		plan, err := f.svc.PlanProfileApply(ctx, f.game, "alt")
 		require.NoError(t, err)
@@ -110,7 +110,7 @@ func TestProfileApply_AModAnotherProfileHasIsDeployedFromItsCache(t *testing.T) 
 	t.Run("a live deployment of another version is not installed beside", func(t *testing.T) {
 		f := l1Fixture(t)
 		f.profile(t, "survival", false, "a")
-		require.NoError(t, f.svc.GetGameCache(f.game).Store("sky", "local", "a", "0.9", "Data/a.esp", []byte("old a")))
+		require.NoError(t, f.svc.GetGameCache(f.game).Store(cachepkg.Key{GameID: "sky", SourceID: "local", ModID: "a", Version: "0.9"}, "Data/a.esp", []byte("old a")))
 		require.NoError(t, f.svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 			Mod:         domain.Mod{ID: "a", SourceID: "local", Name: "Mod a", Version: "0.9", GameID: "sky"},
 			ProfileName: "survival", UpdatePolicy: domain.UpdateNotify, Enabled: true, Deployed: true, LinkMethod: domain.LinkSymlink,
@@ -135,7 +135,7 @@ func TestProfileApply_RecordsDeployedOnTheRowsItEnables(t *testing.T) {
 	writeProfileFile(t, f.svc, "sky", "default", "name: default\ngame_id: sky\nmods:\n    - source_id: local\n      mod_id: m\n      version: \"1.0\"\nis_default: true\n")
 	f.profile(t, "alt", false)
 	cache := f.svc.GetGameCache(f.game)
-	require.NoError(t, cache.Store("sky", "local", "m", "1.0", "old.esp", []byte("m 1.0")))
+	require.NoError(t, cache.Store(cachepkg.Key{GameID: "sky", SourceID: "local", ModID: "m", Version: "1.0"}, "old.esp", []byte("m 1.0")))
 	require.NoError(t, f.svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "m", SourceID: "local", Name: "Mod m", Version: "1.0", GameID: "sky"},
 		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: false, LinkMethod: domain.LinkSymlink,
@@ -150,7 +150,7 @@ func TestProfileApply_RecordsDeployedOnTheRowsItEnables(t *testing.T) {
 	assert.True(t, row.Deployed, "the files are live, and the row says so")
 
 	// alt lists m at 2.0, a different file.
-	require.NoError(t, cache.Store("sky", "local", "m", "2.0", "new.esp", []byte("m 2.0")))
+	require.NoError(t, cache.Store(cachepkg.Key{GameID: "sky", SourceID: "local", ModID: "m", Version: "2.0"}, "new.esp", []byte("m 2.0")))
 	require.NoError(t, f.svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "m", SourceID: "local", Name: "Mod m", Version: "2.0", GameID: "sky"},
 		ProfileName: "alt", UpdatePolicy: domain.UpdateNotify, Enabled: false, LinkMethod: domain.LinkSymlink,
