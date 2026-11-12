@@ -58,7 +58,7 @@ export function curseForgeTypes(text) {
 /** curseForgeGuideURL is the guide's section on picking a flavor: where the
  * id field sends someone when lmm could not load CurseForge's list. */
 export const curseForgeGuideURL =
-  "https://donovanmods.github.io/linux-mod-manager/add-a-game.html#pick-a-curseforge-game-flavor";
+  "https://donovanmods.github.io/linux-mod-manager/guide/add-a-game.html#pick-a-curseforge-game-flavor";
 
 /** pickerRows is the checklist for a game's CurseForge version types (issue
  * 563): every type CurseForge lists, by name, then every id the draft holds
