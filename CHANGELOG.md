@@ -18,12 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in a later release (#354).
 - **A Wine/Proton prefix for each game (#605).** `games.yaml` takes
   `prefix:` (the folder holding the game's `drive_c`) and `prefix_user:`
-  (the Windows user folder inside it). Without them lmm finds a Steam
-  game's own Proton prefix, `steamapps/compatdata/<appid>/pfx`, in any of
-  your Steam libraries (the most recently used one if several have it),
-  and picks `steamuser`, or the only user folder besides `Public`.
-  `lmm game detect` fills in `prefix:` when it finds one; `lmm game edit
---prefix` / `--prefix-user` set or clear them (`""`), as do two new
+  (the Windows user folder inside it), both overrides: without them lmm
+  finds a Steam game's own Proton prefix, `steamapps/compatdata/<appid>/pfx`,
+  in any of your Steam libraries (the most recently used one if several
+  have it), every time it needs it, and picks `steamuser`, or the only
+  user folder besides `Public`, refusing one that links outside the
+  prefix. `lmm game detect --json` shows the prefix it finds, without
+  writing it to `games.yaml`; `lmm game edit --prefix` / `--prefix-user`
+  set or clear them (`""`), as do two new
   fields in the web game editor; `lmm game show` prints the prefix lmm
   uses and where it came from, and its `--json` (and
   `GET /api/v1/games/<id>`) gains `prefix_status`. Nothing writes into the

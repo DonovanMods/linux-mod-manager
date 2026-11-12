@@ -295,9 +295,13 @@ type DetectedGame struct {
 	CurseForge *GameCurseForge `json:"curseforge,omitempty"`
 	// Prefix is the Steam compatdata prefix detection found for the app
 	// (#605) - <library>/steamapps/compatdata/<appid>/pfx in any Steam
-	// library, the most recently used when there are several - which
-	// prefills the configured game's `prefix:`. A row with no compatdata
-	// prefix, and every non-Steam row, carries no member at all.
+	// library, the most recently used when there are several. It is
+	// INFORMATION, shown so a user can see which prefix lmm will use: it is
+	// never written to games.yaml, because core derives the same prefix at
+	// runtime whenever `prefix:` is absent, and a pinned copy would go
+	// stale (a game moved between libraries, a wiped compatdata) while
+	// counting as the user's own choice. A row with no compatdata prefix,
+	// and every non-Steam row, carries no member at all.
 	Prefix string `json:"prefix,omitempty"`
 	// Launch is how the configured game is started (#501), when detection
 	// knows - a Battle.net game is started through its prefix's Battle.net

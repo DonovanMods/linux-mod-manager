@@ -450,7 +450,10 @@ prefix unless the game's adapter needs it.
 
 - **`prefix`** names the prefix: the directory holding `drive_c` (and
   `system.reg`). `~/` is your home directory, and the path must be
-  absolute.
+  absolute. It is an **override**: a Steam game needs none, because lmm
+  finds its prefix by itself (next point), every time it is asked.
+  For a Steam game's compatdata, name its `pfx` folder, not the
+  `compatdata/<appid>` folder above it.
 - **Without `prefix`**, lmm uses Steam's own: for a game with a Steam app
   id it looks for `<library>/steamapps/compatdata/<appid>/pfx` in **every**
   Steam library that `libraryfolders.vdf` lists, not only the one the game
@@ -465,6 +468,10 @@ prefix unless the game's adapter needs it.
   umu made, and otherwise the one directory there besides `Public`. With
   none, or several, the user is unresolved, and `prefix_user` is the
   answer.
+- The user directory must be inside the prefix: lmm resolves symlinks,
+  and a `drive_c/users/<user>` that leads out of `drive_c/users` (say, a
+  link to your home directory) is unresolved, never followed, whether
+  `prefix_user` names it or lmm found it.
 
 ```yaml
 games:
@@ -478,9 +485,12 @@ games:
       nexusmods: skyrimspecialedition
 ```
 
-`lmm game detect` fills in `prefix` for a Steam game whose compatdata
-prefix it finds. `lmm game edit <game> --prefix <dir>` and `--prefix-user
-<name>` set them, and `""` clears either. `lmm game show <game>` (and its
+`lmm game detect` shows the compatdata prefix it finds for a Steam game
+(`prefix` in its `--json`), but never writes it to `games.yaml`: lmm
+derives it again whenever it is needed, so it follows the game when Steam
+moves it to another library, where a written copy would go stale.
+`lmm game edit <game> --prefix <dir>` and `--prefix-user <name>` set the
+overrides, and `""` clears either. `lmm game show <game>` (and its
 `--json` `prefix_status`, also `GET /api/v1/games/<game>`) prints the
 prefix lmm resolved: the directory, whether `games.yaml` named it or lmm
 found it in Steam's compatdata (and in which library), the user inside

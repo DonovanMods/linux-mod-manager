@@ -38,12 +38,12 @@ func TestEditGame_Prefix_SetsAndClears(t *testing.T) {
 	svc := newFlowsTestService(t)
 	seedPrefixGame(t, svc)
 
-	prefix, user := "~/Games/Heroic/Prefixes/skyrim/", " dyoung "
+	prefix, user := "~/Games/Heroic/Prefixes/skyrim/", "dyoung"
 	entry, err := editPrefix(svc, &prefix, &user)
 	require.NoError(t, err)
 	want := filepath.Join(home, "Games/Heroic/Prefixes/skyrim")
 	assert.Equal(t, want, entry.Prefix, `"~/" expanded and the path cleaned`)
-	assert.Equal(t, "dyoung", entry.PrefixUser, "trimmed")
+	assert.Equal(t, "dyoung", entry.PrefixUser)
 
 	onDisk, err := config.LoadGames(svc.ConfigDir())
 	require.NoError(t, err)
@@ -75,10 +75,13 @@ func TestEditGame_Prefix_Refusals(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, nil, 0o644))
 
 	for name, edit := range map[string]core.GameEdit{
-		"relative prefix":     {Prefix: ptr("Prefixes/skyrim")},
-		"a file":              {Prefix: &file},
-		"a slash in the user": {PrefixUser: ptr("users/dyoung")},
-		"dot-dot user":        {PrefixUser: ptr("..")},
+		"relative prefix":         {Prefix: ptr("Prefixes/skyrim")},
+		"a file":                  {Prefix: &file},
+		"a prefix with a space":   {Prefix: ptr(" /pfx/skyrim")},
+		"a prefix with a newline": {Prefix: ptr("/pfx/skyrim\n")},
+		"a slash in the user":     {PrefixUser: ptr("users/dyoung")},
+		"dot-dot user":            {PrefixUser: ptr("..")},
+		"a user with a space":     {PrefixUser: ptr("dyoung ")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := svc.EditGame(context.Background(), "skyrim-se", edit)

@@ -410,7 +410,7 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 					}
 					slug := uniqueSlug(name, manifest.AppID, takenSlugs)
 					takenSlugs[slug] = true
-					found = append(found, withPrefixPrefill(withWorkshopPrefill(DetectedGame{
+					found = append(found, withPrefix(withWorkshopPrefill(DetectedGame{
 						Detector:    domain.DetectorSteam,
 						DetectorID:  manifest.AppID,
 						SteamAppID:  manifest.AppID,
@@ -425,7 +425,7 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 					modPath = filepath.Join(installPath, info.ModPath)
 				}
 				seen[info.Slug] = true
-				found = append(found, withPrefixPrefill(withWorkshopPrefill(DetectedGame{
+				found = append(found, withPrefix(withWorkshopPrefill(DetectedGame{
 					Detector:    domain.DetectorSteam,
 					DetectorID:  manifest.AppID,
 					SteamAppID:  manifest.AppID,
@@ -447,10 +447,10 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 	return found, warnings, nil
 }
 
-// withPrefixPrefill sets g's Prefix to the app's compatdata prefix (#605):
+// withPrefix sets g's Prefix to the app's compatdata prefix (#605):
 // the most recently used one in any of libraries, or none when the app has
 // none - a native game, or one Steam has never run through Proton.
-func withPrefixPrefill(g DetectedGame, libraries []string) DetectedGame {
+func withPrefix(g DetectedGame, libraries []string) DetectedGame {
 	if found := wineprefix.SteamCompatdata(libraries, g.SteamAppID); len(found) > 0 {
 		g.Prefix = found[0].Path
 	}

@@ -117,6 +117,21 @@ func TestSteamCompatdata(t *testing.T) {
 		assert.Empty(t, wineprefix.SteamCompatdata([]string{lib}, "489830"))
 	})
 
+	t.Run("a tie keeps the libraries' order", func(t *testing.T) {
+		a, b, c := filepath.Join(base, "tie-a"), filepath.Join(base, "tie-b"), filepath.Join(base, "tie-c")
+		pfxA := makeCompatdata(t, a, "489830", older)
+		pfxB := makeCompatdata(t, b, "489830", older)
+		pfxC := makeCompatdata(t, c, "489830", older)
+		for _, order := range [][]string{{a, b, c}, {c, a, b}} {
+			got := wineprefix.SteamCompatdata(order, "489830")
+			require.Len(t, got, 3)
+			want := map[string]string{a: pfxA, b: pfxB, c: pfxC}
+			for i, lib := range order {
+				assert.Equal(t, want[lib], got[i].Path, "order %v, position %d", order, i)
+			}
+		}
+	})
+
 	t.Run("the same library twice counts once", func(t *testing.T) {
 		lib := filepath.Join(base, "dup")
 		makeCompatdata(t, lib, "489830", older)
@@ -185,11 +200,85 @@ func TestFindUser(t *testing.T) {
 	})
 }
 
-func TestValidUserName(t *testing.T) {
+func TestCheckUserName(t *testing.T) {
 	for _, ok := range []string{"steamuser", "dyoung", "John Smith"} {
-		assert.True(t, wineprefix.ValidUserName(ok), ok)
+		assert.NoError(t, wineprefix.CheckUserName(ok), ok)
 	}
-	for _, bad := range []string{"", ".", "..", "a/b", `a\b`, " "} {
-		assert.False(t, wineprefix.ValidUserName(bad), "%q", bad)
+	for bad, says := range map[string]string{
+		"":         "empty",
+		".":        "not a directory name",
+		"..":       "not a directory name",
+		"a/b":      "slash",
+		`a\b`:      "slash",
+		" ":        "whitespace",
+		" dyoung":  "leading or trailing whitespace",
+		"dyoung\t": "leading or trailing whitespace",
+	} {
+		err := wineprefix.CheckUserName(bad)
+		require.Error(t, err, "%q", bad)
+		assert.Contains(t, err.Error(), says, "%q", bad)
 	}
+}
+
+// #605 review: a user directory that is a symlink is followed only while it
+// stays inside the prefix's drive_c/users - a link to the host's home
+// would point a writer outside the prefix.
+func TestCheckUserDir(t *testing.T) {
+	base := t.TempDir()
+	pfx := makePrefix(t, filepath.Join(base, "pfx"), "dyoung", "real")
+	users := filepath.Join(pfx, "drive_c", "users")
+	outside := filepath.Join(base, "home")
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.NoError(t, os.Symlink(outside, filepath.Join(users, "escape")))
+	require.NoError(t, os.Symlink("real", filepath.Join(users, "inside")))
+	require.NoError(t, os.Symlink(".", filepath.Join(users, "self")))
+	require.NoError(t, os.WriteFile(filepath.Join(users, "file"), nil, 0o644))
+
+	assert.NoError(t, wineprefix.CheckUserDir(pfx, "dyoung"))
+	assert.NoError(t, wineprefix.CheckUserDir(pfx, "inside"), "a link that stays inside drive_c/users is fine")
+	assert.ErrorIs(t, wineprefix.CheckUserDir(pfx, "escape"), wineprefix.ErrUserOutsidePrefix)
+	assert.ErrorIs(t, wineprefix.CheckUserDir(pfx, "self"), wineprefix.ErrUserOutsidePrefix, "drive_c/users itself is not a user directory")
+	assert.ErrorIs(t, wineprefix.CheckUserDir(pfx, "file"), wineprefix.ErrNoUserDir)
+	assert.ErrorIs(t, wineprefix.CheckUserDir(pfx, "missing"), wineprefix.ErrNoUserDir)
+
+	// drive_c/users itself linked out of the prefix escapes too.
+	other := makePrefix(t, filepath.Join(base, "other"))
+	require.NoError(t, os.RemoveAll(filepath.Join(other, "drive_c", "users")))
+	require.NoError(t, os.MkdirAll(filepath.Join(outside, "u"), 0o755))
+	require.NoError(t, os.Symlink(outside, filepath.Join(other, "drive_c", "users")))
+	assert.ErrorIs(t, wineprefix.CheckUserDir(other, "u"), wineprefix.ErrUserOutsidePrefix)
+
+	// A prefix reached through a symlink is checked against where it is.
+	link := filepath.Join(base, "pfx-link")
+	require.NoError(t, os.Symlink(pfx, link))
+	assert.NoError(t, wineprefix.CheckUserDir(link, "dyoung"))
+}
+
+// FindUser applies the same rule to the directory it picks: one that
+// leaves the prefix is reported as Outside, never picked.
+func TestFindUser_RefusesAUserDirectoryOutsideThePrefix(t *testing.T) {
+	base := t.TempDir()
+	outside := filepath.Join(base, "home")
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+
+	single := makePrefix(t, filepath.Join(base, "single"), "Public")
+	require.NoError(t, os.Symlink(outside, filepath.Join(single, "drive_c", "users", "dyoung")))
+	got := wineprefix.FindUser(single)
+	assert.Empty(t, got.Name)
+	assert.Equal(t, "dyoung", got.Outside)
+
+	proton := makeCompatdata(t, filepath.Join(base, "lib"), "1", time.Now(), "Public")
+	require.NoError(t, os.Symlink(outside, filepath.Join(proton, "drive_c", "users", "steamuser")))
+	got = wineprefix.FindUser(proton)
+	assert.Empty(t, got.Name)
+	assert.Equal(t, "steamuser", got.Outside)
+
+	// A link that stays under drive_c/users is followed: here into a
+	// folder under Public, which is still inside the prefix.
+	inside := makePrefix(t, filepath.Join(base, "inside"), "Public")
+	require.NoError(t, os.MkdirAll(filepath.Join(inside, "drive_c", "users", "Public", "real"), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join("Public", "real"), filepath.Join(inside, "drive_c", "users", "dyoung")))
+	got = wineprefix.FindUser(inside)
+	assert.Equal(t, "dyoung", got.Name)
+	assert.Empty(t, got.Outside)
 }

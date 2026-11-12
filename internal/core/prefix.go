@@ -84,7 +84,11 @@ type PrefixStatus struct {
 	// UserOrigin is how User was picked: PrefixUserExplicit,
 	// PrefixUserProton or PrefixUserOnly.
 	UserOrigin string `json:"user_origin,omitempty"`
-	// UserPath is <Path>/drive_c/users/<User>, when Resolved.
+	// UserPath is <Path>/drive_c/users/<User>, when Resolved. It is CHECKED
+	// (wineprefix.CheckUserDir): a directory that, symlinks resolved, is
+	// still inside the prefix's drive_c/users, so a writer into it cannot
+	// be sent out of the prefix by a user directory linked to the host's
+	// home. One that leaves is unresolved, and Problem says so.
 	UserPath string `json:"user_path,omitempty"`
 	// Resolved reports that both the prefix and the user directory are
 	// usable: what a writer into the prefix requires.
@@ -193,6 +197,9 @@ func (s *Service) locatePrefix(game *domain.Game) *PrefixStatus {
 
 // explicitPrefixProblem is why an explicit `prefix:` is unusable, or "".
 func explicitPrefixProblem(prefix string) string {
+	if strings.TrimSpace(prefix) != prefix {
+		return fmt.Sprintf("prefix: %q has leading or trailing whitespace", prefix)
+	}
 	if !filepath.IsAbs(prefix) {
 		return fmt.Sprintf("prefix: %q is not an absolute path", prefix)
 	}
@@ -200,6 +207,11 @@ func explicitPrefixProblem(prefix string) string {
 		return fmt.Sprintf("prefix: %s does not exist - run the game once, or correct prefix:", prefix)
 	}
 	if !wineprefix.IsPrefix(prefix) {
+		// Steam's compatdata/<appid> folder holds the prefix in pfx/, and is
+		// the folder a file manager shows - an easy one to name instead.
+		if pfx := filepath.Join(prefix, "pfx"); wineprefix.IsPrefix(pfx) {
+			return fmt.Sprintf("prefix: %s is not a Wine prefix, but %s is - append /pfx (Steam keeps the prefix in its compatdata folder's pfx)", prefix, pfx)
+		}
 		return fmt.Sprintf("prefix: %s is not a Wine prefix (a prefix holds drive_c and system.reg)", prefix)
 	}
 	return ""
@@ -211,18 +223,23 @@ func (s *Service) resolvePrefixUser(game *domain.Game, st *PrefixStatus) {
 	users := filepath.Join(st.Path, "drive_c", "users")
 	if game.PrefixUser != "" {
 		st.User, st.UserOrigin = game.PrefixUser, PrefixUserExplicit
-		if !wineprefix.ValidUserName(game.PrefixUser) {
-			st.Problem = fmt.Sprintf("prefix_user: %q is not a user directory name (one name, no slashes)", game.PrefixUser)
+		if err := wineprefix.CheckUserName(game.PrefixUser); err != nil {
+			st.Problem = "prefix_user: " + err.Error()
 			return
 		}
-		if info, err := os.Stat(filepath.Join(users, game.PrefixUser)); err != nil || !info.IsDir() {
-			st.Problem = fmt.Sprintf("prefix_user: %s/drive_c/users/%s is not a directory - correct prefix_user:", st.Path, game.PrefixUser)
+		if err := wineprefix.CheckUserDir(st.Path, game.PrefixUser); err != nil {
+			st.Problem = "prefix_user: " + err.Error() + " - correct prefix_user:"
 		}
 		return
 	}
 	found := wineprefix.FindUser(st.Path)
 	if found.Name != "" {
 		st.User, st.UserOrigin = found.Name, found.Rule
+		return
+	}
+	if found.Outside != "" {
+		st.Problem = fmt.Sprintf("%s: lmm will not write outside the prefix - make it a real directory, or set prefix_user: to another",
+			wineprefix.CheckUserDir(st.Path, found.Outside))
 		return
 	}
 	if len(found.Candidates) == 0 {

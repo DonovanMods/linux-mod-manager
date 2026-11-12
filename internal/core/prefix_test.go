@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,6 +80,21 @@ func TestResolvePrefix(t *testing.T) {
 	single := prefixTree(t, filepath.Join(base, "heroic"), "dyoung", "Public")
 	several := prefixTree(t, filepath.Join(base, "lutris"), "alice", "bob", "Public")
 	none := prefixTree(t, filepath.Join(base, "none"), "Public")
+
+	// #605 review: user directories that are symlinks - one out of the
+	// prefix (to a stand-in for the host's home), one that stays inside.
+	home := filepath.Join(base, "host-home")
+	require.NoError(t, os.MkdirAll(home, 0o755))
+	escapes := prefixTree(t, filepath.Join(base, "escapes"), "Public")
+	require.NoError(t, os.Symlink(home, filepath.Join(escapes, "drive_c", "users", "dyoung")))
+	linkedIn := prefixTree(t, filepath.Join(base, "linked-in"), "Public")
+	require.NoError(t, os.MkdirAll(filepath.Join(linkedIn, "drive_c", "users", "Public", "dyoung"), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join("Public", "dyoung"), filepath.Join(linkedIn, "drive_c", "users", "dyoung")))
+	// An explicit prefix that is itself a symlink to a real prefix.
+	prefixLink := filepath.Join(base, "prefix-link")
+	require.NoError(t, os.Symlink(single, prefixLink))
+	// A compatdata/<id> folder named where its pfx belongs.
+	compatFolder := filepath.Dir(onlyB)
 
 	for _, tc := range []struct {
 		name       string
@@ -205,6 +221,60 @@ func TestResolvePrefix(t *testing.T) {
 			path: onlyB, origin: core.PrefixOriginSteam, library: libB,
 			user: "steamuser", userOrigin: core.PrefixUserProton, resolved: true,
 		},
+		{
+			name: "a found user directory that links out of the prefix",
+			game: func() *domain.Game { g := prefixGame(""); g.Prefix = escapes; return g },
+			path: escapes, origin: core.PrefixOriginExplicit,
+			problem: "resolves outside the prefix's drive_c/users",
+		},
+		{
+			name: "a prefix_user that links out of the prefix",
+			game: func() *domain.Game {
+				g := prefixGame("")
+				g.Prefix, g.PrefixUser = escapes, "dyoung"
+				return g
+			},
+			path: escapes, origin: core.PrefixOriginExplicit, user: "dyoung", userOrigin: core.PrefixUserExplicit,
+			problem: "resolves outside the prefix's drive_c/users",
+		},
+		{
+			name: "a user directory that links within drive_c/users",
+			game: func() *domain.Game {
+				g := prefixGame("")
+				g.Prefix, g.PrefixUser = linkedIn, "dyoung"
+				return g
+			},
+			path: linkedIn, origin: core.PrefixOriginExplicit,
+			user: "dyoung", userOrigin: core.PrefixUserExplicit, resolved: true,
+		},
+		{
+			name: "an explicit prefix that is a symlink to one",
+			game: func() *domain.Game { g := prefixGame(""); g.Prefix = prefixLink; return g },
+			path: prefixLink, origin: core.PrefixOriginExplicit,
+			user: "dyoung", userOrigin: core.PrefixUserOnly, resolved: true,
+		},
+		{
+			name: "an explicit prefix that is a compatdata folder, not its pfx",
+			game: func() *domain.Game { g := prefixGame(""); g.Prefix = compatFolder; return g },
+			path: compatFolder, origin: core.PrefixOriginExplicit,
+			problem: "append /pfx",
+		},
+		{
+			name: "an explicit prefix with surrounding whitespace",
+			game: func() *domain.Game { g := prefixGame(""); g.Prefix = single + " "; return g },
+			path: single + " ", origin: core.PrefixOriginExplicit,
+			problem: "leading or trailing whitespace",
+		},
+		{
+			name: "a prefix_user with surrounding whitespace",
+			game: func() *domain.Game {
+				g := prefixGame("")
+				g.Prefix, g.PrefixUser = single, " dyoung"
+				return g
+			},
+			path: single, origin: core.PrefixOriginExplicit, user: " dyoung", userOrigin: core.PrefixUserExplicit,
+			problem: "leading or trailing whitespace",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := prefixService(t, tc.libs...)
@@ -327,4 +397,40 @@ func TestVerify_ReportsAnUnresolvedPrefixAsAWarning(t *testing.T) {
 	for _, f := range report.Result.Findings {
 		assert.NotEqual(t, core.VerifyStatusPrefixUnresolved, f.Status)
 	}
+}
+
+// TestResolvePrefix_ConcurrentWithSetSteamLibraries: the composition root
+// sets the library seam once, but nothing stops a test or a frontend from
+// setting it while queries run; under -race this is the proof that the seam
+// is safe to read and replace concurrently.
+func TestResolvePrefix_ConcurrentWithSetSteamLibraries(t *testing.T) {
+	lib := filepath.Join(t.TempDir(), "lib")
+	pfx := compatdataTree(t, lib, "489830", prefixOlder)
+	svc := prefixService(t, lib)
+	game := prefixGame("489830")
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for range 50 {
+				got := svc.ResolvePrefix(game)
+				if got.Path != "" {
+					assert.Equal(t, pfx, got.Path)
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := range 50 {
+				if (i+j)%2 == 0 {
+					svc.SetSteamLibraries(func() []string { return []string{lib} })
+				} else {
+					svc.SetSteamLibraries(nil)
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }

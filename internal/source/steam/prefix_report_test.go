@@ -12,9 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// #605: detection prefills `prefix:` from Steam's compatdata, probing every
+// #605: detection reports the app's Steam compatdata prefix, probing every
 // library libraryfolders.vdf lists - not only the one the game is
-// installed in, since compatdata stays behind when a game moves.
+// installed in, since compatdata stays behind when a game moves. It is
+// information for the detect listing; lmm never writes it to games.yaml.
 
 // writeLibraryFolders lists libs in root's libraryfolders.vdf, in order.
 func writeLibraryFolders(t *testing.T, root string, libs ...string) {
@@ -42,7 +43,7 @@ func writeCompatdata(t *testing.T, lib, appID string, mod time.Time) string {
 	return pfx
 }
 
-func TestDetectGames_PrefillsThePrefixFromAnotherLibrarysCompatdata(t *testing.T) {
+func TestDetectGames_ReportsThePrefixFromAnotherLibrarysCompatdata(t *testing.T) {
 	root := steamFixture(t, "1149460", "Icarus", "Icarus")
 	other := filepath.Join(t.TempDir(), "OtherLibrary")
 	writeLibraryFolders(t, root, root, other)
@@ -52,7 +53,7 @@ func TestDetectGames_PrefillsThePrefixFromAnotherLibrarysCompatdata(t *testing.T
 	assert.Equal(t, pfx, got.Prefix)
 }
 
-func TestDetectGames_PrefillsTheMostRecentlyUsedPrefix(t *testing.T) {
+func TestDetectGames_ReportsTheMostRecentlyUsedPrefix(t *testing.T) {
 	root := steamFixture(t, "1149460", "Icarus", "Icarus")
 	other := filepath.Join(t.TempDir(), "OtherLibrary")
 	writeLibraryFolders(t, root, root, other)
@@ -64,7 +65,7 @@ func TestDetectGames_PrefillsTheMostRecentlyUsedPrefix(t *testing.T) {
 
 func TestDetectGames_NoCompatdataNoPrefix(t *testing.T) {
 	steamFixture(t, "1149460", "Icarus", "Icarus")
-	assert.Empty(t, detectOne(t, steam.DetectOptions{}).Prefix, "a native game, or one never run, has no prefix to prefill")
+	assert.Empty(t, detectOne(t, steam.DetectOptions{}).Prefix, "a native game, or one never run, has no prefix to report")
 }
 
 func TestAllLibraryPaths_EveryLibraryOfEveryRoot(t *testing.T) {

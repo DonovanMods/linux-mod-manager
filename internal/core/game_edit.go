@@ -206,9 +206,11 @@ func (s *Service) editedGame(ctx context.Context, game *domain.Game, edit GameEd
 	}
 
 	if edit.PrefixUser != nil {
-		user := strings.TrimSpace(*edit.PrefixUser)
-		if user != "" && !wineprefix.ValidUserName(user) {
-			return nil, false, nil, newGameSpecError("prefix_user", user, "the prefix user is one directory name under drive_c/users, with no slashes")
+		user := *edit.PrefixUser
+		if user != "" {
+			if err := wineprefix.CheckUserName(user); err != nil {
+				return nil, false, nil, newGameSpecError("prefix_user", user, "the prefix user is one directory name under drive_c/users: "+err.Error())
+			}
 		}
 		updated.PrefixUser, changed = user, true
 	}
@@ -321,10 +323,15 @@ func installPathValue(value string) (string, error) {
 }
 
 // prefixValue is the `prefix:` an edit writes (#605): "" to clear it, or a
-// trimmed, "~/"-expanded, cleaned absolute path that is not a file. It
-// need not exist - a prefix can be named before the game first runs.
+// "~/"-expanded, cleaned absolute path that is not a file. Leading or
+// trailing whitespace is refused rather than trimmed - it is more likely a
+// paste gone wrong than part of a path. It need not exist - a prefix can be
+// named before the game first runs.
 func prefixValue(value string) (string, error) {
-	prefix := config.ExpandPath(strings.TrimSpace(value))
+	if strings.TrimSpace(value) != value {
+		return "", newGameSpecError("prefix", value, "the prefix has leading or trailing whitespace")
+	}
+	prefix := config.ExpandPath(value)
 	if prefix == "" {
 		return "", nil
 	}

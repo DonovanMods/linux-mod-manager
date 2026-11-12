@@ -348,8 +348,9 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
-			// #605's detection prefill: a Steam app whose compatdata prefix
-			// exists carries it, for `prefix:` in the game it configures.
+			// #605: a Steam app whose compatdata prefix exists carries it,
+			// as information - the prefix lmm will derive. It is never
+			// written to the games.yaml the row configures.
 			"detected_game_prefix",
 			domain.DetectedGame{
 				Detector:    domain.DetectorSteam,

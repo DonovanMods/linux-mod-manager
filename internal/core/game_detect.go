@@ -57,7 +57,6 @@ func GameFromDetected(g domain.DetectedGame) (*domain.Game, error) {
 		Loader:      cloneDetectedLoader(g.Loader),
 		CurseForge:  cloneCurseForge(g.CurseForge),
 		Launch:      cloneLaunch(g.Launch),
-		Prefix:      g.Prefix,
 	}, nil
 }
 
@@ -172,9 +171,6 @@ func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
 	}
 	if spec.Launch == nil {
 		spec.Launch = cloneLaunch(d.Launch)
-	}
-	if spec.Prefix == "" {
-		spec.Prefix = d.Prefix
 	}
 	if spec.Loader == nil && d.Loader != nil {
 		spec.Loader = &LoaderSpec{
@@ -664,10 +660,6 @@ func repairedGame(prior, detected *domain.Game) (*domain.Game, string) {
 	}
 	if repaired.Launch == nil {
 		repaired.Launch = cloneLaunch(detected.Launch)
-	}
-	// #605's compatdata prefix likewise: a prefix the user set is theirs.
-	if repaired.Prefix == "" {
-		repaired.Prefix = detected.Prefix
 	}
 
 	var notice string
