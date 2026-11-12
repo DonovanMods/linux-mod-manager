@@ -318,9 +318,29 @@ prints the same suggestion. In the terminal:
 lmm game edit skyrim-se --adapter bethesda
 ```
 
-For a copy from GOG or Epic, add the game by hand with one of these game
-ids so lmm knows which game it is: `skyrim-se`, `skyrim-vr`, `fallout4`,
-`fallout4-vr`, `starfield` or `skyrim`.
+{: .warning }
+Mods you already installed keep the layout they were installed with: the
+switch only changes how mods installed or updated after it are laid out.
+To lay one out again, uninstall it (from every profile that has it) and
+install it again. When the game has mods installed, Mission Control asks
+before it switches, and `lmm game edit` prints the same warning.
+
+## Telling lmm which game a copy is
+
+lmm recognises a game from Steam by itself. A copy from GOG or Epic, added
+by hand through Heroic or Lutris under an id of your own, can say which
+game it is by naming its entry in lmm's game catalog (the games
+`lmm game detect` knows). In the browser, pick it under **Game catalog
+entry** in the game's editor. In the terminal:
+
+```bash
+lmm game edit my-gog-skyrim --catalog skyrim-se
+```
+
+lmm then treats it as that game: a Bethesda game gets its plugin rules,
+and lmm suggests the adapter the catalog sets the game up with. If you
+give an id the catalog doesn't have, lmm lists the ones it does.
+`--catalog ""` takes the setting off again.
 
 {: .note }
 A script extender's loader (`skse64_loader.exe` and its DLLs) and an ENB

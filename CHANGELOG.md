@@ -25,6 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are recognised as game-folder content, but still deploy into `Data/`
   until #629. The adapter answers #605's "uses a prefix" question for
   every game it recognises, so an unresolved prefix is reported for them.
+  Switching an existing game to it warns, everywhere the switch is offered
+  or made (`lmm game edit --adapter` on stderr, the verify note, and a
+  confirmation on the game page), that mods already installed keep the
+  layout they were installed with until they are uninstalled and installed
+  again (`GameStatus` gains `suggested_adapter_warning`, omitted when empty).
+- **games.yaml `catalog:` says which known game an entry is (#606).** For
+  an install lmm cannot recognise by its Steam app id or a standard game
+  id, such as a GOG or Epic copy under an id of your own, `catalog:
+skyrim-se` names its entry in lmm's game catalog (the games `lmm game
+detect` knows). lmm then treats it as that game: the `bethesda` adapter
+  identifies it, and lmm suggests the catalog's adapter for it. Set it with
+  `lmm game edit --catalog <id>` (`""` clears it) or the new **Game catalog
+  entry** choice in the web UI's game editor; an unknown id is refused with
+  the list of known ones, and one written by hand is a `catalog_unknown`
+  note in `lmm verify`, never a load error. `lmm game show` prints it, the
+  game's `--json` documents gain `catalog` (omitted when empty), and `GET
+/api/v1/games/known` lists the catalog.
 - **A FOMOD installer engine, not yet wired into installs (#604).** The new
   `internal/fomod` package reads `fomod/ModuleConfig.xml` in any encoding
   real installers use and works out which files a set of installer choices

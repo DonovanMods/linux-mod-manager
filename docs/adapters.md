@@ -376,8 +376,10 @@ order, extra plugin directories, and the active limits.
 
 An adapter that does not recognise the game answers the zero `PluginSpec`,
 and `adapter.PluginRules` reports that as "no rules": an adapter never
-guesses which game it is looking at. `bethesda` recognises a game by the
-Steam app id games.yaml states (`launch.steam_app_id`, or a numeric
+guesses which game it is looking at. `bethesda` recognises a game by its
+`catalog:` entry (the known-games catalog entry games.yaml says it is; see
+[configuration.md](configuration.md#catalog-gamesyaml)), else by the Steam
+app id games.yaml states (`launch.steam_app_id`, or a numeric
 `steamworkshop` mapping), else by its game id (`skyrim-se`, `skyrim-vr`,
 `fallout4`, `fallout4-vr`, `starfield`, `skyrim`); never by its NexusMods
 domain, which Skyrim VR and Fallout 4 VR share with Skyrim SE and Fallout 4.

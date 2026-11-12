@@ -389,10 +389,18 @@ whether the game's mods have to be compiled into one artifact, and what
   for the plugin list to come. A game already in games.yaml is never
   switched to it: `lmm verify` (an `adapter_suggested` note) and the web
   UI's game page suggest it, and `lmm game edit <game> --adapter bethesda`
-  sets it. It recognises which game it is by the Steam app id games.yaml
-  states, else by the game id detection gives each game (`skyrim-se`,
-  `skyrim-vr`, `fallout4`, `fallout4-vr`, `starfield`, `skyrim`); a game it
-  cannot identify gets a `bethesda_game_unknown` note in `lmm verify`. A
+  sets it. **Switching an existing game does not re-lay out the mods
+  already installed for it**: an adapter's layout applies when a mod is
+  installed, so they keep the layout they were installed with, and only
+  mods installed or updated afterwards get the new one. To lay one out
+  again, uninstall it (from every profile that has it) and install it
+  again. `lmm game edit --adapter`, the `lmm verify` note and the web UI
+  all say so, and the web UI asks before it switches. It recognises which
+  game it is by the game's [`catalog:`](#catalog-gamesyaml) entry, else by
+  the Steam app id games.yaml states, else by the game id detection gives
+  each game (`skyrim-se`, `skyrim-vr`, `fallout4`, `fallout4-vr`,
+  `starfield`, `skyrim`); a game it cannot identify gets a
+  `bethesda_game_unknown` note in `lmm verify`. A
   script extender's loader and DLLs and an ENB are recognised as game-folder
   files, but lmm still deploys them into `Data/` like every other file;
   deploying them to the game folder is a later release (#629).
@@ -517,6 +525,38 @@ An unresolved prefix is never an error. For a game whose adapter writes
 into the prefix, `lmm verify` reports it as a `prefix_unresolved`
 warning, saying what is missing; for every other game it is reported
 nowhere, because nothing needs it.
+
+### Catalog (games.yaml)
+
+`catalog` says which game in lmm's **game catalog** — the games
+`lmm game detect` knows, each with its own id (`skyrim-se`, `fallout4`,
+`witcher3`, …) — a games.yaml entry is. lmm normally recognises a
+game by itself: from its Steam app id, or from the id detection gave it. A
+copy it cannot recognise, such as a GOG or Epic install added through
+Heroic or Lutris under an id of your own, can say which game it is:
+
+```yaml
+games:
+  my-gog-skyrim:
+    name: Skyrim Special Edition (GOG)
+    install_path: ~/Games/Heroic/Skyrim Special Edition
+    mod_path: ~/Games/Heroic/Skyrim Special Edition/Data
+    catalog: skyrim-se
+    sources:
+      nexusmods: skyrimspecialedition
+```
+
+lmm then treats the entry as that game: the [`bethesda`](#adapter-gamesyaml)
+adapter knows its plugin rules, and lmm suggests the adapter the catalog
+sets the game up with. Set it with `lmm game edit <game> --catalog <id>`
+(or the **Game catalog entry** choice in the web UI's game editor);
+`--catalog ""` clears it. An id the catalog does not have is refused, with
+the list of ids it does have. One written into games.yaml by hand is read
+as written: lmm ignores an unknown id and `lmm verify` reports it as a
+`catalog_unknown` note, so a typo never stops lmm from starting.
+
+The catalog is `internal/source/steam/data/steam-games.yaml` plus your own
+`~/.config/lmm/steam-games.yaml`, if you have one.
 
 ### Deploy Mode (games.yaml)
 
