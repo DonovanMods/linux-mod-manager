@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -400,7 +401,7 @@ func TestEvaluate_CompositeOperators(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := &evaluator{flags: map[string]flagValue{"y": {value: "On"}}, warned: map[string]bool{}}
+			e := &evaluator{flags: map[string]flagValue{"y": {value: "On"}}, warned: map[warnKey]bool{}}
 			assert.Equal(t, tt.want, e.test(&tt.cond))
 		})
 	}
@@ -414,10 +415,11 @@ func TestEvaluate_NilConfig(t *testing.T) {
 func TestEvaluate_LargeGroupsStayLinear(t *testing.T) {
 	// A hostile config near the size cap: one exactly-one group of tens of
 	// thousands of Recommended options, each setting its own flag, with every
-	// option recorded as picked. A quadratic walk (each Recommended clearing
-	// the whole group, each deselect scanning every flag, each option
-	// scanning every pick) would take minutes; a linear one, milliseconds.
-	const n = 40000
+	// option recorded as picked (6 elements each, so near MaxNodes). A
+	// quadratic walk (each Recommended clearing the whole group, each
+	// deselect scanning every flag, each option scanning every pick) would
+	// take minutes; a linear one, milliseconds.
+	const n = 16000
 	var b strings.Builder
 	b.WriteString(`<config><installSteps><installStep name="S"><optionalFileGroups><group name="G" type="SelectExactlyOne"><plugins order="Explicit">`)
 	picks := make([]OptionChoice, 0, n)
@@ -429,10 +431,13 @@ func TestEvaluate_LargeGroupsStayLinear(t *testing.T) {
 	b.WriteString(`</plugins></group></optionalFileGroups></installStep></installSteps></config>`)
 	cfg := mustParse(t, b.String())
 
-	res := evaluate(t, cfg, Request{Mode: ModeDefaults})
-	assert.Equal(t, []string{"S/G/p" + itoa(n-1)}, selected(res))
+	withinBudget(t, 10*time.Second, func() {
+		res := evaluate(t, cfg, Request{Mode: ModeDefaults})
+		assert.Equal(t, []string{"S/G/p" + itoa(n-1)}, selected(res))
 
-	res = evaluate(t, cfg, Request{Mode: ModeReplay, Choices: []StepChoice{{Name: "S", Groups: []GroupChoice{{Name: "G", Choices: picks}}}}})
-	assert.Len(t, selected(res), n)
-	assert.Empty(t, res.Unmatched)
+		// MaxChoices caps a recording; replay the largest one allowed.
+		res = evaluate(t, cfg, Request{Mode: ModeReplay, Choices: []StepChoice{{Name: "S", Groups: []GroupChoice{{Name: "G", Choices: picks[:MaxChoices-2]}}}}})
+		assert.Len(t, selected(res), MaxChoices-2)
+		assert.Empty(t, res.Unmatched)
+	})
 }

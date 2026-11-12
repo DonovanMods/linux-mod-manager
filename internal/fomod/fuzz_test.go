@@ -24,12 +24,12 @@ func FuzzParse(f *testing.F) {
 		// Whatever parses must evaluate without panicking, under both
 		// modes, and resolve to contained destinations.
 		for _, mode := range []Mode{ModeReplay, ModeDefaults} {
-			res, err := Evaluate(cfg, Request{Mode: mode, Members: []string{"a", "b/c", "fomod/ModuleConfig.xml"}})
+			res, err := Evaluate(cfg, Request{Mode: mode, Members: fuzzMembers})
 			if err != nil {
 				continue
 			}
 			// Feeding the canonical choices back must be stable.
-			again, err := Evaluate(cfg, Request{Mode: ModeReplay, Choices: res.Choices, Members: []string{"a", "b/c", "fomod/ModuleConfig.xml"}})
+			again, err := Evaluate(cfg, Request{Mode: ModeReplay, Choices: res.Choices, Members: fuzzMembers})
 			if err != nil {
 				t.Fatalf("replaying canonical choices failed: %v", err)
 			}
@@ -97,3 +97,6 @@ func FuzzEvaluateChoices(f *testing.F) {
 		}
 	})
 }
+
+// fuzzMembers mixes ordinary members with hostile ones the resolver must drop.
+var fuzzMembers = []string{"a", "b/c", "fomod/ModuleConfig.xml", "x/../../up", "/abs", `C:\win`, `.\b\d`}

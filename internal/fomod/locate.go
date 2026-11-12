@@ -32,8 +32,10 @@ func (in *Installer) Rel(member string) (string, bool) {
 // Locate finds the FOMOD in an archive from its file name and member
 // names, without reading any member. A FOMOD is fomod/ModuleConfig.xml
 // (case-insensitively) at the archive root or under exactly one wrapper
-// directory; a root-level one wins over wrappers, and two wrappers with
-// one each are ErrAmbiguous.
+// directory. A root-level one wins over wrappers. Two candidates at the
+// same level, even ones differing only in case ("fomod/ModuleConfig.xml"
+// and "FOMOD/moduleconfig.xml", or wrappers "A/" and "a/"), are
+// ErrAmbiguous: which one an archive tool would extract is not knowable.
 //
 // It returns (nil, nil) for an archive that is not an installer, and
 // ErrScripted for an OMOD (by its .omod name, or its config + .crc members)
@@ -45,9 +47,10 @@ func Locate(archiveName string, members []string) (*Installer, error) {
 		return nil, ErrScripted
 	}
 
-	var rootConfig string
-	wrapperConfigs := map[string]string{} // lower-case wrapper -> config member
-	var wrapperOrder []string
+	// Candidates by exact (normalised) member path, so case variants are
+	// distinct candidates and a member listed twice is one.
+	rootConfigs := map[string]bool{}
+	wrapperConfigs := map[string]bool{}
 	scripted, omodConfig, omodCRC := false, false, false
 
 	for _, member := range members {
@@ -75,13 +78,9 @@ func Locate(archiveName string, members []string) (*Installer, error) {
 		switch parts[len(parts)-1] {
 		case "moduleconfig.xml":
 			if prefix == "" {
-				rootConfig = m
-				continue
-			}
-			key := strings.ToLower(prefix)
-			if _, ok := wrapperConfigs[key]; !ok {
-				wrapperOrder = append(wrapperOrder, key)
-				wrapperConfigs[key] = m
+				rootConfigs[m] = true
+			} else {
+				wrapperConfigs[m] = true
 			}
 		case "script.cs":
 			scripted = true
@@ -89,13 +88,15 @@ func Locate(archiveName string, members []string) (*Installer, error) {
 	}
 
 	switch {
-	case rootConfig != "":
-		return &Installer{ModuleConfig: rootConfig}, nil
-	case len(wrapperOrder) == 1:
-		cfg := wrapperConfigs[wrapperOrder[0]]
-		return &Installer{Root: cfg[:strings.IndexByte(cfg, '/')+1], ModuleConfig: cfg}, nil
-	case len(wrapperOrder) > 1:
+	case len(rootConfigs) > 1:
 		return nil, ErrAmbiguous
+	case len(rootConfigs) == 1:
+		return &Installer{ModuleConfig: only(rootConfigs)}, nil
+	case len(wrapperConfigs) > 1:
+		return nil, ErrAmbiguous
+	case len(wrapperConfigs) == 1:
+		cfg := only(wrapperConfigs)
+		return &Installer{Root: cfg[:strings.IndexByte(cfg, '/')+1], ModuleConfig: cfg}, nil
 	case scripted, omodConfig && omodCRC:
 		return nil, ErrScripted
 	}
@@ -116,4 +117,12 @@ func normalizeMember(member string) string {
 			return m
 		}
 	}
+}
+
+// only returns the one key of a single-entry set.
+func only(set map[string]bool) string {
+	for k := range set {
+		return k
+	}
+	return ""
 }

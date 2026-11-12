@@ -56,6 +56,11 @@ type Result struct {
 	Unanswered []GroupRef
 	// Unmatched are recorded choices that selected nothing.
 	Unmatched []Unmatched
+	// UnsafeMembers are Request.Members dropped before matching, as given:
+	// a ".." segment, an absolute or drive-letter path, or a NUL. Dropping
+	// one never fails the evaluation; whether it should block an install is
+	// the caller's call.
+	UnsafeMembers []string
 	// Violations are visible groups whose selection breaks their rule.
 	Violations []Violation
 	// MissingSources are file and folder entries that match no member.
@@ -129,8 +134,19 @@ type evaluator struct {
 	selectedIn map[[2]int]map[int]bool
 	override   map[optKey]PluginType
 	groupType  map[[2]int]GroupType
-	warned     map[string]bool
+	warned     map[warnKey]bool
 	warnings   []string
+	// used counts condition nodes visited; past limit (MaxConditionEvals
+	// when zero) every test fails and err is set.
+	used, limit int
+	err         error
+}
+
+// warnKey dedupes warnings before any message is formatted: a condition
+// evaluated thousands of times costs a map lookup, not a Sprintf.
+type warnKey struct {
+	kind             ConditionKind
+	element, version string
 }
 
 // Evaluate walks cfg with a choice set the way Vortex's installer does,
@@ -154,6 +170,9 @@ func Evaluate(cfg *Config, req Request) (*Result, error) {
 	if cfg == nil {
 		return nil, ErrNotModuleConfig
 	}
+	if n := countChoices(req.Choices); n > MaxChoices {
+		return nil, fmt.Errorf("%w: %d recorded choices, more than %d", ErrTooLarge, n, MaxChoices)
+	}
 	e := &evaluator{
 		cfg:        cfg,
 		files:      req.Files,
@@ -163,10 +182,13 @@ func Evaluate(cfg *Config, req Request) (*Result, error) {
 		selectedIn: map[[2]int]map[int]bool{},
 		override:   map[optKey]PluginType{},
 		groupType:  map[[2]int]GroupType{},
-		warned:     map[string]bool{},
+		warned:     map[warnKey]bool{},
 	}
 
 	if cfg.Prerequisites != nil && !e.test(cfg.Prerequisites) {
+		if e.err != nil {
+			return nil, e.err
+		}
 		return nil, &PrerequisitesError{Unmet: e.unmet(cfg.Prerequisites)}
 	}
 	e.fixSteps()
@@ -188,14 +210,21 @@ func Evaluate(cfg *Config, req Request) (*Result, error) {
 		}
 		e.fixSelected(si)
 		res.Steps = append(res.Steps, e.snapshot(si, answered))
+		if e.err != nil {
+			return nil, e.err
+		}
 	}
 
 	r := newResolver(req.Members, e.warn)
 	if err := e.collect(r); err != nil {
 		return nil, err
 	}
+	if e.err != nil {
+		return nil, e.err
+	}
 	res.Ops = r.result()
 	res.MissingSources = r.missing
+	res.UnsafeMembers = r.unsafe
 
 	res.Choices = canonicalChoices(cfg, res.Steps)
 	res.Unanswered, res.Violations = groupFindings(res.Steps)
@@ -372,8 +401,14 @@ func (e *evaluator) collect(r *resolver) error {
 			for pi := range e.cfg.Steps[si].Groups[gi].Plugins {
 				k := optKey{si, gi, pi}
 				sel := e.selected[k]
+				// The option's type is resolved at most once here, however
+				// many installIfUsable files it carries.
+				usable, resolved := false, false
 				for _, f := range e.plugin(k).Files {
-					if sel || f.AlwaysInstall || (f.InstallIfUsable && e.typeOf(k) != NotUsable) {
+					if !sel && !f.AlwaysInstall && f.InstallIfUsable && !resolved {
+						usable, resolved = e.typeOf(k) != NotUsable, true
+					}
+					if sel || f.AlwaysInstall || (f.InstallIfUsable && usable) {
 						if err := r.install(f, 0); err != nil {
 							return err
 						}
@@ -396,30 +431,48 @@ func (e *evaluator) collect(r *resolver) error {
 	return nil
 }
 
+// warn records a resolver message once.
 func (e *evaluator) warn(msg string) {
-	if e.warned[msg] {
-		return
-	}
-	e.warned[msg] = true
-	e.warnings = append(e.warnings, msg)
+	e.warnOnce(warnKey{kind: -1, element: msg}, func() string { return msg })
 }
 
-// test evaluates a condition under the current flags. Like Vortex, a
-// composite evaluates every child (no short circuit), so every assumed
-// dependency is warned about.
+// warnOnce records the message for key the first time key is seen; format
+// runs only then.
+func (e *evaluator) warnOnce(key warnKey, format func() string) {
+	if e.warned[key] {
+		return
+	}
+	e.warned[key] = true
+	e.warnings = append(e.warnings, format())
+}
+
+// test evaluates a condition under the current flags. Composites short
+// circuit (an And stops at its first false child, an Or at its first true
+// one); Vortex evaluates every child, which changes nothing but which
+// assumed dependencies are warned about. Every node visited counts toward
+// MaxConditionEvals; past it, test fails and e.err is set.
 func (e *evaluator) test(c *Condition) bool {
+	limit := e.limit
+	if limit == 0 {
+		limit = MaxConditionEvals
+	}
+	if e.err != nil {
+		return false
+	}
+	e.used++
+	if e.used > limit {
+		e.err = fmt.Errorf("%w: more than %d condition evaluations", ErrTooLarge, limit)
+		return false
+	}
 	switch c.Kind {
 	case ConditionComposite:
-		all := c.Operator == OperatorAnd
+		and := c.Operator == OperatorAnd
 		for i := range c.Conditions {
-			v := e.test(&c.Conditions[i])
-			if c.Operator == OperatorAnd {
-				all = all && v
-			} else {
-				all = all || v
+			if e.test(&c.Conditions[i]) != and {
+				return !and
 			}
 		}
-		return all
+		return and
 	case ConditionFile:
 		state := FileMissing
 		if e.files != nil {
@@ -433,10 +486,14 @@ func (e *evaluator) test(c *Condition) bool {
 		}
 		return ok && v.value == c.Value
 	case ConditionVersion:
-		e.warn(fmt.Sprintf("%s (version %s) is not checked: treated as satisfied", c.Element, c.Version))
+		e.warnOnce(warnKey{kind: c.Kind, element: c.Element, version: c.Version}, func() string {
+			return fmt.Sprintf("%s (version %s) is not checked: treated as satisfied", c.Element, c.Version)
+		})
 		return true
 	default:
-		e.warn(fmt.Sprintf("%s is not understood: treated as satisfied", c.Element))
+		e.warnOnce(warnKey{kind: c.Kind, element: c.Element}, func() string {
+			return fmt.Sprintf("%s is not understood: treated as satisfied", c.Element)
+		})
 		return true
 	}
 }
@@ -653,4 +710,16 @@ func indexPicks(presets []*GroupChoice) picks {
 func (p picks) has(name string, ordinal int) bool {
 	ps := p[name]
 	return ps != nil && (ps.any || ps.ordinals[ordinal])
+}
+
+// countChoices counts a choice set's entries: steps, groups and picks.
+func countChoices(steps []StepChoice) int {
+	n := len(steps)
+	for _, s := range steps {
+		n += len(s.Groups)
+		for _, g := range s.Groups {
+			n += len(g.Choices)
+		}
+	}
+	return n
 }

@@ -15,6 +15,18 @@ const (
 	// <folder> expands to every member under it, so a hostile config could
 	// otherwise multiply a large archive many times over.
 	MaxOps = 1 << 20
+	// MaxNodes is the most XML elements Parse accepts. Byte and depth caps
+	// alone still let 8 MiB of empty elements decode into millions of
+	// nodes and gigabytes of allocation; the largest real installers hold a
+	// few tens of thousands of elements, so this leaves ample headroom.
+	MaxNodes = 100_000
+	// MaxChoices is the most recorded entries (steps, groups and picks
+	// together) Evaluate accepts in Request.Choices.
+	MaxChoices = 10_000
+	// MaxConditionEvals bounds the condition nodes one Evaluate visits. The
+	// walk visits each node a handful of times, so a config under MaxNodes
+	// stays far below it; it is a backstop, not a working limit.
+	MaxConditionEvals = 10_000_000
 )
 
 var (
@@ -28,8 +40,9 @@ var (
 	// ErrNotModuleConfig means the document is not a ModuleConfig: empty,
 	// not XML, or rooted at something other than <config>.
 	ErrNotModuleConfig = errors.New("fomod: not a ModuleConfig.xml document")
-	// ErrTooLarge means the input exceeds MaxConfigSize, or a resolution
-	// would exceed MaxOps.
+	// ErrTooLarge means an input exceeds a cap: MaxConfigSize or MaxNodes
+	// for a document, MaxChoices for a choice set, MaxOps or
+	// MaxConditionEvals for an evaluation.
 	ErrTooLarge = errors.New("fomod: installer exceeds a size limit")
 	// ErrTooDeep means the document nests deeper than MaxDepth.
 	ErrTooDeep = errors.New("fomod: ModuleConfig.xml nests too deeply")

@@ -84,7 +84,28 @@
 //     entry rather than failing the install.
 //   - Destinations collide case-insensitively (Vortex keys them exactly,
 //     then writes to a case-insensitive filesystem, so the later copy wins
-//     regardless of priority), and a ".." that leaves the mod root fails
-//     with ErrUnsafePath.
-//   - Input is capped: MaxConfigSize, MaxDepth, and MaxOps operations.
+//     regardless of priority). A copy to "a" cannot coexist with a
+//     directory at "a" or anything under "a/": the stronger side by the
+//     same priority-then-source rule is kept, and the other dropped with a
+//     warning.
+//   - Composite conditions short-circuit; Vortex evaluates every child.
+//     Only which assumed dependencies get a warning can differ.
+//   - Two installers at the same level of an archive, even ones differing
+//     only in case, are ErrAmbiguous.
+//
+// # Untrusted input
+//
+// The ModuleConfig.xml and the archive's member names are both
+// author-controlled. A destination from the XML that leaves the mod root
+// (".."), contains a NUL, or is a drive-letter or UNC path fails the
+// evaluation with ErrUnsafePath. A member name with a ".." segment, an
+// absolute or drive-letter path, or a NUL is dropped before matching and
+// listed in Result.UnsafeMembers, so one hostile member cannot fail the
+// whole install; the caller decides whether it blocks. Op.Source is
+// always a member exactly as the caller spelled it. Every dimension is
+// capped: MaxConfigSize bytes, MaxDepth nesting and MaxNodes elements per
+// document, MaxChoices recorded entries, and MaxOps operations and
+// MaxConditionEvals condition visits per evaluation (ErrTooLarge or
+// ErrTooDeep beyond them). Type resolution, flag bookkeeping and choice
+// matching are indexed, so evaluation is linear in the document.
 package fomod

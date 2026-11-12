@@ -123,8 +123,8 @@ type dependencyXML struct {
 // declaration ignored, there is no schema validation (encoding/xml in
 // non-strict mode), enum values match case-insensitively, and an
 // unrecognised value falls back to a default with a Config.Warnings entry.
-// It is not tolerant of size: input over MaxConfigSize or nested deeper
-// than MaxDepth is refused. No entity is expanded beyond XML's five
+// It is not tolerant of size: input over MaxConfigSize, with more than
+// MaxNodes elements, or nested deeper than MaxDepth is refused. No entity is expanded beyond XML's five
 // predefined ones; a DTD's custom entities are left as literal text.
 func Parse(data []byte) (*Config, error) {
 	text, err := decodeText(data)
@@ -157,12 +157,12 @@ func newDecoder(text string) *xml.Decoder {
 	return dec
 }
 
-// prescan walks the token stream once to enforce MaxDepth and check the
-// root element, before the struct decode (whose recursion has no cap of
-// its own beyond the standard library's).
+// prescan walks the token stream once to enforce MaxDepth and MaxNodes and
+// check the root element, before the struct decode (whose recursion and
+// allocation have no cap of their own beyond the standard library's).
 func prescan(text string) error {
 	dec := newDecoder(text)
-	depth := 0
+	depth, nodes := 0, 0
 	sawRoot := false
 	for {
 		tok, err := dec.Token()
@@ -186,6 +186,10 @@ func prescan(text string) error {
 			depth++
 			if depth > MaxDepth {
 				return ErrTooDeep
+			}
+			nodes++
+			if nodes > MaxNodes {
+				return fmt.Errorf("%w: more than %d elements", ErrTooLarge, MaxNodes)
 			}
 		case xml.EndElement:
 			depth--

@@ -253,9 +253,10 @@ func TestResolve_UnselectedOptionFiles(t *testing.T) {
 func TestResolve_MemberMatching(t *testing.T) {
 	cfg := mustParse(t, `<config><requiredInstallFiles><file source="CORE\Sub\A.ESP" destination="a.esp"/><folder source="core\sub" destination="all"/></requiredInstallFiles></config>`)
 	res := evaluate(t, cfg, Request{Members: []string{`Core\Sub\a.esp`, "Core/Sub/", "core/sub/b.esp"}})
+	// Sources come back exactly as the members were given.
 	assert.Equal(t, map[string]string{
-		"a.esp":     "Core/Sub/a.esp",
-		"all/a.esp": "Core/Sub/a.esp",
+		"a.esp":     `Core\Sub\a.esp`,
+		"all/a.esp": `Core\Sub\a.esp`,
 		"all/b.esp": "core/sub/b.esp",
 	}, copies(res))
 }
