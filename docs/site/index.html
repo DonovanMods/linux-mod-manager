@@ -74,7 +74,7 @@
   <div class="wrap">
     <div class="feature__grid feature__grid--flip">
       <div class="prose">
-        <h2 id="frontends-title">A terminal and a browser, one engine</h2>
+        <h2 id="frontends-title">A Terminal and a Browser, One Engine</h2>
         <p>Browse your library, find mods and manage updates in the web UI. Use the CLI for scripts or over SSH. Both use the same engine, database and profiles.</p>
         <p>Run <code>lmm serve</code> to open the UI in your browser. It listens on your computer's loopback address by default, and can run as a systemd user service. <a href="guide/background.html">Run lmm in the background</a>.</p>
       </div>
@@ -87,7 +87,7 @@
       </figure>
     </div>
     <figure class="cli-example" aria-labelledby="cli-title">
-      <h3 id="cli-title">The same library in the terminal</h3>
+      <h3 id="cli-title">The Same Library in the Terminal</h3>
 <pre class="code" tabindex="0"><code><span class="prompt">$</span> lmm list
 Installed mods in Starfall Colony (profile: default) — 9 mod(s), 1 disabled
 
@@ -110,7 +110,7 @@ CampfireCooking  Campfire Cooking     1.6.2    Halvard         -</code></pre>
 <section id="profiles" class="feature" aria-labelledby="profiles-title">
   <div class="wrap feature__grid">
     <div class="prose">
-      <h2 id="profiles-title">Save a setup. Make the game match it.</h2>
+      <h2 id="profiles-title">Save a Setup. Make the Game Match It.</h2>
       <p>A profile records your mods, versions and load order. Applying it installs what's missing, removes mods it no longer lists, and changes versions in either direction. Version locks stay enforced.</p>
       <p>Keep separate profiles for solo and co-op play. Switch between them using the mod files lmm already has in its cache.</p>
       <p>Export a profile as YAML to save or share the setup. Another computer can fetch the same versions when its sources are configured and those files are still available. Keep local mod archives and custom-source configuration separately: the profile doesn't include them. <a href="guide/profiles.html">How profiles work</a>.</p>
@@ -129,7 +129,7 @@ CampfireCooking  Campfire Cooking     1.6.2    Halvard         -</code></pre>
 
 <section class="band" aria-labelledby="sources-title">
   <div class="wrap">
-    <h2 id="sources-title">Bring your games and your mod sources</h2>
+    <h2 id="sources-title">Bring Your Games and Your Mod Sources</h2>
     <p class="section-lede prose">lmm finds Steam games and Battle.net installations under Wine or Proton, and fills in mod paths for known games. Already modded a game? Scan its mod folder to bring existing mods into lmm. <a href="guide/first-mods.html">Get started with your games</a>.</p>
     <ul class="cards">
       <li class="card">
@@ -145,11 +145,11 @@ CampfireCooking  Campfire Cooking     1.6.2    Halvard         -</code></pre>
         <p>Track the items Steam already installed, import a Workshop collection as a profile, or let lmm download an item and manage its own copy.</p>
       </li>
       <li class="card">
-        <h3>Your own sources</h3>
+        <h3>Your Own Sources</h3>
         <p>Describe a local folder, a JSON or YAML mod list, or a REST API in a short YAML file. lmm installs and updates from it like a built-in source.</p>
       </li>
       <li class="card">
-        <h3>Files you downloaded</h3>
+        <h3>Files You Downloaded</h3>
         <p>Hand lmm an archive you downloaded yourself, for example from a free NexusMods account, and it manages that mod like any other.</p>
       </li>
       <li class="card">
@@ -162,22 +162,22 @@ CampfireCooking  Campfire Cooking     1.6.2    Halvard         -</code></pre>
 
 <section class="feature" aria-labelledby="safety-title">
   <div class="wrap prose prose--wide">
-    <h2 id="safety-title">Preview changes and keep a way back</h2>
+    <h2 id="safety-title">Preview Changes and Keep a Way Back</h2>
     <dl class="facts">
       <div>
-        <dt>Review installs, updates and profile changes</dt>
+        <dt>Review Installs, Updates and Profile Changes</dt>
         <dd>The web UI shows a plan before installing, updating, deploying or applying a profile. In the CLI, <code>update</code>, <code>deploy</code> and <code>profile apply</code> support <code>--dry-run</code>. Enabling or disabling a mod applies immediately.</dd>
       </div>
       <div>
-        <dt>Back to an unmodded game</dt>
+        <dt>Back to an Unmodded Game</dt>
         <dd><code>lmm purge</code> removes deployed mods and restores originals backed up when lmm replaced game files.</dd>
       </div>
       <div>
-        <dt>Snapshots and rollback</dt>
+        <dt>Snapshots and Rollback</dt>
         <dd>Save a snapshot of your mod setup before experimenting. <code>lmm update rollback</code> can return a mod to its previous version.</dd>
       </div>
       <div>
-        <dt>Verify what's on disk</dt>
+        <dt>Verify What's on Disk</dt>
         <dd><code>lmm verify</code> checks cached files and the deployed mod files. <code>lmm conflicts</code> shows which mods provide the same file and which one wins.</dd>
       </div>
     </dl>
@@ -187,15 +187,15 @@ CampfireCooking  Campfire Cooking     1.6.2    Halvard         -</code></pre>
 
 <section class="band" aria-labelledby="everyday-title">
   <div class="wrap">
-    <h2 id="everyday-title">Fits the way you use Linux</h2>
+    <h2 id="everyday-title">Fits the Way You Use Linux</h2>
     <div class="details-grid">
       <div class="prose">
-        <h3>Ready for scripts</h3>
+        <h3>Ready for Scripts</h3>
         <p>Add <code>--json</code> for structured command output, with warnings inside the document. Use it with <code>jq</code> or your own tools. <a href="https://github.com/DonovanMods/linux-mod-manager#json-output">JSON output reference</a>.</p>
 <pre class="code" tabindex="0"><code><span class="prompt">$</span> lmm update --json | jq '.updates'</code></pre>
       </div>
       <div class="prose">
-        <h3>Verified self-updates</h3>
+        <h3>Verified Self-Updates</h3>
         <p>Release-download and <code>go install</code> installations can update automatically after signature and checksum verification. You can turn this off. Package installations stay under your package manager's control. <a href="guide/updates.html">How updates work</a>.</p>
       </div>
     </div>
@@ -204,7 +204,7 @@ CampfireCooking  Campfire Cooking     1.6.2    Halvard         -</code></pre>
 
 <section class="band" aria-labelledby="limits-title">
   <div class="wrap prose prose--wide">
-    <h2 id="limits-title">Check that lmm fits your setup</h2>
+    <h2 id="limits-title">Check That lmm Fits Your Setup</h2>
     <p>FOMOD installer options, automatic LOOT-style plugin sorting and Nexus Collections aren't supported yet. You can set load order yourself. The web UI is designed for desktop browsers. <a href="guide/faq.html">Check the compatibility FAQ</a>.</p>
   </div>
 </section>
