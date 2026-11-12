@@ -53,6 +53,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV21,
 		migrateV22,
 		migrateV23,
+		migrateV24,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -638,4 +639,26 @@ func migrateV23(ctx context.Context, q migrationExec) error {
 	}
 	_, err := q.ExecContext(ctx, `UPDATE installed_mods SET last_updated_at = installed_at WHERE last_updated_at IS NULL`)
 	return err
+}
+
+// migrateV24 adds installed_mods.variant and previous_variant (#614): which
+// tree of the row's version (and of its previous_version) the row installed,
+// when the tree depends on more than the source file - FOMOD installer
+// choices first. It is the cache key's Variant, a separate component that
+// is never part of the version string. ” is the plain tree, which every
+// existing row is, so the columns default to it. Guarded like migrateV20.
+func migrateV24(ctx context.Context, q migrationExec) error {
+	for _, col := range []string{"variant", "previous_variant"} {
+		var have int
+		if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('installed_mods') WHERE name = ?`, col).Scan(&have); err != nil {
+			return fmt.Errorf("inspecting installed_mods: %w", err)
+		}
+		if have > 0 {
+			continue
+		}
+		if _, err := q.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN `+col+` TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
 }

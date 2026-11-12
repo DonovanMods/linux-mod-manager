@@ -2423,14 +2423,16 @@ func (s *Service) IsSourceAuthenticated(ctx context.Context, sourceID string) bo
 // #3): zero production callers - the only exported form's beginOp gate ever
 // added is now provided by UpdateModVersionForTest for core's own tests.
 func (s *Service) updateModVersion(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string) error {
-	return s.db.UpdateModVersion(ctx, sourceID, modID, gameID, profileName, newVersion)
+	return s.db.UpdateModVersion(ctx, sourceID, modID, gameID, profileName, newVersion, "")
 }
 
 // applyModUpdate updates version and file IDs atomically, preserving
 // rollback state. Unexported (phase-2-close review Important #3): zero
 // production callers - see updateModVersion's doc comment.
-func (s *Service) applyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string, fileIDs []string) error {
-	return s.db.ApplyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, fileIDs)
+//
+// newVariant is the new version's tree (#614), never part of newVersion.
+func (s *Service) applyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion, newVariant string, fileIDs []string) error {
+	return s.db.ApplyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, newVariant, fileIDs)
 }
 
 // rollbackModVersion reverts a mod to its previous version. Unexported

@@ -67,6 +67,6 @@ func TestApplyModUpdate_ClearsSkippedVersion(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, database.SetModSkippedVersion(ctx, "nexusmods", "12345", "skyrim-se", "default", "1.1.0"))
 
-	require.NoError(t, database.ApplyModUpdate(ctx, "nexusmods", "12345", "skyrim-se", "default", "1.1.0", []string{"f2"}))
+	require.NoError(t, database.ApplyModUpdate(ctx, "nexusmods", "12345", "skyrim-se", "default", "1.1.0", "", []string{"f2"}))
 	assert.Empty(t, skippedVersionOf(t, database), "an applied update clears the skip")
 }
