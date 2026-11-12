@@ -76,6 +76,6 @@ lmm can only tell a mod needs BepInEx from its *shape* once it has
 downloaded and opened it. When you install several mods at once, or import a
 profile, lmm downloads all of them first. If any of them needs BepInEx and
 the game isn't set up for it, lmm installs **none** of them and lists which
-mods need BepInEx and which were only held back. It keeps the downloads, so
-once you've done the steps above, run the same install or import again and
-nothing is downloaded twice.
+mods need BepInEx and which were only held back. It keeps the files it
+downloaded, so once you've done the steps above, run the same install or
+import again and they aren't downloaded a second time.

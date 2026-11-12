@@ -422,7 +422,11 @@ func TestService_ApplyInstall_Batch_ForceWithFailingBeforeAll(t *testing.T) {
 	assert.NotContains(t, phases[forced+1:], core.InstallDepDownloadDone, "and follows every download")
 }
 
-func TestService_ApplyInstall_Batch_FailingBeforeAllWithoutForceAbortsBeforeAnyMod(t *testing.T) {
+// #602: install.before_all runs once every mod is acquired, so a failing
+// one (no --force) aborts before any mod is WRITTEN - the downloads have
+// happened, and are kept, so the re-run after the hook is fixed fetches
+// nothing again (review S3).
+func TestService_ApplyInstall_Batch_FailingBeforeAllWithoutForceAbortsBeforeAnyModIsWritten(t *testing.T) {
 	svc, game, src := newBatchInstallFixture(t)
 	modA := batchModA(t, src, "mod a content")
 
@@ -438,6 +442,10 @@ func TestService_ApplyInstall_Batch_FailingBeforeAllWithoutForceAbortsBeforeAnyM
 	assert.Contains(t, err.Error(), "install.before_all hook failed: ")
 	assert.Empty(t, result.Installed)
 	assert.Empty(t, batchInstalledRows(t, svc, "g1", "default"))
+
+	retained, err := os.ReadDir(filepath.Join(svc.DataDirForTest(), "downloads", "retained"))
+	require.NoError(t, err, "the acquired archive is retained for the re-run")
+	assert.Len(t, retained, 1)
 }
 
 // --- scenario: failing_after_each ---

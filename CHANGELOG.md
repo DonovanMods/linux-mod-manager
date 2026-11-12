@@ -27,8 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   again failed with a stale-plan error. Now nothing is written: not the
   profile, not the other mods. lmm names every mod that needs the loader
   (one requirement, one set of setup steps), marks the rest as held back,
-  and keeps every download, so running the same command again after
-  `lmm game edit --loader` downloads nothing twice. The exit code and
+  and keeps the archives it downloaded, so running the same command again
+  after `lmm game edit --loader` does not download them again (a Steam
+  Workshop item fetched through steamcmd is not kept, and is fetched again;
+  a kept archive is only reused for the same version of the mod). A failing
+  `install.before_all` hook keeps the downloads the same way. The exit code and
   `--json` documents are unchanged in shape: an import still fails with its
   incomplete-import document and a multi-mod install still exits 0 with its
   install result, each with new `refused` and `loader_required` keys, and

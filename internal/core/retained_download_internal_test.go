@@ -25,9 +25,9 @@ func TestReuseRetainedDownload_TreatsTheSidecarFileNameAsABareName(t *testing.T)
 	outside := filepath.Join(filepath.Dir(dir), "elsewhere.zip")
 	require.NoError(t, os.WriteFile(outside, []byte("bytes"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, retainedDownloadFile),
-		[]byte(`{"file_name":"../elsewhere.zip","size":5}`), 0o600))
+		[]byte(`{"file_name":"../elsewhere.zip","size":5,"version":"1.0.0"}`), 0o600))
 
-	path, _, ok := svc.reuseRetainedDownload("src", "mod", "file")
+	path, _, ok := svc.reuseRetainedDownload("src", "mod", "file", retainedIdentity{Version: "1.0.0"})
 	assert.False(t, ok, "a sidecar naming a path outside its own directory reuses nothing, got %q", path)
 }
 
@@ -39,12 +39,49 @@ func TestReuseRetainedDownload_ReusesTheArchiveBesideItsSidecar(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dir, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "Thing-1.0.0.zip"), []byte("bytes"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, retainedDownloadFile),
-		[]byte(`{"file_name":"Thing-1.0.0.zip","size":5,"sha256":"abc"}`), 0o600))
+		[]byte(`{"file_name":"Thing-1.0.0.zip","size":5,"sha256":"abc","version":"1.0.0"}`), 0o600))
 
-	path, result, ok := svc.reuseRetainedDownload("src", "mod", "file")
+	path, result, ok := svc.reuseRetainedDownload("src", "mod", "file", retainedIdentity{Version: "1.0.0"})
 	require.True(t, ok)
 	assert.Equal(t, filepath.Join(dir, "Thing-1.0.0.zip"), path)
 	require.NotNil(t, result)
 	assert.Equal(t, int64(5), result.Size)
 	assert.Equal(t, "abc", result.SHA256)
+}
+
+// TestReuseRetainedDownload_RequiresTheSameVersion is #602 review S2: the
+// entry is keyed by (source, mod, file id), and a file id can outlive a
+// release. An archive kept for 1.0.0 must not be installed as 2.0.0 - nor
+// one whose source-declared size or checksum has since changed, nor one a
+// binary from before the field wrote (no version at all). Each is discarded,
+// so the next acquire downloads.
+func TestReuseRetainedDownload_RequiresTheSameVersion(t *testing.T) {
+	for name, tc := range map[string]struct {
+		sidecar string
+		want    retainedIdentity
+		reused  bool
+	}{
+		"same version":        {`"version":"1.0.0"`, retainedIdentity{Version: "1.0.0"}, true},
+		"newer version":       {`"version":"1.0.0"`, retainedIdentity{Version: "2.0.0"}, false},
+		"no recorded version": {``, retainedIdentity{Version: "1.0.0"}, false},
+		"declared size moved": {`"version":"1.0.0","declared_size":5`, retainedIdentity{Version: "1.0.0", DeclaredSize: 6}, false},
+		"declared sha moved":  {`"version":"1.0.0","declared_sha256":"aa"`, retainedIdentity{Version: "1.0.0", DeclaredSHA256: "bb"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := &Service{dataDir: t.TempDir()}
+			dir := svc.retainedDownloadDir("src", "mod", "file")
+			require.NoError(t, os.MkdirAll(dir, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "a.zip"), []byte("bytes"), 0o600))
+			sidecar := `{"file_name":"a.zip","size":5`
+			if tc.sidecar != "" {
+				sidecar += "," + tc.sidecar
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(dir, retainedDownloadFile), []byte(sidecar+"}"), 0o600))
+
+			_, _, ok := svc.reuseRetainedDownload("src", "mod", "file", tc.want)
+			assert.Equal(t, tc.reused, ok)
+			_, statErr := os.Stat(dir)
+			assert.Equal(t, tc.reused, statErr == nil, "a stale entry is removed, a matching one kept")
+		})
+	}
 }

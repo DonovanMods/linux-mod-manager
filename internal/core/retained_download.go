@@ -33,7 +33,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // retainedDownloadsDirName is the staging-root subdirectory holding them.
@@ -54,12 +57,36 @@ const retainedDownloadTTL = 7 * 24 * time.Hour
 // result feeds).
 const retainedDownloadFile = "download.json"
 
-// retainedDownload is that sidecar's content.
+// retainedDownload is that sidecar's content: what the download produced,
+// and the identity of the file it was downloaded AS (retainedIdentity).
 type retainedDownload struct {
 	FileName string `json:"file_name"`
 	Size     int64  `json:"size"`
 	Checksum string `json:"checksum"`
 	SHA256   string `json:"sha256"`
+	retainedIdentity
+}
+
+// retainedIdentity is what a retained archive must still match to be
+// reused: the mod version it was downloaded for, and whatever the source
+// declared about the file (#602 review S2).
+//
+// The directory key is (source, mod, file id), and a file id is not a
+// version: a Steam Workshop item keeps its PublishedFileID, an Icarus mod
+// its "pak"/"exmodz" file ids, and a manifest source may keep an id, across
+// releases. Without this, a re-run inside the TTL after an upstream release
+// would install the OLD bytes and record them as the new version. A
+// sidecar from before this field existed has no version, matches nothing,
+// and is discarded.
+type retainedIdentity struct {
+	Version        string `json:"version"`
+	DeclaredSize   int64  `json:"declared_size,omitempty"`
+	DeclaredSHA256 string `json:"declared_sha256,omitempty"`
+}
+
+// identityOf is the identity a download of file for mod is retained under.
+func identityOf(mod *domain.Mod, file *domain.DownloadableFile) retainedIdentity {
+	return retainedIdentity{Version: mod.Version, DeclaredSize: file.Size, DeclaredSHA256: strings.ToLower(file.SHA256)}
 }
 
 // retainedDownloadDir names the directory for one (source, mod, file), or ""
@@ -84,8 +111,10 @@ func (s *Service) retainedDownloadDir(sourceID, modID, fileID string) string {
 //
 // It does NOT consume the entry: a retry that is refused again - the user
 // has not run the edit yet - must still have the bytes for the next one.
-// dropRetainedDownload is what removes it, once the ingest succeeds.
-func (s *Service) reuseRetainedDownload(sourceID, modID, fileID string) (string, *DownloadResult, bool) {
+// dropRetainedDownload is what removes it, once the ingest succeeds. An
+// entry kept for a different identity (want: another version, or a file the
+// source now declares differently) is stale and is removed instead.
+func (s *Service) reuseRetainedDownload(sourceID, modID, fileID string, want retainedIdentity) (string, *DownloadResult, bool) {
 	dir := s.retainedDownloadDir(sourceID, modID, fileID)
 	if dir == "" {
 		return "", nil, false
@@ -96,6 +125,12 @@ func (s *Service) reuseRetainedDownload(sourceID, modID, fileID string) (string,
 	}
 	var meta retainedDownload
 	if err := json.Unmarshal(data, &meta); err != nil || meta.FileName == "" {
+		return "", nil, false
+	}
+	if meta.retainedIdentity != want {
+		s.logger().Debug("discarding a retained download kept for another version", "dir", dir,
+			"kept", meta.Version, "want", want.Version)
+		s.dropRetainedDownload(sourceID, modID, fileID)
 		return "", nil, false
 	}
 	// filepath.Base: the sidecar's file_name is a BARE name by
@@ -131,7 +166,7 @@ func (s *Service) retainBlocked(a *acquiredFile) {
 	if a == nil || a.download == nil {
 		return
 	}
-	s.retainRefusedDownload(errAcquireBlocked, a.sourceID, a.mod.ID, a.file.ID, a.archivePath, a.download)
+	s.retainRefusedDownload(errAcquireBlocked, a.sourceID, a.mod.ID, a.file.ID, a.archivePath, a.download, identityOf(&a.mod, a.file))
 }
 
 // retainRefusedDownload keeps archivePath for the retry when err is one of
@@ -142,7 +177,7 @@ func (s *Service) retainBlocked(a *acquiredFile) {
 // logged rather than allowed to replace the refusal the caller is about to
 // report. It is also a no-op when the archive already IS the retained copy
 // (a second refused retry).
-func (s *Service) retainRefusedDownload(err error, sourceID, modID, fileID, archivePath string, result *DownloadResult) {
+func (s *Service) retainRefusedDownload(err error, sourceID, modID, fileID, archivePath string, result *DownloadResult, id retainedIdentity) {
 	if !retainsDownload(err) || result == nil {
 		return
 	}
@@ -153,7 +188,7 @@ func (s *Service) retainRefusedDownload(err error, sourceID, modID, fileID, arch
 	if filepath.Dir(archivePath) == dir {
 		return
 	}
-	if rerr := s.storeRetainedDownload(dir, archivePath, result); rerr != nil {
+	if rerr := s.storeRetainedDownload(dir, archivePath, result, id); rerr != nil {
 		s.logger().Debug("keeping the refused download failed", "path", archivePath, "err", rerr)
 	}
 }
@@ -163,7 +198,7 @@ func (s *Service) retainRefusedDownload(err error, sourceID, modID, fileID, arch
 // The archive is MOVED (the caller's staging directory is about to be
 // removed) and the sidecar is written last, so a crash mid-move leaves an
 // entry reuseRetainedDownload rejects rather than one it trusts.
-func (s *Service) storeRetainedDownload(dir, archivePath string, result *DownloadResult) error {
+func (s *Service) storeRetainedDownload(dir, archivePath string, result *DownloadResult, id retainedIdentity) error {
 	s.sweepRetainedDownloads()
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("clearing %s: %w", dir, err)
@@ -183,6 +218,7 @@ func (s *Service) storeRetainedDownload(dir, archivePath string, result *Downloa
 	}
 	meta, err := json.Marshal(retainedDownload{
 		FileName: name, Size: result.Size, Checksum: result.Checksum, SHA256: result.SHA256,
+		retainedIdentity: id,
 	})
 	if err != nil {
 		return fmt.Errorf("describing %s: %w", dest, err)

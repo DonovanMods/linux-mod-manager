@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,16 +68,24 @@ type acquiredFile struct {
 	download    *DownloadResult
 
 	owned []string
+	log   *slog.Logger
 }
 
 // release removes the acquisition's scratch directories. Safe on nil and
 // safe to call twice.
+//
+// A directory it cannot remove is LOGGED, not returned: release runs after
+// the commit (or the refusal) has already decided the outcome, and a
+// committed install must not be reported as failed because scratch space
+// outlived it - nor a refusal replaced by a cleanup error (#602 review N4).
 func (a *acquiredFile) release() {
 	if a == nil {
 		return
 	}
 	for _, dir := range a.owned {
-		_ = os.RemoveAll(dir)
+		if err := os.RemoveAll(dir); err != nil && a.log != nil {
+			a.log.Warn("removing an acquire directory failed", "path", dir, "err", err)
+		}
 	}
 	a.owned = nil
 }
@@ -120,8 +129,8 @@ func (s *Service) commitAcquired(ctx context.Context, a *acquiredFile) (*Downloa
 }
 
 // newAcquired starts an acquisition for (mod, file) and creates nothing.
-func newAcquired(gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile) *acquiredFile {
-	a := &acquiredFile{gameCache: gameCache, game: game, mod: *mod, file: file, sourceID: sourceID}
+func (s *Service) newAcquired(gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile) *acquiredFile {
+	a := &acquiredFile{gameCache: gameCache, game: game, mod: *mod, file: file, sourceID: sourceID, log: s.logger()}
 	a.tree = acquireTreePath(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}), file.ID)
 	return a
 }
@@ -189,14 +198,15 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 	if err != nil {
 		return nil, err
 	}
-	a = newAcquired(gameCache, sourceID, game, mod, file)
+	a = s.newAcquired(gameCache, sourceID, game, mod, file)
 	a.owned = append(a.owned, tempDir)
-	defer func() {
+	// pending, not a: a `return nil, err` has already set the named result
+	// to nil by the time this runs.
+	defer func(pending *acquiredFile) {
 		if err != nil {
-			a.release()
-			a = nil
+			pending.release()
 		}
-	}()
+	}(a)
 
 	// Download the file. safeFileName sanitizes file.FileName - a
 	// SOURCE-CONTROLLED value (NexusMods/CurseForge/Icarus/a custom source's
@@ -221,7 +231,7 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 	// sidecar at all and reuseRetainedDownload rejects it outright instead
 	// of trusting a truncated archive. The retained copy is dropped by the
 	// COMMIT (commitAcquiredRaw), whichever kind of member set it built.
-	retainedPath, downloadResult, reused := s.reuseRetainedDownload(sourceID, mod.ID, file.ID)
+	retainedPath, downloadResult, reused := s.reuseRetainedDownload(sourceID, mod.ID, file.ID, identityOf(mod, file))
 	if !reused {
 		var headers map[string]string
 		if hp, ok := src.(source.DownloadHeaderProvider); ok {
@@ -311,7 +321,7 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 
 	members, err := s.extractPristine(ctx, game, mod, archivePath, a.tree, sink)
 	if err != nil {
-		s.retainRefusedDownload(err, sourceID, mod.ID, file.ID, archivePath, downloadResult)
+		s.retainRefusedDownload(err, sourceID, mod.ID, file.ID, archivePath, downloadResult, identityOf(mod, file))
 		return nil, fmt.Errorf("extracting mod: %w", err)
 	}
 	a.members, a.listed = members, true
@@ -337,16 +347,17 @@ func (s *Service) acquireLocal(ctx context.Context, gameCache *cache.Cache, game
 	if err != nil {
 		return nil, fmt.Errorf("local mod path: %w", err)
 	}
-	a = newAcquired(gameCache, mod.SourceID, game, mod, file)
+	a = s.newAcquired(gameCache, mod.SourceID, game, mod, file)
 	if err := a.claimTree(); err != nil {
 		return nil, err
 	}
-	defer func() {
+	// pending, not a: a `return nil, err` has already set the named result
+	// to nil by the time this runs.
+	defer func(pending *acquiredFile) {
 		if err != nil {
-			a.release()
-			a = nil
+			pending.release()
 		}
-	}()
+	}(a)
 	a.listed = true
 
 	switch {

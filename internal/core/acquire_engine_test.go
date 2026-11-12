@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -422,4 +423,247 @@ func TestApplyImport_CancellationKeepsTheRuling16Pairing(t *testing.T) {
 		fx.requireNothingWritten(t, "a", "b")
 		assert.Zero(t, fx.retainedEntries(t), "a cancellation is not a refusal: nothing is kept")
 	})
+}
+
+// requireNoAcquireLeftovers asserts no acquire tree, staging or extraction
+// directory is left beside any cache entry of the fixture's game, and no
+// download or fetch staging directory under the data dir (#602 review S4).
+func (fx *acquireFixture) requireNoAcquireLeftovers(t *testing.T) {
+	t.Helper()
+	requireNoAcquireLeftovers(t, fx.svc, fx.game)
+}
+
+func requireNoAcquireLeftovers(t *testing.T, svc *core.Service, game *domain.Game) {
+	t.Helper()
+	entry := svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: "x", ModID: "x", Version: "x"})
+	gameRoot := filepath.Dir(filepath.Dir(entry))
+	var left []string
+	_ = filepath.WalkDir(gameRoot, func(p string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			base := filepath.Base(p)
+			if strings.Contains(base, ".acquire-") || strings.HasSuffix(base, ".staging") || strings.HasSuffix(base, ".extract") {
+				left = append(left, p)
+			}
+		}
+		return nil
+	})
+	if entries, err := os.ReadDir(filepath.Join(svc.DataDirForTest(), "downloads")); err == nil {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "lmm-download-") || strings.HasPrefix(e.Name(), "lmm-fetch-") {
+				left = append(left, e.Name())
+			}
+		}
+	}
+	assert.Empty(t, left, "nothing an acquire made outlives the Apply")
+}
+
+// The cleanup half of every outcome: success, a refusal, a cancellation.
+func TestApplyImport_LeavesNoAcquireDirectories(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		fx := newAcquireFixture(t, plainMod("a", "A"), plainMod("b", "B"))
+		_, err := fx.svc.ApplyImport(context.Background(), fx.game, fx.importPlan(t, "a", "b"), core.ProfileImportOptions{Install: true}, nil)
+		require.NoError(t, err)
+		fx.requireNoAcquireLeftovers(t)
+	})
+	t.Run("refusal", func(t *testing.T) {
+		fx := newAcquireFixture(t, plainMod("a", "A"), loaderMod("thing", "Thing"))
+		_, err := fx.svc.ApplyImport(context.Background(), fx.game, fx.importPlan(t, "a", "thing"), core.ProfileImportOptions{Install: true}, nil)
+		require.Error(t, err)
+		fx.requireNoAcquireLeftovers(t)
+	})
+	t.Run("cancellation", func(t *testing.T) {
+		fx := newAcquireFixture(t, plainMod("a", "A"), plainMod("b", "B"))
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		_, err := fx.svc.ApplyImport(ctx, fx.game, fx.importPlan(t, "a", "b"), core.ProfileImportOptions{Install: true}, func(e core.Event) {
+			if fe, ok := e.(core.FlowEvent); ok && fe.FlowPhase() == core.ImportDownloadDone {
+				cancel()
+			}
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		fx.requireNoAcquireLeftovers(t)
+	})
+}
+
+// A panic in one item's commit (serve recovers a job's panic and keeps
+// running) must not leak the LATER items' acquire trees and download
+// staging: runAcquire releases every unsettled item on the way out.
+func TestApplyInstall_Batch_APanickingCommitLeavesNoAcquireDirectories(t *testing.T) {
+	fx := newAcquireFixture(t, plainMod("a", "A"), plainMod("b", "B"), plainMod("c", "C"))
+	fx.svc.SetAfterInstallSaveForTest(func() { panic("boom") })
+	plan, err := fx.svc.PlanInstallMany(context.Background(), fx.game, "default", []*domain.Mod{
+		{ID: "a", SourceID: "repo", Name: "A", Version: "1.0.0", GameID: "valheim"},
+		{ID: "b", SourceID: "repo", Name: "B", Version: "1.0.0", GameID: "valheim"},
+		{ID: "c", SourceID: "repo", Name: "C", Version: "1.0.0", GameID: "valheim"},
+	}, false)
+	require.NoError(t, err)
+
+	func() {
+		defer func() { require.Equal(t, "boom", recover()) }()
+		_, _ = fx.svc.ApplyInstall(context.Background(), fx.game, plan, core.InstallOptions{}, nil)
+	}()
+	fx.requireNoAcquireLeftovers(t)
+}
+
+// #602 review S1: a mod with two files, the SECOND of which refuses. The
+// first file acquired cleanly before the refusal and must be retained with
+// it, so the re-run after the remedy fetches neither file again.
+func TestApplyImport_AMultiFileModRetainsEveryFileItAcquired(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	plain := bepinexZipBytes(t, map[string]string{"readme.txt": "x"})
+	loader := bepinexZipBytes(t, map[string]string{"BepInEx/plugins/a.dll": "a", "manifest.json": "{}"})
+	var c1, c2 atomic.Int64
+	mux.HandleFunc("/f1.zip", func(w http.ResponseWriter, _ *http.Request) { c1.Add(1); _, _ = w.Write(plain) })
+	mux.HandleFunc("/f2.zip", func(w http.ResponseWriter, _ *http.Request) { c2.Add(1); _, _ = w.Write(loader) })
+	manifest := fmt.Sprintf(`version: 1
+mods:
+  - id: m
+    name: M
+    version: 1.0.0
+    files:
+      - id: f1
+        filename: f1.zip
+        version: 1.0.0
+        url: %[1]s/f1.zip
+        primary: true
+      - id: f2
+        filename: f2.zip
+        version: 1.0.0
+        url: %[1]s/f2.zip
+`, srv.URL)
+	mux.HandleFunc("/mods.yaml", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(manifest)) })
+	src, err := custom.New(custom.SourceDefinition{ID: "repo", Name: "Repo", Type: custom.TypeManifest, AllowHTTP: true,
+		Manifest: &custom.ManifestConfig{URL: srv.URL + "/mods.yaml"}})
+	require.NoError(t, err)
+	fx := &acquireFixture{svc: newFlowsTestService(t)}
+	fx.svc.RegisterSource(src)
+	root := t.TempDir()
+	fx.game = &domain.Game{ID: "valheim", Name: "Valheim", InstallPath: root, ModPath: root, LinkMethod: domain.LinkSymlink, SourceIDs: map[string]string{"repo": "valheim"}}
+	require.NoError(t, fx.svc.SaveGame(context.Background(), fx.game))
+	data, err := config.ExportProfile(&domain.Profile{Name: "target", GameID: fx.game.ID,
+		Mods: []domain.ModReference{{SourceID: "repo", ModID: "m", Version: "1.0.0", FileIDs: []string{"f1", "f2"}}}})
+	require.NoError(t, err)
+
+	plan, err := fx.svc.PlanImport(context.Background(), fx.game, data)
+	require.NoError(t, err)
+	_, err = fx.svc.ApplyImport(context.Background(), fx.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	var loaderErr *core.LoaderRequiredError
+	require.ErrorAs(t, err, &loaderErr)
+	fx.requireNothingWritten(t, "m")
+	assert.Equal(t, 2, fx.retainedEntries(t), "both files are kept: the refused one and the one before it")
+	fx.requireNoAcquireLeftovers(t)
+
+	fx.declareLoader(t)
+	plan, err = fx.svc.PlanImport(context.Background(), fx.game, data)
+	require.NoError(t, err)
+	_, err = fx.svc.ApplyImport(context.Background(), fx.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), c1.Load(), "the earlier file is not fetched again")
+	assert.Equal(t, int64(1), c2.Load(), "nor the refused one")
+	fx.requireNoAcquireLeftovers(t)
+}
+
+// #602 review S2: a retained archive is keyed by (source, mod, file id),
+// and a file id can outlive a release. When the source moves to 2.0.0 under
+// the SAME file id between the refusal and the re-run, the 1.0.0 bytes kept
+// for the re-run must not be installed as 2.0.0: the re-run downloads.
+func TestApplyInstall_ARetainedArchiveIsNotReusedForAnotherVersion(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	fx := &acquireFixture{svc: newFlowsTestService(t)}
+	var version atomic.Value
+	version.Store("1.0.0")
+	var fetches atomic.Int64
+	archiveFor := func(v string) []byte {
+		return bepinexZipBytes(t, map[string]string{"BepInEx/plugins/thing.dll": "assembly " + v, "manifest.json": "{}"})
+	}
+	mux.HandleFunc("/files/thing.zip", func(w http.ResponseWriter, _ *http.Request) {
+		fetches.Add(1)
+		_, _ = w.Write(archiveFor(version.Load().(string)))
+	})
+	mux.HandleFunc("/mods.yaml", func(w http.ResponseWriter, _ *http.Request) {
+		v := version.Load().(string)
+		_, _ = fmt.Fprintf(w, `version: 1
+mods:
+  - id: thing
+    name: Thing
+    version: %[2]s
+    files:
+      - id: thing-main
+        filename: thing.zip
+        version: %[2]s
+        url: %[1]s/files/thing.zip
+        primary: true
+`, srv.URL, v)
+	})
+	// A fresh source instance per phase: a manifest source caches what it
+	// read, and the test is about the release, not that cache.
+	register := func() {
+		src, err := custom.New(custom.SourceDefinition{ID: "repo", Name: "Repo", Type: custom.TypeManifest, AllowHTTP: true,
+			Manifest: &custom.ManifestConfig{URL: srv.URL + "/mods.yaml"}})
+		require.NoError(t, err)
+		fx.svc.RegisterSource(src)
+	}
+	register()
+	root := t.TempDir()
+	fx.game = &domain.Game{ID: "valheim", Name: "Valheim", InstallPath: root, ModPath: root, LinkMethod: domain.LinkSymlink, SourceIDs: map[string]string{"repo": "valheim"}}
+	require.NoError(t, fx.svc.SaveGame(context.Background(), fx.game))
+
+	install := func(v string) (*core.InstallResult, error) {
+		plan, err := fx.svc.PlanInstallMany(context.Background(), fx.game, "default",
+			[]*domain.Mod{{ID: "thing", SourceID: "repo", Name: "Thing", Version: v, GameID: "valheim"}}, false)
+		require.NoError(t, err)
+		return fx.svc.ApplyInstall(context.Background(), fx.game, plan, core.InstallOptions{}, nil)
+	}
+
+	result, err := install("1.0.0")
+	require.NoError(t, err)
+	require.True(t, result.Refused)
+	assert.Equal(t, 1, fx.retainedEntries(t), "1.0.0's archive is kept for the re-run")
+
+	version.Store("2.0.0") // upstream releases under the same file id
+	register()
+	fx.declareLoader(t)
+	result, err = install("2.0.0")
+	require.NoError(t, err)
+	require.Len(t, result.Installed, 1)
+	assert.Equal(t, int64(2), fetches.Load(), "the 1.0.0 archive is not reused for 2.0.0")
+
+	content, err := os.ReadFile(filepath.Join(fx.svc.GetGameCache(fx.game).ModPath(
+		cache.Key{GameID: fx.game.ID, SourceID: "repo", ModID: "thing", Version: "2.0.0"}), "BepInEx", "plugins", "thing.dll"))
+	require.NoError(t, err)
+	assert.Equal(t, "assembly 2.0.0", string(content), "2.0.0's entry holds 2.0.0's bytes")
+	assert.Zero(t, fx.retainedEntries(t))
+}
+
+// #602 review S3: a failing install.before_all (no --force) aborts with
+// nothing written but keeps the downloads, so the re-run after the hook is
+// fixed fetches nothing again.
+func TestApplyInstall_Batch_AFailingBeforeAllKeepsTheDownloads(t *testing.T) {
+	fx := newAcquireFixture(t, plainMod("a", "A"), plainMod("b", "B"))
+	scripts := t.TempDir()
+	hook := createTestScript(t, scripts, "before_all.sh", "#!/bin/bash\nexit 1\n")
+	seedHooks(t, fx.svc, fx.game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeAll: hook}})
+	mods := []*domain.Mod{
+		{ID: "a", SourceID: "repo", Name: "A", Version: "1.0.0", GameID: "valheim"},
+		{ID: "b", SourceID: "repo", Name: "B", Version: "1.0.0", GameID: "valheim"},
+	}
+	plan, err := fx.svc.PlanInstallMany(context.Background(), fx.game, "default", mods, false)
+	require.NoError(t, err)
+	_, err = fx.svc.ApplyInstall(context.Background(), fx.game, plan, core.InstallOptions{}, nil)
+	require.ErrorContains(t, err, "install.before_all hook failed")
+	assert.Equal(t, 2, fx.retainedEntries(t))
+	fx.requireNoAcquireLeftovers(t)
+
+	require.NoError(t, os.WriteFile(hook, []byte("#!/bin/bash\nexit 0\n"), 0o755))
+	plan, err = fx.svc.PlanInstallMany(context.Background(), fx.game, "default", mods, false)
+	require.NoError(t, err)
+	result, err := fx.svc.ApplyInstall(context.Background(), fx.game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	assert.Len(t, result.Installed, 2)
+	assert.Equal(t, int64(1), fx.fetches("a"), "no second download")
+	assert.Equal(t, int64(1), fx.fetches("b"), "no second download")
 }

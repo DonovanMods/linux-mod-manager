@@ -26,6 +26,19 @@
 //     download error, in an ordinary Apply) settles here as today's
 //     per-item counted failure, in its place in the order.
 //
+// "NOTHING WRITTEN", precisely: no cache entry, no installed_mods row, no
+// profile, no deployed file and no hook run. Two things acquire does
+// persist, both deliberately. The archives a refused Apply kept for its
+// re-run (retained_download.go), and - when a download fails because its
+// source will only serve it by hand - the manual-only flag on that mod
+// (noteDownloadOutcome, #543): a true fact about the SOURCE, learned once,
+// which no installed row, profile or plan snapshot reads, so it leaves the
+// plan fresh. A run refused at decide, or by a failing begin (an
+// install.before_all hook), keeps its downloads; a cancelled one keeps
+// nothing. Every item is released exactly once, a panicking commit
+// included (runAcquire's deferred releaseAll), so no acquire tree or
+// download staging directory outlives the run.
+//
 // MODE SELECTION. An install-shaped Apply runs PHASED, as above. A flow runs
 // INTERLEAVED - acquire item i, settle it, then item i+1 - only by explicit
 // declaration (acquireInterleaved), and exactly one flow declares it: the
@@ -214,6 +227,10 @@ type acquireFailure struct {
 	// settle records it as the flow's per-item failure (counting it and
 	// emitting its events) when it does not block. May be nil.
 	settle func()
+	// release frees what the item acquired before it failed - a mod's
+	// earlier files, when a later one refused - retaining it when blocked,
+	// exactly as a clean item's release does. May be nil.
+	release func(blocked bool)
 	// abort, when set, stops the whole Apply with this error (a
 	// cancellation the flow refuses to count as a per-item failure).
 	abort error
@@ -223,6 +240,12 @@ type acquireFailure struct {
 type acquireRun[T any] struct {
 	policy acquirePolicy
 	n      int
+	// key, when set, names item i; an item whose key an earlier item
+	// already had is skipped - never acquired, committed or reported - so
+	// the first occurrence wins deterministically. Two items for one mod
+	// would otherwise share one acquire tree (acquireTreePath) and one
+	// cache entry.
+	key func(i int) string
 	// acquire fetches item i and writes nothing; a nil failure means the
 	// staged value is ready to commit.
 	acquire func(ctx context.Context, i int) (T, *acquireFailure)
@@ -237,39 +260,91 @@ type acquireRun[T any] struct {
 }
 
 type acquiredItem[T any] struct {
+	index   int
 	staged  T
 	failure *acquireFailure
+	done    bool
+}
+
+// acquireItems is the set of items one run has acquired, each released
+// exactly once: when it settles, when the run is refused or stopped, or -
+// whatever else happens, a panic in a commit included - by runAcquire's
+// deferred releaseAll, so no acquire tree or staging directory outlives the
+// run.
+type acquireItems[T any] struct {
+	r     *acquireRun[T]
+	items []*acquiredItem[T]
+}
+
+func (a *acquireItems[T]) release(it *acquiredItem[T], blocked bool) {
+	if it.done {
+		return
+	}
+	it.done = true
+	switch {
+	case it.failure == nil:
+		a.r.release(it.staged, blocked)
+	case it.failure.release != nil:
+		it.failure.release(blocked)
+	}
+}
+
+func (a *acquireItems[T]) releaseAll(blocked bool) {
+	for _, it := range a.items {
+		a.release(it, blocked)
+	}
+}
+
+// settle commits a clean item, or records a failed one as the flow's
+// per-item failure, and releases it either way.
+func (a *acquireItems[T]) settle(ctx context.Context, it *acquiredItem[T]) error {
+	defer a.release(it, false)
+	if it.failure != nil {
+		if it.failure.settle != nil {
+			it.failure.settle()
+		}
+		return nil
+	}
+	return a.r.commit(ctx, it.index, it.staged)
 }
 
 // runAcquire drives r through the engine (see the file's doc comment for
 // the phases and the mode selection).
 func runAcquire[T any](ctx context.Context, r acquireRun[T]) error {
-	if r.policy.mode == acquireInterleaved {
-		return runInterleaved(ctx, r)
+	set := &acquireItems[T]{r: &r}
+	defer set.releaseAll(false)
+
+	seen := make(map[string]bool)
+	duplicate := func(i int) bool {
+		if r.key == nil {
+			return false
+		}
+		k := r.key(i)
+		if seen[k] {
+			return true
+		}
+		seen[k] = true
+		return false
 	}
 
-	items := make([]acquiredItem[T], 0, r.n)
-	discard := func(from int, blocked bool) {
-		for _, it := range items[from:] {
-			if it.failure == nil {
-				r.release(it.staged, blocked)
-			}
-		}
+	if r.policy.mode == acquireInterleaved {
+		return runInterleaved(ctx, r, set, duplicate)
 	}
 
 	var refusals []AcquireRefusal
 	for i := 0; i < r.n; i++ {
 		if err := ctx.Err(); err != nil {
-			discard(0, false)
 			return err
 		}
+		if duplicate(i) {
+			continue
+		}
 		staged, failure := r.acquire(ctx, i)
-		items = append(items, acquiredItem[T]{staged: staged, failure: failure})
+		set.items = append(set.items, &acquiredItem[T]{index: i, staged: staged, failure: failure})
 		if failure == nil {
 			continue
 		}
 		if failure.abort != nil {
-			discard(0, false)
 			return failure.abort
 		}
 		if r.policy.blocks(failure.refusal.Err) {
@@ -279,27 +354,27 @@ func runAcquire[T any](ctx context.Context, r acquireRun[T]) error {
 	// A cancellation during the last item's acquire must stop the Apply as
 	// a cancellation, not surface as that item's refusal.
 	if err := ctx.Err(); err != nil {
-		discard(0, false)
 		return err
 	}
 	if len(refusals) > 0 {
-		discard(0, true)
+		set.releaseAll(true)
 		return newAcquireRefusedError(refusals)
 	}
 
 	if r.begin != nil {
 		if err := r.begin(ctx); err != nil {
-			discard(0, false)
+			// Nothing was written and the downloads are sound: a failing
+			// install.before_all is fixed and re-run, and the re-run must
+			// not fetch everything again.
+			set.releaseAll(true)
 			return err
 		}
 	}
-	for i, it := range items {
+	for _, it := range set.items {
 		if err := ctx.Err(); err != nil {
-			discard(i, false)
 			return err
 		}
-		if err := settleAcquired(ctx, r, i, it); err != nil {
-			discard(i+1, false)
+		if err := set.settle(ctx, it); err != nil {
 			return err
 		}
 	}
@@ -307,7 +382,7 @@ func runAcquire[T any](ctx context.Context, r acquireRun[T]) error {
 }
 
 // runInterleaved settles each item before acquiring the next.
-func runInterleaved[T any](ctx context.Context, r acquireRun[T]) error {
+func runInterleaved[T any](ctx context.Context, r acquireRun[T], set *acquireItems[T], duplicate func(int) bool) error {
 	if r.begin != nil {
 		if err := r.begin(ctx); err != nil {
 			return err
@@ -317,7 +392,12 @@ func runInterleaved[T any](ctx context.Context, r acquireRun[T]) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if duplicate(i) {
+			continue
+		}
 		staged, failure := r.acquire(ctx, i)
+		it := &acquiredItem[T]{index: i, staged: staged, failure: failure}
+		set.items = append(set.items, it)
 		if failure != nil && failure.abort != nil {
 			// Interleaved, the items before this one are written: the
 			// failure is recorded like theirs before the run stops.
@@ -326,24 +406,11 @@ func runInterleaved[T any](ctx context.Context, r acquireRun[T]) error {
 			}
 			return failure.abort
 		}
-		if err := settleAcquired(ctx, r, i, acquiredItem[T]{staged: staged, failure: failure}); err != nil {
+		if err := set.settle(ctx, it); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// settleAcquired commits a clean item, or records a failed one as the
-// flow's per-item failure. It releases the item either way.
-func settleAcquired[T any](ctx context.Context, r acquireRun[T], i int, it acquiredItem[T]) error {
-	if it.failure != nil {
-		if it.failure.settle != nil {
-			it.failure.settle()
-		}
-		return nil
-	}
-	defer r.release(it.staged, false)
-	return r.commit(ctx, i, it.staged)
 }
 
 // releaseAcquired releases a set of acquired files, retaining their network
@@ -355,4 +422,13 @@ func (s *Service) releaseAcquired(files []*acquiredFile, blocked bool) {
 		}
 		a.release()
 	}
+}
+
+// releaseFilesFunc is acquireFailure.release for the files an item acquired
+// before one of its later files failed.
+func (s *Service) releaseFilesFunc(files []*acquiredFile) func(blocked bool) {
+	if len(files) == 0 {
+		return nil
+	}
+	return func(blocked bool) { s.releaseAcquired(files, blocked) }
 }

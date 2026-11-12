@@ -726,6 +726,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	run := acquireRun[*importStaged]{
 		policy: acquirePolicy{mode: acquirePhased, blockAll: opts.AllOrNothing},
 		n:      total,
+		key:    func(i int) string { return domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID) },
 		acquire: func(ctx context.Context, i int) (*importStaged, *acquireFailure) {
 			st, failure := s.acquireImportItem(ctx, game, plan, toInstall[i], Scope{Op: OpImport, Index: i + 1, Total: total}, result, emit, failed)
 			key := domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID)

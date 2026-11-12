@@ -178,3 +178,66 @@ func TestCombineRefusals(t *testing.T) {
 		assert.Equal(t, "A, B and C", joinNames([]string{"A", "B", "C"}))
 	})
 }
+
+// #602 review N1: two items for one mod would share one acquire tree
+// (acquireTreePath) and one cache entry, and the second claimTree would
+// delete the first's tree. With a key, the engine acquires, commits and
+// reports the FIRST occurrence only - in both modes.
+func TestRunAcquire_ADuplicateItemIsAcquiredOnce(t *testing.T) {
+	keys := []string{"a", "b", "a"}
+	for name, mode := range map[string]acquireMode{"phased": acquirePhased, "interleaved": acquireInterleaved} {
+		t.Run(name, func(t *testing.T) {
+			var log engineLog
+			run := fakeRun(acquirePolicy{mode: mode}, &log, nil, nil, nil)
+			run.key = func(i int) string { return keys[i] }
+			require.NoError(t, runAcquire(context.Background(), run))
+			assert.NotContains(t, log.steps, "acquire 2")
+			assert.NotContains(t, log.steps, "commit 2")
+			assert.Contains(t, log.steps, "commit 0")
+			assert.Contains(t, log.steps, "commit 1")
+		})
+	}
+}
+
+// Every acquired item is released exactly once, whatever happens - a
+// panicking commit included (#602 review S4).
+func TestRunAcquire_APanickingCommitReleasesEveryUnsettledItem(t *testing.T) {
+	released := map[int]int{}
+	run := acquireRun[fakeItem]{
+		n:       3,
+		acquire: func(_ context.Context, i int) (fakeItem, *acquireFailure) { return fakeItem{id: i}, nil },
+		commit: func(_ context.Context, i int, _ fakeItem) error {
+			if i == 1 {
+				panic("boom")
+			}
+			return nil
+		},
+		release: func(it fakeItem, _ bool) { released[it.id]++ },
+	}
+	func() {
+		defer func() { require.Equal(t, "boom", recover()) }()
+		_ = runAcquire(context.Background(), run)
+	}()
+	assert.Equal(t, map[int]int{0: 1, 1: 1, 2: 1}, released)
+}
+
+// A failed item's partial acquisition (a mod's earlier files) is released
+// with the same blocked flag as the clean items: retained when the run is
+// refused (#602 review S1).
+func TestRunAcquire_AFailedItemsPartialFilesAreRetainedWhenBlocked(t *testing.T) {
+	var retained []bool
+	run := acquireRun[fakeItem]{
+		n: 1,
+		acquire: func(context.Context, int) (fakeItem, *acquireFailure) {
+			return fakeItem{}, &acquireFailure{
+				refusal: AcquireRefusal{Err: errLoader},
+				release: func(blocked bool) { retained = append(retained, blocked) },
+			}
+		},
+		commit:  func(context.Context, int, fakeItem) error { return nil },
+		release: func(fakeItem, bool) {},
+	}
+	var refused *AcquireRefusedError
+	require.ErrorAs(t, runAcquire(context.Background(), run), &refused)
+	assert.Equal(t, []bool{true}, retained, "released once, retained")
+}

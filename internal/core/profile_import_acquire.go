@@ -137,8 +137,11 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 		}
 		a, err := s.acquireFile(ctx, gameCache, ref.SourceID, game, mod, file, progressFn)
 		if err != nil {
-			s.releaseAcquired(st.files, false)
 			f := fail(fmt.Sprintf("download failed: %v", err), err)
+			// The mod's earlier files go with the failure, so a refusal
+			// that blocks retains them too: the re-run fetches none of
+			// them again.
+			f.release = s.releaseFilesFunc(st.files)
 			emit(StepEvent{Scope: st.scope, Phase: ImportDownloadDone})
 			return nil, f
 		}
@@ -243,8 +246,13 @@ func refusedImport(plan *ImportPlan, toInstall []domain.ModReference, refused *A
 	result.ProfileName = plan.Profile.Name
 	result.Refused = true
 	result.Failed, result.Failures = 0, nil
+	listed := make(map[string]bool, len(toInstall))
 	for _, ref := range toInstall {
 		key := domain.ModKey(ref.SourceID, ref.ModID)
+		if listed[key] {
+			continue // a duplicate the engine skipped (acquireRun.key)
+		}
+		listed[key] = true
 		failure := ItemFailure{SourceID: ref.SourceID, ModID: ref.ModID, Name: names[key]}
 		switch r, isRefused := byKey[key]; {
 		case isRefused:

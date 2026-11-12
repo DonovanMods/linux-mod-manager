@@ -1809,6 +1809,7 @@ func (s *Service) runInstallBatch(ctx context.Context, game *domain.Game, plan *
 	run := acquireRun[*batchStaged]{
 		policy: acquirePolicy{mode: acquirePhased},
 		n:      len(targets),
+		key:    func(i int) string { return domain.ModKey(targets[i].mod.SourceID, targets[i].mod.ID) },
 		acquire: func(ctx context.Context, i int) (*batchStaged, *acquireFailure) {
 			return s.acquireBatchMod(ctx, game, plan, targets[i], pm, opts, result, emit, failed)
 		},
@@ -1846,8 +1847,13 @@ func refusedInstall(targets []batchTarget, refused *AcquireRefusedError, failed 
 	}
 	result.Refused = true
 	result.Skipped, result.Failed = nil, nil
+	listed := make(map[string]bool, len(targets))
 	for _, t := range targets {
 		key := domain.ModKey(t.mod.SourceID, t.mod.ID)
+		if listed[key] {
+			continue // a duplicate the engine skipped (acquireRun.key)
+		}
+		listed[key] = true
 		ref := InstalledRef{SourceID: t.mod.SourceID, ModID: t.mod.ID, Name: t.mod.Name, Version: t.mod.Version}
 		switch r, isRefused := byKey[key]; {
 		case isRefused:
@@ -2028,8 +2034,11 @@ func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *
 		emit(StepEvent{Scope: scope, Phase: InstallDepDownloadDone})
 
 		if err != nil {
-			s.releaseAcquired(st.files, false)
-			return nil, skip("Error", fmt.Sprintf("download failed: %v", err), err)
+			f := skip("Error", fmt.Sprintf("download failed: %v", err), err)
+			// The mod's earlier files go with the failure, so a refusal
+			// that blocks retains them too.
+			f.release = s.releaseFilesFunc(st.files)
+			return nil, f
 		}
 		st.files = append(st.files, a)
 
