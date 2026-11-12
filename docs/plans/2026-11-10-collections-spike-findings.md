@@ -74,7 +74,7 @@ node-nexus-api (github.com/Nexus-Mods/node-nexus-api, V-nna); lmm repo.
   (items `{name, short_name, URI}` = IDownloadURL), then starts a normal download of `URI`s named `<collection name>-rev<N>.7z`.
   So the archive is a 7z file.
 - VERIFIED (V-live): that URL anonymously returns HTTP 401 `{"message":"Please provide an authentication method"}`. So it needs the `apikey` header (or OAuth bearer).
-- UNVERIFIED: whether a free account's key gets 200 here. Evidence for yes (INFERRED): Vortex nxmProtocol.ts says "A free user can't ask the api for a download link, so only a keyless link to a mod file ... can ever need the website round trip. Collections, extensions from the site domain, and links the website already authorised go straight to the api." i.e. collection downloads are NOT in the premium-gated website-round-trip path. No key/expires is passed for them. Needs one real test with a free key.
+- VERIFIED 2026-11-12 (design doc, Decisions log): a free account's key gets 200 here, and the URI serves the full archive. The earlier inference was right: Vortex nxmProtocol.ts says "A free user can't ask the api for a download link, so only a keyless link to a mod file ... can ever need the website round trip. Collections, extensions from the site domain, and links the website already authorised go straight to the api." i.e. collection downloads are NOT in the premium-gated website-round-trip path. No key/expires is passed for them. Needs one real test with a free key.
 - VERIFIED (V-src collections/makeInstall.ts): the archive root has `collection.json` (read from destinationPath/collection.json), plus `bundled/` (BUNDLED_PATH, constants.ts) files and `patches/` (PATCHES_PATH) ; other top-level files are copied as-is.
 - VERIFIED (V-src collections/types/ICollection.ts, quoted):
   ```ts
@@ -137,7 +137,7 @@ node-nexus-api (github.com/Nexus-Mods/node-nexus-api, V-nna); lmm repo.
 
 ### Not confirmed / to test with a real key
 
-1. Free-account 200/403 on collection `download_link`; whether `download_links` has expiry (signed CDN URL; assume short-lived).
+1. ~~Free-account 200/403 on collection `download_link`~~ (200, answered 2026-11-12); whether `download_links` has expiry (signed CDN URL; assume short-lived).
 2. v3 download-link API shape and its free-user eligibility.
 3. Quoted Nexus ToS text on automating free downloads.
 4. IReference (modmeta-db) field list; IGamebryoRules/IUserlistEntry; file_based_loadorder collection types.
