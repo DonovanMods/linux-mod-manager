@@ -18,6 +18,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -149,7 +150,7 @@ func TestVerify_Fix_VersionMismatch_RenameFails_LeavesRecordUnchanged(t *testing
 	skipIfRoot(t)
 	svc, game := newVersionRepairFixGame(t, false)
 	gameCache := svc.GetGameCache(game)
-	chmodForTest(t, filepath.Dir(gameCache.ModPath(game.ID, "test-src", "mod1", "1.5")), 0o500)
+	chmodForTest(t, filepath.Dir(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.5"})), 0o500)
 
 	result, _ := runVersionRepairFix(t, svc, game)
 
@@ -158,8 +159,8 @@ func TestVerify_Fix_VersionMismatch_RenameFails_LeavesRecordUnchanged(t *testing
 	assert.Equal(t, "version_mismatch", f.Status)
 	assert.NotEmpty(t, f.Note, "the failure reason reaches the finding (audit Finding 7)")
 	assert.Equal(t, "1.5", installedVersion(t, svc, game, "default"), "no DB write when the rename itself fails")
-	assert.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"))
-	assert.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"))
+	assert.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.5"}))
+	assert.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 }
 
 // TestVerify_Fix_VersionMismatch_PreservesFileChecksum guards audit
@@ -191,8 +192,8 @@ func TestVerify_Fix_VersionMismatch_RetryAfterPartialFailure_StillRepairsSibling
 	addVersionRepairSibling(t, svc, game, "second", "1.5", []string{"2"})
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, os.Rename(
-		gameCache.ModPath(game.ID, "test-src", "mod1", "1.5"),
-		gameCache.ModPath(game.ID, "test-src", "mod1", "1.0"),
+		gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.5"}),
+		gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}),
 	), "a prior run's completed rename")
 
 	runVersionRepairFix(t, svc, game)
@@ -231,7 +232,7 @@ func TestVerify_Fix_VersionMismatch_OldPathStatErrorBlocksRepair(t *testing.T) {
 	skipIfRoot(t)
 	svc, game := newVersionRepairFixGame(t, false)
 	gameCache := svc.GetGameCache(game)
-	chmodForTest(t, filepath.Dir(gameCache.ModPath(game.ID, "test-src", "mod1", "1.5")), 0o000)
+	chmodForTest(t, filepath.Dir(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.5"})), 0o000)
 
 	runVersionRepairFix(t, svc, game)
 
@@ -262,7 +263,7 @@ func TestVerify_Fix_VersionMismatch_SiblingNotInstalled_SkippedSilently(t *testi
 func TestVerify_Fix_VersionMismatch_RenameBlocked_SiblingsUntouched(t *testing.T) {
 	svc, game := newVersionRepairFixGame(t, false)
 	addVersionRepairSibling(t, svc, game, "second", "1.5", []string{"2"})
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "2", []byte("pre-existing 1.0 content")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}, "2", []byte("pre-existing 1.0 content")))
 
 	runVersionRepairFix(t, svc, game)
 

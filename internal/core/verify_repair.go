@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // redownloadModFile re-downloads a single mod file and extracts it to the
@@ -120,7 +121,7 @@ func (r *verifyRun) populateChecksum(mod *domain.InstalledMod, fileID string, re
 // failure to store what was computed.
 func (r *verifyRun) fillChecksumFromCache(mod *domain.InstalledMod, fileID string) (bool, error) {
 	gameCache := r.svc.GetGameCache(r.game)
-	if !gameCache.HasFileIDs(r.game.ID, mod.SourceID, mod.ID, mod.Version, []string{fileID}) {
+	if !gameCache.HasFileIDs(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, []string{fileID}) {
 		return false, nil
 	}
 	checksum, err := checksumFromCache(gameCache, r.game.ID, mod.SourceID, mod.ID, mod.Version, fileID)
@@ -330,8 +331,11 @@ func cacheDirExists(path string) (bool, error) {
 func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledMod, effective string) (note string, siblingFailures int, err error) {
 	recorded := mod.Version
 	gameCache := r.svc.GetGameCache(r.game)
-	oldPath := gameCache.ModPath(r.game.ID, mod.SourceID, mod.ID, recorded)
-	newPath := gameCache.ModPath(r.game.ID, mod.SourceID, mod.ID, effective)
+	oldPath := gameCache.ModPath(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: recorded})
+	newPath, err := gameCache.NewEntryPath(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: effective})
+	if err != nil {
+		return "", 0, err
+	}
 
 	oldExists, statErr := cacheDirExists(oldPath)
 	if statErr != nil {

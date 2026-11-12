@@ -8,6 +8,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ const heldNewFile = "Data/k3.esp"
 // and done receives its error when it has.
 func heldDeploy(t *testing.T, f *legacyFixture) (release func(), done <-chan error) {
 	t.Helper()
-	require.NoError(t, f.svc.GetGameCache(f.game).Store(f.game.ID, "local", "k", "unknown", heldNewFile, []byte("mod k3")))
+	require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "unknown"}, heldNewFile, []byte("mod k3")))
 	reached := make(chan struct{})
 	gate := make(chan struct{})
 	var reachOnce, releaseOnce sync.Once

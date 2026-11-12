@@ -9,6 +9,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
@@ -39,7 +40,7 @@ func TestConverge_RowDrivenStaleRemoved(t *testing.T) {
 	// deployableFiles (full ListFiles union - no manifests recorded here) no
 	// longer includes it, while its deployed_files row still exists.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "gone.esp")))
+	require.NoError(t, os.Remove(gameCache.GetFilePath(cache.Key{GameID: "g1", SourceID: "src", ModID: "m1", Version: "1.0"}, "gone.esp")))
 
 	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
@@ -79,7 +80,7 @@ func TestConverge_SharedPathProtectedByUnion(t *testing.T) {
 	// m1 no longer provides shared.esp itself (its cache copy is gone), but
 	// m2's cache copy still exists, so the union still contains shared.esp.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "shared.esp")))
+	require.NoError(t, os.Remove(gameCache.GetFilePath(cache.Key{GameID: "g1", SourceID: "src", ModID: "m1", Version: "1.0"}, "shared.esp")))
 
 	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
@@ -143,8 +144,8 @@ func TestConverge_HealthySymlinkUntouched(t *testing.T) {
 	// A symlink into the cache root whose target genuinely exists (the
 	// merged-pak shape) but has no deployed_files row - must survive.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store("g1", "src", "merged", "1.0", "merged.pak", []byte("content")))
-	target := gameCache.GetFilePath("g1", "src", "merged", "1.0", "merged.pak")
+	require.NoError(t, gameCache.Store(cache.Key{GameID: "g1", SourceID: "src", ModID: "merged", Version: "1.0"}, "merged.pak", []byte("content")))
+	target := gameCache.GetFilePath(cache.Key{GameID: "g1", SourceID: "src", ModID: "merged", Version: "1.0"}, "merged.pak")
 	require.NoError(t, os.Symlink(target, filepath.Join(gameDir, "merged.pak")))
 
 	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
@@ -168,7 +169,7 @@ func TestConverge_DryRunTouchesNothing(t *testing.T) {
 	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "gone.esp")))
+	require.NoError(t, os.Remove(gameCache.GetFilePath(cache.Key{GameID: "g1", SourceID: "src", ModID: "m1", Version: "1.0"}, "gone.esp")))
 
 	// Scenario 3 shape: dangling cache-rooted link, no row.
 	cacheRoot := svc.GetGameCachePath(game)
@@ -211,7 +212,7 @@ func TestConverge_RegularFileNeedsRow(t *testing.T) {
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "gone.esp")))
+	require.NoError(t, os.Remove(gameCache.GetFilePath(cache.Key{GameID: "g1", SourceID: "src", ModID: "m1", Version: "1.0"}, "gone.esp")))
 
 	// An untracked regular file dropped directly in the game dir, no row -
 	// the sweep must never touch it (it only ever considers symlinks).
@@ -254,7 +255,7 @@ func TestConverge_RowPass_UndeployFailureExcludedFromRemoved(t *testing.T) {
 
 	// The recorded path becomes stale: no longer provided by m1.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "blocked/gone.esp")))
+	require.NoError(t, os.Remove(gameCache.GetFilePath(cache.Key{GameID: "g1", SourceID: "src", ModID: "m1", Version: "1.0"}, "blocked/gone.esp")))
 
 	// Obstruct the parent after deployment; there is no user replacement at
 	// the recorded leaf, but the linker still cannot undeploy it.
@@ -372,7 +373,7 @@ func TestConverge_AbsentCacheEntry_UnknownProvenanceRowSpared(t *testing.T) {
 	// which removes just one file) - deployableFiles now returns
 	// fs.ErrNotExist for m1, not "zero files".
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, os.RemoveAll(gameCache.ModPath("g1", "src", "m1", "1.0")))
+	require.NoError(t, os.RemoveAll(gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "src", ModID: "m1", Version: "1.0"})))
 
 	// A dangling symlink with no DB row, targeting the same now-removed
 	// mod's cache dir - proves the sweep still catches genuinely row-less
@@ -463,7 +464,7 @@ func TestConverge_AbsentCacheEntry_SymlinkRowSweptByPhysicalEvidence(t *testing.
 	// now dangling: physical evidence the sweep pass judges independently
 	// of the row pass's bookkeeping decision.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, os.RemoveAll(gameCache.ModPath("g1", "src", "m1", "1.0")))
+	require.NoError(t, os.RemoveAll(gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "src", ModID: "m1", Version: "1.0"})))
 
 	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)

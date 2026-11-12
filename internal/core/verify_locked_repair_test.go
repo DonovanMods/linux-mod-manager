@@ -7,6 +7,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -91,7 +92,7 @@ func TestVerifyFix_LockedMod_MissingFile_RefusesWhenSourceMovedOn(t *testing.T) 
 	require.NoError(t, err)
 
 	assert.Equal(t, 0, src.DownloadCount(), "nothing may be fetched into the locked version's slot")
-	assert.False(t, svc.GetGameCache(game).Exists(game.ID, "lsrc", "locked-mod", "1.0"),
+	assert.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: "lsrc", ModID: "locked-mod", Version: "1.0"}),
 		"the recorded version's slot must be left exactly as it was")
 
 	f := findingFor(t, result, "locked-mod")
@@ -109,7 +110,7 @@ func TestVerifyFix_LockedMod_MissingFile_RepairsWhenSourceStillServesIt(t *testi
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, src.DownloadCount(), "the recorded version's own file is fetchable, so fetch it")
-	assert.True(t, svc.GetGameCache(game).Exists(game.ID, "lsrc", "locked-mod", "1.0"))
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: "lsrc", ModID: "locked-mod", Version: "1.0"}))
 
 	f := findingFor(t, result, "locked-mod")
 	assert.Equal(t, "ok", f.Status)

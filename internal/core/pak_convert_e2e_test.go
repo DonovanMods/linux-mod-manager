@@ -84,7 +84,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	require.Equal(t, "fake-compiler:pakmod", rec.lastSources[1].ModRef, "profile load order: pakmod second")
 	require.Equal(t, "pak", rec.lastSources[1].Kind)
 
-	manifests, err := gameCache.FileManifests(game.ID, "fake-compiler", "pakmod", "1.0")
+	manifests, err := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "pakmod", Version: "1.0"})
 	require.NoError(t, err)
 	require.True(t, manifests["pak"].Recorded)
 	require.Empty(t, manifests["pak"].Members, "converted: pak manifest flips to nil (merged pak claims it)")
@@ -113,7 +113,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	require.Len(t, rec.lastSources, 1, "MergeCompile must receive ONLY the exmodz source")
 	require.Equal(t, "fake-compiler:exmod", rec.lastSources[0].ModRef)
 
-	manifests, err = gameCache.FileManifests(game.ID, "fake-compiler", "pakmod", "1.0")
+	manifests, err = gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "pakmod", Version: "1.0"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"pakmod.pak"}, manifests["pak"].Members, "opted-out: pak manifest lists the raw pak again")
 
@@ -136,7 +136,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 
 	require.Len(t, rec.lastSources, 2, "re-opted-in: MergeCompile receives both sources again")
 
-	manifests, err = gameCache.FileManifests(game.ID, "fake-compiler", "pakmod", "1.0")
+	manifests, err = gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "pakmod", Version: "1.0"})
 	require.NoError(t, err)
 	require.Empty(t, manifests["pak"].Members, "converted state again")
 
@@ -172,7 +172,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	// regression that conflated "disabled" with "opted out" (e.g. routing
 	// disabled mods through the raw-fallback branch) would flip this back to
 	// ["pakmod.pak"] and this assertion would catch it.
-	manifests, err = gameCache.FileManifests(game.ID, "fake-compiler", "pakmod", "1.0")
+	manifests, err = gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "pakmod", Version: "1.0"})
 	require.NoError(t, err)
 	require.Empty(t, manifests["pak"].Members, "disabled mods are skipped by reconcile, not reverted to raw - members stays at its pre-disable converted state")
 
@@ -220,7 +220,7 @@ func TestNoPakModsByteIdentical(t *testing.T) {
 	// lives in the external core_test package, so it names them literally
 	// rather than reaching into core's unexported identifiers.
 	gameCache := svc.GetGameCache(game)
-	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, "merged-pak", "merged")
+	cachePath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: "merged-pak", Version: "merged"})
 	markerPath := cache.MergeFingerprintPath(cachePath)
 
 	raw, err := os.ReadFile(markerPath)

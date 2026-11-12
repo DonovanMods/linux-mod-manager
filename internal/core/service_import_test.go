@@ -53,7 +53,7 @@ func TestImportMod_LocalArchive(t *testing.T) {
 	assert.False(t, result.AutoDetected)
 
 	// Verify files are in cache
-	assert.True(t, modCache.Exists(game.ID, domain.SourceLocal, result.Mod.ID, result.Mod.Version))
+	assert.True(t, modCache.Exists(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: result.Mod.ID, Version: result.Mod.Version}))
 }
 
 func TestImportMod_NexusModsFilename(t *testing.T) {
@@ -204,7 +204,7 @@ func TestImportMod_ReimportOverwritesCache(t *testing.T) {
 	assert.Equal(t, 2, result2.FilesExtracted)
 
 	// Verify old file is gone and new files exist
-	files, err := modCache.ListFiles(game.ID, domain.SourceLocal, "test-mod-123", result2.Mod.Version)
+	files, err := modCache.ListFiles(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "test-mod-123", Version: result2.Mod.Version})
 	require.NoError(t, err)
 	assert.Equal(t, 2, len(files))
 }

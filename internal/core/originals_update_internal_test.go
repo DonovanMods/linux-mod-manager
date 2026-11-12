@@ -53,8 +53,8 @@ func newObsoleteLoopFixture(t *testing.T, lm domain.LinkMethod, shipping, other 
 
 	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: lm}
 
-	require.NoError(t, modCache.Store("g", shipping.SourceID, shipping.ID, shipping.Version, "Data/stock.esp", []byte("the mod's version")))
-	require.NoError(t, modCache.Store("g", other.SourceID, other.ID, other.Version, "Data/other.esp", []byte("the other version")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: shipping.SourceID, ModID: shipping.ID, Version: shipping.Version}, "Data/stock.esp", []byte("the mod's version")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: other.SourceID, ModID: other.ID, Version: other.Version}, "Data/other.esp", []byte("the other version")))
 
 	stock := filepath.Join(gameDir, "Data", "stock.esp")
 	require.NoError(t, os.MkdirAll(filepath.Dir(stock), 0755))

@@ -398,7 +398,7 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 			// hard-fail with "old mod not in cache" where the old code fell
 			// back to a bare Install.
 			var replaces *domain.InstalledMod
-			if im.Deployed && gameCache.Exists(game.ID, im.SourceID, im.ID, im.Version) {
+			if im.Deployed && gameCache.Exists(cache.Key{GameID: game.ID, SourceID: im.SourceID, ModID: im.ID, Version: im.Version}) {
 				prior := *im
 				replaces = &prior
 			}
@@ -407,7 +407,7 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 		}
 
 		if !im.Enabled {
-			if gameCache.Exists(game.ID, im.SourceID, im.ID, im.Version) {
+			if gameCache.Exists(cache.Key{GameID: game.ID, SourceID: im.SourceID, ModID: im.ID, Version: im.Version}) {
 				plan.ToEnable = append(plan.ToEnable, *im)
 				continue
 			}
@@ -551,7 +551,7 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 	// (a partially-populated version directory would be skipped forever) or
 	// by file name (an extracted archive's members match no
 	// DownloadableFile, so every archive-based mod would redownload).
-	entry.Cached = s.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, profileApplyFileIDs(selected))
+	entry.Cached = s.GetGameCache(game).HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, profileApplyFileIDs(selected))
 }
 
 // rowsElsewhere collects the installed rows of every saved profile of
@@ -591,7 +591,7 @@ func cachedRowElsewhere(gameCache *cache.Cache, gameID string, ref domain.ModRef
 		return domain.InstalledMod{}, false
 	}
 	cached := func(row domain.InstalledMod) bool {
-		return gameCache.HasFileIDs(gameID, row.SourceID, row.ID, row.Version, row.FileIDs)
+		return gameCache.HasFileIDs(cache.Key{GameID: gameID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version}, row.FileIDs)
 	}
 	row := pickImportRow(rows, ref, cached)
 	if row.External || (ref.Version != "" && row.Version != ref.Version) || !cached(row) {

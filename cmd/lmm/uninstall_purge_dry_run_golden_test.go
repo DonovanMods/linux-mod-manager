@@ -12,6 +12,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,7 +142,7 @@ func setupUninstallDryRun(t *testing.T, modID string) dryRunGoldenFixture {
 // so a bare-ID uninstall has something to disambiguate.
 func seedSecondSourceMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, name, fileName string) {
 	t.Helper()
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, sourceID, modID, "1.0", fileName, []byte("data")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: "1.0"}, fileName, []byte("data")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",

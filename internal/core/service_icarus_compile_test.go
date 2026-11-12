@@ -160,11 +160,11 @@ func TestDownloadMod_DeployCompile_ValidatesAndRetainsNoPerModPak(t *testing.T) 
 	require.Equal(t, 0, result.FilesExtracted, "a per-mod exmodz cache entry has no deployment members under the merged-only model")
 
 	gameCache := svc.GetGameCache(game)
-	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	require.Empty(t, files, "ListFiles must report zero deployment members - the retained source is reserved, not a member")
 
-	retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(file.ID))
+	retainedPath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, cache.RetainedSourceName(file.ID))
 	data, err := os.ReadFile(retainedPath)
 	require.NoError(t, err)
 	require.Equal(t, "fake-exmodz-bytes", string(data), "the original .exmodz bytes must still be retained")
@@ -198,7 +198,7 @@ func TestDownloadMod_DeployCompile_MalformedExmodz_FailsLoudAtIngest(t *testing.
 	require.Error(t, err)
 
 	gameCache := svc.GetGameCache(game)
-	require.False(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version), "a validation failure must leave no cache entry")
+	require.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}), "a validation failure must leave no cache entry")
 }
 
 // pakConversionOutcomeSource wraps fakeCompilerSource so a test can script
@@ -242,10 +242,10 @@ var _ adapter.MergeCompiler = (*pakConversionOutcomeSource)(nil)
 func seedEnabledPakMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, version, fileID string, pakContent []byte) {
 	t.Helper()
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(fileID), pakContent))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, cache.RetainedSourceName(fileID), pakContent))
 	member := modID + ".pak"
-	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, member, pakContent))
-	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, member, pakContent))
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{member}))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
@@ -306,17 +306,17 @@ func TestDownloadPakRetainsAndDeploysRaw(t *testing.T) {
 
 		gameCache := svc.GetGameCache(game)
 
-		retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(file.ID))
+		retainedPath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, cache.RetainedSourceName(file.ID))
 		retainedData, err := os.ReadFile(retainedPath)
 		require.NoError(t, err)
 		require.Equal(t, "fake-pak-bytes", string(retainedData), "the original pak bytes must be retained")
 
-		deployablePath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, "CoolMod.pak")
+		deployablePath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, "CoolMod.pak")
 		deployableData, err := os.ReadFile(deployablePath)
 		require.NoError(t, err)
 		require.Equal(t, "fake-pak-bytes", string(deployableData), "a deployable copy of the raw pak must also be staged")
 
-		manifests, err := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+		manifests, err := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 		require.NoError(t, err)
 		require.True(t, manifests[file.ID].Recorded)
 		require.Equal(t, []string{"CoolMod.pak"}, manifests[file.ID].Members, "raw-deploy default: the deployable copy is the sole member")
@@ -329,13 +329,13 @@ func TestDownloadPakRetainsAndDeploysRaw(t *testing.T) {
 		require.Equal(t, 1, result.FilesExtracted)
 
 		gameCache := svc.GetGameCache(game)
-		require.True(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version), "cache entry must exist")
+		require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}), "cache entry must exist")
 
-		retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(file.ID))
+		retainedPath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, cache.RetainedSourceName(file.ID))
 		_, statErr := os.Stat(retainedPath)
 		require.True(t, os.IsNotExist(statErr), "legacy path: no retained source must be written")
 
-		files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+		files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 		require.NoError(t, err)
 		require.Equal(t, []string{"CoolMod.pak"}, files, "legacy path: plain copy, the pak itself is the sole member")
 	})
@@ -382,13 +382,13 @@ func TestDownloadPak_NonCompilingAdapter_FallsThroughToLegacyPath(t *testing.T) 
 	require.Equal(t, 1, result.FilesExtracted)
 
 	gameCache := svc.GetGameCache(game)
-	require.True(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version), "cache entry must exist")
+	require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}), "cache entry must exist")
 
-	retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(file.ID))
+	retainedPath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, cache.RetainedSourceName(file.ID))
 	_, statErr := os.Stat(retainedPath)
 	require.True(t, os.IsNotExist(statErr), "legacy path: no retained source must be written")
 
-	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	require.Equal(t, []string{"CoolMod.pak"}, files, "legacy path: plain copy, the pak itself is the sole member")
 }
@@ -505,12 +505,12 @@ func TestSyncMergedPakReconcilesPakManifests(t *testing.T) {
 
 	gameCache := svc.GetGameCache(game)
 
-	goodManifests, err := gameCache.FileManifests(game.ID, "fake-compiler", "goodmod", "1.0")
+	goodManifests, err := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "goodmod", Version: "1.0"})
 	require.NoError(t, err)
 	require.True(t, goodManifests["pak"].Recorded)
 	require.Empty(t, goodManifests["pak"].Members, "a converted pak's raw copy must be unclaimed (members=nil)")
 
-	badManifests, err := gameCache.FileManifests(game.ID, "fake-compiler", "badmod", "1.0")
+	badManifests, err := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "badmod", Version: "1.0"})
 	require.NoError(t, err)
 	require.True(t, badManifests["pak"].Recorded)
 	require.Equal(t, []string{"badmod.pak"}, badManifests["pak"].Members, "a failed conversion must keep its raw pak deployed")
@@ -547,7 +547,7 @@ func TestSyncMergedPakReconcilesPakManifests(t *testing.T) {
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
-	goodManifests, err = gameCache.FileManifests(game.ID, "fake-compiler", "goodmod", "1.0")
+	goodManifests, err = gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "goodmod", Version: "1.0"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"goodmod.pak"}, goodManifests["pak"].Members, "opting out must flip goodmod back to raw deploy")
 
@@ -597,7 +597,7 @@ func TestDownloadPak_CompilingGame_ConvertsWhicheverSourceServedIt(t *testing.T)
 	require.NoError(t, err)
 
 	gameCache := svc.GetGameCache(game)
-	retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(file.ID))
+	retainedPath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, cache.RetainedSourceName(file.ID))
 	require.FileExists(t, retainedPath,
 		"a compiling game retains a .pak as a merge source whichever source served it")
 }

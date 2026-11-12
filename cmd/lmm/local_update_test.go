@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,7 +20,7 @@ import (
 // with no remote source, so CheckUpdates filters it out.
 func seedLocalMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name string) {
 	t.Helper()
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, domain.SourceLocal, modID, "1.0", name+".esp", []byte("data")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: modID, Version: "1.0"}, name+".esp", []byte("data")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: domain.SourceLocal, Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",

@@ -10,6 +10,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -239,7 +240,7 @@ func TestApplyWorkshopAdopt_RecordsTrackingAndTouchesNoFiles(t *testing.T) {
 	entries, err := os.ReadDir(game.ModPath)
 	require.NoError(t, err)
 	assert.Empty(t, entries)
-	assert.False(t, svc.GetGameCache(game).Exists(game.ID, "steamworkshop", "3617086610", "7987119735124793734"))
+	assert.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: "steamworkshop", ModID: "3617086610", Version: "7987119735124793734"}))
 	assert.FileExists(t, filepath.Join(item.Path, "mod.pak"), "Steam's own file is untouched")
 }
 

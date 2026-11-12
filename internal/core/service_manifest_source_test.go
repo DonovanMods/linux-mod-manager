@@ -13,6 +13,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,7 +96,7 @@ mods:
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 	gameCache := svc.GetGameCache(game)
-	assert.True(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version))
+	assert.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}))
 
 	// Update checks: installed 1.0.0 -> manifest 1.2.0 offers an update.
 	installed := []domain.InstalledMod{{Mod: domain.Mod{ID: "cool-mod", SourceID: "e2e-repo", Version: "1.0.0"}}}
@@ -151,5 +152,5 @@ mods:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sha256 mismatch")
 	gameCache := svc.GetGameCache(game)
-	assert.False(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version))
+	assert.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}))
 }

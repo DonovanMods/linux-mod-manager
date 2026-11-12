@@ -15,6 +15,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -243,8 +244,8 @@ func TestVerifyFixable_CompileGameStatuses(t *testing.T) {
 	// file_count_mismatch: a cache version directory that still exists but
 	// holds none of its recorded files (TestVerify_FullOrder_Integration's
 	// own fixture).
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "fc-mod", "1.0", "fc-file", []byte("x")))
-	require.NoError(t, os.Remove(gameCache.GetFilePath(game.ID, "fake-compiler", "fc-mod", "1.0", "fc-file")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "fc-mod", Version: "1.0"}, "fc-file", []byte("x")))
+	require.NoError(t, os.Remove(gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "fc-mod", Version: "1.0"}, "fc-file")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "fc-mod", SourceID: "fake-compiler", Name: "FC Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -264,7 +265,7 @@ func TestVerifyFixable_CompileGameStatuses(t *testing.T) {
 	// pre-#221 pak cache entries - a deployable member on disk, no
 	// retained source - so both produce needs_reingest, but only the
 	// source-backed one is fixable.
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "legacypak", "1.0", "legacypak.pak", []byte("legacy-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "legacypak", Version: "1.0"}, "legacypak.pak", []byte("legacy-bytes")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "legacypak", SourceID: "fake-compiler", Name: "Legacy Pak", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -274,7 +275,7 @@ func TestVerifyFixable_CompileGameStatuses(t *testing.T) {
 	}))
 	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "legacypak", Version: "1.0", FileIDs: []string{"pak"}}))
 
-	require.NoError(t, gameCache.Store(game.ID, domain.SourceLocal, "locallegacy", "1.0", "locallegacy.pak", []byte("local-legacy-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "locallegacy", Version: "1.0"}, "locallegacy.pak", []byte("local-legacy-bytes")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "locallegacy", SourceID: domain.SourceLocal, Name: "Local Legacy Pak", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",

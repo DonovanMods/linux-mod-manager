@@ -1795,7 +1795,7 @@ func (s *Service) fetchFileToCache(ctx context.Context, gameCache *cache.Cache, 
 	}
 
 	// Count extracted files
-	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	if err != nil {
 		return nil, err
 	}
@@ -1908,7 +1908,7 @@ func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache
 		return nil, err
 	}
 
-	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	if err != nil {
 		return nil, err
 	}
@@ -1989,7 +1989,7 @@ func prepareStaging(ctx context.Context, gameCache *cache.Cache, game *domain.Ga
 	if err != nil {
 		return "", "", err
 	}
-	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+	if gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
 		if err := copyDir(ctx, cachePath, stagePath); err != nil {
 			// Best-effort: restore the "no debris" guarantee even though
 			// copyDir itself already failed. A cleanup failure here isn't
@@ -2013,8 +2013,13 @@ func prepareStaging(ctx context.Context, gameCache *cache.Cache, game *domain.Ga
 // has. Caller contract: as with prepareStaging, the CALLER owns stagePath's
 // cleanup (defer os.RemoveAll immediately after) - but unlike prepareStaging,
 // on a nil error stagePath NEVER exists yet; the first writer creates it.
+// A version the cache refuses to mint an entry for (cache.Key.Validate,
+// #603) fails here, before anything is written.
 func prepareUnseededStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
-	cachePath = gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	cachePath, err = gameCache.NewEntryPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+	if err != nil {
+		return "", "", err
+	}
 	stagePath = cachePath + ".staging"
 	if err := os.RemoveAll(stagePath); err != nil {
 		return "", "", fmt.Errorf("clearing staging cache: %w", err)

@@ -18,6 +18,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,7 +48,7 @@ func TestFlowHealthFix_JobCarriesTheDownloadWarning(t *testing.T) {
 	_, err = svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 	// The cache entry goes, so the repair re-downloads it.
-	require.NoError(t, svc.GetGameCache(game).Delete(game.ID, fixtureSourceID, "m5", "1.0"))
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: "m5", Version: "1.0"}))
 
 	j := runFlow(t, s, game, "verify_fix", "", "")
 	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
@@ -106,7 +107,7 @@ func TestFlowHealthFix_ResultSaysWhatWasRepairedAndWhatStillFails(t *testing.T) 
 	// Cached Mod lost its checksum but keeps its complete cache entry; Stuck
 	// Mod lost the cache entry itself. The source serves neither.
 	require.NoError(t, svc.SaveFileChecksum(ctx, fixtureSourceID, "c1", game.ID, "default", "cf1", ""))
-	require.NoError(t, svc.GetGameCache(game).Delete(game.ID, fixtureSourceID, "s1", "1.0"))
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: "s1", Version: "1.0"}))
 	src.refuse = map[string]error{
 		"c1": &source.ManualDownloadError{Reason: "the author has turned off API downloads"},
 		"s1": &source.ManualDownloadError{Reason: "the author has turned off API downloads"},

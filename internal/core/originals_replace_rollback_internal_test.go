@@ -70,10 +70,10 @@ func TestReplaceRollback_PutsBackTheOriginalUnderANewOnlyFile(t *testing.T) {
 
 			// v1.0 ships one file; v2.0 ships that one, the game's own
 			// Data/stock.esp, and one more that sorts AFTER it.
-			require.NoError(t, modCache.Store("g", "src", "1", "1.0", "Data/keep.esp", []byte("v1 keep")))
-			require.NoError(t, modCache.Store("g", "src", "1", "2.0", "Data/keep.esp", []byte("v2 keep")))
-			require.NoError(t, modCache.Store("g", "src", "1", "2.0", "Data/stock.esp", []byte("v2 stock")))
-			require.NoError(t, modCache.Store("g", "src", "1", "2.0", "Data/zzz.esp", []byte("v2 zzz")))
+			require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "1", Version: "1.0"}, "Data/keep.esp", []byte("v1 keep")))
+			require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "1", Version: "2.0"}, "Data/keep.esp", []byte("v2 keep")))
+			require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "1", Version: "2.0"}, "Data/stock.esp", []byte("v2 stock")))
+			require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "1", Version: "2.0"}, "Data/zzz.esp", []byte("v2 zzz")))
 
 			stock := filepath.Join(gameDir, "Data", "stock.esp")
 			require.NoError(t, os.MkdirAll(filepath.Dir(stock), 0755))

@@ -9,6 +9,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,7 +142,7 @@ func TestPlanUninstall_AbsentCacheEntry_FallsBackToTrackedDeployedPaths(t *testi
 
 	// A copy deploy owns real files, so erasing the cache entry leaves the
 	// deployment fully on disk with only the DB remembering it is ours.
-	require.NoError(t, os.RemoveAll(svc.GetGameCache(game).ModPath(game.ID, "src", "1", "1.0")))
+	require.NoError(t, os.RemoveAll(svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "1", Version: "1.0"})))
 
 	plan, err := svc.PlanUninstall(ctx, game, "default", "src", "1", core.UninstallOptions{})
 	require.NoError(t, err)

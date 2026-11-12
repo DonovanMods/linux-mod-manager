@@ -34,6 +34,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,7 +78,7 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 func (f *backfillFixture) row(t *testing.T, profile, modID string, enabled, deployed bool) {
 	t.Helper()
 	ctx := context.Background()
-	require.NoError(t, f.svc.GetGameCache(f.game).Store(f.game.ID, "src", modID, "1.0", modID+".esp", []byte(modID)))
+	require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: f.game.ID, SourceID: "src", ModID: modID, Version: "1.0"}, modID+".esp", []byte(modID)))
 	require.NoError(t, f.svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: "Mod " + modID, Version: "1.0", GameID: f.game.ID},
 		ProfileName:  profile,

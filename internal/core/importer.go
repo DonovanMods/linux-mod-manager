@@ -191,6 +191,11 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	filename := filepath.Base(archivePath)
 
 	sourceID, modID, version, autoDetected := ident.sourceID, ident.modID, ident.version, ident.autoDetected
+	// #603: refuse, before any write, a version the cache will not mint an
+	// entry for - every branch below writes one.
+	if err := (cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}).Validate(); err != nil {
+		return nil, err
+	}
 
 	var modName string
 	var fileCount int
@@ -286,7 +291,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		// Copy mode: just copy the file as-is to cache (don't extract)
 		modName = importedModName(game, kind, filename, version, nil)
 
-		cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)
+		cachePath := i.cache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 
 		// Remove existing cache if present (re-import case). A failed removal
 		// can leave stale content that an otherwise successful copy would not
@@ -359,7 +364,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		}
 
 		// Move extracted files to cache
-		cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)
+		cachePath := i.cache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 		if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
 			return nil, fmt.Errorf("creating cache directory: %w", err)
 		}
@@ -377,7 +382,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		}
 
 		// Count extracted files
-		files, err := i.cache.ListFiles(game.ID, sourceID, modID, version)
+		files, err := i.cache.ListFiles(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 		if err != nil {
 			return nil, fmt.Errorf("listing cached files: %w", err)
 		}
@@ -471,11 +476,11 @@ func (s *Service) resolveImportedFile(ctx context.Context, game *domain.Game, so
 // beginOp, and core's tests reach it through MarkImportedFileCompleteForTest.
 func (s *Service) markImportedFileComplete(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
 	gameCache := s.GetGameCache(game)
-	members, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	members, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	if err != nil {
 		return fmt.Errorf("listing cache members: %w", err)
 	}
-	versionDir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	return cache.MarkFileCompleteWithMembers(versionDir, fileID, members)
 }
 

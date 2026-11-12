@@ -21,6 +21,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -142,13 +143,13 @@ func requireActiveListedLive(t *testing.T, svc *core.Service, gameID string) {
 		require.NoError(t, err, "the active profile %s lists %s, so it has a row for it", active.Name, ref.ModID)
 		assert.True(t, row.Enabled, "%s is enabled under %s", ref.ModID, active.Name)
 		assert.True(t, row.Deployed, "%s is deployed under %s", ref.ModID, active.Name)
-		files, err := gameCache.ListFiles(gameID, row.SourceID, row.ID, row.Version)
+		files, err := gameCache.ListFiles(cache.Key{GameID: gameID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version})
 		require.NoError(t, err)
 		require.NotEmpty(t, files)
 		recorded, err := svc.GetDeployedFilesForMod(ctx, gameID, active.Name, row.SourceID, row.ID)
 		require.NoError(t, err)
 		for _, file := range files {
-			want, err := os.ReadFile(gameCache.GetFilePath(gameID, row.SourceID, row.ID, row.Version, file))
+			want, err := os.ReadFile(gameCache.GetFilePath(cache.Key{GameID: gameID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version}, file))
 			require.NoError(t, err)
 			got, err := os.ReadFile(filepath.Join(game.ModPath, file))
 			if assert.NoError(t, err, "%s of %s is live under %s", file, ref.ModID, game.ModPath) {

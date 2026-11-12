@@ -26,9 +26,9 @@ func TestInstaller_Install(t *testing.T) {
 
 	// Create a mock cached mod file
 	modCache := cache.New(cacheDir)
-	err := modCache.Store("skyrim", "test", "123", "1.0.0", "data/test.esp", []byte("test plugin content"))
+	err := modCache.Store(cache.Key{GameID: "skyrim", SourceID: "test", ModID: "123", Version: "1.0.0"}, "data/test.esp", []byte("test plugin content"))
 	require.NoError(t, err)
-	err = modCache.Store("skyrim", "test", "123", "1.0.0", "data/meshes/test.nif", []byte("test mesh content"))
+	err = modCache.Store(cache.Key{GameID: "skyrim", SourceID: "test", ModID: "123", Version: "1.0.0"}, "data/meshes/test.nif", []byte("test mesh content"))
 	require.NoError(t, err)
 
 	game := &domain.Game{
@@ -68,7 +68,7 @@ func TestInstaller_Uninstall(t *testing.T) {
 
 	// Create a mock cached mod file
 	modCache := cache.New(cacheDir)
-	err := modCache.Store("skyrim", "test", "123", "1.0.0", "test.esp", []byte("test plugin"))
+	err := modCache.Store(cache.Key{GameID: "skyrim", SourceID: "test", ModID: "123", Version: "1.0.0"}, "test.esp", []byte("test plugin"))
 	require.NoError(t, err)
 
 	game := &domain.Game{
@@ -112,7 +112,7 @@ func TestInstaller_IsInstalled(t *testing.T) {
 	gameDir := t.TempDir()
 
 	modCache := cache.New(cacheDir)
-	err := modCache.Store("skyrim", "test", "123", "1.0.0", "test.esp", []byte("test"))
+	err := modCache.Store(cache.Key{GameID: "skyrim", SourceID: "test", ModID: "123", Version: "1.0.0"}, "test.esp", []byte("test"))
 	require.NoError(t, err)
 
 	game := &domain.Game{
@@ -152,8 +152,8 @@ func TestInstaller_IsInstalled_PartialInstallReturnsFalse(t *testing.T) {
 	gameDir := t.TempDir()
 
 	modCache := cache.New(cacheDir)
-	require.NoError(t, modCache.Store("skyrim", "test", "123", "1.0.0", "a.esp", []byte("a")))
-	require.NoError(t, modCache.Store("skyrim", "test", "123", "1.0.0", "b.esp", []byte("b")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "skyrim", SourceID: "test", ModID: "123", Version: "1.0.0"}, "a.esp", []byte("a")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "skyrim", SourceID: "test", ModID: "123", Version: "1.0.0"}, "b.esp", []byte("b")))
 
 	game := &domain.Game{
 		ID:         "skyrim",
@@ -171,7 +171,7 @@ func TestInstaller_IsInstalled_PartialInstallReturnsFalse(t *testing.T) {
 	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
 
 	// Deploy only one file (partial install)
-	aSrc := modCache.GetFilePath("skyrim", "test", "123", "1.0.0", "a.esp")
+	aSrc := modCache.GetFilePath(cache.Key{GameID: "skyrim", SourceID: "test", ModID: "123", Version: "1.0.0"}, "a.esp")
 	aDst := filepath.Join(gameDir, "a.esp")
 	require.NoError(t, os.MkdirAll(filepath.Dir(aDst), 0755))
 	require.NoError(t, os.Symlink(aSrc, aDst))
@@ -198,7 +198,7 @@ func TestInstaller_Install_VerifyFilesInModPath(t *testing.T) {
 	}
 
 	for path, content := range testFiles {
-		err := modCache.Store("testgame", "nexusmods", "999", "2.0.0", path, content)
+		err := modCache.Store(cache.Key{GameID: "testgame", SourceID: "nexusmods", ModID: "999", Version: "2.0.0"}, path, content)
 		require.NoError(t, err)
 	}
 
@@ -233,7 +233,7 @@ func TestInstaller_Install_VerifyFilesInModPath(t *testing.T) {
 		// Verify symlink points to correct source
 		target, err := os.Readlink(fullPath)
 		require.NoError(t, err)
-		expectedSource := modCache.GetFilePath("testgame", "nexusmods", "999", "2.0.0", path)
+		expectedSource := modCache.GetFilePath(cache.Key{GameID: "testgame", SourceID: "nexusmods", ModID: "999", Version: "2.0.0"}, path)
 		assert.Equal(t, expectedSource, target, "Symlink should point to cache")
 	}
 
@@ -250,7 +250,7 @@ func TestInstaller_Install_WithExpandedTildePath(t *testing.T) {
 	modPath := t.TempDir()
 
 	modCache := cache.New(cacheDir)
-	err := modCache.Store("game", "src", "1", "1.0", "mod.file", []byte("content"))
+	err := modCache.Store(cache.Key{GameID: "game", SourceID: "src", ModID: "1", Version: "1.0"}, "mod.file", []byte("content"))
 	require.NoError(t, err)
 
 	// Use absolute path (as would happen after tilde expansion)
@@ -309,9 +309,9 @@ games:
 
 	// Create cache with mod files
 	modCache := cache.New(cacheDir)
-	err = modCache.Store("testgame", "nexusmods", "123", "1.0", "Data/plugin.esp", []byte("plugin"))
+	err = modCache.Store(cache.Key{GameID: "testgame", SourceID: "nexusmods", ModID: "123", Version: "1.0"}, "Data/plugin.esp", []byte("plugin"))
 	require.NoError(t, err)
-	err = modCache.Store("testgame", "nexusmods", "123", "1.0", "Data/textures/tex.dds", []byte("texture"))
+	err = modCache.Store(cache.Key{GameID: "testgame", SourceID: "nexusmods", ModID: "123", Version: "1.0"}, "Data/textures/tex.dds", []byte("texture"))
 	require.NoError(t, err)
 
 	mod := &domain.Mod{
@@ -446,8 +446,8 @@ func TestInstaller_Install_DeployFailureRollsBackAndClearsDB(t *testing.T) {
 	defer func() { _ = database.Close() }()
 
 	modCache := cache.New(tempDir)
-	require.NoError(t, modCache.Store("g", "src", "1", "v1", "a.esp", []byte("a")))
-	require.NoError(t, modCache.Store("g", "src", "1", "v1", "b.esp", []byte("b")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "1", Version: "v1"}, "a.esp", []byte("a")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "1", Version: "v1"}, "b.esp", []byte("b")))
 
 	realLnk := linker.New(domain.LinkSymlink)
 	lnk := &failingLinker{Linker: realLnk, failAfter: 1}
@@ -477,10 +477,10 @@ func TestInstaller_Replace_DeployFailureRestoresOldFiles(t *testing.T) {
 	gameDir := t.TempDir()
 
 	modCache := cache.New(cacheDir)
-	require.NoError(t, modCache.Store("g", "src", "mod", "old", "same.esp", []byte("old-same")))
-	require.NoError(t, modCache.Store("g", "src", "mod", "old", "old-only.esp", []byte("old-only")))
-	require.NoError(t, modCache.Store("g", "src", "mod", "new", "same.esp", []byte("new-same")))
-	require.NoError(t, modCache.Store("g", "src", "mod", "new", "new-only.esp", []byte("new-only")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "old"}, "same.esp", []byte("old-same")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "old"}, "old-only.esp", []byte("old-only")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "new"}, "same.esp", []byte("new-same")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "new"}, "new-only.esp", []byte("new-only")))
 
 	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 	oldMod := &domain.Mod{ID: "mod", SourceID: "src", Version: "old", GameID: "g"}
@@ -505,11 +505,11 @@ func TestInstaller_Replace_DeployFailureRestoresOldFiles(t *testing.T) {
 
 	sameTarget, err := os.Readlink(samePath)
 	require.NoError(t, err)
-	assert.Equal(t, modCache.GetFilePath("g", "src", "mod", "old", "same.esp"), sameTarget)
+	assert.Equal(t, modCache.GetFilePath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "old"}, "same.esp"), sameTarget)
 
 	oldOnlyTarget, err := os.Readlink(oldOnlyPath)
 	require.NoError(t, err)
-	assert.Equal(t, modCache.GetFilePath("g", "src", "mod", "old", "old-only.esp"), oldOnlyTarget)
+	assert.Equal(t, modCache.GetFilePath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "old"}, "old-only.esp"), oldOnlyTarget)
 
 	_, err = os.Lstat(newOnlyPath)
 	assert.True(t, os.IsNotExist(err), "new-only file should not remain after rollback")
@@ -529,15 +529,15 @@ func TestInstaller_Replace_FailedReplaceDoesNotResurrectStaleOldPak(t *testing.T
 
 	// Old version: claimed pak (recorded marker) + unclaimed stale pak on
 	// disk + retained source - deployableFiles narrows to Old_P.pak only.
-	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.0", "Old_P.pak", []byte("old")))
-	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.0", "Stale_P.pak", []byte("stale")))
-	oldDir := modCache.ModPath("icarus", "icarus", "m1", "1.0")
+	require.NoError(t, modCache.Store(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.0"}, "Old_P.pak", []byte("old")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.0"}, "Stale_P.pak", []byte("stale")))
+	oldDir := modCache.ModPath(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.0"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(oldDir, "pak", []string{"Old_P.pak"}))
 	require.NoError(t, os.WriteFile(filepath.Join(oldDir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 
 	// New version: a claimed file whose deploy will fail.
-	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.4", "New_P.pak", []byte("new")))
-	newDir := modCache.ModPath("icarus", "icarus", "m1", "1.4")
+	require.NoError(t, modCache.Store(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.4"}, "New_P.pak", []byte("new")))
+	newDir := modCache.ModPath(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.4"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(newDir, "pak", []string{"New_P.pak"}))
 
 	game := &domain.Game{ID: "icarus", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
@@ -566,7 +566,7 @@ func TestInstaller_Replace_FailedReplaceDoesNotResurrectStaleOldPak(t *testing.T
 
 	oldTarget, err := os.Readlink(filepath.Join(gameDir, "Old_P.pak"))
 	require.NoError(t, err)
-	assert.Equal(t, modCache.GetFilePath("icarus", "icarus", "m1", "1.0", "Old_P.pak"), oldTarget)
+	assert.Equal(t, modCache.GetFilePath(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.0"}, "Old_P.pak"), oldTarget)
 }
 
 // TestInstaller_Replace_NewSideSkipsUnclaimed: replacing onto a version whose
@@ -578,13 +578,13 @@ func TestInstaller_Replace_NewSideSkipsUnclaimed(t *testing.T) {
 	modCache := cache.New(cacheDir)
 
 	// Old version: ordinary claimed pak, deployed.
-	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.0", "Old_P.pak", []byte("old")))
-	oldDir := modCache.ModPath("icarus", "icarus", "m1", "1.0")
+	require.NoError(t, modCache.Store(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.0"}, "Old_P.pak", []byte("old")))
+	oldDir := modCache.ModPath(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.0"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(oldDir, "pak", []string{"Old_P.pak"}))
 
 	// New version: the #210 mixed shape.
-	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.4", "Stale_P.pak", []byte("stale")))
-	newDir := modCache.ModPath("icarus", "icarus", "m1", "1.4")
+	require.NoError(t, modCache.Store(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.4"}, "Stale_P.pak", []byte("stale")))
+	newDir := modCache.ModPath(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.4"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(newDir, "exmodz", nil))
 	require.NoError(t, os.WriteFile(filepath.Join(newDir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 
@@ -609,9 +609,9 @@ func TestInstaller_ReplaceWithOldCache_SameVersionRemovesStaleFiles(t *testing.T
 
 	oldCache := cache.New(oldCacheDir)
 	newCache := cache.New(newCacheDir)
-	require.NoError(t, oldCache.Store("g", "src", "mod", "1.0", "main.esp", []byte("old-main")))
-	require.NoError(t, oldCache.Store("g", "src", "mod", "1.0", "optional.esp", []byte("old-optional")))
-	require.NoError(t, newCache.Store("g", "src", "mod", "1.0", "main.esp", []byte("new-main")))
+	require.NoError(t, oldCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "main.esp", []byte("old-main")))
+	require.NoError(t, oldCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "optional.esp", []byte("old-optional")))
+	require.NoError(t, newCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "main.esp", []byte("new-main")))
 
 	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 	mod := &domain.Mod{ID: "mod", SourceID: "src", Version: "1.0", GameID: "g"}
@@ -624,7 +624,7 @@ func TestInstaller_ReplaceWithOldCache_SameVersionRemovesStaleFiles(t *testing.T
 
 	mainTarget, err := os.Readlink(filepath.Join(gameDir, "main.esp"))
 	require.NoError(t, err)
-	assert.Equal(t, newCache.GetFilePath("g", "src", "mod", "1.0", "main.esp"), mainTarget)
+	assert.Equal(t, newCache.GetFilePath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "main.esp"), mainTarget)
 
 	_, err = os.Lstat(filepath.Join(gameDir, "optional.esp"))
 	assert.True(t, os.IsNotExist(err), "stale optional file should be removed")
@@ -646,7 +646,7 @@ func TestGetConflicts(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create cached mod files for mod A
-	err = c.Store(game.ID, "nexusmods", "111", "1.0", "shared.txt", []byte("a"))
+	err = c.Store(cache.Key{GameID: game.ID, SourceID: "nexusmods", ModID: "111", Version: "1.0"}, "shared.txt", []byte("a"))
 	require.NoError(t, err)
 
 	// Deploy mod A
@@ -655,9 +655,9 @@ func TestGetConflicts(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create cached mod files for mod B (with overlapping file)
-	err = c.Store(game.ID, "nexusmods", "222", "1.0", "shared.txt", []byte("b"))
+	err = c.Store(cache.Key{GameID: game.ID, SourceID: "nexusmods", ModID: "222", Version: "1.0"}, "shared.txt", []byte("b"))
 	require.NoError(t, err)
-	err = c.Store(game.ID, "nexusmods", "222", "1.0", "unique.txt", []byte("b"))
+	err = c.Store(cache.Key{GameID: game.ID, SourceID: "nexusmods", ModID: "222", Version: "1.0"}, "unique.txt", []byte("b"))
 	require.NoError(t, err)
 
 	// Check conflicts for mod B
@@ -686,7 +686,7 @@ func TestGetConflicts_ReinstallSelf(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create and deploy mod A
-	err = c.Store(game.ID, "nexusmods", "111", "1.0", "file.txt", []byte("a"))
+	err = c.Store(cache.Key{GameID: game.ID, SourceID: "nexusmods", ModID: "111", Version: "1.0"}, "file.txt", []byte("a"))
 	require.NoError(t, err)
 
 	modA := &domain.Mod{SourceID: "nexusmods", ID: "111", Version: "1.0", GameID: game.ID}
@@ -710,7 +710,7 @@ func TestGetConflicts_NoDatabase(t *testing.T) {
 	err := os.MkdirAll(game.ModPath, 0755)
 	require.NoError(t, err)
 
-	err = c.Store(game.ID, "nexusmods", "111", "1.0", "file.txt", []byte("a"))
+	err = c.Store(cache.Key{GameID: game.ID, SourceID: "nexusmods", ModID: "111", Version: "1.0"}, "file.txt", []byte("a"))
 	require.NoError(t, err)
 
 	modA := &domain.Mod{SourceID: "nexusmods", ID: "111", Version: "1.0", GameID: game.ID}
@@ -729,9 +729,9 @@ func TestGetConflicts_NoDatabase(t *testing.T) {
 // old file's members ONLY - and then seedSameDirNewFile the replacement.
 func seedSameDirOldFile(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod, legacy bool) {
 	t.Helper()
-	require.NoError(t, modCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, "a.esp", []byte("a")))
-	require.NoError(t, modCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, "shared.esp", []byte("shared")))
-	versionDir := modCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, modCache.Store(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, "a.esp", []byte("a")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, "shared.esp", []byte("shared")))
+	versionDir := modCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	if legacy {
 		require.NoError(t, cache.MarkFileComplete(versionDir, "fileA"))
 		return
@@ -744,8 +744,8 @@ func seedSameDirOldFile(t *testing.T, modCache *cache.Cache, game *domain.Game, 
 // does after the old deployment already exists.
 func seedSameDirNewFile(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod, legacy bool) {
 	t.Helper()
-	require.NoError(t, modCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, "b.esp", []byte("b")))
-	versionDir := modCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, modCache.Store(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, "b.esp", []byte("b")))
+	versionDir := modCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	if legacy {
 		require.NoError(t, cache.MarkFileComplete(versionDir, "fileB"))
 		return
@@ -809,7 +809,7 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_FallsBackToUnionWithoutProvenan
 		}},
 		{"unattributed content present", func(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod, inst *core.Installer) {
 			seedSameDirOldFile(t, modCache, game, mod, false)
-			require.NoError(t, modCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, "orphan.esp", []byte("o")))
+			require.NoError(t, modCache.Store(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, "orphan.esp", []byte("o")))
 			require.NoError(t, inst.Install(context.Background(), game, mod, "default"))
 			seedSameDirNewFile(t, modCache, game, mod, false)
 		}},
@@ -925,21 +925,21 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_StaleMarkerIsNotASurvivor(t *te
 	modCache := cache.New(t.TempDir())
 	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 	mod := &domain.Mod{ID: "mod", SourceID: "src", Version: "1.0", GameID: "g"}
-	versionDir := modCache.ModPath("g", "src", "mod", "1.0")
+	versionDir := modCache.ModPath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 
 	// Generation A (departed): its member and manifest remain in the dir.
-	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "a.esp", []byte("a")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "a.esp", []byte("a")))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileA", []string{"a.esp"}))
 	// Generation B (currently installed and deployed).
-	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "b.esp", []byte("b")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "b.esp", []byte("b")))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileB", []string{"b.esp"}))
 
 	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
 	lnk := linker.New(domain.LinkSymlink)
-	require.NoError(t, lnk.Deploy(modCache.GetFilePath("g", "src", "mod", "1.0", "b.esp"), filepath.Join(gameDir, "b.esp")))
+	require.NoError(t, lnk.Deploy(modCache.GetFilePath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "b.esp"), filepath.Join(gameDir, "b.esp")))
 
 	// Generation C arrives (the new download).
-	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "c.esp", []byte("c")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "c.esp", []byte("c")))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileC", []string{"c.esp"}))
 
 	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileB"}, []string{"fileC"}))
@@ -965,18 +965,18 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_PureAdditionNarrowsToo(t *testi
 	modCache := cache.New(t.TempDir())
 	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 	mod := &domain.Mod{ID: "mod", SourceID: "src", Version: "1.0", GameID: "g"}
-	versionDir := modCache.ModPath("g", "src", "mod", "1.0")
+	versionDir := modCache.ModPath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 
 	// Stale departed generation: recorded, on disk, NOT deployed.
-	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "s.esp", []byte("s")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "s.esp", []byte("s")))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileS", []string{"s.esp"}))
 	// Currently installed generation A, deployed.
-	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "a.esp", []byte("a")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "a.esp", []byte("a")))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileA", []string{"a.esp"}))
 	lnk := linker.New(domain.LinkSymlink)
-	require.NoError(t, lnk.Deploy(modCache.GetFilePath("g", "src", "mod", "1.0", "a.esp"), filepath.Join(gameDir, "a.esp")))
+	require.NoError(t, lnk.Deploy(modCache.GetFilePath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "a.esp"), filepath.Join(gameDir, "a.esp")))
 	// The update adds B alongside A.
-	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "b.esp", []byte("b")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "b.esp", []byte("b")))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileB", []string{"b.esp"}))
 
 	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
@@ -1002,12 +1002,12 @@ func TestInstaller_ReplaceForUpdate_DistinctCacheDirs_MatchesReplace(t *testing.
 	oldMod := &domain.Mod{ID: "mod", SourceID: "src", Version: "1.0", GameID: "g"}
 	newMod := &domain.Mod{ID: "mod", SourceID: "src", Version: "2.0", GameID: "g"}
 
-	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "old-only.esp", []byte("old")))
-	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "shared.esp", []byte("shared")))
-	require.NoError(t, cache.MarkFileCompleteWithMembers(modCache.ModPath("g", "src", "mod", "1.0"), "fileA", []string{"old-only.esp", "shared.esp"}))
-	require.NoError(t, modCache.Store("g", "src", "mod", "2.0", "new-only.esp", []byte("new")))
-	require.NoError(t, modCache.Store("g", "src", "mod", "2.0", "shared.esp", []byte("shared-2")))
-	require.NoError(t, cache.MarkFileCompleteWithMembers(modCache.ModPath("g", "src", "mod", "2.0"), "fileB", []string{"new-only.esp", "shared.esp"}))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "old-only.esp", []byte("old")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "shared.esp", []byte("shared")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(modCache.ModPath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}), "fileA", []string{"old-only.esp", "shared.esp"}))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "2.0"}, "new-only.esp", []byte("new")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "2.0"}, "shared.esp", []byte("shared-2")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(modCache.ModPath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "2.0"}), "fileB", []string{"new-only.esp", "shared.esp"}))
 
 	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
 	require.NoError(t, inst.Install(context.Background(), game, oldMod, "default"))
@@ -1020,7 +1020,7 @@ func TestInstaller_ReplaceForUpdate_DistinctCacheDirs_MatchesReplace(t *testing.
 	assert.NoError(t, err)
 	target, err := os.Readlink(filepath.Join(gameDir, "shared.esp"))
 	require.NoError(t, err)
-	assert.Equal(t, modCache.GetFilePath("g", "src", "mod", "2.0", "shared.esp"), target,
+	assert.Equal(t, modCache.GetFilePath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "2.0"}, "shared.esp"), target,
 		"shared members must point at the NEW version's cache entry")
 }
 
@@ -1033,8 +1033,8 @@ func TestInstaller_Install_SkipsUnclaimedFiles(t *testing.T) {
 	gameDir := t.TempDir()
 	modCache := cache.New(cacheDir)
 
-	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.4", "Stale_P.pak", []byte("stale")))
-	dir := modCache.ModPath("icarus", "icarus", "m1", "1.4")
+	require.NoError(t, modCache.Store(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.4"}, "Stale_P.pak", []byte("stale")))
+	dir := modCache.ModPath(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.4"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "exmodz", nil))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 
@@ -1057,8 +1057,8 @@ func TestInstaller_Install_LegacyBareMarker_DeploysUnion(t *testing.T) {
 	gameDir := t.TempDir()
 	modCache := cache.New(cacheDir)
 
-	require.NoError(t, modCache.Store("icarus", "icarus", "m2", "2.2", "MorePoints_P.pak", []byte("pak")))
-	dir := modCache.ModPath("icarus", "icarus", "m2", "2.2")
+	require.NoError(t, modCache.Store(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m2", Version: "2.2"}, "MorePoints_P.pak", []byte("pak")))
+	dir := modCache.ModPath(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m2", Version: "2.2"})
 	require.NoError(t, cache.MarkFileComplete(dir, "exmodz")) // pre-manifest bare marker
 
 	game := &domain.Game{ID: "icarus", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
@@ -1083,8 +1083,8 @@ func TestInstaller_IsInstalled_RetainOnlyEntry(t *testing.T) {
 	gameDir := t.TempDir()
 	modCache := cache.New(cacheDir)
 
-	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.4", "Stale_P.pak", []byte("stale")))
-	dir := modCache.ModPath("icarus", "icarus", "m1", "1.4")
+	require.NoError(t, modCache.Store(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.4"}, "Stale_P.pak", []byte("stale")))
+	dir := modCache.ModPath(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "m1", Version: "1.4"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "exmodz", nil))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 

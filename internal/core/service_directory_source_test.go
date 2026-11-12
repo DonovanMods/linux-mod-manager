@@ -53,7 +53,7 @@ func TestDirectorySourceEndToEnd(t *testing.T) {
 	result, err := svc.ingestLocalToCache(context.Background(), gameCache, game, &mod, &files[0], url[len("file://"):], nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
-	assert.True(t, gameCache.Exists("7dtd", "my-mods", "BiggerBackpack", "1.2.0"))
+	assert.True(t, gameCache.Exists(cache.Key{GameID: "7dtd", SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"}))
 }
 
 func sourceSearchQuery(q, gameID string) source.SearchQuery {

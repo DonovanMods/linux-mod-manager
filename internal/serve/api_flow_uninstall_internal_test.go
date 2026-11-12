@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,7 +64,7 @@ func TestFlowUninstall_JobRemovesEverything(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods, "the profile's load order must lose the ref too")
 
-	assert.False(t, svc.GetGameCache(game).Exists(game.ID, fixtureSourceID, "m1", "1.0"),
+	assert.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: "m1", Version: "1.0"}),
 		"without keep_cache the cache entry is deleted")
 }
 
@@ -78,6 +79,6 @@ func TestFlowUninstall_KeepCacheOptionIsHonoured(t *testing.T) {
 
 	_, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "m1", game.ID, "default")
 	require.ErrorIs(t, err, domain.ErrModNotFound)
-	assert.True(t, svc.GetGameCache(game).Exists(game.ID, fixtureSourceID, "m1", "1.0"),
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: "m1", Version: "1.0"}),
 		"keep_cache must leave the cache entry in place")
 }

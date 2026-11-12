@@ -16,6 +16,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -272,7 +273,7 @@ func deployOneModFile(t *testing.T, svc *core.Service, game *domain.Game) {
 	t.Helper()
 	ctx := context.Background()
 	mod := &domain.Mod{ID: "m1", SourceID: "nexusmods", Name: "Mod One", Version: "1.0", GameID: game.ID}
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, mod.SourceID, mod.ID, mod.Version, "plugin.esp", []byte("x")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, "plugin.esp", []byte("x")))
 	pm := svc.NewProfileManager()
 	_, err := pm.CreateOrResetDefaultAfterGameSave(ctx, game.ID)
 	require.NoError(t, err)

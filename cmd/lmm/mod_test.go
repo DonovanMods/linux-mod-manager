@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -109,7 +110,7 @@ func TestDoModDisable_Verbose_RestoresHistoricalUndeployWarningByteIdentically(t
 	// TestService_DisableMod_UndeployFailureIsNonFatal) so there is
 	// something to undeploy.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "blocked/plugin.esp", []byte("data")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "1", Version: "1.0"}, "blocked/plugin.esp", []byte("data")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
@@ -195,7 +196,7 @@ func TestDoModDisable_ErrorPath_PrintsAccumulatedNoteToStdout(t *testing.T) {
 	}
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "blocked/plugin.esp", []byte("data")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "1", Version: "1.0"}, "blocked/plugin.esp", []byte("data")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
@@ -261,7 +262,7 @@ func TestDoModEnable_ErrorPath_NilResultDoesNotPanic(t *testing.T) {
 	}
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "plugin.esp", []byte("data")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "1", Version: "1.0"}, "plugin.esp", []byte("data")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
@@ -309,7 +310,7 @@ func TestDoModEnableDisable_AcceptAnImportedModsLocalSource(t *testing.T) {
 		SourceIDs: map[string]string{"nexusmods": "g1"},
 	}
 	ctx := context.Background()
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, domain.SourceLocal, "imp", "1.0", "imported.esp", []byte("data")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "imp", Version: "1.0"}, "imported.esp", []byte("data")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "imp", SourceID: domain.SourceLocal, Name: "Imported Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",

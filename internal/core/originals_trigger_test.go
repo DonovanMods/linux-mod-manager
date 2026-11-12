@@ -382,9 +382,9 @@ func TestReplace_LeavesAFileLmmDoesNotOwnAlone(t *testing.T) {
 	// v1's cache entry names Data/stock.esp; v2's does not, so the obsolete
 	// loop will visit it. Nothing was ever deployed there - the file on
 	// disk is the game's own.
-	require.NoError(t, modCache.Store("g", "src", "1", "1.0", "Data/stock.esp", []byte("the mod's version")))
-	require.NoError(t, modCache.Store("g", "src", "1", "1.0", "Data/mine.esp", []byte("v1")))
-	require.NoError(t, modCache.Store("g", "src", "1", "2.0", "Data/mine.esp", []byte("v2")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "1", Version: "1.0"}, "Data/stock.esp", []byte("the mod's version")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "1", Version: "1.0"}, "Data/mine.esp", []byte("v1")))
+	require.NoError(t, modCache.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "1", Version: "2.0"}, "Data/mine.esp", []byte("v2")))
 
 	stock := filepath.Join(gameDir, "Data", "stock.esp")
 	require.NoError(t, os.MkdirAll(filepath.Dir(stock), 0755))

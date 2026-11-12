@@ -13,6 +13,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -152,7 +153,7 @@ func TestImportArchive_WithID_ResolvesFileIDAndStampsMarker(t *testing.T) {
 	assert.Equal(t, []string{"55"}, installed.FileIDs)
 
 	gameCache := svc.GetGameCache(game)
-	assert.True(t, gameCache.HasFileIDs("g1", "acme-source", "999", "2.0", []string{"55"}),
+	assert.True(t, gameCache.HasFileIDs(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "2.0"}, []string{"55"}),
 		"the import-written cache entry must carry the resolved file's completion marker")
 
 	prof, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
@@ -180,10 +181,10 @@ func TestImportArchive_EnrichmentVersionChange_RenamesCacheEntryOnDisk(t *testin
 	assert.True(t, result.Renamed)
 
 	gameCache := svc.GetGameCache(game)
-	_, statErr := os.Stat(gameCache.ModPath("g1", "acme-source", "999", "unknown"))
+	_, statErr := os.Stat(gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "unknown"}))
 	assert.True(t, os.IsNotExist(statErr), "the pre-enrichment cache directory must be gone after the rename")
 
-	data, rErr := os.ReadFile(filepath.Join(gameCache.ModPath("g1", "acme-source", "999", "2.0"), "mymod.esp"))
+	data, rErr := os.ReadFile(filepath.Join(gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "2.0"}), "mymod.esp"))
 	require.NoError(t, rErr)
 	assert.Equal(t, "data", string(data))
 }
@@ -204,7 +205,7 @@ func TestImportArchive_CacheRenameFailure_NotesAndCascadesToDeploymentFailure(t 
 	createImportTestZip(t, archivePath, map[string]string{"mymod.esp": "data"})
 
 	gameCache := svc.GetGameCache(game)
-	newPath := gameCache.ModPath("g1", "acme-source", "999", "2.0")
+	newPath := gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "2.0"})
 	require.NoError(t, os.MkdirAll(filepath.Dir(newPath), 0755))
 	require.NoError(t, os.WriteFile(newPath, []byte("blocker"), 0644)) // a FILE: os.Rename(dir, this) fails
 
@@ -217,7 +218,7 @@ func TestImportArchive_CacheRenameFailure_NotesAndCascadesToDeploymentFailure(t 
 	assert.Contains(t, result.Notes[0], "Warning: could not rename cache entry: ")
 	assert.Equal(t, "Warning: could not check conflicts: mod not in cache: acme-source/999@2.0", result.Notes[1])
 
-	data, rErr := os.ReadFile(filepath.Join(gameCache.ModPath("g1", "acme-source", "999", "unknown"), "mymod.esp"))
+	data, rErr := os.ReadFile(filepath.Join(gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "unknown"}), "mymod.esp"))
 	require.NoError(t, rErr, "a failed rename must leave the original cache directory untouched")
 	assert.Equal(t, "data", string(data))
 
@@ -535,7 +536,7 @@ func TestImportArchive_BeforeAllFails_AbortsWithoutForce(t *testing.T) {
 	assert.Empty(t, mods, "a fatal before_all hook must leave nothing installed")
 
 	require.NotNil(t, result.Mod)
-	assert.True(t, svc.GetGameCache(game).Exists("g1", result.Mod.SourceID, result.Mod.ID, result.Mod.Version),
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version}),
 		"Import's cache write happens before hooks run, so it survives a later fatal hook abort")
 }
 

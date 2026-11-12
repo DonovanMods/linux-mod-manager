@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -173,7 +174,7 @@ func TestDoProfileApply_DisabledModCacheGone_SchedulesRedownload(t *testing.T) {
 		Enabled:      false,
 		FileIDs:      []string{"main"},
 	}))
-	require.False(t, svc.GetGameCache(game).Exists(game.ID, "test-src", "mod1", "1.0"),
+	require.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}),
 		"precondition: the cache entry must be gone")
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 
@@ -187,7 +188,7 @@ func TestDoProfileApply_DisabledModCacheGone_SchedulesRedownload(t *testing.T) {
 	assert.NotContains(t, out, "Will enable", "a mod with no cache entry must not be classified as a plain enable")
 	assert.Contains(t, out, "    ✓ Installed: Mod One\n")
 
-	assert.True(t, svc.GetGameCache(game).Exists(game.ID, "test-src", "mod1", "1.0"), "the mod must be re-downloaded")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}), "the mod must be re-downloaded")
 	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.True(t, installed.Enabled, "the re-downloaded mod must end up enabled")

@@ -41,18 +41,29 @@ func (c *Cache) SetLogger(l *slog.Logger) {
 	c.log = l
 }
 
-// ModPath returns the path where a mod version's files are stored
-func (c *Cache) ModPath(gameID, sourceID, modID, version string) string {
-	modKey := fmt.Sprintf("%s-%s", sourceID, modID)
+// ModPath returns the path where k's files are stored. It never refuses a
+// key: reads of an existing entry must keep working whatever its version
+// says. A caller about to create a new entry uses NewEntryPath.
+func (c *Cache) ModPath(k Key) string {
 	if c.gameScoped {
-		return filepath.Join(c.basePath, modKey, version)
+		return filepath.Join(c.basePath, k.modDir(), k.versionDir())
 	}
-	return filepath.Join(c.basePath, gameID, modKey, version)
+	return filepath.Join(c.basePath, k.GameID, k.modDir(), k.versionDir())
+}
+
+// NewEntryPath is ModPath for a caller about to create (or replace) the
+// entry: it refuses a key Validate refuses, with a *VersionSeparatorError,
+// so no entry is ever minted whose directory another key could also spell.
+func (c *Cache) NewEntryPath(k Key) (string, error) {
+	if err := k.Validate(); err != nil {
+		return "", err
+	}
+	return c.ModPath(k), nil
 }
 
 // Exists checks if a mod version is cached
-func (c *Cache) Exists(gameID, sourceID, modID, version string) bool {
-	path := c.ModPath(gameID, sourceID, modID, version)
+func (c *Cache) Exists(k Key) bool {
+	path := c.ModPath(k)
 	info, err := os.Stat(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -205,8 +216,8 @@ func FileManifestsAt(versionDir string) (map[string]FileManifest, error) {
 // carries an unrecognized header parses as Recorded=false - the safe,
 // union-fallback direction - so pre-manifest entries and any future format
 // revision both degrade silently rather than misreport provenance.
-func (c *Cache) FileManifests(gameID, sourceID, modID, version string) (map[string]FileManifest, error) {
-	return fileManifestsAt(c.ModPath(gameID, sourceID, modID, version))
+func (c *Cache) FileManifests(k Key) (map[string]FileManifest, error) {
+	return fileManifestsAt(c.ModPath(k))
 }
 
 // fileManifestsAt is FileManifests' shared implementation, taking a raw
@@ -255,7 +266,7 @@ func parseManifest(body []byte) FileManifest {
 }
 
 // HasFileIDs reports whether every named source file has been fully committed
-// to the given (gameID, sourceID, modID, version) cache entry - a stronger
+// to k's cache entry - a stronger
 // guard than Exists alone, which only checks the version directory's presence
 // and can return true for a PARTIALLY populated entry (e.g. a previous
 // download run that stored file 1 of 2 before failing - each file is
@@ -282,11 +293,11 @@ func parseManifest(body []byte) FileManifest {
 // An empty/nil fileIDs degrades to Exists - there is nothing left to verify
 // beyond the directory's presence. An unverifiable ID (blank, or carrying a
 // path separator) reports false rather than being skipped.
-func (c *Cache) HasFileIDs(gameID, sourceID, modID, version string, fileIDs []string) bool {
-	if !c.Exists(gameID, sourceID, modID, version) {
+func (c *Cache) HasFileIDs(k Key, fileIDs []string) bool {
+	if !c.Exists(k) {
 		return false
 	}
-	versionDir := c.ModPath(gameID, sourceID, modID, version)
+	versionDir := c.ModPath(k)
 	for _, id := range fileIDs {
 		if !VerifiableFileID(id) {
 			return false
@@ -561,9 +572,12 @@ func MergeFingerprintPath(versionDir string) string {
 	return filepath.Join(versionDir, mergeFingerprintMarkerName)
 }
 
-// Store saves a file to the cache
-func (c *Cache) Store(gameID, sourceID, modID, version, relativePath string, content []byte) error {
-	modPath := c.ModPath(gameID, sourceID, modID, version)
+// Store saves a file to the cache. It refuses a key Validate refuses.
+func (c *Cache) Store(k Key, relativePath string, content []byte) error {
+	modPath, err := c.NewEntryPath(k)
+	if err != nil {
+		return err
+	}
 	fullPath := filepath.Join(modPath, relativePath)
 
 	dir := filepath.Dir(fullPath)
@@ -588,8 +602,8 @@ func (c *Cache) Store(gameID, sourceID, modID, version, relativePath string, con
 // ONLY markers correctly reports zero files.
 //
 // CloneMod is the sole exception and walks with includeReserved - see there.
-func (c *Cache) ListFiles(gameID, sourceID, modID, version string) ([]string, error) {
-	return walkEntries(c.ModPath(gameID, sourceID, modID, version), false)
+func (c *Cache) ListFiles(k Key) ([]string, error) {
+	return walkEntries(c.ModPath(k), false)
 }
 
 // walkEntries lists modPath's files relative to modPath. When includeReserved
@@ -639,8 +653,8 @@ func walkEntries(modPath string, includeReserved bool) ([]string, error) {
 // leaving it behind after every version is gone is just litter (#190 item
 // 4). A container that still holds another version, or that never existed,
 // is left alone either way - never an error.
-func (c *Cache) Delete(gameID, sourceID, modID, version string) error {
-	modPath := c.ModPath(gameID, sourceID, modID, version)
+func (c *Cache) Delete(k Key) error {
+	modPath := c.ModPath(k)
 	if err := os.RemoveAll(modPath); err != nil {
 		return fmt.Errorf("deleting cached mod: %w", err)
 	}
@@ -671,8 +685,8 @@ func removeIfEmpty(dir string) error {
 }
 
 // GetFilePath returns the full path to a cached file
-func (c *Cache) GetFilePath(gameID, sourceID, modID, version, relativePath string) string {
-	return filepath.Join(c.ModPath(gameID, sourceID, modID, version), relativePath)
+func (c *Cache) GetFilePath(k Key, relativePath string) string {
+	return filepath.Join(c.ModPath(k), relativePath)
 }
 
 // CloneMod copies a cached mod version into another cache.
@@ -684,8 +698,8 @@ func (c *Cache) GetFilePath(gameID, sourceID, modID, version, relativePath strin
 // cache and back. Dropping the completion markers on that round trip would
 // silently downgrade a complete entry to a pre-marker one and cost a
 // redundant redownload on the next cache-first check.
-func (c *Cache) CloneMod(ctx context.Context, dest *Cache, gameID, sourceID, modID, version string) error {
-	files, err := walkEntries(c.ModPath(gameID, sourceID, modID, version), true)
+func (c *Cache) CloneMod(ctx context.Context, dest *Cache, k Key) error {
+	files, err := walkEntries(c.ModPath(k), true)
 	if err != nil {
 		return err
 	}
@@ -693,8 +707,8 @@ func (c *Cache) CloneMod(ctx context.Context, dest *Cache, gameID, sourceID, mod
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		srcPath := c.GetFilePath(gameID, sourceID, modID, version, file)
-		dstPath := dest.GetFilePath(gameID, sourceID, modID, version, file)
+		srcPath := c.GetFilePath(k, file)
+		dstPath := dest.GetFilePath(k, file)
 		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
 			return fmt.Errorf("creating destination dir: %w", err)
 		}
@@ -705,8 +719,8 @@ func (c *Cache) CloneMod(ctx context.Context, dest *Cache, gameID, sourceID, mod
 	return nil
 }
 
-// CopyModAs copies the cache entry of sourceID/modID at version to
-// destSourceID/destModID at the same version (#590: a re-link moves a mod to
+// CopyModAs copies k's cache entry to destSourceID/destModID at the same
+// game, version and variant (#590: a re-link moves a mod to
 // a new identity, and the files it was installed from go with it). Like
 // CloneMod it carries lmm's .lmm-* markers, so the copy is as complete as
 // the original, and the original stays - another profile may still have the
@@ -714,13 +728,19 @@ func (c *Cache) CloneMod(ctx context.Context, dest *Cache, gameID, sourceID, mod
 // rewrites a file in place, which a shared inode would carry into the other
 // entry. The copy is built beside the destination and renamed into place,
 // so a failed one leaves no partial entry; an existing destination is never
-// overwritten (os.ErrExist).
-func (c *Cache) CopyModAs(ctx context.Context, gameID, sourceID, modID, destSourceID, destModID, version string) (err error) {
-	dst := c.ModPath(gameID, destSourceID, destModID, version)
+// overwritten (os.ErrExist). It refuses a key Validate refuses: the copy is
+// a new entry.
+func (c *Cache) CopyModAs(ctx context.Context, k Key, destSourceID, destModID string) (err error) {
+	destKey := k
+	destKey.SourceID, destKey.ModID = destSourceID, destModID
+	dst, err := c.NewEntryPath(destKey)
+	if err != nil {
+		return err
+	}
 	if _, statErr := os.Lstat(dst); statErr == nil {
 		return fmt.Errorf("cache entry %s: %w", dst, os.ErrExist)
 	}
-	files, err := walkEntries(c.ModPath(gameID, sourceID, modID, version), true)
+	files, err := walkEntries(c.ModPath(k), true)
 	if err != nil {
 		return err
 	}
@@ -746,7 +766,7 @@ func (c *Cache) CopyModAs(ctx context.Context, gameID, sourceID, modID, destSour
 		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
 			return fmt.Errorf("creating destination dir: %w", err)
 		}
-		if err := copyFile(c.GetFilePath(gameID, sourceID, modID, version, file), dstPath); err != nil {
+		if err := copyFile(c.GetFilePath(k, file), dstPath); err != nil {
 			return err
 		}
 	}
@@ -787,8 +807,8 @@ func (c *Cache) sweepCopyLeftovers(container string) {
 
 // Size returns the total size of cached files for a mod version. lmm's own
 // .lmm-* bookkeeping entries are excluded, same as in ListFiles.
-func (c *Cache) Size(gameID, sourceID, modID, version string) (int64, error) {
-	modPath := c.ModPath(gameID, sourceID, modID, version)
+func (c *Cache) Size(k Key) (int64, error) {
+	modPath := c.ModPath(k)
 
 	var totalSize int64
 	err := filepath.WalkDir(modPath, func(path string, d fs.DirEntry, err error) error {

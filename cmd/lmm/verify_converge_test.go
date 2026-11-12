@@ -9,6 +9,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -46,8 +47,8 @@ func setupDoVerifyConvergeTest(t *testing.T) (*cobra.Command, *core.Service, *do
 	svc, game, _ := setupDoInstallTest(t)
 	gameCache := svc.GetGameCache(game)
 
-	require.NoError(t, gameCache.Store(game.ID, domain.SourceLocal, "mod1", "1.0", "a.esp", []byte("a")))
-	require.NoError(t, gameCache.Store(game.ID, domain.SourceLocal, "mod1", "1.0", "gone.esp", []byte("g")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "mod1", Version: "1.0"}, "a.esp", []byte("a")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "mod1", Version: "1.0"}, "gone.esp", []byte("g")))
 
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "mod1", SourceID: domain.SourceLocal, Name: "Mod One", Version: "1.0", GameID: game.ID},
@@ -69,7 +70,7 @@ func setupDoVerifyConvergeTest(t *testing.T) (*cobra.Command, *core.Service, *do
 	// gone.esp is now stale: its deployed_files row and game-dir symlink
 	// survive, but the file itself is gone from the cache, so no installed
 	// mod provides it any longer.
-	require.NoError(t, os.Remove(gameCache.GetFilePath(game.ID, domain.SourceLocal, "mod1", "1.0", "gone.esp")))
+	require.NoError(t, os.Remove(gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "mod1", Version: "1.0"}, "gone.esp")))
 
 	// A dangling symlink into the game's cache root with no DB row at all.
 	cacheRoot := svc.GetGameCachePath(game)

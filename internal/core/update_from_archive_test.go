@@ -10,6 +10,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -149,7 +150,7 @@ func TestUpdateFromArchive_AdvertisedMatch_UpdatesLikeADownload(t *testing.T) {
 	assert.Equal(t, "2.0", ref.Version)
 	assert.Equal(t, []string{"200"}, ref.FileIDs)
 
-	assert.True(t, f.svc.GetGameCache(f.game).Exists("g1", "msrc", "42", "1.0"), "the old version's cache entry survives for rollback")
+	assert.True(t, f.svc.GetGameCache(f.game).Exists(cache.Key{GameID: "g1", SourceID: "msrc", ModID: "42", Version: "1.0"}), "the old version's cache entry survives for rollback")
 
 	verified, err := f.svc.VerifyForTest(context.Background(), f.game, "default", core.VerifyOptions{}, nil)
 	require.NoError(t, err)
@@ -206,7 +207,7 @@ func TestUpdateFromArchive_Mismatch_RefusedUnlessAccepted(t *testing.T) {
 	assert.Equal(t, "Auctionator-Classic-2.0.zip", mismatch.ArchiveName)
 	assert.Equal(t, "200", mismatch.Advertised.ID)
 	assert.Equal(t, "1.0", f.row(t).Version, "a refusal changes nothing")
-	assert.False(t, f.svc.GetGameCache(f.game).Exists("g1", "msrc", "42", "2.0"), "nothing is ingested before the gate")
+	assert.False(t, f.svc.GetGameCache(f.game).Exists(cache.Key{GameID: "g1", SourceID: "msrc", ModID: "42", Version: "2.0"}), "nothing is ingested before the gate")
 
 	_, err = f.svc.ApplyUpdateFromArchive(context.Background(), f.game, plan, core.UpdateFromArchiveOptions{AcceptMismatch: true}, nil)
 	require.NoError(t, err)
@@ -326,8 +327,8 @@ func TestUpdateFromArchive_HookFailure_DiscardsTheNewCacheEntry(t *testing.T) {
 	require.ErrorContains(t, err, "install.before_each hook failed")
 
 	assert.Equal(t, "1.0", f.row(t).Version)
-	assert.False(t, f.svc.GetGameCache(f.game).Exists("g1", "msrc", "42", "2.0"), "the failed update's cache entry is removed")
-	assert.True(t, f.svc.GetGameCache(f.game).Exists("g1", "msrc", "42", "1.0"))
+	assert.False(t, f.svc.GetGameCache(f.game).Exists(cache.Key{GameID: "g1", SourceID: "msrc", ModID: "42", Version: "2.0"}), "the failed update's cache entry is removed")
+	assert.True(t, f.svc.GetGameCache(f.game).Exists(cache.Key{GameID: "g1", SourceID: "msrc", ModID: "42", Version: "1.0"}))
 }
 
 // A Workshop item is Steam's to update.

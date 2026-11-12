@@ -65,6 +65,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/serve"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // e2eShutdownGrace is how long a browser fixture's server waits for
@@ -336,7 +337,7 @@ func newE2EFixtureWithAttentionLocked(t *testing.T, lockPath string) e2eFixture 
 	svc, game := newFixtureServiceWithLock(t, src, lockPath)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake", ModID: "boots", Version: "1.0"}, "f1", []byte("content")))
 	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -1318,8 +1319,8 @@ func newE2EFixtureWithRollbackReadyMod(t *testing.T) e2eFixture {
 	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "2.0"}})
 	f := newE2EFixtureFromSource(t, src)
 
-	require.NoError(t, f.Svc.GetGameCache(f.Game).Store(f.Game.ID, "fake", "a", "1.0", "alpha.esp", []byte("old content")))
-	require.NoError(t, f.Svc.GetGameCache(f.Game).Store(f.Game.ID, "fake", "a", "2.0", "alpha.esp", []byte("new content")))
+	require.NoError(t, f.Svc.GetGameCache(f.Game).Store(cache.Key{GameID: f.Game.ID, SourceID: "fake", ModID: "a", Version: "1.0"}, "alpha.esp", []byte("old content")))
+	require.NoError(t, f.Svc.GetGameCache(f.Game).Store(cache.Key{GameID: f.Game.ID, SourceID: "fake", ModID: "a", Version: "2.0"}, "alpha.esp", []byte("new content")))
 	require.NoError(t, f.Svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
 		Mod:             domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "2.0", GameID: f.Game.ID},
 		ProfileName:     "default",
@@ -2474,7 +2475,7 @@ func newE2EFixtureWithALockedAndAnUnlockedUpdate(t *testing.T) e2eFixture {
 	} {
 		fileID := seed.id + "-1.0"
 		member := "Mods/" + seed.id + ".pak"
-		require.NoError(t, svc.GetGameCache(game).Store(game.ID, "fake", seed.id, "1.0",
+		require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "fake", ModID: seed.id, Version: "1.0"},
 			member, []byte("payload for "+seed.id+"/"+fileID)))
 		require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
 			Mod: domain.Mod{

@@ -19,6 +19,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // newE2EFixtureWithASharedDeployment is the flow suite's mixedFlowServer
@@ -35,7 +36,7 @@ func newE2EFixtureWithASharedDeployment(t *testing.T) e2eFixture {
 		domain.Mod{ID: "shared", SourceID: "fake", Name: "Shared Mod", Version: "1.0", GameID: f.Game.ID},
 		true, map[string][]byte{"shared.pak": []byte("shared")})
 	require.NoError(t, pm.AddMod(ctx, f.Game.ID, "default", domain.ModReference{SourceID: "fake", ModID: "shared", Version: "1.0"}))
-	require.NoError(t, f.Svc.GetGameCache(f.Game).Store(f.Game.ID, "fake", "own", "1.0", "own.pak", []byte("own")))
+	require.NoError(t, f.Svc.GetGameCache(f.Game).Store(cache.Key{GameID: f.Game.ID, SourceID: "fake", ModID: "own", Version: "1.0"}, "own.pak", []byte("own")))
 	_, err := pm.Create(ctx, f.Game.ID, "alt")
 	require.NoError(t, err)
 	for _, m := range []struct{ id, name string }{{"shared", "Shared Mod"}, {"own", "Own Mod"}} {

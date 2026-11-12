@@ -239,7 +239,7 @@ func (s *Service) retainedMergeFiles(ctx context.Context, game *domain.Game, pro
 			continue
 		}
 		for _, fileID := range mod.FileIDs {
-			retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(fileID))
+			retainedPath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, cache.RetainedSourceName(fileID))
 			if _, statErr := os.Stat(retainedPath); statErr != nil {
 				continue // not a retained merge source (nothing ingested for this fileID - a legacy-ingest pak, or a non-convert-eligible one)
 			}
@@ -306,7 +306,7 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 		if uerr := installer.Uninstall(ctx, game, syntheticMod, profileName); uerr != nil {
 			return nil, fmt.Errorf("removing merged pak: %w", uerr)
 		}
-		if derr := gameCache.Delete(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion); derr != nil {
+		if derr := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: mergedPakModID, Version: mergedPakVersion}); derr != nil {
 			return nil, fmt.Errorf("clearing merged pak cache entry: %w", derr)
 		}
 		// An all-opted-out (or all-disabled) profile must still flip any
@@ -333,7 +333,7 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 		return nil, err
 	}
 
-	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+	cachePath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: mergedPakModID, Version: mergedPakVersion})
 	deployedPath := filepath.Join(game.ModPath, mc.MergedArtifactName())
 	if stored, ok := readMergedFingerprint(cachePath); ok {
 		if eq, eqErr := mergedFingerprintsEqual(current, stored, mc.ClassifyMergeSource); eqErr == nil && eq {
@@ -491,7 +491,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 			continue
 		}
 		for _, fileID := range mod.FileIDs {
-			versionDir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+			versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 			retained := filepath.Join(versionDir, cache.RetainedSourceName(fileID))
 			if _, statErr := os.Stat(retained); statErr != nil {
 				continue // nothing retained (legacy ingest): Task 11's needs_reingest covers it
@@ -509,7 +509,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 			_, failed := failedByRef[ref]
 			participating := game.ConvertPaks && mod.ConvertPaks && !failed
 
-			manifests, merr := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+			manifests, merr := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 			if merr != nil {
 				return warnings, merr
 			}
@@ -563,7 +563,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				// by content identity with its retained source - see its
 				// doc comment for why that is the one attribution that
 				// survives a convert flip.
-				files, lerr := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+				files, lerr := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 				if lerr != nil {
 					return warnings, lerr
 				}
@@ -800,7 +800,7 @@ func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Ga
 			continue
 		}
 		for _, fileID := range mod.FileIDs {
-			retained := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(fileID))
+			retained := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, cache.RetainedSourceName(fileID))
 			if _, statErr := os.Stat(retained); statErr != nil {
 				if !os.IsNotExist(statErr) {
 					s.logger().Warn("stat failed while checking retained merge source", "game_id", game.ID, "file_id", fileID, "err", statErr)
@@ -871,7 +871,7 @@ func (s *Service) recordMergeOutcome(ctx context.Context, game *domain.Game, pro
 // one now (unconfigured since) reads as "no outcomes available".
 func (s *Service) mergedPakOutcomes(ctx context.Context, game *domain.Game, profileName string) ([]MergedFingerprintEntry, bool) {
 	gameCache := s.GetGameCache(game)
-	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+	cachePath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: mergedPakModID, Version: mergedPakVersion})
 	fp, ok := readMergedFingerprint(cachePath)
 	if !ok {
 		return nil, false
@@ -932,7 +932,7 @@ func (s *Service) PakNeedsReingest(ctx context.Context, game *domain.Game, mod *
 		return false, nil
 	}
 	gameCache := s.GetGameCache(game)
-	versionDir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	if _, err := os.Stat(filepath.Join(versionDir, cache.RetainedSourceName(fileID))); err == nil {
 		return false, nil // already retained
 	} else if !os.IsNotExist(err) {
@@ -940,7 +940,7 @@ func (s *Service) PakNeedsReingest(ctx context.Context, game *domain.Game, mod *
 	}
 	// Only flag entries that actually exist (an entirely-missing cache entry
 	// is the MISSING status's business, not ours).
-	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	if err != nil || len(files) == 0 {
 		return false, err
 	}
@@ -1050,7 +1050,7 @@ func (s *Service) CheckMergedPakStaleness(ctx context.Context, game *domain.Game
 	}
 
 	gameCache := s.GetGameCache(game)
-	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+	cachePath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: mergedPakModID, Version: mergedPakVersion})
 	stored, ok := readMergedFingerprint(cachePath)
 	// #197 postsmoke UX fix: reason defaults to the fingerprint-mismatch
 	// case ("base pak updated") and is only downgraded to "not deployed"
@@ -1172,7 +1172,7 @@ func (s *Service) checkMergeMembersCached(ctx context.Context, game *domain.Game
 	}
 	gameCache := s.GetGameCache(game)
 	for _, mod := range mods {
-		if !mod.Enabled || mod.External || gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+		if !mod.Enabled || mod.External || gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
 			continue
 		}
 		member := false
@@ -1231,7 +1231,7 @@ func (s *Service) purgeMergedPak(ctx context.Context, game *domain.Game, profile
 	}
 	if deleteCache {
 		gameCache := s.GetGameCache(game)
-		if err := gameCache.Delete(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion); err != nil {
+		if err := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: mergedPakModID, Version: mergedPakVersion}); err != nil {
 			return fmt.Errorf("clearing merged pak cache entry: %w", err)
 		}
 	}
@@ -1320,7 +1320,7 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 		// the STORED fingerprint to still match those inputs. Consult the
 		// same comparison it makes (merged_pak.go:297-298) before claiming
 		// "nothing changes".
-		cachePath := s.GetGameCache(game).ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+		cachePath := s.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: mergedPakModID, Version: mergedPakVersion})
 		stored, ok := readMergedFingerprint(cachePath)
 		if !ok {
 			return resync
@@ -1459,7 +1459,7 @@ func (s *Service) mergedArtifactEffectForImport(ctx context.Context, game *domai
 		return resync
 	}
 
-	cachePath := s.GetGameCache(game).ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+	cachePath := s.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: mergedPakModID, Version: mergedPakVersion})
 	stored, ok := readMergedFingerprint(cachePath)
 	if !ok {
 		return resync

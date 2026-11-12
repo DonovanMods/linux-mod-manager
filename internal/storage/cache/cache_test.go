@@ -17,7 +17,7 @@ func TestCache_ModPath(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
 
-	path := c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0")
+	path := c.ModPath(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	expected := filepath.Join(dir, "skyrim-se", "nexusmods-12345", "1.0.0")
 	assert.Equal(t, expected, path)
 }
@@ -26,7 +26,7 @@ func TestCache_ModPath_GameScoped(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.NewGameScoped(dir)
 
-	path := c.ModPath("starrupture", "nexusmods", "35", "1.00")
+	path := c.ModPath(cache.Key{GameID: "starrupture", SourceID: "nexusmods", ModID: "35", Version: "1.00"})
 	expected := filepath.Join(dir, "nexusmods-35", "1.00")
 	assert.Equal(t, expected, path, "game-scoped cache omits gameID from path")
 }
@@ -36,11 +36,11 @@ func TestCache_Store(t *testing.T) {
 	c := cache.New(dir)
 
 	content := []byte("test mod content")
-	err := c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "testfile.txt", content)
+	err := c.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "testfile.txt", content)
 	require.NoError(t, err)
 
 	// Verify file exists
-	storedPath := filepath.Join(c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), "testfile.txt")
+	storedPath := filepath.Join(c.ModPath(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}), "testfile.txt")
 	data, err := os.ReadFile(storedPath)
 	require.NoError(t, err)
 	assert.Equal(t, content, data)
@@ -50,12 +50,12 @@ func TestCache_Exists(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
 
-	assert.False(t, c.Exists("skyrim-se", "nexusmods", "12345", "1.0.0"))
+	assert.False(t, c.Exists(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}))
 
-	err := c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "test.txt", []byte("data"))
+	err := c.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "test.txt", []byte("data"))
 	require.NoError(t, err)
 
-	assert.True(t, c.Exists("skyrim-se", "nexusmods", "12345", "1.0.0"))
+	assert.True(t, c.Exists(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}))
 }
 
 // TestCache_HasFileIDs is the #96 review round 1 finding 2 guard, reworked in
@@ -74,43 +74,43 @@ func TestCache_HasFileIDs(t *testing.T) {
 	c := cache.New(dir)
 
 	// No directory at all yet.
-	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001"}))
+	assert.False(t, c.HasFileIDs(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, []string{"1001"}))
 
 	// Directory exists but is completely empty (e.g. MkdirAll ran but no
 	// file was ever committed) - still not complete.
-	require.NoError(t, os.MkdirAll(c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), 0755))
-	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001"}))
+	require.NoError(t, os.MkdirAll(c.ModPath(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}), 0755))
+	assert.False(t, c.HasFileIDs(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, []string{"1001"}))
 
 	// A legacy (pre-marker) cache entry - real content, no markers - reads as
 	// incomplete: one redundant redownload, which then writes the markers.
-	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "SomeArchiveMember.esp", []byte("a")))
-	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001"}),
+	require.NoError(t, c.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "SomeArchiveMember.esp", []byte("a")))
+	assert.False(t, c.HasFileIDs(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, []string{"1001"}),
 		"a pre-marker cache entry must read as incomplete")
 
 	// One of two files marked complete - a partial download.
-	require.NoError(t, cache.MarkFileComplete(c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), "1001"))
-	assert.True(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001"}))
-	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001", "1002"}),
+	require.NoError(t, cache.MarkFileComplete(c.ModPath(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}), "1001"))
+	assert.True(t, c.HasFileIDs(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, []string{"1001"}))
+	assert.False(t, c.HasFileIDs(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, []string{"1001", "1002"}),
 		"a partially-populated cache entry must not report having all requested files")
 
 	// Both marked - fully cached, even though NEITHER file ID resembles any
 	// on-disk name (the archive-extracted case round 1 got wrong).
-	require.NoError(t, cache.MarkFileComplete(c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), "1002"))
-	assert.True(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001", "1002"}))
+	require.NoError(t, cache.MarkFileComplete(c.ModPath(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}), "1002"))
+	assert.True(t, c.HasFileIDs(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, []string{"1001", "1002"}))
 
 	// An empty ID list against a nonexistent entry is still false -
 	// HasFileIDs is never weaker than Exists.
-	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "no-such-mod", "1.0.0", nil))
+	assert.False(t, c.HasFileIDs(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "no-such-mod", Version: "1.0.0"}, nil))
 
 	// An empty ID list against an entry that DOES exist has nothing left to
 	// verify beyond Exists itself.
-	assert.True(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", nil))
+	assert.True(t, c.HasFileIDs(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, nil))
 
 	// A blank or path-bearing file ID can never be verified - the safe
 	// direction is false (a redundant re-download, not a silently-trusted
 	// gap, and never a marker lookup that escapes the version directory).
-	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001", ""}))
-	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"../../etc/passwd"}))
+	assert.False(t, c.HasFileIDs(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, []string{"1001", ""}))
+	assert.False(t, c.HasFileIDs(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, []string{"../../etc/passwd"}))
 }
 
 // TestCache_MarkersAreNeverContent is the #96 round 2 exclusion guard: the
@@ -124,27 +124,27 @@ func TestCache_MarkersAreNeverContent(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
 
-	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "real.esp", []byte("12345")))
-	sizeBefore, err := c.Size("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, c.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "real.esp", []byte("12345")))
+	sizeBefore, err := c.Size(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), sizeBefore)
 
-	require.NoError(t, cache.MarkFileComplete(c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), "1001"))
+	require.NoError(t, cache.MarkFileComplete(c.ModPath(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}), "1001"))
 
-	files, err := c.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
+	files, err := c.ListFiles(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"real.esp"}, files, "markers must never be listed as mod content")
 
-	sizeAfter, err := c.Size("skyrim-se", "nexusmods", "12345", "1.0.0")
+	sizeAfter, err := c.Size(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	require.NoError(t, err)
 	assert.Equal(t, sizeBefore, sizeAfter, "markers must not be counted toward cache size")
 
 	// A version directory holding ONLY markers still has zero files - `lmm
 	// verify` flags "cache dir exists but has 0 files", and a marker must not
 	// mask that.
-	require.NoError(t, os.MkdirAll(c.ModPath("skyrim-se", "nexusmods", "67890", "2.0.0"), 0755))
-	require.NoError(t, cache.MarkFileComplete(c.ModPath("skyrim-se", "nexusmods", "67890", "2.0.0"), "1001"))
-	empty, err := c.ListFiles("skyrim-se", "nexusmods", "67890", "2.0.0")
+	require.NoError(t, os.MkdirAll(c.ModPath(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "67890", Version: "2.0.0"}), 0755))
+	require.NoError(t, cache.MarkFileComplete(c.ModPath(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "67890", Version: "2.0.0"}), "1001"))
+	empty, err := c.ListFiles(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "67890", Version: "2.0.0"})
 	require.NoError(t, err)
 	assert.Empty(t, empty, "a marker-only version directory must still count as 0 files")
 }
@@ -159,15 +159,15 @@ func TestCache_CloneMod_PreservesMarkers(t *testing.T) {
 	src := cache.New(t.TempDir())
 	dst := cache.New(t.TempDir())
 
-	require.NoError(t, src.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "real.esp", []byte("data")))
-	require.NoError(t, cache.MarkFileComplete(src.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), "1001"))
+	require.NoError(t, src.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "real.esp", []byte("data")))
+	require.NoError(t, cache.MarkFileComplete(src.ModPath(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}), "1001"))
 
-	require.NoError(t, src.CloneMod(context.Background(), dst, "skyrim-se", "nexusmods", "12345", "1.0.0"))
+	require.NoError(t, src.CloneMod(context.Background(), dst, cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}))
 
-	files, err := dst.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
+	files, err := dst.ListFiles(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"real.esp"}, files, "the clone's CONTENT must still exclude markers")
-	assert.True(t, dst.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001"}),
+	assert.True(t, dst.HasFileIDs(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, []string{"1001"}),
 		"a cloned entry must stay complete - markers travel with the entry")
 }
 
@@ -179,7 +179,7 @@ func TestCache_CloneMod_PreservesMarkers(t *testing.T) {
 func TestCache_MarkFileComplete_UnverifiableIDs(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
-	modPath := c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0")
+	modPath := c.ModPath(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	require.NoError(t, os.MkdirAll(modPath, 0755))
 
 	require.NoError(t, cache.MarkFileComplete(modPath, ""))
@@ -197,12 +197,12 @@ func TestCache_ListFiles(t *testing.T) {
 	c := cache.New(dir)
 
 	// Store multiple files
-	err := c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "file1.txt", []byte("1"))
+	err := c.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "file1.txt", []byte("1"))
 	require.NoError(t, err)
-	err = c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "subdir/file2.txt", []byte("2"))
+	err = c.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "subdir/file2.txt", []byte("2"))
 	require.NoError(t, err)
 
-	files, err := c.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
+	files, err := c.ListFiles(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	require.NoError(t, err)
 	assert.Len(t, files, 2)
 }
@@ -211,13 +211,13 @@ func TestCache_Delete(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
 
-	err := c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "test.txt", []byte("data"))
+	err := c.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "test.txt", []byte("data"))
 	require.NoError(t, err)
-	assert.True(t, c.Exists("skyrim-se", "nexusmods", "12345", "1.0.0"))
+	assert.True(t, c.Exists(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}))
 
-	err = c.Delete("skyrim-se", "nexusmods", "12345", "1.0.0")
+	err = c.Delete(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	require.NoError(t, err)
-	assert.False(t, c.Exists("skyrim-se", "nexusmods", "12345", "1.0.0"))
+	assert.False(t, c.Exists(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}))
 }
 
 // TestCache_Delete_RemovesNowEmptyModDirectory guards #190 item 4: deleting
@@ -228,11 +228,11 @@ func TestCache_Delete_RemovesNowEmptyModDirectory(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
 
-	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "test.txt", []byte("data")))
+	require.NoError(t, c.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "test.txt", []byte("data")))
 	modDir := filepath.Join(dir, "skyrim-se", "nexusmods-12345")
 	require.DirExists(t, modDir)
 
-	require.NoError(t, c.Delete("skyrim-se", "nexusmods", "12345", "1.0.0"))
+	require.NoError(t, c.Delete(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}))
 	assert.NoDirExists(t, modDir, "the now-empty per-mod cache directory must not be left behind")
 }
 
@@ -243,13 +243,13 @@ func TestCache_Delete_KeepsModDirectoryWhenOtherVersionsRemain(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
 
-	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "old.txt", []byte("old")))
-	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "2.0.0", "new.txt", []byte("new")))
+	require.NoError(t, c.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "old.txt", []byte("old")))
+	require.NoError(t, c.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "2.0.0"}, "new.txt", []byte("new")))
 	modDir := filepath.Join(dir, "skyrim-se", "nexusmods-12345")
 
-	require.NoError(t, c.Delete("skyrim-se", "nexusmods", "12345", "1.0.0"))
+	require.NoError(t, c.Delete(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}))
 	assert.DirExists(t, modDir, "a sibling version still lives here - the container must survive")
-	assert.True(t, c.Exists("skyrim-se", "nexusmods", "12345", "2.0.0"), "the other version must be untouched")
+	assert.True(t, c.Exists(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "2.0.0"}), "the other version must be untouched")
 }
 
 // TestCache_Delete_NonexistentVersion_NoopsCleanly: deleting a version that
@@ -260,7 +260,7 @@ func TestCache_Delete_NonexistentVersion_NoopsCleanly(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
 
-	err := c.Delete("skyrim-se", "nexusmods", "12345", "1.0.0")
+	err := c.Delete(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	assert.NoError(t, err)
 }
 
@@ -272,11 +272,11 @@ func TestCache_Delete_GameScoped_RemovesNowEmptyModDirectory(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.NewGameScoped(dir)
 
-	require.NoError(t, c.Store("starrupture", "nexusmods", "35", "1.00", "file.pak", []byte("data")))
+	require.NoError(t, c.Store(cache.Key{GameID: "starrupture", SourceID: "nexusmods", ModID: "35", Version: "1.00"}, "file.pak", []byte("data")))
 	modDir := filepath.Join(dir, "nexusmods-35")
 	require.DirExists(t, modDir)
 
-	require.NoError(t, c.Delete("starrupture", "nexusmods", "35", "1.00"))
+	require.NoError(t, c.Delete(cache.Key{GameID: "starrupture", SourceID: "nexusmods", ModID: "35", Version: "1.00"}))
 	assert.NoDirExists(t, modDir)
 }
 
@@ -284,11 +284,11 @@ func TestCache_Exists_ListFiles_GameScoped(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.NewGameScoped(dir)
 
-	err := c.Store("starrupture", "nexusmods", "35", "1.00", "file.pak", []byte("data"))
+	err := c.Store(cache.Key{GameID: "starrupture", SourceID: "nexusmods", ModID: "35", Version: "1.00"}, "file.pak", []byte("data"))
 	require.NoError(t, err)
-	assert.True(t, c.Exists("starrupture", "nexusmods", "35", "1.00"))
+	assert.True(t, c.Exists(cache.Key{GameID: "starrupture", SourceID: "nexusmods", ModID: "35", Version: "1.00"}))
 
-	files, err := c.ListFiles("starrupture", "nexusmods", "35", "1.00")
+	files, err := c.ListFiles(cache.Key{GameID: "starrupture", SourceID: "nexusmods", ModID: "35", Version: "1.00"})
 	require.NoError(t, err)
 	assert.Len(t, files, 1)
 	assert.Equal(t, "file.pak", files[0])
@@ -298,10 +298,10 @@ func TestCache_Size(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
 
-	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "file1.txt", []byte("12345")))       // 5 bytes
-	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "sub/file2.txt", []byte("1234567"))) // 7 bytes
+	require.NoError(t, c.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "file1.txt", []byte("12345")))       // 5 bytes
+	require.NoError(t, c.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "sub/file2.txt", []byte("1234567"))) // 7 bytes
 
-	size, err := c.Size("skyrim-se", "nexusmods", "12345", "1.0.0")
+	size, err := c.Size(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	require.NoError(t, err)
 	assert.EqualValues(t, 12, size)
 }
@@ -312,10 +312,10 @@ func TestCache_Size_EmptyDir(t *testing.T) {
 
 	// The mod directory exists (created by Store then Delete leaves nothing,
 	// so create it directly) but contains no files.
-	modPath := c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0")
+	modPath := c.ModPath(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	require.NoError(t, os.MkdirAll(modPath, 0755))
 
-	size, err := c.Size("skyrim-se", "nexusmods", "12345", "1.0.0")
+	size, err := c.Size(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	require.NoError(t, err)
 	assert.EqualValues(t, 0, size)
 }
@@ -328,7 +328,7 @@ func TestCache_Size_MissingDir(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
 
-	size, err := c.Size("skyrim-se", "nexusmods", "12345", "1.0.0")
+	size, err := c.Size(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 
 	require.Error(t, err)
 	assert.Zero(t, size)
@@ -341,12 +341,12 @@ func TestCache_CloneMod(t *testing.T) {
 	src := cache.New(srcDir)
 	dst := cache.New(dstDir)
 
-	require.NoError(t, src.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "main.esp", []byte("main")))
-	require.NoError(t, src.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "optional/patch.esp", []byte("patch")))
+	require.NoError(t, src.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "main.esp", []byte("main")))
+	require.NoError(t, src.Store(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}, "optional/patch.esp", []byte("patch")))
 
-	require.NoError(t, src.CloneMod(context.Background(), dst, "skyrim-se", "nexusmods", "12345", "1.0.0"))
+	require.NoError(t, src.CloneMod(context.Background(), dst, cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"}))
 
-	files, err := dst.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
+	files, err := dst.ListFiles(cache.Key{GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", Version: "1.0.0"})
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"main.esp", "optional/patch.esp"}, files)
 }
@@ -359,12 +359,12 @@ func TestCache_CloneMod(t *testing.T) {
 // manifest back keyed by file ID.
 func TestCache_FileManifests_RoundTrip(t *testing.T) {
 	c := cache.New(t.TempDir())
-	versionDir := c.ModPath("g", "src", "mod", "1.0")
+	versionDir := c.ModPath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "file-a", []string{"main.esp", "textures/skin.dds"}))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "file-b", []string{"optional.esp"}))
 
-	manifests, err := c.FileManifests("g", "src", "mod", "1.0")
+	manifests, err := c.FileManifests(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 	require.NoError(t, err)
 	require.Len(t, manifests, 2)
 
@@ -386,12 +386,12 @@ func TestCache_FileManifests_RoundTrip(t *testing.T) {
 // behavior on absence, but may trust an empty manifest.
 func TestCache_FileManifests_AbsenceVsEmpty(t *testing.T) {
 	c := cache.New(t.TempDir())
-	versionDir := c.ModPath("g", "src", "mod", "1.0")
+	versionDir := c.ModPath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 
 	require.NoError(t, cache.MarkFileComplete(versionDir, "legacy"))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "empty", nil))
 
-	manifests, err := c.FileManifests("g", "src", "mod", "1.0")
+	manifests, err := c.FileManifests(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 	require.NoError(t, err)
 	require.Len(t, manifests, 2)
 
@@ -406,7 +406,7 @@ func TestCache_FileManifests_AbsenceVsEmpty(t *testing.T) {
 	assert.Empty(t, empty.Members)
 
 	// A version directory with no markers at all reads as no manifests.
-	none, err := c.FileManifests("g", "src", "other-mod", "1.0")
+	none, err := c.FileManifests(cache.Key{GameID: "g", SourceID: "src", ModID: "other-mod", Version: "1.0"})
 	require.NoError(t, err)
 	assert.Empty(t, none)
 }
@@ -418,16 +418,16 @@ func TestCache_FileManifests_AbsenceVsEmpty(t *testing.T) {
 // a corrupted manifest that could undeploy the wrong path.
 func TestCache_FileManifests_UnrepresentableMemberDegradesToBareMarker(t *testing.T) {
 	c := cache.New(t.TempDir())
-	versionDir := c.ModPath("g", "src", "mod", "1.0")
+	versionDir := c.ModPath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "weird", []string{"ok.esp", "bad\nname.esp"}))
 
-	manifests, err := c.FileManifests("g", "src", "mod", "1.0")
+	manifests, err := c.FileManifests(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 	require.NoError(t, err)
 	m, ok := manifests["weird"]
 	require.True(t, ok, "completion must still be vouched for")
 	assert.False(t, m.Recorded, "an unrepresentable member set must degrade to a bare marker")
-	assert.True(t, c.HasFileIDs("g", "src", "mod", "1.0", []string{"weird"}),
+	assert.True(t, c.HasFileIDs(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, []string{"weird"}),
 		"the degraded marker still counts for completeness")
 }
 
@@ -438,22 +438,22 @@ func TestCache_FileManifests_UnrepresentableMemberDegradesToBareMarker(t *testin
 func TestCache_ManifestMarkersStayReservedAndComplete(t *testing.T) {
 	c := cache.New(t.TempDir())
 
-	require.NoError(t, c.Store("g", "src", "mod", "1.0", "real.esp", []byte("12345")))
-	require.NoError(t, cache.MarkFileCompleteWithMembers(c.ModPath("g", "src", "mod", "1.0"), "1001", []string{"real.esp"}))
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "real.esp", []byte("12345")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(c.ModPath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}), "1001", []string{"real.esp"}))
 
-	files, err := c.ListFiles("g", "src", "mod", "1.0")
+	files, err := c.ListFiles(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"real.esp"}, files, "manifest-bearing markers must never be listed as content")
 
-	size, err := c.Size("g", "src", "mod", "1.0")
+	size, err := c.Size(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), size, "manifest bytes must not count toward cache size")
 
-	assert.True(t, c.HasFileIDs("g", "src", "mod", "1.0", []string{"1001"}))
+	assert.True(t, c.HasFileIDs(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, []string{"1001"}))
 
 	dst := cache.New(t.TempDir())
-	require.NoError(t, c.CloneMod(context.Background(), dst, "g", "src", "mod", "1.0"))
-	cloned, err := dst.FileManifests("g", "src", "mod", "1.0")
+	require.NoError(t, c.CloneMod(context.Background(), dst, cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}))
+	cloned, err := dst.FileManifests(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 	require.NoError(t, err)
 	m, ok := cloned["1001"]
 	require.True(t, ok, "markers travel with a cloned entry")
@@ -466,7 +466,7 @@ func TestCache_ManifestMarkersStayReservedAndComplete(t *testing.T) {
 // or path-bearing file ID is skipped (no error, no file, no manifest).
 func TestCache_MarkFileCompleteWithMembers_UnverifiableIDs(t *testing.T) {
 	c := cache.New(t.TempDir())
-	modPath := c.ModPath("g", "src", "mod", "1.0")
+	modPath := c.ModPath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 	require.NoError(t, os.MkdirAll(modPath, 0755))
 
 	require.NoError(t, cache.MarkFileCompleteWithMembers(modPath, "", []string{"a.esp"}))
@@ -488,14 +488,14 @@ func TestCache_RetainedSourceName_IsReservedAndExcludedFromContent(t *testing.T)
 		"retained source name must live under the reserved namespace")
 
 	c := cache.New(t.TempDir())
-	require.NoError(t, c.Store("g", "src", "mod", "1.0", "Bear_Mount_P.pak", []byte("compiled")))
-	require.NoError(t, c.Store("g", "src", "mod", "1.0", name, []byte("original exmodz bytes")))
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, "Bear_Mount_P.pak", []byte("compiled")))
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, name, []byte("original exmodz bytes")))
 
-	files, err := c.ListFiles("g", "src", "mod", "1.0")
+	files, err := c.ListFiles(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Bear_Mount_P.pak"}, files, "a retained source must never be listed as deployable content")
 
-	size, err := c.Size("g", "src", "mod", "1.0")
+	size, err := c.Size(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 	require.NoError(t, err)
 	assert.Equal(t, int64(len("compiled")), size, "a retained source's bytes must not count toward cache size")
 }
@@ -541,11 +541,11 @@ func TestCache_MergeFingerprintPath_IsReserved(t *testing.T) {
 // reserved marker's ListFiles exclusion.
 func TestCache_MergeFingerprintPath_ExcludedFromContent(t *testing.T) {
 	c := cache.New(t.TempDir())
-	require.NoError(t, c.Store("g", "lmm-merged", "merged-pak", "merged", "zzz_LMM_Merged_P.pak", []byte("pak-bytes")))
-	versionDir := c.ModPath("g", "lmm-merged", "merged-pak", "merged")
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "lmm-merged", ModID: "merged-pak", Version: "merged"}, "zzz_LMM_Merged_P.pak", []byte("pak-bytes")))
+	versionDir := c.ModPath(cache.Key{GameID: "g", SourceID: "lmm-merged", ModID: "merged-pak", Version: "merged"})
 	require.NoError(t, os.WriteFile(cache.MergeFingerprintPath(versionDir), []byte(`{"BaseIndexHash":"abc"}`), 0o644))
 
-	files, err := c.ListFiles("g", "lmm-merged", "merged-pak", "merged")
+	files, err := c.ListFiles(cache.Key{GameID: "g", SourceID: "lmm-merged", ModID: "merged-pak", Version: "merged"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"zzz_LMM_Merged_P.pak"}, files, "the fingerprint marker must never be listed as deployable content")
 }
@@ -558,16 +558,16 @@ func TestCache_MergeFingerprintPath_ExcludedFromContent(t *testing.T) {
 // claimed by nothing, survives.
 func TestPruneUnclaimed_RemovesUnclaimedWhenAllRecorded(t *testing.T) {
 	c := cache.New(t.TempDir())
-	require.NoError(t, c.Store("g", "s", "m", "1.0", "claimed.pak", []byte("a")))
-	require.NoError(t, c.Store("g", "s", "m", "1.0", "stale.pak", []byte("b")))
-	require.NoError(t, c.Store("g", "s", "m", "1.0", "sub/stale2.pak", []byte("c")))
-	dir := c.ModPath("g", "s", "m", "1.0")
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}, "claimed.pak", []byte("a")))
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}, "stale.pak", []byte("b")))
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}, "sub/stale2.pak", []byte("c")))
+	dir := c.ModPath(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"})
 	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("f1")), []byte("zip"), 0o644))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "f1", []string{"claimed.pak"}))
 
 	require.NoError(t, cache.PruneUnclaimed(dir))
 
-	files, err := c.ListFiles("g", "s", "m", "1.0")
+	files, err := c.ListFiles(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"claimed.pak"}, files)
 	// Emptied subdirectory is removed too.
@@ -583,47 +583,47 @@ func TestPruneUnclaimed_RemovesUnclaimedWhenAllRecorded(t *testing.T) {
 // signature.
 func TestPruneUnclaimed_NoOpWithoutRetainedSource(t *testing.T) {
 	c := cache.New(t.TempDir())
-	require.NoError(t, c.Store("g", "s", "m", "1.0", "claimed.pak", []byte("a")))
-	require.NoError(t, c.Store("g", "s", "m", "1.0", "stale.pak", []byte("b")))
-	dir := c.ModPath("g", "s", "m", "1.0")
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}, "claimed.pak", []byte("a")))
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}, "stale.pak", []byte("b")))
+	dir := c.ModPath(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "f1", []string{"claimed.pak"}))
 
 	require.NoError(t, cache.PruneUnclaimed(dir))
 
-	files, err := c.ListFiles("g", "s", "m", "1.0")
+	files, err := c.ListFiles(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"})
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"claimed.pak", "stale.pak"}, files, "no retained source means no-op, even with all markers recorded")
 }
 
 func TestPruneUnclaimed_NoOpWithBareMarker(t *testing.T) {
 	c := cache.New(t.TempDir())
-	require.NoError(t, c.Store("g", "s", "m", "1.0", "a.pak", []byte("a")))
-	dir := c.ModPath("g", "s", "m", "1.0")
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}, "a.pak", []byte("a")))
+	dir := c.ModPath(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"})
 	require.NoError(t, cache.MarkFileComplete(dir, "f1")) // bare: provenance unknown
 
 	require.NoError(t, cache.PruneUnclaimed(dir))
 
-	files, err := c.ListFiles("g", "s", "m", "1.0")
+	files, err := c.ListFiles(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"a.pak"}, files)
 }
 
 func TestPruneUnclaimed_NoOpWithoutMarkers(t *testing.T) {
 	c := cache.New(t.TempDir())
-	require.NoError(t, c.Store("g", "s", "m", "1.0", "a.pak", []byte("a")))
-	dir := c.ModPath("g", "s", "m", "1.0")
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}, "a.pak", []byte("a")))
+	dir := c.ModPath(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"})
 
 	require.NoError(t, cache.PruneUnclaimed(dir))
 
-	files, err := c.ListFiles("g", "s", "m", "1.0")
+	files, err := c.ListFiles(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"a.pak"}, files)
 }
 
 func TestPruneUnclaimed_NeverTouchesReservedEntries(t *testing.T) {
 	c := cache.New(t.TempDir())
-	require.NoError(t, c.Store("g", "s", "m", "1.0", "claimed.pak", []byte("a")))
-	dir := c.ModPath("g", "s", "m", "1.0")
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}, "claimed.pak", []byte("a")))
+	dir := c.ModPath(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"})
 	// A retained source is reserved bookkeeping, claimed by nothing.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "exmodz", nil))
@@ -650,10 +650,10 @@ func TestPruneUnclaimed_KeepsUnclaimedFileMatchingRetainedSource(t *testing.T) {
 	staleBytes := []byte("stale-pak-bytes123") // same length as pakBytes, different content
 	require.Len(t, staleBytes, len(pakBytes), "fixture invariant: size alone must not distinguish the two")
 
-	require.NoError(t, c.Store("g", "s", "m", "1.0", "SuperMod_P.pak", pakBytes)) // suppressed raw-fallback copy, unclaimed
-	require.NoError(t, c.Store("g", "s", "m", "1.0", "stale.pak", staleBytes))    // genuine debris, unclaimed
-	require.NoError(t, c.Store("g", "s", "m", "1.0", "claimed.txt", []byte("sibling-content")))
-	dir := c.ModPath("g", "s", "m", "1.0")
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}, "SuperMod_P.pak", pakBytes)) // suppressed raw-fallback copy, unclaimed
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}, "stale.pak", staleBytes))    // genuine debris, unclaimed
+	require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}, "claimed.txt", []byte("sibling-content")))
+	dir := c.ModPath(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"})
 	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("pak")), pakBytes, 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("exmodz")), []byte("exmodz-zip"), 0o644))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "pak", nil)) // converted: the merged pak claims its content
@@ -662,7 +662,7 @@ func TestPruneUnclaimed_KeepsUnclaimedFileMatchingRetainedSource(t *testing.T) {
 
 	require.NoError(t, cache.PruneUnclaimed(dir))
 
-	files, err := c.ListFiles("g", "s", "m", "1.0")
+	files, err := c.ListFiles(cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"})
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"SuperMod_P.pak", "claimed.txt"}, files,
 		"the converted pak's deployable copy matches its retained source and must survive (#250); the same-size stale file must still be pruned")
@@ -675,23 +675,23 @@ func TestPruneUnclaimed_KeepsUnclaimedFileMatchingRetainedSource(t *testing.T) {
 // inode would carry a write to one entry into the other.
 func TestCache_CopyModAs_CarriesTheEntryToANewIdentity(t *testing.T) {
 	c := cache.New(t.TempDir())
-	require.NoError(t, c.Store("icarus", "icarus", "old", "1.0", "sub/mod.pak", []byte("pak")))
-	require.NoError(t, cache.MarkFileComplete(c.ModPath("icarus", "icarus", "old", "1.0"), "pak"))
+	require.NoError(t, c.Store(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "old", Version: "1.0"}, "sub/mod.pak", []byte("pak")))
+	require.NoError(t, cache.MarkFileComplete(c.ModPath(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "old", Version: "1.0"}), "pak"))
 
-	require.NoError(t, c.CopyModAs(context.Background(), "icarus", "icarus", "old", "icarus", "new", "1.0"))
+	require.NoError(t, c.CopyModAs(context.Background(), cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "old", Version: "1.0"}, "icarus", "new"))
 
-	files, err := c.ListFiles("icarus", "icarus", "new", "1.0")
+	files, err := c.ListFiles(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "new", Version: "1.0"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{filepath.Join("sub", "mod.pak")}, files)
-	assert.True(t, c.HasFileIDs("icarus", "icarus", "new", "1.0", []string{"pak"}))
-	assert.True(t, c.Exists("icarus", "icarus", "old", "1.0"), "the original entry stays")
+	assert.True(t, c.HasFileIDs(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "new", Version: "1.0"}, []string{"pak"}))
+	assert.True(t, c.Exists(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "old", Version: "1.0"}), "the original entry stays")
 
-	require.NoError(t, c.Store("icarus", "icarus", "new", "1.0", "sub/mod.pak", []byte("changed")))
-	got, err := os.ReadFile(c.GetFilePath("icarus", "icarus", "old", "1.0", "sub/mod.pak"))
+	require.NoError(t, c.Store(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "new", Version: "1.0"}, "sub/mod.pak", []byte("changed")))
+	got, err := os.ReadFile(c.GetFilePath(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "old", Version: "1.0"}, "sub/mod.pak"))
 	require.NoError(t, err)
 	assert.Equal(t, "pak", string(got), "the two entries share no file")
 
-	err = c.CopyModAs(context.Background(), "icarus", "icarus", "old", "icarus", "new", "1.0")
+	err = c.CopyModAs(context.Background(), cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "old", Version: "1.0"}, "icarus", "new")
 	assert.ErrorIs(t, err, os.ErrExist, "an existing entry is never overwritten")
 }
 
@@ -702,9 +702,9 @@ func TestCache_CopyModAs_CarriesTheEntryToANewIdentity(t *testing.T) {
 // last version, which would otherwise leave the container behind.
 func TestCache_CopyModAs_LeftoverTempDirIsSwept(t *testing.T) {
 	c := cache.New(t.TempDir())
-	require.NoError(t, c.Store("icarus", "icarus", "old", "1.0", "mod.pak", []byte("pak")))
-	require.NoError(t, c.Store("icarus", "icarus", "old", "2.0", "mod.pak", []byte("pak2")))
-	container := filepath.Dir(c.ModPath("icarus", "icarus", "new", "1.0"))
+	require.NoError(t, c.Store(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "old", Version: "1.0"}, "mod.pak", []byte("pak")))
+	require.NoError(t, c.Store(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "old", Version: "2.0"}, "mod.pak", []byte("pak2")))
+	container := filepath.Dir(c.ModPath(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "new", Version: "1.0"}))
 	leftover := func() string {
 		t.Helper()
 		dir, err := os.MkdirTemp(container, ".lmm-copy-*")
@@ -715,7 +715,7 @@ func TestCache_CopyModAs_LeftoverTempDirIsSwept(t *testing.T) {
 	require.NoError(t, os.MkdirAll(container, 0o755))
 	crashed := leftover()
 
-	require.NoError(t, c.CopyModAs(context.Background(), "icarus", "icarus", "old", "icarus", "new", "1.0"))
+	require.NoError(t, c.CopyModAs(context.Background(), cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "old", Version: "1.0"}, "icarus", "new"))
 	assert.NoDirExists(t, crashed, "the next copy into the mod sweeps a crashed one's temp dir")
 	entries, err := os.ReadDir(container)
 	require.NoError(t, err)
@@ -723,6 +723,6 @@ func TestCache_CopyModAs_LeftoverTempDirIsSwept(t *testing.T) {
 	assert.Equal(t, "1.0", entries[0].Name())
 
 	leftover()
-	require.NoError(t, c.Delete("icarus", "icarus", "new", "1.0"))
+	require.NoError(t, c.Delete(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "new", Version: "1.0"}))
 	assert.NoDirExists(t, container, "deleting the last version sweeps a leftover temp dir with the container")
 }

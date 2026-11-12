@@ -12,6 +12,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,8 +37,8 @@ func rollbackReadyFlowFixtureServer(t *testing.T) (*Server, *core.Service, *doma
 	t.Helper()
 	s, svc, game := newFlowFixtureServer(t)
 
-	require.NoError(t, svc.GetGameCache(game).Store(
-		game.ID, fixtureSourceID, "m1", rollbackFixtureNewVersion, deployFixtureFile, []byte("new pak bytes")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: "m1", Version: rollbackFixtureNewVersion},
+		deployFixtureFile, []byte("new pak bytes")))
 
 	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
 		Mod:             domain.Mod{ID: "m1", SourceID: fixtureSourceID, Name: "Mod One", Version: rollbackFixtureNewVersion, GameID: game.ID},

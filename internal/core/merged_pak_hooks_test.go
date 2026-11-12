@@ -86,8 +86,8 @@ func TestApplyRollback_SyncsMergedPak(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "bear-mount", "1.0", cache.RetainedSourceName("exmodz-v1"), []byte("v1-bytes")))
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "bear-mount", "2.0", cache.RetainedSourceName("exmodz-v2"), []byte("v2-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "bear-mount", Version: "1.0"}, cache.RetainedSourceName("exmodz-v1"), []byte("v1-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "bear-mount", Version: "2.0"}, cache.RetainedSourceName("exmodz-v2"), []byte("v2-bytes")))
 
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:             domain.Mod{ID: "bear-mount", SourceID: "fake-compiler", Name: "bear-mount", Version: "2.0", GameID: game.ID},
@@ -143,7 +143,7 @@ func TestPurgeProfile_UndeploysMergedPak_KeepsCacheWithoutUninstall(t *testing.T
 	require.True(t, os.IsNotExist(err), "purge must undeploy the merged pak, not just no-op per-mod")
 
 	gameCache := svc.GetGameCache(game)
-	require.True(t, gameCache.Exists(game.ID, domain.SourceMerged, "merged-pak", "merged"),
+	require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: "merged-pak", Version: "merged"}),
 		"a plain purge (no --uninstall) must keep the merged pak's cache entry, mirroring real-mod purge semantics")
 }
 
@@ -167,7 +167,7 @@ func TestPurgeProfile_Uninstall_DeletesMergedPakCacheToo(t *testing.T) {
 	require.True(t, os.IsNotExist(err))
 
 	gameCache := svc.GetGameCache(game)
-	require.False(t, gameCache.Exists(game.ID, domain.SourceMerged, "merged-pak", "merged"),
+	require.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: "merged-pak", Version: "merged"}),
 		"--uninstall must also clear the merged pak's cache entry")
 }
 

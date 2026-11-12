@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,7 +30,7 @@ func TestE2E_HealthCard_FindingsReadInFullWithoutCLIText(t *testing.T) {
 		Files: []domain.DownloadableFile{{ID: "f1", Version: "2.0", IsPrimary: true}},
 	})
 	svc, game := newFixtureServiceWithSource(t, src)
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "fake", "long", "1.0", "f1", []byte("content")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "fake", ModID: "long", Version: "1.0"}, "f1", []byte("content")))
 	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "long", SourceID: "fake", Name: longName, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
