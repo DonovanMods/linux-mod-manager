@@ -171,7 +171,7 @@ The plan derives a **feature set** from the manifest, and the acquire phase (§1
 | `patches` | an item with `patches` | C5 (BSDIFF40 only; any other patch format stays unsupported) |
 | `plugin_order` | top-level `plugins` or `pluginRules` | C6 |
 | `file_load_order:<id>` | a non-empty `fbLoadOrders` entry (Vortex's file-based load order: the first sample orders 275 Cyberpunk `.archive` files under `cyberpunk2077-archive`) | C9 (#620), one id at a time |
-| `manifest:<key>` | a manifest key the parser did not recognise and does not allowlist. An **empty** value (`loadOrder: []`, `tools: []`, an `fbLoadOrders` entry with no entries) is treated as absent and raises nothing | never, until a story names it |
+| `manifest:<key>` | a manifest key the parser did not recognise and does not allowlist. An **empty** value (`loadOrder: []`, an `fbLoadOrders` entry with no entries) is treated as absent and raises nothing. `tools` is allowlisted and never raises a feature (§11 Q8) | never, until a story names it |
 | `manifest_unavailable` | the recipe could not be fetched | never |
 
 `modRules` of type `requires`/`recommends`/`conflicts`/`provides` are informational for lmm's purposes (the list already *is* the requirement set) and raise no feature; they are shown in the plan.
@@ -511,7 +511,7 @@ C1, A1, F0, F1, P1 and P2 have no parents and can run as six parallel worktrees.
 - No timestamp-ordered games' plugin order (Morrowind, Oblivion, FO3, NV) in this design.
 - No automatic LOOT sort. P6 offers suggestions only.
 - No collection *authoring* or publishing. Import only.
-- No execution of anything from a collection: `tools` entries, if a manifest has them, raise `manifest:tools` and are unsupported.
+- No execution of anything from a collection. `tools` entries are listed in the plan as information (name and `exe`), with a note that lmm neither creates nor runs collection tools. They raise no feature, and nothing from them is ever executed or written (§11 Q8).
 
 ---
 
@@ -534,7 +534,7 @@ These are the genuine forks; everything above is decided unless a reviewer reope
 5. **Old binaries dropping new profile keys.** Accepted above (self-update makes downgrades rare). The alternative is a `requires_lmm: ">=2.N"` profile key that older binaries refuse to rewrite. That only protects binaries released *after* it, so it is cheap insurance for the next feature rather than this one.
 6. **FOMOD placement in core** (**ruled 2026-11-10: core, all games**) reverses #354's text ("lives in a bethesda adapter"). Decided above with reasons (§4); recorded here because it changes an issue's stated plan.
 7. **`gameDependency` and script-extender versions** evaluate as satisfied, with a warning (§4). Reading a Windows executable's version resource would answer them properly (`debug/pe` parses the headers; walking the resource section is the extra work). Deferred, not rejected: it becomes worth doing if real FOMODs turn out to gate on it often.
-8. **Non-empty `tools`.** *Raised 2026-11-12 by the Skyrim sample.* §3 and §9 make a non-empty `tools` key a collection-level `manifest:tools` feature, which blocks the whole import. The Skyrim sample's two entries are Vortex dashboard shortcuts to SSEEdit, which is itself a member mod: launcher entries, not install steps. Blocking a 60-mod collection over two shortcuts lmm would never run anyway seems too strict. **Proposed:** treat `tools` as informational. The plan lists each entry (name and `exe`) under a note that lmm does not create or run collection tools, it raises no feature, and nothing from it is ever executed or written. §9's "no execution" rule is unchanged. **Needs the owner's ruling.**
+8. **Non-empty `tools`.** *Raised 2026-11-12 by the Skyrim sample.* **Ruled 2026-11-12: informational, as proposed.** §3 and §9 made a non-empty `tools` key a collection-level `manifest:tools` feature, which blocked the whole import. The Skyrim sample's two entries are Vortex dashboard shortcuts to SSEEdit, which is itself a member mod: launcher entries, not install steps. Blocking a 60-mod collection over two shortcuts lmm would never run anyway seems too strict. **Proposed:** treat `tools` as informational. The plan lists each entry (name and `exe`) under a note that lmm does not create or run collection tools, it raises no feature, and nothing from it is ever executed or written. §9's "no execution" rule is unchanged.
 
 ---
 
@@ -652,6 +652,7 @@ Core owns every arrow, and the converters are pure (manifest → document). The 
 - Signatures: room reserved now, implementation later (L4).
 - Import sources in the first version: a local file and an HTTPS URL (no git).
 - The export is a compressed `.lmmc` file by default; `--plain` writes bare YAML.
+- 2026-11-12: a collection's `tools` entries are informational, never a blocking feature, and never executed (Q8).
 
 **Story issues:**
 
@@ -694,5 +695,5 @@ Core owns every arrow, and the converters are pure (manifest → document). The 
 - An ordered 16-entry `plugins` list, all enabled, with `excludePluginRules: true` and no `pluginRules`.
 - Two `modRules`: an `after` that resolves by md5, and a `conflicts` against a non-member version range.
 - SKSE64 with `details.type: "dinput"` (game root). This sample is why the gate gains the `mod_type:<type>` row (§3).
-- Two non-empty `tools` entries: SSEEdit launcher shortcuts. §11 Q8 is open on how to treat them.
-- **Consequence:** this collection needs C2 + C4 + C6, plus P2's game-root routing for `mod_type:dinput`. It does not need C5. With the Cyberpunk sample (C2 + C4 + C5 + C9), FOMOD replay (C4) is needed by both samples so far, and bundled files and patches by neither. So C5's ranking stays open until a sample with them turns up. Under the design as written, `tools` alone would block this import (§3, §9): see Q8.
+- Two non-empty `tools` entries: SSEEdit launcher shortcuts. They are informational (§11 Q8, ruled 2026-11-12).
+- **Consequence:** this collection needs C2 + C4 + C6, plus P2's game-root routing for `mod_type:dinput`. It does not need C5. With the Cyberpunk sample (C2 + C4 + C5 + C9), FOMOD replay (C4) is needed by both samples so far, and bundled files and patches by neither. So C5's ranking stays open until a sample with them turns up. Under the design as first written, `tools` alone would have blocked this import. Q8 removes that block.
