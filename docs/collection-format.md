@@ -99,7 +99,7 @@ save happens only when something changed; if it fails, the export fails. A
 duplicate keeps `title`, `author`, `description`, `install_instructions` and
 `origin` as starting values, and drops `id` and `version`.
 | `game_id`              | The author's local id for the game. A version-1 importer ignores it; an older lmm imports by it. |
-| `game`                 | The portable game identity. An importer matches a local game by `steam_app_id` first, then by any `sources` entry its own game maps to the same id. None, or more than one, needs `--game`. |
+| `game`                 | The portable game identity. An importer matches a local game by `steam_app_id` first, then by any `sources` entry its own game maps to the same id - unless that game's own Steam app id is known and differs (Fallout 4 and Fallout 4 VR share a Nexus id). None, or more than one, needs `--game`. |
 | `requires`             | The features the content needs. Derived by the exporter, never written by hand. |
 | `origin`               | Where the collection came from, when someone else curated it. Carried through every re-export, so the curator stays credited. |
 | `signer`               | Reserved (#624). Ignored, with a warning. |
@@ -148,22 +148,36 @@ A collection from someone else is untrusted input.
   they are imported only with `--with-hooks` (in the web UI, the **Import
   these hooks** box); without it the profile is imported without them, and
   the result says so. A collection fetched from a URL never has its hooks
-  imported. A version-0 document keeps its round trip unchanged.
-- **Overrides** are listed in the plan, and deploy writes them only inside
-  the game directory.
+  imported. A version-0 document keeps its round trip unchanged. A hook
+  command holding a control, escape, or bidi/format character is refused,
+  never cleaned: the plan must show exactly what would run.
+- **Overrides** are listed in the plan. A path that is absolute, escapes
+  the game directory, or holds a control or formatting character is refused
+  before anything is written, and deploy writes overrides only inside the
+  game directory.
+- **Links.** Only an absolute `http`/`https` address stays a link (an
+  external item's `url`, `origin.url`). Any other - `javascript:`, `data:`,
+  `file:`, a relative one - is dropped from the item, and the plan names it
+  in a warning, as text.
 - **Sources you do not have.** A mod from a source this machine lacks (a
   custom source, say) is listed with what to do. A collection never carries
   a custom source's definition, since those can make requests with your
   credentials; ask the collection's author for it.
 - **Text** is sanitised before it is shown: control characters and
-  direction overrides are removed.
+  direction overrides are removed. Names that are identifiers rather than
+  text (`game.sources` keys) are refused instead.
+- **A version-0 document** never carries a `collection` or `external`
+  block, so the version-0 import ignores both: only a checked version-1
+  document sets them.
 - **Caps.** A container is at most 64 MiB with at most 4096 members, and
   `collection.yaml` at most 4 MiB, inflated through a limit; a member
   compressed more than 100:1 past 1 MiB is refused unread. A document lists
   at most 10,000 mods, 1,000 external items and 256 overrides; a one-line
   value is at most 1 KiB, a description or instructions at most 64 KiB.
   Member names go through the same zip-slip and reserved-name checks as
-  mod archives.
+  mod archives. The web UI's import posts the file inside its request,
+  which holds about 700 KiB of container; a larger one imports with
+  `lmm profile import`.
 
 Failures are counted per mod, as an ordinary import's are: a mod that
 cannot be downloaded fails on its own and the rest are imported. A mod that

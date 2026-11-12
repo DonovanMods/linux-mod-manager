@@ -37,6 +37,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -138,6 +140,22 @@ type CollectionImportResult struct {
 	Result     *ProfileImportResult `json:"result"`
 }
 
+// collectionState is the profile state a collection import saves beside
+// its version-0 document: the collection identity and the external items,
+// both checked by sanitizeCollection.
+type collectionState struct {
+	collection *domain.CollectionInfo
+	external   []domain.CollectionExternalItem
+}
+
+// applyTo sets c's state on profile; a nil c sets nothing.
+func (c *collectionState) applyTo(profile *domain.Profile) {
+	if c == nil {
+		return
+	}
+	profile.Collection, profile.External = c.collection, c.external
+}
+
 // CollectionImportItem is one mod of a collection import plan.
 type CollectionImportItem struct {
 	SourceID string `json:"source_id"`
@@ -158,6 +176,17 @@ type CollectionGameError struct {
 	// Candidates names the matching games when there are several; empty
 	// when none matched.
 	Candidates []string
+	// Mismatched names the games that share a source id with the
+	// document but are, by their Steam app id, a different game.
+	Mismatched []CollectionGameMismatch
+}
+
+// CollectionGameMismatch is a local game a collection's source id points
+// at, refused because its Steam app id differs from the document's.
+type CollectionGameMismatch struct {
+	GameID     string
+	SteamAppID string
+	SourceID   string
 }
 
 // Error implements error.
@@ -166,6 +195,14 @@ func (e *CollectionGameError) Error() string {
 	if len(e.Candidates) > 0 {
 		return fmt.Sprintf("this collection is for %s, which matches more than one of your games (%s); choose one with --game",
 			what, strings.Join(e.Candidates, ", "))
+	}
+	if len(e.Mismatched) > 0 {
+		var games []string
+		for _, m := range e.Mismatched {
+			games = append(games, fmt.Sprintf("%s (Steam app %s, same %s id)", m.GameID, m.SteamAppID, m.SourceID))
+		}
+		return fmt.Sprintf("this collection is for %s, and your game %s is a different Steam app; if it is the right game, choose it with --game",
+			what, strings.Join(games, ", "))
 	}
 	return fmt.Sprintf("this collection is for %s, which matches none of your games; add the game, or choose one with --game", what)
 }
@@ -296,6 +333,9 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 		return nil, err
 	}
 	plan.hookedData = hooked
+	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External}
+	// The preview shows the profile the import will save.
+	plan.Profile.Collection, plan.Profile.External = profile.Collection, profile.External
 
 	requires := doc.Requires
 	derived := deriveCollectionRequires(doc)
@@ -409,11 +449,25 @@ func (s *Service) matchCollectionGame(want domain.CollectionGame, gameID string)
 	}
 	var hits []*domain.Game
 	var via string
+	var mismatched []CollectionGameMismatch
 	for _, g := range games {
-		if src := sharedSource(want.Sources, g.SourceIDs); src != "" {
-			hits = append(hits, g)
-			via = src
+		src := sharedSource(want.Sources, g.SourceIDs)
+		if src == "" {
+			continue
 		}
+		// A shared source id is not enough when the Steam app ids say
+		// otherwise (#621 review S7): Fallout 4 and Fallout 4 VR share
+		// nexusmods' fallout4, Skyrim SE and VR share
+		// skyrimspecialedition. A game whose own app id is known and
+		// differs is a different game.
+		if want.SteamAppID != "" {
+			if id := s.steamAppIDOf(g); id != "" && id != want.SteamAppID {
+				mismatched = append(mismatched, CollectionGameMismatch{GameID: g.ID, SteamAppID: id, SourceID: src})
+				continue
+			}
+		}
+		hits = append(hits, g)
+		via = src
 	}
 	if len(hits) == 1 {
 		return hits[0], "source:" + via, nil
@@ -421,7 +475,7 @@ func (s *Service) matchCollectionGame(want domain.CollectionGame, gameID string)
 	if len(hits) > 1 {
 		return nil, "", &CollectionGameError{Game: want, Candidates: gameIDs(hits)}
 	}
-	return nil, "", &CollectionGameError{Game: want}
+	return nil, "", &CollectionGameError{Game: want, Mismatched: mismatched}
 }
 
 // sharedSource is the first source (in name order) both maps give the same
@@ -454,10 +508,21 @@ func (s *Service) gameMismatch(want domain.CollectionGame, game *domain.Game) st
 			contradicts = true
 		}
 	}
-	if !contradicts {
+	if contradicts {
+		return fmt.Sprintf("this collection is for %s, but importing into %s as asked", describeCollectionGame(want), game.ID)
+	}
+	// Nothing contradicts, but nothing agrees either (#621 review N3): the
+	// document names its game and the chosen game shares none of it.
+	if want.SteamAppID == "" && len(want.Sources) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("this collection is for %s, but importing into %s as asked", describeCollectionGame(want), game.ID)
+	if want.SteamAppID != "" && s.steamAppIDOf(game) == want.SteamAppID {
+		return ""
+	}
+	if sharedSource(want.Sources, game.SourceIDs) != "" {
+		return ""
+	}
+	return fmt.Sprintf("this collection is for %s, which shares no Steam app id or source id with %s; importing into it as asked", describeCollectionGame(want), game.ID)
 }
 
 // unavailableReason is why lmm cannot fetch a mod from sourceID here -
@@ -556,6 +621,55 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 		line("external.url", &e.URL)
 		text("external.instructions", &e.Instructions)
 	}
+	// Hooks are commands lmm would run, and override keys and source ids
+	// are names that reach the plan and the filesystem: none is rewritten
+	// (a cleaned command is not the command that runs), so one carrying a
+	// control, escape, or bidi/format character - which could make the plan
+	// show something other than what it holds - refuses the document
+	// (#621 review S1, S2).
+	for _, h := range listHooks(doc.Hooks, doc.HooksExplicit) {
+		if hasUnsafeRunes(h.Command) {
+			return nil, fmt.Errorf("%w: the %s hook's command contains control or formatting characters, so the plan could not show it as it would run", ErrInvalidCollection, h.Hook)
+		}
+		if len(h.Command) > maxCollectionLine {
+			return nil, fmt.Errorf("%w: the %s hook's command is %d bytes, over the %d-byte limit", ErrInvalidCollection, h.Hook, len(h.Command), maxCollectionLine)
+		}
+	}
+	for path := range doc.Overrides {
+		if hasUnsafeRunes(path) || len(path) > maxCollectionLine {
+			return nil, fmt.Errorf("%w: an override path (%q) contains control or formatting characters, or is over the %d-byte limit", ErrInvalidCollection, path, maxCollectionLine)
+		}
+		// The deploy's own containment rule, applied before anything is
+		// saved: an override the deploy would refuse never reaches the
+		// profile, where it would fail every later deploy (S6).
+		if err := checkOverridePath(path); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidCollection, err)
+		}
+	}
+	for src := range doc.Game.Sources {
+		if hasUnsafeRunes(src) || len(src) > maxCollectionLine {
+			return nil, fmt.Errorf("%w: a game.sources key (%q) contains control or formatting characters, or is over the %d-byte limit", ErrInvalidCollection, src, maxCollectionLine)
+		}
+	}
+	// A link is shown as one only when it is a plain web address (S3): any
+	// other URL - javascript:, data:, file:, a relative one - is dropped
+	// from the item and named, as text, in a warning.
+	safeURL := func(what string, u *string) {
+		if *u != "" && domain.SafeWebURL(*u) == "" {
+			warnings = append(warnings, fmt.Sprintf("%s's link (%q) is not a web address and was dropped", what, *u))
+			*u = ""
+		}
+	}
+	if o := doc.Info.Origin; o != nil {
+		safeURL("the collection's origin", &o.URL)
+		if o.IsZero() {
+			doc.Info.Origin = nil
+		}
+	}
+	for i := range doc.External {
+		safeURL(fmt.Sprintf("external item %q", doc.External[i].Name), &doc.External[i].URL)
+	}
+
 	items := doc.Items[:0]
 	for _, item := range doc.Items {
 		r := &item.Ref
@@ -583,6 +697,23 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 		warnings = append(warnings, fmt.Sprintf("the document names a signer (%s), which this version of lmm does not verify", doc.Signer))
 	}
 	return warnings, tooLong
+}
+
+// hasUnsafeRunes reports whether s holds invalid UTF-8, a control
+// character (tabs and line breaks included), a format character (bidi
+// marks and controls, zero-width characters) or a line/paragraph
+// separator: anything that could make a string display as other than it
+// is.
+func hasUnsafeRunes(s string) bool {
+	if !utf8.ValidString(s) {
+		return true
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' {
+			return true
+		}
+	}
+	return false
 }
 
 // describeCollectionGame names a portable game identity for a message.

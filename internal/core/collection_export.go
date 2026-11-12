@@ -14,6 +14,7 @@ package core
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -31,7 +32,20 @@ type CollectionExportOptions struct {
 	Author              string
 	Description         string
 	InstallInstructions string
+
+	// NoRecord makes the export read-only: when it would have to record
+	// the collection identity first (a profile's first export, or a
+	// metadata field that changed), it fails with
+	// ErrCollectionIdentityUnrecorded instead. `lmm serve`'s GET export
+	// sets it, so a GET never writes (#621 review S8); the caller records
+	// the identity with RecordCollectionIdentity first.
+	NoRecord bool
 }
+
+// ErrCollectionIdentityUnrecorded refuses a read-only export
+// (CollectionExportOptions.NoRecord) of a profile whose collection
+// identity has to be recorded first: RecordCollectionIdentity does that.
+var ErrCollectionIdentityUnrecorded = errors.New("the profile's collection identity has not been recorded yet")
 
 // CollectionExport is one exported collection: the version-1 YAML
 // document, and the notes the export has for its author.
@@ -82,8 +96,16 @@ func (s *Service) ExportCollection(ctx context.Context, gameID, profileName stri
 	}
 
 	if want := collectionInfoForExport(profile.Collection, opts); want.ID == "" || !want.Equal(profile.Collection) {
+		if opts.NoRecord {
+			return nil, fmt.Errorf("exporting profile %s: %w", profileName, ErrCollectionIdentityUnrecorded)
+		}
 		recorded, err := s.recordCollectionInfo(ctx, gameID, profileName, opts)
 		if err != nil {
+			// Recording takes the op lock (#621 review S9), so a running
+			// lmm operation - a `lmm serve` job, say - can refuse it.
+			if errors.Is(err, ErrOperationInProgress) || errors.As(err, new(*OperationInProgressError)) {
+				return nil, fmt.Errorf("recording the collection identity in profile %s (try again once the other lmm operation finishes): %w", profileName, err)
+			}
 			return nil, fmt.Errorf("recording the collection identity in profile %s: %w", profileName, err)
 		}
 		profile.Collection = recorded
@@ -116,6 +138,23 @@ func (s *Service) ExportCollection(ctx context.Context, gameID, profileName stri
 		return nil, err
 	}
 	return &CollectionExport{Document: data, Notes: exportNotes(doc)}, nil
+}
+
+// RecordCollectionIdentity records the collection identity an export with
+// opts would publish - minting the collection id when the profile has none
+// - in gameID/profileName's `collection:` block, and returns it. It writes
+// only when something changed, under the op lock with the text-preserving
+// profile save. It is the write half of ExportCollection, for a caller
+// whose export must not write (`lmm serve`'s GET export, #621 review S8).
+func (s *Service) RecordCollectionIdentity(ctx context.Context, gameID, profileName string, opts CollectionExportOptions) (*domain.CollectionInfo, error) {
+	profile, err := config.LoadProfile(s.configDir, gameID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	if want := collectionInfoForExport(profile.Collection, opts); want.ID != "" && want.Equal(profile.Collection) {
+		return &want, nil
+	}
+	return s.recordCollectionInfo(ctx, gameID, profileName, opts)
 }
 
 // recordCollectionInfo records the identity an export with opts publishes

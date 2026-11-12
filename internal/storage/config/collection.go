@@ -7,6 +7,7 @@ package config
 // ignores keys it does not know) still imports one by them.
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -123,16 +124,46 @@ func ParseCollection(data []byte) (*domain.CollectionDocument, error) {
 	return doc, nil
 }
 
+// ErrCollectionFormat is a document whose `lmm_collection:` key is there
+// but holds no whole number: it claims the collection format, so it is an
+// invalid collection, never a version-0 export.
+var ErrCollectionFormat = errors.New("lmm_collection must be a whole number")
+
 // CollectionFormatOf reports a YAML document's collection format version:
-// its `lmm_collection:` value, or 0 when it has none (a version-0 profile
-// export). A document that does not parse, or whose value is not a whole
-// number, is an error.
+// its `lmm_collection:` value, or 0 when it has no such key (a version-0
+// profile export). A document that does not parse is an error, and so is
+// one whose key holds anything but a whole number (ErrCollectionFormat).
 func CollectionFormatOf(data []byte) (int, error) {
-	var head struct {
-		Version int `yaml:"lmm_collection"`
+	version, _, err := CollectionFormatKey(data)
+	return version, err
+}
+
+// CollectionFormatKey is CollectionFormatOf that also says whether the
+// document has the `lmm_collection:` key at all: present is true for a
+// value that is not a whole number too, alongside ErrCollectionFormat.
+func CollectionFormatKey(data []byte) (version int, present bool, err error) {
+	var doc yaml.Node
+	if err := safeyaml.Unmarshal(data, &doc); err != nil {
+		return 0, false, fmt.Errorf("parsing profile document: %w", err)
 	}
-	if err := safeyaml.Unmarshal(data, &head); err != nil {
-		return 0, fmt.Errorf("parsing profile document: %w", err)
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		// Not a mapping: no key to have. The version-0 reader says what
+		// is wrong with it.
+		return 0, false, nil
 	}
-	return head.Version, nil
+	root := doc.Content[0]
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "lmm_collection" {
+			continue
+		}
+		node := root.Content[i+1]
+		if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
+			return 0, true, fmt.Errorf("%w (it is %q)", ErrCollectionFormat, node.Value)
+		}
+		if err := node.Decode(&version); err != nil {
+			return 0, true, fmt.Errorf("%w (it is %q)", ErrCollectionFormat, node.Value)
+		}
+		return version, true, nil
+	}
+	return 0, false, nil
 }

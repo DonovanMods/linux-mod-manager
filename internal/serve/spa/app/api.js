@@ -332,6 +332,13 @@ export const deleteSnapshot = (name, context) =>
 export const profileExportURL = (name, context) =>
   scoped(`${profilePath(name)}/export?format=lmmc`, context);
 
+/** Records a profile's collection identity (issue 621) - minting its
+ * collection id on the first call - so the side-effect-free GET at
+ * profileExportURL can serve it. Returns domain.CollectionInfo. The GET
+ * answers 409 until this has run once. */
+export const recordProfileCollection = (name, context) =>
+  post(scoped(`${profilePath(name)}/collection`, context), {});
+
 /** Commits a new load order. Returns core.ProfileResult, re-read after the
  * write, so profile.mods IS the persisted order. ids are lowest-priority
  * first (api_profiles.go); a partial order is fine - what is left unnamed

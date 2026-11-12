@@ -120,6 +120,10 @@ type ImportPlan struct {
 	// plan - a URL's included - so nothing can switch such hooks on.
 	hookedData []byte
 
+	// collectionState is what a collection import adds to the saved profile
+	// beyond its version-0 document (#621): nil for every other plan.
+	collectionState *collectionState
+
 	// storedFileIDs maps domain.ModKey keys (for NeedsRedownload's cache-miss
 	// entries only) to that mod's DB-recorded FileIDs - preserving
 	// doProfileImport's :541-552 rule: a redownload uses the INSTALLED row's
@@ -712,7 +716,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 
 	var profile *domain.Profile
 	saveProfile := func(ctx context.Context) error {
-		saved, err := pm.ImportWithOptions(ctx, plan.data, opts.Force)
+		saved, err := pm.importDocument(ctx, plan.data, opts.Force, plan.collectionState)
 		if err != nil {
 			return fmt.Errorf("importing profile: %w", err)
 		}

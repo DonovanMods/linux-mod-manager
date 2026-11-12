@@ -45,6 +45,8 @@ const (
 	// before it is inflated, whatever its header claims.
 	maxCollectionRatio = 100
 	ratioFloor         = 1 << 20
+	// maxIgnoredWarnings caps the members named in warnings.
+	maxIgnoredWarnings = 20
 )
 
 // zipMagic is the local-file-header signature every zip starts with: what
@@ -150,7 +152,13 @@ func readCollectionContainer(data []byte) (doc []byte, warnings []string, err er
 	if bundled {
 		warnings = append(warnings, "the container's bundled files ("+collectionFilesDir+") were ignored: this version of lmm does not install bundled collection files")
 	}
-	for _, name := range ignored {
+	// Named one by one up to a point, then counted, so a container with
+	// thousands of stray members does not bury the plan (#621 review N4).
+	for i, name := range ignored {
+		if i == maxIgnoredWarnings {
+			warnings = append(warnings, fmt.Sprintf("%d more of the container's members were ignored: they are not part of the collection format", len(ignored)-i))
+			break
+		}
 		warnings = append(warnings, fmt.Sprintf("the container's member %q was ignored: it is not part of the collection format", name))
 	}
 	return doc, warnings, nil

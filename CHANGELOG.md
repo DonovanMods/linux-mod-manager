@@ -68,9 +68,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`lmm profile export` writes the collection document (#621).** Its
   stdout output gains the version-1 keys (`lmm_collection`, `id`,
   `version`, `game`, …), writes only the hooks a profile sets (no `null`
-  entries), and no longer includes the profile's `link_method`, which is a
-  machine preference. An older lmm still imports the new document by its
-  `name` and `game_id`. `--json` is unchanged.
+  entries), and no longer includes the profile's `link_method` (or its
+  default flag, which no export ever carried): both are machine
+  preferences, so a backup restored by export and import no longer brings
+  back an explicit link method. An older lmm still imports the new
+  document by its `name` and `game_id`. `--json` is unchanged.
+- **The first export of a profile writes to it (#621).** It records the
+  collection id (and any metadata flags) in the profile, which takes lmm's
+  operation lock: while another operation runs (a `lmm serve` job, say)
+  that export fails and asks you to retry, after a shell `>` has already
+  emptied its target file. Later exports with nothing new to record do not
+  write. In the web UI, Export records the identity with a POST before the
+  download, whose GET never writes.
+- **A version-0 profile document's `collection:` and `external:` keys are
+  ignored on import (#621).** No version-0 export carried them; only a
+  checked version-1 collection sets them.
 - **Installing several mods, and importing a profile, now download
   everything before writing anything (#602).** A profile import, an install
   with dependencies and a multi-mod install acquire every mod first

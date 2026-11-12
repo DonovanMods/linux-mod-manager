@@ -53,16 +53,19 @@ func deriveCollectionRequires(doc *domain.CollectionDocument) []string {
 }
 
 // IsCollectionDocument reports whether data is an lmm collection - a
-// `.lmmc` container, or a YAML document with an `lmm_collection:` version
-// of 1 or more - rather than a version-0 profile export, which keeps its
-// own import path unchanged. A document that does not parse is not one: the
-// version-0 path reports the parse error as it always has.
+// `.lmmc` container, or a YAML document with an `lmm_collection:`
+// key - rather than a version-0 profile export, which keeps its own import
+// path unchanged. A document that does not parse is not one: the version-0
+// path reports the parse error as it always has.
 func IsCollectionDocument(data []byte) bool {
 	if IsCollectionContainer(data) {
 		return true
 	}
-	version, err := config.CollectionFormatOf(data)
-	return err == nil && version >= 1
+	// A document that HAS the key claims the format, whatever its value
+	// (#621 review S5): "1" quoted, or 0, is an invalid collection that
+	// PlanCollectionImport refuses - never silently a version-0 export.
+	_, present, _ := config.CollectionFormatKey(data)
+	return present
 }
 
 // ErrCollectionFormatTooNew is a collection document written in a format

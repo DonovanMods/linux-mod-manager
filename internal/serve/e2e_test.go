@@ -4333,9 +4333,22 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 	require.NotEmpty(t, exportHref, "the Export control must be a real link to the export route")
 	assert.Contains(t, exportHref, "/api/v1/profiles/default/export")
 
-	// Since #621 the download is the `.lmmc` collection container: fetched
-	// as bytes (base64 across the CDP boundary), its collection.yaml read
-	// here.
+	// Since #621 the download is the `.lmmc` collection container, and the
+	// GET serving it never writes: the Export click first POSTs the
+	// profile's collection identity (minting its id), then downloads. The
+	// click is made for real here, and the recorded id is what proves the
+	// POST ran; the download itself is then fetched as bytes (base64
+	// across the CDP boundary) and its collection.yaml read here.
+	f.runInBrowser(t, chromedp.Evaluate(`
+		Array.from(document.querySelectorAll(".profiles-row")).find((r) => r.textContent.includes("default"))
+			.querySelector('a[href*="/export"]').click()
+	`, nil))
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
+		return err == nil && p.Collection != nil && p.Collection.ID != ""
+	}, 5*time.Second, 20*time.Millisecond, "the Export click must record the collection identity before downloading")
+	settle()
+
 	var exportedB64 string
 	f.runInBrowser(t, chromedp.Evaluate(fmt.Sprintf(`fetch(%q).then((r) => r.arrayBuffer()).then((b) => {
 		const u = new Uint8Array(b); let s = "";

@@ -1833,7 +1833,11 @@ answers "which mod would win each contested path under THIS load order",
 from the same rule a real reorder applies. Leaving it off describes the
 order the profile currently holds. `GET /api/v1/profiles/{name}/export`
 serves the same document `lmm profile export --json` prints, as a
-downloadable attachment.
+downloadable attachment; `?format=lmmc` serves the profile as an lmm
+collection (`.lmmc`) instead. That GET never writes: a profile whose
+collection identity is not recorded yet answers 409, and
+`POST /api/v1/profiles/{name}/collection` records it (minting the
+collection id) first.
 
 Most mutations run as a Plan, then a background job:
 
@@ -1912,6 +1916,7 @@ DELETE /api/v1/profiles/{name}                         -> the profile deleted
 POST   /api/v1/profiles/{name}/rename       {"name"}   -> under its new name
 POST   /api/v1/profiles/{name}/set-default             -> the new default
 POST   /api/v1/profiles/{name}/reorder      {"ids"}    -> the new load order
+POST   /api/v1/profiles/{name}/collection              -> its collection identity, recorded
 ```
 
 The Setup surface — how a game and its credentials come to exist — is the

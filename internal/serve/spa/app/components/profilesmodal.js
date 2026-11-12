@@ -34,6 +34,7 @@ import {
   renameProfile,
   setDefaultProfile,
   profileExportURL,
+  recordProfileCollection,
 } from "../api.js";
 
 /** ProfilesModal renders only when the shared modal slot holds this shape. */
@@ -184,6 +185,24 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
       await afterMutation();
     } catch (err) {
       setError(err?.message ?? String(err));
+      setBusy(false);
+    }
+  }
+
+  /** exportCollection records the profile's collection identity with a
+   * POST (issue 621: the GET that downloads the .lmmc never writes), then
+   * lets the browser download the link's own URL. */
+  async function exportCollection(e) {
+    e.preventDefault();
+    const href = e.currentTarget.getAttribute("href");
+    setBusy(true);
+    setError(null);
+    try {
+      await recordProfileCollection(profile.name, context);
+      window.location.assign(href);
+    } catch (err) {
+      setError(err?.message ?? String(err));
+    } finally {
       setBusy(false);
     }
   }
@@ -374,6 +393,7 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
           class="button button--small"
           href=${profileExportURL(profile.name, context)}
           download=${`${profile.name}.lmmc`}
+          onClick=${exportCollection}
         >
           Export
         </a>
@@ -496,6 +516,10 @@ function CreateProfileForm({ context, afterMutation }) {
   `;
 }
 
+/** maxImportFileBytes keeps a picked file inside the plan request's 1 MiB
+ * body cap once base64 has grown it by a third. */
+const maxImportFileBytes = 700 * 1024;
+
 /** isZip reports whether bytes start with a zip's local-file-header
  * signature - a `.lmmc` collection container (issue 621), which is binary,
  * rather than a YAML or JSON document. The server sniffs the same bytes. */
@@ -536,6 +560,14 @@ function ImportProfileForm({ actions, close }) {
     setError(null);
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
+      // The plan request body is capped (api_jobs.go), and a .lmmc goes
+      // in it base64-encoded. A list-only collection is a few kilobytes;
+      // one this large is said so here, before a 413 (issue 621).
+      if (bytes.length > maxImportFileBytes) {
+        throw new Error(
+          `${file.name} is too large to import here; use \`lmm profile import ${file.name}\` in a terminal`,
+        );
+      }
       const options = isZip(bytes)
         ? { data_base64: base64Of(bytes) }
         : { data: new TextDecoder().decode(bytes) };

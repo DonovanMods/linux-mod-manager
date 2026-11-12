@@ -216,3 +216,36 @@ func TestExportCollection_MetadataThatCannotBeRecordedFailsTheExport(t *testing.
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "recording the collection identity")
 }
+
+// TestExportCollection_NoRecordNeverWrites is #621 review S8's core half:
+// a read-only export of a profile whose identity still has to be recorded
+// refuses, and RecordCollectionIdentity is the write it waits for.
+func TestExportCollection_NoRecordNeverWrites(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g", Name: "G", ModPath: t.TempDir()}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), &domain.Profile{Name: "p", GameID: "g"}))
+	path, err := config.ProfilePath(svc.ConfigDir(), "g", "p")
+	require.NoError(t, err)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	_, err = svc.ExportCollection(context.Background(), game.ID, "p", core.CollectionExportOptions{NoRecord: true})
+	require.ErrorIs(t, err, core.ErrCollectionIdentityUnrecorded)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "a read-only export writes nothing")
+
+	info, err := svc.RecordCollectionIdentity(context.Background(), game.ID, "p", core.CollectionExportOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, info.ID)
+	again, err := svc.RecordCollectionIdentity(context.Background(), game.ID, "p", core.CollectionExportOptions{})
+	require.NoError(t, err)
+	require.Equal(t, info.ID, again.ID, "recording again keeps the id")
+
+	export, err := svc.ExportCollection(context.Background(), game.ID, "p", core.CollectionExportOptions{NoRecord: true})
+	require.NoError(t, err)
+	doc, err := config.ParseCollection(export.Document)
+	require.NoError(t, err)
+	require.Equal(t, info.ID, doc.Info.ID)
+}

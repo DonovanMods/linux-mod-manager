@@ -130,6 +130,10 @@ func TestCollectionFormatOf(t *testing.T) {
 		{"version 1", "lmm_collection: 1\nname: p\n", 1, false},
 		{"newer", "lmm_collection: 2\nname: p\n", 2, false},
 		{"not a number", "lmm_collection: one\n", 0, true},
+		{"quoted", "lmm_collection: \"1\"\n", 0, true},
+		{"empty", "lmm_collection:\nname: p\n", 0, true},
+		{"a list", "lmm_collection: [1]\n", 0, true},
+		{"a float", "lmm_collection: 1.5\n", 0, true},
 		{"not yaml", "\t: [", 0, true},
 	}
 	for _, tc := range cases {

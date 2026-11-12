@@ -329,11 +329,6 @@ type exportedProfileYAML struct {
 	LinkMethod string                `yaml:"link_method,omitempty"`
 	Hooks      ProfileHooksYAML      `yaml:"hooks,omitempty"`
 	Overrides  map[string]string     `yaml:"overrides,omitempty"`
-	// Collection and External (#621) carry a collection-imported profile's
-	// identity and its unfetchable items through the document the import
-	// flow saves; omitempty, so every other export is byte-identical.
-	Collection *domain.CollectionInfo          `yaml:"collection,omitempty"`
-	External   []domain.CollectionExternalItem `yaml:"external,omitempty"`
 }
 
 // ExportProfileValue builds profile's portable domain.ExportedProfile
@@ -394,8 +389,6 @@ func ExportProfile(profile *domain.Profile) ([]byte, error) {
 		LinkMethod: exported.LinkMethod,
 		Hooks:      serializeProfileHooks(exported.Hooks, exported.HooksExplicit),
 		Overrides:  exported.Overrides,
-		Collection: exported.Collection,
-		External:   exported.External,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling exported profile: %w", err)
@@ -417,9 +410,12 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 		Mods:       wire.Mods,
 		LinkMethod: wire.LinkMethod,
 		Overrides:  wire.Overrides,
-		Collection: collectionOrNil(wire.Collection),
-		External:   wire.External,
 	}
+	// A profile's collection: and external: blocks (#621) are neither
+	// written nor read by this pair (review S4): a version-0 document never
+	// carried them legitimately, and a stranger's copy would be unsanitised
+	// and uncapped. The collection import sets them itself, from a document
+	// it has checked (core's PlanCollectionImport).
 	// An export with no hooks: key (every export made before #296 included)
 	// decodes to all-nil pointers, so nothing is marked explicit and the
 	// profile keeps inheriting the game's hooks - the pre-#296 behaviour.
@@ -439,8 +435,6 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 		LinkMethodExplicit: exported.LinkMethod != "",
 		Hooks:              exported.Hooks,
 		HooksExplicit:      exported.HooksExplicit,
-		Collection:         exported.Collection,
-		External:           exported.External,
 	}
 	if len(exported.Overrides) > 0 {
 		p.Overrides = make(map[string][]byte)

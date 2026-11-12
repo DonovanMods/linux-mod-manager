@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
@@ -47,30 +48,61 @@ func applyProfileOverrides(game *domain.Game, profile *domain.Profile, originals
 		return fmt.Errorf("resolving game path: %w", err)
 	}
 	base = filepath.Clean(base)
-	for relPath, content := range profile.Overrides {
-		// Reject absolute or empty paths
-		cleaned := filepath.Clean(filepath.FromSlash(relPath))
-		if cleaned == "" || filepath.IsAbs(cleaned) {
-			return fmt.Errorf("invalid override path: %q", relPath)
-		}
-		dest := filepath.Join(base, cleaned)
-		dest = filepath.Clean(dest)
-		// Ensure dest is under base (no path traversal)
-		rel, err := filepath.Rel(base, dest)
+	// Every key is checked before any is written (#621 review S6): a
+	// profile with one bad key used to fail mid-loop, after writing some of
+	// the others in map order.
+	type overrideWrite struct{ relPath, rel, dest string }
+	writes := make([]overrideWrite, 0, len(profile.Overrides))
+	for relPath := range profile.Overrides {
+		dest, rel, err := overrideDest(base, relPath)
 		if err != nil {
-			return fmt.Errorf("override path %q: %w", relPath, err)
+			return err
 		}
-		if strings.HasPrefix(rel, "..") || rel == ".." {
-			return fmt.Errorf("override path escapes game directory: %q", relPath)
-		}
-		dir := filepath.Dir(dest)
+		writes = append(writes, overrideWrite{relPath: relPath, rel: rel, dest: dest})
+	}
+	sort.Slice(writes, func(i, j int) bool { return writes[i].relPath < writes[j].relPath })
+	for _, w := range writes {
+		dir := filepath.Dir(w.dest)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("creating override dir %s: %w", dir, err)
 		}
-		captureOverriddenOriginal(originals, profile.Name, rel, dest)
-		if err := os.WriteFile(dest, content, 0644); err != nil {
-			return fmt.Errorf("writing override %s: %w", relPath, err)
+		captureOverriddenOriginal(originals, profile.Name, w.rel, w.dest)
+		if err := os.WriteFile(w.dest, profile.Overrides[w.relPath], 0644); err != nil {
+			return fmt.Errorf("writing override %s: %w", w.relPath, err)
 		}
+	}
+	return nil
+}
+
+// overrideDest resolves an override key against base, the game's install
+// directory, refusing an absolute or empty path and one that escapes base.
+// It returns the destination and the cleaned path relative to base.
+func overrideDest(base, relPath string) (dest, rel string, err error) {
+	cleaned := filepath.Clean(filepath.FromSlash(relPath))
+	if cleaned == "" || filepath.IsAbs(cleaned) {
+		return "", "", fmt.Errorf("invalid override path: %q", relPath)
+	}
+	dest = filepath.Clean(filepath.Join(base, cleaned))
+	// Ensure dest is under base (no path traversal)
+	rel, err = filepath.Rel(base, dest)
+	if err != nil {
+		return "", "", fmt.Errorf("override path %q: %w", relPath, err)
+	}
+	if strings.HasPrefix(rel, "..") || rel == ".." {
+		return "", "", fmt.Errorf("override path escapes game directory: %q", relPath)
+	}
+	return dest, rel, nil
+}
+
+// checkOverridePath is overrideDest's rule with no game directory at hand:
+// what a collection import refuses at plan time (#621 review S6), so an
+// override the deploy would refuse never reaches a profile. The path must
+// name a file inside the directory it is joined to.
+func checkOverridePath(relPath string) error {
+	if _, rel, err := overrideDest(string(filepath.Separator)+"game", relPath); err != nil {
+		return err
+	} else if rel == "." {
+		return fmt.Errorf("invalid override path: %q", relPath)
 	}
 	return nil
 }

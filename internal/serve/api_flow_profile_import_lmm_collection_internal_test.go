@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json/v2"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -29,7 +30,10 @@ func exportLMMC(t *testing.T, s *Server, svc *core.Service, game *domain.Game) [
 	profile.HooksExplicit.Install.AfterAll = true
 	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
 
-	rec := doAPI(s, http.MethodGet, scoped("/api/v1/profiles/"+activeProfile+"/export?format=lmmc", game), "")
+	rec := doAPI(s, http.MethodPost, scoped("/api/v1/profiles/"+activeProfile+"/collection", game), "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	rec = doAPI(s, http.MethodGet, scoped("/api/v1/profiles/"+activeProfile+"/export?format=lmmc", game), "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, `attachment; filename="`+activeProfile+`.lmmc"`, rec.Header().Get("Content-Disposition"))
 	assert.Equal(t, "application/zip", rec.Header().Get("Content-Type"))
@@ -101,4 +105,43 @@ func TestFlowLMMCollection_BadRequests(t *testing.T) {
 	}
 	rec := doAPI(s, http.MethodGet, scoped("/api/v1/profiles/"+activeProfile+"/export?format=zip", game), "")
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestFlowLMMCollection_TheExportGETNeverWrites is #621 review S8: the
+// GET is not CSRF-guarded, so it must not record anything. A profile with
+// no collection identity yet answers 409 naming the POST; the POST
+// (CSRF-guarded) records it; the GET then serves it, still writing nothing.
+func TestFlowLMMCollection_TheExportGETNeverWrites(t *testing.T) {
+	s, svc, game := newProfilesFixtureServer(t)
+	path, err := config.ProfilePath(svc.ConfigDir(), game.ID, activeProfile)
+	require.NoError(t, err)
+	read := func() []byte {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		return data
+	}
+	exportURL := scoped("/api/v1/profiles/"+activeProfile+"/export?format=lmmc", game)
+
+	before := read()
+	rec := doAPI(s, http.MethodGet, exportURL, "")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "/collection")
+	require.Equal(t, before, read(), "the refused GET wrote nothing")
+
+	collectionURL := scoped("/api/v1/profiles/"+activeProfile+"/collection", game)
+	rec = doAPIWithoutCSRF(s, http.MethodPost, collectionURL, "")
+	require.NotEqual(t, http.StatusOK, rec.Code, "the write is CSRF-guarded")
+	require.Equal(t, before, read())
+
+	rec = doAPI(s, http.MethodPost, collectionURL, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var info domain.CollectionInfo
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &info))
+	require.NotEmpty(t, info.ID)
+
+	recorded := read()
+	rec = doAPI(s, http.MethodGet, exportURL, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, recorded, read(), "a served GET writes nothing either")
 }

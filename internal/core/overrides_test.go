@@ -73,3 +73,33 @@ func TestApplyProfileOverrides_RefusesAGameWithNoInstallPath(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(cwd, "cfg"))
 	assert.True(t, os.IsNotExist(statErr), "nothing is written to the working directory")
 }
+
+// TestApplyProfileOverrides_ABadKeyWritesNothing (#621 review S6): every
+// key is checked before any is written, so one escaping key fails the whole
+// set rather than leaving the keys that sorted before it on disk.
+func TestApplyProfileOverrides_ABadKeyWritesNothing(t *testing.T) {
+	baseDir := t.TempDir()
+	game := &domain.Game{InstallPath: baseDir}
+	profile := &domain.Profile{Overrides: map[string][]byte{
+		"a/first.ini":       []byte("1"),
+		"b/second.ini":      []byte("2"),
+		"../../../.bashrc":  []byte("evil"),
+		"z/last-ok-key.ini": []byte("3"),
+	}}
+	for range 20 { // map order varies; none may write
+		err := applyProfileOverrides(game, profile, nil)
+		require.Error(t, err)
+		entries, rerr := os.ReadDir(baseDir)
+		require.NoError(t, rerr)
+		require.Empty(t, entries, "nothing may be written when one key is refused")
+	}
+}
+
+func TestCheckOverridePath(t *testing.T) {
+	for _, ok := range []string{"engine/config/user.ini", "Game.ini", "a/./b.ini", "a/../b.ini"} {
+		require.NoError(t, checkOverridePath(ok), ok)
+	}
+	for _, bad := range []string{"../../../.bashrc", "/etc/passwd", "", ".", "a/../../b"} {
+		require.Error(t, checkOverridePath(bad), bad)
+	}
+}

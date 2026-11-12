@@ -23,6 +23,7 @@
 
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
+import { safeWebUrl } from "../weburl.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 
 /** refLabel names a domain.ModReference - it carries no display name of its
@@ -215,23 +216,30 @@ function LMMCollectionSection({ collection: c, actions }) {
           Not fetched by lmm - get these by hand (${c.external.length})
         </h3>
         <ul class="plan__mods">
-          ${c.external.map(
-            (e, i) =>
-              html`<li key=${i} class="plan__mod">
-                <span class="plan__mod-name">${e.name}</span>${" "}
-                ${
-                  e.url &&
-                  html`<a
-                    class="plan__mod-detail"
-                    href=${e.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    >${e.url}</a
-                  >`
-                }${" "}
-                ${e.instructions && html`<span class="plan__mod-detail">${e.instructions}</span>`}
-              </li>`,
-          )}
+          ${c.external.map((e, i) => {
+            // Core drops a link that is not a web address; the browser
+            // applies the same rule again before anything becomes an href.
+            const url = safeWebUrl(e.url);
+            return html`<li key=${i} class="plan__mod">
+              <span class="plan__mod-name">${e.name}</span>${" "}
+              ${
+                url
+                  ? html`<a
+                      class="plan__mod-detail"
+                      href=${url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >${url}</a
+                    >`
+                  : e.url &&
+                    html`<span class="plan__mod-detail">${e.url}</span>`
+              }${" "}
+              ${
+                e.instructions &&
+                html`<span class="plan__mod-detail">${e.instructions}</span>`
+              }
+            </li>`;
+          })}
         </ul>
       </section>`
     }

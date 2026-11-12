@@ -160,6 +160,13 @@ lmm profile export coop -o coop.lmmc --title "Co-op night" \
 lmm remembers these for the profile, so next time you only give what
 changed, such as `--collection-version 3` when you publish an update.
 
+{: .note }
+The first export of a profile saves its collection id in the profile, and
+that waits for any other lmm operation, such as a job running in the
+browser. If it can't, the export stops and asks you to try again, and a
+file you were writing with `>` is left empty; run the export again once
+the other operation has finished.
+
 The import shows this before it does anything, along with:
 
 - **hooks**, the scripts the profile runs. They are only imported if you

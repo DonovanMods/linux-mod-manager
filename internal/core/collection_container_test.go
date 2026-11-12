@@ -96,3 +96,16 @@ func TestCollectionContainer_RatioCap(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ratio")
 }
+
+// TestCollectionContainer_StrayMemberWarningsAreCapped is #621 review N4:
+// the first stray members are named, the rest counted.
+func TestCollectionContainer_StrayMemberWarningsAreCapped(t *testing.T) {
+	members := []string{"collection.yaml", "lmm_collection: 1\n"}
+	for i := 0; i < 30; i++ {
+		members = append(members, fmt.Sprintf("stray-%02d.txt", i), "")
+	}
+	_, warnings, err := readCollectionContainer(zipOf(t, members...))
+	require.NoError(t, err)
+	require.Len(t, warnings, maxIgnoredWarnings+1)
+	require.Contains(t, warnings[maxIgnoredWarnings], "10 more")
+}

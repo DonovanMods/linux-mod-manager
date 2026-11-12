@@ -347,9 +347,18 @@ func (s *Server) handleAPIProfileExport(w http.ResponseWriter, r *http.Request) 
 	s.writeJSON(w, http.StatusOK, exported)
 }
 
-// writeCollectionExport answers the profile as a `.lmmc` attachment.
+// writeCollectionExport answers the profile as a `.lmmc` attachment. It
+// never writes (#621 review S8): a GET is not CSRF-guarded, so a
+// cross-origin page or a prefetcher could otherwise make it record an id,
+// and a GET must not queue behind a running job. A profile whose collection
+// identity is not recorded yet answers 409 naming the POST that records
+// it (handleAPIProfileCollection), which the SPA's Export calls first.
 func (s *Server) writeCollectionExport(w http.ResponseWriter, r *http.Request, gameID, name string) {
-	export, err := s.svc.ExportCollection(r.Context(), gameID, name, core.CollectionExportOptions{})
+	export, err := s.svc.ExportCollection(r.Context(), gameID, name, core.CollectionExportOptions{NoRecord: true})
+	if errors.Is(err, core.ErrCollectionIdentityUnrecorded) {
+		s.writeAPIError(w, http.StatusConflict, fmt.Errorf("%w: POST /api/v1/profiles/%s/collection records it, then export again", err, name))
+		return
+	}
 	if err != nil {
 		s.writeAPIError(w, s.profileErrorStatus(err), err)
 		return
@@ -363,6 +372,24 @@ func (s *Server) writeCollectionExport(w http.ResponseWriter, r *http.Request, g
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+core.CollectionContainerExt))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// handleAPIProfileCollection answers POST
+// /api/v1/profiles/{name}/collection (#621): it records the profile's
+// collection identity - minting its collection id on the first call - and
+// answers the domain.CollectionInfo it holds. It is the CSRF-guarded write
+// the SPA's Export makes before its side-effect-free GET of the `.lmmc`.
+func (s *Server) handleAPIProfileCollection(w http.ResponseWriter, r *http.Request) {
+	sel, ok := s.resolveGameAPISelection(w, r)
+	if !ok {
+		return
+	}
+	info, err := s.svc.RecordCollectionIdentity(r.Context(), sel.Game.ID, r.PathValue("name"), core.CollectionExportOptions{})
+	if err != nil {
+		s.writeAPIError(w, s.profileErrorStatus(err), err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, info)
 }
 
 // profileErrorStatus classifies a profile CRUD failure: a profile that is
