@@ -40,6 +40,20 @@ func (s *Server) handleAPIGames(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, games)
 }
 
+// handleAPIKnownGames answers GET /api/v1/games/known (#606) with lmm's own
+// game catalog - the games `lmm game detect` knows - as core.KnownGame rows,
+// sorted by name: the choices the game editor offers for `catalog:`. Not
+// to be confused with /api/v1/games/catalog below, which searches a mod
+// SOURCE's list of games. An empty array, never null, when no catalog is
+// registered.
+func (s *Server) handleAPIKnownGames(w http.ResponseWriter, _ *http.Request) {
+	games := s.svc.KnownGames()
+	if games == nil {
+		games = []core.KnownGame{}
+	}
+	s.writeJSON(w, http.StatusOK, games)
+}
+
 // handleAPIGamesCatalog answers GET /api/v1/games/catalog?source=<id>&q=<query>
 // with the core.GameCatalogReport `lmm game add --query --json` emits.
 //
@@ -297,6 +311,10 @@ type gameSourcesRequest struct {
 	// for Adapter's reason: an editor that never sent one cannot clear it.
 	Prefix     *string `json:"prefix,omitempty"`
 	PrefixUser *string `json:"prefix_user,omitempty"`
+	// Catalog, when present, sets the game's `catalog:` (#606) - `lmm game
+	// edit --catalog` - the known-games catalog entry the game is; "" clears
+	// it. A pointer for Adapter's reason.
+	Catalog *string `json:"catalog,omitempty"`
 }
 
 // handleAPIGameSources answers PUT /api/v1/games/{id} with the game's own
@@ -331,7 +349,7 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 	edit := core.GameEdit{
 		Name: req.Name, Sources: req.Sources, Adapter: req.Adapter, ModPath: req.ModPath, InstallPath: req.InstallPath,
 		Loader: req.Loader, LoaderSet: req.Loader != nil || req.LoaderSet,
-		Prefix: req.Prefix, PrefixUser: req.PrefixUser,
+		Prefix: req.Prefix, PrefixUser: req.PrefixUser, Catalog: req.Catalog,
 	}
 	if req.CurseForge != nil {
 		types := append([]int{}, req.CurseForge.GameVersionTypes...)
@@ -339,7 +357,7 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 	}
 	if edit.Name == nil && edit.Sources == nil && edit.Adapter == nil && edit.ModPath == nil &&
 		edit.InstallPath == nil && !edit.LoaderSet && edit.CurseForgeVersionTypes == nil &&
-		edit.Prefix == nil && edit.PrefixUser == nil {
+		edit.Prefix == nil && edit.PrefixUser == nil && edit.Catalog == nil {
 		edit.Sources = map[string]string{}
 	}
 	entry, err := s.svc.EditGame(r.Context(), r.PathValue("id"), edit)
