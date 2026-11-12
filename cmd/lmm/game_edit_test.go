@@ -43,7 +43,9 @@ func resetGameEditFlags(t *testing.T) {
 	modPath, modPathSet := gameEditModPath, gameEditModPathSet
 	installPath, installPathSet := gameEditInstallPath, gameEditInstallPathSet
 	cfTypes, cfTypesSet := gameEditCurseForgeTypes, gameEditCurseForgeTypesSet
+	prefix, prefixSet, prefixUser, prefixUserSet := gameEditPrefix, gameEditPrefixSet, gameEditPrefixUser, gameEditPrefixUserSet
 	t.Cleanup(func() {
+		gameEditPrefix, gameEditPrefixSet, gameEditPrefixUser, gameEditPrefixUserSet = prefix, prefixSet, prefixUser, prefixUserSet
 		gameEditCurseForgeTypes, gameEditCurseForgeTypesSet = cfTypes, cfTypesSet
 		gameEditSources, gameEditRemove = sources, remove
 		gameEditModPath, gameEditModPathSet = modPath, modPathSet
@@ -53,6 +55,7 @@ func resetGameEditFlags(t *testing.T) {
 	gameEditModPath, gameEditModPathSet = "", false
 	gameEditInstallPath, gameEditInstallPathSet = "", false
 	gameEditCurseForgeTypes, gameEditCurseForgeTypesSet = nil, false
+	gameEditPrefix, gameEditPrefixSet, gameEditPrefixUser, gameEditPrefixUserSet = "", false, "", false
 }
 
 // TestDoGameEdit_AddsASourceKeepingTheRest is the flow the epic review's

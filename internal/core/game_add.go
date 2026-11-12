@@ -273,6 +273,10 @@ type GameSpec struct {
 	// Launch is #501's `launch:` block, which likewise only detection
 	// prefills (#545: a Battle.net game's prefix). nil writes none.
 	Launch *domain.GameLaunch
+	// Prefix is #605's `prefix:`, which detection prefills from Steam's
+	// compatdata. Optional: "" writes no key, and lmm derives the prefix.
+	// Validated as `lmm game edit --prefix` validates one.
+	Prefix string
 }
 
 // AddGame validates spec, then - under the Service's single mutation slot -
@@ -623,6 +627,11 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 		return nil, err
 	}
 
+	prefix, err := prefixValue(spec.Prefix)
+	if err != nil {
+		return nil, err
+	}
+
 	return &domain.Game{
 		ID:          gameID,
 		Name:        name,
@@ -635,6 +644,7 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 		Loader:      loader,
 		CurseForge:  cloneCurseForge(spec.CurseForge),
 		Launch:      cloneLaunch(spec.Launch),
+		Prefix:      prefix,
 	}, nil
 }
 

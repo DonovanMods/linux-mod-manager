@@ -22,6 +22,10 @@ import (
 // launch registry runs after the built-in command and steam methods, and
 // the machine's GameProbe (#587) - how lmm tells a game it launched, or
 // any other process under the game's install path, is still running.
+//
+// And it lists the machine's Steam libraries for core's prefix resolution
+// (#605): a game's Proton prefix is Steam's compatdata for its app id, in
+// any library - the same libraryfolders.vdf this layer already reads.
 func RegisterLaunchers(svc *core.Service) {
 	idx := &steam.InstallAppIndex{}
 	svc.SetLauncher(core.NewLauncher(func(installPath string) (core.SteamApp, bool) {
@@ -30,4 +34,5 @@ func RegisterLaunchers(svc *core.Service) {
 	}))
 	svc.RegisterLaunchMethod(core.BattleNetLaunchMethod())
 	svc.SetGameProbe(core.NewGameProbe())
+	svc.SetSteamLibraries(steam.AllLibraryPaths)
 }

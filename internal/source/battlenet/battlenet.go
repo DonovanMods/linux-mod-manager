@@ -20,6 +20,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/steam"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/wineprefix"
 )
 
 // DetectOptions tunes a DetectGames scan; it mirrors the half of
@@ -111,7 +112,7 @@ func FindPrefixes() []string {
 	var out []string
 	seen := make(map[string]bool)
 	for _, p := range candidates {
-		if !isPrefix(p) {
+		if !wineprefix.IsPrefix(p) {
 			continue
 		}
 		real, err := filepath.EvalSymlinks(p)
@@ -142,16 +143,6 @@ func children(dir string) []string {
 		}
 	}
 	return out
-}
-
-// isPrefix reports whether dir is a Wine prefix: system.reg and drive_c.
-func isPrefix(dir string) bool {
-	reg, err := os.Stat(filepath.Join(dir, "system.reg"))
-	if err != nil || !reg.Mode().IsRegular() {
-		return false
-	}
-	drive, err := os.Stat(filepath.Join(dir, "drive_c"))
-	return err == nil && drive.IsDir()
 }
 
 // gameRoot is a directory in a prefix that may hold a .build.info, and the
@@ -388,7 +379,7 @@ func launchFor(prefix, home, launchCode string) (launch *domain.GameLaunch, warn
 // NEWEST GE-Proton, which it downloads - and warning says so. "" for a
 // plain Wine prefix or one another Proton made: umu-run's own default.
 func protonFor(prefix, home string) (proton, warning string) {
-	version, ok := protonVersion(prefix)
+	version, ok := wineprefix.ProtonVersion(prefix)
 	if !ok || !strings.HasPrefix(version, "GE-Proton") {
 		return "", ""
 	}
@@ -425,25 +416,6 @@ func protonToolDirs(home string) []string {
 		out = append(out, filepath.Join(d, "umu", "compatibilitytools"), filepath.Join(d, "Steam", "compatibilitytools.d"))
 	}
 	return out
-}
-
-// protonVersion is the Proton build that last ran prefix, from the version
-// file Proton keeps beside its pfx folder - in the prefix itself for one
-// umu made (pfx -> .), in its parent for Steam's compatdata/<id>/pfx. ok is
-// false for a plain Wine prefix.
-func protonVersion(prefix string) (string, bool) {
-	for _, dir := range []string{prefix, filepath.Dir(prefix)} {
-		if _, err := os.Stat(filepath.Join(dir, "pfx")); err != nil {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, "version"))
-		if err != nil {
-			continue
-		}
-		first, _, _ := strings.Cut(string(data), "\n")
-		return strings.TrimSpace(first), true
-	}
-	return "", false
 }
 
 // uniqueSlug derives an unknown game's slug from its name - lower-case

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/wineprefix"
 )
 
 // DetectedGame is a Steam game found on disk that lmm knows how to
@@ -327,6 +328,9 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 		return nil, nil, nil
 	}
 	var found []DetectedGame
+	// #605: every library on the machine, for the compatdata probe -
+	// a game's prefix can be in a library other than its own.
+	allLibraries := AllLibraryPaths()
 	seen := make(map[string]bool)
 	seenApp := make(map[string]bool)
 	// Seeded with EVERY curated slug, not just the ones this scan matched:
@@ -406,14 +410,14 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 					}
 					slug := uniqueSlug(name, manifest.AppID, takenSlugs)
 					takenSlugs[slug] = true
-					found = append(found, withWorkshopPrefill(DetectedGame{
+					found = append(found, withPrefixPrefill(withWorkshopPrefill(DetectedGame{
 						Detector:    domain.DetectorSteam,
 						DetectorID:  manifest.AppID,
 						SteamAppID:  manifest.AppID,
 						Slug:        slug,
 						Name:        name,
 						InstallPath: installPath,
-					}, libPath, opts.NoWorkshop))
+					}, libPath, opts.NoWorkshop), allLibraries))
 					continue
 				}
 				modPath := installPath
@@ -421,7 +425,7 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 					modPath = filepath.Join(installPath, info.ModPath)
 				}
 				seen[info.Slug] = true
-				found = append(found, withWorkshopPrefill(DetectedGame{
+				found = append(found, withPrefixPrefill(withWorkshopPrefill(DetectedGame{
 					Detector:    domain.DetectorSteam,
 					DetectorID:  manifest.AppID,
 					SteamAppID:  manifest.AppID,
@@ -435,12 +439,22 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 					Sources:     info.Sources,
 					Loader:      detectedLoader(info.Loader),
 					Known:       true,
-				}, libPath, opts.NoWorkshop))
+				}, libPath, opts.NoWorkshop), allLibraries))
 			}
 		}
 	}
 
 	return found, warnings, nil
+}
+
+// withPrefixPrefill sets g's Prefix to the app's compatdata prefix (#605):
+// the most recently used one in any of libraries, or none when the app has
+// none - a native game, or one Steam has never run through Proton.
+func withPrefixPrefill(g DetectedGame, libraries []string) DetectedGame {
+	if found := wineprefix.SteamCompatdata(libraries, g.SteamAppID); len(found) > 0 {
+		g.Prefix = found[0].Path
+	}
+	return g
 }
 
 // detectedLoader converts a known-games entry's loader block into the domain

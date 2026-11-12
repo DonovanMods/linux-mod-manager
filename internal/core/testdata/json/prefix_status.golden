@@ -1,0 +1,23 @@
+{
+  "path": "/mnt/games/SteamLibrary/steamapps/compatdata/489830/pfx",
+  "origin": "steam_compatdata",
+  "steam_app_id": "489830",
+  "library": "/mnt/games/SteamLibrary",
+  "candidates": [
+    {
+      "library": "/mnt/games/SteamLibrary",
+      "path": "/mnt/games/SteamLibrary/steamapps/compatdata/489830/pfx",
+      "modified_at": "2026-08-27T12:00:00Z"
+    },
+    {
+      "library": "/home/user/.local/share/Steam",
+      "path": "/home/user/.local/share/Steam/steamapps/compatdata/489830/pfx",
+      "modified_at": "2026-08-26T12:00:00Z"
+    }
+  ],
+  "note": "app 489830 has a compatdata prefix in 2 Steam libraries; using the most recently used one, in /mnt/games/SteamLibrary (last used 2026-08-27T12:00:00Z) - set prefix: to choose another",
+  "user": "steamuser",
+  "user_origin": "proton",
+  "user_path": "/mnt/games/SteamLibrary/steamapps/compatdata/489830/pfx/drive_c/users/steamuser",
+  "resolved": true
+}

@@ -1,0 +1,20 @@
+{
+  "id": "skyrim-se",
+  "name": "Skyrim Special Edition",
+  "install_path": "/home/user/Games/Heroic/Skyrim Special Edition",
+  "mod_path": "/home/user/Games/Heroic/Skyrim Special Edition/Data",
+  "source_ids": {
+    "nexusmods": "skyrimspecialedition"
+  },
+  "link_method": "symlink",
+  "link_method_explicit": false,
+  "hooks": {
+    "install": {},
+    "uninstall": {}
+  },
+  "deploy_mode": "extract",
+  "convert_paks": false,
+  "convert_paks_explicit": false,
+  "prefix": "/home/user/Games/Heroic/Prefixes/default/Skyrim Special Edition",
+  "prefix_user": "dyoung"
+}

@@ -187,6 +187,8 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 | `hooks`        | object | no       | Scripts to run around install/uninstall (see below)                   |
 | `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default), `copy`, or `compile` |
 | `adapter`      | string | no       | Game adapter: `generic-files` (default), `icarus` or `bepinex` — below |
+| `prefix`       | string | no       | The Wine/Proton prefix the game runs in (supports `~`) — below        |
+| `prefix_user`  | string | no       | The Windows user directory inside the prefix — below                  |
 
 Changing a game's `cache_path` requires purging each profile with deployed
 files first: `lmm purge --game <id> --profile <name>`. Do this with the old
@@ -435,6 +437,59 @@ property of the *game*, which is what an adapter is for. So:
 > release — at which point `adapter:` is the only spelling. New
 > configurations should set the adapter and leave `deploy_mode` at its
 > default.
+
+### Prefix (games.yaml)
+
+A Windows game on Linux runs inside a Wine or Proton **prefix**: a
+directory holding a `drive_c`, where the game keeps settings and saves
+outside its install directory. Some games keep files there that lmm will
+write — a Bethesda game's `Plugins.txt`, under
+`drive_c/users/<user>/AppData/Local/<game>` — so lmm needs to know where
+the prefix is. Most games never need one, and lmm does nothing with a
+prefix unless the game's adapter needs it.
+
+- **`prefix`** names the prefix: the directory holding `drive_c` (and
+  `system.reg`). `~/` is your home directory, and the path must be
+  absolute.
+- **Without `prefix`**, lmm uses Steam's own: for a game with a Steam app
+  id it looks for `<library>/steamapps/compatdata/<appid>/pfx` in **every**
+  Steam library that `libraryfolders.vdf` lists, not only the one the game
+  is installed in (Steam leaves the prefix behind when a game moves to
+  another library). If several libraries have one, lmm uses the most
+  recently used and says which. If none does, the prefix is unresolved —
+  run the game once through Steam, or set `prefix`.
+- An explicit `prefix` always wins, even when it names nothing usable: a
+  typo is reported, never quietly replaced by a different directory.
+- **`prefix_user`** names the Windows user directory under
+  `drive_c/users`. Without it, lmm uses `steamuser` in a prefix Proton or
+  umu made, and otherwise the one directory there besides `Public`. With
+  none, or several, the user is unresolved, and `prefix_user` is the
+  answer.
+
+```yaml
+games:
+  skyrim-se:
+    name: "Skyrim Special Edition"
+    install_path: "~/Games/Heroic/Skyrim Special Edition"
+    mod_path: "~/Games/Heroic/Skyrim Special Edition/Data"
+    prefix: "~/Games/Heroic/Prefixes/default/Skyrim Special Edition"
+    prefix_user: steamuser
+    sources:
+      nexusmods: skyrimspecialedition
+```
+
+`lmm game detect` fills in `prefix` for a Steam game whose compatdata
+prefix it finds. `lmm game edit <game> --prefix <dir>` and `--prefix-user
+<name>` set them, and `""` clears either. `lmm game show <game>` (and its
+`--json` `prefix_status`, also `GET /api/v1/games/<game>`) prints the
+prefix lmm resolved: the directory, whether `games.yaml` named it or lmm
+found it in Steam's compatdata (and in which library), the user inside
+it, and, when lmm cannot use it, why.
+
+An unresolved prefix is never an error. For a game whose adapter writes
+into the prefix, `lmm verify` reports it as a `prefix_unresolved`
+warning, saying what is missing; for every other game it is reported
+nowhere, because nothing needs it.
 
 ### Deploy Mode (games.yaml)
 

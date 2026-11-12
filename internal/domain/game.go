@@ -124,6 +124,22 @@ type Game struct {
 	// its app id. Never on the wire (GameLaunch says why): core.LaunchInfo
 	// is what a document says about launching.
 	Launch *GameLaunch `json:"-"`
+	// Prefix is games.yaml's optional `prefix:` (#605): the Wine or Proton
+	// prefix the game runs in - the directory holding drive_c - where a
+	// game keeps state lmm may need to write outside the install directory
+	// (a Bethesda game's Plugins.txt, under AppData). Empty means "derive
+	// it": core looks for Steam's compatdata prefix for the game's app id
+	// in every Steam library (core.Service.ResolvePrefix). It is the
+	// CONFIGURED value, as Adapter is, never the derived one.
+	//
+	// omitempty, like the rest of the optional per-game settings, so every
+	// document a game that sets none produces is byte-identical.
+	Prefix string `json:"prefix,omitempty"`
+	// PrefixUser is games.yaml's optional `prefix_user:` (#605): the
+	// Windows user directory under the prefix's drive_c/users that the
+	// game writes to. Empty means "derive it" - "steamuser" in a Proton or
+	// umu prefix, else the one user directory besides Public.
+	PrefixUser string `json:"prefix_user,omitempty"`
 }
 
 // DeployMode determines how downloaded mod archives are handled
@@ -277,6 +293,12 @@ type DetectedGame struct {
 	// into the Game this candidate configures, so a Classic install is
 	// never offered a Retail addon. Only a curated entry carries one.
 	CurseForge *GameCurseForge `json:"curseforge,omitempty"`
+	// Prefix is the Steam compatdata prefix detection found for the app
+	// (#605) - <library>/steamapps/compatdata/<appid>/pfx in any Steam
+	// library, the most recently used when there are several - which
+	// prefills the configured game's `prefix:`. A row with no compatdata
+	// prefix, and every non-Steam row, carries no member at all.
+	Prefix string `json:"prefix,omitempty"`
 	// Launch is how the configured game is started (#501), when detection
 	// knows - a Battle.net game is started through its prefix's Battle.net
 	// client (#545). Never on the wire, for domain.Game.Launch's reason:

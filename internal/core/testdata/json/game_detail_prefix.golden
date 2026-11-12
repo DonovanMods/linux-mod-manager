@@ -1,0 +1,31 @@
+{
+  "id": "skyrim-se",
+  "name": "Skyrim Special Edition",
+  "install_path": "/home/user/Games/Heroic/Skyrim Special Edition",
+  "mod_path": "/home/user/Games/Heroic/Skyrim Special Edition/Data",
+  "source_ids": {
+    "nexusmods": "skyrimspecialedition"
+  },
+  "link_method": "symlink",
+  "link_method_explicit": false,
+  "hooks": {
+    "install": {},
+    "uninstall": {}
+  },
+  "deploy_mode": "extract",
+  "convert_paks_explicit": false,
+  "prefix": "/home/user/Games/Heroic/Prefixes/skyrim",
+  "default": false,
+  "loader_status": {
+    "game_id": "skyrim-se",
+    "installed": false
+  },
+  "prefix_status": {
+    "path": "/home/user/Games/Heroic/Prefixes/skyrim",
+    "origin": "explicit",
+    "user": "steamuser",
+    "user_origin": "proton",
+    "user_path": "/home/user/Games/Heroic/Prefixes/skyrim/drive_c/users/steamuser",
+    "resolved": true
+  }
+}

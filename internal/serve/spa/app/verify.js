@@ -11,9 +11,10 @@ import { displayVersion } from "./version.js";
 
 /** findingSubject names what a finding is about: its mod, or - for a
  * game-level row with no mod (issue 460: `mod_path_missing`) - the game's
- * mod path. */
+ * mod path, or (issue 605: `prefix_unresolved`) its Wine/Proton prefix. */
 export function findingSubject(f) {
   if (f.status === "mod_path_missing") return "Mod path";
+  if (f.status === "prefix_unresolved") return "Wine/Proton prefix";
   return f.mod_name || f.mod_id || f.status.replaceAll("_", " ");
 }
 
