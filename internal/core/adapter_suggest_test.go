@@ -124,3 +124,32 @@ func TestVerify_SuggestsTheCatalogAdapter(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, findingWithStatus(res.Result, core.VerifyStatusAdapterSuggested))
 }
+
+// A stated app id answers without a library scan: launch.steam_app_id and a
+// numeric steamworkshop mapping come first, and the scan - which reads every
+// app manifest - is the last resort.
+func TestSuggestedAdapter_StatedAppIDSkipsTheLibraryScan(t *testing.T) {
+	svc := newFlowsTestService(t)
+	svc.RegisterAdapter(bethesda.New())
+	scans := 0
+	svc.SetLauncher(core.NewLauncher(func(string) (core.SteamApp, bool) {
+		scans++
+		return core.SteamApp{}, false
+	}))
+	svc.SetCatalogAdapters(func(appID string) string {
+		if appID == "489830" {
+			return "bethesda"
+		}
+		return ""
+	})
+	for _, g := range []*domain.Game{
+		{ID: "a", InstallPath: t.TempDir(), Launch: &domain.GameLaunch{SteamAppID: "489830"}},
+		{ID: "b", InstallPath: t.TempDir(), SourceIDs: map[string]string{"steamworkshop": "489830"}},
+	} {
+		assert.Equal(t, "bethesda", svc.SuggestedAdapter(g), g.ID)
+	}
+	assert.Zero(t, scans, "no library scan when games.yaml states the app id")
+
+	assert.Empty(t, svc.SuggestedAdapter(&domain.Game{ID: "c", InstallPath: t.TempDir()}))
+	assert.Equal(t, 1, scans, "the scan is the last resort")
+}

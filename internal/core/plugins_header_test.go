@@ -146,6 +146,34 @@ func TestReadPluginHeader_Malformed(t *testing.T) {
 	}
 }
 
+// The two resource caps: a header with more masters than any game can load
+// is refused before it can grow a huge slice, and a header record bigger
+// than any real one is refused before a byte of it is read.
+func TestReadPluginHeader_Caps(t *testing.T) {
+	var subs [][]byte
+	for range maxMasters + 1 {
+		subs = append(subs, sub("MAST", []byte("A\x00")))
+	}
+	_, err := ReadPluginHeader(bytes.NewReader(tes4(0, subs...)))
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrPluginHeader))
+	assert.Contains(t, err.Error(), "masters")
+
+	got, err := ReadPluginHeader(bytes.NewReader(tes4(0, subs[:maxMasters]...)))
+	require.NoError(t, err, "exactly the cap is accepted")
+	assert.Len(t, got.Masters, maxMasters)
+
+	var hdr bytes.Buffer
+	hdr.WriteString("TES4")
+	_ = binary.Write(&hdr, binary.LittleEndian, uint32(maxHeaderRecord+1))
+	hdr.Write(make([]byte, 16))
+	_, err = ReadPluginHeader(&hdr)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrPluginHeader))
+	assert.Contains(t, err.Error(), "claims")
+	assert.LessOrEqual(t, maxHeaderRecord, 4<<20, "headers are kilobytes; the cap stays realistic")
+}
+
 // ClassifyPlugin applies a game's PluginSpec to a header: the esplugin
 // rules the spec's fields encode.
 func TestClassifyPlugin(t *testing.T) {

@@ -39,12 +39,27 @@ func (*Adapter) NormalizeArchive(req adapter.NormalizeRequest) (adapter.Layout, 
 
 	rewrites := make(map[string]string)
 	lifted := false
-	dests := make(map[string]string, len(members))
 	for _, m := range members {
 		rel := strings.TrimPrefix(m, wrapper)
 		if top, rest, ok := strings.Cut(rel, "/"); ok && rest != "" && strings.EqualFold(top, dataDir) {
 			rel = rest
 			lifted = true
+		}
+		if rel != m {
+			rewrites[m] = rel
+		}
+	}
+	if wrapper == "" && !lifted {
+		// Nothing is rewritten, so nothing the adapter did can merge two
+		// members: an archive with case-variant names is left as it was,
+		// without a warning about a clash the adapter did not cause.
+		return adapter.NewLayout(layoutKind, nil), nil
+	}
+	dests := make(map[string]string, len(members))
+	for _, m := range members {
+		rel := m
+		if r, ok := rewrites[m]; ok {
+			rel = r
 		}
 		if other, clash := dests[strings.ToLower(rel)]; clash {
 			return adapter.Layout{
@@ -53,12 +68,6 @@ func (*Adapter) NormalizeArchive(req adapter.NormalizeRequest) (adapter.Layout, 
 			}, nil
 		}
 		dests[strings.ToLower(rel)] = m
-		if rel != m {
-			rewrites[m] = rel
-		}
-	}
-	if wrapper == "" && !lifted {
-		return adapter.NewLayout(layoutKind, nil), nil
 	}
 	return adapter.NewLayout(layoutKind, rewrites), nil
 }

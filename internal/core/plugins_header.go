@@ -34,10 +34,17 @@ const (
 	// since Skyrim.
 	tes4HeaderSize = 24
 	// maxHeaderRecord bounds the header record's declared size. Real ones
-	// are kilobytes; this only refuses a size no plugin has.
-	maxHeaderRecord = 64 << 20
+	// are kilobytes, the largest part being an ONAM list of 4-byte form
+	// ids that a big master can run to a few hundred KiB; ONAM is streamed
+	// past, never buffered, so this bounds the read, not memory.
+	maxHeaderRecord = 4 << 20
 	// maxMasterName bounds one master's file name in bytes.
 	maxMasterName = 1024
+	// maxMasters bounds how many masters one header may name - far more
+	// than any game loads (255 full plugins plus the light ones count as
+	// separate files, but no plugin depends on more than a few dozen) - so
+	// a hostile header cannot grow the slice without limit.
+	maxMasters = 1024
 	// compressedFlag marks a compressed record, which a header never is.
 	compressedFlag = 0x00040000
 )
@@ -124,6 +131,9 @@ func ReadPluginHeader(r io.Reader) (PluginHeader, error) {
 			}
 			if len(raw) == 0 {
 				return PluginHeader{}, pluginHeaderError("a master has an empty name")
+			}
+			if len(out.Masters) == maxMasters {
+				return PluginHeader{}, pluginHeaderError("the header names more than %d masters", maxMasters)
 			}
 			out.Masters = append(out.Masters, decodeWindows1252(raw))
 		default:

@@ -133,3 +133,23 @@ func TestNormalizeArchive_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, l.Applies())
 }
+
+// An archive the adapter leaves untouched gets no collision warning, even
+// when two members differ only in case: nothing was rewritten, so nothing
+// the adapter did could have merged them.
+func TestNormalizeArchive_UntouchedCaseVariantsAreNotWarned(t *testing.T) {
+	got, applies, warnings := layoutOf(t, "Textures/a.dds", "textures/a.dds")
+	assert.False(t, applies)
+	assert.Empty(t, warnings)
+	assert.Equal(t, map[string]string{"Textures/a.dds": "Textures/a.dds", "textures/a.dds": "textures/a.dds"}, got)
+}
+
+// A Data-relative mod whose files all sit under one folder - an SKSE plugin
+// is the common case - is never mistaken for a wrapper: SKSE/ is Data
+// content, and stripping it would deploy the DLL to Data/Plugins/.
+func TestNormalizeArchive_SingleDataFolderIsNotStripped(t *testing.T) {
+	got, applies, warnings := layoutOf(t, "SKSE/Plugins/x.dll")
+	assert.False(t, applies)
+	assert.Empty(t, warnings)
+	assert.Equal(t, map[string]string{"SKSE/Plugins/x.dll": "SKSE/Plugins/x.dll"}, got)
+}

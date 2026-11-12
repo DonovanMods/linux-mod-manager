@@ -62,15 +62,18 @@ func (s *Service) SuggestedAdapter(game *domain.Game) string {
 }
 
 // gameSteamAppID is game's Steam app id as the launcher finds it, or "".
+// What games.yaml states (launch.steam_app_id, then a numeric steamworkshop
+// mapping) answers first; the launcher's library scan, which reads Steam's
+// app manifests, is the last resort.
 func (s *Service) gameSteamAppID(game *domain.Game) string {
-	if l := s.launcher(); l != nil {
-		return l.steamApp(game).AppID
-	}
 	if game.Launch != nil && game.Launch.SteamAppID != "" {
 		return game.Launch.SteamAppID
 	}
 	if id := game.SourceIDs["steamworkshop"]; id != "" && strings.Trim(id, "0123456789") == "" {
 		return id
+	}
+	if l := s.launcher(); l != nil {
+		return l.steamApp(game).AppID
 	}
 	return ""
 }
