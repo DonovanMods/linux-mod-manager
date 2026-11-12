@@ -2,19 +2,27 @@
 // refused it for a reason the user can fix without re-fetching the bytes
 // (#359 review F9).
 //
-// There is exactly one such refusal today: the BepInEx loader precondition.
-// A downloaded archive's SHAPE is not knowable until it is extracted, so
-// PlanInstall cannot answer "does this game need a loader declared?" and the
-// refusal necessarily lands mid-ingest - after the file is on disk. The
-// remedy is one `lmm game edit <game> --loader bepinex` away and the bytes
-// are identical afterwards, so discarding them makes the fix cost a second
-// download; on a NexusMods free-tier account that is a second MANUAL
-// download, through the browser, with a wait.
+// There are two such reasons.
+//
+//  1. The BepInEx loader precondition. A downloaded archive's SHAPE is not
+//     knowable until it is extracted, so PlanInstall cannot answer "does
+//     this game need a loader declared?" and the refusal necessarily lands
+//     mid-ingest - after the file is on disk. The remedy is one `lmm game
+//     edit <game> --loader bepinex` away and the bytes are identical
+//     afterwards, so discarding them makes the fix cost a second download;
+//     on a NexusMods free-tier account that is a second MANUAL download,
+//     through the browser, with a wait.
+//  2. A blocked Apply (#602). An install-shaped Apply acquires every item
+//     before it commits any (acquire_engine.go), and refuses with nothing
+//     written when one item needs an answer. The OTHER items' archives
+//     were fetched and verified and are fine; the re-run with the answer
+//     must not fetch them again (errAcquireBlocked).
 //
 // It is deliberately not a general download cache. Only a refusal the user
-// answers by reconfiguring the GAME retains anything: a checksum mismatch, a
-// truncated body or a source error means the bytes are suspect, and keeping
-// those would turn a transient failure into a permanently poisoned retry.
+// answers without changing the bytes retains anything: a checksum mismatch,
+// a truncated body or a source error means the bytes are suspect, and
+// keeping those would turn a transient failure into a permanently poisoned
+// retry.
 package core
 
 import (
@@ -105,8 +113,29 @@ func (s *Service) reuseRetainedDownload(sourceID, modID, fileID string) (string,
 	}, true
 }
 
-// retainRefusedDownload keeps archivePath for the retry when err is the
-// loader precondition, and does nothing otherwise.
+// errAcquireBlocked is the second retention reason: the archive acquired
+// cleanly, but the Apply it belonged to refused at its decide step because
+// of ANOTHER item, so nothing was committed (#602).
+var errAcquireBlocked = errors.New("the apply was refused before anything was written")
+
+// retainsDownload reports whether a refusal keeps the archive: the loader
+// precondition, or a blocked Apply.
+func retainsDownload(err error) bool {
+	var loaderErr *LoaderRequiredError
+	return errors.As(err, &loaderErr) || errors.Is(err, errAcquireBlocked)
+}
+
+// retainBlocked keeps an acquired, uncommitted network download for the
+// re-run of a blocked Apply. A local ingest has nothing to keep.
+func (s *Service) retainBlocked(a *acquiredFile) {
+	if a == nil || a.download == nil {
+		return
+	}
+	s.retainRefusedDownload(errAcquireBlocked, a.sourceID, a.mod.ID, a.file.ID, a.archivePath, a.download)
+}
+
+// retainRefusedDownload keeps archivePath for the retry when err is one of
+// the two retention reasons (retainsDownload), and does nothing otherwise.
 //
 // Best-effort by design: a failure to retain costs the user one repeated
 // download, which is exactly what happened before this existed, so it is
@@ -114,8 +143,7 @@ func (s *Service) reuseRetainedDownload(sourceID, modID, fileID string) (string,
 // report. It is also a no-op when the archive already IS the retained copy
 // (a second refused retry).
 func (s *Service) retainRefusedDownload(err error, sourceID, modID, fileID, archivePath string, result *DownloadResult) {
-	var loaderErr *LoaderRequiredError
-	if !errors.As(err, &loaderErr) || result == nil {
+	if !retainsDownload(err) || result == nil {
 		return
 	}
 	dir := s.retainedDownloadDir(sourceID, modID, fileID)
