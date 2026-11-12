@@ -325,9 +325,24 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 		edit.PrefixUser = &gameEditPrefixUser
 	}
 
+	// #606 review fix 1: an adapter's layout applies when a mod is
+	// ingested, so mods already installed keep the one they were installed
+	// with. Worked out before the edit (the count does not change with it)
+	// and said after it succeeds, on stderr - a warning, which in --json mode
+	// must not sit beside the document.
+	var switchWarning string
+	if adapterSet {
+		if switchWarning, err = service.AdapterSwitchWarning(ctx, game, gameEditAdapter); err != nil {
+			return err
+		}
+	}
+
 	entry, err := service.EditGame(ctx, gameID, edit)
 	if err != nil {
 		return err
+	}
+	if switchWarning != "" {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", switchWarning)
 	}
 
 	// Ruling 15: the GameListEntry document - the same row `lmm game list

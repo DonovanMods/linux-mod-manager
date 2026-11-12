@@ -58,3 +58,51 @@ func TestE2E_AdapterSuggestion_AbsentWithoutACatalogAdapter(t *testing.T) {
 	assert.False(t, present)
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// #606 review fix 1: on a game with mods already installed, the button asks
+// first - core's sentence says they keep the layout they were installed
+// with - and Cancel changes nothing; only "Switch anyway" writes the
+// adapter.
+func TestE2E_AdapterSuggestion_ConfirmsWhenModsAreInstalled(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+	f.Svc.RegisterAdapter(bethesda.New())
+	f.Svc.SetCatalogAdapters(func(appID string) string {
+		if appID == "489830" {
+			return "bethesda"
+		}
+		return ""
+	})
+	f.Game.Launch = &domain.GameLaunch{SteamAppID: "489830"}
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+
+	var warning string
+	var confirmGoneAfterCancel bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		pollUntil(`document.querySelector('[data-testid="adapter-suggestion"]') !== null`),
+		clickWhenSettled(`[data-testid="adapter-suggestion"] [data-action="use-suggested-adapter"]`),
+		pollUntil(`document.querySelector('[data-testid="adapter-suggestion-confirm"]') !== null`),
+		textContent(`[data-testid="adapter-suggestion-confirm"]`, &warning),
+		clickWhenSettled(`[data-action="cancel-suggested-adapter"]`),
+		pollUntil(`document.querySelector('[data-testid="adapter-suggestion-confirm"]') === null`),
+		chromedp.Evaluate(`document.querySelector('[data-action="use-suggested-adapter"]') !== null`, &confirmGoneAfterCancel),
+	)
+	assert.Contains(t, warning, "3 mod(s) already installed for this game keep the layout they were installed with")
+	assert.Contains(t, warning, "Switch anyway")
+	assert.True(t, confirmGoneAfterCancel, "Cancel puts the offer back")
+	game, err := f.Svc.GetGame(f.Game.ID)
+	require.NoError(t, err)
+	assert.Empty(t, game.Adapter, "Cancel wrote nothing")
+
+	f.runInBrowser(t,
+		clickWhenSettled(`[data-testid="adapter-suggestion"] [data-action="use-suggested-adapter"]`),
+		pollUntil(`document.querySelector('[data-action="confirm-suggested-adapter"]') !== null`),
+		clickWhenSettled(`[data-action="confirm-suggested-adapter"]`),
+		pollUntil(`document.querySelector('[data-testid="adapter-suggestion"]') === null`),
+	)
+	game, err = f.Svc.GetGame(f.Game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "bethesda", game.Adapter, "Switch anyway wrote the adapter")
+	assert.Empty(t, f.BrowserErrors())
+}

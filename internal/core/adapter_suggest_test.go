@@ -153,3 +153,41 @@ func TestSuggestedAdapter_StatedAppIDSkipsTheLibraryScan(t *testing.T) {
 	assert.Empty(t, svc.SuggestedAdapter(&domain.Game{ID: "c", InstallPath: t.TempDir()}))
 	assert.Equal(t, 1, scans, "the scan is the last resort")
 }
+
+// Review fix 1: switching an existing game's adapter leaves its installed
+// mods in the layout they were ingested with, so every place that offers or
+// makes the switch says so - in one sentence, core's.
+func TestAdapterSwitchWarning(t *testing.T) {
+	svc, install := suggestFixture(t)
+	ctx := context.Background()
+	game := &domain.Game{ID: "skyrim", Name: "Skyrim", InstallPath: install, ModPath: filepath.Join(install, "Data")}
+	require.NoError(t, svc.SaveGame(ctx, game))
+
+	warning, err := svc.AdapterSwitchWarning(ctx, game, "bethesda")
+	require.NoError(t, err)
+	assert.Empty(t, warning, "nothing installed, nothing to re-lay out")
+
+	seedInstalledMod(t, svc, game, "src", "a", "1.0", true, nil)
+	seedInstalledMod(t, svc, game, "src", "b", "1.0", true, nil)
+
+	warning, err = svc.AdapterSwitchWarning(ctx, game, "bethesda")
+	require.NoError(t, err)
+	assert.Contains(t, warning, "2 mod(s) already installed")
+	assert.Contains(t, warning, "keep the layout they were installed with")
+	assert.Contains(t, warning, "uninstall it")
+
+	same, err := svc.AdapterSwitchWarning(ctx, game, "generic-files")
+	require.NoError(t, err)
+	assert.Empty(t, same, "no switch, no warning")
+
+	status, err := svc.GameStatus(ctx, game)
+	require.NoError(t, err)
+	assert.Equal(t, "bethesda", status.SuggestedAdapter)
+	assert.Equal(t, warning, status.SuggestedAdapterWarning, "the game page shows the same sentence")
+
+	res, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	f := findingWithStatus(res.Result, core.VerifyStatusAdapterSuggested)
+	require.NotNil(t, f)
+	assert.Contains(t, f.Note, warning, "the verify note says it too")
+}

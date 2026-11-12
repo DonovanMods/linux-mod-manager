@@ -392,6 +392,12 @@ type GameStatus struct {
 	// page offers to switch to. omitempty: a game with nothing to suggest
 	// emits no key.
 	SuggestedAdapter string `json:"suggested_adapter,omitempty"`
+	// SuggestedAdapterWarning is what taking SuggestedAdapter means for the
+	// mods already installed (Service.AdapterSwitchWarning): they keep the
+	// layout they were installed with. The game page shows it and asks for
+	// confirmation before switching. omitempty: absent when there is no
+	// suggestion or no installed mod.
+	SuggestedAdapterWarning string `json:"suggested_adapter_warning,omitempty"`
 }
 
 // Status summarizes every configured game, ordered by ID (ListGames').
@@ -489,6 +495,13 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		Profiles:            make([]ProfileSummary, len(profiles)),
 		ModPathError:        modPathErr,
 		SuggestedAdapter:    s.SuggestedAdapter(game),
+	}
+	if status.SuggestedAdapter != "" {
+		warning, err := s.AdapterSwitchWarning(ctx, game, status.SuggestedAdapter)
+		if err != nil {
+			return nil, err
+		}
+		status.SuggestedAdapterWarning = warning
 	}
 	if game.LinkMethodExplicit {
 		status.LinkMethodSource = "game"

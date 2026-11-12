@@ -16,9 +16,16 @@ import { ApiError, updateGame } from "../api.js";
  * AdapterSuggestion renders nothing for a game with nothing to suggest.
  * `onApplied` re-reads the game's status, which then carries no suggestion,
  * so the note goes away by itself.
+ *
+ * `warning` is core's sentence for a game with mods already installed
+ * (core.Service.AdapterSwitchWarning): they keep the layout they were
+ * installed with. When there is one, the button asks first - the warning,
+ * then "Switch anyway" or "Cancel" - because the switch cannot re-lay out
+ * what is already in the cache.
  */
-export function AdapterSuggestion({ suggested, gameID, onApplied }) {
+export function AdapterSuggestion({ suggested, warning, gameID, onApplied }) {
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
   if (!suggested) return null;
 
@@ -27,6 +34,7 @@ export function AdapterSuggestion({ suggested, gameID, onApplied }) {
     setError("");
     try {
       await updateGame(gameID, { adapter: suggested });
+      setConfirming(false);
       await onApplied?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -34,6 +42,8 @@ export function AdapterSuggestion({ suggested, gameID, onApplied }) {
       setBusy(false);
     }
   }
+
+  const offer = () => (warning ? setConfirming(true) : apply());
 
   return html`
     <div
@@ -48,15 +58,48 @@ export function AdapterSuggestion({ suggested, gameID, onApplied }) {
         it lays out and loads its mods. It uses <code>generic-files</code> now;
         lmm never changes that by itself.
       </p>
-      <button
-        type="button"
-        class="button button--small"
-        data-action="use-suggested-adapter"
-        disabled=${busy}
-        onClick=${apply}
-      >
-        Use the ${suggested} adapter
-      </button>
+      ${
+        confirming
+          ? html`
+              <div
+                class="adapter-suggestion__confirm"
+                data-testid="adapter-suggestion-confirm"
+                role="alertdialog"
+                aria-label="Switch adapter?"
+              >
+                <p class="adapter-suggestion__text">${warning}.</p>
+                <button
+                  type="button"
+                  class="button button--small"
+                  data-action="confirm-suggested-adapter"
+                  disabled=${busy}
+                  onClick=${apply}
+                >
+                  Switch anyway
+                </button>
+                <button
+                  type="button"
+                  class="button button--small"
+                  data-action="cancel-suggested-adapter"
+                  disabled=${busy}
+                  onClick=${() => setConfirming(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            `
+          : html`
+              <button
+                type="button"
+                class="button button--small"
+                data-action="use-suggested-adapter"
+                disabled=${busy}
+                onClick=${offer}
+              >
+                Use the ${suggested} adapter
+              </button>
+            `
+      }
       ${
         error &&
         html`<p class="adapter-suggestion__error" role="alert">${error}</p>`

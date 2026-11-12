@@ -263,6 +263,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
         }
         <${AdapterSuggestion}
           suggested=${status.suggested_adapter}
+          warning=${status.suggested_adapter_warning}
           gameID=${route.game}
           onApplied=${actions.reloadStatus}
         />

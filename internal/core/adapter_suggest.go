@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -78,16 +79,52 @@ func (s *Service) gameSteamAppID(game *domain.Game) string {
 	return ""
 }
 
+// AdapterSwitchWarning says what moving game onto adapter `to` means for
+// the mods already installed for it (review fix 1, #606): an adapter's
+// archive layout applies when a mod is ingested, so every mod installed
+// before the switch keeps the layout it was installed with, and only mods
+// installed or updated afterwards get the new one. It returns "" when the
+// switch changes nothing (the game already resolves to `to`) or when no mod
+// is installed in any profile. One sentence, shared by every place that
+// offers or makes the switch: verify's adapter_suggested note, the game
+// page (GameStatus.SuggestedAdapterWarning) and `lmm game edit --adapter`.
+func (s *Service) AdapterSwitchWarning(ctx context.Context, game *domain.Game, to string) (string, error) {
+	if game == nil {
+		return "", nil
+	}
+	after := *game
+	after.Adapter = to
+	if s.AdapterName(&after) == s.AdapterName(game) {
+		return "", nil
+	}
+	n, err := s.db.CountGameMods(ctx, game.ID)
+	if err != nil || n == 0 {
+		return "", err
+	}
+	return adapterSwitchNote(n, s.AdapterName(&after)), nil
+}
+
+// adapterSwitchNote is AdapterSwitchWarning's sentence for n installed mods.
+func adapterSwitchNote(n int, to string) string {
+	return fmt.Sprintf("%d mod(s) already installed for this game keep the layout they were installed with; "+
+		"only mods installed or updated after the switch get the %s adapter's layout. "+
+		"To lay an installed mod out again, uninstall it (from every profile that has it) and install it again", n, to)
+}
+
 // adapterSuggestionPass adds the adapter_suggested note to a verify run.
 func (r *verifyRun) adapterSuggestionPass() {
 	name := r.svc.SuggestedAdapter(r.game)
 	if name == "" {
 		return
 	}
+	note := fmt.Sprintf("lmm's game catalog sets this game up with `adapter: %s`, and it uses %s; "+
+		"the %s adapter knows how this game lays out and loads its mods", name, adapter.GenericID, name)
+	if warning, err := r.svc.AdapterSwitchWarning(r.ctx, r.game, name); err == nil && warning != "" {
+		note += ". " + warning
+	}
 	r.finding(VerifyFinding{
-		Status: VerifyStatusAdapterSuggested,
-		Note: fmt.Sprintf("lmm's game catalog sets this game up with `adapter: %s`, and it uses %s; "+
-			"the %s adapter knows how this game lays out and loads its mods", name, adapter.GenericID, name),
+		Status:        VerifyStatusAdapterSuggested,
+		Note:          note,
 		Recorded:      adapter.GenericID,
 		Effective:     name,
 		FixableReason: fmt.Sprintf("lmm never changes a game's adapter by itself; to use it, run: lmm game edit %s --adapter %s", r.game.ID, name),
