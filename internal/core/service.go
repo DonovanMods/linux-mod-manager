@@ -145,6 +145,11 @@ type Service struct {
 	// until the composition root calls SetGameProbe. Atomic for the same
 	// reason as launcherPtr.
 	gameProbePtr atomic.Pointer[GameProbe]
+	// steamLibrariesPtr lists every Steam library on the machine, for the
+	// compatdata probe a game's prefix is derived by (#605); nil until the
+	// composition root calls SetSteamLibraries, which leaves only an
+	// explicit `prefix:` resolvable. Atomic for launcherPtr's reason.
+	steamLibrariesPtr atomic.Pointer[func() []string]
 	// launchMu guards launchMethods, the launch methods registered after
 	// the built-in ones (RegisterLaunchMethod).
 	launchMu      sync.Mutex

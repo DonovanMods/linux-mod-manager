@@ -170,6 +170,29 @@ func (x *InstallAppIndex) rebuild(roots []steamRoot) {
 	}
 }
 
+// AllLibraryPaths is every Steam library on the machine, each once however
+// many paths reach it: every library of every native Steam root
+// (FindSteamRoots) and then of the Flatpak one, in that order. It is what
+// core probes for a game's compatdata prefix (#605), which can be in any
+// library, not only the one the game is installed in.
+func AllLibraryPaths() []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, root := range currentSteamRoots() {
+		libraries, err := GetLibraryPaths(root.path)
+		if err != nil {
+			continue
+		}
+		for _, lib := range libraries {
+			if real := realDir(lib); !seen[real] {
+				seen[real] = true
+				out = append(out, lib)
+			}
+		}
+	}
+	return out
+}
+
 // currentSteamRoots is every Steam root, native first and then the
 // Flatpak's. A native-looking root (~/.steam/steam) can be a symlink into
 // the Flatpak's data; it is the Flatpak Steam all the same.

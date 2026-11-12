@@ -3200,6 +3200,69 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #605: `lmm game show`'s document for a game with a prefix -
+			// here one games.yaml names, resolved, with the user Proton
+			// gives every prefix. game_detail.golden is a game with
+			// nothing to show, and carries no prefix_status member at all.
+			"game_detail_prefix",
+			core.GameDetail{
+				GameListEntry: core.GameListEntry{
+					Game: domain.Game{
+						ID: "skyrim-se", Name: "Skyrim Special Edition",
+						InstallPath: "/home/user/Games/Heroic/Skyrim Special Edition",
+						ModPath:     "/home/user/Games/Heroic/Skyrim Special Edition/Data",
+						SourceIDs:   map[string]string{"nexusmods": "skyrimspecialedition"},
+						Prefix:      "/home/user/Games/Heroic/Prefixes/skyrim",
+					},
+				},
+				Loader: &core.LoaderStatus{GameID: "skyrim-se"},
+				Prefix: &core.PrefixStatus{
+					Path: "/home/user/Games/Heroic/Prefixes/skyrim", Origin: core.PrefixOriginExplicit,
+					User: "steamuser", UserOrigin: core.PrefixUserProton,
+					UserPath: "/home/user/Games/Heroic/Prefixes/skyrim/drive_c/users/steamuser",
+					Resolved: true,
+				},
+			},
+		},
+		{
+			// #605: a prefix derived from Steam's compatdata, found in two
+			// libraries - the most recently used wins, and the document
+			// says which, from where, and why.
+			"prefix_status",
+			core.PrefixStatus{
+				Path:       "/mnt/games/SteamLibrary/steamapps/compatdata/489830/pfx",
+				Origin:     core.PrefixOriginSteam,
+				SteamAppID: "489830",
+				Library:    "/mnt/games/SteamLibrary",
+				Candidates: []core.PrefixCandidate{
+					{Library: "/mnt/games/SteamLibrary", Path: "/mnt/games/SteamLibrary/steamapps/compatdata/489830/pfx", ModifiedAt: fixedTime},
+					{Library: "/home/user/.local/share/Steam", Path: "/home/user/.local/share/Steam/steamapps/compatdata/489830/pfx", ModifiedAt: fixedTime.Add(-24 * time.Hour)},
+				},
+				Note:       "app 489830 has a compatdata prefix in 2 Steam libraries; using the most recently used one, in /mnt/games/SteamLibrary (last used 2026-08-27T12:00:00Z) - set prefix: to choose another",
+				User:       "steamuser",
+				UserOrigin: core.PrefixUserProton,
+				UserPath:   "/mnt/games/SteamLibrary/steamapps/compatdata/489830/pfx/drive_c/users/steamuser",
+				Resolved:   true,
+			},
+		},
+		{
+			// #605: one library's compatdata prefix, as prefix_status's
+			// candidates list each.
+			"prefix_candidate",
+			core.PrefixCandidate{Library: "/mnt/games/SteamLibrary", Path: "/mnt/games/SteamLibrary/steamapps/compatdata/489830/pfx", ModifiedAt: fixedTime},
+		},
+		{
+			// #605: a game whose adapter needs its prefix, and lmm cannot
+			// find one - the prefix_unresolved finding, never an error.
+			"prefix_status_unresolved",
+			core.PrefixStatus{
+				SteamAppID: "489830",
+				Problem:    "no Steam compatdata prefix for app 489830 in any Steam library: run the game once through Steam (with Proton), or set prefix: (`lmm game edit skyrim-se --prefix <dir>`)",
+				Needed:     true,
+				Finding:    core.FindingPrefixUnresolved,
+			},
+		},
+		{
 			// #359 unit 3: the loader report `lmm game show` prints and the
 			// web game page renders. It carries the declared AND the detected
 			// answer, so a disagreement is visible on the wire rather than

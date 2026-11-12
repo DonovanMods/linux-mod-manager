@@ -130,6 +130,13 @@ type GameConfig struct {
 	// Launch is #501's optional block. A POINTER, like Loader, so a game
 	// that sets nothing gains no `launch:` key on a re-marshal.
 	Launch *GameLaunchYAML `yaml:"launch,omitempty"`
+	// Prefix and PrefixUser are #605's Wine/Proton prefix and the Windows
+	// user inside it. omitempty, so a game that sets neither gains no key
+	// on a re-marshal. A value is loaded as written ("~/" expanded); one
+	// that names nothing usable is reported by core's prefix resolution,
+	// never a load error.
+	Prefix     string `yaml:"prefix,omitempty"`
+	PrefixUser string `yaml:"prefix_user,omitempty"`
 }
 
 // GameLaunchYAML is the YAML representation of how a game is started
@@ -277,6 +284,8 @@ func parseGames(gamesPath string, data []byte) (map[string]*domain.Game, error) 
 			Loader:              loader,
 			CurseForge:          curseForge,
 			Launch:              launch,
+			Prefix:              ExpandPath(cfg.Prefix),
+			PrefixUser:          cfg.PrefixUser,
 			Hooks: domain.GameHooks{
 				Install: domain.HookConfig{
 					BeforeAll:  ExpandPath(cfg.Hooks.Install.BeforeAll),
@@ -453,6 +462,7 @@ func gameConfigOf(game *domain.Game) GameConfig {
 			cfg.Launch.BattleNet = &GameBattleNetLaunchYAML{Prefix: b.Prefix, Product: b.Product, Runner: b.Runner, Proton: b.Proton}
 		}
 	}
+	cfg.Prefix, cfg.PrefixUser = game.Prefix, game.PrefixUser
 	return cfg
 }
 

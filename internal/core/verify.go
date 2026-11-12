@@ -1191,6 +1191,21 @@ func (r *verifyRun) adapterPass(installedMods []domain.InstalledMod) {
 			FixableReason: f.FixableReason,
 		}, VerifyEvent{Recorded: f.Recorded, Effective: f.Effective})
 	}
+
+	// #605: a game whose adapter writes into its prefix is told here when
+	// lmm cannot find it - before a deploy has anything to skip. A warning:
+	// nothing is broken yet, and every other game says nothing at all.
+	if !adapter.UsesPrefix(a, r.game) {
+		return
+	}
+	if st := r.svc.ResolvePrefix(r.game); st.Finding == FindingPrefixUnresolved {
+		r.result.Warnings++
+		r.finding(VerifyFinding{
+			Status:        VerifyStatusPrefixUnresolved,
+			Note:          st.Problem,
+			FixableReason: "--fix cannot choose a prefix: set prefix: (and prefix_user:) in games.yaml, or with `lmm game edit " + r.game.ID + " --prefix <dir>`",
+		}, VerifyEvent{})
+	}
 }
 
 // externalPresencePass is #269's verify tier for EXTERNAL mods: the only

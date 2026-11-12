@@ -789,6 +789,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			gameSourcesRequest{InstallPath: new("/mnt/library/valheim"), ModPath: new("BepInEx/plugins")},
 		},
 		{
+			// #605: the prefix members - the Wine/Proton prefix and the
+			// Windows user inside it; "" clears either.
+			"game_prefix_request",
+			gameSourcesRequest{Prefix: new("/home/user/Games/Heroic/Prefixes/skyrim"), PrefixUser: new("dyoung")},
+		},
+		{
 			// The detect apply's body: which listing rows to add, named by
 			// 1-based index or slug (core.SelectDetectedGames resolves
 			// both, so the golden carries one of each).
