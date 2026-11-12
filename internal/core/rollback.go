@@ -11,7 +11,6 @@ import (
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // --- PlanRollback (v2 Phase 2 Unit I, #289) ---
@@ -131,7 +130,7 @@ func (s *Service) PlanRollback(ctx context.Context, game *domain.Game, profileNa
 		plan.Refusal = lockedRefUnlockOnlyMessage(mod.Mod, profileName, ref)
 	}
 
-	plan.CacheMissing = !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.PreviousVersion, Variant: mod.PreviousVariant})
+	plan.CacheMissing = !s.GetGameCache(game).Exists(previousCacheKey(game.ID, mod))
 
 	return plan, nil
 }
@@ -330,7 +329,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 		return result, fmt.Errorf("no previous version available for rollback")
 	}
 
-	if !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.PreviousVersion, Variant: mod.PreviousVariant}) {
+	if !s.GetGameCache(game).Exists(previousCacheKey(game.ID, &mod)) {
 		return result, fmt.Errorf("previous version %s not found in cache", mod.PreviousVersion)
 	}
 
