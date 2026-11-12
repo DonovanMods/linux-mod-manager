@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A FOMOD installer engine, not yet wired into installs (#604).** The new
+  `internal/fomod` package reads `fomod/ModuleConfig.xml` in any encoding
+  real installers use and works out which files a set of installer choices
+  installs, following Vortex's rules so a NexusMods collection's recorded
+  choices reproduce the curator's install. It refuses C# scripted
+  installers and OMODs rather than running them. Installs start using it
+  in a later release (#354).
+
 ### Changed
 
 - **Installing several mods, and importing a profile, now download
