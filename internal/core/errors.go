@@ -272,13 +272,23 @@ func (e *ProfileSwitchIncompleteError) Details() any { return e.Result }
 // (#485). Result is the complete outcome, including every item that did
 // install and the structured failures, so frontends can show the partial
 // work without claiming the import succeeded.
+//
+// Result.Refused marks the other shape (#602): the import refused before
+// writing anything at all - not even the profile - because a mod needed an
+// answer only its download could reveal. The error then unwraps to that
+// refusal (*AcquireRefusedError, and through it a *LoaderRequiredError), so
+// a frontend that prints the loader's setup steps finds them.
 type ProfileImportIncompleteError struct {
 	Profile string
 	Result  *ProfileImportResult
+	refusal error
 }
 
 // Error names the imported profile and every failed mod with its reason.
 func (e *ProfileImportIncompleteError) Error() string {
+	if e.Result != nil && e.Result.Refused && e.refusal != nil {
+		return fmt.Sprintf("profile %q was not imported - nothing was written: %v", e.Profile, e.refusal)
+	}
 	return fmt.Sprintf("profile %q was not fully imported - %d mod(s) failed: %s",
 		e.Profile, e.Result.Failed, failedImportModsText(e.Result.Failures))
 }
@@ -286,6 +296,9 @@ func (e *ProfileImportIncompleteError) Error() string {
 // Details returns the whole ProfileImportResult for a frontend's error
 // envelope's "details" field.
 func (e *ProfileImportIncompleteError) Details() any { return e.Result }
+
+// Unwrap is the refusal behind a Refused import, nil otherwise.
+func (e *ProfileImportIncompleteError) Unwrap() error { return e.refusal }
 
 // failedModsText names each failed mod with its reason.
 func failedModsText(failed []InstalledRef) string {
@@ -682,6 +695,11 @@ type LoaderRequiredError struct {
 	// ModName is the mod that needs it, as the flow named it. Empty when the
 	// refusal is about an archive whose identity is not resolved yet.
 	ModName string `json:"mod_name,omitempty"`
+	// Mods names every mod that needs the loader when one refusal stands
+	// for several (#602: an install-shaped Apply collects them before
+	// writing anything); ModName then reads them as one phrase. Omitted for
+	// a single mod.
+	Mods []string `json:"mods,omitempty"`
 	// Layout names the EVIDENCE the requirement was inferred from, so a user
 	// can see WHY lmm decided this is a BepInEx mod: the archive shape in
 	// the normaliser's own words ("game-root-relative", "wrapped in a single
@@ -698,12 +716,15 @@ type LoaderRequiredError struct {
 // Error states the requirement and names the command that records it, so
 // even a caller that only prints the error is told what to do.
 func (e *LoaderRequiredError) Error() string {
-	name := e.ModName
+	name, verb := e.ModName, "needs"
 	if name == "" {
 		name = "this mod"
 	}
-	return fmt.Sprintf("%s needs the %s mod loader, which game %q does not declare: install it into the game directory, then run `lmm game edit %s --loader %s`",
-		name, loaderDisplayName(e.Kind), e.GameID, e.GameID, e.Kind)
+	if len(e.Mods) > 1 {
+		verb = "need"
+	}
+	return fmt.Sprintf("%s %s the %s mod loader, which game %q does not declare: install it into the game directory, then run `lmm game edit %s --loader %s`",
+		name, verb, loaderDisplayName(e.Kind), e.GameID, e.GameID, e.Kind)
 }
 
 // Details implements the --json error envelope's extension point.

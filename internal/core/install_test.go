@@ -3528,10 +3528,12 @@ func TestService_ApplyInstall_FreshInstall_CancelledAtDBSave_UndeploysFiles(t *t
 // TestService_ApplyInstall_BatchPath_CancelledBetweenPrimaryFiles_RecordsFailureAndErrors
 // is review finding I2's regression guard: on the BATCH path the primary is
 // the LAST entry in the loop by construction, so a per-file ctx check that
-// returns a bare nil lets ApplyInstall exit 0 with the primary uninstalled
-// and nothing recorded. Cancelling on the primary's FIRST InstallDepDownloadDone
-// (its download already finished; the next iteration's head check is what
-// fires) must surface as an error AND name the primary in result.Failed.
+// returns a bare nil let ApplyInstall exit 0 having installed nothing.
+// Cancelling on the primary's FIRST InstallDepDownloadDone (its download
+// already finished; the next file's check is what fires) must surface as an
+// error. Since #602 the cancellation lands in the ACQUIRE phase, before
+// anything is written, so the stronger property holds: neither the primary
+// nor the dependency acquired before it was installed or recorded.
 func TestService_ApplyInstall_BatchPath_CancelledBetweenPrimaryFiles_RecordsFailureAndErrors(t *testing.T) {
 	svc, game, _ := setupInterplayService(t, true)
 
@@ -3552,8 +3554,9 @@ func TestService_ApplyInstall_BatchPath_CancelledBetweenPrimaryFiles_RecordsFail
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result)
-	assert.Contains(t, installedRefNames(result.Failed), "Root", "the cancelled primary must be recorded as failed, not silently dropped")
-	assert.NotContains(t, installedRefNames(result.Installed), "Root")
+	assert.Empty(t, result.Installed, "a cancellation during acquire writes nothing, the dependency included")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "root", game.ID, "default")
+	assert.Error(t, err, "no row for the cancelled primary")
 }
 
 // TestService_ApplyInstall_CancelledEnsureProfileExists_RecordsFailureNotSilentDrop

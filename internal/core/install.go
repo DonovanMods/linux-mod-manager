@@ -793,6 +793,9 @@ type InstalledRef struct {
 	Name     string `json:"name"`
 	Version  string `json:"version,omitempty"`
 	Reason   string `json:"reason,omitempty"`
+	// Refusal is ItemFailure.Refusal's code, for a Failed entry of an
+	// install that refused before writing anything (#602).
+	Refusal string `json:"refusal,omitempty"`
 }
 
 // skippedRef builds the InstalledRef a flow records when a mod is not
@@ -894,6 +897,18 @@ type InstallResult struct {
 	// Warnings entry saying so, emitted as an InstallWarning event where it
 	// happens. Empty unless one did.
 	ReenabledDependencies []InstalledRef `json:"reenabled_dependencies,omitempty"`
+
+	// Refused is true when the Apply refused before writing anything
+	// (#602): an item needed an answer - today, a mod loader the game does
+	// not declare - discovered only after its download, so no item was
+	// written. Every item is then in the failure list, each with its
+	// Refusal code. omitzero, so an ordinary document is unchanged.
+	Refused bool `json:"refused,omitzero"`
+	// LoaderRequired is the loader refusal behind Refused, when that is
+	// what it was: the same document `lmm install --json` carries in its
+	// error envelope for a single mod, naming every mod that needs the
+	// loader, with the setup steps both frontends render.
+	LoaderRequired *LoaderRequiredError `json:"loader_required,omitempty"`
 
 	Warnings []string `json:"warnings,omitempty"`
 	Notes    []string `json:"notes,omitempty"`
@@ -1531,13 +1546,13 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		}
 	}
 
-	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_all", hooks.GetInstallBeforeAll()); err != nil {
-		if !opts.Force {
-			return result, fmt.Errorf("install.before_all hook failed: %w", err)
+	// The BATCH path runs install.before_all inside runInstallBatch, once
+	// every mod is acquired (#602); the STRICT path's single cache fill is
+	// already done above.
+	if len(plan.Dependencies) == 0 {
+		if err := runInstallBeforeAll(ctx, opts, runner, hooks, &hookCtx, result, emit); err != nil {
+			return result, err
 		}
-		msg := fmt.Sprintf("install.before_all hook failed (forced): %v", err)
-		result.Warnings = append(result.Warnings, msg)
-		emit(HookEvent{Scope: Scope{Op: OpInstall}, Phase: InstallBeforeAllForced, Stage: "install.before_all", Detail: msg})
 	}
 
 	// deferredWarnings holds every install.after_each (BATCH path: every mod
@@ -1566,18 +1581,22 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		// construction above); every dependency iteration gets nil and
 		// re-derives its own selection exactly as before.
 		total := len(mods)
+		targets := make([]batchTarget, 0, total)
 		for idx, mod := range mods {
-			if err := ctx.Err(); err != nil {
-				return result, err
-			}
 			target := batchTarget{mod: mod, idx: idx, total: total, dependency: idx < total-1}
 			if idx == total-1 {
 				target.files = primaryOverrideFiles
 			}
-			if warn := s.applyInstallBatchMod(ctx, game, plan, target, linkMethod, pm, opts, hooks, runner, result, emit); warn != nil {
-				deferredWarnings = append(deferredWarnings, *warn)
-			}
+			targets = append(targets, target)
 		}
+		warnings, refused, err := s.runInstallBatch(ctx, game, plan, targets, linkMethod, pm, opts, hooks, runner, result, emit)
+		if err != nil {
+			return result, err
+		}
+		if refused {
+			return result, nil
+		}
+		deferredWarnings = append(deferredWarnings, warnings...)
 		// The primary is mods' LAST entry, so a cancellation inside its own
 		// iteration never reaches the head-of-loop check above - without
 		// this, install.after_all would run and ApplyInstall would return
@@ -1681,26 +1700,10 @@ func (s *Service) applyInstallBatch(ctx context.Context, game *domain.Game, plan
 		return result, err
 	}
 	hookCtx := hookContextFor(game)
-	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_all", hooks.GetInstallBeforeAll()); err != nil {
-		if !opts.Force {
-			return result, fmt.Errorf("install.before_all hook failed: %w", err)
-		}
-		msg := fmt.Sprintf("install.before_all hook failed (forced): %v", err)
-		result.Warnings = append(result.Warnings, msg)
-		emit(HookEvent{Scope: Scope{Op: OpInstall}, Phase: InstallBeforeAllForced, Stage: "install.before_all", Detail: msg})
-	}
-
-	// deferredWarnings mirrors the dependency path's own convention (itself
-	// modeled on batchInstallMods' printHookWarnings, which accumulated hook
-	// errors across the WHOLE loop and printed them together only after
-	// everything else had already happened).
-	var deferredWarnings []Event
 
 	total := len(plan.Batch)
+	targets := make([]batchTarget, 0, total)
 	for idx, entry := range plan.Batch {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
 		// A local copy: the engine stamps the effective version onto the
 		// mod it installs, and a plan a caller may re-inspect (or re-apply
 		// after ErrStalePlan) must not be quietly rewritten by applying it.
@@ -1709,9 +1712,18 @@ func (s *Service) applyInstallBatch(ctx context.Context, game *domain.Game, plan
 		if entry.File != nil {
 			target.files = []domain.DownloadableFile{*entry.File}
 		}
-		if warn := s.applyInstallBatchMod(ctx, game, plan, target, linkMethod, pm, opts, hooks, runner, result, emit); warn != nil {
-			deferredWarnings = append(deferredWarnings, *warn)
-		}
+		targets = append(targets, target)
+	}
+	// deferredWarnings mirrors the dependency path's own convention (itself
+	// modeled on batchInstallMods' printHookWarnings, which accumulated hook
+	// errors across the WHOLE loop and printed them together only after
+	// everything else had already happened).
+	deferredWarnings, refused, err := s.runInstallBatch(ctx, game, plan, targets, linkMethod, pm, opts, hooks, runner, result, emit)
+	if err != nil {
+		return result, err
+	}
+	if refused {
+		return result, nil
 	}
 	// A cancellation inside the LAST entry's own iteration never reaches the
 	// head-of-loop check above - without this, install.after_all would run
@@ -1768,64 +1780,160 @@ type batchTarget struct {
 	planError string
 }
 
-// applyInstallBatchMod installs one mod from the BATCH path's combined
-// [Dependencies..., primary] list - a dependency OR the primary, treated
-// COMPLETELY identically - matching cmd/lmm/install.go's pre-extraction
-// batchInstallMods per-mod loop byte-for-byte (Fix wave 1 restored the
-// primary's participation in this exact mechanism; Task 2's original design
-// special-cased the primary onto fillPrimaryCache/deployPrimary's strict mechanics even
-// when Dependencies was non-empty - see task-2-report.md's "Fix wave 1"
-// entry for the review trace this fixes). Any failure (hook, fetch, files,
-// download, conflict aside, deploy, or save) skips this mod and continues -
-// never Force-gated, never fatal to the overall ApplyInstall call, primary
-// included. No Replace/reinstall-cache-transaction (an existing same-key
-// install is uninstalled+cache-deleted first, then a fresh Install always),
-// no interactive selection (the filtered list's primary-or-first file,
-// re-resolved here - plan.Files is never consulted; the primary's
-// --version/--file pins arrive pre-resolved via overrideFiles, #96/#140),
-// a non-blocking inline conflict warning (never a blocking prompt). Returns
-// the install.after_each warning event to defer (nil if none), matching
-// ApplyInstall's deferredWarnings convention.
+// runInstallBeforeAll runs install.before_all: a failure aborts the
+// install unless forced, in which case it is a warning.
+func runInstallBeforeAll(ctx context.Context, opts InstallOptions, runner *HookRunner, hooks *ResolvedHooks, hookCtx *HookContext, result *InstallResult, emit func(Event)) error {
+	if err := runHook(ctx, opts.SkipHooks, runner, hookCtx, "install.before_all", hooks.GetInstallBeforeAll()); err != nil {
+		if !opts.Force {
+			return fmt.Errorf("install.before_all hook failed: %w", err)
+		}
+		msg := fmt.Sprintf("install.before_all hook failed (forced): %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(HookEvent{Scope: Scope{Op: OpInstall}, Phase: InstallBeforeAllForced, Stage: "install.before_all", Detail: msg})
+	}
+	return nil
+}
+
+// runInstallBatch drives a BATCH install's mods through the acquire /
+// decide / commit engine (acquire_engine.go, #602): every mod is acquired -
+// selected, lock-checked, downloaded - before install.before_all runs and
+// before any mod is written, then each is committed in order
+// (commitBatchMod). Failures that do not block keep the batch's per-mod
+// skip-and-continue counting. A refusal that blocks (an answerable one: a
+// mod loader the game does not declare) refuses the WHOLE batch with
+// nothing written and no hook run: refused is true, and result lists every
+// mod with its refusal code (refusedInstall). It returns the after_each
+// warnings to defer.
+func (s *Service) runInstallBatch(ctx context.Context, game *domain.Game, plan *InstallPlan, targets []batchTarget, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, hooks *ResolvedHooks, runner *HookRunner, result *InstallResult, emit func(Event)) (deferred []Event, refused bool, err error) {
+	failed := make(map[string]string)
+	run := acquireRun[*batchStaged]{
+		policy: acquirePolicy{mode: acquirePhased},
+		n:      len(targets),
+		key:    func(i int) string { return domain.ModKey(targets[i].mod.SourceID, targets[i].mod.ID) },
+		acquire: func(ctx context.Context, i int) (*batchStaged, *acquireFailure) {
+			return s.acquireBatchMod(ctx, game, plan, targets[i], pm, opts, result, emit, failed)
+		},
+		begin: func(ctx context.Context) error {
+			hookCtx := hookContextFor(game)
+			return runInstallBeforeAll(ctx, opts, runner, hooks, &hookCtx, result, emit)
+		},
+		commit: func(ctx context.Context, _ int, st *batchStaged) error {
+			if warn := s.commitBatchMod(ctx, game, plan, st, linkMethod, pm, opts, hooks, runner, result, emit); warn != nil {
+				deferred = append(deferred, *warn)
+			}
+			return nil
+		},
+		release: func(st *batchStaged, blocked bool) { s.releaseAcquired(st.files, blocked) },
+	}
+	err = runAcquire(ctx, run)
+	var acq *AcquireRefusedError
+	if errors.As(err, &acq) {
+		refusedInstall(targets, acq, failed, result)
+		return nil, true, nil
+	}
+	return deferred, false, err
+}
+
+// refusedInstall shapes a BATCH install the engine refused (#602) into the
+// InstallResult a batch with failed mods already had: Skipped and Failed list
+// EVERY mod - each refused one with its refusal code, each one that failed
+// on its own with its reason, each one held back with RefusalHeldBack -
+// and Refused is set, with the loader refusal (when that is what it was)
+// under LoaderRequired. Nothing was written and no hook ran.
+func refusedInstall(targets []batchTarget, refused *AcquireRefusedError, failed map[string]string, result *InstallResult) {
+	byKey := make(map[string]AcquireRefusal, len(refused.Refusals))
+	for _, r := range refused.Refusals {
+		byKey[domain.ModKey(r.SourceID, r.ModID)] = r
+	}
+	result.Refused = true
+	result.Skipped, result.Failed = nil, nil
+	listed := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		key := domain.ModKey(t.mod.SourceID, t.mod.ID)
+		if listed[key] {
+			continue // a duplicate the engine skipped (acquireRun.key)
+		}
+		listed[key] = true
+		ref := InstalledRef{SourceID: t.mod.SourceID, ModID: t.mod.ID, Name: t.mod.Name, Version: t.mod.Version}
+		switch r, isRefused := byKey[key]; {
+		case isRefused:
+			ref.Reason, ref.Refusal = failed[key], refusalCode(r.Err)
+		case failed[key] != "":
+			ref.Reason = failed[key]
+		default:
+			ref.Reason, ref.Refusal = heldBackReason, RefusalHeldBack
+		}
+		recordBatchFailure(result, ref)
+	}
+	var loaderErr *LoaderRequiredError
+	if errors.As(refused, &loaderErr) {
+		result.LoaderRequired = loaderErr
+	}
+}
+
+// batchStaged is one BATCH-path mod between its acquire and its commit.
+type batchStaged struct {
+	t     batchTarget
+	mod   *domain.Mod
+	scope Scope
+	// files are the acquired files, in selection order; checksums what
+	// their downloads computed (#372), saved once the DB row exists.
+	files     []*acquiredFile
+	checksums []fileChecksum
+}
+
+// recordBatchFailure counts one failed BATCH-path mod: Skipped and Failed
+// hold the same entries, in the same order (see InstallResult).
+func recordBatchFailure(result *InstallResult, ref InstalledRef) {
+	result.Skipped = append(result.Skipped, ref)
+	result.Failed = append(result.Failed, ref)
+}
+
+// acquireBatchMod is acquire for one mod of the BATCH path's combined
+// [Dependencies..., primary] list (or a multi-select batch's entry): file
+// selection, the #143 lock gate, and the download of every selected file -
+// writing nothing (#602). It mirrors cmd/lmm's pre-extraction
+// batchInstallMods per-mod loop, as applyInstallBatchMod did, with one
+// ruled move: install.before_each runs in commitBatchMod, immediately before
+// the mod's writes, so no hook fires for an install that then writes
+// nothing.
 //
-// t carries the mod, its position in the batch, and the two things the two
-// callers resolve differently - see batchTarget.
-func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, t batchTarget, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, hooks *ResolvedHooks, runner *HookRunner, result *InstallResult, emit func(Event)) *WarningEvent {
+// A failure is reported LIVE - the same InstallDepSkipped/InstallLockRefusal
+// event, at the same point in the mod's own lines - and COUNTED only when it
+// settles (recordBatchFailure), so an install the engine refuses counts
+// nothing. failed receives each failure's reason, for the refused document.
+func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, t batchTarget, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(Event), failed map[string]string) (*batchStaged, *acquireFailure) {
 	mod, overrideFiles := t.mod, t.files
 	scope := Scope{Op: OpInstall, Index: t.idx + 1, Total: t.total, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
-	// fail records this mod's failure on the result; every caller pairs it
-	// with an event of its own, because the skip reason and the sentence a
-	// frontend prints are not always the same string (see the lock gate).
-	fail := func(reason string) {
+	key := domain.ModKey(mod.SourceID, mod.ID)
+	// fail records this mod's failure for its settle; every caller pairs
+	// it with an event of its own, because the skip reason and the sentence
+	// a frontend prints are not always the same string (see the lock gate).
+	fail := func(reason string, err error) *acquireFailure {
+		failed[key] = reason
 		ref := InstalledRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.Version, Reason: reason}
-		result.Skipped = append(result.Skipped, ref)
-		result.Failed = append(result.Failed, ref)
+		if err == nil {
+			err = errors.New(reason)
+		}
+		return &acquireFailure{
+			refusal: AcquireRefusal{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Err: err},
+			settle:  func() { recordBatchFailure(result, ref) },
+		}
 	}
-	skip := func(label, reason string) {
+	skip := func(label, reason string, err error) *acquireFailure {
 		emit(ModEvent{Scope: scope, Phase: InstallDepSkipped, Detail: fmt.Sprintf("%s: %s", label, reason)})
-		fail(reason)
+		return fail(reason, err)
 	}
 
 	emit(ModEvent{Scope: scope, Phase: InstallDepInstalling, Version: mod.Version})
 
-	hookCtx := hookContextFor(game)
-	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
-	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
-		skip("Skipped", fmt.Sprintf("install.before_each hook failed: %v", err))
-		return nil
-	}
-
 	// A plan-time file-resolution failure (PlanInstallMany's own GetModFiles
 	// /empty-list step, which the dependency path performs inline below
-	// instead) is reported HERE - after install.before_each, before anything
-	// is removed - so the pre-lift ordering holds either way: the mod's
-	// header line, then its hook, then the Error line, with its previous
-	// installation still intact.
+	// instead) is reported HERE, right under the mod's header line, with
+	// its previous installation still intact.
 	if t.planError != "" {
-		skip("Error", t.planError)
-		return nil
+		return nil, skip("Error", t.planError, nil)
 	}
-
-	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 
 	// mod.SourceID (NOT plan.SourceID) is used for every source call below,
 	// matching batchInstallMods' own `sourceID := mod.SourceID` exactly -
@@ -1833,16 +1941,16 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	// case InstallPlan.Dependencies' doc comment already documents as
 	// unreachable via any registered source in practice.
 	//
-	// File selection is derived BEFORE the uninstall-existing block below
-	// (#143 review finding F2, mirroring cmd/lmm's batchInstallMods after
-	// its own F1 reorder): the #143 lock check must judge the selected
-	// version before anything is removed, and a fetch/selection failure now
-	// skips this mod while its previous installation is still intact.
+	// File selection is derived BEFORE anything is removed (#143 review
+	// finding F2, mirroring cmd/lmm's batchInstallMods after its own F1
+	// reorder): the #143 lock check must judge the selected version before
+	// anything is removed, and a fetch/selection failure skips this mod
+	// while its previous installation is still intact.
 	var selected []*domain.DownloadableFile
 	if overrideFiles != nil {
 		// #96/#140: the primary's --version/--file-resolved FINAL selection,
 		// already fetched and matched by ApplyInstall before the loop
-		// started - see this function's own doc comment.
+		// started - see batchTarget.files.
 		selected = make([]*domain.DownloadableFile, len(overrideFiles))
 		for i := range overrideFiles {
 			selected[i] = &overrideFiles[i]
@@ -1850,36 +1958,30 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	} else {
 		files, err := s.GetModFiles(ctx, game, mod.SourceID, mod)
 		if err != nil {
-			skip("Error", fmt.Sprintf("failed to get mod files: %v", err))
-			return nil
+			return nil, skip("Error", fmt.Sprintf("failed to get mod files: %v", err), err)
 		}
 		files = FilterAndSortFiles(files, plan.ShowArchived)
 		if len(files) == 0 {
-			skip("Error", "no downloadable files available")
-			return nil
+			return nil, skip("Error", "no downloadable files available", nil)
 		}
 		selected, _, err = selectDeployFiles(files, nil, false)
 		if err != nil {
-			skip("Error", err.Error())
-			return nil
+			return nil, skip("Error", err.Error(), err)
 		}
 	}
 	mod.Version = domain.EffectiveInstalledVersion(mod.Version, selected) // #94
 
 	// #143: a LOCKED profile ref converges only via explicit lock/unlock -
 	// skip (batch per-mod semantics) when the selected version differs from
-	// the lock, BEFORE the uninstall-existing block and this mod's
-	// download/deploy. This is NOT redundant with ApplyInstall's up-front
-	// lockedInstallRefusal, for the PRIMARY included: that gate deliberately
-	// passes when its own derivation fails transiently (ok=false), and a
-	// locked, already-installed primary with a missing dependency then
-	// reaches this loop (review finding F2 - the earlier post-uninstall
-	// placement let that fallthrough uninstall the deployed lock target and
-	// delete its cache before skipping). It equally covers a DEPENDENCY
-	// whose ref is locked in the profile but absent from the DB (drift) -
-	// only a ref without a DB row still resolves as a dependency - which
-	// would otherwise deploy and leave drift behind UpsertMod's refusal
-	// Note below.
+	// the lock, BEFORE this mod's download. This is NOT redundant with
+	// ApplyInstall's up-front lockedInstallRefusal, for the PRIMARY
+	// included: that gate deliberately passes when its own derivation
+	// fails transiently (ok=false), and a locked, already-installed primary
+	// with a missing dependency then reaches this loop (review finding F2).
+	// It equally covers a DEPENDENCY whose ref is locked in the profile but
+	// absent from the DB (drift) - only a ref without a DB row still
+	// resolves as a dependency - which would otherwise deploy and leave
+	// drift behind UpsertMod's refusal Note.
 	if prof, err := pm.Get(ctx, game.ID, plan.Profile); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked && ref.Version != mod.Version {
 			// InstallLockRefusal, not the generic InstallDepSkipped: the
@@ -1888,16 +1990,101 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 			// this one line differently (see InstallLockRefusal's doc
 			// comment).
 			emit(ModEvent{Scope: scope, Phase: InstallLockRefusal, Detail: lockedRefRefusalMessage(*mod, plan.Profile, ref)})
-			fail(LockedRefRefusalError(*mod, plan.Profile, ref).Error())
-			return nil
+			lockErr := LockedRefRefusalError(*mod, plan.Profile, ref)
+			return nil, fail(lockErr.Error(), lockErr)
 		}
 	} else if cerr := ctx.Err(); cerr != nil {
 		// Ruling 16 (C): a cancelled read must not degrade this lock gate
-		// open. skip() (not a bare nil) for the same reason the file-loop
-		// check below does it - review finding I2.
-		skip("Error", fmt.Sprintf("cancelled: %v", cerr))
+		// open.
+		return nil, &acquireFailure{abort: cerr}
+	}
+
+	st := &batchStaged{t: t, mod: mod, scope: scope}
+	// #140: overrideFiles may pin several files (--file A,B) - download
+	// EVERY selected file, in order, matching the STRICT path's own
+	// plan.Files loop. The nil-override derivation above always selects
+	// exactly one file, so dependencies and unpinned primaries keep
+	// batchInstallMods' historical single-file mechanics (and event
+	// stream) unchanged.
+	gameCache := s.GetGameCache(game)
+	for _, file := range selected {
+		if err := ctx.Err(); err != nil {
+			s.releaseAcquired(st.files, false)
+			return nil, &acquireFailure{abort: err}
+		}
+		emit(StepEvent{Scope: scope, Phase: InstallDepFileSelected, File: file})
+
+		progressFn := func(e Event) {
+			collectDownloadWarning(e, &result.Warnings)
+			if forwardFetchStep(e, scope, emit) {
+				return
+			}
+			d, ok := e.(DownloadEvent)
+			if !ok || d.TotalBytes <= 0 {
+				return
+			}
+			emit(DownloadEvent{Scope: scope, Phase: InstallDepDownloading, Percent: d.Percent})
+		}
+		a, err := s.acquireFile(ctx, gameCache, mod.SourceID, game, mod, file, progressFn)
+
+		// Unconditional (success OR failure alike), mirroring batchInstallMods'
+		// own `fmt.Println()` immediately after the download call returns -
+		// see InstallDepDownloadDone's doc comment for why this precedes the
+		// failure branch's own InstallDepSkipped event.
+		emit(StepEvent{Scope: scope, Phase: InstallDepDownloadDone})
+
+		if err != nil {
+			f := skip("Error", fmt.Sprintf("download failed: %v", err), err)
+			// The mod's earlier files go with the failure, so a refusal
+			// that blocks retains them too.
+			f.release = s.releaseFilesFunc(st.files)
+			return nil, f
+		}
+		st.files = append(st.files, a)
+
+		if !opts.SkipVerify && a.checksum != "" {
+			emit(StepEvent{Scope: scope, Phase: InstallChecksumComputed, Detail: a.checksum})
+			st.checksums = append(st.checksums, fileChecksum{fileID: file.ID, checksum: a.checksum})
+		}
+	}
+	return st, nil
+}
+
+// commitBatchMod is commit for one acquired BATCH-path mod: its
+// install.before_each hook, then - only if that passes - the old
+// installation's removal, the cache commit, the deployment, the DB row and
+// the profile ref, under the Ruling 16 pairing the single loop had. Any
+// failure (hook, cache commit, deploy, or save) skips this mod and continues
+// - never Force-gated, never fatal to the overall ApplyInstall call, primary
+// included. No Replace/reinstall-cache-transaction (an existing same-key
+// install is uninstalled+cache-deleted first, then a fresh Install always),
+// and a non-blocking inline conflict warning (never a blocking prompt).
+// Returns the install.after_each warning event to defer (nil if none),
+// matching ApplyInstall's deferredWarnings convention.
+func (s *Service) commitBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, st *batchStaged, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, hooks *ResolvedHooks, runner *HookRunner, result *InstallResult, emit func(Event)) *WarningEvent {
+	mod, t, scope := st.mod, st.t, st.scope
+	fail := func(reason string) {
+		recordBatchFailure(result, InstalledRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.Version, Reason: reason})
+	}
+	skip := func(label, reason string) {
+		emit(ModEvent{Scope: scope, Phase: InstallDepSkipped, Detail: fmt.Sprintf("%s: %s", label, reason)})
+		fail(reason)
+	}
+
+	// #602: before_each runs here, immediately before this mod's writes,
+	// rather than before its download - every mod is acquired before any
+	// is committed, so a hook that ran in acquire could fire for an
+	// install that then refuses with nothing written. Its environment
+	// (hookContextFor + the mod's id, name and version) is unchanged; the
+	// version is the selected one.
+	hookCtx := hookContextFor(game)
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
+		skip("Skipped", fmt.Sprintf("install.before_each hook failed: %v", err))
 		return nil
 	}
+
+	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 
 	if existing, err := s.GetInstalledMod(ctx, mod.SourceID, mod.ID, game.ID, plan.Profile); err == nil && existing != nil {
 		emit(ModEvent{Scope: scope, Phase: InstallDepReinstalling})
@@ -1918,58 +2105,18 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		}
 	}
 
-	// #140: overrideFiles may pin several files (--file A,B) - download and
-	// record EVERY selected file, in order, matching the STRICT path's own
-	// plan.Files loop. The nil-override derivation above always selects
-	// exactly one file, so dependencies and unpinned primaries keep
-	// batchInstallMods' historical single-file mechanics (and event stream)
-	// unchanged.
-	fileIDs := make([]string, 0, len(selected))
-	var checksums []fileChecksum
+	fileIDs := make([]string, 0, len(st.files))
 	filesExtracted := 0
-	for _, file := range selected {
-		if err := ctx.Err(); err != nil {
-			// skip() (not a bare nil) so the mod lands in Skipped AND
-			// Failed: the primary is the last entry in the batch loop by
-			// construction, so a silent return made ApplyInstall exit 0
-			// having installed nothing (review finding I2).
-			skip("Error", fmt.Sprintf("cancelled: %v", err))
-			return nil
-		}
-		emit(StepEvent{Scope: scope, Phase: InstallDepFileSelected, File: file})
-
-		progressFn := func(e Event) {
-			collectDownloadWarning(e, &result.Warnings)
-			if forwardFetchStep(e, scope, emit) {
-				return
-			}
-			d, ok := e.(DownloadEvent)
-			if !ok || d.TotalBytes <= 0 {
-				return
-			}
-			emit(DownloadEvent{Scope: scope, Phase: InstallDepDownloading, Percent: d.Percent})
-		}
-		downloadResult, err := s.downloadMod(ctx, mod.SourceID, game, mod, file, progressFn)
-
-		// Unconditional (success OR failure alike), mirroring batchInstallMods'
-		// own `fmt.Println()` immediately after the download call returns -
-		// see InstallDepDownloadDone's doc comment for why this precedes the
-		// failure branch's own InstallDepSkipped event.
-		emit(StepEvent{Scope: scope, Phase: InstallDepDownloadDone})
-
+	for _, a := range st.files {
+		res, err := s.commitAcquired(ctx, a)
 		if err != nil {
 			skip("Error", fmt.Sprintf("download failed: %v", err))
 			return nil
 		}
-
-		if !opts.SkipVerify && downloadResult.Checksum != "" {
-			emit(StepEvent{Scope: scope, Phase: InstallChecksumComputed, Detail: downloadResult.Checksum})
-			checksums = append(checksums, fileChecksum{fileID: file.ID, checksum: downloadResult.Checksum})
-		}
-
-		filesExtracted += downloadResult.FilesExtracted
-		fileIDs = append(fileIDs, file.ID)
+		filesExtracted += res.FilesExtracted
+		fileIDs = append(fileIDs, a.file.ID)
 	}
+	checksums := st.checksums
 
 	if !opts.Force {
 		if conflicts, err := installer.GetConflicts(ctx, game, mod, plan.Profile); err == nil && len(conflicts) > 0 {

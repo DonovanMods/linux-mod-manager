@@ -1083,15 +1083,9 @@ func (pm *ProfileManager) ImportWithOptions(ctx context.Context, data []byte, fo
 		return nil, err
 	}
 
-	profile, err := config.ImportProfile(data)
+	profile, existing, existErr, err := pm.importTarget(data, force)
 	if err != nil {
 		return nil, err
-	}
-
-	// Check if profile already exists
-	existing, existErr := config.LoadProfile(pm.configDir, profile.GameID, profile.Name)
-	if existErr == nil && !force {
-		return nil, fmt.Errorf("profile already exists: %s (use --force to overwrite)", profile.Name)
 	}
 	// An exported document carries no is_default - which profile is active
 	// is local state - so a replaced profile keeps its own (#446): replacing
@@ -1111,6 +1105,29 @@ func (pm *ProfileManager) ImportWithOptions(ctx context.Context, data []byte, fo
 	}
 
 	return profile, nil
+}
+
+// importTarget parses an import document and refuses it when it would
+// replace a saved profile without force, reporting the profile it would
+// replace (existErr nil) or why there is none.
+func (pm *ProfileManager) importTarget(data []byte, force bool) (profile, existing *domain.Profile, existErr, err error) {
+	profile, err = config.ImportProfile(data)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	existing, existErr = config.LoadProfile(pm.configDir, profile.GameID, profile.Name)
+	if existErr == nil && !force {
+		return nil, nil, nil, fmt.Errorf("profile already exists: %s (use --force to overwrite)", profile.Name)
+	}
+	return profile, existing, existErr, nil
+}
+
+// checkImportable is ImportWithOptions' refusals without the save: an
+// import that acquires its mods before saving (#602) asks it first, so a
+// document that cannot be saved fails before anything is downloaded.
+func (pm *ProfileManager) checkImportable(data []byte, force bool) error {
+	_, _, _, err := pm.importTarget(data, force)
+	return err
 }
 
 // ParseProfile parses profile data without saving (for preview)

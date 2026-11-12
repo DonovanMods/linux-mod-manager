@@ -72,6 +72,13 @@ export function useJobResultFailures(jobID, jobState) {
   return useJobResultRead(jobID, jobState)?.failures ?? NO_FAILURES;
 }
 
+// useJobResultLoader returns the loader refusal a finished job's result
+// carries when the job refused before writing anything (issue 602), or
+// null. Same shared read.
+export function useJobResultLoader(jobID, jobState) {
+  return useJobResultRead(jobID, jobState)?.loader ?? null;
+}
+
 const NO_WARNINGS = [];
 const NO_FAILURES = [];
 
@@ -103,7 +110,11 @@ function readResult(status) {
       : null;
   const failures =
     status?.kind === "updates" ? batchFailuresFor(result) : NO_FAILURES;
-  return { warnings, purge, verify, failures };
+  // Issue 602: an install batch that refused before writing anything still
+  // succeeds as a job (its document lists every mod), so the loader
+  // refusal behind it is read from the result rather than an error.
+  const loader = result?.refused ? (result.loader_required ?? null) : null;
+  return { warnings, purge, verify, failures, loader };
 }
 
 /**

@@ -1075,6 +1075,14 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	case pendingCount == 0:
 		// Nothing to install - the pre-extraction CLI's early-out never
 		// printed anything further in this case either.
+	case result.Refused:
+		// #602: nothing was written, the profile included. The error
+		// returned below names the refusal and prints its setup steps.
+		fmt.Printf("\n--- Summary ---\n")
+		fmt.Printf("Nothing was imported: profile %s was not saved and no mod was written.\n", result.ProfileName)
+		for _, f := range result.Failures {
+			printRefusedItem(f.Name, f.SourceID, f.ModID, f.Reason, f.Refusal)
+		}
 	default:
 		fmt.Printf("\n--- Summary ---\n")
 		if result.RecordedOnly {

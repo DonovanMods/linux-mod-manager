@@ -306,6 +306,14 @@ hooks:
 
 Scripts receive environment variables: `LMM_GAME_ID`, `LMM_GAME_PATH`, `LMM_MOD_PATH`, `LMM_MOD_ID`, `LMM_MOD_NAME`, `LMM_MOD_VERSION`, `LMM_HOOK`. Use `--no-hooks` to disable all hooks at runtime; `--force` to continue when a hook fails.
 
+When an install covers several mods (a mod with its dependencies, or several
+mods picked at once), lmm downloads all of them first and only then starts
+installing. `install.before_all` runs after those downloads, and
+`install.before_each` runs immediately before each mod is installed, after
+every download has finished. If lmm refuses the whole install before writing
+anything (a mod needs a loader the game does not declare), no install hook
+runs at all.
+
 ### Adapter (games.yaml)
 
 The `adapter` option selects the **game adapter**: the in-tree code that

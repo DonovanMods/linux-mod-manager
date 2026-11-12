@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
@@ -230,12 +231,16 @@ func TestService_ApplyInstall_Batch_TwoFreshMods(t *testing.T) {
 		{SourceID: "test-src", ModID: "mod-b", Version: "2.0", FileIDs: []string{"b-file"}},
 	}, batchProfileRefs(t, svc, "g1", "default"))
 
+	// #602: every mod is acquired (selected, downloaded, checksummed)
+	// before any is committed, so both mods' Installed lines follow both
+	// downloads.
 	phases, _ := phasesOf(*seen)
 	assert.Equal(t, []core.DeployPhase{
 		core.InstallDepInstalling, core.InstallDepFileSelected, core.InstallDepDownloading,
-		core.InstallDepDownloadDone, core.InstallChecksumComputed, core.InstallDepInstalled,
+		core.InstallDepDownloadDone, core.InstallChecksumComputed,
 		core.InstallDepInstalling, core.InstallDepFileSelected, core.InstallDepDownloading,
-		core.InstallDepDownloadDone, core.InstallChecksumComputed, core.InstallDepInstalled,
+		core.InstallDepDownloadDone, core.InstallChecksumComputed,
+		core.InstallDepInstalled, core.InstallDepInstalled,
 	}, phases)
 }
 
@@ -269,8 +274,20 @@ func TestService_ApplyInstall_Batch_ReinstallSameVersionPlusFresh(t *testing.T) 
 		{SourceID: "test-src", ID: "mod-b", Version: "2.0", Enabled: true, Deployed: true, FileIDs: []string{"b-file"}},
 	}, batchInstalledRows(t, svc, "g1", "default"), "the reinstall upserts mod-a's row, never duplicates it")
 
+	// #602: the old installation is removed at COMMIT, after every mod is
+	// acquired - an install refused at decide must not have uninstalled
+	// anything - and immediately before mod A's own Installed line.
 	phases, _ := phasesOf(*seen)
-	assert.Equal(t, core.InstallDepReinstalling, phases[1], "the reinstall announcement precedes file selection")
+	reinstall := slices.Index(phases, core.InstallDepReinstalling)
+	require.NotEqual(t, -1, reinstall)
+	lastDownload := slices.Index(phases, core.InstallDepDownloadDone)
+	for i, p := range phases {
+		if p == core.InstallDepDownloadDone {
+			lastDownload = i
+		}
+	}
+	assert.Greater(t, reinstall, lastDownload, "the reinstall happens after every download")
+	assert.Equal(t, core.InstallDepInstalled, phases[reinstall+1], "and directly before the reinstalled mod's Installed line")
 }
 
 // --- scenario: locked_ref_different_version_skipped ---
@@ -394,12 +411,22 @@ func TestService_ApplyInstall_Batch_ForceWithFailingBeforeAll(t *testing.T) {
 	require.Len(t, result.Warnings, 1)
 	assert.Contains(t, result.Warnings[0], "install.before_all hook failed (forced): ")
 
+	// #602: install.before_all runs once every mod is acquired, before
+	// the first one is written - so the forced warning follows the
+	// downloads and precedes every Installed line.
 	phases, _ := phasesOf(*seen)
 	require.NotEmpty(t, phases)
-	assert.Equal(t, core.InstallBeforeAllForced, phases[0], "the forced-hook warning precedes every mod")
+	forced := slices.Index(phases, core.InstallBeforeAllForced)
+	require.NotEqual(t, -1, forced)
+	assert.Equal(t, core.InstallDepInstalled, phases[forced+1], "the forced-hook warning precedes the first write")
+	assert.NotContains(t, phases[forced+1:], core.InstallDepDownloadDone, "and follows every download")
 }
 
-func TestService_ApplyInstall_Batch_FailingBeforeAllWithoutForceAbortsBeforeAnyMod(t *testing.T) {
+// #602: install.before_all runs once every mod is acquired, so a failing
+// one (no --force) aborts before any mod is WRITTEN - the downloads have
+// happened, and are kept, so the re-run after the hook is fixed fetches
+// nothing again (review S3).
+func TestService_ApplyInstall_Batch_FailingBeforeAllWithoutForceAbortsBeforeAnyModIsWritten(t *testing.T) {
 	svc, game, src := newBatchInstallFixture(t)
 	modA := batchModA(t, src, "mod a content")
 
@@ -415,6 +442,10 @@ func TestService_ApplyInstall_Batch_FailingBeforeAllWithoutForceAbortsBeforeAnyM
 	assert.Contains(t, err.Error(), "install.before_all hook failed: ")
 	assert.Empty(t, result.Installed)
 	assert.Empty(t, batchInstalledRows(t, svc, "g1", "default"))
+
+	retained, err := os.ReadDir(filepath.Join(svc.DataDirForTest(), "downloads", "retained"))
+	require.NoError(t, err, "the acquired archive is retained for the re-run")
+	assert.Len(t, retained, 1)
 }
 
 // --- scenario: failing_after_each ---

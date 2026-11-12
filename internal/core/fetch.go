@@ -86,8 +86,8 @@ type workshopFetchErrorDetails struct {
 	OutputTail      string `json:"output_tail,omitempty"`
 }
 
-// fetchModToCache runs a source.Fetcher for one file and ingests what it
-// produced, and is downloadModToCache's ErrNotSupported fallback.
+// acquireFetched runs a source.Fetcher for one file and acquires what it
+// produced, and is acquireFile's ErrNotSupported fallback.
 //
 // Core - not the source - creates the staging directory and verifies that
 // what came back is inside it, so a Fetcher cannot name a path of its own
@@ -95,28 +95,34 @@ type workshopFetchErrorDetails struct {
 // (#300). sourceGameID is handed to the Fetcher on a COPY of mod: a
 // Fetcher's contract is that mod.GameID is the source's own game id, and
 // the caller's mod legitimately carries lmm's instead.
-func (s *Service) fetchModToCache(ctx context.Context, gameCache *cache.Cache, fetcher source.Fetcher, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
+//
+// The fetch directory belongs to the acquisition (released with it), since
+// what acquireLocal stages from it is not committed until later.
+func (s *Service) acquireFetched(ctx context.Context, gameCache *cache.Cache, fetcher source.Fetcher, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (*acquiredFile, error) {
 	destDir, err := newStagingDir(s.stagingRoot(), "lmm-fetch-*")
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if cerr := os.RemoveAll(destDir); err == nil && cerr != nil {
-			err = fmt.Errorf("removing fetch directory: %w", cerr)
-		}
-	}()
 
 	fetchMod := *mod
 	fetchMod.GameID = sourceGameIDFor(game, sourceID)
 
 	fetched, ferr := fetcher.Fetch(ctx, &fetchMod, file.ID, destDir, fetchProgressSink(sink))
 	if ferr != nil {
+		_ = os.RemoveAll(destDir)
 		return nil, fetchFailure(ferr)
 	}
 	if verr := verifyFetchedPath(destDir, fetched); verr != nil {
+		_ = os.RemoveAll(destDir)
 		return nil, verr
 	}
-	return s.ingestLocalToCache(ctx, gameCache, game, mod, file, fetched, sink)
+	a, err := s.acquireLocal(ctx, gameCache, game, mod, file, fetched, sink)
+	if err != nil {
+		_ = os.RemoveAll(destDir)
+		return nil, err
+	}
+	a.owned = append(a.owned, destDir)
+	return a, nil
 }
 
 // sourceGameIDFor resolves the identifier sourceID knows game by, falling

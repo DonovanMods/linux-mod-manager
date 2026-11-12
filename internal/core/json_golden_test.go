@@ -3274,6 +3274,60 @@ func TestJSONGoldens(t *testing.T) {
 				"the package depends on BepInEx-BepInExPack-5.4.2100"),
 		},
 		{
+			// #602: two mods' loader refusals collected into one, as an
+			// install-shaped Apply's decide step builds it. "mods" is the
+			// additive key; mod_name reads them as one phrase.
+			"loader_required_error_merged",
+			core.MergeLoaderRequirementsForTest(
+				core.NewLoaderRequirementForTest(&domain.Game{ID: "lethal-company"}, "Skinwalkers",
+					domain.LoaderKindBepInEx, "", "game-root-relative"),
+				core.NewLoaderRequirementForTest(&domain.Game{ID: "lethal-company"}, "MoreCompany",
+					domain.LoaderKindBepInEx, "", "game-root-relative")),
+		},
+		{
+			// #602: an import refused before anything was written. The same
+			// document an incomplete import carries, with the additive
+			// "refused" and "loader_required" keys and every item's
+			// "refusal" code - the refused mod's, and the held-back one's.
+			"profile_import_result_refused",
+			core.ProfileImportResult{
+				ProfileName: "modded", Failed: 2,
+				Failures: []core.ItemFailure{
+					{SourceID: "thunderstore", ModID: "MoreCompany", Name: "MoreCompany",
+						Reason: "held back: another mod refused, so nothing was written", Refusal: core.RefusalHeldBack},
+					{SourceID: "thunderstore", ModID: "Skinwalkers", Name: "Skinwalkers",
+						Reason: "download failed: Skinwalkers needs the BepInEx mod loader", Refusal: core.RefusalLoaderRequired},
+				},
+				Refused: true,
+				LoaderRequired: core.NewLoaderRequirementForTest(&domain.Game{ID: "lethal-company"}, "Skinwalkers",
+					domain.LoaderKindBepInEx, "", "game-root-relative"),
+			},
+		},
+		{
+			// #602: the install batch's refused document - still an
+			// InstallResult (exit 0), every mod in Failed and Skipped with
+			// its refusal code.
+			"install_result_refused",
+			core.InstallResult{
+				Installed: nil,
+				Skipped: []core.InstalledRef{
+					{SourceID: "thunderstore", ModID: "MoreCompany", Name: "MoreCompany", Version: "1.0.0",
+						Reason: "held back: another mod refused, so nothing was written", Refusal: core.RefusalHeldBack},
+					{SourceID: "thunderstore", ModID: "Skinwalkers", Name: "Skinwalkers", Version: "5.0.0",
+						Reason: "download failed: Skinwalkers needs the BepInEx mod loader", Refusal: core.RefusalLoaderRequired},
+				},
+				Failed: []core.InstalledRef{
+					{SourceID: "thunderstore", ModID: "MoreCompany", Name: "MoreCompany", Version: "1.0.0",
+						Reason: "held back: another mod refused, so nothing was written", Refusal: core.RefusalHeldBack},
+					{SourceID: "thunderstore", ModID: "Skinwalkers", Name: "Skinwalkers", Version: "5.0.0",
+						Reason: "download failed: Skinwalkers needs the BepInEx mod loader", Refusal: core.RefusalLoaderRequired},
+				},
+				Refused: true,
+				LoaderRequired: core.NewLoaderRequirementForTest(&domain.Game{ID: "lethal-company"}, "Skinwalkers",
+					domain.LoaderKindBepInEx, "", "game-root-relative"),
+			},
+		},
+		{
 			// `lmm version --json` and GET /api/v1/updates/lmm (#568): a
 			// cached failure beside what the last success learned, so
 			// every field is on the wire at once.

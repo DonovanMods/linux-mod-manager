@@ -6,12 +6,16 @@ Installing 2 mod(s)...
   File: modA.esp
   [████████████████████] 100.0%
   Checksum: fbf39e016ee5...
-  ✓ Installed (1 files)
 
 [2/2] Installing: Mod B v2.0
   File: modB.esp
   [████████████████████] 100.0%
   Checksum: c237c081e647...
+
+[1/2] Mod A
+  ✓ Installed (1 files)
+
+[2/2] Mod B
   ✓ Installed (1 files)
 
 --- Summary ---

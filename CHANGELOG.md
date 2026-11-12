@@ -16,8 +16,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   choices reproduce the curator's install. It refuses C# scripted
   installers and OMODs rather than running them. Installs start using it
   in a later release (#354).
+- **An all-or-nothing import mode in core (#602).**
+  `ProfileImportOptions.AllOrNothing` makes every acquire failure, not only
+  an answerable one, refuse the whole import with nothing written. No
+  frontend uses it yet; collection import will.
 
 ### Changed
+
+- **Installing several mods, and importing a profile, now download
+  everything before writing anything (#602).** A profile import, an install
+  with dependencies and a multi-mod install acquire every mod first
+  (download, verify, extract), then write them. Most of the time this only
+  changes the order of the progress lines: the download lines for every mod
+  come first, then the **Installed** lines, and an import's
+  `✓ Imported profile` line now follows the downloads. An install's
+  `install.before_all` hook runs after the downloads, and
+  `install.before_each` runs right before each mod is written; their
+  environment is unchanged, and a failing `before_each` still skips just
+  that mod in a multi-mod install.
+- **A mod that needs a mod loader now stops the whole import or install
+  before anything is written (#602).** Previously, when one mod in a profile
+  import needed BepInEx and the game did not declare it, the profile and
+  the other mods were saved and only that mod failed, and running the import
+  again failed with a stale-plan error. Now nothing is written: not the
+  profile, not the other mods. lmm names every mod that needs the loader
+  (one requirement, one set of setup steps), marks the rest as held back,
+  and keeps the archives it downloaded, so running the same command again
+  after `lmm game edit --loader` does not download them again (a Steam
+  Workshop item fetched through steamcmd is not kept, and is fetched again;
+  a kept archive is only reused for the same version of the mod). A failing
+  `install.before_all` hook keeps the downloads the same way. The exit code and
+  `--json` documents are unchanged in shape: an import still fails with its
+  incomplete-import document and a multi-mod install still exits 0 with its
+  install result, each with new `refused` and `loader_required` keys, and
+  every listed mod carries a `refusal` code (`loader_required` or
+  `held_back`). The loader refusal document gains a `mods` list when it
+  covers more than one mod. The web UI shows the loader setup steps for
+  these too.
 
 - **The mod cache is addressed by one key (#603).** Internal groundwork
   for FOMOD installer variants: every cache lookup now takes a single key
