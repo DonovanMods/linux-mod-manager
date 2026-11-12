@@ -12,9 +12,11 @@ first-class frontends drive the same engine: a CLI built for scripting,
 automation and remote work over SSH, and `lmm serve`, a local web UI built for
 day-to-day use.
 
-**New to lmm?** The [user guide](https://donovanmods.github.io/linux-mod-manager/)
-walks you through installing it and modding your first game in plain terms.
-This README is the full reference.
+**New to lmm?** The [project site](https://donovanmods.github.io/linux-mod-manager/)
+gives a short tour, and the
+[user guide](https://donovanmods.github.io/linux-mod-manager/guide/) walks you
+through installing it and modding your first game in plain terms. This README
+is the full reference.
 
 ## Features
 
@@ -3148,7 +3150,8 @@ The mod cache location can be customized via `cache_path` in `config.yaml`. Sett
 
 ## Documentation
 
-- **[User guide](https://donovanmods.github.io/linux-mod-manager/)** – A plain-language, task-by-task guide for new users, published from [`docs/guide/`](docs/guide/) at each release.
+- **[Project site](https://donovanmods.github.io/linux-mod-manager/)** – A one-page tour of lmm with screenshots of the web UI, published from [`docs/site/`](docs/site/) at each release.
+- **[User guide](https://donovanmods.github.io/linux-mod-manager/guide/)** – A plain-language, task-by-task guide for new users, published from [`docs/guide/`](docs/guide/) at each release.
 - **[Configuration reference](docs/configuration.md)** – All options for `config.yaml` and `games.yaml` (including hooks, link method, sources).
 - **[Security](docs/security.md)** – How stored credentials are encrypted at rest, what that protects against (and what it does not), and how to recover from a lost or damaged key file.
 - **Man pages** – In [`docs/man/man1/`](docs/man/man1/), one page per command and subcommand, generated from the CLI's own `--help` text (`make man`; a drift test fails CI if the pages fall out of sync). View with `man -l docs/man/man1/lmm.1` or install to your man path.
