@@ -7,6 +7,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +15,7 @@ import (
 // modCacheDir returns the per-mod cache container directory (the version
 // directory's parent) that #190 item 4's cleanup must remove once empty.
 func modCacheDir(svc *core.Service, game *domain.Game, sourceID, modID, version string) string {
-	return filepath.Dir(svc.GetGameCache(game).ModPath(game.ID, sourceID, modID, version))
+	return filepath.Dir(svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}))
 }
 
 // resetUninstallFlags saves and resets uninstall's package-level flag
@@ -83,7 +84,7 @@ func TestDoUninstall_SaysWhichRowKeepsTheCacheEntry(t *testing.T) {
 	t.Cleanup(func() { uninstallDryRun = oldDryRun })
 	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
 	seedLiveRowUnderProfile(t, svc, game, "other", "a", "Mod A")
-	dir := svc.GetGameCache(game).ModPath(game.ID, "src", "a", "1.0")
+	dir := svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "a", Version: "1.0"})
 
 	uninstallDryRun = true
 	out := captureStdout(t, func() error {

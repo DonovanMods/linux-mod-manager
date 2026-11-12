@@ -18,6 +18,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -78,7 +79,7 @@ func TestDownloadWarning_ReachesTheDeployFlow(t *testing.T) {
 	_, err = fixture.svc.ApplyInstall(ctx, fixture.game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 	gameCache := fixture.svc.GetGameCache(fixture.game)
-	require.NoError(t, gameCache.Delete(fixture.game.ID, fixture.mod.SourceID, fixture.mod.ID, fixture.mod.Version))
+	require.NoError(t, gameCache.Delete(cache.Key{GameID: fixture.game.ID, SourceID: fixture.mod.SourceID, ModID: fixture.mod.ID, Version: fixture.mod.Version}))
 
 	sink, events := core.RecordEvents()
 	_, err = fixture.svc.DeployProfile(ctx, fixture.game, "default", core.DeployOptions{}, sink)
@@ -142,7 +143,7 @@ func TestDownloadWarning_ReachesAVerifyFixRedownload(t *testing.T) {
 	_, err = fixture.svc.ApplyInstall(ctx, fixture.game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 	gameCache := fixture.svc.GetGameCache(fixture.game)
-	require.NoError(t, gameCache.Delete(fixture.game.ID, fixture.mod.SourceID, fixture.mod.ID, fixture.mod.Version))
+	require.NoError(t, gameCache.Delete(cache.Key{GameID: fixture.game.ID, SourceID: fixture.mod.SourceID, ModID: fixture.mod.ID, Version: fixture.mod.Version}))
 
 	var details []string
 	_, err = fixture.svc.VerifyReport(ctx, fixture.game, "default", core.VerifyOptions{Fix: true, Force: true}, func(e core.Event) {

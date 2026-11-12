@@ -122,7 +122,7 @@ func (s *Service) commitAcquired(ctx context.Context, a *acquiredFile) (*Downloa
 // newAcquired starts an acquisition for (mod, file) and creates nothing.
 func newAcquired(gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile) *acquiredFile {
 	a := &acquiredFile{gameCache: gameCache, game: game, mod: *mod, file: file, sourceID: sourceID}
-	a.tree = acquireTreePath(gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version), file.ID)
+	a.tree = acquireTreePath(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}), file.ID)
 	return a
 }
 
@@ -445,7 +445,7 @@ func (s *Service) commitAcquiredRaw(ctx context.Context, a *acquiredFile) (*Down
 
 	result := &DownloadModResult{FilesExtracted: len(a.members), Checksum: a.checksum}
 	if a.listed {
-		files, err := a.gameCache.ListFiles(a.game.ID, a.mod.SourceID, a.mod.ID, a.mod.Version)
+		files, err := a.gameCache.ListFiles(cache.Key{GameID: a.game.ID, SourceID: a.mod.SourceID, ModID: a.mod.ID, Version: a.mod.Version})
 		if err != nil {
 			return nil, err
 		}

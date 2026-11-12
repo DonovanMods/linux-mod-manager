@@ -7,6 +7,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/d2r"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
@@ -33,7 +34,7 @@ func d2rFixture(t *testing.T, mods ...[2]string) (*core.Service, *fakeLauncher, 
 	require.NoError(t, err)
 	for _, m := range mods {
 		name, folder := m[0], m[1]
-		require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", name, "1", folder+"/"+folder+".mpq/modinfo.json", []byte("{}")))
+		require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: name, Version: "1"}, folder+"/"+folder+".mpq/modinfo.json", []byte("{}")))
 		require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 			Mod:         domain.Mod{ID: name, SourceID: "src", Name: name, Version: "1", GameID: game.ID},
 			ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true,
@@ -127,7 +128,7 @@ func TestD2R_ProfileApplyAndSwitchAdviseTheModArgument(t *testing.T) {
 
 	// A second profile holding a different D2R mod: switching to it says
 	// what to enter now, in place of the -mod the apply advised.
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "Stash Tabs", "1", "Stash/Stash.mpq/modinfo.json", []byte("{}")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "Stash Tabs", Version: "1"}, "Stash/Stash.mpq/modinfo.json", []byte("{}")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "Stash Tabs", SourceID: "src", Name: "Stash Tabs", Version: "1", GameID: game.ID},
 		ProfileName: "other", UpdatePolicy: domain.UpdateNotify, Enabled: true,

@@ -14,6 +14,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -122,8 +123,8 @@ func TestModPathRefusal_AListedVersionThatNoLongerShipsThePathIsClearable(t *tes
 	ctx := context.Background()
 	f := newLegacyFixture(t, &domain.Game{ID: "sky", Name: "Sky", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink})
 	gameCache := f.svc.GetGameCache(f.game)
-	require.NoError(t, gameCache.Store("sky", "nexus", "m", "1.0", "Data/old.esp", []byte("m 1.0")))
-	require.NoError(t, gameCache.Store("sky", "nexus", "m", "2.0", "Data/new.esp", []byte("m 2.0")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: "sky", SourceID: "nexus", ModID: "m", Version: "1.0"}, "Data/old.esp", []byte("m 1.0")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: "sky", SourceID: "nexus", ModID: "m", Version: "2.0"}, "Data/new.esp", []byte("m 2.0")))
 	dir := filepath.Join(f.svc.ConfigDir(), "games", "sky", "profiles")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "alt.yaml"), []byte("name: alt\ngame_id: sky\nmods:\n    - source_id: nexus\n      mod_id: m\n      version: \"2.0\"\nis_default: true\n"), 0o644))
@@ -131,7 +132,7 @@ func TestModPathRefusal_AListedVersionThatNoLongerShipsThePathIsClearable(t *tes
 	for _, v := range []struct{ profile, version, rel string }{{"alt", "2.0", "Data/new.esp"}, {"default", "1.0", "Data/old.esp"}} {
 		dst := filepath.Join(f.game.ModPath, filepath.FromSlash(v.rel))
 		require.NoError(t, os.MkdirAll(filepath.Dir(dst), 0o755))
-		require.NoError(t, os.Symlink(filepath.Join(gameCache.ModPath("sky", "nexus", "m", v.version), filepath.FromSlash(v.rel)), dst))
+		require.NoError(t, os.Symlink(filepath.Join(gameCache.ModPath(cache.Key{GameID: "sky", SourceID: "nexus", ModID: "m", Version: v.version}), filepath.FromSlash(v.rel)), dst))
 		require.NoError(t, f.svc.ExecForTest(ctx,
 			`INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id) VALUES ('sky', ?, ?, 'nexus', 'm')`, v.profile, v.rel))
 		require.NoError(t, f.svc.SaveInstalledMod(ctx, &domain.InstalledMod{
@@ -282,7 +283,7 @@ func TestVerifyFix_ANonActiveProfilesReplacedLinkIsTheUsers(t *testing.T) {
 	f.profile(t, "other", false, "o")
 	f.deployed(t, "other", "o", domain.LinkSymlink, map[string]string{"Data/o.esp": "o", "Data/d.esp": "d"}, nil)
 	// The mod no longer provides d.esp, and the user put their own file there.
-	cached := filepath.Join(f.svc.GetGameCache(f.game).ModPath("sky", "local", "o", "unknown"), "Data", "d.esp")
+	cached := filepath.Join(f.svc.GetGameCache(f.game).ModPath(cache.Key{GameID: "sky", SourceID: "local", ModID: "o", Version: "unknown"}), "Data", "d.esp")
 	require.NoError(t, os.Remove(cached))
 	user := userFileAt(t, f, "Data/d.esp", "the user's")
 

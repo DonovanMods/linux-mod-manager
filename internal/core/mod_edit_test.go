@@ -14,6 +14,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -490,11 +491,11 @@ func TestService_ApplyRelinkMod_CarriesTheCacheEntryToTheNewID(t *testing.T) {
 	require.NoError(t, err)
 
 	gameCache := svc.GetGameCache(game)
-	require.True(t, gameCache.Exists(game.ID, domain.SourceLocal, "new", "1.0"), "the new id has the cache entry")
-	got, err := os.ReadFile(gameCache.GetFilePath(game.ID, domain.SourceLocal, "new", "1.0", "sub/second.esp"))
+	require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "new", Version: "1.0"}), "the new id has the cache entry")
+	got, err := os.ReadFile(gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "new", Version: "1.0"}, "sub/second.esp"))
 	require.NoError(t, err)
 	assert.Equal(t, "second", string(got))
-	assert.True(t, gameCache.Exists(game.ID, domain.SourceLocal, "old", "1.0"), "the old entry is kept, and the deployed links into it stay valid")
+	assert.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "old", Version: "1.0"}), "the old entry is kept, and the deployed links into it stay valid")
 
 	result, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, nil)
 	require.NoError(t, err)

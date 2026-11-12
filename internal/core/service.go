@@ -1678,7 +1678,7 @@ func prepareStaging(ctx context.Context, gameCache *cache.Cache, game *domain.Ga
 	if err != nil {
 		return "", "", err
 	}
-	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+	if gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
 		if err := copyDir(ctx, cachePath, stagePath); err != nil {
 			// Best-effort: restore the "no debris" guarantee even though
 			// copyDir itself already failed. A cleanup failure here isn't
@@ -1703,7 +1703,7 @@ func prepareStaging(ctx context.Context, gameCache *cache.Cache, game *domain.Ga
 // cleanup (defer os.RemoveAll immediately after) - but unlike prepareStaging,
 // on a nil error stagePath NEVER exists yet; the first writer creates it.
 func prepareUnseededStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
-	cachePath = gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	cachePath = gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	stagePath = cachePath + ".staging"
 	if err := os.RemoveAll(stagePath); err != nil {
 		return "", "", fmt.Errorf("clearing staging cache: %w", err)

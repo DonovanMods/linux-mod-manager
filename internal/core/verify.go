@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
@@ -1474,11 +1475,11 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) error {
 		if r.game.DeployMode == domain.DeployCompile && HasRetainedCompileSource(gameCache, r.game.ID, mod.SourceID, mod.ID, mod.Version, mod.FileIDs) {
 			continue
 		}
-		cacheExists := gameCache.Exists(r.game.ID, mod.SourceID, mod.ID, mod.Version)
+		cacheExists := gameCache.Exists(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 		if !cacheExists {
 			continue
 		}
-		cachedFiles, err := gameCache.ListFiles(r.game.ID, mod.SourceID, mod.ID, mod.Version)
+		cachedFiles, err := gameCache.ListFiles(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 		if err != nil {
 			// A real filesystem error walking the cache dir (permission
 			// denied, I/O error) is not the same as "cache is empty" - the
@@ -1602,7 +1603,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 			continue
 		}
 
-		cacheExists := gameCache.Exists(r.game.ID, mod.SourceID, mod.ID, mod.Version)
+		cacheExists := gameCache.Exists(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 		if !cacheExists {
 			r.result.Issues++
 			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "missing", Version: mod.Version,

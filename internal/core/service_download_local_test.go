@@ -37,7 +37,7 @@ func TestIngestLocalToCacheDirectory(t *testing.T) {
 	assert.Equal(t, 2, result.FilesExtracted)
 	assert.NotEmpty(t, result.Checksum, "#164: a directory ingest must produce a checksum so installs/verify can persist it")
 
-	files, err := gameCache.ListFiles("7dtd", "my-mods", "BiggerBackpack", "1.2.0")
+	files, err := gameCache.ListFiles(cache.Key{GameID: "7dtd", SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"})
 	require.NoError(t, err)
 	assert.Len(t, files, 2)
 }
@@ -132,12 +132,12 @@ func TestIngestLocalToCacheDirectory_ReingestDropsRemovedMembers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, second.FilesExtracted, "the removed member must not be counted after re-ingest")
 
-	files, err := gameCache.ListFiles("7dtd", "my-mods", "BiggerBackpack", "1.2.0")
+	files, err := gameCache.ListFiles(cache.Key{GameID: "7dtd", SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"})
 	require.NoError(t, err)
 	assert.NotContains(t, files, "stale.txt", "a member deleted from the source must not survive re-ingest in the committed cache")
 	assert.Len(t, files, 2)
 
-	manifests, err := gameCache.FileManifests("7dtd", "my-mods", "BiggerBackpack", "1.2.0")
+	manifests, err := gameCache.FileManifests(cache.Key{GameID: "7dtd", SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"})
 	require.NoError(t, err)
 	require.True(t, manifests["main"].Recorded)
 	assert.NotContains(t, manifests["main"].Members, "stale.txt", "the marker manifest must not attribute the removed member")
@@ -172,11 +172,11 @@ func TestIngestLocalToCacheDirectory_MembersIncludeDereferencedSymlinks(t *testi
 	result, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, modDir, nil)
 	require.NoError(t, err)
 
-	files, err := gameCache.ListFiles("7dtd", "my-mods", "LinkedMod", "1.0")
+	files, err := gameCache.ListFiles(cache.Key{GameID: "7dtd", SourceID: "my-mods", ModID: "LinkedMod", Version: "1.0"})
 	require.NoError(t, err)
 	require.Contains(t, files, "alias.txt", "copyDir materializes the symlink as a regular cached file")
 
-	manifests, err := gameCache.FileManifests("7dtd", "my-mods", "LinkedMod", "1.0")
+	manifests, err := gameCache.FileManifests(cache.Key{GameID: "7dtd", SourceID: "my-mods", ModID: "LinkedMod", Version: "1.0"})
 	require.NoError(t, err)
 	require.True(t, manifests["main"].Recorded)
 	assert.Contains(t, manifests["main"].Members, "alias.txt",
@@ -201,7 +201,7 @@ func TestIngestLocalToCacheArchiveCopyMode(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("%x", md5.Sum([]byte("zipbytes"))), result.Checksum,
 		"#164: a file/archive ingest must report the MD5 of the source file, matching the HTTP download path's MD5-of-archive semantics")
 
-	cached := gameCache.GetFilePath("hytale", "my-mods", "coolmod-2.0", "2.0", "coolmod-2.0.zip")
+	cached := gameCache.GetFilePath(cache.Key{GameID: "hytale", SourceID: "my-mods", ModID: "coolmod-2.0", Version: "2.0"}, "coolmod-2.0.zip")
 	_, err = os.Stat(cached)
 	assert.NoError(t, err)
 }
@@ -230,11 +230,11 @@ func TestIngestLocalToCacheArchiveCopyModeUsesDeclaredFileName(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 
-	declaredPath := gameCache.GetFilePath("hytale", "my-mods", "coolmod-2.0", "2.0", "declared.zip")
+	declaredPath := gameCache.GetFilePath(cache.Key{GameID: "hytale", SourceID: "my-mods", ModID: "coolmod-2.0", Version: "2.0"}, "declared.zip")
 	_, err = os.Stat(declaredPath)
 	assert.NoError(t, err, "cached file must be named after the declared file.FileName, not the temp path's basename")
 
-	staleBasenamePath := gameCache.GetFilePath("hytale", "my-mods", "coolmod-2.0", "2.0", "tmp-download-xyz.bin")
+	staleBasenamePath := gameCache.GetFilePath(cache.Key{GameID: "hytale", SourceID: "my-mods", ModID: "coolmod-2.0", Version: "2.0"}, "tmp-download-xyz.bin")
 	_, err = os.Stat(staleBasenamePath)
 	assert.True(t, os.IsNotExist(err), "cached file must NOT be named after localPath's basename when file.FileName is declared")
 }
@@ -259,14 +259,14 @@ func TestIngestLocalToCacheArchiveCopyMode_TraversalFileNameSanitized(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 
-	sanitizedPath := gameCache.GetFilePath("hytale", "my-mods", "coolmod-2.0", "2.0", "evil-traversal.zip")
+	sanitizedPath := gameCache.GetFilePath(cache.Key{GameID: "hytale", SourceID: "my-mods", ModID: "coolmod-2.0", Version: "2.0"}, "evil-traversal.zip")
 	_, err = os.Stat(sanitizedPath)
 	assert.NoError(t, err, "the cached file must land under the sanitized (Base'd) name inside the version directory")
 
 	// The version directory's PARENT (my-mods-coolmod-2.0/) is exactly one
 	// level up from the "2.0" version dir the unsanitized "../evil-*.zip"
 	// would have climbed into.
-	escapedPath := filepath.Join(gameCache.ModPath("hytale", "my-mods", "coolmod-2.0", "2.0"), "..", "evil-traversal.zip")
+	escapedPath := filepath.Join(gameCache.ModPath(cache.Key{GameID: "hytale", SourceID: "my-mods", ModID: "coolmod-2.0", Version: "2.0"}), "..", "evil-traversal.zip")
 	_, err = os.Stat(escapedPath)
 	assert.True(t, os.IsNotExist(err), "a traversal filename must never write outside the mod's own cache version directory")
 }
@@ -298,8 +298,8 @@ func TestPrepareStagingCleansPartialStagingOnCopyFailure(t *testing.T) {
 	game := &domain.Game{ID: "g1"}
 	mod := &domain.Mod{ID: "modX", SourceID: "src", Version: "1.0"}
 
-	require.NoError(t, gameCache.Store("g1", "src", "modX", "1.0", "sealed/inner.txt", []byte("x")))
-	cachePath := gameCache.ModPath("g1", "src", "modX", "1.0")
+	require.NoError(t, gameCache.Store(cache.Key{GameID: "g1", SourceID: "src", ModID: "modX", Version: "1.0"}, "sealed/inner.txt", []byte("x")))
+	cachePath := gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "src", ModID: "modX", Version: "1.0"})
 	sealedDir := filepath.Join(cachePath, "sealed")
 	require.NoError(t, os.Chmod(sealedDir, 0000))
 	t.Cleanup(func() { _ = os.Chmod(sealedDir, 0755) }) // restore before TempDir's own cleanup removes it
@@ -375,10 +375,10 @@ func TestIngestLocalToCacheDirectory_CancelledMidCopy(t *testing.T) {
 	assert.Nil(t, result)
 	assert.Greater(t, ctx.checks, 1, "the guard must be consulted per entry, not once for the whole copy")
 
-	assert.False(t, gameCache.Exists("7dtd", "my-mods", "BiggerBackpack", "1.2.0"),
+	assert.False(t, gameCache.Exists(cache.Key{GameID: "7dtd", SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"}),
 		"a cancelled ingest must publish no cache entry")
-	assert.False(t, gameCache.HasFileIDs("7dtd", "my-mods", "BiggerBackpack", "1.2.0", []string{"main"}),
+	assert.False(t, gameCache.HasFileIDs(cache.Key{GameID: "7dtd", SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"}, []string{"main"}),
 		"a cancelled ingest must leave no completion marker - a partial entry marked complete would be trusted by install/verify")
-	_, statErr := os.Stat(gameCache.ModPath("7dtd", "my-mods", "BiggerBackpack", "1.2.0") + ".staging")
+	_, statErr := os.Stat(gameCache.ModPath(cache.Key{GameID: "7dtd", SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"}) + ".staging")
 	assert.True(t, os.IsNotExist(statErr), "the staging directory must be cleaned up on a cancelled ingest")
 }

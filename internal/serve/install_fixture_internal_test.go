@@ -22,6 +22,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -243,8 +244,8 @@ func newInstallFixtureServer(t *testing.T) (*Server, *core.Service, *domain.Game
 	require.NoError(t, svc.SetDefaultGame(ctx, game.ID))
 
 	mod := domain.Mod{ID: "m1", SourceID: fixtureSourceID, Name: "Mod One", Version: "1.0", GameID: game.ID}
-	require.NoError(t, svc.GetGameCache(game).Store(
-		game.ID, mod.SourceID, mod.ID, mod.Version, deployFixtureFile, []byte("pak bytes")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version},
+		deployFixtureFile, []byte("pak bytes")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:          mod,
 		ProfileName:  "default",

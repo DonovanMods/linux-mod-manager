@@ -14,6 +14,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -337,7 +338,7 @@ func TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput(t *testi
 	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
 
 	// enable-me: installed (cached) but disabled, under "target" already.
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "enable-me", "1.0", "enable.esp", []byte("e")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "enable-me", Version: "1.0"}, "enable.esp", []byte("e")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "enable-me", SourceID: "src", Name: "Enable Me", Version: "1.0", GameID: game.ID},
 		ProfileName:  "target",
@@ -706,7 +707,7 @@ func seedApplyCandidateMod(t *testing.T, svc *core.Service, game *domain.Game, s
 
 	gameCache := svc.GetGameCache(game)
 	for path, content := range files {
-		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, path, content))
 	}
 
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{

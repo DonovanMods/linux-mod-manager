@@ -62,10 +62,10 @@ var _ adapter.MergeCompiler = (*pakOutcomeCompilerSource)(nil)
 func seedEnabledPakModCLI(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, version, fileID string, pakContent []byte) {
 	t.Helper()
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(fileID), pakContent))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, cache.RetainedSourceName(fileID), pakContent))
 	member := modID + ".pak"
-	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, member, pakContent))
-	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, member, pakContent))
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{member}))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
@@ -84,8 +84,8 @@ func seedEnabledPakModCLI(t *testing.T, svc *core.Service, game *domain.Game, so
 func seedLegacyPakModCLI(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, version, fileID string, pakContent []byte) {
 	t.Helper()
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, fileID, pakContent))
-	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, fileID, pakContent))
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{fileID}))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
@@ -271,11 +271,11 @@ func TestVerifyNeedsReingest_ReportsThenFixes(t *testing.T) {
 	assert.Equal(t, firstRunWarnings-1, fixResult.Warnings, "a successfully re-ingested row must be backed out of the warnings count, like every other --fix success path")
 
 	gameCache := svc.GetGameCache(game)
-	retainedPath := gameCache.GetFilePath(game.ID, "fake-compiler", modID, version, cache.RetainedSourceName(fileID))
+	retainedPath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: modID, Version: version}, cache.RetainedSourceName(fileID))
 	_, statErr := os.Stat(retainedPath)
 	assert.NoError(t, statErr, "the retained source must exist after --fix re-ingests the legacy pak")
 
-	manifests, merr := gameCache.FileManifests(game.ID, "fake-compiler", modID, version)
+	manifests, merr := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: modID, Version: version})
 	require.NoError(t, merr)
 	assert.True(t, manifests[fileID].Recorded, "the manifest must now be a Task-9-shaped recorded marker, not the pre-#221 bare one")
 
@@ -359,7 +359,7 @@ func TestVerifyNeedsReingest_CheckErrorSurfacedUnderVerbose(t *testing.T) {
 	seedLegacyPakModCLI(t, svc, game, "fake-compiler", modID, version, fileID, []byte("legacy-pak-bytes"))
 
 	gameCache := svc.GetGameCache(game)
-	versionDir := gameCache.ModPath(game.ID, "fake-compiler", modID, version)
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: modID, Version: version})
 	parentDir := filepath.Dir(versionDir)
 	require.NoError(t, os.Chmod(parentDir, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(parentDir, 0o755) }) // restore before TempDir's own cleanup removes it
@@ -399,8 +399,8 @@ func TestVerifyFileCountCarveOutMembersAware(t *testing.T) {
 
 	const sourceID, modID, version, fileID = "fake-compiler", "broken-pak-mod", "1.0", "BrokenMod.pak"
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(fileID), []byte("retained-bytes")))
-	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, cache.RetainedSourceName(fileID), []byte("retained-bytes")))
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 	// The manifest claims one member ("broken-pak-mod.pak"), but that member
 	// is never actually written to the cache directory - simulating a pak
 	// entry whose deployable content went missing while the retained source

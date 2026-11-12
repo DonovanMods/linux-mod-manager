@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // importStaged is one import item between its acquire and its commit.
@@ -116,7 +117,7 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	// matters most for exactly this flow's drift convergence: a
 	// downgrade's archived file may have vanished upstream.
 	gameCache := s.GetGameCache(game)
-	if gameCache.HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, st.fileIDs) {
+	if gameCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, st.fileIDs) {
 		return st, nil
 	}
 	for _, file := range filesToDownload {

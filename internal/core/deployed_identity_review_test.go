@@ -30,6 +30,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,7 +65,7 @@ func (f *legacyFixture) cachedOnly(t *testing.T, profile, modID string, method d
 	t.Helper()
 	gameCache := f.svc.GetGameCache(f.game)
 	for rel, content := range files {
-		require.NoError(t, gameCache.Store(f.game.ID, "local", modID, "unknown", rel, []byte(content)))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: modID, Version: "unknown"}, rel, []byte(content)))
 	}
 	require.NoError(t, f.svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "local", Name: "Mod " + modID, Version: "unknown", GameID: f.game.ID},
@@ -213,10 +214,10 @@ func TestDeployedIdentity_ADeployNeverWritesThroughAUsersLink(t *testing.T) {
 			{"update onto a path the new version adds", func(t *testing.T, f *legacyFixture) []string {
 				// The deployed version ships only Data/k2.esp; rolling back
 				// to one that also ships Data/k.esp is a replace that adds it.
-				require.NoError(t, os.Remove(filepath.Join(f.svc.GetGameCache(f.game).ModPath(f.game.ID, "local", "k", "unknown"), "Data", "k.esp")))
+				require.NoError(t, os.Remove(filepath.Join(f.svc.GetGameCache(f.game).ModPath(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "unknown"}), "Data", "k.esp")))
 				f.deploy(t, "default", core.DeployOptions{})
-				require.NoError(t, f.svc.GetGameCache(f.game).Store(f.game.ID, "local", "k", "old", "Data/k.esp", []byte("old k")))
-				require.NoError(t, f.svc.GetGameCache(f.game).Store(f.game.ID, "local", "k", "old", "Data/k2.esp", []byte("old k2")))
+				require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "old"}, "Data/k.esp", []byte("old k")))
+				require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "old"}, "Data/k2.esp", []byte("old k2")))
 				require.NoError(t, f.svc.ExecForTest(ctx, `UPDATE installed_mods SET previous_version = 'old' WHERE mod_id = 'k'`))
 				plan, err := f.svc.PlanRollback(ctx, f.game, "default", "local", "k")
 				require.NoError(t, err)
@@ -479,9 +480,9 @@ func TestDeployedIdentity_AFailedReplacePutsBackTheOldRecordsExactly(t *testing.
 	ctx := context.Background()
 	f := ledgerState(t, domain.LinkCopy)
 	gameCache := f.svc.GetGameCache(f.game)
-	require.NoError(t, gameCache.Store(f.game.ID, "local", "k", "old", "Data/k.esp", []byte("old k")))
-	require.NoError(t, gameCache.Store(f.game.ID, "local", "k", "old", "Data/k2.esp", []byte("old k2")))
-	require.NoError(t, gameCache.Store(f.game.ID, "local", "k", "old", "Data/new.esp", []byte("old new")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "old"}, "Data/k.esp", []byte("old k")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "old"}, "Data/k2.esp", []byte("old k2")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "old"}, "Data/new.esp", []byte("old new")))
 	require.NoError(t, f.svc.ExecForTest(ctx, `UPDATE installed_mods SET previous_version = 'old' WHERE mod_id = 'k'`))
 	// Recording the new version's one new path fails.
 	require.NoError(t, f.svc.ExecForTest(ctx, `CREATE TRIGGER fail_new BEFORE INSERT ON deployed_files

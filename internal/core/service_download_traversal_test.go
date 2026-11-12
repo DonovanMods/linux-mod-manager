@@ -58,7 +58,7 @@ func TestDownloadModToCache_TraversalFileName_SanitizedAgainstEscape(t *testing.
 	require.True(t, os.IsNotExist(statErr), "a traversal filename must never write outside the staging tempDir")
 
 	gameCache := svc.GetGameCache(game)
-	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	require.Equal(t, []string{"evil-traversal.zip"}, files, "the sanitized (Base'd) filename is what must actually land in the cache")
 }
@@ -104,11 +104,11 @@ func TestDownloadMod_DeployCompile_TraversalFileID_SanitizedAgainstEscape(t *tes
 	// - an unsanitized "../evil-traversal-id" fileID would climb into
 	// fake-compiler-bear-mount/ (one level up from the version dir).
 	gameCache := svc.GetGameCache(game)
-	escapedPath := filepath.Join(gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version), "..", "evil-traversal-id")
+	escapedPath := filepath.Join(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}), "..", "evil-traversal-id")
 	_, statErr := os.Stat(escapedPath)
 	require.True(t, os.IsNotExist(statErr), "a traversal fileID's retained source must never escape the version directory")
 
-	retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(file.ID))
+	retainedPath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, cache.RetainedSourceName(file.ID))
 	data, err := os.ReadFile(retainedPath)
 	require.NoError(t, err, "the sanitized (Base'd) retained source must actually land inside the version directory")
 	require.Equal(t, "fake-exmodz-bytes", string(data))

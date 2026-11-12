@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   covers more than one mod. The web UI shows the loader setup steps for
   these too.
 
+- **The mod cache is addressed by one key (#603).** Internal groundwork
+  for FOMOD installer variants: every cache lookup now takes a single key
+  (game, source, mod, version, and a variant that is always empty for now)
+  instead of four loose strings. Nothing changes on disk: every cache entry
+  keeps exactly the path it has, and a future variant will live beside its
+  version as `<version>@<variant>`.
+
 ### Added
 
 - **An all-or-nothing import mode in core (#602).**

@@ -45,7 +45,7 @@ func seedUpdatableMod(t *testing.T, svc *core.Service, game *domain.Game, source
 
 	gameCache := svc.GetGameCache(game)
 	for path, content := range files {
-		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, path, content))
 	}
 
 	im := &domain.InstalledMod{
@@ -499,7 +499,7 @@ func TestService_ApplyUpdate_RollbackPreconditionPreserved(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-	require.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"))
+	require.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	mock := &multiFileDownloadSource{
 		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
@@ -516,12 +516,12 @@ func TestService_ApplyUpdate_RollbackPreconditionPreserved(t *testing.T) {
 	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
-	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "the previous version's cache entry must survive an update, for rollback")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}), "the previous version's cache entry must survive an update, for rollback")
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.PreviousVersion, "doUpdateRollback's precondition: PreviousVersion must be set")
-	assert.True(t, svc.GetGameCache(game).Exists("g1", updated.SourceID, updated.ID, updated.PreviousVersion), "doUpdateRollback's precondition: the previous version must still be cached")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: updated.SourceID, ModID: updated.ID, Version: updated.PreviousVersion}), "doUpdateRollback's precondition: the previous version must still be cached")
 }
 
 // TestService_ApplyUpdate_DownloadFailure covers the download-failure trace
@@ -559,7 +559,7 @@ func TestService_ApplyUpdate_DownloadFailure(t *testing.T) {
 	oldContent, err2 := os.ReadFile(filepath.Join(gameDir, "mod1-old.esp"))
 	require.NoError(t, err2, "the originally-deployed file must survive untouched")
 	assert.Equal(t, "old-content", string(oldContent))
-	assert.False(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "2.0"))
+	assert.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "2.0"}))
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
@@ -1016,8 +1016,8 @@ func TestApplyUpdate_RecordsEffectiveFileVersion(t *testing.T) {
 	assert.Equal(t, "1.0", updated.PreviousVersion, "rollback must still target the prior installed version")
 
 	gameCache := svc.GetGameCache(game)
-	assert.True(t, gameCache.Exists("g1", "src", "mod1", "2.0b"), "cache must be keyed by the effective file version")
-	assert.False(t, gameCache.Exists("g1", "src", "mod1", "2.0"), "cache must not be keyed by the mod-level version")
+	assert.True(t, gameCache.Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "2.0b"}), "cache must be keyed by the effective file version")
+	assert.False(t, gameCache.Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "2.0"}), "cache must not be keyed by the mod-level version")
 
 	pm := svc.NewProfileManager()
 	profile, err := pm.Get(context.Background(), "g1", "default")
@@ -1167,7 +1167,7 @@ func TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion(t *testing.
 		"previous_version == version is the smoke report's DB signature for a no-op 'update'")
 
 	gameCache := svc.GetGameCache(game)
-	assert.True(t, gameCache.Exists("g1", "src", "mod1", "1.0.3"), "the new version must be cached under its own key")
+	assert.True(t, gameCache.Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0.3"}), "the new version must be cached under its own key")
 
 	newContent, err := os.ReadFile(filepath.Join(gameDir, "mod1-103.esp"))
 	require.NoError(t, err, "the new version's file must be deployed")
@@ -1666,7 +1666,7 @@ func TestApplyUpdate_FileOnlyUpdate_SameVersionStringApplies(t *testing.T) {
 // the shape every real install has written since manifests were introduced.
 func seedSameVersionManifest(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, version, fileID string, members []string) {
 	t.Helper()
-	versionDir := svc.GetGameCache(game).ModPath(game.ID, sourceID, modID, version)
+	versionDir := svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, members))
 }
 
@@ -1855,7 +1855,7 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_PureRemovalCompensationStaysNarro
 	// A stale, departed generation: its member sits in the shared dir with
 	// recorded provenance but was NOT deployed before the update.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store("g1", "src", "mod1", "1.0", "mod1-fileS.esp", []byte("S")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}, "mod1-fileS.esp", []byte("S")))
 	seedSameVersionManifest(t, svc, game, "src", "mod1", "1.0", "fileS", []string{"mod1-fileS.esp"})
 
 	mock := &multiFileDownloadSource{

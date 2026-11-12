@@ -69,7 +69,7 @@ func seedNarrowedStaleMod(t *testing.T, svc *core.Service, game *domain.Game, mo
 	})
 	seedProfileWithMod(t, svc, game.ID, "default", "src", modID, "1.0")
 
-	versionDir := svc.GetGameCache(game).ModPath(game.ID, "src", modID, "1.0")
+	versionDir := svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: modID, Version: "1.0"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "exmodz", nil))
 	require.NoError(t, os.WriteFile(filepath.Join(versionDir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 	require.NoError(t, os.Symlink(filepath.Join(versionDir, stalePath), filepath.Join(game.ModPath, stalePath)))

@@ -24,6 +24,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/steam"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/spf13/cobra"
@@ -930,7 +931,7 @@ func TestJSONGolden_ImportScan(t *testing.T) {
 // Mirrors install_test.go's own local seedOtherOwningSharedFile closure.
 func seedConflictingOwner(t *testing.T, svc *core.Service, game *domain.Game) {
 	t.Helper()
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "shared.esp", []byte("original-other-content")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "other", Version: "1.0"}, "shared.esp", []byte("original-other-content")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "other", SourceID: "test-src", Name: "Other Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // --- ImportPlan/ApplyImport (Phase 6b Task 8) ---
@@ -287,7 +288,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 					priorVersions = make(map[string]domain.InstalledMod)
 				}
 				priorVersions[key] = im
-			case gameCache.Exists(game.ID, ref.SourceID, ref.ModID, im.Version):
+			case gameCache.Exists(cache.Key{GameID: game.ID, SourceID: ref.SourceID, ModID: ref.ModID, Version: im.Version}):
 				// Bare Exists, deliberately, where the cross-profile branch
 				// below reads HasFileIDs (P1a re-review N5): the two ask
 				// different questions of the cache. There, the answer
@@ -315,7 +316,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 		// reached importCachedMod, which deployed whatever was on disk and
 		// wrote a row claiming the whole FileIDs set and deployed = true.
 		cached := func(row domain.InstalledMod) bool {
-			return gameCache.HasFileIDs(game.ID, ref.SourceID, ref.ModID, row.Version, row.FileIDs)
+			return gameCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: ref.SourceID, ModID: ref.ModID, Version: row.Version}, row.FileIDs)
 		}
 		im := pickImportRow(candidates, ref, cached)
 		if len(candidates) > 0 {
@@ -817,7 +818,7 @@ func (r *ProfileImportResult) countImported(deployed bool) {
 // the way either way.
 func (s *Service) deployImportedMod(ctx context.Context, game *domain.Game, installer *Installer, prior domain.InstalledMod, mod *domain.Mod, profileName string) error {
 	if prior.Deployed && !prior.External &&
-		s.GetGameCache(game).Exists(game.ID, prior.SourceID, prior.ID, prior.Version) {
+		s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: prior.SourceID, ModID: prior.ID, Version: prior.Version}) {
 		if err := installer.Replace(ctx, game, &prior.Mod, mod, profileName); err != nil {
 			return fmt.Errorf("deploy failed: %v", err)
 		}

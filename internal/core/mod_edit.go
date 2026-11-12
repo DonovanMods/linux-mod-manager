@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
@@ -494,14 +495,14 @@ func (s *Service) carryRelinkCache(ctx context.Context, game *domain.Game, oldSo
 		return
 	}
 	gameCache := s.GetGameCache(game)
-	if !gameCache.Exists(game.ID, oldSourceID, oldModID, oldVersion) || gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+	if !gameCache.Exists(cache.Key{GameID: game.ID, SourceID: oldSourceID, ModID: oldModID, Version: oldVersion}) || gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
 		return
 	}
 	if mod.Version != oldVersion {
 		warn("the cache has no files for %s %s yet - run 'lmm verify --fix' to download them", mod.ID, mod.Version)
 		return
 	}
-	if err := gameCache.CopyModAs(ctx, game.ID, oldSourceID, oldModID, mod.SourceID, mod.ID, mod.Version); err != nil && ctx.Err() == nil {
+	if err := gameCache.CopyModAs(ctx, cache.Key{GameID: game.ID, SourceID: oldSourceID, ModID: oldModID, Version: mod.Version}, mod.SourceID, mod.ID); err != nil && ctx.Err() == nil {
 		warn("could not copy the cached files to %s: %v - run 'lmm verify --fix' to download them again", mod.ID, err)
 	}
 }

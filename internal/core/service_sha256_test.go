@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +40,9 @@ func downloadWithSHA256(t *testing.T, content []byte, expectedSHA string) (game 
 
 	_, err = svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
 	gameCache := svc.GetGameCache(game)
-	cached = func() bool { return gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) }
+	cached = func() bool {
+		return gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+	}
 	return game, mod, cached, err
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -328,7 +329,7 @@ func seedInstalledMod(t *testing.T, svc *core.Service, game *domain.Game, mod do
 
 	gameCache := svc.GetGameCache(game)
 	for path, content := range files {
-		require.NoError(t, gameCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, path, content))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, path, content))
 	}
 
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{

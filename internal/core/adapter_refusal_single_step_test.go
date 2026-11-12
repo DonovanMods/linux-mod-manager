@@ -23,6 +23,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -151,7 +152,7 @@ func TestVerifyFix_TheVersionRepairRefusesWhereTheAdapterIsRefused(t *testing.T)
 	refused := switchTo(t, svc, game)
 	refused.Store(true)
 	before := byteTreeSnapshot(t, game.ModPath)
-	cacheEntry := svc.GetGameCache(game).ModPath(game.ID, "test-src", "mod1", "1.5")
+	cacheEntry := svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.5"})
 
 	for _, fix := range []bool{false, true} {
 		result, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyFull, Fix: fix}, nil)

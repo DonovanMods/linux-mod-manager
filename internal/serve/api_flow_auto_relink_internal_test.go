@@ -19,6 +19,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -84,7 +85,7 @@ func newAutoRelinkFixtureServer(t *testing.T) (*Server, *core.Service, *domain.G
 	}))
 	require.NoError(t, svc.NewProfileManager().UpsertMod(ctx, game.ID, "default",
 		domain.ModReference{SourceID: "gonecat", ModID: relinkGoneID, Version: "1.0"}))
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "gonecat", relinkGoneID, "1.0", "bear.pak", []byte("pak")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "gonecat", ModID: relinkGoneID, Version: "1.0"}, "bear.pak", []byte("pak")))
 	return s, svc, game
 }
 

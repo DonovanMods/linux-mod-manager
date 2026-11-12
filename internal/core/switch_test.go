@@ -36,7 +36,7 @@ func seedInstalledModUnderProfile(t *testing.T, svc *core.Service, game *domain.
 
 	gameCache := svc.GetGameCache(game)
 	for path, content := range files {
-		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, path, content))
 	}
 
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
@@ -1068,7 +1068,7 @@ func TestService_ApplyProfileSwitch_InstallLoop_RecordsFileVersion(t *testing.T)
 	assert.Equal(t, "1.0", installed.Version, "DB row must record the selected file's version, not the mod's latest")
 
 	gameCache := svc.GetGameCache(game)
-	assert.True(t, gameCache.Exists("g1", "src", "mod1", "1.0"), "cache must be keyed by the installed file's version")
+	assert.True(t, gameCache.Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}), "cache must be keyed by the installed file's version")
 }
 
 // twoVersionSource serves two versions of the same mod's files: 1.5
@@ -1534,7 +1534,7 @@ func applyProfileSwitchDowngradeEndToEnd(t *testing.T, lm domain.LinkMethod) {
 	svc.RegisterSource(mock)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}, "mod1.esp", []byte("new-payload")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
@@ -1567,7 +1567,7 @@ func applyProfileSwitchDowngradeEndToEnd(t *testing.T, lm domain.LinkMethod) {
 	assert.Equal(t, []string{"9"}, installed.FileIDs, "must have selected the archived 1.0 file, not the primary 1.5 file")
 	assert.True(t, installed.Deployed, "the row must record that files are actually live on disk (review finding 3)")
 
-	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "the downgraded version must be cached")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}), "the downgraded version must be cached")
 
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	assert.True(t, os.IsNotExist(err), "the obsolete 1.5 file must be removed by Replace, not left behind by a bare Install (review finding 1)")
@@ -1600,8 +1600,8 @@ func TestApplyProfileSwitch_PartialCacheEntry_StillDownloads(t *testing.T) {
 	// download run: the directory exists (bare cache.Exists would report
 	// "cached") but holds none of the expected files.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, os.MkdirAll(gameCache.ModPath(game.ID, "src", "mod1", "1.0"), 0755))
-	require.True(t, gameCache.Exists(game.ID, "src", "mod1", "1.0"), "precondition: bare Exists must see the empty dir as already cached")
+	require.NoError(t, os.MkdirAll(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}), 0755))
+	require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}), "precondition: bare Exists must see the empty dir as already cached")
 
 	plan := &core.SwitchPlan{
 		GameID: "g1", From: "default", To: "stable",
@@ -1622,7 +1622,7 @@ func TestApplyProfileSwitch_PartialCacheEntry_StillDownloads(t *testing.T) {
 	// loop executed) - what distinguishes a real download from a
 	// fooled-by-directory-presence skip is whether the byte content is
 	// actually on disk, both in the cache and deployed into the game dir.
-	cached, err := gameCache.ListFiles(game.ID, "src", "mod1", "1.0")
+	cached, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"})
 	require.NoError(t, err)
 	assert.Contains(t, cached, "mod1-old.esp", "the cache entry must actually contain the downloaded file, not just an empty directory")
 
@@ -1631,7 +1631,7 @@ func TestApplyProfileSwitch_PartialCacheEntry_StillDownloads(t *testing.T) {
 
 	// The completed download must leave the entry MARKED, so the next
 	// convergence pass over the same profile is a genuine cache hit.
-	assert.True(t, gameCache.HasFileIDs(game.ID, "src", "mod1", "1.0", []string{"9"}),
+	assert.True(t, gameCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}, []string{"9"}),
 		"a successful download must commit the per-file completion marker")
 	assert.Equal(t, 1, mock.DownloadCount(), "exactly one download, not a retry loop")
 }
@@ -1663,8 +1663,8 @@ func TestApplyProfileSwitch_FullyMarkedCache_SkipsDownload(t *testing.T) {
 	// archive member on disk under a name that matches nothing about the
 	// DownloadableFile ("mod1-old.zip"), plus file "9"'s completion marker.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.0", "mod1-old.esp", []byte("old-payload")))
-	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "src", "mod1", "1.0"), "9"))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}, "mod1-old.esp", []byte("old-payload")))
+	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}), "9"))
 
 	plan := &core.SwitchPlan{
 		GameID: "g1", From: "default", To: "stable",
@@ -2424,7 +2424,7 @@ func TestApplyProfileSwitch_PinnedTargetReplacesTheLiveOutgoingVersion(t *testin
 	require.NoError(t, err)
 	svc.RegisterSource(newTwoVersionSource(t))
 
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}, "mod1.esp", []byte("new-payload")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
 		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true, Deployed: true, FileIDs: []string{"10"},
@@ -2481,7 +2481,7 @@ func TestApplyProfileSwitch_ACacheMissReplacesTheLiveOutgoingVersion(t *testing.
 		Mod:         domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
 		ProfileName: "stable", UpdatePolicy: domain.UpdateNotify, Enabled: true, FileIDs: []string{"10"},
 	}))
-	require.False(t, svc.GetGameCache(game).Exists(game.ID, "src", "mod1", "1.5"))
+	require.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}))
 
 	plan, err := svc.PlanProfileSwitch(ctx, game, "stable")
 	require.NoError(t, err)

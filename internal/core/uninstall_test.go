@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,7 +94,7 @@ func TestService_UninstallMod_FullUninstall(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.True(t, os.IsNotExist(err), "deployed file should be undeployed")
 
-	assert.False(t, svc.GetGameCache(game).Exists("g1", "src", "1", "1.0"), "cache entry should be deleted")
+	assert.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "1", Version: "1.0"}), "cache entry should be deleted")
 
 	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should be removed")
@@ -125,7 +126,7 @@ func TestService_UninstallMod_KeepCache(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.True(t, os.IsNotExist(err), "deployed file should still be undeployed")
 
-	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "1", "1.0"), "cache entry must survive with KeepCache")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "1", Version: "1.0"}), "cache entry must survive with KeepCache")
 
 	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should still be removed")
@@ -470,7 +471,7 @@ func TestService_UninstallMod_UndeployAndCacheDeleteFailures_RecordedAsNotesWith
 	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, nil)
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	modPath := svc.GetGameCache(game).ModPath("g1", "src", "1", "1.0")
+	modPath := svc.GetGameCache(game).ModPath(cache.Key{GameID: "g1", SourceID: "src", ModID: "1", Version: "1.0"})
 	blockedParent := filepath.Dir(modPath) // .../g1/src-1, normally a directory
 	require.NoError(t, os.MkdirAll(filepath.Dir(blockedParent), 0755))
 	require.NoError(t, os.WriteFile(blockedParent, []byte("blocked"), 0644))

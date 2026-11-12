@@ -14,6 +14,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -163,7 +164,7 @@ func setupAutoRelinkTest(t *testing.T) (*core.Service, *domain.Game) {
 	require.NoError(t, err)
 	im.Author = "Donovan"
 	require.NoError(t, svc.SaveInstalledMod(ctx, im))
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "dLs3nvmWj5uOPnXxezGe", "1.0", "bear.pak", []byte("pak")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "dLs3nvmWj5uOPnXxezGe", Version: "1.0"}, "bear.pak", []byte("pak")))
 	moved := domain.Mod{ID: "8m1z04vNo2CCdKcD2C0H", SourceID: "test-src", Name: "Bear Mount", Author: "Donovan", Version: "1.0", GameID: game.ID}
 	gone.AddMod(&moved, nil)
 	svc.RegisterSource(&unstableGoneSource{catalogGoneSource: gone, catalog: []domain.Mod{moved}})

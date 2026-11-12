@@ -45,7 +45,7 @@ func TestDeployProfile_SelfHealsStaleUnclaimedPak(t *testing.T) {
 	seedProfileWithMod(t, svc, "g1", "default", "src", "m1", "1.4")
 
 	gameCache := svc.GetGameCache(game)
-	versionDir := gameCache.ModPath(game.ID, "src", "m1", "1.4")
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "m1", Version: "1.4"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "exmodz", nil))
 	require.NoError(t, os.WriteFile(filepath.Join(versionDir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 

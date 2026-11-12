@@ -26,6 +26,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -94,11 +95,11 @@ func TestApplyInstall_DirectorySource_SameVersionReinstall_DropsRemovedMember(t 
 	installDirectoryMod(t, svc, game, "BiggerBackpack")
 
 	gameCache := svc.GetGameCache(game)
-	files, err := gameCache.ListFiles(game.ID, "my-mods", "BiggerBackpack", "1.2.0")
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"})
 	require.NoError(t, err)
 	assert.NotContains(t, files, "stale.txt", "the removed member must be gone from the committed cache")
 
-	manifests, err := gameCache.FileManifests(game.ID, "my-mods", "BiggerBackpack", "1.2.0")
+	manifests, err := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"})
 	require.NoError(t, err)
 	require.True(t, manifests["main"].Recorded)
 	assert.NotContains(t, manifests["main"].Members, "stale.txt", "the removed member must be gone from the marker manifest")
@@ -131,13 +132,13 @@ func TestApplyInstall_DirectorySource_InstallOverStaleCacheEntry_DropsRemovedMem
 	_, err := svc.UninstallMod(context.Background(), game, "default", "my-mods", "BiggerBackpack", core.UninstallOptions{KeepCache: true})
 	require.NoError(t, err)
 	gameCache := svc.GetGameCache(game)
-	require.True(t, gameCache.Exists(game.ID, "my-mods", "BiggerBackpack", "1.2.0"), "fixture: the stale cache entry must survive the uninstall")
+	require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"}), "fixture: the stale cache entry must survive the uninstall")
 
 	require.NoError(t, os.Remove(filepath.Join(modDir, "stale.txt")))
 
 	installDirectoryMod(t, svc, game, "BiggerBackpack")
 
-	files, err := gameCache.ListFiles(game.ID, "my-mods", "BiggerBackpack", "1.2.0")
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: "my-mods", ModID: "BiggerBackpack", Version: "1.2.0"})
 	require.NoError(t, err)
 	assert.NotContains(t, files, "stale.txt", "re-ingest over the retained entry must drop the removed member from the cache")
 

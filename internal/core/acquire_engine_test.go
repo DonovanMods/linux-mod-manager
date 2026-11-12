@@ -21,6 +21,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
@@ -135,9 +136,9 @@ func (fx *acquireFixture) requireNothingWritten(t *testing.T, ids ...string) {
 	t.Helper()
 	_, err := fx.svc.NewProfileManager().Get(context.Background(), fx.game.ID, "target")
 	assert.ErrorIs(t, err, domain.ErrProfileNotFound, "the profile was not saved")
-	cache := fx.svc.GetGameCache(fx.game)
+	gc := fx.svc.GetGameCache(fx.game)
 	for _, id := range ids {
-		assert.False(t, cache.Exists(fx.game.ID, "repo", id, "1.0.0"), "no cache entry for %s", id)
+		assert.False(t, gc.Exists(cache.Key{GameID: fx.game.ID, SourceID: "repo", ModID: id, Version: "1.0.0"}), "no cache entry for %s", id)
 		for _, profile := range []string{"target", "default"} {
 			_, err := fx.svc.GetInstalledMod(context.Background(), "repo", id, fx.game.ID, profile)
 			assert.Error(t, err, "no installed row for %s in %s", id, profile)
@@ -263,7 +264,7 @@ func TestApplyImport_AnUnanswerableFailureIsCountedPerItem(t *testing.T) {
 
 	_, err = fx.svc.NewProfileManager().Get(context.Background(), fx.game.ID, "target")
 	require.NoError(t, err, "the profile is saved")
-	assert.True(t, fx.svc.GetGameCache(fx.game).Exists(fx.game.ID, "repo", "plain", "1.0.0"))
+	assert.True(t, fx.svc.GetGameCache(fx.game).Exists(cache.Key{GameID: fx.game.ID, SourceID: "repo", ModID: "plain", Version: "1.0.0"}))
 }
 
 // All-or-nothing (a collection apply's mode, C2) blocks on EVERY acquire
@@ -359,9 +360,9 @@ func TestApplyInstall_Batch_ALoaderRefusalWritesNothing(t *testing.T) {
 	assert.Equal(t, result.Failed, result.Skipped)
 	_, statErr := os.Stat(marker)
 	assert.True(t, os.IsNotExist(statErr), "no install hook runs for an install that writes nothing")
-	cache := fx.svc.GetGameCache(fx.game)
+	gc := fx.svc.GetGameCache(fx.game)
 	for _, id := range []string{"plain", "thing"} {
-		assert.False(t, cache.Exists(fx.game.ID, "repo", id, "1.0.0"))
+		assert.False(t, gc.Exists(cache.Key{GameID: fx.game.ID, SourceID: "repo", ModID: id, Version: "1.0.0"}))
 		_, err := fx.svc.GetInstalledMod(context.Background(), "repo", id, fx.game.ID, "default")
 		assert.Error(t, err)
 	}
@@ -405,7 +406,7 @@ func TestApplyImport_CancellationKeepsTheRuling16Pairing(t *testing.T) {
 		assert.Error(t, rowErr, "b was never committed")
 		require.NotNil(t, profile.FindRef("repo", "b"))
 		assert.Empty(t, profile.FindRef("repo", "b").FileIDs)
-		assert.False(t, fx.svc.GetGameCache(fx.game).Exists(fx.game.ID, "repo", "b", "1.0.0"))
+		assert.False(t, fx.svc.GetGameCache(fx.game).Exists(cache.Key{GameID: fx.game.ID, SourceID: "repo", ModID: "b", Version: "1.0.0"}))
 	})
 	t.Run("during acquire", func(t *testing.T) {
 		fx := newAcquireFixture(t, plainMod("a", "A"), plainMod("b", "B"))

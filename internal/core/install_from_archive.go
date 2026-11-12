@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // ErrArchiveModInstalled is PlanImportArchive's refusal of an install from a
@@ -113,7 +114,7 @@ func (s *Service) identifyInstallArchive(ctx context.Context, game *domain.Game,
 	// enrichment rename to make - and whether that entry already exists is
 	// asked of the version it will actually be written at.
 	plan.ident.version = version
-	plan.EntryPreExists = s.GetGameCache(game).Exists(game.ID, plan.ident.sourceID, plan.ident.modID, version)
+	plan.EntryPreExists = s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: plan.ident.sourceID, ModID: plan.ident.modID, Version: version})
 
 	if srcMod != nil {
 		plan.UnmetDependencies = s.unmetDependencies(ctx, game, profileName, opts.SourceID, srcMod, plan.Mod.Name, warn)

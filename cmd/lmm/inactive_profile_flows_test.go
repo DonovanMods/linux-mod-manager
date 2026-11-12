@@ -14,6 +14,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -35,7 +36,7 @@ func seedAltProfile(t *testing.T, svc *core.Service, game *domain.Game, sourceID
 	}
 	require.NoError(t, pm.SetDefault(ctx, game.ID, "default"))
 	for _, m := range []struct{ profile, id string }{{"default", "shared"}, {"alt", "shared"}, {"alt", "altonly"}} {
-		require.NoError(t, svc.GetGameCache(game).Store(game.ID, sourceID, m.id, "1.0", m.id+".esp", []byte(m.id)))
+		require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: m.id, Version: "1.0"}, m.id+".esp", []byte(m.id)))
 		seedSyncInstalledMod(t, svc, game, sourceID, m.id, "Mod "+m.id, "1.0", m.profile, m.profile == "default", nil)
 		require.NoError(t, pm.AddMod(ctx, game.ID, m.profile, domain.ModReference{SourceID: sourceID, ModID: m.id, Version: "1.0"}))
 	}
@@ -212,7 +213,7 @@ func TestDoProfileImport_ANonActiveProfileIsRecordedOnly(t *testing.T) {
 	setFlag(t, &profileImportYes, true)
 	setFlag(t, &profileImportForce, true)
 	ctx := context.Background()
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "donly", "1.0", "donly.esp", []byte("d")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "donly", Version: "1.0"}, "donly.esp", []byte("d")))
 	seedSyncInstalledMod(t, svc, game, "test-src", "donly", "Mod donly", "1.0", "default", true, nil)
 	require.NoError(t, getProfileManager(svc).AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "donly", Version: "1.0"}))
 	_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)

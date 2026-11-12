@@ -15,6 +15,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -89,7 +90,7 @@ func TestWorkshopTier3_EverySurfaceShowsTheRevisionDate(t *testing.T) {
 	})
 
 	t.Run("verify's missing row", func(t *testing.T) {
-		require.NoError(t, svc.GetGameCache(game).Delete(game.ID, mod.SourceID, mod.ID, workshopContentID))
+		require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: workshopContentID}))
 		report, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Force: true}, nil)
 		require.NoError(t, err)
 		var saw bool

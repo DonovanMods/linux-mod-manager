@@ -33,6 +33,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // LocalScan is the pure, displayable result of scanning a game's mod_path
@@ -665,7 +666,7 @@ func (s *Service) adoptScannedMod(ctx context.Context, game *domain.Game, r Scan
 	// missing is a cache entry pointing at the same bytes.
 	if game.DeployMode == domain.DeployCopy {
 		gameCache := s.GetGameCache(game)
-		cachePath := gameCache.ModPath(game.ID, r.Mod.SourceID, r.Mod.ID, r.Mod.Version)
+		cachePath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: r.Mod.SourceID, ModID: r.Mod.ID, Version: r.Mod.Version})
 
 		if err := os.MkdirAll(cachePath, 0755); err != nil {
 			return fmt.Errorf("creating cache: %w", err)

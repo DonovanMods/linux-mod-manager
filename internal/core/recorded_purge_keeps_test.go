@@ -47,6 +47,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,7 +94,7 @@ func (f *legacyFixture) deployed(t *testing.T, profile, modID string, method dom
 	ctx := context.Background()
 	gameCache := f.svc.GetGameCache(f.game)
 	for rel, content := range files {
-		require.NoError(t, gameCache.Store(f.game.ID, "local", modID, "unknown", rel, []byte(content)))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: modID, Version: "unknown"}, rel, []byte(content)))
 		dst := filepath.Join(f.game.ModPath, filepath.FromSlash(rel))
 		require.NoError(t, os.MkdirAll(filepath.Dir(dst), 0o755))
 		// A later deploy of a path replaces what an earlier one left.
@@ -103,7 +104,7 @@ func (f *legacyFixture) deployed(t *testing.T, profile, modID string, method dom
 		if text, edited := live[rel]; edited {
 			require.NoError(t, os.WriteFile(dst, []byte(text), 0o644))
 		} else if method == domain.LinkSymlink {
-			require.NoError(t, os.Symlink(filepath.Join(gameCache.ModPath(f.game.ID, "local", modID, "unknown"), filepath.FromSlash(rel)), dst))
+			require.NoError(t, os.Symlink(filepath.Join(gameCache.ModPath(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: modID, Version: "unknown"}), filepath.FromSlash(rel)), dst))
 		} else {
 			require.NoError(t, os.WriteFile(dst, []byte(content), 0o644))
 		}
@@ -425,7 +426,7 @@ func l1Fixture(t *testing.T) *legacyFixture {
 	f.profile(t, "default", false, "a", "b")
 	f.profile(t, "alt", true, "a")
 	f.deployed(t, "default", "a", domain.LinkSymlink, map[string]string{"Data/a.esp": "mod a"}, nil)
-	require.NoError(t, f.svc.GetGameCache(f.game).Store(f.game.ID, "local", "b", "unknown", "Data/b.esp", []byte("mod b")))
+	require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "b", Version: "unknown"}, "Data/b.esp", []byte("mod b")))
 	require.NoError(t, f.svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "b", SourceID: "local", Name: "Mod b", Version: "unknown", GameID: f.game.ID},
 		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: false, Deployed: true, LinkMethod: domain.LinkSymlink,

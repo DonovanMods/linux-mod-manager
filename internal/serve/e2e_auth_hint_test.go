@@ -17,6 +17,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // e2eKeylessSource is an auth-capable source with no key: every call that
@@ -59,7 +60,7 @@ func newE2EFixtureWithAKeylessSource(t *testing.T) e2eFixture {
 	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
 
 	gameCache := f.Svc.GetGameCache(f.Game)
-	require.NoError(t, gameCache.Store(f.Game.ID, "keyless", "km", "1.0", "f1", []byte("content")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: f.Game.ID, SourceID: "keyless", ModID: "km", Version: "1.0"}, "f1", []byte("content")))
 	require.NoError(t, f.Svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "km", SourceID: "keyless", Name: "Keyed Mod", Version: "1.0", GameID: f.Game.ID},
 		ProfileName:  f.Profile,
