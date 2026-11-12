@@ -1417,7 +1417,8 @@ func TestE2E_ArchiveImport_SuccessDropsTheStaleDiscardSentence(t *testing.T) {
 		// raced the second under -race on a hosted runner (4739e5d8's CI).
 		// Wait for the sentence to go, bounded by the harness's budget, so a
 		// real regression still fails here rather than passing by luck.
-		pollUntil(`!(document.querySelector('[data-testid="staged-upload"]')?.textContent ?? "").includes("discarded")`),
+		// The panel must still be there: a missing panel is a failure, not a pass.
+		pollUntil(`((el) => el !== null && !el.textContent.includes("discarded"))(document.querySelector('[data-testid="staged-upload"]'))`),
 	)
 
 	var afterText string
