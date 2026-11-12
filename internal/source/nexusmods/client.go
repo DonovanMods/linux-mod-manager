@@ -31,8 +31,12 @@ const (
 type Client struct {
 	httpClient *http.Client
 	rest       *httpclient.Client
-	apiKey     string
 	graphqlURL string
+
+	// apiKey is read and written only under keyMu (#601): lmm serve
+	// re-keys a live source (SetAPIKey) while requests are in flight.
+	keyMu  sync.RWMutex
+	apiKey string
 
 	// knownGames is the game domains the games endpoint has confirmed, so a
 	// 404 from a mod endpoint is checked against its game once (#540).
@@ -96,8 +100,17 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 
 // SetAPIKey sets the API key for authentication
 func (c *Client) SetAPIKey(key string) {
+	c.keyMu.Lock()
+	defer c.keyMu.Unlock()
 	c.apiKey = key
 	c.rest.SetAPIKey(key)
+}
+
+// key returns the configured API key.
+func (c *Client) key() string {
+	c.keyMu.RLock()
+	defer c.keyMu.RUnlock()
+	return c.apiKey
 }
 
 // SetBaseURL overrides the REST API base URL — primarily used by tests that
@@ -108,7 +121,7 @@ func (c *Client) SetBaseURL(u string) {
 
 // IsAuthenticated returns true if an API key is configured
 func (c *Client) IsAuthenticated() bool {
-	return c.apiKey != ""
+	return c.key() != ""
 }
 
 // validateResponse is the part of GET /v1/users/validate.json lmm reads: the
@@ -186,7 +199,7 @@ func (c *Client) validate(ctx context.Context, key string) (v validateResponse, 
 // endpoint's is_premium, cached per key (see Client.tier). No key, or a key
 // the endpoint rejects, is domain.ErrAuthRequired.
 func (c *Client) AccountTier(ctx context.Context) (source.Tier, error) {
-	key := c.apiKey
+	key := c.key()
 	if key == "" {
 		return "", fmt.Errorf("NexusMods: %w", domain.ErrAuthRequired)
 	}
@@ -570,8 +583,8 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category str
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("apikey", c.apiKey)
+	if key := c.key(); key != "" {
+		req.Header.Set("apikey", key)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -709,8 +722,8 @@ func (c *Client) GetModRequirements(ctx context.Context, gameDomain string, modI
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("apikey", c.apiKey)
+	if key := c.key(); key != "" {
+		req.Header.Set("apikey", key)
 	}
 
 	resp, err := c.httpClient.Do(req)

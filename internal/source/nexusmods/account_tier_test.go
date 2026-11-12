@@ -18,10 +18,12 @@ package nexusmods
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -175,4 +177,28 @@ func TestNexusMods_ValidateKey_UndecodableBodyIsStillValid(t *testing.T) {
 	require.NoError(t, nm.ValidateKey(context.Background(), "testapikey"))
 	_, err := nm.AccountTier(context.Background())
 	assert.Error(t, err)
+}
+
+// lmm serve re-keys a source live: a re-key racing AccountTier (and every
+// other reader of the key) must be safe under -race.
+func TestNexusMods_AccountTier_ConcurrentReKeyIsRaceFree(t *testing.T) {
+	nm, _ := tierServer(t, validatePath, http.StatusOK, tierFixture(t, "validate-free.json"))
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			nm.SetAPIKey(fmt.Sprintf("key-%d", i))
+		}()
+		go func() {
+			defer wg.Done()
+			_, _ = nm.AccountTier(ctx)
+			_ = nm.IsAuthenticated()
+		}()
+	}
+	wg.Wait()
+	tier, err := nm.AccountTier(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, source.TierFree, tier)
 }
