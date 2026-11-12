@@ -131,7 +131,7 @@ func (s *Service) PlanRollback(ctx context.Context, game *domain.Game, profileNa
 		plan.Refusal = lockedRefUnlockOnlyMessage(mod.Mod, profileName, ref)
 	}
 
-	plan.CacheMissing = !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.PreviousVersion})
+	plan.CacheMissing = !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.PreviousVersion, Variant: mod.PreviousVariant})
 
 	return plan, nil
 }
@@ -330,7 +330,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 		return result, fmt.Errorf("no previous version available for rollback")
 	}
 
-	if !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.PreviousVersion}) {
+	if !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.PreviousVersion, Variant: mod.PreviousVariant}) {
 		return result, fmt.Errorf("previous version %s not found in cache", mod.PreviousVersion)
 	}
 
@@ -367,7 +367,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 
 	prevMod := mod.Mod
-	prevMod.Version = mod.PreviousVersion
+	prevMod.Version, prevMod.Variant = mod.PreviousVersion, mod.PreviousVariant
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = prevMod.ID, prevMod.Name, prevMod.Version
 	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {

@@ -1678,7 +1678,7 @@ func prepareStaging(ctx context.Context, gameCache *cache.Cache, game *domain.Ga
 	if err != nil {
 		return "", "", err
 	}
-	if gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
+	if gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}) {
 		if err := copyDir(ctx, cachePath, stagePath); err != nil {
 			// Best-effort: restore the "no debris" guarantee even though
 			// copyDir itself already failed. A cleanup failure here isn't
@@ -1703,7 +1703,7 @@ func prepareStaging(ctx context.Context, gameCache *cache.Cache, game *domain.Ga
 // cleanup (defer os.RemoveAll immediately after) - but unlike prepareStaging,
 // on a nil error stagePath NEVER exists yet; the first writer creates it.
 func prepareUnseededStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
-	cachePath = gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+	cachePath = gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 	stagePath = cachePath + ".staging"
 	if err := os.RemoveAll(stagePath); err != nil {
 		return "", "", fmt.Errorf("clearing staging cache: %w", err)
@@ -1738,7 +1738,10 @@ func prepareUnseededStaging(gameCache *cache.Cache, game *domain.Game, mod *doma
 // files survive into every later file's commit. (Directory ingests stage
 // UNSEEDED instead - prepareUnseededStaging, #166 - their single synthetic
 // file ID means there are no earlier files' markers to carry forward.)
-func commitStagedCacheWithMarker(cachePath, stagePath, fileID string, members []string) error {
+//
+// k is the entry's key: commitStagedCache stamps it and refuses a
+// directory that is another key's entry (#614).
+func commitStagedCacheWithMarker(k cache.Key, cachePath, stagePath, fileID string, members []string) error {
 	if err := cache.MarkFileCompleteWithMembers(stagePath, fileID, members); err != nil {
 		return err
 	}
@@ -1756,7 +1759,7 @@ func commitStagedCacheWithMarker(cachePath, stagePath, fileID string, members []
 			return err
 		}
 	}
-	return commitStagedCache(cachePath, stagePath)
+	return commitStagedCache(k, cachePath, stagePath)
 }
 
 // relativeFileMembers lists root-relative paths of the regular files under
@@ -1793,7 +1796,27 @@ func relativeFileMembers(root string) ([]string, error) {
 	return members, nil
 }
 
-func commitStagedCache(cachePath, stagePath string) error {
+// commitStagedCache swaps stagePath into place as k's entry at cachePath,
+// with k's identity marker (cache.KeyMarkerName) stamped into it, so every
+// committed entry - plain or variant - says whose it is. An existing
+// directory at cachePath that is ANOTHER key's entry is refused with
+// *cache.KeyCollisionError before anything moves (#614): k's spelling is
+// not injective, and a plain version "1.0@abc" must never replace variant
+// "abc" of version "1.0", nor the other way round.
+func commitStagedCache(k cache.Key, cachePath, stagePath string) error {
+	if _, err := os.Lstat(cachePath); err == nil {
+		if err := cache.CheckKey(cachePath, k); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking existing cache: %w", err)
+	}
+	if err := os.MkdirAll(stagePath, 0755); err != nil {
+		return fmt.Errorf("preparing staged cache: %w", err)
+	}
+	if err := cache.StampKey(stagePath, k); err != nil {
+		return err
+	}
 	parentDir := filepath.Dir(cachePath)
 	if err := os.MkdirAll(parentDir, 0755); err != nil {
 		return fmt.Errorf("creating cache parent directory: %w", err)

@@ -213,7 +213,7 @@ func (s *Service) copyEntry(game *domain.Game, row domain.InstalledMod, ref *dom
 	if row.External {
 		return CopyModEntry{}, ReasonExternalNoCopy
 	}
-	if !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version}) {
+	if !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version, Variant: row.Variant}) {
 		return CopyModEntry{}, fmt.Sprintf("%s %s is not in the cache - reinstall it with 'lmm install --id %s' first", row.Name, row.Version, row.ID)
 	}
 	entry := CopyModEntry{SourceID: row.SourceID, ModID: row.ID, Name: row.Name, Version: row.Version, FileIDs: row.FileIDs}
@@ -516,7 +516,7 @@ func (s *Service) copyExisting(ctx context.Context, gameID string, to *domain.Pr
 // re-linked by Install over its own files.
 func (s *Service) deployCopiedMod(ctx context.Context, game *domain.Game, installer *Installer, prior *domain.InstalledMod, mod *domain.Mod, profile string) error {
 	if prior != nil && prior.Version != mod.Version {
-		if s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: prior.SourceID, ModID: prior.ID, Version: prior.Version}) {
+		if s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: prior.SourceID, ModID: prior.ID, Version: prior.Version, Variant: prior.Variant}) {
 			return installer.Replace(ctx, game, &prior.Mod, mod, profile)
 		}
 		if err := installer.Uninstall(ctx, game, &prior.Mod, profile); err != nil {

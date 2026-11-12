@@ -64,7 +64,7 @@ func (r *verifyRun) recordsPass(installedMods []domain.InstalledMod, files []Dep
 		}
 		if mod.External || adoptedInPlace(r.game, mod) || withFiles[domain.ModKey(mod.SourceID, mod.ID)] ||
 			(r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter) ||
-			gameCache.Exists(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
+			gameCache.Exists(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}) {
 			continue
 		}
 		r.result.Issues++

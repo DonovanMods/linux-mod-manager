@@ -278,7 +278,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			}
 			fileCount = 1
 		}
-		if err := commitStagedCache(cachePath, stagePath); err != nil {
+		if err := commitStagedCache(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, cachePath, stagePath); err != nil {
 			return nil, err
 		}
 		retainedFileID = filename
@@ -286,16 +286,24 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		// Copy mode: just copy the file as-is to cache (don't extract)
 		modName = importedModName(game, kind, filename, version, nil)
 
-		cachePath := i.cache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
+		entryKey := cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}
+		cachePath := i.cache.ModPath(entryKey)
 
-		// Remove existing cache if present (re-import case). A failed removal
+		// Remove existing cache if present (re-import case) - only this
+		// key's own entry, never a colliding key's (#614). A failed removal
 		// can leave stale content that an otherwise successful copy would not
 		// expose, so surface it instead of relying on a later write to fail.
+		if err := i.cache.Claim(entryKey); err != nil {
+			return nil, err
+		}
 		if err := os.RemoveAll(cachePath); err != nil {
 			return nil, fmt.Errorf("removing existing cache directory: %w", err)
 		}
 		if err := os.MkdirAll(cachePath, 0755); err != nil {
 			return nil, fmt.Errorf("creating cache directory: %w", err)
+		}
+		if err := cache.StampKey(cachePath, entryKey); err != nil {
+			return nil, err
 		}
 
 		// Copy the file to cache using streaming to avoid memory spikes
@@ -358,13 +366,21 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			i.log.Warn(w, "archive", filename, "game", game.ID)
 		}
 
-		// Move extracted files to cache
-		cachePath := i.cache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
+		// Move extracted files to cache, stamped as this key's entry (#614).
+		entryKey := cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}
+		cachePath := i.cache.ModPath(entryKey)
 		if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
 			return nil, fmt.Errorf("creating cache directory: %w", err)
 		}
+		if err := cache.StampKey(extractedPath, entryKey); err != nil {
+			return nil, err
+		}
 
-		// Remove existing cache if present (re-import case)
+		// Remove existing cache if present (re-import case) - only this
+		// key's own entry, never a colliding key's (#614).
+		if err := i.cache.Claim(entryKey); err != nil {
+			return nil, err
+		}
 		if err := os.RemoveAll(cachePath); err != nil {
 			return nil, fmt.Errorf("removing existing cache for re-import: %w", err)
 		}
@@ -377,7 +393,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		}
 
 		// Count extracted files
-		files, err := i.cache.ListFiles(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
+		files, err := i.cache.ListFiles(entryKey)
 		if err != nil {
 			return nil, fmt.Errorf("listing cached files: %w", err)
 		}
@@ -471,11 +487,11 @@ func (s *Service) resolveImportedFile(ctx context.Context, game *domain.Game, so
 // beginOp, and core's tests reach it through MarkImportedFileCompleteForTest.
 func (s *Service) markImportedFileComplete(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
 	gameCache := s.GetGameCache(game)
-	members, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+	members, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 	if err != nil {
 		return fmt.Errorf("listing cache members: %w", err)
 	}
-	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 	return cache.MarkFileCompleteWithMembers(versionDir, fileID, members)
 }
 

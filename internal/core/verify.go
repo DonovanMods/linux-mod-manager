@@ -1124,7 +1124,7 @@ func (r *verifyRun) blockedPathsPass(installedMods []domain.InstalledMod, rows [
 		if r.opts.ModFilter != "" && m.ID != r.opts.ModFilter {
 			continue
 		}
-		files, err := deployableFiles(gameCache, a, r.game, m.SourceID, m.ID, m.Version)
+		files, err := deployableFiles(gameCache, a, r.game, modCacheKey(r.game.ID, m.Mod))
 		if err != nil {
 			continue
 		}
@@ -1472,14 +1472,14 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) error {
 		// by design (the shared merged pak, checked separately, is what
 		// actually deploys), so ListFiles == 0 here is correct, healthy
 		// state, not a mismatch.
-		if r.game.DeployMode == domain.DeployCompile && HasRetainedCompileSource(gameCache, r.game.ID, mod.SourceID, mod.ID, mod.Version, mod.FileIDs) {
+		if r.game.DeployMode == domain.DeployCompile && HasRetainedCompileSource(gameCache, modCacheKey(r.game.ID, mod.Mod), mod.FileIDs) {
 			continue
 		}
-		cacheExists := gameCache.Exists(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+		cacheExists := gameCache.Exists(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 		if !cacheExists {
 			continue
 		}
-		cachedFiles, err := gameCache.ListFiles(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+		cachedFiles, err := gameCache.ListFiles(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 		if err != nil {
 			// A real filesystem error walking the cache dir (permission
 			// denied, I/O error) is not the same as "cache is empty" - the
@@ -1603,7 +1603,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 			continue
 		}
 
-		cacheExists := gameCache.Exists(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+		cacheExists := gameCache.Exists(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 		if !cacheExists {
 			r.result.Issues++
 			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "missing", Version: mod.Version,

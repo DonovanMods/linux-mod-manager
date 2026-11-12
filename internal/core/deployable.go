@@ -54,12 +54,15 @@ import (
 // (e.g. Installer.Install's "resolving deployable files", conflicts.go's
 // pre-existing "listing cache files for %s") - this resolver does not
 // prescribe the wording.
-func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, sourceID, modID, version string) ([]string, error) {
-	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
+//
+// k names the entry, variant included (#614): modCacheKey for an installed
+// mod.
+func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, k cache.Key) ([]string, error) {
+	files, err := gameCache.ListFiles(k)
 	if err != nil {
 		return nil, err
 	}
-	return deployableFilesFromListing(gameCache, a, game, sourceID, modID, version, files)
+	return deployableFilesFromListing(gameCache, a, game, k, files)
 }
 
 // deployableFilesFromListing is deployableFiles' narrowing logic for a
@@ -67,9 +70,8 @@ func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain
 // #5): planDeploy needs both the deploy-direction (this) and the
 // removal-direction (the raw listing itself) result for the same mod, and
 // ListFiles-ing one cache entry twice to build one plan row is wasteful.
-func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, sourceID, modID, version string, files []string) ([]string, error) {
-	gameID := game.ID
-	manifests, err := gameCache.FileManifests(cache.Key{GameID: gameID, SourceID: sourceID, ModID: modID, Version: version})
+func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, k cache.Key, files []string) ([]string, error) {
+	manifests, err := gameCache.FileManifests(k)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +87,7 @@ func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, g
 			claimed[member] = true
 		}
 	}
-	versionDir := gameCache.ModPath(cache.Key{GameID: gameID, SourceID: sourceID, ModID: modID, Version: version})
+	versionDir := gameCache.ModPath(k)
 	hasRetainedSource, err := cache.HasRetainedSource(versionDir)
 	if err != nil {
 		return nil, err

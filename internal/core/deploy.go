@@ -471,7 +471,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 			plan.Mods = append(plan.Mods, entry)
 			continue
 		}
-		if !gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
+		if !gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}) {
 			// The deploy loop heals this by re-downloading from source and
 			// then deploying it - this mod WOULD deploy, so it is not a
 			// Skipped entry (Important #2). What it would then link is not
@@ -485,7 +485,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 		// success path (its full removal-direction union IS this raw
 		// listing) without listing the same entry a second time (Task 24
 		// review, Minor #5).
-		files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+		files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 		if err != nil {
 			// A readout, never a reason to fail a plan: the deploy itself
 			// would surface this as that mod's own skip reason.
@@ -494,7 +494,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 			plan.Mods = append(plan.Mods, entry)
 			continue
 		}
-		link, err := deployableFilesFromListing(gameCache, planAdapter, game, mod.SourceID, mod.ID, mod.Version, files)
+		link, err := deployableFilesFromListing(gameCache, planAdapter, game, modCacheKey(game.ID, mod.Mod), files)
 		if err != nil {
 			s.logger().Warn("resolving deployable files failed while planning a deploy",
 				"game_id", game.ID, "profile", profileName, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
@@ -917,7 +917,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 			continue
 		}
 
-		if !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
+		if !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}) {
 			if skipped := s.redeployFromSource(ctx, game, mod, scope, emit, result); skipped {
 				continue
 			}

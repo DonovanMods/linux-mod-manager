@@ -880,7 +880,7 @@ func (v *activeApplyView) canDeploy(key string, hasSource func(string) bool) boo
 		if own.External {
 			return true
 		}
-		if (ref.Version == "" || own.Version == ref.Version) && v.cache.Exists(cache.Key{GameID: v.game.ID, SourceID: own.SourceID, ModID: own.ID, Version: own.Version}) {
+		if (ref.Version == "" || own.Version == ref.Version) && v.cache.Exists(cache.Key{GameID: v.game.ID, SourceID: own.SourceID, ModID: own.ID, Version: own.Version, Variant: own.Variant}) {
 			return true
 		}
 	} else {
@@ -904,7 +904,7 @@ func (v *activeApplyView) unavailable(key string) ListedVersionUnavailable {
 		rows = append(rows, *own)
 	}
 	for _, row := range rows {
-		if !slices.Contains(u.Cached, row.Version) && v.cache.Exists(cache.Key{GameID: v.game.ID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version}) {
+		if !slices.Contains(u.Cached, row.Version) && v.cache.Exists(cache.Key{GameID: v.game.ID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version, Variant: row.Variant}) {
 			u.Cached = append(u.Cached, row.Version)
 		}
 	}

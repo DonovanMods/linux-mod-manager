@@ -233,7 +233,7 @@ func (r *verifyRun) cacheRelayoutApplies(mod *domain.InstalledMod) bool {
 
 // cacheEntryPath is the directory holding mod's cached files for this game.
 func (r *verifyRun) cacheEntryPath(mod *domain.InstalledMod) string {
-	return r.svc.GetGameCache(r.game).ModPath(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+	return r.svc.GetGameCache(r.game).ModPath(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 }
 
 // repairMisplacedLoaderDeploy re-lays out the cache entry and re-deploys the
