@@ -20,6 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ProfileImportOptions.AllOrNothing` makes every acquire failure, not only
   an answerable one, refuse the whole import with nothing written. No
   frontend uses it yet; collection import will.
+- **Groundwork for FOMOD installs: recorded choices and cache variants
+  (#614).** Nothing uses either yet, so installs behave exactly as before.
+  - A profile can record a mod's FOMOD installer choices as a `fomod:`
+    block beside `disabled:` and `category:`. Profile saves, duplicates,
+    `lmm mod copy`, re-links, export and import all keep it, and no file
+    gains the key until a later release writes one. An older lmm drops the
+    block when it rewrites the profile.
+  - The database gains `installed_mods.variant` and `previous_variant`
+    (schema version 24), which name the tree of a version that FOMOD
+    choices build. Rollback restores the previous tree with the previous
+    version. After the upgrade, an older lmm refuses this database, as
+    with every schema change.
+  - Each cache entry now records which version and variant it belongs to
+    (a reserved `.lmm-key` file). A source version that happens to spell
+    another entry's directory, such as `1.0@abcdef123456`, can never read,
+    replace or delete that entry; lmm refuses with an error naming both.
 
 ### Changed
 
