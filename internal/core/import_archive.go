@@ -34,6 +34,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // ImportArchiveOptions configures ImportArchive.
@@ -346,7 +347,7 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	// meaningful for a reproducible identity (unit P review, Important 3).
 	gameCache := s.GetGameCache(game)
 	entryPreExists := !ident.minted &&
-		gameCache.Exists(game.ID, ident.sourceID, ident.modID, ident.version)
+		gameCache.Exists(cache.Key{GameID: game.ID, SourceID: ident.sourceID, ModID: ident.modID, Version: ident.version})
 
 	contents, err := s.planArchiveContents(ctx, game, archivePath, ident.version)
 	if err != nil {
@@ -723,8 +724,8 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	resolvedFile := plan.resolvedFile
 
 	if preEnrichID != result.Mod.ID || preEnrichVersion != result.Mod.Version {
-		oldPath := gameCache.ModPath(game.ID, result.Mod.SourceID, preEnrichID, preEnrichVersion)
-		newPath := gameCache.ModPath(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+		oldPath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: preEnrichID, Version: preEnrichVersion})
+		newPath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version})
 		// A failed MkdirAll is silent, exactly as it was pre-lift: the
 		// rename is not even attempted, and the cascade it causes (the mod
 		// is not cached at its new version) surfaces at the deploy.
@@ -1010,14 +1011,14 @@ func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArc
 	}
 	var warnings []string
 	gameCache := s.GetGameCache(game)
-	if err := gameCache.Delete(game.ID, result.Mod.SourceID, preEnrichID, preEnrichVersion); err != nil {
+	if err := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: preEnrichID, Version: preEnrichVersion}); err != nil {
 		s.logger().Warn("removing refused import's cache entry", "mod", preEnrichID, "version", preEnrichVersion, "err", err)
 		warnings = append(warnings, fmt.Sprintf("could not remove the refused import's cache entry %s@%s: %v", preEnrichID, preEnrichVersion, err))
 	}
 	if !result.Renamed {
 		return warnings
 	}
-	if err := gameCache.Delete(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version); err != nil {
+	if err := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version}); err != nil {
 		s.logger().Warn("removing refused import's renamed cache entry", "mod", result.Mod.ID, "version", result.Mod.Version, "err", err)
 		warnings = append(warnings, fmt.Sprintf("could not remove the refused import's cache entry %s@%s: %v", result.Mod.ID, result.Mod.Version, err))
 	}

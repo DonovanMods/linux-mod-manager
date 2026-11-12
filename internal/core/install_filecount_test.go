@@ -7,6 +7,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -64,7 +65,7 @@ func TestApplyInstall_MultiMemberArchives_ColdAndWarmAgree(t *testing.T) {
 	cold, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 
-	cached, err := svc.GetGameCache(game).ListFiles("g1", "src", "mod1", "1.0")
+	cached, err := svc.GetGameCache(game).ListFiles(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"})
 	require.NoError(t, err)
 	require.Len(t, cached, 3, "sanity: two archives of two members each, sharing one path - the entry holds their union")
 	assert.Equal(t, 3, cold.FilesDeployed, "the cold fill reports the cache entry's own file count, not the sum of what each archive contributed")

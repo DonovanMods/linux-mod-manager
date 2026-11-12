@@ -19,6 +19,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -168,9 +169,9 @@ func TestVerifyFix_ALinkAnotherGameRecordsIsForeign(t *testing.T) {
 func newNestedLeftoverGame(t *testing.T, links ...string) (svc *core.Service, game *domain.Game, target string) {
 	t.Helper()
 	svc, game = newGameRootBepInExGame(t)
-	cache := svc.GetGameCache(game)
-	require.NoError(t, cache.Store(game.ID, domain.SourceLocal, "gone", "1.0", "Gone.dll", []byte("gone")))
-	target = cache.GetFilePath(game.ID, domain.SourceLocal, "gone", "1.0", "Gone.dll")
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "gone", Version: "1.0"}, "Gone.dll", []byte("gone")))
+	target = gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "gone", Version: "1.0"}, "Gone.dll")
 	for _, l := range links {
 		symlinkAt(t, target, nestedPath(game, l))
 	}

@@ -64,7 +64,7 @@ func setupDoUpdateRecompileTest(t *testing.T) (*core.Service, *domain.Game, *com
 
 	const modID, version, fileID = "bear-mount", "3.3", "exmodz-file-id"
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, version, cache.RetainedSourceName(fileID), []byte("retained-exmodz-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: modID, Version: version}, cache.RetainedSourceName(fileID), []byte("retained-exmodz-bytes")))
 
 	im := &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: "Bear Mount", Version: version, GameID: game.ID},

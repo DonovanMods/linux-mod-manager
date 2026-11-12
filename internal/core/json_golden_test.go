@@ -746,6 +746,19 @@ func TestJSONGoldens(t *testing.T) {
 			}).Details(),
 		},
 		{
+			// #601: a download the source refuses for the ACCOUNT (a free
+			// NexusMods key) offers the manual download's remedy
+			// (manual_download) and says why (account_restricted); the key
+			// is omitted from every other failure.
+			"download_error_account_restricted",
+			(&core.DownloadError{
+				SourceID: "nexusmods", ModID: "107", ModName: "Cyber Engine Tweaks",
+				ModURL: "https://www.nexusmods.com/cyberpunk2077/mods/107", ManualDownload: true, AccountRestricted: true,
+				FileID: "168615", FileName: "Cyber Engine Tweaks-107-1-35-0-1752669416.zip",
+				Err: errors.New("NexusMods serves downloads through its API to Premium accounts only, and this API key's account is not Premium: download the file from the mod's page instead"),
+			}).Details(),
+		},
+		{
 			// #513: and with no page to send the user to - the keys that
 			// have nothing to say are left out.
 			"download_error_no_page",
@@ -2304,6 +2317,21 @@ func TestJSONGoldens(t *testing.T) {
 				ToVersion:   "1.3",
 				Error:       "downloading update: mod author has disabled third-party downloads",
 				ModURL:      "https://www.curseforge.com/minecraft/mc-mods/broken-mod",
+			},
+		},
+		{
+			// #601: a batch item the account was refused carries the manual
+			// remedy and the account flag.
+			"update_batch_failure_account_restricted",
+			core.UpdateBatchFailure{
+				Mod:               "nexusmods:107",
+				Name:              "Cyber Engine Tweaks",
+				FromVersion:       "1.34.0",
+				ToVersion:         "1.35.0",
+				Error:             "downloading update: NexusMods serves downloads through its API to Premium accounts only, and this API key's account is not Premium: download the file from the mod's page instead",
+				ModURL:            "https://www.nexusmods.com/cyberpunk2077/mods/107",
+				ManualDownload:    true,
+				AccountRestricted: true,
 			},
 		},
 		{

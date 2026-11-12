@@ -34,6 +34,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -198,11 +199,11 @@ func TestFlowHealthFix_RepairsVersionMismatch_NotJustTheMissingFile(t *testing.T
 
 	// The content must land under the CORRECT (effective) version's cache
 	// slot - not get written into the stale recorded version's directory.
-	assert.False(t, gameCache.Exists(game.ID, fixtureSourceID, versionRepairModID, versionRepairRecorded),
+	assert.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: versionRepairModID, Version: versionRepairRecorded}),
 		"no content should ever be written into the stale recorded version's cache slot")
-	require.True(t, gameCache.Exists(game.ID, fixtureSourceID, versionRepairModID, versionRepairEffective),
+	require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: versionRepairModID, Version: versionRepairEffective}),
 		"the redownload must land under the corrected (effective) version's cache slot")
-	content, err := os.ReadFile(gameCache.GetFilePath(game.ID, fixtureSourceID, versionRepairModID, versionRepairEffective, versionRepairMember))
+	content, err := os.ReadFile(gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: versionRepairModID, Version: versionRepairEffective}, versionRepairMember))
 	require.NoError(t, err)
 	assert.Equal(t, versionRepairPoisonText, string(content),
 		"the effective version's slot must hold exactly what the source currently serves")
@@ -308,7 +309,7 @@ func TestFlowHealthFix_LockedFinding_StaysOutstanding(t *testing.T) {
 func TestFlowHealthFix_LockedNoChecksumFinding_ReportsARefusalNotAFailure(t *testing.T) {
 	s, svc, game := newVersionMismatchFixtureServer(t)
 	ctx := t.Context()
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, fixtureSourceID, versionRepairModID, versionRepairRecorded,
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: versionRepairModID, Version: versionRepairRecorded},
 		versionRepairFileID, []byte("recorded bytes")))
 	_, err := svc.SetModLock(ctx, fixtureSourceID, versionRepairModID, game.ID, "default", "")
 	require.NoError(t, err)

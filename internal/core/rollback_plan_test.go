@@ -15,6 +15,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,7 +116,7 @@ func TestService_PlanRollback_CacheMissing(t *testing.T) {
 		[]string{"old-1"}, []string{"new-1"},
 		map[string][]byte{"mod1-old.esp": []byte("old-content")},
 		map[string][]byte{"mod1-new.esp": []byte("new-content")})
-	require.NoError(t, svc.GetGameCache(game).Delete("g1", "src", "mod1", "1.0"))
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
 	require.NoError(t, err)

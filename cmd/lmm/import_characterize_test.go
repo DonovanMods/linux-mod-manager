@@ -24,6 +24,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -616,7 +617,7 @@ func TestDoImport_VerboseCacheRenameFailure_CascadesToDeploymentFailure(t *testi
 	importModID = "999"
 	importForce = false
 
-	newPath := svc.GetGameCache(game).ModPath("g1", "acme-source", "999", "2.0")
+	newPath := svc.GetGameCache(game).ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "2.0"})
 	require.NoError(t, os.MkdirAll(filepath.Dir(newPath), 0755))
 	require.NoError(t, os.WriteFile(newPath, []byte("blocker"), 0644)) // a FILE, not a dir: os.Rename(dir, this) fails
 

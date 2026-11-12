@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // cacheEntryUsers names the installed rows, other than profile's own in
@@ -28,7 +29,7 @@ func (s *Service) cacheEntryUsers(ctx context.Context, game *domain.Game, profil
 	if err != nil {
 		return nil, fmt.Errorf("listing what else uses the cache entry of %s at %s: %w", domain.ModKey(sourceID, modID), version, err)
 	}
-	dir := s.GetGameCache(game).ModPath(game.ID, sourceID, modID, version)
+	dir := s.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 	var own, others []string
 	for _, row := range rows {
 		if row.GameID == game.ID && row.Profile == profile {
@@ -51,7 +52,7 @@ func (s *Service) cacheEntryUsers(ctx context.Context, game *domain.Game, profil
 			others = append(others, fmt.Sprintf("game %s's profile %s%s (%s is not configured)", row.GameID, row.Profile, why, row.GameID))
 			continue
 		}
-		if samePath(dir, s.GetGameCache(other).ModPath(other.ID, sourceID, modID, version)) {
+		if samePath(dir, s.GetGameCache(other).ModPath(cache.Key{GameID: other.ID, SourceID: sourceID, ModID: modID, Version: version})) {
 			others = append(others, fmt.Sprintf("game %s's profile %s%s", row.GameID, row.Profile, why))
 		}
 	}
@@ -70,7 +71,7 @@ func (s *Service) removeCacheEntry(ctx context.Context, game *domain.Game, profi
 	if len(usedBy) > 0 {
 		return usedBy, nil
 	}
-	return nil, s.GetGameCache(game).Delete(game.ID, sourceID, modID, version)
+	return nil, s.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 }
 
 // cacheKeptNote reports a cache entry removeCacheEntry kept, and for whom.

@@ -10,6 +10,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
@@ -65,7 +66,7 @@ type copyFixture struct {
 func (f *copyFixture) seedRow(t *testing.T, profile, modID, version string, files map[string][]byte, deployed bool) {
 	t.Helper()
 	for path, content := range files {
-		require.NoError(t, f.svc.GetGameCache(f.game).Store(f.game.ID, "src", modID, version, path, content))
+		require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: f.game.ID, SourceID: "src", ModID: modID, Version: version}, path, content))
 	}
 	require.NoError(t, f.svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:         domain.Mod{ID: modID, SourceID: "src", Name: "Mod " + modID, Version: version, GameID: f.game.ID},

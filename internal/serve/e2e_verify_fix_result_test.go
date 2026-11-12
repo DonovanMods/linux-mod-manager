@@ -15,6 +15,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 const (
@@ -49,7 +50,7 @@ func newE2EFixtureWithRepairableMods(t *testing.T) e2eSearchFixture {
 		require.NoError(t, err)
 	}
 	require.NoError(t, f.Svc.SaveFileChecksum(ctx, "fake", "cached", f.Game.ID, "default", "cf1", ""))
-	require.NoError(t, f.Svc.GetGameCache(f.Game).Delete(f.Game.ID, "fake", "stuck", "1.0"))
+	require.NoError(t, f.Svc.GetGameCache(f.Game).Delete(cache.Key{GameID: f.Game.ID, SourceID: "fake", ModID: "stuck", Version: "1.0"}))
 	refusal := &source.ManualDownloadError{Reason: "the author has turned off API downloads"}
 	f.Src.urlErrs = map[string]error{"cached": refusal, "stuck": refusal}
 	return f

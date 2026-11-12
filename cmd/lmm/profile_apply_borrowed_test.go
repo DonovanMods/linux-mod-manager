@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,9 +22,9 @@ func TestDoProfileApply_NamesTheVersionAndTheCacheItBorrows(t *testing.T) {
 	pm := getProfileManager(svc)
 	_, err := pm.Create(ctx, game.ID, "survival")
 	require.NoError(t, err)
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "local", "s", "2.0", "s.esp", []byte("s")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "local", ModID: "s", Version: "2.0"}, "s.esp", []byte("s")))
 	seedSyncInstalledMod(t, svc, game, "local", "s", "Mod s", "2.0", "survival", false, nil)
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "own", "1.0", "own.esp", []byte("own")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "own", Version: "1.0"}, "own.esp", []byte("own")))
 	seedSyncInstalledMod(t, svc, game, "src", "own", "Own Mod", "1.0", "default", false, nil)
 	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "local", ModID: "s", Version: "2.0"}))
 	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "own", Version: "1.0"}))

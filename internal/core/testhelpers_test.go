@@ -10,6 +10,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bepinex"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/require"
 )
@@ -135,7 +136,7 @@ func seedInstalledMod(t *testing.T, svc *core.Service, game *domain.Game, source
 
 	gameCache := svc.GetGameCache(game)
 	for path, content := range files {
-		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, path, content))
 	}
 
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
@@ -178,7 +179,7 @@ func seedNamedInstalledMod(t *testing.T, svc *core.Service, game *domain.Game, s
 
 	gameCache := svc.GetGameCache(game)
 	for path, content := range files {
-		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, path, content))
 	}
 
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{

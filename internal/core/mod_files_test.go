@@ -94,7 +94,7 @@ func TestService_ModFiles_DeployCompile_RetainedSource_ReportsMergedPakOnly(t *t
 
 	const modID, version, fileID = "bear-mount", "1.0", "exmodz-file"
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", modID, version, cache.RetainedSourceName(fileID), []byte("bear-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: modID, Version: version}, cache.RetainedSourceName(fileID), []byte("bear-bytes")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: "Bear Mount", Version: version, GameID: game.ID},
 		ProfileName:  "default",

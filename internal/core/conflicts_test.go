@@ -177,7 +177,7 @@ func TestGetProfileConflictsMissingCacheSkipsMod(t *testing.T) {
 
 	// Delete modX's cache entry: modY is now the only provider left, so the
 	// conflict disappears rather than erroring the whole query.
-	require.NoError(t, svc.GetGameCache(game).Delete("g1", "src", "modX", "1.0"))
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: "g1", SourceID: "src", ModID: "modX", Version: "1.0"}))
 
 	conflicts, err = svc.GetProfileConflicts(context.Background(), game, "default")
 	assert.NoError(t, err)
@@ -217,7 +217,7 @@ func TestGetProfileConflictsCacheReadErrorPropagates(t *testing.T) {
 		map[string][]byte{"shared.esp": []byte("Y-content")},
 	)
 
-	modXCache := svc.GetGameCache(game).ModPath("g1", "src", "modX", "1.0")
+	modXCache := svc.GetGameCache(game).ModPath(cache.Key{GameID: "g1", SourceID: "src", ModID: "modX", Version: "1.0"})
 	require.NoError(t, os.Chmod(modXCache, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(modXCache, 0o755) })
 
@@ -278,11 +278,11 @@ func TestProfileConflicts_IgnoresUnclaimedCacheFiles(t *testing.T) {
 
 	gameCache := svc.GetGameCache(game)
 
-	dirA := gameCache.ModPath("g1", "src", "modA", "1.0")
+	dirA := gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "src", ModID: "modA", Version: "1.0"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dirA, "exmodz", nil))
 	require.NoError(t, os.WriteFile(filepath.Join(dirA, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 
-	dirB := gameCache.ModPath("g1", "src", "modB", "1.0")
+	dirB := gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "src", ModID: "modB", Version: "1.0"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dirB, "exmodz", []string{"shared.pak"}))
 	require.NoError(t, os.WriteFile(filepath.Join(dirB, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 

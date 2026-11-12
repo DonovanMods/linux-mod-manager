@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,8 +39,8 @@ func decodeProfileResult(t *testing.T, raw []byte) core.ProfileResult {
 func seedSharedConflict(t *testing.T, s *Server, game *domain.Game) {
 	t.Helper()
 	for _, modID := range []string{"p1", "p3"} {
-		require.NoError(t, s.svc.GetGameCache(game).Store(
-			game.ID, fixtureSourceID, modID, "1.0", sharedConflictPath, []byte(modID+" shared")))
+		require.NoError(t, s.svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: modID, Version: "1.0"},
+			sharedConflictPath, []byte(modID+" shared")))
 	}
 	deployFixtureProfile(t, s, game)
 }

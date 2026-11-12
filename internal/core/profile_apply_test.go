@@ -133,7 +133,7 @@ func TestPlanProfileApply_VersionDrift_RecordsReplaces(t *testing.T) {
 	svc.RegisterSource(newTwoVersionSource(t))
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}, "mod1.esp", []byte("new-payload")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
@@ -159,7 +159,7 @@ func TestPlanProfileApply_VersionDrift_RecordsReplaces(t *testing.T) {
 	// The same drift with the OLD cache entry pruned falls back to a plain
 	// install: Installer.Replace reads the old entry to work out which files
 	// to retire and hard-fails without it.
-	require.NoError(t, gameCache.Delete(game.ID, "src", "mod1", "1.5"))
+	require.NoError(t, gameCache.Delete(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}))
 	plan, err = svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Len(t, plan.ToInstall, 1)
@@ -190,8 +190,8 @@ func TestPlanProfileApply_ResolvesModAndCacheState(t *testing.T) {
 
 	// A COMPLETE cache entry for 1.5 (file "10"): the plan must see it.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
-	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "src", "mod1", "1.5"), "10"))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}, "mod1.esp", []byte("new-payload")))
+	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}), "10"))
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
@@ -375,8 +375,8 @@ func TestApplyProfileApply_CachedEntry_SkipsDownload(t *testing.T) {
 	svc.RegisterSource(mock)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
-	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "src", "mod1", "1.5"), "10"))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}, "mod1.esp", []byte("new-payload")))
+	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}), "10"))
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
@@ -408,8 +408,8 @@ func TestApplyProfileApply_PartialCacheEntry_StillDownloads(t *testing.T) {
 	svc.RegisterSource(mock)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, os.MkdirAll(gameCache.ModPath(game.ID, "src", "mod1", "1.0"), 0o755))
-	require.True(t, gameCache.Exists(game.ID, "src", "mod1", "1.0"), "precondition: bare Exists sees the empty dir as cached")
+	require.NoError(t, os.MkdirAll(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}), 0o755))
+	require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}), "precondition: bare Exists sees the empty dir as cached")
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
@@ -421,12 +421,12 @@ func TestApplyProfileApply_PartialCacheEntry_StillDownloads(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Installed)
 
-	cached, err := gameCache.ListFiles(game.ID, "src", "mod1", "1.0")
+	cached, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"})
 	require.NoError(t, err)
 	assert.Contains(t, cached, "mod1-old.esp", "the entry holds the downloaded file, not just an empty directory")
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
 	assert.NoError(t, err, "the file is deployed, not merely a DB row claiming so")
-	assert.True(t, gameCache.HasFileIDs(game.ID, "src", "mod1", "1.0", []string{"9"}),
+	assert.True(t, gameCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}, []string{"9"}),
 		"the download commits its completion marker, so the next apply is a real cache hit")
 	assert.Equal(t, 1, mock.DownloadCount(), "exactly one download, not a retry loop")
 }
@@ -445,7 +445,7 @@ func TestApplyProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t 
 	svc.RegisterSource(newTwoVersionSource(t))
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}, "mod1.esp", []byte("new-payload")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
@@ -460,7 +460,7 @@ func TestApplyProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t 
 		&domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	require.NoError(t, err, "precondition: 1.5 is deployed")
-	require.NoError(t, gameCache.Delete(game.ID, "src", "mod1", "1.5"))
+	require.NoError(t, gameCache.Delete(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}))
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
@@ -488,7 +488,7 @@ func TestApplyProfileApply_VersionDrift_ReplacesLiveDeployment(t *testing.T) {
 	svc.RegisterSource(newTwoVersionSource(t))
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.5"}, "mod1.esp", []byte("new-payload")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
@@ -578,7 +578,7 @@ func TestApplyProfileApply_EnableLoop_InstallFailure_NotesAndSkipsEnable(t *test
 	// enable loop's own failure branch without touching filesystem
 	// permissions.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Delete(game.ID, "src", "off", "1.0"))
+	require.NoError(t, gameCache.Delete(cache.Key{GameID: game.ID, SourceID: "src", ModID: "off", Version: "1.0"}))
 
 	sink, events := core.RecordEvents()
 	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, sink)

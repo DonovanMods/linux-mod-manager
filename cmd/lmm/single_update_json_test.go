@@ -21,6 +21,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -325,7 +326,7 @@ func TestDoUpdateRollback_JSON_NotInstalled_GuardErrorNoDocument(t *testing.T) {
 func TestDoUpdateRollback_JSON_MissingCache_GuardErrorNoDocument(t *testing.T) {
 	withJSONOutput(t)
 	svc, game, _ := setupRollbackReadyMod(t)
-	require.NoError(t, svc.GetGameCache(game).Delete("g1", "test-src", "mod1", "1.0"))
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: "g1", SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 
 	var callErr error
 	out := captureStdout(t, func() error {

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +33,6 @@ func TestApplyImportArchive_LinkMethodFailure_LeavesNoCacheEntry(t *testing.T) {
 	_, err = svc.ApplyImportArchive(context.Background(), game, "default", plan, opts, nil)
 	require.Error(t, err)
 
-	assert.False(t, svc.GetGameCache(game).Exists("g1", "acme-source", "B1", "1.0"),
+	assert.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "B1", Version: "1.0"}),
 		"the hard-error path must discard the entry this call created, like the refusal does")
 }

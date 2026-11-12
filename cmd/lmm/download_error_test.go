@@ -8,6 +8,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -175,4 +176,41 @@ func TestApplySingleUpdate_DownloadFailure_PrintsThePage(t *testing.T) {
 	out, _ := captureStderrErr(t, func() error { reportError(err); return nil })
 	assert.Contains(t, out, "downloading update:")
 	assert.Contains(t, out, "Download it manually from: https://example.test/mods/mod1")
+}
+
+// #601: a free NexusMods account's refusal gets the manual download's
+// remedy - the page and the from-file command - with the source's own
+// sentence saying why.
+func TestReportError_Human_DownloadError_AccountRestrictedSaysHowToFinishIt(t *testing.T) {
+	err := withFromFileRemedy(fmt.Errorf("download unavailable via API: %w", &core.DownloadError{
+		SourceID: "nexusmods", ModID: "107", ModURL: "https://www.nexusmods.com/cyberpunk2077/mods/107",
+		FileID: "168615", ManualDownload: true, AccountRestricted: true,
+		Err: &source.AccountRestrictedError{Reason: "NexusMods serves downloads through its API to Premium accounts only"},
+	}), installFromFileRemedy)
+	out, _ := captureStderrErr(t, func() error { reportError(err); return nil })
+
+	assert.Contains(t, out, "Premium accounts only")
+	assert.Contains(t, out, "Download it manually from: https://www.nexusmods.com/cyberpunk2077/mods/107")
+	assert.Contains(t, out, "--file 168615 --from-file <downloaded-file>")
+}
+
+// #601: --json carries account_restricted beside manual_download.
+func TestReportError_JSON_DownloadError_AccountRestricted(t *testing.T) {
+	withJSONOutput(t)
+
+	err := &core.DownloadError{
+		SourceID: "nexusmods", ModID: "107", ManualDownload: true, AccountRestricted: true,
+		Err: &source.AccountRestrictedError{Reason: "premium only"},
+	}
+	out := captureStdout(t, func() error { reportError(err); return nil })
+
+	assert.Equal(t, "{\n"+
+		"  \"error\": \"premium only\",\n"+
+		"  \"details\": {\n"+
+		"    \"source_id\": \"nexusmods\",\n"+
+		"    \"mod_id\": \"107\",\n"+
+		"    \"manual_download\": true,\n"+
+		"    \"account_restricted\": true\n"+
+		"  }\n"+
+		"}\n", out)
 }

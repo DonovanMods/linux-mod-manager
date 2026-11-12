@@ -30,6 +30,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -202,7 +203,7 @@ func TestService_PlanInstall_ConflictingFilesListsPathAndOwningMod(t *testing.T)
 	// "newmod" is NOT installed, but its cache entry already exists (at the
 	// same version PlanInstall will fetch) with an overlapping file.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "newmod", "1.0", "shared.esp", []byte("n")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "newmod", Version: "1.0"}, "shared.esp", []byte("n")))
 
 	mock := newMockSource("src")
 	svc.RegisterSource(mock)
@@ -725,8 +726,8 @@ func TestService_ApplyInstall_ForceReinstall_MissingCacheEntryRedownloads(t *tes
 	require.NoError(t, err)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Delete(game.ID, "src", "mod1", "1.0"))
-	require.False(t, gameCache.Exists(game.ID, "src", "mod1", "1.0"), "precondition: cache entry is gone")
+	require.NoError(t, gameCache.Delete(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	require.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}), "precondition: cache entry is gone")
 
 	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)
@@ -736,9 +737,9 @@ func TestService_ApplyInstall_ForceReinstall_MissingCacheEntryRedownloads(t *tes
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 	assert.Equal(t, 2, mock.DownloadCount(), "the missing entry must be re-downloaded")
-	assert.True(t, gameCache.Exists(game.ID, "src", "mod1", "1.0"), "the reinstall repairs the missing cache entry")
+	assert.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}), "the reinstall repairs the missing cache entry")
 
-	content, err := os.ReadFile(gameCache.GetFilePath(game.ID, "src", "mod1", "1.0", "mod1.esp"))
+	content, err := os.ReadFile(gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}, "mod1.esp"))
 	require.NoError(t, err)
 	assert.Equal(t, "repaired-content", string(content))
 }
@@ -781,7 +782,7 @@ func TestService_ApplyInstall_ForceReinstall_MissingCacheEntryPostActivationFail
 			require.NotEmpty(t, checksumsBefore[0].Checksum)
 
 			gameCache := svc.GetGameCache(game)
-			require.NoError(t, gameCache.Delete(game.ID, "src", "mod1", "1.0"))
+			require.NoError(t, gameCache.Delete(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}))
 			deployedPath := filepath.Join(game.ModPath, "mod1.esp")
 			_, err = os.Lstat(deployedPath)
 			require.NoError(t, err, "the existing game symlink still points at the missing entry")
@@ -804,7 +805,7 @@ func TestService_ApplyInstall_ForceReinstall_MissingCacheEntryPostActivationFail
 			require.ErrorIs(t, err, context.Canceled)
 			assert.NotContains(t, err.Error(), "new mod not in cache", "compensation must have its new-side source")
 			assert.Equal(t, 2, mock.DownloadCount(), "the missing entry was repaired before the injected failure")
-			require.True(t, gameCache.Exists(game.ID, "src", "mod1", "1.0"))
+			require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}))
 			content, readErr := os.ReadFile(deployedPath)
 			require.NoError(t, readErr, "the installed path must remain readable")
 			if tc.userFile {
@@ -847,7 +848,7 @@ func TestService_ApplyInstall_ForceReinstall_MissingCacheEntryCancelledDuringAct
 	_, err = svc.ApplyInstall(context.Background(), game, first, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Delete(game.ID, "src", "mod1", "1.0"))
+	require.NoError(t, gameCache.Delete(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)
@@ -860,7 +861,7 @@ func TestService_ApplyInstall_ForceReinstall_MissingCacheEntryCancelledDuringAct
 		}
 	})
 	require.ErrorIs(t, err, context.Canceled)
-	assert.False(t, gameCache.Exists(game.ID, "src", "mod1", "1.0"), "an incomplete activation must not leave a partial repair")
+	assert.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}), "an incomplete activation must not leave a partial repair")
 	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "default")
 	assert.NoError(t, err, "the preexisting installed row must remain")
 }
@@ -887,8 +888,8 @@ func TestService_ApplyInstall_ForceReinstall_BrokenCacheEntryStillFails(t *testi
 
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("old-content")})
 	gameCache := svc.GetGameCache(game)
-	entry := gameCache.ModPath(game.ID, "src", "mod1", "1.0")
-	require.NoError(t, gameCache.Delete(game.ID, "src", "mod1", "1.0"))
+	entry := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"})
+	require.NoError(t, gameCache.Delete(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}))
 	require.NoError(t, os.MkdirAll(entry, 0755))
 	socket, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(entry, "unreadable.sock"), Net: "unix"})
 	require.NoError(t, err)
@@ -932,7 +933,7 @@ func TestService_ApplyInstall_KeepCacheReinstall_SavesChecksumFromCache(t *testi
 
 	_, err = svc.UninstallMod(context.Background(), game, "default", "src", "mod1", core.UninstallOptions{KeepCache: true})
 	require.NoError(t, err)
-	require.True(t, svc.GetGameCache(game).HasFileIDs("g1", "src", "mod1", "1.0", []string{"mod1"}), "sanity: --keep-cache must leave the cache entry complete")
+	require.True(t, svc.GetGameCache(game).HasFileIDs(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}, []string{"mod1"}), "sanity: --keep-cache must leave the cache entry complete")
 
 	plan2, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)
@@ -1042,7 +1043,7 @@ func TestService_ApplyInstall_MultiFileMod_FilesDeployedCountsTheEntryOnce(t *te
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 
-	cached, err := svc.GetGameCache(game).ListFiles("g1", "src", "mod1", "1.0")
+	cached, err := svc.GetGameCache(game).ListFiles(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"})
 	require.NoError(t, err)
 	require.Len(t, cached, 2, "sanity: the entry holds one member per archive")
 	assert.Equal(t, 2, result.FilesDeployed, "the cold fill must report the entry's file count, not the running sum of per-file listings")
@@ -1270,8 +1271,8 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 		_, err = os.Lstat(filepath.Join(gameDir, "mod1-new.esp"))
 		assert.NoError(t, err, "new version's file must be deployed")
 
-		assert.False(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "old version's cache entry should be cleared after a version upgrade")
-		assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "2.0"))
+		assert.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}), "old version's cache entry should be cleared after a version upgrade")
+		assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "2.0"}))
 
 		installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 		require.NoError(t, err)
@@ -1410,7 +1411,7 @@ func TestService_ApplyInstall_DownloadFailure(t *testing.T) {
 		require.NotNil(t, result, "a partial result must be returned alongside the error")
 		assert.Empty(t, result.Installed)
 
-		assert.False(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"))
+		assert.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}))
 		_, dbErr := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 		assert.Error(t, dbErr, "the mod must not be saved to the DB when its download fails")
 	})
@@ -1820,8 +1821,8 @@ func TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey(t *testing.T
 	assert.Equal(t, "1.0", got.Version, "DB row must record the selected file's version, not the mod's latest")
 
 	gameCache := svc.GetGameCache(game)
-	assert.True(t, gameCache.Exists("g1", "src", "mod1", "1.0"), "cache must be keyed by the installed file's version")
-	assert.False(t, gameCache.Exists("g1", "src", "mod1", "1.5"), "cache must NOT be keyed by the mod's latest version when an older file was installed")
+	assert.True(t, gameCache.Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}), "cache must be keyed by the installed file's version")
+	assert.False(t, gameCache.Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.5"}), "cache must NOT be keyed by the mod's latest version when an older file was installed")
 
 	// The user-visible symptom: installing an older file must not suppress
 	// its own update notification. domain.IsNewerVersion backs CheckUpdates'
@@ -1952,8 +1953,8 @@ func TestApplyInstall_ExplicitOldFile_BatchPath_RecordsFileVersion(t *testing.T)
 	assert.Equal(t, "2.0.1", got.Version, "the dependency's DB row must record the selected file's version, not the mod's mod-level 2.0")
 
 	gameCache := svc.GetGameCache(game)
-	assert.True(t, gameCache.Exists("g1", "src", "dep1", "2.0.1"), "cache must be keyed by the installed file's version")
-	assert.False(t, gameCache.Exists("g1", "src", "dep1", "2.0"), "cache must NOT be keyed by the mod's mod-level version when the file's own version differs")
+	assert.True(t, gameCache.Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "dep1", Version: "2.0.1"}), "cache must be keyed by the installed file's version")
+	assert.False(t, gameCache.Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "dep1", Version: "2.0"}), "cache must NOT be keyed by the mod's mod-level version when the file's own version differs")
 }
 
 // --- #143: locked-ref install guard ---
@@ -2293,7 +2294,7 @@ func TestService_ApplyInstall_LockedPrimary_BatchPath_GuardFallthroughSkipsBefor
 
 	// The deployed lock target's cache must survive: the loop's lock check
 	// must fire BEFORE the uninstall-existing block, not after it.
-	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "root", "1.0"),
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "root", Version: "1.0"}),
 		"the lock target's cache entry must not be deleted on a refused reinstall")
 	phases, _ := phasesOf(*seen)
 	for _, ph := range phases {
@@ -2663,7 +2664,7 @@ func TestService_ApplyInstall_ReplacePath_SaveInstalledModFailureRollsBackReinst
 	require.NoError(t, err, "the original deployed file must survive the rollback")
 	assert.Equal(t, "original-content", string(content))
 
-	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "the live cache entry must exist (restored, not left empty/half-migrated)")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}), "the live cache entry must exist (restored, not left empty/half-migrated)")
 
 	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
@@ -2744,7 +2745,7 @@ func TestService_ApplyInstall_Conflicts_FreshInstall(t *testing.T) {
 		// managed state - Ruling 1), and NOTHING else did.
 		require.NotNil(t, result, "a partial result must be returned alongside the error")
 		assert.Empty(t, result.Installed)
-		assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "newmod", "1.0"), "the download must remain cached - the re-run with AcceptConflicts reuses this entry")
+		assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "newmod", Version: "1.0"}), "the download must remain cached - the re-run with AcceptConflicts reuses this entry")
 
 		_, dbErr := svc.GetInstalledMod(context.Background(), "src", "newmod", "g1", "default")
 		assert.Error(t, dbErr, "an unaccepted conflict must leave zero DB mutations")
@@ -2890,7 +2891,7 @@ func TestService_ApplyInstall_Conflicts_SameVersionReinstall_LeavesOriginalDeplo
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
 	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "mod1", "1.0", "shared.esp", []byte("mod1-shared-content")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}, "shared.esp", []byte("mod1-shared-content")))
 
 	// "other" is installed+deployed AFTER mod1, independently owning
 	// shared.esp too - the DB conflict GetConflicts will find against
@@ -2924,7 +2925,7 @@ func TestService_ApplyInstall_Conflicts_SameVersionReinstall_LeavesOriginalDeplo
 	require.NoError(t, err)
 	assert.Equal(t, "original-content", string(content), "the reinstall-cache-transaction's rollback must restore the ORIGINAL deployed content")
 
-	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "the live cache entry must exist (restored, not left empty/half-migrated)")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}), "the live cache entry must exist (restored, not left empty/half-migrated)")
 
 	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
@@ -2949,7 +2950,7 @@ func TestService_ApplyInstall_Conflicts_SameVersionReinstall_AcceptRerun_Redownl
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
 	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "mod1", "1.0", "shared.esp", []byte("mod1-shared-content")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}, "shared.esp", []byte("mod1-shared-content")))
 
 	seedInstalledMod(t, svc, game, "src", "other", "1.0", true, map[string][]byte{"shared.esp": []byte("other-content")})
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
@@ -3194,7 +3195,7 @@ func TestService_ApplyInstall_StrictPath_TargetVersion_ResolvedInCore(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", got.Version, "TargetVersion must be honored in core on the STRICT path")
 	assert.Equal(t, []string{"root-opt-1"}, got.FileIDs, "the version pool's auto-pick (category sort, no IsPrimary -> first) must be installed")
-	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "root", "1.0"), "cache must be keyed by the target version")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "root", Version: "1.0"}), "cache must be keyed by the target version")
 }
 
 // TestService_ApplyInstall_StrictPath_TargetVersion_CallerSelectionWithinVersionKept
@@ -3461,12 +3462,12 @@ func TestService_ApplyInstall_SameVersionReinstall_CancelledMidDeploy_RestoresLi
 	require.NotNil(t, result)
 
 	gameCache := svc.GetGameCache(game)
-	require.True(t, gameCache.Exists("g1", "src", "mod1", "1.0"),
+	require.True(t, gameCache.Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}),
 		"the live cache entry must be restored, not left deleted by a cancelled clone")
-	files, err := gameCache.ListFiles("g1", "src", "mod1", "1.0")
+	files, err := gameCache.ListFiles(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"mod1.esp"}, files, "the restored live entry must carry its files")
-	content, err := os.ReadFile(gameCache.GetFilePath("g1", "src", "mod1", "1.0", "mod1.esp"))
+	content, err := os.ReadFile(gameCache.GetFilePath(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}, "mod1.esp"))
 	require.NoError(t, err)
 	assert.Equal(t, "original-content", string(content), "the ORIGINAL cached bytes must be what was restored")
 
@@ -3754,7 +3755,7 @@ func TestApplyInstall_MissingCacheReinstallChangedFileSet(t *testing.T) {
 				require.NoError(t, err)
 				_, err = svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, nil)
 				require.NoError(t, err)
-				require.NoError(t, svc.GetGameCache(game).Delete("g1", "src", "mod1", "1.0"))
+				require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}))
 				oldPath := filepath.Join(game.ModPath, "old.esp")
 				if failure == "user change" {
 					require.NoError(t, os.Remove(oldPath))
@@ -3768,7 +3769,7 @@ func TestApplyInstall_MissingCacheReinstallChangedFileSet(t *testing.T) {
 						&domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: "g2"}, "default"))
 				}
 				if failure == "other profile" {
-					require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "other", "1.0", "old.esp", []byte("old-payload")))
+					require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "other", Version: "1.0"}, "old.esp", []byte("old-payload")))
 					require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 						Mod:         domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: game.ID},
 						ProfileName: "alt", LinkMethod: method, Deployed: true,

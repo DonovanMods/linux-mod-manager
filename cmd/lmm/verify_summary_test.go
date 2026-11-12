@@ -18,6 +18,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -105,7 +106,7 @@ func TestDoVerify_EmptyProfile_FixHintSaysWhatFixWouldDo(t *testing.T) {
 	// A locally imported loose plugin, deployed into the game root where
 	// BepInEx never loads it: rows, but no checksums, so verify takes the
 	// empty-profile branch.
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, domain.SourceLocal, "loose", "1.0", "Loose.dll", []byte("dll")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "loose", Version: "1.0"}, "Loose.dll", []byte("dll")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "loose", SourceID: domain.SourceLocal, Name: "Loose", Version: "1.0", GameID: game.ID},
 		ProfileName: "default", Enabled: true,
@@ -118,7 +119,7 @@ func TestDoVerify_EmptyProfile_FixHintSaysWhatFixWouldDo(t *testing.T) {
 	// And a link lmm left inside a nested BepInEx/ directory.
 	stray := filepath.Join(game.ModPath, "BepInEx", "plugins", "BepInEx", "plugins", "Stray.dll")
 	require.NoError(t, os.MkdirAll(filepath.Dir(stray), 0o755))
-	require.NoError(t, os.Symlink(svc.GetGameCache(game).GetFilePath(game.ID, domain.SourceLocal, "loose", "1.0", "Loose.dll"), stray))
+	require.NoError(t, os.Symlink(svc.GetGameCache(game).GetFilePath(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "loose", Version: "1.0"}, "Loose.dll"), stray))
 
 	text, result := verifyTally(t, cmd, svc, game)
 	require.False(t, result.HasFiles, "fixture: the empty-profile branch; findings %v", result.Findings)
@@ -152,7 +153,7 @@ func seedVerifySummaryMod(t *testing.T, svc *core.Service, game *domain.Game) {
 	t.Helper()
 	ctx := context.Background()
 	const rel = "BepInEx/plugins/Thing/Thing.dll"
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, domain.SourceLocal, "thing", "1.0", rel, []byte("dll")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "thing", Version: "1.0"}, rel, []byte("dll")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "thing", SourceID: domain.SourceLocal, Name: "Thing", Version: "1.0", GameID: game.ID},
 		ProfileName: "default", Enabled: true, FileIDs: []string{"Thing-1.0.zip"},

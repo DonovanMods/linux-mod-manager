@@ -12,6 +12,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -34,7 +35,7 @@ func setupHeldImport(t *testing.T) (*core.Service, *domain.Game, string) {
 		_, err := pm.Create(ctx, g.ID, "default")
 		require.NoError(t, err)
 	}
-	require.NoError(t, svc.GetGameCache(g2).Store("g2", "src", "j", "1.0", "held.esp", []byte("g2's")))
+	require.NoError(t, svc.GetGameCache(g2).Store(cache.Key{GameID: "g2", SourceID: "src", ModID: "j", Version: "1.0"}, "held.esp", []byte("g2's")))
 	seedSyncInstalledMod(t, svc, g2, "src", "j", "Mod j", "1.0", "default", true, nil)
 	require.NoError(t, pm.AddMod(ctx, "g2", "default", domain.ModReference{SourceID: "src", ModID: "j", Version: "1.0"}))
 	_, err := svc.DeployProfile(ctx, g2, "default", core.DeployOptions{}, nil)

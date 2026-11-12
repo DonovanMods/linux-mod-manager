@@ -17,6 +17,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -89,7 +90,7 @@ func TestPlanImportArchive_AgreesWithIngestForEveryShape(t *testing.T) {
 					result, err := svc.ApplyImportArchive(context.Background(), game, "default", plan, core.ImportArchiveOptions{}, nil)
 					require.NoError(t, err)
 
-					cached, err := svc.GetGameCache(game).ListFiles(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+					cached, err := svc.GetGameCache(game).ListFiles(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version})
 					require.NoError(t, err)
 					slices.Sort(cached)
 					if cached == nil {
@@ -130,7 +131,7 @@ func TestImportArchive_ModNameIsDerivedBeforeTheRewrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Flat-2.0", result.Mod.Name)
 
-	cached, err := svc.GetGameCache(game).ListFiles(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+	cached, err := svc.GetGameCache(game).ListFiles(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"by-name/Flat-2.0/named.txt"}, cached)
 }
@@ -174,7 +175,7 @@ func TestPlanImportArchive_AgreesWithIngestForANonCanonicalDestination(t *testin
 	result, err := svc.ApplyImportArchive(context.Background(), game, "default", plan, core.ImportArchiveOptions{}, nil)
 	require.NoError(t, err)
 
-	cached, err := svc.GetGameCache(game).ListFiles(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+	cached, err := svc.GetGameCache(game).ListFiles(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version})
 	require.NoError(t, err)
 	slices.Sort(cached)
 	assert.Equal(t, plan.Files, cached,

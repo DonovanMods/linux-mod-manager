@@ -18,6 +18,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,7 +31,7 @@ func cachedRow(t *testing.T, svc *core.Service, game *domain.Game, profile, modI
 	t.Helper()
 	gameCache := svc.GetGameCache(game)
 	for rel, content := range files {
-		require.NoError(t, gameCache.Store(game.ID, "local", modID, version, rel, []byte(content)))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "local", ModID: modID, Version: version}, rel, []byte(content)))
 	}
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "local", Name: "Mod " + modID, Version: version, GameID: game.ID},
@@ -73,7 +74,7 @@ func TestUninstall_KeepsACacheEntryAnotherProfileUses(t *testing.T) {
 	assert.Equal(t, []string{"profile default"}, uplan.CacheUsedBy, "the plan says the cache entry stays, and why")
 	assert.Equal(t, []string{"profile default"}, result.CacheUsedBy, "and so does the result")
 	assert.NoFileExists(t, live, "alt's deployment is gone")
-	assert.True(t, f.svc.GetGameCache(f.game).Exists("sky", "local", "k", "unknown"), "default's only copy of the mod is still cached")
+	assert.True(t, f.svc.GetGameCache(f.game).Exists(cache.Key{GameID: "sky", SourceID: "local", ModID: "k", Version: "unknown"}), "default's only copy of the mod is still cached")
 
 	// default can still deploy it: switching to it, then applying it.
 	splan, err := f.svc.PlanProfileSwitch(ctx, f.game, "default")
@@ -93,7 +94,7 @@ func TestUninstall_KeepsACacheEntryAnotherProfileUses(t *testing.T) {
 	t.Run("the last row's uninstall removes it", func(t *testing.T) {
 		_, result := uninstall(t, f.svc, f.game, "default", "k")
 		assert.Empty(t, result.CacheUsedBy)
-		assert.False(t, f.svc.GetGameCache(f.game).Exists("sky", "local", "k", "unknown"))
+		assert.False(t, f.svc.GetGameCache(f.game).Exists(cache.Key{GameID: "sky", SourceID: "local", ModID: "k", Version: "unknown"}))
 	})
 }
 
@@ -110,7 +111,7 @@ func TestUninstall_KeepsACacheEntryARowRollsBackTo(t *testing.T) {
 
 	assert.Equal(t, []string{"profile p (to roll back to)"}, plan.CacheUsedBy)
 	assert.Equal(t, []string{"profile p (to roll back to)"}, result.CacheUsedBy)
-	assert.True(t, f.svc.GetGameCache(f.game).Exists("sky", "local", "k", "1.0"), "p's rollback still has its version")
+	assert.True(t, f.svc.GetGameCache(f.game).Exists(cache.Key{GameID: "sky", SourceID: "local", ModID: "k", Version: "1.0"}), "p's rollback still has its version")
 }
 
 func TestUninstall_KeepsACacheEntryAnotherGameUses(t *testing.T) {
@@ -140,8 +141,8 @@ func TestUninstall_KeepsACacheEntryAnotherGameUses(t *testing.T) {
 
 			assert.Equal(t, tc.usedBy, plan.CacheUsedBy)
 			assert.Equal(t, tc.usedBy, result.CacheUsedBy)
-			assert.Equal(t, tc.sameCache, svc.GetGameCache(sky).Exists("sky", "local", "k", "unknown"))
-			assert.True(t, svc.GetGameCache(sky2).Exists("sky2", "local", "k", "unknown"))
+			assert.Equal(t, tc.sameCache, svc.GetGameCache(sky).Exists(cache.Key{GameID: "sky", SourceID: "local", ModID: "k", Version: "unknown"}))
+			assert.True(t, svc.GetGameCache(sky2).Exists(cache.Key{GameID: "sky2", SourceID: "local", ModID: "k", Version: "unknown"}))
 		})
 	}
 
@@ -159,7 +160,7 @@ func TestUninstall_KeepsACacheEntryAnotherGameUses(t *testing.T) {
 		_, result := uninstall(t, svc, sky, "default", "k")
 
 		assert.Equal(t, []string{"game gone's profile default (gone is not configured)"}, result.CacheUsedBy)
-		assert.True(t, svc.GetGameCache(sky).Exists("sky", "local", "k", "unknown"))
+		assert.True(t, svc.GetGameCache(sky).Exists(cache.Key{GameID: "sky", SourceID: "local", ModID: "k", Version: "unknown"}))
 	})
 }
 
@@ -190,7 +191,7 @@ func TestInstall_KeepsAReplacedVersionAnotherProfileUses(t *testing.T) {
 	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 
-	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "profile other still uses 1.0")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}), "profile other still uses 1.0")
 	assert.Contains(t, result.Notes, "Kept the cache entry of src:mod1 at 1.0: profile other still uses it")
 	_, err = os.Lstat(filepath.Join(gameDir, "mod1-new.esp"))
 	assert.NoError(t, err)

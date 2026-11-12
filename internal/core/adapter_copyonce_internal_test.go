@@ -57,8 +57,8 @@ func newCopyOnceFixture(t *testing.T, versions map[string]string) copyOnceFixtur
 	t.Helper()
 	c := cache.New(t.TempDir())
 	for version, defaults := range versions {
-		require.NoError(t, c.Store("g", "src", "m", version, "bin/plugin.dll", []byte("assembly "+version)))
-		require.NoError(t, c.Store("g", "src", "m", version, "cfg/plugin.cfg", []byte(defaults)))
+		require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "m", Version: version}, "bin/plugin.dll", []byte("assembly "+version)))
+		require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "m", Version: version}, "cfg/plugin.cfg", []byte(defaults)))
 	}
 	root := t.TempDir()
 	game := &domain.Game{ID: "g", InstallPath: root, ModPath: root, LinkMethod: domain.LinkSymlink}

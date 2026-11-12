@@ -6,6 +6,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -39,7 +40,7 @@ func seedConflictMod(t *testing.T, svc *core.Service, game *domain.Game, modID, 
 	t.Helper()
 
 	for path, content := range files {
-		require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", modID, "1.0", path, content))
+		require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: modID, Version: "1.0"}, path, content))
 	}
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: "1.0", GameID: game.ID},

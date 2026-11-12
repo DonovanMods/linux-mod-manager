@@ -55,7 +55,7 @@ import (
 // pre-existing "listing cache files for %s") - this resolver does not
 // prescribe the wording.
 func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, sourceID, modID, version string) ([]string, error) {
-	files, err := gameCache.ListFiles(game.ID, sourceID, modID, version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain
 // ListFiles-ing one cache entry twice to build one plan row is wasteful.
 func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, sourceID, modID, version string, files []string) ([]string, error) {
 	gameID := game.ID
-	manifests, err := gameCache.FileManifests(gameID, sourceID, modID, version)
+	manifests, err := gameCache.FileManifests(cache.Key{GameID: gameID, SourceID: sourceID, ModID: modID, Version: version})
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, g
 			claimed[member] = true
 		}
 	}
-	versionDir := gameCache.ModPath(gameID, sourceID, modID, version)
+	versionDir := gameCache.ModPath(cache.Key{GameID: gameID, SourceID: sourceID, ModID: modID, Version: version})
 	hasRetainedSource, err := cache.HasRetainedSource(versionDir)
 	if err != nil {
 		return nil, err

@@ -355,7 +355,7 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 
 	// Verify both files are in the cache
 	gameCache := svc.GetGameCache(game)
-	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 
 	// Should have 2 files total
@@ -372,7 +372,7 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 	// #96: each commit stamps its own completion marker, and prepareStaging's
 	// reseed carries the earlier file's marker through the later file's
 	// commit - so after both downloads the entry reads as complete for BOTH.
-	assert.True(t, gameCache.HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, []string{file1.ID, file2.ID}),
+	assert.True(t, gameCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, []string{file1.ID, file2.ID}),
 		"both files' markers must survive a multi-file download")
 }
 
@@ -418,7 +418,7 @@ func TestService_DownloadMod_RecordsMemberManifests(t *testing.T) {
 	_, err = svc.DownloadModForTest(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file3", FileName: "loose.esp"}, nil)
 	require.NoError(t, err)
 
-	manifests, err := svc.GetGameCache(game).FileManifests("testgame", "test", "123", "1.0.0")
+	manifests, err := svc.GetGameCache(game).FileManifests(cache.Key{GameID: "testgame", SourceID: "test", ModID: "123", Version: "1.0.0"})
 	require.NoError(t, err)
 	require.Len(t, manifests, 3)
 
@@ -437,7 +437,7 @@ func TestService_DownloadMod_RecordsMemberManifests(t *testing.T) {
 	assert.Equal(t, []string{"loose.esp"}, m3.Members)
 
 	// The overwrite landed: file2 won the shared member's content.
-	content, err := os.ReadFile(svc.GetGameCache(game).GetFilePath("testgame", "test", "123", "1.0.0", "shared.txt"))
+	content, err := os.ReadFile(svc.GetGameCache(game).GetFilePath(cache.Key{GameID: "testgame", SourceID: "test", ModID: "123", Version: "1.0.0"}, "shared.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, "from file2", string(content))
 }
@@ -461,12 +461,12 @@ func TestService_DownloadMod_PrunesUnclaimedStaleFiles(t *testing.T) {
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
 
 	gameCache := svc.GetGameCache(game)
-	dir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	dir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 
 	// Pre-seed the entry with debris a manifest-unaware world would have left
 	// behind: a stale pak no current marker claims, and a #197 retained
 	// source whose own marker IS recorded (claiming nothing).
-	require.NoError(t, gameCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, "stale.pak", []byte("debris")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, "stale.pak", []byte("debris")))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("legacy")), []byte("zip"), 0o644))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "legacy", nil))
 
@@ -478,7 +478,7 @@ func TestService_DownloadMod_PrunesUnclaimedStaleFiles(t *testing.T) {
 	_, err = svc.DownloadModForTest(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "file1.zip"}, nil)
 	require.NoError(t, err)
 
-	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"new.txt"}, files, "the unclaimed stale pak must be pruned once every marker is recorded")
 
@@ -520,7 +520,7 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 	mod := &domain.Mod{ID: "123", SourceID: "test-compiler", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
 
 	gameCache := svc.GetGameCache(game)
-	dir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	dir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 
 	// Generation 1: the honest pre-#197 shape - a real DownloadModToCache
 	// commit that claims a compiled pak for this file ID.
@@ -528,11 +528,11 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 	_, err := svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod_P.pak"}, nil)
 	require.NoError(t, err)
 
-	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"Mod_P.pak"}, files, "generation 1 must land the compiled pak as a claimed member")
 
-	manifests, err := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+	manifests, err := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	require.True(t, manifests["file1"].Recorded)
 	require.Equal(t, []string{"Mod_P.pak"}, manifests["file1"].Members, "generation 1's marker must genuinely claim the pak")
@@ -543,7 +543,7 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 	_, err = svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod.exmodz"}, nil)
 	require.NoError(t, err)
 
-	files, err = gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err = gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	assert.Empty(t, files, "the stale pak must be pruned once file1's marker is re-recorded claiming nothing")
 
@@ -576,7 +576,7 @@ func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) 
 	mod := &domain.Mod{ID: "123", SourceID: "test-compiler", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
 
 	gameCache := svc.GetGameCache(game)
-	dir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	dir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 
 	// Generation 1: the pak variant ingests via the validate+retain branch -
 	// a retained source plus a claimed deployable copy (#221's raw-deploy
@@ -585,7 +585,7 @@ func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) 
 	_, err := svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "pak", FileName: "Mod_P.pak"}, nil)
 	require.NoError(t, err)
 
-	manifests, err := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+	manifests, err := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	require.Equal(t, []string{"Mod_P.pak"}, manifests["pak"].Members, "precondition: ingest claims the deployable pak copy")
 
@@ -645,9 +645,9 @@ func TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected(t *testing.T) 
 	assert.Contains(t, err.Error(), ".lmm-")
 
 	gameCache := svc.GetGameCache(game)
-	assert.False(t, gameCache.HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, []string{file1.ID, "file2"}),
+	assert.False(t, gameCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, []string{file1.ID, "file2"}),
 		"a forged marker must never make an un-downloaded file read as cached")
-	assert.False(t, gameCache.HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, []string{"file2"}),
+	assert.False(t, gameCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, []string{"file2"}),
 		"file2 was never downloaded and must not read as complete")
 }
 
@@ -693,11 +693,11 @@ func TestService_DownloadMod_PathLikeFilename_ArchiveWithoutExtension(t *testing
 	assert.NotEmpty(t, result.Checksum)
 
 	gameCache := svc.GetGameCache(game)
-	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"plugin.esp"}, files)
 
-	content, err := os.ReadFile(gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, "plugin.esp"))
+	content, err := os.ReadFile(gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, "plugin.esp"))
 	require.NoError(t, err)
 	assert.Equal(t, []byte("payload"), content)
 }
@@ -729,7 +729,7 @@ func TestService_DownloadMod_RejectsFileURLFromNonDirectorySource(t *testing.T) 
 		"the refusal text is frozen regardless of how the gate itself is implemented (#300: source.LocalFileServer, not a *custom.Directory type assertion)")
 
 	gameCache := svc.GetGameCache(game)
-	assert.False(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version),
+	assert.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}),
 		"a file:// URL from a non-directory source must not be ingested into the cache")
 }
 
@@ -759,7 +759,7 @@ func TestService_DownloadMod_RejectsFileURLFromSourceDenyingLocalFiles(t *testin
 	assert.EqualError(t, err, `source "test" returned a local file:// URL but is not a directory source`)
 
 	gameCache := svc.GetGameCache(game)
-	assert.False(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version),
+	assert.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}),
 		"a file:// URL from a source denying local-file service must not be ingested into the cache")
 }
 

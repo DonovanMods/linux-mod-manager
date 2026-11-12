@@ -19,6 +19,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,7 +106,7 @@ func removalPaths() []removalPath {
 		{"rollback", func(t *testing.T, f *legacyFixture) []string {
 			// The previous version ships only Data/k2.esp, so rolling back
 			// removes Data/k.esp.
-			require.NoError(t, f.svc.GetGameCache(f.game).Store(f.game.ID, "local", "k", "old", "Data/k2.esp", []byte("mod k2")))
+			require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "old"}, "Data/k2.esp", []byte("mod k2")))
 			require.NoError(t, f.svc.ExecForTest(ctx, `UPDATE installed_mods SET previous_version = 'old' WHERE mod_id = 'k'`))
 			plan, err := f.svc.PlanRollback(ctx, f.game, "default", "local", "k")
 			require.NoError(t, err)
@@ -132,7 +133,7 @@ func removalPaths() []removalPath {
 		}},
 		{"verify --fix convergence", func(t *testing.T, f *legacyFixture) []string {
 			// The mod no longer ships Data/k.esp, so its row is stale.
-			entry := f.svc.GetGameCache(f.game).ModPath(f.game.ID, "local", "k", "unknown")
+			entry := f.svc.GetGameCache(f.game).ModPath(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "unknown"})
 			require.NoError(t, os.Remove(filepath.Join(entry, "Data", "k.esp")))
 			report, err := f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Fix: true, Force: true}, nil)
 			require.NoError(t, err)
@@ -201,7 +202,7 @@ func TestDeployedIdentity_AnUnfingerprintedRowIsRemovedAndReportedUnverified(t *
 	f.deployed(t, "default", "k", domain.LinkCopy, map[string]string{"Data/k.esp": "mod k"}, map[string]string{"Data/k.esp": "edited before v18"})
 	// With the cache entry gone the removal walks the recorded paths, and
 	// there is no cached copy to compare with.
-	require.NoError(t, os.RemoveAll(f.svc.GetGameCache(f.game).ModPath(f.game.ID, "local", "k", "unknown")))
+	require.NoError(t, os.RemoveAll(f.svc.GetGameCache(f.game).ModPath(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "unknown"})))
 
 	result, err := f.svc.UninstallMod(ctx, f.game, "default", "local", "k", core.UninstallOptions{})
 	require.NoError(t, err)
@@ -254,7 +255,7 @@ func TestDeployedIdentity_ARowWrittenWithoutAChecksumSaysSo(t *testing.T) {
 	require.NoError(t, f.svc.ExecForTest(ctx, `UPDATE deployed_files SET mod_path = ?`, f.game.ModPath))
 	// With the cache entry gone the removal walks the recorded paths, and
 	// there is no cached copy to compare with.
-	require.NoError(t, os.RemoveAll(f.svc.GetGameCache(f.game).ModPath(f.game.ID, "local", "k", "unknown")))
+	require.NoError(t, os.RemoveAll(f.svc.GetGameCache(f.game).ModPath(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "unknown"})))
 
 	result, err := f.svc.UninstallMod(ctx, f.game, "default", "local", "k", core.UninstallOptions{})
 	require.NoError(t, err)
@@ -416,7 +417,7 @@ func TestDeployedIdentity_ADeployKeepsAnUntrackedFileItCannotPreserve(t *testing
 	require.NoError(t, os.MkdirAll(filepath.Dir(f.kPath()), 0o755))
 	require.NoError(t, os.WriteFile(f.kPath(), []byte("STOCK"), 0o644))
 	f.deployed(t, "default", "k", domain.LinkCopy, map[string]string{"Data/k2.esp": "mod k2"}, nil)
-	require.NoError(t, f.svc.GetGameCache(f.game).Store(f.game.ID, "local", "k", "unknown", "Data/k.esp", []byte("mod k")))
+	require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "unknown"}, "Data/k.esp", []byte("mod k")))
 	_, err := f.svc.DeployProfile(ctx, f.game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 	require.Equal(t, "mod k", readLive(t, f.kPath()))
@@ -432,7 +433,7 @@ func TestDeployedIdentity_ADeployKeepsAnUntrackedFileItCannotPreserve(t *testing
 	// user's file, so it does not replace it.
 	f.profile(t, "default", true, "k")
 	f.deployed(t, "default", "k", domain.LinkCopy, map[string]string{"Data/k2.esp": "mod k2"}, nil)
-	require.NoError(t, f.svc.GetGameCache(f.game).Store(f.game.ID, "local", "k", "unknown", "Data/k.esp", []byte("mod k")))
+	require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "unknown"}, "Data/k.esp", []byte("mod k")))
 	result, err := f.svc.DeployProfile(ctx, f.game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "USER FILE", readLive(t, f.kPath()))
