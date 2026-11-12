@@ -83,6 +83,7 @@ internal/
 │   ├── db/               # SQLite (mod metadata, auth tokens)
 │   ├── config/           # YAML parsing (games, profiles)
 │   └── cache/            # Central mod file cache
+├── fomod/                # FOMOD installer evaluator (#604): Locate/Parse/Evaluate, Vortex semantics, stdlib only; core runs its ops (fomod_resolve.go)
 ├── notices/              # THIRD_PARTY_NOTICES generator + drift test (`make notices`, go run ./tools/notices; stdlib only, dev-time, #522)
 ├── safeyaml/             # The one YAML decode every reader uses: a decoder panic is an error, never a crash (#452)
 ├── releasesig/           # ed25519 sign/verify of a release's checksums.txt (#569); tools/releasekey is its maintainer CLI, docs/release-signing.md the key
@@ -153,6 +154,11 @@ internal/
     ├── self_update.go     # SelfUpdater: `lmm self-update` (#569) - trusted release keys, signature then checksum verification, atomic binary replace (never a serve restart: serve restarts itself, #586); needs no Service
     ├── auto_update.go     # automatic updates (#586): RunAuto (lock, verified Plan/Apply, step-asides incl. a running mutation via the op lock + serve's Quiesce; replaces the binary, never restarts serve), RestartServeWhenIdle (serve restarting itself, Quiesce only, no op lock), AutoUpdateDue's back-offs (install failures and release-check failures, kept apart), <data>/auto-update.json (the update to announce once, the failure), AutoUpdateStatus, SetAutoUpdate
     ├── source_notices.go  # WithSourceNotices: a source's throttle/suspension/cold-build notices as events (#436)
+    ├── fomod_resolve.go   # the FOMOD resolve step (#614): after extract, before the adapter; executes internal/fomod's ops, the ask/refuse policy, fomodVariant
+    ├── fomod_errors.go    # FomodChoicesRequiredError (the question document, answerable through the acquire engine) and FomodInstallError
+    ├── fomod_acquire.go   # per-flow FOMOD inputs (Options.Fomod answers, else the ref's recorded choices), unifyFomod, fomodDrift for converge
+    ├── fomod_filestates.go # fileDependency answers from the profile: present = in the mod dir or deployed by the profile; active = present until P5
+    ├── cache_key.go       # modCacheKey/previousCacheKey: an installed mod's cache entry, variant included (#614)
     └── verify_repair.go   # verify --fix repair actions: redownload, checksum backfill
 └── serve/                # `lmm serve` local web UI: an SPA over /api/v1; imports only app/core/domain (boundary_test.go)
     ├── server.go          # Package doc; New/Listen/Serve/Close, graceful shutdown, CSRF guard
