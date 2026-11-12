@@ -114,6 +114,10 @@ type UpdateBatchFailure struct {
 	// hand from ModURL, and the web UI offers "Update from file..." for it
 	// (#530). Omitted otherwise.
 	ManualDownload bool `json:"manual_download,omitzero"`
+	// AccountRestricted reports that the refusal behind ManualDownload is
+	// the account's, not the mod's (DownloadError.AccountRestricted, #601:
+	// a free NexusMods key). Omitted otherwise.
+	AccountRestricted bool `json:"account_restricted,omitzero"`
 
 	// cause is the original error, kept for an in-process caller. It is
 	// deliberately unexported: it is not part of the wire contract, and a
@@ -366,6 +370,7 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 			var dl *DownloadError
 			if errors.As(err, &dl) {
 				failure.ModURL, failure.ManualDownload = dl.ModURL, dl.ManualDownload
+				failure.AccountRestricted = dl.AccountRestricted
 			}
 			result.Failed = append(result.Failed, failure)
 			emit(ModEvent{Scope: scope, Phase: UpdateBatchItemFailed, Detail: err.Error()})

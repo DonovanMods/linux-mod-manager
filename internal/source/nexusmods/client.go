@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 )
 
@@ -30,8 +31,12 @@ const (
 type Client struct {
 	httpClient *http.Client
 	rest       *httpclient.Client
-	apiKey     string
 	graphqlURL string
+
+	// apiKey is read and written only under keyMu (#601): lmm serve
+	// re-keys a live source (SetAPIKey) while requests are in flight.
+	keyMu  sync.RWMutex
+	apiKey string
 
 	// knownGames is the game domains the games endpoint has confirmed, so a
 	// 404 from a mod endpoint is checked against its game once (#540).
@@ -46,6 +51,14 @@ type Client struct {
 	categories     map[string]map[int]string
 	categoryMisses map[string]time.Time
 	now            func() time.Time
+
+	// tier caches AccountTier's answer for tierKey, the key it was asked
+	// with (#601): the tier is the account's, so it is asked once per key
+	// for the client's lifetime, and a changed key asks again. A failed
+	// check is never cached.
+	tierMu  sync.Mutex
+	tierKey string
+	tier    source.Tier
 }
 
 // categoryRetryAfter is how long a game domain whose category list could not
@@ -87,8 +100,17 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 
 // SetAPIKey sets the API key for authentication
 func (c *Client) SetAPIKey(key string) {
+	c.keyMu.Lock()
+	defer c.keyMu.Unlock()
 	c.apiKey = key
 	c.rest.SetAPIKey(key)
+}
+
+// key returns the configured API key.
+func (c *Client) key() string {
+	c.keyMu.RLock()
+	defer c.keyMu.RUnlock()
+	return c.apiKey
 }
 
 // SetBaseURL overrides the REST API base URL — primarily used by tests that
@@ -99,16 +121,45 @@ func (c *Client) SetBaseURL(u string) {
 
 // IsAuthenticated returns true if an API key is configured
 func (c *Client) IsAuthenticated() bool {
-	return c.apiKey != ""
+	return c.key() != ""
 }
 
-// ValidateAPIKey validates an API key by calling the NexusMods validate endpoint
-func (c *Client) ValidateAPIKey(ctx context.Context, key string) (err error) {
+// validateResponse is the part of GET /v1/users/validate.json lmm reads: the
+// account's tier (#601). The endpoint also sends "is_premium?" duplicates,
+// which are not decoded.
+type validateResponse struct {
+	IsPremium bool `json:"is_premium"`
+}
+
+// validateBodyLimit bounds how much of the validate endpoint's answer is
+// read: the real one is a few hundred bytes.
+const validateBodyLimit = 64 << 10
+
+// errInvalidKey is the validate endpoint's 401.
+var errInvalidKey = errors.New("invalid API key")
+
+// errUndecodable marks a 200 from the validate endpoint whose body did not
+// decode: the key is valid, only the tier is unknown.
+var errUndecodable = errors.New("undecodable validate response")
+
+// ValidateAPIKey validates an API key by calling the NexusMods validate
+// endpoint. A 200 is a valid key whatever its body says: only AccountTier
+// needs the body.
+func (c *Client) ValidateAPIKey(ctx context.Context, key string) error {
+	_, err := c.validate(ctx, key)
+	if errors.Is(err, errUndecodable) {
+		return nil
+	}
+	return err
+}
+
+// validate asks the validate endpoint about key and decodes its answer.
+func (c *Client) validate(ctx context.Context, key string) (v validateResponse, err error) {
 	url := c.rest.BaseURL() + "/v1/users/validate.json"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
+		return v, fmt.Errorf("creating request: %w", err)
 	}
 
 	req.Header.Set("apikey", key)
@@ -116,7 +167,7 @@ func (c *Client) ValidateAPIKey(ctx context.Context, key string) (err error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
+		return v, fmt.Errorf("executing request: %w", err)
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); err == nil && cerr != nil {
@@ -125,18 +176,51 @@ func (c *Client) ValidateAPIKey(ctx context.Context, key string) (err error) {
 	}()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return errors.New("invalid API key")
+		return v, errInvalidKey
 	}
 
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, validateBodyLimit))
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
-			return fmt.Errorf("API error (status %d); reading body: %w", resp.StatusCode, readErr)
+			return v, fmt.Errorf("API error (status %d); reading body: %w", resp.StatusCode, readErr)
 		}
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+		return v, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
+	if readErr != nil {
+		return v, fmt.Errorf("%w: reading response: %w", errUndecodable, readErr)
+	}
+	if err := json.Unmarshal(body, &v); err != nil {
+		return v, fmt.Errorf("%w: %w", errUndecodable, err)
+	}
+	return v, nil
+}
 
-	return nil
+// AccountTier reports the configured key's account tier from the validate
+// endpoint's is_premium, cached per key (see Client.tier). No key, or a key
+// the endpoint rejects, is domain.ErrAuthRequired.
+func (c *Client) AccountTier(ctx context.Context) (source.Tier, error) {
+	key := c.key()
+	if key == "" {
+		return "", fmt.Errorf("NexusMods: %w", domain.ErrAuthRequired)
+	}
+	c.tierMu.Lock()
+	defer c.tierMu.Unlock()
+	if c.tier != "" && c.tierKey == key {
+		return c.tier, nil
+	}
+	v, err := c.validate(ctx, key)
+	if errors.Is(err, errInvalidKey) {
+		return "", fmt.Errorf("NexusMods rejected the API key: %w", domain.ErrAuthRequired)
+	}
+	if err != nil {
+		return "", fmt.Errorf("checking the NexusMods account tier: %w", err)
+	}
+	tier := source.TierFree
+	if v.IsPremium {
+		tier = source.TierPremium
+	}
+	c.tierKey, c.tier = key, tier
+	return tier, nil
 }
 
 // doRequest performs an authenticated REST request and JSON-decodes the response.
@@ -499,8 +583,8 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category str
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("apikey", c.apiKey)
+	if key := c.key(); key != "" {
+		req.Header.Set("apikey", key)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -586,10 +670,29 @@ func (c *Client) GetDownloadLinks(ctx context.Context, gameDomain string, modID,
 
 	var links []DownloadLink
 	if err := c.doRequest(ctx, http.MethodGet, path, &links); err != nil {
+		if isPremiumOnly(err) {
+			return nil, &source.AccountRestrictedError{Reason: premiumOnlyReason}
+		}
 		return nil, fmt.Errorf("getting download links: %w", err)
 	}
 
 	return links, nil
+}
+
+// premiumOnlyReason is what a free account's download refusal says (#601):
+// the API's own sentence carries a typo and embedded indentation, so lmm
+// says it plainly instead.
+const premiumOnlyReason = "NexusMods serves downloads through its API to Premium accounts only, and this API key's account is not Premium: download the file from the mod's page instead"
+
+// isPremiumOnly reports whether err is the download_link endpoint refusing a
+// free account (#601): a 403 whose body says the links are "for premium users
+// only". Both are required - a 403 alone is also a removed or hidden file -
+// and the wording is matched, not the whole message, which carries the
+// API's own typo ("visting") and embedded indentation.
+func isPremiumOnly(err error) bool {
+	var se *apiStatusError
+	return errors.As(err, &se) && se.status == http.StatusForbidden &&
+		strings.Contains(strings.ToLower(se.body), "premium users only")
 }
 
 // ModRequirement represents a dependency returned from the GraphQL API
@@ -619,8 +722,8 @@ func (c *Client) GetModRequirements(ctx context.Context, gameDomain string, modI
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("apikey", c.apiKey)
+	if key := c.key(); key != "" {
+		req.Header.Set("apikey", key)
 	}
 
 	resp, err := c.httpClient.Do(req)

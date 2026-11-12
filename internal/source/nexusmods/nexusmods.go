@@ -56,6 +56,14 @@ func (n *NexusMods) ValidateAPIKey(ctx context.Context, key string) error {
 	return n.client.ValidateAPIKey(ctx, key)
 }
 
+// AccountTier implements source.AccountTierReporter (#601): the configured
+// key's account is Premium or free, from the validate endpoint's is_premium,
+// asked once per key for the source's lifetime. A free account gets no API
+// download links; its refusal is a *source.AccountRestrictedError.
+func (n *NexusMods) AccountTier(ctx context.Context) (source.Tier, error) {
+	return n.client.AccountTier(ctx)
+}
+
 // EnvKey implements source.EnvKeyProvider: the legacy environment variable
 // name, preserved exactly.
 func (n *NexusMods) EnvKey() string {
@@ -326,6 +334,9 @@ func (n *NexusMods) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID 
 	}
 
 	links, err := n.client.GetDownloadLinks(ctx, mod.GameID, modID, fID)
+	if errors.Is(err, source.ErrAccountRestricted) {
+		return "", err // its own sentence is the whole answer (#601)
+	}
 	if err != nil {
 		return "", fmt.Errorf("getting download links: %w", err)
 	}
