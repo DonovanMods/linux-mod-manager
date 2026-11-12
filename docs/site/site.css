@@ -356,7 +356,8 @@ h2 code {
   box-shadow: var(--shadow-raised);
 }
 
-.shot figcaption {
+.shot figcaption,
+.cli-example figcaption {
   margin-top: 0.625rem;
   color: var(--text-muted);
   font-size: 0.875rem;
@@ -364,6 +365,10 @@ h2 code {
 
 .shot--hero {
   margin-top: 2.5rem;
+}
+
+.cli-example {
+  margin: 2rem 0 0;
 }
 
 /* Sections. */

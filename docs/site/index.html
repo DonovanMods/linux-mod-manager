@@ -11,7 +11,7 @@
 <meta name="theme-color" content="#0b0f14" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preload" href="fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="site.css?v=d8739343e669">
+<link rel="stylesheet" href="site.css?v=17ce8fcb394e">
 
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="lmm">
@@ -39,7 +39,7 @@
     </a>
     <nav aria-label="Site">
       <ul class="nav">
-        <li><a href="#profiles">Features</a></li>
+        <li><a href="#frontends">Features</a></li>
         <li><a href="#install">Install</a></li>
         <li><a href="guide/">Guide</a></li>
         <li><a href="https://github.com/DonovanMods/linux-mod-manager">GitHub</a></li>
@@ -70,6 +70,43 @@
   </div>
 </section>
 
+<section id="frontends" class="feature feature--alt" aria-labelledby="frontends-title">
+  <div class="wrap">
+    <div class="feature__grid feature__grid--flip">
+      <div class="prose">
+        <h2 id="frontends-title">A terminal and a browser, one engine</h2>
+        <p>Browse your library, find mods and manage updates in the web UI. Use the CLI for scripts or over SSH. Both use the same engine, database and profiles.</p>
+        <p>Run <code>lmm serve</code> to open the UI in your browser. It listens on your computer's loopback address by default, and can run as a systemd user service. <a href="guide/background.html">Run lmm in the background</a>.</p>
+      </div>
+      <figure class="shot">
+        <picture>
+          <source srcset="images/library-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="images/library-light.png" width="1280" height="960" alt="The web UI's nine-mod library grouped into Audio, Crafting, Interface, Lighting, Storage and Visuals. Rows show versions, healthy checkmarks and load order; three mods have Update buttons.">
+        </picture>
+        <figcaption>The web UI library, grouped by category. Grouping never changes the load order.</figcaption>
+      </figure>
+    </div>
+    <figure class="cli-example" aria-labelledby="cli-title">
+      <h3 id="cli-title">The same library in the terminal</h3>
+<pre class="code" tabindex="0"><code><span class="prompt">$</span> lmm list
+Installed mods in Starfall Colony (profile: default) — 9 mod(s), 1 disabled
+
+ID               NAME                 VERSION  AUTHOR          STATE
+--               ----                 -------  ------          -----
+BetterLanterns   Better Lanterns      1.3.2    Halvard         -
+QuietFootsteps   Quiet Footsteps      2.0.1    mira_k          disabled
+ExpandedStorage  Expanded Storage     3.2.0    Halvard         -
+FasterCrafting   Faster Crafting      1.1.0    tinkerbox       -
+HDTerrain        HD Terrain Textures  5.0.2    Ostrava Studio  -
+MapMarkers       Map Markers          0.9.1    mira_k          -
+NightSky         Night Sky Overhaul   2.2.0    Ostrava Studio  -
+BackpackPlus     Backpack Plus        1.0.0    tinkerbox       -
+CampfireCooking  Campfire Cooking     1.6.2    Halvard         -</code></pre>
+      <figcaption>Actual CLI output for the same demo game and profile, listed in load order.</figcaption>
+    </figure>
+  </div>
+</section>
+
 <section id="profiles" class="feature" aria-labelledby="profiles-title">
   <div class="wrap feature__grid">
     <div class="prose">
@@ -86,23 +123,6 @@
         <img src="images/profile-apply-light.png" width="536" height="316" alt="The Apply profile preview in the web UI. It reads &quot;Making default match what it lists&quot; and lists two installs: Better Lanterns 1.4.0, replacing 1.3.2, and Smarter Wildlife 0.7.0, with Cancel and Apply profile buttons.">
       </picture>
       <figcaption>Review a profile's changes before applying them. Shown with demo mods.</figcaption>
-    </figure>
-  </div>
-</section>
-
-<section class="feature feature--alt" aria-labelledby="frontends-title">
-  <div class="wrap feature__grid feature__grid--flip">
-    <div class="prose">
-      <h2 id="frontends-title">A terminal and a browser, one engine</h2>
-      <p>Browse your library, find mods and manage updates in the web UI. Use the CLI for scripts or over SSH. Both use the same engine, database and profiles.</p>
-      <p>Run <code>lmm serve</code> to open the UI in your browser. It listens on your computer's loopback address by default, and can run as a systemd user service. <a href="guide/background.html">Run lmm in the background</a>.</p>
-    </div>
-    <figure class="shot">
-      <picture>
-        <source srcset="images/library-dark.png" media="(prefers-color-scheme: dark)">
-        <img src="images/library-light.png" width="1280" height="960" alt="The web UI's nine-mod library grouped into Audio, Crafting, Interface, Lighting, Storage and Visuals. Rows show versions, healthy checkmarks and load order; three mods have Update buttons.">
-      </picture>
-      <figcaption>The library, grouped by category. Grouping never changes the load order.</figcaption>
     </figure>
   </div>
 </section>
