@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A landing page for the project site (#625).**
+  <https://donovanmods.github.io/linux-mod-manager/> now opens on a page that
+  says what lmm is and who it is for, with screenshots of the web UI and the
+  install options, and the user guide moves to
+  <https://donovanmods.github.io/linux-mod-manager/guide/>. Every old guide
+  address, such as `/linux-mod-manager/updates.html`, redirects to the same
+  page under `/guide/`, keeping any `#section`. The page is plain HTML and
+  CSS in `docs/site/`, with the web UI's colours and fonts and nothing
+  loaded from another site. The Pages workflow now also builds the site on
+  `develop`, without deploying it, so a change that breaks it shows up
+  before a release.
+
 ### Fixed
 
 - **Setup no longer says `make install` gives a self-updating lmm (#599).**
