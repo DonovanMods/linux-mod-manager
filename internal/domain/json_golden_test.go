@@ -331,6 +331,42 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #605: a game that names its Wine/Proton prefix and the
+			// Windows user inside it. game.golden is the unset case, and
+			// stays byte-identical to what it was before these fields
+			// existed (both omitempty).
+			"game_prefix",
+			domain.Game{
+				ID:          "skyrim-se",
+				Name:        "Skyrim Special Edition",
+				InstallPath: "/home/user/Games/Heroic/Skyrim Special Edition",
+				ModPath:     "/home/user/Games/Heroic/Skyrim Special Edition/Data",
+				SourceIDs:   map[string]string{"nexusmods": "skyrimspecialedition"},
+				LinkMethod:  domain.LinkSymlink,
+				Prefix:      "/home/user/Games/Heroic/Prefixes/default/Skyrim Special Edition",
+				PrefixUser:  "dyoung",
+			},
+		},
+		{
+			// #605: a Steam app whose compatdata prefix exists carries it,
+			// as information - the prefix lmm will derive. It is never
+			// written to the games.yaml the row configures.
+			"detected_game_prefix",
+			domain.DetectedGame{
+				Detector:    domain.DetectorSteam,
+				DetectorID:  "489830",
+				SteamAppID:  "489830",
+				Slug:        "skyrim-se",
+				Name:        "Skyrim Special Edition",
+				InstallPath: "/home/user/.steam/steam/steamapps/common/Skyrim Special Edition",
+				ModPath:     "/home/user/.steam/steam/steamapps/common/Skyrim Special Edition/Data",
+				NexusID:     "skyrimspecialedition",
+				Sources:     map[string]string{"nexusmods": "skyrimspecialedition"},
+				Known:       true,
+				Prefix:      "/home/user/.steam/steam/steamapps/compatdata/489830/pfx",
+			},
+		},
+		{
 			// A CURATED candidate: every field the known-games entry
 			// supplies, plus #206's "known": true.
 			"detected_game",

@@ -28,6 +28,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/wineprefix"
 )
 
 // GameEdit is one edit of a configured game's games.yaml entry - what `lmm
@@ -68,6 +69,16 @@ type GameEdit struct {
 	// the game accepts, duplicates dropped. An empty list clears the
 	// setting, so the game accepts every file again.
 	CurseForgeVersionTypes *[]int
+	// Prefix, when non-nil, sets `prefix:` (#605): the game's Wine/Proton
+	// prefix, trimmed, "~/" expanded and cleaned. It must be absolute and,
+	// when it exists, a directory; it need not exist yet (`lmm game show`
+	// says when it does not). "" clears it, so lmm derives the prefix from
+	// Steam's compatdata again.
+	Prefix *string
+	// PrefixUser, when non-nil, sets `prefix_user:` (#605): the Windows
+	// user directory name under the prefix's drive_c/users, trimmed - one
+	// name, no slashes. "" clears it.
+	PrefixUser *string
 }
 
 // EditGame applies edit to gameID's games.yaml entry and returns the game's
@@ -186,6 +197,24 @@ func (s *Service) editedGame(ctx context.Context, game *domain.Game, edit GameEd
 		updated.CurseForge, changed = block, true
 	}
 
+	if edit.Prefix != nil {
+		prefix, err := prefixValue(*edit.Prefix)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		updated.Prefix, changed = prefix, true
+	}
+
+	if edit.PrefixUser != nil {
+		user := *edit.PrefixUser
+		if user != "" {
+			if err := wineprefix.CheckUserName(user); err != nil {
+				return nil, false, nil, newGameSpecError("prefix_user", user, "the prefix user is one directory name under drive_c/users: "+err.Error())
+			}
+		}
+		updated.PrefixUser, changed = user, true
+	}
+
 	if edit.Sources != nil {
 		cleaned, err := s.validatedSourceMap(edit.Sources)
 		if err != nil {
@@ -291,6 +320,28 @@ func installPathValue(value string) (string, error) {
 		return "", &GameSpecError{Field: "install_path", Value: install, Reason: err.Error(), Err: err}
 	}
 	return filepath.Clean(install), nil
+}
+
+// prefixValue is the `prefix:` an edit writes (#605): "" to clear it, or a
+// "~/"-expanded, cleaned absolute path that is not a file. Leading or
+// trailing whitespace is refused rather than trimmed - it is more likely a
+// paste gone wrong than part of a path. It need not exist - a prefix can be
+// named before the game first runs.
+func prefixValue(value string) (string, error) {
+	if strings.TrimSpace(value) != value {
+		return "", newGameSpecError("prefix", value, "the prefix has leading or trailing whitespace")
+	}
+	prefix := config.ExpandPath(value)
+	if prefix == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(prefix) {
+		return "", newGameSpecError("prefix", prefix, "the prefix must be an absolute path")
+	}
+	if info, err := os.Stat(prefix); err == nil && !info.IsDir() {
+		return "", newGameSpecError("prefix", prefix, "the prefix must be a directory - the one holding drive_c")
+	}
+	return filepath.Clean(prefix), nil
 }
 
 // followInstallPath is where game's mod_path goes when its install path

@@ -25,9 +25,14 @@ Proton game uses the Windows winhttp proxy - and prints the exact string
 to paste. 'lmm verify' then tells you whether it worked.
 
 .PP
-Nothing here launches the game, reads your Steam configuration or touches
-a Proton prefix; the runtime and bootstrap are read from files in the
-game's own install directory.
+It also prints the game's Wine/Proton prefix: the one games.yaml names
+(prefix:), or Steam's compatdata prefix for the game, from whichever Steam
+library holds it, and the Windows user directory inside it.
+
+.PP
+Nothing here launches the game or writes anything: the runtime and
+bootstrap are read from files in the game's own install directory, and
+the prefix from Steam's library list and the prefix directories.
 
 .PP
 Examples:
