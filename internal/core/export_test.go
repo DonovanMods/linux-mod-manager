@@ -434,3 +434,7 @@ func WithAutoTargetForTest(ref CatalogModRef, modID string) CatalogModRef {
 func (s *Service) SetModCategoryNameForTest(ctx context.Context, sourceID, modID, gameID, profileName, name string) error {
 	return s.db.SetModCategoryName(ctx, sourceID, modID, gameID, profileName, name)
 }
+
+// FomodVariantForTest exposes fomodVariant (#614): the cache variant a
+// recorded choice set names.
+func FomodVariantForTest(c domain.FomodChoices) string { return fomodVariant(c) }

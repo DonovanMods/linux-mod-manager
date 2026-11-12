@@ -1,0 +1,14 @@
+{
+  "mod": {
+    "source_id": "nexusmods",
+    "mod_id": "12604",
+    "version": "1.0",
+    "locked": false
+  },
+  "name": "Sample Mod",
+  "from_version": "1.0",
+  "to_version": "1.1",
+  "status": "skipped",
+  "reason": "installer choices need re-answering",
+  "fomod_reanswer": true
+}

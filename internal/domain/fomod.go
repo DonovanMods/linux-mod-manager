@@ -6,6 +6,19 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
 )
 
+// FomodStepChoice, FomodGroupChoice and FomodOptionChoice name
+// internal/fomod's choice types for a frontend, which builds answers
+// (InstallOptions.Fomod and its siblings) but may not import the evaluator
+// (#614; cmd/lmm's and internal/serve's import allow-lists).
+type (
+	// FomodStepChoice is fomod.StepChoice: one step's answers.
+	FomodStepChoice = fomod.StepChoice
+	// FomodGroupChoice is fomod.GroupChoice: one group's answer.
+	FomodGroupChoice = fomod.GroupChoice
+	// FomodOptionChoice is fomod.OptionChoice: one picked option.
+	FomodOptionChoice = fomod.OptionChoice
+)
+
 // FomodChoices is what was chosen in a mod's FOMOD installer (#614): the
 // recorded answers a profile carries beside Disabled and Category, so an
 // export, an import, a duplicate, a copy and a collection all reproduce the

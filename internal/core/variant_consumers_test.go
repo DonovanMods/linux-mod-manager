@@ -200,6 +200,9 @@ func mustPlanRollback(t *testing.T, f *copyFixture) *core.RollbackPlan {
 func TestVariant_ModCopyCarriesTheTreeAndTheChoices(t *testing.T) {
 	f := newCopyFixture(t)
 	ctx := context.Background()
+	// The variant the recorded choices name (F2b, #614): a switch to the
+	// copy's profile converges to exactly that tree.
+	variantA := core.FomodVariantForTest(recordedChoices())
 	f.seedVariantRow(t, "default", "1.0", variantA, "VARIANT", false)
 	f.setRefs(t, "default", domain.ModReference{SourceID: "src", ModID: "a", Version: "1.0", FileIDs: []string{"f-a"}, Fomod: recordedChoices()})
 

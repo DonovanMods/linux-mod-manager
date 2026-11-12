@@ -231,7 +231,7 @@ func fomodSourceProblems(res *fomod.Result) []string {
 		if m.Reason == fomod.SourceIsDirectory {
 			why = "names a directory"
 		}
-		out = append(out, fmt.Sprintf("the installer's %s %q %s", kind, m.Source, why))
+		out = append(out, fmt.Sprintf("the installer's %s %q %s", kind, strings.ReplaceAll(m.Source, `\`, "/"), why))
 	}
 	for _, m := range res.UnsafeMembers {
 		out = append(out, fmt.Sprintf("the archive member %q is not a safe path and was not read", strings.ReplaceAll(m, "\x00", `\0`)))

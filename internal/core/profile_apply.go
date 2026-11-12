@@ -382,8 +382,9 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 			continue
 		}
 
-		if ref.Version != "" && im.Version != ref.Version {
-			// #96 convergence: the profile names a different version than
+		if (ref.Version != "" && im.Version != ref.Version) || fomodDrift(ref, im) {
+			// #96 convergence (and #614's: the profile records FOMOD choices
+			// whose tree is not the installed one): the profile names a different version than
 			// the installed row - reinstall at the profile's version
 			// (downgrades included), regardless of enabled state. ref is
 			// passed as-is: its own FileIDs (if any) describe the TARGET
@@ -596,7 +597,7 @@ func cachedRowElsewhere(gameCache *cache.Cache, gameID string, ref domain.ModRef
 		return gameCache.HasFileIDs(cache.Key{GameID: gameID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version, Variant: row.Variant}, row.FileIDs)
 	}
 	row := pickImportRow(rows, ref, cached)
-	if row.External || (ref.Version != "" && row.Version != ref.Version) || !cached(row) {
+	if row.External || (ref.Version != "" && row.Version != ref.Version) || row.Variant != refVariant(&ref) || !cached(row) {
 		return domain.InstalledMod{}, false
 	}
 	if _, drift := liveOtherVersion(rows, ref); drift {

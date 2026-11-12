@@ -273,8 +273,8 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 				// branch below into a reinstall lmm has no way to perform.
 				// "Already installed" is the whole truth about it.
 				installed = append(installed, ref)
-			case ref.Version != "" && im.Version != ref.Version:
-				// #138 convergence, mirroring PlanProfileSwitch's #96 drift
+			case (ref.Version != "" && im.Version != ref.Version) || fomodDrift(ref, &im):
+				// #138 convergence (and #614's FOMOD choices drift), mirroring PlanProfileSwitch's #96 drift
 				// case: the imported profile names a different version than
 				// the installed row - reinstall at the profile's version
 				// (downgrades included). ref is passed as-is: its own
@@ -456,7 +456,9 @@ func pickImportRow(rows []domain.InstalledMod, ref domain.ModReference, cached f
 	best := domain.InstalledMod{}
 	bestScore := -1
 	for _, row := range rows {
-		versionMatches := ref.Version == "" || row.Version == ref.Version
+		// #614: a row of another tree (other FOMOD choices) is not the
+		// one the reference names.
+		versionMatches := (ref.Version == "" || row.Version == ref.Version) && row.Variant == refVariant(&ref)
 		score := 0
 		switch {
 		case row.External:

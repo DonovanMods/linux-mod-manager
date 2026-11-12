@@ -333,8 +333,8 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		switch {
 		case !installed:
 			toInstall = append(toInstall, ref)
-		case ref.Version != "" && row.Version != ref.Version:
-			// #96 convergence: the profile names a different version than
+		case (ref.Version != "" && row.Version != ref.Version) || fomodDrift(ref, row):
+			// #96 convergence (and #614's FOMOD choices drift): the profile names a different version than
 			// the installed row - reinstall at the profile's version
 			// (downgrades included). ref is passed as-is: its own FileIDs
 			// (if any) describe the TARGET version; the installed row's
@@ -349,7 +349,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			if live != nil {
 				prior = *live
 			}
-			if prior.Version != ref.Version {
+			if prior.Version != ref.Version || fomodDrift(ref, &prior) {
 				recordPrior(key, prior)
 			}
 		case !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version, Variant: row.Variant}):

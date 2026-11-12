@@ -85,3 +85,14 @@ func withFomod(ref domain.ModReference, r *fomodResolved) domain.ModReference {
 	}
 	return ref
 }
+
+// fomodDrift reports that ref records FOMOD choices whose tree is not the
+// one row installed (#614): the profile is desired state, so a converge
+// flow reinstalls the mod with the recorded choices, as it does for a
+// version drift. A reference that records no choices never drifts: a row
+// installed with choices the profile does not carry (an older lmm dropped
+// the key on a rewrite) keeps its tree rather than ask a question no
+// converge flow can.
+func fomodDrift(ref domain.ModReference, row *domain.InstalledMod) bool {
+	return row != nil && !ref.Fomod.IsZero() && row.Variant != fomodVariant(ref.Fomod)
+}
