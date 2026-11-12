@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-16"?>
+<!-- Synthesised fixture: the shape FOMOD Creation Tool and hand-written
+     installers produce (explicit orders, flags gating a later step,
+     dependencyType patterns over plugin state, conditional installs).
+     No content is copied from any published mod. -->
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://qconsulting.ca/fo3/ModConfig5.0.xsd">
+	<moduleName>Example Overhaul</moduleName>
+	<moduleImage path="fomod\images\banner.png" />
+	<moduleDependencies operator="And">
+		<fileDependency file="Skyrim.esm" state="Active" />
+	</moduleDependencies>
+	<requiredInstallFiles>
+		<folder source="00 Core" destination="" />
+		<file source="00 Core\Docs\Readme.txt" destination="Docs\Example Readme.txt" />
+	</requiredInstallFiles>
+	<installSteps order="Explicit">
+		<installStep name="Main">
+			<optionalFileGroups order="Explicit">
+				<group name="Texture Resolution" type="SelectExactlyOne">
+					<plugins order="Explicit">
+						<plugin name="2K">
+							<description>Balanced.</description>
+							<image path="fomod\images\2k.png" />
+							<files>
+								<folder source="10 Textures 2K" destination="textures" priority="0" />
+							</files>
+							<conditionFlags>
+								<flag name="res">2k</flag>
+							</conditionFlags>
+							<typeDescriptor>
+								<type name="Recommended" />
+							</typeDescriptor>
+						</plugin>
+						<plugin name="4K">
+							<description>Sharp.</description>
+							<files>
+								<folder source="11 Textures 4K" destination="textures" />
+							</files>
+							<conditionFlags>
+								<flag name="res">4k</flag>
+							</conditionFlags>
+							<typeDescriptor>
+								<type name="Optional" />
+							</typeDescriptor>
+						</plugin>
+					</plugins>
+				</group>
+				<group name="Patches" type="SelectAny">
+					<plugins order="Explicit">
+						<plugin name="Dawnguard Patch">
+							<description>Needs Dawnguard.</description>
+							<files>
+								<file source="20 Patches\Example - Dawnguard.esp" destination="Example - Dawnguard.esp" />
+							</files>
+							<typeDescriptor>
+								<dependencyType>
+									<defaultType name="NotUsable" />
+									<patterns>
+										<pattern>
+											<dependencies operator="And">
+												<fileDependency file="Dawnguard.esm" state="Active" />
+											</dependencies>
+											<type name="Recommended" />
+										</pattern>
+										<pattern>
+											<dependencies operator="And">
+												<fileDependency file="Dawnguard.esm" state="Inactive" />
+											</dependencies>
+											<type name="CouldBeUsable" />
+										</pattern>
+									</patterns>
+								</dependencyType>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Lighting Patch">
+							<description>For lighting mods.</description>
+							<files>
+								<file source="20 Patches\Example - Lighting.esp" destination="Example - Lighting.esp" />
+							</files>
+							<conditionFlags>
+								<flag name="lighting">On</flag>
+							</conditionFlags>
+							<typeDescriptor>
+								<type name="Optional" />
+							</typeDescriptor>
+						</plugin>
+					</plugins>
+				</group>
+			</optionalFileGroups>
+		</installStep>
+		<installStep name="Lighting Options">
+			<visible>
+				<flagDependency flag="lighting" value="On" />
+			</visible>
+			<optionalFileGroups order="Explicit">
+				<group name="Brightness" type="SelectExactlyOne">
+					<plugins order="Explicit">
+						<plugin name="Dark">
+							<description>Darker interiors.</description>
+							<conditionFlags>
+								<flag name="bright">dark</flag>
+							</conditionFlags>
+							<typeDescriptor>
+								<type name="Optional" />
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Vanilla">
+							<description>As shipped.</description>
+							<conditionFlags>
+								<flag name="bright">vanilla</flag>
+							</conditionFlags>
+							<typeDescriptor>
+								<type name="Optional" />
+							</typeDescriptor>
+						</plugin>
+					</plugins>
+				</group>
+			</optionalFileGroups>
+		</installStep>
+	</installSteps>
+	<conditionalFileInstalls>
+		<patterns>
+			<pattern>
+				<dependencies operator="And">
+					<flagDependency flag="lighting" value="On" />
+					<flagDependency flag="bright" value="dark" />
+				</dependencies>
+				<files>
+					<file source="30 Conditional\Dark Lighting.ini" destination="SKSE\Plugins\Lighting.ini" />
+				</files>
+			</pattern>
+			<pattern>
+				<dependencies operator="Or">
+					<flagDependency flag="res" value="4k" />
+					<gameDependency version="1.6.1170" />
+				</dependencies>
+				<files>
+					<file source="30 Conditional\Example.ini" destination="Example.ini" priority="5" />
+				</files>
+			</pattern>
+		</patterns>
+	</conditionalFileInstalls>
+</config>

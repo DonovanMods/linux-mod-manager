@@ -385,6 +385,12 @@ type GameDetail struct {
 	// loader still gets one, because "here is the build and the launch
 	// option you would need" is exactly what someone setting one up reads.
 	Loader *LoaderStatus `json:"loader_status,omitzero"`
+	// Prefix is the game's Wine/Proton prefix, resolved (#605): where it
+	// is, whether games.yaml named it or lmm derived it (and from which
+	// Steam library), and the Windows user directory inside it. nil - no
+	// member - for a game with no prefix set or found that needs none,
+	// which is every native game.
+	Prefix *PrefixStatus `json:"prefix_status,omitempty"`
 }
 
 // GameDetail returns the full document for gameID: its `lmm game list` row
@@ -409,5 +415,5 @@ func (s *Service) GameDetail(ctx context.Context, gameID string) (*GameDetail, e
 	if err != nil {
 		return nil, err
 	}
-	return &GameDetail{GameListEntry: entry, Loader: status}, nil
+	return &GameDetail{GameListEntry: entry, Loader: status, Prefix: s.gamePrefixStatus(game)}, nil
 }

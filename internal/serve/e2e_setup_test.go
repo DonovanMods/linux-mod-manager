@@ -1412,6 +1412,13 @@ func TestE2E_ArchiveImport_SuccessDropsTheStaleDiscardSentence(t *testing.T) {
 		clickWhenSettled(`.modal [data-action="confirm"]`),
 		waitGone(`.modal`),
 		chromedp.WaitVisible(`[data-testid="setup-import-archive"] .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		// The job's "succeeded" state and the staged panel's re-render are two
+		// separate updates; reading the panel straight after the first one
+		// raced the second under -race on a hosted runner (4739e5d8's CI).
+		// Wait for the sentence to go, bounded by the harness's budget, so a
+		// real regression still fails here rather than passing by luck.
+		// The panel must still be there: a missing panel is a failure, not a pass.
+		pollUntil(`((el) => el !== null && !el.textContent.includes("discarded"))(document.querySelector('[data-testid="staged-upload"]'))`),
 	)
 
 	var afterText string

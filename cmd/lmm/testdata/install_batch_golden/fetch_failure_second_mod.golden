@@ -6,10 +6,12 @@ Installing 2 mod(s)...
   File: modA.esp
   [████████████████████] 100.0%
   Checksum: fbf39e016ee5...
-  ✓ Installed (1 files)
 
 [2/2] Installing: Mod B v2.0
   Error: failed to get mod files: boom: files endpoint unavailable
+
+[1/2] Mod A
+  ✓ Installed (1 files)
 
 --- Summary ---
 Installed: 1

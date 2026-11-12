@@ -522,6 +522,32 @@ type LaunchAdvisor interface {
 	LaunchAdvice(g *domain.Game, mods []DeployedMod, previous string) Advice
 }
 
+// PrefixConsumer is the optional capability of an adapter whose game keeps
+// state lmm writes inside the game's Wine or Proton prefix rather than its
+// install directory (#605) - a Bethesda game's Plugins.txt, under
+// drive_c/users/<user>/AppData/Local. It is how core knows a prefix it
+// cannot resolve is worth a `prefix_unresolved` finding: for every other
+// game, an unresolved prefix is simply nothing lmm needs.
+//
+// It is a capability of its own, rather than implied by the plugin-order
+// capability that will use it, so the question "does this game need a
+// prefix" has one answer whatever later needs one. Core resolves the
+// prefix itself (domain.Game.Prefix, Steam's compatdata); the adapter
+// supplies only the yes/no, pure and with no disk access.
+type PrefixConsumer interface {
+	// UsesPrefix reports whether lmm writes into g's prefix for this
+	// adapter.
+	UsesPrefix(g *domain.Game) bool
+}
+
+// UsesPrefix reports whether the adapter needs g's prefix: false for an
+// adapter with no PrefixConsumer, which is every adapter until #355's
+// bethesda adapter.
+func UsesPrefix(a GameAdapter, g *domain.Game) bool {
+	pc, ok := a.(PrefixConsumer)
+	return ok && pc.UsesPrefix(g)
+}
+
 // Route classifies one deployable file: an adapter that implements no
 // FileRouter routes every file RouteLink - today's behaviour exactly.
 func Route(a GameAdapter, g *domain.Game, rel string) FileRoute {

@@ -947,6 +947,7 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 	// byte-for-byte. See each Install* constant's doc comment (in
 	// internal/core/phases.go, starting at InstallDepInstalling) for the
 	// exact text/semantics being restored here.
+	var section batchSection
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
@@ -957,7 +958,9 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		case core.InstallDepInstalling:
 			fmt.Printf("\n[%d/%d] Installing: %s%s\n", p.Index, p.Total, p.ModName, labels.eventSuffix(p))
+			section.open(p)
 		case core.InstallDepReinstalling:
+			section.under(p)
 			fmt.Printf("  Removing previous installation...\n")
 		case core.InstallDepFileSelected:
 			fmt.Printf("  File: %s\n", displayFileLabel(*p.File))
@@ -971,15 +974,18 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 			// fully-prefixed text verbatim ("Skipped: ..." for a hook
 			// failure, "Error: ..." for everything else) - see
 			// InstallDepSkipped's doc comment.
+			section.under(p)
 			fmt.Printf("  %s\n", p.Detail)
 		case core.InstallLockRefusal:
 			// Detail is the refusal SENTENCE only (#288); this path has
 			// always printed the ErrModLocked-wrapped error, so it puts the
 			// sentinel back. The multi-select path prints the bare sentence.
+			section.under(p)
 			fmt.Printf("  Skipped: %v: %s\n", core.ErrModLocked, p.Detail)
 		case core.InstallChecksumComputed:
 			fmt.Printf("  Checksum: %s\n", truncateChecksum(p.Detail))
 		case core.InstallDepConflictWarning:
+			section.under(p)
 			fmt.Printf("  ⚠ %s\n", p.Detail)
 		case core.InstallDepInstalled:
 			// #197 postsmoke UX fix: see the single-mod path's identical
@@ -992,10 +998,12 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 			if game.DeployMode == domain.DeployCompile && p.FilesExtracted == 0 {
 				pendingCompileDeps = append(pendingCompileDeps, p.ModName)
 			} else {
+				section.under(p)
 				fmt.Printf("  ✓ Installed (%d files)\n", p.FilesExtracted)
 			}
 		case core.InstallNote:
 			if verbose {
+				section.under(p)
 				fmt.Printf("  %s\n", p.Detail)
 			}
 		case core.InstallChecksumSaveFailed:
@@ -1042,6 +1050,10 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 	}
 
 	fmt.Printf("\n--- Summary ---\n")
+	if result.Refused {
+		printRefusedInstall(result)
+		return nil
+	}
 	fmt.Printf("Installed: %d\n", len(result.Installed))
 	if len(result.Failed) > 0 {
 		fmt.Printf("Failed: %d (%s)\n", len(result.Failed), strings.Join(installedRefNames(result.Failed), ", "))
@@ -1195,6 +1207,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 	// review fix, #200).
 	var pendingCompileMods []string
 
+	var section batchSection
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
@@ -1205,7 +1218,9 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		case core.InstallDepInstalling:
 			fmt.Printf("\n[%d/%d] Installing: %s%s\n", p.Index, p.Total, p.ModName, labels.eventSuffix(p))
+			section.open(p)
 		case core.InstallDepReinstalling:
+			section.under(p)
 			fmt.Printf("  Removing previous installation...\n")
 		case core.InstallDepFileSelected:
 			fmt.Printf("  File: %s\n", displayFileLabel(*p.File))
@@ -1218,12 +1233,15 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			// Detail already carries its failure-type-specific, fully
 			// prefixed text verbatim ("Skipped: ..." for a hook failure,
 			// "Error: ..." for everything else).
+			section.under(p)
 			fmt.Printf("  %s\n", p.Detail)
 		case core.InstallLockRefusal:
+			section.under(p)
 			fmt.Printf("  Skipped: %s\n", p.Detail)
 		case core.InstallChecksumComputed:
 			fmt.Printf("  Checksum: %s\n", truncateChecksum(p.Detail))
 		case core.InstallDepConflictWarning:
+			section.under(p)
 			fmt.Printf("  ⚠ %s\n", p.Detail)
 		case core.InstallDepInstalled:
 			// A DeployCompile ".exmodz" mod deploys zero files of its own by
@@ -1232,10 +1250,12 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			if game.DeployMode == domain.DeployCompile && p.FilesExtracted == 0 {
 				pendingCompileMods = append(pendingCompileMods, p.ModName)
 			} else {
+				section.under(p)
 				fmt.Printf("  ✓ Installed (%d files)\n", p.FilesExtracted)
 			}
 		case core.InstallNote:
 			if verbose {
+				section.under(p)
 				fmt.Printf("  %s\n", p.Detail)
 			}
 		case core.InstallChecksumSaveFailed:
@@ -1279,6 +1299,10 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 	}
 
 	fmt.Printf("\n--- Summary ---\n")
+	if result.Refused {
+		printRefusedInstall(result)
+		return nil
+	}
 	fmt.Printf("Installed: %d\n", len(result.Installed))
 	if len(result.Failed) > 0 {
 		fmt.Printf("Failed: %d (%s)\n", len(result.Failed), strings.Join(installedRefNames(result.Failed), ", "))
@@ -1507,3 +1531,52 @@ func (e *installNoExactMatchError) Unwrap() error { return core.ErrConfirmationR
 
 // Details implements the --json error envelope's extension point.
 func (e *installNoExactMatchError) Details() any { return e }
+
+// printRefusedInstall renders an install that refused before writing
+// anything (#602): which mods refused and why, which were only held back
+// (told apart by their refusal code, not their sentence), and - for a
+// missing mod loader - the setup steps, as a single-mod install's error
+// prints them.
+func printRefusedInstall(result *core.InstallResult) {
+	fmt.Println("Nothing was installed: a mod needs something lmm cannot supply, so no mod was written.")
+	for _, ref := range result.Failed {
+		printRefusedItem(ref.Name, ref.SourceID, ref.ModID, ref.Reason, ref.Refusal)
+	}
+	if result.LoaderRequired != nil {
+		reportLoaderSetup(result.LoaderRequired)
+	}
+}
+
+// printRefusedItem is one item of a refused install or import.
+func printRefusedItem(name, sourceID, modID, reason, refusal string) {
+	label := sourceID + ":" + modID
+	if name != "" {
+		label = fmt.Sprintf("%s (%s)", name, label)
+	}
+	if refusal == core.RefusalHeldBack {
+		fmt.Printf("  - %s: held back, not written because another mod refused\n", label)
+		return
+	}
+	fmt.Printf("  ✗ %s: %s\n", label, reason)
+}
+
+// batchSection keeps a multi-mod install's lines under the mod they belong
+// to (#602). Every mod is acquired before any is written, so a mod's
+// write-phase lines (its old installation's removal, a conflict warning,
+// its Installed or Skipped line) arrive after OTHER mods' download lines;
+// when a line's mod is not the one whose header was printed last, the mod
+// is named again first.
+type batchSection struct{ current int }
+
+// open records the mod whose "[i/n] Installing:" header was just printed.
+func (b *batchSection) open(p flowLine) { b.current = p.Index }
+
+// under prints a short "[i/n] <name>" header when p belongs to a different
+// mod than the last header named. Lines with no mod (Index 0) pass through.
+func (b *batchSection) under(p flowLine) {
+	if p.Index == 0 || p.Index == b.current {
+		return
+	}
+	b.current = p.Index
+	fmt.Printf("\n[%d/%d] %s\n", p.Index, p.Total, p.ModName)
+}

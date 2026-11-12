@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -535,6 +536,15 @@ type ProfileImportOptions struct {
 	// Left false, the profile is still saved and every pending mod is
 	// counted in Skipped - the same outcome a declined prompt produced.
 	Install bool
+
+	// AllOrNothing makes EVERY acquire failure refuse the whole import
+	// with nothing written, not only a refusal the user answers (#602):
+	// a download error on one mod then blocks the rest, and Apply returns
+	// the bare *AcquireRefusedError naming every refused item. It is the
+	// collection apply's mode (C2), where a half-applied list is the
+	// outcome that looks like it worked; an ordinary import leaves it
+	// false and keeps per-mod failure counting.
+	AllOrNothing bool
 }
 
 // ProfileImportResult reports the outcome of ApplyImport. As with every other
@@ -586,17 +596,39 @@ type ProfileImportResult struct {
 	RecordedOnly  bool   `json:"recorded_only,omitzero"`
 	ActiveProfile string `json:"active_profile,omitempty"`
 	Recorded      int    `json:"recorded,omitzero"`
+
+	// Refused is true when the Apply refused before writing anything
+	// (#602): an item needed an answer - today, a mod loader the game does
+	// not declare - discovered only after its download, so no item was
+	// written. Every item is then in the failure list, each with its
+	// Refusal code. omitzero, so an ordinary document is unchanged.
+	Refused bool `json:"refused,omitzero"`
+	// LoaderRequired is the loader refusal behind Refused, when that is
+	// what it was: the same document `lmm install --json` carries in its
+	// error envelope for a single mod, naming every mod that needs the
+	// loader, with the setup steps both frontends render.
+	LoaderRequired *LoaderRequiredError `json:"loader_required,omitempty"`
 }
 
-// ApplyImport executes a plan produced by PlanImport: saves the profile
-// (ProfileManager.ImportWithOptions), then - unless there is nothing to
-// download, NoInstall is set, or opts.Install is false - downloads and
-// installs every NeedsRedownload/Missing mod, in that order, matching
-// doProfileImport exactly (:481-633). Since #138 the install loop also
-// carries ApplyProfileSwitch's convergence machinery: a fully-cached target
-// version (by per-file completion marker) deploys from cache without
+// ApplyImport executes a plan produced by PlanImport. With nothing to
+// download (or NoInstall set, or opts.Install false) it saves the profile
+// (ProfileManager.ImportWithOptions) and stops. Otherwise it runs the
+// acquire/decide/commit engine (acquire_engine.go, #602): every
+// AlreadyCached/NeedsRedownload/Missing mod, in that order, is resolved and
+// downloaded first, with nothing written; then the profile is saved and each
+// mod is committed - cache, deployment, DB row, profile ref. A fully-cached
+// target version (by per-file completion marker) deploys from cache without
 // redownloading, and a version-drift entry with a live prior deployment is
-// Replaced rather than installed over. sink may be nil.
+// Replaced rather than installed over (#138). sink may be nil.
+//
+// A mod that fails on its own (a download error) is counted and the rest
+// continue, as before; the result is then a *ProfileImportIncompleteError.
+// A refusal the user answers before re-running (a mod loader the game does
+// not declare) stops the whole import with NOTHING written, the profile
+// included: the same error, its Result marked Refused, every mod listed with
+// its refusal code, and the downloads kept so the re-run fetches nothing
+// again. opts.AllOrNothing makes every acquire failure refuse that way, and
+// returns the bare *AcquireRefusedError.
 //
 // plan is executed EXACTLY as given - like PlanProfileSwitch/ApplyProfileSwitch,
 // this method never re-plans or re-validates it against current state (see
@@ -646,12 +678,6 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	deploy := !recordedOnly
 
 	pm := s.NewProfileManager()
-	profile, err := pm.ImportWithOptions(ctx, plan.data, opts.Force)
-	if err != nil {
-		return result, fmt.Errorf("importing profile: %w", err)
-	}
-	result.ProfileName = profile.Name
-	emit(StepEvent{Scope: Scope{Op: OpImport, ModName: profile.Name}, Phase: ImportSaved})
 
 	// #371: AlreadyCached leads, since those install straight from the cache
 	// entry another profile already has - no fetch, no download.
@@ -660,183 +686,77 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	toInstall = append(toInstall, plan.NeedsRedownload...)
 	toInstall = append(toInstall, plan.Missing...)
 
-	if len(toInstall) == 0 {
-		return result, nil
+	var profile *domain.Profile
+	saveProfile := func(ctx context.Context) error {
+		saved, err := pm.ImportWithOptions(ctx, plan.data, opts.Force)
+		if err != nil {
+			return fmt.Errorf("importing profile: %w", err)
+		}
+		profile = saved
+		result.ProfileName = profile.Name
+		emit(StepEvent{Scope: Scope{Op: OpImport, ModName: profile.Name}, Phase: ImportSaved})
+		return nil
 	}
-	if opts.NoInstall || !opts.Install {
-		result.Skipped = len(toInstall)
+
+	if len(toInstall) == 0 || opts.NoInstall || !opts.Install {
+		if err := saveProfile(ctx); err != nil {
+			return result, err
+		}
+		if len(toInstall) > 0 {
+			result.Skipped = len(toInstall)
+		}
 		return result, nil
 	}
 
-	installer, err := s.getInstallerForProfile(ctx, game, profile.Name)
-	if err != nil {
-		return result, err
+	// #602: the profile is saved only once every mod has been acquired, so
+	// a document that cannot be saved (it would replace a profile without
+	// --force) must fail now, before anything is downloaded - not after.
+	if err := pm.checkImportable(plan.data, opts.Force); err != nil {
+		return result, fmt.Errorf("importing profile: %w", err)
 	}
+
 	total := len(toInstall)
 	emit(StepEvent{Scope: Scope{Op: OpImport, Total: total}, Phase: ImportInstalling})
 
-	for idx, ref := range toInstall {
-		// Task 6 item d (cancel-then-drain): checked between mods, never
-		// mid-file-operation - see DeployProfile/ApplyProfileSwitch's
-		// identical check.
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-
-		scope := Scope{Op: OpImport, Index: idx + 1, Total: total, Mod: &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID}}
-		emit(ModEvent{Scope: scope, Phase: ImportModInstalling})
-
-		fail := func(reason string) {
-			result.Failed++
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s:%s: %s", ref.SourceID, ref.ModID, reason))
-			result.Failures = append(result.Failures, ItemFailure{
-				SourceID: ref.SourceID, ModID: ref.ModID, Name: scope.ModName, Reason: reason,
-			})
-			emit(ModEvent{Scope: scope, Phase: ImportModFailed, Detail: reason})
-		}
-
-		key := domain.ModKey(ref.SourceID, ref.ModID)
-
-		// #371: a mod another profile already has needs this profile's own
-		// row, built from that row and its cache entry. Deliberately ahead
-		// of every source call below: an already-downloaded mod must not be
-		// re-fetched, and an EXTERNAL one (Steam's own item) has no source
-		// call that would even succeed.
-		if row, ok := plan.cachedRows[key]; ok {
-			scope.ModName = row.Name
-			modRef, msgs, err := s.importCachedMod(ctx, game, profile.Name, installer, row, plan.priorVersions[key], deploy)
-			if err != nil {
-				fail(err.Error())
-				continue
+	// names and failed remember, per mod key, what acquire learned - for
+	// the refused document, which lists every item (refusedImport).
+	names := make(map[string]string, total)
+	failed := make(map[string]string)
+	var installer *Installer
+	run := acquireRun[*importStaged]{
+		policy: acquirePolicy{mode: acquirePhased, blockAll: opts.AllOrNothing},
+		n:      total,
+		key:    func(i int) string { return domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID) },
+		acquire: func(ctx context.Context, i int) (*importStaged, *acquireFailure) {
+			st, failure := s.acquireImportItem(ctx, game, plan, toInstall[i], Scope{Op: OpImport, Index: i + 1, Total: total}, result, emit, failed)
+			key := domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID)
+			switch {
+			case st != nil:
+				names[key] = st.scope.ModName
+			case failure != nil:
+				names[key] = failure.refusal.Name
 			}
-			for _, msg := range msgs {
-				result.Warnings = append(result.Warnings, msg)
-				emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
+			return st, failure
+		},
+		begin: func(ctx context.Context) error {
+			if err := saveProfile(ctx); err != nil {
+				return err
 			}
-			if cerr := s.recordImportedRef(ctx, pm, game.ID, profile.Name, modRef, scope, result, emit); cerr != nil {
-				return result, cerr
-			}
-			result.countImported(deploy)
-			emit(ModEvent{Scope: scope, Phase: ImportModInstalled})
-			continue
+			var err error
+			installer, err = s.getInstallerForProfile(ctx, game, profile.Name)
+			return err
+		},
+		commit: func(ctx context.Context, _ int, st *importStaged) error {
+			return s.commitImportItem(ctx, game, plan, profile.Name, pm, installer, st, deploy, result, emit)
+		},
+		release: func(st *importStaged, blocked bool) { s.releaseAcquired(st.files, blocked) },
+	}
+	if err := runAcquire(ctx, run); err != nil {
+		var refused *AcquireRefusedError
+		if errors.As(err, &refused) && !opts.AllOrNothing {
+			return result, refusedImport(plan, toInstall, refused, names, failed, result)
 		}
-
-		mod, err := s.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
-		if err != nil {
-			fail(fmt.Sprintf("failed to fetch mod: %v", err))
-			continue
-		}
-		scope.ModName = mod.Name
-
-		files, err := s.GetModFiles(ctx, game, ref.SourceID, mod)
-		if err != nil {
-			fail(fmt.Sprintf("failed to get files: %v", err))
-			continue
-		}
-		if len(files) == 0 {
-			fail("no downloadable files")
-			continue
-		}
-
-		// Select files to download - use the DB-stored FileIDs for a
-		// redownload, or the imported profile's own FileIDs for a fresh
-		// install (:541-552's rule; see ImportPlan.storedFileIDs' doc
-		// comment for why this can't just be ref.FileIDs uniformly).
-		var fileIDsToUse []string
-		if stored, ok := plan.storedFileIDs[key]; ok {
-			fileIDsToUse = stored
-		} else if len(ref.FileIDs) > 0 {
-			fileIDsToUse = ref.FileIDs
-		}
-		filesToDownload, err := selectFilesForVersion(files, fileIDsToUse, ref.Version)
-		if err != nil {
-			fail(err.Error())
-			continue
-		}
-
-		mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
-
-		downloadedFileIDs := make([]string, 0, len(filesToDownload))
-		for _, f := range filesToDownload {
-			downloadedFileIDs = append(downloadedFileIDs, f.ID)
-		}
-		// #138: cache-first, by per-file completion marker - the same guard
-		// (and the same two review findings) as ApplyProfileSwitch's install
-		// loop: HasFileIDs, not bare Exists (a version directory can exist
-		// yet be only PARTIALLY populated by a broken-off download run), and
-		// by FILE ID, never FileName (an extracted archive's cache entry
-		// holds member names that match no DownloadableFile). Deploying from
-		// cache matters most for exactly this flow's drift convergence: a
-		// downgrade's archived file may have vanished upstream.
-		var checksums []fileChecksum // #372 - saved after the DB row below
-		if !s.GetGameCache(game).HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, downloadedFileIDs) {
-			downloadFailed := false
-			for _, file := range filesToDownload {
-				if err := ctx.Err(); err != nil {
-					return result, err
-				}
-				progressFn := func(e Event) {
-					if forwardFetchStep(e, scope, emit) {
-						return
-					}
-					d, ok := e.(DownloadEvent)
-					if !ok || d.TotalBytes <= 0 {
-						return
-					}
-					emit(DownloadEvent{Scope: scope, Phase: ImportDownloading, Percent: d.Percent})
-				}
-				downloadResult, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn)
-				if err != nil {
-					fail(fmt.Sprintf("download failed: %v", err))
-					downloadFailed = true
-					break
-				}
-				checksums = appendChecksum(checksums, file.ID, downloadResult)
-			}
-			emit(StepEvent{Scope: scope, Phase: ImportDownloadDone})
-
-			if downloadFailed {
-				continue
-			}
-		}
-
-		if deploy {
-			if err := s.deployImportedMod(ctx, game, installer, plan.priorVersions[key], mod, profile.Name); err != nil {
-				fail(err.Error())
-				continue
-			}
-		}
-
-		// Save to DB. Normalize GameID to the lmm game (see the comment on
-		// ApplyProfileSwitch's own identical save site for why).
-		installedMod := &domain.InstalledMod{
-			Mod:          *mod,
-			ProfileName:  profile.Name,
-			UpdatePolicy: domain.UpdateNotify,
-			Enabled:      true,
-			FileIDs:      downloadedFileIDs,
-			Deployed:     deploy, // installer.Install above just succeeded
-		}
-		installedMod.GameID = game.ID
-		if err := s.saveInstalledMod(ctx, installedMod); err != nil {
-			fail(fmt.Sprintf("save failed: %v", err))
-			continue
-		}
-
-		// #372: the row exists now, so what was downloaded above finally has
-		// somewhere to record its checksum.
-		for _, msg := range s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, profile.Name, checksums) {
-			result.Warnings = append(result.Warnings, msg)
-			emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
-		}
-
-		modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
-		if cerr := s.recordImportedRef(ctx, pm, game.ID, profile.Name, modRef, scope, result, emit); cerr != nil {
-			return result, cerr
-		}
-
-		result.countImported(deploy)
-		emit(ModEvent{Scope: scope, Phase: ImportModInstalled})
+		return result, err
 	}
 
 	// #197 I3 fix: profile import deploys mods (installer.Install above) the

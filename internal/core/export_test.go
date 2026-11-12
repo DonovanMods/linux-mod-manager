@@ -299,6 +299,16 @@ func NewLoaderRequirementForTest(game *domain.Game, modName, kind, version, evid
 	return newLoaderRequirement(game, modName, kind, version, evidence)
 }
 
+// MergeLoaderRequirementsForTest is the decide step's merge of several
+// mods' loader refusals into one (#602), as the engine builds it.
+func MergeLoaderRequirementsForTest(errs ...*LoaderRequiredError) *LoaderRequiredError {
+	refusals := make([]AcquireRefusal, 0, len(errs))
+	for _, e := range errs {
+		refusals = append(refusals, AcquireRefusal{Err: e})
+	}
+	return mergeLoaderRequirements(refusals)
+}
+
 // OweProfileDisabledBackfillForTest puts the Service in the state
 // migrateV17 leaves a database an older lmm wrote: the one-time
 // profile-document backfill (#431) is owed. Every test database is created

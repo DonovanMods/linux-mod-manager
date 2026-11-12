@@ -1,8 +1,8 @@
 // gameeditor.js - the Setup page's one editor for a configured game (issue
 // 527): every field a Games row edits - name, install path (issue 528), mod
-// path, sources, loader and, for a CurseForge game, the CurseForge game
-// version types it accepts (issue 544) - in one panel, with one Save and one
-// Cancel.
+// path, Wine/Proton prefix (issue 605), sources, loader and, for a CurseForge
+// game, the CurseForge game version types it accepts (issue 544) - in one
+// panel, with one Save and one Cancel.
 //
 // One Save is one request: PUT /api/v1/games/{id} carries every changed
 // field, and core (Service.EditGame) checks all of them against the game
@@ -39,6 +39,8 @@ export function gameDraft(game) {
     sources: { ...(game.source_ids ?? {}) },
     loader: loaderDraft(game.loader),
     curseforge_types: (game.curseforge?.game_version_types ?? []).join(", "),
+    prefix: game.prefix ?? "",
+    prefix_user: game.prefix_user ?? "",
   };
 }
 
@@ -112,6 +114,12 @@ export function gameEditBody(game, draft) {
     body.install_path = draft.install_path;
   }
   if (draft.mod_path !== was.mod_path) body.mod_path = draft.mod_path;
+  // issue 605: "" is sent as itself - it clears the key, handing the game
+  // back to lmm's own prefix resolution.
+  if (draft.prefix !== was.prefix) body.prefix = draft.prefix;
+  if (draft.prefix_user !== was.prefix_user) {
+    body.prefix_user = draft.prefix_user;
+  }
   if (!sameMap(draft.sources, was.sources)) body.sources = draft.sources;
   if (!sameLoader(draft.loader, was.loader)) {
     body.loader = loaderSpec(draft.loader) ?? undefined;
@@ -129,7 +137,8 @@ export function gameEditBody(game, draft) {
  * the error envelope's details - by structure, never by the message:
  *
  *   - core.GameSpecError carries the wire key itself ("name",
- *     "install_path", "mod_path", "sources", "loader.runtime", ...);
+ *     "install_path", "mod_path", "prefix", "prefix_user", "sources",
+ *     "loader.runtime", ...);
  *   - core.GameInstallPathInUseError (issue 528) carries new_install_path;
  *   - core.GameModPathInUseError is modPathInUseFor's shape, and a game whose
  *     files are stranded under another mod_path (core.ModPathMissingError)
@@ -144,9 +153,14 @@ export function gameEditErrorField(details) {
   if (typeof details.field === "string") {
     if (details.field.startsWith("loader")) return "loader";
     if (details.field.startsWith("curseforge")) return "curseforge_types";
-    return ["name", "install_path", "mod_path", "sources"].includes(
-      details.field,
-    )
+    return [
+      "name",
+      "install_path",
+      "mod_path",
+      "prefix",
+      "prefix_user",
+      "sources",
+    ].includes(details.field)
       ? details.field
       : "";
   }
@@ -335,6 +349,8 @@ export function GameEditor({
     install_path: `install-path-${game.id}`,
     mod_path: `mod-path-${game.id}`,
     curseforge_types: `curseforge-types-${game.id}`,
+    prefix: `prefix-${game.id}`,
+    prefix_user: `prefix-user-${game.id}`,
   };
   const nameRef = useRef(null);
   const modPathRef = useRef(null);
@@ -380,12 +396,12 @@ export function GameEditor({
       <div class="game-editor__field">
         <label class="plan__control" for=${ids[field]}>${label}</label>
         ${
-          field === "install_path"
+          field === "install_path" || field === "prefix"
             ? html`<${FolderField}
-                value=${draft.install_path}
-                label="install path"
+                value=${draft[field]}
+                label=${field === "prefix" ? "prefix" : "install path"}
                 disabled=${busy}
-                onChoose=${(path) => patch({ install_path: path })}
+                onChoose=${(path) => patch({ [field]: path })}
                 >${input}<//
               >`
             : input
@@ -469,6 +485,20 @@ export function GameEditor({
             under the old one, and says what to run first.
           </p>
         </div>
+        ${textField(
+          "prefix",
+          "Wine/Proton prefix",
+          null,
+          "prefix",
+          "The prefix the game runs in - the folder holding drive_c. Leave it blank for a Steam game: lmm uses Steam's compatdata prefix from whichever library has it. Set it for a Heroic, Lutris or Wine install.",
+        )}
+        ${textField(
+          "prefix_user",
+          "Prefix user",
+          null,
+          "prefix-user",
+          'The user folder under the prefix\'s drive_c/users. Leave it blank and lmm uses "steamuser" in a Proton prefix, or the only user there.',
+        )}
       </div>
 
       ${

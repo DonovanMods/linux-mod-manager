@@ -30,9 +30,13 @@ your game needs - a native Linux build uses BepInEx's run_bepinex.sh, a
 Proton game uses the Windows winhttp proxy - and prints the exact string
 to paste. 'lmm verify' then tells you whether it worked.
 
-Nothing here launches the game, reads your Steam configuration or touches
-a Proton prefix; the runtime and bootstrap are read from files in the
-game's own install directory.
+It also prints the game's Wine/Proton prefix: the one games.yaml names
+(prefix:), or Steam's compatdata prefix for the game, from whichever Steam
+library holds it, and the Windows user directory inside it.
+
+Nothing here launches the game or writes anything: the runtime and
+bootstrap are read from files in the game's own install directory, and
+the prefix from Steam's library list and the prefix directories.
 
 Examples:
   lmm game show valheim
@@ -98,9 +102,49 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 		fmt.Printf("                %s\n", colorRed(detail.AdapterError))
 	}
 	fmt.Printf("  Sources:      %s\n", formatGameSources(detail.SourceIDs))
+	printPrefixStatus(detail.Prefix)
 
 	printLoaderStatus(detail.Loader, detail.EffectiveAdapter == domain.LoaderKindBepInEx)
 	return nil
+}
+
+// printPrefixStatus renders the game's Wine/Proton prefix (#605): the
+// directory, where it came from (games.yaml, or which Steam library's
+// compatdata), the Windows user inside it, and - when lmm cannot use it -
+// why. Nothing at all for a game with no prefix set or found that needs
+// none (core leaves Prefix nil), which is every native game.
+func printPrefixStatus(st *core.PrefixStatus) {
+	if st == nil {
+		return
+	}
+	switch {
+	case st.Path == "":
+		fmt.Printf("  Prefix:       %s\n", colorDim("none found"))
+	case st.Origin == core.PrefixOriginExplicit:
+		fmt.Printf("  Prefix:       %s %s\n", st.Path, colorDim("(set in games.yaml)"))
+	default:
+		fmt.Printf("  Prefix:       %s %s\n", st.Path, colorDim("(Steam compatdata for app "+st.SteamAppID+", in library "+st.Library+")"))
+	}
+	if st.Note != "" {
+		fmt.Printf("                %s\n", colorDim(st.Note))
+	}
+	if st.User != "" {
+		how := map[string]string{
+			core.PrefixUserExplicit: "set in games.yaml",
+			core.PrefixUserProton:   "Proton's user",
+			core.PrefixUserOnly:     "the only user in the prefix",
+		}[st.UserOrigin]
+		fmt.Printf("  Prefix user:  %s %s\n", st.User, colorDim("("+how+")"))
+	}
+	if st.Problem != "" {
+		problem := st.Problem
+		if st.Needed {
+			problem = colorRed(problem)
+		} else {
+			problem = colorDim(problem)
+		}
+		fmt.Printf("                %s\n", problem)
+	}
 }
 
 // printLoaderStatus renders the loader half of `lmm game show`.

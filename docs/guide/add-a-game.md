@@ -76,6 +76,28 @@ from under them. It tells you what to do first: take the mods out of the
 game folder, change the folder, then put them back. The message lists each
 step.
 
+## Tell lmm where the game's prefix is
+
+A Windows game runs inside a Wine or Proton **prefix**, the folder that
+holds its `drive_c`. A few games keep files there that lmm needs to
+write. For a Steam game you don't have to do anything: lmm finds Steam's
+prefix for it each time, in whichever of your Steam libraries has it, so
+it keeps up when Steam moves the game. Set a prefix only to override
+that, or for a game from Heroic, Lutris or another launcher:
+
+```bash
+lmm game edit skyrim-se --prefix "~/Games/Heroic/Prefixes/default/Skyrim Special Edition"
+lmm game show skyrim-se     # the prefix lmm uses, and where it came from
+```
+
+If the prefix has more than one user folder under `drive_c/users`, pick
+the game's with `--prefix-user <name>`. lmm only uses a user folder that
+is really inside the prefix; one that is a link to somewhere else, such as
+your home folder, is refused. `--prefix ""` goes back to what
+lmm finds by itself. In the browser, the same two fields are in the
+game's editor under **⚙ Setup → Games**. See
+[Configuration](../configuration.md#prefix-gamesyaml) for the details.
+
 ## Pick a CurseForge game flavor
 
 Some games come in several flavors that CurseForge files under one game.

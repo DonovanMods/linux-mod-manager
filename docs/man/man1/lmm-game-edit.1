@@ -2,7 +2,7 @@
 .TH "LMM" "1" "Nov 2026" "lmm 2.3.0" "User Commands"
 
 .SH NAME
-lmm-game-edit - Edit a configured game's sources, install path, mod path, adapter or loader
+lmm-game-edit - Edit a configured game's sources, install path, mod path, adapter, loader or prefix
 
 
 .SH SYNOPSIS
@@ -91,9 +91,21 @@ those types is reported as having no installable file for this game.
 names none fails with that list.
 
 .PP
---source, --remove-source, --adapter, --mod-path, --install-path and
---curseforge-version-type are one edit: every change is checked before any is written, so a run applies
-all of them or none. That is also what lets --mod-path and --adapter move a game onto
+--prefix sets the Wine or Proton prefix the game runs in - the directory
+holding drive_c - for state lmm writes outside the install directory (a
+Bethesda game's Plugins.txt, under AppData). Without it lmm uses Steam's
+compatdata prefix for the game's app id, from whichever Steam library has
+it, so a Steam game rarely needs one; a Heroic, Lutris or plain Wine
+install does. --prefix-user names the Windows user directory under
+drive_c/users when lmm cannot pick one itself (it uses "steamuser" in a
+Proton prefix, else the one user besides Public). '--prefix ""' and
+\&'--prefix-user ""' clear them. 'lmm game show' prints the prefix lmm
+resolved and where it came from.
+
+.PP
+--source, --remove-source, --adapter, --mod-path, --install-path,
+--curseforge-version-type, --prefix and --prefix-user are one edit: every
+change is checked before any is written, so a run applies all of them or none. That is also what lets --mod-path and --adapter move a game onto
 bepinex, or off it, in one run.
 
 .PP
@@ -112,6 +124,8 @@ Examples:
   lmm game edit valheim --loader ""
   lmm game edit wow-classic --curseforge-version-type wow-classic
   lmm game edit wow-classic --curseforge-version-type 67408
+  lmm game edit skyrim-se --prefix "~/Games/Heroic/Prefixes/default/Skyrim Special Edition"
+  lmm game edit skyrim-se --prefix ""
   lmm game edit skyrim-se --source nexusmods=skyrimspecialedition --json
 
 
@@ -150,6 +164,14 @@ Examples:
 .PP
 \fB--mod-path\fP=""
 	set the directory lmm deploys mods into (relative to the install path unless absolute)
+
+.PP
+\fB--prefix\fP=""
+	set the game's Wine/Proton prefix, the directory holding drive_c ("" clears it, so lmm uses Steam's compatdata prefix)
+
+.PP
+\fB--prefix-user\fP=""
+	set the Windows user directory under the prefix's drive_c/users ("" clears it, so lmm picks one)
 
 .PP
 \fB--remove-source\fP=[]

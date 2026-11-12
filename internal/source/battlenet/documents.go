@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/wineprefix"
 )
 
 // shellFoldersKey is the user.reg key whose Personal value is the Documents
@@ -198,6 +200,6 @@ func readShellFolder(path, name string) (string, error) {
 // isProtonPrefix reports whether prefix is one Proton made: a version file
 // beside a pfx folder.
 func isProtonPrefix(prefix string) bool {
-	_, ok := protonVersion(prefix)
+	_, ok := wineprefix.ProtonVersion(prefix)
 	return ok
 }
