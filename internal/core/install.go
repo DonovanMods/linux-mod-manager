@@ -2479,7 +2479,7 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 			if dlErr != nil {
 				reason := fmt.Sprintf("download failed: %v", dlErr)
 				emit(ModEvent{Scope: fileScope, Phase: InstallDownloadFailed, Detail: reason})
-				if errors.Is(dlErr, source.ErrManualDownload) && mod.PageURL() != "" {
+				if (errors.Is(dlErr, source.ErrManualDownload) || errors.Is(dlErr, source.ErrAccountRestricted)) && mod.PageURL() != "" {
 					return st, fmt.Errorf("download unavailable via API: %w", dlErr)
 				}
 				return st, fmt.Errorf("download failed: %w", dlErr)

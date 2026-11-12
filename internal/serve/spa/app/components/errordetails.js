@@ -113,9 +113,13 @@ function isUpdatable(failure, actions) {
  */
 function downloadHeadline(failure, sourceName, updatable) {
   const mod = failure.modName || "this mod";
-  return updatable
-    ? `${sourceName} won't let lmm download the update for ${mod}.`
-    : `${sourceName} won't let lmm download ${mod}.`;
+  const what = updatable ? `the update for ${mod}` : mod;
+  // Issue 601: a refusal for the account, not the mod, says so - the user
+  // can do something about it that a mod author's opt-out never allows.
+  if (failure.accountRestricted) {
+    return `Your ${sourceName} account isn't Premium, so ${sourceName} won't let lmm download ${what}.`;
+  }
+  return `${sourceName} won't let lmm download ${what}.`;
 }
 
 /**

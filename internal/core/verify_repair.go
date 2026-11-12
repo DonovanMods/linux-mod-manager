@@ -76,8 +76,9 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 // cache rather than a download.
 //
 // A re-download is the usual way, but a file its source will not serve
-// (source.ErrManualDownload - a CurseForge author's third-party opt-out) can
-// never be re-downloaded, so the warning could never clear (#514). For such
+// (source.ErrManualDownload - a CurseForge author's third-party opt-out - or
+// source.ErrAccountRestricted, a free NexusMods account, #601) can never be
+// re-downloaded, so the warning could never clear (#514). For such
 // a file - a row already flagged (see cacheFirst), or one whose re-download
 // was just refused that way - the checksum is computed from the mod's own
 // cache entry instead (fillChecksumFromCache). verify only ever checks a
@@ -100,7 +101,11 @@ func (r *verifyRun) populateChecksum(mod *domain.InstalledMod, fileID string, re
 		}
 	}
 	persisted, err = r.redownloadModFile(r.ctx, mod, fileID, ref)
-	if cacheFirst || !errors.Is(err, source.ErrManualDownload) {
+	// #601: a file the ACCOUNT is refused (a free NexusMods key) can no more
+	// be re-downloaded than one the mod's author opted out of, so it falls
+	// back to the cache the same way - though nothing records it per mod.
+	refused := errors.Is(err, source.ErrManualDownload) || errors.Is(err, source.ErrAccountRestricted)
+	if cacheFirst || !refused {
 		return persisted, false, err
 	}
 	filled, ferr := r.fillChecksumFromCache(mod, fileID)
