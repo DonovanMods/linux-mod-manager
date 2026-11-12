@@ -31,6 +31,9 @@ var detailsCoverage = map[string]string{
 	// envelope as data, not only as the sentence.
 	"core.AmbiguousModError": "TestReportError_JSON_AmbiguousModError",
 	"core.ConflictError":     "TestReportError_JSON_ConflictError",
+	// #621: a collection needing features this lmm cannot import - the
+	// missing features, the items raising each, and the supported set.
+	"core.CollectionUnsupportedError": "TestReportError_JSON_CollectionUnsupportedError",
 	// #530: update-from-file's two refusals - the advertised and matched
 	// files, and the archive that needs a version - as data.
 	"core.ArchiveMismatchError":        "TestReportError_JSON_ArchiveMismatchError",

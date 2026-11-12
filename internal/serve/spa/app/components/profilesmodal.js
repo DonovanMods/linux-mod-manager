@@ -373,7 +373,7 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
         <a
           class="button button--small"
           href=${profileExportURL(profile.name, context)}
-          download=${`${profile.name}.json`}
+          download=${`${profile.name}.lmmc`}
         >
           Export
         </a>
@@ -496,10 +496,34 @@ function CreateProfileForm({ context, afterMutation }) {
   `;
 }
 
-/** ImportProfileForm reads the picked file as TEXT and hands it to the
+/** isZip reports whether bytes start with a zip's local-file-header
+ * signature - a `.lmmc` collection container (issue 621), which is binary,
+ * rather than a YAML or JSON document. The server sniffs the same bytes. */
+function isZip(bytes) {
+  return (
+    bytes.length >= 4 &&
+    bytes[0] === 0x50 &&
+    bytes[1] === 0x4b &&
+    bytes[2] === 0x03 &&
+    bytes[3] === 0x04
+  );
+}
+
+/** base64Of encodes bytes for the plan request's data_base64 member, in
+ * chunks so a large container does not overflow the argument list. */
+function base64Of(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+/** ImportProfileForm reads the picked file and hands it to the
  * confirm-plan framework as the profile-import kind's own request body
  * (kind_profile_import.go: "the SPA reads the file the user picked and
- * posts its contents"). It never uploads the file itself. */
+ * posts its contents"): a document as text, a `.lmmc` container (issue
+ * 621) as base64. It never uploads the file itself. */
 function ImportProfileForm({ actions, close }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -511,14 +535,17 @@ function ImportProfileForm({ actions, close }) {
     setBusy(true);
     setError(null);
     try {
-      const data = await file.text();
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const options = isZip(bytes)
+        ? { data_base64: base64Of(bytes) }
+        : { data: new TextDecoder().decode(bytes) };
       close();
       await actions.openPlan({
         kind: "profile_import",
         origin: "profile-import",
         title: `Import ${file.name}`,
         confirmLabel: "Import",
-        options: { data },
+        options,
       });
     } catch (err) {
       setError(err?.message ?? String(err));
@@ -534,7 +561,7 @@ function ImportProfileForm({ actions, close }) {
         ${busy ? "Reading…" : "Choose file…"}
         <input
           type="file"
-          accept=".json,.yaml,.yml,application/json"
+          accept=".lmmc,.json,.yaml,.yml,application/json"
           disabled=${busy}
           onChange=${onPick}
           hidden

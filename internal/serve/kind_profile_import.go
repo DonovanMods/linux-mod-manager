@@ -17,10 +17,17 @@
 // this endpoint stays plain JSON like every other one and core keeps
 // receiving the same []byte config.ImportProfile has always parsed (YAML or
 // JSON - ImportProfile accepts both, since JSON is valid YAML).
+//
+// An lmm collection (#621) - a version-1 YAML document, or a `.lmmc`
+// container, which is binary and so arrives base64-encoded in DataBase64 -
+// takes core's collection import instead: PlanCollectionImport into the
+// selected game, ApplyCollectionImport with the apply request's WithHooks.
+// The document is a file the user picked, so its hooks are importable.
 package serve
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 
@@ -48,6 +55,9 @@ func init() {
 // collection's own title, exactly as `lmm profile import --as` does.
 type profileImportPlanRequest struct {
 	Data string `json:"data,omitzero"`
+	// DataBase64 is a document as base64 (#621): how the SPA posts a
+	// `.lmmc` container, which is not text. Mutually exclusive with Data.
+	DataBase64 string `json:"data_base64,omitzero"`
 	// WorkshopCollection is a collection id or the URL of its page,
 	// forwarded to core verbatim: the SOURCE owns what it recognises, and a
 	// second parser here could only disagree with it.
@@ -59,6 +69,16 @@ type profileImportPlanRequest struct {
 // exclusive: with both, the server would be guessing which one the caller
 // meant, and the CLI refuses the same combination.
 func (r *profileImportPlanRequest) validate() error {
+	if r.DataBase64 != "" {
+		if r.Data != "" {
+			return errors.New(`"data" and "data_base64" are mutually exclusive`)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(r.DataBase64)
+		if err != nil {
+			return fmt.Errorf(`"data_base64" is not base64: %w`, err)
+		}
+		r.Data, r.DataBase64 = string(decoded), ""
+	}
 	switch {
 	case r.Data == "" && r.WorkshopCollection == "":
 		return errors.New(`"data" or "workshop_collection" is required`)
@@ -66,8 +86,8 @@ func (r *profileImportPlanRequest) validate() error {
 		return errors.New(`"data" and "workshop_collection" are mutually exclusive`)
 	case r.Data == "" && r.ProfileName == "":
 		return nil
-	case r.Data != "" && r.ProfileName != "":
-		return errors.New(`"profile_name" applies to "workshop_collection" only - a profile document names its own profile`)
+	case r.Data != "" && r.ProfileName != "" && !core.IsCollectionDocument([]byte(r.Data)):
+		return errors.New(`"profile_name" applies to "workshop_collection" or an lmm collection only - an older profile document names its own profile`)
 	}
 	return nil
 }
@@ -86,11 +106,14 @@ type profileImportApplyRequest struct {
 	Install   bool `json:"install,omitzero"`
 	Force     bool `json:"force,omitzero"`
 	NoInstall bool `json:"no_install,omitzero"`
+	// WithHooks is `--with-hooks` (#621): apply an lmm collection's hooks,
+	// which its plan lists. Ignored for any other import.
+	WithHooks bool `json:"with_hooks,omitzero"`
 }
 
 // importOptions renders the request as the core options struct.
 func (r profileImportApplyRequest) importOptions() core.ProfileImportOptions {
-	return core.ProfileImportOptions{Install: r.Install, Force: r.Force, NoInstall: r.NoInstall}
+	return core.ProfileImportOptions{Install: r.Install, Force: r.Force, NoInstall: r.NoInstall, WithHooks: r.WithHooks}
 }
 
 // pendingProfileImport is what the plan store holds between Plan and Apply:
@@ -111,6 +134,9 @@ func planProfileImportKind(ctx context.Context, s *Server, sel selection, opts a
 
 	if req.WorkshopCollection != "" {
 		return planWorkshopCollectionImport(ctx, s, sel, req)
+	}
+	if core.IsCollectionDocument([]byte(req.Data)) {
+		return planLMMCollectionImport(ctx, s, sel, req)
 	}
 
 	// Parse first, so a document that is not a profile export at all is
@@ -175,6 +201,26 @@ func planWorkshopCollectionImport(ctx context.Context, s *Server, sel selection,
 	return plan, &pendingProfileImport{Game: sel.Game, Plan: plan}, nil
 }
 
+// planLMMCollectionImport is the lmm collection half of the plan kind
+// (#621): the document imports into the selected game (a document for
+// another game plans with a warning saying so), as a file the user picked.
+// A document the reader refuses is the caller's 400.
+func planLMMCollectionImport(ctx context.Context, s *Server, sel selection, req profileImportPlanRequest) (any, any, error) {
+	plan, err := s.svc.PlanCollectionImport(ctx, core.CollectionImportRequest{
+		Data:        []byte(req.Data),
+		Input:       core.CollectionFromFile,
+		GameID:      sel.Game.ID,
+		ProfileName: req.ProfileName,
+	})
+	if err != nil {
+		if core.IsInvalidCollection(err) || core.IsCollectionGameUnresolved(err) || errors.Is(err, domain.ErrInvalidProfileName) {
+			return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
+		}
+		return nil, nil, err
+	}
+	return plan, &pendingProfileImport{Game: sel.Game, Plan: plan}, nil
+}
+
 // applyProfileImportKind implements planKind.Apply for "profile_import".
 func applyProfileImportKind(ctx context.Context, s *Server, pending, opts any, sink core.EventSink) (any, error) {
 	p, ok := pending.(*pendingProfileImport)
@@ -191,6 +237,9 @@ func applyProfileImportKind(ctx context.Context, s *Server, pending, opts any, s
 	// both frontends inherit it rather than in whichever one remembered.
 	if p.Plan.WorkshopCollection != nil {
 		return s.svc.ApplyWorkshopCollectionImport(ctx, p.Game, p.Plan, req.importOptions(), sink)
+	}
+	if p.Plan.Collection != nil {
+		return s.svc.ApplyCollectionImport(ctx, p.Game, p.Plan, req.importOptions(), sink)
 	}
 	return s.svc.ApplyImport(ctx, p.Game, p.Plan, req.importOptions(), sink)
 }

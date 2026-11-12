@@ -315,12 +315,28 @@ func (s *Server) handleAPIProfileDuplicate(w http.ResponseWriter, r *http.Reques
 // quoted and the profile name itself is safe to interpolate: it came
 // through config's own validation (no separators, no traversal) on the way
 // in, and a profile that failed that validation cannot be read here at all.
+//
+// ?format=lmmc (#621) answers the profile as an lmm collection instead: the
+// `.lmmc` container `lmm profile export -o` writes, as an attachment named
+// "<profile>.lmmc" - what the SPA's Export downloads. A profile's first
+// such export records its collection id in the profile (core.
+// ExportCollection). The default answer is unchanged.
 func (s *Server) handleAPIProfileExport(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveGameAPISelection(w, r)
 	if !ok {
 		return
 	}
 	name := r.PathValue("name")
+
+	switch format := r.URL.Query().Get("format"); format {
+	case "", "json":
+	case "lmmc":
+		s.writeCollectionExport(w, r, sel.Game.ID, name)
+		return
+	default:
+		s.writeAPIError(w, http.StatusBadRequest, fmt.Errorf("unknown export format %q (json, lmmc)", format))
+		return
+	}
 
 	exported, err := s.svc.ExportProfile(r.Context(), sel.Game.ID, name)
 	if err != nil {
@@ -329,6 +345,24 @@ func (s *Server) handleAPIProfileExport(w http.ResponseWriter, r *http.Request) 
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".json"))
 	s.writeJSON(w, http.StatusOK, exported)
+}
+
+// writeCollectionExport answers the profile as a `.lmmc` attachment.
+func (s *Server) writeCollectionExport(w http.ResponseWriter, r *http.Request, gameID, name string) {
+	export, err := s.svc.ExportCollection(r.Context(), gameID, name, core.CollectionExportOptions{})
+	if err != nil {
+		s.writeAPIError(w, s.profileErrorStatus(err), err)
+		return
+	}
+	data, err := export.Container()
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+core.CollectionContainerExt))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 // profileErrorStatus classifies a profile CRUD failure: a profile that is

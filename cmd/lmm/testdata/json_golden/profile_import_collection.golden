@@ -1,0 +1,48 @@
+{
+  "collection": {
+    "format_version": 1,
+    "container": true,
+    "input": "file",
+    "id": "fixed-id",
+    "version": 1,
+    "name": "Co-op",
+    "profile_name": "coop",
+    "game": {
+      "name": "Game",
+      "steam_app_id": "1091500",
+      "sources": {
+        "steamworkshop": "1091500"
+      }
+    },
+    "game_id": "cyber",
+    "matched_by": "steam_app_id",
+    "items": [
+      {
+        "source_id": "src",
+        "mod_id": "a",
+        "version": "1.0",
+        "unavailable": "lmm has no source \"src\" here; add it, then re-import (a collection never carries a custom source's definition: ask its author for it)"
+      }
+    ],
+    "hooks": [
+      {
+        "hook": "install.after_all",
+        "command": "/usr/bin/true"
+      }
+    ],
+    "hooks_importable": true,
+    "overrides": [
+      "cfg/user.ini"
+    ]
+  },
+  "result": {
+    "profile_name": "coop",
+    "installed": 0,
+    "failed": 0,
+    "skipped": 1,
+    "notes": [
+      "The collection's 1 hook(s) were not imported: re-import with --with-hooks to apply them."
+    ],
+    "hooks_withheld": 1
+  }
+}

@@ -84,6 +84,13 @@ type ImportPlan struct {
 	// this addition byte-identical for every existing golden.
 	WorkshopCollection *WorkshopCollection `json:"workshop_collection,omitempty"`
 
+	// Collection describes the lmm collection document (version 1, #621)
+	// this plan was built from (Service.PlanCollectionImport): the gate's
+	// verdict, the matched game, the hooks, overrides and external items.
+	// Nil - and absent - for a version-0 import, so every existing golden
+	// is unchanged.
+	Collection *CollectionImport `json:"collection,omitempty"`
+
 	// Exists reports whether a profile with this name is already saved for
 	// the game - purely informational (e.g. so a caller can warn before even
 	// attempting the save); ApplyImport does not consult it, instead letting
@@ -106,6 +113,12 @@ type ImportPlan struct {
 	// to ProfileManager.ImportWithOptions unchanged - PlanImport parses via
 	// ParseProfile purely for preview, without persisting anything.
 	data []byte
+
+	// hookedData is data with the collection document's hooks, kept only
+	// for a document read from a local file (#621): ApplyCollectionImport
+	// saves it in data's place under opts.WithHooks. Nil for every other
+	// plan - a URL's included - so nothing can switch such hooks on.
+	hookedData []byte
 
 	// storedFileIDs maps domain.ModKey keys (for NeedsRedownload's cache-miss
 	// entries only) to that mod's DB-recorded FileIDs - preserving
@@ -545,6 +558,12 @@ type ProfileImportOptions struct {
 	// outcome that looks like it worked; an ordinary import leaves it
 	// false and keeps per-mod failure counting.
 	AllOrNothing bool
+
+	// WithHooks applies a collection document's hooks (#621,
+	// ApplyCollectionImport): `--with-hooks`. Without it a collection's
+	// profile is saved without them, and the result says so. Ignored for a
+	// version-0 import, whose hooks round-trip as they always have (#296).
+	WithHooks bool
 }
 
 // ProfileImportResult reports the outcome of ApplyImport. As with every other
@@ -608,6 +627,11 @@ type ProfileImportResult struct {
 	// error envelope for a single mod, naming every mod that needs the
 	// loader, with the setup steps both frontends render.
 	LoaderRequired *LoaderRequiredError `json:"loader_required,omitempty"`
+
+	// HooksWithheld counts the hooks a collection document carried that
+	// the import did not apply (#621): no --with-hooks, or a document from
+	// a URL. omitzero, so every other result is unchanged.
+	HooksWithheld int `json:"hooks_withheld,omitzero"`
 }
 
 // ApplyImport executes a plan produced by PlanImport. With nothing to

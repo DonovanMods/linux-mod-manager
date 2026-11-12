@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -60,7 +62,9 @@ func TestImportRefLine(t *testing.T) {
 
 // TestProfileImportInputsAreMutuallyExclusive pins the three ways `lmm
 // profile import`'s two inputs can be combined wrongly. Each is refused
-// BEFORE any service is opened, so none of them touches disk.
+// BEFORE any service is opened. --as now names an lmm collection's profile
+// too (#621), so its refusal for an older profile export reads the file
+// first, to tell the two apart.
 func TestProfileImportInputsAreMutuallyExclusive(t *testing.T) {
 	t.Run("a collection and a file together", func(t *testing.T) {
 		restore := setImportFlags(t, "2500900001", "")
@@ -78,12 +82,14 @@ func TestProfileImportInputsAreMutuallyExclusive(t *testing.T) {
 		assert.Contains(t, err.Error(), "--workshop-collection")
 	})
 
-	t.Run("--as without a collection", func(t *testing.T) {
+	t.Run("--as with an older profile export", func(t *testing.T) {
 		restore := setImportFlags(t, "", "ships")
 		defer restore()
-		err := runProfileImport(profileImportCmd, []string{"survival.yaml"})
+		path := filepath.Join(t.TempDir(), "survival.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("name: survival\ngame_id: g\nmods: []\n"), 0o644))
+		err := runProfileImport(profileImportCmd, []string{path})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "a profile FILE names its own profile")
+		assert.Contains(t, err.Error(), "an older profile export names its own profile")
 	})
 }
 

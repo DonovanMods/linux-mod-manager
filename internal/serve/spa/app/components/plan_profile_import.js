@@ -12,6 +12,15 @@
 // `lmm import --workshop`"), which the generic buckets cannot show: they
 // hold bare refs with no name, no link and no note.
 
+// A plan carrying `collection` (issue 621) is an lmm collection: an
+// ordinary import - its buckets and install controls are the same - with
+// the collection's own part rendered first. That part is everything the
+// buckets do not show and the user must see before anything is written:
+// who made it and how it matched this game, the features this lmm lacks
+// (the apply refuses then), the hooks (scripts lmm would run, imported only
+// when the user ticks the box), the config overrides, the items lmm does
+// not fetch, and mods from sources this machine does not have.
+
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
@@ -119,7 +128,156 @@ function CollectionHeader({ collection }) {
   `;
 }
 
+/** matchLine says how a collection was matched to this game. */
+function matchLine(c) {
+  if (c.matched_by === "game") return `imported into ${c.game_id}`;
+  if (c.matched_by === "steam_app_id")
+    return `matched to ${c.game_id} by Steam app id ${c.game?.steam_app_id}`;
+  if (c.matched_by?.startsWith("source:")) {
+    const src = c.matched_by.slice("source:".length);
+    return `matched to ${c.game_id} by its ${src} id ${c.game?.sources?.[src] ?? ""}`;
+  }
+  return c.game_id;
+}
+
+/** LMMCollectionSection renders core.CollectionImport. Every string in it
+ * was sanitised by core (issue 594), and the preact templates escape it. */
+function LMMCollectionSection({ collection: c, actions }) {
+  const unavailable = (c.items ?? []).filter((item) => item.unavailable);
+  function setWithHooks(e) {
+    actions.setPlanOptions({ with_hooks: e.currentTarget.checked });
+  }
+  return html`
+    <section class="plan__section" data-testid="lmm-collection">
+      <h3 class="plan__heading">
+        ${c.name}${c.version ? ` (version ${c.version})` : ""}
+      </h3>
+      ${c.author && html`<p class="plan__note">by ${c.author}</p>`}
+      ${
+        c.origin &&
+        html`<p class="plan__note">
+          from
+          ${" "}${c.origin.url || `${c.origin.source_id ?? ""} ${c.origin.slug ?? ""}`}${
+            c.origin.author ? `, curated by ${c.origin.author}` : ""
+          }
+        </p>`
+      }
+      <p class="plan__note">${matchLine(c)}</p>
+      ${c.description && html`<p class="plan__note">${c.description}</p>`}
+      ${
+        c.install_instructions &&
+        html`<p class="plan__note">
+          <strong>Install instructions:</strong> ${c.install_instructions}
+        </p>`
+      }
+      ${(c.warnings ?? []).map(
+        (w) => html`<p class="plan__note plan__note--warn">${w}</p>`,
+      )}
+    </section>
+    ${
+      (c.unsupported ?? []).length > 0 &&
+      html`<section class="plan__section" data-testid="collection-unsupported">
+        <p class="plan__note plan__note--warn">
+          This collection needs features this version of lmm cannot import:
+          ${" "}${c.unsupported.map((f) => f.feature).join(", ")}. Importing it
+          is refused, with nothing written; update lmm and try again.
+        </p>
+      </section>`
+    }
+    ${
+      unavailable.length > 0 &&
+      html`<section class="plan__section">
+        <h3 class="plan__heading">
+          From a source lmm does not have here (${unavailable.length})
+        </h3>
+        <ul class="plan__mods">
+          ${unavailable.map(
+            (item) =>
+              html`<li
+                key=${`${item.source_id}:${item.mod_id}`}
+                class="plan__mod plan__mod--warn"
+              >
+                <span class="plan__mod-name"
+                  >${item.name || `${item.source_id}:${item.mod_id}`}</span
+                >${" "}
+                <span class="plan__mod-detail plan__mod-detail--warn"
+                  >${item.unavailable}</span
+                >
+              </li>`,
+          )}
+        </ul>
+      </section>`
+    }
+    ${
+      (c.external ?? []).length > 0 &&
+      html`<section class="plan__section" data-testid="collection-external">
+        <h3 class="plan__heading">
+          Not fetched by lmm - get these by hand (${c.external.length})
+        </h3>
+        <ul class="plan__mods">
+          ${c.external.map(
+            (e, i) =>
+              html`<li key=${i} class="plan__mod">
+                <span class="plan__mod-name">${e.name}</span>${" "}
+                ${
+                  e.url &&
+                  html`<a
+                    class="plan__mod-detail"
+                    href=${e.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >${e.url}</a
+                  >`
+                }${" "}
+                ${e.instructions && html`<span class="plan__mod-detail">${e.instructions}</span>`}
+              </li>`,
+          )}
+        </ul>
+      </section>`
+    }
+    ${
+      (c.overrides ?? []).length > 0 &&
+      html`<section class="plan__section">
+        <h3 class="plan__heading">
+          Config overrides written into the game directory
+        </h3>
+        <ul class="plan__paths">
+          ${c.overrides.map((path) => html`<li key=${path} class="mono">${path}</li>`)}
+        </ul>
+      </section>`
+    }
+    ${
+      (c.hooks ?? []).length > 0 &&
+      html`<section class="plan__section" data-testid="collection-hooks">
+        <h3 class="plan__heading">Hooks - scripts lmm would run</h3>
+        <ul class="plan__paths">
+          ${c.hooks.map(
+            (h) =>
+              html`<li key=${h.hook} class="mono">
+                ${h.hook}: ${h.command || "(disables the game's hook)"}
+              </li>`,
+          )}
+        </ul>
+        ${
+          c.hooks_importable
+            ? html`<label class="plan__control">
+                  <input type="checkbox" onChange=${setWithHooks} />
+                  Import these hooks
+                </label>
+                <p class="plan__note">
+                  Left unchecked, the profile is imported without them.
+                </p>`
+            : html`<p class="plan__note">
+                Hooks are never imported from a URL.
+              </p>`
+        }
+      </section>`
+    }
+  `;
+}
+
 export function ProfileImportPlanView({ plan, modal, actions }) {
+  const lmmCollection = plan.collection ?? null;
   const collection = plan.workshop_collection ?? null;
   const installed = plan.installed ?? [];
   // Issue 371: installed under ANOTHER profile. The bytes are cached, so
@@ -192,6 +350,13 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
             recorded as skipped.
           </p>
         `
+      }
+      ${
+        lmmCollection &&
+        html`<${LMMCollectionSection}
+          collection=${lmmCollection}
+          actions=${actions}
+        />`
       }
       ${collection && html`<${CollectionHeader} collection=${collection} />`}
       ${

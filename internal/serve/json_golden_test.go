@@ -551,6 +551,17 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileImportApplyRequest{Install: true, Force: true, NoInstall: true},
 		},
 		{
+			// #621: a .lmmc is binary, so the SPA posts it base64-encoded,
+			// optionally naming the profile; the apply half's with_hooks is
+			// `--with-hooks`.
+			"profile_import_plan_request_lmmc",
+			profileImportPlanRequest{DataBase64: "UEsDBA==", ProfileName: "coop"},
+		},
+		{
+			"profile_import_apply_request_with_hooks",
+			profileImportApplyRequest{Install: true, WithHooks: true},
+		},
+		{
 			// #332's one-member profile body, shared by POST
 			// /api/v1/profiles (the name to create) and POST
 			// /api/v1/profiles/{name}/rename (the name to rename TO).

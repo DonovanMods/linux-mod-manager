@@ -36,6 +36,12 @@ type ProfileConfig struct {
 	IsDefault  bool                 `yaml:"is_default,omitempty"`
 	Hooks      ProfileHooksYAML     `yaml:"hooks,omitempty"`
 	Overrides  map[string]string    `yaml:"overrides,omitempty"` // path (relative to game install) -> file content (INI tweaks, etc.)
+	// Collection and External are #621's: the collection identity of a
+	// profile imported from (or exported as) a collection document, and
+	// the items lmm cannot fetch. Both omitempty, so a file without them
+	// is unchanged.
+	Collection *domain.CollectionInfo          `yaml:"collection,omitempty"`
+	External   []domain.CollectionExternalItem `yaml:"external,omitempty"`
 }
 
 // ModReferenceConfig is the YAML representation of a mod reference.
@@ -245,6 +251,12 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 	}
 
 	profile.Hooks, profile.HooksExplicit = parseProfileHooks(cfg.Hooks)
+	if !cfg.Collection.IsZero() {
+		profile.Collection = cfg.Collection
+	}
+	if len(cfg.External) > 0 {
+		profile.External = cfg.External
+	}
 
 	if len(cfg.Overrides) > 0 {
 		profile.Overrides = make(map[string][]byte)
@@ -317,6 +329,11 @@ type exportedProfileYAML struct {
 	LinkMethod string                `yaml:"link_method,omitempty"`
 	Hooks      ProfileHooksYAML      `yaml:"hooks,omitempty"`
 	Overrides  map[string]string     `yaml:"overrides,omitempty"`
+	// Collection and External (#621) carry a collection-imported profile's
+	// identity and its unfetchable items through the document the import
+	// flow saves; omitempty, so every other export is byte-identical.
+	Collection *domain.CollectionInfo          `yaml:"collection,omitempty"`
+	External   []domain.CollectionExternalItem `yaml:"external,omitempty"`
 }
 
 // ExportProfileValue builds profile's portable domain.ExportedProfile
@@ -349,7 +366,18 @@ func ExportProfileValue(profile *domain.Profile) *domain.ExportedProfile {
 		Overrides:     overrides,
 		Hooks:         profile.Hooks,
 		HooksExplicit: profile.HooksExplicit,
+		Collection:    collectionOrNil(profile.Collection),
+		External:      profile.External,
 	}
+}
+
+// collectionOrNil is c, or nil when it records nothing - so an empty
+// collection block is never written or emitted.
+func collectionOrNil(c *domain.CollectionInfo) *domain.CollectionInfo {
+	if c.IsZero() {
+		return nil
+	}
+	return c
 }
 
 // ExportProfile exports a profile to a portable format
@@ -366,6 +394,8 @@ func ExportProfile(profile *domain.Profile) ([]byte, error) {
 		LinkMethod: exported.LinkMethod,
 		Hooks:      serializeProfileHooks(exported.Hooks, exported.HooksExplicit),
 		Overrides:  exported.Overrides,
+		Collection: exported.Collection,
+		External:   exported.External,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling exported profile: %w", err)
@@ -387,6 +417,8 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 		Mods:       wire.Mods,
 		LinkMethod: wire.LinkMethod,
 		Overrides:  wire.Overrides,
+		Collection: collectionOrNil(wire.Collection),
+		External:   wire.External,
 	}
 	// An export with no hooks: key (every export made before #296 included)
 	// decodes to all-nil pointers, so nothing is marked explicit and the
@@ -407,6 +439,8 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 		LinkMethodExplicit: exported.LinkMethod != "",
 		Hooks:              exported.Hooks,
 		HooksExplicit:      exported.HooksExplicit,
+		Collection:         exported.Collection,
+		External:           exported.External,
 	}
 	if len(exported.Overrides) > 0 {
 		p.Overrides = make(map[string][]byte)
@@ -441,6 +475,8 @@ func ProfileFromExported(exported *domain.ExportedProfile) *domain.Profile {
 		Mods:          exported.Mods,
 		Hooks:         exported.Hooks,
 		HooksExplicit: exported.HooksExplicit,
+		Collection:    collectionOrNil(exported.Collection),
+		External:      exported.External,
 	}
 	// LinkMethod is only carried when it was EXPLICIT: ExportProfileValue
 	// writes it as "" otherwise, and turning "" into a phantom symlink

@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **lmm collections: a shareable, versioned profile export (#621).**
+  `lmm profile export` now writes version 1 of lmm's collection format
+  (spec: `docs/collection-format.md`): still YAML on stdout, so
+  `lmm profile export coop > coop.yaml` works as before, and with
+  `-o <file>` a compressed `.lmmc` container (`--plain` writes the YAML to
+  the file). The document adds a stable collection id (minted on a
+  profile's first export and recorded in the profile's new `collection:`
+  block), the author's metadata (`--title`, `--author`, `--description`,
+  `--instructions`, `--collection-version`), the game's portable identity
+  (Steam app id, per-source ids) beside the author's `game_id`, mod display
+  names, external items to get by hand, the curator's `origin` (kept
+  through re-export, with a note that republishing is your call) and the
+  `requires:` features it needs. `lmm profile import <file>` reads a
+  `.lmmc`, a version-1 document or an older export: a collection is matched
+  to your game by Steam app id, then source ids (`--game` when that is
+  ambiguous), may be named with `--as`, lists its hooks, overrides, external
+  items and missing sources before anything is written, imports its hooks
+  only with `--with-hooks`, and is refused with nothing written when it
+  needs a feature this lmm lacks (`CollectionUnsupportedError`). An older
+  export imports exactly as before. In the web UI, **Export** downloads a
+  `.lmmc`, and **Import** accepts one, with an **Import these hooks** box.
 - **A FOMOD installer engine, not yet wired into installs (#604).** The new
   `internal/fomod` package reads `fomod/ModuleConfig.xml` in any encoding
   real installers use and works out which files a set of installer choices
@@ -39,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`lmm profile export` writes the collection document (#621).** Its
+  stdout output gains the version-1 keys (`lmm_collection`, `id`,
+  `version`, `game`, …), writes only the hooks a profile sets (no `null`
+  entries), and no longer includes the profile's `link_method`, which is a
+  machine preference. An older lmm still imports the new document by its
+  `name` and `game_id`. `--json` is unchanged.
 - **Installing several mods, and importing a profile, now download
   everything before writing anything (#602).** A profile import, an install
   with dependencies and a multi-mod install acquire every mod first
