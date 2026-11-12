@@ -171,7 +171,7 @@ func TestE2E_GameEditor_CurseForgePickerFallsBackToTheIDField(t *testing.T) {
 		chromedp.WaitVisible(editorSel(`[data-testid="game-saved"]`), chromedp.ByQuery),
 	)
 	assert.Contains(t, why, "Couldn't load CurseForge's list")
-	assert.Contains(t, guide, "#pick-a-curseforge-game-flavor")
+	assert.Contains(t, guide, "/linux-mod-manager/guide/add-a-game.html#pick-a-curseforge-game-flavor")
 
 	onDisk, err := config.LoadGames(f.Svc.ConfigDir())
 	require.NoError(t, err)
