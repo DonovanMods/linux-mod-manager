@@ -205,11 +205,12 @@ CampfireCooking  Campfire Cooking     1.6.2    Halvard         -</code></pre>
 <section id="install" class="install" aria-labelledby="install-title">
   <div class="wrap">
     <h2 id="install-title">Install lmm</h2>
-    <p class="section-lede">Every release on <a href="https://github.com/DonovanMods/linux-mod-manager/releases">GitHub Releases</a> has packages and a plain download for x86-64 (<code>amd64</code>) and ARM64 (<code>arm64</code>).</p>
+    <p class="section-lede">The <a href="https://github.com/DonovanMods/linux-mod-manager/releases/latest">latest release</a> has packages and a plain download for x86-64 (<code>amd64</code>) and ARM64 (<code>arm64</code>).</p>
+    <p class="section-lede note">For downloaded packages and archives, run the commands from the folder containing your download. Replace <code>&lt;version&gt;</code> with its version number, and use <code>arm64</code> instead of <code>amd64</code> for ARM64.</p>
     <div class="install__grid">
       <article class="card">
         <h3>Debian, Ubuntu, Fedora, openSUSE, Alpine</h3>
-        <p>Download the <code>.deb</code>, <code>.rpm</code> or <code>.apk</code> from the latest release, then install it:</p>
+        <p>Download the <code>.deb</code>, <code>.rpm</code> or <code>.apk</code> from the <a href="https://github.com/DonovanMods/linux-mod-manager/releases/latest">latest release</a>, then install it:</p>
 <pre class="code" tabindex="0"><code><span class="comment"># Debian / Ubuntu</span>
 sudo dpkg -i lmm_&lt;version&gt;_linux_amd64.deb
 <span class="comment"># Fedora</span>
@@ -229,9 +230,11 @@ makepkg -si</code></pre>
       </article>
       <article class="card">
         <h3>Any Linux</h3>
-        <p>Download <code>lmm_&lt;version&gt;_linux_amd64.tar.gz</code> (or <code>arm64</code>) and put <code>lmm</code> on your path. Installed this way, lmm updates itself.</p>
-<pre class="code" tabindex="0"><code>tar -xzf lmm_*.tar.gz
-mkdir -p ~/.local/bin &amp;&amp; mv lmm ~/.local/bin/</code></pre>
+        <p>Download <code>lmm_&lt;version&gt;_linux_amd64.tar.gz</code> (or <code>arm64</code>) from the <a href="https://github.com/DonovanMods/linux-mod-manager/releases/latest">latest release</a>. Install it in your user bin directory so lmm can update itself:</p>
+<pre class="code" tabindex="0"><code>tar -xzf lmm_&lt;version&gt;_linux_amd64.tar.gz
+mkdir -p ~/.local/bin &amp;&amp; mv lmm ~/.local/bin/
+export PATH="$HOME/.local/bin:$PATH"</code></pre>
+        <p class="note">If <code>~/.local/bin</code> isn't already on your PATH, add it to your shell's startup configuration for future sessions.</p>
       </article>
       <article class="card">
         <h3>With Go</h3>
