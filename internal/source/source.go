@@ -344,6 +344,62 @@ func (e *ManualDownloadError) Error() string { return e.Reason }
 // Is makes errors.Is(err, ErrManualDownload) true.
 func (e *ManualDownloadError) Is(target error) bool { return target == ErrManualDownload }
 
+// ErrAccountRestricted classifies a download a source refuses for the
+// ACCOUNT rather than the mod (#601): NexusMods serves API download links to
+// Premium accounts only. The remedy is the manual download's (fetch the file
+// from the mod's page, then install or update from it), but the fact is the
+// account's, so it is deliberately NOT ErrManualDownload: core records every
+// ErrManualDownload against the mod, for every account, and a free user's
+// refusals would mark each Nexus mod they touched manual-only for everyone.
+// Branch with errors.Is; a source returns an *AccountRestrictedError.
+var ErrAccountRestricted = errors.New("this account cannot download files through the source's API")
+
+// AccountRestrictedError is the error a source returns for
+// ErrAccountRestricted, with its own explanation as the text. It never
+// wraps ErrManualDownload.
+type AccountRestrictedError struct {
+	// Reason is the sentence the user reads; empty falls back to
+	// ErrAccountRestricted's text.
+	Reason string
+}
+
+// Error is Reason, or the class's text when Reason is empty.
+func (e *AccountRestrictedError) Error() string {
+	if e.Reason == "" {
+		return ErrAccountRestricted.Error()
+	}
+	return e.Reason
+}
+
+// Is makes errors.Is(err, ErrAccountRestricted) true.
+func (e *AccountRestrictedError) Is(target error) bool { return target == ErrAccountRestricted }
+
+// Tier is an account's standing with a source, as far as what the source
+// will serve through its API depends on it (#601).
+type Tier string
+
+const (
+	// TierFree is an account the source serves metadata to but not
+	// downloads: every file is a manual download for it.
+	TierFree Tier = "free"
+	// TierPremium is an account the source serves downloads to.
+	TierPremium Tier = "premium"
+)
+
+// Premium reports whether t is TierPremium.
+func (t Tier) Premium() bool { return t == TierPremium }
+
+// AccountTierReporter is implemented by sources whose API serves downloads
+// only to some accounts (NexusMods: Premium). AccountTier reports the
+// configured key's tier, so a plan can say up front that every download
+// will be manual instead of discovering it once per file at Apply. It is a
+// fact about the account, never about a mod: an implementation caches it
+// for the session (until the key changes), and nothing records it per mod.
+// Optional and type-asserted, like every capability here.
+type AccountTierReporter interface {
+	AccountTier(ctx context.Context) (Tier, error)
+}
+
 // Capabilities reports which optional operations a source supports.
 type Capabilities struct {
 	Search       bool

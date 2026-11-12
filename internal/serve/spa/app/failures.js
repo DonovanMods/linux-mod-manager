@@ -95,6 +95,9 @@ export function explainerFor(job) {
  * somewhere to read about the mod but where the file has to come from.
  * `fileID`/`fileName` name the file the download was for (issue 535) - the
  * one "Install from file…" expects the downloaded archive to be.
+ * `accountRestricted` says the refusal is the ACCOUNT's rather than the
+ * mod's (a free NexusMods key, issue 601): `manual` comes with it, so the
+ * way out is the same, and only the headline says why.
  */
 export function downloadFailureFor(details) {
   if (!details || typeof details !== "object") return null;
@@ -111,6 +114,7 @@ export function downloadFailureFor(details) {
     modName: details.mod_name ?? "",
     url: safeWebUrl(details.mod_url),
     manual: Boolean(details.manual_download),
+    accountRestricted: Boolean(details.account_restricted),
     fileID: details.file_id ?? "",
     fileName: details.file_name ?? "",
   };
@@ -147,6 +151,7 @@ export function batchFailuresFor(result) {
       error: item.error ?? "",
       url: safeWebUrl(item.mod_url),
       manual: Boolean(item.manual_download),
+      accountRestricted: Boolean(item.account_restricted),
     });
   }
   return out;
