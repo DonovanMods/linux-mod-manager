@@ -16,6 +16,8 @@ published documentation, not ported.
 - Part 1 — NexusMods Collections: the GraphQL API, the collection archive and `collection.json`
 - Part 2 — FOMOD
 - Part 3 — Plugin load order and LOOT
+- Part 4 — First real manifest (Cyberpunk 2077)
+- Part 5 — Second real manifest (Skyrim SE)
 
 ---
 
@@ -528,3 +530,32 @@ Open risks / questions
 ### Environment
 
 There was no `7z` on the development machine. lmm's extractor shells out to it for `.7z`, so it was installed (`7zip` 26.04) to read the archive.
+
+## Part 5 — Second real manifest (2026-11-12)
+
+`skyrimspecialedition/xk05aw`, "Essential Mods for Skyrim", supplied by the owner. All VERIFIED (read this session). The list was fetched over GraphQL, and the archive with the **free** test key (§11 Q1).
+
+### The list
+
+- Collection id 49623, latest published revision 325 (revision id 797763), 60 items, `totalSize` about 454 MB, `assetsSizeBytes` 0, `adultContent` false, `gameVersions` `["1.7.104.0"]`, no `externalResources`, `installationInfo` empty.
+- Every `updatePolicy` is `exact`, and none is optional.
+- File categories: MAIN 53, OLD_VERSION 5, OPTIONAL 2. 16 files are not the mod's primary file.
+- `downloadLink` = `/v2/collections/49623/revisions/797763/download_link`.
+
+### The archive
+
+- 6.8 KB 7z holding **only** `collection.json` (48 KB). Unlike the Cyberpunk archive, there are no empty `bundled/` or `patches/` directories, so neither may be assumed to exist.
+
+### `collection.json`
+
+- Top-level keys: `info`, `mods`, `modRules`, `plugins`, `tools`, `collectionConfig`. There is no `pluginRules`, `loadOrder` or `fbLoadOrders` key at all.
+- `collectionConfig`: `{excludePluginRules: true, recommendNewProfile: false, referenceTagScheme: "v1"}`. `excludePluginRules` is new, and the parser must allowlist it. It explains the missing `pluginRules`.
+- `info.installInstructions` (334 characters): "always launch the game from SKSE64", "check … all the plugins are active … sort using Vortex".
+- Each mod has `name`, `version`, `optional`, `domainName`, `source`, `author`, `details` and `phase`, and 18 have `choices`. None has `hashes`, `patches`, `instructions` or `fileOverrides`. All phases are 0. Each `source` is `type: nexus` with `modId`, `fileId`, `md5`, `fileSize`, `logicalFilename`, `updatePolicy` and `tag`.
+- **`details.type` is not always empty.** 59 mods have `""`, but SKSE64 (mod 30379) has `{"category": "Utilities", "type": "dinput"}`. `dinput` is Vortex's mod type for content deployed to the **game root**, not to `Data/`.
+- **FOMOD: 18 of 60 mods (30%) carry `choices`**, all `type: fomod`. 15 have one step with one pick. MCM Helper has 2 steps with 3 picks (`"ESL", idx 1`; the index is not always 0). Two have one step with 2 picks. **Rock Traps Trigger Fixes records a step named `""` holding one group (`Patches`) with `choices: []`**: a select-any group where nothing was picked. Replay must match an empty step name and treat an empty pick list as "pick nothing", not as "no answer". No choice name has leading or trailing whitespace here.
+- `modRules` (2):
+  - `after`: MfgFix NG after MfgFix. Both are members, and both sides resolve by `fileMD5`.
+  - `conflicts`: SKSE64 Steam (source, by md5) against `{logicalFileName: "Skyrim Script Extender 64 (SKSE64)", versionMatch: "<2.3.1 || >2.3.1"}`, with no `fileMD5`. It is a semver range against a logical name that is not a member. That is informational under the design's rule, and it shows that `conflicts` references need not resolve.
+- `plugins` (16): an ordered `{name, enabled}` list, all enabled. One name is all lower case (`unofficial skyrim special edition patch.esp`, which is how USSEP ships it) and 15 are mixed case, so plugin matching must be case-insensitive. Base-game masters (`Skyrim.esm`, `Update.esm`, the DLCs) are not listed. Only 16 of the 60 mods ship plugins.
+- **`tools` (2) is non-empty**: Vortex dashboard shortcuts, `{name, exe, args, cwd, detach, shell, onStart}`, both pointing at SSEEdit inside `Data\SSEEdit 4.1.5f\` (`SSEEditQuickAutoClean.exe`, `SSEEdit.exe`). SSEEdit (mod 164) is itself a member. They are launcher entries, not install steps.
