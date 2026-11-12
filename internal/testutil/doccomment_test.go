@@ -22,6 +22,7 @@ func TestExportedIdentifiersHaveDocComments(t *testing.T) {
 		"internal/adapter/bepinex",
 		"internal/adapter/d2r",
 		"internal/adapter/icarus",
+		"internal/fomod",
 	}
 	for _, pkg := range packages {
 		t.Run(pkg, func(t *testing.T) {
