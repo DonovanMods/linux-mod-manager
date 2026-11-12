@@ -1,10 +1,11 @@
 # The lmm user guide, published to GitHub Pages by .github/workflows/pages.yml
-# (#553). Only this directory is published: docs/plans and the other internal
-# docs are never part of the site.
+# (#553) under /guide/, beneath the landing page in docs/site (#625). Only
+# these two directories are published: docs/plans and the other internal docs
+# are never part of the site.
 title: lmm user guide
 description: A plain-language guide to lmm, the Linux Mod Manager.
 url: https://donovanmods.github.io
-baseurl: /linux-mod-manager
+baseurl: /linux-mod-manager/guide # where pages.yml builds it; cmd/lmm/site_test.go pins the two together
 
 remote_theme: just-the-docs/just-the-docs@v0.12.0
 plugins:
@@ -32,7 +33,8 @@ callouts:
     color: yellow
 
 footer_content: >-
-  lmm is free and open source. Found a mistake in this guide?
+  <a href="https://donovanmods.github.io/linux-mod-manager/">lmm</a> is free
+  and open source. Found a mistake in this guide?
   <a href="https://github.com/DonovanMods/linux-mod-manager/issues">Open an issue</a>.
 
 exclude:
