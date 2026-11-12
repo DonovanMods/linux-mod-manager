@@ -278,3 +278,235 @@ func TestFomodUpdate_MatchingChoicesUpdateAndStaleOnesSkip(t *testing.T) {
 func cacheKeyOf(row *domain.InstalledMod) cache.Key {
 	return cache.Key{GameID: row.GameID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version, Variant: row.Variant}
 }
+
+// TestFomodProfileApply_ConvergesToTheRecordedChoices: a profile is
+// desired state, so recorded choices whose tree is not the installed one
+// (an edit, an import of another document) make apply reinstall the mod
+// with them - and a second apply, with the canonical choices now recorded,
+// has nothing to do.
+func TestFomodProfileApply_ConvergesToTheRecordedChoices(t *testing.T) {
+	f := newFomodFixture(t)
+	f.serve(t, "mod1", "1.0", "4K", "v1")
+	ctx := context.Background()
+	_, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+	require.Equal(t, "4K-v1", f.deployed(t, "textures/t.dds"))
+
+	p, err := f.svc.NewProfileManager().Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	p.FindRef("src", "mod1").Fomod = answer("2K") // a hand edit: no config hash
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), p))
+
+	plan, err := f.svc.PlanProfileApply(ctx, f.game, "default")
+	require.NoError(t, err)
+	require.Len(t, plan.ToInstall, 1, "the choices drifted from the installed tree")
+	_, err = f.svc.ApplyProfileApply(ctx, f.game, plan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "2K-v1", f.deployed(t, "textures/t.dds"))
+	ref := f.ref(t, "default", "mod1")
+	assert.Len(t, ref.Fomod.ConfigSHA256, 64, "the canonical choices are recorded")
+	row, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, core.FomodVariantForTest(ref.Fomod), row.Variant)
+
+	plan, err = f.svc.PlanProfileApply(ctx, f.game, "default")
+	require.NoError(t, err)
+	assert.Empty(t, plan.ToInstall, "converged")
+}
+
+// TestFomodProfileSwitch_DeploysTheTargetsTree: a switch to a profile that
+// records other choices for the same version installs that profile's tree
+// - from the cache when it has it.
+func TestFomodProfileSwitch_DeploysTheTargetsTree(t *testing.T) {
+	f := newFomodFixture(t)
+	f.serve(t, "mod1", "1.0", "4K", "v1")
+	ctx := context.Background()
+	pm := f.svc.NewProfileManager()
+	_, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, "g1", "default"))
+
+	// "alt" lists the same mod and version with the 2K choice.
+	_, err = pm.Create(ctx, "g1", "alt")
+	require.NoError(t, err)
+	alt, err := pm.Get(ctx, "g1", "alt")
+	require.NoError(t, err)
+	alt.Mods = []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0", Fomod: answer("2K")}}
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), alt))
+
+	plan, err := f.svc.PlanProfileSwitch(ctx, f.game, "alt")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "2K-v1", f.deployed(t, "textures/t.dds"))
+	altRow, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "alt")
+	require.NoError(t, err)
+	defRow, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.NotEqual(t, defRow.Variant, altRow.Variant, "two choices, two trees of one version")
+
+	// Back again: default's tree is cached, so nothing is downloaded.
+	downloads := f.mock.DownloadCount()
+	plan, err = f.svc.PlanProfileSwitch(ctx, f.game, "default")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "4K-v1", f.deployed(t, "textures/t.dds"))
+	assert.Equal(t, downloads, f.mock.DownloadCount())
+}
+
+// writeFomodArchive writes an installer archive to a local file, as a user
+// would have downloaded it by hand.
+func writeFomodArchive(t *testing.T, name, option4K, tag string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), name)
+	require.NoError(t, os.WriteFile(p, fomodZip(t, option4K, tag), 0o644))
+	return p
+}
+
+// TestFomodImportArchive_AsksThenImportsTheAnswer: `lmm import <archive>`
+// runs the resolve step on the archive it is given, refusing before
+// anything is cached when the installer needs answers.
+func TestFomodImportArchive_AsksThenImportsTheAnswer(t *testing.T) {
+	f := newFomodFixture(t)
+	ctx := context.Background()
+	archive := writeFomodArchive(t, "Flow Mod-123-1-0.zip", "4K", "local")
+	_, err := f.svc.NewProfileManager().Create(ctx, "g1", "default")
+	require.NoError(t, err)
+
+	plan, err := f.svc.PlanImportArchive(ctx, f.game, "default", archive, core.ImportArchiveOptions{})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyImportArchive(ctx, f.game, "default", plan, core.ImportArchiveOptions{}, nil)
+	var q *core.FomodChoicesRequiredError
+	require.True(t, errors.As(err, &q), "got %v", err)
+	key := domain.ModKey(plan.Mod.SourceID, plan.Mod.ID)
+	assert.Equal(t, key, domain.ModKey(q.Mods[0].SourceID, q.Mods[0].ModID), "the question names the mod the plan resolved")
+	assert.Empty(t, f.deployed(t, "plugin.esp"))
+
+	plan, err = f.svc.PlanImportArchive(ctx, f.game, "default", archive, core.ImportArchiveOptions{})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyImportArchive(ctx, f.game, "default", plan, core.ImportArchiveOptions{Fomod: map[string]domain.FomodChoices{key: answer("2K")}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "2K-local", f.deployed(t, "textures/t.dds"))
+	p, err := f.svc.NewProfileManager().Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	ref := p.FindRef(plan.Mod.SourceID, plan.Mod.ID)
+	require.NotNil(t, ref)
+	assert.Len(t, ref.Fomod.ConfigSHA256, 64)
+	row, err := f.svc.GetInstalledMod(ctx, plan.Mod.SourceID, plan.Mod.ID, "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, core.FomodVariantForTest(ref.Fomod), row.Variant)
+}
+
+// TestFomodUpdateFromArchive_ReplaysTheRecordedChoices: an update from a
+// hand-downloaded file installs the new version with the recorded choices.
+func TestFomodUpdateFromArchive_ReplaysTheRecordedChoices(t *testing.T) {
+	f := newFomodFixture(t)
+	f.serve(t, "mod1", "1.0", "4K", "v1")
+	ctx := context.Background()
+	_, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+
+	archive := writeFomodArchive(t, "mod1-2.0.zip", "4K", "v2")
+	plan, err := f.svc.PlanUpdateFromArchive(ctx, f.game, "default", "src", "mod1", archive, core.UpdateFromArchiveOptions{Version: "2.0"})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyUpdateFromArchive(ctx, f.game, plan, core.UpdateFromArchiveOptions{Version: "2.0", AcceptMismatch: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "4K-v2", f.deployed(t, "textures/t.dds"))
+	row, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", row.Version)
+	assert.Equal(t, core.FomodVariantForTest(f.ref(t, "default", "mod1").Fomod), row.Variant)
+	assert.NotEmpty(t, row.PreviousVariant)
+
+	// A stale recording refuses the from-file update, nothing cached.
+	stale := writeFomodArchive(t, "mod1-3.0.zip", "Ultra", "v3")
+	plan, err = f.svc.PlanUpdateFromArchive(ctx, f.game, "default", "src", "mod1", stale, core.UpdateFromArchiveOptions{Version: "3.0"})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyUpdateFromArchive(ctx, f.game, plan, core.UpdateFromArchiveOptions{Version: "3.0", AcceptMismatch: true}, nil)
+	var q *core.FomodChoicesRequiredError
+	require.True(t, errors.As(err, &q), "got %v", err)
+	assert.Equal(t, "4K-v2", f.deployed(t, "textures/t.dds"))
+}
+
+// TestFomodInstallBatch_OneQuestionForTheModAndItsDependency: an install
+// with dependencies acquires every mod first, so two installers' questions
+// come back as one document, with nothing written; the answered re-run
+// installs both.
+func TestFomodInstallBatch_OneQuestionForTheModAndItsDependency(t *testing.T) {
+	f := newFomodFixture(t)
+	ctx := context.Background()
+	f.mock.AddDownload("dep", fomodZip(t, "4K", "dep"))
+	f.mock.AddMod("g1", &domain.Mod{ID: "dep", SourceID: "src", Name: "Dep", Version: "1.0", GameID: "g1"})
+	f.mock.AddDownload("root", fomodZip(t, "4K", "root"))
+	f.mock.AddMod("g1", &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep"}}})
+
+	plan, err := f.svc.PlanInstall(ctx, f.game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Dependencies)
+	result, err := f.svc.ApplyInstall(ctx, f.game, plan, core.InstallOptions{}, nil)
+	// A multi-mod install reports a refusal on its result (#602), as it
+	// does the loader refusal.
+	require.NoError(t, err)
+	require.NotNil(t, result.FomodChoicesRequired, "the refusal rides on the result: %+v", result)
+	assert.True(t, result.Refused)
+	assert.Len(t, result.FomodChoicesRequired.Mods, 2)
+	for _, failed := range result.Failed {
+		assert.Equal(t, core.RefusalFomodChoicesRequired, failed.Refusal)
+	}
+	assert.Empty(t, f.deployed(t, "plugin.esp"), "nothing was written")
+
+	plan, err = f.svc.PlanInstall(ctx, f.game, "default", "src", "root", false)
+	require.NoError(t, err)
+	result, err = f.svc.ApplyInstall(ctx, f.game, plan, core.InstallOptions{Fomod: map[string]domain.FomodChoices{
+		"src:root": answer("4K"), "src:dep": answer("2K"),
+	}}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Failed)
+	assert.Equal(t, "4K", f.ref(t, "default", "root").Fomod.Steps[0].Groups[0].Choices[0].Name)
+	assert.Equal(t, "2K", f.ref(t, "default", "dep").Fomod.Steps[0].Groups[0].Choices[0].Name)
+	assert.Equal(t, 2, f.mock.DownloadCount(), "the kept downloads served the re-run")
+}
+
+// TestFomodInstall_CancellationAtTheProfileWriteKeepsTheChoicesPaired is
+// Ruling 16 for a FOMOD install: the DB row (whose variant is the answered
+// tree) and the profile ref (which records the answers) are one pair, so a
+// cancellation landing after the row is written still finishes the ref -
+// with the choices, or the profile would name a tree its row does not have.
+func TestFomodInstall_CancellationAtTheProfileWriteKeepsTheChoicesPaired(t *testing.T) {
+	for name, deps := range map[string]bool{"strict path": false, "batch path": true} {
+		t.Run(name, func(t *testing.T) {
+			f := newFomodFixture(t)
+			f.serve(t, "mod1", "1.0", "4K", "v1")
+			if deps {
+				f.mock.AddDownload("dep", fomodZip(t, "4K", "dep"))
+				f.mock.AddMod("g1", &domain.Mod{ID: "dep", SourceID: "src", Name: "Dep", Version: "1.0", GameID: "g1"})
+				f.mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod mod1", Version: "1.0", GameID: "g1",
+					Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep"}}})
+			}
+			plan, err := f.svc.PlanInstall(context.Background(), f.game, "default", "src", "mod1", false)
+			require.NoError(t, err)
+
+			inner, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			ctx := &cancelAtCompletingProfileWrite{Context: inner, cancel: cancel}
+			_, err = f.svc.ApplyInstall(ctx, f.game, plan, core.InstallOptions{Fomod: map[string]domain.FomodChoices{
+				"src:mod1": answer("4K"), "src:dep": answer("2K"),
+			}}, nil)
+			require.True(t, ctx.fired.Load(), "the cancellation must land at the completing profile write")
+			assert.ErrorIs(t, err, context.Canceled)
+
+			first := "mod1"
+			if deps {
+				first = "dep" // a dependency is committed first
+			}
+			row, err := f.svc.GetInstalledMod(context.Background(), "src", first, "g1", "default")
+			require.NoError(t, err)
+			ref := f.ref(t, "default", first)
+			require.NotNil(t, ref, "the ref completing the row was written")
+			assert.False(t, ref.Fomod.IsZero(), "with the choices")
+			assert.Equal(t, core.FomodVariantForTest(ref.Fomod), row.Variant, "naming the row's own tree")
+		})
+	}
+}

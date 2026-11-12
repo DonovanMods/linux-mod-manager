@@ -113,6 +113,16 @@ func (a *autoUpdater) recordOutcome(key string, planned []domain.Update, result 
 			reached[f.Mod] = true
 			failed[f.Mod] = f
 		}
+		// #614: automatic updates never ask a question. A mod skipped
+		// because its FOMOD installer choices need re-answering is
+		// announced with the failures, so the user learns why it did not
+		// update and answers them.
+		for _, r := range result.Skipped {
+			if r.FomodReanswer {
+				mod := domain.ModKey(r.Mod.SourceID, r.Mod.ModID)
+				failed[mod] = core.UpdateBatchFailure{Mod: mod, Name: r.Name, FromVersion: r.FromVersion, ToVersion: r.ToVersion, Error: r.Reason}
+			}
+		}
 	}
 	for _, u := range planned {
 		mod := domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)

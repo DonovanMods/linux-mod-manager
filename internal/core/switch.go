@@ -385,7 +385,9 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			// version on disk, whatever the target row claims - only one
 			// version can be deployed, and the enable has to replace it.
 			tr, hasTargetRow := targetInstalled[key]
-			drifted := live != nil && live.Version != row.Version
+			// #614: another tree of the same version (other FOMOD
+			// choices) on disk is a drift too.
+			drifted := live != nil && (live.Version != row.Version || live.Variant != row.Variant)
 			if !hasTargetRow || !tr.Enabled || !tr.Deployed || drifted {
 				toEnable = append(toEnable, *row)
 				if drifted {
