@@ -400,6 +400,17 @@ h2 code {
   align-items: start;
 }
 
+.details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+  gap: 2rem 3rem;
+  margin-top: 1.5rem;
+}
+
+.section-followup {
+  margin: 1.5rem 0 0;
+}
+
 @media (min-width: 64rem) {
   .feature__grid {
     grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
