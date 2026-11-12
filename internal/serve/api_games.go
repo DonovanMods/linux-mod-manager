@@ -291,6 +291,12 @@ type gameSourcesRequest struct {
 	// it. The member is the games document's own shape, so the editor sends
 	// back what it read.
 	CurseForge *domain.GameCurseForge `json:"curseforge,omitempty"`
+	// Prefix and PrefixUser, when present, set the game's `prefix:` and
+	// `prefix_user:` (#605) - `lmm game edit --prefix/--prefix-user` - and
+	// "" clears either, handing it back to lmm's own resolution. Pointers
+	// for Adapter's reason: an editor that never sent one cannot clear it.
+	Prefix     *string `json:"prefix,omitempty"`
+	PrefixUser *string `json:"prefix_user,omitempty"`
 }
 
 // handleAPIGameSources answers PUT /api/v1/games/{id} with the game's own
@@ -325,13 +331,15 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 	edit := core.GameEdit{
 		Name: req.Name, Sources: req.Sources, Adapter: req.Adapter, ModPath: req.ModPath, InstallPath: req.InstallPath,
 		Loader: req.Loader, LoaderSet: req.Loader != nil || req.LoaderSet,
+		Prefix: req.Prefix, PrefixUser: req.PrefixUser,
 	}
 	if req.CurseForge != nil {
 		types := append([]int{}, req.CurseForge.GameVersionTypes...)
 		edit.CurseForgeVersionTypes = &types
 	}
 	if edit.Name == nil && edit.Sources == nil && edit.Adapter == nil && edit.ModPath == nil &&
-		edit.InstallPath == nil && !edit.LoaderSet && edit.CurseForgeVersionTypes == nil {
+		edit.InstallPath == nil && !edit.LoaderSet && edit.CurseForgeVersionTypes == nil &&
+		edit.Prefix == nil && edit.PrefixUser == nil {
 		edit.Sources = map[string]string{}
 	}
 	entry, err := s.svc.EditGame(r.Context(), r.PathValue("id"), edit)

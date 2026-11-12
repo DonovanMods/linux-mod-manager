@@ -163,6 +163,7 @@ adapter.
 | `LaunchAdvisor` | `LaunchAdvice(g, mods, previous) Advice` | `d2r` | shows the advice as a warning after a deploy (a switch's and an apply's too) and on a launch |
 | `PluginOrderer` | `PluginRules(g) PluginSpec` | `bethesda` | *nothing yet*: the plugin list, sort and `Plugins.txt` write are #616 |
 | `RootRouter` | `RouteRoots(g, files) []DeployRoot`, `RootForModType(g, type) (DeployRoot, bool)` | `bethesda` | *nothing yet*: deploying to `install_path` is #629, and until then a root-routed file deploys under `mod_path` as before |
+| `PrefixConsumer` | `UsesPrefix(g) bool` | `bethesda` | reports a prefix it cannot resolve as a `prefix_unresolved` finding (`lmm verify`, `lmm game show`) |
 
 ### FileRouter
 
@@ -307,6 +308,18 @@ about the game's INSTALLATION (is the loader there, which launch option
 does it need), which `LoaderStatus` computes once per game. This advice is
 about the PROFILE: it changes with every deploy, so it is said where the
 profile's mods change and where the game starts.
+
+### PrefixConsumer
+
+`UsesPrefix(g) bool` says the game keeps state lmm writes inside its Wine
+or Proton prefix rather than its install directory (#605) — a Bethesda
+game's `Plugins.txt`, under `drive_c/users/<user>/AppData/Local`. Core
+resolves the prefix itself (`prefix:` in `games.yaml`, else Steam's
+compatdata in any library; see
+[configuration.md](configuration.md#prefix-gamesyaml)); the adapter only
+answers yes or no. A prefix lmm cannot resolve is a `prefix_unresolved`
+finding for a game whose adapter answers yes, and nothing at all for any
+other game.
 
 ### MergeCompiler
 

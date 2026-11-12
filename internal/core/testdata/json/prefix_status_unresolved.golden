@@ -1,0 +1,7 @@
+{
+  "steam_app_id": "489830",
+  "resolved": false,
+  "problem": "no Steam compatdata prefix for app 489830 in any Steam library: run the game once through Steam (with Proton), or set prefix: (`lmm game edit skyrim-se --prefix <dir>`)",
+  "needed": true,
+  "finding": "prefix_unresolved"
+}

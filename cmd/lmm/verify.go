@@ -610,6 +610,11 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		// #427: the game's mod_path is gone; the note names the repair.
 		fmt.Printf("%s mod_path - %s\n", colorYellow("?"), f.Note)
 
+	case core.VerifyStatusPrefixUnresolved:
+		// #605: a game whose adapter writes into its Wine/Proton prefix,
+		// and lmm cannot find the prefix; the note says what is missing.
+		fmt.Printf("%s prefix - %s\n", colorYellow("?"), f.Note)
+
 	case core.VerifyStatusDeployedModified:
 		// #466: a copy or hardlink the user changed; the note names it and
 		// the fixable reason says how to take the mod's version back.
