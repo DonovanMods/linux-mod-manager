@@ -685,6 +685,14 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 			fmt.Printf("  %s\n", f.FixableReason)
 		}
 
+	case core.VerifyStatusCatalogUnknown:
+		// #606: a games.yaml `catalog:` naming no catalog entry - ignored,
+		// so a note, with the command that fixes it.
+		fmt.Printf("~ catalog - %s\n", f.Note)
+		if f.FixableReason != "" {
+			fmt.Printf("  %s\n", f.FixableReason)
+		}
+
 	default:
 		renderVerifyLoaderFinding(f)
 	}

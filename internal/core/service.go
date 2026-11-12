@@ -141,10 +141,10 @@ type Service struct {
 	// composition root calls SetLauncher. Atomic: it is set once at
 	// startup and read by concurrent queries (GameStatus).
 	launcherPtr atomic.Pointer[Launcher]
-	// catalogAdapters reads the curated game catalog's adapter for a Steam
-	// app id (#606), nil until the composition root calls
-	// SetCatalogAdapters. Atomic for launcherPtr's reason.
-	catalogAdapters atomic.Pointer[CatalogAdapterLookup]
+	// knownGames reads lmm's curated game catalog (#606), nil until the
+	// composition root calls SetKnownGames. Atomic for launcherPtr's
+	// reason.
+	knownGames atomic.Pointer[func() []KnownGame]
 	// gameProbePtr is how this Service tells a running game (#587), nil
 	// until the composition root calls SetGameProbe. Atomic for the same
 	// reason as launcherPtr.

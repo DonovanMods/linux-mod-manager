@@ -12,17 +12,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bethesda"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 func TestE2E_AdapterSuggestion_OfferedAndTakenOnMissionControl(t *testing.T) {
 	f := newE2EFixture(t)
 	f.Svc.RegisterAdapter(bethesda.New())
-	f.Svc.SetCatalogAdapters(func(appID string) string {
-		if appID == "489830" {
-			return "bethesda"
-		}
-		return ""
+	f.Svc.SetKnownGames(func() []core.KnownGame {
+		return []core.KnownGame{{Slug: "skyrim-se", Name: "Skyrim Special Edition", SteamAppID: "489830", Adapter: "bethesda"}}
 	})
 	f.Game.Launch = &domain.GameLaunch{SteamAppID: "489830"}
 	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
@@ -66,11 +64,8 @@ func TestE2E_AdapterSuggestion_AbsentWithoutACatalogAdapter(t *testing.T) {
 func TestE2E_AdapterSuggestion_ConfirmsWhenModsAreInstalled(t *testing.T) {
 	f := newE2EFixtureWithLibrarySample(t)
 	f.Svc.RegisterAdapter(bethesda.New())
-	f.Svc.SetCatalogAdapters(func(appID string) string {
-		if appID == "489830" {
-			return "bethesda"
-		}
-		return ""
+	f.Svc.SetKnownGames(func() []core.KnownGame {
+		return []core.KnownGame{{Slug: "skyrim-se", Name: "Skyrim Special Edition", SteamAppID: "489830", Adapter: "bethesda"}}
 	})
 	f.Game.Launch = &domain.GameLaunch{SteamAppID: "489830"}
 	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))

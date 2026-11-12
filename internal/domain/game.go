@@ -140,6 +140,14 @@ type Game struct {
 	// game writes to. Empty means "derive it" - "steamuser" in a Proton or
 	// umu prefix, else the one user directory besides Public.
 	PrefixUser string `json:"prefix_user,omitempty"`
+	// Catalog is games.yaml's optional `catalog:` (#606): the slug of the
+	// known-games catalog entry this game is (internal/source/steam's
+	// steam-games.yaml, `skyrim-se`), for an install lmm cannot recognise
+	// by its Steam app id or a standard game id - a GOG or Epic copy added
+	// under an id of the user's own. Empty means "recognise it as before".
+	// It is loaded as written; an unknown slug is a verify note, never a
+	// load error. omitempty, so a game that sets none is byte-identical.
+	Catalog string `json:"catalog,omitempty"`
 }
 
 // DeployMode determines how downloaded mod archives are handled

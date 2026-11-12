@@ -34,16 +34,18 @@ func suggestFixture(t *testing.T) (*core.Service, string) {
 		}
 		return core.SteamApp{}, false
 	}))
-	svc.SetCatalogAdapters(func(appID string) string {
-		switch appID {
-		case "489830":
-			return "bethesda"
-		case "999":
-			return "not-registered"
-		}
-		return ""
-	})
+	svc.SetKnownGames(testKnownGames)
 	return svc, install
+}
+
+// testKnownGames is a three-entry catalog: a game with an adapter, one whose
+// adapter this lmm does not register, and one with none.
+func testKnownGames() []core.KnownGame {
+	return []core.KnownGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", SteamAppID: "489830", Adapter: "bethesda"},
+		{Slug: "future-game", Name: "Future Game", SteamAppID: "999", Adapter: "not-registered"},
+		{Slug: "fallout3", Name: "Fallout 3", SteamAppID: "22380"},
+	}
 }
 
 func TestSuggestedAdapter(t *testing.T) {
@@ -67,6 +69,16 @@ func TestSuggestedAdapter(t *testing.T) {
 			&domain.Game{ID: "other", InstallPath: other, Launch: &domain.GameLaunch{SteamAppID: "999"}}, ""},
 		"not a Steam game at all": {
 			&domain.Game{ID: "other", InstallPath: other}, ""},
+		// #606 owner request: `catalog:` says which known game an install
+		// is when nothing else can - a GOG copy under an id of its own.
+		"a catalog entry with an adapter": {
+			&domain.Game{ID: "gog-skyrim", InstallPath: other, Catalog: "skyrim-se"}, "bethesda"},
+		"a catalog entry with no adapter": {
+			&domain.Game{ID: "gog-fo3", InstallPath: other, Catalog: "fallout3"}, ""},
+		"the catalog entry wins over the app id": {
+			&domain.Game{ID: "x", InstallPath: other, Catalog: "fallout3", Launch: &domain.GameLaunch{SteamAppID: "489830"}}, ""},
+		"an unknown catalog slug falls back to the app id": {
+			&domain.Game{ID: "x", InstallPath: other, Catalog: "typo", Launch: &domain.GameLaunch{SteamAppID: "489830"}}, "bethesda"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, tt.want, svc.SuggestedAdapter(tt.game))
@@ -136,12 +148,7 @@ func TestSuggestedAdapter_StatedAppIDSkipsTheLibraryScan(t *testing.T) {
 		scans++
 		return core.SteamApp{}, false
 	}))
-	svc.SetCatalogAdapters(func(appID string) string {
-		if appID == "489830" {
-			return "bethesda"
-		}
-		return ""
-	})
+	svc.SetKnownGames(testKnownGames)
 	for _, g := range []*domain.Game{
 		{ID: "a", InstallPath: t.TempDir(), Launch: &domain.GameLaunch{SteamAppID: "489830"}},
 		{ID: "b", InstallPath: t.TempDir(), SourceIDs: map[string]string{"steamworkshop": "489830"}},
@@ -190,4 +197,82 @@ func TestAdapterSwitchWarning(t *testing.T) {
 	f := findingWithStatus(res.Result, core.VerifyStatusAdapterSuggested)
 	require.NotNil(t, f)
 	assert.Contains(t, f.Note, warning, "the verify note says it too")
+}
+
+// KnownGames lists the registered catalog, by name; nil before the
+// composition root registers one.
+func TestKnownGames(t *testing.T) {
+	svc := newFlowsTestService(t)
+	assert.Nil(t, svc.KnownGames())
+	svc.SetKnownGames(testKnownGames)
+	got := svc.KnownGames()
+	require.Len(t, got, 3)
+	assert.Equal(t, []string{"fallout3", "future-game", "skyrim-se"}, []string{got[0].Slug, got[1].Slug, got[2].Slug})
+}
+
+// A hand-edited `catalog:` that names no entry is a verify note - counted
+// in neither tally, naming the slug and how to see the valid ones - never
+// a load failure (config.LoadGames reads it as written).
+func TestVerify_UnknownCatalogSlugIsANote(t *testing.T) {
+	svc, _ := suggestFixture(t)
+	ctx := context.Background()
+	game := &domain.Game{ID: "gog", Name: "GOG game", InstallPath: t.TempDir(), Catalog: "skyrim-sx"}
+	require.NoError(t, svc.SaveGame(ctx, game))
+
+	res, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	f := findingWithStatus(res.Result, core.VerifyStatusCatalogUnknown)
+	require.NotNil(t, f, "statuses: %v", findingStatuses(res.Result))
+	assert.Contains(t, f.Note, `"skyrim-sx"`)
+	assert.Contains(t, f.Note, "skyrim-se")
+	assert.Contains(t, f.FixableReason, "lmm game edit gog --catalog")
+	assert.Zero(t, res.Result.Issues)
+	assert.Zero(t, res.Result.Warnings)
+
+	game.Catalog = "skyrim-se"
+	require.NoError(t, svc.SaveGame(ctx, game))
+	res, err = svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(res.Result, core.VerifyStatusCatalogUnknown))
+}
+
+// `lmm game edit --catalog` / PUT /api/v1/games/{id}: a known slug is set,
+// "" clears it, and an unknown one is refused by field, naming the valid
+// slugs. With no catalog registered there is nothing to check a slug
+// against, so a slug is refused rather than written unchecked.
+func TestEditGame_Catalog(t *testing.T) {
+	svc, _ := suggestFixture(t)
+	ctx := context.Background()
+	game := &domain.Game{ID: "gog", Name: "GOG game", InstallPath: t.TempDir(), ModPath: t.TempDir()}
+	require.NoError(t, svc.SaveGame(ctx, game))
+
+	set := func(v string) (*core.GameListEntry, error) {
+		return svc.EditGame(ctx, "gog", core.GameEdit{Catalog: &v})
+	}
+	entry, err := set(" skyrim-se ")
+	require.NoError(t, err)
+	assert.Equal(t, "skyrim-se", entry.Catalog)
+
+	_, err = set("skyrim-sx")
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "catalog", specErr.Field)
+	assert.Contains(t, specErr.Reason, "fallout3, future-game, skyrim-se")
+	saved, err := svc.GetGame("gog")
+	require.NoError(t, err)
+	assert.Equal(t, "skyrim-se", saved.Catalog, "a refused edit writes nothing")
+
+	entry, err = set("")
+	require.NoError(t, err)
+	assert.Empty(t, entry.Catalog)
+
+	bare := newFlowsTestService(t)
+	require.NoError(t, bare.SaveGame(ctx, &domain.Game{ID: "gog", Name: "GOG game", InstallPath: t.TempDir(), ModPath: t.TempDir()}))
+	v := "skyrim-se"
+	_, err = bare.EditGame(ctx, "gog", core.GameEdit{Catalog: &v})
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "catalog", specErr.Field)
+	empty := ""
+	_, err = bare.EditGame(ctx, "gog", core.GameEdit{Catalog: &empty})
+	require.NoError(t, err, "clearing needs no catalog")
 }

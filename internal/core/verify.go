@@ -1160,6 +1160,7 @@ func (r *verifyRun) blockedPathsPass(installedMods []domain.InstalledMod, rows [
 // do.
 func (r *verifyRun) adapterPass(installedMods []domain.InstalledMod) {
 	r.adapterSuggestionPass()
+	r.catalogPass()
 	a, err := r.svc.AdapterFor(r.game)
 	if err != nil {
 		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("adapter: %v", err)}, VerifyEvent{})

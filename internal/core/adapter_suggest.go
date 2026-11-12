@@ -17,49 +17,28 @@ import (
 // fixable: lmm does not rewrite a game's adapter, it says how to.
 const VerifyStatusAdapterSuggested = "adapter_suggested"
 
-// CatalogAdapterLookup answers the curated game catalog's `adapter:` for a
-// Steam app id, or "" when the catalog names none.
-type CatalogAdapterLookup func(steamAppID string) string
-
-// SetCatalogAdapters registers how this Service reads the curated game
-// catalog's adapter for a Steam app id. The composition root calls it
-// (internal/app), because the catalog lives in a concrete source core may
-// not import. Until it does, SuggestedAdapter suggests nothing.
-func (s *Service) SetCatalogAdapters(lookup CatalogAdapterLookup) {
-	if lookup == nil {
-		s.catalogAdapters.Store(nil)
-		return
-	}
-	s.catalogAdapters.Store(&lookup)
-}
-
-// SuggestedAdapter returns the adapter the curated catalog names for game's
-// Steam app id when the game does not use it, or "".
+// SuggestedAdapter returns the adapter lmm's game catalog names for game
+// when the game does not use it, or "".
 //
 // It only ever suggests for a game with no `adapter:` key that resolves to
 // the identity: an explicit adapter, `generic-files` included, is the
 // user's choice, and a derived one (BepInEx from a loader) already says
-// what the game is. The app id is the one the launcher reads -
-// launch.steam_app_id, a numeric steamworkshop mapping, or the Steam
-// library holding the install path - and the suggestion must be an adapter
-// this lmm registers.
+// what the game is. The catalog entry is the one the game's `catalog:`
+// names, else the one for its Steam app id (launch.steam_app_id, a numeric
+// steamworkshop mapping, then the Steam library holding the install path),
+// and the suggestion must be an adapter this lmm registers.
 func (s *Service) SuggestedAdapter(game *domain.Game) string {
-	p := s.catalogAdapters.Load()
-	if p == nil || game == nil || game.Adapter != "" {
+	if game == nil || game.Adapter != "" || s.KnownGames() == nil {
 		return ""
 	}
 	if s.AdapterName(game) != adapter.GenericID {
 		return ""
 	}
-	appID := s.gameSteamAppID(game)
-	if appID == "" {
+	k, ok := s.knownGameFor(game)
+	if !ok || k.Adapter == "" || k.Adapter == adapter.GenericID || !slices.Contains(s.ListAdapters(), k.Adapter) {
 		return ""
 	}
-	name := (*p)(appID)
-	if name == "" || name == adapter.GenericID || !slices.Contains(s.ListAdapters(), name) {
-		return ""
-	}
-	return name
+	return k.Adapter
 }
 
 // gameSteamAppID is game's Steam app id as the launcher finds it, or "".

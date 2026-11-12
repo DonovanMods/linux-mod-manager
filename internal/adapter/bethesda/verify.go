@@ -24,10 +24,11 @@ func (*Adapter) Verify(_ context.Context, req adapter.VerifyRequest) ([]adapter.
 		Status: StatusGameUnknown,
 		Note: fmt.Sprintf(
 			"lmm cannot tell which Bethesda game %q is, so it has no plugin rules for it. "+
-				"It recognises a game by the Steam app id games.yaml states (launch.steam_app_id) "+
-				"or by the game ids %s",
+				"It recognises a game by its catalog: entry, the Steam app id games.yaml states (launch.steam_app_id), "+
+				"or the game id - one of %s",
 			req.Game.ID, strings.Join(recognisedSlugs(), ", ")),
-		Severity:      adapter.SeverityNote,
-		FixableReason: "lmm never renames a game; add the game again from `lmm game detect` to get its recognised id",
+		Severity: adapter.SeverityNote,
+		FixableReason: fmt.Sprintf("say which game it is: lmm game edit %s --catalog <entry>, where <entry> is one of %s",
+			req.Game.ID, strings.Join(recognisedSlugs(), ", ")),
 	}}, nil
 }

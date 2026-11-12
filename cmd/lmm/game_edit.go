@@ -103,8 +103,16 @@ Proton prefix, else the one user besides Public). '--prefix ""' and
 '--prefix-user ""' clear them. 'lmm game show' prints the prefix lmm
 resolved and where it came from.
 
+--catalog says which game in lmm's game catalog (the games 'lmm game
+detect' knows) this entry is, by its id - for an install lmm cannot
+recognise by its Steam app id or a standard game id, such as a GOG or Epic
+copy added under an id of your own: '--catalog skyrim-se'. lmm then treats
+it as that game, for example suggesting the adapter the catalog sets it up
+with. An id the catalog does not have is refused with the list of ids it
+does; '--catalog ""' clears it.
+
 --source, --remove-source, --adapter, --mod-path, --install-path,
---curseforge-version-type, --prefix and --prefix-user are one edit: every
+--curseforge-version-type, --prefix, --prefix-user and --catalog are one edit: every
 change is checked before any is written, so a run applies all of them or none. That is also what lets --mod-path and --adapter move a game onto
 bepinex, or off it, in one run.
 
@@ -158,6 +166,11 @@ var (
 	gameEditPrefixSet     bool
 	gameEditPrefixUser    string
 	gameEditPrefixUserSet bool
+
+	// gameEditCatalog/Set are --catalog (#606), Set so `""` reaches the
+	// edit as "clear".
+	gameEditCatalog    string
+	gameEditCatalogSet bool
 )
 
 func init() {
@@ -187,6 +200,8 @@ func init() {
 		`set the game's Wine/Proton prefix, the directory holding drive_c ("" clears it, so lmm uses Steam's compatdata prefix)`)
 	gameEditCmd.Flags().StringVar(&gameEditPrefixUser, "prefix-user", "",
 		`set the Windows user directory under the prefix's drive_c/users ("" clears it, so lmm picks one)`)
+	gameEditCmd.Flags().StringVar(&gameEditCatalog, "catalog", "",
+		`say which game in lmm's game catalog this is, by its id, e.g. skyrim-se ("" clears it)`)
 	markDirectoryFlags(gameEditCmd, "install-path", "mod-path", "prefix")
 }
 
@@ -197,6 +212,7 @@ func runGameEdit(cmd *cobra.Command, args []string) error {
 	gameEditCurseForgeTypesSet = cmd.Flags().Changed("curseforge-version-type")
 	gameEditPrefixSet = cmd.Flags().Changed("prefix")
 	gameEditPrefixUserSet = cmd.Flags().Changed("prefix-user")
+	gameEditCatalogSet = cmd.Flags().Changed("catalog")
 	return withGameWriteService(cmd, args[0], func(ctx context.Context, service *core.Service) error {
 		// Changed("loader") rather than a non-empty value, so `--loader ""`
 		// is an explicit "this game has no loader after all" and reaches
@@ -220,8 +236,8 @@ func runGameEdit(cmd *cobra.Command, args []string) error {
 // asks for more than one rather than picking an order.
 func doGameEditLoader(ctx context.Context, service *core.Service, gameID string, adapterSet bool) error {
 	if len(gameEditSources) > 0 || len(gameEditRemove) > 0 || adapterSet || gameEditModPathSet || gameEditInstallPathSet || gameEditCurseForgeTypesSet ||
-		gameEditPrefixSet || gameEditPrefixUserSet {
-		return fmt.Errorf("edit the loader separately: pass --loader, or --source/--remove-source/--adapter/--mod-path/--install-path/--curseforge-version-type/--prefix/--prefix-user, not both")
+		gameEditPrefixSet || gameEditPrefixUserSet || gameEditCatalogSet {
+		return fmt.Errorf("edit the loader separately: pass --loader, or --source/--remove-source/--adapter/--mod-path/--install-path/--curseforge-version-type/--prefix/--prefix-user/--catalog, not both")
 	}
 
 	spec, err := loaderSpecFromFlags(gameEditLoader, gameEditLoaderVersion, gameEditLoaderRuntime, gameEditLoaderBootstrap)
@@ -267,8 +283,8 @@ func doGameEditLoader(ctx context.Context, service *core.Service, gameID string,
 func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapterSet bool) error {
 	editsSources := len(gameEditSources) > 0 || len(gameEditRemove) > 0
 	if !editsSources && !adapterSet && !gameEditModPathSet && !gameEditInstallPathSet && !gameEditCurseForgeTypesSet &&
-		!gameEditPrefixSet && !gameEditPrefixUserSet {
-		return fmt.Errorf("nothing to edit: pass --source <id>=<identifier>, --remove-source <id>, --adapter <name>, --mod-path <path>, --install-path <dir>, --curseforge-version-type <id>, --prefix <dir>, or --prefix-user <name>")
+		!gameEditPrefixSet && !gameEditPrefixUserSet && !gameEditCatalogSet {
+		return fmt.Errorf("nothing to edit: pass --source <id>=<identifier>, --remove-source <id>, --adapter <name>, --mod-path <path>, --install-path <dir>, --curseforge-version-type <id>, --prefix <dir>, --prefix-user <name>, or --catalog <id>")
 	}
 
 	game, err := service.GetGame(gameID)
@@ -323,6 +339,10 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 	}
 	if gameEditPrefixUserSet {
 		edit.PrefixUser = &gameEditPrefixUser
+	}
+	// #606: core checks the id against lmm's game catalog; "" clears.
+	if gameEditCatalogSet {
+		edit.Catalog = &gameEditCatalog
 	}
 
 	// #606 review fix 1: an adapter's layout applies when a mod is
@@ -404,6 +424,13 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 	if gameEditPrefixSet || gameEditPrefixUserSet {
 		lines = append(lines, "  "+colorDim("run `lmm game show "+entry.ID+"` to see the prefix lmm resolves"))
 	}
+	if gameEditCatalogSet {
+		if entry.Catalog == "" {
+			lines = append(lines, "catalog entry cleared")
+		} else {
+			lines = append(lines, "catalog entry set to "+catalogLabel(service, entry.Catalog))
+		}
+	}
 	for _, line := range lines {
 		if strings.HasPrefix(line, "  ") {
 			fmt.Println(line)
@@ -467,4 +494,15 @@ func sourceMapFromFlags(game *domain.Game) (map[string]string, error) {
 		sources[strings.TrimSpace(id)] = strings.TrimSpace(identifier)
 	}
 	return sources, nil
+}
+
+// catalogLabel is a catalog entry as `lmm game edit` names it: its id, and
+// the game's name beside it when the catalog has the entry.
+func catalogLabel(service *core.Service, slug string) string {
+	for _, k := range service.KnownGames() {
+		if k.Slug == slug {
+			return slug + " (" + k.Name + ")"
+		}
+	}
+	return slug
 }

@@ -137,6 +137,10 @@ type GameConfig struct {
 	// never a load error.
 	Prefix     string `yaml:"prefix,omitempty"`
 	PrefixUser string `yaml:"prefix_user,omitempty"`
+	// Catalog is #606's `catalog:`, the known-games catalog entry the game
+	// is, by slug. omitempty; an unknown slug is a verify note, never a
+	// load error.
+	Catalog string `yaml:"catalog,omitempty"`
 }
 
 // GameLaunchYAML is the YAML representation of how a game is started
@@ -286,6 +290,7 @@ func parseGames(gamesPath string, data []byte) (map[string]*domain.Game, error) 
 			Launch:              launch,
 			Prefix:              ExpandPath(cfg.Prefix),
 			PrefixUser:          cfg.PrefixUser,
+			Catalog:             strings.TrimSpace(cfg.Catalog),
 			Hooks: domain.GameHooks{
 				Install: domain.HookConfig{
 					BeforeAll:  ExpandPath(cfg.Hooks.Install.BeforeAll),
@@ -463,6 +468,7 @@ func gameConfigOf(game *domain.Game) GameConfig {
 		}
 	}
 	cfg.Prefix, cfg.PrefixUser = game.Prefix, game.PrefixUser
+	cfg.Catalog = game.Catalog
 	return cfg
 }
 

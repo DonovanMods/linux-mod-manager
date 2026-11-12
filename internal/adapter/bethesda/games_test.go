@@ -44,6 +44,23 @@ func TestPluginRules_AppIDBeatsSlug(t *testing.T) {
 	assert.Equal(t, "Skyrim VR", spec.AppDataFolders[0].Name)
 }
 
+// #606 owner request: `catalog:` names the known-games catalog entry a game
+// is, and it comes first - before the Steam app id and the game id - which
+// is what makes a GOG or Epic copy under an id of its own recognisable.
+func TestPluginRules_CatalogEntryComesFirst(t *testing.T) {
+	gog := rulesFor(t, &domain.Game{ID: "my-gog-skyrim", Catalog: "skyrim-se"})
+	assert.Equal(t, rulesFor(t, &domain.Game{ID: "skyrim-se"}), gog)
+
+	vr := rulesFor(t, &domain.Game{ID: "skyrim-se", Catalog: "skyrim-vr", Launch: &domain.GameLaunch{SteamAppID: "489830"}})
+	assert.Equal(t, "Skyrim VR", vr.AppDataFolders[0].Name, "the catalog entry beats both the app id and the game id")
+
+	// A catalog entry that is some other game is an answer too: the game
+	// is that one, whatever its id says.
+	_, ok := adapter.PluginRules(New(), &domain.Game{ID: "skyrim-se", Catalog: "witcher3"})
+	assert.False(t, ok)
+	assert.True(t, New().UsesPrefix(&domain.Game{ID: "x", Catalog: "starfield"}))
+}
+
 // A game the adapter cannot identify gets no rules: it never guesses, and
 // in particular it never reads the NexusMods domain, which Skyrim VR and
 // Fallout 4 VR share with Skyrim SE and Fallout 4.
