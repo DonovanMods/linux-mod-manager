@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   choices reproduce the curator's install. It refuses C# scripted
   installers and OMODs rather than running them. Installs start using it
   in a later release (#354).
+- **An all-or-nothing import mode in core (#602).**
+  `ProfileImportOptions.AllOrNothing` makes every acquire failure, not only
+  an answerable one, refuse the whole import with nothing written. No
+  frontend uses it yet; collection import will.
 
 ### Changed
 
@@ -56,13 +60,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of four loose strings. Nothing changes on disk: every cache entry
   keeps exactly the path it has, and a future variant will live beside its
   version as `<version>@<variant>`.
-
-### Added
-
-- **An all-or-nothing import mode in core (#602).**
-  `ProfileImportOptions.AllOrNothing` makes every acquire failure, not only
-  an answerable one, refuse the whole import with nothing written. No
-  frontend uses it yet; collection import will.
 
 ### Fixed
 
