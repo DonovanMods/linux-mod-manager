@@ -27,9 +27,11 @@ the default flag stay on this machine.
 
 .PP
 A collection has a stable id: the first export of a profile records one in
-the profile, and every later export keeps it. --collection-version numbers
-each version you publish. --title, --author, --description and
---instructions add the words a recipient sees before importing.
+the profile, and every later export keeps it. --title, --author,
+--description and --instructions add the words a recipient sees before
+importing, and --collection-version numbers each version you publish. What
+these flags set is saved in the profile, so the next export reuses it and
+you only pass what changes; the version is never raised for you.
 
 .PP
 --json prints the profile document of #309 instead, unchanged.

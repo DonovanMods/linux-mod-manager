@@ -55,13 +55,16 @@ func (e *CollectionExport) Container() ([]byte, error) {
 // collection document, from the profile, its installed rows (for file ids
 // and display names) and the game.
 //
-// It writes once per profile at most (owner ruling, 2026-11-12): a profile
-// with no collection id yet gets one - opts.ID, or a minted random UUID -
-// recorded in its `collection:` block under the op lock with the
-// text-preserving profile save, so every later export keeps the same id. A
-// failure to record it fails the export: a document carrying an id the
-// profile does not remember would start a second identity on the next
-// export.
+// It records what it publishes (owner rulings, 2026-11-12): the profile's
+// `collection:` block is updated to the identity the document carries - a
+// collection id minted on the first export (opts.ID when given), and every
+// metadata field opts sets - so the next export reuses them, and opts only
+// has to name what changes. The version is never bumped automatically: an
+// author raises it (opts.Version) to publish a new one. The write happens
+// only when something changed, under the op lock with the text-preserving
+// profile save, and a failure to make it fails the export: a document
+// carrying an identity the profile does not remember would start a second
+// one on the next export.
 func (s *Service) ExportCollection(ctx context.Context, gameID, profileName string, opts CollectionExportOptions) (*CollectionExport, error) {
 	game, err := s.GetGame(gameID)
 	if err != nil {
@@ -78,19 +81,12 @@ func (s *Service) ExportCollection(ctx context.Context, gameID, profileName stri
 		}
 	}
 
-	if profile.Collection == nil || profile.Collection.ID == "" {
-		id := opts.ID
-		if id == "" {
-			id = newCollectionID()
-		}
-		recorded, err := s.recordCollectionID(ctx, gameID, profileName, id)
+	if want := collectionInfoForExport(profile.Collection, opts); want.ID == "" || !want.Equal(profile.Collection) {
+		recorded, err := s.recordCollectionInfo(ctx, gameID, profileName, opts)
 		if err != nil {
-			return nil, fmt.Errorf("recording the collection id in profile %s: %w", profileName, err)
+			return nil, fmt.Errorf("recording the collection identity in profile %s: %w", profileName, err)
 		}
-		if profile.Collection == nil {
-			profile.Collection = &domain.CollectionInfo{}
-		}
-		profile.Collection.ID = recorded
+		profile.Collection = recorded
 	}
 	info := collectionInfoForExport(profile.Collection, opts)
 	doc := &domain.CollectionDocument{
@@ -122,36 +118,39 @@ func (s *Service) ExportCollection(ctx context.Context, gameID, profileName stri
 	return &CollectionExport{Document: data, Notes: exportNotes(doc)}, nil
 }
 
-// recordCollectionID records id as gameID/profileName's collection id,
-// under the op lock, and returns the id the profile then holds: one another
-// export recorded first wins, so two concurrent first exports agree.
-func (s *Service) recordCollectionID(ctx context.Context, gameID, profileName, id string) (string, error) {
+// recordCollectionInfo records the identity an export with opts publishes
+// as gameID/profileName's collection block, under the op lock, and returns
+// it. The profile is re-read inside the lock, so an id another export
+// recorded first is kept: two concurrent first exports agree.
+func (s *Service) recordCollectionInfo(ctx context.Context, gameID, profileName string, opts CollectionExportOptions) (*domain.CollectionInfo, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer release()
 	pm := s.NewProfileManager()
 	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if profile.Collection != nil && profile.Collection.ID != "" {
-		return profile.Collection.ID, nil
+	info := collectionInfoForExport(profile.Collection, opts)
+	if info.ID == "" {
+		info.ID = newCollectionID()
 	}
-	if profile.Collection == nil {
-		profile.Collection = &domain.CollectionInfo{}
+	if info.Equal(profile.Collection) {
+		return profile.Collection, nil
 	}
-	profile.Collection.ID = id
+	profile.Collection = &info
 	if err := pm.save(profile); err != nil {
-		return "", err
+		return nil, err
 	}
-	return id, nil
+	return &info, nil
 }
 
 // collectionInfoForExport is the identity an export writes: what the
-// profile records, with each metadata field opts sets taking its place.
-// Version starts at 1.
+// profile records, with each field opts sets taking its place. Version
+// starts at 1 and otherwise moves only when opts sets it. The id is left
+// empty when neither has one; recordCollectionInfo mints it.
 func collectionInfoForExport(stored *domain.CollectionInfo, opts CollectionExportOptions) domain.CollectionInfo {
 	var info domain.CollectionInfo
 	if stored != nil {

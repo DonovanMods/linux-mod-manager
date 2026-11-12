@@ -88,10 +88,16 @@ overrides:                   # config files written into the game directory
 | Key                    | Meaning |
 | ---------------------- | ------- |
 | `lmm_collection`       | The format version. `1` for this document. An importer that reads a lower version refuses a higher one ("made by a newer lmm"). |
-| `id`                   | The collection's stable id. The first export of a profile mints a random UUID and records it in the profile, so every later export keeps it. A profile imported from a collection keeps that collection's id. |
-| `version`              | The author's version number for this publish (`--collection-version`). Defaults to the profile's, else 1. |
+| `id`                   | The collection's stable id. The first export of a profile mints a random UUID and records it in the profile, so every later export keeps it. A profile imported from a collection keeps that collection's id; a duplicated profile (`lmm profile duplicate`) is a new collection and mints its own. |
+| `version`              | The author's version number for this publish (`--collection-version`). Defaults to the profile's, else 1. It is never raised automatically. |
 | `name`                 | The profile name. It keeps version 0's meaning so an older lmm imports the document under the same name. An importer that cannot use it as a file name derives one from it or from `title`; `--as` chooses another. |
 | `title`, `author`, `description`, `install_instructions` | The author's words, shown to the recipient before anything is written. |
+
+What an export publishes - the id and every value its flags set - is saved
+in the profile's `collection:` block, so the next export reuses it. The
+save happens only when something changed; if it fails, the export fails. A
+duplicate keeps `title`, `author`, `description`, `install_instructions` and
+`origin` as starting values, and drops `id` and `version`.
 | `game_id`              | The author's local id for the game. A version-1 importer ignores it; an older lmm imports by it. |
 | `game`                 | The portable game identity. An importer matches a local game by `steam_app_id` first, then by any `sources` entry its own game maps to the same id. None, or more than one, needs `--game`. |
 | `requires`             | The features the content needs. Derived by the exporter, never written by hand. |

@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the file). The document adds a stable collection id (minted on a
   profile's first export and recorded in the profile's new `collection:`
   block), the author's metadata (`--title`, `--author`, `--description`,
-  `--instructions`, `--collection-version`), the game's portable identity
+  `--instructions`, `--collection-version`; saved in that block too, so the
+  next export reuses them, and the version is never raised for you), the
+  game's portable identity
   (Steam app id, per-source ids) beside the author's `game_id`, mod display
   names, external items to get by hand, the curator's `origin` (kept
   through re-export, with a note that republishing is your call) and the
@@ -30,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needs a feature this lmm lacks (`CollectionUnsupportedError`). An older
   export imports exactly as before. In the web UI, **Export** downloads a
   `.lmmc`, and **Import** accepts one, with an **Import these hooks** box.
+  `lmm profile duplicate` makes the copy a new collection: no id (its first
+  export mints one) and version reset, keeping the title, author,
+  description, instructions and the curator's credit.
 - **A FOMOD installer engine, not yet wired into installs (#604).** The new
   `internal/fomod` package reads `fomod/ModuleConfig.xml` in any encoding
   real installers use and works out which files a set of installer choices

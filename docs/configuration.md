@@ -600,7 +600,7 @@ It runs once per installation. It does not record a mod switched off afterwards 
 
 The document includes:
 
-- **lmm_collection**, **id**, **version** – The format version, the collection's stable id (minted on a profile's first export and recorded in its `collection:` block) and the author's version number.
+- **lmm_collection**, **id**, **version** – The format version, the collection's stable id (minted on a profile's first export) and the author's version number. The id and every metadata flag an export sets are recorded in the profile's `collection:` block and reused by the next export.
 - **name**, **game_id** – The profile name and the author's local game id, so an older lmm still imports the document.
 - **game** – The portable game identity (Steam app id, per-source game ids) an importer matches against its own games.
 - **mods** – Mod references in load order; each has `source_id`, `mod_id`, optional `version`, `file_ids`, `locked`, `disabled`, `category` (see Per-mod keys above), plus a display `name`.

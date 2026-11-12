@@ -83,7 +83,10 @@ var profileDuplicateCmd = &cobra.Command{
 	Long: `Duplicate a profile as a new one.
 
 The copy is faithful: load order, versions, locks, disabled marks, link
-method, hooks and config overrides all carry over. The new profile is not
+method, hooks and config overrides all carry over. A profile that is an lmm
+collection becomes a new collection: the copy gets its own collection id on
+its first export and starts again at version 1, keeping the title, author,
+description, instructions and the original curator's credit. The new profile is not
 made the active profile, and nothing is downloaded. Its mods are recorded as
 installed but are deployed to the game directory only when you switch to it
 ('lmm profile switch'). Duplicating onto a name another profile already uses
@@ -127,9 +130,11 @@ ids on each source) beside this machine's game id. Your link method and
 the default flag stay on this machine.
 
 A collection has a stable id: the first export of a profile records one in
-the profile, and every later export keeps it. --collection-version numbers
-each version you publish. --title, --author, --description and
---instructions add the words a recipient sees before importing.
+the profile, and every later export keeps it. --title, --author,
+--description and --instructions add the words a recipient sees before
+importing, and --collection-version numbers each version you publish. What
+these flags set is saved in the profile, so the next export reuses it and
+you only pass what changes; the version is never raised for you.
 
 --json prints the profile document of #309 instead, unchanged.
 

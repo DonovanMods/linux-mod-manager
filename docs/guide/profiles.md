@@ -51,6 +51,8 @@ the same mods in the same load order, at the same versions, with the same
 locks, the same disabled mods, and the same settings (link method, hooks and
 config overrides). It is not made the active profile: its mods count as
 installed straight away, and they go into the game when you switch to it.
+If you share the profile as a collection, the copy counts as a new one: it
+keeps the title, description and credits, and starts again at version 1.
 
 ```bash
 lmm profile duplicate coop coop-test
@@ -154,6 +156,9 @@ You can describe the collection for the people you share it with:
 lmm profile export coop -o coop.lmmc --title "Co-op night" \
   --author me --description "What we play on Fridays." --collection-version 2
 ```
+
+lmm remembers these for the profile, so next time you only give what
+changed, such as `--collection-version 3` when you publish an update.
 
 The import shows this before it does anything, along with:
 

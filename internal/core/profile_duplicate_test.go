@@ -200,3 +200,56 @@ func TestDuplicateProfile_CancelledCtxWritesNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, rows)
 }
+
+// TestDuplicateProfile_StartsANewCollection is the owner's ruling of
+// 2026-11-12 (#621): the duplicate is a new collection - no id (its first
+// export mints one) and no version - that keeps the curator's credit and
+// the author's words as starting values.
+func TestDuplicateProfile_StartsANewCollection(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g", Name: "G", ModPath: t.TempDir()}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	origin := &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "abc", Revision: 4, Author: "curator"}
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), &domain.Profile{
+		Name: "src", GameID: "g",
+		Collection: &domain.CollectionInfo{
+			ID: "original", Version: 5, Title: "T", Author: "A", Description: "D", InstallInstructions: "I", Origin: origin,
+		},
+	}))
+
+	_, err := svc.DuplicateProfile(context.Background(), "g", "src", "copy")
+	require.NoError(t, err)
+	copied, err := config.LoadProfile(svc.ConfigDir(), "g", "copy")
+	require.NoError(t, err)
+	require.Equal(t, &domain.CollectionInfo{
+		Title: "T", Author: "A", Description: "D", InstallInstructions: "I",
+		Origin: &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "abc", Revision: 4, Author: "curator"},
+	}, copied.Collection)
+
+	source, err := config.LoadProfile(svc.ConfigDir(), "g", "src")
+	require.NoError(t, err)
+	require.Equal(t, "original", source.Collection.ID, "the source keeps its identity")
+
+	export, err := svc.ExportCollection(context.Background(), "g", "copy", core.CollectionExportOptions{})
+	require.NoError(t, err)
+	doc, err := config.ParseCollection(export.Document)
+	require.NoError(t, err)
+	require.NotEqual(t, "original", doc.Info.ID, "the copy mints its own id")
+	require.NotEmpty(t, doc.Info.ID)
+	require.Equal(t, 1, doc.Info.Version)
+	require.Equal(t, "curator", doc.Info.Origin.Author)
+}
+
+func TestDuplicateProfile_WithoutACollectionHasNone(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g", Name: "G", ModPath: t.TempDir()}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), &domain.Profile{
+		Name: "src", GameID: "g", Collection: &domain.CollectionInfo{ID: "only-an-id", Version: 1},
+	}))
+	_, err := svc.DuplicateProfile(context.Background(), "g", "src", "copy")
+	require.NoError(t, err)
+	copied, err := config.LoadProfile(svc.ConfigDir(), "g", "copy")
+	require.NoError(t, err)
+	require.Nil(t, copied.Collection, "a block holding only the identity leaves nothing to copy")
+}

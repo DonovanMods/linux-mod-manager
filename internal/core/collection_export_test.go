@@ -136,7 +136,7 @@ func TestExportCollection_IDThatCannotBeRecordedFailsTheExport(t *testing.T) {
 
 	_, err = svc.ExportCollection(context.Background(), game.ID, "p", core.CollectionExportOptions{})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "recording the collection id")
+	require.Contains(t, err.Error(), "recording the collection identity")
 }
 
 func TestExportCollection_Container(t *testing.T) {
@@ -149,4 +149,70 @@ func TestExportCollection_Container(t *testing.T) {
 	require.True(t, core.IsCollectionDocument(container))
 	require.True(t, core.IsCollectionDocument(export.Document))
 	require.False(t, core.IsCollectionDocument([]byte("name: p\ngame_id: g\nmods: []\n")), "version 0 is not")
+}
+
+// TestExportCollection_MetadataIsRecordedAndReused is the owner's ruling of
+// 2026-11-12: what an export's flags set is saved in the profile's
+// collection block, the next export reuses it, a flag overrides it (and the
+// override is saved), and the version moves only when the author sets it.
+func TestExportCollection_MetadataIsRecordedAndReused(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g", Name: "G", ModPath: t.TempDir()}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), &domain.Profile{Name: "p", GameID: "g"}))
+	export := func(opts core.CollectionExportOptions) *domain.CollectionDocument {
+		t.Helper()
+		e, err := svc.ExportCollection(context.Background(), game.ID, "p", opts)
+		require.NoError(t, err)
+		doc, err := config.ParseCollection(e.Document)
+		require.NoError(t, err)
+		return doc
+	}
+	saved := func() *domain.CollectionInfo {
+		t.Helper()
+		p, err := config.LoadProfile(svc.ConfigDir(), "g", "p")
+		require.NoError(t, err)
+		return p.Collection
+	}
+
+	first := export(core.CollectionExportOptions{
+		Title: "Night", Author: "me", Description: "Words.", InstallInstructions: "Read me.", Version: 2,
+	})
+	require.Equal(t, first.Info, *saved(), "the profile records exactly what was published")
+
+	again := export(core.CollectionExportOptions{})
+	require.Equal(t, first.Info, again.Info, "a bare export reuses every saved value, version included")
+
+	changed := export(core.CollectionExportOptions{Author: "you"})
+	require.Equal(t, "you", changed.Info.Author)
+	require.Equal(t, 2, changed.Info.Version, "never bumped automatically")
+	require.Equal(t, "Night", changed.Info.Title)
+	require.Equal(t, "you", saved().Author, "the override is saved")
+	require.Equal(t, first.Info.ID, saved().ID)
+
+	bumped := export(core.CollectionExportOptions{Version: 3})
+	require.Equal(t, 3, bumped.Info.Version)
+	require.Equal(t, 3, export(core.CollectionExportOptions{}).Info.Version)
+}
+
+func TestExportCollection_MetadataThatCannotBeRecordedFailsTheExport(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes a read-only file")
+	}
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g", Name: "G", ModPath: t.TempDir()}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), &domain.Profile{
+		Name: "p", GameID: "g", Collection: &domain.CollectionInfo{ID: "kept", Version: 1, Author: "me"},
+	}))
+	path, err := config.ProfilePath(svc.ConfigDir(), "g", "p")
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(path, 0o444))
+
+	_, err = svc.ExportCollection(context.Background(), game.ID, "p", core.CollectionExportOptions{})
+	require.NoError(t, err, "nothing changed, so nothing is written: a read-only profile still exports")
+
+	_, err = svc.ExportCollection(context.Background(), game.ID, "p", core.CollectionExportOptions{Author: "you"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "recording the collection identity")
 }
