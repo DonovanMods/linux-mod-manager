@@ -13,6 +13,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,7 +35,7 @@ func newUnstableService(t *testing.T, unstable bool, catalog ...domain.Mod) (*co
 	}
 	game.SourceIDs = map[string]string{"gonecat": game.ID}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "gonecat", "old", "1.0", "old.pak", []byte("pak")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "gonecat", ModID: "old", Version: "1.0"}, "old.pak", []byte("pak")))
 	return svc, game
 }
 
@@ -134,7 +135,7 @@ func TestAutoRelink_NewerSuccessorKeepsTheInstalledVersionAndItsFiles(t *testing
 	require.Len(t, installed, 1)
 	assert.Equal(t, "new", installed[0].ID)
 	assert.Equal(t, "1.0", installed[0].Version, "the recorded version is the files' version")
-	assert.True(t, svc.GetGameCache(game).Exists(game.ID, "gonecat", "new", "1.0"), "the cache entry carried across")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: "gonecat", ModID: "new", Version: "1.0"}), "the cache entry carried across")
 
 	verify, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, nil)
 	require.NoError(t, err)

@@ -13,6 +13,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -125,7 +126,7 @@ func seedManualOnlyMod(t *testing.T, adoptedInPlace, complete bool) (*core.Servi
 	mod := domain.Mod{ID: "8939586", SourceID: "msrc", Name: "Auctionator", Version: "1.0", GameID: game.ID,
 		SourceURL: "https://example.test/mods/auctionator"}
 	ctx := context.Background()
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "msrc", mod.ID, "1.0", "Auctionator/Auctionator.toc", []byte("## Title: Auctionator")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "msrc", ModID: mod.ID, Version: "1.0"}, "Auctionator/Auctionator.toc", []byte("## Title: Auctionator")))
 	if complete {
 		require.NoError(t, svc.MarkImportedFileCompleteForTest(ctx, game, &mod, "1"))
 	}
@@ -231,7 +232,7 @@ func TestVerify_ManualOnlyMod_StillReportsMissingCache(t *testing.T) {
 	row.FileIDs = nil
 	require.NoError(t, svc.SaveInstalledMod(ctx, row))
 
-	require.NoError(t, svc.GetGameCache(game).Delete(game.ID, "msrc", "8939586", "1.0"))
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: "msrc", ModID: "8939586", Version: "1.0"}))
 	result, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Force: true}, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, findingWithStatus(result, "missing_cache"), "statuses were %v", findingStatuses(result))
@@ -270,7 +271,7 @@ func TestVerifyFix_NoChecksum_SourceRefusesDownload_IncompleteCacheKeepsWarningW
 // The MISSING repair names the page too when its download fails.
 func TestVerifyFix_Missing_DownloadFailure_ShowsThePage(t *testing.T) {
 	svc, game, _ := seedManualOnlyMod(t, false, false)
-	require.NoError(t, svc.GetGameCache(game).Delete(game.ID, "msrc", "8939586", "1.0"))
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: "msrc", ModID: "8939586", Version: "1.0"}))
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), "msrc", "8939586", game.ID, "default", "1", "sum"))
 
 	sink, rec := core.RecordEvents()
@@ -333,7 +334,7 @@ func TestApplyProfileSwitch_RowCopiedFromAnotherProfile_KeepsItsChecksums(t *tes
 	require.NoError(t, err)
 	require.NoError(t, pm.SetDefault(ctx, game.ID, "default"))
 
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "1", "1.0", "plugin.esp", []byte("data")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "1", Version: "1.0"}, "plugin.esp", []byte("data")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: game.ID},
 		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, FileIDs: []string{"f1"},

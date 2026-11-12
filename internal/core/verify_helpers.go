@@ -26,7 +26,7 @@ import (
 func HasRetainedCompileSource(gameCache *cache.Cache, gameID, sourceID, modID, version string, fileIDs []string) bool {
 	retained := false
 	for _, fileID := range fileIDs {
-		retainedPath := gameCache.GetFilePath(gameID, sourceID, modID, version, cache.RetainedSourceName(fileID))
+		retainedPath := gameCache.GetFilePath(cache.Key{GameID: gameID, SourceID: sourceID, ModID: modID, Version: version}, cache.RetainedSourceName(fileID))
 		if _, err := os.Stat(retainedPath); err == nil {
 			retained = true
 			break
@@ -35,7 +35,7 @@ func HasRetainedCompileSource(gameCache *cache.Cache, gameID, sourceID, modID, v
 	if !retained {
 		return false
 	}
-	manifests, err := gameCache.FileManifests(gameID, sourceID, modID, version)
+	manifests, err := gameCache.FileManifests(cache.Key{GameID: gameID, SourceID: sourceID, ModID: modID, Version: version})
 	if err != nil {
 		// Unreadable manifests: don't suppress on the strength of a check
 		// that itself failed (epic98 audit Finding 4's precedent) - the

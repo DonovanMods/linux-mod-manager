@@ -17,6 +17,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,7 +75,7 @@ func seedVerifyMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID,
 	if storeCache {
 		gameCache := svc.GetGameCache(game)
 		for _, fileID := range fileIDs {
-			require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, fileID, []byte("content-"+fileID)))
+			require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, fileID, []byte("content-"+fileID)))
 		}
 	}
 
@@ -525,7 +526,7 @@ func TestVerify_CompileGameStatuses(t *testing.T) {
 	// A pre-#221 pak cache entry: a deployable member on disk, but no
 	// retained source (predates #221's widened ingest) - PakNeedsReingest's
 	// lazy-migration case.
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "legacypak", "1.0", "legacypak.pak", []byte("legacy-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "legacypak", Version: "1.0"}, "legacypak.pak", []byte("legacy-bytes")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "legacypak", SourceID: "fake-compiler", Name: "Legacy Pak", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -537,7 +538,7 @@ func TestVerify_CompileGameStatuses(t *testing.T) {
 
 	// The same pre-#221 shape, but SourceLocal - the note text switches on
 	// this.
-	require.NoError(t, gameCache.Store(game.ID, domain.SourceLocal, "locallegacy", "1.0", "locallegacy.pak", []byte("local-legacy-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: domain.SourceLocal, ModID: "locallegacy", Version: "1.0"}, "locallegacy.pak", []byte("local-legacy-bytes")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "locallegacy", SourceID: domain.SourceLocal, Name: "Local Legacy Pak", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -984,7 +985,7 @@ func newNeedsReingestFixGame(t *testing.T, src source.ModSource, sourceID string
 	require.NoError(t, err)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, sourceID, "legacypak", "1.0", "legacypak.pak", []byte("legacy-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: "legacypak", Version: "1.0"}, "legacypak.pak", []byte("legacy-bytes")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "legacypak", SourceID: sourceID, Name: "Legacy Pak", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -1097,7 +1098,7 @@ func newVersionRepairFixGame(t *testing.T, deployed bool) (*core.Service, *domai
 	svc.RegisterSource(src)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.5", "2", []byte("plugin content")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.5"}, "2", []byte("plugin content")))
 
 	seedVerifyMod(t, svc, game, "test-src", "mod1", "Mod One", "1.5", []string{"2"}, false)
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), "test-src", "mod1", game.ID, "default", "2", "deadbeef"))
@@ -1177,8 +1178,8 @@ func TestVerify_Fix_VersionMismatch_NotDeployed_RepairsCacheAndRecord(t *testing
 	require.Equal(t, "Repaired: 1.5 → 1.0", f.Repair)
 
 	gameCache := svc.GetGameCache(game)
-	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "cache must exist under the effective version")
-	require.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"), "cache must no longer exist under the recorded version")
+	require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}), "cache must exist under the effective version")
+	require.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.5"}), "cache must no longer exist under the recorded version")
 
 	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
@@ -1208,7 +1209,7 @@ func TestVerify_Fix_VersionMismatch_RenameBlocked_NoRelink(t *testing.T) {
 	svc, game := newVersionRepairFixGame(t, true)
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.0", "2", []byte("unvetted 1.0 content")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}, "2", []byte("unvetted 1.0 content")))
 
 	deployedPath := filepath.Join(game.ModPath, "2")
 	preTarget, err := os.Readlink(deployedPath)
@@ -1222,8 +1223,8 @@ func TestVerify_Fix_VersionMismatch_RenameBlocked_NoRelink(t *testing.T) {
 	require.Equal(t, "ok", f.Status)
 	require.Equal(t, "cache entry for 1.0 already exists; left 1.5 in place", f.Note)
 
-	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"), "old cache entry must be left in place")
-	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "pre-existing new cache entry must be left untouched")
+	require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.5"}), "old cache entry must be left in place")
+	require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}), "pre-existing new cache entry must be left untouched")
 
 	postTarget, err := os.Readlink(deployedPath)
 	require.NoError(t, err)
@@ -1267,8 +1268,8 @@ func TestVerify_Fix_VersionMismatch_LockedPrimary_RefusesRepair(t *testing.T) {
 	require.Equal(t, "1.5", mod.Version, "a locked record must not be rewritten by --fix")
 
 	gameCache := svc.GetGameCache(game)
-	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"))
-	require.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "cache must not be renamed to the effective version for a locked mod")
+	require.True(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.5"}))
+	require.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}), "cache must not be renamed to the effective version for a locked mod")
 
 	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
@@ -1707,8 +1708,8 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 	// file_count_mismatch: cache dir exists (still holds the version
 	// directory itself) but is empty despite a recorded non-zero FileIDs
 	// count - the fileCountPrePass fixture.
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "fc-mod", "1.0", "fc-file", []byte("x")))
-	require.NoError(t, os.Remove(gameCache.GetFilePath(game.ID, "fake-compiler", "fc-mod", "1.0", "fc-file")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "fc-mod", Version: "1.0"}, "fc-file", []byte("x")))
+	require.NoError(t, os.Remove(gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "fc-mod", Version: "1.0"}, "fc-file")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "fc-mod", SourceID: "fake-compiler", Name: "FC Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
@@ -1727,7 +1728,7 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 
 	// legacypak: a pre-#221 pak cache entry (deployable member, no retained
 	// source) - the needs_reingest fixture.
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "legacypak", "1.0", "legacypak.pak", []byte("legacy-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: "legacypak", Version: "1.0"}, "legacypak.pak", []byte("legacy-bytes")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "legacypak", SourceID: "fake-compiler", Name: "Legacy Pak", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",

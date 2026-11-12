@@ -119,7 +119,7 @@ func TestVerify_LoaderTier_FixRelaysOutAndRedeploysADeploymentOutsideBepInEx(t *
 	assert.NotNil(t, findingWithStatus(fixed.Result, "fixed_loader_deployed_outside_loader"),
 		"statuses were %v", findingStatuses(fixed.Result))
 
-	cached, err := svc.GetGameCache(game).ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	cached, err := svc.GetGameCache(game).ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	slashed := make([]string, 0, len(cached))
 	for _, c := range cached {
@@ -472,7 +472,7 @@ func siblingsOfCacheEntry(t *testing.T, entry string) []string {
 // first proves nothing about a mixture.
 func TestVerify_LoaderTier_AFailedRelayoutLeavesTheCacheEntryByteIdentical(t *testing.T) {
 	svc, game, mod := stalePreFixJotunn(t)
-	entry := svc.GetGameCache(game).ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	entry := svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	before := cacheEntrySnapshot(t, entry)
 	require.Len(t, before, 2, "the fixture's entry is Jotunn.dll + Jotunn.xml")
 
@@ -521,7 +521,7 @@ func TestVerify_LoaderTier_AFailedRelayoutLeavesTheCacheEntryByteIdentical(t *te
 // a mod that is sitting right there.
 func TestVerify_LoaderTier_FixCarriesTheEntrysBookkeepingAcross(t *testing.T) {
 	svc, game, mod := stalePreFixJotunn(t)
-	entry := svc.GetGameCache(game).ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	entry := svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(entry, "1",
 		[]string{filepath.FromSlash("Jotunn/Jotunn.dll"), filepath.FromSlash("Jotunn/Jotunn.xml")}))
 
@@ -529,7 +529,7 @@ func TestVerify_LoaderTier_FixCarriesTheEntrysBookkeepingAcross(t *testing.T) {
 		core.VerifyOptions{Fix: true, Force: true}, nil)
 	require.NoError(t, err)
 
-	manifests, err := svc.GetGameCache(game).FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+	manifests, err := svc.GetGameCache(game).FileManifests(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	require.Contains(t, manifests, "1", "the completion marker must survive the re-layout")
 	assert.True(t, manifests["1"].Recorded)
@@ -548,7 +548,7 @@ func TestVerify_LoaderTier_FixCarriesTheEntrysBookkeepingAcross(t *testing.T) {
 // Jotunn is a NexusMods download, which is the case that HAS markers.
 func TestVerify_LoaderTier_FixRewritesTheEntrysRecordedMemberManifest(t *testing.T) {
 	svc, game, mod := stalePreFixJotunn(t)
-	entry := svc.GetGameCache(game).ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	entry := svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(entry, "1",
 		[]string{filepath.FromSlash("Jotunn/Jotunn.dll"), filepath.FromSlash("Jotunn/Jotunn.xml")}))
 
@@ -556,7 +556,7 @@ func TestVerify_LoaderTier_FixRewritesTheEntrysRecordedMemberManifest(t *testing
 		core.VerifyOptions{Fix: true, Force: true}, nil)
 	require.NoError(t, err)
 
-	manifests, err := svc.GetGameCache(game).FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+	manifests, err := svc.GetGameCache(game).FileManifests(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	require.Contains(t, manifests, "1")
 	require.True(t, manifests["1"].Recorded)
@@ -573,7 +573,7 @@ func TestVerify_LoaderTier_FixRewritesTheEntrysRecordedMemberManifest(t *testing
 	}, recorded, "the manifest has to name where the members actually are now")
 
 	// ...and the two enumerators the user reads agree with the disk.
-	listed, err := svc.GetGameCache(game).ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	listed, err := svc.GetGameCache(game).ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	require.NoError(t, err)
 	slashedList := make([]string, 0, len(listed))
 	for _, l := range listed {
@@ -654,7 +654,7 @@ func TestVerify_LoaderTier_FixLeavesADisabledProfileAlone(t *testing.T) {
 // entries whose OWN name is reserved would rebuild the directory empty.
 func TestVerify_LoaderTier_FixCarriesAReservedSubtreeWhole(t *testing.T) {
 	svc, game, mod := stalePreFixJotunn(t)
-	entry := svc.GetGameCache(game).ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	entry := svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	reserved := filepath.Join(entry, ".lmm-source-1", "nested")
 	require.NoError(t, os.MkdirAll(reserved, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(reserved, "Jotunn-2.30.0.zip"), []byte("archive"), 0o644))

@@ -24,6 +24,11 @@ from file…** for an update) appears right next to that link:
 1. Click the link and download the file from the mod's page.
 2. Click **Install from file…** and choose the file you downloaded.
 
+If the reason is a free NexusMods account, the message says your account
+isn't Premium. Nothing about the mod itself is wrong, so lmm keeps trying
+to download its updates, and they work as soon as the account (or the API
+key) is Premium.
+
 lmm already knows which mod it is, so it can still tell you about updates
 for it later. In the terminal, the error message prints the full command to
 run, with everything filled in except the file. It looks like this:

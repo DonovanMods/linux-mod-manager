@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,7 +31,7 @@ func TestDoProfileImport_NoInstallGolden(t *testing.T) {
 	// "cached" is installed under another profile: its bytes are here.
 	_, err := getProfileManager(svc).Create(ctx, game.ID, "other")
 	require.NoError(t, err)
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "cached", "1.0", "cached.esp", []byte("c")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "cached", Version: "1.0"}, "cached.esp", []byte("c")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "cached", SourceID: "test-src", Name: "Cached", Version: "1.0", GameID: "g1"},
 		ProfileName: "other", UpdatePolicy: domain.UpdateNotify, Enabled: true,

@@ -19,6 +19,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -842,7 +843,7 @@ func TestDoInstall_DependencyPath_ReinstallPrintsRemovingPreviousInstallation(t 
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "mod1-old.esp", []byte("old")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}, "mod1-old.esp", []byte("old")))
 	deployInstalledMod(t, svc, game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default")
 
 	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Dep One", Version: "1.0", GameID: "g1"}
@@ -928,7 +929,7 @@ func TestDoInstall_DependencyPath_ConflictsNeverBlockStdin(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "mod1.esp", []byte("o")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "other", Version: "1.0"}, "mod1.esp", []byte("o")))
 	deployInstalledMod(t, svc, game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default")
 
 	oldStdin := os.Stdin
@@ -982,7 +983,7 @@ func TestDoInstall_DependencyPath_ConflictsNeverBlockStdin(t *testing.T) {
 // TestService_PlanInstall_ConflictingFilesListsPathAndOwningMod's approach.
 func seedConflictingMod(t *testing.T, svc *core.Service, game *domain.Game) {
 	t.Helper()
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "shared.esp", []byte("o")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "other", Version: "1.0"}, "shared.esp", []byte("o")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "other", SourceID: "test-src", Name: "Other Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
@@ -990,7 +991,7 @@ func seedConflictingMod(t *testing.T, svc *core.Service, game *domain.Game) {
 		Enabled:      true,
 	}))
 	deployInstalledMod(t, svc, game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default")
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "shared.esp", []byte("n")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}, "shared.esp", []byte("n")))
 }
 
 // TestDoInstall_ConflictPrompt_ForceSkipsPrompt guards the conflict prompt
@@ -1034,7 +1035,7 @@ func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 		// reinstall-cache-transaction to roll back - see
 		// InstallOptions.AcceptConflicts' doc comment), but nothing
 		// deployed or saved.
-		assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"), "the download must remain cached on decline, matching base's exact decline state")
+		assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "test-src", ModID: "mod1", Version: "1.0"}), "the download must remain cached on decline, matching base's exact decline state")
 		_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.Error(t, dbErr, "declining must leave zero DB mutations")
 	})
@@ -1107,7 +1108,7 @@ func TestDoInstall_ConflictPrompt_JSONOutputSurfacesConflictError(t *testing.T) 
 func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 	seedOtherOwningSharedFile := func(t *testing.T, svc *core.Service, game *domain.Game) {
 		t.Helper()
-		require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "shared.esp", []byte("original-other-content")))
+		require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "other", Version: "1.0"}, "shared.esp", []byte("original-other-content")))
 		require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 			Mod:          domain.Mod{ID: "other", SourceID: "test-src", Name: "Other Mod", Version: "1.0", GameID: "g1"},
 			ProfileName:  "default",
@@ -1121,7 +1122,7 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 		svc, game, src := setupDoInstallTest(t)
 		installYes = false
 		seedOtherOwningSharedFile(t, svc, game)
-		require.False(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"), "mod1 must never have been cached before this install")
+		require.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "test-src", ModID: "mod1", Version: "1.0"}), "mod1 must never have been cached before this install")
 		src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
 			[]domain.DownloadableFile{{ID: "main", FileName: "shared.esp", IsPrimary: true}})
 		src.AddDownload("main", []byte("new-mod1-content"))
@@ -1144,7 +1145,7 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 		require.Greater(t, conflictIdx, extractIdx)
 		assert.NotContains(t, out, "Deploying to game directory...")
 
-		assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"), "the download must remain cached on decline")
+		assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "test-src", ModID: "mod1", Version: "1.0"}), "the download must remain cached on decline")
 		_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.Error(t, dbErr)
 
@@ -1718,7 +1719,7 @@ func TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall(t *testing.T) {
 
 	// The deployed lock target and its cache must be untouched.
 	assert.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
-	assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"),
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "test-src", ModID: "mod1", Version: "1.0"}),
 		"the lock target's cache entry must survive a fetch failure")
 	installed, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, dbErr)

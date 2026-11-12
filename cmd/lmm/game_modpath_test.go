@@ -17,6 +17,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/spf13/cobra"
@@ -60,7 +61,7 @@ func deployOneFileForTest(t *testing.T, svc *core.Service, game *domain.Game, pr
 	t.Helper()
 	ctx := context.Background()
 	mod := &domain.Mod{ID: modID, SourceID: "nexusmods", Name: "Mod " + modID, Version: "1.0", GameID: game.ID}
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, mod.SourceID, mod.ID, mod.Version, modID+".esp", []byte("x")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, modID+".esp", []byte("x")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod: *mod, ProfileName: profile, UpdatePolicy: domain.UpdateNotify, Enabled: true,
 	}))

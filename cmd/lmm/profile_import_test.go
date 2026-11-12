@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
@@ -104,7 +105,7 @@ func TestDoProfileImport_AllInstalled_PrintsSummaryAndSkipsInstallStep(t *testin
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
 
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("cached")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}, "mod1.esp", []byte("cached")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 		ProfileName:  "target",
@@ -141,7 +142,7 @@ func TestDoProfileImport_InstalledUnderAnotherProfile_AddsItToThisOne(t *testing
 	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("cached")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}, "mod1.esp", []byte("cached")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // recordProfileDisabled writes #431's per-profile off marker onto the
@@ -181,7 +182,7 @@ func (s *Service) enableMod(ctx context.Context, game *domain.Game, profileName,
 		return result, nil
 	}
 
-	if !s.GetGameCache(game).Exists(game.ID, sourceID, modID, mod.Version) {
+	if !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: mod.Version}) {
 		return nil, fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
 	}
 

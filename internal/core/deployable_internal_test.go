@@ -16,9 +16,9 @@ func seedEntry(t *testing.T, files map[string][]byte) (*cache.Cache, string) {
 	t.Helper()
 	c := cache.New(t.TempDir())
 	for name, content := range files {
-		require.NoError(t, c.Store("g", "src", "mod", "1.0", name, content))
+		require.NoError(t, c.Store(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"}, name, content))
 	}
-	return c, c.ModPath("g", "src", "mod", "1.0")
+	return c, c.ModPath(cache.Key{GameID: "g", SourceID: "src", ModID: "mod", Version: "1.0"})
 }
 
 func TestDeployableFiles_AllRecorded_ExcludesUnclaimed(t *testing.T) {

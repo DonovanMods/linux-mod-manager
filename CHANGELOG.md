@@ -21,7 +21,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `develop`, without deploying it, so a change that breaks it shows up
   before a release.
 
+### Changed
+
+- **The mod cache is addressed by one key (#603).** Internal groundwork
+  for FOMOD installer variants: every cache lookup now takes a single key
+  (game, source, mod, version, and a variant that is always empty for now)
+  instead of four loose strings. Nothing changes on disk: every cache entry
+  keeps exactly the path it has, and a future variant will live beside its
+  version as `<version>@<variant>`.
+
 ### Fixed
+
+- **A free NexusMods account's download refusal now says so, and offers the
+  manual download (#601).** NexusMods serves downloads through its API to
+  Premium accounts only. A free account's install or update used to fail
+  with a raw `API error (status 403)`; it now says the account isn't
+  Premium, links the mod's page, and offers **Install from file…** /
+  **Update from file…** in the web UI (`--from-file` in the terminal), as
+  for a mod whose author turned API downloads off. `verify --fix` fills a
+  missing checksum from the cached files for such a mod too. Unlike an
+  author's opt-out, the refusal is not recorded against the mod: it is the
+  account's, so another account's updates still download it. In the
+  `--json` error details and the update batch's failures, this refusal now
+  sets `manual_download: true` (it was `false`), and a new
+  `account_restricted: true` says the account is why.
+  Internally, sources can now report the account's tier (`free`/`premium`)
+  for later plans to use.
 
 - **Setup no longer says `make install` gives a self-updating lmm (#599).**
   The Updates tab, `lmm self-update --help`, the README and the

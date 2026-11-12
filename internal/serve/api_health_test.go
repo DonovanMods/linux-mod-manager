@@ -11,6 +11,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/serve"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -110,7 +111,7 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 	since := time.Now().UTC()
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake", ModID: "boots", Version: "1.0"}, "f1", []byte("content")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID,
@@ -190,7 +191,7 @@ func TestServer_APIHealth_SecondHydrateAnswersFromTheMemo(t *testing.T) {
 	})
 	svc, game := newFixtureServiceWithSource(t, src)
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "fake", ModID: "boots", Version: "1.0"}, "f1", []byte("content")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID,

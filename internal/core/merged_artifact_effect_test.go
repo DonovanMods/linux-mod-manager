@@ -8,6 +8,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +35,7 @@ const mergedArtifactName = "zzz_LMM_Merged_P.pak"
 // nothing to the merged artifact.
 func seedPlainMod(t *testing.T, svc *core.Service, game *domain.Game, modID, fileName string) {
 	t.Helper()
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "fake-compiler", modID, "1.0", fileName, []byte("plain")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "fake-compiler", ModID: modID, Version: "1.0"}, fileName, []byte("plain")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: modID, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",

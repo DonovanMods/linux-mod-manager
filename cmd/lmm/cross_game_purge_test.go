@@ -7,6 +7,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ func TestDoPurge_SaysWhichFilesItLeftForAnotherGame(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, getProfileManager(svc).SetDefault(ctx, other.ID, "default"))
 	for _, g := range []*domain.Game{game, other} {
-		require.NoError(t, svc.GetGameCache(g).Store(g.ID, "src", "shared", "1.0", "shared.esp", []byte(g.ID)))
+		require.NoError(t, svc.GetGameCache(g).Store(cache.Key{GameID: g.ID, SourceID: "src", ModID: "shared", Version: "1.0"}, "shared.esp", []byte(g.ID)))
 		seedSyncInstalledMod(t, svc, g, "src", "shared", "shared", "1.0", "default", true, nil)
 		require.NoError(t, getProfileManager(svc).AddMod(ctx, g.ID, "default", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
 		result, err := svc.DeployProfile(ctx, g, "default", core.DeployOptions{}, nil)

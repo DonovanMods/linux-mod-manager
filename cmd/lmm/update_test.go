@@ -14,6 +14,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -224,7 +225,7 @@ func seedInstalledForUpdate(t *testing.T, svc *core.Service, game *domain.Game, 
 
 	gameCache := svc.GetGameCache(game)
 	for path, content := range files {
-		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, path, content))
 	}
 
 	im := &domain.InstalledMod{
@@ -593,7 +594,7 @@ func TestDoUpdateRollback_Integration_AfterApplySingleUpdate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2.0", updated.Version)
 	require.Equal(t, "1.0", updated.PreviousVersion)
-	require.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"), "the previous version must still be cached for rollback")
+	require.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "test-src", ModID: "mod1", Version: "1.0"}), "the previous version must still be cached for rollback")
 
 	out := captureStdout(t, func() error {
 		return doUpdateRollback(context.Background(), svc, game, "mod1")

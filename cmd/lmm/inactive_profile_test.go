@@ -11,6 +11,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
@@ -68,7 +69,7 @@ func TestDoProfileApply_RefusesANonActiveProfile(t *testing.T) {
 	pm := getProfileManager(svc)
 	_, err := pm.Create(ctx, game.ID, "alt")
 	require.NoError(t, err)
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "m1", "1.0", "m1.esp", []byte("m1")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "m1", Version: "1.0"}, "m1.esp", []byte("m1")))
 	seedSyncInstalledMod(t, svc, game, "src", "m1", "Mod One", "1.0", "alt", false, nil)
 	require.NoError(t, pm.AddMod(ctx, game.ID, "alt", domain.ModReference{SourceID: "src", ModID: "m1", Version: "1.0"}))
 	setFlag(t, &profileApplyYes, true)
@@ -113,7 +114,7 @@ func mixedGameDir(t *testing.T) (*core.Service, *domain.Game) {
 	_, err := pm.Create(ctx, game.ID, "alt")
 	require.NoError(t, err)
 	for _, m := range []struct{ profile, id string }{{"default", "shared"}, {"alt", "shared"}, {"alt", "altonly"}} {
-		require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", m.id, "1.0", m.id+".esp", []byte(m.id)))
+		require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: m.id, Version: "1.0"}, m.id+".esp", []byte(m.id)))
 		seedSyncInstalledMod(t, svc, game, "src", m.id, m.id, "1.0", m.profile, true, nil)
 		require.NoError(t, pm.AddMod(ctx, game.ID, m.profile, domain.ModReference{SourceID: "src", ModID: m.id, Version: "1.0"}))
 	}

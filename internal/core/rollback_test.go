@@ -20,6 +20,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,10 +41,10 @@ func seedRollbackReadyMod(t *testing.T, svc *core.Service, game *domain.Game, so
 
 	gameCache := svc.GetGameCache(game)
 	for path, content := range oldFiles {
-		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, oldVersion, path, content))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: oldVersion}, path, content))
 	}
 	for path, content := range newFiles {
-		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, newVersion, path, content))
+		require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: newVersion}, path, content))
 	}
 
 	oldMod := domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: oldVersion, GameID: game.ID}
@@ -149,7 +150,7 @@ func TestApplyRollbackMissingCache(t *testing.T) {
 		map[string][]byte{"mod1-old.esp": []byte("old-content")},
 		map[string][]byte{"mod1-new.esp": []byte("new-content")})
 
-	require.NoError(t, svc.GetGameCache(game).Delete("g1", "src", "mod1", "1.0"))
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
 	require.NoError(t, err)
@@ -463,7 +464,7 @@ func seedSameVersionRollbackReadyMod(t *testing.T, svc *core.Service, game *doma
 
 	const version = "1.0"
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", version, "mod1-fileA.esp", []byte("A")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: version}, "mod1-fileA.esp", []byte("A")))
 	if withManifests {
 		seedSameVersionManifest(t, svc, game, "src", "mod1", version, "fileA", []string{"mod1-fileA.esp"})
 	}
@@ -492,7 +493,7 @@ func seedSameVersionRollbackReadyMod(t *testing.T, svc *core.Service, game *doma
 
 	// The same-version file-only update: fileB's member lands in the SAME
 	// version dir, superseding fileA's.
-	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", version, "mod1-fileB.esp", []byte("B")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: version}, "mod1-fileB.esp", []byte("B")))
 	if withManifests {
 		seedSameVersionManifest(t, svc, game, "src", "mod1", version, "fileB", []string{"mod1-fileB.esp"})
 	}

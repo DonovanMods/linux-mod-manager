@@ -11,6 +11,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -531,7 +532,7 @@ func TestApplyAdopt_MatchedFile_RecordsFileIDsAndStampsMarker(t *testing.T) {
 	assert.Equal(t, []string{"77"}, installed.FileIDs)
 	assert.True(t, installed.AdoptedInPlace,
 		"adoption keeps its manual-download semantics regardless of file resolution")
-	assert.True(t, svc.GetGameCache(game).HasFileIDs("g1", "acme-source", "42", installed.Version, []string{"77"}),
+	assert.True(t, svc.GetGameCache(game).HasFileIDs(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "42", Version: installed.Version}, []string{"77"}),
 		"the adoption-written cache entry must carry the resolved file's completion marker")
 }
 
@@ -601,7 +602,7 @@ func TestApplyAdopt_DeployCompile_SyncsMergedPak(t *testing.T) {
 	// "merged-pak"/"merged" mirror core's private mergedPakModID/
 	// mergedPakVersion (same convention as merged_pak_hooks_test.go).
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, domain.SourceMerged, "merged-pak", "merged", "zzz_LMM_Merged_P.pak", []byte("merged-bytes")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: "merged-pak", Version: "merged"}, "zzz_LMM_Merged_P.pak", []byte("merged-bytes")))
 
 	// A non-copy game scans mod_path for DIRECTORIES.
 	require.NoError(t, os.MkdirAll(filepath.Join(game.ModPath, "LooseMod-1.0"), 0755))
@@ -614,7 +615,7 @@ func TestApplyAdopt_DeployCompile_SyncsMergedPak(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Adopted)
 
-	assert.False(t, gameCache.Exists(game.ID, domain.SourceMerged, "merged-pak", "merged"),
+	assert.False(t, gameCache.Exists(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: "merged-pak", Version: "merged"}),
 		"adopting a mod must sync the merged pak")
 }
 

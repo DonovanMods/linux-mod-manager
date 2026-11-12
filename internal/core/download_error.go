@@ -32,9 +32,18 @@ type DownloadError struct {
 	ModURL string
 
 	// ManualDownload is true when the source refuses to serve this file
-	// through its API (source.ErrManualDownload): the file has to be
-	// fetched by hand from ModURL, then imported.
+	// through its API: the file has to be fetched by hand from ModURL, then
+	// imported. The refusal is the mod's (source.ErrManualDownload, which
+	// core also records as manual-only, #543) or the account's
+	// (source.ErrAccountRestricted, AccountRestricted below, #601); the
+	// remedy is the same either way.
 	ManualDownload bool
+
+	// AccountRestricted is true when the refusal is the account's, not the
+	// mod's (source.ErrAccountRestricted, #601): a free NexusMods key gets
+	// no API download links at all. ManualDownload is true with it. A
+	// frontend may say why; nothing records it against the mod.
+	AccountRestricted bool
 
 	// FileID and FileName name the file the download was for (#535): the
 	// one a frontend's "Install from file..." expects the hand-downloaded
@@ -60,13 +69,14 @@ func (e *DownloadError) Unwrap() error { return e.Err }
 // only the page.
 func (e *DownloadError) Details() any {
 	d := downloadErrorDetails{
-		SourceID:       e.SourceID,
-		ModID:          e.ModID,
-		ModName:        e.ModName,
-		ModURL:         e.ModURL,
-		ManualDownload: e.ManualDownload,
-		FileID:         e.FileID,
-		FileName:       e.FileName,
+		SourceID:          e.SourceID,
+		ModID:             e.ModID,
+		ModName:           e.ModName,
+		ModURL:            e.ModURL,
+		ManualDownload:    e.ManualDownload,
+		AccountRestricted: e.AccountRestricted,
+		FileID:            e.FileID,
+		FileName:          e.FileName,
 	}
 	var workshop *WorkshopFetchError
 	if errors.As(e.Err, &workshop) {
@@ -84,8 +94,11 @@ type downloadErrorDetails struct {
 	ModName        string `json:"mod_name,omitempty"`
 	ModURL         string `json:"mod_url,omitempty"`
 	ManualDownload bool   `json:"manual_download"`
-	FileID         string `json:"file_id,omitempty"`
-	FileName       string `json:"file_name,omitempty"`
+	// AccountRestricted is omitted unless true (#601), so every document
+	// from before it is byte-for-byte unchanged.
+	AccountRestricted bool   `json:"account_restricted,omitzero"`
+	FileID            string `json:"file_id,omitempty"`
+	FileName          string `json:"file_name,omitempty"`
 }
 
 type workshopDownloadErrorDetails struct {
@@ -114,13 +127,15 @@ func asDownloadError(err error, sourceID string, mod *domain.Mod, file *domain.D
 	if errors.As(err, &typed) && !errors.As(err, &workshop) {
 		return err
 	}
+	restricted := errors.Is(err, source.ErrAccountRestricted)
 	dl := &DownloadError{
-		SourceID:       sourceID,
-		ModID:          mod.ID,
-		ModName:        mod.Name,
-		ModURL:         mod.PageURL(),
-		ManualDownload: errors.Is(err, source.ErrManualDownload),
-		Err:            err,
+		SourceID:          sourceID,
+		ModID:             mod.ID,
+		ModName:           mod.Name,
+		ModURL:            mod.PageURL(),
+		ManualDownload:    restricted || errors.Is(err, source.ErrManualDownload),
+		AccountRestricted: restricted,
+		Err:               err,
 	}
 	if file != nil {
 		dl.FileID, dl.FileName = file.ID, file.FileName

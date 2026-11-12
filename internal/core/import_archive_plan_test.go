@@ -22,6 +22,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -258,7 +259,7 @@ func TestPlanImportArchive_FilesMatchIngest(t *testing.T) {
 			result, err := svc.ApplyImportArchive(context.Background(), game, "default", plan, fx.opts, nil)
 			require.NoError(t, err)
 
-			cached, err := svc.GetGameCache(game).ListFiles(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+			cached, err := svc.GetGameCache(game).ListFiles(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version})
 			require.NoError(t, err)
 			slices.Sort(cached)
 			if cached == nil {
@@ -333,7 +334,7 @@ func TestApplyImportArchive_ConflictRefusalLeavesNoCacheEntry(t *testing.T) {
 	_, err = svc.ApplyImportArchive(context.Background(), game, "default", plan, opts, nil)
 	require.ErrorAs(t, err, new(*core.ConflictError))
 
-	assert.False(t, svc.GetGameCache(game).Exists("g1", "acme-source", "B1", "1.0"),
+	assert.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "B1", Version: "1.0"}),
 		"a refused conflict must remove the cache entry this apply created")
 
 	data, rErr := os.ReadFile(filepath.Join(game.ModPath, "shared.txt"))
@@ -371,14 +372,14 @@ func TestApplyImportArchive_ConflictSetChangedSincePlan_ReturnsErrStalePlan(t *t
 	// between the plan and the apply, and DeployProfile re-syncs the DB's
 	// deployed-file ownership from it exactly as a real redeploy would.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store("g1", "other-src", "A1", "1.0", "shared.txt", []byte("from-A-too")))
+	require.NoError(t, gameCache.Store(cache.Key{GameID: "g1", SourceID: "other-src", ModID: "A1", Version: "1.0"}, "shared.txt", []byte("from-A-too")))
 	_, err = svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 
 	_, err = svc.ApplyImportArchive(context.Background(), game, "default", plan, core.ImportArchiveOptions{}, nil)
 	require.ErrorIs(t, err, core.ErrStalePlan)
 
-	assert.False(t, gameCache.Exists("g1", plan.Mod.SourceID, plan.Mod.ID, plan.Mod.Version),
+	assert.False(t, gameCache.Exists(cache.Key{GameID: "g1", SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID, Version: plan.Mod.Version}),
 		"a stale-conflict refusal must discard the cache entry this apply created")
 
 	mods, mErr := svc.GetInstalledMods(context.Background(), "g1", "default")

@@ -9,6 +9,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,7 +140,7 @@ func TestService_DisableMod_UndeploysEnabledMod(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.True(t, os.IsNotExist(err), "plugin.esp should be removed from the game dir")
 
-	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "1", "1.0"), "cache entry must be preserved")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: "src", ModID: "1", Version: "1.0"}), "cache entry must be preserved")
 
 	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)

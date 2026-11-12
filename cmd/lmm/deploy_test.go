@@ -15,6 +15,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -95,7 +96,7 @@ func setupDoDeployTest(t *testing.T) (*core.Service, *domain.Game) {
 func seedDeployableMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, fileName string) {
 	t.Helper()
 
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", modID, "1.0", fileName, []byte("data")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: modID, Version: "1.0"}, fileName, []byte("data")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",

@@ -29,8 +29,8 @@ func TestInstaller_AnUnreadableOtherGameChangesNothing(t *testing.T) {
 			game := &domain.Game{ID: "sky", ModPath: modPath}
 			modCache := cache.New(t.TempDir())
 			for _, version := range []string{"1.0", "2.0"} {
-				require.NoError(t, modCache.Store("sky", "local", "k", version, "Data/a.esp", []byte("new "+version)))
-				require.NoError(t, modCache.Store("sky", "local", "k", version, "Data/only-"+version+".esp", []byte("only "+version)))
+				require.NoError(t, modCache.Store(cache.Key{GameID: "sky", SourceID: "local", ModID: "k", Version: version}, "Data/a.esp", []byte("new "+version)))
+				require.NoError(t, modCache.Store(cache.Key{GameID: "sky", SourceID: "local", ModID: "k", Version: version}, "Data/only-"+version+".esp", []byte("only "+version)))
 			}
 			live := filepath.Join(modPath, "Data", "a.esp")
 			only := filepath.Join(modPath, "Data", "only-1.0.esp")
@@ -78,7 +78,7 @@ func TestConverge_KeepsAFileAnotherGameRecords(t *testing.T) {
 	sky2 := &domain.Game{ID: "sky2", Name: "Sky 2", ModPath: shared, LinkMethod: domain.LinkCopy, LinkMethodExplicit: true}
 	require.NoError(t, svc.SaveGame(ctx, sky))
 	require.NoError(t, svc.SaveGame(ctx, sky2))
-	require.NoError(t, svc.GetGameCache(sky).Store("sky", "local", "k", "1.0", "k.esp", []byte("k")))
+	require.NoError(t, svc.GetGameCache(sky).Store(cache.Key{GameID: "sky", SourceID: "local", ModID: "k", Version: "1.0"}, "k.esp", []byte("k")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "k", SourceID: "local", Name: "K", Version: "1.0", GameID: "sky"},
 		ProfileName: "default", Enabled: true, Deployed: true, LinkMethod: domain.LinkCopy,

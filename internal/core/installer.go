@@ -393,7 +393,7 @@ func (c *cachedMod) fileFor(st db.DeployedFileState, rel string) string {
 	if c == nil || c.cache == nil || c.method == domain.LinkSymlink || st.SourceID != c.mod.SourceID || st.ModID != c.mod.ID {
 		return ""
 	}
-	path := c.cache.GetFilePath(c.game.ID, c.mod.SourceID, c.mod.ID, c.mod.Version, filepath.FromSlash(rel))
+	path := c.cache.GetFilePath(cache.Key{GameID: c.game.ID, SourceID: c.mod.SourceID, ModID: c.mod.ID, Version: c.mod.Version}, filepath.FromSlash(rel))
 	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
 		return ""
 	}
@@ -636,7 +636,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		return err
 	}
 	// Check if mod is cached
-	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+	if !i.cache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
 		return fmt.Errorf("mod not in cache: %s/%s@%s", mod.SourceID, mod.ID, mod.Version)
 	}
 
@@ -676,7 +676,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		default:
 		}
 
-		srcPath := i.cache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, file)
+		srcPath := i.cache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, file)
 		dstPath := filepath.Join(game.ModPath, file)
 
 		// #445 gate 2, G2-1: another game's file is never replaced. The
@@ -800,10 +800,10 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 	if err := i.refuseStranded(ctx, game); err != nil {
 		return err
 	}
-	if !oldCache.Exists(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version) {
+	if !oldCache.Exists(cache.Key{GameID: game.ID, SourceID: oldMod.SourceID, ModID: oldMod.ID, Version: oldMod.Version}) {
 		return fmt.Errorf("old mod not in cache: %s/%s@%s", oldMod.SourceID, oldMod.ID, oldMod.Version)
 	}
-	if !newCache.Exists(game.ID, newMod.SourceID, newMod.ID, newMod.Version) {
+	if !newCache.Exists(cache.Key{GameID: game.ID, SourceID: newMod.SourceID, ModID: newMod.ID, Version: newMod.Version}) {
 		return fmt.Errorf("new mod not in cache: %s/%s@%s", newMod.SourceID, newMod.ID, newMod.Version)
 	}
 
@@ -811,7 +811,7 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 	if err != nil {
 		return err
 	}
-	oldFiles, err := oldCache.ListFiles(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version)
+	oldFiles, err := oldCache.ListFiles(cache.Key{GameID: game.ID, SourceID: oldMod.SourceID, ModID: oldMod.ID, Version: oldMod.Version})
 	if err != nil {
 		return fmt.Errorf("listing old cached files: %w", err)
 	}
@@ -987,7 +987,7 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 		default:
 		}
 
-		srcPath := newCache.GetFilePath(game.ID, newMod.SourceID, newMod.ID, newMod.Version, file)
+		srcPath := newCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: newMod.SourceID, ModID: newMod.ID, Version: newMod.Version}, file)
 		dstPath := filepath.Join(game.ModPath, file)
 		// #445 gate 2, G2-1: another game's file is never replaced; the
 		// path is still recorded for the new version below, as Install
@@ -1234,13 +1234,13 @@ func resolveSharedDirUpdate(gameID string, oldCache, newCache *cache.Cache, oldM
 	if sameIDSet {
 		return nil, nil, false
 	}
-	oldDir := oldCache.ModPath(gameID, oldMod.SourceID, oldMod.ID, oldMod.Version)
-	newDir := newCache.ModPath(gameID, newMod.SourceID, newMod.ID, newMod.Version)
+	oldDir := oldCache.ModPath(cache.Key{GameID: gameID, SourceID: oldMod.SourceID, ModID: oldMod.ID, Version: oldMod.Version})
+	newDir := newCache.ModPath(cache.Key{GameID: gameID, SourceID: newMod.SourceID, ModID: newMod.ID, Version: newMod.Version})
 	if filepath.Clean(oldDir) != filepath.Clean(newDir) {
 		return nil, nil, false
 	}
 
-	manifests, err := newCache.FileManifests(gameID, newMod.SourceID, newMod.ID, newMod.Version)
+	manifests, err := newCache.FileManifests(cache.Key{GameID: gameID, SourceID: newMod.SourceID, ModID: newMod.ID, Version: newMod.Version})
 	if err != nil {
 		return nil, nil, false // unreadable bookkeeping is absent bookkeeping: union fallback
 	}
@@ -1290,7 +1290,7 @@ func (i *Installer) restoreOldFiles(oldCache *cache.Cache, game *domain.Game, ol
 		file := replacedOrAdded[j]
 		dstPath := filepath.Join(game.ModPath, file)
 		if oldSet[file] {
-			srcPath := oldCache.GetFilePath(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version, file)
+			srcPath := oldCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: oldMod.SourceID, ModID: oldMod.ID, Version: oldMod.Version}, file)
 			if err := i.linker.Deploy(srcPath, dstPath); err != nil {
 				errs = append(errs, fmt.Errorf("restoring %s: %w", file, err))
 			}
@@ -1321,7 +1321,7 @@ func (i *Installer) restoreOldFiles(oldCache *cache.Cache, game *domain.Game, ol
 		if !oldSet[file] {
 			continue
 		}
-		srcPath := oldCache.GetFilePath(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version, file)
+		srcPath := oldCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: oldMod.SourceID, ModID: oldMod.ID, Version: oldMod.Version}, file)
 		dstPath := filepath.Join(game.ModPath, file)
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
 			errs = append(errs, fmt.Errorf("restoring removed %s: %w", file, err))
@@ -1520,7 +1520,7 @@ func replacedLink(path string) bool {
 // (recordedOnly), only a path this profile's deployed_files rows name for
 // the mod is kept: without the adapter, a listing is not proof.
 func (i *Installer) removalPaths(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) ([]string, error) {
-	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := i.cache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	switch {
 	case err != nil && !errors.Is(err, fs.ErrNotExist):
 		return nil, fmt.Errorf("listing cached files: %w", err)
@@ -1576,7 +1576,7 @@ func (i *Installer) onlyRecorded(ctx context.Context, game *domain.Game, mod *do
 // cached file is deployed (partial installs report as not installed).
 func (i *Installer) IsInstalled(ctx context.Context, game *domain.Game, mod *domain.Mod) (bool, error) {
 	// Check if mod is cached first
-	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+	if !i.cache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
 		return false, nil
 	}
 
@@ -1628,7 +1628,7 @@ func (i *Installer) GetConflicts(ctx context.Context, game *domain.Game, mod *do
 	}
 
 	// Check if mod is cached
-	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+	if !i.cache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
 		return nil, fmt.Errorf("mod not in cache: %s/%s@%s", mod.SourceID, mod.ID, mod.Version)
 	}
 
@@ -1696,7 +1696,7 @@ func sortConflicts(conflicts []Conflict) {
 
 // GetDeployedFiles returns the list of files deployed for a mod
 func (i *Installer) GetDeployedFiles(ctx context.Context, game *domain.Game, mod *domain.Mod) ([]string, error) {
-	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+	if !i.cache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
 		return nil, nil
 	}
 

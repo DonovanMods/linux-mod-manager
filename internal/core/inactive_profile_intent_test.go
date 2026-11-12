@@ -21,6 +21,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -192,7 +193,7 @@ func switchedAwaySnapshot(t *testing.T, deployed bool) (*core.Service, *domain.G
 	pm := svc.NewProfileManager()
 	require.NoError(t, pm.SetDefault(ctx, game.ID, "default"))
 
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "alpha", "1.0", "Data/alpha.esp", []byte("alpha v1")))
+	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "alpha", Version: "1.0"}, "Data/alpha.esp", []byte("alpha v1")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "alpha", SourceID: "src", Name: "Alpha", Version: "1.0", GameID: game.ID},
 		ProfileName:  "alt",

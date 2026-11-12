@@ -9,6 +9,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,7 +125,7 @@ func TestApplyUpdateBatch_MergedPakRecompile_ReportsTheMergedRow(t *testing.T) {
 func TestApplyUpdateBatch_MergedPakRecompile_MissingMemberCacheNamesIt(t *testing.T) {
 	ctx := context.Background()
 	svc, game := newStaleMergedPakWithGoneMember(t)
-	require.NoError(t, svc.GetGameCache(game).Delete(game.ID, "catalog", "gone-mod", "1.0"))
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: "catalog", ModID: "gone-mod", Version: "1.0"}))
 
 	plan, err := svc.PlanUpdateBatch(ctx, game, "default", nil)
 	require.NoError(t, err)
@@ -148,7 +149,7 @@ func TestApplyUpdateBatch_MergedPakRecompile_MissingMemberCacheNamesIt(t *testin
 func TestApplyMergedPakRegen_MissingMemberCacheNamesIt(t *testing.T) {
 	ctx := context.Background()
 	svc, game := newStaleMergedPakWithGoneMember(t)
-	require.NoError(t, svc.GetGameCache(game).Delete(game.ID, "catalog", "gone-mod", "1.0"))
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: "catalog", ModID: "gone-mod", Version: "1.0"}))
 
 	_, err := svc.ApplyMergedPakRegen(ctx, game, "default", nil)
 	var missing *core.MergeMemberCacheMissingError
@@ -164,7 +165,7 @@ func TestApplyMergedPakRegen_MissingMemberCacheNamesIt(t *testing.T) {
 func TestVerify_Fix_MergedPakMissingMemberCache_RefusesTheResync(t *testing.T) {
 	ctx := context.Background()
 	svc, game := newStaleMergedPakWithGoneMember(t)
-	require.NoError(t, svc.GetGameCache(game).Delete(game.ID, "catalog", "gone-mod", "1.0"))
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: "catalog", ModID: "gone-mod", Version: "1.0"}))
 	before, err := os.ReadFile(filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak"))
 	require.NoError(t, err)
 

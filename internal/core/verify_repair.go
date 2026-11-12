@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // redownloadModFile re-downloads a single mod file and extracts it to the
@@ -75,8 +76,9 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 // cache rather than a download.
 //
 // A re-download is the usual way, but a file its source will not serve
-// (source.ErrManualDownload - a CurseForge author's third-party opt-out) can
-// never be re-downloaded, so the warning could never clear (#514). For such
+// (source.ErrManualDownload - a CurseForge author's third-party opt-out - or
+// source.ErrAccountRestricted, a free NexusMods account, #601) can never be
+// re-downloaded, so the warning could never clear (#514). For such
 // a file - a row already flagged (see cacheFirst), or one whose re-download
 // was just refused that way - the checksum is computed from the mod's own
 // cache entry instead (fillChecksumFromCache). verify only ever checks a
@@ -99,7 +101,11 @@ func (r *verifyRun) populateChecksum(mod *domain.InstalledMod, fileID string, re
 		}
 	}
 	persisted, err = r.redownloadModFile(r.ctx, mod, fileID, ref)
-	if cacheFirst || !errors.Is(err, source.ErrManualDownload) {
+	// #601: a file the ACCOUNT is refused (a free NexusMods key) can no more
+	// be re-downloaded than one the mod's author opted out of, so it falls
+	// back to the cache the same way - though nothing records it per mod.
+	refused := errors.Is(err, source.ErrManualDownload) || errors.Is(err, source.ErrAccountRestricted)
+	if cacheFirst || !refused {
 		return persisted, false, err
 	}
 	filled, ferr := r.fillChecksumFromCache(mod, fileID)
@@ -120,7 +126,7 @@ func (r *verifyRun) populateChecksum(mod *domain.InstalledMod, fileID string, re
 // failure to store what was computed.
 func (r *verifyRun) fillChecksumFromCache(mod *domain.InstalledMod, fileID string) (bool, error) {
 	gameCache := r.svc.GetGameCache(r.game)
-	if !gameCache.HasFileIDs(r.game.ID, mod.SourceID, mod.ID, mod.Version, []string{fileID}) {
+	if !gameCache.HasFileIDs(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, []string{fileID}) {
 		return false, nil
 	}
 	checksum, err := checksumFromCache(gameCache, r.game.ID, mod.SourceID, mod.ID, mod.Version, fileID)
@@ -330,8 +336,8 @@ func cacheDirExists(path string) (bool, error) {
 func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledMod, effective string) (note string, siblingFailures int, err error) {
 	recorded := mod.Version
 	gameCache := r.svc.GetGameCache(r.game)
-	oldPath := gameCache.ModPath(r.game.ID, mod.SourceID, mod.ID, recorded)
-	newPath := gameCache.ModPath(r.game.ID, mod.SourceID, mod.ID, effective)
+	oldPath := gameCache.ModPath(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: recorded})
+	newPath := gameCache.ModPath(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: effective})
 
 	oldExists, statErr := cacheDirExists(oldPath)
 	if statErr != nil {

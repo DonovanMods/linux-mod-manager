@@ -219,7 +219,7 @@ func seedProfileMod(t *testing.T, svc *core.Service, game *domain.Game, profileN
 	fileID := modID + "-f1"
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, fixtureSourceID, modID, version,
+	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: modID, Version: version},
 		profileModFile(modID), []byte(modID+" payload")))
 	// The per-file completion marker a real download leaves behind. Without
 	// it the entry is only PARTIALLY populated by cache.HasFileIDs' rule -
@@ -227,7 +227,7 @@ func seedProfileMod(t *testing.T, svc *core.Service, game *domain.Game, profileN
 	// #371 included, since P1a review F6) - so the fixture would describe an
 	// interrupted download rather than an installed mod.
 	require.NoError(t, cache.MarkFileCompleteWithMembers(
-		gameCache.ModPath(game.ID, fixtureSourceID, modID, version),
+		gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: modID, Version: version}),
 		fileID, []string{profileModFile(modID)}))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod: domain.Mod{

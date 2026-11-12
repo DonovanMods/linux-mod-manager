@@ -260,7 +260,7 @@ func twoModsDryRunFixture(t *testing.T) deployDryRunFixture {
 // can start from an already-deployed state without running a full deploy.
 func linkDeployedFileForTest(t *testing.T, svc *core.Service, game *domain.Game, modID, fileName string) {
 	t.Helper()
-	versionDir := svc.GetGameCache(game).ModPath(game.ID, "src", modID, "1.0")
+	versionDir := svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: modID, Version: "1.0"})
 	require.NoError(t, os.Symlink(filepath.Join(versionDir, fileName), filepath.Join(game.ModPath, fileName)))
 }
 
@@ -345,7 +345,7 @@ func seedDisabledMod(t *testing.T, svc *core.Service, game *domain.Game, modID, 
 func seedNarrowedStaleCLIMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, stalePath string) {
 	t.Helper()
 	seedDeployableMod(t, svc, game, modID, name, stalePath)
-	versionDir := svc.GetGameCache(game).ModPath(game.ID, "src", modID, "1.0")
+	versionDir := svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: modID, Version: "1.0"})
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "exmodz", nil))
 	require.NoError(t, os.WriteFile(filepath.Join(versionDir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 	require.NoError(t, os.Symlink(filepath.Join(versionDir, stalePath), filepath.Join(game.ModPath, stalePath)))
