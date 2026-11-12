@@ -378,6 +378,23 @@ whether the game's mods have to be compiled into one artifact, and what
   fixes for its own configuration, and each fix silences it. See
   [adapters.md](adapters.md#loader) for the whole rule.
 
+- **`bethesda`**: Bethesda's Creation Engine games — Skyrim Special
+  Edition/Anniversary Edition, Skyrim VR, Fallout 4, Fallout 4 VR,
+  Starfield and Skyrim (2011). `lmm game detect` sets it for those games
+  from Steam. It lays out an archive packed relative to the game folder
+  (one with a `Data/` folder, or SKSE's own archive with its version-named
+  folder) relative to `Data/`, and it carries each game's plugin-order rules
+  for the plugin list to come. A game already in games.yaml is never
+  switched to it: `lmm verify` (an `adapter_suggested` note) and the web
+  UI's game page suggest it, and `lmm game edit <game> --adapter bethesda`
+  sets it. It recognises which game it is by the Steam app id games.yaml
+  states, else by the game id detection gives each game (`skyrim-se`,
+  `skyrim-vr`, `fallout4`, `fallout4-vr`, `starfield`, `skyrim`); a game it
+  cannot identify gets a `bethesda_game_unknown` note in `lmm verify`. A
+  script extender's loader and DLLs and an ENB are recognised as game-folder
+  files, but lmm still deploys them into `Data/` like every other file;
+  deploying them to the game folder is a later release (#629).
+
 The adapters that follow are added in the same tree, so `lmm game list`
 always names what this build actually has:
 

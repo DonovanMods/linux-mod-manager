@@ -33,6 +33,7 @@ under `internal/adapter/` and one registration line — and *nothing* in
 | `icarus` | `adapter: icarus`, or derived from `deploy_mode: compile` | Icarus's compile path: every enabled mod's `.EXMODZ` table diffs (and, with `convert_paks`, its prebuilt `.pak` artifacts) merge against the installed game's own `data.pak` into one artifact. |
 | `bepinex` | `adapter: bepinex`, or derived from a game whose `mod_path` is its install path and that declares `loader: kind: bepinex` **or** has BepInEx installed in its directory | Plugin archive layout, `BepInEx/config/**` seeding, the "this game has no BepInEx" refusal, and verify's loader-installation tier. |
 | `d2r` | `adapter: d2r` only, which Battle.net detection's Diablo II: Resurrected entry sets (#546) | Lays every archive out as `<name>/<name>.mpq/` under the game's `mods` folder, and names the `-mod <name> -txt` the deployed profile needs (`LaunchAdvisor`). |
+| `bethesda` | `adapter: bethesda` only, which Steam detection sets for Skyrim Special Edition/Anniversary Edition, Skyrim VR, Fallout 4, Fallout 4 VR, Starfield and Skyrim (#606) | Lays a game-root-relative archive (a `Data/` folder, SKSE's version-named wrapper) out relative to `Data/`, and carries each game's plugin rules (`PluginOrderer`) and game-root file table (`RootRouter`) for the plugin-order and game-root stories that use them. |
 
 `lmm game list` always names what *this* build actually ships, and
 `lmm game add --adapter` / `lmm game edit --adapter` validate against the
@@ -156,10 +157,12 @@ adapter.
 | --- | --- | --- | --- |
 | `FileRouter` | `RouteFile(g, rel) FileRoute` | `bepinex` | decides link / copy-once / skip, per deployable file |
 | `ArchiveClaimer` | `ClaimArchive(members) (Claim, error)` | `bepinex` | refuses an archive that is unmistakably ANOTHER kind of game's |
-| `Verifier` | `Verify(ctx, req) ([]Finding, error)` | `bepinex` | appends adapter findings to `lmm verify`'s result |
+| `Verifier` | `Verify(ctx, req) ([]Finding, error)` | `bepinex`, `bethesda` | appends adapter findings to `lmm verify`'s result |
 | `MergeCompiler` | 11 methods | `icarus` | the whole merged-artifact compile path |
 | `Preconditioner` | `CheckPreconditions(g, mods) error` | *(none yet)* | refuses a flow before it starts |
 | `LaunchAdvisor` | `LaunchAdvice(g, mods, previous) Advice` | `d2r` | shows the advice as a warning after a deploy (a switch's and an apply's too) and on a launch |
+| `PluginOrderer` | `PluginRules(g) PluginSpec` | `bethesda` | *nothing yet*: the plugin list, sort and `Plugins.txt` write are #616 |
+| `RootRouter` | `RouteRoots(g, files) []DeployRoot`, `RootForModType(g, type) (DeployRoot, bool)` | `bethesda` | *nothing yet*: deploying to `install_path` is #629, and until then a root-routed file deploys under `mod_path` as before |
 
 ### FileRouter
 
@@ -342,6 +345,92 @@ the files and the merged artifact the real run removes.
 Nothing ships an implementation yet; it is the seam for the day something
 needs to refuse a flow on facts about the mods it is about to act on, rather
 than about one archive.
+
+### PluginOrderer
+
+A Bethesda game loads plugin files (`.esm`, `.esp`, `.esl`) in an order the
+user controls, from an active-plugin list in the game's Wine prefix. That
+order is a second axis beside lmm's mod order (design §5,
+[2026-11-10-collections-design.md](plans/2026-11-10-collections-design.md)).
+`PluginRules(g)` answers, as pure data, everything about that list that is a
+fact about the game rather than about the profile: the list's kind
+(`ListAsterisk`: one `Plugins.txt`, `*` for active; `ListTextfile`:
+`Plugins.txt` plus `loadorder.txt`), the AppData folder candidates (with the
+install-directory file that selects a GOG or Epic variant), the plugin
+extensions, the header flag bits, the extensions that imply a master or a
+light plugin, the implicit plugins, the Creation Club files in precedence
+order, extra plugin directories, and the active limits.
+
+An adapter that does not recognise the game answers the zero `PluginSpec`,
+and `adapter.PluginRules` reports that as "no rules": an adapter never
+guesses which game it is looking at. `bethesda` recognises a game by the
+Steam app id games.yaml states (`launch.steam_app_id`, or a numeric
+`steamworkshop` mapping), else by its game id (`skyrim-se`, `skyrim-vr`,
+`fallout4`, `fallout4-vr`, `starfield`, `skyrim`); never by its NexusMods
+domain, which Skyrim VR and Fallout 4 VR share with Skyrim SE and Fallout 4.
+A game it cannot identify gets a `bethesda_game_unknown` verify note.
+
+Core reads the plugin headers itself (`core.ReadPluginHeader`, a
+standard-library TES4 reader) and applies the spec to one with
+`core.ClassifyPlugin`. Nothing else in core consumes `PluginOrderer` yet;
+#616 adds the profile's plugin list, the sort and the write.
+
+### RootRouter
+
+A Bethesda game's `mod_path` is `Data/`, but some mods belong beside the
+game's executable: a script extender's loader and DLLs, an ENB. `FileRoute`
+is unchanged; the answer comes from a separate capability, a `DeployRoot`
+per file (`RootModPath`, the zero value, or `RootInstallPath`).
+
+- `RouteRoots(g, files)` answers for every file of ONE mod's cache entry at
+  once, because some rules are about the whole mod: an ENB preset is
+  recognised by its top-level `enbseries.ini`, and then all of it belongs at
+  the game root.
+- `RootForModType(g, type)` answers for a mod whose kind was stated rather
+  than detected: a Vortex mod type, as a NexusMods collection records it.
+  `bethesda` maps `""` (Vortex's default) to `mod_path`, and `dinput` (the
+  type Vortex's script-extender installer sets) and `enb` to `install_path`.
+
+**Core does not honour it yet.** Deploying outside `mod_path` means the
+deploy, every removal path, converge, verify, purge, conflict detection and
+the `deployed_files` record all learning a second root, and that is #629.
+Until it lands, a file routed to `RootInstallPath` deploys under `mod_path`
+exactly as it did before #606 (`TestRootInstallPathStillDeploysUnderModPath`
+pins it).
+
+### The `bethesda` adapter's facts, and where each comes from
+
+libloadorder, esplugin, libloot and Vortex are GPL; lmm is MIT. They were
+read for **facts** (file names, flag bits, implicit plugin lists, limits);
+no code was copied. A value no readable source confirmed is left out.
+
+| Fact | Value | Source |
+| --- | --- | --- |
+| List kind | asterisk: SSE/AE, Skyrim VR, Fallout 4, Fallout 4 VR, Starfield; textfile: Skyrim | libloadorder `src/game_settings.rs` (`load_order_method`) |
+| List file | `Plugins.txt` (the games read the capitalised name) | libloadorder `plugins_file_path` |
+| Order file | `loadorder.txt`, beside `Plugins.txt`, UTF-8 without a BOM (Skyrim only) | libloadorder `doc/src/textfile_standard.md` |
+| AppData folders | `Skyrim Special Edition` (`… GOG` when `Galaxy64.dll`, `… EPIC` when `EOSSDK-Win64-Shipping.dll` is in the game directory), `Skyrim VR`, `Fallout4` (`Fallout4 EPIC`), `Fallout4VR`, `Starfield`, `Skyrim` | libloadorder `appdata_folder_name` |
+| Implicit plugins | SSE: `Skyrim.esm`, `Update.esm`, `Dawnguard.esm`, `HearthFires.esm`, `Dragonborn.esm`; VR adds `SkyrimVR.esm`; FO4: `Fallout4.esm`, `DLCRobot.esm`, `DLCworkshop01.esm`, `DLCCoast.esm`, `DLCworkshop02.esm`, `DLCworkshop03.esm`, `DLCNukaWorld.esm`, `DLCUltraHighResolution.esm`; FO4 VR: `Fallout4.esm`, `Fallout4_VR.esm`; Starfield: `Starfield.esm`, `Constellation.esm`, `OldMars.esm`, `ShatteredSpace.esm`, `SFBGS003/004/006/007/008/00D/047/050.esm`; Skyrim: `Skyrim.esm` | libloadorder `*_HARDCODED_PLUGINS` |
+| Implicitly active, no fixed position | Skyrim: `Update.esm` | libloadorder `implicitly_active_plugins` |
+| CCC files, in precedence order | `Skyrim.ccc`, `Fallout4.ccc` in the game directory; Starfield: `My Games/Starfield/Starfield.ccc`, then the game directory's (the first that exists wins, even when empty) | libloadorder `ccc_file_paths` |
+| Extra plugin directory | Starfield: `My Games/Starfield/Data` | libloadorder `additional_plugins_directories` |
+| Header | TES4 record, 24-byte header; `MAST` subrecords name the masters | esplugin `src/record.rs`, `src/plugin.rs` |
+| Master flag | `0x1`; `.esm`/`.esl` imply master for SSE, FO4 and Starfield only | esplugin `is_master_file` |
+| Light flag | `0x200` (SSE, FO4 and their VR editions), `0x100` (Starfield); `.esl` implies light | esplugin `is_light_flag_set`; libloadorder `src/enums.rs` (VR read as SSE/FO4) |
+| Starfield medium / update / blueprint flags | `0x400` / `0x200` / `0x800`; the update flag stops `.esl` implying light | esplugin `is_medium_flag_set`, `is_update_flag_set`, `is_blueprint_plugin` |
+| Delisted by the game | Starfield: blueprint plugins and names starting `BlueprintShips-` | libloadorder `src/load_order/asterisk_based.rs` |
+| Limits | 255 full (one fewer for each of the light and medium classes in use), 4096 light, 256 medium (Starfield) | libloadorder `doc/src/active_plugins.md`, `src/load_order/writable.rs`, `src/load_order/mutable.rs` |
+| Script extender files at the game root | top-level `.dll`/`.exe` named `skse64_*`, `skse_*`, `sksevr_*`, `f4se_*`, `f4sevr_*`, `sfse_*` | each extender's readme (skse.silverlock.org; github.com/ianpatt/f4se, /sfse; github.com/Neanka/f4sevr); SKSEVR's build targets (github.com/Odie/sksevr-mirror) |
+| ENB and dinput8 at the game root | a top-level `enbseries.ini` or `dinput8.dll` takes the whole mod; `d3d11.dll` and `enbseries/` on their own | Vortex `extensions/modtype-enb`, `extensions/modtype-dinput`; the collections design §4 |
+| Vortex mod types | `""` deploys to `Data`, `dinput` and `enb` to the game directory | Vortex `extensions/games/game-skyrimse` (`queryModPath`), `modtype-dinput`, `modtype-enb`, `script-extender-installer` |
+| Steam app ids | 489830, 611670, 377160, 611660, 1716740, 72850 | store.steampowered.com `appdetails` |
+| NexusMods domains | the VR editions have none of their own (`skyrimspecialedition`, `fallout4`) | the NexusMods `v1/games.json` list |
+
+Left out: the Microsoft Store variants (they do not run on Linux), Enderal,
+the INI `sTestFile` overrides, and `d3dcompiler_46e.dll` / `enblocal.ini` as
+ENB files on their own (enbdev.com, the only source, refuses scripted
+readers; an ENB preset's `enbseries.ini` still carries them to the game
+root).
 
 ## Composition with the rest of `games.yaml`
 

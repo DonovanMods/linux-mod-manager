@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A `bethesda` game adapter for Skyrim SE/AE, Skyrim VR, Fallout 4,
+  Fallout 4 VR, Starfield and Skyrim (#606).** `lmm game detect` now sets
+  `adapter: bethesda` for those games from Steam, and finds Skyrim VR and
+  Fallout 4 VR, which it did not know before. The adapter lays out archives
+  packed relative to the game folder (a `Data/` folder, or SKSE's own
+  archive) into `Data/`, and carries each game's plugin-order rules (where
+  `Plugins.txt` lives, implicit plugins, master/light/medium header flags,
+  the 255/4096/256 active limits) for the plugin list to come (#616). A
+  game already in games.yaml is never switched: `lmm verify` prints an
+  `adapter_suggested` note and the web UI's game page offers a **Use the
+  bethesda adapter** button (`GameStatus` gains `suggested_adapter`, omitted
+  when empty). Core gains a standard-library reader for plugin headers
+  (`.esm`/`.esp`/`.esl` flags and masters). Script extender and ENB files
+  are recognised as game-folder content, but still deploy into `Data/`
+  until #629.
 - **A FOMOD installer engine, not yet wired into installs (#604).** The new
   `internal/fomod` package reads `fomod/ModuleConfig.xml` in any encoding
   real installers use and works out which files a set of installer choices

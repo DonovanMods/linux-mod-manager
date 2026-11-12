@@ -279,6 +279,33 @@ w3:
   launch_code: W3
 ```
 
+## Bethesda games
+
+Skyrim Special Edition (and Anniversary Edition), Skyrim VR, Fallout 4,
+Fallout 4 VR, Starfield and Skyrim (2011) use the `bethesda` adapter. When
+`lmm game detect` adds one from Steam it sets that for you. It lays out
+archives packed relative to the game folder, such as SKSE's, into `Data/`,
+and it knows each game's plugin rules for the plugin list to come.
+
+A game you added before lmm knew this keeps the adapter it has: lmm never
+changes it by itself. Mission Control shows a note offering the `bethesda`
+adapter, with a **Use the bethesda adapter** button, and `lmm verify`
+prints the same suggestion. In the terminal:
+
+```bash
+lmm game edit skyrim-se --adapter bethesda
+```
+
+For a copy from GOG or Epic, add the game by hand with one of these game
+ids so lmm knows which game it is: `skyrim-se`, `skyrim-vr`, `fallout4`,
+`fallout4-vr`, `starfield` or `skyrim`.
+
+{: .note }
+A script extender's loader (`skse64_loader.exe` and its DLLs) and an ENB
+belong in the game folder itself, not in `Data/`. lmm recognises them but
+still deploys them into `Data/` for now, so copy those few files into the
+game folder by hand.
+
 ## Games from other stores
 
 For every other store, adding the game by hand works the same as for any
