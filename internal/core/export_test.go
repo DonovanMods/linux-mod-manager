@@ -28,7 +28,7 @@ func (s *Service) DownloadModForTest(ctx context.Context, sourceID string, game 
 		return nil, err
 	}
 	defer release()
-	return s.downloadMod(ctx, sourceID, game, mod, file, sink)
+	return s.downloadMod(ctx, sourceID, game, mod, file, fomodInput{}, sink)
 }
 
 // NewDownloaderWithoutBackoffForTest is NewDownloader with the retry backoff

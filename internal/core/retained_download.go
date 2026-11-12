@@ -157,7 +157,8 @@ var errAcquireBlocked = errors.New("the apply was refused before anything was wr
 // precondition, or a blocked Apply.
 func retainsDownload(err error) bool {
 	var loaderErr *LoaderRequiredError
-	return errors.As(err, &loaderErr) || errors.Is(err, errAcquireBlocked)
+	var fomodErr *FomodChoicesRequiredError
+	return errors.As(err, &loaderErr) || errors.As(err, &fomodErr) || errors.Is(err, errAcquireBlocked)
 }
 
 // retainBlocked keeps an acquired, uncommitted network download for the

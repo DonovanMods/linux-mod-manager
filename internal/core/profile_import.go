@@ -545,6 +545,13 @@ type ProfileImportOptions struct {
 	// outcome that looks like it worked; an ordinary import leaves it
 	// false and keeps per-mod failure counting.
 	AllOrNothing bool
+
+	// Fomod answers FOMOD installer questions (#614), keyed by
+	// domain.ModKey, as InstallOptions.Fomod does. A mod with no entry
+	// installs with the choices its imported reference records. An import
+	// with an unanswered installer refuses with *FomodChoicesRequiredError
+	// (the result's FomodChoicesRequired), nothing written.
+	Fomod map[string]domain.FomodChoices
 }
 
 // ProfileImportResult reports the outcome of ApplyImport. As with every other
@@ -608,6 +615,11 @@ type ProfileImportResult struct {
 	// error envelope for a single mod, naming every mod that needs the
 	// loader, with the setup steps both frontends render.
 	LoaderRequired *LoaderRequiredError `json:"loader_required,omitempty"`
+	// FomodChoicesRequired is the FOMOD question behind Refused, when the
+	// refusal includes one (#614): the question document for every mod
+	// whose installer needs answers, which the frontend answers and sends
+	// back in the Apply's Options.Fomod.
+	FomodChoicesRequired *FomodChoicesRequiredError `json:"fomod_choices_required,omitempty"`
 }
 
 // ApplyImport executes a plan produced by PlanImport. With nothing to
@@ -728,7 +740,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		n:      total,
 		key:    func(i int) string { return domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID) },
 		acquire: func(ctx context.Context, i int) (*importStaged, *acquireFailure) {
-			st, failure := s.acquireImportItem(ctx, game, plan, toInstall[i], Scope{Op: OpImport, Index: i + 1, Total: total}, result, emit, failed)
+			st, failure := s.acquireImportItem(ctx, game, plan, toInstall[i], Scope{Op: OpImport, Index: i + 1, Total: total}, opts.Fomod, result, emit, failed)
 			key := domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID)
 			switch {
 			case st != nil:

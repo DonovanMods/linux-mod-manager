@@ -96,6 +96,10 @@ type ServiceConfig struct {
 type DownloadModResult struct {
 	FilesExtracted int    `json:"files_extracted"` // Number of files extracted
 	Checksum       string `json:"checksum"`        // MD5 hash of downloaded archive
+
+	// fomod is the FOMOD resolve step's outcome when the file was an
+	// installer (#614), for the flow to record; nil otherwise.
+	fomod *fomodResolved
 }
 
 // Service is the application facade every frontend talks to.
@@ -1580,20 +1584,33 @@ func (s *Service) SourceCapabilities(sourceID string) (source.Capabilities, erro
 // (verify_test.go) now seeds the same "cached, no checksum" state through
 // PlanInstall/ApplyInstall with InstallOptions.SkipVerify; internal/core's
 // own fixtures use the DownloadModForTest shim (export_test.go).
-func (s *Service) downloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
-	return s.downloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, sink)
+//
+// fx is what a FOMOD installer in the file is installed with (#614). When
+// the file is one, mod.Variant becomes the resolved tree's variant, so a
+// mod's later files commit into the same entry and the caller's row names
+// it; the result carries the choices to record.
+func (s *Service) downloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, sink EventSink) (result *DownloadModResult, err error) {
+	return s.downloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, fx, sink)
 }
 
 // downloadModToCache fetches file into gameCache: acquire then commit, back
 // to back (acquire.go). Any failure comes back as a *DownloadError carrying
 // the mod's page (#513), with the failure's own text.
-func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (*DownloadModResult, error) {
-	a, err := s.acquireFile(ctx, gameCache, sourceID, game, mod, file, sink)
+func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, sink EventSink) (*DownloadModResult, error) {
+	a, err := s.acquireFile(ctx, gameCache, sourceID, game, mod, file, fx, sink)
 	if err != nil {
 		return nil, err
 	}
 	defer a.release()
-	return s.commitAcquired(ctx, a)
+	res, err := s.commitAcquired(ctx, a)
+	if err != nil {
+		return nil, err
+	}
+	if a.fomod != nil {
+		res.fomod = a.fomod
+		mod.Variant = a.fomod.variant
+	}
+	return res, nil
 }
 
 // ingestLocalToCache copies a local mod (directory or archive) into the
@@ -1601,7 +1618,7 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 // acquireLocal for the checksum each kind records. sink receives the
 // archive's download-time warnings (#425) and may be nil.
 func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, localPath string, sink EventSink) (*DownloadModResult, error) {
-	a, err := s.acquireLocal(ctx, gameCache, game, mod, file, localPath, sink)
+	a, err := s.acquireLocal(ctx, gameCache, game, mod, file, localPath, fomodInput{}, sink)
 	if err != nil {
 		return nil, err
 	}

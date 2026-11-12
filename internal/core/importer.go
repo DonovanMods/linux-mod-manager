@@ -22,6 +22,11 @@ type ImportOptions struct {
 	SourceID    string // Explicit source (empty = auto-detect or "local")
 	ModID       string // Explicit mod ID (empty = auto-detect or generate)
 	ProfileName string // Target profile
+
+	// fomod is what a FOMOD installer in the archive is installed with
+	// (#614); the zero value records no choices. Set by the service flows
+	// that know the target profile and the caller's answers.
+	fomod fomodInput
 }
 
 // ImportResult contains the outcome of importing a local mod
@@ -42,6 +47,10 @@ type ImportResult struct {
 	// from the staleness fingerprint on both sides of the comparison. Empty
 	// for every other deploy mode.
 	RetainedFileID string `json:"retained_file_id,omitempty"`
+
+	// fomod is the FOMOD resolve outcome when the archive was an installer
+	// (#614): Mod.Variant is its variant, and the flow records its choices.
+	fomod *fomodResolved
 }
 
 // Importer handles importing mods from local archive files
@@ -86,6 +95,11 @@ type Importer struct {
 	// it nil and makes no such refusal, exactly as it makes none of the
 	// other Service-scoped checks.
 	claimArchive func(game *domain.Game, modName string, members []string) error
+	// resolveFomod is the FOMOD resolve step (#614), run on the extracted
+	// tree before the adapter's layout. Nil for a standalone NewImporter,
+	// which has no service to run it with: such an archive is cached as
+	// extracted, as before.
+	resolveFomod func(mod *domain.Mod, archiveName, tree string, in fomodInput) (*fomodResolved, error)
 }
 
 // NewImporter creates a new Importer that stages extraction in the OS temp
@@ -110,6 +124,7 @@ func (s *Service) newImporter(game *domain.Game) *Importer {
 	imp.stagingRoot = s.stagingRoot()
 	imp.resolveMergeCompiler = s.adapterCompiler
 	imp.claimArchive = s.requireAdapterClaim
+	imp.resolveFomod = s.resolveFomod
 	imp.log = s.logger()
 	// #353: a resolution failure here (a games.yaml naming an adapter this
 	// build does not ship) is reported by the flow's own AdapterFor call,
@@ -195,6 +210,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	var modName string
 	var fileCount int
 	var retainedFileID string
+	var resolved *fomodResolved
 
 	// #256: whether filename is the game's NATIVE merge format
 	// (mc.IsNativeMergeSource - the seam-routed successor to core's static
@@ -358,6 +374,15 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		// caller can reach the ingest without planning first (#359). It
 		// lands before the cache commit, so nothing is deployed and nothing
 		// is recorded.
+		// #614: a FOMOD installer becomes the tree its choices install,
+		// after the name is derived (the plan names it from the archive)
+		// and before the adapter lays it out.
+		if i.resolveFomod != nil {
+			if resolved, err = i.resolveFomod(&domain.Mod{ID: modID, SourceID: sourceID, Name: modName, Version: version, GameID: game.ID}, filename, extractedPath, opts.fomod); err != nil {
+				return nil, err
+			}
+		}
+
 		layout, err := i.layoutExtracted(game, modName, extractedPath)
 		if err != nil {
 			return nil, err
@@ -366,8 +391,12 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			i.log.Warn(w, "archive", filename, "game", game.ID)
 		}
 
-		// Move extracted files to cache, stamped as this key's entry (#614).
+		// Move extracted files to cache, stamped as this key's entry (#614),
+		// a FOMOD's under its resolved variant.
 		entryKey := cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}
+		if resolved != nil {
+			entryKey.Variant = resolved.variant
+		}
 		cachePath := i.cache.ModPath(entryKey)
 		if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
 			return nil, fmt.Errorf("creating cache directory: %w", err)
@@ -407,6 +436,9 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		Version:  version,
 		GameID:   game.ID,
 	}
+	if resolved != nil {
+		mod.Variant = resolved.variant
+	}
 
 	return &ImportResult{
 		Mod:            mod,
@@ -414,6 +446,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		LinkedSource:   sourceID,
 		AutoDetected:   autoDetected,
 		RetainedFileID: retainedFileID,
+		fomod:          resolved,
 	}, nil
 }
 

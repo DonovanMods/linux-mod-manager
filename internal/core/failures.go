@@ -60,6 +60,10 @@ func refusalCode(err error) string {
 	if errors.As(err, &loaderErr) {
 		return RefusalLoaderRequired
 	}
+	var fomodErr *FomodChoicesRequiredError
+	if errors.As(err, &fomodErr) {
+		return RefusalFomodChoicesRequired
+	}
 	return RefusalOther
 }
 

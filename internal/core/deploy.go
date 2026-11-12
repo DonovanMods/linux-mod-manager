@@ -1066,6 +1066,12 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	// not in cache" even though the download just succeeded.
 	fetchedMod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload)
 
+	// #614: a FOMOD mod's tree is rebuilt from the profile's recorded
+	// choices - the same tree only if they still fit and name the row's
+	// own variant, which is checked after the download.
+	fx := s.replayInput(ctx, game, mod.ProfileName, mod.SourceID, mod.ID)
+	fetchedMod.Variant = mod.Variant
+
 	var checksums []fileChecksum // #372 - saved at the end of this function
 	for _, file := range filesToDownload {
 		if err := ctx.Err(); err != nil {
@@ -1086,7 +1092,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 			}
 			emit(DownloadEvent{Scope: scope, Phase: DeployDownloading, Percent: d.Percent})
 		}
-		downloadResult, err := s.downloadMod(ctx, mod.SourceID, game, fetchedMod, file, progressFn)
+		downloadResult, err := s.downloadMod(ctx, mod.SourceID, game, fetchedMod, file, fx, progressFn)
 		if err != nil {
 			reason := fmt.Sprintf("download failed: %v", err)
 			emit(ModEvent{Scope: scope, Phase: DeployDownloadFailed, Detail: reason})
@@ -1094,6 +1100,9 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 			return true
 		}
 		checksums = appendChecksum(checksums, file.ID, downloadResult)
+	}
+	if fetchedMod.Variant != mod.Variant {
+		return skip(ReasonFomodReanswer)
 	}
 
 	emit(StepEvent{Scope: scope, Phase: DeployDownloadDone})

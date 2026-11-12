@@ -551,6 +551,12 @@ func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName str
 			}
 			profile.Mods[i].Version = mod.Version
 			profile.Mods[i].FileIDs = mod.FileIDs
+			// #614: an install of a FOMOD records the choices it was
+			// installed with; every other write passes none and keeps the
+			// recorded ones, as it keeps Disabled and Category below.
+			if !mod.Fomod.IsZero() {
+				profile.Mods[i].Fomod = mod.Fomod
+			}
 			// Preserve Locked marker on in-place update (#97: survives UpsertMod).
 			// Do not modify Locked; it is only changed via explicit lock/unlock operations.
 			//

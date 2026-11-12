@@ -619,6 +619,13 @@ type UpdateOptions struct {
 	Force bool
 	// SkipHooks: run no hooks even when hooks are configured (the CLI's --no-hooks).
 	SkipHooks bool
+	// Fomod answers FOMOD installer questions (#614), keyed by
+	// domain.ModKey, as InstallOptions.Fomod does. Without an answer, an
+	// update installs with the mod's recorded choices; when those no longer
+	// fit the new version's installer it refuses with
+	// *FomodChoicesRequiredError, nothing written and the download kept. The
+	// update BATCH never asks: it skips such a mod (ReasonFomodReanswer).
+	Fomod map[string]domain.FomodChoices
 }
 
 // UpdateStatus classifies the outcome an UpdateApplyResult reports - the
@@ -730,6 +737,12 @@ type UpdateApplyResult struct {
 	// result document is byte-identical to what it was before.
 	ManualOnly bool   `json:"manual_only,omitzero"`
 	ModURL     string `json:"mod_url,omitzero"`
+	// FomodReanswer marks a batch item skipped because the mod's recorded
+	// FOMOD installer choices no longer fit the new version's installer
+	// (#614): Reason is ReasonFomodReanswer. The update batch and
+	// automatic updates never ask a question; the user answers them and
+	// updates the mod on its own. omitzero.
+	FomodReanswer bool `json:"fomod_reanswer,omitzero"`
 }
 
 // ErrModLocked reports an update apply refused because the profile ref is
@@ -1013,6 +1026,12 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 
 	var downloadedFileIDs []string
 	var checksums []fileChecksum // #372 - saved after applyModUpdate below
+	// #614: a FOMOD mod's new version installs with this run's answers,
+	// else its recorded choices; the tree they resolve to is the new
+	// variant, and its choices (with the new installer's config hash) are
+	// recorded.
+	fx := s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod)
+	var resolved *fomodResolved
 	for _, file := range filesToDownload {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -1027,9 +1046,12 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 			}
 			emit(DownloadEvent{Scope: scope, Phase: UpdateDownloading, Percent: d.Percent})
 		}
-		downloadResult, err := s.downloadMod(ctx, mod.SourceID, game, newMod, file, progressFn)
+		downloadResult, err := s.downloadMod(ctx, mod.SourceID, game, newMod, file, fx, progressFn)
 		if err != nil {
 			return result, fmt.Errorf("downloading update: %w", err)
+		}
+		if downloadResult.fomod != nil {
+			resolved = downloadResult.fomod
 		}
 		checksums = appendChecksum(checksums, file.ID, downloadResult)
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
@@ -1046,6 +1068,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 		hooks:     hooks,
 		runner:    runner,
 		hookCtx:   hookCtx,
+		fomod:     resolved,
 	}, opts, result, emit)
 	return result, err
 }
@@ -1070,6 +1093,9 @@ type updateCommit struct {
 	hooks     *ResolvedHooks
 	runner    *HookRunner
 	hookCtx   HookContext
+	// fomod is the new version's FOMOD resolve outcome (#614), recorded on
+	// the profile ref; nil when it is not an installer.
+	fomod *fomodResolved
 }
 
 // commitUpdate is the update flow from "the new files are cached" to the
@@ -1177,7 +1203,7 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	}
 
 	pm := s.NewProfileManager()
-	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: effectiveVersion, FileIDs: downloadedFileIDs}
+	modRef := withFomod(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: effectiveVersion, FileIDs: downloadedFileIDs}, c.fomod)
 	if err := pm.UpsertMod(ctx, game.ID, profileName, modRef); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)

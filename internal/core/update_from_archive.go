@@ -56,6 +56,12 @@ type UpdateFromArchiveOptions struct {
 	Force bool
 	// SkipHooks runs no hooks (`--no-hooks`).
 	SkipHooks bool
+	// Fomod answers FOMOD installer questions (#614), keyed by
+	// domain.ModKey, as InstallOptions.Fomod does; without an answer the
+	// mod's recorded choices replay. An installer they do not fit fails the
+	// update with *FomodChoicesRequiredError before anything is cached.
+	// Apply-time only.
+	Fomod map[string]domain.FomodChoices
 }
 
 // ArchiveMatch classifies how an archive's name relates to the files the
@@ -663,7 +669,11 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 	}
 
 	ident := importIdentity{sourceID: mod.SourceID, modID: mod.ID, version: plan.ToVersion}
-	importOpts := ImportOptions{SourceID: mod.SourceID, ModID: mod.ID, ProfileName: profileName}
+	importOpts := ImportOptions{SourceID: mod.SourceID, ModID: mod.ID, ProfileName: profileName,
+		// #614: the new version's installer replays the recorded choices,
+		// unless this call answers it.
+		fomod: s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod),
+	}
 	imported, err := s.newImporter(game).importWithIdentity(ctx, plan.Archive, game, importOpts, ident)
 	if err != nil {
 		return result, fmt.Errorf("import failed: %w", err)
@@ -671,6 +681,7 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 
 	newMod := mod.Mod
 	newMod.Version = plan.ToVersion
+	newMod.Variant = imported.Mod.Variant
 	fileIDs := slices.Clone(plan.FileIDs)
 	// #197 C1: a DeployCompile merge source is retained under its own
 	// filename, and a row that does not record it is invisible to every
@@ -694,9 +705,10 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 		hooks:     hooks,
 		runner:    runner,
 		hookCtx:   hookContextFor(game),
+		fomod:     imported.fomod,
 	}, UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks}, result, emit)
 	if err != nil {
-		s.discardUpdateArchiveEntry(game, plan, warn)
+		s.discardUpdateArchiveEntry(game, plan, newMod.Variant, warn)
 		return result, err
 	}
 	if plan.sourceManualOnly {
@@ -710,7 +722,7 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 // it found it. It leaves an entry that pre-existed the plan, and one the row
 // records after all (a compensation that itself failed): deleting that would
 // strand the deployment it backs.
-func (s *Service) discardUpdateArchiveEntry(game *domain.Game, plan *UpdateFromArchivePlan, warn func(string, ...any)) {
+func (s *Service) discardUpdateArchiveEntry(game *domain.Game, plan *UpdateFromArchivePlan, variant string, warn func(string, ...any)) {
 	if plan.entryPreExists {
 		return
 	}
@@ -719,7 +731,7 @@ func (s *Service) discardUpdateArchiveEntry(game *domain.Game, plan *UpdateFromA
 	if row, err := s.GetInstalledMod(ctx, mod.SourceID, mod.ID, game.ID, mod.ProfileName); err != nil || row.Version == plan.ToVersion {
 		return
 	}
-	if err := s.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: plan.ToVersion}); err != nil && !errors.Is(err, context.Canceled) {
+	if err := s.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: plan.ToVersion, Variant: variant}); err != nil && !errors.Is(err, context.Canceled) {
 		s.logger().Warn("removing failed update's cache entry", "mod", mod.ID, "version", plan.ToVersion, "err", err)
 		warn("could not remove the failed update's cache entry %s@%s: %v", mod.ID, plan.ToVersion, err)
 	}

@@ -11,7 +11,6 @@ import (
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // importStaged is one import item between its acquire and its commit.
@@ -29,6 +28,9 @@ type importStaged struct {
 	mod     *domain.Mod
 	fileIDs []string
 	files   []*acquiredFile
+	// fomod is the mod's FOMOD resolve outcome (#614), recorded on its
+	// ref; nil when it is not an installer.
+	fomod *fomodResolved
 }
 
 // recordImportFailure counts one failed import item, as the single loop
@@ -47,7 +49,7 @@ func recordImportFailure(result *ProfileImportResult, ref domain.ModReference, n
 // Installing line) and COUNTED only when it settles, so an import the
 // engine refuses counts nothing. failed receives the reason of every
 // failure, for the refused document.
-func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan *ImportPlan, ref domain.ModReference, scope Scope, result *ProfileImportResult, emit func(Event), failed map[string]string) (*importStaged, *acquireFailure) {
+func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan *ImportPlan, ref domain.ModReference, scope Scope, answers map[string]domain.FomodChoices, result *ProfileImportResult, emit func(Event), failed map[string]string) (*importStaged, *acquireFailure) {
 	scope.Mod = &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID}
 	emit(ModEvent{Scope: scope, Phase: ImportModInstalling})
 
@@ -116,8 +118,18 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	// member names that match no DownloadableFile). Deploying from cache
 	// matters most for exactly this flow's drift convergence: a
 	// downgrade's archived file may have vanished upstream.
+	//
+	// #614: a FOMOD mod's entry is the variant its choices - this run's
+	// answers, else the imported reference's - name (fomodVariant).
+	fx := s.fomodInputFor(ctx, game, plan.Profile.Name, &ref, ref.SourceID, ref.ModID, answers)
 	gameCache := s.GetGameCache(game)
-	if gameCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}, st.fileIDs) {
+	warmKey := modCacheKey(game.ID, *mod)
+	warmKey.Variant = fomodVariant(fx.choices)
+	if gameCache.HasFileIDs(warmKey, st.fileIDs) {
+		if warmKey.Variant != "" {
+			mod.Variant = warmKey.Variant
+			st.fomod = &fomodResolved{variant: warmKey.Variant, choices: fx.choices}
+		}
 		return st, nil
 	}
 	for _, file := range filesToDownload {
@@ -135,7 +147,7 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 			}
 			emit(DownloadEvent{Scope: st.scope, Phase: ImportDownloading, Percent: d.Percent})
 		}
-		a, err := s.acquireFile(ctx, gameCache, ref.SourceID, game, mod, file, progressFn)
+		a, err := s.acquireFile(ctx, gameCache, ref.SourceID, game, mod, file, fx, progressFn)
 		if err != nil {
 			f := fail(fmt.Sprintf("download failed: %v", err), err)
 			// The mod's earlier files go with the failure, so a refusal
@@ -148,6 +160,13 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 		st.files = append(st.files, a)
 	}
 	emit(StepEvent{Scope: st.scope, Phase: ImportDownloadDone})
+	resolved, err := unifyFomod(mod, st.files)
+	if err != nil {
+		f := fail(err.Error(), err)
+		f.release = s.releaseFilesFunc(st.files)
+		return nil, f
+	}
+	st.fomod = resolved
 	return st, nil
 }
 
@@ -222,7 +241,7 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 		emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
 	}
 
-	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: st.fileIDs}
+	modRef := withFomod(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: st.fileIDs}, st.fomod)
 	if cerr := s.recordImportedRef(ctx, pm, game.ID, profileName, modRef, scope, result, emit); cerr != nil {
 		return cerr
 	}
@@ -268,6 +287,10 @@ func refusedImport(plan *ImportPlan, toInstall []domain.ModReference, refused *A
 	var loaderErr *LoaderRequiredError
 	if errors.As(refused, &loaderErr) {
 		result.LoaderRequired = loaderErr
+	}
+	var fomodErr *FomodChoicesRequiredError
+	if errors.As(refused, &fomodErr) {
+		result.FomodChoicesRequired = fomodErr
 	}
 	return &ProfileImportIncompleteError{Profile: plan.Profile.Name, Result: result, refusal: refused}
 }

@@ -863,8 +863,19 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			// cache entry for an extracted archive holds member names that
 			// match no DownloadableFile, so a name-based check would miss
 			// every archive-based mod and redownload a complete cache.
+			//
+			// #614: a FOMOD mod's entry is the variant the target ref's
+			// recorded choices name, and a download replays them.
 			var checksums []fileChecksum // #372 - saved after the DB row below
-			if !s.GetGameCache(game).HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}, downloadedFileIDs) {
+			fx := s.fomodInputFor(ctx, game, plan.To, &ref, ref.SourceID, ref.ModID, nil)
+			var resolved *fomodResolved
+			mod.Variant = refVariant(&ref)
+			if s.GetGameCache(game).HasFileIDs(modCacheKey(game.ID, *mod), downloadedFileIDs) {
+				if mod.Variant != "" {
+					resolved = &fomodResolved{variant: mod.Variant, choices: ref.Fomod}
+				}
+			} else {
+				mod.Variant = ""
 				downloadFailed := false
 				for _, file := range filesToDownload {
 					progressFn := func(e Event) {
@@ -877,7 +888,10 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 						}
 						emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
 					}
-					downloadResult, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn)
+					downloadResult, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, fx, progressFn)
+					if err == nil && downloadResult.fomod != nil {
+						resolved = downloadResult.fomod
+					}
 					if err != nil {
 						// Not fail(): SwitchDownloadFailed renders this
 						// mod's Error line already.
@@ -954,7 +968,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				emit(WarningEvent{Scope: scope, Phase: SwitchInstallWarning, Message: msg})
 			}
 
-			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
+			modRef := withFomod(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}, resolved)
 			if err := completeProfileWrite(ctx, func(ctx context.Context) error {
 				return pm.UpsertMod(ctx, game.ID, plan.To, modRef)
 			}); err != nil {

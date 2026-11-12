@@ -542,6 +542,8 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 	}
 
 	mod.Version = domain.EffectiveInstalledVersion(mod.Version, selected) // #94
+	// #614: a FOMOD mod's entry is the variant its recorded choices name.
+	mod.Variant = refVariant(&entry.Ref)
 
 	entry.Mod = mod
 	entry.Files = selected
@@ -909,7 +911,15 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			fileIDs := profileApplyFileIDs(entry.Files)
 
 			var checksums []fileChecksum // #372 - saved after the DB row below
+			// #614: a cached FOMOD entry is the recorded choices' tree; a
+			// download replays them and records what it resolved.
+			var resolved *fomodResolved
+			if entry.Cached && mod.Variant != "" {
+				resolved = &fomodResolved{variant: mod.Variant, choices: entry.Ref.Fomod}
+			}
 			if !entry.Cached {
+				mod.Variant = ""
+				fx := s.fomodInputFor(ctx, game, plan.Profile, &entry.Ref, entry.Ref.SourceID, entry.Ref.ModID, nil)
 				downloadFailed := false
 				for _, file := range entry.Files {
 					progressFn := func(e Event) {
@@ -922,7 +932,10 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 						}
 						emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
 					}
-					downloadResult, err := s.downloadMod(ctx, entry.Ref.SourceID, game, mod, file, progressFn)
+					downloadResult, err := s.downloadMod(ctx, entry.Ref.SourceID, game, mod, file, fx, progressFn)
+					if err == nil && downloadResult.fomod != nil {
+						resolved = downloadResult.fomod
+					}
 					if err != nil {
 						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: fmt.Sprintf("download failed: %v", err)})
 						// Cannot use fail(): SwitchDownloadFailed above already
@@ -980,7 +993,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 				warn(scope, SwitchInstallWarning, msg)
 			}
 
-			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
+			modRef := withFomod(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}, resolved)
 			if err := pm.UpsertMod(ctx, game.ID, plan.Profile, modRef); err != nil {
 				// v2 Phase 3 Task 18: UpsertMod's own ctx.Err() guard can now
 				// be what makes this call fail, so a cancellation must stay
