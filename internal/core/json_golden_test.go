@@ -14,6 +14,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -2412,6 +2413,13 @@ func TestJSONGoldens(t *testing.T) {
 			// #592: the user category a copy carries.
 			"copy_mod_entry_category",
 			core.CopyModEntry{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3", Category: "Favourites"},
+		},
+		{
+			// #614: the recorded FOMOD choices a copy carries.
+			"copy_mod_entry_fomod",
+			core.CopyModEntry{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3",
+				Fomod: domain.FomodChoices{ConfigSHA256: "ab12", Steps: []fomod.StepChoice{{Name: "Main Files",
+					Groups: []fomod.GroupChoice{{Name: "Texture Resolution", Choices: []fomod.OptionChoice{{Name: "2K", Idx: 1}}}}}}}},
 		},
 		{
 			"copy_mod_skip",

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,6 +33,24 @@ var updateJSONGoldens = flag.Bool("update-json-goldens", false, "rewrite interna
 // fixedTime is the sample timestamp every golden with a time.Time field
 // uses, so a golden diff is never just "the clock moved."
 var fixedTime = time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+
+// sampleFomodChoices is a recorded choice set with every shape a golden
+// should pin: two same-named options told apart by index, and a group
+// answered with nothing picked.
+func sampleFomodChoices() domain.FomodChoices {
+	second := 1
+	return domain.FomodChoices{
+		ConfigSHA256: "9f2c4e1d0b8a7c6e5f4d3c2b1a0918273645546372819a0b1c2d3e4f5a6b7c8d",
+		Steps: []fomod.StepChoice{{
+			Name: "Main Files",
+			Groups: []fomod.GroupChoice{
+				{Name: "Texture Resolution", Choices: []fomod.OptionChoice{{Name: "2K", Idx: 1}}},
+				{Name: "Patches", Choices: []fomod.OptionChoice{{Name: "USSEP", Idx: 0}, {Name: "USSEP", Idx: 2, Index: &second}}},
+				{Name: "Extras", Choices: []fomod.OptionChoice{}},
+			},
+		}},
+	}
+}
 
 func TestJSONGoldens(t *testing.T) {
 	endorsements := int64(500)
@@ -87,6 +106,16 @@ func TestJSONGoldens(t *testing.T) {
 			// above), present when set.
 			"mod_reference_category",
 			domain.ModReference{SourceID: "nexusmods", ModID: "12345", Version: "2.0.0", Category: "User Interface"},
+		},
+		{
+			// #614: recorded FOMOD choices, in Vortex's choices shape plus
+			// lmm's optional index, beside the installer's config hash.
+			"mod_reference_fomod",
+			domain.ModReference{SourceID: "nexusmods", ModID: "12604", Version: "2.0.0", FileIDs: []string{"37471"}, Fomod: sampleFomodChoices()},
+		},
+		{
+			"fomod_choices",
+			sampleFomodChoices(),
 		},
 		{
 			// #592: the source's category id (category) beside its name.

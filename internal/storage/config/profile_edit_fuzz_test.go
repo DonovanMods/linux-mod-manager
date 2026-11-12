@@ -87,6 +87,13 @@ var markerFuzzSeeds = []string{
 	"name: p\ngame_id: g\nmods: []\n",
 	"name: p\ngame_id: g\nbase: &base {source_id: s, mod_id: a}\nmods:\n  - *base\n",
 	"name: default\ngame_id: g1\nmods:\n    - source_id: nexusmods\n      mod_id: \"1\"\n      version: \"1.0\"\n      file_ids:\n        - \"10\"\n        - \"11\"\n    - source_id: nexusmods\n      mod_id: \"2\"\n      version: \"2.0\"\n      locked: true\nis_default: true\n",
+	// #614: a nested fomod block, last in its reference and in the middle,
+	// in block and flow style, with comments inside it.
+	"name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: a\n    fomod:\n      config_sha256: ab # c\n      steps:\n        - name: Main\n          groups:\n            - name: G\n              choices:\n                - name: O\n                  idx: 0\n                  # deep\n  - source_id: s\n    mod_id: b\n",
+	"name: p\ngame_id: g\nmods:\n  - source_id: s\n    fomod:\n        config_sha256: ab\n        steps: []\n    mod_id: a\n    disabled: false\n",
+	"name: p\ngame_id: g\nmods:\n  - {source_id: s, mod_id: a, fomod: {config_sha256: ab, steps: [{name: \"\", groups: [{name: G, choices: []}]}]}}\n",
+	"name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: a\n    fomod: {config_sha256: ab, steps: []}\n",
+	"name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: a\n    fomod:\n",
 }
 
 // FuzzMarkModsDisabled is F1's property test over the in-place editor. For

@@ -37,6 +37,9 @@ func (in *Installer) Rel(member string) (string, bool) {
 // and "FOMOD/moduleconfig.xml", or wrappers "A/" and "a/"), are
 // ErrAmbiguous: which one an archive tool would extract is not knowable.
 //
+// Members Evaluate would drop as unsafe (Result.UnsafeMembers) are skipped
+// here too, so Root is always a safe relative prefix.
+//
 // It returns (nil, nil) for an archive that is not an installer, and
 // ErrScripted for an OMOD (by its .omod name, or its config + .crc members)
 // or for fomod/script.cs with no ModuleConfig.xml beside it. An archive
@@ -54,6 +57,13 @@ func Locate(archiveName string, members []string) (*Installer, error) {
 	scripted, omodConfig, omodCRC := false, false, false
 
 	for _, member := range members {
+		// A member Evaluate would drop (resolve.go's unsafeMember: a ".."
+		// segment, an absolute or drive-letter path, a NUL) is never a
+		// candidate either, so it can neither become Root ("../") nor make
+		// a sound installer ErrAmbiguous (#614).
+		if unsafeMember(member) {
+			continue
+		}
 		m := normalizeMember(member)
 		if m == "" || strings.HasSuffix(m, "/") {
 			continue

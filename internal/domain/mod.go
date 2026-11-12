@@ -166,6 +166,14 @@ type ModReference struct {
 	// written before the field existed is byte-identical.
 	Category string `yaml:"category,omitempty" json:"category,omitempty"`
 
+	// Fomod is the mod's recorded FOMOD installer choices (#614), user
+	// intent like Disabled and Category: it lives in the profile document
+	// and travels with export/import/duplicate/copy. The zero value means
+	// none are recorded, and both encodings omit it (FomodChoices.IsZero),
+	// so every profile file and document written before the field existed is
+	// byte-identical. An older lmm drops the key when it rewrites the file.
+	Fomod FomodChoices `yaml:"fomod,omitempty" json:"fomod,omitzero"`
+
 	// External and UpdatedAt are DISPLAY facts a plan document carries so a
 	// renderer never has to print Version raw (#365, part of #269).
 	//

@@ -55,6 +55,10 @@ type ModReferenceConfig struct {
 	// Category is the #592 user category; `omitempty` for the same reason
 	// as Disabled - a file with no user category is unchanged.
 	Category string `yaml:"category,omitempty"`
+	// Fomod is the #614 recorded FOMOD choices, a nested block; omitted
+	// when none are recorded (domain.FomodChoices.IsZero), so a file with
+	// none is unchanged.
+	Fomod domain.FomodChoices `yaml:"fomod,omitempty"`
 }
 
 // parseProfileHooks converts YAML hooks to domain types, tracking which were explicitly set
@@ -241,6 +245,7 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 			Locked:   m.Locked,
 			Disabled: m.Disabled,
 			Category: m.Category,
+			Fomod:    m.Fomod,
 		}
 	}
 

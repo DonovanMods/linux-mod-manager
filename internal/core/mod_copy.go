@@ -35,8 +35,8 @@ type CopyModRequest struct {
 
 // CopyModEntry is one mod a CopyModPlan copies: the destination's ref will
 // carry this Version and these FileIDs (the source row's - what the cache
-// holds), and the source ref's Locked and Disabled markers and user
-// Category.
+// holds), and the source ref's Locked and Disabled markers, user Category
+// and recorded FOMOD choices.
 type CopyModEntry struct {
 	SourceID string   `json:"source_id"`
 	ModID    string   `json:"mod_id"`
@@ -52,6 +52,10 @@ type CopyModEntry struct {
 	// Category is the source ref's user category (#592), which the copy
 	// carries like the lock: user intent about that mod. omitempty.
 	Category string `json:"category,omitempty"`
+	// Fomod is the source ref's recorded FOMOD installer choices (#614),
+	// carried like the category: they are what the copied files were built
+	// from. omitzero.
+	Fomod domain.FomodChoices `json:"fomod,omitzero"`
 	// AlreadyListed reports that the destination lists this mod already,
 	// at ExistingVersion. ApplyCopyMod refuses it with ModAlreadyListedError
 	// unless CopyModOptions.Replace is set - or, in an All copy, skips it.
@@ -221,6 +225,7 @@ func (s *Service) copyEntry(game *domain.Game, row domain.InstalledMod, ref *dom
 		entry.Locked = ref.Locked
 		entry.Disabled = ref.Disabled
 		entry.Category = ref.Category
+		entry.Fomod = ref.Fomod
 	}
 	if v, ok := listed[domain.ModKey(row.SourceID, row.ID)]; ok {
 		entry.AlreadyListed = true
@@ -426,7 +431,7 @@ func (s *Service) applyCopyMod(ctx context.Context, game *domain.Game, plan *Cop
 		}
 
 		ref := domain.ModReference{SourceID: e.SourceID, ModID: e.ModID, Version: e.Version,
-			FileIDs: e.FileIDs, Locked: e.Locked, Disabled: e.Disabled, Category: e.Category}
+			FileIDs: e.FileIDs, Locked: e.Locked, Disabled: e.Disabled, Category: e.Category, Fomod: e.Fomod}
 		msgs, err := s.copyRowToProfile(ctx, game, *row, plan.To, rowCopy{enabled: !e.Disabled, method: method})
 		if err != nil {
 			return result, fmt.Errorf("recording %s under %s: %w", e.Name, plan.To, err)
