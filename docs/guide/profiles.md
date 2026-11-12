@@ -135,6 +135,15 @@ lmm profile import coop.yaml
 
 In the browser, **Export** and **Import** are in the Profiles window.
 
+An import downloads every mod before it saves anything. You see the
+**Installing** and download lines for each mod first, then the profile is
+saved and the **Installed** lines follow. If one mod can't be downloaded,
+that mod fails on its own and the rest are imported as usual. But if a mod
+turns out to need something you have to set up first, such as
+[BepInEx](bepinex.md), nothing is imported: not the profile, not the other
+mods. lmm says what to do and keeps the downloads, so running the import
+again after you've fixed it downloads nothing twice.
+
 {: .tip }
 To make sure a friend gets *exactly* the version you have, lock the mod
 first (see [Locking a mod](updates.md#locking-a-mod-to-one-version)). Locks

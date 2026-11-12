@@ -1,5 +1,7 @@
 package core
 
+import "errors"
+
 // ItemFailure is one per-item failure inside a batch flow's result
 // document: which mod failed, and why (#308).
 //
@@ -30,4 +32,36 @@ type ItemFailure struct {
 	// Name now carries separately - the same two facts, split rather
 	// than reworded.
 	Reason string `json:"reason"`
+	// Refusal is set when the failure is part of an install-shaped Apply
+	// that refused before writing anything (#602): RefusalLoaderRequired
+	// (or another refusal code) for an item that refused, RefusalHeldBack
+	// for one that was fine but was not written because another item
+	// refused. Empty for an ordinary per-item failure.
+	Refusal string `json:"refusal,omitempty"`
 }
+
+// The refusal codes ItemFailure.Refusal and InstalledRef.Refusal carry
+// (#602). A script tells "this mod needs something" from "this mod was only
+// held back" by the code, never by the sentence.
+const (
+	// RefusalLoaderRequired: the item needs a mod loader the game does not
+	// declare (*LoaderRequiredError).
+	RefusalLoaderRequired = "loader_required"
+	// RefusalHeldBack: the item acquired cleanly, but nothing was written
+	// because another item refused.
+	RefusalHeldBack = "held_back"
+	// RefusalOther: the item refused for a reason with no code of its own.
+	RefusalOther = "refused"
+)
+
+// refusalCode is the code an acquire refusal is reported under.
+func refusalCode(err error) string {
+	var loaderErr *LoaderRequiredError
+	if errors.As(err, &loaderErr) {
+		return RefusalLoaderRequired
+	}
+	return RefusalOther
+}
+
+// heldBackReason is the sentence a held-back item's failure carries.
+const heldBackReason = "held back: another mod refused, so nothing was written"

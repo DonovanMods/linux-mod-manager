@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -8,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -215,11 +218,11 @@ func TestDoProfileImport_NeedsRedownload_ReinstallsUsingStoredFileIDs(t *testing
 		"    - test-src:mod1 v1.0\n"+
 		"\n"+
 		"Download and install mods? [Y/n]: \n"+
-		"✓ Imported profile: target\n"+
-		"\n"+
 		"Downloading and installing mods...\n"+
 		"  Installing test-src:mod1...\n"+
 		"\n"+
+		"\n"+
+		"✓ Imported profile: target\n"+
 		"    ✓ Installed: Mod One\n"+
 		"\n"+
 		"--- Summary ---\n"+
@@ -255,11 +258,11 @@ func TestDoProfileImport_MissingWithInstall_AcceptedInstallsMod(t *testing.T) {
 		"    - test-src:mod1 v1.0\n"+
 		"\n"+
 		"Download and install mods? [Y/n]: \n"+
-		"✓ Imported profile: target\n"+
-		"\n"+
 		"Downloading and installing mods...\n"+
 		"  Installing test-src:mod1...\n"+
 		"\n"+
+		"\n"+
+		"✓ Imported profile: target\n"+
 		"    ✓ Installed: Mod One\n"+
 		"\n"+
 		"--- Summary ---\n"+
@@ -422,11 +425,11 @@ func TestDoProfileImport_YesFlagSkipsPromptEntirely(t *testing.T) {
 		"  ↓ 1 need to be downloaded:\n"+
 		"    - test-src:mod1 v1.0\n"+
 		"\n"+
-		"✓ Imported profile: target\n"+
-		"\n"+
 		"Downloading and installing mods...\n"+
 		"  Installing test-src:mod1...\n"+
 		"\n"+
+		"\n"+
+		"✓ Imported profile: target\n"+
 		"    ✓ Installed: Mod One\n"+
 		"\n"+
 		"--- Summary ---\n"+
@@ -623,13 +626,13 @@ func TestDoProfileImport_PerItemFailure_PlainOutputIsUnchanged(t *testing.T) {
 		"    - test-src:mod1 v1.0\n"+
 		"\n"+
 		"Download and install mods? [Y/n]: \n"+
-		"✓ Imported profile: target\n"+
-		"\n"+
 		"Downloading and installing mods...\n"+
 		"  Installing test-src:ghost...\n"+
 		"    Error: failed to fetch mod: mod ghost is not in Fake Install Source's catalog (removed, or republished under a new ID)\n"+
 		"  Installing test-src:mod1...\n"+
 		"\n"+
+		"\n"+
+		"✓ Imported profile: target\n"+
 		"    ✓ Installed: Mod One\n"+
 		"\n"+
 		"--- Summary ---\n"+
@@ -650,4 +653,59 @@ func activateImportTarget(t *testing.T, svc *core.Service, game *domain.Game) {
 	require.NoError(t, err)
 	require.NoError(t, pm.SetDefault(ctx, game.ID, "target"))
 	profileImportForce = true
+}
+
+// TestDoProfileImport_LoaderRefusal_ImportsNothing is #602 at the CLI: a mod
+// that needs a loader the game does not declare refuses the whole import
+// before anything is written, and the summary tells the mod that refused
+// from the one only held back.
+func TestDoProfileImport_LoaderRefusal_ImportsNothing(t *testing.T) {
+	svc, game, src := setupDoProfileImportTest(t)
+	app.RegisterAdapters(svc)
+	// A BepInEx archive is recognised for a game whose mods deploy into
+	// the game root.
+	game.InstallPath = game.ModPath
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("mod1 content"))
+	var archive bytes.Buffer
+	zw := zip.NewWriter(&archive)
+	fw, err := zw.Create("BepInEx/plugins/Thing.dll")
+	require.NoError(t, err)
+	_, err = fw.Write([]byte("assembly"))
+	require.NoError(t, err)
+	fw, err = zw.Create("manifest.json")
+	require.NoError(t, err)
+	_, err = fw.Write([]byte("{}"))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	src.AddMod(&domain.Mod{ID: "thing", SourceID: "test-src", Name: "Thing", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "thing-main", FileName: "Thing.zip", IsPrimary: true}})
+	src.AddDownload("thing-main", archive.Bytes())
+
+	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{
+		{SourceID: "test-src", ModID: "mod1", Version: "1.0"},
+		{SourceID: "test-src", ModID: "thing", Version: "1.0"},
+	})
+	var out string
+	var importErr error
+	withStdin(t, "y\n", func() {
+		out, _, importErr = captureStdoutAndStderr(t, func() error {
+			return doProfileImport(context.Background(), svc, game, data)
+		})
+	})
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, importErr, &incomplete)
+	var loaderErr *core.LoaderRequiredError
+	require.ErrorAs(t, importErr, &loaderErr, "reportError finds the setup steps through the import's error")
+	assert.Contains(t, importErr.Error(), `profile "target" was not imported - nothing was written`)
+
+	assert.NotContains(t, out, "✓ Imported profile")
+	assert.NotContains(t, out, "✓ Installed")
+	assert.Contains(t, out, "Nothing was imported: profile target was not saved and no mod was written.\n")
+	assert.Contains(t, out, "  - Mod One (test-src:mod1): held back, not written because another mod refused\n")
+	assert.Contains(t, out, "  ✗ Thing (test-src:thing): download failed: extracting mod: Thing needs the BepInEx mod loader")
+
+	_, err = svc.NewProfileManager().Get(context.Background(), "g1", "target")
+	assert.ErrorIs(t, err, domain.ErrProfileNotFound)
 }

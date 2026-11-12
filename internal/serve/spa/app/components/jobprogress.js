@@ -25,6 +25,7 @@ import {
 } from "../progress.js";
 import {
   useJobResultFailures,
+  useJobResultLoader,
   useJobResultPurge,
   useJobResultVerify,
   useJobResultWarnings,
@@ -157,6 +158,8 @@ export function JobProgress({
   // way out (its page, and "Update from file…" when the source refused the
   // download).
   const batchFailures = useJobResultFailures(jobID, state);
+  // Issue 602: a refused install batch's loader refusal, from its result.
+  const resultLoader = useJobResultLoader(jobID, state);
 
   if (state === "running") {
     const fraction = progressFraction(frame);
@@ -194,7 +197,9 @@ export function JobProgress({
   // Issue 423: a loader refusal's setup steps render where the failure is
   // shown, for the same reason - "Failed: needs BepInEx" alone leaves the
   // user with the one sentence that says nothing about what to do.
-  const loader = failed ? loaderSetupFor(summary?.error?.details) : null;
+  const loader = failed
+    ? loaderSetupFor(summary?.error?.details)
+    : loaderSetupFor(resultLoader);
   // Issue 513: a failed download carries the mod's page; it renders where
   // the failure is shown, like the explainers above.
   const download = failed ? downloadFailureFor(summary?.error?.details) : null;

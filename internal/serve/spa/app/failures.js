@@ -165,11 +165,18 @@ export function batchFailuresFor(result) {
  * BepInExPack dependency, issue 409).
  */
 export function loaderSetupFor(details) {
+  // Issue 602: an import or install that refused before writing anything
+  // carries the loader refusal one level down, beside its per-item list.
+  if (details?.loader_required) return loaderSetupFor(details.loader_required);
   if (!details || !Array.isArray(details.setup) || !details.kind) return null;
   return {
     kind: details.kind,
     loaderVersion: details.version ?? "",
     modName: details.mod_name ?? "",
+    // Issue 602: several mods refused as one requirement.
+    mods: Array.isArray(details.mods)
+      ? details.mods.filter((m) => typeof m === "string" && m !== "")
+      : [],
     steps: details.setup.filter((s) => typeof s === "string" && s !== ""),
   };
 }

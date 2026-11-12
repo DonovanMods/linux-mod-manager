@@ -221,6 +221,8 @@ export function LoaderSetup({ loader }) {
   const wanted = loader.loaderVersion
     ? `${loaderLabel(loader.kind)} ${loader.loaderVersion}`
     : loaderLabel(loader.kind);
+  // Issue 602: one refusal can stand for several mods.
+  const verb = loader.mods?.length > 1 ? "need" : "needs";
   return html`
     <div
       class="loader-setup"
@@ -229,7 +231,7 @@ export function LoaderSetup({ loader }) {
       data-version=${loader.loaderVersion || undefined}
     >
       <p class="loader-setup__title">
-        ${loader.modName || "This mod"} needs ${wanted}. To set it up for this
+        ${loader.modName || "This mod"} ${verb} ${wanted}. To set it up for this
         game:
       </p>
       <ol class="loader-setup__steps">

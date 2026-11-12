@@ -411,7 +411,7 @@ const (
 	// DownloadWarning is a warning only a DOWNLOAD can raise, because an
 	// archive's shape is not knowable until it is extracted (#425): #424's
 	// "BepInEx found in <path>; declare it with ..." notice and #358's
-	// "layout lmm cannot place" warning. Service.extractIntoStaging emits it
+	// "layout lmm cannot place" warning. Service.extractPristine emits it
 	// as a WarningEvent, and every flow that downloads forwards it
 	// (forwardFetchStep) under its OWN scope with this phase unchanged -
 	// install, update, deploy, switch, apply, import, snapshot restore - so

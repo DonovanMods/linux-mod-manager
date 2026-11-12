@@ -349,7 +349,7 @@ func (c *cancelAfterFirstEntry) Err() error {
 // check in copyDirFollowing, which is the ONLY cancellation guard below
 // ApplyInstall's/ApplyUpdate's per-file loops on the directory-source
 // local-ingest path: nothing else in ingestLocalToCache's copy branch
-// consults ctx (the archive branch has extractIntoStaging, the copy branch
+// consults ctx (the archive branch has extractPristine, the copy branch
 // had nothing). Cancelling mid-copy must abort with the ctx error AND leave
 // no cache entry behind - in particular none marked complete, which is what
 // makes a later install/verify re-ingest instead of trusting half a mod.

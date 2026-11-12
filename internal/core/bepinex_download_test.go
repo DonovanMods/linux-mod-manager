@@ -54,7 +54,7 @@ func bepinexZipBytes(t *testing.T, members map[string]string) []byte {
 // zip built from members, plus the count of times the archive itself was
 // actually fetched.
 //
-// It exists because the DOWNLOAD ingest (extractIntoStaging) is a different
+// It exists because the DOWNLOAD ingest (extractPristine) is a different
 // code path from the archive-import ingest (importWithIdentity), and #358's
 // contract is that both reach the cache in the same layout. The request
 // counter is what lets a test assert the stronger property #359 needs: a

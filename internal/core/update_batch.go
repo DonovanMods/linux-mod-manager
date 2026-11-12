@@ -346,119 +346,160 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 		return result, err
 	}
 
+	// #602: the batch runs on the acquire/decide/commit engine, and is the
+	// one flow that declares INTERLEAVED: each item is re-planned
+	// (PlanUpdateFrom, its acquire half) against the state the previous
+	// item's apply left, so acquiring every item first would plan item N
+	// against the world before the batch. See acquire_engine.go.
 	total := len(plan.Updates)
-	for i, upd := range plan.Updates {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
+	run := acquireRun[*updateBatchStaged]{
+		policy: acquirePolicy{mode: acquireInterleaved},
+		n:      total,
+		acquire: func(ctx context.Context, i int) (*updateBatchStaged, *acquireFailure) {
+			return s.acquireUpdateBatchItem(ctx, game, plan, opts, i, result, emit)
+		},
+		commit: func(ctx context.Context, _ int, st *updateBatchStaged) error {
+			return s.commitUpdateBatchItem(ctx, game, plan, opts, st, result, emit, sink)
+		},
+		release: func(*updateBatchStaged, bool) {},
+	}
+	if err := runAcquire(ctx, run); err != nil {
+		return result, err
+	}
+	return result, nil
+}
 
-		mod := upd.InstalledMod
-		key := domain.ModKey(mod.SourceID, mod.ID)
-		scope := Scope{
-			Op:      OpUpdate,
-			Mod:     &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version},
-			ModName: mod.Name,
-			Index:   i + 1,
-			Total:   total,
-		}
-		fail := func(err error) {
-			failure := UpdateBatchFailure{Mod: key, Name: mod.Name, FromVersion: mod.Version, ToVersion: upd.NewVersion, Error: err.Error(), cause: err}
-			var dl *DownloadError
-			if errors.As(err, &dl) {
-				failure.ModURL, failure.ManualDownload = dl.ModURL, dl.ManualDownload
-			}
-			result.Failed = append(result.Failed, failure)
-			emit(ModEvent{Scope: scope, Phase: UpdateBatchItemFailed, Detail: err.Error()})
-		}
+// updateBatchStaged is one batch item between its re-plan and its apply.
+type updateBatchStaged struct {
+	upd   domain.Update
+	scope Scope
+	fail  func(error)
+	// regen routes the item to the merged-pak rebuild (#589's synthetic
+	// row, or a RecompileNeeded row), itemPlan to applyUpdate.
+	regen    bool
+	itemPlan *UpdatePlan
+	// skip, when set, is the item's not-attempted outcome.
+	skip *UpdateApplyResult
+}
 
-		emit(ModEvent{Scope: scope, Phase: UpdateBatchItem, Version: upd.NewVersion})
-
-		// #589: the merged-pak row is synthetic - no installed row stands
-		// behind it, so PlanUpdateFrom's lookup would fail it as a bare
-		// "mod not found". It carries no lock, policy or version of its own
-		// to plan; the regen is the whole of applying it.
-		if isMergedPakRow(upd) {
-			applied, err := s.applyMergedPakRegen(ctx, game, plan.Profile, sink)
-			if err != nil {
-				fail(err)
-				if cerr := ctx.Err(); cerr != nil {
-					return result, cerr
-				}
-				if opts.StopOnError {
-					return result, err
-				}
-				continue
-			}
-			applied.Mod = domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}
-			applied.Name, applied.FromVersion, applied.ToVersion = mod.Name, mod.Version, upd.NewVersion
-			result.Applied = append(result.Applied, *applied)
-			emit(ModEvent{Scope: scope, Phase: UpdateBatchItemApplied, Version: applied.ToVersion})
-			continue
+// acquireUpdateBatchItem is the batch item's acquire half: its header event
+// and its re-plan against the current state. A re-plan failure settles as
+// the item's failure, and stops the batch under StopOnError.
+func (s *Service) acquireUpdateBatchItem(ctx context.Context, game *domain.Game, plan *UpdateBatchPlan, opts UpdateBatchOptions, i int, result *UpdateBatchResult, emit func(Event)) (*updateBatchStaged, *acquireFailure) {
+	upd := plan.Updates[i]
+	mod := upd.InstalledMod
+	key := domain.ModKey(mod.SourceID, mod.ID)
+	st := &updateBatchStaged{upd: upd, scope: Scope{
+		Op:      OpUpdate,
+		Mod:     &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version},
+		ModName: mod.Name,
+		Index:   i + 1,
+		Total:   len(plan.Updates),
+	}}
+	st.fail = func(err error) {
+		failure := UpdateBatchFailure{Mod: key, Name: mod.Name, FromVersion: mod.Version, ToVersion: upd.NewVersion, Error: err.Error(), cause: err}
+		var dl *DownloadError
+		if errors.As(err, &dl) {
+			failure.ModURL, failure.ManualDownload = dl.ModURL, dl.ManualDownload
 		}
-
-		itemPlan, err := s.PlanUpdateFrom(ctx, game, plan.Profile, upd)
-		if err != nil {
-			fail(err)
-			if opts.StopOnError {
-				return result, err
-			}
-			continue
-		}
-
-		// #269: an EXTERNAL item's update is a normal, expected, reportable
-		// state - Steam applies it itself - so the batch declines to attempt
-		// it exactly as it declines a locked one, rather than letting
-		// applyUpdate's refusal land in Failed and paint the run red.
-		// The two share one branch because they share one outcome. Note
-		// that the || order buys nothing about WORDING: when a row is both
-		// external and locked, planUpdateBase gives the LOCKED reason
-		// precedence (update.go), deliberately - a lock is the user's own
-		// choice and lifting it is the action available to them.
-		if itemPlan.External || itemPlan.Locked {
-			skip := planUpdateSkip(itemPlan, upd.NewVersion)
-			result.Skipped = append(result.Skipped, skip)
-			emit(ModEvent{Scope: scope, Phase: UpdateBatchItemSkipped, Detail: skip.Reason})
-			continue
-		}
-		// #543: a mod its source will not serve through the API is never
-		// downloaded automatically - the update is reported, and installed
-		// from a hand-downloaded file. The row's own flag is read here, at
-		// apply time, so a refusal recorded after the check still counts.
-		if !itemPlan.RecompileNeeded && (itemPlan.Mod.ManualOnly || upd.InstalledMod.ManualOnly) {
-			skip := manualOnlySkip(itemPlan, upd)
-			result.Skipped = append(result.Skipped, skip)
-			emit(ModEvent{Scope: scope, Phase: UpdateBatchItemSkipped, Detail: skip.Reason})
-			continue
-		}
-
-		var applied *UpdateApplyResult
-		if itemPlan.RecompileNeeded {
-			// #196/#197: no version change to apply, only the compiled
-			// artifact to rebuild - the same routing applyUpdate (cmd/lmm)
-			// does for a single row.
-			applied, err = s.applyMergedPakRegen(ctx, game, plan.Profile, sink)
-		} else {
-			applied, err = s.applyUpdate(ctx, game, itemPlan,
-				UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks}, sink)
-		}
-		if err != nil {
-			fail(err)
-			// Ruling 16: a cancelled item has already completed its own
-			// paired writes; stop the run here rather than carrying on into
-			// the next item with a dead context.
-			if cerr := ctx.Err(); cerr != nil {
-				return result, cerr
-			}
-			if opts.StopOnError {
-				return result, err
-			}
-			continue
-		}
-		result.Applied = append(result.Applied, *applied)
-		emit(ModEvent{Scope: scope, Phase: UpdateBatchItemApplied, Version: applied.ToVersion})
+		result.Failed = append(result.Failed, failure)
+		emit(ModEvent{Scope: st.scope, Phase: UpdateBatchItemFailed, Detail: err.Error()})
 	}
 
-	return result, nil
+	emit(ModEvent{Scope: st.scope, Phase: UpdateBatchItem, Version: upd.NewVersion})
+
+	// #589: the merged-pak row is synthetic - no installed row stands
+	// behind it, so PlanUpdateFrom's lookup would fail it as a bare "mod
+	// not found". It carries no lock, policy or version of its own to
+	// plan; the regen is the whole of applying it.
+	if isMergedPakRow(upd) {
+		st.regen = true
+		return st, nil
+	}
+
+	itemPlan, err := s.PlanUpdateFrom(ctx, game, plan.Profile, upd)
+	if err != nil {
+		failure := &acquireFailure{
+			refusal: AcquireRefusal{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Err: err},
+			settle:  func() { st.fail(err) },
+		}
+		if opts.StopOnError {
+			failure.abort = err
+		}
+		return nil, failure
+	}
+
+	// #269: an EXTERNAL item's update is a normal, expected, reportable
+	// state - Steam applies it itself - so the batch declines to attempt
+	// it exactly as it declines a locked one, rather than letting
+	// applyUpdate's refusal land in Failed and paint the run red. The two
+	// share one branch because they share one outcome. Note that the ||
+	// order buys nothing about WORDING: when a row is both external and
+	// locked, planUpdateBase gives the LOCKED reason precedence (update.go),
+	// deliberately - a lock is the user's own choice and lifting it is the
+	// action available to them.
+	if itemPlan.External || itemPlan.Locked {
+		skip := planUpdateSkip(itemPlan, upd.NewVersion)
+		st.skip = &skip
+		return st, nil
+	}
+	// #543: a mod its source will not serve through the API is never
+	// downloaded automatically - the update is reported, and installed from
+	// a hand-downloaded file. The row's own flag is read here, at apply
+	// time, so a refusal recorded after the check still counts.
+	if !itemPlan.RecompileNeeded && (itemPlan.Mod.ManualOnly || upd.InstalledMod.ManualOnly) {
+		skip := manualOnlySkip(itemPlan, upd)
+		st.skip = &skip
+		return st, nil
+	}
+	// #196/#197: no version change to apply, only the compiled artifact to
+	// rebuild - the same routing applyUpdate (cmd/lmm) does for a single
+	// row.
+	st.regen = itemPlan.RecompileNeeded
+	st.itemPlan = itemPlan
+	return st, nil
+}
+
+// commitUpdateBatchItem is the batch item's commit half: its skip, or its
+// apply. A failure is recorded and the batch continues, unless the run was
+// cancelled (Ruling 16: the item's own paired writes are complete; stop
+// here rather than carry a dead context into the next item) or
+// StopOnError is set.
+func (s *Service) commitUpdateBatchItem(ctx context.Context, game *domain.Game, plan *UpdateBatchPlan, opts UpdateBatchOptions, st *updateBatchStaged, result *UpdateBatchResult, emit func(Event), sink EventSink) error {
+	if st.skip != nil {
+		result.Skipped = append(result.Skipped, *st.skip)
+		emit(ModEvent{Scope: st.scope, Phase: UpdateBatchItemSkipped, Detail: st.skip.Reason})
+		return nil
+	}
+
+	var applied *UpdateApplyResult
+	var err error
+	if st.regen {
+		applied, err = s.applyMergedPakRegen(ctx, game, plan.Profile, sink)
+	} else {
+		applied, err = s.applyUpdate(ctx, game, st.itemPlan,
+			UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks}, sink)
+	}
+	if err != nil {
+		st.fail(err)
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
+		if opts.StopOnError {
+			return err
+		}
+		return nil
+	}
+	if st.itemPlan == nil {
+		// The synthetic merged-pak row names itself: no plan stands
+		// behind it.
+		mod := st.upd.InstalledMod
+		applied.Mod = domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}
+		applied.Name, applied.FromVersion, applied.ToVersion = mod.Name, mod.Version, st.upd.NewVersion
+	}
+	result.Applied = append(result.Applied, *applied)
+	emit(ModEvent{Scope: st.scope, Phase: UpdateBatchItemApplied, Version: applied.ToVersion})
+	return nil
 }
 
 // isMergedPakRow reports whether upd is the synthetic merged-pak recompile
