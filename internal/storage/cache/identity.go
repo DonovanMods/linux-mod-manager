@@ -86,8 +86,10 @@ func StampKey(dir string, k Key) error {
 
 // CheckKey reports whether dir, an existing entry, is k's: its marker
 // records k's version and variant, or it has no marker and k is plain (a
-// legacy entry). Anything else is a *KeyCollisionError. A dir that does not
-// exist is not checked here; see Claim.
+// legacy entry). Anything else is a *KeyCollisionError - except that a
+// marker which cannot be read at all (an unreadable directory) does not
+// stop a plain key, as it would not have before markers existed. A dir
+// that does not exist is not checked here; see Claim.
 func CheckKey(dir string, k Key) error {
 	body, err := os.ReadFile(filepath.Join(dir, KeyMarkerName))
 	if errors.Is(err, os.ErrNotExist) {
@@ -97,6 +99,14 @@ func CheckKey(dir string, k Key) error {
 		return &KeyCollisionError{Path: dir, Want: k, Legacy: true}
 	}
 	if err != nil {
+		// The directory cannot be read (permissions, I/O). A plain key
+		// keeps the answer it had before markers existed - the directory
+		// is there, and whatever reads it next reports the real error -
+		// so a plain entry's behaviour never depends on the marker. A
+		// variant key needs the marker to vouch for it, and has none.
+		if k.Variant == "" {
+			return nil
+		}
 		return &KeyCollisionError{Path: dir, Want: k, Unreadable: true}
 	}
 	version, variant, ok := parseKeyMarker(body)

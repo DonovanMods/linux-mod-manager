@@ -167,3 +167,22 @@ func TestIdentity_StampKeyRoundTrips(t *testing.T) {
 		assert.Error(t, cache.CheckKey(dir, other), "%q", k.Version)
 	}
 }
+
+// TestIdentity_UnreadableDirectoryKeepsThePlainAnswer: a directory whose
+// marker cannot be read at all (no permission) still exists for a plain
+// key, exactly as it did before markers existed, so the error surfaces
+// where the entry is read rather than as "not cached". A variant key has
+// nothing vouching for it and does not see it.
+func TestIdentity_UnreadableDirectoryKeepsThePlainAnswer(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any directory")
+	}
+	c := cache.New(t.TempDir())
+	dir := c.ModPath(collidingPlain)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.Chmod(dir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	assert.True(t, c.Exists(collidingPlain))
+	assert.False(t, c.Exists(collidingVariant))
+}

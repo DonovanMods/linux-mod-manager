@@ -443,8 +443,8 @@ func (r *verifyRun) profilesDeploying(mod *domain.InstalledMod) ([]relayoutHolde
 			}
 			return nil, fmt.Errorf("checking profile %s: %w", p.Name, err)
 		}
-		if sibling.Version != mod.Version {
-			continue // a different cache entry entirely
+		if sibling.Version != mod.Version || sibling.Variant != mod.Variant {
+			continue // a different cache entry entirely (#614: another tree is another entry)
 		}
 		if !sibling.Deployed {
 			continue // nothing deployed there for the re-layout to invalidate
