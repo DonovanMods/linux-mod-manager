@@ -386,6 +386,12 @@ type GameStatus struct {
 	// it cannot (#501) - what the web UI's Play button reads. omitzero: a
 	// Service with no Launcher registered (SetLauncher) says nothing.
 	Launch LaunchInfo `json:"launch,omitzero"`
+	// SuggestedAdapter is the adapter lmm's game catalog would set this
+	// game up with, when the game has no `adapter:` key and uses the
+	// identity (#606, Service.SuggestedAdapter) - what the web UI's game
+	// page offers to switch to. omitempty: a game with nothing to suggest
+	// emits no key.
+	SuggestedAdapter string `json:"suggested_adapter,omitempty"`
 }
 
 // Status summarizes every configured game, ordered by ID (ListGames').
@@ -482,6 +488,7 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		ResolvedCachePath:   s.GetGameCachePath(game),
 		Profiles:            make([]ProfileSummary, len(profiles)),
 		ModPathError:        modPathErr,
+		SuggestedAdapter:    s.SuggestedAdapter(game),
 	}
 	if game.LinkMethodExplicit {
 		status.LinkMethodSource = "game"
