@@ -36,21 +36,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ProfileImportOptions.AllOrNothing` makes every acquire failure, not only
   an answerable one, refuse the whole import with nothing written. No
   frontend uses it yet; collection import will.
-- **Groundwork for FOMOD installs: recorded choices and cache variants
-  (#614).** Nothing uses either yet, so installs behave exactly as before.
-  - A profile can record a mod's FOMOD installer choices as a `fomod:`
-    block beside `disabled:` and `category:`. Profile saves, duplicates,
-    `lmm mod copy`, re-links, export and import all keep it, and no file
-    gains the key until a later release writes one. An older lmm drops the
+- **FOMOD installers install, for every game (#614).** A mod whose archive
+  is a FOMOD installer (`fomod/ModuleConfig.xml`) is installed as the
+  installer's choices say, rather than as the raw archive: only the chosen
+  files, at the places the installer puts them, never the installer's own
+  `fomod/` folder. This runs in `lmm install`, `lmm profile import`,
+  `lmm import <archive>`, `lmm update` (and `--from-file`), profile switch
+  and apply, and `verify --fix`. Scripted installers (`fomod/script.cs`)
+  and OMODs are refused, never run.
+  - What was chosen is recorded on the profile as a `fomod:` block beside
+    `disabled:` and `category:`, with the hash of the installer it answers.
+    Reinstalls, export and import, duplicate, `lmm mod copy`, re-links,
+    switch and apply all reuse it, so they install the same files. Editing
+    it, or importing a document with other choices, makes the next
+    `lmm profile apply` reinstall the mod with them. An older lmm drops the
     block when it rewrites the profile.
-  - The database gains `installed_mods.variant` and `previous_variant`
-    (schema version 24), which name the tree of a version that FOMOD
-    choices build. Rollback restores the previous tree with the previous
-    version. After the upgrade, an older lmm refuses this database, as
-    with every schema change.
-  - Each cache entry now records which version and variant it belongs to
-    (a reserved `.lmm-key` file). A source version that happens to spell
-    another entry's directory, such as `1.0@abcdef123456`, can never read,
+  - An install with no recorded choices stops before anything is written,
+    keeps the download, and reports the installer's questions: the error's
+    `--json` details are the question document, and a multi-mod install or
+    an import carries it as `fomod_choices_required` beside the existing
+    `loader_required`, with the refusal code `fomod_choices_required`.
+    Recorded choices that no longer fit the installer are asked about the
+    same way, showing what no longer fits. (The prompts that answer them
+    ship with this change, #615.)
+  - Updates keep the choices. The update batch and automatic updates never
+    ask: a mod whose new installer no longer accepts them is skipped with
+    "installer choices need re-answering" (`fomod_reanswer: true` in
+    `--json`), and automatic updates list it with their failures.
+  - Each set of choices gets its own cache entry beside the version
+    (`<version>@<variant>`); the version shown everywhere is still the
+    source's. The database gains `installed_mods.variant` and
+    `previous_variant` (schema version 24), so rollback restores the right
+    files. After the upgrade, an older lmm refuses this database, as with
+    every schema change.
+  - Each cache entry records which version and variant it belongs to (a
+    reserved `.lmm-key` file), so a source version that happens to spell
+    another entry's folder, such as `1.0@abcdef123456`, can never read,
     replace or delete that entry; lmm refuses with an error naming both.
 
 ### Changed
