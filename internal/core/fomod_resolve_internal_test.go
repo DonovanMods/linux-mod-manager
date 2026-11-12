@@ -324,3 +324,21 @@ func TestProfileFileStates(t *testing.T) {
 		"":                fomod.FileMissing,
 	}, got, "%v", keys)
 }
+
+// TestResolveFomod_AnIncompleteAnswerIsAskedAgainNotStale: answers that
+// leave a visible group unanswered (a later step, or a group they skipped)
+// are asked about again, with the answers as the preselection - and are
+// not called a stale recording.
+func TestResolveFomod_AnIncompleteAnswerIsAskedAgainNotStale(t *testing.T) {
+	tree := fomodTree(t, "", testModuleConfig, nil)
+	partial := domain.FomodChoices{Steps: []fomod.StepChoice{{Name: "Main", Groups: []fomod.GroupChoice{
+		{Name: "Extras", Choices: []fomod.OptionChoice{{Name: "Readme"}}},
+	}}}}
+	_, err := (&Service{}).resolveFomod(fomodTestMod, "mod.zip", tree, fomodInput{choices: partial, answered: true})
+	var q *FomodChoicesRequiredError
+	require.True(t, errors.As(err, &q), "got %v", err)
+	assert.Equal(t, FomodReasonUnanswered, q.Mods[0].Reason)
+	require.Len(t, q.Mods[0].Unanswered, 1)
+	assert.Equal(t, "Texture", q.Mods[0].Unanswered[0].Group)
+	assert.NotContains(t, err.Error(), "no longer fit")
+}

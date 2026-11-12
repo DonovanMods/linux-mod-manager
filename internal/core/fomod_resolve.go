@@ -183,7 +183,9 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 	}
 
 	if len(res.Unanswered) > 0 || (recorded && (len(res.Unmatched) > 0 || len(res.Violations) > 0)) {
-		return nil, &FomodChoicesRequiredError{Mods: []FomodQuestion{fomodQuestion(mod, inst, cfg, configSHA, res, recorded)}}
+		// A replay's recording is stale; a fresh answer is incomplete or
+		// wrong, which is asked about the same way but not called stale.
+		return nil, &FomodChoicesRequiredError{Mods: []FomodQuestion{fomodQuestion(mod, inst, cfg, configSHA, res, recorded && !in.answered)}}
 	}
 
 	warnings := slices.Clone(res.Warnings)
@@ -195,7 +197,7 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 		warnings = append(warnings, problems...)
 	}
 
-	opWarnings, err := executeFomodOps(tree, inst, byRel, res.Ops)
+	opWarnings, err := executeFomodOps(tree, byRel, res.Ops)
 	if err != nil {
 		return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: "installing its chosen files failed: " + err.Error(), err: err}
 	}
@@ -263,7 +265,7 @@ func readCapped(path string, limit int64) ([]byte, error) {
 // directory is never installed (Vortex does not deploy it either), and a
 // destination in lmm's reserved namespace is refused: an installer must not
 // be able to forge cache bookkeeping.
-func executeFomodOps(tree string, inst *fomod.Installer, byRel map[string]string, ops []fomod.Op) ([]string, error) {
+func executeFomodOps(tree string, byRel map[string]string, ops []fomod.Op) ([]string, error) {
 	out := tree + ".fomod"
 	if err := os.RemoveAll(out); err != nil {
 		return nil, err
@@ -304,7 +306,6 @@ func executeFomodOps(tree string, inst *fomod.Installer, byRel map[string]string
 			}
 		}
 	}
-	_ = inst // Op.Source is relative to inst.Root; byRel already maps it.
 	if err := os.RemoveAll(tree); err != nil {
 		return fail(err)
 	}
@@ -343,7 +344,7 @@ func isFomodDirectory(rel string) bool {
 
 // fomodQuestion builds the question document for one mod from an
 // evaluation: what is visible, what is selected, and what did not fit.
-func fomodQuestion(mod *domain.Mod, inst *fomod.Installer, cfg *fomod.Config, configSHA string, res *fomod.Result, recorded bool) FomodQuestion {
+func fomodQuestion(mod *domain.Mod, inst *fomod.Installer, cfg *fomod.Config, configSHA string, res *fomod.Result, stale bool) FomodQuestion {
 	q := FomodQuestion{
 		SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name,
 		ConfigSHA256: configSHA, ModuleName: cfg.ModuleName, InstallerRoot: inst.Root,
@@ -352,7 +353,7 @@ func fomodQuestion(mod *domain.Mod, inst *fomod.Installer, cfg *fomod.Config, co
 	if q.Choices == nil {
 		q.Choices = []fomod.StepChoice{}
 	}
-	if recorded {
+	if stale {
 		q.Reason = FomodReasonStale
 	}
 	for i, st := range res.Steps {
