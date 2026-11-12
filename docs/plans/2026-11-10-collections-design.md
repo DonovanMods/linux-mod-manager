@@ -595,7 +595,7 @@ overrides: { "engine/config/user.ini": "…" }
 - **References, never redistribution.** A document points at each mod on its source, and the recipient downloads it with their own account. A collection may bundle only its author's own files (§12, the container). That keeps sharing within Nexus's and CurseForge's terms, and lets a collection live anywhere: a file, a gist, a raw file in a git repository.
 - **Portable game identity.** `game_id` in today's export is the author's local name for the game. Version 1 replaces it with `game:` (Steam app id, per-source game ids, display name, tested game versions), and the importer matches a local game by Steam app id, then by source ids. No match, or several, needs `--game`. Version 0 keeps `game_id`.
 - **Documents from others are untrusted input.**
-  - **Hooks are code.** A hook is a script path lmm executes, and #296 made hooks survive an export/import round trip. Version-1 export omits hooks unless `--include-hooks` is given. Import never applies hooks from a URL, and applies them from a local file only with `--with-hooks`, after the plan lists them. That changes #296's behaviour for version-1 documents. Version 0 keeps its round trip.
+  - **Hooks are code.** A hook is a script path lmm executes, and #296 made hooks survive an export/import round trip. **Ruled 2026-11-12:** export keeps hooks, as today, so the document is complete. Import never applies hooks from a URL. From a local file, the plan lists every hook, and Apply applies them only with `--with-hooks`. Without the flag, the profile imports without its hooks and the result says so. Version 0 keeps its round trip unchanged.
   - **Overrides** (INI tweaks) are legitimate collection content, as Vortex's are. They stay, confined to the game directory (`overrides.go`'s containment, unchanged), and the plan shows each one.
   - The local `link_method` and the profile's default flag are machine preferences and are never exported.
   - Strings are sanitised (`domain.SanitizeLine`, #594); the document, items and strings are size-capped; a URL fetch uses the shared HTTP client's caps, timeouts and redirect rules.
@@ -615,10 +615,10 @@ collection.yaml.sig        reserved for L4's signature; ignored until then
 ```
 
 - **One container for every case.** A list-only collection is a zip holding just `collection.yaml`, and one that bundles files adds `files/`. Bundles are not a separate format.
-- **Export:**
-  - `lmm profile export <name> -o survival.lmmc` writes the container.
-  - Without `-o`, the zip goes to stdout only when stdout is not a terminal; at a terminal it refuses with a hint rather than spray binary.
-  - `--plain` writes the bare version-1 YAML, for a diff, a git repository or a gist.
+- **Export (ruled 2026-11-12, for backward compatibility):**
+  - Stdout stays plain YAML, now the version-1 document, so the documented `lmm profile export coop > coop.yaml` keeps working.
+  - `-o <file>` writes the compressed `.lmmc` container by default; `-o <file> --plain` writes the version-1 YAML to the file instead.
+  - Version 1 keeps writing the author's `game_id` beside the portable `game:` block, so an older lmm (which reads `game_id` and ignores the new keys) can still import it on a machine with the same game id.
   - `--json` keeps its existing contract (#309), unchanged.
   - The SPA's export downloads a `.lmmc`.
 - **Import** sniffs the first bytes (`PK\x03\x04` means a container, anything else is YAML of either version), from a file or a URL, so a plain document, a container and a version-0 export all import with the same command.
@@ -654,6 +654,10 @@ Core owns every arrow, and the converters are pure (manifest → document). The 
 - The export is a compressed `.lmmc` file by default; `--plain` writes bare YAML.
 - 2026-11-12: a collection's `tools` entries are informational, never a blocking feature, and never executed (Q8).
 - 2026-11-12: A1 is not bound to "no user-visible change". Ordinary import and install-with-dependencies are phased for real (§7).
+- 2026-11-12: new features may change what users see, but backward incompatibilities are avoided, or agreed with the owner first.
+- 2026-11-12 (L1): `lmm profile export` keeps writing YAML to stdout; `-o` writes `.lmmc`; version 1 keeps `game_id` beside `game:` (§12).
+- 2026-11-12 (L1): export keeps hooks; import never applies them from a URL, and from a local file only with `--with-hooks`, after the plan lists them (§12).
+- 2026-11-12 (F2/F3): F2 is built to ask for missing FOMOD choices as designed, and F2 and F3 merge into `develop` together, so there is no window in which a FOMOD install is refused with no way to answer.
 
 **Story issues:**
 
