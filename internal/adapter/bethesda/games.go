@@ -253,3 +253,12 @@ func skyrimLE() adapter.PluginSpec {
 		MaxFull:          maxFull,
 	}
 }
+
+// UsesPrefix reports whether lmm writes into g's Wine/Proton prefix (#605):
+// true for every game the adapter recognises, whose Plugins.txt lives under
+// the prefix's AppData/Local. A game it cannot identify has no plugin rules,
+// so lmm writes nothing there; its verify note says why instead.
+func (*Adapter) UsesPrefix(g *domain.Game) bool {
+	_, ok := kindFor(g)
+	return ok
+}

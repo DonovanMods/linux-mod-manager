@@ -39,3 +39,16 @@ func TestVerify_UnknownGameIsANote(t *testing.T) {
 	}
 	assert.Contains(t, f.Note, "my-skyrim")
 }
+
+// #605's PrefixConsumer: every Tier 1 game keeps Plugins.txt in its prefix,
+// so it needs one; a game the adapter cannot identify has no plugin rules,
+// so lmm writes nothing there and needs none (its bethesda_game_unknown
+// note says why).
+func TestUsesPrefix(t *testing.T) {
+	for _, slug := range []string{"skyrim-se", "skyrim-vr", "fallout4", "fallout4-vr", "starfield", "skyrim"} {
+		assert.True(t, adapter.UsesPrefix(New(), &domain.Game{ID: slug}), slug)
+	}
+	assert.True(t, adapter.UsesPrefix(New(), &domain.Game{ID: "x", Launch: &domain.GameLaunch{SteamAppID: "489830"}}))
+	assert.False(t, adapter.UsesPrefix(New(), &domain.Game{ID: "my-skyrim"}))
+	assert.False(t, adapter.UsesPrefix(New(), nil))
+}

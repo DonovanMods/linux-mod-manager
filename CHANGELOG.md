@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when empty). Core gains a standard-library reader for plugin headers
   (`.esm`/`.esp`/`.esl` flags and masters). Script extender and ENB files
   are recognised as game-folder content, but still deploy into `Data/`
-  until #629.
+  until #629. The adapter answers #605's "uses a prefix" question for
+  every game it recognises, so an unresolved prefix is reported for them.
 - **A FOMOD installer engine, not yet wired into installs (#604).** The new
   `internal/fomod` package reads `fomod/ModuleConfig.xml` in any encoding
   real installers use and works out which files a set of installer choices

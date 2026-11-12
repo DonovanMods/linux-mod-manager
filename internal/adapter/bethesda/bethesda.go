@@ -21,6 +21,8 @@
 //	                  adapter.RootRouter
 //	Verifier          a note when the adapter cannot tell which of its games
 //	                  a game is (verify.go)
+//	PrefixConsumer    yes for every game it recognises: Plugins.txt lives in
+//	                  the game's Wine/Proton prefix (#605)
 //
 // Facts, not code: libloadorder, esplugin, libloot and Vortex are GPL, and
 // lmm is MIT. Their documentation and behaviour were READ for the facts in
@@ -54,8 +56,9 @@ func (*Adapter) Label() string { return "Bethesda (Creation Engine plugins)" }
 
 // Compile-time proof of the capabilities the package documents.
 var (
-	_ adapter.GameAdapter   = (*Adapter)(nil)
-	_ adapter.PluginOrderer = (*Adapter)(nil)
-	_ adapter.RootRouter    = (*Adapter)(nil)
-	_ adapter.Verifier      = (*Adapter)(nil)
+	_ adapter.GameAdapter    = (*Adapter)(nil)
+	_ adapter.PluginOrderer  = (*Adapter)(nil)
+	_ adapter.RootRouter     = (*Adapter)(nil)
+	_ adapter.Verifier       = (*Adapter)(nil)
+	_ adapter.PrefixConsumer = (*Adapter)(nil)
 )
