@@ -9,18 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The mod cache is addressed by one key, and refuses a version with `@` (#603).**
-  Internal groundwork for FOMOD installer variants: every cache lookup now
-  takes a single key (game, source, mod, version, and a variant that is
-  always empty for now) instead of four loose strings. Existing cache
-  entries keep exactly the paths they have. A future variant will live
-  beside its version as `<version>@<variant>`, so lmm now refuses to create
-  a cache entry for a version that itself contains `@`: a download, an
-  archive import, an adoption or a `verify --fix` version repair of such a
-  version fails with an error naming it (an archive import's `--id`
-  rename reports it as a warning, as any failed rename does). Entries
-  already on disk with such a version are still read, deployed and removed
-  as before. No source lmm supports is known to publish such versions.
+- **The mod cache is addressed by one key (#603).** Internal groundwork
+  for FOMOD installer variants: every cache lookup now takes a single key
+  (game, source, mod, version, and a variant that is always empty for now)
+  instead of four loose strings. Nothing changes on disk: every cache entry
+  keeps exactly the path it has, and a future variant will live beside its
+  version as `<version>@<variant>`.
 
 ### Fixed
 

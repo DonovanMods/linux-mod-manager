@@ -191,11 +191,6 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	filename := filepath.Base(archivePath)
 
 	sourceID, modID, version, autoDetected := ident.sourceID, ident.modID, ident.version, ident.autoDetected
-	// #603: refuse, before any write, a version the cache will not mint an
-	// entry for - every branch below writes one.
-	if err := (cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}).Validate(); err != nil {
-		return nil, err
-	}
 
 	var modName string
 	var fileCount int

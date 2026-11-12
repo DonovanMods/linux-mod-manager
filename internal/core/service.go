@@ -2013,13 +2013,8 @@ func prepareStaging(ctx context.Context, gameCache *cache.Cache, game *domain.Ga
 // has. Caller contract: as with prepareStaging, the CALLER owns stagePath's
 // cleanup (defer os.RemoveAll immediately after) - but unlike prepareStaging,
 // on a nil error stagePath NEVER exists yet; the first writer creates it.
-// A version the cache refuses to mint an entry for (cache.Key.Validate,
-// #603) fails here, before anything is written.
 func prepareUnseededStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
-	cachePath, err = gameCache.NewEntryPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
-	if err != nil {
-		return "", "", err
-	}
+	cachePath = gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	stagePath = cachePath + ".staging"
 	if err := os.RemoveAll(stagePath); err != nil {
 		return "", "", fmt.Errorf("clearing staging cache: %w", err)

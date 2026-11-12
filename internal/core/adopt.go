@@ -666,10 +666,7 @@ func (s *Service) adoptScannedMod(ctx context.Context, game *domain.Game, r Scan
 	// missing is a cache entry pointing at the same bytes.
 	if game.DeployMode == domain.DeployCopy {
 		gameCache := s.GetGameCache(game)
-		cachePath, err := gameCache.NewEntryPath(cache.Key{GameID: game.ID, SourceID: r.Mod.SourceID, ModID: r.Mod.ID, Version: r.Mod.Version})
-		if err != nil {
-			return err
-		}
+		cachePath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: r.Mod.SourceID, ModID: r.Mod.ID, Version: r.Mod.Version})
 
 		if err := os.MkdirAll(cachePath, 0755); err != nil {
 			return fmt.Errorf("creating cache: %w", err)

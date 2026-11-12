@@ -725,15 +725,11 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 
 	if preEnrichID != result.Mod.ID || preEnrichVersion != result.Mod.Version {
 		oldPath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: preEnrichID, Version: preEnrichVersion})
-		newPath, pathErr := gameCache.NewEntryPath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version})
+		newPath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version})
 		// A failed MkdirAll is silent, exactly as it was pre-lift: the
 		// rename is not even attempted, and the cascade it causes (the mod
-		// is not cached at its new version) surfaces at the deploy. A
-		// version the cache refuses to mint an entry for (#603) is a failed
-		// rename, with the same cascade.
-		if pathErr != nil {
-			note(ImportArchiveNote, "Warning: could not rename cache entry: %v", pathErr)
-		} else if err := os.MkdirAll(filepath.Dir(newPath), 0755); err == nil {
+		// is not cached at its new version) surfaces at the deploy.
+		if err := os.MkdirAll(filepath.Dir(newPath), 0755); err == nil {
 			if err := os.Rename(oldPath, newPath); err != nil {
 				note(ImportArchiveNote, "Warning: could not rename cache entry: %v", err)
 			} else {

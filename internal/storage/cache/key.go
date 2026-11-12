@@ -1,11 +1,5 @@
 package cache
 
-import (
-	"errors"
-	"fmt"
-	"strings"
-)
-
 // VariantSeparator joins a version to its variant in a cache entry's
 // directory name: <version>@<variant>. Not "+", which is semver build
 // metadata and which version comparison ignores - a stray parse of the
@@ -21,6 +15,15 @@ const VariantSeparator = "@"
 // as a SIBLING directory, <Version>@<Variant>. An empty Variant - every key
 // today - spells exactly the path the four loose strings did before Key
 // existed.
+//
+// The spelling is not injective. Source versions are free text and may
+// contain VariantSeparator, so a plain key can name the same directory as a
+// variant key: version "1.0@abcdef123456" with no variant, and version "1.0"
+// with variant "abcdef123456". The cache does not refuse such versions (a
+// version a source publishes stays installable), so preventing the collision
+// is the variant minter's job (F2, #614), in both directions - a variant
+// entry minted where a plain version's directory already exists, and a plain
+// version installed where a variant entry already exists.
 type Key struct {
 	// GameID is the game the entry belongs to. A game-scoped cache (a
 	// per-game cache_path) leaves it out of the path.
@@ -35,40 +38,6 @@ type Key struct {
 	// Variant distinguishes two trees built from the same source file
 	// (e.g. different installer choices). Empty means the plain entry.
 	Variant string
-}
-
-// ErrVersionSeparator is the sentinel every *VersionSeparatorError matches
-// with errors.Is.
-var ErrVersionSeparator = errors.New("cache: version contains the variant separator " + `"` + VariantSeparator + `"`)
-
-// VersionSeparatorError is the cache's refusal to mint an entry for a version
-// that contains VariantSeparator: such a version would spell the same
-// directory as another version's variant ("1.0@ab" is version "1.0",
-// variant "ab"). It matches ErrVersionSeparator.
-type VersionSeparatorError struct {
-	// Version is the refused version string, verbatim.
-	Version string
-}
-
-// Error describes the refused version.
-func (e *VersionSeparatorError) Error() string {
-	return fmt.Sprintf("cache: version %q contains the variant separator %q", e.Version, VariantSeparator)
-}
-
-// Is reports whether target is ErrVersionSeparator.
-func (e *VersionSeparatorError) Is(target error) bool {
-	return target == ErrVersionSeparator
-}
-
-// Validate reports whether the cache may mint an entry for k: its Version
-// must not contain VariantSeparator. It returns a *VersionSeparatorError
-// otherwise. Reads never validate, so an entry created before the check
-// existed stays readable.
-func (k Key) Validate() error {
-	if strings.Contains(k.Version, VariantSeparator) {
-		return &VersionSeparatorError{Version: k.Version}
-	}
-	return nil
 }
 
 // versionDir is the last path segment of k's entry: the version, or

@@ -2,8 +2,6 @@ package cache_test
 
 import (
 	"context"
-	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -63,84 +61,45 @@ func TestKey_VariantIsASiblingDirectory(t *testing.T) {
 	assert.False(t, c.Exists(plain), "a variant entry is not its plain version's entry")
 }
 
-// TestKey_Validate_RefusesVersionSeparator: a version carrying the variant
-// separator would spell the same directory as a different version's
-// variant ("1.0@ab" vs version "1.0", variant "ab"), so it is refused with a
-// typed error.
-func TestKey_Validate_RefusesVersionSeparator(t *testing.T) {
-	assert.NoError(t, cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0.0"}.Validate())
-	assert.NoError(t, cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0.0", Variant: "0123456789ab"}.Validate())
-
-	err := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0@beta"}.Validate()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, cache.ErrVersionSeparator)
-	var sepErr *cache.VersionSeparatorError
-	require.True(t, errors.As(err, &sepErr))
-	assert.Equal(t, "1.0@beta", sepErr.Version)
-	assert.Contains(t, err.Error(), `"1.0@beta"`)
-}
-
-// TestCache_NewEntryPath: the path a NEW entry is written at is ModPath's,
-// unless the key is one the cache refuses to mint.
-func TestCache_NewEntryPath(t *testing.T) {
+// TestKey_SeparatorInAVersionIsAnOrdinaryVersion: the cache never refuses
+// a version, even one carrying VariantSeparator - a version a source
+// publishes stays installable (#603). Such an entry is written, read,
+// copied, cloned and deleted like any other.
+func TestKey_SeparatorInAVersionIsAnOrdinaryVersion(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
-	k := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "2.0"}
-
-	got, err := c.NewEntryPath(k)
-	require.NoError(t, err)
-	assert.Equal(t, c.ModPath(k), got)
-
-	k.Version = "2.0@x"
-	got, err = c.NewEntryPath(k)
-	assert.ErrorIs(t, err, cache.ErrVersionSeparator)
-	assert.Empty(t, got)
-}
-
-// TestCache_WritesRefuseVersionSeparator: Store and CopyModAs mint entries,
-// so they refuse a separator-carrying version and write nothing.
-func TestCache_WritesRefuseVersionSeparator(t *testing.T) {
-	dir := t.TempDir()
-	c := cache.New(dir)
-	bad := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0@beta"}
-
-	assert.ErrorIs(t, c.Store(bad, "f.pak", []byte("x")), cache.ErrVersionSeparator)
-	assert.NoDirExists(t, c.ModPath(bad))
-
-	// A legacy entry with such a version, made before the refusal existed,
-	// is not copied to a new identity either.
-	require.NoError(t, os.MkdirAll(c.ModPath(bad), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(c.ModPath(bad), "f.pak"), []byte("x"), 0o644))
-	err := c.CopyModAs(context.Background(), bad, "s", "other")
-	assert.ErrorIs(t, err, cache.ErrVersionSeparator)
-	assert.NoDirExists(t, filepath.Join(dir, "g", "s-other"))
-}
-
-// TestCache_ReadsOfALegacySeparatorEntryStillWork: the refusal is about
-// minting entries, never reading them - an existing install whose version
-// happens to carry the separator keeps resolving, listing and deleting
-// exactly as before F0 (#603: no on-disk change for an existing install).
-func TestCache_ReadsOfALegacySeparatorEntryStillWork(t *testing.T) {
-	dir := t.TempDir()
-	c := cache.New(dir)
-	legacy := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0@beta"}
+	k := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0@beta"}
 	entry := filepath.Join(dir, "g", "s-m", "1.0@beta")
-	require.NoError(t, os.MkdirAll(entry, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(entry, "f.pak"), []byte("x"), 0o644))
 
-	assert.Equal(t, entry, c.ModPath(legacy))
-	assert.True(t, c.Exists(legacy))
-	files, err := c.ListFiles(legacy)
+	require.NoError(t, c.Store(k, "f.pak", []byte("x")))
+	assert.Equal(t, entry, c.ModPath(k))
+	assert.True(t, c.Exists(k))
+	files, err := c.ListFiles(k)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"f.pak"}, files)
-	size, err := c.Size(legacy)
+	size, err := c.Size(k)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), size)
 
-	snapshot := cache.New(t.TempDir())
-	require.NoError(t, c.CloneMod(context.Background(), snapshot, legacy), "a clone reproduces an existing entry")
-	assert.True(t, snapshot.Exists(legacy))
+	require.NoError(t, c.CopyModAs(context.Background(), k, "s", "other"))
+	assert.FileExists(t, filepath.Join(dir, "g", "s-other", "1.0@beta", "f.pak"))
 
-	require.NoError(t, c.Delete(legacy))
+	snapshot := cache.New(t.TempDir())
+	require.NoError(t, c.CloneMod(context.Background(), snapshot, k))
+	assert.True(t, snapshot.Exists(k))
+
+	require.NoError(t, c.Delete(k))
 	assert.NoDirExists(t, entry)
+}
+
+// TestKey_PlainAndVariantKeysCanSpellOneDirectory pins the collision
+// Key's doc comment hands to the variant minter (F2, #614): a plain version
+// that happens to end in "@<variant>" names the same directory as that
+// variant of the shorter version. The cache does not arbitrate; if this
+// test starts failing, the spelling changed and existing entries moved.
+func TestKey_PlainAndVariantKeysCanSpellOneDirectory(t *testing.T) {
+	c := cache.New(t.TempDir())
+	plain := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0@abcdef123456"}
+	variant := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0", Variant: "abcdef123456"}
+	assert.Equal(t, c.ModPath(plain), c.ModPath(variant))
 }

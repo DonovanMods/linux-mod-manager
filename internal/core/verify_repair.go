@@ -332,10 +332,7 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 	recorded := mod.Version
 	gameCache := r.svc.GetGameCache(r.game)
 	oldPath := gameCache.ModPath(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: recorded})
-	newPath, err := gameCache.NewEntryPath(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: effective})
-	if err != nil {
-		return "", 0, err
-	}
+	newPath := gameCache.ModPath(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: effective})
 
 	oldExists, statErr := cacheDirExists(oldPath)
 	if statErr != nil {

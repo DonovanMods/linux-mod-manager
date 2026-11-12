@@ -41,24 +41,12 @@ func (c *Cache) SetLogger(l *slog.Logger) {
 	c.log = l
 }
 
-// ModPath returns the path where k's files are stored. It never refuses a
-// key: reads of an existing entry must keep working whatever its version
-// says. A caller about to create a new entry uses NewEntryPath.
+// ModPath returns the path where k's files are stored.
 func (c *Cache) ModPath(k Key) string {
 	if c.gameScoped {
 		return filepath.Join(c.basePath, k.modDir(), k.versionDir())
 	}
 	return filepath.Join(c.basePath, k.GameID, k.modDir(), k.versionDir())
-}
-
-// NewEntryPath is ModPath for a caller about to create (or replace) the
-// entry: it refuses a key Validate refuses, with a *VersionSeparatorError,
-// so no entry is ever minted whose directory another key could also spell.
-func (c *Cache) NewEntryPath(k Key) (string, error) {
-	if err := k.Validate(); err != nil {
-		return "", err
-	}
-	return c.ModPath(k), nil
 }
 
 // Exists checks if a mod version is cached
@@ -572,12 +560,9 @@ func MergeFingerprintPath(versionDir string) string {
 	return filepath.Join(versionDir, mergeFingerprintMarkerName)
 }
 
-// Store saves a file to the cache. It refuses a key Validate refuses.
+// Store saves a file to the cache
 func (c *Cache) Store(k Key, relativePath string, content []byte) error {
-	modPath, err := c.NewEntryPath(k)
-	if err != nil {
-		return err
-	}
+	modPath := c.ModPath(k)
 	fullPath := filepath.Join(modPath, relativePath)
 
 	dir := filepath.Dir(fullPath)
@@ -728,15 +713,11 @@ func (c *Cache) CloneMod(ctx context.Context, dest *Cache, k Key) error {
 // rewrites a file in place, which a shared inode would carry into the other
 // entry. The copy is built beside the destination and renamed into place,
 // so a failed one leaves no partial entry; an existing destination is never
-// overwritten (os.ErrExist). It refuses a key Validate refuses: the copy is
-// a new entry.
+// overwritten (os.ErrExist).
 func (c *Cache) CopyModAs(ctx context.Context, k Key, destSourceID, destModID string) (err error) {
 	destKey := k
 	destKey.SourceID, destKey.ModID = destSourceID, destModID
-	dst, err := c.NewEntryPath(destKey)
-	if err != nil {
-		return err
-	}
+	dst := c.ModPath(destKey)
 	if _, statErr := os.Lstat(dst); statErr == nil {
 		return fmt.Errorf("cache entry %s: %w", dst, os.ErrExist)
 	}
