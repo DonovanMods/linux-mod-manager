@@ -156,4 +156,7 @@ type CollectionDocument struct {
 	Hooks         GameHooks
 	HooksExplicit GameHooksExplicit
 	Overrides     map[string]string
+	// Plugins is the profile's plugin list (#616), which a document needs
+	// the plugin_order feature to carry.
+	Plugins ProfilePlugins
 }

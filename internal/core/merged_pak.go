@@ -274,7 +274,23 @@ func (s *Service) retainedMergeFiles(ctx context.Context, game *domain.Game, pro
 // touches a merge input, including the single-step ones no Plan gates
 // (#413). A refusal comes back as this call's error and the artifact is left
 // exactly as it is; the uninstall-to-zero removal still runs.
+//
+// It is also the plugin-list choke point (#616): every flow that can change
+// which plugins a profile deploys ends with this call, so the game's
+// Plugins.txt is rewritten here (syncPluginList), after the merged artifact
+// and whatever the flow deployed. Its findings join warnings; a flow with
+// a structured result of its own reads them from a pluginListRecorder on
+// ctx. The plugin step never fails the flow - the mods are deployed by
+// then - and runs only when the merged-artifact sync succeeded.
 func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileName string) (warnings []string, err error) {
+	defer func() {
+		if err != nil {
+			return
+		}
+		res := s.syncPluginList(ctx, game, profileName)
+		recordPluginList(ctx, res)
+		warnings = append(warnings, res.warnings()...)
+	}()
 	if game.DeployMode != domain.DeployCompile {
 		return nil, nil
 	}

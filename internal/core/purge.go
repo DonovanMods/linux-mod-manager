@@ -1688,6 +1688,11 @@ type PurgeResult struct {
 
 	RemovedPaths int             `json:"removed_paths,omitzero"`
 	Kept         []PurgeKeptPath `json:"kept,omitempty"`
+
+	// Plugins is the game's plugin list put back as it was before lmm
+	// first wrote it (#616): nil when lmm never wrote one. Its findings
+	// are also Warnings.
+	Plugins *PluginListResult `json:"plugins,omitempty"`
 }
 
 // PurgeProfile undeploys every mod in mods from game's directory - the
@@ -1814,6 +1819,19 @@ func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileNa
 		result.Warnings = append(result.Warnings, msg)
 		if sink != nil {
 			sink(WarningEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeWarning, Message: msg})
+		}
+	}
+
+	// #616: the plugin list the user had before lmm's first write comes
+	// back once every mod is gone. A warning, not a failure: the mods are
+	// purged either way.
+	if res := s.restorePluginList(game); res != nil {
+		result.Plugins = res
+		for _, w := range res.warnings() {
+			result.Warnings = append(result.Warnings, w)
+			if sink != nil {
+				sink(WarningEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeWarning, Message: w})
+			}
 		}
 	}
 

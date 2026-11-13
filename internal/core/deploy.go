@@ -196,6 +196,11 @@ type DeployResult struct {
 	MergedArtifact string `json:"merged_artifact,omitempty"`
 	MergedMods     int    `json:"merged_mods"`
 	RawFallbacks   int    `json:"raw_fallbacks"`
+
+	// Plugins is what the deploy did to the game's plugin list (#616): nil
+	// on a game whose adapter manages none. Its findings are also
+	// Warnings, so a reader of Warnings alone misses nothing.
+	Plugins *PluginListResult `json:"plugins,omitempty"`
 }
 
 // DeployPlan is PlanDeploy's side-effect-free description of what a deploy
@@ -997,11 +1002,13 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
 	}
 
-	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+	plugins := &pluginListRecorder{}
+	if syncWarnings, syncErr := s.syncMergedPak(withPluginListRecorder(ctx, plugins), game, profileName); syncErr != nil {
 		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
 		result.Warnings = append(result.Warnings, msg)
 		emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
 	} else {
+		result.Plugins = plugins.result
 		for _, w := range syncWarnings {
 			result.Warnings = append(result.Warnings, w)
 			emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: w})
