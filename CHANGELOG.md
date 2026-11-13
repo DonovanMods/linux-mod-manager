@@ -313,6 +313,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web UI's mod page no longer blanks its live details when a job
+  ends (#615).** After a job, the mod page reloads its documents. It used
+  to clear the live description, changelog, versions table and
+  **Reconfigure installer…** while it waited for the new answers. That
+  swapped the buttons for new ones, so focus fell to the page for a moment
+  after the FOMOD wizard closed. The mod page now keeps what it is showing
+  until the new answers arrive.
+
 - **A free NexusMods account's download refusal now says so, and offers the
   manual download (#601).** NexusMods serves downloads through its API to
   Premium accounts only. A free account's install or update used to fail

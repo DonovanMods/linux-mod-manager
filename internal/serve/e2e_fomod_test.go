@@ -10,6 +10,7 @@ package serve_test
 import (
 	"archive/zip"
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,18 +187,38 @@ func TestE2E_FomodWizard_ResultShapedQuestionAndEscape(t *testing.T) {
 	assert.Equal(t, "2K", e2eDeployed(t, f.Game, "Mods/t.dds"), "the installer's preselection, answered")
 
 	// Escape: reconfigure from the mod page, then dismiss the wizard.
+	//
+	// The job's end re-reads this page, and that re-read must not replace
+	// the opener (issue 615 follow-up): a re-hydrate that blanked the
+	// page's live detail for a moment unmounted the button and mounted a
+	// new one, so focus blinked to <body> until modal.js's refocus caught
+	// it. openerWatchJS records whether the button node ever leaves the
+	// document, and counts this mod's detail reads so the test can wait
+	// for the re-read to have landed before it asks.
+	var replaced bool
 	var focused string
 	f.runInBrowser(t,
 		chromedp.Navigate(f.ModPagePath("fake", "wizard")),
+		chromedp.WaitVisible(`[data-action="reconfigure-fomod"]`, chromedp.ByQuery),
+		chromedp.Evaluate(openerWatchJS(`[data-action="reconfigure-fomod"]`, "/api/v1/mods/fake/wizard"), nil),
 		clickWhenSettled(`[data-action="reconfigure-fomod"]`),
 		chromedp.WaitVisible(`.modal[data-kind="mod_fomod"] .plan`, chromedp.ByQuery),
 		clickWhenSettled(`.modal [data-action="confirm"]`),
 		chromedp.WaitVisible(fomodModal+` [data-testid="fomod-step"]`, chromedp.ByQuery),
+		// The shell's Escape listener is attached in an effect.
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		waitGone(fomodModal),
-		pollUntil(`document.activeElement && document.activeElement.matches('[data-action="reconfigure-fomod"]')`),
-		chromedp.Evaluate(`document.activeElement.getAttribute("data-action")`, &focused),
+		// The job's re-read has been asked for and has answered.
+		pollUntil(`window.__openerWatch.detailReads >= 1 && window.__openerWatch.inflight === 0`),
+		settleEffects(),
+		chromedp.Evaluate(`window.__openerWatch.replaced`, &replaced),
+		// Focus is on the opener, and stays there: two checks in a row,
+		// each reading the attribute in the same evaluation.
+		pollUntil(stableFocusJS(`[data-action="reconfigure-fomod"]`)),
+		chromedp.Evaluate(`document.activeElement && document.activeElement.getAttribute("data-action")`, &focused),
 	)
+	assert.False(t, replaced, "the post-job re-read kept the opener's node")
 	assert.Equal(t, "reconfigure-fomod", focused)
 	assert.Equal(t, "2K", e2eDeployed(t, f.Game, "Mods/t.dds"), "a dismissed wizard changes nothing")
 	assert.Empty(t, f.BrowserErrors())
@@ -413,4 +434,45 @@ func TestE2E_FomodWizard_ANewModalKeepsFocusFromTheOldOpener(t *testing.T) {
 	)
 	assert.False(t, stolen, "focus stayed off the control behind the wizard's scrim")
 	assert.Empty(t, f.BrowserErrors())
+}
+
+// openerWatchJS installs window.__openerWatch on the page: replaced turns
+// true the moment the node sel names now leaves the document (a re-render
+// that unmounted it and mounted a new one), and detailReads/inflight count
+// the reads of detailPath (a mod's detail document, not its /files or
+// /versions) issued from here on and the fetches still outstanding, so a
+// test can wait for a re-read to have landed.
+func openerWatchJS(sel, detailPath string) string {
+	return fmt.Sprintf(`(() => {
+		const el = document.querySelector(%q);
+		const watch = { replaced: false, detailReads: 0, inflight: 0 };
+		window.__openerWatch = watch;
+		new MutationObserver(() => {
+			if (!el.isConnected) watch.replaced = true;
+		}).observe(document.body, { childList: true, subtree: true });
+		const fetchFn = window.fetch;
+		window.fetch = (input, init) => {
+			const path = new URL(String(input), location.href).pathname;
+			const detail = path === %q;
+			watch.inflight++;
+			return fetchFn(input, init).finally(() => {
+				watch.inflight--;
+				if (detail) watch.detailReads++;
+			});
+		};
+	})()`, sel, detailPath)
+}
+
+// stableFocusJS is truthy once sel has held focus on two consecutive
+// checks: the first records the focused node, the next (a poll interval
+// later) confirms the same node still matches. A focus that blinks away
+// and back between two checks resets it.
+func stableFocusJS(sel string) string {
+	return fmt.Sprintf(`(() => {
+		const el = document.activeElement;
+		const ok = el !== null && el.matches(%q);
+		const prev = window.__stableFocus;
+		window.__stableFocus = ok ? el : null;
+		return ok && prev === el;
+	})()`, sel)
 }

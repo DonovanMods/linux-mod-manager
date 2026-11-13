@@ -620,6 +620,17 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
   // and updates to null. The newer hydration has already written its
   // extras by then, so they stay blank until something hydrates again.
   // Narrow, but it is the class C-1 closed everywhere else.
+  //
+  // A RE-hydrate keeps the extras already on screen until its own answers
+  // replace them below (issue 615 follow-up). Blanking them here took down
+  // everything the live detail gates - the Reconfigure installer… button
+  // among them - for the one render between this write and the next, so
+  // the button a just-closed modal had returned focus to was unmounted and
+  // a new one mounted in its place: focus fell to <body>. The extras are
+  // this same mod's (key is checked just above), and the extras commit
+  // below overwrites each field this load is current for, so nothing stale
+  // outlives the re-read.
+  const prior = reHydrating ? store.get().modPage : null;
   if (
     !commitSlices(
       seq,
@@ -631,11 +642,11 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
           // When this files report was asked for (issue 454 N1).
           filesStamp: pageClaim.get("modPage").stamp,
           error: null,
-          detail: null,
-          detailError: null,
-          versions: null,
-          versionsError: null,
-          updates: null,
+          detail: prior?.detail ?? null,
+          detailError: prior?.detailError ?? null,
+          versions: prior?.versions ?? null,
+          versionsError: prior?.versionsError ?? null,
+          updates: prior?.updates ?? null,
         },
       },
       {},
