@@ -14,6 +14,7 @@
 // comment - a live source.ChangelogProvider read every time), so this is
 // the one section that fetches, lazily, once the panel is open.
 
+import { deployedKey, deployedPath } from "../deploypath.js";
 import { html, useEffect, useMemo, useRef, useState } from "../render.js";
 import { trapFocus } from "../focustrap.js";
 import { exitMillis } from "../motion.js";
@@ -637,8 +638,8 @@ export function ModPanel({
               <ul class="plan__paths">
                 ${conflicts.map(
                   (c) =>
-                    html`<li key=${c.path} class="mono">
-                      ${c.path}
+                    html`<li key=${deployedKey(c.path, c.root)} class="mono">
+                      ${deployedPath(c.path, c.root)}
                       ${
                         c.load_order_winner.key === row.key
                           ? " (wins)"

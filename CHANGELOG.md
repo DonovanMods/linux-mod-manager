@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mod files that belong in the game folder are deployed there (#629).**
+  On a game with the `bethesda` adapter, a script extender's loader and
+  DLLs (`skse64_loader.exe`, `skse64_*.dll`, and the F4SE/SFSE/SKSEVR
+  equivalents), an ENB's `d3d11.dll` and `enbseries/` folder, and the whole
+  of an ENB preset or a `dinput8.dll` mod now deploy into the game's
+  `install_path`, beside its executable, instead of into `Data/` where the
+  game never loads them; the rest of the same mod still goes into `Data/`.
+  Every flow handles them: `lmm deploy`, `lmm install`, `lmm update` and
+  rollbacks, `lmm uninstall`, `lmm mod disable`/`enable`, `lmm purge`,
+  `lmm profile switch`/`apply`, `lmm verify` (and `--fix`), `lmm
+conflicts`, `lmm mod files`, snapshots, and a profile override on such a
+  file (#630). When a mod's file replaces one the game ships (a stock
+  `d3d11.dll`, say), lmm keeps the game's copy first and puts it back when
+  the mod's file goes, exactly as it does in `Data/`. lmm writes and
+  removes only inside the game folder: a folder there that is a link to
+  somewhere else is refused, and the deploy says so. Wherever lmm lists a
+  deployed file, one in the game folder is shown with the root named in
+  front, `<game root>/d3d11.dll`, and the web UI's Health card marks such a
+  row with a **Game root** badge. In `--json` and the web API, a document
+  that reports a deployed file as an object (`lmm verify`'s findings,
+  `lmm conflicts`, `lmm mod files`, a purge's or uninstall's kept,
+  stranded and unshipped paths, a convergence's removed files, an install
+  conflict, a snapshot's `deployed_files`) gains a `root` field,
+  `"install_path"`, beside the path relative to it; a mod_path file has no
+  `root` field, so every existing document is unchanged. A plain list of
+  paths (a deploy plan's `link`, `remove` and `purge`, a purge plan's
+  `remove`, an uninstall plan's `files`, the `removed` lists) spells a
+  game-folder file `<game root>/...`.
+  The database moves to schema version 26 (`deployed_files` records each
+  file's root), so an older lmm refuses to open it, as for every schema
+  change. A mod deployed into `Data/` before its game used the `bethesda`
+  adapter has those files moved to the game folder by the next deploy (no
+  reinstall needed), and an uninstall or purge before then finds them
+  where they are; the warning `lmm game edit --adapter` and the web UI give
+  when switching adapters now says so.
+
 - **A profile override can change a mod's own file (#630).** A profile
   (or a collection) that overrides a file a deployed mod ships, such as a
   mod's `.ini`, now works under every link method: the deploy replaces

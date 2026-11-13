@@ -487,8 +487,10 @@ var ErrNotAMod = errors.New("this archive is not a mod for this game")
 var ErrPreconditionUnmet = errors.New("the game's adapter refused this operation")
 
 // DeployedMod is one deployed mod as a LaunchAdvisor sees it: its display
-// name and its deployed files, mod-path-relative and SLASH-separated, for
-// NormalizeRequest.Members' reason.
+// name and its deployed files under the game's mod_path, mod-path-relative
+// and SLASH-separated, for NormalizeRequest.Members' reason. A file the
+// mod deploys under the game root (RootInstallPath, #629) is not among
+// them: it is not mod-path-relative.
 type DeployedMod struct {
 	// Name is the mod's display name.
 	Name string

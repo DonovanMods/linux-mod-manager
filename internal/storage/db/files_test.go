@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
@@ -22,7 +23,7 @@ func TestSaveDeployedFile(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify it was saved
-	owner, err := database.GetFileOwner(context.Background(), "skyrim-se", "default", "meshes/test.nif")
+	owner, err := database.GetFileOwner(context.Background(), "skyrim-se", "default", domain.ModPathFile("meshes/test.nif"))
 	require.NoError(t, err)
 	assert.Equal(t, "nexusmods", owner.SourceID)
 	assert.Equal(t, "12345", owner.ModID)
@@ -44,7 +45,7 @@ func TestSaveDeployedFile_Upsert(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify new owner
-	owner, err := database.GetFileOwner(context.Background(), "skyrim-se", "default", "meshes/test.nif")
+	owner, err := database.GetFileOwner(context.Background(), "skyrim-se", "default", domain.ModPathFile("meshes/test.nif"))
 	require.NoError(t, err)
 	assert.Equal(t, "222", owner.ModID)
 }
@@ -56,7 +57,7 @@ func TestGetFileOwner_NotFound(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	owner, err := database.GetFileOwner(context.Background(), "skyrim-se", "default", "nonexistent.nif")
+	owner, err := database.GetFileOwner(context.Background(), "skyrim-se", "default", domain.ModPathFile("nonexistent.nif"))
 	require.NoError(t, err)
 	assert.Nil(t, owner)
 }
@@ -78,13 +79,13 @@ func TestDeleteDeployedFiles(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify 123's files are gone
-	owner, _ := database.GetFileOwner(context.Background(), "skyrim-se", "default", "meshes/a.nif")
+	owner, _ := database.GetFileOwner(context.Background(), "skyrim-se", "default", domain.ModPathFile("meshes/a.nif"))
 	assert.Nil(t, owner)
-	owner, _ = database.GetFileOwner(context.Background(), "skyrim-se", "default", "meshes/b.nif")
+	owner, _ = database.GetFileOwner(context.Background(), "skyrim-se", "default", domain.ModPathFile("meshes/b.nif"))
 	assert.Nil(t, owner)
 
 	// Verify 456's files remain
-	owner, _ = database.GetFileOwner(context.Background(), "skyrim-se", "default", "meshes/c.nif")
+	owner, _ = database.GetFileOwner(context.Background(), "skyrim-se", "default", domain.ModPathFile("meshes/c.nif"))
 	assert.NotNil(t, owner)
 	assert.Equal(t, "456", owner.ModID)
 }
@@ -97,13 +98,13 @@ func TestDeleteDeployedFile(t *testing.T) {
 	require.NoError(t, d.SaveDeployedFile(context.Background(), "g", "default", "mods/a.pak", "src", "m1"))
 	require.NoError(t, d.SaveDeployedFile(context.Background(), "g", "default", "mods/b.pak", "src", "m1"))
 
-	require.NoError(t, d.DeleteDeployedFile(context.Background(), "g", "default", "mods/a.pak"))
-	files, err := d.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "m1")
+	require.NoError(t, d.DeleteDeployedFile(context.Background(), "g", "default", domain.ModPathFile("mods/a.pak")))
+	files, err := relsOf(d.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "m1"))
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"mods/b.pak"}, files)
 
 	// Idempotent: deleting again is a no-op, not an error.
-	require.NoError(t, d.DeleteDeployedFile(context.Background(), "g", "default", "mods/a.pak"))
+	require.NoError(t, d.DeleteDeployedFile(context.Background(), "g", "default", domain.ModPathFile("mods/a.pak")))
 }
 
 func TestGetDeployedFilesForMod(t *testing.T) {
@@ -117,7 +118,7 @@ func TestGetDeployedFilesForMod(t *testing.T) {
 	require.NoError(t, database.SaveDeployedFile(context.Background(), "skyrim-se", "default", "meshes/b.nif", "nexusmods", "123"))
 	require.NoError(t, database.SaveDeployedFile(context.Background(), "skyrim-se", "default", "meshes/c.nif", "nexusmods", "456"))
 
-	files, err := database.GetDeployedFilesForMod(context.Background(), "skyrim-se", "default", "nexusmods", "123")
+	files, err := relsOf(database.GetDeployedFilesForMod(context.Background(), "skyrim-se", "default", "nexusmods", "123"))
 	require.NoError(t, err)
 	assert.Len(t, files, 2)
 	assert.Contains(t, files, "meshes/a.nif")
@@ -131,7 +132,7 @@ func TestGetDeployedFilesForMod_Empty(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	files, err := database.GetDeployedFilesForMod(context.Background(), "skyrim-se", "default", "nexusmods", "nonexistent")
+	files, err := relsOf(database.GetDeployedFilesForMod(context.Background(), "skyrim-se", "default", "nexusmods", "nonexistent"))
 	require.NoError(t, err)
 	assert.Empty(t, files)
 }
@@ -148,13 +149,13 @@ func TestCheckFileConflicts(t *testing.T) {
 	require.NoError(t, database.SaveDeployedFile(context.Background(), "skyrim-se", "default", "meshes/only123.nif", "nexusmods", "123"))
 
 	// Check conflicts for new mod that wants to deploy shared.nif and newfile.nif
-	paths := []string{"meshes/shared.nif", "meshes/newfile.nif"}
+	paths := []domain.DeployPath{domain.ModPathFile("meshes/shared.nif"), domain.ModPathFile("meshes/newfile.nif")}
 	conflicts, err := database.CheckFileConflicts(context.Background(), "skyrim-se", "default", paths)
 	require.NoError(t, err)
 
 	// Only shared.nif should conflict
 	assert.Len(t, conflicts, 1)
-	assert.Equal(t, "meshes/shared.nif", conflicts[0].RelativePath)
+	assert.Equal(t, "meshes/shared.nif", conflicts[0].Path.Rel)
 	assert.Equal(t, "123", conflicts[0].ModID)
 }
 
@@ -171,7 +172,7 @@ func TestCheckFileConflicts_Empty(t *testing.T) {
 	assert.Empty(t, conflicts)
 
 	// Empty slice
-	conflicts, err = database.CheckFileConflicts(context.Background(), "skyrim-se", "default", []string{})
+	conflicts, err = database.CheckFileConflicts(context.Background(), "skyrim-se", "default", []domain.DeployPath{})
 	require.NoError(t, err)
 	assert.Empty(t, conflicts)
 }
@@ -256,7 +257,7 @@ func TestCheckFileConflicts_NoConflicts(t *testing.T) {
 	})
 
 	// No existing files, check paths
-	paths := []string{"meshes/new1.nif", "meshes/new2.nif"}
+	paths := []domain.DeployPath{domain.ModPathFile("meshes/new1.nif"), domain.ModPathFile("meshes/new2.nif")}
 	conflicts, err := database.CheckFileConflicts(context.Background(), "skyrim-se", "default", paths)
 	require.NoError(t, err)
 	assert.Empty(t, conflicts)
@@ -278,9 +279,9 @@ func TestListDeployedFiles_ReturnsEveryPathSorted(t *testing.T) {
 	files, err := d.ListDeployedFiles(ctx, "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, files, 2, "another profile's rows are not included")
-	assert.Equal(t, "a.esp", files[0].RelativePath)
+	assert.Equal(t, "a.esp", files[0].Path.Rel)
 	assert.Equal(t, "a", files[0].ModID)
-	assert.Equal(t, "z.esp", files[1].RelativePath)
+	assert.Equal(t, "z.esp", files[1].Path.Rel)
 	assert.Equal(t, "b", files[1].ModID)
 }
 
@@ -312,9 +313,9 @@ func TestDeployedPathRecords_NamesEveryRecordOfAPath(t *testing.T) {
 
 	records, err := d.DeployedPathRecords(ctx, "g1")
 	require.NoError(t, err)
-	assert.Equal(t, map[string][]db.PathRecord{
-		"shared.esp": {{Profile: "a", SourceID: "local", ModID: "other"}, {Profile: "b", SourceID: "src", ModID: "s"}},
-		"own.esp":    {{Profile: "b", SourceID: "src", ModID: "o"}},
+	assert.Equal(t, map[domain.DeployPath][]db.PathRecord{
+		domain.ModPathFile("shared.esp"): {{Profile: "a", SourceID: "local", ModID: "other"}, {Profile: "b", SourceID: "src", ModID: "s"}},
+		domain.ModPathFile("own.esp"):    {{Profile: "b", SourceID: "src", ModID: "o"}},
 	}, records, "another game's rows are not included")
 }
 
@@ -341,4 +342,17 @@ func TestDeployedFileCounts(t *testing.T) {
 	counts, err = database.DeployedFileCounts(ctx, "g1")
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int{"default": 2, "second": 1}, counts, "another game's rows are not counted")
+}
+
+// relsOf is a deployed-file listing's paths relative to their roots, for a
+// test that asserts on mod_path paths by name (#629).
+func relsOf(paths []domain.DeployPath, err error) ([]string, error) {
+	if paths == nil {
+		return nil, err
+	}
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = p.Rel
+	}
+	return out, err
 }

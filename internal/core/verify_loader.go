@@ -306,11 +306,11 @@ func (r *verifyRun) unlinkedLoaderFiles(mod *domain.InstalledMod) []string {
 	}
 	var missing []string
 	for _, f := range files {
-		slash := filepath.ToSlash(f)
-		if !strings.HasPrefix(slash, loaderContentRoot+"/") {
+		slash := filepath.ToSlash(f.path.Rel)
+		if f.path.IsGameRoot() || !strings.HasPrefix(slash, loaderContentRoot+"/") {
 			continue
 		}
-		if _, err := os.Lstat(filepath.Join(r.game.ModPath, f)); err != nil {
+		if _, err := os.Lstat(deployTarget(r.game, f.path)); err != nil {
 			missing = append(missing, slash)
 		}
 	}

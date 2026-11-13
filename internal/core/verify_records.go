@@ -33,7 +33,7 @@ func (r *verifyRun) recordsPass(installedMods []domain.InstalledMod, files []Dep
 	for _, m := range installedMods {
 		installed[domain.ModKey(m.SourceID, m.ID)] = true
 	}
-	orphans := make(map[string][]string)
+	orphans := make(map[string][]domain.DeployPath)
 	var order []string
 	for _, row := range rows {
 		key := domain.ModKey(row.SourceID, row.ModID)
@@ -45,7 +45,7 @@ func (r *verifyRun) recordsPass(installedMods []domain.InstalledMod, files []Dep
 		if _, seen := orphans[key]; !seen {
 			order = append(order, key)
 		}
-		orphans[key] = append(orphans[key], row.RelativePath)
+		orphans[key] = append(orphans[key], row.Path)
 	}
 	if len(order) > 0 {
 		if err := r.orphanedRecordFindings(order, orphans); err != nil {
@@ -106,14 +106,14 @@ func (r *verifyRun) recordsPassTolerant(installedMods []domain.InstalledMod, fil
 // orphanedRecordFindings reports, and under --fix on the active profile
 // drops, the records recordsPass found with no installed row, one finding
 // per mod.
-func (r *verifyRun) orphanedRecordFindings(order []string, orphans map[string][]string) error {
+func (r *verifyRun) orphanedRecordFindings(order []string, orphans map[string][]domain.DeployPath) error {
 	live, err := r.svc.liveProfile(r.ctx, r.game.ID)
 	active := err == nil && live == r.profile
 	for _, key := range order {
 		paths := orphans[key]
-		slices.Sort(paths)
+		slices.SortFunc(paths, domain.CompareDeployPaths)
 		sourceID, modID, _ := strings.Cut(key, ":")
-		note := fmt.Sprintf("%d deployed-file record(s) of %s with no installed mod: %s", len(paths), key, strings.Join(paths, ", "))
+		note := fmt.Sprintf("%d deployed-file record(s) of %s with no installed mod: %s", len(paths), key, strings.Join(displayStrings(paths), ", "))
 		f := VerifyFinding{ModID: modID, Status: "orphaned_record", Note: note}
 		switch {
 		case err != nil:

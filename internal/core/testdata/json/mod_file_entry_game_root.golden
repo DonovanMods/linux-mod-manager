@@ -1,0 +1,6 @@
+{
+  "path": "skse64_loader.exe",
+  "root": "install_path",
+  "size": 4096,
+  "deployed": true
+}

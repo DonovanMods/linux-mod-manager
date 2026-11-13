@@ -7,6 +7,7 @@
 // still printing the raw status slug beside a card rendering the same
 // finding as prose.
 
+import { isGameRoot } from "./deploypath.js";
 import { displayVersion } from "./version.js";
 
 /** findingSubject names what a finding is about: its mod, or - for a
@@ -38,6 +39,13 @@ export function findingLabel(f) {
     return `${label} (recorded ${f.recorded}, source reports ${f.effective})`;
   }
   return label;
+}
+
+/** isGameRootFinding reports whether a finding is about a file deployed
+ * under the game root (issue 629) - core's root field, never a guess from
+ * the path - so a row can say so beside its path. */
+export function isGameRootFinding(f) {
+  return isGameRoot(f?.root);
 }
 
 /** isInformational reports whether a finding is a fact about the install

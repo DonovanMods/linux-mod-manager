@@ -6,43 +6,32 @@ import "github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 // relative to. It is the "Root" the game-adapter design left room for
 // beside FileRoute (docs/plans/2026-09-10-game-adapter-design.md §2): a
 // separate answer from a separate capability, so FileRoute and every
-// adapter that answers it are unchanged.
-type DeployRoot int
+// adapter that answers it are unchanged. It is domain.DeployRoot, the
+// vocabulary core records a deployed file's root in (#629).
+type DeployRoot = domain.DeployRoot
 
 const (
 	// RootModPath is the zero value: the file deploys under the game's
 	// mod_path, as every file of every game always has.
-	RootModPath DeployRoot = iota
+	RootModPath = domain.RootModPath
 	// RootInstallPath is a file that belongs at the game's install_path,
 	// relative to it: a script extender's loader and DLLs, an ENB's
 	// d3d11.dll, which the game only loads from beside its executable.
-	RootInstallPath
+	RootInstallPath = domain.RootInstallPath
 )
-
-// String returns the root's diagnostic name.
-func (r DeployRoot) String() string {
-	switch r {
-	case RootModPath:
-		return "mod_path"
-	case RootInstallPath:
-		return "install_path"
-	default:
-		return "unknown"
-	}
-}
 
 // RootRouter is the optional capability of an adapter whose game loads
 // some mod content from its install directory rather than from its
 // mod_path (#606: a Bethesda game's mod_path is Data/, but a script
 // extender's loader and an ENB live beside the executable).
 //
-// CORE DOES NOT HONOUR IT YET. Deploying a file outside mod_path means the
-// deploy, every removal path, converge, verify, purge, conflict detection
-// and the deployed_files record all learning a second root, and that is a
-// story of its own (#629). Until it lands, a file this capability routes to
-// RootInstallPath deploys under mod_path exactly as it did before #606;
-// internal/core's TestRootInstallPathStillDeploysUnderModPath pins that,
-// so the story that changes it has to change the test on purpose.
+// Core honours it (#629): a file routed to RootInstallPath deploys under the
+// game's install_path, is recorded there (deployed_files.root), and every
+// removal, converge, verify, purge and conflict report finds it there. It
+// is written only beneath the install_path, and a stock file it replaces
+// is preserved first and put back when lmm's file goes
+// (internal/core/deploy_root.go). For a game whose mod_path IS its
+// install_path the answer changes nothing: there is one directory.
 //
 // Like every capability it is pure: it answers from file names and the
 // game's configuration, never from the disk.

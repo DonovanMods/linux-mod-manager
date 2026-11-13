@@ -417,6 +417,53 @@ func TestJSONGoldens(t *testing.T) {
 			"purge_kept_path",
 			core.PurgeKeptPath{Path: "Data/shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default", "survival"}},
 		},
+		// #629: every document that reports a deployed file as an object
+		// carries root "install_path" for one deployed under the game root,
+		// beside its path relative to it; a mod_path file has no root field
+		// (every golden above is that shape, unchanged).
+		{
+			"purge_kept_path_game_root",
+			core.PurgeKeptPath{Path: "d3d11.dll", Root: domain.RootInstallPath, Reason: core.PurgeKeptUserFile, Note: "its content changed after lmm deployed it"},
+		},
+		{
+			"purge_stranded_path_game_root",
+			core.PurgeStrandedPath{Path: "skse64_loader.exe", Root: domain.RootInstallPath, ModPath: "/games/skyrim-se/OldData"},
+		},
+		{
+			"purge_unshipped_path_game_root",
+			core.PurgeUnshippedPath{Path: "enbseries/effect.fx", Root: domain.RootInstallPath, SourceID: "nexusmods", ModID: "42", Version: "2.0", Profile: "default"},
+		},
+		{
+			"profile_conflict_game_root",
+			core.ProfileConflict{
+				Path:            "d3d11.dll",
+				Root:            domain.RootInstallPath,
+				Owner:           core.ConflictModRef{Key: "nexusmods:42", Name: "Sample ENB"},
+				AlsoIn:          []core.ConflictModRef{{Key: "nexusmods:7", Name: "Other ENB"}},
+				LoadOrderWinner: core.ConflictModRef{Key: "nexusmods:42", Name: "Sample ENB"},
+			},
+		},
+		{
+			"conflict_game_root",
+			core.Conflict{RelativePath: "d3d11.dll", Root: domain.RootInstallPath, CurrentSourceID: "nexusmods", CurrentModID: "42"},
+		},
+		{
+			"verify_finding_game_root",
+			core.VerifyFinding{ModID: "42", ModName: "Sample ENB", FileID: "enbseries/effect.fx", Root: domain.RootInstallPath,
+				Status: core.VerifyStatusDeployedModified, Note: "<game root>/enbseries/effect.fx: its content changed after lmm deployed it, so lmm leaves it as yours"},
+		},
+		{
+			"mod_file_entry_game_root",
+			core.ModFileEntry{Path: "skse64_loader.exe", Root: domain.RootInstallPath, Size: 4096, Deployed: true},
+		},
+		{
+			"converged_file_game_root",
+			core.ConvergedFile{Path: "d3d11.dll", Root: domain.RootInstallPath, Reason: "no longer provided by nexusmods/42", SourceID: "nexusmods", ModID: "42"},
+		},
+		{
+			"snapshot_file_game_root",
+			core.SnapshotFile{RelativePath: "d3d11.dll", Root: core.OriginalRootInstallPath, SourceID: "nexusmods", ModID: "42", SHA256: "ab", Size: 2},
+		},
 		{
 			// #445 review F1, F3, F7: the other reasons a path is kept.
 			"purge_kept_paths_by_reason",

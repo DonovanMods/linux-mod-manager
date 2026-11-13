@@ -52,8 +52,9 @@ type overrideEnv struct {
 // (deployedJudge): only lmm's own file there - its link, its copy, an
 // overridden copy it wrote - is replaced without a second thought.
 type modPathFile struct {
-	// rel is the path relative to the mod path, in slash form.
-	rel string
+	// rel is the mod file's deployed path (#629: under the mod path, or
+	// under the game root).
+	rel domain.DeployPath
 	// ours: the file is lmm's own, so replacing it loses nothing.
 	ours bool
 	// recorded: the acting profile records the path, so the override
@@ -258,11 +259,12 @@ func applyOneOverride(base, realBase, relPath string, profile *domain.Profile, e
 // capture, a failure refuses the override - it is the only copy of the
 // user's content - as does an earlier original of the path the store
 // already keeps, which it would not replace.
-func preserveUsersModFile(originals *originalsStore, profileName, rel, path string) error {
+func preserveUsersModFile(originals *originalsStore, profileName string, rel domain.DeployPath, path string) error {
 	if originals == nil {
 		return errors.New("it is yours, and lmm has nowhere to set it aside first, so it left it")
 	}
-	held, err := originals.holds(OriginalRootModPath, rel)
+	root, member := originalRootOf(rel)
+	held, err := originals.holds(root, member)
 	if err != nil {
 		return fmt.Errorf("it is yours, and the originals store could not be read to set it aside first (%v), so lmm left it", err)
 	}
@@ -270,7 +272,7 @@ func preserveUsersModFile(originals *originalsStore, profileName, rel, path stri
 		return errors.New("it is yours, and lmm already keeps an earlier original of that path, so it could not set this one aside too - move it aside, then deploy again")
 	}
 	if err := originals.capture(OriginalFile{
-		Root: OriginalRootModPath, RelativePath: rel,
+		Root: root, RelativePath: member,
 		Op: OriginalOpProfileOverride, Profile: profileName,
 	}, path); err != nil {
 		return fmt.Errorf("it is yours, and it could not be set aside first (%v), so lmm left it", err)
@@ -305,9 +307,10 @@ func (s *Service) applyOverrides(ctx context.Context, game *domain.Game, profile
 	if s.db != nil && game.ModPath != "" {
 		if absMod, err := filepath.Abs(game.ModPath); err == nil {
 			if realMod, err := resolveExisting(absMod); err == nil {
-				env.modPathFile = s.modPathJudge(ctx, game, profileName, realMod)
+				deployedAt := deployedPathAt(game, realMod)
+				env.modPathFile = s.modPathJudge(ctx, game, profileName, deployedAt)
 				env.recordCopy = func(realDest string) {
-					if rel, ok := relUnder(realMod, realDest); ok {
+					if rel, ok := deployedAt(realDest); ok {
 						s.recordOverriddenCopy(ctx, game, profileName, rel, realDest)
 					}
 				}
@@ -317,17 +320,45 @@ func (s *Service) applyOverrides(ctx context.Context, game *domain.Game, profile
 	return applyProfileOverrides(game, profile, env)
 }
 
+// deployedPathAt resolves a real path in game to the deployed path a mod
+// file there has: relative to realMod, the resolved mod path, or - for a
+// game with a game root of its own (#629) - the install_path key of its
+// path relative to the resolved install_path. A path under the mod path is
+// the mod path's, whatever else contains it.
+func deployedPathAt(game *domain.Game, realMod string) func(realDest string) (domain.DeployPath, bool) {
+	realInstall := ""
+	if routesToGameRoot(game) {
+		if abs, err := filepath.Abs(game.InstallPath); err == nil {
+			if r, err := resolveExisting(abs); err == nil {
+				realInstall = r
+			}
+		}
+	}
+	return func(realDest string) (domain.DeployPath, bool) {
+		if rel, ok := relUnder(realMod, realDest); ok {
+			return domain.ModPathFile(rel), true
+		}
+		if realInstall != "" {
+			if rel, ok := relUnder(realInstall, realDest); ok {
+				return domain.GameRootFile(rel), true
+			}
+		}
+		return domain.DeployPath{}, false
+	}
+}
+
 // modPathJudge is overrideEnv.modPathFile for profileName of game, whose
-// resolved mod path is realMod: the deployedJudge every removal asks,
+// deployed paths deployedAt resolves: the deployedJudge every removal asks,
 // acting for the profile, plus the games sharing the mod directory.
-func (s *Service) modPathJudge(ctx context.Context, game *domain.Game, profileName, realMod string) func(string) (modPathFile, bool) {
+func (s *Service) modPathJudge(ctx context.Context, game *domain.Game, profileName string, deployedAt func(string) (domain.DeployPath, bool)) func(string) (modPathFile, bool) {
 	others, othersErr := s.otherGamesRecording(ctx, game)
 	jd := deployedJudge{db: s.db, game: game, profile: profileName, cacheRoots: s.cacheRoots(game), others: others}
 	return func(realDest string) (modPathFile, bool) {
-		rel, ok := relUnder(realMod, realDest)
+		rel, ok := deployedAt(realDest)
 		if !ok {
 			return modPathFile{}, false
 		}
+
 		mf := modPathFile{rel: rel}
 		if othersErr != nil {
 			mf.unchecked = othersErr.Error()
@@ -369,7 +400,7 @@ func (s *Service) modPathJudge(ctx context.Context, game *domain.Game, profileNa
 // lmm's own to every later judge. A profile with no record of the path
 // records nothing; a failure is logged, and leaves the copy judged as a
 // file lmm cannot vouch for.
-func (s *Service) recordOverriddenCopy(ctx context.Context, game *domain.Game, profileName, rel, dst string) {
+func (s *Service) recordOverriddenCopy(ctx context.Context, game *domain.Game, profileName string, rel domain.DeployPath, dst string) {
 	states, err := currentStates(ctx, s.db, game, rel)
 	if err != nil {
 		s.log.Warn("could not read the record of an overridden mod file", "path", dst, "err", err)
@@ -385,7 +416,7 @@ func (s *Service) recordOverriddenCopy(ctx context.Context, game *domain.Game, p
 			return
 		}
 		if err := s.db.RecordDeployedFile(ctx, db.DeployedFileRecord{
-			GameID: game.ID, Profile: profileName, RelativePath: rel,
+			GameID: game.ID, Profile: profileName, Path: rel,
 			SourceID: st.SourceID, ModID: st.ModID,
 			ModPath: recordRoot(game), Fingerprint: fp,
 		}); err != nil {

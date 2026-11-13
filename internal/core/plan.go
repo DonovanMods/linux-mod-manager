@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -333,8 +332,8 @@ func staleSnapshotError(gameID, profileName string, got, want installedSnapshot)
 // mod COULD have deployed; only what is on disk right now is what an
 // undeploy would actually touch (Task 24 review, Minor #1). Lstat, not
 // Stat - a dangling symlink is still a deployed path to remove.
-func isDeployedNow(game *domain.Game, f string) bool {
-	_, err := os.Lstat(filepath.Join(game.ModPath, f))
+func isDeployedNow(game *domain.Game, f domain.DeployPath) bool {
+	_, err := os.Lstat(deployTarget(game, f))
 	return err == nil
 }
 

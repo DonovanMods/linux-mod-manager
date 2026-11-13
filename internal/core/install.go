@@ -2730,16 +2730,16 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		if err != nil {
 			return nil, fmt.Errorf("resolving repaired files: %w", err)
 		}
-		newSet := make(map[string]bool, len(newFiles))
+		newSet := make(map[domain.DeployPath]bool, len(newFiles))
 		for _, file := range newFiles {
-			newSet[filepath.ToSlash(file)] = true
+			newSet[file.path] = true
 		}
 		oldRecords, err := s.db.DeployedFileRecordsForMod(ctx, game.ID, plan.Profile, plan.Replaces.SourceID, plan.Replaces.ID)
 		if err != nil {
 			return nil, fmt.Errorf("reading old deployment: %w", err)
 		}
 		for _, rec := range oldRecords {
-			if !newSet[rec.RelativePath] {
+			if !newSet[rec.Path] {
 				oldOnlyRecords = append(oldOnlyRecords, rec)
 			}
 		}
@@ -2748,7 +2748,7 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		var errs []error
 		for _, rec := range oldOnlyRecords {
 			if err := s.db.RecordDeployedFile(ctx, rec); err != nil {
-				errs = append(errs, fmt.Errorf("restoring old deployment record %s: %w", rec.RelativePath, err))
+				errs = append(errs, fmt.Errorf("restoring old deployment record %s: %w", rec.Path, err))
 			}
 		}
 		return errors.Join(errs...)

@@ -225,7 +225,7 @@ func printStrandedPaths(plan *core.PurgePlan, lead string) {
 	if len(plan.Stranded) > 0 {
 		fmt.Printf("%s %d file(s) deployed under an earlier mod_path:\n", lead, len(plan.Stranded))
 		for _, st := range plan.Stranded {
-			fmt.Printf("  - %s\n", filepath.Join(st.ModPath, filepath.FromSlash(st.Path)))
+			fmt.Printf("  - %s\n", underModPath(st.ModPath, st.Root, st.Path))
 		}
 	}
 	var kept []core.PurgeKeptPath
@@ -251,7 +251,9 @@ func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Ga
 			plan.Profile, game.Name, plan.ActiveProfile, plan.Profile)
 		strandedAt := make(map[string]string, len(plan.Stranded))
 		for _, st := range plan.Stranded {
-			strandedAt[st.Path] = st.ModPath
+			if st.Root == domain.RootModPath {
+				strandedAt[st.Path] = st.ModPath
+			}
 		}
 		for _, path := range plan.Remove {
 			if root, ok := strandedAt[path]; ok {
@@ -322,15 +324,25 @@ func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Ga
 	return nil
 }
 
+// underModPath is p, relative to root, as the absolute path it has under
+// modPath - except a game-root file's (#629), which is not under any
+// mod_path and is shown as "<game root>/...".
+func underModPath(modPath string, root domain.DeployRoot, p string) string {
+	if root != domain.RootModPath {
+		return domain.DisplayDeployPath(root, p)
+	}
+	return filepath.Join(modPath, filepath.FromSlash(p))
+}
+
 // printKeptPaths lists the paths a recorded-only purge leaves in place,
 // each with why - and, for a file the game hands to the user, that lmm
 // stops tracking it.
 func printKeptPaths(kept []core.PurgeKeptPath) {
 	for _, k := range kept {
-		path := k.Path
+		path := domain.DisplayDeployPath(k.Root, k.Path)
 		if k.ModPath != "" {
 			// #451: under a mod_path the game no longer uses.
-			path = filepath.Join(k.ModPath, filepath.FromSlash(k.Path))
+			path = underModPath(k.ModPath, k.Root, k.Path)
 		}
 		if k.Reason == core.PurgeKeptUserFile {
 			fmt.Printf("Kept your file; lmm no longer tracks it (%s): %s\n", keptReason(k), path)

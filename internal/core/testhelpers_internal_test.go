@@ -3,6 +3,8 @@ package core
 import (
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,4 +18,26 @@ func newBareService(t *testing.T) *Service {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	return svc
+}
+
+// relsOf is relsOf of the external test package, for internal tests: a
+// deployed-file listing's paths relative to their roots (#629).
+func relsOf(paths []domain.DeployPath, err error) ([]string, error) {
+	if paths == nil {
+		return nil, err
+	}
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = p.Rel
+	}
+	return out, err
+}
+
+// membersErr is a deployable listing's cache members, for a test that
+// asserts on members by name.
+func membersErr(items []deployItem, err error) ([]string, error) {
+	if items == nil {
+		return nil, err
+	}
+	return membersOf(items), err
 }

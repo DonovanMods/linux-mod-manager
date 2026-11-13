@@ -33,7 +33,7 @@ under `internal/adapter/` and one registration line — and *nothing* in
 | `icarus` | `adapter: icarus`, or derived from `deploy_mode: compile` | Icarus's compile path: every enabled mod's `.EXMODZ` table diffs (and, with `convert_paks`, its prebuilt `.pak` artifacts) merge against the installed game's own `data.pak` into one artifact. |
 | `bepinex` | `adapter: bepinex`, or derived from a game whose `mod_path` is its install path and that declares `loader: kind: bepinex` **or** has BepInEx installed in its directory | Plugin archive layout, `BepInEx/config/**` seeding, the "this game has no BepInEx" refusal, and verify's loader-installation tier. |
 | `d2r` | `adapter: d2r` only, which Battle.net detection's Diablo II: Resurrected entry sets (#546) | Lays every archive out as `<name>/<name>.mpq/` under the game's `mods` folder, and names the `-mod <name> -txt` the deployed profile needs (`LaunchAdvisor`). |
-| `bethesda` | `adapter: bethesda` only, which Steam detection sets for Skyrim Special Edition/Anniversary Edition, Skyrim VR, Fallout 4, Fallout 4 VR, Starfield and Skyrim (#606) | Lays a game-root-relative archive (a `Data/` folder, SKSE's version-named wrapper) out relative to `Data/`, and carries each game's plugin rules (`PluginOrderer`) and game-root file table (`RootRouter`) for the plugin-order and game-root stories that use them. |
+| `bethesda` | `adapter: bethesda` only, which Steam detection sets for Skyrim Special Edition/Anniversary Edition, Skyrim VR, Fallout 4, Fallout 4 VR, Starfield and Skyrim (#606) | Lays a game-root-relative archive (a `Data/` folder, SKSE's version-named wrapper) out relative to `Data/`, and carries each game's plugin rules (`PluginOrderer`) and game-root file table (`RootRouter`, which core deploys by: #629) for the plugin-order and game-root stories that use them. |
 
 `lmm game list` always names what *this* build actually ships, and
 `lmm game add --adapter` / `lmm game edit --adapter` validate against the
@@ -162,7 +162,7 @@ adapter.
 | `Preconditioner` | `CheckPreconditions(g, mods) error` | *(none yet)* | refuses a flow before it starts |
 | `LaunchAdvisor` | `LaunchAdvice(g, mods, previous) Advice` | `d2r` | shows the advice as a warning after a deploy (a switch's and an apply's too) and on a launch |
 | `PluginOrderer` | `PluginRules(g) PluginSpec` | `bethesda` | *nothing yet*: the plugin list, sort and `Plugins.txt` write are #616 |
-| `RootRouter` | `RouteRoots(g, files) []DeployRoot`, `RootForModType(g, type) (DeployRoot, bool)` | `bethesda` | *nothing yet*: deploying to `install_path` is #629, and until then a root-routed file deploys under `mod_path` as before |
+| `RootRouter` | `RouteRoots(g, files) []DeployRoot`, `RootForModType(g, type) (DeployRoot, bool)` | `bethesda` | deploys a root-routed file under `install_path`, and every removal, verify, purge and conflict report finds it there (#629) |
 | `PrefixConsumer` | `UsesPrefix(g) bool` | `bethesda` | reports a prefix it cannot resolve as a `prefix_unresolved` finding (`lmm verify`, `lmm game show`) |
 
 ### FileRouter
@@ -406,12 +406,34 @@ per file (`RootModPath`, the zero value, or `RootInstallPath`).
   `bethesda` maps `""` (Vortex's default) to `mod_path`, and `dinput` (the
   type Vortex's script-extender installer sets) and `enb` to `install_path`.
 
-**Core does not honour it yet.** Deploying outside `mod_path` means the
-deploy, every removal path, converge, verify, purge, conflict detection and
-the `deployed_files` record all learning a second root, and that is #629.
-Until it lands, a file routed to `RootInstallPath` deploys under `mod_path`
-exactly as it did before #606 (`TestRootInstallPathStillDeploysUnderModPath`
-pins it).
+**Core honours it (#629).** A file routed to `RootInstallPath` deploys
+under the game's `install_path`, relative to it. Core names every deployed
+file by a `domain.DeployPath` - its root and its path relative to that root
+- so every flow that keeps files by path (deploy, install/update/rollback,
+uninstall, disable, purge, converge, verify and `--fix`, conflicts,
+snapshots, switch/apply, and #630's overridden copies) finds it under its
+own root, and plan/apply matching compares roots, never display strings.
+`deployed_files` records the root in a `root` column (schema v26, CHECKed
+to `mod_path`/`install_path`). Wire documents that report a deployed file
+as an object carry an additive `root` field (`"install_path"`); frontends
+show such a file as `<game root>/d3d11.dll`. Writes and removals under the
+game root, and the restore of an original there, go through an
+openat/no-follow walk beneath `install_path` (`rootLinker`) that refuses any
+folder on the way that is a link; a stock file a game-root file replaces is
+captured under the originals store's `install_path` root and put back when
+lmm's file goes. A game whose `mod_path` is its `install_path` has one
+directory, so the answer changes nothing there. A root-routed member that
+lands inside the `mod_path` - a whole-mod route's `Data/` folder, matched
+case-insensitively - is that `mod_path` file, deployed from its own cache
+member (`Data/Weather.esp` becomes `Weather.esp` under `Data/`). The game
+root's routing applies at deploy time, so after `adapter: bethesda` is set
+the next deploy moves an installed mod's game-root files there.
+
+`RootForModType` is honoured by `deployItemsForType` for a caller that
+states a mod type: the whole mod goes to the root the adapter names, and a
+type it does not know is a `*core.ModTypeUnsupportedError`, never
+`mod_path`. Nothing persists a mod type yet; the collections converter
+(#607) is the first caller that will have one.
 
 ### The `bethesda` adapter's facts, and where each comes from
 

@@ -145,6 +145,15 @@ func recordRoot(game *domain.Game) string {
 	return filepath.Clean(game.ModPath)
 }
 
+// deployedUnder is the directory a judge's reason names for rel: the
+// game's install_path for a game-root path (#629), else recordRoot's.
+func deployedUnder(game *domain.Game, rel domain.DeployPath) string {
+	if rel.IsGameRoot() {
+		return filepath.Clean(game.InstallPath)
+	}
+	return recordRoot(game)
+}
+
 // underCurrentRoot reports whether a record with the given recorded
 // mod_path describes a path under game's current mod_path: one that
 // recorded none is taken to, as every row did before #451.
@@ -155,8 +164,8 @@ func underCurrentRoot(game *domain.Game, recorded string) bool {
 // currentStates is database's records of rel in game, keeping only those
 // deployed under its current mod_path. A record stranded under another one
 // says nothing about what is at rel here.
-func currentStates(ctx context.Context, database *db.DB, game *domain.Game, rel string) ([]db.DeployedFileState, error) {
-	states, err := database.DeployedFileStates(ctx, game.ID, filepath.ToSlash(rel))
+func currentStates(ctx context.Context, database *db.DB, game *domain.Game, rel domain.DeployPath) ([]db.DeployedFileState, error) {
+	states, err := database.DeployedFileStates(ctx, game.ID, rel)
 	if err != nil {
 		return nil, err
 	}
@@ -188,12 +197,12 @@ type deployedJudge struct {
 	// cached returns the mod's cached copy of rel for a record, or "" when
 	// there is none to compare with (#466 review D10): the proof a record
 	// with no fingerprint can still have.
-	cached func(st db.DeployedFileState, rel string) string
+	cached func(st db.DeployedFileState, rel domain.DeployPath) string
 }
 
 // judge decides whether dst, the deployed path rel of the judge's game,
 // holds lmm's own file.
-func (jd deployedJudge) judge(ctx context.Context, rel, dst string) deployedJudgement {
+func (jd deployedJudge) judge(ctx context.Context, rel domain.DeployPath, dst string) deployedJudgement {
 	if jd.db == nil {
 		return deployedJudgement{verdict: deployedOurs, recorded: true}
 	}
@@ -229,7 +238,7 @@ func (jd deployedJudge) judge(ctx context.Context, rel, dst string) deployedJudg
 		return j
 	}
 	if !j.regular {
-		return jd.judgeLink(j, info, states, dst)
+		return jd.judgeLink(j, info, states, rel, dst)
 	}
 	var prints []db.DeployedFileState
 	for _, st := range states {
@@ -249,7 +258,7 @@ func (jd deployedJudge) judge(ctx context.Context, rel, dst string) deployedJudg
 	prints = append(prints, theirs...)
 	if len(prints) == 0 {
 		if !j.recorded {
-			j.verdict, j.reason = deployedUsers, "lmm has no record of deploying it under "+recordRoot(jd.game)
+			j.verdict, j.reason = deployedUsers, "lmm has no record of deploying it under "+deployedUnder(jd.game, rel)
 			return j
 		}
 		return jd.judgeUnprinted(j, info, states, rel, dst)
@@ -317,14 +326,14 @@ func symlinkReplacementState(states []db.DeployedFileState, mode fs.FileMode) *d
 // no profile counts every record. With no record at all it is the user's
 // (review D2): a link lmm did not make may point anywhere, and a deploy
 // that wrote through it would overwrite whatever it points at.
-func (jd deployedJudge) judgeLink(j deployedJudgement, info fs.FileInfo, states []db.DeployedFileState, dst string) deployedJudgement {
+func (jd deployedJudge) judgeLink(j deployedJudgement, info fs.FileInfo, states []db.DeployedFileState, rel domain.DeployPath, dst string) deployedJudgement {
 	if info.Mode()&fs.ModeSymlink != 0 && jd.linksIntoCache(dst) {
 		j.verdict = deployedOurs
 		return j
 	}
 	if !j.recorded {
 		j.verdict = deployedUsers
-		j.reason = fmt.Sprintf("it is %s lmm has no record of deploying under %s", describeMode(info.Mode()), recordRoot(jd.game))
+		j.reason = fmt.Sprintf("it is %s lmm has no record of deploying under %s", describeMode(info.Mode()), deployedUnder(jd.game, rel))
 		return j
 	}
 	deciding := states
@@ -355,7 +364,7 @@ func (jd deployedJudge) judgeLink(j deployedJudgement, info fs.FileInfo, states 
 // the user's when that mod is the path's only claimant; when another mod,
 // profile or game records the path too, the content may be theirs, and the
 // file is unverified - as it is when there is nothing to compare with.
-func (jd deployedJudge) judgeUnprinted(j deployedJudgement, info fs.FileInfo, states []db.DeployedFileState, rel, dst string) deployedJudgement {
+func (jd deployedJudge) judgeUnprinted(j deployedJudgement, info fs.FileInfo, states []db.DeployedFileState, rel domain.DeployPath, dst string) deployedJudgement {
 	var sum string
 	compared := false
 	for _, st := range jd.comparable(states) {
@@ -403,7 +412,7 @@ func (jd deployedJudge) judgeUnprinted(j deployedJudgement, info fs.FileInfo, st
 // onlyClaimant reports whether every record of rel - the game's, under its
 // current mod_path, and the overlapping games' - is the acting profile's
 // record of one mod.
-func (jd deployedJudge) onlyClaimant(states []db.DeployedFileState, rel string) bool {
+func (jd deployedJudge) onlyClaimant(states []db.DeployedFileState, rel domain.DeployPath) bool {
 	if len(jd.others.holding(rel)) > 0 {
 		return false
 	}
@@ -436,7 +445,7 @@ func (jd deployedJudge) linksIntoCache(dst string) bool {
 
 // sharesCache reports whether the file info describes is the very file the
 // mod's cache holds for rel - a hard link to it.
-func (jd deployedJudge) sharesCache(info fs.FileInfo, states []db.DeployedFileState, rel string) bool {
+func (jd deployedJudge) sharesCache(info fs.FileInfo, states []db.DeployedFileState, rel domain.DeployPath) bool {
 	if jd.cached == nil {
 		return false
 	}
@@ -545,14 +554,14 @@ func describeMode(mode fs.FileMode) string {
 }
 
 // userFileNote is what a removal that kept rel reports.
-func userFileNote(rel, reason string) string {
-	return fmt.Sprintf("%s was left in place: %s, so lmm treats it as yours", filepath.ToSlash(rel), reason)
+func userFileNote(rel domain.DeployPath, reason string) string {
+	return fmt.Sprintf("%s was left in place: %s, so lmm treats it as yours", rel, reason)
 }
 
 // userFileOverwriteNote is what a deploy that did not replace rel reports.
-func userFileOverwriteNote(rel, reason string, sharesCache bool) string {
+func userFileOverwriteNote(rel domain.DeployPath, reason string, sharesCache bool) string {
 	return fmt.Sprintf("%s was not replaced: %s, so lmm left your file there - %s",
-		filepath.ToSlash(rel), reason, takeModVersionRemedy(sharesCache))
+		rel, reason, takeModVersionRemedy(sharesCache))
 }
 
 // takeModVersionRemedy is how the user takes the mod's version of a file
@@ -570,24 +579,24 @@ func takeModVersionRemedy(sharesCache bool) string {
 // unpreservedOverwriteNote is what a deploy reports for a file it did not
 // replace because the originals store already holds another original of
 // the path, so this one could not be kept.
-func unpreservedOverwriteNote(rel string) string {
+func unpreservedOverwriteNote(rel domain.DeployPath) string {
 	return fmt.Sprintf("%s was not replaced: lmm did not deploy the file there and already keeps an earlier original of that path, so it could not keep this one too - move it aside, then deploy again, to take the mod's version",
-		filepath.ToSlash(rel))
+		rel)
 }
 
 // uncapturableOverwriteNote is what a deploy reports for a path it did not
 // replace because what is there could not be preserved first (#466 review
 // D2, D4): a link or directory lmm did not make, or a file the originals
 // store failed to copy.
-func uncapturableOverwriteNote(rel, why string) string {
+func uncapturableOverwriteNote(rel domain.DeployPath, why string) string {
 	return fmt.Sprintf("%s was not replaced: lmm did not deploy what is there, and it could not be preserved (%s), so lmm left it - move it aside, then deploy again, to take the mod's version",
-		filepath.ToSlash(rel), why)
+		rel, why)
 }
 
 // unverifiedPath is a path a flow removed with no content check, and
 // whether its records all predate schema v18.
 type unverifiedPath struct {
-	rel    string
+	rel    domain.DeployPath
 	legacy bool
 }
 
@@ -599,10 +608,11 @@ func unverifiedNotes(paths []unverifiedPath) []string {
 	var legacy, bare []string
 	for _, p := range paths {
 		if p.legacy {
-			legacy = append(legacy, p.rel)
+			legacy = append(legacy, p.rel.String())
 		} else {
-			bare = append(bare, p.rel)
+			bare = append(bare, p.rel.String())
 		}
+
 	}
 	var out []string
 	if len(legacy) > 0 {

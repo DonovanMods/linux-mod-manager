@@ -256,7 +256,8 @@ type DeployPlanMod struct {
 	Class DeployModClass `json:"class"`
 
 	// Link lists the game-dir-relative paths the deploy would link/copy
-	// for this mod, in cache listing order - deployableFiles' result, which
+	// for this mod - a file under the game root (#629) spelled
+	// "<game root>/..." (domain.DeployPath's String) - in cache listing order - deployableFiles' result, which
 	// is precisely what Installer.Install deploys. On a DeployCompile game
 	// a DeployModMerged entry's own Link is empty (#197 - it deploys zero
 	// files of its own): its content reaches the game dir only via the
@@ -377,7 +378,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 		profile, _ := config.LoadProfile(s.configDir, game.ID, profileName)
 		mods, _ := partitionExternal(orderByProfile(profile, installedMods))
 		purgeMods = len(mods)
-		seen := make(map[string]bool)
+		seen := make(map[domain.DeployPath]bool)
 		installer := s.getInstaller(game)
 		for i := range mods {
 			for _, f := range s.deployedPathsFor(ctx, installer, game, profileName, &mods[i]) {
@@ -388,7 +389,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 				if !isDeployedNow(game, f) {
 					continue
 				}
-				plan.Purge = append(plan.Purge, f)
+				plan.Purge = append(plan.Purge, f.String())
 			}
 		}
 	}
@@ -501,14 +502,15 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 			plan.Mods = append(plan.Mods, entry)
 			continue
 		}
-		entry.Link = link
-		linked := make(map[string]bool, len(link))
+		linked := make(map[domain.DeployPath]bool, len(link))
+		entry.Link = make([]string, 0, len(link))
 		for _, f := range link {
-			linked[f] = true
+			linked[f.path] = true
+			entry.Link = append(entry.Link, f.path.String())
 		}
-		for _, f := range files {
-			if !linked[f] {
-				entry.Remove = append(entry.Remove, f)
+		for _, f := range deployItems(planAdapter, game, files) {
+			if !linked[f.path] {
+				entry.Remove = append(entry.Remove, f.path.String())
 			}
 		}
 		plan.Mods = append(plan.Mods, entry)
@@ -527,7 +529,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 // not change which paths are named). Best-effort - a listing failure is
 // logged and reported as "nothing known", never an error that fails the
 // plan.
-func (s *Service) deployedPathsFor(ctx context.Context, installer *Installer, game *domain.Game, profileName string, mod *domain.InstalledMod) []string {
+func (s *Service) deployedPathsFor(ctx context.Context, installer *Installer, game *domain.Game, profileName string, mod *domain.InstalledMod) []domain.DeployPath {
 	// #269: an external mod has no lmm-deployed files at all - nothing to
 	// list, nothing to remove. Answering "nothing known" here is what keeps
 	// it out of every purge preview and every removal set.
@@ -540,7 +542,7 @@ func (s *Service) deployedPathsFor(ctx context.Context, installer *Installer, ga
 			"game_id", game.ID, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
 		return nil
 	}
-	return files
+	return pathsOf(files)
 }
 
 // resolvedHooksForPlan is resolvedHooks for a read-only caller: hook

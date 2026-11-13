@@ -173,8 +173,10 @@ or warnings.
 
 .PP
 --json emits {game_id, profile, result: {findings: [{mod_id, mod_name,
-file_id, status, note, recorded, effective, version, external}], issues,
-warnings, checked, has_files, mods, external, unverified}}; each finding
+file_id, root, status, note, recorded, effective, version, external}],
+issues, warnings, checked, has_files, mods, external, unverified}}; root is
+"install_path" on a row about a file deployed in the game folder rather
+than the mod folder, whose file_id is relative to it; each finding
 key is omitted when unset (a row only carries the fields its status needs -
 e.g. "version_mismatch" carries recorded/effective, "missing" carries
 version, most statuses carry neither). checked is the number of files/mods

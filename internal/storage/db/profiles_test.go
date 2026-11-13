@@ -57,12 +57,12 @@ func TestRenameProfile_MovesEveryProfileKeyedTable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, old)
 
-	owner, err := database.GetFileOwner(ctx, "skyrim-se", "survival", "meshes/test.nif")
+	owner, err := database.GetFileOwner(ctx, "skyrim-se", "survival", domain.ModPathFile("meshes/test.nif"))
 	require.NoError(t, err)
 	require.NotNil(t, owner)
 	assert.Equal(t, "12345", owner.ModID)
 
-	oldOwner, err := database.GetFileOwner(ctx, "skyrim-se", "default", "meshes/test.nif")
+	oldOwner, err := database.GetFileOwner(ctx, "skyrim-se", "default", domain.ModPathFile("meshes/test.nif"))
 	require.NoError(t, err)
 	assert.Nil(t, oldOwner, "no ownership row may still name the old profile")
 }

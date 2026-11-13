@@ -757,7 +757,7 @@ func doModFiles(ctx context.Context, svc *core.Service, game *domain.Game, modID
 	}
 
 	for _, f := range report.Files {
-		fmt.Printf("  %s\n", f.Path)
+		fmt.Printf("  %s\n", domain.DisplayDeployPath(f.Root, f.Path))
 	}
 	fmt.Printf("\nTotal: %d file(s)\n", len(report.Files))
 

@@ -1,0 +1,7 @@
+{
+  "path": "d3d11.dll",
+  "root": "install_path",
+  "reason": "no longer provided by nexusmods/42",
+  "source_id": "nexusmods",
+  "mod_id": "42"
+}

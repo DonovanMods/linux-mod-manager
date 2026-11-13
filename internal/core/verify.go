@@ -94,17 +94,22 @@ type VerifyOptions struct {
 // row's Status resolves away from missing/version_mismatch, so a repaired
 // row never carries a stale pre-repair value. The CLI's own text/JSON
 // rendering is untouched by these fields - it still reads the VerifyEvent
-// extras (text mode) or copies VerifyFinding by named field (JSON mode, see
-// verifyFileJSON in cmd/lmm/verify.go), never a bare struct copy.
+// extras (text mode), and its --json is the VerifyReport document itself
+// (doVerify in cmd/lmm/verify.go), so a new field here reaches it as is.
 type VerifyFinding struct {
-	ModID     string `json:"mod_id,omitempty"`
-	ModName   string `json:"mod_name,omitempty"`
-	FileID    string `json:"file_id,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Note      string `json:"note,omitempty"`
-	Recorded  string `json:"recorded,omitempty"`
-	Effective string `json:"effective,omitempty"`
-	Version   string `json:"version,omitempty"`
+	ModID   string `json:"mod_id,omitempty"`
+	ModName string `json:"mod_name,omitempty"`
+	FileID  string `json:"file_id,omitempty"`
+	// Root is the game directory FileID is relative to when FileID names a
+	// deployed file: absent for the mod_path, "install_path" for a file
+	// deployed under the game root (#629). A frontend shows the latter as
+	// "<game root>/<file_id>".
+	Root      domain.DeployRoot `json:"root,omitzero"`
+	Status    string            `json:"status,omitempty"`
+	Note      string            `json:"note,omitempty"`
+	Recorded  string            `json:"recorded,omitempty"`
+	Effective string            `json:"effective,omitempty"`
+	Version   string            `json:"version,omitempty"`
 	// DisplayVersion is Version as a person reads it when it is a Workshop
 	// content id (domain.Mod.DisplayVersion, #458).
 	DisplayVersion string `json:"display_version,omitempty"`
@@ -1074,7 +1079,7 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 	stale := newStaleOverrideCheck(r, overridden)
 	jd := deployedJudge{
 		db: r.svc.db, game: r.game, profile: r.profile, cacheRoots: r.svc.cacheRoots(r.game),
-		cached: func(st db.DeployedFileState, rel string) string {
+		cached: func(st db.DeployedFileState, rel domain.DeployPath) string {
 			return byKey[domain.ModKey(st.SourceID, st.ModID)].fileFor(st, rel)
 		},
 	}
@@ -1085,24 +1090,26 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 		if r.opts.ModFilter != "" && row.ModID != r.opts.ModFilter {
 			continue
 		}
-		if !underCurrentRoot(r.game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(row.RelativePath)) {
+		if !underCurrentRoot(r.game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(row.Path.Rel)) {
 			continue
 		}
-		dst := filepath.Join(r.game.ModPath, filepath.FromSlash(row.RelativePath))
-		if content, ok := overridden.content(row.RelativePath); ok && holdsOverriddenCopy(dst, content) {
+		dst := deployTarget(r.game, row.Path)
+		shown := row.Path.String()
+		if content, ok := overridden.content(row.Path); ok && holdsOverriddenCopy(dst, content) {
 			r.finding(VerifyFinding{
 				ModID:   row.ModID,
 				ModName: names[domain.ModKey(row.SourceID, row.ModID)],
-				FileID:  row.RelativePath,
+				FileID:  relOf(row.Path),
+				Root:    rootOf(row.Path),
 				Status:  VerifyStatusDeployedOverridden,
-				Note:    row.RelativePath + ": mod file, overridden by the profile",
+				Note:    shown + ": mod file, overridden by the profile",
 			}, VerifyEvent{})
 			continue
 		}
 		if stale.report(row, dst, names[domain.ModKey(row.SourceID, row.ModID)]) {
 			continue
 		}
-		j := jd.judge(r.ctx, row.RelativePath, dst)
+		j := jd.judge(r.ctx, row.Path, dst)
 		if j.verdict != deployedUsers {
 			continue
 		}
@@ -1110,9 +1117,10 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 		r.finding(VerifyFinding{
 			ModID:         row.ModID,
 			ModName:       names[domain.ModKey(row.SourceID, row.ModID)],
-			FileID:        row.RelativePath,
+			FileID:        relOf(row.Path),
+			Root:          rootOf(row.Path),
 			Status:        VerifyStatusDeployedModified,
-			Note:          fmt.Sprintf("%s: %s, so lmm leaves it as yours", row.RelativePath, j.reason),
+			Note:          fmt.Sprintf("%s: %s, so lmm leaves it as yours", shown, j.reason),
 			FixableReason: "--fix never writes over a file you changed - " + deployedModifiedRemedy(j.sharesCache),
 		}, VerifyEvent{})
 	}
@@ -1147,7 +1155,7 @@ func (r *verifyRun) blockedPathsPass(installedMods []domain.InstalledMod, rows [
 		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("deployed content: listing deployed files: %v", err)}, VerifyEvent{})
 		return nil
 	}
-	recordedHere := func(rel string) bool {
+	recordedHere := func(rel domain.DeployPath) bool {
 		for _, rec := range records[rel] {
 			if underCurrentRoot(r.game, rec.ModPath) {
 				return true
@@ -1176,20 +1184,22 @@ func (r *verifyRun) blockedPathsPass(installedMods []domain.InstalledMod, rows [
 			continue
 		}
 		for _, file := range files {
-			rel := filepath.ToSlash(file)
-			if installer.notLinkerOwned(r.game, rel) || recordedHere(rel) {
+			rel := file.path
+			if installer.notLinkerOwned(r.game, file.member) || recordedHere(rel) {
 				continue
 			}
-			if _, err := os.Lstat(filepath.Join(r.game.ModPath, file)); err != nil {
+			if _, err := os.Lstat(deployTarget(r.game, rel)); err != nil {
 				continue
 			}
 			r.result.Warnings++
 			r.finding(VerifyFinding{
-				ModID:         m.ID,
-				ModName:       m.Name,
-				FileID:        rel,
-				Status:        VerifyStatusDeployedBlocked,
-				Note:          fmt.Sprintf("%s: not deployed - lmm did not put what is there, and could not preserve it to put the mod's file in its place", rel),
+				ModID:   m.ID,
+				ModName: m.Name,
+				FileID:  relOf(rel),
+				Root:    rootOf(rel),
+				Status:  VerifyStatusDeployedBlocked,
+				Note:    fmt.Sprintf("%s: not deployed - lmm did not put what is there, and could not preserve it to put the mod's file in its place", rel),
+
 				FixableReason: "--fix never writes over what it cannot preserve - move it aside, then run `lmm deploy`, to take the mod's version",
 			}, VerifyEvent{})
 		}
@@ -1474,11 +1484,11 @@ func (r *verifyRun) convergencePass() {
 	if convResult != nil {
 		for _, cf := range convResult.Removed {
 			if r.opts.Fix {
-				r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Status: "fixed_stale_deployment", Note: cf.Reason}, VerifyEvent{})
+				r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Root: cf.Root, Status: "fixed_stale_deployment", Note: cf.Reason}, VerifyEvent{})
 				continue
 			}
 			r.result.Warnings++
-			r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Status: "stale_deployment", Note: cf.Reason, Fixable: true}, VerifyEvent{})
+			r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Root: cf.Root, Status: "stale_deployment", Note: cf.Reason, Fixable: true}, VerifyEvent{})
 		}
 	}
 	if convErr != nil {

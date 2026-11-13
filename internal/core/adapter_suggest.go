@@ -80,14 +80,27 @@ func (s *Service) AdapterSwitchWarning(ctx context.Context, game *domain.Game, t
 	if err != nil || n == 0 {
 		return "", err
 	}
-	return adapterSwitchNote(n, s.AdapterName(&after)), nil
+	routesRoots := false
+	if a, err := s.AdapterFor(&after); err == nil {
+		_, routesRoots = a.(adapter.RootRouter)
+	}
+	return adapterSwitchNote(n, s.AdapterName(&after), routesRoots), nil
 }
 
 // adapterSwitchNote is AdapterSwitchWarning's sentence for n installed mods.
-func adapterSwitchNote(n int, to string) string {
-	return fmt.Sprintf("%d mod(s) already installed for this game keep the layout they were installed with; "+
+// An adapter that routes some files to the game folder (adapter.RootRouter,
+// #629) does that at deploy time, not at install: the next deploy moves an
+// installed mod's game-folder files there, so only the cache layout needs a
+// reinstall.
+func adapterSwitchNote(n int, to string, routesRoots bool) string {
+	note := fmt.Sprintf("%d mod(s) already installed for this game keep the layout they were installed with; "+
 		"only mods installed or updated after the switch get the %s adapter's layout. "+
 		"To lay an installed mod out again, uninstall it (from every profile that has it) and install it again", n, to)
+	if routesRoots {
+		note += fmt.Sprintf(". Files the %s adapter places in the game folder itself rather than the mod folder "+
+			"(a script extender's loader, an ENB) move there at the next deploy, with no reinstall", to)
+	}
+	return note
 }
 
 // adapterSuggestionPass adds the adapter_suggested note to a verify run.

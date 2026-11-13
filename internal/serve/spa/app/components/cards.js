@@ -5,10 +5,12 @@
 // confirm-modal framework every mutation below submits through; this unit
 // (issue 332) wires the per-row and batch actions themselves.
 
+import { deployedKey, deployedPath } from "../deploypath.js";
 import { html, useState } from "../render.js";
 import {
   findingLabel,
   findingSubject,
+  isGameRootFinding,
   isInformational,
   successorList,
 } from "../verify.js";
@@ -971,6 +973,16 @@ function HealthCard({
                             data-testid="finding-overridden"
                             >Overridden</span
                           >`
+                        }${
+                          // issue 629: a file in the game folder itself,
+                          // beside the executable - not the mod folder.
+                          isGameRootFinding(f) &&
+                          html` <span
+                            class="badge"
+                            data-testid="finding-game-root"
+                            title="In the game folder, beside the game's executable - not in the mod folder"
+                            >Game root</span
+                          >`
                         }</span
                       >
                       <span
@@ -1313,12 +1325,14 @@ function ConflictsCard({ state, rows, error, onRetry, actions }) {
               <ul class="card__list">
                 ${rows.map(
                   (c) => html`
-                    <li key=${c.path} class="card__row">
+                    <li key=${deployedKey(c.path, c.root)} class="card__row">
                       <span class="card__row-name" title=${conflictLabel(c)}
                         >${conflictLabel(c)}</span
                       >
-                      <span class="mono card__row-detail" title=${c.path}
-                        >${c.path}</span
+                      <span
+                        class="mono card__row-detail"
+                        title=${deployedPath(c.path, c.root)}
+                        >${deployedPath(c.path, c.root)}</span
                       >
                       <button
                         type="button"

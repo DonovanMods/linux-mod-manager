@@ -401,7 +401,9 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	// that does not exist yet - the Installer.GetConflicts twin that takes
 	// paths (#314). The linker is irrelevant to a conflict question, so the
 	// game's default installer answers it without reading the profile.
-	conflicts, err := s.getInstaller(game).conflictsForPaths(ctx, game, &plan.Mod, profileName, files)
+	// #629: as the deployed paths the files take, game-root ones included.
+	installer := s.getInstaller(game)
+	conflicts, err := installer.conflictsForPaths(ctx, game, &plan.Mod, profileName, pathsOf(deployItems(installer.adapter, game, files)))
 	if err != nil {
 		return nil, err
 	}

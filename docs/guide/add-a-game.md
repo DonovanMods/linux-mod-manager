@@ -342,11 +342,30 @@ and lmm suggests the adapter the catalog sets the game up with. If you
 give an id the catalog doesn't have, lmm lists the ones it does.
 `--catalog ""` takes the setting off again.
 
-{: .note }
+### Files that belong in the game folder
+
 A script extender's loader (`skse64_loader.exe` and its DLLs) and an ENB
-belong in the game folder itself, not in `Data/`. lmm recognises them but
-still deploys them into `Data/` for now, so copy those few files into the
-game folder by hand.
+(`d3d11.dll`, `enbseries/`, or a whole preset with an `enbseries.ini`)
+belong in the game folder itself, beside the game's executable, not in
+`Data/`. The `bethesda` adapter recognises them, and lmm deploys them
+there; the rest of the same mod still goes into `Data/`.
+
+Wherever lmm lists a deployed file, one in the game folder is shown with
+the folder named in front: `<game root>/d3d11.dll`, beside
+`textures/sky.dds` for a file in `Data/`. That is how `lmm deploy
+--dry-run`, `lmm verify`, `lmm purge`, `lmm conflicts` and `lmm mod files`
+print them, and how the web UI's health and verify views show them.
+
+The game folder holds the game's own files. If a mod's file would replace
+one the game ships (a `d3d11.dll` of the game's own, say), lmm keeps a copy
+of the game's file first and puts it back when the mod is uninstalled,
+disabled or purged, exactly as it does in `Data/`. lmm only ever writes
+inside the game folder: a folder there that is a link to somewhere else is
+refused, and the mod's deploy says so.
+
+A mod deployed before the game used the `bethesda` adapter put those files
+into `Data/`. The next deploy (`lmm deploy`, or **Deploy** in the web UI)
+moves them to the game folder; there is no need to reinstall the mod.
 
 ## Games from other stores
 

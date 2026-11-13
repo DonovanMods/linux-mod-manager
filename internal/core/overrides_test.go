@@ -198,7 +198,7 @@ func TestApplyProfileOverrides_BreaksAHardlinkedModFile(t *testing.T) {
 	var recorded []string
 	env := overrideEnv{
 		modPathFile: func(dst string) (modPathFile, bool) {
-			return modPathFile{rel: "mod.ini", ours: true, recorded: true}, dst == modIni
+			return modPathFile{rel: domain.ModPathFile("mod.ini"), ours: true, recorded: true}, dst == modIni
 		},
 		recordCopy: func(dst string) { recorded = append(recorded, dst) },
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
@@ -17,9 +16,14 @@ import (
 // - a dangling symlink is reported as not Deployed rather than a bogus
 // near-zero size.
 type ModFileEntry struct {
-	Path     string `json:"path"`
-	Size     int64  `json:"size"`
-	Deployed bool   `json:"deployed"`
+	// Path is relative to Root, in slash form.
+	Path string `json:"path"`
+	// Root is absent for the mod_path, "install_path" for a file deployed
+	// under the game root (#629); a frontend shows the latter as
+	// "<game root>/<path>".
+	Root     domain.DeployRoot `json:"root,omitzero"`
+	Size     int64             `json:"size"`
+	Deployed bool              `json:"deployed"`
 }
 
 // ModFilesReport is the pure, displayable result of ModFiles: every datum
@@ -45,7 +49,7 @@ func (s *Service) ModFiles(ctx context.Context, game *domain.Game, profileName, 
 		return nil, fmt.Errorf("mod not found: %s", modID)
 	}
 
-	paths, err := s.GetDeployedFilesForMod(ctx, game.ID, profileName, sourceID, modID)
+	paths, err := s.db.GetDeployedFilesForMod(ctx, game.ID, profileName, sourceID, modID)
 	if err != nil {
 		return nil, fmt.Errorf("getting deployed files: %w", err)
 	}
@@ -61,8 +65,8 @@ func (s *Service) ModFiles(ctx context.Context, game *domain.Game, profileName, 
 
 	report.Files = make([]ModFileEntry, 0, len(paths))
 	for _, p := range paths {
-		entry := ModFileEntry{Path: p}
-		if info, statErr := os.Stat(filepath.Join(game.ModPath, p)); statErr == nil {
+		entry := ModFileEntry{Path: relOf(p), Root: rootOf(p)}
+		if info, statErr := os.Stat(deployTarget(game, p)); statErr == nil {
 			entry.Deployed = true
 			entry.Size = info.Size()
 		}

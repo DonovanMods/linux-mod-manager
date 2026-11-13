@@ -42,7 +42,7 @@ func TestNew_V18AddsTheLedgerColumnsToAV17Database(t *testing.T) {
 	require.NoError(t, upgraded.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
 	assert.GreaterOrEqual(t, version, 18)
 
-	states, err := upgraded.DeployedFileStates(ctx, "g", "a.pak")
+	states, err := upgraded.DeployedFileStates(ctx, "g", domain.ModPathFile("a.pak"))
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	assert.Nil(t, states[0].Fingerprint, "an existing row is not backfilled")
@@ -50,11 +50,11 @@ func TestNew_V18AddsTheLedgerColumnsToAV17Database(t *testing.T) {
 	assert.Equal(t, "m", states[0].ModID)
 
 	require.NoError(t, upgraded.RecordDeployedFile(ctx, db.DeployedFileRecord{
-		GameID: "g", Profile: "default", RelativePath: "a.pak", SourceID: "src", ModID: "m",
+		GameID: "g", Profile: "default", Path: domain.ModPathFile("a.pak"), SourceID: "src", ModID: "m",
 		ModPath:     "/games/g/mods",
 		Fingerprint: &db.FileFingerprint{Checksum: "abc", Size: 3, MTime: 42, CTime: 43},
 	}))
-	states, err = upgraded.DeployedFileStates(ctx, "g", "a.pak")
+	states, err = upgraded.DeployedFileStates(ctx, "g", domain.ModPathFile("a.pak"))
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	assert.Equal(t, &db.FileFingerprint{Checksum: "abc", Size: 3, MTime: 42, CTime: 43}, states[0].Fingerprint)
@@ -69,7 +69,7 @@ func TestNew_V18RerunsHarmlessly(t *testing.T) {
 	seed, err := db.New(path)
 	require.NoError(t, err)
 	require.NoError(t, seed.RecordDeployedFile(ctx, db.DeployedFileRecord{
-		GameID: "g", Profile: "p", RelativePath: "x", SourceID: "s", ModID: "m",
+		GameID: "g", Profile: "p", Path: domain.ModPathFile("x"), SourceID: "s", ModID: "m",
 		Fingerprint: &db.FileFingerprint{Checksum: "ff", Size: 1, MTime: 2},
 	}))
 	_, err = seed.Exec("DELETE FROM schema_migrations WHERE version >= 18")
@@ -79,7 +79,7 @@ func TestNew_V18RerunsHarmlessly(t *testing.T) {
 	again, err := db.New(path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, again.Close()) })
-	states, err := again.DeployedFileStates(ctx, "g", "x")
+	states, err := again.DeployedFileStates(ctx, "g", domain.ModPathFile("x"))
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	assert.Equal(t, "ff", states[0].Fingerprint.Checksum)
@@ -96,12 +96,12 @@ func TestRecordDeployedFile_AnUpsertReplacesTheFingerprintAndRoot(t *testing.T) 
 	ctx := t.Context()
 
 	require.NoError(t, database.RecordDeployedFile(ctx, db.DeployedFileRecord{
-		GameID: "g", Profile: "p", RelativePath: "x", SourceID: "s", ModID: "a",
+		GameID: "g", Profile: "p", Path: domain.ModPathFile("x"), SourceID: "s", ModID: "a",
 		ModPath: "/old", Fingerprint: &db.FileFingerprint{Checksum: "aa", Size: 1, MTime: 1},
 	}))
 	require.NoError(t, database.SaveDeployedFile(ctx, "g", "p", "x", "s", "b"))
 
-	states, err := database.DeployedFileStates(ctx, "g", "x")
+	states, err := database.DeployedFileStates(ctx, "g", domain.ModPathFile("x"))
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	assert.Equal(t, "b", states[0].ModID)
@@ -111,10 +111,10 @@ func TestRecordDeployedFile_AnUpsertReplacesTheFingerprintAndRoot(t *testing.T) 
 
 	// An empty checksum is no fingerprint.
 	require.NoError(t, database.RecordDeployedFile(ctx, db.DeployedFileRecord{
-		GameID: "g", Profile: "p", RelativePath: "x", SourceID: "s", ModID: "b",
+		GameID: "g", Profile: "p", Path: domain.ModPathFile("x"), SourceID: "s", ModID: "b",
 		Fingerprint: &db.FileFingerprint{Size: 9, MTime: 9},
 	}))
-	states, err = database.DeployedFileStates(ctx, "g", "x")
+	states, err = database.DeployedFileStates(ctx, "g", domain.ModPathFile("x"))
 	require.NoError(t, err)
 	assert.Nil(t, states[0].Fingerprint)
 }
@@ -128,14 +128,14 @@ func TestDeployedFileStates_EveryProfilesRecord(t *testing.T) {
 	ctx := t.Context()
 
 	for _, rec := range []db.DeployedFileRecord{
-		{GameID: "g", Profile: "b", RelativePath: "x", SourceID: "s", ModID: "m", Fingerprint: &db.FileFingerprint{Checksum: "bb"}},
-		{GameID: "g", Profile: "a", RelativePath: "x", SourceID: "s", ModID: "m"},
-		{GameID: "g", Profile: "a", RelativePath: "y", SourceID: "s", ModID: "m"},
-		{GameID: "h", Profile: "a", RelativePath: "x", SourceID: "s", ModID: "m"},
+		{GameID: "g", Profile: "b", Path: domain.ModPathFile("x"), SourceID: "s", ModID: "m", Fingerprint: &db.FileFingerprint{Checksum: "bb"}},
+		{GameID: "g", Profile: "a", Path: domain.ModPathFile("x"), SourceID: "s", ModID: "m"},
+		{GameID: "g", Profile: "a", Path: domain.ModPathFile("y"), SourceID: "s", ModID: "m"},
+		{GameID: "h", Profile: "a", Path: domain.ModPathFile("x"), SourceID: "s", ModID: "m"},
 	} {
 		require.NoError(t, database.RecordDeployedFile(ctx, rec))
 	}
-	states, err := database.DeployedFileStates(ctx, "g", "x")
+	states, err := database.DeployedFileStates(ctx, "g", domain.ModPathFile("x"))
 	require.NoError(t, err)
 	require.Len(t, states, 2)
 	assert.Equal(t, "a", states[0].Profile)
@@ -143,7 +143,7 @@ func TestDeployedFileStates_EveryProfilesRecord(t *testing.T) {
 	assert.Equal(t, "b", states[1].Profile)
 	assert.Equal(t, "bb", states[1].Fingerprint.Checksum)
 
-	none, err := database.DeployedFileStates(ctx, "g", "z")
+	none, err := database.DeployedFileStates(ctx, "g", domain.ModPathFile("z"))
 	require.NoError(t, err)
 	assert.Empty(t, none)
 }
@@ -167,26 +167,26 @@ func TestDeployedFileStates_CarriesTheOwningRowsLinkMethod(t *testing.T) {
 		require.NoError(t, database.SaveInstalledMod(ctx, &row))
 	}
 	for _, rec := range []db.DeployedFileRecord{
-		{GameID: "g", Profile: "a", RelativePath: "sym", SourceID: "s", ModID: "sym"},
-		{GameID: "g", Profile: "b", RelativePath: "copy", SourceID: "s", ModID: "copy"},
-		{GameID: "g", Profile: "c", RelativePath: "residual", SourceID: "s", ModID: "gone"},
+		{GameID: "g", Profile: "a", Path: domain.ModPathFile("sym"), SourceID: "s", ModID: "sym"},
+		{GameID: "g", Profile: "b", Path: domain.ModPathFile("copy"), SourceID: "s", ModID: "copy"},
+		{GameID: "g", Profile: "c", Path: domain.ModPathFile("residual"), SourceID: "s", ModID: "gone"},
 	} {
 		require.NoError(t, database.RecordDeployedFile(ctx, rec))
 	}
 
-	states, err := database.DeployedFileStates(ctx, "g", "sym")
+	states, err := database.DeployedFileStates(ctx, "g", domain.ModPathFile("sym"))
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	require.NotNil(t, states[0].LinkMethod)
 	assert.Equal(t, domain.LinkSymlink, *states[0].LinkMethod)
 
-	states, err = database.DeployedFileStates(ctx, "g", "copy")
+	states, err = database.DeployedFileStates(ctx, "g", domain.ModPathFile("copy"))
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	require.NotNil(t, states[0].LinkMethod)
 	assert.Equal(t, domain.LinkCopy, *states[0].LinkMethod)
 
-	states, err = database.DeployedFileStates(ctx, "g", "residual")
+	states, err = database.DeployedFileStates(ctx, "g", domain.ModPathFile("residual"))
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	assert.Nil(t, states[0].LinkMethod)
@@ -200,11 +200,11 @@ func TestDeployedFileRoots_CountsPerProfileAndRecordedModPath(t *testing.T) {
 	ctx := t.Context()
 
 	for _, rec := range []db.DeployedFileRecord{
-		{GameID: "g", Profile: "p", RelativePath: "1", SourceID: "s", ModID: "m", ModPath: "/old"},
-		{GameID: "g", Profile: "p", RelativePath: "2", SourceID: "s", ModID: "m", ModPath: "/old"},
-		{GameID: "g", Profile: "p", RelativePath: "3", SourceID: "s", ModID: "m"},
-		{GameID: "g", Profile: "q", RelativePath: "1", SourceID: "s", ModID: "m", ModPath: "/new"},
-		{GameID: "h", Profile: "p", RelativePath: "1", SourceID: "s", ModID: "m", ModPath: "/old"},
+		{GameID: "g", Profile: "p", Path: domain.ModPathFile("1"), SourceID: "s", ModID: "m", ModPath: "/old"},
+		{GameID: "g", Profile: "p", Path: domain.ModPathFile("2"), SourceID: "s", ModID: "m", ModPath: "/old"},
+		{GameID: "g", Profile: "p", Path: domain.ModPathFile("3"), SourceID: "s", ModID: "m"},
+		{GameID: "g", Profile: "q", Path: domain.ModPathFile("1"), SourceID: "s", ModID: "m", ModPath: "/new"},
+		{GameID: "h", Profile: "p", Path: domain.ModPathFile("1"), SourceID: "s", ModID: "m", ModPath: "/old"},
 	} {
 		require.NoError(t, database.RecordDeployedFile(ctx, rec))
 	}
@@ -231,10 +231,10 @@ func TestDeleteDeployedFilesExcept_KeepsRowsUnderTheNamedRoots(t *testing.T) {
 	ctx := t.Context()
 
 	for _, rec := range []db.DeployedFileRecord{
-		{GameID: "g", Profile: "p", RelativePath: "legacy", SourceID: "s", ModID: "m"},
-		{GameID: "g", Profile: "p", RelativePath: "here", SourceID: "s", ModID: "m", ModPath: "/new"},
-		{GameID: "g", Profile: "p", RelativePath: "there", SourceID: "s", ModID: "m", ModPath: "/old"},
-		{GameID: "g", Profile: "p", RelativePath: "other", SourceID: "s", ModID: "n", ModPath: "/new"},
+		{GameID: "g", Profile: "p", Path: domain.ModPathFile("legacy"), SourceID: "s", ModID: "m"},
+		{GameID: "g", Profile: "p", Path: domain.ModPathFile("here"), SourceID: "s", ModID: "m", ModPath: "/new"},
+		{GameID: "g", Profile: "p", Path: domain.ModPathFile("there"), SourceID: "s", ModID: "m", ModPath: "/old"},
+		{GameID: "g", Profile: "p", Path: domain.ModPathFile("other"), SourceID: "s", ModID: "n", ModPath: "/new"},
 	} {
 		require.NoError(t, database.RecordDeployedFile(ctx, rec))
 	}
@@ -243,7 +243,7 @@ func TestDeleteDeployedFilesExcept_KeepsRowsUnderTheNamedRoots(t *testing.T) {
 	require.NoError(t, err)
 	var paths []string
 	for _, f := range files {
-		paths = append(paths, f.RelativePath)
+		paths = append(paths, f.Path.Rel)
 	}
 	assert.Equal(t, []string{"other", "there"}, paths)
 
@@ -263,19 +263,19 @@ func TestDeleteDeployedFilesExcept_KeepsRowsForTheNamedPaths(t *testing.T) {
 
 	fp := &db.FileFingerprint{Checksum: "abc", Size: 3, MTime: 1, CTime: 2}
 	for _, rec := range []db.DeployedFileRecord{
-		{GameID: "g", Profile: "p", RelativePath: "a", SourceID: "s", ModID: "m", ModPath: "/new", Fingerprint: fp},
-		{GameID: "g", Profile: "p", RelativePath: "b", SourceID: "s", ModID: "m", ModPath: "/new"},
-		{GameID: "g", Profile: "p", RelativePath: "c", SourceID: "s", ModID: "m", ModPath: "/old"},
+		{GameID: "g", Profile: "p", Path: domain.ModPathFile("a"), SourceID: "s", ModID: "m", ModPath: "/new", Fingerprint: fp},
+		{GameID: "g", Profile: "p", Path: domain.ModPathFile("b"), SourceID: "s", ModID: "m", ModPath: "/new"},
+		{GameID: "g", Profile: "p", Path: domain.ModPathFile("c"), SourceID: "s", ModID: "m", ModPath: "/old"},
 	} {
 		require.NoError(t, database.RecordDeployedFile(ctx, rec))
 	}
-	require.NoError(t, database.DeleteDeployedFilesExcept(ctx, "g", "p", "s", "m", []string{"/old"}, []string{"a"}))
+	require.NoError(t, database.DeleteDeployedFilesExcept(ctx, "g", "p", "s", "m", []string{"/old"}, []domain.DeployPath{domain.ModPathFile("a")}))
 
 	records, err := database.DeployedFileRecordsForMod(ctx, "g", "p", "s", "m")
 	require.NoError(t, err)
 	assert.Equal(t, []db.DeployedFileRecord{
-		{GameID: "g", Profile: "p", RelativePath: "a", SourceID: "s", ModID: "m", ModPath: "/new", Fingerprint: fp},
-		{GameID: "g", Profile: "p", RelativePath: "c", SourceID: "s", ModID: "m", ModPath: "/old"},
+		{GameID: "g", Profile: "p", Path: domain.ModPathFile("a"), SourceID: "s", ModID: "m", ModPath: "/new", Fingerprint: fp},
+		{GameID: "g", Profile: "p", Path: domain.ModPathFile("c"), SourceID: "s", ModID: "m", ModPath: "/old"},
 	}, records)
 }
 
@@ -291,10 +291,10 @@ func TestRerootDeployedFiles_MovesOnlyTheNamedRoots(t *testing.T) {
 	ctx := t.Context()
 
 	for _, rec := range []db.DeployedFileRecord{
-		{GameID: "g", Profile: "default", RelativePath: "a.pak", SourceID: "src", ModID: "m", ModPath: "/old/mods"},
-		{GameID: "g", Profile: "other", RelativePath: "b.pak", SourceID: "src", ModID: "m"},
-		{GameID: "g", Profile: "default", RelativePath: "c.pak", SourceID: "src", ModID: "m", ModPath: "/elsewhere"},
-		{GameID: "h", Profile: "default", RelativePath: "a.pak", SourceID: "src", ModID: "m", ModPath: "/old/mods"},
+		{GameID: "g", Profile: "default", Path: domain.ModPathFile("a.pak"), SourceID: "src", ModID: "m", ModPath: "/old/mods"},
+		{GameID: "g", Profile: "other", Path: domain.ModPathFile("b.pak"), SourceID: "src", ModID: "m"},
+		{GameID: "g", Profile: "default", Path: domain.ModPathFile("c.pak"), SourceID: "src", ModID: "m", ModPath: "/elsewhere"},
+		{GameID: "h", Profile: "default", Path: domain.ModPathFile("a.pak"), SourceID: "src", ModID: "m", ModPath: "/old/mods"},
 	} {
 		require.NoError(t, database.RecordDeployedFile(ctx, rec))
 	}
