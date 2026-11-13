@@ -510,6 +510,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if checkErr != nil {
 		result.ErrorMessage = checkErr.Error()
 	}
+	// #627: the same for what the check cleared - printed above under
+	// text, and the check document is not emitted under --json.
+	result.ManualOnlyCleared = report.ManualOnlyCleared
 
 	if jsonOutput {
 		if err := emitJSON(result); err != nil {
@@ -1102,6 +1105,10 @@ func applySingleUpdateFromSource(ctx context.Context, service *core.Service, gam
 			return authPromptError(updateSource)
 		}
 		return err
+	}
+	if !jsonOutput {
+		// #627: this check is the one that cleared it, so it says so.
+		printManualOnlyCleared(&core.UpdateCheckReport{ManualOnlyCleared: plan.ManualOnlyCleared})
 	}
 
 	switch {

@@ -1,0 +1,44 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "applied": [
+    {
+      "mod": {
+        "source_id": "test-src",
+        "mod_id": "modA",
+        "version": "2.0",
+        "file_ids": [
+          "a-new"
+        ],
+        "locked": false
+      },
+      "name": "Mod A",
+      "from_version": "1.0",
+      "to_version": "2.0",
+      "status": "updated"
+    },
+    {
+      "mod": {
+        "source_id": "test-src",
+        "mod_id": "modB",
+        "version": "2.0",
+        "file_ids": [
+          "b-new"
+        ],
+        "locked": false
+      },
+      "name": "Mod B",
+      "from_version": "1.0",
+      "to_version": "2.0",
+      "status": "updated"
+    }
+  ],
+  "manual_only_cleared": [
+    {
+      "source_id": "test-src",
+      "mod_id": "modA",
+      "name": "Mod A",
+      "message": "Mod A: automatic downloads are available again - Fake Update Source serves it through its API now"
+    }
+  ]
+}

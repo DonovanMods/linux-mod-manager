@@ -2423,6 +2423,40 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #627: `lmm update --all --json`'s batch result carries what the
+			// check before it cleared.
+			"update_batch_result_manual_only_cleared",
+			core.UpdateBatchResult{
+				GameID:  "minecraft",
+				Profile: "default",
+				Applied: []core.UpdateApplyResult{{
+					Mod:         domain.ModReference{SourceID: "curseforge", ModID: "238222", Version: "2.1", FileIDs: []string{"5001"}},
+					Name:        "Opted Back In",
+					FromVersion: "2.0",
+					ToVersion:   "2.1",
+					Status:      core.UpdateUpdated,
+				}},
+				ManualOnlyCleared: []core.ManualOnlyCleared{{
+					SourceID: "curseforge", ModID: "238222", Name: "Opted Back In",
+					Message: "Opted Back In: automatic downloads are available again - CurseForge serves it through its API now",
+				}},
+			},
+		},
+		{
+			// #627: `lmm update <id>`'s plan carries what its check cleared.
+			"update_plan_manual_only_cleared",
+			core.UpdatePlan{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "238222", SourceID: "curseforge", Name: "Opted Back In", Version: "2.0", GameID: "minecraft", UpdatedAt: fixedTime},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				ManualOnlyCleared: []core.ManualOnlyCleared{{
+					SourceID: "curseforge", ModID: "238222", Name: "Opted Back In",
+					Message: "Opted Back In: automatic downloads are available again - CurseForge serves it through its API now",
+				}},
+			},
+		},
+		{
 			"manual_only_cleared",
 			core.ManualOnlyCleared{
 				SourceID: "curseforge", ModID: "238222", Name: "Opted Back In",

@@ -16,11 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extra request, since the check already fetches every installed mod, and
   a mod with no pending update is cleared all the same. The mod takes part
   in **Update all**, `lmm update --all` and automatic updates again. The
-  check says so once: `lmm update` prints that automatic downloads are
-  available again for the mod, the web UI's
+  check says so once: `lmm update` (bulk or `lmm update <id>`) prints that
+  automatic downloads are available again for the mod, the web UI's
   Updates card shows the same line until the next explicit **Check for
-  updates**, and the update check's `--json` document (and
-  `GET /api/v1/updates`) gains a `manual_only_cleared` list. Only an
+  updates**, and a `manual_only_cleared` list is added to the update
+  check's `--json` document (and `GET /api/v1/updates`), to the batch
+  result `lmm update --all --json` emits, and to the single-mod update
+  plan. Only an
   explicit "allowed" clears the mark; a source that says nothing leaves it,
   and a later refusal records it again. `lmm mod show`, an update or
   install from a hand-downloaded file, an archive import, an adoption and a

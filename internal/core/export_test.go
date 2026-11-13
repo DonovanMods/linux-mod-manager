@@ -459,3 +459,10 @@ func (s *Service) SetReinstallTxnOpenedForTest(fn func(cache.Key)) { s.reinstall
 func (pm *ProfileManager) ImportForTest(ctx context.Context, data []byte, force bool) (*domain.Profile, error) {
 	return pm.importDocument(ctx, data, force, importAdjust{})
 }
+
+// RecordManualOnlyForTest records sourceID's modID as manual-only for gameID
+// (#543) the way a refused download does, without a download - for tests of
+// the flows that clear it (#627).
+func (s *Service) RecordManualOnlyForTest(ctx context.Context, gameID, sourceID, modID string) {
+	s.recordManualOnly(ctx, gameID, sourceID, modID)
+}

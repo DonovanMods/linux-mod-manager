@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"testing"
 
@@ -196,4 +197,43 @@ func TestJSONGolden_UpdateCheckManualOnlyCleared(t *testing.T) {
 
 	out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
 	assertJSONCLIGolden(t, "update_check_manual_only_cleared", out)
+}
+
+// #627 review: `lmm update --all --json` emits the batch result, not the
+// check document, whenever an update remains - so the batch result carries
+// what the check cleared, or it is lost for good with the record.
+func TestJSONGolden_UpdateBulkAllManualOnlyCleared(t *testing.T) {
+	withJSONOutput(t)
+	svc, game, src := setupManualOnlyUpdate(t)
+	yes := true
+	src.mods["modA"].Distributable = &yes
+	src.manualOnly = nil
+	src.AddDownload("a-new", []byte("new"))
+	updateAll = true
+
+	out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+
+	var result core.UpdateBatchResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	require.Len(t, result.ManualOnlyCleared, 1)
+	assert.Equal(t, "modA", result.ManualOnlyCleared[0].ModID)
+	assert.Len(t, result.Applied, 2, "the cleared mod is applied with the rest")
+	assertJSONCLIGolden(t, "update_bulk_all_manual_only_cleared", out)
+}
+
+// `lmm update <id>` says it too: its own check is the one that cleared it.
+func TestDoUpdate_Single_SaysAutomaticDownloadsAreAvailableAgain(t *testing.T) {
+	svc, game, src := setupManualOnlyUpdate(t)
+	yes := true
+	src.mods["modA"].Distributable = &yes
+	src.manualOnly = nil
+	src.AddDownload("a-new", []byte("new"))
+
+	out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, []string{"modA"}) })
+
+	assert.Contains(t, out, "Mod A: automatic downloads are available again - Fake Update Source serves it through its API now\n")
+	a, err := svc.GetInstalledMod(context.Background(), "test-src", "modA", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", a.Version)
+	assert.False(t, a.ManualOnly)
 }

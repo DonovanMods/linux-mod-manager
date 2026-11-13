@@ -257,3 +257,72 @@ func TestImportArchive_SourceSaysDistributable_ClearsManualOnly(t *testing.T) {
 
 	assert.False(t, f.row(t).ManualOnly, "the source's explicit word outranks the refusal recorded before it")
 }
+
+// An adoption matched to a source that says it serves the mod clears a
+// manual-only record the mod already had (noteSourceClassification).
+func TestApplyAdopt_SourceSaysDistributable_ClearsManualOnly(t *testing.T) {
+	svc, game := newAdoptTestService(t)
+	src := newAdoptTestSource("acme-source")
+	src.searchMods = []domain.Mod{{ID: "42", SourceID: "acme-source", Name: "AcmeMod", GameID: "g1", Distributable: boolPtr(true)}}
+	src.files = []domain.DownloadableFile{{ID: "77", FileName: "AcmeMod-1.0.zip", Version: "1.0"}}
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	writeLooseMod(t, game, "AcmeMod-1.0.zip", "payload")
+	svc.RecordManualOnlyForTest(context.Background(), "g1", "acme-source", "42")
+
+	plan, err := svc.PlanAdopt(context.Background(), game, "default", core.AdoptOptions{})
+	require.NoError(t, err)
+	_, err = svc.ApplyAdopt(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+
+	installed, err := svc.GetInstalledMod(context.Background(), "acme-source", "42", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, installed.ManualOnly)
+}
+
+// A re-link to an identity whose source says it serves the mod clears a
+// manual-only record that identity had; one whose source says nothing
+// keeps it.
+func TestApplyRelinkMod_NewIdentitySaysDistributable_ClearsManualOnly(t *testing.T) {
+	for name, tc := range map[string]struct {
+		distributable *bool
+		want          bool
+	}{
+		"distributable": {boolPtr(true), false},
+		"says nothing":  {nil, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, game, src := newModDetailTestService(t)
+			game.SourceIDs["src"] = game.ID
+			seedCategorised(t, svc, game, "a", "")
+			src.AddMod(game.ID, &domain.Mod{ID: "b", SourceID: "src", Name: "Mod b", Version: "1.0", GameID: game.ID, Distributable: tc.distributable})
+			ctx := context.Background()
+			svc.RecordManualOnlyForTest(ctx, game.ID, "src", "b")
+
+			plan, err := svc.PlanRelinkMod(ctx, game, "default", "src", "a", "src", "b")
+			require.NoError(t, err)
+			_, err = svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+			require.NoError(t, err)
+
+			row, err := svc.GetInstalledMod(ctx, "src", "b", game.ID, "default")
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, row.ManualOnly)
+		})
+	}
+}
+
+// `lmm update <id>`'s plan carries what its check cleared, so the single
+// update can say so too.
+func TestPlanUpdate_CarriesWhatItsCheckCleared(t *testing.T) {
+	f, src := newManualOnlyFixture(t)
+	src.distributable["42"] = boolPtr(true)
+
+	plan, err := f.svc.PlanUpdate(context.Background(), f.game, "default", "msrc", "42")
+	require.NoError(t, err)
+
+	require.Len(t, plan.ManualOnlyCleared, 1)
+	assert.Equal(t, "42", plan.ManualOnlyCleared[0].ModID)
+	assert.False(t, plan.Mod.ManualOnly, "the plan's row is read after the clear")
+	assert.False(t, f.row(t).ManualOnly)
+}

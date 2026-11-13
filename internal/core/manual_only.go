@@ -179,6 +179,10 @@ func (s *Service) clearDistributableManualOnly(ctx context.Context, gameID strin
 			continue
 		}
 		delete(recorded, key) // a mod listed twice is cleared, and reported, once
+		// A download refused between the source's answer and this delete
+		// may record the mod just before the clear removes it again. That
+		// race is benign and heals itself: the next attempt is refused the
+		// same way and records it again (noteDownloadOutcome).
 		if err := s.db.ClearManualOnly(ctx, gameID, m.SourceID, m.ID); err != nil {
 			s.logger().Warn("cannot clear a manual-only mod", "game", gameID, "mod", key, "err", err)
 			continue
