@@ -153,7 +153,8 @@ A collection from someone else is untrusted input.
   exactly what would run.
 - **Overrides** are listed in the plan. One that targets a text config
   file (`.ini`, `.cfg`, `.conf`, `.txt`, `.json`, `.xml`, `.toml`, `.yaml`,
-  `.yml`, in any case) is imported; any other is skipped unless
+  `.yml`, `.properties`, `.config`, `.ltx`, `.lsx`, `.cvars`, `.ron`, in any
+  case) is imported; any other is skipped unless
   `--allow-any-overrides` (the web UI's **Import these overrides too**),
   and the plan (`restricted_overrides`) and the result
   (`overrides_skipped`) name each. Whatever its type, a path that is

@@ -119,3 +119,34 @@ func TestImportGates_AProfileWithoutHooksOrOverridesIsUnchanged(t *testing.T) {
 	require.Zero(t, result.HooksWithheld)
 	require.Empty(t, result.OverridesSkipped)
 }
+
+// TestImportGates_TextConfigExtensions is the owner's list of text config
+// file types an imported override may target without
+// --allow-any-overrides, matched case-insensitively, and a few that are
+// code and stay held back.
+func TestImportGates_TextConfigExtensions(t *testing.T) {
+	svc, game := recipient(t)
+	cases := []struct {
+		path       string
+		restricted bool
+	}{
+		{"a.ini", false}, {"a.cfg", false}, {"a.conf", false}, {"a.txt", false},
+		{"a.json", false}, {"a.xml", false}, {"a.toml", false}, {"a.yaml", false},
+		{"a.yml", false}, {"server.properties", false}, {"app.config", false},
+		{"system.ltx", false}, {"settings.lsx", false}, {"game.cvars", false},
+		{"config.ron", false}, {"UPPER.PROPERTIES", false}, {"Mixed.Ltx", false},
+		{"version.dll", true}, {"game.exe", true}, {"lib.so", true},
+		{"init.lua", true}, {"run.sh", true}, {"noextension", true},
+	}
+	for _, tc := range cases {
+		doc := "name: shared\ngame_id: cyber\nmods: []\noverrides:\n  " + tc.path + ": x\n"
+		plan, err := svc.PlanImport(context.Background(), game, []byte(doc))
+		require.NoError(t, err, tc.path)
+		if tc.restricted {
+			require.Len(t, plan.RestrictedOverrides, 1, tc.path)
+		} else {
+			require.Empty(t, plan.RestrictedOverrides, tc.path)
+		}
+	}
+	require.Len(t, core.TextConfigOverrideExtensions(), 15)
+}

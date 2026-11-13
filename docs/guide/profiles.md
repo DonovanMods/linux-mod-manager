@@ -188,7 +188,8 @@ two things before it does anything, and leaves them out unless you ask:
   `--with-hooks`.
 - **Overrides that aren't config files.** An override is a file the
   profile writes into the game folder. Text config files (`.ini`, `.cfg`,
-  `.conf`, `.txt`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`) are imported
+  `.conf`, `.txt`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`,
+  `.properties`, `.config`, `.ltx`, `.lsx`, `.cvars`, `.ron`) are imported
   as usual; anything else, such as a `.dll`, is skipped unless you add
   `--allow-any-overrides` (in the browser, tick **Import these overrides
   too**).

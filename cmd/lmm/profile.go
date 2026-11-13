@@ -171,7 +171,8 @@ Whatever the file's format, two things are held back until you ask, and
 both are listed before anything is written. Hooks are scripts lmm would
 run, so they are imported only with --with-hooks. Config overrides are
 imported when they are text config files (.ini, .cfg, .conf, .txt, .json,
-.xml, .toml, .yaml, .yml); any other file type is skipped unless you pass
+.xml, .toml, .yaml, .yml, .properties, .config, .ltx, .lsx, .cvars,
+.ron); any other file type is skipped unless you pass
 --allow-any-overrides. The result says what was held back.
 
 --workshop-collection takes a Steam Workshop collection id or the URL of

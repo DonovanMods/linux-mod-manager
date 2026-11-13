@@ -40,9 +40,14 @@ func IsUnsafeImport(err error) bool { return errors.Is(err, ErrUnsafeImport) }
 
 // textConfigOverrideExts are the file types an imported override may
 // target by default: text configuration a game reads, never code it runs.
+// Besides the generic formats: .properties (Java key=value), .config
+// (.NET/Unity XML), .ltx (S.T.A.L.K.E.R.), .lsx (Larian XML), .cvars
+// (cvar lists) and .ron (Rusty Object Notation).
 var textConfigOverrideExts = map[string]bool{
 	".ini": true, ".cfg": true, ".conf": true, ".txt": true, ".json": true,
 	".xml": true, ".toml": true, ".yaml": true, ".yml": true,
+	".properties": true, ".config": true, ".ltx": true, ".lsx": true,
+	".cvars": true, ".ron": true,
 }
 
 // TextConfigOverrideExtensions lists, in order, the file extensions an

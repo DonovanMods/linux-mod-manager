@@ -99,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needs `--with-hooks` to keep its hooks. Every hook a file carries is
   listed before anything is written and imported only with `--with-hooks`;
   an override that is not a text config file (`.ini`, `.cfg`, `.conf`,
-  `.txt`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`) is skipped unless
+  `.txt`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.properties`,
+  `.config`, `.ltx`, `.lsx`, `.cvars`, `.ron`) is skipped unless
   `--allow-any-overrides`. The result says what was held back and names the
   flag (`--json`: `hooks_withheld`, `overrides_skipped`); the web UI's
   import has a box for each. An override path that is absolute or leaves

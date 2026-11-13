@@ -2061,7 +2061,7 @@ func TestJSONGoldens(t *testing.T) {
 			// #621's override gate: an override of an imported document
 			// that does not target a text config file.
 			"restricted_override",
-			core.RestrictedOverride{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .ini, .json, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"},
+			core.RestrictedOverride{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .config, .cvars, .ini, .json, .lsx, .ltx, .properties, .ron, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"},
 		},
 		{
 			// A version-0 import's plan with its hooks and a restricted
@@ -2074,7 +2074,7 @@ func TestJSONGoldens(t *testing.T) {
 				NeedsRedownload:     []domain.ModReference{},
 				Missing:             []domain.ModReference{},
 				Hooks:               []core.ImportHook{{Hook: "install.after_all", Command: "/home/author/bin/after.sh"}},
-				RestrictedOverrides: []core.RestrictedOverride{{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .ini, .json, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"}},
+				RestrictedOverrides: []core.RestrictedOverride{{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .config, .cvars, .ini, .json, .lsx, .ltx, .properties, .ron, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"}},
 			},
 		},
 		{
@@ -2082,7 +2082,7 @@ func TestJSONGoldens(t *testing.T) {
 			"profile_import_result_gated",
 			core.ProfileImportResult{
 				ProfileName: "shared", Skipped: 1, HooksWithheld: 1,
-				OverridesSkipped: []core.RestrictedOverride{{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .ini, .json, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"}},
+				OverridesSkipped: []core.RestrictedOverride{{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .config, .cvars, .ini, .json, .lsx, .ltx, .properties, .ron, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"}},
 			},
 		},
 		{
