@@ -311,3 +311,70 @@ func TestE2E_FomodWizard_ACollectionWithStaleRecordedChoices(t *testing.T) {
 	}, 30*time.Second, e2ePollInterval, "the profile records the answered choices")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// e2eFomodArchiveFile writes the wizard's installer archive as name.
+func e2eFomodArchiveFile(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	require.NoError(t, os.WriteFile(path, e2eFomodArchive(t), 0o644))
+	return path
+}
+
+// TestE2E_FomodWizard_InstallFromFile: an install a source refuses is
+// finished from a downloaded file (import_archive) that is a FOMOD
+// installer: the job asks, the wizard answers, and its Finish re-posts the
+// same upload - which the failed Apply kept - and the mod installs (#615
+// review blocker: the re-post used to demand a re-upload it could not do).
+func TestE2E_FomodWizard_InstallFromFile(t *testing.T) {
+	f := newE2EFixtureWithManualInstall(t)
+	archive := e2eFomodArchiveFile(t, "MapUtils-1.2.24-classic (1).zip")
+	row := searchResultRow("fake", "maputils")
+
+	f.runInBrowser(t,
+		failSearchInstall(f),
+		clickWhenSettled(row+` .job-progress [data-action="install-from-file"]`),
+		chromedp.SetUploadFiles(e2eFromFileInput, []string{archive}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="import_archive"] .plan`, chromedp.ByQuery),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+		chromedp.WaitVisible(fomodModal+` [data-testid="fomod-step"][data-step="Size"]`, chromedp.ByQuery),
+		chromedp.Click(fomodModal+` [data-option="4K"] input`, chromedp.ByQuery),
+		clickWhenSettled(fomodModal+` [data-action="fomod-finish"]`),
+		chromedp.WaitVisible(fomodModal+` [data-testid="fomod-step"][data-step="Extras"]`, chromedp.ByQuery),
+		clickWhenSettled(fomodModal+` [data-action="fomod-finish"]`),
+		waitGone(fomodModal),
+	)
+	require.Eventually(t, func() bool { return e2eDeployed(t, f.Game, "Mods/t.dds") == "4K" }, 30*time.Second, e2ePollInterval)
+	assert.Equal(t, "README", e2eDeployed(t, f.Game, "Mods/readme.txt"))
+	mod, err := f.Svc.GetInstalledMod(t.Context(), "fake", "maputils", f.Game.ID, "default")
+	require.NoError(t, err)
+	assert.NotEmpty(t, mod.Variant, "installed as the answered tree")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FomodWizard_UpdateFromFile: an update finished from a downloaded
+// file (update_from_archive) whose new version is a FOMOD installer asks,
+// and the wizard's answer re-posts the kept upload and updates the mod.
+func TestE2E_FomodWizard_UpdateFromFile(t *testing.T) {
+	f := newE2EFixtureWithManualUpdate(t)
+	archive := e2eFomodArchiveFile(t, "ManualUp-2.0 (1).zip")
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SlideOverPath("fake", "manualup")),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.slide-over__actions`, chromedp.ByQuery),
+		failManualUpdate(),
+		clickWhenSettled(`.slide-over .job-progress [data-testid="download-page"] [data-action="update-from-file"]`),
+		chromedp.SetUploadFiles(e2eFromFileInput, []string{archive}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="update_from_archive"] .plan`, chromedp.ByQuery),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+		chromedp.WaitVisible(fomodModal+` [data-testid="fomod-step"][data-step="Size"]`, chromedp.ByQuery),
+		clickWhenSettled(fomodModal+` [data-action="fomod-defaults"]`),
+		waitGone(fomodModal),
+	)
+	require.Eventually(t, func() bool {
+		row, err := f.Svc.GetInstalledMod(t.Context(), "fake", "manualup", f.Game.ID, "default")
+		return err == nil && row.Version == "2.0"
+	}, 30*time.Second, e2ePollInterval, "the update applied")
+	assert.Equal(t, "2K", e2eDeployed(t, f.Game, "Mods/t.dds"), "the installer's defaults")
+	assert.Empty(t, f.BrowserErrors())
+}

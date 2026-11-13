@@ -2086,7 +2086,13 @@ async function submitFomod(origin, answers, walked) {
   const context = req.context ?? routeContext();
   await startBinding(origin, async () => {
     try {
-      const planOptions = await freshUpload(basePlanOptions);
+      // Only profile_import's plan consumes its upload; import_archive and
+      // update_from_archive keep theirs until an Apply succeeds
+      // (kind_import_archive.go), so their re-post plans the same one.
+      const planOptions =
+        req.kind === "profile_import"
+          ? await freshUpload(basePlanOptions)
+          : basePlanOptions;
       const response = await planMutation(req.kind, planOptions, context);
       const { id: jobID } = await startJob(response.plan_id, applyOptions);
       fomodRequests.set(origin, { ...req, planOptions, applyOptions });
