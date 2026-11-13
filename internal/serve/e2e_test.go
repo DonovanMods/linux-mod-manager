@@ -2179,7 +2179,7 @@ func TestE2E_UpdatesBatch_DropsARowAndAppliesTheRest(t *testing.T) {
 				.forEach((cb) => cb.click());
 		`, nil),
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="batch-update"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-update"]`),
 		chromedp.WaitVisible(`[data-testid="updates-batch-rows"]`, chromedp.ByQuery),
 	)
 
@@ -3481,7 +3481,7 @@ func TestE2E_LibraryBatchBar_EnableDisableUninstallToDisk(t *testing.T) {
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
 		selectBoth,
-		chromedp.Click(`[data-action="batch-disable"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-disable"]`),
 	)
 	require.Eventually(t, func() bool {
 		a, errA := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
@@ -3500,7 +3500,7 @@ func TestE2E_LibraryBatchBar_EnableDisableUninstallToDisk(t *testing.T) {
 
 	f.runInBrowser(t,
 		selectBoth,
-		chromedp.Click(`[data-action="batch-enable"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-enable"]`),
 	)
 	require.Eventually(t, func() bool {
 		a, errA := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
@@ -3513,7 +3513,7 @@ func TestE2E_LibraryBatchBar_EnableDisableUninstallToDisk(t *testing.T) {
 	// plans (design doc §Modals: "modals stack at most one deep").
 	f.runInBrowser(t,
 		selectBoth,
-		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-uninstall"]`),
 		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
 		// Each mod's own uninstall plan is computed asynchronously
 		// (uninstallbatchmodal.js's own mount effect) - wait for both to
@@ -3598,7 +3598,7 @@ func TestE2E_LibraryBatchBar_UpdateFiltersToRowsWithAnUpdate(t *testing.T) {
 	assert.True(t, mixedEnabled, "a MIXED selection with at least one update must enable the button")
 
 	f.runInBrowser(t,
-		chromedp.Click(`[data-action="batch-update"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-update"]`),
 		chromedp.WaitVisible(`[data-testid="updates-batch-rows"]`, chromedp.ByQuery),
 	)
 	var rowsText string
@@ -3706,7 +3706,7 @@ func TestE2E_LibraryBatchBar_CancelKeepsTheSelectionAndReturnsFocus(t *testing.T
 				.querySelector("td.col--select input").click();
 		`, nil),
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-uninstall"]`),
 		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
 	)
 
@@ -3882,7 +3882,7 @@ func TestE2E_LibraryBatchBar_UninstallSequencesOneJobAtATime(t *testing.T) {
 			document.querySelectorAll(".mod-row td.col--select input").forEach((cb) => cb.click());
 		`, nil),
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-uninstall"]`),
 		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelector('.modal[data-kind="uninstall-batch"] [data-action="confirm"]').click()`, nil),
 		waitGone(`.modal[data-kind="uninstall-batch"]`),
@@ -4696,7 +4696,7 @@ func TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelec
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
 		selectByName("Alpha Mod"),
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-uninstall"]`),
 		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
 		// Wait for Alpha's own preview plan to actually land - otherwise
 		// there is nothing stale yet for the bug below to replay.
@@ -4722,7 +4722,7 @@ func TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelec
 		`, nil),
 		selectByName("Beta Mod"),
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-uninstall"]`),
 		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
 	)
