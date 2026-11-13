@@ -388,7 +388,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 				if !isDeployedNow(game, f) {
 					continue
 				}
-				plan.Purge = append(plan.Purge, f)
+				plan.Purge = append(plan.Purge, displayPath(f))
 			}
 		}
 	}
@@ -501,14 +501,14 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 			plan.Mods = append(plan.Mods, entry)
 			continue
 		}
-		entry.Link = link
+		entry.Link = displayPaths(link)
 		linked := make(map[string]bool, len(link))
 		for _, f := range link {
 			linked[f] = true
 		}
-		for _, f := range files {
+		for _, f := range deployedPaths(planAdapter, game, files) {
 			if !linked[f] {
-				entry.Remove = append(entry.Remove, f)
+				entry.Remove = append(entry.Remove, displayPath(f))
 			}
 		}
 		plan.Mods = append(plan.Mods, entry)

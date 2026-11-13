@@ -256,6 +256,27 @@ func (s *Service) verifyFingerprint(ctx context.Context, game *domain.Game, prof
 	if err := fingerprintTree(ctx, h, game.ModPath); err != nil {
 		return "", err
 	}
+
+	// #629: the files deployed under the game root are not under the mod
+	// path the walk above covers, and the install directory is the game's
+	// own tree - too big to walk for a handful of files. Each recorded
+	// game-root path is stat'ed instead: its record and its state on disk.
+	deployed, err := s.db.ListDeployedFiles(ctx, game.ID, profile)
+	if err != nil {
+		return "", fmt.Errorf("fingerprinting deployed files: %w", err)
+	}
+	for _, row := range deployed {
+		if !isGameRoot(row.RelativePath) {
+			continue
+		}
+		token := "absent"
+		if info, err := os.Lstat(deployTarget(game, row.RelativePath)); err == nil {
+			token = fmt.Sprintf("%d\x1f%d\x1f%s", info.Size(), info.ModTime().UnixNano(), info.Mode())
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			token = "error"
+		}
+		_, _ = fmt.Fprintf(h, "rootfile\x1f%s\x1f%s\x1f%s\x1f%s\n", cacheMember(row.RelativePath), row.SourceID, row.ModID, token)
+	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 

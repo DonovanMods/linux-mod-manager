@@ -113,7 +113,7 @@ func (r *verifyRun) orphanedRecordFindings(order []string, orphans map[string][]
 		paths := orphans[key]
 		slices.Sort(paths)
 		sourceID, modID, _ := strings.Cut(key, ":")
-		note := fmt.Sprintf("%d deployed-file record(s) of %s with no installed mod: %s", len(paths), key, strings.Join(paths, ", "))
+		note := fmt.Sprintf("%d deployed-file record(s) of %s with no installed mod: %s", len(paths), key, strings.Join(displayPaths(paths), ", "))
 		f := VerifyFinding{ModID: modID, Status: "orphaned_record", Note: note}
 		switch {
 		case err != nil:
@@ -131,7 +131,7 @@ func (r *verifyRun) orphanedRecordFindings(order []string, orphans map[string][]
 		var failed []string
 		for _, path := range paths {
 			if derr := r.svc.db.DeleteDeployedFile(r.ctx, r.game.ID, r.profile, path); derr != nil {
-				failed = append(failed, fmt.Sprintf("%s (%v)", path, derr))
+				failed = append(failed, fmt.Sprintf("%s (%v)", displayPath(path), derr))
 			}
 		}
 		if len(failed) > 0 {

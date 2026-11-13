@@ -245,7 +245,7 @@ func applyOneOverride(base, realBase, relPath string, profile *domain.Profile, e
 			env.recordCopy(realDest)
 		}
 		return fmt.Sprintf("%s was yours (%s), so lmm set it aside before writing the override - removing the mod, or `lmm purge`, puts it back",
-			mf.rel, mf.reason), nil
+			displayPath(mf.rel), mf.reason), nil
 	}
 	captureOverriddenOriginal(env.originals, profile.Name, rel, realDest)
 	return "", write(perm)
@@ -262,7 +262,8 @@ func preserveUsersModFile(originals *originalsStore, profileName, rel, path stri
 	if originals == nil {
 		return errors.New("it is yours, and lmm has nowhere to set it aside first, so it left it")
 	}
-	held, err := originals.holds(OriginalRootModPath, rel)
+	root, member := originalRootOf(rel)
+	held, err := originals.holds(root, member)
 	if err != nil {
 		return fmt.Errorf("it is yours, and the originals store could not be read to set it aside first (%v), so lmm left it", err)
 	}
@@ -270,7 +271,7 @@ func preserveUsersModFile(originals *originalsStore, profileName, rel, path stri
 		return errors.New("it is yours, and lmm already keeps an earlier original of that path, so it could not set this one aside too - move it aside, then deploy again")
 	}
 	if err := originals.capture(OriginalFile{
-		Root: OriginalRootModPath, RelativePath: rel,
+		Root: root, RelativePath: member,
 		Op: OriginalOpProfileOverride, Profile: profileName,
 	}, path); err != nil {
 		return fmt.Errorf("it is yours, and it could not be set aside first (%v), so lmm left it", err)
@@ -305,9 +306,10 @@ func (s *Service) applyOverrides(ctx context.Context, game *domain.Game, profile
 	if s.db != nil && game.ModPath != "" {
 		if absMod, err := filepath.Abs(game.ModPath); err == nil {
 			if realMod, err := resolveExisting(absMod); err == nil {
-				env.modPathFile = s.modPathJudge(ctx, game, profileName, realMod)
+				deployedAt := deployedPathAt(game, realMod)
+				env.modPathFile = s.modPathJudge(ctx, game, profileName, deployedAt)
 				env.recordCopy = func(realDest string) {
-					if rel, ok := relUnder(realMod, realDest); ok {
+					if rel, ok := deployedAt(realDest); ok {
 						s.recordOverriddenCopy(ctx, game, profileName, rel, realDest)
 					}
 				}
@@ -317,17 +319,45 @@ func (s *Service) applyOverrides(ctx context.Context, game *domain.Game, profile
 	return applyProfileOverrides(game, profile, env)
 }
 
+// deployedPathAt resolves a real path in game to the deployed path a mod
+// file there has: relative to realMod, the resolved mod path, or - for a
+// game with a game root of its own (#629) - the install_path key of its
+// path relative to the resolved install_path. A path under the mod path is
+// the mod path's, whatever else contains it.
+func deployedPathAt(game *domain.Game, realMod string) func(realDest string) (string, bool) {
+	realInstall := ""
+	if routesToGameRoot(game) {
+		if abs, err := filepath.Abs(game.InstallPath); err == nil {
+			if r, err := resolveExisting(abs); err == nil {
+				realInstall = r
+			}
+		}
+	}
+	return func(realDest string) (string, bool) {
+		if rel, ok := relUnder(realMod, realDest); ok {
+			return rel, true
+		}
+		if realInstall != "" {
+			if rel, ok := relUnder(realInstall, realDest); ok {
+				return domain.InstallPathKey(rel), true
+			}
+		}
+		return "", false
+	}
+}
+
 // modPathJudge is overrideEnv.modPathFile for profileName of game, whose
-// resolved mod path is realMod: the deployedJudge every removal asks,
+// deployed paths deployedAt resolves: the deployedJudge every removal asks,
 // acting for the profile, plus the games sharing the mod directory.
-func (s *Service) modPathJudge(ctx context.Context, game *domain.Game, profileName, realMod string) func(string) (modPathFile, bool) {
+func (s *Service) modPathJudge(ctx context.Context, game *domain.Game, profileName string, deployedAt func(string) (string, bool)) func(string) (modPathFile, bool) {
 	others, othersErr := s.otherGamesRecording(ctx, game)
 	jd := deployedJudge{db: s.db, game: game, profile: profileName, cacheRoots: s.cacheRoots(game), others: others}
 	return func(realDest string) (modPathFile, bool) {
-		rel, ok := relUnder(realMod, realDest)
+		rel, ok := deployedAt(realDest)
 		if !ok {
 			return modPathFile{}, false
 		}
+
 		mf := modPathFile{rel: rel}
 		if othersErr != nil {
 			mf.unchecked = othersErr.Error()

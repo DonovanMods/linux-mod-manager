@@ -200,7 +200,7 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 		if err != nil {
 			// GetFileOwner errs only on storage failure; conflating that with
 			// "no owner recorded" would silently under-report conflicts.
-			return nil, fmt.Errorf("looking up file owner for %s: %w", path, err)
+			return nil, fmt.Errorf("looking up file owner for %s: %w", displayPath(path), err)
 		}
 		if !found {
 			continue
@@ -221,7 +221,7 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 		}
 
 		conflicts = append(conflicts, ProfileConflict{
-			Path:            path,
+			Path:            displayPath(path),
 			Owner:           ref(ownerKey),
 			AlsoIn:          alsoIn,
 			LoadOrderWinner: ref(winnerKey),

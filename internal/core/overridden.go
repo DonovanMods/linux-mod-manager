@@ -111,8 +111,11 @@ func relUnder(root, path string) (string, bool) {
 	return filepath.ToSlash(rel), true
 }
 
-// overriddenModFiles is the files under game's mod_path that profileName's
-// overrides replace. A profile that cannot be read overrides nothing: the
+// overriddenModFiles is the mod files of game that profileName's overrides
+// replace, keyed by deployed path: those under its mod_path by their path
+// relative to it, and - for a game with a game root of its own (#629) -
+// those under its install_path, outside the mod_path, by their
+// install_path key. A profile that cannot be read overrides nothing: the
 // flow that reads it for its own purposes reports the failure.
 func (s *Service) overriddenModFiles(game *domain.Game, profileName string) overriddenFiles {
 	if profileName == "" {
@@ -122,7 +125,26 @@ func (s *Service) overriddenModFiles(game *domain.Game, profileName string) over
 	if err != nil {
 		return nil
 	}
-	return overriddenUnder(game, profile, game.ModPath)
+	return overriddenDeployed(game, profile)
+}
+
+// overriddenDeployed is overriddenModFiles for a profile already read.
+func overriddenDeployed(game *domain.Game, profile *domain.Profile) overriddenFiles {
+	out := overriddenUnder(game, profile, game.ModPath)
+	if !routesToGameRoot(game) {
+		return out
+	}
+	for rel, content := range overriddenUnder(game, profile, game.InstallPath) {
+		key := gameRootKey(game, filepath.FromSlash(rel))
+		if !isGameRoot(key) {
+			continue // a mod_path file, which the first answer holds
+		}
+		if out == nil {
+			out = overriddenFiles{}
+		}
+		out[key] = content
+	}
+	return out
 }
 
 // errNotRegularTarget refuses an override or an overridden copy whose
@@ -414,10 +436,10 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 	var warnings []string
 	for _, row := range rows {
 		rel := row.RelativePath
-		if !underCurrentRoot(game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(rel)) {
+		if !underCurrentRoot(game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(cacheMember(rel))) {
 			continue
 		}
-		dst := filepath.Join(game.ModPath, filepath.FromSlash(rel))
+		dst := deployTarget(game, filepath.FromSlash(rel))
 		content, overridden := mine.content(rel)
 		if !overridden && !staleCopyCandidate(rel, dst, elsewhere, linked) {
 			continue
@@ -436,8 +458,8 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 			if form == formOther {
 				continue
 			}
-			if err := writeOverriddenCopy(game.ModPath, rel, content); err != nil {
-				warnings = append(warnings, fmt.Sprintf("%s: could not write the profile's override over the mod's file: %v", rel, err))
+			if err := writeOverriddenCopy(deployRootDir(game, rel), cacheMember(rel), content); err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: could not write the profile's override over the mod's file: %v", displayPath(rel), err))
 				continue
 			}
 			s.recordOverriddenCopy(ctx, game, profileName, rel, dst)
@@ -449,7 +471,7 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 			continue
 		}
 		if err := s.restorePlainDeployment(ctx, installer, game, profileName, row, src, dst); err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: could not put the mod's own file back in place of the override another profile left: %v", rel, err))
+			warnings = append(warnings, fmt.Sprintf("%s: could not put the mod's own file back in place of the override another profile left: %v", displayPath(rel), err))
 		}
 	}
 	return warnings
@@ -535,7 +557,7 @@ func (s *Service) deployedFormOf(ctx context.Context, installer *Installer, othe
 		return formOther, ""
 	}
 	if mod, err := s.GetInstalledMod(ctx, own.SourceID, own.ModID, game.ID, profileName); err == nil {
-		path := installer.cache.GetFilePath(modCacheKey(game.ID, mod.Mod), filepath.FromSlash(rel))
+		path := installer.cache.GetFilePath(modCacheKey(game.ID, mod.Mod), filepath.FromSlash(cacheMember(rel)))
 		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
 			src = path
 		}
@@ -596,10 +618,13 @@ func (s *Service) restorePlainDeployment(ctx context.Context, installer *Install
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	lnk := linkerFor(installer.linker, game, row.RelativePath)
+	if _, contained := lnk.(rootLinker); !contained {
+		if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
-	if err := installer.linker.Deploy(src, dst); err != nil {
+	if err := lnk.Deploy(src, dst); err != nil {
 		return err
 	}
 	return installer.recordDeployed(ctx, game, profileName, row.RelativePath, &mod.Mod, installer.deployedFingerprint(dst))
@@ -679,9 +704,9 @@ func (c *staleOverrideCheck) report(row db.DeployedPath, dst, modName string) bo
 	}
 	fixable, reason := r.deployRowFixability(repairable && !fixing, reason, repairable && fixing, true)
 	r.finding(VerifyFinding{
-		ModID: row.ModID, ModName: modName, FileID: row.RelativePath,
+		ModID: row.ModID, ModName: modName, FileID: displayPath(row.RelativePath),
 		Status:        VerifyStatusOverrideStale,
-		Note:          row.RelativePath + ": still holds an override the profile no longer has",
+		Note:          displayPath(row.RelativePath) + ": still holds an override the profile no longer has",
 		Fixable:       fixable,
 		FixableReason: reason,
 	}, VerifyEvent{})
@@ -696,16 +721,17 @@ func (c *staleOverrideCheck) report(row db.DeployedPath, dst, modName string) bo
 func (c *staleOverrideCheck) repair(row db.DeployedPath, src, dst string) {
 	r := c.r
 	if err := r.refuseLiveDeploy(); err != nil {
-		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("--fix did not restore %s: %s", row.RelativePath, deployRefusedReason(err))})
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("--fix did not restore %s: %s", displayPath(row.RelativePath), deployRefusedReason(err))})
 		return
 	}
 	if err := r.svc.restorePlainDeployment(r.ctx, c.installer, r.game, r.profile, row, src, dst); err != nil {
 		last := &r.result.Findings[len(r.result.Findings)-1]
 		last.FixableReason = fmt.Sprintf("this --fix run could not put the mod's own file back: %v", err)
-		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Could not restore %s: %v", row.RelativePath, err)})
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Could not restore %s: %v", displayPath(row.RelativePath), err)})
 		return
 	}
-	r.resolveLast(VerifyStatusFixedOverrideStale, row.RelativePath+": put the mod's own file back in place of an override the profile no longer has")
+	r.resolveLast(VerifyStatusFixedOverrideStale, displayPath(row.RelativePath)+": put the mod's own file back in place of an override the profile no longer has")
 	r.result.Warnings--
-	r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Restored the mod's own " + row.RelativePath, Fixed: true})
+	r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Restored the mod's own " + displayPath(row.RelativePath), Fixed: true})
+
 }

@@ -55,6 +55,11 @@ import (
 // pre-existing "listing cache files for %s") - this resolver does not
 // prescribe the wording.
 //
+// The answer is DEPLOYED PATHS (deploy_root.go, #629), not bare members: a
+// member the adapter's RootRouter sends to the game root comes back as
+// domain.InstallPathKey of it. A caller that reads the cache entry asks
+// cacheMember for the member; one that touches the game asks deployTarget.
+//
 // k names the entry, variant included (#614): modCacheKey for an installed
 // mod.
 func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, k cache.Key) ([]string, error) {
@@ -75,13 +80,16 @@ func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, g
 	if err != nil {
 		return nil, err
 	}
+	// #629: each member's deployed path, routed over the WHOLE listing -
+	// some of the adapter's root rules are about the mod as a whole.
+	keyed := deployedPathIndex(a, game, files)
 	if len(manifests) == 0 {
-		return routeDeployables(a, game, files), nil
+		return keyed.of(routeDeployables(a, game, files)), nil
 	}
 	claimed := make(map[string]bool)
 	for _, m := range manifests {
 		if !m.Recorded {
-			return routeDeployables(a, game, files), nil
+			return keyed.of(routeDeployables(a, game, files)), nil
 		}
 		for _, member := range m.Members {
 			claimed[member] = true
@@ -93,7 +101,7 @@ func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, g
 		return nil, err
 	}
 	if !hasRetainedSource {
-		return routeDeployables(a, game, files), nil
+		return keyed.of(routeDeployables(a, game, files)), nil
 	}
 	deployable := make([]string, 0, len(files))
 	for _, f := range files {
@@ -101,5 +109,5 @@ func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, g
 			deployable = append(deployable, f)
 		}
 	}
-	return routeDeployables(a, game, deployable), nil
+	return keyed.of(routeDeployables(a, game, deployable)), nil
 }

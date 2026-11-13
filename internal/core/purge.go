@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
@@ -142,9 +141,9 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 			case spec.kept == nil:
 				installer.noteHeld(h.removalNote())
 			case h.userReason != "":
-				*spec.kept = append(*spec.kept, PurgeKeptPath{Path: h.path, Reason: PurgeKeptUserFile, Note: h.userReason})
+				*spec.kept = append(*spec.kept, PurgeKeptPath{Path: displayPath(h.path), Reason: PurgeKeptUserFile, Note: h.userReason})
 			default:
-				*spec.kept = append(*spec.kept, PurgeKeptPath{Path: h.path, Reason: PurgeKeptOtherGame, Games: h.games})
+				*spec.kept = append(*spec.kept, PurgeKeptPath{Path: displayPath(h.path), Reason: PurgeKeptOtherGame, Games: h.games})
 			}
 		}
 		if err != nil {
@@ -232,7 +231,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		spec.emit(w)
 	}
 
-	linker.CleanupEmptyDirs(game.ModPath, removed)
+	cleanupRemoved(game, removed)
 	spec.emit(StepEvent{Scope: Scope{Op: spec.op}, Phase: PurgeComplete})
 	return nil
 }
@@ -626,7 +625,7 @@ func (s *Service) planRecordedPurge(ctx context.Context, game *domain.Game, prof
 		ActiveProfile: live,
 	}
 	for _, row := range remove {
-		plan.Remove = append(plan.Remove, row.RelativePath)
+		plan.Remove = append(plan.Remove, displayPath(row.RelativePath))
 		if row.unshipped != nil {
 			plan.Unshipped = append(plan.Unshipped, *row.unshipped)
 		}
@@ -634,7 +633,7 @@ func (s *Service) planRecordedPurge(ctx context.Context, game *domain.Game, prof
 	}
 	plan.Stranded = strandedOf(game, remove)
 	for _, k := range kept {
-		plan.Kept = append(plan.Kept, k.PurgeKeptPath)
+		plan.Kept = append(plan.Kept, k.displayed())
 		if k.Reason.DropsRecord() {
 			withPaths[domain.ModKey(k.row.SourceID, k.row.ModID)] = true
 		}
@@ -655,16 +654,26 @@ func strandedOf(game *domain.Game, remove []recordedRemoval) []PurgeStrandedPath
 	var out []PurgeStrandedPath
 	for _, row := range remove {
 		if rowGame := gameUnderRoot(game, row.ModPath); rowGame != game {
-			out = append(out, PurgeStrandedPath{Path: row.RelativePath, ModPath: rowGame.ModPath})
+			out = append(out, PurgeStrandedPath{Path: displayPath(row.RelativePath), ModPath: rowGame.ModPath})
 		}
 	}
 	return out
 }
 
-// keptRecord is a record recordedPaths keeps the path of, and why.
+// keptRecord is a record recordedPaths keeps the path of, and why. Its
+// Path is the row's deployed path (#629); what a frontend is shown is
+// displayed's.
 type keptRecord struct {
 	PurgeKeptPath
 	row db.DeployedPath
+}
+
+// displayed is the kept path as a plan or result reports it: its Path in
+// displayPath's spelling, so a game-root file names the root.
+func (k keptRecord) displayed() PurgeKeptPath {
+	out := k.PurgeKeptPath
+	out.Path = displayPath(out.Path)
+	return out
 }
 
 // recordedPaths splits profileName's deployed-file records into the ones a
@@ -731,7 +740,7 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 				othersUnder[rowGame.ModPath] = rowOthers
 			}
 		}
-		dst := filepath.Join(rowGame.ModPath, filepath.FromSlash(row.RelativePath))
+		dst := deployTarget(rowGame, filepath.FromSlash(row.RelativePath))
 		if _, err := os.Lstat(dst); errors.Is(err, fs.ErrNotExist) {
 			remove = append(remove, recordedRemoval{DeployedPath: row})
 			continue
@@ -751,7 +760,7 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 					continue
 				}
 				remove = append(remove, recordedRemoval{DeployedPath: row, unshipped: &PurgeUnshippedPath{
-					Path: row.RelativePath, SourceID: row.SourceID, ModID: row.ModID, Version: version, Profile: live,
+					Path: displayPath(row.RelativePath), SourceID: row.SourceID, ModID: row.ModID, Version: version, Profile: live,
 				}})
 				continue
 			}
@@ -865,7 +874,7 @@ func keptPath(ctx context.Context, row db.DeployedPath, profileName, live string
 	// is one only its difference from the mod's cached copy says is the
 	// user's: the claims below still decide whether its record stays, so a
 	// purge order cannot change what is left recorded (#445's handoffs).
-	dst := filepath.Join(game.ModPath, filepath.FromSlash(row.RelativePath))
+	dst := deployTarget(game, filepath.FromSlash(row.RelativePath))
 	if j := jd.judge(ctx, row.RelativePath, dst); j.verdict == deployedUsers && !j.unchecked && !j.cacheProof {
 		k.Reason, k.Note = PurgeKeptUserFile, j.reason
 		return k, true
@@ -1048,8 +1057,11 @@ func (s *Service) liveListedMods(gameID, live string) (map[string]string, error)
 // the same directory, one inside the other, or either reached through a
 // link.
 type otherGameRecords struct {
-	root  string // the purged game's mod directory, links resolved
-	games []*otherGame
+	root string // the purged game's mod directory, links resolved
+	// installRoot is its install directory, links resolved: what a
+	// game-root path (#629) is under. "" when it has none apart from root.
+	installRoot string
+	games       []*otherGame
 	// claimsOf reads a game's active profile and the mods its document
 	// lists, for heldForActive (Service.gameClaims).
 	claimsOf func(gameID string) gameClaims
@@ -1060,9 +1072,12 @@ type otherGameRecords struct {
 
 type otherGame struct {
 	id      string
-	modPath string                     // its mod directory, as configured
-	root    string                     // its mod directory, links resolved
-	paths   map[string][]db.PathRecord // its recorded paths (DeployedPathRecords)
+	modPath string // its mod directory, as configured
+	root    string // its mod directory, links resolved
+	// installRoot is its install directory, links resolved, when its
+	// game-root paths (#629) are somewhere other than root.
+	installRoot string
+	paths       map[string][]db.PathRecord // its recorded paths (DeployedPathRecords)
 	// claims is claimsOf's answer for the game, read on first use.
 	claims *gameClaims
 }
@@ -1096,21 +1111,58 @@ func (s *Service) otherGamesRecording(ctx context.Context, game *domain.Game) (*
 		claimsOf: func(id string) gameClaims { return s.gameClaims(ctx, id) },
 		statesOf: s.db.DeployedFileStates,
 	}
+	if routesToGameRoot(game) {
+		records.installRoot = resolvedDir(game.InstallPath)
+	}
+	overlaps := func(a, b string) bool { return a != "" && b != "" && (pathWithin(a, b) || pathWithin(b, a)) }
 	for _, other := range s.ListGames() {
 		if other.ID == game.ID || other.ModPath == "" {
 			continue
 		}
 		root := resolvedDir(other.ModPath)
-		if !pathWithin(records.root, root) && !pathWithin(root, records.root) {
+		installRoot := ""
+		if routesToGameRoot(other) {
+			installRoot = resolvedDir(other.InstallPath)
+		}
+		// The mod directories overlap, as they always had to; or a game
+		// root of either one (#629) overlaps a directory of the other.
+		if !overlaps(records.root, root) && !overlaps(records.installRoot, root) &&
+			!overlaps(records.root, installRoot) && !overlaps(records.installRoot, installRoot) {
 			continue
 		}
 		paths, err := s.db.DeployedPathRecords(ctx, other.ID)
 		if err != nil {
 			return nil, fmt.Errorf("listing %s's deployed files: %w", other.ID, err)
 		}
-		records.games = append(records.games, &otherGame{id: other.ID, modPath: other.ModPath, root: root, paths: paths})
+		records.games = append(records.games, &otherGame{id: other.ID, modPath: other.ModPath, root: root, installRoot: installRoot, paths: paths})
 	}
 	return records, nil
+}
+
+// abs is where rel, a deployed path of the purged game, is on disk, links
+// resolved in its root.
+func (r *otherGameRecords) abs(rel string) string {
+	if member, root := domain.SplitDeployedPath(rel); root && r.installRoot != "" {
+		return filepath.Join(r.installRoot, filepath.FromSlash(member))
+	}
+	return filepath.Join(r.root, filepath.FromSlash(rel))
+}
+
+// pathAt is g's deployed path for abs, an absolute path, when g records
+// one there: under its mod directory, or under its game root.
+func (g *otherGame) pathAt(abs string) (string, bool) {
+	if theirs, ok := relWithin(g.root, abs); ok && len(g.paths[filepath.ToSlash(theirs)]) > 0 {
+		return filepath.ToSlash(theirs), true
+	}
+	if g.installRoot != "" {
+		if theirs, ok := relWithin(g.installRoot, abs); ok {
+			key := domain.InstallPathKey(filepath.ToSlash(theirs))
+			if len(g.paths[key]) > 0 {
+				return key, true
+			}
+		}
+	}
+	return "", false
 }
 
 // recording names the other games that record rel, a path under the purged
@@ -1127,6 +1179,7 @@ func (r *otherGameRecords) recording(rel string) []string {
 type otherGameHold struct {
 	game    *otherGame
 	records []db.PathRecord
+	path    string // the other game's deployed path of the file
 }
 
 // holding is each other game that records rel, a path under the purged
@@ -1135,11 +1188,11 @@ func (r *otherGameRecords) holding(rel string) []otherGameHold {
 	if r == nil {
 		return nil
 	}
-	abs := filepath.Join(r.root, filepath.FromSlash(rel))
+	abs := r.abs(rel)
 	var holds []otherGameHold
 	for _, g := range r.games {
-		if theirs, ok := relWithin(g.root, abs); ok && len(g.paths[filepath.ToSlash(theirs)]) > 0 {
-			holds = append(holds, otherGameHold{game: g, records: g.paths[filepath.ToSlash(theirs)]})
+		if theirs, ok := g.pathAt(abs); ok {
+			holds = append(holds, otherGameHold{game: g, records: g.paths[theirs], path: theirs})
 		}
 	}
 	return holds
@@ -1151,11 +1204,11 @@ func (r *otherGameRecords) holding(rel string) []otherGameHold {
 func (r *otherGameRecords) fingerprints(ctx context.Context, rel string) ([]db.DeployedFileState, error) {
 	var out []db.DeployedFileState
 	for _, h := range r.holding(rel) {
-		theirs, _ := relWithin(h.game.root, filepath.Join(r.root, filepath.FromSlash(rel)))
-		states, err := r.statesOf(ctx, h.game.id, filepath.ToSlash(theirs))
+		states, err := r.statesOf(ctx, h.game.id, h.path)
 		if err != nil {
-			return nil, fmt.Errorf("reading %s's record of %s: %w", h.game.id, rel, err)
+			return nil, fmt.Errorf("reading %s's record of %s: %w", h.game.id, displayPath(rel), err)
 		}
+
 		for _, st := range states {
 			if st.Fingerprint != nil && (st.ModPath == "" || samePath(st.ModPath, h.game.modPath)) {
 				out = append(out, st)
@@ -1240,12 +1293,12 @@ func (s *Service) purgeRecorded(ctx context.Context, game *domain.Game, plan *Pu
 	}
 	approved := make(map[string]bool, len(plan.Remove))
 	for _, path := range plan.Remove {
-		approved[path] = true
+		approved[displayPath(path)] = true
 	}
 	untrack := make(map[string]bool)
 	for _, k := range plan.Kept {
 		if k.Reason.DropsRecord() {
-			untrack[k.Path] = true
+			untrack[displayPath(k.Path)] = true
 		}
 	}
 	emit(StepEvent{Scope: Scope{Op: OpPurge, Total: len(plan.Mods)}, Phase: DeployPurging})
@@ -1298,20 +1351,20 @@ func (s *Service) purgeStranded(ctx context.Context, game *domain.Game, profileN
 	untrack := make(map[string]bool)
 	if plan != nil {
 		for _, st := range plan.Stranded {
-			approved[st.Path] = true
+			approved[displayPath(st.Path)] = true
 		}
 		for _, k := range plan.Kept {
 			if k.ModPath != "" && k.Reason.DropsRecord() {
-				untrack[k.Path] = true
+				untrack[displayPath(k.Path)] = true
 			}
 		}
 	} else {
 		for _, row := range remove {
-			approved[row.RelativePath] = true
+			approved[displayPath(row.RelativePath)] = true
 		}
 		for _, k := range kept {
 			if k.Reason.DropsRecord() {
-				untrack[k.Path] = true
+				untrack[displayPath(k.Path)] = true
 			}
 		}
 	}
@@ -1320,12 +1373,13 @@ func (s *Service) purgeStranded(ctx context.Context, game *domain.Game, profileN
 }
 
 // purgeClearOptions is the recordedClearOptions of a purge: approved names
-// the paths it removes, untrack the kept paths whose records it drops, and
-// what it removes, keeps and warns of goes on result, as events too.
+// the paths it removes, untrack the kept paths whose records it drops -
+// both keyed by displayPath, the spelling a plan carries (#629) - and what
+// it removes, keeps and warns of goes on result, as events too.
 func purgeClearOptions(approved, untrack map[string]bool, result *PurgeResult, emit func(Event)) recordedClearOptions {
 	return recordedClearOptions{
-		approve: func(path string) bool { return approved[path] },
-		untrack: func(path string) bool { return untrack[path] },
+		approve: func(path string) bool { return approved[displayPath(path)] },
+		untrack: func(path string) bool { return untrack[displayPath(path)] },
 		note: func(msg string) {
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeNote, Detail: msg})
@@ -1418,6 +1472,7 @@ func (s *Service) clearRecorded(ctx context.Context, game *domain.Game, profileN
 func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, profileName string, remove []recordedRemoval, kept []keptRecord, opts recordedClearOptions) (map[string]int, error) {
 	reportKept := func(k PurgeKeptPath) {
 		if opts.kept != nil {
+			k.Path = displayPath(k.Path)
 			opts.kept(k)
 		}
 	}
@@ -1446,7 +1501,7 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 		}
 		if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, k.Path); err != nil {
 			left[key]++
-			opts.note(fmt.Sprintf("⚠ %s - %v", k.Path, err))
+			opts.note(fmt.Sprintf("⚠ %s - %v", displayPath(k.Path), err))
 			continue
 		}
 		if k.Reason == PurgeKeptUserFile && k.Note != "" && k.ModPath == "" {
@@ -1456,11 +1511,12 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 		}
 	}
 	warn := func(path string, err error, what string) {
-		opts.warn(fmt.Sprintf("%s was left in place, with its record: %s: %v", path, what, err))
+		opts.warn(fmt.Sprintf("%s was left in place, with its record: %s: %v", displayPath(path), what, err))
 	}
 
 	installers := make(map[domain.LinkMethod]*Installer)
 	removed := make(map[string][]string) // mod_path -> paths removed under it
+	rootGames := make(map[string]*domain.Game)
 	var roots []string
 	for _, row := range remove {
 		if err := ctx.Err(); err != nil {
@@ -1478,7 +1534,7 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 			installers[method] = installer
 		}
 		rowGame := gameUnderRoot(game, row.ModPath)
-		dst := filepath.Join(rowGame.ModPath, filepath.FromSlash(row.RelativePath))
+		dst := deployTarget(rowGame, filepath.FromSlash(row.RelativePath))
 		_, err := os.Lstat(dst)
 		switch {
 		case err == nil:
@@ -1506,7 +1562,7 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 				reportKept(k)
 				if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, row.RelativePath); err != nil {
 					left[key]++
-					opts.note(fmt.Sprintf("⚠ %s - %v", row.RelativePath, err))
+					opts.note(fmt.Sprintf("⚠ %s - %v", displayPath(row.RelativePath), err))
 					continue
 				}
 				if rowGame == game {
@@ -1514,7 +1570,7 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 				}
 				continue
 			}
-			if err := removeDeployed(installer.linker, dst, j.verdict == deployedOurs && j.regular); err != nil {
+			if err := removeDeployed(linkerFor(installer.linker, rowGame, row.RelativePath), dst, j.verdict == deployedOurs && j.regular); err != nil {
 				left[key]++
 				warn(row.RelativePath, err, "it could not be removed")
 				continue
@@ -1532,11 +1588,12 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 		}
 		if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, row.RelativePath); err != nil {
 			left[key]++
-			opts.note(fmt.Sprintf("⚠ %s - %v", row.RelativePath, err))
+			opts.note(fmt.Sprintf("⚠ %s - %v", displayPath(row.RelativePath), err))
 			continue
 		}
 		if _, ok := removed[rowGame.ModPath]; !ok {
 			roots = append(roots, rowGame.ModPath)
+			rootGames[rowGame.ModPath] = rowGame
 		}
 		removed[rowGame.ModPath] = append(removed[rowGame.ModPath], row.RelativePath)
 		if opts.removed != nil {
@@ -1547,9 +1604,10 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 		}
 	}
 	for _, root := range roots {
-		linker.CleanupEmptyDirs(root, removed[root])
+		cleanupRemoved(rootGames[root], removed[root])
 	}
 	return left, nil
+
 }
 
 // PurgeOptions configures PurgeProfile.

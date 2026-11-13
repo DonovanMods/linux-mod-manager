@@ -112,8 +112,13 @@ type Snapshot struct {
 // SnapshotFile is one row of a snapshot's deployed-files manifest.
 type SnapshotFile struct {
 	// RelativePath is the path under the game's mod directory, in slash
-	// form.
+	// form - or, when Root says so, under its install directory.
 	RelativePath string `json:"relative_path"`
+	// Root is "install_path" for a file deployed under the game's install
+	// directory rather than its mod directory (#629: a script extender's
+	// loader, an ENB's d3d11.dll), and empty for every other file - the
+	// mod directory, as every row before #629 was.
+	Root OriginalRoot `json:"root,omitempty"`
 	// SourceID/ModID name the mod that deployed it, from the
 	// deployed_files table.
 	SourceID string `json:"source_id"`
@@ -406,11 +411,14 @@ func (s *Service) snapshotDeployedFiles(ctx context.Context, game *domain.Game, 
 			return nil, err
 		}
 		file := SnapshotFile{
-			RelativePath: filepath.ToSlash(row.RelativePath),
+			RelativePath: filepath.ToSlash(cacheMember(row.RelativePath)),
 			SourceID:     row.SourceID,
 			ModID:        row.ModID,
 		}
-		abs := filepath.Join(game.ModPath, filepath.FromSlash(row.RelativePath))
+		if isGameRoot(row.RelativePath) {
+			file.Root = OriginalRootInstallPath
+		}
+		abs := deployTarget(game, filepath.FromSlash(row.RelativePath))
 		if _, statErr := os.Stat(abs); statErr != nil {
 			file.Missing = true
 			out = append(out, file)

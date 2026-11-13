@@ -1085,17 +1085,18 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 		if r.opts.ModFilter != "" && row.ModID != r.opts.ModFilter {
 			continue
 		}
-		if !underCurrentRoot(r.game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(row.RelativePath)) {
+		if !underCurrentRoot(r.game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(cacheMember(row.RelativePath))) {
 			continue
 		}
-		dst := filepath.Join(r.game.ModPath, filepath.FromSlash(row.RelativePath))
+		dst := deployTarget(r.game, filepath.FromSlash(row.RelativePath))
+		shown := displayPath(row.RelativePath)
 		if content, ok := overridden.content(row.RelativePath); ok && holdsOverriddenCopy(dst, content) {
 			r.finding(VerifyFinding{
 				ModID:   row.ModID,
 				ModName: names[domain.ModKey(row.SourceID, row.ModID)],
-				FileID:  row.RelativePath,
+				FileID:  shown,
 				Status:  VerifyStatusDeployedOverridden,
-				Note:    row.RelativePath + ": mod file, overridden by the profile",
+				Note:    shown + ": mod file, overridden by the profile",
 			}, VerifyEvent{})
 			continue
 		}
@@ -1110,9 +1111,9 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 		r.finding(VerifyFinding{
 			ModID:         row.ModID,
 			ModName:       names[domain.ModKey(row.SourceID, row.ModID)],
-			FileID:        row.RelativePath,
+			FileID:        shown,
 			Status:        VerifyStatusDeployedModified,
-			Note:          fmt.Sprintf("%s: %s, so lmm leaves it as yours", row.RelativePath, j.reason),
+			Note:          fmt.Sprintf("%s: %s, so lmm leaves it as yours", shown, j.reason),
 			FixableReason: "--fix never writes over a file you changed - " + deployedModifiedRemedy(j.sharesCache),
 		}, VerifyEvent{})
 	}
@@ -1180,16 +1181,17 @@ func (r *verifyRun) blockedPathsPass(installedMods []domain.InstalledMod, rows [
 			if installer.notLinkerOwned(r.game, rel) || recordedHere(rel) {
 				continue
 			}
-			if _, err := os.Lstat(filepath.Join(r.game.ModPath, file)); err != nil {
+			if _, err := os.Lstat(deployTarget(r.game, file)); err != nil {
 				continue
 			}
 			r.result.Warnings++
 			r.finding(VerifyFinding{
-				ModID:         m.ID,
-				ModName:       m.Name,
-				FileID:        rel,
-				Status:        VerifyStatusDeployedBlocked,
-				Note:          fmt.Sprintf("%s: not deployed - lmm did not put what is there, and could not preserve it to put the mod's file in its place", rel),
+				ModID:   m.ID,
+				ModName: m.Name,
+				FileID:  displayPath(rel),
+				Status:  VerifyStatusDeployedBlocked,
+				Note:    fmt.Sprintf("%s: not deployed - lmm did not put what is there, and could not preserve it to put the mod's file in its place", displayPath(rel)),
+
 				FixableReason: "--fix never writes over what it cannot preserve - move it aside, then run `lmm deploy`, to take the mod's version",
 			}, VerifyEvent{})
 		}

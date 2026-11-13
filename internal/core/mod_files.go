@@ -61,8 +61,8 @@ func (s *Service) ModFiles(ctx context.Context, game *domain.Game, profileName, 
 
 	report.Files = make([]ModFileEntry, 0, len(paths))
 	for _, p := range paths {
-		entry := ModFileEntry{Path: p}
-		if info, statErr := os.Stat(filepath.Join(game.ModPath, p)); statErr == nil {
+		entry := ModFileEntry{Path: displayPath(p)}
+		if info, statErr := os.Stat(deployTarget(game, filepath.FromSlash(p))); statErr == nil {
 			entry.Deployed = true
 			entry.Size = info.Size()
 		}

@@ -145,6 +145,15 @@ func recordRoot(game *domain.Game) string {
 	return filepath.Clean(game.ModPath)
 }
 
+// deployedUnder is the directory a judge's reason names for rel: the
+// game's install_path for a game-root path (#629), else recordRoot's.
+func deployedUnder(game *domain.Game, rel string) string {
+	if isGameRoot(rel) {
+		return filepath.Clean(game.InstallPath)
+	}
+	return recordRoot(game)
+}
+
 // underCurrentRoot reports whether a record with the given recorded
 // mod_path describes a path under game's current mod_path: one that
 // recorded none is taken to, as every row did before #451.
@@ -229,7 +238,7 @@ func (jd deployedJudge) judge(ctx context.Context, rel, dst string) deployedJudg
 		return j
 	}
 	if !j.regular {
-		return jd.judgeLink(j, info, states, dst)
+		return jd.judgeLink(j, info, states, rel, dst)
 	}
 	var prints []db.DeployedFileState
 	for _, st := range states {
@@ -249,7 +258,7 @@ func (jd deployedJudge) judge(ctx context.Context, rel, dst string) deployedJudg
 	prints = append(prints, theirs...)
 	if len(prints) == 0 {
 		if !j.recorded {
-			j.verdict, j.reason = deployedUsers, "lmm has no record of deploying it under "+recordRoot(jd.game)
+			j.verdict, j.reason = deployedUsers, "lmm has no record of deploying it under "+deployedUnder(jd.game, rel)
 			return j
 		}
 		return jd.judgeUnprinted(j, info, states, rel, dst)
@@ -317,14 +326,14 @@ func symlinkReplacementState(states []db.DeployedFileState, mode fs.FileMode) *d
 // no profile counts every record. With no record at all it is the user's
 // (review D2): a link lmm did not make may point anywhere, and a deploy
 // that wrote through it would overwrite whatever it points at.
-func (jd deployedJudge) judgeLink(j deployedJudgement, info fs.FileInfo, states []db.DeployedFileState, dst string) deployedJudgement {
+func (jd deployedJudge) judgeLink(j deployedJudgement, info fs.FileInfo, states []db.DeployedFileState, rel, dst string) deployedJudgement {
 	if info.Mode()&fs.ModeSymlink != 0 && jd.linksIntoCache(dst) {
 		j.verdict = deployedOurs
 		return j
 	}
 	if !j.recorded {
 		j.verdict = deployedUsers
-		j.reason = fmt.Sprintf("it is %s lmm has no record of deploying under %s", describeMode(info.Mode()), recordRoot(jd.game))
+		j.reason = fmt.Sprintf("it is %s lmm has no record of deploying under %s", describeMode(info.Mode()), deployedUnder(jd.game, rel))
 		return j
 	}
 	deciding := states
@@ -546,13 +555,13 @@ func describeMode(mode fs.FileMode) string {
 
 // userFileNote is what a removal that kept rel reports.
 func userFileNote(rel, reason string) string {
-	return fmt.Sprintf("%s was left in place: %s, so lmm treats it as yours", filepath.ToSlash(rel), reason)
+	return fmt.Sprintf("%s was left in place: %s, so lmm treats it as yours", displayPath(rel), reason)
 }
 
 // userFileOverwriteNote is what a deploy that did not replace rel reports.
 func userFileOverwriteNote(rel, reason string, sharesCache bool) string {
 	return fmt.Sprintf("%s was not replaced: %s, so lmm left your file there - %s",
-		filepath.ToSlash(rel), reason, takeModVersionRemedy(sharesCache))
+		displayPath(rel), reason, takeModVersionRemedy(sharesCache))
 }
 
 // takeModVersionRemedy is how the user takes the mod's version of a file
@@ -572,7 +581,7 @@ func takeModVersionRemedy(sharesCache bool) string {
 // the path, so this one could not be kept.
 func unpreservedOverwriteNote(rel string) string {
 	return fmt.Sprintf("%s was not replaced: lmm did not deploy the file there and already keeps an earlier original of that path, so it could not keep this one too - move it aside, then deploy again, to take the mod's version",
-		filepath.ToSlash(rel))
+		displayPath(rel))
 }
 
 // uncapturableOverwriteNote is what a deploy reports for a path it did not
@@ -581,7 +590,7 @@ func unpreservedOverwriteNote(rel string) string {
 // store failed to copy.
 func uncapturableOverwriteNote(rel, why string) string {
 	return fmt.Sprintf("%s was not replaced: lmm did not deploy what is there, and it could not be preserved (%s), so lmm left it - move it aside, then deploy again, to take the mod's version",
-		filepath.ToSlash(rel), why)
+		displayPath(rel), why)
 }
 
 // unverifiedPath is a path a flow removed with no content check, and
@@ -599,10 +608,11 @@ func unverifiedNotes(paths []unverifiedPath) []string {
 	var legacy, bare []string
 	for _, p := range paths {
 		if p.legacy {
-			legacy = append(legacy, p.rel)
+			legacy = append(legacy, displayPath(p.rel))
 		} else {
-			bare = append(bare, p.rel)
+			bare = append(bare, displayPath(p.rel))
 		}
+
 	}
 	var out []string
 	if len(legacy) > 0 {

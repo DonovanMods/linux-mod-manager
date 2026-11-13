@@ -371,7 +371,7 @@ func (s *Service) disableRecorded(ctx context.Context, game *domain.Game, mod *d
 		warn:    func(msg string) { result.Warnings = append(result.Warnings, msg) },
 	})
 	if cleared != nil {
-		result.Removed = cleared.removed
+		result.Removed = displayPaths(cleared.removed)
 		result.Kept = append(result.Kept, cleared.kept...)
 	}
 	if err != nil {

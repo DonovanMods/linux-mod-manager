@@ -454,7 +454,33 @@ func (s *Service) refuseInstallPathMove(ctx context.Context, game, updated *doma
 				}
 			}
 			inUse.DeployedFiles += len(recs)
-			if _, err := os.Lstat(filepath.Join(updated.ModPath, filepath.FromSlash(rel))); err != nil {
+			if _, err := os.Lstat(deployTarget(updated, filepath.FromSlash(rel))); err != nil {
+				inUse.MissingFiles += len(recs)
+			}
+		}
+		for _, profile := range slices.Sorted(maps.Keys(counts)) {
+			inUse.Profiles = append(inUse.Profiles, ProfileDeployedFiles{Profile: profile, DeployedFiles: counts[profile]})
+		}
+	default:
+		// #629: a file deployed under the game root lives in the install
+		// folder whether or not the mod_path moves with it, so it holds the
+		// install_path as the mod_path's files hold a mod_path that moves.
+		// Its record names the mod_path generation only, so it follows by
+		// itself; it must be at the same place under the new install path.
+		records, err := s.db.DeployedPathRecords(ctx, game.ID)
+		if err != nil {
+			return nil, err
+		}
+		counts := map[string]int{}
+		for rel, recs := range records {
+			if !isGameRoot(rel) {
+				continue
+			}
+			for _, r := range recs {
+				counts[r.Profile]++
+			}
+			inUse.DeployedFiles += len(recs)
+			if _, err := os.Lstat(deployTarget(updated, rel)); err != nil {
 				inUse.MissingFiles += len(recs)
 			}
 		}

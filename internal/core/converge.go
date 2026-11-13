@@ -179,7 +179,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			// method the mod's row was deployed with, as recordedPaths
 			// reads it. The #466 judge cannot say so: a link's record
 			// carries no fingerprint.
-			if m.LinkMethod == domain.LinkSymlink && !installer.notLinkerOwned(game, row.RelativePath) && replacedLink(filepath.Join(game.ModPath, path)) && !ownCopy(ctx, jd, path, filepath.Join(game.ModPath, path)) {
+			if m.LinkMethod == domain.LinkSymlink && !installer.notLinkerOwned(game, row.RelativePath) && replacedLink(deployTarget(game, path)) && !ownCopy(ctx, jd, path, deployTarget(game, path)) {
 				return PurgeKeptPath{Path: row.RelativePath, Reason: PurgeKeptUserFile, Note: replacedLinkNote}, true
 			}
 			return keptPath(ctx, row, profileName, live, recordsUnder(game, game, records[row.RelativePath]), listed, others, installer, jd)
@@ -220,8 +220,8 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			// deleting records based on corrupt data is its own hazard; the
 			// error surfaces it to the user as a verify warning via the
 			// joined-error path instead.
-			if !filepath.IsLocal(path) {
-				errs = append(errs, fmt.Errorf("skipping unsafe deployed-file record %q for %s/%s", path, m.SourceID, m.ID))
+			if !filepath.IsLocal(cacheMember(path)) {
+				errs = append(errs, fmt.Errorf("skipping unsafe deployed-file record %q for %s/%s", displayPath(path), m.SourceID, m.ID))
 				continue
 			}
 			if strandedPaths[path] {
@@ -240,12 +240,12 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			}
 
 			cf := ConvergedFile{
-				Path:     path,
+				Path:     displayPath(path),
 				Reason:   fmt.Sprintf("no longer provided by %s/%s", m.SourceID, m.ID),
 				SourceID: m.SourceID,
 				ModID:    m.ID,
 			}
-			dstPath := filepath.Join(game.ModPath, path)
+			dstPath := deployTarget(game, path)
 			// #466: the user's file is kept, reported, and no longer
 			// tracked, as a purge does it - asked first, so a changed file
 			// another game also records is reported as the user's (review
@@ -257,7 +257,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				errs = append(errs, errors.New(userFileNote(path, j.reason)))
 				if !dryRun && !j.unchecked {
 					if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {
-						errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
+						errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", displayPath(path), err))
 					} else if store := s.originalsStoreFor(game.ID); store != nil {
 						store.markKeptUser(filepath.ToSlash(path))
 					}
@@ -278,7 +278,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			}
 			if kept != nil {
 				if k, ok := kept(path, m, jd); ok {
-					errs = append(errs, fmt.Errorf("%s was left in place: %s", path, k.describe()))
+					errs = append(errs, fmt.Errorf("%s was left in place: %s", displayPath(path), k.describe()))
 					if !dryRun && k.Reason.DropsRecord() {
 						if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {
 							errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
@@ -292,8 +292,8 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				continue
 			}
 
-			if err := removeDeployed(lnk, dstPath, j.verdict == deployedOurs && j.regular); err != nil {
-				errs = append(errs, fmt.Errorf("undeploying %s: %w", path, err))
+			if err := removeDeployed(linkerFor(lnk, game, path), dstPath, j.verdict == deployedOurs && j.regular); err != nil {
+				errs = append(errs, fmt.Errorf("undeploying %s: %w", displayPath(path), err))
 				continue
 			}
 			if j.verdict == deployedUnverified {
@@ -306,7 +306,9 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			// back at the same moment - the same contract uninstall and
 			// purge follow.
 			if store := s.originalsStoreFor(game.ID); store != nil {
-				if _, err := store.release(OriginalRootModPath, filepath.ToSlash(path), dstPath); err != nil {
+				root, rel := originalRootOf(path)
+				if _, err := store.release(root, rel, dstPath); err != nil {
+
 					store.noteFailure(fmt.Sprintf(
 						"could not put back the file lmm replaced at %s; `lmm snapshot restore` can still do it: %v", dstPath, err))
 				}

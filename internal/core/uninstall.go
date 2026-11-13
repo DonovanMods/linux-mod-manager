@@ -184,7 +184,7 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 		plan.MergedArtifact = s.mergedArtifactEffectForUninstall(ctx, game, profileName, mod)
 		for _, f := range s.deployedPathsFor(ctx, s.getInstaller(game), game, profileName, mod) {
 			if isDeployedNow(game, f) {
-				plan.Files = append(plan.Files, f)
+				plan.Files = append(plan.Files, displayPath(f))
 			}
 		}
 	}
@@ -217,11 +217,11 @@ func (s *Service) planRecordedUninstall(ctx context.Context, game *domain.Game, 
 	for _, row := range remove {
 		plan.remove[row.RelativePath] = true
 		if isDeployedNow(game, row.RelativePath) {
-			plan.Files = append(plan.Files, row.RelativePath)
+			plan.Files = append(plan.Files, displayPath(row.RelativePath))
 		}
 	}
 	for _, k := range kept {
-		plan.Kept = append(plan.Kept, k.PurgeKeptPath)
+		plan.Kept = append(plan.Kept, k.displayed())
 		if k.Reason.DropsRecord() {
 			plan.untrack[k.Path] = true
 		}
@@ -406,7 +406,7 @@ func (s *Service) uninstallRecorded(ctx context.Context, game *domain.Game, prof
 			warn:    func(msg string) { result.Warnings = append(result.Warnings, msg) },
 		})
 		if cleared != nil {
-			result.Removed = cleared.removed
+			result.Removed = displayPaths(cleared.removed)
 			result.Kept = append(result.Kept, cleared.kept...)
 		}
 		if err != nil {
@@ -567,7 +567,8 @@ func (s *Service) strandedUninstallPaths(ctx context.Context, game *domain.Game,
 	var stranded []PurgeStrandedPath
 	for _, row := range rows {
 		if row.SourceID == sourceID && row.ModID == modID && !underCurrentRoot(game, row.ModPath) {
-			stranded = append(stranded, PurgeStrandedPath{Path: row.RelativePath, ModPath: row.ModPath})
+			stranded = append(stranded, PurgeStrandedPath{Path: displayPath(row.RelativePath), ModPath: row.ModPath})
+
 		}
 	}
 	return stranded, nil
