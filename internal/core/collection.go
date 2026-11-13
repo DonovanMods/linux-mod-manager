@@ -26,14 +26,21 @@ const CollectionFeatureExternal = "external"
 // than deploy the archive raw.
 const CollectionFeatureFomod = "fomod"
 
+// CollectionFeaturePluginOrder is the feature a document with a plugin
+// list requires (#616): the profile's `plugins:` block - a plugin load
+// order and its rules - which an importer must keep, and write to the
+// game's Plugins.txt, rather than drop.
+const CollectionFeaturePluginOrder = "plugin_order"
+
 // supportedCollectionFeatures is this lmm's supported set: the features a
 // collection document may require and still import. A later story adds a
 // feature by adding its name here, and that is the whole release
 // mechanism - an older lmm refuses what it cannot replay instead of
 // half-installing it.
 var supportedCollectionFeatures = map[string]bool{
-	CollectionFeatureExternal: true,
-	CollectionFeatureFomod:    true,
+	CollectionFeatureExternal:    true,
+	CollectionFeatureFomod:       true,
+	CollectionFeaturePluginOrder: true,
 }
 
 // SupportedCollectionFeatures lists the features this lmm can import, in
@@ -61,6 +68,9 @@ func deriveCollectionRequires(doc *domain.CollectionDocument) []string {
 			features = append(features, CollectionFeatureFomod)
 			break
 		}
+	}
+	if !doc.Plugins.IsZero() {
+		features = append(features, CollectionFeaturePluginOrder)
 	}
 	sort.Strings(features)
 	return features

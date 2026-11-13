@@ -36,6 +36,9 @@ type collectionDocYAML struct {
 	External            []domain.CollectionExternalItem `yaml:"external,omitempty"`
 	Hooks               profileFileHooksYAML            `yaml:"hooks,omitempty"`
 	Overrides           map[string]string               `yaml:"overrides,omitempty"`
+	// Plugins is the profile's plugin list (#616), whose presence requires
+	// the plugin_order feature.
+	Plugins *ProfilePluginsConfig `yaml:"plugins,omitempty"`
 }
 
 // collectionModYAML is one mods: entry: the profile's own ModReference
@@ -67,6 +70,7 @@ func MarshalCollection(doc *domain.CollectionDocument) ([]byte, error) {
 		External:            doc.External,
 		Hooks:               profileFileHooksYAML{Install: fileHook(hooks.Install), Uninstall: fileHook(hooks.Uninstall)},
 		Overrides:           doc.Overrides,
+		Plugins:             pluginsConfigOf(doc.Plugins),
 		Mods:                make([]collectionModYAML, len(doc.Items)),
 	}
 	if doc.Info.Origin != nil && !doc.Info.Origin.IsZero() {
@@ -107,6 +111,7 @@ func ParseCollection(data []byte) (*domain.CollectionDocument, error) {
 		Signer:    wire.Signer,
 		External:  wire.External,
 		Overrides: wire.Overrides,
+		Plugins:   pluginsFromConfig(wire.Plugins),
 	}
 	if wire.Origin != nil && !wire.Origin.IsZero() {
 		doc.Info.Origin = wire.Origin

@@ -1,0 +1,32 @@
+lmm_collection: 1
+id: 2f8c7a3e-0000-4000-8000-000000000003
+version: 1
+name: plugins
+game_id: cp
+game:
+    name: Cyberpunk 2077
+    steam_app_id: "1091500"
+    sources:
+        steamworkshop: "1091500"
+requires:
+    - plugin_order
+mods:
+    - source_id: nexusmods
+      mod_id: "1"
+      version: "1.0"
+plugins:
+    order:
+        - name: Unofficial Skyrim Special Edition Patch.esp
+        - name: SkyUI_SE.esp
+        - name: Optional Thing.esp
+          enabled: false
+    rules:
+        groups:
+            - name: Late Loaders
+              after:
+                - default
+        plugins:
+            - name: Patch.esp
+              group: Late Loaders
+              after:
+                - SkyUI_SE.esp

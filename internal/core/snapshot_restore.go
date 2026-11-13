@@ -563,12 +563,14 @@ func (s *Service) profileDiffersFromSnapshot(gameID string, doc *Snapshot) bool 
 	if err != nil {
 		return true
 	}
+	recorded := config.ProfileFromExported(doc.ProfileDocument)
 	a, aErr := config.ExportProfile(current)
-	b, bErr := config.ExportProfile(config.ProfileFromExported(doc.ProfileDocument))
+	b, bErr := config.ExportProfile(recorded)
 	if aErr != nil || bErr != nil {
 		return true
 	}
-	return string(a) != string(b)
+	// The plugin list (#616) is not part of the version-0 document.
+	return string(a) != string(b) || !current.Plugins.Equal(recorded.Plugins)
 }
 
 // ApplySnapshotRestore carries out plan under the mutation slot: safety
