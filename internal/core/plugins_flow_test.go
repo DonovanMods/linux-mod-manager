@@ -465,3 +465,24 @@ func TestPlugins_UninstallingTheLastPluginStillUpdatesTheList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "", f.list(t), "lmm wrote this list, so it keeps it in step")
 }
+
+func TestPlugins_ProfileSwitchWritesTheTargetsList(t *testing.T) {
+	f := newPluginFixture(t)
+	f.mod(t, "a", map[string][]byte{"A.esp": pluginBytes(0)})
+	_, err := f.svc.NewProfileManager().Create(context.Background(), f.game.ID, "plain")
+	require.NoError(t, err)
+	f.deploy(t)
+	require.Equal(t, "*A.esp\r\n", f.list(t))
+
+	plan, err := f.svc.PlanProfileSwitch(context.Background(), f.game, "plain")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyProfileSwitch(context.Background(), f.game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "", f.list(t), "the plain profile deploys no plugin")
+
+	plan, err = f.svc.PlanProfileSwitch(context.Background(), f.game, "default")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyProfileSwitch(context.Background(), f.game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "*A.esp\r\n", f.list(t), "switching back lists its plugin again")
+}
