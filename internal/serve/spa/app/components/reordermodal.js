@@ -25,7 +25,7 @@
 // load_order_winner/stale fields (api_profiles.go's own doc comment: "Do
 // not compute the winner in JS").
 
-import { deployedPath } from "../deploypath.js";
+import { deployedKey, deployedPath } from "../deploypath.js";
 import { html, useEffect, useMemo, useRef, useState } from "../render.js";
 import { Modal } from "./modal.js";
 import { conflictsForOrder, reorderProfile } from "../api.js";
@@ -57,7 +57,7 @@ function buildInitialOrder(mods) {
 function conflictsByPath(report) {
   const map = new Map();
   for (const c of report?.conflicts ?? [])
-    map.set(deployedPath(c.path, c.root), c);
+    map.set(deployedKey(c.path, c.root), c);
   return map;
 }
 
@@ -398,16 +398,18 @@ function ReorderModalBody({ modal, state, actions }) {
                       </tr>
                     </thead>
                     <tbody>
-                      ${paths.map((path) => {
-                        const current = currentByPath.get(path);
-                        const proposed = proposedByPath.get(path);
+                      ${paths.map((key) => {
+                        const current = currentByPath.get(key);
+                        const proposed = proposedByPath.get(key);
+                        const row = current ?? proposed;
+                        const path = deployedPath(row?.path, row?.root);
                         const changed =
                           current &&
                           proposed &&
                           current.load_order_winner.key !==
                             proposed.load_order_winner.key;
                         return html`
-                          <tr key=${path}>
+                          <tr key=${key}>
                             <td class="mono">${path}</td>
                             <td>
                               ${current?.load_order_winner.name ?? "—"}

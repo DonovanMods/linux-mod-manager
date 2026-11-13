@@ -331,15 +331,16 @@ type PurgePlan struct {
 }
 
 // removeKeys is the deployed paths p's Remove names: removeSet, or - for a
-// plan built by hand rather than by PlanPurge - Remove's entries read as
-// mod_path paths.
+// plan built by hand rather than by PlanPurge - Remove's entries read back
+// from their display spelling (domain.ParseDisplayDeployPath), so a
+// "<game root>/x" entry names the game-root file, as PlanPurge spelled it.
 func (p *PurgePlan) removeKeys() map[domain.DeployPath]bool {
 	if p.removeSet != nil {
 		return p.removeSet
 	}
 	keys := make(map[domain.DeployPath]bool, len(p.Remove))
 	for _, r := range p.Remove {
-		keys[domain.ModPathFile(filepath.FromSlash(r))] = true
+		keys[domain.ParseDisplayDeployPath(r)] = true
 	}
 	return keys
 }

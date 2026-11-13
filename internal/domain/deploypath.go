@@ -110,6 +110,17 @@ func DisplayDeployPath(root DeployRoot, rel string) string {
 	return rel
 }
 
+// ParseDisplayDeployPath reads String's spelling back into a deployed
+// path: "<game root>/rel" is rel under the install_path, anything else a
+// mod_path path. It exists for a document a caller assembled from display
+// strings alone; lmm's own plans carry the typed paths beside them.
+func ParseDisplayDeployPath(s string) DeployPath {
+	if rel, ok := strings.CutPrefix(s, GameRootLabel+"/"); ok {
+		return GameRootFile(filepath.FromSlash(rel))
+	}
+	return ModPathFile(filepath.FromSlash(s))
+}
+
 // CompareDeployPaths orders deployed paths as every listing of them is
 // ordered: the mod_path files first, then the game-root ones, each by
 // relative path (byte order, as the database's BINARY collation sorts).

@@ -326,6 +326,14 @@ var errOutsideInstallPath = errors.New("it is not beneath the game's install_pat
 type rootLinker struct {
 	inner linker.Linker
 	root  string
+	// followInRoot relaxes the no-link rule to the one a profile
+	// override's write has always used (writeOverriddenCopy, released in
+	// v2.3.0): a folder that is a link is followed when it resolves inside
+	// the install_path, and refused only when it leaves it. Only the
+	// restore of an override's original sets it, so that original goes
+	// back wherever the override wrote; a game-root MOD file (#629) is
+	// held to the strict rule.
+	followInRoot bool
 }
 
 var _ linker.Linker = rootLinker{}
@@ -348,6 +356,9 @@ func (r rootLinker) open(dst string, create bool) (*os.File, string, error) {
 
 	if !ok {
 		return nil, "", fmt.Errorf("refusing %s: %w", dst, errOutsideInstallPath)
+	}
+	if r.followInRoot {
+		return r.openFollowingInRoot(dst, absRoot, rel, create)
 	}
 	// The install_path itself may be reached through a link (a Steam
 	// library on another mount); nothing beneath it may. Each folder on
@@ -385,6 +396,30 @@ func (r rootLinker) open(dst string, create bool) (*os.File, string, error) {
 	return dir, filepath.Base(filepath.FromSlash(rel)), nil
 }
 
+// openFollowingInRoot is open under followInRoot: the destination's folder
+// resolved through its links, refused only when that leaves the resolved
+// install_path, then opened beneath it with the no-follow walk - the rule
+// writeOverriddenCopy applies to an override's write.
+func (r rootLinker) openFollowingInRoot(dst, absRoot, rel string, create bool) (*os.File, string, error) {
+	realRoot, err := resolveExisting(absRoot)
+	if err != nil {
+		return nil, "", err
+	}
+	realDir, err := resolveExisting(filepath.Join(absRoot, filepath.Dir(filepath.FromSlash(rel))))
+	if err != nil {
+		return nil, "", err
+	}
+	dirRel, ok := dirUnder(realRoot, realDir)
+	if !ok {
+		return nil, "", fmt.Errorf("refusing %s: it leaves the game's install_path (%s) through a link", dst, r.root)
+	}
+	dir, err := openDirBeneath(realRoot, dirRel, create)
+	if err != nil {
+		return nil, "", err
+	}
+	return dir, filepath.Base(filepath.FromSlash(rel)), nil
+}
+
 // Deploy places src at dst the way the inner linker would - a symlink, a
 // hard link or a copy - replacing a regular file or link there (the caller
 // has judged it lmm's to replace, or captured it) and refusing anything
@@ -405,7 +440,7 @@ func (r rootLinker) Deploy(src, dst string) error {
 	dirfd := int(dir.Fd())
 	switch r.inner.Method() {
 	case domain.LinkCopy:
-		return copyAt(dir, name, src)
+		return copyAt(dir, name, src, 0)
 	case domain.LinkHardlink:
 		if exists {
 			if err := unix.Unlinkat(dirfd, name, 0); err != nil {
@@ -480,7 +515,11 @@ func (r rootLinker) Method() domain.LinkMethod { return r.inner.Method() }
 // copyAt copies src to name beneath dir as a new regular file: written to a
 // temporary file beside it, then renamed over whatever is there, so a link
 // there is replaced, never written through (CopyLinker's rule).
-func copyAt(dir *os.File, name, src string) (err error) {
+//
+// perm is the new file's mode; 0 takes the source's. It is set on the
+// temporary file's own handle before the rename, so nothing swapped in at
+// name afterwards is ever chmod-ed.
+func copyAt(dir *os.File, name, src string, perm fs.FileMode) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("opening source: %w", err)
@@ -510,7 +549,10 @@ func copyAt(dir *os.File, name, src string) (err error) {
 		_ = out.Close()
 		return fmt.Errorf("copying file: %w", err)
 	}
-	if err := out.Chmod(info.Mode().Perm()); err != nil {
+	if perm == 0 {
+		perm = info.Mode().Perm()
+	}
+	if err := out.Chmod(perm); err != nil {
 		_ = out.Close()
 		return fmt.Errorf("setting destination mode: %w", err)
 	}

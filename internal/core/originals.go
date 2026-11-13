@@ -68,8 +68,6 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-
-	"golang.org/x/sys/unix"
 )
 
 // OriginalRoot names which of a game's two directories an original's
@@ -726,8 +724,15 @@ func baseOf(absPath, rel string) (string, bool) {
 // base, through rootLinker's contained walk: a folder on the way that is a
 // link is refused, and whatever is at absPath (lmm's link into the cache,
 // its copy) is replaced by a rename, never written through.
+//
+// A profile override's original (OriginalOpProfileOverride) goes back by
+// the override write's own rule (rootLinker.followInRoot): a folder that is
+// a link staying inside the install_path is followed, as it was when the
+// override was written and as v2.3.0 restored it. A game-root mod file's
+// original is held to the strict rule.
 func restoreContained(row OriginalFile, stored, base, absPath string) error {
-	dir, name, err := rootLinker{root: base}.open(absPath, true)
+	rl := rootLinker{root: base, followInRoot: row.Op == OriginalOpProfileOverride}
+	dir, name, err := rl.open(absPath, true)
 	if err != nil {
 		return fmt.Errorf("restoring the original of %s: %w", row.RelativePath, err)
 	}
@@ -739,15 +744,12 @@ func restoreContained(row OriginalFile, stored, base, absPath string) error {
 	if exists && !isRegularOrLink(st) {
 		return fmt.Errorf("restoring the original of %s: %w", row.RelativePath, errNotRegularTarget)
 	}
-	if err := copyAt(dir, name, stored); err != nil {
-		return fmt.Errorf("restoring the original of %s: %w", row.RelativePath, err)
-	}
 	mode := fs.FileMode(0644)
 	if row.Mode != 0 {
 		mode = fs.FileMode(row.Mode).Perm()
 	}
-	if err := unix.Fchmodat(int(dir.Fd()), name, uint32(mode), 0); err != nil {
-		return fmt.Errorf("setting permissions on the restored %s: %w", row.RelativePath, err)
+	if err := copyAt(dir, name, stored, mode); err != nil {
+		return fmt.Errorf("restoring the original of %s: %w", row.RelativePath, err)
 	}
 	return nil
 }

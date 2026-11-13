@@ -128,3 +128,45 @@ func TestRestoreContained(t *testing.T) {
 	entries, _ := os.ReadDir(outside)
 	assert.Empty(t, entries)
 }
+
+// The two rules restoreContained holds an original to (#629 re-review): a
+// profile override's original follows a folder linked inside the
+// install_path, as the override write did, and refuses one leaving it; a
+// game-root mod file's original refuses both.
+func TestRestoreContained_OverrideOriginalsFollowAnInRootLink(t *testing.T) {
+	install, outside := t.TempDir(), t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(install, "realcfg"), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(install, "realcfg"), filepath.Join(install, "cfg")))
+	require.NoError(t, os.Symlink(outside, filepath.Join(install, "away")))
+	stored := filepath.Join(t.TempDir(), "stored")
+	require.NoError(t, os.WriteFile(stored, []byte("shipped"), 0o600))
+
+	override := OriginalFile{Root: OriginalRootInstallPath, RelativePath: "cfg/game.ini", Op: OriginalOpProfileOverride, Mode: 0o640}
+	require.NoError(t, restoreContained(override, stored, install, filepath.Join(install, "cfg", "game.ini")))
+	got, err := os.ReadFile(filepath.Join(install, "realcfg", "game.ini"))
+	require.NoError(t, err)
+	assert.Equal(t, "shipped", string(got))
+	info, err := os.Stat(filepath.Join(install, "realcfg", "game.ini"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o640), info.Mode().Perm())
+
+	escaping := OriginalFile{Root: OriginalRootInstallPath, RelativePath: "away/game.ini", Op: OriginalOpProfileOverride}
+	require.Error(t, restoreContained(escaping, stored, install, filepath.Join(install, "away", "game.ini")))
+	entries, _ := os.ReadDir(outside)
+	assert.Empty(t, entries, "a link leaving the install_path is refused even for an override")
+
+	deployed := OriginalFile{Root: OriginalRootInstallPath, RelativePath: "cfg/d3d11.dll", Op: OriginalOpDeploy}
+	require.Error(t, restoreContained(deployed, stored, install, filepath.Join(install, "cfg", "d3d11.dll")),
+		"a game-root mod file's original keeps the strict rule")
+}
+
+// A purge plan built without PlanPurge's typed set reads its Remove
+// entries back from their display spelling (#629 re-review), never a
+// "<game root>/x" entry as a mod_path folder of that name.
+func TestPurgePlan_RemoveKeysFallbackParsesTheDisplaySpelling(t *testing.T) {
+	plan := &PurgePlan{Remove: []string{"<game root>/d3d11.dll", "textures/a.dds"}}
+	assert.Equal(t, map[domain.DeployPath]bool{
+		domain.GameRootFile("d3d11.dll"):     true,
+		domain.ModPathFile("textures/a.dds"): true,
+	}, plan.removeKeys())
+}

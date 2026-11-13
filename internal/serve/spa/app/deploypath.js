@@ -20,3 +20,10 @@ export function deployedPath(path, root) {
   const p = typeof path === "string" ? path : "";
   return isGameRoot(root) ? `${GAME_ROOT}/${p}` : p;
 }
+
+/** deployedKey is a list key for path under root: unique per file, so a
+ * mod-folder folder literally named "<game root>" never shares a key with
+ * the game-root file its display spelling matches. */
+export function deployedKey(path, root) {
+  return `${isGameRoot(root) ? "install_path" : "mod_path"}:${typeof path === "string" ? path : ""}`;
+}

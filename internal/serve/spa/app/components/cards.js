@@ -5,7 +5,7 @@
 // confirm-modal framework every mutation below submits through; this unit
 // (issue 332) wires the per-row and batch actions themselves.
 
-import { deployedPath } from "../deploypath.js";
+import { deployedKey, deployedPath } from "../deploypath.js";
 import { html, useState } from "../render.js";
 import {
   findingLabel,
@@ -1325,7 +1325,7 @@ function ConflictsCard({ state, rows, error, onRetry, actions }) {
               <ul class="card__list">
                 ${rows.map(
                   (c) => html`
-                    <li key=${deployedPath(c.path, c.root)} class="card__row">
+                    <li key=${deployedKey(c.path, c.root)} class="card__row">
                       <span class="card__row-name" title=${conflictLabel(c)}
                         >${conflictLabel(c)}</span
                       >

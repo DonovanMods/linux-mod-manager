@@ -37,7 +37,7 @@
 // sharing one version has nothing for a version picker to decide, only the
 // file picker beneath it.
 
-import { deployedPath } from "../deploypath.js";
+import { deployedKey, deployedPath } from "../deploypath.js";
 import { html, useState } from "../render.js";
 import { PlanAdvanced, PlanOption, ApplyOption } from "./planoptions.js";
 import { absoluteTime, updatedPhrase } from "../relativetime.js";
@@ -269,7 +269,7 @@ export function InstallPlanView({ plan, modal, actions }) {
               ${conflicts.map(
                 (c) =>
                   html`<li
-                    key=${deployedPath(c.relative_path, c.root)}
+                    key=${deployedKey(c.relative_path, c.root)}
                     class="mono"
                   >
                     ${deployedPath(c.relative_path, c.root)}

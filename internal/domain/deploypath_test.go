@@ -44,3 +44,9 @@ func TestCompareDeployPaths_ModPathFirstThenByPath(t *testing.T) {
 	slices.SortFunc(ps, domain.CompareDeployPaths)
 	assert.Equal(t, []domain.DeployPath{domain.ModPathFile("b"), domain.ModPathFile("z"), domain.GameRootFile("0"), domain.GameRootFile("a")}, ps)
 }
+
+func TestParseDisplayDeployPath_ReadsStringBack(t *testing.T) {
+	for _, p := range []domain.DeployPath{domain.GameRootFile("enbseries/a.fx"), domain.ModPathFile("textures/a.dds")} {
+		assert.Equal(t, p, domain.ParseDisplayDeployPath(p.String()))
+	}
+}

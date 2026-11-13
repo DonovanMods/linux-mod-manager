@@ -19,6 +19,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -660,4 +661,45 @@ func TestDeployRoot_APlainDeployMovesFilesAnEarlierRoutingPutInData(t *testing.T
 			assert.Equal(t, "shader", readFileString(t, filepath.Join(game.InstallPath, "enbseries", "effect.fx")))
 		})
 	}
+}
+
+// A profile override's original reached through a folder that is a link
+// staying inside the install_path (#629 re-review; released in v2.3.0):
+// the override write follows that link, so snapshot restore does too and
+// puts the shipped file back. Only game-root MOD files are held to the
+// stricter no-link rule, which is new with #629.
+func TestDeployRoot_OverrideOriginalThroughAnInRootLinkIsRestored(t *testing.T) {
+	svc, _ := newOriginalsService(t)
+	ctx := context.Background()
+	installDir, gameDir := t.TempDir(), t.TempDir()
+	realCfg := filepath.Join(installDir, "realcfg")
+	require.NoError(t, os.MkdirAll(realCfg, 0o755))
+	require.NoError(t, os.Symlink(realCfg, filepath.Join(installDir, "cfg")))
+	game := &domain.Game{ID: "g1", Name: "Game", InstallPath: installDir, ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	shipped := filepath.Join(realCfg, "game.ini")
+	require.NoError(t, os.WriteFile(shipped, []byte("SHIPPED"), 0o644))
+	seedNamedInstalledMod(t, svc, game, "src", "m1", "Mod One", "1.0", true, map[string][]byte{"one.esp": []byte("1")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "m1", "1.0")
+	require.NoError(t, svc.SaveGame(ctx, game))
+	_, err := svc.CreateSnapshot(ctx, game, "default", "pre")
+	require.NoError(t, err)
+
+	profile, err := svc.NewProfileManager().Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	profile.Overrides = map[string][]byte{"cfg/game.ini": []byte("OVERRIDE")}
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
+	_, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, "OVERRIDE", readFileString(t, shipped), "the override is written through the in-root link")
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "pre")
+	require.NoError(t, err)
+	res, err := svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.OriginalsRestored, "%+v", res)
+	assert.Empty(t, res.OriginalsSkipped)
+	assert.Equal(t, "SHIPPED", readFileString(t, shipped))
+	info, err := os.Lstat(filepath.Join(installDir, "cfg"))
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&os.ModeSymlink, "the user's linked folder stays a link")
 }

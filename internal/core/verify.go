@@ -94,8 +94,8 @@ type VerifyOptions struct {
 // row's Status resolves away from missing/version_mismatch, so a repaired
 // row never carries a stale pre-repair value. The CLI's own text/JSON
 // rendering is untouched by these fields - it still reads the VerifyEvent
-// extras (text mode) or copies VerifyFinding by named field (JSON mode, see
-// verifyFileJSON in cmd/lmm/verify.go), never a bare struct copy.
+// extras (text mode), and its --json is the VerifyReport document itself
+// (doVerify in cmd/lmm/verify.go), so a new field here reaches it as is.
 type VerifyFinding struct {
 	ModID   string `json:"mod_id,omitempty"`
 	ModName string `json:"mod_name,omitempty"`
