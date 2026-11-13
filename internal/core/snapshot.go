@@ -411,14 +411,14 @@ func (s *Service) snapshotDeployedFiles(ctx context.Context, game *domain.Game, 
 			return nil, err
 		}
 		file := SnapshotFile{
-			RelativePath: filepath.ToSlash(cacheMember(row.RelativePath)),
+			RelativePath: relOf(row.Path),
 			SourceID:     row.SourceID,
 			ModID:        row.ModID,
 		}
-		if isGameRoot(row.RelativePath) {
+		if row.Path.IsGameRoot() {
 			file.Root = OriginalRootInstallPath
 		}
-		abs := deployTarget(game, filepath.FromSlash(row.RelativePath))
+		abs := deployTarget(game, row.Path)
 		if _, statErr := os.Stat(abs); statErr != nil {
 			file.Missing = true
 			out = append(out, file)

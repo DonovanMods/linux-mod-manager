@@ -362,7 +362,7 @@ func (s *Service) disableRecorded(ctx context.Context, game *domain.Game, mod *d
 			wasOff = ref.Disabled
 		}
 	}
-	all := func(string) bool { return true }
+	all := func(domain.DeployPath) bool { return true }
 	cleared, err := s.clearRecorded(ctx, game, profileName, live, recordedClearOptions{
 		only:    modKeySet(mod.SourceID, mod.ID),
 		approve: all,
@@ -371,7 +371,7 @@ func (s *Service) disableRecorded(ctx context.Context, game *domain.Game, mod *d
 		warn:    func(msg string) { result.Warnings = append(result.Warnings, msg) },
 	})
 	if cleared != nil {
-		result.Removed = displayPaths(cleared.removed)
+		result.Removed = displayStrings(cleared.removed)
 		result.Kept = append(result.Kept, cleared.kept...)
 	}
 	if err != nil {

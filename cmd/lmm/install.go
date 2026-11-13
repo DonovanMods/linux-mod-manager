@@ -65,7 +65,7 @@ func confirmInstallConflicts(ctx context.Context, service *core.Service, game *d
 			index[key] = at
 			groups = append(groups, conflictGroup{key: key})
 		}
-		groups[at].paths = append(groups[at].paths, c.RelativePath)
+		groups[at].paths = append(groups[at].paths, domain.DisplayDeployPath(c.Root, c.RelativePath))
 	}
 
 	for _, g := range groups {

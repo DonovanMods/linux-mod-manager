@@ -364,8 +364,8 @@ inside the game folder: a folder there that is a link to somewhere else is
 refused, and the mod's deploy says so.
 
 A mod deployed before the game used the `bethesda` adapter put those files
-into `Data/`. Run `lmm deploy --purge` (or, in the web UI, deploy with
-**Purge the game directory first** ticked) to move them to the game folder.
+into `Data/`. The next deploy (`lmm deploy`, or **Deploy** in the web UI)
+moves them to the game folder; there is no need to reinstall the mod.
 
 ## Games from other stores
 

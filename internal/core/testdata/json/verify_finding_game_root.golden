@@ -1,0 +1,8 @@
+{
+  "mod_id": "42",
+  "mod_name": "Sample ENB",
+  "file_id": "enbseries/effect.fx",
+  "root": "install_path",
+  "status": "deployed_modified",
+  "note": "<game root>/enbseries/effect.fx: its content changed after lmm deployed it, so lmm leaves it as yours"
+}

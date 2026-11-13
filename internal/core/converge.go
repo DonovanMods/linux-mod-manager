@@ -25,10 +25,13 @@ import (
 // an lmm cache root with no DB row at all (SourceID/ModID empty - a "sweep
 // find").
 type ConvergedFile struct {
-	Path     string `json:"path"`                // game-dir-relative
-	Reason   string `json:"reason"`              // "no longer provided by <source>/<mod>" | "dangling link into lmm cache"
-	SourceID string `json:"source_id,omitempty"` // owning mod when known ("" for sweep finds with no row)
-	ModID    string `json:"mod_id,omitempty"`
+	Path string `json:"path"` // relative to Root
+	// Root is absent for the mod_path, "install_path" for a file deployed
+	// under the game root (#629).
+	Root     domain.DeployRoot `json:"root,omitzero"`
+	Reason   string            `json:"reason"`              // "no longer provided by <source>/<mod>" | "dangling link into lmm cache"
+	SourceID string            `json:"source_id,omitempty"` // owning mod when known ("" for sweep finds with no row)
+	ModID    string            `json:"mod_id,omitempty"`
 }
 
 // ConvergeResult is convergeDeployedFiles' outcome. Removed's meaning
@@ -120,7 +123,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	// enabled AND disabled: a disabled mod's rows may still linger (disable
 	// undeploys files but doesn't always clear every row), and its cache
 	// entry may still legitimately claim a path some OTHER mod's row names.
-	provided := make(map[string]bool)
+	provided := make(map[domain.DeployPath]bool)
 	// unknownProvenance holds every mod (by ModKey) whose cache entry is
 	// wholly absent - see the row-pass doc above (Finding 2): such a mod's
 	// rows must be skipped, not judged "no longer provided".
@@ -138,7 +141,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			return nil, fmt.Errorf("listing deployable files for %s: %w", domain.ModKey(m.SourceID, m.ID), err)
 		}
 		for _, f := range files {
-			provided[f] = true
+			provided[f.path] = true
 		}
 	}
 
@@ -161,7 +164,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	if err != nil {
 		return nil, err
 	}
-	var kept func(path string, m domain.InstalledMod, jd deployedJudge) (PurgeKeptPath, bool)
+	var kept func(path domain.DeployPath, m domain.InstalledMod, jd deployedJudge) (PurgeKeptPath, bool)
 	if recordedOnly {
 		records, err := s.db.DeployedPathRecords(ctx, game.ID)
 		if err != nil {
@@ -172,17 +175,17 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			return nil, err
 		}
 		installer := s.getInstaller(game)
-		kept = func(path string, m domain.InstalledMod, jd deployedJudge) (PurgeKeptPath, bool) {
-			row := db.DeployedPath{RelativePath: filepath.ToSlash(path), SourceID: m.SourceID, ModID: m.ID}
+		kept = func(path domain.DeployPath, m domain.InstalledMod, jd deployedJudge) (PurgeKeptPath, bool) {
+			row := db.DeployedPath{Path: path, SourceID: m.SourceID, ModID: m.ID}
 			// #469 (b), as the recorded-only purge judges it: a regular
 			// file where this profile recorded a link is the user's - by the
 			// method the mod's row was deployed with, as recordedPaths
 			// reads it. The #466 judge cannot say so: a link's record
 			// carries no fingerprint.
-			if m.LinkMethod == domain.LinkSymlink && !installer.notLinkerOwned(game, row.RelativePath) && replacedLink(deployTarget(game, path)) && !ownCopy(ctx, jd, path, deployTarget(game, path)) {
-				return PurgeKeptPath{Path: row.RelativePath, Reason: PurgeKeptUserFile, Note: replacedLinkNote}, true
+			if m.LinkMethod == domain.LinkSymlink && !installer.notLinkerOwned(game, path.Rel) && replacedLink(deployTarget(game, path)) && !ownCopy(ctx, jd, path, deployTarget(game, path)) {
+				return keptPathOf(path, PurgeKeptPath{Reason: PurgeKeptUserFile, Note: replacedLinkNote}), true
 			}
-			return keptPath(ctx, row, profileName, live, recordsUnder(game, game, records[row.RelativePath]), listed, others, installer, jd)
+			return keptPath(ctx, row, profileName, live, recordsUnder(game, game, records[path]), listed, others, installer, jd)
 		}
 	}
 
@@ -195,7 +198,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	}
 
 	result := &ConvergeResult{}
-	handled := make(map[string]bool) // every row path the row pass actually judged (kept or removed)
+	handled := make(map[domain.DeployPath]bool) // every row path the row pass actually judged (kept or removed)
 	var errs []error
 
 	cacheRoots := s.cacheRoots(game)
@@ -205,7 +208,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		rows, err := s.GetDeployedFilesForMod(ctx, game.ID, profileName, m.SourceID, m.ID)
+		rows, err := s.db.GetDeployedFilesForMod(ctx, game.ID, profileName, m.SourceID, m.ID)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("getting deployed files for %s: %w", domain.ModKey(m.SourceID, m.ID), err))
 			continue
@@ -220,8 +223,8 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			// deleting records based on corrupt data is its own hazard; the
 			// error surfaces it to the user as a verify warning via the
 			// joined-error path instead.
-			if !filepath.IsLocal(cacheMember(path)) {
-				errs = append(errs, fmt.Errorf("skipping unsafe deployed-file record %q for %s/%s", displayPath(path), m.SourceID, m.ID))
+			if !filepath.IsLocal(filepath.FromSlash(path.Rel)) {
+				errs = append(errs, fmt.Errorf("skipping unsafe deployed-file record %q for %s/%s", path, m.SourceID, m.ID))
 				continue
 			}
 			if strandedPaths[path] {
@@ -240,7 +243,8 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			}
 
 			cf := ConvergedFile{
-				Path:     displayPath(path),
+				Path:     relOf(path),
+				Root:     rootOf(path),
 				Reason:   fmt.Sprintf("no longer provided by %s/%s", m.SourceID, m.ID),
 				SourceID: m.SourceID,
 				ModID:    m.ID,
@@ -257,9 +261,9 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				errs = append(errs, errors.New(userFileNote(path, j.reason)))
 				if !dryRun && !j.unchecked {
 					if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {
-						errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", displayPath(path), err))
+						errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
 					} else if store := s.originalsStoreFor(game.ID); store != nil {
-						store.markKeptUser(filepath.ToSlash(path))
+						store.markKeptUser(path)
 					}
 				}
 				continue
@@ -278,7 +282,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			}
 			if kept != nil {
 				if k, ok := kept(path, m, jd); ok {
-					errs = append(errs, fmt.Errorf("%s was left in place: %s", displayPath(path), k.describe()))
+					errs = append(errs, fmt.Errorf("%s was left in place: %s", path, k.describe()))
 					if !dryRun && k.Reason.DropsRecord() {
 						if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {
 							errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
@@ -293,12 +297,12 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			}
 
 			if err := removeDeployed(linkerFor(lnk, game, path), dstPath, j.verdict == deployedOurs && j.regular); err != nil {
-				errs = append(errs, fmt.Errorf("undeploying %s: %w", displayPath(path), err))
+				errs = append(errs, fmt.Errorf("undeploying %s: %w", path, err))
 				continue
 			}
 			if j.verdict == deployedUnverified {
 				if store := s.originalsStoreFor(game.ID); store != nil {
-					store.noteUnverified(filepath.ToSlash(path), j.legacy)
+					store.noteUnverified(path, j.legacy)
 				}
 			}
 			// Coordinator ruling on review note 13: a convergence removes
@@ -366,7 +370,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		if relErr != nil {
 			return nil
 		}
-		if handled[rel] {
+		if handled[domain.ModPathFile(rel)] {
 			return nil // row pass already decided this path's fate
 		}
 
@@ -400,7 +404,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			return nil
 		}
 		result.Removed = append(result.Removed, cf)
-		_ = s.db.DeleteDeployedFile(ctx, game.ID, profileName, rel) // best-effort: no row typically exists here
+		_ = s.db.DeleteDeployedFile(ctx, game.ID, profileName, domain.ModPathFile(rel)) // best-effort: no row typically exists here
 
 		return nil
 	})
@@ -419,15 +423,15 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 
 // strandedRowPaths is the paths of profileName's deployed-file rows in game
 // that were recorded under a mod_path other than its current one (#451).
-func (s *Service) strandedRowPaths(ctx context.Context, game *domain.Game, profileName string) (map[string]bool, error) {
+func (s *Service) strandedRowPaths(ctx context.Context, game *domain.Game, profileName string) (map[domain.DeployPath]bool, error) {
 	rows, err := s.db.ListDeployedFiles(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("listing deployed files: %w", err)
 	}
-	paths := make(map[string]bool)
+	paths := make(map[domain.DeployPath]bool)
 	for _, row := range rows {
 		if !underCurrentRoot(game, row.ModPath) {
-			paths[row.RelativePath] = true
+			paths[row.Path] = true
 		}
 	}
 	return paths, nil

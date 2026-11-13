@@ -323,7 +323,7 @@ func (s *Service) nestedOwnership(ctx context.Context, path string, scopes []own
 				if !ok {
 					continue
 				}
-				owned, err := s.db.AnyProfileOwnsFile(ctx, scope.gameID, rel)
+				owned, err := s.db.AnyProfileOwnsFile(ctx, scope.gameID, domain.ModPathFile(rel))
 				if err != nil {
 					return ownedElsewhere, err
 				}

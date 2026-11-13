@@ -59,7 +59,8 @@ func TestFlowGameRoot_DeployHealthAndPurge(t *testing.T) {
 
 	rec := doAPI(s, http.MethodGet, scoped("/api/v1/mods/"+fixtureSourceID+"/m1/files", game), "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), `"<game root>/enbseries/effect.fx"`)
+	assert.Contains(t, rec.Body.String(), `"path": "enbseries/effect.fx"`)
+	assert.Contains(t, rec.Body.String(), `"root": "install_path"`)
 
 	// The user swaps the ENB shader for their own: Health names its root.
 	shader := filepath.Join(game.InstallPath, "enbseries", "effect.fx")
@@ -67,7 +68,9 @@ func TestFlowGameRoot_DeployHealthAndPurge(t *testing.T) {
 	require.NoError(t, os.WriteFile(shader, []byte("mine"), 0o644))
 	rec = doAPI(s, http.MethodGet, scoped("/api/v1/health", game)+"&force=1", "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), `"file_id": "<game root>/enbseries/effect.fx"`)
+	assert.Contains(t, rec.Body.String(), `"file_id": "enbseries/effect.fx"`)
+	assert.Contains(t, rec.Body.String(), `"root": "install_path"`)
+	assert.Contains(t, rec.Body.String(), "<game root>/enbseries/effect.fx", "the note names the root in prose")
 	assert.Contains(t, rec.Body.String(), `"status": "deployed_modified"`)
 	assert.NotContains(t, rec.Body.String(), `\u0000`)
 
@@ -75,11 +78,11 @@ func TestFlowGameRoot_DeployHealthAndPurge(t *testing.T) {
 	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
 	result, ok := j.status().Result.(*core.PurgeResult)
 	require.True(t, ok, "%T", j.status().Result)
-	var kept []string
+	var kept []domain.DeployPath
 	for _, k := range result.Kept {
-		kept = append(kept, k.Path)
+		kept = append(kept, k.DeployPath())
 	}
-	assert.Equal(t, []string{"<game root>/enbseries/effect.fx"}, kept, "the user's file stays, named by its root")
+	assert.Equal(t, []domain.DeployPath{domain.GameRootFile("enbseries/effect.fx")}, kept, "the user's file stays, under its root")
 	info, err := os.Lstat(stock)
 	require.NoError(t, err)
 	assert.True(t, info.Mode().IsRegular())

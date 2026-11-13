@@ -107,18 +107,18 @@ func TestJudge_OnAFilesystemWithoutAChangeTimeEveryFileIsHashed(t *testing.T) {
 	require.NoError(t, err)
 	// A record whose size, mtime and ctime are exactly the edited file's.
 	require.NoError(t, database.RecordDeployedFile(ctx, db.DeployedFileRecord{
-		GameID: "g", Profile: "p", RelativePath: "k.esp", SourceID: "s", ModID: "m", ModPath: root,
+		GameID: "g", Profile: "p", Path: domain.ModPathFile("k.esp"), SourceID: "s", ModID: "m", ModPath: root,
 		Fingerprint: &db.FileFingerprint{Checksum: "0000lmm", Size: info.Size(), MTime: info.ModTime().UnixNano(), CTime: inodeChangeTime(info)},
 	}))
 	jd := deployedJudge{db: database, game: game, profile: "p"}
 
 	withStatfs(t, 0x4d44, nil) // vfat
-	j := jd.judge(ctx, "k.esp", dst)
+	j := jd.judge(ctx, domain.ModPathFile("k.esp"), dst)
 	assert.Equal(t, deployedUsers, j.verdict, "hashed, and found to be the user's")
 	assert.Equal(t, "its content changed after lmm deployed it", j.reason)
 
 	withStatfs(t, 0xEF53, nil) // ext4: the pre-check is trusted
-	assert.Equal(t, deployedOurs, jd.judge(ctx, "k.esp", dst).verdict)
+	assert.Equal(t, deployedOurs, jd.judge(ctx, domain.ModPathFile("k.esp"), dst).verdict)
 }
 
 func TestFingerprintOf_ARacyCTimeIsNotRecorded(t *testing.T) {
@@ -169,7 +169,7 @@ func TestJudge_OnARealVfatMount(t *testing.T) {
 	fp, err := fingerprintFile(dst)
 	require.NoError(t, err)
 	require.NoError(t, database.RecordDeployedFile(ctx, db.DeployedFileRecord{
-		GameID: "g", Profile: "p", RelativePath: "k.esp", SourceID: "s", ModID: "m", ModPath: root, Fingerprint: fp,
+		GameID: "g", Profile: "p", Path: domain.ModPathFile("k.esp"), SourceID: "s", ModID: "m", ModPath: root, Fingerprint: fp,
 	}))
 	// A same-size edit with the mtime put back.
 	info, err := os.Stat(dst)
@@ -177,7 +177,7 @@ func TestJudge_OnARealVfatMount(t *testing.T) {
 	require.NoError(t, os.WriteFile(dst, []byte("tex MINE 1.0.0\n"), 0o644))
 	require.NoError(t, os.Chtimes(dst, info.ModTime(), info.ModTime()))
 
-	j := deployedJudge{db: database, game: &domain.Game{ID: "g", ModPath: root}, profile: "p"}.judge(ctx, "k.esp", dst)
+	j := deployedJudge{db: database, game: &domain.Game{ID: "g", ModPath: root}, profile: "p"}.judge(ctx, domain.ModPathFile("k.esp"), dst)
 	assert.Equal(t, deployedUsers, j.verdict)
 }
 
@@ -190,15 +190,15 @@ func TestBeginOp_AFlowsKeptFilesEndWithIt(t *testing.T) {
 
 	release, err := svc.beginOp(context.Background())
 	require.NoError(t, err)
-	store.rememberKept("Data/k.esp", keptFile{reason: "it could not be checked"})
-	_, ok := store.keptBefore("Data/k.esp")
+	store.rememberKept(domain.ModPathFile("Data/k.esp"), keptFile{reason: "it could not be checked"})
+	_, ok := store.keptBefore(domain.ModPathFile("Data/k.esp"))
 	require.True(t, ok, "the flow itself still knows")
 	// A flow that fails before its drain (#466 re-review R6).
 	store.note("Data/k2.esp was left in place: it could not be checked")
-	store.noteUnverified("Data/k3.esp", false)
+	store.noteUnverified(domain.ModPathFile("Data/k3.esp"), false)
 	release()
 
-	_, ok = store.keptBefore("Data/k.esp")
+	_, ok = store.keptBefore(domain.ModPathFile("Data/k.esp"))
 	assert.False(t, ok, "the next flow judges the file again")
 	assert.Empty(t, store.takeFailures(), "and does not report the last flow's notes as its own")
 }
@@ -219,17 +219,17 @@ func TestJudgeLink_OnlyTheActingProfilesRecordsMakeALinkLmms(t *testing.T) {
 	dst := filepath.Join(root, "k.esp")
 	require.NoError(t, os.Symlink(precious, dst))
 	require.NoError(t, database.RecordDeployedFile(ctx, db.DeployedFileRecord{
-		GameID: "g", Profile: "sym", RelativePath: "k.esp", SourceID: "s", ModID: "m", ModPath: root,
+		GameID: "g", Profile: "sym", Path: domain.ModPathFile("k.esp"), SourceID: "s", ModID: "m", ModPath: root,
 	}))
 
-	j := deployedJudge{db: database, game: game, profile: "default"}.judge(ctx, "k.esp", dst)
+	j := deployedJudge{db: database, game: game, profile: "default"}.judge(ctx, domain.ModPathFile("k.esp"), dst)
 	assert.Equal(t, deployedUsers, j.verdict)
 	assert.True(t, j.recorded, "a deploy writes no record of its own over it")
 	assert.Nil(t, j.kept, "and restores none")
 	assert.Contains(t, j.reason, "it is a link")
 
-	assert.Equal(t, deployedOurs, deployedJudge{db: database, game: game, profile: "sym"}.judge(ctx, "k.esp", dst).verdict,
+	assert.Equal(t, deployedOurs, deployedJudge{db: database, game: game, profile: "sym"}.judge(ctx, domain.ModPathFile("k.esp"), dst).verdict,
 		"sym's own link deployment")
-	assert.Equal(t, deployedOurs, deployedJudge{db: database, game: game}.judge(ctx, "k.esp", dst).verdict,
+	assert.Equal(t, deployedOurs, deployedJudge{db: database, game: game}.judge(ctx, domain.ModPathFile("k.esp"), dst).verdict,
 		"a judge acting for no profile counts every record")
 }

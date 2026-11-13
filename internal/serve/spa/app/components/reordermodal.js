@@ -25,6 +25,7 @@
 // load_order_winner/stale fields (api_profiles.go's own doc comment: "Do
 // not compute the winner in JS").
 
+import { deployedPath } from "../deploypath.js";
 import { html, useEffect, useMemo, useRef, useState } from "../render.js";
 import { Modal } from "./modal.js";
 import { conflictsForOrder, reorderProfile } from "../api.js";
@@ -55,7 +56,8 @@ function buildInitialOrder(mods) {
  * rows in the same order the saved one did. */
 function conflictsByPath(report) {
   const map = new Map();
-  for (const c of report?.conflicts ?? []) map.set(c.path, c);
+  for (const c of report?.conflicts ?? [])
+    map.set(deployedPath(c.path, c.root), c);
   return map;
 }
 

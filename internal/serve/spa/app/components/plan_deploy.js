@@ -7,6 +7,7 @@
 // hooks run, what the merge would produce" - the renderer's whole job is to
 // put those on screen in the order a user decides by.
 
+import { deployedPath } from "../deploypath.js";
 import { html } from "../render.js";
 import {
   PlanAdvanced,
@@ -30,7 +31,9 @@ export function DeployPlanView({ plan, modal, state, actions }) {
   // exactly as core.ProfileConflict reports it.
   const winnerByPath = new Map(
     (state?.conflicts?.conflicts ?? []).map((c) => [
-      c.path,
+      // The plan's link list spells a game-root file "<game root>/..."
+      // (issue 629), so the join does too.
+      deployedPath(c.path, c.root),
       c.load_order_winner,
     ]),
   );

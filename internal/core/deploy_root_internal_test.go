@@ -29,7 +29,7 @@ func TestRootLinker_Containment(t *testing.T) {
 			require.NoError(t, os.Symlink(outside, filepath.Join(install, "enbseries")))
 			err = rl.Deploy(src, filepath.Join(install, "enbseries", "a.fx"))
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "leaves the game's install_path")
+			assert.Contains(t, err.Error(), "install_path")
 			entries, _ := os.ReadDir(outside)
 			assert.Empty(t, entries)
 
@@ -67,10 +67,64 @@ func TestRootLinker_SymlinkUndeployRefusesARegularFile(t *testing.T) {
 }
 
 // A game-root route whose path lands inside the mod_path - a whole-mod
-// route's Data/ folder - is that mod_path file: one place, one name.
-func TestGameRootKey_InsideTheModPathIsTheModPathFile(t *testing.T) {
+// route's Data/ folder - is that mod_path file: one place, one name. The
+// mod_path's folder is matched case-insensitively: an archive's data/ is the
+// game's Data/.
+func TestGameRootPath_InsideTheModPathIsTheModPathFile(t *testing.T) {
 	install := t.TempDir()
 	game := &domain.Game{InstallPath: install, ModPath: filepath.Join(install, "Data")}
-	assert.Equal(t, filepath.Join("textures", "a.dds"), gameRootKey(game, filepath.Join("Data", "textures", "a.dds")))
-	assert.Equal(t, domain.InstallPathKey("d3d11.dll"), gameRootKey(game, "d3d11.dll"))
+	assert.Equal(t, domain.ModPathFile(filepath.Join("textures", "a.dds")), gameRootPath(game, filepath.Join("Data", "textures", "a.dds")))
+	assert.Equal(t, domain.ModPathFile("Weather.esp"), gameRootPath(game, filepath.Join("data", "Weather.esp")))
+	assert.Equal(t, domain.GameRootFile("d3d11.dll"), gameRootPath(game, "d3d11.dll"))
+	assert.Equal(t, domain.GameRootFile("Database.txt"), gameRootPath(game, "Database.txt"), "a name merely starting with Data is not the folder")
+	assert.Equal(t, domain.GameRootFile("Data"), gameRootPath(game, "Data"), "the folder itself is not a file under it")
+}
+
+// A folder under the game root that is a link - even one that stays inside
+// the install_path, into Data/ - is refused: a game-root file is only ever
+// written where its record says it is.
+func TestRootLinker_RefusesALinkInsideTheRoot(t *testing.T) {
+	install := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(install, "Data", "enbseries"), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(install, "Data", "enbseries"), filepath.Join(install, "enbseries")))
+	src := filepath.Join(t.TempDir(), "a.fx")
+	require.NoError(t, os.WriteFile(src, []byte("fx"), 0o644))
+	rl := rootLinker{inner: linker.New(domain.LinkSymlink), root: install}
+	err := rl.Deploy(src, filepath.Join(install, "enbseries", "a.fx"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is a link")
+	_, err = os.Lstat(filepath.Join(install, "Data", "enbseries", "a.fx"))
+	assert.True(t, os.IsNotExist(err), "nothing lands in Data/ under a root name")
+}
+
+// An original under the install_path goes back through the contained walk
+// (#629 review): lmm's link at the path is replaced, never written
+// through, and a folder on the way that is a link is refused.
+func TestRestoreContained(t *testing.T) {
+	install, outside, cacheDir := t.TempDir(), t.TempDir(), t.TempDir()
+	stored := filepath.Join(t.TempDir(), "stored")
+	require.NoError(t, os.WriteFile(stored, []byte("stock"), 0o600))
+	cached := filepath.Join(cacheDir, "d3d11.dll")
+	require.NoError(t, os.WriteFile(cached, []byte("mod"), 0o644))
+	dst := filepath.Join(install, "d3d11.dll")
+	require.NoError(t, os.Symlink(cached, dst))
+
+	row := OriginalFile{Root: OriginalRootInstallPath, RelativePath: "d3d11.dll", Mode: 0o755}
+	base, ok := baseOf(dst, row.RelativePath)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Clean(install), base)
+	require.NoError(t, restoreContained(row, stored, base, dst))
+	info, err := os.Lstat(dst)
+	require.NoError(t, err)
+	assert.True(t, info.Mode().IsRegular())
+	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+	got, _ := os.ReadFile(cached)
+	assert.Equal(t, "mod", string(got), "the cache entry is never written through")
+
+	require.NoError(t, os.Symlink(outside, filepath.Join(install, "enbseries")))
+	linked := filepath.Join(install, "enbseries", "a.fx")
+	row = OriginalFile{Root: OriginalRootInstallPath, RelativePath: "enbseries/a.fx"}
+	require.Error(t, restoreContained(row, stored, install, linked))
+	entries, _ := os.ReadDir(outside)
+	assert.Empty(t, entries)
 }

@@ -1,0 +1,5 @@
+{
+  "path": "skse64_loader.exe",
+  "root": "install_path",
+  "mod_path": "/games/skyrim-se/OldData"
+}

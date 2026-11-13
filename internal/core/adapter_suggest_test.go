@@ -182,6 +182,8 @@ func TestAdapterSwitchWarning(t *testing.T) {
 	assert.Contains(t, warning, "2 mod(s) already installed")
 	assert.Contains(t, warning, "keep the layout they were installed with")
 	assert.Contains(t, warning, "uninstall it")
+	assert.Contains(t, warning, "move there at the next deploy, with no reinstall",
+		"the bethesda adapter's game-root routing applies at deploy time (#629)")
 
 	same, err := svc.AdapterSwitchWarning(ctx, game, "generic-files")
 	require.NoError(t, err)

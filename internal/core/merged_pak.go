@@ -1305,7 +1305,7 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 		remaining++
 	}
 
-	deployed := isDeployedNow(game, name)
+	deployed := isDeployedNow(game, domain.ModPathFile(name))
 	switch {
 	case remaining == 0:
 		if deployed {
@@ -1403,8 +1403,8 @@ func (s *Service) mergedArtifactRemoval(ctx context.Context, game *domain.Game, 
 		return nil
 	}
 	for _, p := range paths {
-		if isDeployedNow(game, p) {
-			return &MergedArtifactEffect{Action: MergedArtifactRemove, Path: filepath.ToSlash(p)}
+		if isDeployedNow(game, p.path) {
+			return &MergedArtifactEffect{Action: MergedArtifactRemove, Path: p.path.String()}
 		}
 	}
 	return nil
@@ -1455,7 +1455,7 @@ func (s *Service) mergedArtifactEffectForImport(ctx context.Context, game *domai
 	name := mc.MergedArtifactName()
 	resync := &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
 
-	if contributes || !isDeployedNow(game, name) {
+	if contributes || !isDeployedNow(game, domain.ModPathFile(name)) {
 		return resync
 	}
 

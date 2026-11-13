@@ -6,30 +6,19 @@ import "github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 // relative to. It is the "Root" the game-adapter design left room for
 // beside FileRoute (docs/plans/2026-09-10-game-adapter-design.md §2): a
 // separate answer from a separate capability, so FileRoute and every
-// adapter that answers it are unchanged.
-type DeployRoot int
+// adapter that answers it are unchanged. It is domain.DeployRoot, the
+// vocabulary core records a deployed file's root in (#629).
+type DeployRoot = domain.DeployRoot
 
 const (
 	// RootModPath is the zero value: the file deploys under the game's
 	// mod_path, as every file of every game always has.
-	RootModPath DeployRoot = iota
+	RootModPath = domain.RootModPath
 	// RootInstallPath is a file that belongs at the game's install_path,
 	// relative to it: a script extender's loader and DLLs, an ENB's
 	// d3d11.dll, which the game only loads from beside its executable.
-	RootInstallPath
+	RootInstallPath = domain.RootInstallPath
 )
-
-// String returns the root's diagnostic name.
-func (r DeployRoot) String() string {
-	switch r {
-	case RootModPath:
-		return "mod_path"
-	case RootInstallPath:
-		return "install_path"
-	default:
-		return "unknown"
-	}
-}
 
 // RootRouter is the optional capability of an adapter whose game loads
 // some mod content from its install directory rather than from its

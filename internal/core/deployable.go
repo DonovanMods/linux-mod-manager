@@ -55,14 +55,14 @@ import (
 // pre-existing "listing cache files for %s") - this resolver does not
 // prescribe the wording.
 //
-// The answer is DEPLOYED PATHS (deploy_root.go, #629), not bare members: a
+// The answer is DEPLOY ITEMS (deploy_root.go, #629), not bare members: a
 // member the adapter's RootRouter sends to the game root comes back as
-// domain.InstallPathKey of it. A caller that reads the cache entry asks
-// cacheMember for the member; one that touches the game asks deployTarget.
+// a domain.GameRootFile. A caller reads the cache entry by the item's member
+// and touches the game at deployTarget of its path.
 //
 // k names the entry, variant included (#614): modCacheKey for an installed
 // mod.
-func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, k cache.Key) ([]string, error) {
+func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, k cache.Key) ([]deployItem, error) {
 	files, err := gameCache.ListFiles(k)
 	if err != nil {
 		return nil, err
@@ -75,14 +75,14 @@ func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain
 // #5): planDeploy needs both the deploy-direction (this) and the
 // removal-direction (the raw listing itself) result for the same mod, and
 // ListFiles-ing one cache entry twice to build one plan row is wasteful.
-func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, k cache.Key, files []string) ([]string, error) {
+func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, k cache.Key, files []string) ([]deployItem, error) {
 	manifests, err := gameCache.FileManifests(k)
 	if err != nil {
 		return nil, err
 	}
 	// #629: each member's deployed path, routed over the WHOLE listing -
 	// some of the adapter's root rules are about the mod as a whole.
-	keyed := deployedPathIndex(a, game, files)
+	keyed := deployItemIndex(a, game, files)
 	if len(manifests) == 0 {
 		return keyed.of(routeDeployables(a, game, files)), nil
 	}

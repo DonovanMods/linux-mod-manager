@@ -195,3 +195,16 @@ func seedNamedInstalledMod(t *testing.T, svc *core.Service, game *domain.Game, s
 		Enabled:      enabled,
 	}))
 }
+
+// relsOf is a deployed-file listing's paths relative to their roots, for a
+// test that asserts on mod_path paths by name (#629).
+func relsOf(paths []domain.DeployPath, err error) ([]string, error) {
+	if paths == nil {
+		return nil, err
+	}
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = p.Rel
+	}
+	return out, err
+}

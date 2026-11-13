@@ -165,8 +165,10 @@ being silently folded into the OK case - this is never counted in issues
 or warnings.
 
 --json emits {game_id, profile, result: {findings: [{mod_id, mod_name,
-file_id, status, note, recorded, effective, version, external}], issues,
-warnings, checked, has_files, mods, external, unverified}}; each finding
+file_id, root, status, note, recorded, effective, version, external}],
+issues, warnings, checked, has_files, mods, external, unverified}}; root is
+"install_path" on a row about a file deployed in the game folder rather
+than the mod folder, whose file_id is relative to it; each finding
 key is omitted when unset (a row only carries the fields its status needs -
 e.g. "version_mismatch" carries recorded/effective, "missing" carries
 version, most statuses carry neither). checked is the number of files/mods
@@ -608,7 +610,7 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 	case "stale_deployment":
 		// #168/#212 - FileID carries the deployed path (convergeDeployedFiles
 		// reports per-path, not per-mod-file).
-		fmt.Printf("%s %s - STALE DEPLOYMENT (%s)\n", colorYellow("?"), f.FileID, f.Note)
+		fmt.Printf("%s %s - STALE DEPLOYMENT (%s)\n", colorYellow("?"), domain.DisplayDeployPath(f.Root, f.FileID), f.Note)
 
 	case "mod_path_missing":
 		// #427: the game's mod_path is gone; the note names the repair.
@@ -693,7 +695,7 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		// field involved) - unlike a version repair, which prints a plain
 		// main line and a separate green sub-line, a --fix stale-deployment
 		// removal has no main line of its own to have printed first.
-		fmt.Println(colorGreen(fmt.Sprintf("Fixed: removed %s (%s)", f.FileID, f.Note)))
+		fmt.Println(colorGreen(fmt.Sprintf("Fixed: removed %s (%s)", domain.DisplayDeployPath(f.Root, f.FileID), f.Note)))
 
 	case core.VerifyStatusAdapterSuggested, "bethesda_game_unknown":
 		// #606: game-level notes about the game's adapter - core's

@@ -403,7 +403,7 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	// game's default installer answers it without reading the profile.
 	// #629: as the deployed paths the files take, game-root ones included.
 	installer := s.getInstaller(game)
-	conflicts, err := installer.conflictsForPaths(ctx, game, &plan.Mod, profileName, deployedPaths(installer.adapter, game, files))
+	conflicts, err := installer.conflictsForPaths(ctx, game, &plan.Mod, profileName, pathsOf(deployItems(installer.adapter, game, files)))
 	if err != nil {
 		return nil, err
 	}

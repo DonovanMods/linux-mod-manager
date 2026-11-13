@@ -66,6 +66,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+
+	"golang.org/x/sys/unix"
 )
 
 // OriginalRoot names which of a game's two directories an original's
@@ -155,6 +159,17 @@ type originalsManifest struct {
 	// place as the user's file and stopped tracking (#466 review F5), so
 	// the deploy that later sets such a file aside to replace it says so.
 	KeptUser []string `json:"kept_user,omitempty"`
+	// KeptUserGameRoot is KeptUser for files under the game's
+	// install_path (#629), relative to it, in slash form.
+	KeptUserGameRoot []string `json:"kept_user_game_root,omitempty"`
+}
+
+// keptUserList is the manifest's KeptUser list rel's root is kept in.
+func (m *originalsManifest) keptUserList(rel domain.DeployPath) *[]string {
+	if rel.IsGameRoot() {
+		return &m.KeptUserGameRoot
+	}
+	return &m.KeptUser
 }
 
 // originalsStore is one game's originals directory plus its manifest.
@@ -189,7 +204,7 @@ type originalsStore struct {
 	// cleared by the same drain and at the end of every mutation
 	// (Service.beginOp): a value is the fingerprinted record the path was
 	// judged against and why it was kept.
-	kept map[string]keptFile
+	kept map[domain.DeployPath]keptFile
 }
 
 // snapshotsDirFor returns a game's snapshot directory,
@@ -237,18 +252,18 @@ func (s *originalsStore) note(msg string) {
 }
 
 // rememberKept records that a removal left rel as the user's (#466).
-func (s *originalsStore) rememberKept(rel string, kf keptFile) {
+func (s *originalsStore) rememberKept(rel domain.DeployPath, kf keptFile) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.kept == nil {
-		s.kept = make(map[string]keptFile)
+		s.kept = make(map[domain.DeployPath]keptFile)
 	}
 	s.kept[rel] = kf
 }
 
 // keptBefore reports whether a removal in the running flow left rel as the
 // user's, and the record it was judged against.
-func (s *originalsStore) keptBefore(rel string) (keptFile, bool) {
+func (s *originalsStore) keptBefore(rel domain.DeployPath) (keptFile, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	kf, ok := s.kept[rel]
@@ -257,7 +272,7 @@ func (s *originalsStore) keptBefore(rel string) (keptFile, bool) {
 
 // noteUnverified records rel as removed without a content check (#466);
 // legacy says its records all predate schema v18.
-func (s *originalsStore) noteUnverified(rel string, legacy bool) {
+func (s *originalsStore) noteUnverified(rel domain.DeployPath, legacy bool) {
 	s.mu.Lock()
 	s.unverified = append(s.unverified, unverifiedPath{rel: rel, legacy: legacy})
 	s.mu.Unlock()
@@ -266,15 +281,20 @@ func (s *originalsStore) noteUnverified(rel string, legacy bool) {
 // markKeptUser records, in the manifest, that a removal left rel in place
 // as the user's file and stopped tracking it (#466 review F5). Best effort:
 // a mark that cannot be written costs only the warning takeKeptUser gives.
-func (s *originalsStore) markKeptUser(rel string) {
+func (s *originalsStore) markKeptUser(path domain.DeployPath) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, err := s.read()
-	if err != nil || slices.Contains(m.KeptUser, rel) {
+	rel := filepath.ToSlash(path.Rel)
+	if err != nil {
 		return
 	}
-	m.KeptUser = append(m.KeptUser, rel)
-	slices.Sort(m.KeptUser)
+	list := m.keptUserList(path)
+	if slices.Contains(*list, rel) {
+		return
+	}
+	*list = append(*list, rel)
+	slices.Sort(*list)
 	if err := s.write(m); err != nil {
 		s.log.Debug("could not record a file lmm left as yours", "path", rel, "err", err)
 	}
@@ -282,18 +302,20 @@ func (s *originalsStore) markKeptUser(rel string) {
 
 // takeKeptUser reports whether rel carries markKeptUser's mark, and clears
 // it.
-func (s *originalsStore) takeKeptUser(rel string) bool {
+func (s *originalsStore) takeKeptUser(path domain.DeployPath) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, err := s.read()
 	if err != nil {
 		return false
 	}
-	i := slices.Index(m.KeptUser, rel)
+	rel := filepath.ToSlash(path.Rel)
+	list := m.keptUserList(path)
+	i := slices.Index(*list, rel)
 	if i < 0 {
 		return false
 	}
-	m.KeptUser = slices.Delete(m.KeptUser, i, i+1)
+	*list = slices.Delete(*list, i, i+1)
 	if err := s.write(m); err != nil {
 		s.log.Debug("could not clear the mark of a file lmm left as yours", "path", rel, "err", err)
 	}
@@ -659,6 +681,15 @@ func (s *originalsStore) restore(row OriginalFile, absPath string) error {
 		return fmt.Errorf("the stored original of %s does not match its recorded checksum (%s, expected %s); it is not safe to write back",
 			row.RelativePath, sum, row.SHA256)
 	}
+	// An original under the game's install_path (#629 - a stock d3d11.dll
+	// a game-root mod file replaced, or a file a profile override wrote
+	// over) goes back the way lmm's own game-root files are written:
+	// beneath the install_path only, through the no-follow walk.
+	if row.Root == OriginalRootInstallPath {
+		if base, ok := baseOf(absPath, row.RelativePath); ok {
+			return restoreContained(row, stored, base, absPath)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
 		return fmt.Errorf("creating the directory for %s: %w", row.RelativePath, err)
 	}
@@ -679,6 +710,46 @@ func (s *originalsStore) restore(row OriginalFile, absPath string) error {
 	// shipped binaries. 0644 remains the fallback for a row written before
 	// the mode was recorded.
 	return applyOriginalMode(absPath, row)
+}
+
+// baseOf is the directory absPath is rel under: absPath with rel's
+// components taken off its end, when they are its end.
+func baseOf(absPath, rel string) (string, bool) {
+	clean, relOS := filepath.Clean(absPath), filepath.Clean(filepath.FromSlash(rel))
+	if relOS == "." || !strings.HasSuffix(clean, string(filepath.Separator)+relOS) {
+		return "", false
+	}
+	return strings.TrimSuffix(clean, string(filepath.Separator)+relOS), true
+}
+
+// restoreContained writes the stored original back at absPath, beneath
+// base, through rootLinker's contained walk: a folder on the way that is a
+// link is refused, and whatever is at absPath (lmm's link into the cache,
+// its copy) is replaced by a rename, never written through.
+func restoreContained(row OriginalFile, stored, base, absPath string) error {
+	dir, name, err := rootLinker{root: base}.open(absPath, true)
+	if err != nil {
+		return fmt.Errorf("restoring the original of %s: %w", row.RelativePath, err)
+	}
+	defer func() { _ = dir.Close() }()
+	st, exists, err := lstatAt(dir, name)
+	if err != nil {
+		return err
+	}
+	if exists && !isRegularOrLink(st) {
+		return fmt.Errorf("restoring the original of %s: %w", row.RelativePath, errNotRegularTarget)
+	}
+	if err := copyAt(dir, name, stored); err != nil {
+		return fmt.Errorf("restoring the original of %s: %w", row.RelativePath, err)
+	}
+	mode := fs.FileMode(0644)
+	if row.Mode != 0 {
+		mode = fs.FileMode(row.Mode).Perm()
+	}
+	if err := unix.Fchmodat(int(dir.Fd()), name, uint32(mode), 0); err != nil {
+		return fmt.Errorf("setting permissions on the restored %s: %w", row.RelativePath, err)
+	}
+	return nil
 }
 
 // applyOriginalMode puts row's recorded permission bits back on absPath,

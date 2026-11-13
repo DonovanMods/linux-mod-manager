@@ -454,7 +454,7 @@ func (s *Service) refuseInstallPathMove(ctx context.Context, game, updated *doma
 				}
 			}
 			inUse.DeployedFiles += len(recs)
-			if _, err := os.Lstat(deployTarget(updated, filepath.FromSlash(rel))); err != nil {
+			if _, err := os.Lstat(deployTarget(updated, rel)); err != nil {
 				inUse.MissingFiles += len(recs)
 			}
 		}
@@ -473,7 +473,7 @@ func (s *Service) refuseInstallPathMove(ctx context.Context, game, updated *doma
 		}
 		counts := map[string]int{}
 		for rel, recs := range records {
-			if !isGameRoot(rel) {
+			if !rel.IsGameRoot() {
 				continue
 			}
 			for _, r := range recs {
@@ -857,7 +857,7 @@ func (s *Service) countListedUnrecorded(ctx context.Context, game *domain.Game, 
 				// (heldForActive), so the active profile deploys the mod
 				// into the new directory only - and only an apply does it
 				// when the profile has no enabled row of it.
-				if !inUse.ApplyAfterMove && len(others.heldForActive(k.Path)) > 0 {
+				if !inUse.ApplyAfterMove && len(others.heldForActive(k.row.Path)) > 0 {
 					if view == nil {
 						if view, err = s.activeApplyViewOf(ctx, game, inUse.ActiveProfile); err != nil {
 							return err
@@ -891,7 +891,7 @@ func (s *Service) countListedUnrecorded(ctx context.Context, game *domain.Game, 
 				}
 				continue
 			}
-			for _, h := range others.holding(k.Path) {
+			for _, h := range others.holding(k.row.Path) {
 				if c := others.claims(h.game); c.err != nil {
 					return fmt.Errorf("cannot move the mod_path of %s: %d deployed file(s) are recorded under it, and game %s, which shares the directory, records %s too - lmm cannot name the purge that lets it go until it can tell which profile of %s is active: %w",
 						game.ID, inUse.DeployedFiles, h.game.id, k.Path, h.game.id, c.err)

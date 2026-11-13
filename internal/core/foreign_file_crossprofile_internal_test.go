@@ -94,10 +94,10 @@ func TestForeignFile_AnotherProfilesDeploymentIsNotForeign(t *testing.T) {
 			require.NoError(t, f.inst.Install(context.Background(), f.game, f.v1, "a"))
 
 			assert.False(t,
-				f.inst.foreignFile(context.Background(), f.game, "b", "Data/shared.esp", f.sharedDst),
+				f.inst.foreignFile(context.Background(), f.game, "b", domain.ModPathFile("Data/shared.esp"), f.sharedDst),
 				"a file another profile of this game deployed is lmm's own; the deployed tree is game-global")
 			assert.False(t,
-				f.inst.foreignFile(context.Background(), f.game, "a", "Data/shared.esp", f.sharedDst),
+				f.inst.foreignFile(context.Background(), f.game, "a", domain.ModPathFile("Data/shared.esp"), f.sharedDst),
 				"and the deploying profile's own answer is unchanged")
 		})
 	}
@@ -115,7 +115,7 @@ func TestForeignFile_TheGamesOwnFileStaysForeign(t *testing.T) {
 			require.NoError(t, os.WriteFile(f.sharedDst, []byte("as the game shipped"), 0755))
 
 			assert.True(t,
-				f.inst.foreignFile(context.Background(), f.game, "a", "Data/shared.esp", f.sharedDst),
+				f.inst.foreignFile(context.Background(), f.game, "a", domain.ModPathFile("Data/shared.esp"), f.sharedDst),
 				"nothing lmm deployed is here, under any profile: this is the game's own file")
 		})
 	}

@@ -53,12 +53,12 @@ func TestMigrateV26_MigratesAV25Database(t *testing.T) {
 	recs, err := d.DeployedFileRecordsForMod(ctx, "g", "default", "src", "m")
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	assert.Equal(t, "textures/a.dds", recs[0].RelativePath)
+	assert.Equal(t, domain.ModPathFile("textures/a.dds"), recs[0].Path)
 	assert.Equal(t, "/games/g/Data", recs[0].ModPath)
 	assert.Equal(t, &FileFingerprint{Checksum: "abc", Size: 3, MTime: 4, CTime: 5}, recs[0].Fingerprint)
 
 	// The same relative path under the game root is another file.
-	require.NoError(t, d.SaveDeployedFile(ctx, "g", "default", domain.InstallPathKey("textures/a.dds"), "src", "enb"))
+	require.NoError(t, d.RecordDeployedFile(ctx, DeployedFileRecord{GameID: "g", Profile: "default", Path: domain.GameRootFile("textures/a.dds"), SourceID: "src", ModID: "enb"}))
 	var n int
 	require.NoError(t, d.QueryRow("SELECT COUNT(*) FROM deployed_files").Scan(&n))
 	assert.Equal(t, 2, n)
@@ -66,4 +66,15 @@ func TestMigrateV26_MigratesAV25Database(t *testing.T) {
 	require.NoError(t, migrateV26(ctx, d), "a re-run is a no-op")
 	require.NoError(t, d.QueryRow("SELECT COUNT(*) FROM deployed_files").Scan(&n))
 	assert.Equal(t, 2, n)
+}
+
+// The root column holds only the two roots lmm knows: a writer cannot store
+// a value a reader would have to guess at.
+func TestMigrateV26_RootIsChecked(t *testing.T) {
+	d, err := New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, d.Close()) })
+	_, err = d.Exec(`INSERT INTO deployed_files (game_id, profile_name, root, relative_path, source_id, mod_id)
+		VALUES ('g', 'p', 'modpath', 'a', 's', 'm')`)
+	require.Error(t, err, "an unknown root is refused by the CHECK")
 }

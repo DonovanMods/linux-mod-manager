@@ -26,17 +26,24 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   removes only inside the game folder: a folder there that is a link to
   somewhere else is refused, and the deploy says so. Wherever lmm lists a
   deployed file, one in the game folder is shown with the root named in
-  front, `<game root>/d3d11.dll` (in `--json` output too, in the existing
-  path fields), and the web UI's Health card marks such a row with a
-  **Game root** badge. A snapshot's `deployed_files` rows gain a `root`
-  field (`"install_path"`) for such a file, and no field for any other.
+  front, `<game root>/d3d11.dll`, and the web UI's Health card marks such a
+  row with a **Game root** badge. In `--json` and the web API, a document
+  that reports a deployed file as an object (`lmm verify`'s findings,
+  `lmm conflicts`, `lmm mod files`, a purge's or uninstall's kept,
+  stranded and unshipped paths, a convergence's removed files, an install
+  conflict, a snapshot's `deployed_files`) gains a `root` field,
+  `"install_path"`, beside the path relative to it; a mod_path file has no
+  `root` field, so every existing document is unchanged. A plain list of
+  paths (a deploy plan's `link`, `remove` and `purge`, a purge plan's
+  `remove`, an uninstall plan's `files`, the `removed` lists) spells a
+  game-folder file `<game root>/...`.
   The database moves to schema version 26 (`deployed_files` records each
   file's root), so an older lmm refuses to open it, as for every schema
   change. A mod deployed into `Data/` before its game used the `bethesda`
-  adapter keeps those files there until `lmm deploy --purge` (or `lmm
-purge` and a deploy) moves them to the game folder; `lmm verify --fix`
-  removes the stale `Data/` copies, and an uninstall finds them where they
-  are.
+  adapter has those files moved to the game folder by the next deploy (no
+  reinstall needed), and an uninstall or purge before then finds them
+  where they are; the warning `lmm game edit --adapter` and the web UI give
+  when switching adapters now says so.
 
 - **A profile override can change a mod's own file (#630).** A profile
   (or a collection) that overrides a file a deployed mod ships, such as a

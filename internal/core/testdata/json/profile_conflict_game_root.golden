@@ -1,0 +1,19 @@
+{
+  "path": "d3d11.dll",
+  "root": "install_path",
+  "owner": {
+    "key": "nexusmods:42",
+    "name": "Sample ENB"
+  },
+  "also_in": [
+    {
+      "key": "nexusmods:7",
+      "name": "Other ENB"
+    }
+  ],
+  "load_order_winner": {
+    "key": "nexusmods:42",
+    "name": "Sample ENB"
+  },
+  "stale": false
+}

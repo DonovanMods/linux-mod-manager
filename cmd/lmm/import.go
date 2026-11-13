@@ -365,7 +365,7 @@ func renderImportArchivePlan(plan *core.ImportArchivePlan, game *domain.Game, pr
 		fmt.Printf("  Would overwrite %d file(s) owned by other mods\n", len(plan.Conflicts))
 		if verbose {
 			for _, c := range plan.Conflicts {
-				fmt.Printf("    - %s (%s)\n", c.RelativePath, domain.ModKey(c.CurrentSourceID, c.CurrentModID))
+				fmt.Printf("    - %s (%s)\n", domain.DisplayDeployPath(c.Root, c.RelativePath), domain.ModKey(c.CurrentSourceID, c.CurrentModID))
 			}
 		}
 	}

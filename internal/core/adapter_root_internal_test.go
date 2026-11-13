@@ -66,7 +66,7 @@ func TestRootInstallPathDeploysUnderInstallPath(t *testing.T) {
 
 	files, err := deployableFiles(c, rootRouter{}, game, key)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{domain.InstallPathKey("skse64_loader.exe"), filepath.Join("Scripts", "SKSE.pex")}, files)
+	assert.ElementsMatch(t, []domain.DeployPath{domain.GameRootFile("skse64_loader.exe"), domain.ModPathFile(filepath.Join("Scripts", "SKSE.pex"))}, pathsOf(files))
 
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
@@ -86,7 +86,7 @@ func TestRootInstallPathDeploysUnderInstallPath(t *testing.T) {
 
 	paths, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "skse")
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"Scripts/SKSE.pex", domain.InstallPathKey("skse64_loader.exe")}, paths)
+	assert.ElementsMatch(t, []domain.DeployPath{domain.ModPathFile("Scripts/SKSE.pex"), domain.GameRootFile("skse64_loader.exe")}, paths)
 
 	require.NoError(t, inst.Uninstall(context.Background(), game, mod, "default"))
 	_, err = os.Lstat(filepath.Join(game.InstallPath, "skse64_loader.exe"))
@@ -110,7 +110,7 @@ func TestRootInstallPathIsModPathWhenTheyAreOneDirectory(t *testing.T) {
 
 	files, err := deployableFiles(c, rootRouter{}, game, key)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"skse64_loader.exe"}, files)
+	assert.Equal(t, []domain.DeployPath{domain.ModPathFile("skse64_loader.exe")}, pathsOf(files))
 }
 
 // A stated mod type (a NexusMods collection's Vortex "dinput") routes the
@@ -121,20 +121,20 @@ func TestRootForStatedModType(t *testing.T) {
 	game := rootGame(t, domain.LinkSymlink)
 	files := []string{"skse64_loader.exe", filepath.Join("Scripts", "SKSE.pex")}
 
-	got, err := deployedPathsForType(rootRouter{}, game, "dinput", files)
+	got, err := deployItemsForType(rootRouter{}, game, "dinput", files)
 	require.NoError(t, err)
-	assert.Equal(t, []string{domain.InstallPathKey("skse64_loader.exe"), domain.InstallPathKey(filepath.Join("Scripts", "SKSE.pex"))}, got)
+	assert.Equal(t, []domain.DeployPath{domain.GameRootFile("skse64_loader.exe"), domain.GameRootFile(filepath.Join("Scripts", "SKSE.pex"))}, pathsOf(got))
 
-	got, err = deployedPathsForType(rootRouter{}, game, "", files)
+	got, err = deployItemsForType(rootRouter{}, game, "", files)
 	require.NoError(t, err)
-	assert.Equal(t, []string{domain.InstallPathKey("skse64_loader.exe"), filepath.Join("Scripts", "SKSE.pex")}, got, "no stated type: the adapter routes file by file")
+	assert.Equal(t, []domain.DeployPath{domain.GameRootFile("skse64_loader.exe"), domain.ModPathFile(filepath.Join("Scripts", "SKSE.pex"))}, pathsOf(got), "no stated type: the adapter routes file by file")
 
-	_, err = deployedPathsForType(rootRouter{}, game, "collectionbundledmod", files)
+	_, err = deployItemsForType(rootRouter{}, game, "collectionbundledmod", files)
 	var unknown *ModTypeUnsupportedError
 	require.ErrorAs(t, err, &unknown)
 	assert.Equal(t, "collectionbundledmod", unknown.ModType)
 
-	_, err = deployedPathsForType(adapter.Generic{}, game, "dinput", files)
+	_, err = deployItemsForType(adapter.Generic{}, game, "dinput", files)
 	require.ErrorAs(t, err, &unknown, "an adapter with no RootRouter knows no type")
 }
 
@@ -169,5 +169,5 @@ func TestReplace_RemovesAFileWhereAnEarlierRoutingPutIt(t *testing.T) {
 	assert.Equal(t, c.GetFilePath(newKey, "skse64_loader.exe"), target)
 	paths, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "skse")
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"Scripts/SKSE.pex", domain.InstallPathKey("skse64_loader.exe")}, paths)
+	assert.ElementsMatch(t, []domain.DeployPath{domain.ModPathFile("Scripts/SKSE.pex"), domain.GameRootFile("skse64_loader.exe")}, paths)
 }

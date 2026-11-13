@@ -14,6 +14,7 @@
 // the number shown and the number purged cannot disagree"), which is why
 // the count in the sentence is read off the list rather than computed.
 
+import { deployedPath } from "../deploypath.js";
 import { html } from "../render.js";
 import { PlanAdvanced, PlanOption, ApplyOption } from "./planoptions.js";
 
@@ -247,8 +248,12 @@ function RecordedPurgeView({ plan, confirmName }) {
             <ul class="plan__paths" data-testid="purge-kept">
               ${kept.map(
                 (k) => html`
-                  <li key=${k.path} data-reason=${k.reason}>
-                    <span class="mono">${k.path}</span>${" "}
+                  <li
+                    key=${deployedPath(k.path, k.root)}
+                    data-reason=${k.reason}
+                  >
+                    <span class="mono">${deployedPath(k.path, k.root)}</span
+                    >${" "}
                     <span class="plan__mod-detail">— ${keptReason(k)}</span>
                   </li>
                 `,

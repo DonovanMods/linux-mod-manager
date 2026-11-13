@@ -45,11 +45,15 @@ func (s *Service) launchAdvice(ctx context.Context, game *domain.Game, profile s
 		if err != nil {
 			continue
 		}
-		for i, f := range files {
-			// #629: a game-root file as "<game root>/...", never the key.
-			files[i] = displayPath(f)
+		// The mod's files under the mod_path, as adapter.DeployedMod says:
+		// a game-root file (#629) is not mod-path-relative.
+		var under []string
+		for _, f := range files {
+			if !f.path.IsGameRoot() {
+				under = append(under, filepath.ToSlash(f.path.Rel))
+			}
 		}
-		deployed = append(deployed, adapter.DeployedMod{Name: m.Name, Files: files})
+		deployed = append(deployed, adapter.DeployedMod{Name: m.Name, Files: under})
 	}
 	advice := adapter.LaunchAdvice(a, game, deployed, s.launchArgs(game.ID))
 	if record {

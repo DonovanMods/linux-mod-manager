@@ -97,7 +97,7 @@ type UninstallPlan struct {
 	// remove is every recorded path a RecordedOnly plan approved removing,
 	// the ones already gone included; untrack is the kept paths whose
 	// record it approved dropping.
-	remove, untrack map[string]bool
+	remove, untrack map[domain.DeployPath]bool
 }
 
 // uninstallModNotFoundError preserves PlanUninstall's established sentence
@@ -184,7 +184,7 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 		plan.MergedArtifact = s.mergedArtifactEffectForUninstall(ctx, game, profileName, mod)
 		for _, f := range s.deployedPathsFor(ctx, s.getInstaller(game), game, profileName, mod) {
 			if isDeployedNow(game, f) {
-				plan.Files = append(plan.Files, displayPath(f))
+				plan.Files = append(plan.Files, f.String())
 			}
 		}
 	}
@@ -212,18 +212,18 @@ func (s *Service) planRecordedUninstall(ctx context.Context, game *domain.Game, 
 	if err != nil {
 		return err
 	}
-	plan.remove = make(map[string]bool, len(remove))
-	plan.untrack = make(map[string]bool, len(kept))
+	plan.remove = make(map[domain.DeployPath]bool, len(remove))
+	plan.untrack = make(map[domain.DeployPath]bool, len(kept))
 	for _, row := range remove {
-		plan.remove[row.RelativePath] = true
-		if isDeployedNow(game, row.RelativePath) {
-			plan.Files = append(plan.Files, displayPath(row.RelativePath))
+		plan.remove[row.Path] = true
+		if isDeployedNow(game, row.Path) {
+			plan.Files = append(plan.Files, row.Path.String())
 		}
 	}
 	for _, k := range kept {
-		plan.Kept = append(plan.Kept, k.displayed())
+		plan.Kept = append(plan.Kept, k.PurgeKeptPath)
 		if k.Reason.DropsRecord() {
-			plan.untrack[k.Path] = true
+			plan.untrack[k.row.Path] = true
 		}
 	}
 	return nil
@@ -263,8 +263,8 @@ func (s *Service) ApplyUninstall(ctx context.Context, game *domain.Game, plan *U
 	}
 	if recordedOnly {
 		return s.uninstallRecorded(ctx, game, plan.Mod.ProfileName, plan.Mod.SourceID, plan.Mod.ID, live, opts,
-			func(path string) bool { return plan.remove[path] },
-			func(path string) bool { return plan.untrack[path] })
+			func(path domain.DeployPath) bool { return plan.remove[path] },
+			func(path domain.DeployPath) bool { return plan.untrack[path] })
 	}
 	return s.uninstallMod(ctx, game, plan.Mod.ProfileName, plan.Mod.SourceID, plan.Mod.ID, opts)
 }
@@ -374,7 +374,7 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 		return nil, err
 	}
 	if recordedOnly {
-		all := func(string) bool { return true }
+		all := func(domain.DeployPath) bool { return true }
 		return s.uninstallRecorded(ctx, game, profileName, sourceID, modID, live, opts, all, all)
 	}
 	return s.uninstallMod(ctx, game, profileName, sourceID, modID, opts)
@@ -386,7 +386,7 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 // plan's say - and no hook runs. The record and the profile entry go as
 // they always do; a recorded path that is kept with its record stays with
 // that profile, for `lmm purge -p <profile>`.
-func (s *Service) uninstallRecorded(ctx context.Context, game *domain.Game, profileName, sourceID, modID, live string, opts UninstallOptions, approve, untrack func(string) bool) (*UninstallResult, error) {
+func (s *Service) uninstallRecorded(ctx context.Context, game *domain.Game, profileName, sourceID, modID, live string, opts UninstallOptions, approve, untrack func(domain.DeployPath) bool) (*UninstallResult, error) {
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
@@ -406,7 +406,7 @@ func (s *Service) uninstallRecorded(ctx context.Context, game *domain.Game, prof
 			warn:    func(msg string) { result.Warnings = append(result.Warnings, msg) },
 		})
 		if cleared != nil {
-			result.Removed = displayPaths(cleared.removed)
+			result.Removed = displayStrings(cleared.removed)
 			result.Kept = append(result.Kept, cleared.kept...)
 		}
 		if err != nil {
@@ -567,7 +567,7 @@ func (s *Service) strandedUninstallPaths(ctx context.Context, game *domain.Game,
 	var stranded []PurgeStrandedPath
 	for _, row := range rows {
 		if row.SourceID == sourceID && row.ModID == modID && !underCurrentRoot(game, row.ModPath) {
-			stranded = append(stranded, PurgeStrandedPath{Path: displayPath(row.RelativePath), ModPath: row.ModPath})
+			stranded = append(stranded, PurgeStrandedPath{Path: relOf(row.Path), Root: rootOf(row.Path), ModPath: row.ModPath})
 
 		}
 	}

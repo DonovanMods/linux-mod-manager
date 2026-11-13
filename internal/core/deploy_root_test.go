@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bethesda"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
@@ -186,9 +187,10 @@ func TestDeployRoot_RefusesAGameRootFolderThatLeavesThroughALink(t *testing.T) {
 	assertAbsent(t, filepath.Join(game.InstallPath, "d3d11.dll"), "the failed mod is rolled back")
 }
 
-// verify --fix, conflicts and `lmm mod files` see a game-root file under
-// its own root and name it so: "<game root>/d3d11.dll", never "d3d11.dll",
-// which would be the Data file of that name.
+// verify, conflicts and `lmm mod files` see a game-root file under its own
+// root and say so: its path with root "install_path", which a frontend
+// shows as "<game root>/d3d11.dll" - never a bare "d3d11.dll", which would
+// be the Data file of that name.
 func TestDeployRoot_ReportsNameTheGameRoot(t *testing.T) {
 	svc, _ := newOriginalsService(t)
 	game := newRootGame(t, svc, domain.LinkCopy)
@@ -203,13 +205,14 @@ func TestDeployRoot_ReportsNameTheGameRoot(t *testing.T) {
 	conflicts, err := svc.GetProfileConflicts(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Len(t, conflicts, 1)
-	assert.Equal(t, "<game root>/d3d11.dll", conflicts[0].Path)
+	assert.Equal(t, "d3d11.dll", conflicts[0].Path)
+	assert.Equal(t, domain.RootInstallPath, conflicts[0].Root)
 
 	files, err := svc.ModFiles(context.Background(), game, "default", "src", "enb")
 	require.NoError(t, err)
 	var paths []string
 	for _, f := range files.Files {
-		paths = append(paths, f.Path)
+		paths = append(paths, domain.DisplayDeployPath(f.Root, f.Path))
 		assert.True(t, f.Deployed, f.Path)
 	}
 	assert.ElementsMatch(t, []string{"textures/sky/sky.dds", "<game root>/enbseries/effect.fx"}, paths,
@@ -230,8 +233,9 @@ func TestDeployRoot_ReportsNameTheGameRoot(t *testing.T) {
 		}
 	}
 	require.Len(t, modified, 1, "%+v", result.Findings)
-	assert.Equal(t, "<game root>/enbseries/effect.fx", modified[0].FileID)
-	assert.Contains(t, modified[0].Note, "<game root>/enbseries/effect.fx")
+	assert.Equal(t, "enbseries/effect.fx", modified[0].FileID)
+	assert.Equal(t, domain.RootInstallPath, modified[0].Root)
+	assert.Contains(t, modified[0].Note, "<game root>/enbseries/effect.fx", "prose names the root")
 	for _, f := range result.Findings {
 		assert.NotContains(t, f.Note, "\x00", "no internal key reaches a finding")
 		assert.NotContains(t, f.FileID, "\x00")
@@ -262,7 +266,7 @@ func TestDeployRoot_VerifyFixConvergesAGameRootFileNoLongerShipped(t *testing.T)
 	var fixed []string
 	for _, f := range report.Result.Findings {
 		if f.Status == "fixed_stale_deployment" {
-			fixed = append(fixed, f.FileID)
+			fixed = append(fixed, domain.DisplayDeployPath(f.Root, f.FileID))
 		}
 	}
 	assert.Equal(t, []string{"<game root>/d3d11.dll"}, fixed)
@@ -431,7 +435,7 @@ func TestDeployRoot_OverrideOnAGameRootModFile(t *testing.T) {
 	for _, f := range report.Result.Findings {
 		assert.NotEqual(t, core.VerifyStatusDeployedModified, f.Status, "%+v", f)
 		if f.Status == core.VerifyStatusDeployedOverridden {
-			overridden = append(overridden, f.FileID)
+			overridden = append(overridden, domain.DisplayDeployPath(f.Root, f.FileID))
 		}
 	}
 	assert.Equal(t, []string{"<game root>/enbseries/effect.fx"}, overridden)
@@ -468,7 +472,192 @@ func TestDeployRoot_DeployPurgeMovesAFileAnEarlierRoutingPutInData(t *testing.T)
 	require.NoError(t, err)
 	var paths []string
 	for _, f := range files.Files {
-		paths = append(paths, f.Path)
+		paths = append(paths, domain.DisplayDeployPath(f.Root, f.Path))
 	}
 	assert.ElementsMatch(t, []string{"<game root>/d3d11.dll", "<game root>/enbseries/effect.fx", "textures/sky/sky.dds"}, paths)
+}
+
+// The bethesda adapter's ENB preset (#629 review, the blocker): a top-level
+// enbseries.ini takes the whole mod to the game root, and the mod's Data/
+// folder - whatever its case - lands in the mod_path, each file resolving
+// to the cache member it came from, under every link method; verify finds
+// nothing wrong, and a purge takes it all down.
+func TestDeployRoot_ENBPresetWithADataFolder(t *testing.T) {
+	for _, method := range rootMethods {
+		t.Run(method.String(), func(t *testing.T) {
+			svc, _ := newOriginalsService(t)
+			svc.RegisterAdapter(bethesda.New())
+			install := t.TempDir()
+			game := &domain.Game{ID: "skyrim-se", Name: "Skyrim", InstallPath: install, ModPath: filepath.Join(install, "Data"),
+				LinkMethod: method, LinkMethodExplicit: true, Adapter: bethesda.ID}
+			require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
+			require.NoError(t, svc.SaveGame(context.Background(), game))
+			files := map[string][]byte{
+				"enbseries.ini":         []byte("[GLOBAL]"),
+				"enbseries/effect.fx":   []byte("shader"),
+				"Data/Weather.esp":      []byte("weather plugin"),
+				"data/textures/sky.dds": []byte("lowercase data folder"),
+				"Data/meshes/cloud.nif": []byte("cloud"),
+			}
+			seedNamedInstalledMod(t, svc, game, "src", "preset", "ENB Preset", "1.0", true, files)
+			seedProfileWithMod(t, svc, game.ID, "default", "src", "preset", "1.0")
+
+			res, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+			require.NoError(t, err)
+			assert.Equal(t, 1, res.Deployed)
+			assert.Empty(t, res.Skipped)
+			assert.Empty(t, res.Warnings)
+
+			for path, want := range map[string]string{
+				filepath.Join(install, "enbseries.ini"):            "[GLOBAL]",
+				filepath.Join(install, "enbseries", "effect.fx"):   "shader",
+				filepath.Join(game.ModPath, "Weather.esp"):         "weather plugin",
+				filepath.Join(game.ModPath, "textures", "sky.dds"): "lowercase data folder",
+				filepath.Join(game.ModPath, "meshes", "cloud.nif"): "cloud",
+			} {
+				assert.Equal(t, want, readFileString(t, path), path)
+			}
+			assertAbsent(t, filepath.Join(install, "data"), "a lowercase data/ folder is the game's Data/, never one beside it")
+			assertAbsent(t, filepath.Join(game.ModPath, "Data"), "nor Data/Data/")
+
+			report, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Force: true}, nil)
+			require.NoError(t, err)
+			for _, f := range report.Result.Findings {
+				switch f.Status {
+				case core.VerifyStatusDeployedModified, core.VerifyStatusDeployedBlocked, "stale_deployment", "loader_plugin_unlinked":
+					t.Errorf("verify found the deploy wrong: %+v", f)
+				}
+			}
+			assert.Zero(t, report.Result.Issues, "%+v", report.Result.Findings)
+
+			plan, err := svc.PlanPurge(context.Background(), game, "default", core.PurgeOptions{})
+			require.NoError(t, err)
+			_, err = svc.ApplyPurge(context.Background(), game, plan, core.PurgeOptions{}, nil)
+			require.NoError(t, err)
+			for _, path := range []string{
+				filepath.Join(install, "enbseries.ini"), filepath.Join(install, "enbseries"),
+				filepath.Join(game.ModPath, "Weather.esp"), filepath.Join(game.ModPath, "textures"), filepath.Join(game.ModPath, "meshes"),
+			} {
+				assertAbsent(t, path, "the purge takes it down")
+			}
+		})
+	}
+}
+
+// A mod_path folder literally named "<game root>" (#629 review) is its own
+// file, never the game-root file its display spelling matches: both deploy,
+// both are recorded, and a verify --fix that takes the game-root one down
+// leaves the other.
+func TestDeployRoot_AFolderNamedGameRootIsItsOwnFile(t *testing.T) {
+	svc, _ := newOriginalsService(t)
+	game := newRootGame(t, svc, domain.LinkSymlink)
+	seedNamedInstalledMod(t, svc, game, "src", "odd", "Odd Mod", "1.0", true, map[string][]byte{
+		"d3d11.dll":             []byte("root d3d11"),
+		"<game root>/d3d11.dll": []byte("data-side d3d11"),
+	})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "odd", "1.0")
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "root d3d11", readFileString(t, filepath.Join(game.InstallPath, "d3d11.dll")))
+	assert.Equal(t, "data-side d3d11", readFileString(t, filepath.Join(game.ModPath, "<game root>", "d3d11.dll")))
+
+	files, err := svc.ModFiles(context.Background(), game, "default", "src", "odd")
+	require.NoError(t, err)
+	got := map[domain.DeployPath]bool{}
+	for _, f := range files.Files {
+		got[domain.DeployPath{Root: f.Root, Rel: f.Path}] = true
+	}
+	assert.Equal(t, map[domain.DeployPath]bool{domain.GameRootFile("d3d11.dll"): true, domain.ModPathFile("<game root>/d3d11.dll"): true}, got)
+
+	cached := svc.GetGameCache(game).GetFilePath(cache.Key{GameID: "g1", SourceID: "src", ModID: "odd", Version: "1.0"}, "d3d11.dll")
+	require.NoError(t, os.Remove(cached))
+	_, err = svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+	assertAbsent(t, filepath.Join(game.InstallPath, "d3d11.dll"), "the game-root file no longer shipped goes")
+	assert.Equal(t, "data-side d3d11", readFileString(t, filepath.Join(game.ModPath, "<game root>", "d3d11.dll")), "the folder's file stays")
+}
+
+// No result a frontend is handed carries an internal key (#629 review): no
+// NUL byte anywhere in the JSON of a deploy plan and result, a verify, a
+// purge plan and result, conflicts, mod files or a snapshot of a game with
+// game-root files.
+func TestDeployRoot_NoOutputCarriesANul(t *testing.T) {
+	svc, _ := newOriginalsService(t)
+	game := newRootGame(t, svc, domain.LinkCopy)
+	seedNamedInstalledMod(t, svc, game, "src", "enb", "ENB", "1.0", true, enbFiles)
+	seedNamedInstalledMod(t, svc, game, "src", "enb2", "Other ENB", "1.0", true, map[string][]byte{"d3d11.dll": []byte("another d3d11")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "enb", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "enb2", "1.0")
+	ctx := context.Background()
+	// A folder under the game root that is a link, so a deploy has a
+	// refusal to report too.
+	require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(game.InstallPath, "enbseries")))
+
+	var docs []any
+	plan, err := svc.PlanDeploy(ctx, game, "default", core.DeployOptions{})
+	require.NoError(t, err)
+	docs = append(docs, plan)
+	res, _ := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	docs = append(docs, res)
+	require.NoError(t, os.Remove(filepath.Join(game.InstallPath, "enbseries")))
+	res, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	docs = append(docs, res)
+	tuned := filepath.Join(game.InstallPath, "enbseries", "effect.fx")
+	require.NoError(t, os.Remove(tuned))
+	require.NoError(t, os.WriteFile(tuned, []byte("mine"), 0o644))
+	report, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	docs = append(docs, report)
+	conflicts, err := svc.GetProfileConflicts(ctx, game, "default")
+	require.NoError(t, err)
+	docs = append(docs, conflicts)
+	files, err := svc.ModFiles(ctx, game, "default", "src", "enb")
+	require.NoError(t, err)
+	docs = append(docs, files)
+	snap, err := svc.CreateSnapshot(ctx, game, "default", "s")
+	require.NoError(t, err)
+	docs = append(docs, snap)
+	purge, err := svc.PlanPurge(ctx, game, "default", core.PurgeOptions{})
+	require.NoError(t, err)
+	docs = append(docs, purge)
+	purged, err := svc.ApplyPurge(ctx, game, purge, core.PurgeOptions{}, nil)
+	require.NoError(t, err)
+	docs = append(docs, purged)
+	for i, d := range docs {
+		b, err := json.Marshal(d)
+		require.NoError(t, err)
+		assert.NotContains(t, string(b), `\u0000`, "document %d: %s", i, b)
+	}
+	snapDoc, err := os.ReadFile(snap.Path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(snapDoc), `\u0000`)
+}
+
+// A plain deploy after the game's adapter starts routing files to the game
+// root moves them there (#629 review): the deploy's undeploy-before-redeploy
+// step finds the Data/ copy by its record. Every link method.
+func TestDeployRoot_APlainDeployMovesFilesAnEarlierRoutingPutInData(t *testing.T) {
+	for _, method := range rootMethods {
+		t.Run(method.String(), func(t *testing.T) {
+			svc, _ := newOriginalsService(t)
+			game := newRootGame(t, svc, method)
+			game.Adapter = ""
+			require.NoError(t, svc.SaveGame(context.Background(), game))
+			seedNamedInstalledMod(t, svc, game, "src", "enb", "ENB", "1.0", true, enbFiles)
+			seedProfileWithMod(t, svc, "g1", "default", "src", "enb", "1.0")
+			_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+			require.NoError(t, err)
+			require.FileExists(t, filepath.Join(game.ModPath, "d3d11.dll"))
+
+			game.Adapter = rootTestAdapterID
+			require.NoError(t, svc.SaveGame(context.Background(), game))
+			_, err = svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+			require.NoError(t, err)
+			assertAbsent(t, filepath.Join(game.ModPath, "d3d11.dll"), "the Data copy is gone")
+			assertAbsent(t, filepath.Join(game.ModPath, "enbseries"), "")
+			assert.Equal(t, "the ENB's d3d11", readFileString(t, filepath.Join(game.InstallPath, "d3d11.dll")))
+			assert.Equal(t, "shader", readFileString(t, filepath.Join(game.InstallPath, "enbseries", "effect.fx")))
+		})
+	}
 }

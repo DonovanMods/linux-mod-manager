@@ -407,22 +407,29 @@ per file (`RootModPath`, the zero value, or `RootInstallPath`).
   type Vortex's script-extender installer sets) and `enb` to `install_path`.
 
 **Core honours it (#629).** A file routed to `RootInstallPath` deploys
-under the game's `install_path`, relative to it. Core names such a file by a
-*deployed path* whose `install_path` form carries the root in a reserved
-prefix (`domain.InstallPathKey`), so every flow that keeps files by path -
-deploy, install/update/rollback, uninstall, disable, purge, converge,
-verify and `--fix`, conflicts, snapshots, switch/apply, and #630's
-overridden copies - finds it under its own root; `deployed_files` records
-the root in a `root` column (schema v26). Frontends are shown
-`<game root>/d3d11.dll`. Writes and removals under the game root go through
-an openat/no-follow walk beneath `install_path` (`rootLinker`), and a stock
-file a game-root file replaces is captured under the originals store's
-`install_path` root and put back when lmm's file goes. A game whose
-`mod_path` is its `install_path` has one directory, so the answer changes
-nothing there, and a root-routed path that lands inside the `mod_path` (a
-whole-mod route's `Data/` folder) keeps its `mod_path` name.
+under the game's `install_path`, relative to it. Core names every deployed
+file by a `domain.DeployPath` - its root and its path relative to that root
+- so every flow that keeps files by path (deploy, install/update/rollback,
+uninstall, disable, purge, converge, verify and `--fix`, conflicts,
+snapshots, switch/apply, and #630's overridden copies) finds it under its
+own root, and plan/apply matching compares roots, never display strings.
+`deployed_files` records the root in a `root` column (schema v26, CHECKed
+to `mod_path`/`install_path`). Wire documents that report a deployed file
+as an object carry an additive `root` field (`"install_path"`); frontends
+show such a file as `<game root>/d3d11.dll`. Writes and removals under the
+game root, and the restore of an original there, go through an
+openat/no-follow walk beneath `install_path` (`rootLinker`) that refuses any
+folder on the way that is a link; a stock file a game-root file replaces is
+captured under the originals store's `install_path` root and put back when
+lmm's file goes. A game whose `mod_path` is its `install_path` has one
+directory, so the answer changes nothing there. A root-routed member that
+lands inside the `mod_path` - a whole-mod route's `Data/` folder, matched
+case-insensitively - is that `mod_path` file, deployed from its own cache
+member (`Data/Weather.esp` becomes `Weather.esp` under `Data/`). The game
+root's routing applies at deploy time, so after `adapter: bethesda` is set
+the next deploy moves an installed mod's game-root files there.
 
-`RootForModType` is honoured by `deployedPathsForType` for a caller that
+`RootForModType` is honoured by `deployItemsForType` for a caller that
 states a mod type: the whole mod goes to the root the adapter names, and a
 type it does not know is a `*core.ModTypeUnsupportedError`, never
 `mod_path`. Nothing persists a mod type yet; the collections converter

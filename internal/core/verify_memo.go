@@ -266,16 +266,16 @@ func (s *Service) verifyFingerprint(ctx context.Context, game *domain.Game, prof
 		return "", fmt.Errorf("fingerprinting deployed files: %w", err)
 	}
 	for _, row := range deployed {
-		if !isGameRoot(row.RelativePath) {
+		if !row.Path.IsGameRoot() {
 			continue
 		}
 		token := "absent"
-		if info, err := os.Lstat(deployTarget(game, row.RelativePath)); err == nil {
+		if info, err := os.Lstat(deployTarget(game, row.Path)); err == nil {
 			token = fmt.Sprintf("%d\x1f%d\x1f%s", info.Size(), info.ModTime().UnixNano(), info.Mode())
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			token = "error"
 		}
-		_, _ = fmt.Fprintf(h, "rootfile\x1f%s\x1f%s\x1f%s\x1f%s\n", cacheMember(row.RelativePath), row.SourceID, row.ModID, token)
+		_, _ = fmt.Fprintf(h, "rootfile\x1f%s\x1f%s\x1f%s\x1f%s\n", row.Path.Rel, row.SourceID, row.ModID, token)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

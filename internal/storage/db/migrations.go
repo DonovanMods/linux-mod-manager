@@ -688,6 +688,9 @@ func migrateV25(ctx context.Context, q migrationExec) error {
 // primary key, because a game-root "textures/a.dds" (an ENB preset's) and a
 // mod_path "textures/a.dds" are two different files.
 //
+// The column CHECKs its two values, so no writer can store a root a reader
+// would have to guess at (readers refuse an unknown one too).
+//
 // SQLite cannot change a primary key in place, so the table is rebuilt:
 // created beside the old one, filled from it with every row's root
 // 'mod_path', and renamed over it. The mod_path column keeps its #451
@@ -707,7 +710,7 @@ func migrateV26(ctx context.Context, q migrationExec) error {
 		`CREATE TABLE deployed_files_v26 (
 			game_id TEXT NOT NULL,
 			profile_name TEXT NOT NULL,
-			root TEXT NOT NULL DEFAULT 'mod_path',
+			root TEXT NOT NULL DEFAULT 'mod_path' CHECK (root IN ('mod_path', 'install_path')),
 			relative_path TEXT NOT NULL,
 			source_id TEXT NOT NULL,
 			mod_id TEXT NOT NULL,

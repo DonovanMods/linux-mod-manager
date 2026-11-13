@@ -29,11 +29,16 @@ type ConflictModRef struct {
 // profile was reordered - or historically, deploy order was nondeterministic
 // - since the last deploy), meaning a redeploy would change which file wins.
 type ProfileConflict struct {
-	Path            string           `json:"path"`
-	Owner           ConflictModRef   `json:"owner"`
-	AlsoIn          []ConflictModRef `json:"also_in"`
-	LoadOrderWinner ConflictModRef   `json:"load_order_winner"`
-	Stale           bool             `json:"stale"`
+	// Path is relative to Root, in slash form.
+	Path string `json:"path"`
+	// Root is absent for the mod_path, "install_path" for a file deployed
+	// under the game root (#629); a frontend shows the latter as
+	// "<game root>/<path>".
+	Root            domain.DeployRoot `json:"root,omitzero"`
+	Owner           ConflictModRef    `json:"owner"`
+	AlsoIn          []ConflictModRef  `json:"also_in"`
+	LoadOrderWinner ConflictModRef    `json:"load_order_winner"`
+	Stale           bool              `json:"stale"`
 }
 
 // ConflictReport is the document `lmm conflicts` (and serve) renders:
@@ -151,7 +156,7 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 	if err != nil {
 		return nil, err
 	}
-	fileToKeys := make(map[string][]string)
+	fileToKeys := make(map[domain.DeployPath][]string)
 	for _, m := range enabled {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -168,7 +173,7 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 		}
 		key := domain.ModKey(m.SourceID, m.ID)
 		for _, f := range files {
-			fileToKeys[f] = append(fileToKeys[f], key)
+			fileToKeys[f.path] = append(fileToKeys[f.path], key)
 		}
 	}
 
@@ -196,11 +201,11 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 			continue
 		}
 
-		ownerSourceID, ownerModID, found, err := s.GetFileOwner(ctx, game.ID, profileName, path)
+		ownerSourceID, ownerModID, found, err := s.fileOwner(ctx, game.ID, profileName, path)
 		if err != nil {
 			// GetFileOwner errs only on storage failure; conflating that with
 			// "no owner recorded" would silently under-report conflicts.
-			return nil, fmt.Errorf("looking up file owner for %s: %w", displayPath(path), err)
+			return nil, fmt.Errorf("looking up file owner for %s: %w", path, err)
 		}
 		if !found {
 			continue
@@ -221,7 +226,8 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 		}
 
 		conflicts = append(conflicts, ProfileConflict{
-			Path:            displayPath(path),
+			Path:            relOf(path),
+			Root:            rootOf(path),
 			Owner:           ref(ownerKey),
 			AlsoIn:          alsoIn,
 			LoadOrderWinner: ref(winnerKey),
@@ -229,6 +235,11 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 		})
 	}
 
-	sort.Slice(conflicts, func(i, j int) bool { return conflicts[i].Path < conflicts[j].Path })
+	sort.Slice(conflicts, func(i, j int) bool {
+		if conflicts[i].Root != conflicts[j].Root {
+			return conflicts[i].Root < conflicts[j].Root // mod_path files first (#629)
+		}
+		return conflicts[i].Path < conflicts[j].Path
+	})
 	return conflicts, nil
 }

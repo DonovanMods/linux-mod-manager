@@ -397,7 +397,7 @@ func TestInstaller_Uninstall_AbsentCacheEntry_CleansTrackingWithoutError(t *test
 	require.NoError(t, inst.Uninstall(context.Background(), game, mod, "default"),
 		"an absent cache entry means nothing to undeploy, not an error")
 
-	rows, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "1")
+	rows, err := relsOf(database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "1"))
 	require.NoError(t, err)
 	require.Empty(t, rows, "stale tracking rows must still be cleared when the cache entry is gone")
 }
@@ -431,7 +431,7 @@ func TestInstaller_Uninstall_AbsentCacheEntry_RemovesTrackedDeployedFiles(t *tes
 	_, err = os.Stat(deployedPath)
 	require.True(t, os.IsNotExist(err), "the tracked deployed file must be removed via the DB fallback")
 
-	rows, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "1")
+	rows, err := relsOf(database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "1"))
 	require.NoError(t, err)
 	require.Empty(t, rows)
 }
@@ -467,7 +467,7 @@ func TestInstaller_Install_DeployFailureRollsBackAndClearsDB(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "b.esp should not exist")
 
 	// DB should have no records for this mod
-	paths, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "1")
+	paths, err := relsOf(database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "1"))
 	require.NoError(t, err)
 	assert.Empty(t, paths, "DB should have no deployed file records for this mod")
 }
@@ -777,7 +777,7 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_UndeploysSupersededSoleMembers(
 	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
 	assert.NoError(t, err, "the superseding file's member must be deployed")
 
-	rows, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "mod")
+	rows, err := relsOf(database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "mod"))
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"shared.esp", "b.esp"}, rows,
 		"the superseded member's deployed-files row must be removed like any other obsolete file's")
@@ -857,7 +857,7 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_ReverseRestoresOldDeployment(t 
 	seedSameDirNewFile(t, modCache, game, mod, false)
 
 	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileA"}, []string{"fileB"}))
-	rows, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "mod")
+	rows, err := relsOf(database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "mod"))
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"shared.esp", "b.esp"}, rows)
 
@@ -870,7 +870,7 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_ReverseRestoresOldDeployment(t 
 	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
 	assert.True(t, os.IsNotExist(err), "the uncommitted new file's sole member must be removed")
 
-	rows, err = database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "mod")
+	rows, err = relsOf(database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "mod"))
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a.esp", "shared.esp"}, rows,
 		"the compensated deployed-file rows must describe the restored OLD deployment")

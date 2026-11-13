@@ -2669,14 +2669,24 @@ func (s *Service) deleteInstalledMod(ctx context.Context, sourceID, modID, gameI
 	return s.db.DeleteInstalledMod(ctx, sourceID, modID, gameID, profileName)
 }
 
-// GetDeployedFilesForMod returns the relative paths the given mod has deployed
-// in the named profile.
+// GetDeployedFilesForMod returns the paths the given mod has deployed in the
+// named profile, each as domain.DeployPath's String spells it: a mod_path
+// file by its relative path, a game-root file (#629) as "<game root>/...".
+// Core's own flows read the typed records instead.
 //
 // No cmd/app caller today (converge/deploy/ModFiles call it internally);
 // kept exported as a serve-facing query (Phase 3 Ruling 10) - a frontend
 // inspecting one mod's deployed files needs the same lookup.
 func (s *Service) GetDeployedFilesForMod(ctx context.Context, gameID, profileName, sourceID, modID string) ([]string, error) {
-	return s.db.GetDeployedFilesForMod(ctx, gameID, profileName, sourceID, modID)
+	paths, err := s.db.GetDeployedFilesForMod(ctx, gameID, profileName, sourceID, modID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = p.String()
+	}
+	return out, nil
 }
 
 // getLastDeployTime returns the timestamp of the most recent deploy for the
@@ -2690,14 +2700,21 @@ func (s *Service) getLastDeployTime(ctx context.Context, gameID, profileName str
 	return s.db.GetLastDeployTime(ctx, gameID, profileName)
 }
 
-// GetFileOwner reports which mod currently owns a deployed file. The bool is
-// false when no record exists; err is non-nil only on storage errors.
+// GetFileOwner reports which mod currently owns a deployed file under the
+// game's mod_path (relativePath is relative to it; fileOwner asks about any
+// deployed path). The bool is false when no record exists; err is non-nil
+// only on storage errors.
 //
 // No cmd/app caller today (Conflicts calls it internally); kept exported as
 // a serve-facing query (Phase 3 Ruling 10) - a frontend resolving one file's
 // ownership needs the same lookup.
 func (s *Service) GetFileOwner(ctx context.Context, gameID, profileName, relativePath string) (sourceID, modID string, found bool, err error) {
-	owner, err := s.db.GetFileOwner(ctx, gameID, profileName, relativePath)
+	return s.fileOwner(ctx, gameID, profileName, domain.ModPathFile(relativePath))
+}
+
+// fileOwner is GetFileOwner for any deployed path (#629).
+func (s *Service) fileOwner(ctx context.Context, gameID, profileName string, path domain.DeployPath) (sourceID, modID string, found bool, err error) {
+	owner, err := s.db.GetFileOwner(ctx, gameID, profileName, path)
 	if err != nil {
 		return "", "", false, err
 	}

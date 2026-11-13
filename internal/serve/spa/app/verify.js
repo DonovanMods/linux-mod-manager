@@ -7,6 +7,7 @@
 // still printing the raw status slug beside a card rendering the same
 // finding as prose.
 
+import { isGameRoot } from "./deploypath.js";
 import { displayVersion } from "./version.js";
 
 /** findingSubject names what a finding is about: its mod, or - for a
@@ -40,18 +41,11 @@ export function findingLabel(f) {
   return label;
 }
 
-/** GAME_ROOT_PREFIX is how core names a file deployed under the game's
- * install folder rather than its mod folder (issue 629): "<game root>/"
- * in front of the path - a script extender's loader, an ENB's d3d11.dll.
- * It is core's spelling (domain.GameRootLabel), passed through as is. */
-export const GAME_ROOT_PREFIX = "<game root>/";
-
 /** isGameRootFinding reports whether a finding is about a file deployed
- * under the game root, so a row can say so beside its path (issue 629). */
+ * under the game root (issue 629) - core's root field, never a guess from
+ * the path - so a row can say so beside its path. */
 export function isGameRootFinding(f) {
-  return (
-    typeof f.file_id === "string" && f.file_id.startsWith(GAME_ROOT_PREFIX)
-  );
+  return isGameRoot(f?.root);
 }
 
 /** isInformational reports whether a finding is a fact about the install

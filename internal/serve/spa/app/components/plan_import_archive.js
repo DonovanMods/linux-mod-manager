@@ -24,6 +24,7 @@
 // Confirm's "Install anyway" (confirmplan.js), and the dependencies it does
 // not install, by name.
 
+import { deployedPath } from "../deploypath.js";
 import { html } from "../render.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 import { useSourceName } from "../sourcenames.js";
@@ -181,8 +182,11 @@ export function ImportArchivePlanView({ plan, modal, actions }) {
             <ul class="plan__paths">
               ${conflicts.map(
                 (c) =>
-                  html`<li key=${c.relative_path} class="mono">
-                    ${c.relative_path}
+                  html`<li
+                    key=${deployedPath(c.relative_path, c.root)}
+                    class="mono"
+                  >
+                    ${deployedPath(c.relative_path, c.root)}
                   </li>`,
               )}
             </ul>

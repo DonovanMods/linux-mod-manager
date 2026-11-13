@@ -42,20 +42,29 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// overriddenFiles is the files under one deploy root that a profile's
-// overrides replace: each path relative to the root, in slash form, mapped
-// to the content its override writes. The zero value overrides nothing.
-type overriddenFiles map[string][]byte
+// overriddenFiles is the mod files a profile's overrides replace: each by
+// its deployed path (root and slash-form relative path), mapped to the
+// content its override writes. The zero value overrides nothing.
+type overriddenFiles map[domain.DeployPath][]byte
 
-// content is the override for rel (relative to the root, either slash
-// form), and whether there is one.
-func (o overriddenFiles) content(rel string) ([]byte, bool) {
+// overrideKey is p as overriddenFiles keys it: its relative path cleaned
+// and in slash form.
+func overrideKey(p domain.DeployPath) domain.DeployPath {
+	return domain.DeployPath{Root: p.Root, Rel: filepath.ToSlash(filepath.Clean(p.Rel))}
+}
+
+// content is the override for p, and whether there is one.
+func (o overriddenFiles) content(p domain.DeployPath) ([]byte, bool) {
 	if len(o) == 0 {
 		return nil, false
 	}
-	c, ok := o[filepath.ToSlash(filepath.Clean(rel))]
+	c, ok := o[overrideKey(p)]
 	return c, ok
 }
+
+// forget drops p's override, for an Install or replace that could not place
+// it and deploys the mod's own file instead.
+func (o overriddenFiles) forget(p domain.DeployPath) { delete(o, overrideKey(p)) }
 
 // overriddenUnder resolves profile's override keys - each relative to
 // game.InstallPath - against root, a deploy root of game, keeping the ones
@@ -63,7 +72,7 @@ func (o overriddenFiles) content(rel string) ([]byte, bool) {
 // escaping) lands nowhere. The match is by path, tried as written and then
 // with both directories resolved through their symlinks, so a mod_path
 // reached through a link still matches.
-func overriddenUnder(game *domain.Game, profile *domain.Profile, root string) overriddenFiles {
+func overriddenUnder(game *domain.Game, profile *domain.Profile, root string) map[string][]byte {
 	if profile == nil || len(profile.Overrides) == 0 || game.InstallPath == "" || root == "" {
 		return nil
 	}
@@ -82,7 +91,7 @@ func overriddenUnder(game *domain.Game, profile *domain.Profile, root string) ov
 	if r, err := resolveExisting(absRoot); err == nil {
 		realRoot = r
 	}
-	out := overriddenFiles{}
+	out := map[string][]byte{}
 	for key, content := range profile.Overrides {
 		dest, _, err := overrideDest(base, key)
 		if err != nil {
@@ -112,10 +121,9 @@ func relUnder(root, path string) (string, bool) {
 }
 
 // overriddenModFiles is the mod files of game that profileName's overrides
-// replace, keyed by deployed path: those under its mod_path by their path
-// relative to it, and - for a game with a game root of its own (#629) -
-// those under its install_path, outside the mod_path, by their
-// install_path key. A profile that cannot be read overrides nothing: the
+// replace, keyed by deployed path: those under its mod_path, and - for a
+// game with a game root of its own (#629) - those under its install_path
+// outside the mod_path. A profile that cannot be read overrides nothing: the
 // flow that reads it for its own purposes reports the failure.
 func (s *Service) overriddenModFiles(game *domain.Game, profileName string) overriddenFiles {
 	if profileName == "" {
@@ -130,19 +138,26 @@ func (s *Service) overriddenModFiles(game *domain.Game, profileName string) over
 
 // overriddenDeployed is overriddenModFiles for a profile already read.
 func overriddenDeployed(game *domain.Game, profile *domain.Profile) overriddenFiles {
-	out := overriddenUnder(game, profile, game.ModPath)
+	under := overriddenUnder(game, profile, game.ModPath)
+	var out overriddenFiles
+	add := func(p domain.DeployPath, content []byte) {
+		if out == nil {
+			out = overriddenFiles{}
+		}
+		out[overrideKey(p)] = content
+	}
+	for rel, content := range under {
+		add(domain.ModPathFile(rel), content)
+	}
 	if !routesToGameRoot(game) {
 		return out
 	}
 	for rel, content := range overriddenUnder(game, profile, game.InstallPath) {
-		key := gameRootKey(game, filepath.FromSlash(rel))
-		if !isGameRoot(key) {
+		key := gameRootPath(game, filepath.FromSlash(rel))
+		if !key.IsGameRoot() {
 			continue // a mod_path file, which the first answer holds
 		}
-		if out == nil {
-			out = overriddenFiles{}
-		}
-		out[key] = content
+		add(key, content)
 	}
 	return out
 }
@@ -369,7 +384,7 @@ func holdsOverriddenCopy(dst string, content []byte) bool {
 // ownCopy reports whether jd finds the regular file at dst lmm's own: under
 // a symlink deployment, the overridden copy a profile override left (#630),
 // which is no replacement of the user's.
-func ownCopy(ctx context.Context, jd deployedJudge, rel, dst string) bool {
+func ownCopy(ctx context.Context, jd deployedJudge, rel domain.DeployPath, dst string) bool {
 	j := jd.judge(ctx, rel, dst)
 	return j.verdict == deployedOurs && j.regular
 }
@@ -435,11 +450,11 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 	}
 	var warnings []string
 	for _, row := range rows {
-		rel := row.RelativePath
-		if !underCurrentRoot(game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(cacheMember(rel))) {
+		rel := row.Path
+		if !underCurrentRoot(game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(rel.Rel)) {
 			continue
 		}
-		dst := deployTarget(game, filepath.FromSlash(rel))
+		dst := deployTarget(game, rel)
 		content, overridden := mine.content(rel)
 		if !overridden && !staleCopyCandidate(rel, dst, elsewhere, linked) {
 			continue
@@ -458,8 +473,8 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 			if form == formOther {
 				continue
 			}
-			if err := writeOverriddenCopy(deployRootDir(game, rel), cacheMember(rel), content); err != nil {
-				warnings = append(warnings, fmt.Sprintf("%s: could not write the profile's override over the mod's file: %v", displayPath(rel), err))
+			if err := writeOverriddenCopy(deployRootDir(game, rel), rel.Rel, content); err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: could not write the profile's override over the mod's file: %v", rel, err))
 				continue
 			}
 			s.recordOverriddenCopy(ctx, game, profileName, rel, dst)
@@ -471,7 +486,7 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 			continue
 		}
 		if err := s.restorePlainDeployment(ctx, installer, game, profileName, row, src, dst); err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: could not put the mod's own file back in place of the override another profile left: %v", displayPath(rel), err))
+			warnings = append(warnings, fmt.Sprintf("%s: could not put the mod's own file back in place of the override another profile left: %v", rel, err))
 		}
 	}
 	return warnings
@@ -480,8 +495,8 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 // overriddenElsewhere is the mod files the game's other profiles override
 // and profileName does not (mine): where an overridden copy of another
 // profile's may be left for this one to undo.
-func (s *Service) overriddenElsewhere(game *domain.Game, profileName string, mine overriddenFiles) map[string]bool {
-	elsewhere := map[string]bool{}
+func (s *Service) overriddenElsewhere(game *domain.Game, profileName string, mine overriddenFiles) map[domain.DeployPath]bool {
+	elsewhere := map[domain.DeployPath]bool{}
 	names, err := config.ListProfiles(s.configDir, game.ID)
 	if err != nil {
 		return elsewhere
@@ -504,8 +519,8 @@ func (s *Service) overriddenElsewhere(game *domain.Game, profileName string, min
 // path another profile overrides, or, under symlink and hardlink (linked),
 // any regular file of its own, where a plain deployment never is one. Only
 // a candidate is judged (deployedFormOf), which hashes.
-func staleCopyCandidate(rel, dst string, elsewhere map[string]bool, linked bool) bool {
-	return elsewhere[filepath.ToSlash(rel)] || (linked && soleRegularFile(dst))
+func staleCopyCandidate(rel domain.DeployPath, dst string, elsewhere map[domain.DeployPath]bool, linked bool) bool {
+	return elsewhere[overrideKey(rel)] || (linked && soleRegularFile(dst))
 }
 
 // deployedForm is what deployedFormOf finds at a deployed path.
@@ -538,7 +553,7 @@ const (
 // records THAT game's fingerprint on this profile's row (heldFingerprint),
 // which matches that game's file and differs from this mod's cache - read
 // as an override copy, a restore would delete the other game's file.
-func (s *Service) deployedFormOf(ctx context.Context, installer *Installer, others *otherGameRecords, game *domain.Game, profileName, rel, dst string) (form deployedForm, src string) {
+func (s *Service) deployedFormOf(ctx context.Context, installer *Installer, others *otherGameRecords, game *domain.Game, profileName string, rel domain.DeployPath, dst string) (form deployedForm, src string) {
 	if len(others.recording(rel)) > 0 {
 		return formOther, ""
 	}
@@ -557,9 +572,12 @@ func (s *Service) deployedFormOf(ctx context.Context, installer *Installer, othe
 		return formOther, ""
 	}
 	if mod, err := s.GetInstalledMod(ctx, own.SourceID, own.ModID, game.ID, profileName); err == nil {
-		path := installer.cache.GetFilePath(modCacheKey(game.ID, mod.Mod), filepath.FromSlash(cacheMember(rel)))
-		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
-			src = path
+		for _, member := range cachedMembersOf(game, rel) {
+			path := installer.cache.GetFilePath(modCacheKey(game.ID, mod.Mod), member)
+			if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
+				src = path
+				break
+			}
 		}
 	}
 	info, err := os.Lstat(dst)
@@ -618,7 +636,7 @@ func (s *Service) restorePlainDeployment(ctx context.Context, installer *Install
 	if err != nil {
 		return err
 	}
-	lnk := linkerFor(installer.linker, game, row.RelativePath)
+	lnk := linkerFor(installer.linker, game, row.Path)
 	if _, contained := lnk.(rootLinker); !contained {
 		if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -627,7 +645,7 @@ func (s *Service) restorePlainDeployment(ctx context.Context, installer *Install
 	if err := lnk.Deploy(src, dst); err != nil {
 		return err
 	}
-	return installer.recordDeployed(ctx, game, profileName, row.RelativePath, &mod.Mod, installer.deployedFingerprint(dst))
+	return installer.recordDeployed(ctx, game, profileName, row.Path, &mod.Mod, installer.deployedFingerprint(dst))
 }
 
 // soleRegularFile reports whether path is a regular file with one link:
@@ -647,7 +665,7 @@ func soleRegularFile(path string) bool {
 type staleOverrideCheck struct {
 	r          *verifyRun
 	overridden overriddenFiles
-	elsewhere  map[string]bool
+	elsewhere  map[domain.DeployPath]bool
 	installer  *Installer
 	others     *otherGameRecords
 	linked     bool
@@ -679,16 +697,16 @@ func (c *staleOverrideCheck) report(row db.DeployedPath, dst, modName string) bo
 	if c.installer == nil {
 		return false
 	}
-	if _, ok := c.overridden.content(row.RelativePath); ok || !staleCopyCandidate(row.RelativePath, dst, c.elsewhere, c.linked) {
+	if _, ok := c.overridden.content(row.Path); ok || !staleCopyCandidate(row.Path, dst, c.elsewhere, c.linked) {
 		return false
 	}
 	// A file another game records is that game's (#445), whatever this
 	// profile's row fingerprints - as the convergence leaves it.
-	if _, held := heldElsewhere(c.others, row.RelativePath, dst); held {
+	if _, held := heldElsewhere(c.others, row.Path, dst); held {
 		return false
 	}
 	r := c.r
-	form, src := r.svc.deployedFormOf(r.ctx, c.installer, c.others, r.game, r.profile, row.RelativePath, dst)
+	form, src := r.svc.deployedFormOf(r.ctx, c.installer, c.others, r.game, r.profile, row.Path, dst)
 	if form != formOverrideCopy {
 		return false
 	}
@@ -704,9 +722,9 @@ func (c *staleOverrideCheck) report(row db.DeployedPath, dst, modName string) bo
 	}
 	fixable, reason := r.deployRowFixability(repairable && !fixing, reason, repairable && fixing, true)
 	r.finding(VerifyFinding{
-		ModID: row.ModID, ModName: modName, FileID: displayPath(row.RelativePath),
+		ModID: row.ModID, ModName: modName, FileID: relOf(row.Path), Root: rootOf(row.Path),
 		Status:        VerifyStatusOverrideStale,
-		Note:          displayPath(row.RelativePath) + ": still holds an override the profile no longer has",
+		Note:          row.Path.String() + ": still holds an override the profile no longer has",
 		Fixable:       fixable,
 		FixableReason: reason,
 	}, VerifyEvent{})
@@ -721,17 +739,17 @@ func (c *staleOverrideCheck) report(row db.DeployedPath, dst, modName string) bo
 func (c *staleOverrideCheck) repair(row db.DeployedPath, src, dst string) {
 	r := c.r
 	if err := r.refuseLiveDeploy(); err != nil {
-		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("--fix did not restore %s: %s", displayPath(row.RelativePath), deployRefusedReason(err))})
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("--fix did not restore %s: %s", row.Path.String(), deployRefusedReason(err))})
 		return
 	}
 	if err := r.svc.restorePlainDeployment(r.ctx, c.installer, r.game, r.profile, row, src, dst); err != nil {
 		last := &r.result.Findings[len(r.result.Findings)-1]
 		last.FixableReason = fmt.Sprintf("this --fix run could not put the mod's own file back: %v", err)
-		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Could not restore %s: %v", displayPath(row.RelativePath), err)})
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Could not restore %s: %v", row.Path.String(), err)})
 		return
 	}
-	r.resolveLast(VerifyStatusFixedOverrideStale, displayPath(row.RelativePath)+": put the mod's own file back in place of an override the profile no longer has")
+	r.resolveLast(VerifyStatusFixedOverrideStale, row.Path.String()+": put the mod's own file back in place of an override the profile no longer has")
 	r.result.Warnings--
-	r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Restored the mod's own " + displayPath(row.RelativePath), Fixed: true})
+	r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Restored the mod's own " + row.Path.String(), Fixed: true})
 
 }

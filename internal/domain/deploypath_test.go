@@ -1,8 +1,8 @@
 package domain_test
 
 import (
-	"os"
-	"path/filepath"
+	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -11,31 +11,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDeployedPath_RoundTrip(t *testing.T) {
-	key := domain.InstallPathKey("enbseries/a.fx")
-	rel, root := domain.SplitDeployedPath(key)
-	assert.True(t, root)
-	assert.Equal(t, "enbseries/a.fx", rel)
-	assert.True(t, domain.IsInstallPathKey(key))
-
-	rel, root = domain.SplitDeployedPath("textures/a.dds")
-	assert.False(t, root)
-	assert.Equal(t, "textures/a.dds", rel)
-	assert.False(t, domain.IsInstallPathKey("textures/a.dds"))
+func TestDeployPath_IdentityIsRootAndPath(t *testing.T) {
+	assert.NotEqual(t, domain.GameRootFile("textures/a.dds"), domain.ModPathFile("textures/a.dds"))
+	assert.Equal(t, domain.DeployPath{Rel: "a"}, domain.ModPathFile("a"), "the zero root is the mod_path")
+	assert.True(t, domain.GameRootFile("d3d11.dll").IsGameRoot())
+	assert.False(t, domain.ModPathFile("d3d11.dll").IsGameRoot())
+	// A mod_path folder literally named "<game root>" is its own file.
+	assert.NotEqual(t, domain.GameRootFile("d3d11.dll"), domain.ModPathFile("<game root>/d3d11.dll"))
 }
 
-func TestDisplayDeployedPath(t *testing.T) {
-	assert.Equal(t, "<game root>/d3d11.dll", domain.DisplayDeployedPath(domain.InstallPathKey("d3d11.dll")))
-	assert.Equal(t, "textures/a.dds", domain.DisplayDeployedPath("textures/a.dds"))
+func TestDeployPath_String(t *testing.T) {
+	assert.Equal(t, "<game root>/enbseries/a.fx", domain.GameRootFile("enbseries/a.fx").String())
+	assert.Equal(t, "textures/a.dds", domain.ModPathFile("textures/a.dds").String())
 }
 
-// The key's point: a path joined onto a directory without asking its root
-// is one no system call accepts, so a code path that forgot cannot touch
-// the mod_path file of the same name.
-func TestInstallPathKey_UnjoinedKeyIsRefusedBySyscalls(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "d3d11.dll"), []byte("x"), 0o644))
-	_, err := os.Lstat(filepath.Join(dir, domain.InstallPathKey("d3d11.dll")))
-	require.Error(t, err)
-	assert.False(t, os.IsNotExist(err), "a NUL in a path is refused outright, not reported missing")
+func TestDeployRoot_Text(t *testing.T) {
+	b, err := json.Marshal(struct {
+		R domain.DeployRoot `json:"root"`
+	}{domain.RootInstallPath})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"root":"install_path"}`, string(b))
+	var r domain.DeployRoot
+	require.NoError(t, r.UnmarshalText([]byte("mod_path")))
+	assert.Equal(t, domain.RootModPath, r)
+	assert.Error(t, r.UnmarshalText([]byte("modpath")), "an unknown root is refused, never read as mod_path")
+	_, err = domain.DeployRoot(7).MarshalText()
+	assert.Error(t, err)
+}
+
+func TestCompareDeployPaths_ModPathFirstThenByPath(t *testing.T) {
+	ps := []domain.DeployPath{domain.GameRootFile("a"), domain.ModPathFile("z"), domain.ModPathFile("b"), domain.GameRootFile("0")}
+	slices.SortFunc(ps, domain.CompareDeployPaths)
+	assert.Equal(t, []domain.DeployPath{domain.ModPathFile("b"), domain.ModPathFile("z"), domain.GameRootFile("0"), domain.GameRootFile("a")}, ps)
 }

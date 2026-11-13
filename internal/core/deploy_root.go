@@ -3,17 +3,17 @@
 // script extender's loader and DLLs, an ENB's d3d11.dll and enbseries/,
 // which the bethesda adapter routes there through adapter.RootRouter).
 //
-// A deployed file is named everywhere in core by its DEPLOYED PATH (see
-// internal/domain/deploypath.go): a mod_path file by its path relative to
-// the mod_path, exactly as before #629, and an install_path file by
-// domain.InstallPathKey of its path relative to the install_path. So the
-// maps, sets, records and comparisons every flow keeps by path need no
-// second key, and deployed_files stores the root in a column of its own.
-// What every flow DOES have to ask is where a deployed path lives -
-// deployTarget - and which cache member it is - cacheMember. A key that
-// reaches a system call without being resolved holds a NUL byte the kernel
-// refuses, so a missed site fails loudly instead of touching the mod_path
-// file of the same name.
+// A deployed file is named everywhere in core by a domain.DeployPath: its
+// root (the mod_path, as every file was before #629, or the install_path)
+// and its path relative to that root. It is the identity every record, map,
+// set and plan/apply match keeps a file by, so a game-root "textures/a.dds"
+// is never the mod_path file of that name. A deployItem pairs it with the
+// cache member the file's bytes come from, which differs from the path
+// where a whole-mod game-root route lands inside the mod_path (an ENB
+// preset's Data/ folder, gameRootPath). Every flow asks deployTarget where
+// a path lives, and frontends are handed the path and its root apart - or,
+// in a plain list of strings, DeployPath.String's "<game root>/..." - and
+// spell it at their own render step.
 //
 // The install_path holds the game's own files (its executables and DLLs),
 // so a game-root file is held to the rules #630 holds an overridden copy to:
@@ -32,6 +32,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
@@ -54,37 +55,88 @@ func routesToGameRoot(game *domain.Game) bool {
 	return game.ModPath == "" || !samePath(game.ModPath, game.InstallPath)
 }
 
-// deployedPaths maps one mod's cache listing (cache-entry-relative members)
-// to the deployed paths those members take: the adapter's RouteRoots
-// answer, asked once for the whole listing because some of its rules are
-// about the mod as a whole (an ENB preset recognised by one file).
-func deployedPaths(a adapter.GameAdapter, game *domain.Game, files []string) []string {
-	out, _ := deployedPathsForType(a, game, "", files)
+// deployItem is one cache member as the deployed file it becomes (#629):
+// path is the file's identity in the game - its root and its path relative
+// to that root, what every record, map and comparison keeps it by - and
+// member is the cache-entry-relative member its bytes come from. The two
+// paths are the same except where a game-root route lands inside the
+// mod_path (gameRootPath): an ENB preset's Data/Weather.esp is the mod_path
+// file Weather.esp, deployed from the member Data/Weather.esp.
+type deployItem struct {
+	path   domain.DeployPath
+	member string
+}
+
+// recordedItem is the item a deployed path known only from its record
+// stands for: its member is taken to be its relative path, which is what
+// every record but a Data/-folder game-root route's names.
+func recordedItem(p domain.DeployPath) deployItem {
+	return deployItem{path: p, member: filepath.FromSlash(p.Rel)}
+}
+
+// pathsOf is the deployed paths of items, in order.
+func pathsOf(items []deployItem) []domain.DeployPath {
+	out := make([]domain.DeployPath, len(items))
+	for i, it := range items {
+		out[i] = it.path
+	}
 	return out
 }
 
-// pathIndex maps a cache listing's members to their deployed paths.
-type pathIndex map[string]string
+// membersOf is the cache members of items, in order.
+func membersOf(items []deployItem) []string {
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = it.member
+	}
+	return out
+}
 
-// deployedPathIndex is deployedPaths as a member -> deployed path index.
-func deployedPathIndex(a adapter.GameAdapter, game *domain.Game, files []string) pathIndex {
-	keys := deployedPaths(a, game, files)
-	idx := make(pathIndex, len(files))
-	for i, f := range files {
-		idx[f] = keys[i]
+// displayStrings is each of ps as its String spells it, for a wire list of
+// strings, which has no room for a root beside each path (#629); nil for
+// none.
+func displayStrings(ps []domain.DeployPath) []string {
+	if len(ps) == 0 {
+		return nil
+	}
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = p.String()
+	}
+	return out
+}
+
+// deployItems maps one mod's cache listing (cache-entry-relative members)
+// to the deployed files those members become: the adapter's RouteRoots
+// answer, asked once for the whole listing because some of its rules are
+// about the mod as a whole (an ENB preset recognised by one file).
+func deployItems(a adapter.GameAdapter, game *domain.Game, files []string) []deployItem {
+	out, _ := deployItemsForType(a, game, "", files)
+	return out
+}
+
+// itemIndex maps a cache listing's members to the items they become.
+type itemIndex map[string]deployItem
+
+// deployItemIndex is deployItems as a member -> item index.
+func deployItemIndex(a adapter.GameAdapter, game *domain.Game, files []string) itemIndex {
+	items := deployItems(a, game, files)
+	idx := make(itemIndex, len(files))
+	for _, it := range items {
+		idx[it.member] = it
 	}
 	return idx
 }
 
-// of is members' deployed paths, in order; a member the index does not
-// hold keeps its own name.
-func (idx pathIndex) of(members []string) []string {
-	out := make([]string, len(members))
+// of is members' items, in order; a member the index does not hold is a
+// mod_path file of its own name.
+func (idx itemIndex) of(members []string) []deployItem {
+	out := make([]deployItem, len(members))
 	for i, m := range members {
-		if k, ok := idx[m]; ok {
-			out[i] = k
+		if it, ok := idx[m]; ok {
+			out[i] = it
 		} else {
-			out[i] = m
+			out[i] = deployItem{path: domain.ModPathFile(m), member: m}
 		}
 	}
 	return out
@@ -107,15 +159,13 @@ func (e *ModTypeUnsupportedError) Error() string {
 	return fmt.Sprintf("the mod's type %q is not one game %s's adapter (%s) knows where to deploy", e.ModType, e.GameID, e.Adapter)
 }
 
-// deployedPathsForType is deployedPaths for a mod whose type may have been
+// deployItemsForType is deployItems for a mod whose type may have been
 // stated: "" asks the adapter file by file (RouteRoots); any other type
 // routes the WHOLE mod to the root RootForModType names for it, and a type
 // it does not know is a *ModTypeUnsupportedError. Nothing persists a mod
 // type yet - the collections converter (#607) is the first caller that
 // will have one - so every flow today passes "".
-func deployedPathsForType(a adapter.GameAdapter, game *domain.Game, modType string, files []string) ([]string, error) {
-	out := make([]string, len(files))
-	copy(out, files)
+func deployItemsForType(a adapter.GameAdapter, game *domain.Game, modType string, files []string) ([]deployItem, error) {
 	var roots []adapter.DeployRoot
 	if modType == "" {
 		slash := make([]string, len(files))
@@ -141,92 +191,101 @@ func deployedPathsForType(a adapter.GameAdapter, game *domain.Game, modType stri
 			roots[i] = root
 		}
 	}
-	if !routesToGameRoot(game) {
-		return out, nil
-	}
-	for i, r := range roots {
-		if r == adapter.RootInstallPath {
-			out[i] = gameRootKey(game, files[i])
+	toRoot := routesToGameRoot(game)
+	out := make([]deployItem, len(files))
+	for i, f := range files {
+		out[i] = deployItem{path: domain.ModPathFile(f), member: f}
+		if toRoot && roots[i] == adapter.RootInstallPath {
+			out[i].path = gameRootPath(game, f)
 		}
 	}
 	return out, nil
 }
 
-// gameRootKey is the deployed path of rel, a path relative to game's
+// gameRootPath is the deployed path of rel, a path relative to game's
 // install_path. One that lands inside the mod_path - a whole-mod root
-// route's Data/ folder, for a game whose mod_path is install_path/Data -
-// is that mod_path file, and keeps its mod_path name: one place on disk
-// has one deployed path, so conflicts, records and removals see it once.
-func gameRootKey(game *domain.Game, rel string) string {
-	if game.ModPath != "" {
-		if inside, ok := relUnder(game.ModPath, filepath.Join(game.InstallPath, rel)); ok {
-			return filepath.FromSlash(inside)
+// route's Data/ folder, for a game whose mod_path is install_path/Data - is
+// that mod_path file, and keeps its mod_path name: one place on disk has
+// one deployed path, so conflicts, records and removals see it once. The
+// mod_path's own components are matched case-insensitively, since an
+// archive's data/ means the game's Data/ (the game reads it on a
+// case-insensitive filesystem), and a data/ folder beside Data/ is one it
+// never loads.
+func gameRootPath(game *domain.Game, rel string) domain.DeployPath {
+	if prefix, ok := modPathUnderInstall(game); ok {
+		comps := strings.Split(filepath.ToSlash(rel), "/")
+		if len(comps) > len(prefix) {
+			match := true
+			for i, p := range prefix {
+				if !strings.EqualFold(comps[i], p) {
+					match = false
+					break
+				}
+			}
+			if match {
+				return domain.ModPathFile(filepath.FromSlash(strings.Join(comps[len(prefix):], "/")))
+			}
 		}
 	}
-	return domain.InstallPathKey(rel)
+	return domain.GameRootFile(rel)
 }
 
-// cacheMember is the cache-entry-relative member a deployed path deploys:
-// the path relative to its root, which is how the cache entry names it.
-func cacheMember(p string) string {
-	rel, _ := domain.SplitDeployedPath(p)
-	return rel
+// modPathUnderInstall is game's mod_path relative to its install_path, as
+// its components, when the mod_path lies strictly inside it.
+func modPathUnderInstall(game *domain.Game) ([]string, bool) {
+	if game.ModPath == "" || game.InstallPath == "" {
+		return nil, false
+	}
+	rel, ok := relUnder(game.InstallPath, game.ModPath)
+	if !ok {
+		return nil, false
+	}
+	return strings.Split(rel, "/"), true
 }
-
-// isGameRoot reports whether p is a deployed path under the game root.
-func isGameRoot(p string) bool { return domain.IsInstallPathKey(p) }
 
 // deployRootDir is the directory p is relative to in game: its install_path
 // for a game-root path, its mod_path otherwise.
-func deployRootDir(game *domain.Game, p string) string {
-	if isGameRoot(p) {
+func deployRootDir(game *domain.Game, p domain.DeployPath) string {
+	if p.IsGameRoot() {
 		return game.InstallPath
 	}
 	return game.ModPath
 }
 
 // deployTarget is where p lives in game: its root directory joined with its
-// relative path.
-func deployTarget(game *domain.Game, p string) string {
-	rel, root := domain.SplitDeployedPath(p)
-	if root {
-		return filepath.Join(game.InstallPath, filepath.FromSlash(rel))
+// relative path. A game-root path of a game with no install_path has no
+// place, and is "" - never a path relative to the working directory.
+func deployTarget(game *domain.Game, p domain.DeployPath) string {
+	dir := deployRootDir(game, p)
+	if dir == "" && p.IsGameRoot() {
+		return ""
 	}
-	return filepath.Join(game.ModPath, rel)
+	return filepath.Join(dir, filepath.FromSlash(p.Rel))
 }
 
-// displayPath is p as a frontend shows it (domain.DisplayDeployedPath), in
-// slash form.
-func displayPath(p string) string { return domain.DisplayDeployedPath(filepath.ToSlash(p)) }
+// rootOf is the wire root a deployed path reports beside its relative path
+// (#629): the zero value for a mod_path file, so a document about one is
+// unchanged.
+func rootOf(p domain.DeployPath) domain.DeployRoot { return p.Root }
 
-// displayPaths is displayPath of each of ps, in order; nil for nil.
-func displayPaths(ps []string) []string {
-	if ps == nil {
-		return nil
-	}
-	out := make([]string, len(ps))
-	for i, p := range ps {
-		out[i] = displayPath(p)
-	}
-	return out
-}
+// relOf is p's relative path in slash form, as a wire document carries it.
+func relOf(p domain.DeployPath) string { return filepath.ToSlash(p.Rel) }
 
 // originalRootOf is the originals-store root and relative path p is
 // captured and released under: install_path for a game-root file - the
 // root a profile override's originals already use, so a stock file both
 // replace is one original - and mod_path otherwise.
-func originalRootOf(p string) (OriginalRoot, string) {
-	rel, root := domain.SplitDeployedPath(p)
-	if root {
-		return OriginalRootInstallPath, filepath.ToSlash(rel)
+func originalRootOf(p domain.DeployPath) (OriginalRoot, string) {
+	if p.IsGameRoot() {
+		return OriginalRootInstallPath, filepath.ToSlash(p.Rel)
 	}
-	return OriginalRootModPath, filepath.ToSlash(p)
+	return OriginalRootModPath, filepath.ToSlash(p.Rel)
 }
 
 // linkerFor is lnk for a mod_path file, and lnk held to the install_path
 // (rootLinker) for a game-root one.
-func linkerFor(lnk linker.Linker, game *domain.Game, p string) linker.Linker {
-	if isGameRoot(p) {
+func linkerFor(lnk linker.Linker, game *domain.Game, p domain.DeployPath) linker.Linker {
+	if p.IsGameRoot() {
 		return rootLinker{inner: lnk, root: game.InstallPath}
 	}
 	return lnk
@@ -236,13 +295,13 @@ func linkerFor(lnk linker.Linker, game *domain.Game, p string) linker.Linker {
 // removed the deployed paths in removed (linker.CleanupEmptyDirs), each
 // under its own root: game-root paths under the install_path, the rest
 // under the mod_path.
-func cleanupRemoved(game *domain.Game, removed []string) {
+func cleanupRemoved(game *domain.Game, removed []domain.DeployPath) {
 	var mod, root []string
 	for _, p := range removed {
-		if rel, ok := domain.SplitDeployedPath(p); ok {
-			root = append(root, rel)
+		if p.IsGameRoot() {
+			root = append(root, filepath.FromSlash(p.Rel))
 		} else {
-			mod = append(mod, p)
+			mod = append(mod, filepath.FromSlash(p.Rel))
 		}
 	}
 	if len(mod) > 0 {
@@ -290,17 +349,34 @@ func (r rootLinker) open(dst string, create bool) (*os.File, string, error) {
 	if !ok {
 		return nil, "", fmt.Errorf("refusing %s: %w", dst, errOutsideInstallPath)
 	}
+	// The install_path itself may be reached through a link (a Steam
+	// library on another mount); nothing beneath it may. Each folder on
+	// the way is checked here for a clear refusal, and openDirBeneath's
+	// no-follow walk refuses one swapped for a link after the check.
 	realRoot, err := resolveExisting(absRoot)
 	if err != nil {
 		return nil, "", err
 	}
-	realDir, err := resolveExisting(filepath.Join(absRoot, filepath.Dir(filepath.FromSlash(rel))))
-	if err != nil {
-		return nil, "", err
+	dirRel := filepath.Dir(filepath.FromSlash(rel))
+	if dirRel == "." {
+		dirRel = ""
 	}
-	dirRel, ok := dirUnder(realRoot, realDir)
-	if !ok {
-		return nil, "", fmt.Errorf("refusing %s: it leaves the game's install_path (%s) through a symlink", dst, r.root)
+	walked := realRoot
+	for _, comp := range strings.Split(dirRel, string(filepath.Separator)) {
+		if comp == "" {
+			continue
+		}
+		walked = filepath.Join(walked, comp)
+		info, err := os.Lstat(walked)
+		if errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		if err != nil {
+			return nil, "", err
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return nil, "", fmt.Errorf("refusing %s: %s is a link, and lmm never writes or removes anything beneath the game's install_path (%s) through one", dst, walked, r.root)
+		}
 	}
 	dir, err := openDirBeneath(realRoot, dirRel, create)
 	if err != nil {
@@ -445,4 +521,20 @@ func copyAt(dir *os.File, name, src string) (err error) {
 		return fmt.Errorf("creating destination: %w", &os.PathError{Op: "rename", Path: filepath.Join(dir.Name(), name), Err: err})
 	}
 	return nil
+}
+
+// cachedMembersOf is the cache members a deployed path known only from its
+// record may have come from, most likely first: its relative path, and -
+// for a mod_path file of a game whose mod_path lies inside its install_path
+// - that path under the mod_path's own folders, where a whole-mod game-root
+// route's Data/ member came from (gameRootPath).
+func cachedMembersOf(game *domain.Game, p domain.DeployPath) []string {
+	out := []string{filepath.FromSlash(p.Rel)}
+	if p.IsGameRoot() || game == nil || !routesToGameRoot(game) {
+		return out
+	}
+	if prefix, ok := modPathUnderInstall(game); ok {
+		out = append(out, filepath.Join(append(append([]string{}, prefix...), filepath.FromSlash(p.Rel))...))
+	}
+	return out
 }

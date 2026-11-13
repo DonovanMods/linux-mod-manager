@@ -24,7 +24,7 @@ func TestRelinkInstalledMod_PreservesLedgerAndScope(t *testing.T) {
 	for _, scope := range [][2]string{{"game", "default"}, {"game", "other"}, {"other-game", "default"}} {
 		require.NoError(t, database.SaveInstalledMod(ctx, relinkTestMod(scope[0], scope[1], "local", "old")))
 		require.NoError(t, database.RecordDeployedFile(ctx, db.DeployedFileRecord{
-			GameID: scope[0], Profile: scope[1], RelativePath: "file.esp", SourceID: "local", ModID: "old",
+			GameID: scope[0], Profile: scope[1], Path: domain.ModPathFile("file.esp"), SourceID: "local", ModID: "old",
 			ModPath: "/games/" + scope[0], Fingerprint: &db.FileFingerprint{Checksum: "abc", Size: 5, MTime: 6, CTime: 7},
 		}))
 	}
@@ -36,7 +36,7 @@ func TestRelinkInstalledMod_PreservesLedgerAndScope(t *testing.T) {
 	require.Equal(t, "Renamed", mod.Name)
 	require.Equal(t, []string{"archive"}, mod.FileIDs)
 	for _, scope := range [][2]string{{"game", "default"}, {"game", "other"}, {"other-game", "default"}} {
-		states, err := database.DeployedFileStates(ctx, scope[0], "file.esp")
+		states, err := database.DeployedFileStates(ctx, scope[0], domain.ModPathFile("file.esp"))
 		require.NoError(t, err)
 		var state *db.DeployedFileState
 		for i := range states {
@@ -112,7 +112,7 @@ func TestRelinkInstalledMod_CollisionAndLedgerFailureRollBack(t *testing.T) {
 			checksum, err := database.GetFileChecksum(ctx, "local", "old", "g", "p", "archive")
 			require.NoError(t, err)
 			require.Equal(t, "abc123", checksum)
-			rows, err := database.GetDeployedFilesForMod(ctx, "g", "p", "local", "old")
+			rows, err := relsOf(database.GetDeployedFilesForMod(ctx, "g", "p", "local", "old"))
 			require.NoError(t, err)
 			require.Equal(t, []string{"file.esp"}, rows)
 		})

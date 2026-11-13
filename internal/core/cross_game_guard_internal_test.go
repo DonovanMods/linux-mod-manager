@@ -95,10 +95,10 @@ func TestConverge_KeepsAFileAnotherGameRecords(t *testing.T) {
 		assert.Empty(t, result.Removed)
 		assert.Equal(t, "sky2's", readFile(t, filepath.Join(shared, "gone.esp")))
 	}
-	rows, err := svc.db.GetDeployedFilesForMod(ctx, "sky", "default", "local", "k")
+	rows, err := relsOf(svc.db.GetDeployedFilesForMod(ctx, "sky", "default", "local", "k"))
 	require.NoError(t, err)
 	assert.Empty(t, rows, "sky's stale record goes")
-	rows, err = svc.db.GetDeployedFilesForMod(ctx, "sky2", "default", "local", "k")
+	rows, err = relsOf(svc.db.GetDeployedFilesForMod(ctx, "sky2", "default", "local", "k"))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"gone.esp"}, rows)
 }

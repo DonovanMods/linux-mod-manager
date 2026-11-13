@@ -1,57 +1,124 @@
 package domain
 
-import "strings"
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+)
 
-// A deployed path is how lmm names one file it deploys into a game (#629).
-// Until #629 every deployed file was relative to the game's mod_path, and a
-// deployed path was simply that relative path. A file a game adapter routes
-// to the game's install_path - a script extender's loader, an ENB's
-// d3d11.dll - is relative to that directory instead, and its deployed path
-// carries the root in a reserved prefix: InstallPathKey's.
-//
-// The prefix starts with a NUL byte, which no file name can hold. So the
-// key can never collide with a real mod_path-relative path, and a code path
-// that joins one onto a directory without asking which root it names gets
-// a path every system call refuses, rather than silently touching a file
-// under the wrong directory. A key is internal: frontends are handed
-// DisplayDeployedPath's spelling, and storage records the root in a column
-// of its own.
-const installPathKeyPrefix = "\x00install_path/"
+// DeployRoot names which of a game's two directories a deployed file is
+// relative to (#629): its mod_path, as every file of every game always
+// was, or its install_path, for content the game loads from beside its
+// executable (a script extender's loader, an ENB's d3d11.dll). The game
+// adapter's RootRouter answers in this type (adapter.DeployRoot is an
+// alias), and storage and the wire carry its name.
+type DeployRoot uint8
 
-// GameRootLabel is how a deployed path under the game's install_path is
-// spelled for a person: "<game root>/d3d11.dll", beside a bare
-// "textures/a.dds" for one under the mod_path.
+const (
+	// RootModPath is the zero value: the file is relative to the game's
+	// mod_path.
+	RootModPath DeployRoot = iota
+	// RootInstallPath is a file relative to the game's install_path.
+	RootInstallPath
+)
+
+// String returns the root's wire and storage name: "mod_path" or
+// "install_path" ("unknown" for an out-of-range value).
+func (r DeployRoot) String() string {
+	switch r {
+	case RootModPath:
+		return "mod_path"
+	case RootInstallPath:
+		return "install_path"
+	default:
+		return "unknown"
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler, refusing an out-of-range
+// value rather than writing "unknown" to a document a reader would refuse.
+func (r DeployRoot) MarshalText() ([]byte, error) {
+	if r > RootInstallPath {
+		return nil, fmt.Errorf("unknown deploy root %d", r)
+	}
+	return []byte(r.String()), nil
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler, refusing a name this
+// build does not know rather than reading it as the mod_path.
+func (r *DeployRoot) UnmarshalText(b []byte) error {
+	root, err := ParseDeployRoot(string(b))
+	if err != nil {
+		return err
+	}
+	*r = root
+	return nil
+}
+
+// ParseDeployRoot is the root a stored or wire name names.
+func ParseDeployRoot(name string) (DeployRoot, error) {
+	switch name {
+	case "mod_path":
+		return RootModPath, nil
+	case "install_path":
+		return RootInstallPath, nil
+	default:
+		return RootModPath, fmt.Errorf("unknown deploy root %q", name)
+	}
+}
+
+// GameRootLabel is how a file under the game's install_path is spelled for
+// a person: "<game root>/d3d11.dll", beside a bare "textures/a.dds" for one
+// under the mod_path. Only frontends and messages use it; nothing matches
+// on it.
 const GameRootLabel = "<game root>"
 
-// InstallPathKey returns the deployed path of rel, a slash- or
-// OS-separated path relative to the game's install_path.
-func InstallPathKey(rel string) string {
-	return installPathKeyPrefix + rel
+// DeployPath names one deployed file of a game (#629): the root it is
+// relative to and its path relative to that root. It is comparable, and it
+// is the identity lmm keeps a deployed file by - in its records, its maps
+// and its plan/apply matching - so a game-root "textures/a.dds" and a
+// mod_path "textures/a.dds" are never the same file.
+type DeployPath struct {
+	Root DeployRoot
+	// Rel is the path relative to Root, as the cache entry and the
+	// deployed_files record spell it.
+	Rel string
 }
 
-// SplitDeployedPath splits a deployed path into the path relative to its
-// root and whether that root is the game's install_path (false: the
-// mod_path, which every path without the prefix is).
-func SplitDeployedPath(p string) (rel string, installPath bool) {
-	if rest, ok := strings.CutPrefix(p, installPathKeyPrefix); ok {
-		return rest, true
+// ModPathFile is the deployed path rel under the game's mod_path.
+func ModPathFile(rel string) DeployPath { return DeployPath{Root: RootModPath, Rel: rel} }
+
+// GameRootFile is the deployed path rel under the game's install_path.
+func GameRootFile(rel string) DeployPath { return DeployPath{Root: RootInstallPath, Rel: rel} }
+
+// IsGameRoot reports whether p is under the game's install_path.
+func (p DeployPath) IsGameRoot() bool { return p.Root == RootInstallPath }
+
+// String is p as a person reads it: a mod_path file as its relative path,
+// and a game-root file with the root named in front ("<game root>/d3d11.dll"),
+// both slash-separated. It is a spelling for messages and frontends, never a
+// key.
+func (p DeployPath) String() string { return DisplayDeployPath(p.Root, p.Rel) }
+
+// DisplayDeployPath is the String spelling of rel under root, for a frontend
+// that holds the two apart (a wire document's path and root fields).
+func DisplayDeployPath(root DeployRoot, rel string) string {
+	rel = filepath.ToSlash(rel)
+	if root == RootInstallPath {
+		return GameRootLabel + "/" + rel
 	}
-	return p, false
+	return rel
 }
 
-// IsInstallPathKey reports whether p is a deployed path under the game's
-// install_path.
-func IsInstallPathKey(p string) bool {
-	return strings.HasPrefix(p, installPathKeyPrefix)
-}
-
-// DisplayDeployedPath is p as a person reads it: a mod_path file as its
-// relative path, unchanged, and an install_path file with the root named in
-// front ("<game root>/d3d11.dll").
-func DisplayDeployedPath(p string) string {
-	rel, root := SplitDeployedPath(p)
-	if !root {
-		return p
+// CompareDeployPaths orders deployed paths as every listing of them is
+// ordered: the mod_path files first, then the game-root ones, each by
+// relative path (byte order, as the database's BINARY collation sorts).
+func CompareDeployPaths(a, b DeployPath) int {
+	if a.Root != b.Root {
+		if a.Root < b.Root {
+			return -1
+		}
+		return 1
 	}
-	return GameRootLabel + "/" + rel
+	return strings.Compare(a.Rel, b.Rel)
 }

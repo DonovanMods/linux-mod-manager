@@ -47,6 +47,7 @@
 // hidden - the row still names why) whenever the mod is locked, mirroring
 // what ApplyRollback/ApplyUpdate would refuse server-side anyway.
 
+import { deployedPath } from "../deploypath.js";
 import { html, useEffect, useMemo, useState } from "../render.js";
 import { contextPath, modPageKey } from "../router.js";
 import { loadModJobHistory, candidateJobKey } from "../jobhistory.js";
@@ -464,8 +465,8 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             <ul class="plan__paths">
               ${conflicts.map(
                 (c) =>
-                  html`<li key=${c.path} class="mono">
-                    ${c.path}
+                  html`<li key=${deployedPath(c.path, c.root)} class="mono">
+                    ${deployedPath(c.path, c.root)}
                     ${
                       c.load_order_winner.key === `${sourceID}:${modID}`
                         ? " (wins)"
@@ -590,8 +591,8 @@ function FilesSection({ filesReport }) {
                   <tbody>
                     ${filesReport.files.map(
                       (f) =>
-                        html`<tr key=${f.path}>
-                          <td class="mono">${f.path}</td>
+                        html`<tr key=${deployedPath(f.path, f.root)}>
+                          <td class="mono">${deployedPath(f.path, f.root)}</td>
                           <td class="mono">${formatBytes(f.size)}</td>
                           <td>${f.deployed ? "yes" : "no"}</td>
                         </tr>`,

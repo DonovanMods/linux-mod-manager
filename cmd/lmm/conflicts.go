@@ -109,7 +109,7 @@ func doConflicts(ctx context.Context, svc *core.Service, game *domain.Game) erro
 	fmt.Printf("Found %d conflicting file(s):\n\n", len(conflicts))
 
 	for _, c := range conflicts {
-		fmt.Printf("  %s\n", c.Path)
+		fmt.Printf("  %s\n", domain.DisplayDeployPath(c.Root, c.Path))
 		fmt.Printf("    Owner: %s\n", c.Owner.Name)
 		fmt.Printf("    Also in: ")
 		for i, m := range c.AlsoIn {
