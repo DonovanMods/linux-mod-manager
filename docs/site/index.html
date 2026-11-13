@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lmm, the Linux Mod Manager</title>
+<meta name="description" content="Install, update and organize your game mods on Linux with lmm. Use a local web UI or the terminal, with separate profiles for solo and co-op play. Free and open source.">
+<link rel="canonical" href="https://donovanmods.github.io/linux-mod-manager/">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0f14" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preload" href="fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="site.css?v=17ce8fcb394e">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="lmm">
+<meta property="og:title" content="lmm, the Linux Mod Manager">
+<meta property="og:description" content="Install, update and organize your game mods on Linux. Use a local web UI or the terminal, with separate profiles for solo and co-op play.">
+<meta property="og:url" content="https://donovanmods.github.io/linux-mod-manager/">
+<meta property="og:image" content="https://donovanmods.github.io/linux-mod-manager/images/social-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="lmm, the Linux Mod Manager, beside its web UI's Mission Control screen.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="lmm, the Linux Mod Manager">
+<meta name="twitter:description" content="Install, update and organize your game mods on Linux. Use a local web UI or the terminal, with separate profiles for solo and co-op play.">
+<meta name="twitter:image" content="https://donovanmods.github.io/linux-mod-manager/images/social-card.png">
+<meta name="twitter:image:alt" content="lmm, the Linux Mod Manager, beside its web UI's Mission Control screen.">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap site-header__inner">
+    <a class="brand" href="./" aria-label="lmm home">
+      <img src="favicon.svg" alt="" width="28" height="28">
+      <span>lmm</span>
+    </a>
+    <nav aria-label="Site">
+      <ul class="nav">
+        <li><a href="#frontends">Features</a></li>
+        <li><a href="#install">Install</a></li>
+        <li><a href="guide/">Guide</a></li>
+        <li><a href="https://github.com/DonovanMods/linux-mod-manager">GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="wrap">
+    <p class="eyebrow">lmm · Linux Mod Manager</p>
+    <h1 id="hero-title">Manage Your Game&nbsp;Mods on Linux.</h1>
+    <p class="lede">lmm installs, updates and organizes your game mods through a local web UI or the terminal. Keep separate profiles for solo play, co-op, or trying something new.</p>
+    <div class="actions">
+      <a class="button button--primary" href="#install">Install lmm</a>
+      <a class="button" href="guide/">Read the guide</a>
+    </div>
+    <p class="fineprint">Free and open source under the MIT license. One binary for x86-64 and ARM64 Linux.</p>
+    <figure class="shot shot--hero">
+      <picture>
+        <source srcset="images/mission-control-dark.png" media="(prefers-color-scheme: dark)">
+        <img src="images/mission-control-light.png" width="1280" height="1048" alt="lmm's Mission Control screen with three available mod updates and one profile mod still to install. The library lists nine installed mods with healthy checkmarks, versions and load order." fetchpriority="high">
+      </picture>
+      <figcaption>Mission Control, the web UI's home screen. The game and mods are demo data.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="frontends" class="feature feature--alt" aria-labelledby="frontends-title">
+  <div class="wrap">
+    <div class="feature__grid feature__grid--flip">
+      <div class="prose">
+        <h2 id="frontends-title">A Terminal and a Browser, One Engine</h2>
+        <p>Browse your library, find mods and manage updates in the web UI. Use the CLI for scripts or over SSH. Both use the same engine, database and profiles.</p>
+        <p>Run <code>lmm serve</code> to open the UI in your browser. It listens on your computer's loopback address by default, and can run as a systemd user service. <a href="guide/background.html">Run lmm in the background</a>.</p>
+      </div>
+      <figure class="shot">
+        <picture>
+          <source srcset="images/library-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="images/library-light.png" width="1280" height="960" alt="The web UI's nine-mod library grouped into Audio, Crafting, Interface, Lighting, Storage and Visuals. Rows show versions, healthy checkmarks and load order; three mods have Update buttons.">
+        </picture>
+        <figcaption>The web UI library, grouped by category. Grouping never changes the load order.</figcaption>
+      </figure>
+    </div>
+    <figure class="cli-example" aria-labelledby="cli-title">
+      <h3 id="cli-title">The Same Library in the Terminal</h3>
+<pre class="code" tabindex="0"><code><span class="prompt">$</span> lmm list
+Installed mods in Starfall Colony (profile: default) — 9 mod(s), 1 disabled
+
+ID               NAME                 VERSION  AUTHOR          STATE
+--               ----                 -------  ------          -----
+BetterLanterns   Better Lanterns      1.3.2    Halvard         -
+QuietFootsteps   Quiet Footsteps      2.0.1    mira_k          disabled
+ExpandedStorage  Expanded Storage     3.2.0    Halvard         -
+FasterCrafting   Faster Crafting      1.1.0    tinkerbox       -
+HDTerrain        HD Terrain Textures  5.0.2    Ostrava Studio  -
+MapMarkers       Map Markers          0.9.1    mira_k          -
+NightSky         Night Sky Overhaul   2.2.0    Ostrava Studio  -
+BackpackPlus     Backpack Plus        1.0.0    tinkerbox       -
+CampfireCooking  Campfire Cooking     1.6.2    Halvard         -</code></pre>
+      <figcaption>Actual CLI output for the same demo game and profile, listed in load order.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="band" aria-labelledby="sources-title">
+  <div class="wrap">
+    <h2 id="sources-title">Bring Your Games and Your Mod Sources</h2>
+    <p class="section-lede prose">lmm finds Steam games and Battle.net installations under Wine or Proton, and fills in mod paths for known games. Already modded a game? Scan its mod folder to bring existing mods into lmm. <a href="guide/first-mods.html">Get started with your games</a>.</p>
+    <ul class="cards">
+      <li class="card">
+        <h3>NexusMods and CurseForge</h3>
+        <p>Connect with an API key, stored encrypted on your computer. Free NexusMods accounts can import manually downloaded archives.</p>
+      </li>
+      <li class="card">
+        <h3>Thunderstore</h3>
+        <p>Browse without an API key. For BepInEx games such as Valheim and Lethal Company, lmm puts plugins where the loader expects them.</p>
+      </li>
+      <li class="card">
+        <h3>Steam Workshop</h3>
+        <p>Track the items Steam already installed, import a Workshop collection as a profile, or let lmm download an item and manage its own copy.</p>
+      </li>
+      <li class="card">
+        <h3>Your Own Sources</h3>
+        <p>Describe a local folder, a JSON or YAML mod list, or a REST API in a short YAML file. lmm installs and updates from it like a built-in source.</p>
+      </li>
+      <li class="card">
+        <h3>Files You Downloaded</h3>
+        <p>Hand lmm an archive you downloaded yourself, for example from a free NexusMods account, and it manages that mod like any other.</p>
+      </li>
+      <li class="card">
+        <h3>Icarus</h3>
+        <p>Icarus has its own built-in source. lmm converts its <code>.pak</code> mods and merges them in load order.</p>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<section id="profiles" class="feature" aria-labelledby="profiles-title">
+  <div class="wrap feature__grid">
+    <div class="prose">
+      <h2 id="profiles-title">Save a Setup. Make the Game Match It.</h2>
+      <p>A profile records your mods, versions and load order. Applying it installs what's missing, removes mods it no longer lists, and changes versions in either direction. Version locks stay enforced.</p>
+      <p>Keep separate profiles for solo and co-op play. Switch between them using the mod files lmm already has in its cache.</p>
+      <p>Export a profile as YAML to save or share the setup. Another computer can fetch the same versions when its sources are configured and those files are still available. Keep local mod archives and custom-source configuration separately: the profile doesn't include them. <a href="guide/profiles.html">How profiles work</a>.</p>
+<pre class="code" tabindex="0"><code><span class="prompt">$</span> lmm profile export default &gt; setup.yaml
+<span class="prompt">$</span> lmm profile apply --dry-run</code></pre>
+    </div>
+    <figure class="shot">
+      <picture>
+        <source srcset="images/profile-apply-dark.png" media="(prefers-color-scheme: dark)">
+        <img src="images/profile-apply-light.png" width="536" height="316" alt="The Apply profile preview in the web UI. It reads &quot;Making default match what it lists&quot; and lists two installs: Better Lanterns 1.4.0, replacing 1.3.2, and Smarter Wildlife 0.7.0, with Cancel and Apply profile buttons.">
+      </picture>
+      <figcaption>Review a profile's changes before applying them. Shown with demo mods.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="feature" aria-labelledby="safety-title">
+  <div class="wrap prose prose--wide">
+    <h2 id="safety-title">Preview Changes and Keep a Way Back</h2>
+    <dl class="facts">
+      <div>
+        <dt>Review Installs, Updates and Profile Changes</dt>
+        <dd>The web UI shows a plan before installing, updating, deploying or applying a profile. In the CLI, <code>update</code>, <code>deploy</code> and <code>profile apply</code> support <code>--dry-run</code>. Enabling or disabling a mod applies immediately.</dd>
+      </div>
+      <div>
+        <dt>Back to an Unmodded Game</dt>
+        <dd><code>lmm purge</code> removes deployed mods and restores originals backed up when lmm replaced game files.</dd>
+      </div>
+      <div>
+        <dt>Snapshots and Rollback</dt>
+        <dd>Save a snapshot of your mod setup before experimenting. <code>lmm update rollback</code> can return a mod to its previous version.</dd>
+      </div>
+      <div>
+        <dt>Verify What's on Disk</dt>
+        <dd><code>lmm verify</code> checks cached files and the deployed mod files. <code>lmm conflicts</code> shows which mods provide the same file and which one wins.</dd>
+      </div>
+    </dl>
+    <p class="section-followup"><a href="guide/troubleshooting.html">Previews, snapshots and recovery in the guide</a></p>
+  </div>
+</section>
+
+<section class="band" aria-labelledby="everyday-title">
+  <div class="wrap">
+    <h2 id="everyday-title">Fits the Way You Use Linux</h2>
+    <div class="details-grid">
+      <div class="prose">
+        <h3>Ready for Scripts</h3>
+        <p>Add <code>--json</code> for structured command output, with warnings inside the document. Use it with <code>jq</code> or your own tools. <a href="https://github.com/DonovanMods/linux-mod-manager#json-output">JSON output reference</a>.</p>
+<pre class="code" tabindex="0"><code><span class="prompt">$</span> lmm update --json | jq '.updates'</code></pre>
+      </div>
+      <div class="prose">
+        <h3>Verified Self-Updates</h3>
+        <p>Release-download and <code>go install</code> installations can update automatically after signature and checksum verification. You can turn this off. Package installations stay under your package manager's control. <a href="guide/updates.html">How updates work</a>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="install" class="install" aria-labelledby="install-title">
+  <div class="wrap">
+    <h2 id="install-title">Install lmm</h2>
+    <p class="section-lede">The <a href="https://github.com/DonovanMods/linux-mod-manager/releases/latest">latest release</a> has packages and a plain download for x86-64 (<code>amd64</code>) and ARM64 (<code>arm64</code>).</p>
+    <p class="section-lede note">For downloaded packages and archives, run the commands from the folder containing your download. Replace <code>&lt;version&gt;</code> with its version number, and use <code>arm64</code> instead of <code>amd64</code> for ARM64.</p>
+    <div class="install__grid">
+      <article class="card">
+        <h3>Debian, Ubuntu, Fedora, openSUSE, Alpine</h3>
+        <p>Download the <code>.deb</code>, <code>.rpm</code> or <code>.apk</code> from the <a href="https://github.com/DonovanMods/linux-mod-manager/releases/latest">latest release</a>, then install it:</p>
+<pre class="code" tabindex="0"><code><span class="comment"># Debian / Ubuntu</span>
+sudo dpkg -i lmm_&lt;version&gt;_linux_amd64.deb
+<span class="comment"># Fedora</span>
+sudo rpm -i lmm_&lt;version&gt;_linux_amd64.rpm
+<span class="comment"># openSUSE</span>
+sudo zypper install ./lmm_&lt;version&gt;_linux_amd64.rpm
+<span class="comment"># Alpine</span>
+sudo apk add --allow-untrusted ./lmm_&lt;version&gt;_linux_amd64.apk</code></pre>
+        <p class="note">Includes the man pages and shell completions.</p>
+      </article>
+      <article class="card">
+        <h3>Arch Linux</h3>
+        <p>Each release carries a <code>PKGBUILD</code> for <code>lmm-bin</code>. It isn't on the AUR yet (<a href="https://github.com/DonovanMods/linux-mod-manager/issues/549">#549</a>).</p>
+<pre class="code" tabindex="0"><code>mkdir lmm-bin &amp;&amp; cd lmm-bin
+curl -LO https://github.com/DonovanMods/linux-mod-manager/releases/latest/download/PKGBUILD
+makepkg -si</code></pre>
+      </article>
+      <article class="card">
+        <h3>Any Linux</h3>
+        <p>Download <code>lmm_&lt;version&gt;_linux_amd64.tar.gz</code> (or <code>arm64</code>) from the <a href="https://github.com/DonovanMods/linux-mod-manager/releases/latest">latest release</a>. Install it in your user bin directory so lmm can update itself:</p>
+<pre class="code" tabindex="0"><code>tar -xzf lmm_&lt;version&gt;_linux_amd64.tar.gz
+mkdir -p ~/.local/bin &amp;&amp; mv lmm ~/.local/bin/
+export PATH="$HOME/.local/bin:$PATH"</code></pre>
+        <p class="note">If <code>~/.local/bin</code> isn't already on your PATH, add it to your shell's startup configuration for future sessions.</p>
+      </article>
+      <article class="card">
+        <h3>With Go</h3>
+        <p>Needs Go 1.27 or later.</p>
+<pre class="code" tabindex="0"><code>go install github.com/DonovanMods/linux-mod-manager/v2/cmd/lmm@latest</code></pre>
+      </article>
+    </div>
+    <div class="next">
+      <p>Then run <code>lmm serve</code> and follow the setup in your browser, or <code>lmm init</code> in the terminal. The guide walks you through adding a game and installing your first mods.</p>
+      <div class="actions">
+        <a class="button button--primary" href="guide/first-mods.html">Set up your first mods</a>
+        <a class="button" href="https://github.com/DonovanMods/linux-mod-manager/releases">All releases</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap site-footer__inner">
+    <p>lmm is free and open source under the <a href="https://github.com/DonovanMods/linux-mod-manager/blob/main/LICENSE">MIT license</a>.</p>
+    <nav aria-label="Project">
+      <ul class="nav nav--footer">
+        <li><a href="guide/">User guide</a></li>
+        <li><a href="https://github.com/DonovanMods/linux-mod-manager#readme">Full reference (README)</a></li>
+        <li><a href="https://github.com/DonovanMods/linux-mod-manager/blob/main/CHANGELOG.md">Changelog</a></li>
+        <li><a href="https://github.com/DonovanMods/linux-mod-manager/issues">Issues</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>
