@@ -853,3 +853,101 @@ func TestFomodUpdateBatch_ANewInstallerSaysChoicesNeeded(t *testing.T) {
 	assert.Equal(t, core.ReasonFomodChoicesNeeded, result.Skipped[0].Reason)
 	assert.True(t, result.Skipped[0].FomodReanswer)
 }
+
+// installConditionalWithDep installs dep (providing dep.esp) and then the
+// conditional installer mod1, whose tree gains patch.txt because dep.esp is
+// active; then removes dep, so the profile's file states have changed since
+// mod1 was installed.
+func installConditionalWithDepThenDropDep(t *testing.T, f *fomodFixture) *domain.InstalledMod {
+	t.Helper()
+	ctx := context.Background()
+	depZip := createTestZip(t, t.TempDir(), map[string]string{"dep.esp": "DEP"})
+	dep, err := os.ReadFile(depZip)
+	require.NoError(t, err)
+	f.mock.AddDownload("dep", dep)
+	f.mock.AddMod("g1", &domain.Mod{ID: "dep", SourceID: "src", Name: "Dep", Version: "1.0", GameID: "g1"})
+	f.mock.AddDownload("mod1", conditionalZip(t))
+	f.mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod mod1", Version: "1.0", GameID: "g1"})
+	_, err = f.install(t, "dep", nil)
+	require.NoError(t, err)
+	_, err = f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+	require.NoError(t, f.svc.NewProfileManager().SetDefault(ctx, "g1", "default"))
+	require.Equal(t, "PLUGIN", f.deployed(t, "patch.txt"))
+	_, err = f.svc.UninstallMod(ctx, f.game, "default", "src", "dep", core.UninstallOptions{})
+	require.NoError(t, err)
+	row, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	return row
+}
+
+// modContainerEntries lists the version directories under mod1's cache
+// container.
+func modContainerEntries(t *testing.T, f *fomodFixture, row *domain.InstalledMod) []string {
+	t.Helper()
+	container := filepath.Dir(f.svc.GetGameCache(f.game).ModPath(cacheKeyOf(row)))
+	entries, err := os.ReadDir(container)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names
+}
+
+// TestFomodRebuild_ReplaysTheRecordedFileStates (#614 re-review should-fix
+// 1): deploy's self-heal and verify --fix rebuild the row's OWN tree, so
+// they answer the installer's file conditions as recorded - dep.esp was
+// active then - though dep has since been uninstalled.
+func TestFomodRebuild_ReplaysTheRecordedFileStates(t *testing.T) {
+	f := newFomodFixture(t)
+	ctx := context.Background()
+	row := installConditionalWithDepThenDropDep(t, f)
+	c := f.svc.GetGameCache(f.game)
+	key := cacheKeyOf(row)
+
+	// Self-heal.
+	require.NoError(t, c.Delete(key))
+	result, err := f.svc.DeployProfile(ctx, f.game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Skipped, "%+v", result.Skipped)
+	assert.True(t, c.Exists(key), "the row's own variant is rebuilt")
+	assert.FileExists(t, filepath.Join(c.ModPath(key), "patch.txt"), "with the recorded dep.esp outcome")
+	assert.Equal(t, []string{filepath.Base(c.ModPath(key))}, modContainerEntries(t, f, row), "and no other entry")
+
+	// verify --fix's redownload.
+	require.NoError(t, f.svc.SaveFileChecksum(ctx, "src", "mod1", "g1", "default", "mod1", "0123456789abcdef0123456789abcdef"))
+	require.NoError(t, c.Delete(key))
+	_, err = f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Fix: true}, nil)
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(c.ModPath(key), "patch.txt"))
+	assert.Equal(t, []string{filepath.Base(c.ModPath(key))}, modContainerEntries(t, f, row))
+}
+
+// TestFomodSelfHeal_AStaleRecordingLeavesNoOrphanEntry: when the recorded
+// choices no longer rebuild the row's tree, self-heal skips the mod BEFORE
+// committing anything - no unused variant entry is left behind.
+func TestFomodSelfHeal_AStaleRecordingLeavesNoOrphanEntry(t *testing.T) {
+	f := newFomodFixture(t)
+	ctx := context.Background()
+	f.serve(t, "mod1", "1.0", "4K", "v1")
+	_, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+	require.NoError(t, f.svc.NewProfileManager().SetDefault(ctx, "g1", "default"))
+	row, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+
+	// The source now serves a re-packed archive whose option is renamed.
+	f.mock.AddDownload("mod1", fomodZip(t, "Ultra", "v1b"))
+	c := f.svc.GetGameCache(f.game)
+	require.NoError(t, c.Delete(cacheKeyOf(row)))
+	result, err := f.svc.DeployProfile(ctx, f.game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Skipped, 1)
+	assert.Empty(t, modContainerEntries(t, f, row), "nothing was committed")
+}

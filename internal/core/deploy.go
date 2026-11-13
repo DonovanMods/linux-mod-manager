@@ -1093,7 +1093,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		emit(DownloadEvent{Scope: scope, Phase: DeployDownloading, Percent: d.Percent})
 	}
 	results, _, err := s.downloadModFiles(ctx, s.GetGameCache(game), mod.SourceID, game, fetchedMod, filesToDownload, fx,
-		modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }})
+		modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, requireVariant: &mod.Variant})
 	if err != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			return skip(fmt.Sprintf("cancelled: %v", cerr))

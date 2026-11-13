@@ -1622,6 +1622,26 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	return res, nil
 }
 
+// rebuildModFile is downloadMod for a repair of ONE file of an installed
+// row's own cache entry (#614): the file commits into variant's entry only
+// when it resolves to that variant - a FOMOD file whose recorded choices
+// now build another tree is refused with ReasonFomodReanswer before
+// anything is committed - and it commits seeded, beside the row's other
+// files.
+func (s *Service) rebuildModFile(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, variant string, sink EventSink) (*DownloadModResult, error) {
+	mod.Variant = variant
+	a, err := s.acquireFile(ctx, s.GetGameCache(game), sourceID, game, mod, file, fx, sink)
+	if err != nil {
+		return nil, err
+	}
+	defer a.release()
+	if a.fomod != nil && a.mod.Variant != variant {
+		return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: ReasonFomodReanswer}
+	}
+	a.mod.Variant = variant
+	return s.commitAcquired(ctx, a)
+}
+
 // ingestLocalToCache copies a local mod (directory or archive) into the
 // cache through the same acquire/commit pair as a download - see
 // acquireLocal for the checksum each kind records. sink receives the

@@ -63,16 +63,10 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 	// from the profile's recorded choices - which must still name that
 	// variant, or the repair would fill a tree the row does not use.
 	mapped := SourceMappedMod(r.game, &mod.Mod)
-	fx := r.svc.fomodInputFor(ctx, r.game, r.profile, ref, mod.SourceID, mod.ID, nil)
-	if mod.Variant == "" && fx.choices.IsZero() {
-		fx.raw = true // installed before FOMOD support: rebuild it raw (rebuildInput)
-	}
-	result, err := r.svc.downloadMod(ctx, mod.SourceID, r.game, mapped, downloadFile, fx, r.downloadWarningSink())
+	fx := asRebuild(r.svc.fomodInputFor(ctx, r.game, r.profile, ref, mod.SourceID, mod.ID, nil), mod)
+	result, err := r.svc.rebuildModFile(ctx, mod.SourceID, r.game, mapped, downloadFile, fx, mod.Variant, r.downloadWarningSink())
 	if err != nil {
 		return false, err
-	}
-	if result.fomod != nil && mapped.Variant != mod.Variant {
-		return false, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: ReasonFomodReanswer}
 	}
 	if result.Checksum == "" {
 		return false, nil
