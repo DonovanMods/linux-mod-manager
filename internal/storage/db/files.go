@@ -24,6 +24,38 @@ type FileConflict struct {
 	ModID        string
 }
 
+// A deployed_files row names its file by two columns, root and
+// relative_path (#629, migrateV26): root is 'mod_path' or 'install_path'.
+// Callers name it by one string, a domain deployed path, whose
+// install_path form carries the root in a reserved prefix
+// (domain.InstallPathKey); every function here takes and returns that
+// form, and splits or joins it at the query.
+const (
+	rootModPath     = "mod_path"
+	rootInstallPath = "install_path"
+)
+
+// splitPath is a deployed path's root and relative_path columns.
+func splitPath(p string) (root, rel string) {
+	if rel, ok := domain.SplitDeployedPath(p); ok {
+		return rootInstallPath, rel
+	}
+	return rootModPath, p
+}
+
+// joinPath is the deployed path a row's root and relative_path name.
+func joinPath(root, rel string) string {
+	if root == rootInstallPath {
+		return domain.InstallPathKey(rel)
+	}
+	return rel
+}
+
+// orderByPath is the order every path listing returns rows in: the
+// mod_path rows first, in relative_path order exactly as before #629, then
+// the install_path ones.
+const orderByPath = "(root <> 'mod_path'), relative_path"
+
 // SaveDeployedFile records that a file is deployed by a specific mod, with
 // no fingerprint and no recorded mod_path (RecordDeployedFile).
 // Uses upsert to handle overwrites (new mod takes ownership).
@@ -76,10 +108,11 @@ func (d *DB) RecordDeployedFile(ctx context.Context, rec DeployedFileRecord) err
 	if rec.ModPath != "" {
 		modPath = sql.NullString{String: rec.ModPath, Valid: true}
 	}
+	root, rel := splitPath(rec.RelativePath)
 	_, err := d.ExecContext(ctx, `
-		INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id, checksum, size, mtime, ctime, mod_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(game_id, profile_name, relative_path) DO UPDATE SET
+		INSERT INTO deployed_files (game_id, profile_name, root, relative_path, source_id, mod_id, checksum, size, mtime, ctime, mod_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(game_id, profile_name, root, relative_path) DO UPDATE SET
 			source_id = excluded.source_id,
 			mod_id = excluded.mod_id,
 			checksum = excluded.checksum,
@@ -88,7 +121,7 @@ func (d *DB) RecordDeployedFile(ctx context.Context, rec DeployedFileRecord) err
 			ctime = excluded.ctime,
 			mod_path = excluded.mod_path,
 			deployed_at = CURRENT_TIMESTAMP
-	`, rec.GameID, rec.Profile, rec.RelativePath, rec.SourceID, rec.ModID, checksum, size, mtime, ctime, modPath)
+	`, rec.GameID, rec.Profile, root, rel, rec.SourceID, rec.ModID, checksum, size, mtime, ctime, modPath)
 	if err != nil {
 		return fmt.Errorf("saving deployed file: %w", err)
 	}
@@ -116,6 +149,7 @@ type DeployedFileState struct {
 // against (#466), including the method provenance that distinguishes a
 // replaced symlink (#483).
 func (d *DB) DeployedFileStates(ctx context.Context, gameID, relativePath string) (states []DeployedFileState, err error) {
+	root, rel := splitPath(relativePath)
 	rows, err := d.QueryContext(ctx, `
 		SELECT df.profile_name, df.source_id, df.mod_id, df.mod_path,
 		       df.checksum, df.size, df.mtime, df.ctime, im.link_method,
@@ -126,9 +160,9 @@ func (d *DB) DeployedFileStates(ctx context.Context, gameID, relativePath string
 		 AND im.profile_name = df.profile_name
 		 AND im.source_id = df.source_id
 		 AND im.mod_id = df.mod_id
-		WHERE df.game_id = ? AND df.relative_path = ?
+		WHERE df.game_id = ? AND df.root = ? AND df.relative_path = ?
 		ORDER BY df.profile_name
-	`, gameID, relativePath)
+	`, gameID, root, rel)
 	if err != nil {
 		return nil, fmt.Errorf("querying deployed file states: %w", err)
 	}
@@ -264,10 +298,11 @@ func (d *DB) GetLastDeployTime(ctx context.Context, gameID, profileName string) 
 // Returns nil if no mod owns the file.
 func (d *DB) GetFileOwner(ctx context.Context, gameID, profileName, relativePath string) (*FileOwner, error) {
 	var owner FileOwner
+	root, rel := splitPath(relativePath)
 	err := d.QueryRowContext(ctx, `
 		SELECT source_id, mod_id FROM deployed_files
-		WHERE game_id = ? AND profile_name = ? AND relative_path = ?
-	`, gameID, profileName, relativePath).Scan(&owner.SourceID, &owner.ModID)
+		WHERE game_id = ? AND profile_name = ? AND root = ? AND relative_path = ?
+	`, gameID, profileName, root, rel).Scan(&owner.SourceID, &owner.ModID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -288,11 +323,12 @@ func (d *DB) GetFileOwner(ctx context.Context, gameID, profileName, relativePath
 // have written a mod's bytes back as if they were stock content.
 func (d *DB) AnyProfileOwnsFile(ctx context.Context, gameID, relativePath string) (bool, error) {
 	var one int
+	root, rel := splitPath(relativePath)
 	err := d.QueryRowContext(ctx, `
 		SELECT 1 FROM deployed_files
-		WHERE game_id = ? AND relative_path = ?
+		WHERE game_id = ? AND root = ? AND relative_path = ?
 		LIMIT 1
-	`, gameID, relativePath).Scan(&one)
+	`, gameID, root, rel).Scan(&one)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
@@ -321,9 +357,9 @@ type PathRecord struct {
 // names.
 func (d *DB) DeployedPathRecords(ctx context.Context, gameID string) (records map[string][]PathRecord, err error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT relative_path, profile_name, source_id, mod_id, COALESCE(mod_path, '') FROM deployed_files
+		SELECT root, relative_path, profile_name, source_id, mod_id, COALESCE(mod_path, '') FROM deployed_files
 		WHERE game_id = ?
-		ORDER BY relative_path, profile_name
+		ORDER BY `+orderByPath+`, profile_name
 	`, gameID)
 	if err != nil {
 		return nil, fmt.Errorf("querying deployed files: %w", err)
@@ -336,11 +372,12 @@ func (d *DB) DeployedPathRecords(ctx context.Context, gameID string) (records ma
 
 	records = make(map[string][]PathRecord)
 	for rows.Next() {
-		var path string
+		var root, rel string
 		var r PathRecord
-		if err := rows.Scan(&path, &r.Profile, &r.SourceID, &r.ModID, &r.ModPath); err != nil {
+		if err := rows.Scan(&root, &rel, &r.Profile, &r.SourceID, &r.ModID, &r.ModPath); err != nil {
 			return nil, fmt.Errorf("scanning deployed file: %w", err)
 		}
+		path := joinPath(root, rel)
 		records[path] = append(records[path], r)
 	}
 	return records, rows.Err()
@@ -414,7 +451,11 @@ func (d *DB) DeleteDeployedFilesExcept(ctx context.Context, gameID, profileName,
 		}
 	}
 	notIn("COALESCE(mod_path, '')", keepRoots)
-	notIn("relative_path", keepPaths)
+	for _, p := range keepPaths {
+		root, rel := splitPath(p)
+		query += " AND NOT (root = ? AND relative_path = ?)"
+		args = append(args, root, rel)
+	}
 	if _, err := d.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("deleting deployed files: %w", err)
 	}
@@ -426,9 +467,9 @@ func (d *DB) DeleteDeployedFilesExcept(ctx context.Context, gameID, profileName,
 // included - sorted by path: what a replace puts back if it fails (#466).
 func (d *DB) DeployedFileRecordsForMod(ctx context.Context, gameID, profileName, sourceID, modID string) (records []DeployedFileRecord, err error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT relative_path, mod_path, checksum, size, mtime, ctime FROM deployed_files
+		SELECT root, relative_path, mod_path, checksum, size, mtime, ctime FROM deployed_files
 		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?
-		ORDER BY relative_path
+		ORDER BY `+orderByPath+`
 	`, gameID, profileName, sourceID, modID)
 	if err != nil {
 		return nil, fmt.Errorf("querying deployed file records: %w", err)
@@ -440,11 +481,13 @@ func (d *DB) DeployedFileRecordsForMod(ctx context.Context, gameID, profileName,
 	}()
 	for rows.Next() {
 		rec := DeployedFileRecord{GameID: gameID, Profile: profileName, SourceID: sourceID, ModID: modID}
+		var root string
 		var modPath, checksum sql.NullString
 		var size, mtime, ctime sql.NullInt64
-		if err := rows.Scan(&rec.RelativePath, &modPath, &checksum, &size, &mtime, &ctime); err != nil {
+		if err := rows.Scan(&root, &rec.RelativePath, &modPath, &checksum, &size, &mtime, &ctime); err != nil {
 			return nil, fmt.Errorf("scanning deployed file record: %w", err)
 		}
+		rec.RelativePath = joinPath(root, rec.RelativePath)
 		rec.ModPath = modPath.String
 		if checksum.Valid && checksum.String != "" {
 			rec.Fingerprint = &FileFingerprint{Checksum: checksum.String, Size: size.Int64, MTime: mtime.Int64, CTime: ctime.Int64}
@@ -459,10 +502,11 @@ func (d *DB) DeployedFileRecordsForMod(ctx context.Context, gameID, profileName,
 // this for paths it just undeployed, and a row may already be gone when the
 // path was attributed only by a dangling link.
 func (d *DB) DeleteDeployedFile(ctx context.Context, gameID, profileName, relativePath string) error {
+	root, rel := splitPath(relativePath)
 	_, err := d.ExecContext(ctx, `
 		DELETE FROM deployed_files
-		WHERE game_id = ? AND profile_name = ? AND relative_path = ?`,
-		gameID, profileName, relativePath)
+		WHERE game_id = ? AND profile_name = ? AND root = ? AND relative_path = ?`,
+		gameID, profileName, root, rel)
 	if err != nil {
 		return fmt.Errorf("deleting deployed file record: %w", err)
 	}
@@ -472,9 +516,9 @@ func (d *DB) DeleteDeployedFile(ctx context.Context, gameID, profileName, relati
 // GetDeployedFilesForMod returns all file paths deployed by a specific mod.
 func (d *DB) GetDeployedFilesForMod(ctx context.Context, gameID, profileName, sourceID, modID string) (paths []string, err error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT relative_path FROM deployed_files
+		SELECT root, relative_path FROM deployed_files
 		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?
-		ORDER BY relative_path
+		ORDER BY `+orderByPath+`
 	`, gameID, profileName, sourceID, modID)
 	if err != nil {
 		return nil, fmt.Errorf("querying deployed files: %w", err)
@@ -486,11 +530,11 @@ func (d *DB) GetDeployedFilesForMod(ctx context.Context, gameID, profileName, so
 	}()
 
 	for rows.Next() {
-		var path string
-		if err := rows.Scan(&path); err != nil {
+		var root, rel string
+		if err := rows.Scan(&root, &rel); err != nil {
 			return nil, fmt.Errorf("scanning path: %w", err)
 		}
-		paths = append(paths, path)
+		paths = append(paths, joinPath(root, rel))
 	}
 	return paths, rows.Err()
 }
@@ -502,20 +546,29 @@ func (d *DB) CheckFileConflicts(ctx context.Context, gameID, profileName string,
 		return nil, nil
 	}
 
-	// Build placeholders for IN clause
-	placeholders := make([]string, len(paths))
-	args := make([]interface{}, 0, len(paths)+2)
-	args = append(args, gameID, profileName)
-	for i, p := range paths {
-		placeholders[i] = "?"
-		args = append(args, p)
+	// One IN clause per root the paths name.
+	byRoot := map[string][]any{}
+	for _, p := range paths {
+		root, rel := splitPath(p)
+		byRoot[root] = append(byRoot[root], rel)
+	}
+	args := []any{gameID, profileName}
+	var clauses []string
+	for _, root := range []string{rootModPath, rootInstallPath} {
+		rels := byRoot[root]
+		if len(rels) == 0 {
+			continue
+		}
+		clauses = append(clauses, fmt.Sprintf("(root = ? AND relative_path IN (%s))", strings.TrimSuffix(strings.Repeat("?,", len(rels)), ",")))
+		args = append(args, root)
+		args = append(args, rels...)
 	}
 
 	query := fmt.Sprintf(`
-		SELECT relative_path, source_id, mod_id FROM deployed_files
-		WHERE game_id = ? AND profile_name = ? AND relative_path IN (%s)
-		ORDER BY relative_path
-	`, strings.Join(placeholders, ","))
+		SELECT root, relative_path, source_id, mod_id FROM deployed_files
+		WHERE game_id = ? AND profile_name = ? AND (%s)
+		ORDER BY %s
+	`, strings.Join(clauses, " OR "), orderByPath)
 
 	rows, err := d.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -529,9 +582,11 @@ func (d *DB) CheckFileConflicts(ctx context.Context, gameID, profileName string,
 
 	for rows.Next() {
 		var c FileConflict
-		if err := rows.Scan(&c.RelativePath, &c.SourceID, &c.ModID); err != nil {
+		var root string
+		if err := rows.Scan(&root, &c.RelativePath, &c.SourceID, &c.ModID); err != nil {
 			return nil, fmt.Errorf("scanning conflict: %w", err)
 		}
+		c.RelativePath = joinPath(root, c.RelativePath)
 		conflicts = append(conflicts, c)
 	}
 	return conflicts, rows.Err()
@@ -555,9 +610,9 @@ type DeployedPath struct {
 // as the profile's deployed-files manifest (#350).
 func (d *DB) ListDeployedFiles(ctx context.Context, gameID, profileName string) (files []DeployedPath, err error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT relative_path, source_id, mod_id, COALESCE(mod_path, '') FROM deployed_files
+		SELECT root, relative_path, source_id, mod_id, COALESCE(mod_path, '') FROM deployed_files
 		WHERE game_id = ? AND profile_name = ?
-		ORDER BY relative_path
+		ORDER BY `+orderByPath+`
 	`, gameID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("querying deployed files: %w", err)
@@ -570,9 +625,12 @@ func (d *DB) ListDeployedFiles(ctx context.Context, gameID, profileName string) 
 
 	for rows.Next() {
 		var f DeployedPath
-		if err := rows.Scan(&f.RelativePath, &f.SourceID, &f.ModID, &f.ModPath); err != nil {
+		var root string
+		if err := rows.Scan(&root, &f.RelativePath, &f.SourceID, &f.ModID, &f.ModPath); err != nil {
 			return nil, fmt.Errorf("scanning deployed file: %w", err)
 		}
+		f.RelativePath = joinPath(root, f.RelativePath)
+
 		files = append(files, f)
 	}
 	return files, rows.Err()

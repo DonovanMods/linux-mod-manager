@@ -55,6 +55,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV23,
 		migrateV24,
 		migrateV25,
+		migrateV26,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -678,4 +679,56 @@ func migrateV25(ctx context.Context, q migrationExec) error {
 	}
 	_, err := q.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN previous_fomod TEXT NOT NULL DEFAULT ''`)
 	return err
+}
+
+// migrateV26 adds deployed_files.root (#629): which of the game's two
+// directories relative_path is relative to - 'mod_path', which every row
+// before it is, or 'install_path', a file a game adapter routes to the game
+// root (a script extender's loader, an ENB's d3d11.dll). The root joins the
+// primary key, because a game-root "textures/a.dds" (an ENB preset's) and a
+// mod_path "textures/a.dds" are two different files.
+//
+// SQLite cannot change a primary key in place, so the table is rebuilt:
+// created beside the old one, filled from it with every row's root
+// 'mod_path', and renamed over it. The mod_path column keeps its #451
+// meaning for both roots - the game's mod_path when the row was deployed -
+// so a row's generation is judged the same way whichever root it is under.
+// Guarded like migrateV20: a table that already has the column is left
+// alone.
+func migrateV26(ctx context.Context, q migrationExec) error {
+	var have int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('deployed_files') WHERE name = 'root'`).Scan(&have); err != nil {
+		return fmt.Errorf("inspecting deployed_files: %w", err)
+	}
+	if have > 0 {
+		return nil
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE deployed_files_v26 (
+			game_id TEXT NOT NULL,
+			profile_name TEXT NOT NULL,
+			root TEXT NOT NULL DEFAULT 'mod_path',
+			relative_path TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			mod_id TEXT NOT NULL,
+			deployed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			checksum TEXT,
+			size INTEGER,
+			mtime INTEGER,
+			ctime INTEGER,
+			mod_path TEXT,
+			PRIMARY KEY (game_id, profile_name, root, relative_path)
+		)`,
+		`INSERT INTO deployed_files_v26
+			(game_id, profile_name, root, relative_path, source_id, mod_id, deployed_at, checksum, size, mtime, ctime, mod_path)
+		SELECT game_id, profile_name, 'mod_path', relative_path, source_id, mod_id, deployed_at, checksum, size, mtime, ctime, mod_path
+		FROM deployed_files`,
+		`DROP TABLE deployed_files`,
+		`ALTER TABLE deployed_files_v26 RENAME TO deployed_files`,
+	} {
+		if _, err := q.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("adding deployed_files.root: %w", err)
+		}
+	}
+	return nil
 }
