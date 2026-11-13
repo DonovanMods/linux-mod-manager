@@ -69,12 +69,15 @@ func describeKey(version, variant string) string {
 }
 
 // StampKey writes k's identity marker into dir (an entry, or the staging
-// directory about to become one), replacing any marker already there.
+// directory about to become one), replacing any marker already there. The
+// marker is written to a temporary file, synced, and renamed into place, so
+// a crash leaves the old marker or the new one, never an empty file.
 func StampKey(dir string, k Key) error {
 	body := keyMarkerHeader + "\nversion " + strconv.Quote(k.Version) + "\nvariant " + strconv.Quote(k.Variant) + "\n"
 	path := filepath.Join(dir, KeyMarkerName)
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
+	if err := writeSynced(tmp, []byte(body)); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("writing cache identity marker: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
@@ -84,34 +87,61 @@ func StampKey(dir string, k Key) error {
 	return nil
 }
 
-// CheckKey reports whether dir, an existing entry, is k's: its marker
-// records k's version and variant, or it has no marker and k is plain (a
-// legacy entry). Anything else is a *KeyCollisionError - except that a
-// marker which cannot be read at all (an unreadable directory) does not
-// stop a plain key, as it would not have before markers existed. A dir
-// that does not exist is not checked here; see Claim.
+// writeSynced writes body to path and syncs it to disk before closing.
+func writeSynced(path string, body []byte) (err error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+	}()
+	if _, err := f.Write(body); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
+// CheckKey reports whether dir, an existing entry, is k's.
+//
+// A marker is a real collision only when it is CURRENT - the key it records
+// spells exactly the directory it sits in - and that key is not k: then the
+// directory is another key's entry. Every other state is LEGACY, an entry
+// whose marker vouches for no key: no marker (written before markers
+// existed), an empty or unparseable one (a crash mid-write on an older
+// filesystem, a hand edit), or a STALE one, whose key spells another
+// directory (an entry renamed after it was stamped - verify --fix's version
+// repair, an import's identity rename, a manual mv - whose restamp did not
+// happen). A legacy entry is plain, as every entry was before variants
+// existed: a plain key owns it (and its next commit restamps it), and a
+// variant key is refused, since nothing vouches that the files are that
+// variant's.
+//
+// A marker that cannot be read at all (an unreadable directory) does not
+// stop a plain key either, as it would not have before markers existed. A
+// dir that does not exist is not checked here; see Claim.
 func CheckKey(dir string, k Key) error {
+	legacy := func(unreadable bool) error {
+		if k.Variant == "" {
+			return nil
+		}
+		return &KeyCollisionError{Path: dir, Want: k, Legacy: !unreadable, Unreadable: unreadable}
+	}
 	body, err := os.ReadFile(filepath.Join(dir, KeyMarkerName))
 	if errors.Is(err, os.ErrNotExist) {
-		if k.Variant == "" {
-			return nil
-		}
-		return &KeyCollisionError{Path: dir, Want: k, Legacy: true}
+		return legacy(false)
 	}
 	if err != nil {
-		// The directory cannot be read (permissions, I/O). A plain key
-		// keeps the answer it had before markers existed - the directory
-		// is there, and whatever reads it next reports the real error -
-		// so a plain entry's behaviour never depends on the marker. A
-		// variant key needs the marker to vouch for it, and has none.
-		if k.Variant == "" {
-			return nil
-		}
-		return &KeyCollisionError{Path: dir, Want: k, Unreadable: true}
+		return legacy(true)
 	}
 	version, variant, ok := parseKeyMarker(body)
 	if !ok {
-		return &KeyCollisionError{Path: dir, Want: k, Unreadable: true}
+		return legacy(true)
+	}
+	if (Key{Version: version, Variant: variant}).versionDir() != filepath.Base(dir) {
+		return legacy(false) // stale: stamped for another directory
 	}
 	if version != k.Version || variant != k.Variant {
 		return &KeyCollisionError{Path: dir, Want: k, HaveVersion: version, HaveVariant: variant}
