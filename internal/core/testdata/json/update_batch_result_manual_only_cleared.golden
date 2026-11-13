@@ -1,0 +1,29 @@
+{
+  "game_id": "minecraft",
+  "profile": "default",
+  "applied": [
+    {
+      "mod": {
+        "source_id": "curseforge",
+        "mod_id": "238222",
+        "version": "2.1",
+        "file_ids": [
+          "5001"
+        ],
+        "locked": false
+      },
+      "name": "Opted Back In",
+      "from_version": "2.0",
+      "to_version": "2.1",
+      "status": "updated"
+    }
+  ],
+  "manual_only_cleared": [
+    {
+      "source_id": "curseforge",
+      "mod_id": "238222",
+      "name": "Opted Back In",
+      "message": "Opted Back In: automatic downloads are available again - CurseForge serves it through its API now"
+    }
+  ]
+}

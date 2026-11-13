@@ -169,6 +169,13 @@ type UpdateBatchResult struct {
 	// carry that failure onto the SAME document the apply produced, rather
 	// than losing it once the run moves past the check-only report.
 	ErrorMessage string `json:"error,omitempty"`
+	// ManualOnlyCleared is, like ErrorMessage, caller-populated: the
+	// manual-only mods the frontend's own check cleared (#627,
+	// UpdateCheckReport.ManualOnlyCleared), carried onto the document the
+	// apply produced - `lmm update --all --json` emits this one instead of
+	// the check's whenever an update remains, and the record the check
+	// cleared is gone, so nothing would say it otherwise. omitempty.
+	ManualOnlyCleared []ManualOnlyCleared `json:"manual_only_cleared,omitempty"`
 }
 
 // PlanUpdateBatch computes the batch plan for selection in profileName: it

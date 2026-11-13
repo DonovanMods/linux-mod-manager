@@ -308,7 +308,9 @@ leave the card. A few things hold it back:
   tries it again when a newer version comes out, or when you click **Check
   for updates**.
 - **Locked, manual-download or Steam Workshop mods** are never updated
-  automatically, whatever their setting.
+  automatically, whatever their setting. A manual-download mod whose author
+  allows downloads through apps again is updated automatically once more
+  (see [When the author turns downloads back on](manual-mods.md#when-the-author-turns-downloads-back-on)).
 - **Only the active profile** is updated: the one whose mods are in the game
   folder. Looking at another profile's updates never installs them.
 

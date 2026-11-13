@@ -363,7 +363,8 @@ func (s *Service) matchUntracked(ctx context.Context, game *domain.Game, r *Scan
 	r.Mod.Summary = matched.Summary
 	r.Mod.SourceURL = matched.SourceURL
 	r.Mod.PictureURL = matched.PictureURL
-	r.Mod.ManualOnly = matched.ManualOnly // #543: the source's own classification
+	r.Mod.ManualOnly = matched.ManualOnly       // #543: the source's own classification
+	r.Mod.Distributable = matched.Distributable // #627
 	r.Mod.GameID = matched.GameID
 	r.MatchedSource = matched.SourceID
 

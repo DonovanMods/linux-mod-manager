@@ -254,6 +254,16 @@ type Mod struct {
 	// the from-file install that follows. omitzero, so every document for a
 	// mod its source serves is byte-identical to what it was before.
 	ManualOnly bool `json:"manual_only,omitzero"`
+	// Distributable is the source's own explicit word on whether it serves
+	// this mod's files through its API (#627): non-nil only when the source
+	// said so either way (CurseForge's allowModDistribution, set only when
+	// the response carries the field). ManualOnly cannot carry it, because
+	// its false means both "the source serves it" and "the source said
+	// nothing". Core clears its manual-only record of a mod on an explicit
+	// true, and on nothing else: nil leaves the record as it is. Not on the
+	// wire - it is the source's report to core, not something a frontend
+	// shows (ManualOnly is).
+	Distributable *bool `json:"-"`
 	// Variant names which tree of Version's files this is, when the tree
 	// depends on more than the source file (#614: FOMOD installer choices,
 	// later an exact file list or applied patches). It is the cache key's

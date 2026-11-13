@@ -136,6 +136,11 @@ func (s *fakeUpdateSource) CheckUpdates(ctx context.Context, installed []domain.
 	var updates []domain.Update
 	for _, im := range installed {
 		avail, ok := s.mods[im.ID]
+		if ok && avail.Distributable != nil {
+			// #627: every mod fetched is reported with the source's
+			// classification, as curseforge's check does.
+			source.ReportFetchedMod(ctx, domain.Mod{ID: im.ID, SourceID: s.id, GameID: im.GameID, Distributable: avail.Distributable})
+		}
 		if !ok || avail.Version == im.Version {
 			continue
 		}

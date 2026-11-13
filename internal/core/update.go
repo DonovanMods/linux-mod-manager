@@ -422,6 +422,12 @@ type UpdatePlan struct {
 	// GameID/Profile fields, just carried on the embedded domain.Mod/
 	// InstalledMod instead of duplicated).
 	Mod domain.InstalledMod `json:"mod"`
+	// ManualOnlyCleared is what the check PlanUpdate ran cleared (#627):
+	// the mod, when its source now says it serves it through its API, so
+	// `lmm update <id>` can say automatic downloads are available again.
+	// The record is gone after that check, so nothing else will say it.
+	// Never set by PlanUpdateFrom, which runs no check. omitempty.
+	ManualOnlyCleared []ManualOnlyCleared `json:"manual_only_cleared,omitempty"`
 	// Locked/LockedVersion mirror the profile ref's lock state, read once -
 	// same semantics as domain.Update.Locked/LockedVersion (CheckGameUpdates
 	// already stamps these on Update when one exists, but PlanUpdate also
@@ -507,14 +513,22 @@ func (s *Service) PlanUpdate(ctx context.Context, game *domain.Game, profileName
 	if len(res.catalogMissing) > 0 {
 		return nil, s.notInCatalog(mod.SourceID, mod.ID, nil)
 	}
+	if len(res.cleared) > 0 {
+		mod.ManualOnly = false // #627: read before the check cleared it
+	}
 	// #542: an explicit single-mod update ignores a skip - the skip only
 	// hides the prompt - and applying it clears the skip.
 	updates := slices.Concat(res.updates, res.skipped)
+	var plan *UpdatePlan
 	if len(updates) == 0 {
-		return s.planUpdateBase(ctx, game, profileName, mod)
+		plan, err = s.planUpdateBase(ctx, game, profileName, mod)
+	} else {
+		plan, err = s.planUpdateFrom(ctx, game, profileName, mod, updates[0])
 	}
-
-	return s.planUpdateFrom(ctx, game, profileName, mod, updates[0])
+	if plan != nil {
+		plan.ManualOnlyCleared = res.cleared
+	}
+	return plan, err
 }
 
 // PlanUpdateFrom builds the plan for upd - the same UpdatePlan PlanUpdate

@@ -1096,7 +1096,8 @@ func (s *Service) enrichImportedMod(ctx context.Context, game *domain.Game, arch
 	imported.Summary = mod.Summary
 	imported.SourceURL = mod.SourceURL
 	imported.PictureURL = mod.PictureURL
-	imported.ManualOnly = mod.ManualOnly // #543: the source's own classification
+	imported.ManualOnly = mod.ManualOnly       // #543: the source's own classification
+	imported.Distributable = mod.Distributable // #627: and its explicit word the other way
 	if opts.InstallFromFile {
 		return mod, nil
 	}

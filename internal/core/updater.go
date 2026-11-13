@@ -308,6 +308,13 @@ type UpdateCheckReport struct {
 	// being, or already, re-linked to their one successor. Set by the
 	// frontend that ran it; omitempty.
 	AutoRelink *CatalogAutoRelink `json:"auto_relink,omitempty"`
+	// ManualOnlyCleared names the manual-only mods (#543) this check
+	// cleared because their source now says it serves them through its API
+	// (#627): automatic downloads are available for them again, so they
+	// take part in update batches and automatic updates once more. Each is
+	// reported by the one check that cleared it; `lmm serve` keeps showing
+	// it until the user's explicit check. omitempty.
+	ManualOnlyCleared []ManualOnlyCleared `json:"manual_only_cleared,omitempty"`
 }
 
 // CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
@@ -430,15 +437,16 @@ func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profi
 func (s *Service) CheckGameUpdateReport(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) (*UpdateCheckReport, error) {
 	res, checkErr := s.checkGameUpdates(ctx, game, profileName, installed, sink, opts)
 	report := &UpdateCheckReport{
-		GameID:          game.ID,
-		Profile:         profileName,
-		Updates:         res.updates,
-		Skipped:         CountUpdateSkips(installed),
-		External:        CountExternalUpdates(res.updates),
-		ExternalMissing: res.drift.missingRefs(),
-		Warnings:        res.drift.warnings,
-		CatalogMissing:  res.catalogMissing,
-		SkippedUpdates:  res.skipped,
+		GameID:            game.ID,
+		Profile:           profileName,
+		Updates:           res.updates,
+		Skipped:           CountUpdateSkips(installed),
+		External:          CountExternalUpdates(res.updates),
+		ExternalMissing:   res.drift.missingRefs(),
+		Warnings:          res.drift.warnings,
+		CatalogMissing:    res.catalogMissing,
+		SkippedUpdates:    res.skipped,
+		ManualOnlyCleared: res.cleared,
 	}
 	report.Skipped.Updates = len(res.skipped)
 	if checkErr != nil {
@@ -459,6 +467,8 @@ type gameUpdateCheck struct {
 	// skipped is the updates left out of updates because the user skipped
 	// the version they offer (#542).
 	skipped []domain.Update
+	// cleared is the manual-only mods the check cleared (#627).
+	cleared []ManualOnlyCleared
 }
 
 // checkGameUpdates is CheckGameUpdates' body, also returning what
@@ -470,12 +480,16 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 	}
 	// #592: the sources report every mod they fetch, and the names they
 	// report are recorded on the rows - the backfill costs no request.
-	checkCtx, fetched := withFetchedCategories(ctx)
+	checkCtx, fetched := withFetchedMods(ctx)
 	updates, catalogMissing, checkErr := s.NewUpdater().checkUpdates(checkCtx, game, drift.overlay(installed), sink, opts)
 	s.backfillCategoryNames(ctx, game.ID, installed, fetched)
 	// #590: each gone mod's likely new identity, one search apiece.
 	s.fillCatalogSuccessors(ctx, game.ID, installed, catalogMissing)
 	carryManualOnly(updates, installed) // #543
+	// #627: and a manual-only mod its source now says it serves is cleared
+	// - from the same fetched metadata, so with no request of its own.
+	cleared := s.clearDistributableManualOnly(ctx, game.ID, installed, updates, fetched)
+	unflagCleared(updates, cleared)
 
 	staleUpd, staleErr := s.CheckMergedPakStaleness(ctx, game, profileName)
 	if staleErr != nil && checkErr == nil {
@@ -508,7 +522,7 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 		// unlocked, which is a lie the caller acts on; the cancellation
 		// outranks checkErr, which under a cancelled ctx is derived from it.
 		if cerr := ctx.Err(); cerr != nil {
-			return gameUpdateCheck{updates: updates, drift: drift, catalogMissing: catalogMissing}, cerr
+			return gameUpdateCheck{updates: updates, drift: drift, catalogMissing: catalogMissing, cleared: cleared}, cerr
 		}
 	}
 	for i := range updates {
@@ -520,7 +534,7 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 	}
 
 	offered, skipped := splitSkippedUpdates(installed, updates)
-	return gameUpdateCheck{updates: offered, drift: drift, catalogMissing: catalogMissing, skipped: skipped}, checkErr
+	return gameUpdateCheck{updates: offered, drift: drift, catalogMissing: catalogMissing, skipped: skipped, cleared: cleared}, checkErr
 }
 
 // splitSkippedUpdates separates the updates offering a version the user

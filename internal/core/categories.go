@@ -228,24 +228,41 @@ func (pm *ProfileManager) SetModCategory(ctx context.Context, gameID, profileNam
 	return pm.save(profile)
 }
 
-// fetchedCategories collects the category names an update check's sources
-// reported for the mods they fetched (source.ReportFetchedMod), keyed by
-// domain.ModKey. Sources may report from several goroutines.
-type fetchedCategories struct {
+// fetchedMods collects what an update check's sources reported for the
+// mods they fetched (source.ReportFetchedMod), keyed by domain.ModKey: the
+// category names (#592) and the mods the source explicitly says it serves
+// through its API (#627). Sources may report from several goroutines.
+type fetchedMods struct {
 	mu    sync.Mutex
 	names map[string]string
+	// distributable holds the mods reported with Distributable set to
+	// true - an explicit positive, never an absent classification.
+	distributable map[string]bool
 }
 
-func (f *fetchedCategories) observe(mod domain.Mod) {
-	if mod.CategoryName == "" {
-		return
-	}
+func (f *fetchedMods) observe(mod domain.Mod) {
+	key := domain.ModKey(mod.SourceID, mod.ID)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.names == nil {
-		f.names = map[string]string{}
+	if mod.CategoryName != "" {
+		if f.names == nil {
+			f.names = map[string]string{}
+		}
+		f.names[key] = mod.CategoryName
 	}
-	f.names[domain.ModKey(mod.SourceID, mod.ID)] = mod.CategoryName
+	if explicitlyDistributable(&mod) {
+		if f.distributable == nil {
+			f.distributable = map[string]bool{}
+		}
+		f.distributable[key] = true
+	}
+}
+
+// distributableKeys is a snapshot of the mods reported distributable.
+func (f *fetchedMods) distributableKeys() map[string]bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return maps.Clone(f.distributable) // a source may still be reporting
 }
 
 // backfillCategoryNames records on each of installed's rows the category
@@ -255,7 +272,7 @@ func (f *fetchedCategories) observe(mod domain.Mod) {
 // is logged, never returned: the name is display metadata, and the check it
 // rides on must not fail over it. It costs no request - the names are what
 // the check fetched anyway.
-func (s *Service) backfillCategoryNames(ctx context.Context, gameID string, installed []domain.InstalledMod, fetched *fetchedCategories) {
+func (s *Service) backfillCategoryNames(ctx context.Context, gameID string, installed []domain.InstalledMod, fetched *fetchedMods) {
 	fetched.mu.Lock()
 	names := maps.Clone(fetched.names) // a source may still be reporting
 	fetched.mu.Unlock()
@@ -273,9 +290,9 @@ func (s *Service) backfillCategoryNames(ctx context.Context, gameID string, inst
 	}
 }
 
-// withFetchedCategories returns ctx carrying an observer that collects the
-// category names a source reports into the returned fetchedCategories.
-func withFetchedCategories(ctx context.Context) (context.Context, *fetchedCategories) {
-	fetched := &fetchedCategories{}
+// withFetchedMods returns ctx carrying an observer that collects what a
+// source reports about the mods it fetched into the returned fetchedMods.
+func withFetchedMods(ctx context.Context) (context.Context, *fetchedMods) {
+	fetched := &fetchedMods{}
 	return source.WithFetchedModObserver(ctx, fetched.observe), fetched
 }

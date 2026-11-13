@@ -670,7 +670,20 @@ func modToDomain(data Mod, gameID string, types flavorSet) domain.Mod {
 		PictureURL:   pictureURL,
 		UpdatedAt:    data.DateModified,
 		ManualOnly:   distributionDisallowed(data),
+		// #627: the author's word either way, nil when CurseForge sent none,
+		// so core can clear a manual-only record once the author allows
+		// third-party downloads again.
+		Distributable: cloneBool(data.AllowModDistribution),
 	}
+}
+
+// cloneBool is a copy of p, so the domain mod never aliases the response.
+func cloneBool(p *bool) *bool {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 // distributionDisallowed reports a mod whose author turned off third-party

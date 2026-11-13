@@ -38,6 +38,30 @@ lmm install --id 12345 -s curseforge --file 67890 --from-file ~/Downloads/SomeMo
 lmm update 12345 --from-file ~/Downloads/SomeMod-2.1.zip
 ```
 
+## When the author turns downloads back on
+
+Once a mod's site refuses to let lmm download it, lmm marks the mod
+**Manual** and stops trying: update checks still tell you about new
+versions, but **Update all** and automatic updates leave it out.
+
+Mod authors can change their minds. On CurseForge, an author can turn
+downloads through apps back on. lmm notices this the next time it checks
+for updates, from the terminal or in the browser, at no extra cost: the
+check already asks the site about every mod. It takes the **Manual** mark
+off, and says so once:
+
+```text
+SomeMod: automatic downloads are available again - CurseForge serves it through its API now
+```
+
+In the browser the same line appears on the **Updates** card until you
+next click **Check for updates**. From then on the mod is updated like any
+other, including automatically if its update setting is **Auto**. If the
+site refuses a download again later, lmm marks the mod **Manual** again.
+
+lmm only removes the mark when the site says plainly that it allows the
+download. A site that says nothing either way leaves the mark in place.
+
 ## A mod that isn't on any site
 
 To add an archive (a `.zip`, `.7z` or `.rar` file) lmm has no record of, use

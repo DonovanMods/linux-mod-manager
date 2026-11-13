@@ -196,6 +196,9 @@ func (s *Server) checkModUpdates(ctx context.Context, game *domain.Game, profile
 		return nil, err
 	}
 	report, _ := s.svc.CheckGameUpdateReport(ctx, game, profile, installed, sink, opts)
+	// #627: what this check cleared, and what earlier ones did, until the
+	// user's explicit check.
+	report.ManualOnlyCleared = s.manualOnlyCleared.remember(autoUpdateKey(game.ID, profile), report.ManualOnlyCleared, installed, opts.Refresh)
 	if auto {
 		// #590 first: a moved mod is re-linked before its updates are
 		// looked at, and a re-link job running makes the update pass below

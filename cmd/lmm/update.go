@@ -352,6 +352,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", checkErr)
 		}
 	}
+	if !jsonOutput {
+		printManualOnlyCleared(report)
+	}
 
 	// finish is returned at every exit below rather than bailing out early: a
 	// partial check still has results worth printing and auto-updates worth
@@ -507,6 +510,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if checkErr != nil {
 		result.ErrorMessage = checkErr.Error()
 	}
+	// #627: the same for what the check cleared - printed above under
+	// text, and the check document is not emitted under --json.
+	result.ManualOnlyCleared = report.ManualOnlyCleared
 
 	if jsonOutput {
 		if err := emitJSON(result); err != nil {
@@ -766,6 +772,18 @@ func printExternalCheckWarnings(report *core.UpdateCheckReport) {
 	}
 }
 
+// printManualOnlyCleared says, once, that each manual-only mod the check
+// cleared (#627) can be downloaded automatically again - in core's own
+// words, the sentence the web UI shows. Silent when there are none.
+func printManualOnlyCleared(report *core.UpdateCheckReport) {
+	for _, c := range report.ManualOnlyCleared {
+		fmt.Println(c.Message)
+	}
+	if len(report.ManualOnlyCleared) > 0 {
+		fmt.Println()
+	}
+}
+
 // printExternalMissing names the Steam Workshop items lmm tracks that Steam
 // no longer lists (#538): they were not checked, and are not updates.
 // Silent when there are none.
@@ -823,6 +841,8 @@ func autoRelinkGone(ctx context.Context, service *core.Service, game *domain.Gam
 	// to; this one only re-reads the moved mods.
 	again, againErr := service.CheckGameUpdateReport(ctx, game, profileName, reread, sink, core.UpdateCheckOptions{})
 	again.AutoRelink = &core.CatalogAutoRelink{Relinked: result.Relinked}
+	// #627: the first check cleared these, so the re-run cannot report them.
+	again.ManualOnlyCleared = append(slices.Clone(report.ManualOnlyCleared), again.ManualOnlyCleared...)
 	return again, reread, againErr
 }
 
@@ -1085,6 +1105,10 @@ func applySingleUpdateFromSource(ctx context.Context, service *core.Service, gam
 			return authPromptError(updateSource)
 		}
 		return err
+	}
+	if !jsonOutput {
+		// #627: this check is the one that cleared it, so it says so.
+		printManualOnlyCleared(&core.UpdateCheckReport{ManualOnlyCleared: plan.ManualOnlyCleared})
 	}
 
 	switch {

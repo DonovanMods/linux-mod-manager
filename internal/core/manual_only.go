@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -110,10 +111,111 @@ func (s *Service) noteDownloadOutcome(ctx context.Context, gameID, sourceID stri
 // classified it so in the metadata it returned (CurseForge's
 // allowModDistribution: false) - the way an install from a hand-downloaded
 // file, an archive import or an adoption learns it without any download
-// being tried. A source that says nothing leaves any earlier record alone.
+// being tried - and clears that record when the source says explicitly that
+// it serves the mod (#627, domain.Mod.Distributable). A source that says
+// nothing leaves any earlier record alone.
 func (s *Service) noteSourceClassification(ctx context.Context, gameID string, mod *domain.Mod) {
-	if mod != nil && mod.ManualOnly {
+	switch {
+	case mod == nil:
+	case mod.ManualOnly:
 		s.recordManualOnly(ctx, gameID, mod.SourceID, mod.ID)
+	case explicitlyDistributable(mod):
+		s.clearManualOnly(ctx, gameID, mod.SourceID, mod.ID)
+	}
+}
+
+// explicitlyDistributable reports a mod its source says, explicitly, that it
+// serves through its API (#627). An absent classification is not a yes.
+func explicitlyDistributable(mod *domain.Mod) bool {
+	return mod != nil && mod.Distributable != nil && *mod.Distributable
+}
+
+// ManualOnlyCleared is one mod whose manual-only record (#543) an update
+// check cleared because its source now says it serves the mod's files
+// through its API (#627): CurseForge's allowModDistribution turned back on.
+// The mod takes part in update batches and automatic updates again. A check
+// reports it once - the record it cleared is gone - so a frontend says so
+// once (UpdateCheckReport.ManualOnlyCleared).
+type ManualOnlyCleared struct {
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	Name     string `json:"name,omitempty"`
+	// Message is the sentence both frontends show: "<name>: automatic
+	// downloads are available again - <source> serves it through its API
+	// now".
+	Message string `json:"message"`
+}
+
+// clearDistributableManualOnly clears the manual-only record of every mod in
+// installed that its source said, during this update check, it serves
+// through its API (#627) - reported through source.ReportFetchedMod
+// (fetched), or on the update the source built for it - and returns those
+// it cleared, in installed's order. It costs no request: the check fetched
+// the mods anyway. A mod with no record is not news, and an absent
+// classification clears nothing. Best-effort, like the record itself: a
+// failure is logged and the mod stays recorded until the next check.
+func (s *Service) clearDistributableManualOnly(ctx context.Context, gameID string, installed []domain.InstalledMod, updates []domain.Update, fetched *fetchedMods) []ManualOnlyCleared {
+	said := fetched.distributableKeys()
+	for i := range updates {
+		if explicitlyDistributable(&updates[i].InstalledMod.Mod) {
+			if said == nil {
+				said = map[string]bool{}
+			}
+			said[domain.ModKey(updates[i].InstalledMod.SourceID, updates[i].InstalledMod.ID)] = true
+		}
+	}
+	if len(said) == 0 || ctx.Err() != nil {
+		return nil
+	}
+	recorded, err := s.db.ManualOnlyMods(ctx, gameID)
+	if err != nil {
+		s.logger().Debug("cannot read manual-only mods", "game", gameID, "err", err)
+		return nil
+	}
+	var cleared []ManualOnlyCleared
+	for _, m := range installed {
+		key := domain.ModKey(m.SourceID, m.ID)
+		if !said[key] || !recorded[key] {
+			continue
+		}
+		delete(recorded, key) // a mod listed twice is cleared, and reported, once
+		// A download refused between the source's answer and this delete
+		// may record the mod just before the clear removes it again. That
+		// race is benign and heals itself: the next attempt is refused the
+		// same way and records it again (noteDownloadOutcome).
+		if err := s.db.ClearManualOnly(ctx, gameID, m.SourceID, m.ID); err != nil {
+			s.logger().Warn("cannot clear a manual-only mod", "game", gameID, "mod", key, "err", err)
+			continue
+		}
+		name := cmp.Or(m.Name, m.ID)
+		sourceName := m.SourceID
+		if src, err := s.GetSource(m.SourceID); err == nil {
+			sourceName = cmp.Or(src.Name(), m.SourceID)
+		}
+		cleared = append(cleared, ManualOnlyCleared{
+			SourceID: m.SourceID,
+			ModID:    m.ID,
+			Name:     m.Name,
+			Message:  fmt.Sprintf("%s: automatic downloads are available again - %s serves it through its API now", name, sourceName),
+		})
+	}
+	return cleared
+}
+
+// unflagCleared takes ManualOnly off the updates of the mods cleared: the
+// row they were built from was stamped before the clear.
+func unflagCleared(updates []domain.Update, cleared []ManualOnlyCleared) {
+	if len(cleared) == 0 {
+		return
+	}
+	keys := make(map[string]bool, len(cleared))
+	for _, c := range cleared {
+		keys[domain.ModKey(c.SourceID, c.ModID)] = true
+	}
+	for i := range updates {
+		if keys[domain.ModKey(updates[i].InstalledMod.SourceID, updates[i].InstalledMod.ID)] {
+			updates[i].InstalledMod.ManualOnly = false
+		}
 	}
 }
 

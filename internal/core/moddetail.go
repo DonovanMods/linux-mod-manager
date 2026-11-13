@@ -115,6 +115,13 @@ type InstalledDetail struct {
 // described from its installed row (#447): that row is everything lmm knows
 // about it, and a detail view of an installed mod must not fail for want of
 // a catalog entry nobody can serve.
+//
+// It is a read, with one write (#627): when the source says explicitly that
+// it serves the mod through its API (domain.Mod.Distributable), the mod's
+// manual-only record is cleared, as an update check clears it. Unlike the
+// check, ModDetail gives no notice of it - the document simply no longer
+// says manual_only. Every reader of the source's metadata clears on its
+// word, and a detail view has no place for a one-time "available again".
 func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sourceID, modID string) (*ModDetail, error) {
 	mod, err := s.GetMod(ctx, sourceID, game.ID, modID)
 	liveSource := err == nil
@@ -138,6 +145,10 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		s.resolveAuthorNames(ctx, sourceID, mod)
 	}
 	detail := &ModDetail{Mod: mod}
+	// #627: a source that says it serves the mod clears lmm's record first.
+	if liveSource && explicitlyDistributable(mod) {
+		s.clearManualOnly(ctx, game.ID, sourceID, modID)
+	}
 	// #543: the source's own classification, or a refusal lmm recorded -
 	// installed or not, since a refused install is when the user looks.
 	mod.ManualOnly = mod.ManualOnly || s.manualOnlyRecorded(ctx, game.ID, sourceID, modID)
