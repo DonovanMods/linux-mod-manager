@@ -416,13 +416,14 @@ func TestDoModFomod_DefaultsResetToTheInstallersOwn(t *testing.T) {
 // or an ESC sequence never reaches the terminal - while the answer echoes
 // the raw names, which is what the installer matches (#615 review item 6).
 func TestFomodWalk_SanitisesInstallerTextButAnswersRawNames(t *testing.T) {
-	evil := "Opt\u009b2J‮A\x1b]0;pwned\x07"
+	rlo := string(rune(0x202E)) // a bidi override, spelled so no tool rewrites it
+	evil := "Opt\u009b2J" + rlo + "A\x1b]0;pwned\x07"
 	q := core.FomodQuestion{
-		SourceID: "src", ModID: "m", Name: "Mod\x1b[31m", ModuleName: "Inst‮", ConfigSHA256: "ab",
+		SourceID: "src", ModID: "m", Name: "Mod\x1b[31m", ModuleName: "Inst" + rlo, ConfigSHA256: "ab",
 		Steps: []core.FomodQuestionStep{{Name: "Step\u009b", Groups: []core.FomodQuestionGroup{{
 			Name: "Group\x1b[2J", Type: "SelectExactlyOne",
 			Options: []core.FomodQuestionOption{
-				{Name: evil, Type: "Optional", Selected: true, Description: "line one\u009b\nline‮ two"},
+				{Name: evil, Type: "Optional", Selected: true, Description: "line one\u009b\nline" + rlo + " two"},
 				{Name: "Plain", Type: "Optional"},
 			},
 		}}}},
@@ -435,7 +436,7 @@ func TestFomodWalk_SanitisesInstallerTextButAnswersRawNames(t *testing.T) {
 	a, err := f.walk(q)
 	require.NoError(t, err)
 	text := out.String()
-	for _, bad := range []string{"\u009b", "‮", "\x1b", "\x07"} {
+	for _, bad := range []string{"\u009b", rlo, "\x1b", "\x07"} {
 		assert.NotContains(t, text, bad, "the walk printed a raw control")
 	}
 	assert.Contains(t, text, "line one")
@@ -445,7 +446,7 @@ func TestFomodWalk_SanitisesInstallerTextButAnswersRawNames(t *testing.T) {
 
 	var summary bytes.Buffer
 	printFomodQuestionSummary(&summary, &core.FomodChoicesRequiredError{Mods: []core.FomodQuestion{q}})
-	for _, bad := range []string{"\u009b", "‮", "\x1b", "\x07"} {
+	for _, bad := range []string{"\u009b", rlo, "\x1b", "\x07"} {
 		assert.NotContains(t, summary.String(), bad, "the summary printed a raw control")
 	}
 }
