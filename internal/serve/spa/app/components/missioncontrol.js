@@ -32,6 +32,7 @@ import { ModPanel } from "./modpanel.js";
 import { OmnibarResults } from "./omnibarresults.js";
 import { SnapshotsCard } from "./snapshots.js";
 import { ModPathWarning } from "./modpath.js";
+import { AdapterSuggestion } from "./adaptersuggestion.js";
 import { PendingReads } from "./pendingreads.js";
 
 /** goToChooser is the error state's escape hatch: a click, not just advice
@@ -255,6 +256,16 @@ export function MissionControl({ state, onThemeChange, actions }) {
           error=${status.mod_path_error}
           gameID=${route.game}
           route=${route}
+        />
+        ${
+          /* issue 606: the adapter lmm's game catalog would set this game
+          up with, when it uses the identity - offered, never applied. */ ""
+        }
+        <${AdapterSuggestion}
+          suggested=${status.suggested_adapter}
+          warning=${status.suggested_adapter_warning}
+          gameID=${route.game}
+          onApplied=${actions.reloadStatus}
         />
         ${
           /* issue 583: every slow read still out names itself here, in

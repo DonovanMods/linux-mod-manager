@@ -1,6 +1,7 @@
 // gameeditor.js - the Setup page's one editor for a configured game (issue
 // 527): every field a Games row edits - name, install path (issue 528), mod
-// path, Wine/Proton prefix (issue 605), sources, loader and, for a CurseForge
+// path, Wine/Proton prefix (issue 605), game catalog entry (issue 606),
+// sources, loader and, for a CurseForge
 // game, the CurseForge game version types it accepts (issue 544) - in one
 // panel, with one Save and one Cancel.
 //
@@ -18,7 +19,7 @@ import {
   useState,
 } from "../render.js";
 import { codeSpans } from "../errortext.js";
-import { ApiError, getSourceVersionTypes } from "../api.js";
+import { ApiError, getKnownGames, getSourceVersionTypes } from "../api.js";
 import { SourcesMapEditor } from "./sourcesmap.js";
 import {
   GameLoaderEditor,
@@ -41,6 +42,7 @@ export function gameDraft(game) {
     curseforge_types: (game.curseforge?.game_version_types ?? []).join(", "),
     prefix: game.prefix ?? "",
     prefix_user: game.prefix_user ?? "",
+    catalog: game.catalog ?? "",
   };
 }
 
@@ -120,6 +122,8 @@ export function gameEditBody(game, draft) {
   if (draft.prefix_user !== was.prefix_user) {
     body.prefix_user = draft.prefix_user;
   }
+  // issue 606: "" clears `catalog:`.
+  if (draft.catalog !== was.catalog) body.catalog = draft.catalog;
   if (!sameMap(draft.sources, was.sources)) body.sources = draft.sources;
   if (!sameLoader(draft.loader, was.loader)) {
     body.loader = loaderSpec(draft.loader) ?? undefined;
@@ -137,7 +141,7 @@ export function gameEditBody(game, draft) {
  * the error envelope's details - by structure, never by the message:
  *
  *   - core.GameSpecError carries the wire key itself ("name",
- *     "install_path", "mod_path", "prefix", "prefix_user", "sources",
+ *     "install_path", "mod_path", "prefix", "prefix_user", "catalog", "sources",
  *     "loader.runtime", ...);
  *   - core.GameInstallPathInUseError (issue 528) carries new_install_path;
  *   - core.GameModPathInUseError is modPathInUseFor's shape, and a game whose
@@ -159,6 +163,7 @@ export function gameEditErrorField(details) {
       "mod_path",
       "prefix",
       "prefix_user",
+      "catalog",
       "sources",
     ].includes(details.field)
       ? details.field
@@ -323,6 +328,71 @@ function CurseForgeTypesPicker({
 }
 
 /**
+ * CatalogField is the game's `catalog:` (issue 606): which entry of lmm's game
+ * catalog the game is, for an install lmm cannot recognise by its Steam app
+ * id or a standard game id (a GOG or Epic copy under an id of its own). The
+ * choices are GET /api/v1/games/known, by name; "Not set" clears it. A value
+ * the catalog does not have (a hand-edited games.yaml) is kept as a choice of
+ * its own, marked, so opening and saving the panel never drops it silently.
+ */
+function CatalogField({ id, value, busy, error, onChange }) {
+  const [known, setKnown] = useState(null);
+  const [failure, setFailure] = useState(null);
+  useEffect(() => {
+    let live = true;
+    getKnownGames()
+      .then((rows) => live && setKnown(rows ?? []))
+      .catch(
+        (err) =>
+          live &&
+          setFailure(err instanceof ApiError ? err.message : String(err)),
+      );
+    return () => {
+      live = false;
+    };
+  }, []);
+  const listed = (known ?? []).some((k) => k.slug === value);
+  return html`
+    <div class="game-editor__field" data-testid="catalog-editor">
+      <label class="plan__control" for=${id}>Game catalog entry</label>
+      <select
+        id=${id}
+        name="catalog"
+        value=${value}
+        disabled=${busy || known === null}
+        aria-invalid=${error ? "true" : undefined}
+        aria-describedby=${error ? `${id}-error` : `${id}-hint`}
+        onChange=${(e) => onChange(e.currentTarget.value)}
+      >
+        <option value="">Not set - recognised by its Steam app id or id</option>
+        ${(known ?? []).map(
+          (k) =>
+            html`<option key=${k.slug} value=${k.slug}>
+              ${k.name} (${k.slug})
+            </option>`,
+        )}
+        ${
+          value &&
+          known !== null &&
+          !listed &&
+          html`<option value=${value}>${value} (not in lmm's catalog)</option>`
+        }
+      </select>
+      <div class="game-editor__answer" role="status">
+        <${FieldError} id=${`${id}-error`} error=${error} />
+      </div>
+      <p class="empty-state__hint" id=${`${id}-hint`}>
+        ${
+          failure
+            ? `Couldn't load lmm's game catalog: ${failure}.`
+            : "Which game this is, for one lmm doesn't recognise by itself - a GOG or Epic copy added under an id of your own. lmm then treats it as that game."
+        }
+      </p>
+    </div>
+  `;
+}
+
+/**
  * GameEditor is the panel. It is a controlled component: setupgames.js owns
  * the draft, the answer and the request, and hands the panel `error` (the
  * last refusal: {message, field, details}) and `saved` (the last save
@@ -351,6 +421,7 @@ export function GameEditor({
     curseforge_types: `curseforge-types-${game.id}`,
     prefix: `prefix-${game.id}`,
     prefix_user: `prefix-user-${game.id}`,
+    catalog: `catalog-${game.id}`,
   };
   const nameRef = useRef(null);
   const modPathRef = useRef(null);
@@ -499,6 +570,13 @@ export function GameEditor({
           "prefix-user",
           'The user folder under the prefix\'s drive_c/users. Leave it blank and lmm uses "steamuser" in a Proton prefix, or the only user there.',
         )}
+        <${CatalogField}
+          id=${ids.catalog}
+          value=${draft.catalog}
+          busy=${busy}
+          error=${fieldError("catalog")}
+          onChange=${(catalog) => patch({ catalog })}
+        />
       </div>
 
       ${

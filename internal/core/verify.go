@@ -1159,6 +1159,8 @@ func (r *verifyRun) blockedPathsPass(installedMods []domain.InstalledMod, rows [
 // own and counts towards neither tally, exactly as the other passes' skips
 // do.
 func (r *verifyRun) adapterPass(installedMods []domain.InstalledMod) {
+	r.adapterSuggestionPass()
+	r.catalogPass()
 	a, err := r.svc.AdapterFor(r.game)
 	if err != nil {
 		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("adapter: %v", err)}, VerifyEvent{})

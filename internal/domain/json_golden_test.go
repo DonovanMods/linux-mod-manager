@@ -348,6 +348,22 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #606: `catalog:` names the known-games catalog entry a game
+			// is - a GOG or Epic install under a custom id. game.golden is
+			// the unset case and stays byte-identical (omitempty).
+			"game_catalog",
+			domain.Game{
+				ID:          "gog-skyrim",
+				Name:        "Skyrim Special Edition (GOG)",
+				InstallPath: "/home/user/Games/Heroic/Skyrim Special Edition",
+				ModPath:     "/home/user/Games/Heroic/Skyrim Special Edition/Data",
+				SourceIDs:   map[string]string{"nexusmods": "skyrimspecialedition"},
+				LinkMethod:  domain.LinkSymlink,
+				Adapter:     "bethesda",
+				Catalog:     "skyrim-se",
+			},
+		},
+		{
 			// #605: a Steam app whose compatdata prefix exists carries it,
 			// as information - the prefix lmm will derive. It is never
 			// written to the games.yaml the row configures.

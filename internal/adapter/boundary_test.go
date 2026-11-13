@@ -20,6 +20,7 @@ const modulePrefix = "github.com/DonovanMods/linux-mod-manager/v2/"
 var adapterPackages = []string{
 	"internal/adapter",
 	"internal/adapter/bepinex",
+	"internal/adapter/bethesda",
 	"internal/adapter/icarus",
 	"internal/adapter/d2r",
 }

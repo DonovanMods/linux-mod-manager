@@ -3984,6 +3984,40 @@ a.row-menu__item.mod-page-link {
   overflow-wrap: anywhere;
 }
 
+/* issue 606: the adapter lmm's game catalog suggests for a game that uses
+ * the identity - a note with the action that takes it. */
+.adapter-suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--accent);
+  background: var(--surface-sunken);
+}
+
+.adapter-suggestion__text {
+  flex: 1 1 20rem;
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.adapter-suggestion__confirm {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.adapter-suggestion__error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--danger);
+}
+
 .mod-path-editor {
   display: flex;
   flex-wrap: wrap;
