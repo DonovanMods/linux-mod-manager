@@ -743,6 +743,11 @@ type UpdateApplyResult struct {
 	// automatic updates never ask a question; the user answers them and
 	// updates the mod on its own. omitzero.
 	FomodReanswer bool `json:"fomod_reanswer,omitzero"`
+	// FomodChoicesRequired is the question behind a FomodReanswer skip
+	// (#615), so a frontend can ask it and send the answers back in
+	// UpdateBatchOptions.Fomod (or a single update's UpdateOptions.Fomod).
+	// omitempty.
+	FomodChoicesRequired *FomodChoicesRequiredError `json:"fomod_choices_required,omitempty"`
 }
 
 // ErrModLocked reports an update apply refused because the profile ref is

@@ -87,6 +87,10 @@ func splitModKey(key string) (sourceID, modID string, ok bool) {
 type updatesApplyRequest struct {
 	Force     bool `json:"force,omitzero"`
 	SkipHooks bool `json:"skip_hooks,omitzero"`
+	// Fomod answers the FOMOD installer questions a fomod_reanswer skip
+	// carried (#615), keyed by "<source-id>:<mod-id>": the web UI's
+	// installer wizard re-posts the batch for that mod with them.
+	Fomod map[string]domain.FomodChoices `json:"fomod,omitzero"`
 }
 
 // batchOptions renders the request as the core options struct. StopOnError
@@ -95,7 +99,7 @@ type updatesApplyRequest struct {
 // failed is not what that gesture means (core's default, and both the
 // pre-#324 loops', is to carry on and name the failures).
 func (r updatesApplyRequest) batchOptions() core.UpdateBatchOptions {
-	return core.UpdateBatchOptions{Force: r.Force, SkipHooks: r.SkipHooks}
+	return core.UpdateBatchOptions{Force: r.Force, SkipHooks: r.SkipHooks, Fomod: r.Fomod}
 }
 
 // pendingUpdates is what the plan store holds between Plan and Apply: the

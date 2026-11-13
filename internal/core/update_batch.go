@@ -82,6 +82,12 @@ type UpdateBatchOptions struct {
 	// would rather stop and be told than half-apply a set it thinks of as
 	// one change; nothing in lmm passes it today.
 	StopOnError bool
+	// Fomod answers FOMOD installer questions, keyed by domain.ModKey, as
+	// UpdateOptions.Fomod does (#615). The batch still never asks: an item
+	// whose installer needs answers this map does not give is skipped
+	// (ReasonFomodReanswer) with the question on its result, which a
+	// frontend answers and sends back here for that item.
+	Fomod map[string]domain.FomodChoices
 }
 
 // UpdateBatchFailure is one item the batch could not update, with the
@@ -483,7 +489,7 @@ func (s *Service) commitUpdateBatchItem(ctx context.Context, game *domain.Game, 
 		applied, err = s.applyMergedPakRegen(ctx, game, plan.Profile, sink)
 	} else {
 		applied, err = s.applyUpdate(ctx, game, st.itemPlan,
-			UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks}, sink)
+			UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks, Fomod: opts.Fomod}, sink)
 	}
 	var question *FomodChoicesRequiredError
 	if err != nil && st.itemPlan != nil && ctx.Err() == nil && errors.As(err, &question) {
@@ -491,6 +497,7 @@ func (s *Service) commitUpdateBatchItem(ctx context.Context, game *domain.Game, 
 		// fit its new installer, so it is skipped - its download kept -
 		// for the user to answer on its own.
 		skip := fomodReanswerSkip(st.itemPlan, st.upd)
+		skip.FomodChoicesRequired = question
 		result.Skipped = append(result.Skipped, skip)
 		emit(ModEvent{Scope: st.scope, Phase: UpdateBatchItemSkipped, Detail: skip.Reason})
 		return nil

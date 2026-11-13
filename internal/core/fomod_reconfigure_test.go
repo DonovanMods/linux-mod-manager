@@ -91,3 +91,39 @@ func createTestZipBytes(t *testing.T, files map[string]string) []byte {
 	require.NoError(t, err)
 	return b
 }
+
+// TestFomodUpdateBatch_TheSkipCarriesItsQuestionAndTakesAnswers: the batch
+// never asks, but its skip carries the question, and the batch run again
+// with the answers updates the mod (#615: the web UI answers an update
+// that way).
+func TestFomodUpdateBatch_TheSkipCarriesItsQuestionAndTakesAnswers(t *testing.T) {
+	f := newFomodFixture(t)
+	f.serve(t, "mod1", "1.0", "4K", "v1")
+	ctx := context.Background()
+	_, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+
+	f.serve(t, "mod1", "1.1", "Ultra", "v2")
+	batch := func(opts core.UpdateBatchOptions) *core.UpdateBatchResult {
+		t.Helper()
+		row, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+		require.NoError(t, err)
+		plan, err := f.svc.PlanUpdateBatchFrom(ctx, f.game, "default", []domain.Update{{InstalledMod: *row, NewVersion: "1.1"}}, nil)
+		require.NoError(t, err)
+		result, err := f.svc.ApplyUpdateBatch(ctx, f.game, plan, opts, nil)
+		require.NoError(t, err)
+		return result
+	}
+
+	result := batch(core.UpdateBatchOptions{})
+	require.Len(t, result.Skipped, 1)
+	skip := result.Skipped[0]
+	require.True(t, skip.FomodReanswer)
+	require.NotNil(t, skip.FomodChoicesRequired, "the skip carries its question")
+	assert.Equal(t, "mod1", skip.FomodChoicesRequired.Mods[0].ModID)
+	assert.Equal(t, core.FomodReasonStale, skip.FomodChoicesRequired.Mods[0].Reason)
+
+	result = batch(core.UpdateBatchOptions{Fomod: map[string]domain.FomodChoices{"src:mod1": answer("Ultra")}})
+	require.Len(t, result.Applied, 1, "skipped %+v failed %+v", result.Skipped, result.Failed)
+	assert.Equal(t, "4K-v2", f.deployed(t, "textures/t.dds"))
+}

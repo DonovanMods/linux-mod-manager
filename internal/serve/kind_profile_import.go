@@ -86,11 +86,16 @@ type profileImportApplyRequest struct {
 	Install   bool `json:"install,omitzero"`
 	Force     bool `json:"force,omitzero"`
 	NoInstall bool `json:"no_install,omitzero"`
+	// Fomod answers FOMOD installer questions (#615): the choices per mod,
+	// keyed by "<source-id>:<mod-id>", that a job refused with a
+	// fomod_choices_required question for - the web UI's installer wizard
+	// re-posts the plan and the job with the answers accumulated so far.
+	Fomod map[string]domain.FomodChoices `json:"fomod,omitzero"`
 }
 
 // importOptions renders the request as the core options struct.
 func (r profileImportApplyRequest) importOptions() core.ProfileImportOptions {
-	return core.ProfileImportOptions{Install: r.Install, Force: r.Force, NoInstall: r.NoInstall}
+	return core.ProfileImportOptions{Install: r.Install, Force: r.Force, NoInstall: r.NoInstall, Fomod: r.Fomod}
 }
 
 // pendingProfileImport is what the plan store holds between Plan and Apply:

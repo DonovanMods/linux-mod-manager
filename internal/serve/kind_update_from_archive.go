@@ -72,6 +72,11 @@ type updateFromArchiveApplyRequest struct {
 	// Force and SkipHooks mirror `lmm update --force/--no-hooks`.
 	Force     bool `json:"force,omitzero"`
 	SkipHooks bool `json:"skip_hooks,omitzero"`
+	// Fomod answers FOMOD installer questions (#615): the choices per mod,
+	// keyed by "<source-id>:<mod-id>", that a job refused with a
+	// fomod_choices_required question for - the web UI's installer wizard
+	// re-posts the plan and the job with the answers accumulated so far.
+	Fomod map[string]domain.FomodChoices `json:"fomod,omitzero"`
 }
 
 // pendingUpdateFromArchive is what the plan store holds between Plan and
@@ -128,6 +133,7 @@ func applyUpdateFromArchiveKind(ctx context.Context, s *Server, pending, opts an
 		AcceptMismatch: req.AcceptMismatch,
 		Force:          req.Force,
 		SkipHooks:      req.SkipHooks,
+		Fomod:          req.Fomod,
 	}, sink)
 	if err != nil {
 		return result, err

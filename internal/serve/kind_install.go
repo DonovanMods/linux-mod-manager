@@ -104,6 +104,11 @@ type installApplyRequest struct {
 	// InstallChecksumComputed event. It changes nothing about what the plan
 	// SAYS, so it never re-plans.
 	SkipVerify bool `json:"skip_verify,omitzero"`
+	// Fomod answers FOMOD installer questions (#615): the choices per mod,
+	// keyed by "<source-id>:<mod-id>", that a job refused with a
+	// fomod_choices_required question for - the web UI's installer wizard
+	// re-posts the plan and the job with the answers accumulated so far.
+	Fomod map[string]domain.FomodChoices `json:"fomod,omitzero"`
 }
 
 // installOptions renders the request as the core options struct.
@@ -115,6 +120,7 @@ func (r installApplyRequest) installOptions() core.InstallOptions {
 		Force:           r.Force,
 		SkipHooks:       r.SkipHooks,
 		SkipVerify:      r.SkipVerify,
+		Fomod:           r.Fomod,
 	}
 }
 

@@ -2473,6 +2473,15 @@ func TestJSONGoldens(t *testing.T) {
 				Reason: core.ReasonFomodReanswer, FomodReanswer: true},
 		},
 		{
+			// #615: the same skip carrying its question, for a frontend to
+			// ask.
+			"update_apply_result_fomod_question",
+			core.UpdateApplyResult{Mod: domain.ModReference{SourceID: "nexusmods", ModID: "12604", Version: "1.0"},
+				Name: "Sample Mod", FromVersion: "1.0", ToVersion: "1.1", Status: core.UpdateSkipped,
+				Reason: core.ReasonFomodReanswer, FomodReanswer: true,
+				FomodChoicesRequired: &core.FomodChoicesRequiredError{Mods: []core.FomodQuestion{sampleFomodQuestion()}}},
+		},
+		{
 			// #614: the recorded FOMOD choices a copy carries.
 			"copy_mod_entry_fomod",
 			core.CopyModEntry{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3",
