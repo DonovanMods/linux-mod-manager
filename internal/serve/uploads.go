@@ -30,6 +30,7 @@ package serve
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -186,6 +187,32 @@ func (s *uploadStore) MarkInUse(id uploadID) {
 	if u, ok := s.uploads[id]; ok {
 		u.inUseUntil = s.now().Add(uploadInUseGrace)
 	}
+}
+
+// errUploadInUse refuses a claim on an upload a running plan or job is
+// using.
+var errUploadInUse = errors.New("the upload is in use by a running import")
+
+// claim is Get for a reader that consumes the upload (a profile-import
+// plan, #630): under one lock it refuses an upload some other plan or job
+// has marked in use, and marks this one in use itself, so neither a sweep
+// nor an eviction reclaims it while it is read. The reader then Removes
+// it. An unknown id is nil with no error.
+func (s *uploadStore) claim(id uploadID) (*stagedUpload, error) {
+	now := s.now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sweepLocked(now)
+	u, ok := s.uploads[id]
+	if !ok {
+		return nil, nil
+	}
+	if u.inUse(now) {
+		return nil, errUploadInUse
+	}
+	u.inUseUntil = now.Add(uploadInUseGrace)
+	return u, nil
 }
 
 // ClearInUse un-flags id, so the next sweep reclaims it once its TTL has

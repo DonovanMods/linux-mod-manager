@@ -6,7 +6,12 @@
 // (issue 332) wires the per-row and batch actions themselves.
 
 import { html, useState } from "../render.js";
-import { findingLabel, findingSubject, successorList } from "../verify.js";
+import {
+  findingLabel,
+  findingSubject,
+  isInformational,
+  successorList,
+} from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
 import { ListedOffList, listedOffRefs } from "./listedoff.js";
 import {
@@ -876,7 +881,13 @@ function HealthCard({
       data-deferred=${deferred ? "true" : undefined}
     >
       <h2 class="card__title">
-        ⚠ Health${result ? ` (${result.issues + result.warnings})` : ""}
+        ${
+          // issue 630: findings that are only facts (an overridden mod
+          // file) are no warning, and the heading says nothing is wrong.
+          !error && findings.length > 0 && findings.every(isInformational)
+            ? "Health"
+            : `⚠ Health${result ? ` (${result.issues + result.warnings})` : ""}`
+        }
       </h2>
       ${
         deferred &&
@@ -934,6 +945,13 @@ function HealthCard({
                             class="badge"
                             data-testid="finding-external"
                             >Steam</span
+                          >`
+                        }${
+                          isInformational(f) &&
+                          html` <span
+                            class="badge"
+                            data-testid="finding-overridden"
+                            >Overridden</span
                           >`
                         }</span
                       >

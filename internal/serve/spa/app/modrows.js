@@ -9,6 +9,7 @@
 // anything: a rendering bug and a join bug cannot hide behind each other.
 
 import { displayUpdateTarget } from "./version.js";
+import { isInformational } from "./verify.js";
 
 /** The wire key a mod is addressed by everywhere but the URL (domain.ModKey:
  * "sourceID:modID") - core.ConflictModRef.Key and every /api/v1/updates row
@@ -146,7 +147,9 @@ export function buildRows(mods, updates, findings, conflicts, verified) {
   // "issues", so they offer no Repair and match no "Unhealthy" filter.
   const problems = new Map();
   for (const f of verified ? (findings ?? []) : []) {
-    if (f.status === "ok") continue;
+    // issue 630: an overridden mod file is the profile's choice, not a
+    // problem - it makes no row "issues".
+    if (f.status === "ok" || isInformational(f)) continue;
     problems.set(f.mod_id, (problems.get(f.mod_id) ?? 0) + 1);
   }
   const conflictKeys = new Set();

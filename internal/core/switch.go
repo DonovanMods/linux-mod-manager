@@ -501,6 +501,12 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	}
 	defer release()
 	result, err := s.applyProfileSwitch(ctx, game, plan, sink)
+	if err == nil && !plan.AlreadyActive {
+		// #630: the profile now live may override mod files the one it
+		// replaced did not, and the other way round - even when the two
+		// list the same mods and nothing above redeployed.
+		result.Warnings = append(result.Warnings, s.convergeOverriddenFiles(ctx, game, plan.To)...)
+	}
 	if err == nil && len(result.Failed) > 0 {
 		err = &ProfileSwitchIncompleteError{Profile: plan.To, Result: result}
 	}

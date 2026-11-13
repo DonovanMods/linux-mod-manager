@@ -134,6 +134,11 @@ type Server struct {
 	// the maxUploadBytes constant read directly, so a test can shrink it
 	// without shrinking the production default (see Options.MaxUploadBytes).
 	maxUploadBytes int64
+	// maxProfileDocumentBytes is the smaller cap a profile document upload
+	// (.lmmc, .yaml, .yml, .json) is held to at upload time (#630): the
+	// largest document an import reads, core.MaxCollectionFileBytes. A
+	// field for maxUploadBytes' reason - a test shrinks it.
+	maxProfileDocumentBytes int64
 
 	// heartbeat is the clock seam every SSE stream's comment heartbeat
 	// runs on (see sse.go). Production is realHeartbeatTicker; an internal
@@ -205,24 +210,25 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 
 	allowedHosts, wildcardPort := allowedHostsFor(opts.Addr)
 	s := &Server{
-		svc:            svc,
-		log:            log,
-		mux:            http.NewServeMux(),
-		allowedHosts:   allowedHosts,
-		wildcardPort:   wildcardPort,
-		shutdownGrace:  grace,
-		csrf:           newCSRFGuard(),
-		plans:          newPlanStore(defaultPlanTTL, defaultPlanStoreCap, time.Now),
-		uploads:        newUploadStore(defaultUploadTTL, defaultUploadStoreCap, time.Now),
-		maxUploadBytes: maxUpload,
-		jobs:           newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
-		heartbeat:      realHeartbeatTicker,
-		gameRows:       svc.ListGameEntries,
-		draining:       make(chan struct{}),
-		version:        opts.Version,
-		releases:       opts.ReleaseChecker,
-		autoUpdater:    opts.AutoUpdater,
-		notices:        opts.Notices,
+		svc:                     svc,
+		log:                     log,
+		mux:                     http.NewServeMux(),
+		allowedHosts:            allowedHosts,
+		wildcardPort:            wildcardPort,
+		shutdownGrace:           grace,
+		csrf:                    newCSRFGuard(),
+		plans:                   newPlanStore(defaultPlanTTL, defaultPlanStoreCap, time.Now),
+		uploads:                 newUploadStore(defaultUploadTTL, defaultUploadStoreCap, time.Now),
+		maxUploadBytes:          maxUpload,
+		maxProfileDocumentBytes: core.MaxCollectionFileBytes,
+		jobs:                    newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
+		heartbeat:               realHeartbeatTicker,
+		gameRows:                svc.ListGameEntries,
+		draining:                make(chan struct{}),
+		version:                 opts.Version,
+		releases:                opts.ReleaseChecker,
+		autoUpdater:             opts.AutoUpdater,
+		notices:                 opts.Notices,
 
 		installedCheckEvery: installedCheckEvery,
 	}

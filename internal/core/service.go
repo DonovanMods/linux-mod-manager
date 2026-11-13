@@ -2297,6 +2297,9 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	installer.otherGames = s.otherGamesRecording
 	// #466 review F1: a link into the game's cache is lmm's.
 	installer.cacheRoots = s.cacheRoots(game)
+	// #630: and every one places a file the profile overrides as the
+	// overridden copy.
+	installer.overridden = s.overriddenModFiles
 	installer.afterLink = s.afterDeployLink
 	// #353: and every Installer routes its deployable files through the
 	// game's adapter. A resolution failure is reported by the flow's own

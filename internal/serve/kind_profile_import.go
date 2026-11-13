@@ -246,10 +246,16 @@ func planWorkshopCollectionImport(ctx context.Context, s *Server, sel selection,
 // readProfileUpload reads the profile document a POST /api/v1/uploads
 // staged, up to core.MaxCollectionFileBytes, and removes the upload: the
 // plan holds the document from here on, so nothing else needs the file.
-// A missing upload, or one over the cap, is the caller's 400.
+// A missing upload, one over the cap, and one another plan or job has
+// marked in use (#630: an archive import running over the same handle,
+// whose file the removal would take) are the caller's 400. The read claims
+// the upload first, so no sweep reclaims it mid-read.
 func (s *Server) readProfileUpload(id uploadID) ([]byte, error) {
-	staged, ok := s.uploads.Get(id)
-	if !ok {
+	staged, err := s.uploads.claim(id)
+	if err != nil {
+		return nil, fmt.Errorf("%w: upload %q: %w", errBadPlanRequest, id, err)
+	}
+	if staged == nil {
 		return nil, fmt.Errorf("%w: no staged upload %q (it expired or was cancelled)", errBadPlanRequest, id)
 	}
 	defer s.uploads.Remove(id)

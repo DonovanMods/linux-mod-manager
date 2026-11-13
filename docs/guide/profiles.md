@@ -239,6 +239,23 @@ A Steam Workshop **collection** can be imported as a profile too, by pasting
 its link into the Profiles window, or with
 `lmm profile import --workshop-collection <link>`.
 
+## An override of a mod's own file
+
+An override can change a file that a mod ships, such as a mod's `.ini`.
+On deploy, lmm replaces that one file in the game folder with a copy
+holding the override, whichever link method the profile uses; the mod's
+cached copy, which every profile shares, is never changed. Deploying
+again leaves the copy as it is, and uninstalling, disabling or purging the
+mod removes it with the rest of the mod's files.
+
+`lmm verify` lists the file as "mod file, overridden by the profile"
+(`deployed_overridden` in `--json`). That is not a problem, and
+`lmm verify --fix` leaves it. In the browser, the Health card shows it
+with an **Overridden** badge.
+
+To go back to the mod's own file, take the override out of the profile and
+deploy again. Switching to a profile without the override does the same.
+
 ## "Your profile and the game don't match"
 
 A profile is the list of what *should* be installed. If the two drift apart,

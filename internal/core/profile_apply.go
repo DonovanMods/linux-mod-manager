@@ -706,6 +706,11 @@ func (s *Service) ApplyProfileApply(ctx context.Context, game *domain.Game, plan
 		return &ProfileApplyResult{}, err
 	}
 	result, err := s.applyProfileApply(ctx, game, plan, opts, sink)
+	if err == nil {
+		// #630: the mods the apply left in place still take the profile's
+		// overrides, and lose another profile's.
+		result.Warnings = append(result.Warnings, s.convergeOverriddenFiles(ctx, game, plan.Profile)...)
+	}
 	if err == nil && len(result.Failed) > 0 {
 		err = &ProfileApplyIncompleteError{Profile: plan.Profile, Result: result}
 	}

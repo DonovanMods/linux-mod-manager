@@ -989,6 +989,16 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 // note says how to take the mod's version back.
 const VerifyStatusDeployedModified = "deployed_modified"
 
+// VerifyStatusDeployedOverridden is the status of a verify row for a file a
+// deployed mod ships that the profile's overrides replace (#630): the mod's
+// link was broken into a regular copy holding the override, which is the
+// profile's own choice rather than drift. It is reported so the copy is not
+// a mystery, counted as neither an issue nor a warning, and never fixable -
+// --fix leaves the override exactly where it is. Removing the override from
+// the profile, or switching to a profile without it, puts the plain link
+// back.
+const VerifyStatusDeployedOverridden = "deployed_overridden"
+
 // VerifyStatusCatalogMissing is the status of a version-check row whose
 // source's catalog no longer has the mod (#590): its files lookup answered
 // domain.ErrModNotFound - the same typed condition the update check reports
@@ -1038,6 +1048,9 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 		names[domain.ModKey(m.SourceID, m.ID)] = m.Name
 		byKey[domain.ModKey(m.SourceID, m.ID)] = &cachedMod{cache: gameCache, game: r.game, mod: &installedMods[i].Mod, method: m.LinkMethod}
 	}
+	// #630: the files the profile's overrides replace are its own choice,
+	// reported as such rather than as drift.
+	overridden := r.svc.overriddenModFiles(r.game, r.profile)
 	jd := deployedJudge{
 		db: r.svc.db, game: r.game, profile: r.profile, cacheRoots: r.svc.cacheRoots(r.game),
 		cached: func(st db.DeployedFileState, rel string) string {
@@ -1055,6 +1068,16 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 			continue
 		}
 		dst := filepath.Join(r.game.ModPath, filepath.FromSlash(row.RelativePath))
+		if content, ok := overridden.content(row.RelativePath); ok && holdsOverriddenCopy(dst, content) {
+			r.finding(VerifyFinding{
+				ModID:   row.ModID,
+				ModName: names[domain.ModKey(row.SourceID, row.ModID)],
+				FileID:  row.RelativePath,
+				Status:  VerifyStatusDeployedOverridden,
+				Note:    row.RelativePath + ": mod file, overridden by the profile",
+			}, VerifyEvent{})
+			continue
+		}
 		j := jd.judge(r.ctx, row.RelativePath, dst)
 		if j.verdict != deployedUsers {
 			continue

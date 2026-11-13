@@ -424,7 +424,7 @@ func TestStageUploadedFile_StreamsWithoutBuffering(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.zip")
 	content := strings.Repeat("mod bytes ", 4096)
 
-	size, err := stageUploadedFile(path, io.LimitReader(strings.NewReader(content), int64(len(content))))
+	size, err := stageUploadedFile(path, io.LimitReader(strings.NewReader(content), int64(len(content))), -1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(len(content)), size)
 
@@ -432,6 +432,81 @@ func TestStageUploadedFile_StreamsWithoutBuffering(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, content, string(onDisk))
 
-	_, err = stageUploadedFile(path, strings.NewReader("x"))
+	_, err = stageUploadedFile(path, strings.NewReader("x"), -1)
 	require.Error(t, err, "an existing staged file is never silently overwritten")
+}
+
+// TestAPIUploadCreate_CapsAProfileDocumentAtUploadTime is #630's upload
+// hardening: a profile document (.lmmc, .yaml, .yml, .json) is refused at
+// upload, with 413 and nothing staged, once it passes the largest document
+// an import reads - not accepted whole and refused later at plan time. An
+// archive of the same size still uploads.
+func TestAPIUploadCreate_CapsAProfileDocumentAtUploadTime(t *testing.T) {
+	s, stagingRoot := newUploadCapFixtureServer(t, 1<<20)
+	assert.EqualValues(t, core.MaxCollectionFileBytes, s.maxProfileDocumentBytes, "the production cap is the import's own")
+	s.maxProfileDocumentBytes = 1024
+
+	for _, name := range []string{"big.lmmc", "big.yaml", "big.yml", "big.JSON"} {
+		rec := postUpload(t, s, name, bytes.Repeat([]byte("x"), 4096))
+		assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, "%s: %s", name, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "profile document", name)
+	}
+	assert.Equal(t, 0, s.uploads.len(), "no entry survives a refused upload")
+	entries, err := os.ReadDir(stagingRoot)
+	if !os.IsNotExist(err) {
+		require.NoError(t, err)
+	}
+	assert.Empty(t, entries, "nothing left under the staging root")
+
+	rec := postUpload(t, s, "exact.lmmc", bytes.Repeat([]byte("x"), 1024))
+	assert.Equal(t, http.StatusOK, rec.Code, "a document at the cap uploads: %s", rec.Body.String())
+	rec = postUpload(t, s, "SomeMod.zip", bytes.Repeat([]byte("x"), 4096))
+	assert.Equal(t, http.StatusOK, rec.Code, "an archive is held to the archive cap only: %s", rec.Body.String())
+}
+
+// TestReadProfileUpload_RespectsAnUploadInUse: a profile-import plan reads
+// its upload and removes it, so one another job has marked in use (an
+// archive import running over the same handle) is refused rather than
+// removed from under that job, and the read itself marks the upload in use
+// so no sweep reclaims it mid-read.
+func TestReadProfileUpload_RespectsAnUploadInUse(t *testing.T) {
+	s, _ := newDeployFixtureServer(t)
+	rec := postUpload(t, s, "doc.yaml", []byte("name: x\n"))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	up := decodeUpload(t, rec.Body.Bytes())
+
+	s.uploads.MarkInUse(up.UploadID)
+	_, err := s.readProfileUpload(up.UploadID)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errBadPlanRequest)
+	assert.Contains(t, err.Error(), "in use")
+	staged, ok := s.uploads.Get(up.UploadID)
+	require.True(t, ok, "the in-use upload is left for the job using it")
+	_, err = os.Stat(staged.Path)
+	require.NoError(t, err)
+
+	s.uploads.ClearInUse(up.UploadID)
+	data, err := s.readProfileUpload(up.UploadID)
+	require.NoError(t, err)
+	assert.Equal(t, "name: x\n", string(data))
+	_, ok = s.uploads.Get(up.UploadID)
+	assert.False(t, ok, "read once, and removed")
+}
+
+// TestUploadStore_ClaimHoldsOffASweep: an upload claimed for a read is not
+// swept even once its TTL has passed.
+func TestUploadStore_ClaimHoldsOffASweep(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	store := newUploadStore(time.Minute, 4, func() time.Time { return now })
+	dir := t.TempDir()
+	id := store.Put(&stagedUpload{Filename: "a.yaml", Dir: dir, Path: filepath.Join(dir, "a.yaml")})
+
+	u, err := store.claim(id)
+	require.NoError(t, err)
+	require.NotNil(t, u)
+	now = now.Add(time.Hour)
+	_, ok := store.Get(id)
+	assert.True(t, ok, "a claimed upload outlives its TTL")
+	_, err = store.claim(id)
+	assert.ErrorIs(t, err, errUploadInUse, "and cannot be claimed twice")
 }
