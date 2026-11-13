@@ -207,3 +207,43 @@ func TestFlowFomod_ReconfigureRefusesAPlainMod(t *testing.T) {
 	rec = doAPI(s, http.MethodPost, scoped("/api/v1/plans/mod_fomod", game), `{"mod_id":"m1"}`)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+// TestFlowFomod_UpdateBatchSkipCarriesTheQuestionAndTakesTheAnswer: the
+// web UI's update path (#615 review 5): an update whose recorded choices no
+// longer fit its new installer is skipped with the question on the batch
+// job's result, and the batch re-posted with "fomod" (what the wizard's
+// Finish sends) applies it.
+func TestFlowFomod_UpdateBatchSkipCarriesTheQuestionAndTakesTheAnswer(t *testing.T) {
+	src := newUpdatesSource(t)
+	src.archives = map[string][]byte{"u1-" + updateToVersion: fomodTestArchive(t)}
+	s, svc, game := newUpdatesFixtureServerWith(t, src)
+	require.NoError(t, svc.NewProfileManager().UpsertMod(t.Context(), game.ID, "default", domain.ModReference{
+		SourceID: fixtureSourceID, ModID: "u1", Version: updateFromVersion,
+		Fomod: domain.FomodChoices{ConfigSHA256: "old", Steps: []domain.FomodStepChoice{sizeStep("Gone", 0)}},
+	}))
+	body := `{"mods":["` + fixtureSourceID + `:u1"]}`
+
+	j := runFlow(t, s, game, "updates", body, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	raw, err := json.Marshal(j.status().Result)
+	require.NoError(t, err)
+	var result core.UpdateBatchResult
+	require.NoError(t, json.Unmarshal(raw, &result))
+	require.Len(t, result.Skipped, 1, "%s", raw)
+	require.True(t, result.Skipped[0].FomodReanswer)
+	require.NotNil(t, result.Skipped[0].FomodChoicesRequired, "the skip carries its question")
+	assert.Equal(t, "u1", result.Skipped[0].FomodChoicesRequired.Mods[0].ModID)
+
+	answer, err := json.Marshal(map[string]any{"fomod": map[string]domain.FomodChoices{
+		fixtureSourceID + ":u1": {Steps: []domain.FomodStepChoice{sizeStep("4K", 1),
+			{Name: "Extras", Groups: []domain.FomodGroupChoice{{Name: "Docs", Choices: []domain.FomodOptionChoice{}}}}}},
+	}})
+	require.NoError(t, err)
+	j = runFlow(t, s, game, "updates", body, string(answer))
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	raw, err = json.Marshal(j.status().Result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &result))
+	require.Len(t, result.Applied, 1, "%s", raw)
+	assert.Equal(t, "4K", deployedContent(t, game, fomodFile))
+}

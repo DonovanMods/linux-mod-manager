@@ -33,6 +33,9 @@ straight away.
   marked _not usable_ can't be picked.
 - Each option shows its description and, if the installer has one, its
   picture.
+- **Use the installer's defaults** answers with what the installer itself
+  suggests, without going through the steps (for one mod at a time when
+  several ask). It is the same as `--fomod-defaults` in the terminal.
 - If one of your answers changes which steps come next, lmm checks the
   installer again and opens the window once more at the next step. This
   doesn't download the mod again.

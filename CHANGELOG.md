@@ -146,7 +146,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     installer of a FOMOD mod installed before lmm ran installers (which
     went in as the raw archive), replacing that install.
   - The web UI asks in a wizard, one step per page, with option
-    descriptions and images, and re-posts the job with the answers; the
+    descriptions and images, and re-posts the job with the answers; "Use
+    the installer's defaults" answers a mod in one click, as
+    `--fomod-defaults` does; the
     full mod page offers "Reconfigure installer…", and the activity tray
     "Answer installer…" on a failed job. Option images are served read-only
     from what the question kept (`GET /api/v1/fomod/images`): only images

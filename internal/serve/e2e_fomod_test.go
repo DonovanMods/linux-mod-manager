@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
@@ -198,5 +199,47 @@ func TestE2E_FomodWizard_ResultShapedQuestionAndEscape(t *testing.T) {
 	)
 	assert.Equal(t, "reconfigure-fomod", focused)
 	assert.Equal(t, "2K", e2eDeployed(t, f.Game, "Mods/t.dds"), "a dismissed wizard changes nothing")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FomodWizard_UseTheInstallersDefaults: the web counterpart of
+// --fomod-defaults. A reconfigure of a mod recorded with 4K and the readme
+// opens preselected with them; one click answers with the installer's own
+// defaults (2K, no Extras step) and re-posts, without walking a step.
+func TestE2E_FomodWizard_UseTheInstallersDefaults(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+	f.Src.addMod(e2eSearchSourceMod{
+		mod:      domain.Mod{ID: "wizard", SourceID: "fake", Name: "Wizard Mod", Version: "1.0"},
+		files:    []domain.DownloadableFile{{ID: "w1", Name: "Main", FileName: "wizard.zip", Version: "1.0", Category: "MAIN", IsPrimary: true, Size: 512}},
+		archives: map[string][]byte{"w1": e2eFomodArchive(t)},
+	})
+	ctx := t.Context()
+	plan, err := f.Svc.PlanInstall(ctx, f.Game, "default", "fake", "wizard", false)
+	require.NoError(t, err)
+	_, err = f.Svc.ApplyInstall(ctx, f.Game, plan, core.InstallOptions{Fomod: map[string]domain.FomodChoices{"fake:wizard": {Steps: []domain.FomodStepChoice{
+		{Name: "Size", Groups: []domain.FomodGroupChoice{{Name: "Texture", Choices: []domain.FomodOptionChoice{{Name: "4K", Idx: 1}}}}},
+		{Name: "Extras", Groups: []domain.FomodGroupChoice{{Name: "Docs", Choices: []domain.FomodOptionChoice{{Name: "Readme", Idx: 0}}}}},
+	}}}}, nil)
+	require.NoError(t, err)
+	require.Equal(t, "4K", e2eDeployed(t, f.Game, "Mods/t.dds"))
+	require.Equal(t, "README", e2eDeployed(t, f.Game, "Mods/readme.txt"))
+
+	var preselected4K bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "wizard")),
+		clickWhenSettled(`[data-action="reconfigure-fomod"]`),
+		chromedp.WaitVisible(`.modal[data-kind="mod_fomod"] .plan`, chromedp.ByQuery),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+		chromedp.WaitVisible(fomodModal+` [data-testid="fomod-step"][data-step="Size"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('`+fomodModal+` [data-option="4K"] input').checked`, &preselected4K),
+		clickWhenSettled(fomodModal+` [data-action="fomod-defaults"]`),
+		waitGone(fomodModal),
+	)
+	assert.True(t, preselected4K, "the recording is the preselection")
+	require.Eventually(t, func() bool { return e2eDeployed(t, f.Game, "Mods/t.dds") == "2K" }, 30*time.Second, e2ePollInterval)
+	assert.Empty(t, e2eDeployed(t, f.Game, "Mods/readme.txt"), "the installer's defaults hide the Extras step")
+	var reopened bool
+	require.NoError(t, chromedp.Run(f.Ctx, chromedp.Evaluate(`document.querySelector('`+fomodModal+`') !== null`, &reopened)))
+	assert.False(t, reopened, "one click, one round: nothing asked again")
 	assert.Empty(t, f.BrowserErrors())
 }

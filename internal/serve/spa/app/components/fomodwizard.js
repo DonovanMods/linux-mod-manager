@@ -66,6 +66,9 @@ export function FomodWizardModal({ modal, actions }) {
   const [history, setHistory] = useState([0]);
   const [ends, setEnds] = useState({});
   const [problem, setProblem] = useState("");
+  // defaulted are the mods answered with the installer's own defaults
+  // (--fomod-defaults' counterpart): their remaining steps are skipped.
+  const [defaulted, setDefaulted] = useState({});
   if (modal?.type !== "fomod" || !question) return null;
 
   const pages = wizardPages(question, modal.start ?? {});
@@ -78,10 +81,19 @@ export function FomodWizardModal({ modal, actions }) {
     return later;
   }
 
-  function submit(finalEnds) {
+  function submit(finalEnds, finalDefaulted = defaulted) {
     const answers = {};
     const walked = {};
     question.mods.forEach((mod, mi) => {
+      if (finalDefaulted[mi]) {
+        // The installer's own preselection: the question's defaults when it
+        // carries them (a recording or earlier answers chose otherwise),
+        // else its choices, which then ARE the defaults.
+        const steps = mod.defaults?.length ? mod.defaults : mod.choices;
+        answers[modKey(mod)] = { config_sha256: mod.config_sha256, steps };
+        walked[modKey(mod)] = mod.steps.length;
+        return;
+      }
       const through = finalEnds[mi] ?? mod.steps.length;
       answers[modKey(mod)] = answerFor(mod, selections[mi], through);
       walked[modKey(mod)] = through;
@@ -170,12 +182,31 @@ export function FomodWizardModal({ modal, actions }) {
         delete copy[prevPage.mod];
       return copy;
     });
+    setDefaulted((d) => {
+      const copy = { ...d };
+      delete copy[prevPage.mod];
+      return copy;
+    });
     setProblem("");
     setHistory(history.slice(0, -1));
   }
 
   const visibleSteps = mod.steps.length;
   const note = firstOfMod ? reasonNote(mod) : "";
+
+  /** useDefaults answers this page's mod with the installer's defaults and
+   * moves on to the next mod that asks, or finishes. */
+  function useDefaults() {
+    const nextDefaulted = { ...defaulted, [page.mod]: true };
+    setDefaulted(nextDefaulted);
+    setProblem("");
+    const later = pages.findIndex((p, i) => i > pageIndex && p.mod > page.mod);
+    if (later < 0) {
+      submit(ends, nextDefaulted);
+      return;
+    }
+    setHistory([...history, later]);
+  }
 
   return html`
     <${Modal}
@@ -221,6 +252,20 @@ export function FomodWizardModal({ modal, actions }) {
           ${mod.name || modKey(mod)}${mod.module_name ? ` - ${mod.module_name}` : ""}
         </p>
         ${note && html`<p class="plan__note plan__note--warn">${note}</p>`}
+        <p class="fomod__shortcut">
+          <button
+            type="button"
+            class="button button--small"
+            data-action="fomod-defaults"
+            onClick=${useDefaults}
+          >
+            Use the installer's defaults
+          </button>
+          ${" "}<span class="plan__option-hint"
+            >Answers ${question.mods.length > 1 ? "this mod" : "every step"} as
+            the installer suggests, like --fomod-defaults.</span
+          >
+        </p>
         <h3 class="fomod__step">
           Step ${page.step + 1} of ${visibleSteps}: ${step.name || "(unnamed)"}
         </h3>

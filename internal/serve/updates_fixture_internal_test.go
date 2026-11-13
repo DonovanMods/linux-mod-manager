@@ -62,6 +62,9 @@ type updatesSource struct {
 	hold     <-chan struct{}
 	held     chan struct{}
 	heldOnce sync.Once
+	// archives, when it holds modID-version, is that file's whole zip,
+	// served as is (#615's FOMOD installers).
+	archives map[string][]byte
 }
 
 // newUpdatesSource starts the download server.
@@ -81,6 +84,10 @@ func newUpdatesSource(t *testing.T) *updatesSource {
 		}
 		version := strings.TrimPrefix(fileID, modID+"-")
 		w.Header().Set("Content-Type", "application/zip")
+		if archive, ok := s.archives[modID+"-"+version]; ok {
+			_, _ = w.Write(archive)
+			return
+		}
 		_, _ = w.Write(zipWith(updatableModFile(modID), updatableContent(modID, version)))
 	}))
 	t.Cleanup(s.server.Close)

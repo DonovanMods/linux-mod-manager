@@ -2271,6 +2271,10 @@ a.row-menu__item.mod-page-link {
   color: var(--text-secondary);
 }
 
+.fomod__shortcut {
+  margin: 0 0 var(--space-3);
+}
+
 .fomod__step {
   margin: 0 0 var(--space-3);
   color: var(--text-primary);
