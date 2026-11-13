@@ -149,8 +149,13 @@ function refocusWhileLost(selector) {
     const lost =
       document.activeElement === null ||
       document.activeElement === document.body;
+    // A modal opened since (the FOMOD wizard, opening as the job this one
+    // confirmed asks) owns focus: the opener sits behind its scrim, and
+    // focusing it would let Enter fire a control the user cannot see.
+    const modalOpen = document.querySelector('[aria-modal="true"]') !== null;
     const el = document.querySelector(selector);
-    if (lost && el instanceof HTMLElement && el.isConnected) el.focus();
+    if (lost && !modalOpen && el instanceof HTMLElement && el.isConnected)
+      el.focus();
     waited += refocusStepMs;
     if (waited < refocusWindowMs) setTimeout(step, refocusStepMs);
   };

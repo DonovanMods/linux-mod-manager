@@ -378,3 +378,39 @@ func TestE2E_FomodWizard_UpdateFromFile(t *testing.T) {
 	assert.Equal(t, "2K", e2eDeployed(t, f.Game, "Mods/t.dds"), "the installer's defaults")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_FomodWizard_ANewModalKeepsFocusFromTheOldOpener: closing the
+// reconfigure plan arms its opener's focus return, and the wizard opens
+// inside that window. Focus that falls to <body> while the wizard is open
+// must not jump to "Reconfigure installer…" behind its scrim, where Enter
+// would fire it (#615 review).
+func TestE2E_FomodWizard_ANewModalKeepsFocusFromTheOldOpener(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+	f.Src.addMod(e2eSearchSourceMod{
+		mod:      domain.Mod{ID: "wizard", SourceID: "fake", Name: "Wizard Mod", Version: "1.0"},
+		files:    []domain.DownloadableFile{{ID: "w1", Name: "Main", FileName: "wizard.zip", Version: "1.0", Category: "MAIN", IsPrimary: true, Size: 512}},
+		archives: map[string][]byte{"w1": e2eFomodArchive(t)},
+	})
+	plan, err := f.Svc.PlanInstall(t.Context(), f.Game, "default", "fake", "wizard", false)
+	require.NoError(t, err)
+	_, err = f.Svc.ApplyInstall(t.Context(), f.Game, plan, core.InstallOptions{Fomod: map[string]domain.FomodChoices{"fake:wizard": {Steps: []domain.FomodStepChoice{
+		{Name: "Size", Groups: []domain.FomodGroupChoice{{Name: "Texture", Choices: []domain.FomodOptionChoice{{Name: "2K", Idx: 0}}}}},
+	}}}}, nil)
+	require.NoError(t, err)
+
+	var stolen bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "wizard")),
+		clickWhenSettled(`[data-action="reconfigure-fomod"]`),
+		chromedp.WaitVisible(`.modal[data-kind="mod_fomod"] .plan`, chromedp.ByQuery),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+		chromedp.WaitVisible(fomodModal+` [data-testid="fomod-step"]`, chromedp.ByQuery),
+		// Focus falls to <body> while the wizard is open, inside the
+		// closed plan modal's refocus window.
+		chromedp.Evaluate(`document.activeElement && document.activeElement.blur()`, nil),
+		chromedp.Sleep(500*time.Millisecond),
+		chromedp.Evaluate(`document.activeElement !== null && document.activeElement.matches('[data-action="reconfigure-fomod"]')`, &stolen),
+	)
+	assert.False(t, stolen, "focus stayed off the control behind the wizard's scrim")
+	assert.Empty(t, f.BrowserErrors())
+}
