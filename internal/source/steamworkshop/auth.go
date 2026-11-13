@@ -68,7 +68,13 @@ func (s *Source) AuthInstructions() string {
 //
 // It also records the key's FINGERPRINT, which is all the search cache
 // needs to keep one credential's answers from being served to another.
+//
+// It is safe to call while requests are in flight (#626): the two keyed
+// clients guard their own keys, and the three are replaced together under
+// keyMu so concurrent re-keys cannot leave them holding different keys.
 func (s *Source) SetAPIKey(key string) {
+	s.client.keyMu.Lock()
+	defer s.client.keyMu.Unlock()
 	s.client.http.SetAPIKey(key)
 	s.client.names.SetAPIKey(key)
 	s.client.keyID = keyFingerprint(key)
