@@ -145,7 +145,6 @@ func (s *Service) ApplyFomodReconfigure(ctx context.Context, game *domain.Game, 
 	}, sink)
 }
 
-
 // filePtrs is files as the pointers EffectiveInstalledVersion takes.
 func filePtrs(files []domain.DownloadableFile) []*domain.DownloadableFile {
 	out := make([]*domain.DownloadableFile, len(files))

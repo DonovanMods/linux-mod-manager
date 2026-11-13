@@ -75,7 +75,7 @@ func doModFomod(ctx context.Context, service *core.Service, game *domain.Game, m
 		return err
 	}
 	if !jsonOutput {
-		fmt.Printf("Reconfiguring %s %s (profile %s)\n", plan.Mod.Name, plan.Mod.Version, profileName)
+		fmt.Printf("Reconfiguring %s %s (profile %s)\n", domain.SanitizeLine(plan.Mod.Name), domain.SanitizeLine(plan.Mod.Version), profileName)
 	}
 	opts := core.FomodReconfigureOptions{Force: modFomodForce, SkipVerify: modFomodSkipCheck, SkipHooks: noHooks}
 	progress := func(e core.Event) {
@@ -123,7 +123,7 @@ func doModFomod(ctx context.Context, service *core.Service, game *domain.Game, m
 	if jsonOutput {
 		return emitJSON(result)
 	}
-	fmt.Printf("\n✓ Reconfigured: %s %s\n", plan.Mod.Name, plan.Mod.Version)
+	fmt.Printf("\n✓ Reconfigured: %s %s\n", domain.SanitizeLine(plan.Mod.Name), domain.SanitizeLine(plan.Mod.Version))
 	fmt.Printf("  Files deployed: %d\n", result.FilesDeployed)
 	if result.ProfileWriteFailed {
 		fmt.Printf("  NOT recorded on profile: %s\n", profileName)

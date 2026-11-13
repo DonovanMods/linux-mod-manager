@@ -5,6 +5,8 @@ package main
 // `lmm install`, `lmm mod fomod` and the update batch's skip line.
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -407,4 +409,43 @@ func TestDoModFomod_DefaultsResetToTheInstallersOwn(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "2K", deployedFile(t, game, "textures/t.dds"), "the installer's default, not the recorded 4K")
 	assert.Empty(t, deployedFile(t, game, "readme.txt"), "the Extras step is gone with 4K")
+}
+
+// TestFomodWalk_SanitisesInstallerTextButAnswersRawNames: an installer's
+// names and descriptions are untrusted - a C1 CSI (U+009B), a bidi override
+// or an ESC sequence never reaches the terminal - while the answer echoes
+// the raw names, which is what the installer matches (#615 review item 6).
+func TestFomodWalk_SanitisesInstallerTextButAnswersRawNames(t *testing.T) {
+	evil := "Opt\u009b2J‮A\x1b]0;pwned\x07"
+	q := core.FomodQuestion{
+		SourceID: "src", ModID: "m", Name: "Mod\x1b[31m", ModuleName: "Inst‮", ConfigSHA256: "ab",
+		Steps: []core.FomodQuestionStep{{Name: "Step\u009b", Groups: []core.FomodQuestionGroup{{
+			Name: "Group\x1b[2J", Type: "SelectExactlyOne",
+			Options: []core.FomodQuestionOption{
+				{Name: evil, Type: "Optional", Selected: true, Description: "line one\u009b\nline‮ two"},
+				{Name: "Plain", Type: "Optional"},
+			},
+		}}}},
+		Choices: []domain.FomodStepChoice{{Name: "Step\u009b", Groups: []domain.FomodGroupChoice{{Name: "Group\x1b[2J",
+			Choices: []domain.FomodOptionChoice{{Name: evil, Idx: 0}}}}}},
+	}
+	var out bytes.Buffer
+	f := &fomodAnswerer{interactive: true, in: bufio.NewReader(strings.NewReader("\n")), out: &out,
+		answers: map[string]domain.FomodChoices{}, walked: map[string]int{}, sent: map[string]string{}}
+	a, err := f.walk(q)
+	require.NoError(t, err)
+	text := out.String()
+	for _, bad := range []string{"\u009b", "‮", "\x1b", "\x07"} {
+		assert.NotContains(t, text, bad, "the walk printed a raw control")
+	}
+	assert.Contains(t, text, "line one")
+	require.Len(t, a.Steps, 1)
+	assert.Equal(t, "Step\u009b", a.Steps[0].Name, "answers carry the raw names")
+	assert.Equal(t, evil, a.Steps[0].Groups[0].Choices[0].Name)
+
+	var summary bytes.Buffer
+	printFomodQuestionSummary(&summary, &core.FomodChoicesRequiredError{Mods: []core.FomodQuestion{q}})
+	for _, bad := range []string{"\u009b", "‮", "\x1b", "\x07"} {
+		assert.NotContains(t, summary.String(), bad, "the summary printed a raw control")
+	}
 }

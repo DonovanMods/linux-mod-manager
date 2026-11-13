@@ -336,11 +336,11 @@ func optionChoices(g core.FomodQuestionGroup, sel []bool) []domain.FomodOptionCh
 // printQuestionHeader introduces a mod's question, and what a stale
 // recording got wrong.
 func (f *fomodAnswerer) printQuestionHeader(m core.FomodQuestion, start int) {
-	name := m.Name
+	name := shown(m.Name)
 	if name == "" {
-		name = domain.ModKey(m.SourceID, m.ModID)
+		name = shown(domain.ModKey(m.SourceID, m.ModID))
 	}
-	title := m.ModuleName
+	title := shown(m.ModuleName)
 	if title == "" {
 		title = "FOMOD installer"
 	}
@@ -367,7 +367,7 @@ func fomodPath(parts ...string) string {
 	var kept []string
 	for _, p := range parts {
 		if p != "" {
-			kept = append(kept, fmt.Sprintf("%q", p))
+			kept = append(kept, fmt.Sprintf("%q", shown(p)))
 		}
 	}
 	return strings.Join(kept, " > ")
@@ -429,12 +429,21 @@ func groupRule(t string) string {
 	}
 }
 
+// displayName is an installer-supplied name as the terminal shows it:
+// shown, or "(unnamed)" for a blank one.
 func displayName(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return "(unnamed)"
 	}
-	return s
+	return shown(s)
 }
+
+// shown makes one line of installer-supplied text safe to print. A
+// ModuleConfig.xml is untrusted, and encoding/xml passes C1 controls and
+// bidi overrides straight through, so every name a prompt or summary shows
+// goes through domain.SanitizeLine - at display time only: the answers
+// sent back carry the raw names, which is what the installer matches.
+func shown(s string) string { return domain.SanitizeLine(s) }
 
 // printGroup lists a group's options with their selection, type,
 // description and image.
@@ -457,7 +466,7 @@ func (f *fomodAnswerer) printGroup(m core.FomodQuestion, g core.FomodQuestionGro
 			note = " (may not work)"
 		}
 		_, _ = fmt.Fprintf(f.out, "    %d) [%s] %s%s\n", i+1, mark, displayName(o.Name), note)
-		for _, line := range strings.Split(strings.TrimSpace(o.Description), "\n") {
+		for _, line := range strings.Split(strings.TrimSpace(domain.SanitizeText(o.Description)), "\n") {
 			if line = strings.TrimSpace(line); line != "" {
 				_, _ = fmt.Fprintf(f.out, "           %s\n", line)
 			}
@@ -543,9 +552,9 @@ func groupSelectionProblem(g core.FomodQuestionGroup, sel []bool) string {
 	for i, o := range g.Options {
 		switch {
 		case o.Type == "Required" && !sel[i]:
-			return fmt.Sprintf("%q is required and stays selected.", o.Name)
+			return fmt.Sprintf("%q is required and stays selected.", shown(o.Name))
 		case o.Type == "NotUsable" && sel[i] && !o.Selected:
-			return fmt.Sprintf("%q is not usable here.", o.Name)
+			return fmt.Sprintf("%q is not usable here.", shown(o.Name))
 		}
 		if o.Type != "NotUsable" {
 			usable++
@@ -588,15 +597,15 @@ func printFomodQuestionSummary(w io.Writer, q *core.FomodChoicesRequiredError) {
 	for _, m := range q.Mods {
 		_, _ = fmt.Fprintf(w, "\n%s (%s): %s\n", displayName(m.Name), domain.ModKey(m.SourceID, m.ModID), displayName(m.ModuleName))
 		for _, st := range m.Steps {
-			_, _ = fmt.Fprintf(w, "  Step %q\n", st.Name)
+			_, _ = fmt.Fprintf(w, "  Step %q\n", shown(st.Name))
 			for _, g := range st.Groups {
-				_, _ = fmt.Fprintf(w, "    Group %q - %s:", g.Name, groupRule(g.Type))
+				_, _ = fmt.Fprintf(w, "    Group %q - %s:", shown(g.Name), groupRule(g.Type))
 				for _, o := range g.Options {
 					mark := ""
 					if o.Selected {
 						mark = "*"
 					}
-					_, _ = fmt.Fprintf(w, " %q%s", o.Name, mark)
+					_, _ = fmt.Fprintf(w, " %q%s", shown(o.Name), mark)
 				}
 				_, _ = fmt.Fprintln(w)
 			}
