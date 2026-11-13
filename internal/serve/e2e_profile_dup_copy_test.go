@@ -171,14 +171,20 @@ func TestE2E_CopyToProfile_FromTheRowMenuAndTheModPanel(t *testing.T) {
 	)
 	assert.Contains(t, listed, "alt already lists it at 1.0")
 	assert.Equal(t, "Replace", strings.TrimSpace(replaceLabel), "Confirm is the replace")
+	// The copy writes the DB row first and then its paired profile write
+	// (Ruling 16), so waiting on the row alone can read the profile in the
+	// gap between the two: wait for both.
 	require.Eventually(t, func() bool {
 		row, err := f.Svc.GetInstalledMod(t.Context(), "fake", "both", f.Game.ID, "alt")
-		return err == nil && row.Version == "2.0"
-	}, e2eTimeout, e2ePollInterval, "the replace records default's version in alt")
-	alt, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "alt")
-	require.NoError(t, err)
-	ref := alt.FindRef("fake", "both")
-	require.NotNil(t, ref)
-	assert.Equal(t, "2.0", ref.Version, "the ref is replaced in place")
+		if err != nil || row.Version != "2.0" {
+			return false
+		}
+		alt, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "alt")
+		if err != nil {
+			return false
+		}
+		ref := alt.FindRef("fake", "both")
+		return ref != nil && ref.Version == "2.0"
+	}, e2eTimeout, e2ePollInterval, "the replace records default's version in alt: the row, and the ref replaced in place")
 	assert.Empty(t, f.BrowserErrors())
 }
