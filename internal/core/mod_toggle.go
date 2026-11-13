@@ -182,7 +182,7 @@ func (s *Service) enableMod(ctx context.Context, game *domain.Game, profileName,
 		return result, nil
 	}
 
-	if !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: mod.Version}) {
+	if !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: mod.Version, Variant: mod.Variant}) {
 		return nil, fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
 	}
 

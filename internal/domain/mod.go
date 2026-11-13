@@ -166,6 +166,14 @@ type ModReference struct {
 	// written before the field existed is byte-identical.
 	Category string `yaml:"category,omitempty" json:"category,omitempty"`
 
+	// Fomod is the mod's recorded FOMOD installer choices (#614), user
+	// intent like Disabled and Category: it lives in the profile document
+	// and travels with export/import/duplicate/copy. The zero value means
+	// none are recorded, and both encodings omit it (FomodChoices.IsZero),
+	// so every profile file and document written before the field existed is
+	// byte-identical. An older lmm drops the key when it rewrites the file.
+	Fomod FomodChoices `yaml:"fomod,omitempty" json:"fomod,omitzero"`
+
 	// External and UpdatedAt are DISPLAY facts a plan document carries so a
 	// renderer never has to print Version raw (#365, part of #269).
 	//
@@ -246,6 +254,15 @@ type Mod struct {
 	// the from-file install that follows. omitzero, so every document for a
 	// mod its source serves is byte-identical to what it was before.
 	ManualOnly bool `json:"manual_only,omitzero"`
+	// Variant names which tree of Version's files this is, when the tree
+	// depends on more than the source file (#614: FOMOD installer choices,
+	// later an exact file list or applied patches). It is the cache key's
+	// Variant and the installed_mods.variant column, and it is NEVER part
+	// of Version: update checks, locks and version comparisons see the
+	// source's version only. Empty - the plain tree - for every mod whose
+	// files are just the source's. Not on the wire: it is a cache detail,
+	// not something a frontend shows or sends.
+	Variant string `json:"-"`
 }
 
 // InstalledMod tracks a mod installed in a profile
@@ -260,13 +277,17 @@ type InstalledMod struct {
 	// from file, a relink to another version, Steam updating a Workshop item
 	// it owns. InstalledAt never moves after the insert. Not UpdatedAt,
 	// which is when the SOURCE published the installed version.
-	LastUpdatedAt   time.Time  `json:"last_updated_at,omitzero"`
-	Enabled         bool       `json:"enabled"`                     // User intent: wants this mod active
-	Deployed        bool       `json:"deployed"`                    // Current state: files are in game directory
-	PreviousVersion string     `json:"previous_version,omitempty"`  // Version before last update (for rollback)
-	PreviousFileIDs []string   `json:"previous_file_ids,omitempty"` // File IDs before last update (for rollback)
-	LinkMethod      LinkMethod `json:"link_method"`                 // How the mod was deployed (symlink, hardlink, copy)
-	FileIDs         []string   `json:"file_ids,omitempty"`          // Source-specific file IDs that were downloaded
+	LastUpdatedAt   time.Time `json:"last_updated_at,omitzero"`
+	Enabled         bool      `json:"enabled"`                     // User intent: wants this mod active
+	Deployed        bool      `json:"deployed"`                    // Current state: files are in game directory
+	PreviousVersion string    `json:"previous_version,omitempty"`  // Version before last update (for rollback)
+	PreviousFileIDs []string  `json:"previous_file_ids,omitempty"` // File IDs before last update (for rollback)
+	// PreviousVariant is the Variant of PreviousVersion's tree (#614), so a
+	// rollback restores the right cache entry. Moves with PreviousVersion;
+	// not on the wire, like Variant.
+	PreviousVariant string     `json:"-"`
+	LinkMethod      LinkMethod `json:"link_method"`        // How the mod was deployed (symlink, hardlink, copy)
+	FileIDs         []string   `json:"file_ids,omitempty"` // Source-specific file IDs that were downloaded
 	// AdoptedInPlace marks a mod `lmm import` scan mode adopted where it
 	// sat in the game directory (#516): lmm never downloaded it, so on a
 	// game not in copy mode it has no cache entry, and verify neither calls

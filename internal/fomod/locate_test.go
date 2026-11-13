@@ -34,6 +34,31 @@ func TestLocate(t *testing.T) {
 			want:    &Installer{Root: "Wrapper/", ModuleConfig: "Wrapper/fomod/ModuleConfig.xml"},
 		},
 		{
+			// #614 (F1 re-review): an unsafe member is never a candidate, so
+			// it can neither become Root ("../") nor force ErrAmbiguous.
+			name:    "a dot-dot wrapper is not a candidate",
+			archive: "mod.zip",
+			members: []string{"../fomod/ModuleConfig.xml", "Wrapper/fomod/ModuleConfig.xml"},
+			want:    &Installer{Root: "Wrapper/", ModuleConfig: "Wrapper/fomod/ModuleConfig.xml"},
+		},
+		{
+			name:    "a drive-letter wrapper is not a candidate",
+			archive: "mod.zip",
+			members: []string{"C:/fomod/ModuleConfig.xml", `D:\fomod\ModuleConfig.xml`},
+		},
+		{
+			name:    "a dot-dot member does not shadow the root installer",
+			archive: "mod.zip",
+			members: []string{"fomod/ModuleConfig.xml", "fomod/../FOMOD/moduleconfig.xml"},
+			want:    &Installer{Root: "", ModuleConfig: "fomod/ModuleConfig.xml"},
+		},
+		{
+			name:    "an absolute or NUL member is not a candidate",
+			archive: "mod.zip",
+			members: []string{"/fomod/ModuleConfig.xml", "fomod\x00/ModuleConfig.xml", "W/fomod/ModuleConfig.xml"},
+			want:    &Installer{Root: "W/", ModuleConfig: "W/fomod/ModuleConfig.xml"},
+		},
+		{
 			name:    "two levels deep is not an installer",
 			archive: "mod.zip",
 			members: []string{"a/b/fomod/ModuleConfig.xml"},

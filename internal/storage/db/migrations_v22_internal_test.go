@@ -23,7 +23,7 @@ func TestMigrateV22_AddsCategoryNameAndIsIdempotent(t *testing.T) {
 
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	assert.Equal(t, 23, version)
+	assert.Equal(t, 24, version)
 
 	_, err = d.Exec(`INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, summary, source_url, link_method)
 		VALUES ('s', 'm', 'g', 'default', 'n', '1', '', '', '', 0)`)

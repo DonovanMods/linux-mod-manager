@@ -58,7 +58,7 @@ func TestRootInstallPathStillDeploysUnderModPath(t *testing.T) {
 	require.Equal(t, []adapter.DeployRoot{adapter.RootInstallPath, adapter.RootModPath}, routes)
 
 	// ...and core deploys it under mod_path all the same.
-	files, err := deployableFiles(c, rootRouter{}, game, "src", "skse", "1.0")
+	files, err := deployableFiles(c, rootRouter{}, game, key)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"skse64_loader.exe", filepath.Join("Scripts", "SKSE.pex")}, files)
 

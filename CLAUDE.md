@@ -251,7 +251,7 @@ Use `:memory:` for SQLite tests and `t.TempDir()` for filesystem tests.
 
 ## Domain Types
 
-Core types in `internal/domain/` have no external dependencies:
+Core types in `internal/domain/` have no external dependencies: they import only the standard library and `internal/fomod` (a stdlib-only leaf whose choice types are the profile's recorded FOMOD choices, #614), enforced by `internal/domain/imports_test.go`:
 
 - `Mod`: Mod from any source with metadata
 - `InstalledMod`: Mod installed in a profile with update policy

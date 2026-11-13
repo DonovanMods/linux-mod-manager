@@ -126,10 +126,10 @@ func (r *verifyRun) populateChecksum(mod *domain.InstalledMod, fileID string, re
 // failure to store what was computed.
 func (r *verifyRun) fillChecksumFromCache(mod *domain.InstalledMod, fileID string) (bool, error) {
 	gameCache := r.svc.GetGameCache(r.game)
-	if !gameCache.HasFileIDs(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, []string{fileID}) {
+	if !gameCache.HasFileIDs(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}, []string{fileID}) {
 		return false, nil
 	}
-	checksum, err := checksumFromCache(gameCache, r.game.ID, mod.SourceID, mod.ID, mod.Version, fileID)
+	checksum, err := checksumFromCache(gameCache, modCacheKey(r.game.ID, mod.Mod), fileID)
 	if err != nil {
 		// A recorded member that is gone or unreadable: the entry is not
 		// complete after all, so there is nothing honest to record.
@@ -336,13 +336,19 @@ func cacheDirExists(path string) (bool, error) {
 func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledMod, effective string) (note string, siblingFailures int, err error) {
 	recorded := mod.Version
 	gameCache := r.svc.GetGameCache(r.game)
-	oldPath := gameCache.ModPath(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: recorded})
-	newPath := gameCache.ModPath(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: effective})
+	// The rename keeps the row's tree (#614): only the version is wrong.
+	oldKey := modCacheKey(r.game.ID, mod.Mod)
+	newKey := oldKey
+	newKey.Version = effective
+	oldPath := gameCache.ModPath(oldKey)
+	newPath := gameCache.ModPath(newKey)
 
 	oldExists, statErr := cacheDirExists(oldPath)
 	if statErr != nil {
 		return "", 0, fmt.Errorf("checking cache entry for %s: %w", recorded, statErr)
 	}
+	// A directory a colliding key wrote is not this row's entry to move.
+	oldExists = oldExists && cache.CheckKey(oldPath, oldKey) == nil
 	newExists, statErr := cacheDirExists(newPath)
 	if statErr != nil {
 		return "", 0, fmt.Errorf("checking cache entry for %s: %w", effective, statErr)
@@ -354,6 +360,14 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 			note = fmt.Sprintf("cache entry for %s already exists; left %s in place", effective, recorded)
 		} else if renameErr := os.Rename(oldPath, newPath); renameErr != nil {
 			return "", 0, fmt.Errorf("renaming cache entry: %w", renameErr)
+		} else if stampErr := cache.StampKey(newPath, newKey); stampErr != nil {
+			// The moved entry would carry its old key's marker and read as
+			// another key's: put it back, so the row, the profile and the
+			// cache still agree, and the next run retries the repair.
+			if undoErr := os.Rename(newPath, oldPath); undoErr != nil {
+				return "", 0, fmt.Errorf("renaming cache entry: %w (and moving it back failed: %v)", stampErr, undoErr)
+			}
+			return "", 0, fmt.Errorf("renaming cache entry: %w", stampErr)
 		} else {
 			renamed = true
 		}
@@ -618,7 +632,9 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 			}
 			continue
 		}
-		if sibling.Version != recorded {
+		// #614: a sibling with another tree of the version lives in a
+		// directory the rename did not move - it is not this entry's.
+		if sibling.Version != recorded || sibling.Variant != mod.Variant {
 			continue
 		}
 		if !fileIDsEqual(sibling.FileIDs, mod.FileIDs) {

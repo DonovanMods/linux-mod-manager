@@ -24,7 +24,7 @@ func TestCommitStagedCacheWithMarker_UnverifiableFileIDSkipsPrune(t *testing.T) 
 	require.NoError(t, os.WriteFile(filepath.Join(stagePath, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(stagePath, "f1", []string{"a.pak"}))
 
-	require.NoError(t, commitStagedCacheWithMarker(cachePath, stagePath, "unverifiable/id", []string{"new.dat"}))
+	require.NoError(t, commitStagedCacheWithMarker(cache.Key{Version: "entry"}, cachePath, stagePath, "unverifiable/id", []string{"new.dat"}))
 
 	_, err := os.Stat(filepath.Join(cachePath, "new.dat"))
 	require.NoError(t, err, "the unverifiable fileID's own member must survive the commit")

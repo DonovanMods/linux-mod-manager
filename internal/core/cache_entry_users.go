@@ -24,12 +24,16 @@ import (
 // back to it (rollback needs it cached). A row of a game lmm no longer has
 // configured names no cache directory lmm can compare, so it counts too.
 // Own game's rows come first, each list in profile order.
-func (s *Service) cacheEntryUsers(ctx context.Context, game *domain.Game, profile, sourceID, modID, version string) ([]string, error) {
+//
+// k is the entry, k.GameID game's: the version AND the variant (#614), so
+// a row with another tree of the same version does not hold it.
+func (s *Service) cacheEntryUsers(ctx context.Context, game *domain.Game, profile string, k cache.Key) ([]string, error) {
+	sourceID, modID, version, variant := k.SourceID, k.ModID, k.Version, k.Variant
 	rows, err := s.db.ModVersionRows(ctx, sourceID, modID)
 	if err != nil {
 		return nil, fmt.Errorf("listing what else uses the cache entry of %s at %s: %w", domain.ModKey(sourceID, modID), version, err)
 	}
-	dir := s.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
+	dir := s.GetGameCache(game).ModPath(k)
 	var own, others []string
 	for _, row := range rows {
 		if row.GameID == game.ID && row.Profile == profile {
@@ -37,8 +41,8 @@ func (s *Service) cacheEntryUsers(ctx context.Context, game *domain.Game, profil
 		}
 		var why string
 		switch {
-		case row.Version == version:
-		case row.PreviousVersion != "" && row.PreviousVersion == version:
+		case row.Version == version && row.Variant == variant:
+		case row.PreviousVersion != "" && row.PreviousVersion == version && row.PreviousVariant == variant:
 			why = " (to roll back to)"
 		default:
 			continue
@@ -52,26 +56,27 @@ func (s *Service) cacheEntryUsers(ctx context.Context, game *domain.Game, profil
 			others = append(others, fmt.Sprintf("game %s's profile %s%s (%s is not configured)", row.GameID, row.Profile, why, row.GameID))
 			continue
 		}
-		if samePath(dir, s.GetGameCache(other).ModPath(cache.Key{GameID: other.ID, SourceID: sourceID, ModID: modID, Version: version})) {
+		otherKey := k
+		otherKey.GameID = other.ID
+		if samePath(dir, s.GetGameCache(other).ModPath(otherKey)) {
 			others = append(others, fmt.Sprintf("game %s's profile %s%s", row.GameID, row.Profile, why))
 		}
 	}
 	return append(own, others...), nil
 }
 
-// removeCacheEntry deletes game's cache entry for sourceID/modID at version
-// unless another row uses it (cacheEntryUsers, profile's own row aside):
+// removeCacheEntry deletes game's cache entry k unless another row uses it (cacheEntryUsers, profile's own row aside):
 // then it deletes nothing and returns those rows. A read that fails deletes
 // nothing either.
-func (s *Service) removeCacheEntry(ctx context.Context, game *domain.Game, profile, sourceID, modID, version string) ([]string, error) {
-	usedBy, err := s.cacheEntryUsers(ctx, game, profile, sourceID, modID, version)
+func (s *Service) removeCacheEntry(ctx context.Context, game *domain.Game, profile string, k cache.Key) ([]string, error) {
+	usedBy, err := s.cacheEntryUsers(ctx, game, profile, k)
 	if err != nil {
 		return nil, err
 	}
 	if len(usedBy) > 0 {
 		return usedBy, nil
 	}
-	return nil, s.GetGameCache(game).Delete(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
+	return nil, s.GetGameCache(game).Delete(k)
 }
 
 // cacheKeptNote reports a cache entry removeCacheEntry kept, and for whom.

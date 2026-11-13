@@ -1,0 +1,37 @@
+{
+  "config_sha256": "9f2c4e1d0b8a7c6e5f4d3c2b1a0918273645546372819a0b1c2d3e4f5a6b7c8d",
+  "steps": [
+    {
+      "name": "Main Files",
+      "groups": [
+        {
+          "name": "Texture Resolution",
+          "choices": [
+            {
+              "name": "2K",
+              "idx": 1
+            }
+          ]
+        },
+        {
+          "name": "Patches",
+          "choices": [
+            {
+              "name": "USSEP",
+              "idx": 0
+            },
+            {
+              "name": "USSEP",
+              "idx": 2,
+              "index": 1
+            }
+          ]
+        },
+        {
+          "name": "Extras",
+          "choices": []
+        }
+      ]
+    }
+  ]
+}

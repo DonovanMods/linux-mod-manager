@@ -402,7 +402,7 @@ func TestModVersionRows(t *testing.T) {
 	save("sky", "p", "k", "1.0")
 	save("sky", "default", "k", "1.0")
 	save("sky", "default", "other", "1.0")
-	require.NoError(t, database.UpdateModVersion(ctx, "local", "k", "sky", "p", "2.0"))
+	require.NoError(t, database.UpdateModVersion(ctx, "local", "k", "sky", "p", "2.0", ""))
 
 	rows, err := database.ModVersionRows(ctx, "local", "k")
 	require.NoError(t, err)

@@ -156,7 +156,7 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		files, err := deployableFiles(gameCache, gameAdapter, game, m.SourceID, m.ID, m.Version)
+		files, err := deployableFiles(gameCache, gameAdapter, game, modCacheKey(game.ID, m.Mod))
 		if err != nil {
 			// A missing cache entry (e.g. manually deleted) just means the mod
 			// provides nothing; any OTHER read failure (permissions, corruption)

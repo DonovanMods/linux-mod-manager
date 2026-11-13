@@ -214,7 +214,7 @@ func (s *Service) applyAdapterCopyOnce(game *domain.Game, mods []*domain.Install
 		if mod.External {
 			continue // lmm never owns an external mod's bytes
 		}
-		if err := seedCopyOnceFiles(gameCache, a, game, mod.SourceID, mod.ID, mod.Version); err != nil {
+		if err := seedCopyOnceFiles(gameCache, a, game, modCacheKey(game.ID, mod.Mod)); err != nil {
 			return err
 		}
 	}
@@ -245,15 +245,18 @@ func (s *Service) applyAdapterCopyOnce(game *domain.Game, mods []*domain.Install
 // runs over mods a flow may not have cached (an external mod, a row whose
 // entry a prune removed), and reporting that here would duplicate the
 // per-file walk's own missing-file finding.
-func seedCopyOnceFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, sourceID, modID, version string) error {
-	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
+//
+// k names the entry, variant included (#614).
+func seedCopyOnceFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, k cache.Key) error {
+	sourceID, modID := k.SourceID, k.ModID
+	files, err := gameCache.ListFiles(k)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return fmt.Errorf("listing cache files for %s: %w", domain.ModKey(sourceID, modID), err)
 	}
-	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
+	versionDir := gameCache.ModPath(k)
 	for _, rel := range adapterCopyOnceFiles(a, game, files) {
 		// M2: the containment guard belongs BESIDE the write, the way
 		// applyProfileOverrides has one for an override path. Cache
