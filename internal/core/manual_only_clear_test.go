@@ -194,9 +194,9 @@ func TestCheckGameUpdateReport_ClearedMod_BatchAttemptsIt_ARefusalRecordsItAgain
 // Once cleared, an auto-policy mod is an automatic update again.
 func TestCheckGameUpdateReport_ClearedAutoPolicyMod_IsAnAutomaticUpdateAgain(t *testing.T) {
 	f, src := newManualOnlyFixture(t)
-	row := f.row(t)
-	row.UpdatePolicy = domain.UpdateAuto
-	require.NoError(t, f.svc.SaveInstalledMod(context.Background(), row))
+	_, err := f.svc.SetModUpdatePolicy(context.Background(), "msrc", "42", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, err)
+	require.Equal(t, domain.UpdateAuto, f.row(t).UpdatePolicy)
 	key := domain.ModKey("msrc", "42")
 
 	src.distributable["42"] = boolPtr(false)
