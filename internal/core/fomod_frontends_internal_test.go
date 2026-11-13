@@ -253,3 +253,49 @@ func TestFomodImage_TheKeptImagesHaveAGlobalCap(t *testing.T) {
 	_, err = svc.FomodImage("src", "m1", q.Mods[0].ConfigSHA256, "fomod/images/2k.png")
 	assert.NoError(t, err, "the new question's images are kept")
 }
+
+// TestFomodImage_AFailedCopyLeavesNoStalePicture: a later archive whose
+// picture under the same name is not an image serves nothing, never the
+// earlier archive's picture (#615 review).
+func TestFomodImage_AFailedCopyLeavesNoStalePicture(t *testing.T) {
+	svc := &Service{dataDir: t.TempDir()}
+	ask := func(body string) string {
+		tree := fomodTree(t, "", twoStepModuleConfig, map[string]string{"fomod/images/2k.png": body})
+		_, err := svc.resolveFomod(fomodTestMod, "mod.zip", tree, fomodInput{})
+		var q *FomodChoicesRequiredError
+		require.True(t, errors.As(err, &q), "got %v", err)
+		return q.Mods[0].ConfigSHA256
+	}
+	config := ask(string(pngBytes))
+	_, err := svc.FomodImage("src", "m1", config, "fomod/images/2k.png")
+	require.NoError(t, err)
+
+	ask("not an image at all")
+	_, err = svc.FomodImage("src", "m1", config, "fomod/images/2k.png")
+	assert.ErrorIs(t, err, ErrFomodImageNotFound, "the earlier picture is gone, not served in its place")
+}
+
+// TestFomodImage_TheCapNeverEvictsTheSameApplysOtherMods: a batch asks
+// about several mods, each kept apart; past the cap, older questions go,
+// but a mod asked about moments ago in the same Apply keeps its images
+// (#615 review).
+func TestFomodImage_TheCapNeverEvictsTheSameApplysOtherMods(t *testing.T) {
+	svc := &Service{dataDir: t.TempDir()}
+	base := filepath.Join(svc.stagingRoot(), fomodImagesDirName)
+	old := filepath.Join(base, "old")
+	sibling := filepath.Join(base, "sibling") // another mod of this Apply
+	// Evicting the old question alone leaves the total over the cap, so
+	// without the guard the sibling would be next.
+	for dir, size := range map[string]int{old: 16 << 20, sibling: maxFomodImagesStash - maxFomodImagesTotal + 1} {
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "big"), make([]byte, size), 0o600))
+	}
+	past := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(old, past, past))
+
+	_, err := svc.resolveFomod(fomodTestMod, "mod.zip", twoStepTree(t), fomodInput{})
+	var q *FomodChoicesRequiredError
+	require.True(t, errors.As(err, &q), "got %v", err)
+	assert.NoDirExists(t, old, "an older question is dropped first")
+	assert.DirExists(t, sibling, "the same Apply's other mod keeps its images")
+}

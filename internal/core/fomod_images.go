@@ -49,6 +49,12 @@ const (
 	maxFomodImagesStash = 256 << 20
 )
 
+// fomodImagesInUse is how recently a question's images must have been
+// written to be safe from the cap: one Apply asks about several mods in
+// one pass (a batch install, a profile import), each kept apart, and none
+// of them may be evicted to make room for another of the same question.
+const fomodImagesInUse = 10 * time.Minute
+
 // fomodImageTypes are the content types a kept image may sniff as.
 var fomodImageTypes = map[string]bool{
 	"image/png":  true,
@@ -166,6 +172,10 @@ func (s *Service) stashFomodImages(tree string, byRel map[string]string, q *Fomo
 				dest := filepath.Join(dir, fomodImageFileName(key))
 				n, err := copyFomodImage(filepath.Join(tree, filepath.FromSlash(member)), dest, maxFomodImagesTotal-total)
 				if err != nil {
+					// Nothing stale may stand in for it: an earlier
+					// question's picture under the same name is not this
+					// archive's.
+					_ = os.Remove(dest)
 					s.logger().Debug("keeping an installer image failed", "image", key, "err", err)
 					continue
 				}
@@ -285,7 +295,9 @@ func (s *Service) sweepFomodImages() {
 // capFomodImages keeps every question's images together under
 // maxFomodImagesStash, with room for one more question: the oldest
 // questions' directories (by their last use) go first. keep, the directory
-// about to be written, is never dropped.
+// about to be written, is never dropped, and neither is one written within
+// fomodImagesInUse (the same Apply's other mods); while only those remain,
+// the cap is exceeded rather than a question's pictures lost.
 func (s *Service) capFomodImages(keep string) {
 	base := filepath.Dir(keep)
 	entries, err := os.ReadDir(base)
@@ -316,11 +328,12 @@ func (s *Service) capFomodImages(keep string) {
 		dirs = append(dirs, stashDir{path: path, mod: info.ModTime(), size: size})
 	}
 	slices.SortFunc(dirs, func(a, b stashDir) int { return a.mod.Compare(b.mod) })
+	cutoff := time.Now().Add(-fomodImagesInUse)
 	for _, d := range dirs {
 		if total <= maxFomodImagesStash-maxFomodImagesTotal {
 			return
 		}
-		if d.path == keep {
+		if d.path == keep || d.mod.After(cutoff) {
 			continue
 		}
 		if err := os.RemoveAll(d.path); err == nil {
