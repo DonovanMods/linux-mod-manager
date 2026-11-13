@@ -107,7 +107,7 @@ var (
 			LinkMethod: domain.LinkSymlink,
 			Adapter:    "bepinx",
 		},
-		AdapterError: `game "valheim": unknown adapter "bepinx" (registered: bepinex, d2r, generic-files, icarus)`,
+		AdapterError: `game "valheim": unknown adapter "bepinx" (registered: bepinex, bethesda, d2r, generic-files, icarus)`,
 	}
 
 	goldenGameDetailEntry = core.GameListEntry{
@@ -1571,6 +1571,33 @@ func TestJSONGoldens(t *testing.T) {
 				ActiveProfile:       "default",
 				Launch:              core.LaunchInfo{Method: "steam"},
 			},
+		},
+		{
+			// #606: GameStatus offering the adapter lmm's game catalog sets
+			// the game up with, and what taking it means for the mods
+			// already installed - the game page's note and confirmation.
+			"game_status_suggested_adapter",
+			core.GameStatus{
+				Game:                jsonGoldenGame,
+				LinkMethod:          domain.LinkSymlink,
+				EffectiveLinkMethod: domain.LinkSymlink,
+				LinkMethodSource:    "global",
+				ResolvedCachePath:   "/home/user/.local/share/lmm",
+				Profiles:            []core.ProfileSummary{{Name: "default", ModCount: 2, IsDefault: true}},
+				ActiveProfile:       "default",
+				InstalledModCount:   2,
+				EnabledModCount:     2,
+				SuggestedAdapter:    "bethesda",
+				SuggestedAdapterWarning: "2 mod(s) already installed for this game keep the layout they were installed with; " +
+					"only mods installed or updated after the switch get the bethesda adapter's layout. " +
+					"To lay an installed mod out again, uninstall it (from every profile that has it) and install it again",
+			},
+		},
+		{
+			// #606: one entry of lmm's game catalog - GET /api/v1/games/known's
+			// row, the game editor's choices for `catalog:`.
+			"known_game",
+			core.KnownGame{Slug: "skyrim-se", Name: "Skyrim Special Edition", SteamAppID: "489830", Adapter: "bethesda"},
 		},
 		{
 			"search_hit",

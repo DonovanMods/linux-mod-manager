@@ -53,6 +53,7 @@ func Open(ctx context.Context, opts Options) (*core.Service, error) {
 	}
 	RegisterAdapters(svc)
 	RegisterLaunchers(svc)
+	RegisterKnownGames(svc, p.ConfigDir)
 	warnAdapterConfig(svc, warnWriter(opts), opts.OmitAdapterWarnings)
 	registerSources(ctx, svc, p, warnWriter(opts))
 	// #431: the one-time backfill of the profile documents' `disabled:`

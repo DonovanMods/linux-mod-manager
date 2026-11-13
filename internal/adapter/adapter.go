@@ -541,8 +541,8 @@ type PrefixConsumer interface {
 }
 
 // UsesPrefix reports whether the adapter needs g's prefix: false for an
-// adapter with no PrefixConsumer, which is every adapter until #355's
-// bethesda adapter.
+// adapter with no PrefixConsumer, which is every adapter but bethesda
+// (#606).
 func UsesPrefix(a GameAdapter, g *domain.Game) bool {
 	pc, ok := a.(PrefixConsumer)
 	return ok && pc.UsesPrefix(g)

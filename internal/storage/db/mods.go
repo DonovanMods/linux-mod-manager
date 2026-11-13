@@ -368,6 +368,24 @@ func (d *DB) GameHasInstalledModsFromSource(ctx context.Context, gameID, sourceI
 	return true, nil
 }
 
+// CountGameMods returns how many distinct mods gameID has installed in any
+// profile, external (Steam Workshop) mods excepted (#606): the mods whose
+// cache entries lmm laid out at ingest, which a later adapter switch leaves
+// in the layout they were installed with.
+func (d *DB) CountGameMods(ctx context.Context, gameID string) (int, error) {
+	var n int
+	err := d.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM (
+			SELECT DISTINCT source_id, mod_id FROM installed_mods
+			WHERE game_id = ? AND COALESCE(external, 0) = 0
+		)
+	`, gameID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting installed mods for game %s: %w", gameID, err)
+	}
+	return n, nil
+}
+
 // ModVersionRow is one installed row of a mod - in any game and profile -
 // and the versions it names: the one it has, and the one it rolls back to.
 type ModVersionRow struct {

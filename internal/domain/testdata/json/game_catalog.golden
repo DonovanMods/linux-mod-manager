@@ -1,0 +1,20 @@
+{
+  "id": "gog-skyrim",
+  "name": "Skyrim Special Edition (GOG)",
+  "install_path": "/home/user/Games/Heroic/Skyrim Special Edition",
+  "mod_path": "/home/user/Games/Heroic/Skyrim Special Edition/Data",
+  "source_ids": {
+    "nexusmods": "skyrimspecialedition"
+  },
+  "link_method": "symlink",
+  "link_method_explicit": false,
+  "hooks": {
+    "install": {},
+    "uninstall": {}
+  },
+  "deploy_mode": "extract",
+  "convert_paks": false,
+  "convert_paks_explicit": false,
+  "adapter": "bethesda",
+  "catalog": "skyrim-se"
+}

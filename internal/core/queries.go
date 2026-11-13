@@ -386,6 +386,18 @@ type GameStatus struct {
 	// it cannot (#501) - what the web UI's Play button reads. omitzero: a
 	// Service with no Launcher registered (SetLauncher) says nothing.
 	Launch LaunchInfo `json:"launch,omitzero"`
+	// SuggestedAdapter is the adapter lmm's game catalog would set this
+	// game up with, when the game has no `adapter:` key and uses the
+	// identity (#606, Service.SuggestedAdapter) - what the web UI's game
+	// page offers to switch to. omitempty: a game with nothing to suggest
+	// emits no key.
+	SuggestedAdapter string `json:"suggested_adapter,omitempty"`
+	// SuggestedAdapterWarning is what taking SuggestedAdapter means for the
+	// mods already installed (Service.AdapterSwitchWarning): they keep the
+	// layout they were installed with. The game page shows it and asks for
+	// confirmation before switching. omitempty: absent when there is no
+	// suggestion or no installed mod.
+	SuggestedAdapterWarning string `json:"suggested_adapter_warning,omitempty"`
 }
 
 // Status summarizes every configured game, ordered by ID (ListGames').
@@ -482,6 +494,17 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		ResolvedCachePath:   s.GetGameCachePath(game),
 		Profiles:            make([]ProfileSummary, len(profiles)),
 		ModPathError:        modPathErr,
+		SuggestedAdapter:    s.SuggestedAdapter(game),
+	}
+	if status.SuggestedAdapter != "" {
+		// A courtesy, not part of the answer: a count the database cannot
+		// give costs the warning, never the status the page needs (#606).
+		warning, err := s.AdapterSwitchWarning(ctx, game, status.SuggestedAdapter)
+		if err != nil {
+			s.logger().Warn("could not count the game's installed mods for the adapter-switch warning", "game", game.ID, "err", err)
+			warning = ""
+		}
+		status.SuggestedAdapterWarning = warning
 	}
 	if game.LinkMethodExplicit {
 		status.LinkMethodSource = "game"

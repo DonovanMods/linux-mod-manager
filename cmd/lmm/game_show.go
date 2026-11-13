@@ -102,6 +102,10 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 		fmt.Printf("                %s\n", colorRed(detail.AdapterError))
 	}
 	fmt.Printf("  Sources:      %s\n", formatGameSources(detail.SourceIDs))
+	// #606: which game in lmm's catalog games.yaml says this is.
+	if detail.Catalog != "" {
+		fmt.Printf("  Catalog:      %s\n", catalogLabel(service, detail.Catalog))
+	}
 	printPrefixStatus(detail.Prefix)
 
 	printLoaderStatus(detail.Loader, detail.EffectiveAdapter == domain.LoaderKindBepInEx)
