@@ -85,3 +85,49 @@ func TestReuseRetainedDownload_RequiresTheSameVersion(t *testing.T) {
 		})
 	}
 }
+
+// TestRetainedDownload_AnUnidentifiedFileIsNeitherKeptNorReused is #628's
+// third note: a file whose mod has no version and whose source declares no
+// size or checksum has nothing a kept archive can be checked against - an
+// archive kept for an earlier upstream release under the same file id would
+// match it exactly. Such a file is not kept, and an entry already kept for
+// that empty identity (a sidecar from before the fields existed, or one an
+// earlier lmm wrote) is discarded rather than reused.
+func TestRetainedDownload_AnUnidentifiedFileIsNeitherKeptNorReused(t *testing.T) {
+	t.Run("not reused", func(t *testing.T) {
+		svc := &Service{dataDir: t.TempDir()}
+		dir := svc.retainedDownloadDir("src", "mod", "file")
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "a.zip"), []byte("bytes"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, retainedDownloadFile), []byte(`{"file_name":"a.zip","size":5,"version":""}`), 0o600))
+
+		_, _, ok := svc.reuseRetainedDownload("src", "mod", "file", retainedIdentity{})
+		assert.False(t, ok)
+		_, statErr := os.Stat(dir)
+		assert.True(t, os.IsNotExist(statErr), "the unverifiable entry is removed")
+	})
+	t.Run("not kept", func(t *testing.T) {
+		svc := &Service{dataDir: t.TempDir()}
+		archive := filepath.Join(t.TempDir(), "a.zip")
+		require.NoError(t, os.WriteFile(archive, []byte("bytes"), 0o600))
+		svc.retainRefusedDownload(errAcquireBlocked, "src", "mod", "file", archive, &DownloadResult{Path: archive, Size: 5}, retainedIdentity{})
+		_, statErr := os.Stat(svc.retainedDownloadDir("src", "mod", "file"))
+		assert.True(t, os.IsNotExist(statErr), "nothing is kept that no re-run could verify")
+	})
+	t.Run("any one field identifies", func(t *testing.T) {
+		for name, id := range map[string]retainedIdentity{
+			"version":       {Version: "1.0.0"},
+			"declared size": {DeclaredSize: 5},
+			"declared sha":  {DeclaredSHA256: "aa"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				svc := &Service{dataDir: t.TempDir()}
+				archive := filepath.Join(t.TempDir(), "a.zip")
+				require.NoError(t, os.WriteFile(archive, []byte("bytes"), 0o600))
+				svc.retainRefusedDownload(errAcquireBlocked, "src", "mod", "file", archive, &DownloadResult{Path: archive, Size: 5}, id)
+				_, _, ok := svc.reuseRetainedDownload("src", "mod", "file", id)
+				assert.True(t, ok)
+			})
+		}
+	})
+}
