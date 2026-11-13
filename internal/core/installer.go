@@ -570,9 +570,20 @@ func (i *Installer) overridesFor(game *domain.Game, profileName string) overridd
 // or, for a file the acting profile's overrides replace (#630), as the
 // overridden copy - a regular file of its own holding the override, so the
 // cache entry srcPath names is never linked to and never written.
+//
+// An overridden copy that cannot be written (its directory leaves the mod
+// path through a link, say) does not fail the mod (#630 review): the file
+// is deployed through the linker instead, as the deploy's override pass
+// would leave it, and the flow is told why - from then on this Install or
+// replace treats the file as not overridden.
 func (i *Installer) place(game *domain.Game, file, srcPath, dstPath string) error {
 	if content, ok := i.placing.content(file); ok {
-		return writeOverriddenCopy(game.ModPath, file, content)
+		err := writeOverriddenCopy(game.ModPath, file, content)
+		if err == nil {
+			return nil
+		}
+		delete(i.placing, filepath.ToSlash(filepath.Clean(file)))
+		i.noteHeld(fmt.Sprintf("%s: the profile's override could not be placed (%v), so the mod's own file was deployed there", filepath.ToSlash(file), err))
 	}
 	return i.deployOver(srcPath, dstPath)
 }

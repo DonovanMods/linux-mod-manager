@@ -73,4 +73,21 @@ func TestDoVerify_ReportsAnOverriddenModFile(t *testing.T) {
 	assert.True(t, found, "the JSON names the overridden file: %+v", doc.Result.Findings)
 	assert.Zero(t, doc.Result.Issues)
 	assert.Zero(t, doc.Result.Warnings)
+
+	// The override is taken out of the profile by hand: the copy is now a
+	// warning, and --fix puts the mod's own link back.
+	profile.Overrides = nil
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
+	jsonOutput = false
+	out = captureStdout(t, func() error { return doVerify(context.Background(), svc, game, nil) })
+	assert.Contains(t, out, "? Test Mod - OVERRIDE NO LONGER IN THE PROFILE (Config/mod.ini: still holds an override the profile no longer has)")
+	assert.Contains(t, out, "lmm verify --fix")
+
+	verifyFix = true
+	t.Cleanup(func() { verifyFix = false })
+	out = captureStdout(t, func() error { return doVerify(context.Background(), svc, game, nil) })
+	assert.Contains(t, out, "Restored the mod's own Config/mod.ini")
+	info, err = os.Lstat(deployed)
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&os.ModeSymlink, "the mod's link is back")
 }

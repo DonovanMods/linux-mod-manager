@@ -322,3 +322,210 @@ func TestOverriddenModFile_AReplaceKeepsTheOverride(t *testing.T) {
 		})
 	}
 }
+
+// purgeDefault plans and applies a purge of profile default.
+func purgeDefault(t *testing.T, f *legacyFixture) *core.PurgeResult {
+	t.Helper()
+	ctx := context.Background()
+	plan, err := f.svc.PlanPurge(ctx, f.game, "default", core.PurgeOptions{})
+	require.NoError(t, err)
+	result, err := f.svc.ApplyPurge(ctx, f.game, plan, core.PurgeOptions{}, nil)
+	require.NoError(t, err)
+	return result
+}
+
+// replaceWithUsersFile puts the user's own regular file at path, never
+// writing through what was there (a hard link would carry the edit into
+// the cache).
+func replaceWithUsersFile(t *testing.T, path, content string) {
+	t.Helper()
+	require.NoError(t, os.Remove(path))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+}
+
+// TestOverriddenModFile_TheUsersFileIsSetAsideNotLost is the #630 review's
+// blocker: the override pass replaced a file the deploy loop had just left
+// as the user's, with no backup, and then recorded it as lmm's, so the next
+// purge deleted the only copy. The user's file is now captured before the
+// override is written, the deploy says so, and the purge puts it back.
+func TestOverriddenModFile_TheUsersFileIsSetAsideNotLost(t *testing.T) {
+	for _, method := range linkMethods() {
+		t.Run(method.String()+"/an edit of the overridden copy", func(t *testing.T) {
+			f := overriddenFixture(t, method)
+			f.deploy(t, "default", core.DeployOptions{})
+			replaceWithUsersFile(t, f.iniPath(), "mine\n")
+
+			result := f.deploy(t, "default", core.DeployOptions{})
+			assertOverriddenCopy(t, f, "tweaked\n")
+			assert.True(t, containsLine(result.Warnings, "mods/Data/k.ini", "set it aside"), "the deploy says the user's file was set aside: %q", result.Warnings)
+
+			purgeDefault(t, f)
+			assert.Equal(t, "mine\n", readLive(t, f.iniPath()), "the purge puts the user's file back")
+			assert.Equal(t, "stock\n", readLive(t, f.cachedIni()))
+		})
+		t.Run(method.String()+"/a replacement of the mod's file, then an override", func(t *testing.T) {
+			f := overriddenFixture(t, method)
+			f.overriddenProfile(t, "default", true, nil, "k")
+			f.deploy(t, "default", core.DeployOptions{})
+			replaceWithUsersFile(t, f.iniPath(), "mine\n")
+
+			f.overriddenProfile(t, "default", true, map[string]string{overrideKey: "tweaked\n"}, "k")
+			result := f.deploy(t, "default", core.DeployOptions{})
+			assertOverriddenCopy(t, f, "tweaked\n")
+			assert.True(t, containsLine(result.Warnings, "mods/Data/k.ini", "set it aside"), "%q", result.Warnings)
+
+			purgeDefault(t, f)
+			assert.Equal(t, "mine\n", readLive(t, f.iniPath()), "the purge puts the user's file back")
+		})
+	}
+}
+
+// TestOverriddenModFile_AStaleRecordOverAStockFileStillCapturesIt: another
+// profile's record of a path says nothing about the stock file there now,
+// so the override captures it before writing, as it would any game file.
+func TestOverriddenModFile_AStaleRecordOverAStockFileStillCapturesIt(t *testing.T) {
+	ctx := context.Background()
+	f := newLegacyFixture(t, handoffGame(t, "sky", t.TempDir(), domain.LinkSymlink))
+	// default deploys a mod of its own (a deploy with nothing to deploy
+	// applies no overrides), which does not ship Data/k.ini.
+	f.overriddenProfile(t, "default", true, map[string]string{overrideKey: "tweaked\n"}, "j")
+	f.cachedOnly(t, "default", "j", domain.LinkSymlink, map[string]string{"Data/j.esp": "j"})
+	require.NoError(t, os.MkdirAll(filepath.Dir(f.iniPath()), 0o755))
+	require.NoError(t, os.WriteFile(f.iniPath(), []byte("stock game file\n"), 0o644))
+	require.NoError(t, f.svc.ExecForTest(ctx,
+		`INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id) VALUES (?, 'other', 'Data/k.ini', 'local', 'k')`, f.game.ID))
+
+	result := f.deploy(t, "default", core.DeployOptions{})
+	assert.Equal(t, "tweaked\n", readLive(t, f.iniPath()), "%q", result.Warnings)
+
+	require.NoError(t, f.svc.RestoreOriginalsForTest(f.game))
+	assert.Equal(t, "stock game file\n", readLive(t, f.iniPath()), "the stock file was captured before the override replaced it")
+}
+
+// TestOverriddenModFile_AFileAnotherGameRecordsIsLeft: a file a game sharing
+// the mod directory records is that game's (#445); an override of it is
+// refused with a warning naming the game, and the file is left as it is.
+func TestOverriddenModFile_AFileAnotherGameRecordsIsLeft(t *testing.T) {
+	sky, _, live := bothActiveState(t, domain.LinkCopy)
+	sky.overriddenProfile(t, "default", true, map[string]string{"mods/Data/a.esp": "override"}, "k")
+
+	result := sky.deploy(t, "default", core.DeployOptions{})
+	assert.Equal(t, "sky2 a, USER-EDITED", liveBytes(t, live))
+	assert.True(t, containsLine(result.Warnings, "mods/Data/a.esp", "sky2"), "%q", result.Warnings)
+}
+
+// TestOverriddenModFile_AHardlinkWithItsCacheGoneIsNotAnOverride is the
+// #630 review's second finding: with no override anywhere, a hard link
+// whose cache entry was deleted is a sole regular file matching its record,
+// and every apply tried to "restore" it and warned once per file.
+func TestOverriddenModFile_AHardlinkWithItsCacheGoneIsNotAnOverride(t *testing.T) {
+	f := overriddenFixture(t, domain.LinkHardlink)
+	f.overriddenProfile(t, "default", true, nil, "k")
+	f.deploy(t, "default", core.DeployOptions{})
+	entry := f.svc.GetGameCache(f.game).ModPath(cache.Key{GameID: f.game.ID, SourceID: "local", ModID: "k", Version: "unknown"})
+	require.NoError(t, os.RemoveAll(entry))
+
+	ctx := context.Background()
+	plan, err := f.svc.PlanProfileApply(ctx, f.game, "default")
+	require.NoError(t, err)
+	result, err := f.svc.ApplyProfileApply(ctx, f.game, plan, core.ProfileApplyOptions{}, nil)
+	if err == nil {
+		noOverrideNoise(t, "the apply", result.Warnings, result.Notes)
+	} else {
+		for _, w := range result.Warnings {
+			assert.NotContains(t, w, "override", "nothing about overrides: %q", result.Warnings)
+		}
+	}
+	assert.Equal(t, "stock\n", readLive(t, f.iniPath()), "the file is left as it is")
+}
+
+// TestOverriddenModFile_AUsersFileMatchingAnotherProfilesCopyIsLeft is the
+// review's fifth finding: a user's file whose bytes happen to equal another
+// profile's recorded override copy was judged lmm's by that record and
+// replaced by the link. Only the path's own record (the acting profile's)
+// can make a copy lmm's to restore.
+func TestOverriddenModFile_AUsersFileMatchingAnotherProfilesCopyIsLeft(t *testing.T) {
+	ctx := context.Background()
+	f := overriddenFixture(t, domain.LinkSymlink)
+	f.overriddenProfile(t, "plain", false, nil, "k")
+	f.deploy(t, "default", core.DeployOptions{})
+	plan, err := f.svc.PlanProfileSwitch(ctx, f.game, "plain")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
+	require.NoError(t, err)
+	assertPlainDeployment(t, f, domain.LinkSymlink)
+
+	// The user's own file - byte for byte default's override copy.
+	replaceWithUsersFile(t, f.iniPath(), "tweaked\n")
+	applyProfile(t, f.svc, f.game, "plain")
+
+	info, err := os.Lstat(f.iniPath())
+	require.NoError(t, err)
+	assert.True(t, info.Mode().IsRegular(), "the user's file is not replaced by the link")
+	assert.Equal(t, "tweaked\n", readLive(t, f.iniPath()))
+}
+
+// TestOverriddenModFile_ACopyThatCannotBeWrittenFallsBackToTheLink is the
+// review's third finding: an overridden copy the installer cannot write -
+// its directory leaves the mod path through a link - failed the whole mod's
+// install, where the same override in the deploy's override pass is only a
+// warning. The mod now deploys with its plain link there, and says why.
+func TestOverriddenModFile_ACopyThatCannotBeWrittenFallsBackToTheLink(t *testing.T) {
+	f := overriddenFixture(t, domain.LinkSymlink)
+	outside := t.TempDir()
+	require.NoError(t, os.MkdirAll(f.game.ModPath, 0o755))
+	require.NoError(t, os.Symlink(outside, filepath.Join(f.game.ModPath, "Data")))
+
+	result := f.deploy(t, "default", core.DeployOptions{})
+	assert.Equal(t, 1, result.Deployed, "the mod deploys: %+v", result)
+	assert.Empty(t, result.Skipped)
+	assert.True(t, containsLine(result.Warnings, "Data/k.ini", "override could not be placed"), "%q", result.Warnings)
+	info, err := os.Lstat(filepath.Join(outside, "k.ini"))
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&os.ModeSymlink, "the mod's own link is there instead")
+	assert.Equal(t, "stock\n", readLive(t, f.cachedIni()))
+}
+
+// TestOverriddenModFile_VerifyReportsAStaleCopyAndFixRestoresTheLink is the
+// review's fourth finding: once the override is taken out of the profile
+// by hand, the copy lmm wrote still matches its record, so verify said
+// nothing. It is now drift - override_stale, a warning - and --fix puts the
+// mod's own file back.
+func TestOverriddenModFile_VerifyReportsAStaleCopyAndFixRestoresTheLink(t *testing.T) {
+	ctx := context.Background()
+	for _, method := range []domain.LinkMethod{domain.LinkSymlink, domain.LinkHardlink} {
+		t.Run(method.String(), func(t *testing.T) {
+			f := overriddenFixture(t, method)
+			f.deploy(t, "default", core.DeployOptions{})
+			f.overriddenProfile(t, "default", true, nil, "k")
+
+			report, err := f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Force: true}, nil)
+			require.NoError(t, err)
+			var stale []core.VerifyFinding
+			for _, finding := range report.Result.Findings {
+				if finding.Status == core.VerifyStatusOverrideStale {
+					stale = append(stale, finding)
+				}
+			}
+			require.Len(t, stale, 1, "%+v", report.Result.Findings)
+			assert.Equal(t, "Data/k.ini", stale[0].FileID)
+			assert.Contains(t, stale[0].Note, "no longer")
+			assert.True(t, stale[0].Fixable, "%+v", stale[0])
+			assert.Equal(t, 1, report.Result.Warnings)
+
+			fixed, err := f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Fix: true, Force: true}, nil)
+			require.NoError(t, err)
+			var statuses []string
+			for _, finding := range fixed.Result.Findings {
+				statuses = append(statuses, finding.Status)
+			}
+			assert.Contains(t, statuses, core.VerifyStatusFixedOverrideStale)
+			assert.Zero(t, fixed.Result.Warnings, "%+v", fixed.Result.Findings)
+			assertPlainDeployment(t, f, method)
+
+			again, err := f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Force: true}, nil)
+			require.NoError(t, err)
+			assert.Zero(t, again.Result.Warnings, "%+v", again.Result.Findings)
+		})
+	}
+}

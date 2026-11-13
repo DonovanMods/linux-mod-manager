@@ -388,19 +388,7 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 		return nil
 	}
 	mine := s.overriddenModFiles(game, profileName)
-	elsewhere := map[string]bool{}
-	if names, err := config.ListProfiles(s.configDir, game.ID); err == nil {
-		for _, name := range names {
-			if name == profileName {
-				continue
-			}
-			for rel := range s.overriddenModFiles(game, name) {
-				if _, ok := mine[rel]; !ok {
-					elsewhere[rel] = true
-				}
-			}
-		}
-	}
+	elsewhere := s.overriddenElsewhere(game, profileName, mine)
 	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return []string{fmt.Sprintf("checking the profile's overridden mod files: %v", err)}
@@ -423,7 +411,6 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 	if err != nil {
 		return []string{fmt.Sprintf("checking the profile's overridden mod files: %v", err)}
 	}
-	jd := installer.judgeFor(game, profileName, others, nil)
 	var warnings []string
 	for _, row := range rows {
 		rel := row.RelativePath
@@ -432,7 +419,7 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 		}
 		dst := filepath.Join(game.ModPath, filepath.FromSlash(rel))
 		content, overridden := mine.content(rel)
-		if !overridden && !elsewhere[filepath.ToSlash(rel)] && (!linked || !soleRegularFile(dst)) {
+		if !overridden && !staleCopyCandidate(rel, dst, elsewhere, linked) {
 			continue
 		}
 		if overridden && holdsOverriddenCopy(dst, content) {
@@ -441,11 +428,14 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 		if _, held := heldElsewhere(others, rel, dst); held {
 			continue
 		}
-		j := jd.judge(ctx, rel, dst)
-		if j.verdict != deployedOurs {
-			continue
-		}
+		form, src := s.deployedFormOf(ctx, installer, game, profileName, rel, dst)
 		if overridden {
+			// Only lmm's own deployment of the file is replaced here; a
+			// file of the user's is left for `lmm deploy`, whose override
+			// pass sets it aside first.
+			if form == formOther {
+				continue
+			}
 			if err := writeOverriddenCopy(game.ModPath, rel, content); err != nil {
 				warnings = append(warnings, fmt.Sprintf("%s: could not write the profile's override over the mod's file: %v", rel, err))
 				continue
@@ -453,44 +443,149 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 			s.recordOverriddenCopy(ctx, game, profileName, rel, dst)
 			continue
 		}
-		if !j.regular {
-			continue // a link: already the plain deployment
+		// Only a copy this profile's own record says lmm wrote for an
+		// override, whose mod's cached file is there to put back.
+		if form != formOverrideCopy || src == "" {
+			continue
 		}
-		if err := s.restorePlainDeployment(ctx, installer, game, profileName, row, dst); err != nil {
+		if err := s.restorePlainDeployment(ctx, installer, game, profileName, row, src, dst); err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: could not put the mod's own file back in place of the override another profile left: %v", rel, err))
 		}
 	}
 	return warnings
 }
 
+// overriddenElsewhere is the mod files the game's other profiles override
+// and profileName does not (mine): where an overridden copy of another
+// profile's may be left for this one to undo.
+func (s *Service) overriddenElsewhere(game *domain.Game, profileName string, mine overriddenFiles) map[string]bool {
+	elsewhere := map[string]bool{}
+	names, err := config.ListProfiles(s.configDir, game.ID)
+	if err != nil {
+		return elsewhere
+	}
+	for _, name := range names {
+		if name == profileName {
+			continue
+		}
+		for rel := range s.overriddenModFiles(game, name) {
+			if _, ok := mine[rel]; !ok {
+				elsewhere[rel] = true
+			}
+		}
+	}
+	return elsewhere
+}
+
+// staleCopyCandidate reports whether dst, the deployed path rel the
+// profile does not override, may hold an overridden copy left behind - a
+// path another profile overrides, or, under symlink and hardlink (linked),
+// any regular file of its own, where a plain deployment never is one. Only
+// a candidate is judged (deployedFormOf), which hashes.
+func staleCopyCandidate(rel, dst string, elsewhere map[string]bool, linked bool) bool {
+	return elsewhere[filepath.ToSlash(rel)] || (linked && soleRegularFile(dst))
+}
+
+// deployedForm is what deployedFormOf finds at a deployed path.
+type deployedForm int
+
+const (
+	// formOther: neither of the two below - the user's file, one that
+	// could not be read, or one lmm cannot place.
+	formOther deployedForm = iota
+	// formPlain: the plain deployment of the profile's mod - its link
+	// into the cache, its hard link, or a copy of its cached bytes.
+	formPlain
+	// formOverrideCopy: a regular file holding exactly what the path's
+	// own record (the acting profile's) says lmm wrote there, which is not
+	// the mod's cached bytes - the copy an override left (#630). Under the
+	// symlink method every such record is one, since a link records no
+	// fingerprint.
+	formOverrideCopy
+)
+
+// deployedFormOf judges dst, the deployed path rel of profileName's mod in
+// game, by the path's OWN record only (#630 review): another profile's
+// record of an override copy says nothing about a file of the user's that
+// happens to hold the same bytes. src is the mod's cached file for rel,
+// or "" when the cache entry is not there - a copy then cannot be told
+// from the plain deployment, so it is formOther.
+func (s *Service) deployedFormOf(ctx context.Context, installer *Installer, game *domain.Game, profileName, rel, dst string) (form deployedForm, src string) {
+	states, err := currentStates(ctx, s.db, game, rel)
+	if err != nil {
+		return formOther, ""
+	}
+	var own *db.DeployedFileState
+	for i := range states {
+		if states[i].Profile == profileName {
+			own = &states[i]
+			break
+		}
+	}
+	if own == nil {
+		return formOther, ""
+	}
+	if mod, err := s.GetInstalledMod(ctx, own.SourceID, own.ModID, game.ID, profileName); err == nil {
+		path := installer.cache.GetFilePath(modCacheKey(game.ID, mod.Mod), filepath.FromSlash(rel))
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
+			src = path
+		}
+	}
+	info, err := os.Lstat(dst)
+	if err != nil {
+		return formOther, src
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		jd := deployedJudge{cacheRoots: installer.cacheRoots}
+		if jd.linksIntoCache(dst) {
+			return formPlain, src
+		}
+		return formOther, src
+	}
+	if !info.Mode().IsRegular() {
+		return formOther, src
+	}
+	if src != "" {
+		if si, err := os.Lstat(src); err == nil && os.SameFile(info, si) {
+			return formPlain, src
+		}
+	}
+	method := installer.linker.Method()
+	if own.LinkMethod != nil {
+		method = *own.LinkMethod
+	}
+	sum, _, err := hashFile(dst)
+	if err != nil {
+		return formOther, src
+	}
+	if method != domain.LinkSymlink && src != "" {
+		// A copy of the mod's cached bytes is a copy deployment's plain
+		// form, whichever profile wrote it.
+		cacheSum, _, err := hashFile(src)
+		if err != nil {
+			return formOther, src
+		}
+		if cacheSum == sum {
+			return formPlain, src
+		}
+	}
+	if own.Fingerprint == nil || sum != own.Fingerprint.Checksum {
+		return formOther, src
+	}
+	if method == domain.LinkSymlink || src != "" {
+		return formOverrideCopy, src
+	}
+	return formOther, src
+}
+
 // restorePlainDeployment replaces the overridden copy at dst - lmm's own,
-// left by another profile's override - with the plain deployment of the
-// row's mod as profileName has it installed, and records it as a deploy
-// would. A hard link that already is the cache's file, or a copy that
-// already holds the mod's bytes, is the plain deployment and is left.
-func (s *Service) restorePlainDeployment(ctx context.Context, installer *Installer, game *domain.Game, profileName string, row db.DeployedPath, dst string) error {
+// left by an override the profile no longer has - with the plain
+// deployment of src, the row's mod's cached file, and records it as a
+// deploy would.
+func (s *Service) restorePlainDeployment(ctx context.Context, installer *Installer, game *domain.Game, profileName string, row db.DeployedPath, src, dst string) error {
 	mod, err := s.GetInstalledMod(ctx, row.SourceID, row.ModID, game.ID, profileName)
 	if err != nil {
 		return err
-	}
-	src := installer.cache.GetFilePath(modCacheKey(game.ID, mod.Mod), filepath.FromSlash(row.RelativePath))
-	srcInfo, err := os.Lstat(src)
-	if err != nil {
-		return fmt.Errorf("the mod's cached copy: %w", err)
-	}
-	if info, err := os.Lstat(dst); err == nil {
-		switch installer.linker.Method() {
-		case domain.LinkHardlink:
-			if os.SameFile(info, srcInfo) {
-				return nil
-			}
-		case domain.LinkCopy:
-			if a, _, err := hashFile(dst); err == nil {
-				if b, _, err := hashFile(src); err == nil && a == b {
-					return nil
-				}
-			}
-		}
 	}
 	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -510,4 +605,88 @@ func soleRegularFile(path string) bool {
 	}
 	st, ok := info.Sys().(*syscall.Stat_t)
 	return ok && st.Nlink == 1
+}
+
+// staleOverrideCheck is verify's look for an overridden copy the profile no
+// longer overrides (VerifyStatusOverrideStale), with what it needs built
+// once per run.
+type staleOverrideCheck struct {
+	r          *verifyRun
+	overridden overriddenFiles
+	elsewhere  map[string]bool
+	installer  *Installer
+	linked     bool
+}
+
+// newStaleOverrideCheck is a staleOverrideCheck for r's profile, whose
+// overrides are overridden. One whose installer cannot be built checks
+// nothing: the passes that deploy report that failure.
+func newStaleOverrideCheck(r *verifyRun, overridden overriddenFiles) *staleOverrideCheck {
+	c := &staleOverrideCheck{r: r, overridden: overridden}
+	installer, err := r.svc.getInstallerForProfile(r.ctx, r.game, r.profile)
+	if err != nil {
+		return c
+	}
+	c.installer = installer
+	c.linked = installer.linker.Method() != domain.LinkCopy
+	c.elsewhere = r.svc.overriddenElsewhere(r.game, r.profile, overridden)
+	return c
+}
+
+// report emits row's VerifyStatusOverrideStale finding when dst holds an
+// overridden copy the profile no longer overrides, repairs it on a --fix
+// run, and reports whether it did.
+func (c *staleOverrideCheck) report(row db.DeployedPath, dst, modName string) bool {
+	if c.installer == nil {
+		return false
+	}
+	if _, ok := c.overridden.content(row.RelativePath); ok || !staleCopyCandidate(row.RelativePath, dst, c.elsewhere, c.linked) {
+		return false
+	}
+	r := c.r
+	form, src := r.svc.deployedFormOf(r.ctx, c.installer, r.game, r.profile, row.RelativePath, dst)
+	if form != formOverrideCopy {
+		return false
+	}
+	r.result.Warnings++
+	fixing := r.opts.Fix
+	repairable := src != ""
+	reason := ""
+	switch {
+	case !repairable:
+		reason = "the mod's cached copy is gone, so there is no file of its own to put back - reinstall the mod"
+	case fixing:
+		reason = "this --fix run already put the mod's own file back"
+	}
+	fixable, reason := r.deployRowFixability(repairable && !fixing, reason, repairable && fixing, true)
+	r.finding(VerifyFinding{
+		ModID: row.ModID, ModName: modName, FileID: row.RelativePath,
+		Status:        VerifyStatusOverrideStale,
+		Note:          row.RelativePath + ": still holds an override the profile no longer has",
+		Fixable:       fixable,
+		FixableReason: reason,
+	}, VerifyEvent{})
+	if fixing && repairable {
+		c.repair(row, src, dst)
+	}
+	return true
+}
+
+// repair puts the mod's own file back in place of the stale overridden
+// copy reported just before, and resolves that row.
+func (c *staleOverrideCheck) repair(row db.DeployedPath, src, dst string) {
+	r := c.r
+	if err := r.refuseLiveDeploy(); err != nil {
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("--fix did not restore %s: %s", row.RelativePath, deployRefusedReason(err))})
+		return
+	}
+	if err := r.svc.restorePlainDeployment(r.ctx, c.installer, r.game, r.profile, row, src, dst); err != nil {
+		last := &r.result.Findings[len(r.result.Findings)-1]
+		last.FixableReason = fmt.Sprintf("this --fix run could not put the mod's own file back: %v", err)
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Could not restore %s: %v", row.RelativePath, err)})
+		return
+	}
+	r.resolveLast(VerifyStatusFixedOverrideStale, row.RelativePath+": put the mod's own file back in place of an override the profile no longer has")
+	r.result.Warnings--
+	r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Restored the mod's own " + row.RelativePath, Fixed: true})
 }

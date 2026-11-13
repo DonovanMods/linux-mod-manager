@@ -115,3 +115,28 @@ func readFile(t *testing.T, path string) string {
 	require.NoError(t, err)
 	return string(b)
 }
+
+// TestFlowOverridden_AStaleCopyIsAFixableHealthRow: the override taken out
+// of the profile by hand leaves its copy; the Health read reports it as a
+// fixable override_stale row, and the Repair the card offers (verify_fix
+// scoped to the mod) puts the mod's own link back.
+func TestFlowOverridden_AStaleCopyIsAFixableHealthRow(t *testing.T) {
+	s, svc, game := overriddenFlowFixture(t)
+	j := runFlow(t, s, game, "deploy", `{}`, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	profile, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	profile.Overrides = nil
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
+
+	rec := doAPI(s, http.MethodGet, scoped("/api/v1/health", game)+"&force=1", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"status": "override_stale"`)
+	assert.Contains(t, rec.Body.String(), `"fixable": true`)
+
+	j = runFlow(t, s, game, "verify_fix", `{"mod_filter":"m1"}`, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	info, err := os.Lstat(deployedFixturePath(game))
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&os.ModeSymlink, "the plain link is back")
+}

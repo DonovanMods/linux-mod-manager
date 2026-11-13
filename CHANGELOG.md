@@ -26,7 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unhealthy. Taking the override out of the profile and deploying again,
   or switching to (or applying) a profile without it, puts the plain link
   back; a switch or apply to a profile with it places the copy, even when
-  the switch has no mods to change. #621's interim skip and its warning
+  the switch has no mods to change. A copy left behind after the override
+  is taken out of the profile by hand is reported by `lmm verify` as
+  `override_stale` (a warning), which `--fix` (or the web UI's Repair)
+  resolves by putting the mod's own file back. When the file at the mod's
+  path is your own - you edited the overridden copy, or replaced the mod's
+  file before adding the override - the deploy sets it aside first, says
+  so, and removing the mod or `lmm purge` puts it back; a file another
+  game sharing the mod folder records is left alone, with a warning. An
+  overridden copy that cannot be written (its folder leads outside the mod
+  folder through a link) is deployed as the plain link, with a warning,
+  rather than failing the mod. #621's interim skip and its warning
   ("this file belongs to a deployed mod; lmm cannot override a mod's own
   files yet") are gone.
 

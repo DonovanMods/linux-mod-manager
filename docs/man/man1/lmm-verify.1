@@ -204,7 +204,9 @@ the one lmm deployed files under - a warning whose note names the repair),
 after lmm deployed it - a warning --fix leaves alone, since the file is
 yours), "deployed_overridden" (a mod's file the profile's overrides replace,
 deployed as a copy holding the override - neither an issue nor a warning,
-and --fix leaves it), "orphaned_record" and "fixed_orphaned_record" (deployed-file records
+and --fix leaves it), "override_stale" and "fixed_override_stale" (such a
+copy left behind after the override was taken out of the profile - --fix
+puts the mod's own file back), "orphaned_record" and "fixed_orphaned_record" (deployed-file records
 of a mod the profile has no installed row for; --fix drops the active
 profile's, leaving the files), "missing_cache" (an installed mod with no
 recorded file whose cache entry is gone), or one of the loader tier's own rows -

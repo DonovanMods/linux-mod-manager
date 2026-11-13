@@ -253,8 +253,16 @@ mod removes it with the rest of the mod's files.
 `lmm verify --fix` leaves it. In the browser, the Health card shows it
 with an **Overridden** badge.
 
+If the file there is your own - you edited the overridden copy, or
+replaced the mod's file before adding the override - lmm sets it aside
+before writing the override, and says so. Removing the mod, or
+`lmm purge`, puts your file back.
+
 To go back to the mod's own file, take the override out of the profile and
 deploy again. Switching to a profile without the override does the same.
+Until you do, `lmm verify` reports the leftover copy as `override_stale`,
+and `lmm verify --fix` (or **Repair** on the Health card) puts the mod's
+own file back.
 
 ## "Your profile and the game don't match"
 

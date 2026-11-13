@@ -33,15 +33,40 @@ type overrideEnv struct {
 	// under (Service.cacheRoots): a symlink into one is a mod file
 	// deployed as a link.
 	cacheRoots []string
-	// modFile reports whether realDest, a resolved path in the game
-	// directory, is a file a mod deploys: a deployed_files record of the
-	// game names it under the mod path. Nil answers no.
-	modFile func(realDest string) bool
+	// modPathFile answers for realDest, a resolved path in the game
+	// directory, when it is a path under the mod path that a
+	// deployed_files record of the game, or of a game sharing the mod
+	// directory, names: how lmm stands toward the file there, judged as a
+	// removal judges it (#630). ok is false for any other path. Nil
+	// answers false.
+	modPathFile func(realDest string) (mf modPathFile, ok bool)
 	// recordCopy records, on the acting profile's deployed_files record
 	// of realDest, the fingerprint of the overridden copy just written
 	// there (#630), so every removal and deploy judges it lmm's own. Nil
 	// records nothing.
 	recordCopy func(realDest string)
+}
+
+// modPathFile is how lmm stands toward the file at a mod path an override
+// lands on (#630), judged as every removal judges a deployed path
+// (deployedJudge): only lmm's own file there - its link, its copy, an
+// overridden copy it wrote - is replaced without a second thought.
+type modPathFile struct {
+	// rel is the path relative to the mod path, in slash form.
+	rel string
+	// ours: the file is lmm's own, so replacing it loses nothing.
+	ours bool
+	// recorded: the acting profile records the path, so the override
+	// written there is recorded as that profile's copy - and a removal of
+	// it puts back what it replaced.
+	recorded bool
+	// heldBy names the games sharing the mod directory that record the
+	// path: their file, which an override never replaces (#445).
+	heldBy []string
+	// reason says why a file that is not ours is the user's, as a clause.
+	reason string
+	// unchecked says why the file could not be judged, or "".
+	unchecked string
 }
 
 // applyProfileOverrides writes a profile's configuration overrides to the game install directory.
@@ -55,7 +80,11 @@ type overrideEnv struct {
 // mod's cached copy - shared by every profile - is never touched. Every
 // other override replaces what is at its path the same way, atomically
 // (writeOverriddenCopy's temporary-file-and-rename), after #350's capture
-// of the game file it replaces.
+// of the game file it replaces. A file at a mod path that is not lmm's own
+// - the user's edit of an overridden copy, or the user's replacement of a
+// mod's file - is set aside the same way first (#630 review), so the
+// removal that later takes the override away puts it back; one another
+// game records is never replaced.
 //
 // Each override stands on its own (#621 final review): one that is refused
 // is reported in warnings, naming the file and why, and every other one is
@@ -91,8 +120,19 @@ func applyProfileOverrides(game *domain.Game, profile *domain.Profile, env overr
 	}
 	sort.Strings(paths)
 	for _, relPath := range paths {
-		if err := applyOneOverride(base, realBase, relPath, profile, env); err != nil {
+		note, err := applyOneOverride(base, realBase, relPath, profile, env)
+		switch {
+		case err != nil:
 			warnings = append(warnings, fmt.Sprintf("override %s skipped: %v", relPath, err))
+		case note != "":
+			// On the flow's pending list, where it reads after the deploy
+			// loop's own notes about the same file ("left in place").
+			msg := fmt.Sprintf("override %s: %s", relPath, note)
+			if env.originals != nil {
+				env.originals.note(msg)
+			} else {
+				warnings = append(warnings, msg)
+			}
 		}
 	}
 	return warnings, nil
@@ -112,24 +152,26 @@ var (
 	errOverrideSharedFile = errors.New("it shares its data with another file (a hard link) that lmm did not deploy, and lmm never writes through a link")
 )
 
-// applyOneOverride writes one override, or says why it did not.
-func applyOneOverride(base, realBase, relPath string, profile *domain.Profile, env overrideEnv) error {
+// applyOneOverride writes one override, or says why it did not. note is
+// what a write the user should hear about says: that it set their own file
+// aside first.
+func applyOneOverride(base, realBase, relPath string, profile *domain.Profile, env overrideEnv) (note string, err error) {
 	dest, rel, err := overrideDest(base, relPath)
 	if err != nil {
-		return err
+		return "", err
 	}
 	realDir, err := resolveExisting(filepath.Dir(dest))
 	if err != nil {
-		return fmt.Errorf("override path %q: %w", relPath, err)
+		return "", fmt.Errorf("override path %q: %w", relPath, err)
 	}
 	dirRel, ok := dirUnder(realBase, realDir)
 	if !ok {
-		return fmt.Errorf("override path escapes game directory through a symlink: %q", relPath)
+		return "", fmt.Errorf("override path escapes game directory through a symlink: %q", relPath)
 	}
 	realDest := filepath.Join(realDir, filepath.Base(dest))
 	dir, err := openDirBeneath(realBase, dirRel, true)
 	if err != nil {
-		return fmt.Errorf("creating its directory: %w", err)
+		return "", fmt.Errorf("creating its directory: %w", err)
 	}
 	defer func() { _ = dir.Close() }()
 	name := filepath.Base(dest)
@@ -137,44 +179,101 @@ func applyOneOverride(base, realBase, relPath string, profile *domain.Profile, e
 
 	st, exists, err := lstatAt(dir, name)
 	if err != nil {
-		return fmt.Errorf("checking it: %w", err)
+		return "", fmt.Errorf("checking it: %w", err)
 	}
-	modFile := exists && env.modFile != nil && env.modFile(realDest)
-	perm := os.FileMode(0o644)
-	switch {
-	case !exists:
-	case !isRegularOrLink(st):
-		// Refused before anything opens it: a FIFO would block the deploy.
-		return errNotRegularTarget
-	case isLink(st):
-		if !modFile && !linkStaysInside(realDest, realBase, env.cacheRoots) {
-			return errOverrideThroughLink
-		}
-		// lmm's own link into its cache (a mod file deployed as a
-		// symlink) is broken into an overridden copy; a link that stays
-		// inside the game directory is replaced by a regular file. Either
-		// way nothing it points at is written.
-	case st.Nlink > 1 && !modFile:
-		return errOverrideSharedFile
-	case modFile:
-		// A mod file deployed as a hard link or a copy, or the overridden
-		// copy an earlier deploy wrote: lmm's own, with no stock content
-		// to preserve.
-	default:
-		if sameContentAt(dir, name, content) {
-			return nil
-		}
-		perm = os.FileMode(st.Mode) & os.ModePerm
-		captureOverriddenOriginal(env.originals, profile.Name, rel, realDest)
+	var mf modPathFile
+	isMod := false
+	if exists && env.modPathFile != nil {
+		mf, isMod = env.modPathFile(realDest)
 	}
-	alreadyCopy := modFile && isRegular(st) && st.Nlink == 1 && sameContentAt(dir, name, content)
-	if !alreadyCopy {
+	write := func(perm os.FileMode) error {
 		if err := replaceAt(dir, name, content, perm); err != nil {
 			return fmt.Errorf("writing it: %w", err)
 		}
+		return nil
 	}
-	if modFile && env.recordCopy != nil {
-		env.recordCopy(realDest)
+	switch {
+	case !exists:
+		return "", write(0o644)
+	case !isRegularOrLink(st):
+		// Refused before anything opens it: a FIFO would block the deploy.
+		return "", errNotRegularTarget
+	case isMod && mf.unchecked != "":
+		return "", fmt.Errorf("it could not be checked (%s), so lmm left it", mf.unchecked)
+	case isMod && len(mf.heldBy) > 0:
+		return "", fmt.Errorf("%s records it too, so lmm left that game's file there", gamesText(mf.heldBy))
+	case isMod && mf.ours:
+		// lmm's own: its link into the cache (broken into an overridden
+		// copy), its hard link or copy, or the overridden copy an earlier
+		// deploy wrote. Nothing to preserve - the mod's cache has it.
+		if !isRegular(st) || st.Nlink != 1 || !sameContentAt(dir, name, content) {
+			if err := write(0o644); err != nil {
+				return "", err
+			}
+		}
+		if mf.recorded && env.recordCopy != nil {
+			env.recordCopy(realDest)
+		}
+		return "", nil
+	case isLink(st):
+		if !linkStaysInside(realDest, realBase, env.cacheRoots) {
+			return "", errOverrideThroughLink
+		}
+		// A link that stays inside the game directory (or points into
+		// lmm's cache) is replaced by a regular file; nothing it points at
+		// is written.
+		return "", write(0o644)
+	case st.Nlink > 1 && !isMod:
+		return "", errOverrideSharedFile
+	}
+	// A regular file: a game file, or - at a mod path - the user's own.
+	if sameContentAt(dir, name, content) {
+		return "", nil
+	}
+	perm := os.FileMode(st.Mode) & os.ModePerm
+	if isMod && mf.recorded {
+		// The user's file where the profile's mod deploys (#630 review):
+		// set aside where a removal of the mod's file puts it back, then
+		// replaced, and recorded as the profile's copy.
+		if err := preserveUsersModFile(env.originals, profile.Name, mf.rel, realDest); err != nil {
+			return "", err
+		}
+		if err := write(perm); err != nil {
+			return "", err
+		}
+		if env.recordCopy != nil {
+			env.recordCopy(realDest)
+		}
+		return fmt.Sprintf("%s was yours (%s), so lmm set it aside before writing the override - removing the mod, or `lmm purge`, puts it back",
+			mf.rel, mf.reason), nil
+	}
+	captureOverriddenOriginal(env.originals, profile.Name, rel, realDest)
+	return "", write(perm)
+}
+
+// preserveUsersModFile sets the user's own file at rel, a mod path, aside
+// in the originals store before an override replaces it (#630 review),
+// under the mod path's root: the removal that later takes lmm's file there
+// away (restoreReplacedOriginal) puts it back. Unlike a game file's
+// capture, a failure refuses the override - it is the only copy of the
+// user's content - as does an earlier original of the path the store
+// already keeps, which it would not replace.
+func preserveUsersModFile(originals *originalsStore, profileName, rel, path string) error {
+	if originals == nil {
+		return errors.New("it is yours, and lmm has nowhere to set it aside first, so it left it")
+	}
+	held, err := originals.holds(OriginalRootModPath, rel)
+	if err != nil {
+		return fmt.Errorf("it is yours, and the originals store could not be read to set it aside first (%v), so lmm left it", err)
+	}
+	if held {
+		return errors.New("it is yours, and lmm already keeps an earlier original of that path, so it could not set this one aside too - move it aside, then deploy again")
+	}
+	if err := originals.capture(OriginalFile{
+		Root: OriginalRootModPath, RelativePath: rel,
+		Op: OriginalOpProfileOverride, Profile: profileName,
+	}, path); err != nil {
+		return fmt.Errorf("it is yours, and it could not be set aside first (%v), so lmm left it", err)
 	}
 	return nil
 }
@@ -206,17 +305,9 @@ func (s *Service) applyOverrides(ctx context.Context, game *domain.Game, profile
 	if s.db != nil && game.ModPath != "" {
 		if absMod, err := filepath.Abs(game.ModPath); err == nil {
 			if realMod, err := resolveExisting(absMod); err == nil {
-				modRel := func(realDest string) (string, bool) { return relUnder(realMod, realDest) }
-				env.modFile = func(realDest string) bool {
-					rel, ok := modRel(realDest)
-					if !ok {
-						return false
-					}
-					states, err := currentStates(ctx, s.db, game, rel)
-					return err == nil && len(states) > 0
-				}
+				env.modPathFile = s.modPathJudge(ctx, game, profileName, realMod)
 				env.recordCopy = func(realDest string) {
-					if rel, ok := modRel(realDest); ok {
+					if rel, ok := relUnder(realMod, realDest); ok {
 						s.recordOverriddenCopy(ctx, game, profileName, rel, realDest)
 					}
 				}
@@ -224,6 +315,52 @@ func (s *Service) applyOverrides(ctx context.Context, game *domain.Game, profile
 		}
 	}
 	return applyProfileOverrides(game, profile, env)
+}
+
+// modPathJudge is overrideEnv.modPathFile for profileName of game, whose
+// resolved mod path is realMod: the deployedJudge every removal asks,
+// acting for the profile, plus the games sharing the mod directory.
+func (s *Service) modPathJudge(ctx context.Context, game *domain.Game, profileName, realMod string) func(string) (modPathFile, bool) {
+	others, othersErr := s.otherGamesRecording(ctx, game)
+	jd := deployedJudge{db: s.db, game: game, profile: profileName, cacheRoots: s.cacheRoots(game), others: others}
+	return func(realDest string) (modPathFile, bool) {
+		rel, ok := relUnder(realMod, realDest)
+		if !ok {
+			return modPathFile{}, false
+		}
+		mf := modPathFile{rel: rel}
+		if othersErr != nil {
+			mf.unchecked = othersErr.Error()
+			return mf, true
+		}
+		states, err := currentStates(ctx, s.db, game, rel)
+		if err != nil {
+			mf.unchecked = err.Error()
+			return mf, true
+		}
+		mf.heldBy = others.recording(rel)
+		if len(states) == 0 && len(mf.heldBy) == 0 {
+			return modPathFile{}, false
+		}
+		for _, st := range states {
+			if st.Profile == profileName {
+				mf.recorded = true
+			}
+		}
+		j := jd.judge(ctx, rel, realDest)
+		switch {
+		case j.unchecked:
+			mf.unchecked = j.reason
+		case j.verdict == deployedOurs:
+			mf.ours = true
+		default:
+			mf.reason = j.reason
+			if mf.reason == "" {
+				mf.reason = "lmm cannot prove it deployed what is there"
+			}
+		}
+		return mf, true
+	}
 }
 
 // recordOverriddenCopy re-records profileName's record of rel - a mod file
