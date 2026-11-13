@@ -162,16 +162,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose override path is absolute or leaves the game folder - all
   accepted before - is now refused, with nothing written. A profile you
   already have, and overrides you set yourself, are unaffected.
-- **A profile override is never written through a symlink (#621).**
-  Writing an override used to follow a symlink in the game folder: a
-  linked directory could take the file outside the game folder, and a mod
-  file deployed as a symlink (the default) had the override written into
+- **A profile override is never written through a link (#621).** Writing
+  an override used to follow links in the game folder: a linked directory
+  could take the file outside the game folder, and a mod file deployed as
+  a symlink (the default) or a hardlink had the override written into
   lmm's shared mod cache. Now a directory link must stay inside the game
-  folder, a file link that stays inside it is replaced by a regular file,
-  and one leading outside it (a mod file deployed as a link) is refused
-  with a deploy warning naming the override. Every override path is
-  checked before any is written, so the profile's overrides are written
-  together or not at all.
+  folder, and a file link that stays inside it is replaced by a regular
+  file. An override of a deployed mod's own file (a symlink out of the
+  game folder, or a file with more than one hard link) is skipped, with
+  the deploy warning "this file belongs to a deployed mod; lmm cannot
+  override a mod's own files yet" (#630 will let an override replace a
+  mod's file). Each override stands on its own: one that is refused or
+  skipped is named in a warning, and the rest are still written.
 - **A version-0 profile document's `collection:` and `external:` keys are
   ignored on import (#621).** No version-0 export carried them; only a
   checked version-1 collection sets them.

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -35,68 +36,97 @@ import (
 // The store is a PARAMETER rather than resolved inside because this is a
 // package-level function with no Service in scope - the deploy flow that
 // calls it has one, and hands its own store down.
-func applyProfileOverrides(game *domain.Game, profile *domain.Profile, originals *originalsStore) error {
+func applyProfileOverrides(game *domain.Game, profile *domain.Profile, originals *originalsStore) (warnings []string, err error) {
 	if len(profile.Overrides) == 0 {
-		return nil
+		return nil, nil
 	}
 	// filepath.Abs("") is the working directory: never write there.
 	if game.InstallPath == "" {
-		return fmt.Errorf("game %q has no install path to write profile overrides into", game.ID)
+		return nil, fmt.Errorf("game %q has no install path to write profile overrides into", game.ID)
 	}
 	base, err := filepath.Abs(game.InstallPath)
 	if err != nil {
-		return fmt.Errorf("resolving game path: %w", err)
+		return nil, fmt.Errorf("resolving game path: %w", err)
 	}
 	base = filepath.Clean(base)
 	// Containment by path text alone is not enough (#621 review N2): a
 	// directory symlink inside the game directory would carry the write
 	// outside it, and a mod file deployed as a symlink (the default link
-	// method) would be written through into the shared mod cache. So the
-	// game directory and each destination's parent are resolved through
-	// their symlinks and must stay inside the resolved game directory, and
-	// a destination that is itself a symlink is never written through.
+	// method) or a hardlink would be written through into the shared mod
+	// cache. So the game directory and each destination's parent are
+	// resolved through their symlinks and must stay inside the resolved
+	// game directory, and a destination is never written through a link.
 	realBase, err := resolveExisting(base)
 	if err != nil {
-		return fmt.Errorf("resolving game path: %w", err)
+		return nil, fmt.Errorf("resolving game path: %w", err)
 	}
-	// Every key is checked before any is written (#621 review S6): a
-	// profile with one bad key used to fail mid-loop, after writing some of
-	// the others in map order.
-	type overrideWrite struct {
-		relPath, rel, dest string
-		// replaceLink is set when dest is a symlink that stays inside the
-		// game directory: it is removed, and a regular file written in its
-		// place, rather than written through.
-		replaceLink bool
-	}
-	writes := make([]overrideWrite, 0, len(profile.Overrides))
+	// Each override stands on its own (#621 final review): one that is
+	// refused or skipped is reported, naming the file and why, and every
+	// other one is still written. In path order, so the warnings read the
+	// same on every run.
+	paths := make([]string, 0, len(profile.Overrides))
 	for relPath := range profile.Overrides {
-		dest, rel, err := overrideDest(base, relPath)
-		if err != nil {
-			return err
-		}
-		realDest, replaceLink, err := containedOverrideDest(realBase, dest, relPath)
-		if err != nil {
-			return err
-		}
-		writes = append(writes, overrideWrite{relPath: relPath, rel: rel, dest: realDest, replaceLink: replaceLink})
+		paths = append(paths, relPath)
 	}
-	sort.Slice(writes, func(i, j int) bool { return writes[i].relPath < writes[j].relPath })
-	for _, w := range writes {
-		dir := filepath.Dir(w.dest)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("creating override dir %s: %w", dir, err)
+	sort.Strings(paths)
+	for _, relPath := range paths {
+		if err := applyOneOverride(base, realBase, relPath, profile, originals); err != nil {
+			warnings = append(warnings, fmt.Sprintf("override %s skipped: %v", relPath, err))
 		}
-		if w.replaceLink {
-			if err := os.Remove(w.dest); err != nil {
-				return fmt.Errorf("replacing the link at override %s: %w", w.relPath, err)
-			}
-		} else {
-			captureOverriddenOriginal(originals, profile.Name, w.rel, w.dest)
+	}
+	return warnings, nil
+}
+
+// errModFileOverride is the reason an override of a deployed mod's own
+// file is skipped: writing it would go through the link into lmm's shared
+// mod cache. Breaking the link to hold the override instead is #630.
+var errModFileOverride = errors.New("this file belongs to a deployed mod; lmm cannot override a mod's own files yet")
+
+// applyOneOverride writes one override, or says why it did not.
+func applyOneOverride(base, realBase, relPath string, profile *domain.Profile, originals *originalsStore) error {
+	dest, rel, err := overrideDest(base, relPath)
+	if err != nil {
+		return err
+	}
+	realDest, replaceLink, err := containedOverrideDest(realBase, dest, relPath)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(realDest)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("creating its directory: %w", err)
+	}
+	if replaceLink {
+		if err := os.Remove(realDest); err != nil {
+			return fmt.Errorf("replacing the link there: %w", err)
 		}
-		if err := os.WriteFile(w.dest, profile.Overrides[w.relPath], 0644); err != nil {
-			return fmt.Errorf("writing override %s: %w", w.relPath, err)
+	} else {
+		captureOverriddenOriginal(originals, profile.Name, rel, realDest)
+	}
+	// O_NOFOLLOW: a symlink swapped in after the checks above is refused
+	// by the open itself rather than followed. No O_TRUNC: the open file's
+	// own link count is checked first, so a hardlink made after the checks
+	// is refused before anything in its shared data changes.
+	f, err := os.OpenFile(realDest, os.O_WRONLY|os.O_CREATE|syscall.O_NOFOLLOW, 0o644)
+	if err != nil {
+		return fmt.Errorf("writing it: %w", err)
+	}
+	if info, serr := f.Stat(); serr == nil {
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
+			_ = f.Close()
+			return errModFileOverride
 		}
+	}
+	if terr := f.Truncate(0); terr != nil {
+		_ = f.Close()
+		return fmt.Errorf("writing it: %w", terr)
+	}
+	if _, werr := f.Write(profile.Overrides[relPath]); werr != nil {
+		_ = f.Close()
+		return fmt.Errorf("writing it: %w", werr)
+	}
+	if cerr := f.Close(); cerr != nil {
+		return fmt.Errorf("writing it: %w", cerr)
 	}
 	return nil
 }
@@ -129,10 +159,12 @@ func resolveExisting(path string) (string, error) {
 
 // containedOverrideDest resolves dest's parent through its symlinks and
 // refuses one that leaves realBase, the resolved game directory. A dest
-// that is itself a symlink is never written through: one whose target
+// that is itself a link is never written through: a symlink whose target
 // stays inside the game directory is replaced by a regular file
-// (replaceLink), and one leading outside it - a mod file deployed as a
-// symlink into the mod cache, or a link of the user's own - is refused.
+// (replaceLink); a symlink leading outside it - a mod file deployed as a
+// symlink into the mod cache, or a link of the user's own - and a file
+// with more than one hard link (a mod file deployed as a hardlink) are
+// errModFileOverride.
 func containedOverrideDest(realBase, dest, relPath string) (realDest string, replaceLink bool, err error) {
 	realDir, err := resolveExisting(filepath.Dir(dest))
 	if err != nil {
@@ -143,12 +175,24 @@ func containedOverrideDest(realBase, dest, relPath string) (realDest string, rep
 	}
 	realDest = filepath.Join(realDir, filepath.Base(dest))
 	info, err := os.Lstat(realDest)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+	if err != nil {
+		return realDest, false, nil
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		// A file with more than one hard link shares its data with another
+		// name - with the default-off hardlink method, the mod cache's copy.
+		// Writing it would change that copy too.
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && info.Mode().IsRegular() && st.Nlink > 1 {
+			return "", false, errModFileOverride
+		}
 		return realDest, false, nil
 	}
 	target, err := filepath.EvalSymlinks(realDest)
 	if err != nil || !isWithin(target, realBase) {
-		return "", false, fmt.Errorf("override path %q: the game file there is a symlink leading outside the game directory (a mod file deployed as a link, or a link of your own); lmm will not write an override through it - deploy that mod with the copy or hardlink method, or remove the override", relPath)
+		// A link out of the game directory: a mod file deployed as a
+		// symlink into the mod cache (or a link of the user's own, which
+		// is never written through either).
+		return "", false, errModFileOverride
 	}
 	return realDest, true, nil
 }

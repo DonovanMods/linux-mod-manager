@@ -127,11 +127,21 @@ func LoaderConfigOverrideFiles() []string {
 	return out
 }
 
+// isLoaderConfig reports whether name is one of loaderConfigFiles, in any
+// case (strings.EqualFold, so no case mapping can make two names collide).
+func isLoaderConfig(name string) bool {
+	for known := range loaderConfigFiles {
+		if strings.EqualFold(name, known) {
+			return true
+		}
+	}
+	return false
+}
+
 // restrictedOverrideReason is why an imported override at path is held
 // back, or "" when it is a text config file it may write.
 func restrictedOverrideReason(path string) string {
-	base := strings.ToLower(filepath.Base(filepath.FromSlash(path)))
-	if loaderConfigFiles[base] {
+	if isLoaderConfig(filepath.Base(filepath.FromSlash(path))) {
 		return "loader configuration: can make the game load a DLL; imported only with --allow-any-overrides"
 	}
 	if !textConfigOverrideExts[strings.ToLower(filepath.Ext(path))] {

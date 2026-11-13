@@ -156,14 +156,16 @@ A collection from someone else is untrusted input.
   `.yml`, `.properties`, `.config`, `.ltx`, `.lsx`, `.cvars`, `.ron`, in any
   case) is imported, unless it is a loader configuration that can make the
   game load a DLL (`doorstop_config.ini`, `enblocal.ini`, by file name in
-  any case); any other is skipped unless
+  any case - see the known gaps below); any other is skipped unless
   `--allow-any-overrides` (the web UI's **Import these overrides too**),
   and the plan (`restricted_overrides`) and the result
   (`overrides_skipped`) name each. Whatever its type, a path that is
   absolute, escapes the game directory, or holds a control or formatting
   character is refused before anything is written, and deploy writes
-  overrides only inside the game directory, never through a symlink that
-  leads out of it.
+  overrides only inside the game directory, never through a link. An
+  override of a deployed mod's own file (a symlink into lmm's mod cache, or
+  a hardlink) is skipped with a warning for now (#630); each override is
+  written or skipped on its own.
 - **Version 0 too.** The hooks and overrides rules apply to every profile
   import from a file or upload, a version-0 document included, so the
   older format is no way around them. They do not apply to profiles you
@@ -196,3 +198,19 @@ Failures are counted per mod, as an ordinary import's are: a mod that
 cannot be downloaded fails on its own and the rest are imported. A mod that
 needs something set up first (a mod loader) stops the import before
 anything is written.
+
+## Known gaps
+
+- **Loader configurations not yet on the list.** The list of loader
+  configurations held back by name is short on purpose: each entry is a
+  file verified to make a game load a DLL. Two more can likely do it too,
+  but are not verified yet, so they import like any other text config:
+  - `ReShade.ini`, whose `[ADDON]` `AddonPath=` names where ReShade loads
+    add-on DLLs from;
+  - the Ultimate ASI Loader's `.ini` files, which choose the folders it
+    loads `.asi` plugins (DLLs) from.
+- **Overriding a mod's own file.** An override of a file a mod deployed
+  (a symlink into lmm's mod cache, or a hardlink) is skipped with a
+  warning, because writing it would change the cached mod for every
+  profile. #630 will replace the deployed file with a regular copy that
+  holds the override.
