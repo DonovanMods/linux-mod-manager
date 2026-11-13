@@ -527,6 +527,12 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 		addNode(e.name, false, -1, e.active || implicitlyActive[key])
 	}
 	c.external = len(externals)
+	if len(nodes) == 0 && !s.wrotePluginList(game) {
+		// No plugin of lmm's, and a list lmm has never written: it is the
+		// user's (or the game's) alone, and lmm leaves it as it is.
+		c.nothing = true
+		return c, nil
+	}
 
 	loadedFirst := make(map[string]bool, len(implicit))
 	for _, name := range implicit {
@@ -1040,4 +1046,17 @@ func keepExternals(original, current []byte, existed bool, dirs pluginDirs) []by
 		header = now.header
 	}
 	return renderPluginList(adapter.PluginSpec{ListKind: adapter.ListAsterisk}, entries, nil, header, base.eol, "").list
+}
+
+// wrotePluginList reports whether lmm has written game's plugin list - the
+// prefix originals keep a row for every list file lmm replaced or created
+// until a purge hands it back. A list lmm never wrote, for a profile that
+// deploys no plugin, is left alone.
+func (s *Service) wrotePluginList(game *domain.Game) bool {
+	store := s.prefixOriginalsFor(game.ID)
+	if store == nil {
+		return false
+	}
+	rows, err := store.list()
+	return err != nil || len(rows) > 0
 }

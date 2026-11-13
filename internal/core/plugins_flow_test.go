@@ -444,3 +444,24 @@ func TestPlugins_UnresolvedPrefixWithoutPluginsSaysNothing(t *testing.T) {
 	res := f.deploy(t)
 	assert.Nil(t, res.Plugins, "no plugin to list, so no plugin list to report on")
 }
+
+func TestPlugins_AListLmmNeverWroteIsLeftAloneWithoutLmmPlugins(t *testing.T) {
+	f := newPluginFixture(t)
+	f.mod(t, "tex", map[string][]byte{"textures/a.dds": []byte("x")})
+	require.NoError(t, os.MkdirAll(f.listDir, 0o755))
+	original := "*Skyrim.esm\r\n*Gone.esp\r\n"
+	require.NoError(t, os.WriteFile(filepath.Join(f.listDir, "Plugins.txt"), []byte(original), 0o644))
+	res := f.deploy(t)
+	assert.Nil(t, res.Plugins, "no plugin of lmm's, and a list lmm never wrote")
+	assert.Equal(t, original, f.list(t))
+}
+
+func TestPlugins_UninstallingTheLastPluginStillUpdatesTheList(t *testing.T) {
+	f := newPluginFixture(t)
+	f.mod(t, "a", map[string][]byte{"A.esp": pluginBytes(0)})
+	f.deploy(t)
+	require.Equal(t, "*A.esp\r\n", f.list(t))
+	_, err := f.svc.DisableMod(context.Background(), f.game, "default", "src", "a")
+	require.NoError(t, err)
+	assert.Equal(t, "", f.list(t), "lmm wrote this list, so it keeps it in step")
+}
