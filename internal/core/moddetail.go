@@ -184,9 +184,11 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 			}
 		}
 	}
-	if info.Fomod == nil && installed.Variant != "" {
+	if info.Fomod == nil && (installed.Variant != "" || s.cachedFomodInstaller(game, installed)) {
 		// A FOMOD install whose profile lost its choices (an older lmm
-		// dropped the key on a rewrite) can still be reconfigured.
+		// dropped the key on a rewrite), or one installed before lmm ran
+		// FOMOD installers (its cache entry is the raw installer archive),
+		// can still be reconfigured (#615).
 		info.Fomod = &domain.FomodChoices{Steps: []domain.FomodStepChoice{}}
 	}
 	info.EffectiveCategory, info.CategorySource = effectiveCategory(userCategory, installed.CategoryName)

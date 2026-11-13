@@ -147,6 +147,12 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 		return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: fomodLocateReason(err), err: err}
 	}
 	if inst == nil {
+		if in.ask {
+			// A reconfigure asked for an installer this archive does not
+			// have (#615): installing it plain would not be what was asked.
+			return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name,
+				Reason: "its archive is not a FOMOD installer, so there are no installer choices to change", err: ErrNotFomodInstalled}
+		}
 		return nil, nil
 	}
 

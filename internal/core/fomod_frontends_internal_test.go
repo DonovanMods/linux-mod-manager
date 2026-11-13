@@ -177,3 +177,16 @@ func mustRel(t *testing.T, base, path string) string {
 	require.NoError(t, err)
 	return rel
 }
+
+// TestResolveFomod_AskOfAPlainArchiveRefuses: a reconfigure whose refetched
+// archive is not an installer refuses rather than reinstall it plain.
+func TestResolveFomod_AskOfAPlainArchiveRefuses(t *testing.T) {
+	tree := filepath.Join(t.TempDir(), "tree")
+	require.NoError(t, os.MkdirAll(tree, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(tree, "a.esp"), []byte("A"), 0o644))
+	_, err := (&Service{}).resolveFomod(fomodTestMod, "mod.zip", tree, fomodInput{ask: true})
+	var refusal *FomodInstallError
+	require.True(t, errors.As(err, &refusal), "got %v", err)
+	assert.ErrorIs(t, err, ErrNotFomodInstalled)
+	assert.False(t, answerableRefusal(err))
+}

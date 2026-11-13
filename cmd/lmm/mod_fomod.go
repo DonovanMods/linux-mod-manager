@@ -34,6 +34,9 @@ it kept), asks the installer's questions one step at a time, and replaces
 the deployed files with the new selection. The new choices are recorded on
 the profile.
 
+A mod installed before lmm ran FOMOD installers went in as the whole
+archive; this runs its installer and replaces that install.
+
 Without a terminal, answer with --fomod-choices <file.json> or
 --fomod-defaults; with neither, the questions are printed (the full
 document under --json) and lmm exits non-zero.

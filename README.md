@@ -524,7 +524,9 @@ installers (`fomod/script.cs`) and OMODs are refused, never run.
   or a summary on stderr. lmm never picks defaults silently.
 - `lmm mod fomod <mod-id>` re-runs an installed mod's installer with its
   recorded choices preselected, and installs and deploys the new selection
-  in place of the old one.
+  in place of the old one. For a FOMOD mod installed before lmm ran
+  installers (deployed as the raw archive) it runs the installer for the
+  first time.
 - An update batch (`lmm update --all`, automatic updates) never asks: a
   mod whose new installer no longer fits its recorded choices is skipped
   with "installer choices need re-answering", and `lmm update <mod-id>`

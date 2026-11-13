@@ -103,6 +103,11 @@ questions with your current answers already selected, and replaces the
 mod's files in the game folder with the new selection. The mod keeps its
 version; only the chosen files change.
 
+A mod you installed before lmm ran FOMOD installers went in as the whole
+archive, installer and all. Reconfiguring it is how you run its installer
+now: the questions start from the installer's own suggestions, and your
+answers replace the files the old install put in the game folder.
+
 ## When an update changes the installer
 
 If a new version of a mod changes its installer so that your recorded

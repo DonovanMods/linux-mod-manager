@@ -104,7 +104,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     non-zero now.
   - `lmm mod fomod <mod-id>` re-runs an installed mod's installer with its
     recorded choices preselected and installs and deploys the new selection
-    in place of the old one, at the same version.
+    in place of the old one, at the same version. It also runs the
+    installer of a FOMOD mod installed before lmm ran installers (which
+    went in as the raw archive), replacing that install.
   - The web UI asks in a wizard, one step per page, with option
     descriptions and images, and re-posts the job with the answers; the
     full mod page offers "Reconfigure installer…", and the activity tray
