@@ -26,6 +26,7 @@ import {
 import {
   useJobResultFailures,
   useJobResultLoader,
+  useJobResultPlugins,
   useJobResultPurge,
   useJobResultVerify,
   useJobResultWarnings,
@@ -45,6 +46,7 @@ import {
 } from "./errordetails.js";
 import { BatchFailures } from "./batchfailures.js";
 import { PurgeResultDetails } from "./purgeresult.js";
+import { PluginListResult } from "./pluginlistresult.js";
 import { VerifyFixResult } from "./verifyfixresult.js";
 
 /**
@@ -154,6 +156,8 @@ export function JobProgress({
   const resultWarnings = useJobResultWarnings(jobID, state);
   const purgeResult = useJobResultPurge(jobID, state);
   const repairResult = useJobResultVerify(jobID, state);
+  // Issue 616: what a deploy or a purge did to the game's Plugins.txt.
+  const pluginList = useJobResultPlugins(jobID, state);
   // Issues 530 and 533: every failed update item, named, with its download
   // way out (its page, and "Update from file…" when the source refused the
   // download).
@@ -220,9 +224,14 @@ export function JobProgress({
   // where it finished.
   const notices =
     !failed && summary?.kind === "switch" ? resultWarnings : NO_NOTICES;
+  const pluginShown =
+    !failed &&
+    Boolean(pluginList) &&
+    (pluginList.status !== "unchanged" ||
+      (pluginList.findings?.length ?? 0) > 0);
   return html`
     <div
-      class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || batchFailures.length > 0 || notices.length > 0 || purgeResult || repairResult ? "job-progress--explained" : ""}"
+      class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || batchFailures.length > 0 || notices.length > 0 || purgeResult || repairResult || pluginShown ? "job-progress--explained" : ""}"
       data-job=${jobID}
       data-kind=${summary?.kind}
       data-state=${state}
@@ -270,6 +279,7 @@ export function JobProgress({
           </p>`,
       )}
       <${PurgeResultDetails} result=${purgeResult} />
+      <${PluginListResult} result=${failed ? null : pluginList} />
       <${VerifyFixResult} outcome=${repairResult} />
       <${BatchFailures} failures=${batchFailures} actions=${actions} />
       ${

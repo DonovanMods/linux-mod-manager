@@ -72,6 +72,13 @@ export function useJobResultFailures(jobID, jobState) {
   return useJobResultRead(jobID, jobState)?.failures ?? NO_FAILURES;
 }
 
+// useJobResultPlugins returns what a finished job did to the game's plugin
+// list (issue 616: core.PluginListResult, a deploy's or a purge's
+// `plugins`), or null. Same shared read.
+export function useJobResultPlugins(jobID, jobState) {
+  return useJobResultRead(jobID, jobState)?.plugins ?? null;
+}
+
 // useJobResultLoader returns the loader refusal a finished job's result
 // carries when the job refused before writing anything (issue 602), or
 // null. Same shared read.
@@ -80,6 +87,8 @@ export function useJobResultLoader(jobID, jobState) {
 }
 
 const NO_WARNINGS = [];
+// PLUGIN_LIST_KINDS are the job kinds whose result has a `plugins` field.
+const PLUGIN_LIST_KINDS = new Set(["deploy", "purge"]);
 const NO_FAILURES = [];
 
 /** readResult is what the cache holds for one finished job's status/result. */
@@ -114,7 +123,14 @@ function readResult(status) {
   // succeeds as a job (its document lists every mod), so the loader
   // refusal behind it is read from the result rather than an error.
   const loader = result?.refused ? (result.loader_required ?? null) : null;
-  return { warnings, purge, verify, failures, loader };
+  // Issue 616: the plugin list, on the kinds whose result carries one.
+  const plugins =
+    PLUGIN_LIST_KINDS.has(status?.kind) &&
+    result?.plugins &&
+    typeof result.plugins.status === "string"
+      ? result.plugins
+      : null;
+  return { warnings, purge, verify, failures, loader, plugins };
 }
 
 /**
@@ -162,6 +178,15 @@ export function readoutHasNextStep(summary, read) {
   if (tally && resultTallyTone(tally) !== "succeeded") return true;
   if (!read) return false;
   if (read.failures.length > 0 || read.purge || read.verify) return true;
+  // Issue 616: a plugin list with findings, or one a purge put back, is
+  // something to read before the readout goes.
+  if (
+    read.plugins &&
+    ((read.plugins.findings?.length ?? 0) > 0 ||
+      read.plugins.status === "restored" ||
+      read.plugins.status === "removed")
+  )
+    return true;
   return summary?.kind === "switch" && read.warnings.length > 0;
 }
 
@@ -181,6 +206,7 @@ export function resultMayHoldNextStep(summary) {
 
 // RESULT_NEXT_STEP_KINDS is every kind readResult reads a next step from.
 const RESULT_NEXT_STEP_KINDS = new Set([
+  "deploy",
   "purge",
   "verify_fix",
   "switch",
