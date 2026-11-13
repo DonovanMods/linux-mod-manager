@@ -215,6 +215,11 @@ type convItem struct {
 	unsupported bool
 }
 
+// inEntry reports whether it belongs in its mod's profile entry: it is
+// installed, or it is a required item that blocks the import (whose entry
+// the verdict names either way).
+func (it *convItem) inEntry() bool { return it.included || (it.unsupported && !it.Optional) }
+
 // convertCollection converts one collection (see the file comment).
 func convertCollection(in convertInput) *ConvertedCollection {
 	out := &ConvertedCollection{
@@ -291,7 +296,7 @@ func convertCollection(in convertInput) *ConvertedCollection {
 		var installers int
 		types := map[string]bool{}
 		for _, it := range g {
-			if !it.included && !(it.unsupported && !it.Optional) {
+			if !it.inEntry() {
 				continue
 			}
 			if it.Installer {
@@ -310,7 +315,7 @@ func convertCollection(in convertInput) *ConvertedCollection {
 			continue
 		}
 		for _, it := range g {
-			if !it.included && !(it.unsupported && !it.Optional) {
+			if !it.inEntry() {
 				continue
 			}
 			for _, f := range extra {
