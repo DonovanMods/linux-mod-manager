@@ -1440,6 +1440,11 @@ func TestJSONGoldens(t *testing.T) {
 			}}},
 		},
 		{
+			// #614: a FOMOD mod installed before lmm ran installers.
+			"installed_detail_fomod_not_run",
+			core.InstalledDetail{Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateNotify, FomodNotRun: true},
+		},
+		{
 			// #592: the category on the installed block of `lmm mod show`.
 			"installed_detail_category",
 			core.InstalledDetail{

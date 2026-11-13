@@ -97,6 +97,12 @@ type InstalledDetail struct {
 	// choices its profile reference records, so the full mod page can offer
 	// "Reconfigure installer…" (`lmm mod fomod`). Nil for any other mod.
 	Fomod *domain.FomodChoices `json:"fomod,omitempty"`
+	// FomodNotRun reports a FOMOD mod installed before lmm ran FOMOD
+	// installers (#614, Service.IsLegacyFomodInstall): the archive's raw
+	// contents, every option at once, are what is deployed. It keeps
+	// working as it always did; reconfiguring it runs its installer.
+	// omitzero.
+	FomodNotRun bool `json:"fomod_not_run,omitzero"`
 }
 
 // ModDetail fetches modID from sourceID and joins whatever local install
@@ -184,7 +190,8 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 			}
 		}
 	}
-	if info.Fomod == nil && (installed.Variant != "" || s.cachedFomodInstaller(game, installed)) {
+	info.FomodNotRun = s.IsLegacyFomodInstall(game, installed)
+	if info.Fomod == nil && (installed.Variant != "" || info.FomodNotRun) {
 		// A FOMOD install whose profile lost its choices (an older lmm
 		// dropped the key on a rewrite), or one installed before lmm ran
 		// FOMOD installers (its cache entry is the raw installer archive),

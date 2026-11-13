@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
 )
 
 // ErrNotFomodInstalled refuses a reconfigure of a mod that was not
@@ -78,7 +77,7 @@ func (s *Service) PlanFomodReconfigure(ctx context.Context, game *domain.Game, p
 	if ref != nil {
 		choices = ref.Fomod
 	}
-	if row.Variant == "" && choices.IsZero() && !s.cachedFomodInstaller(game, row) {
+	if row.Variant == "" && choices.IsZero() && !s.IsLegacyFomodInstall(game, row) {
 		return nil, fmt.Errorf("%s: %w", row.Name, ErrNotFomodInstalled)
 	}
 	if row.SourceID == domain.SourceLocal {
@@ -146,20 +145,6 @@ func (s *Service) ApplyFomodReconfigure(ctx context.Context, game *domain.Game, 
 	}, sink)
 }
 
-// cachedFomodInstaller reports that row's cache entry holds a FOMOD
-// installer: a mod installed before lmm ran FOMOD installers (#614)
-// deployed the archive as it was, installer included, and records no
-// choices and no variant. Reconfiguring it is how its installer is run
-// (#615). An installer Locate refuses (scripted, ambiguous) counts too, so
-// the reconfigure reports that refusal rather than "not an installer".
-func (s *Service) cachedFomodInstaller(game *domain.Game, row *domain.InstalledMod) bool {
-	files, err := s.GetGameCache(game).ListFiles(modCacheKey(game.ID, row.Mod))
-	if err != nil || len(files) == 0 {
-		return false
-	}
-	inst, err := fomod.Locate("", slashMembers(files))
-	return err != nil || inst != nil
-}
 
 // filePtrs is files as the pointers EffectiveInstalledVersion takes.
 func filePtrs(files []domain.DownloadableFile) []*domain.DownloadableFile {
