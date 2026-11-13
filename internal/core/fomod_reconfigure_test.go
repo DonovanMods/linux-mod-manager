@@ -177,3 +177,71 @@ func TestFomodReconfigure_RunsTheInstallerOfAModInstalledBeforeFomodSupport(t *t
 	assert.False(t, gc.Exists(key), "the raw legacy entry is dropped")
 	assert.Equal(t, "2K", f.ref(t, "default", "mod1").Fomod.Steps[0].Groups[0].Choices[0].Name)
 }
+
+// TestFomodReconfigure_KeepsRollbackHistory: a reconfigure changes the
+// choices, not the version, so the update before it stays undoable -
+// rollback after update 1.0 -> 1.1 and a reconfigure still reaches 1.0,
+// with 1.0's tree and choices.
+func TestFomodReconfigure_KeepsRollbackHistory(t *testing.T) {
+	f := newFomodFixture(t)
+	f.serve(t, "mod1", "1.0", "4K", "v1")
+	ctx := context.Background()
+	_, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+
+	f.serve(t, "mod1", "1.1", "4K", "v2")
+	row, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	up, err := f.svc.PlanUpdateFrom(ctx, f.game, "default", domain.Update{InstalledMod: *row, NewVersion: "1.1"})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyUpdate(ctx, f.game, up, core.UpdateOptions{}, nil)
+	require.NoError(t, err)
+	updated, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	require.Equal(t, "1.0", updated.PreviousVersion)
+
+	plan, err := f.svc.PlanFomodReconfigure(ctx, f.game, "default", "src", "mod1")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyFomodReconfigure(ctx, f.game, plan, core.FomodReconfigureOptions{
+		Fomod: map[string]domain.FomodChoices{"src:mod1": answer("2K")},
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, "2K-v2", f.deployed(t, "textures/t.dds"))
+	after, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, updated.PreviousVersion, after.PreviousVersion, "the rollback target survives")
+	assert.Equal(t, updated.PreviousFileIDs, after.PreviousFileIDs)
+	assert.Equal(t, updated.PreviousVariant, after.PreviousVariant)
+	assert.Equal(t, updated.PreviousFomod, after.PreviousFomod)
+
+	rb, err := f.svc.PlanRollback(ctx, f.game, "default", "src", "mod1")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyRollback(ctx, f.game, rb, core.RollbackOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "4K-v1", f.deployed(t, "textures/t.dds"), "1.0's tree, with 1.0's choices")
+	assert.Equal(t, "4K", f.ref(t, "default", "mod1").Fomod.Steps[0].Groups[0].Choices[0].Name)
+}
+
+// TestFomodReconfigure_WithoutFileIDsNeverRelabelsTheLatestFiles: a row
+// with no recorded file ids whose source now serves another version is not
+// reinstalled from the latest files under the installed version's label;
+// a source that cannot select the installed version refuses, saying what to
+// do.
+func TestFomodReconfigure_WithoutFileIDsNeverRelabelsTheLatestFiles(t *testing.T) {
+	f := newFomodFixture(t)
+	f.serve(t, "mod1", "1.1", "4K", "v2") // the source has moved on
+	ctx := context.Background()
+	mod := domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod mod1", Version: "1.0", GameID: "g1"}
+	require.NoError(t, f.svc.SaveInstalledMod(ctx, &domain.InstalledMod{Mod: mod, ProfileName: "default",
+		UpdatePolicy: domain.UpdateNotify, Enabled: true, Deployed: true, LinkMethod: domain.LinkSymlink}))
+	_, err := f.svc.NewProfileManager().Create(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, f.svc.NewProfileManager().AddMod(ctx, "g1", "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	key := cacheKeyOf(&domain.InstalledMod{Mod: mod})
+	require.NoError(t, f.svc.GetGameCache(f.game).Store(key, "fomod/ModuleConfig.xml", []byte(flowModuleConfig("4K"))))
+
+	_, err = f.svc.PlanFomodReconfigure(ctx, f.game, "default", "src", "mod1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did not record which files of version 1.0 are installed")
+	assert.Contains(t, err.Error(), "lmm install --version 1.0")
+}

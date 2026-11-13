@@ -104,6 +104,19 @@ func (s *Service) PlanFomodReconfigure(ctx context.Context, game *domain.Game, p
 			return nil, fmt.Errorf("%s: the installed files are no longer offered by %s: %w", row.Name, sourceID, err)
 		}
 		install.Files = files
+	} else if domain.EffectiveInstalledVersion(install.Mod.Version, filePtrs(install.Files)) != row.Version {
+		// No file ids recorded, and the source's default pick is another
+		// version: ask the source for the installed version's files rather
+		// than install the latest under the installed version's label.
+		pool, err := s.resolveInstallCandidatePool(ctx, game, sourceID, &install.Mod, true, row.Version)
+		if err != nil {
+			return nil, fmt.Errorf("%s: lmm did not record which files of version %s are installed, and %s cannot select them by version (%w); reinstall it with lmm install --version %s, or update it, to run its installer", row.Name, row.Version, sourceID, err, row.Version)
+		}
+		files, err := selectInstallTargetFiles(pool, nil)
+		if err != nil {
+			return nil, fmt.Errorf("%s: version %s's files are no longer offered by %s: %w", row.Name, row.Version, sourceID, err)
+		}
+		install.Files = files
 	}
 	install.Mod.Version = row.Version
 	return &FomodReconfigurePlan{GameID: game.ID, Profile: profileName, Mod: *row, Choices: choices, install: install}, nil
@@ -146,4 +159,13 @@ func (s *Service) cachedFomodInstaller(game *domain.Game, row *domain.InstalledM
 	}
 	inst, err := fomod.Locate("", slashMembers(files))
 	return err != nil || inst != nil
+}
+
+// filePtrs is files as the pointers EffectiveInstalledVersion takes.
+func filePtrs(files []domain.DownloadableFile) []*domain.DownloadableFile {
+	out := make([]*domain.DownloadableFile, len(files))
+	for i := range files {
+		out[i] = &files[i]
+	}
+	return out
 }

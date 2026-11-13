@@ -2806,6 +2806,15 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		FileIDs:      downloadedFileIDs,
 	}
 	installedMod.GameID = game.ID
+	if opts.fomodReconfigure != "" && plan.Replaces != nil {
+		// #615: a reconfigure changes the choices, not the version, so the
+		// update before it stays the rollback target: the replaced row's
+		// Previous* move forward rather than being dropped.
+		installedMod.PreviousVersion = plan.Replaces.PreviousVersion
+		installedMod.PreviousFileIDs = plan.Replaces.PreviousFileIDs
+		installedMod.PreviousVariant = plan.Replaces.PreviousVariant
+		installedMod.PreviousFomod = plan.Replaces.PreviousFomod
+	}
 
 	if s.beforeSaveInstalled != nil {
 		s.beforeSaveInstalled()
