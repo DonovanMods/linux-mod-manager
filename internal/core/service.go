@@ -237,6 +237,11 @@ type Service struct {
 	// completeProfileWrite. Test-only seam (export_test.go's
 	// SetAfterInstallSaveForTest); always nil in production.
 	afterInstallSave func()
+	// reinstallTxnOpened, when non-nil, is told the key of every
+	// same-version reinstall transaction fillPrimaryCache opens (#614):
+	// tests pin that a reinstall takes that branch. Always nil in
+	// production.
+	reinstallTxnOpened func(cache.Key)
 
 	// afterDeployLink, when non-nil, runs after the Installer has placed a
 	// file in the game directory and before it records the deployed_files

@@ -10,6 +10,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
@@ -438,3 +439,7 @@ func (s *Service) SetModCategoryNameForTest(ctx context.Context, sourceID, modID
 // FomodVariantForTest exposes fomodVariant (#614): the cache variant a
 // recorded choice set names.
 func FomodVariantForTest(c domain.FomodChoices) string { return fomodVariant(c) }
+
+// SetReinstallTxnOpenedForTest arms fillPrimaryCache's seam: fn is told the
+// key of every same-version reinstall transaction it opens (#614).
+func (s *Service) SetReinstallTxnOpenedForTest(fn func(cache.Key)) { s.reinstallTxnOpened = fn }

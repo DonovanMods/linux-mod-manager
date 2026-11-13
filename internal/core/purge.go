@@ -947,8 +947,10 @@ func (s *Service) listedVersionShips(ctx context.Context, game *domain.Game, liv
 		// A row that cannot be read leaves the version unknown, and an
 		// unknown version ships every path. The row also names the
 		// version's tree (#614) - read for that only where there can be
-		// one: a variant is built from FOMOD choices, which the ref then
-		// records.
+		// one. ASSUMPTION: today a variant is built only from FOMOD
+		// choices, which the ref then records, so a ref without choices
+		// has the plain tree. C5's file-list and patch variants break that
+		// assumption and must read the row here whenever it may have one.
 		if version == "" || (!seen && !ref.Fomod.IsZero()) {
 			if row, err := s.GetInstalledMod(ctx, ref.SourceID, ref.ModID, game.ID, live); err == nil {
 				if version == "" {

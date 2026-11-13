@@ -795,3 +795,61 @@ func TestFomodLegacyInstall_KeepsWorkingAndSaysItCanBeReconfigured(t *testing.T)
 	require.NoError(t, err)
 	assert.False(t, f2.svc.IsLegacyFomodInstall(f2.game, resolved))
 }
+
+// TestFomodReinstall_SameChoicesTakeTheTransaction pins (#614, F3's
+// reconfigure): a same-version reinstall with the same choices - recorded,
+// or answered again - takes the reinstall-transaction branch, staging its
+// download apart from the live entry it replaces.
+func TestFomodReinstall_SameChoicesTakeTheTransaction(t *testing.T) {
+	f := newFomodFixture(t)
+	f.serve(t, "mod1", "1.0", "4K", "v1")
+	_, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+	row, err := f.svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	recorded := f.ref(t, "default", "mod1").Fomod
+
+	for name, answers := range map[string]map[string]domain.FomodChoices{
+		"recorded choices": nil,
+		"answered again":   {"src:mod1": recorded},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var opened []cache.Key
+			f.svc.SetReinstallTxnOpenedForTest(func(k cache.Key) { opened = append(opened, k) })
+			t.Cleanup(func() { f.svc.SetReinstallTxnOpenedForTest(nil) })
+			_, err := f.install(t, "mod1", answers)
+			require.NoError(t, err)
+			require.Len(t, opened, 1, "the reinstall took the transaction branch")
+			assert.Equal(t, cacheKeyOf(row), opened[0], "for the installed variant's entry")
+			again, err := f.svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
+			require.NoError(t, err)
+			assert.Equal(t, row.Variant, again.Variant)
+		})
+	}
+}
+
+// TestFomodUpdateBatch_ANewInstallerSaysChoicesNeeded: a mod whose new
+// version is a FOMOD installer, with no choices recorded, is skipped by the
+// batch as "installer choices needed" - there is nothing to re-answer.
+func TestFomodUpdateBatch_ANewInstallerSaysChoicesNeeded(t *testing.T) {
+	f := newFomodFixture(t)
+	ctx := context.Background()
+	plain := createTestZip(t, t.TempDir(), map[string]string{"plain.esp": "PLAIN"})
+	b, err := os.ReadFile(plain)
+	require.NoError(t, err)
+	f.mock.AddDownload("mod1", b)
+	f.mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod mod1", Version: "1.0", GameID: "g1"})
+	_, err = f.install(t, "mod1", nil)
+	require.NoError(t, err)
+
+	f.serve(t, "mod1", "2.0", "4K", "v2")
+	row, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	plan, err := f.svc.PlanUpdateBatchFrom(ctx, f.game, "default", []domain.Update{{InstalledMod: *row, NewVersion: "2.0"}}, nil)
+	require.NoError(t, err)
+	result, err := f.svc.ApplyUpdateBatch(ctx, f.game, plan, core.UpdateBatchOptions{}, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Skipped, 1, "%+v", result)
+	assert.Equal(t, core.ReasonFomodChoicesNeeded, result.Skipped[0].Reason)
+	assert.True(t, result.Skipped[0].FomodReanswer)
+}

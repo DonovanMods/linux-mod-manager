@@ -149,6 +149,11 @@ func (a *acquiredFile) claimTree() error {
 	if err := os.RemoveAll(a.tree); err != nil {
 		return fmt.Errorf("clearing acquire directory: %w", err)
 	}
+	// A FOMOD resolve that crashed mid-build leaves its half-built tree
+	// beside the acquire tree (executeFomodOps): clear that too.
+	if err := os.RemoveAll(a.tree + ".fomod"); err != nil {
+		return fmt.Errorf("clearing acquire directory: %w", err)
+	}
 	a.owned = append(a.owned, a.tree)
 	return nil
 }

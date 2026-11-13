@@ -140,7 +140,7 @@ func CheckKey(dir string, k Key) error {
 	if !ok {
 		return legacy(true)
 	}
-	if (Key{Version: version, Variant: variant}).versionDir() != filepath.Base(dir) {
+	if !spells(dir, Key{Version: version, Variant: variant}.versionDir()) {
 		return legacy(false) // stale: stamped for another directory
 	}
 	if version != k.Version || variant != k.Variant {
@@ -190,4 +190,17 @@ func (c *Cache) owns(dir string, k Key) bool {
 		return false
 	}
 	return true
+}
+
+// spells reports whether dir is the directory versionDir names: its last
+// path elements are exactly versionDir's. A free-text version may contain
+// a separator, which ModPath spells as nested directories, so this compares
+// the whole version path, not only the last element.
+func spells(dir, versionDir string) bool {
+	want := filepath.Clean(filepath.FromSlash(versionDir))
+	got := filepath.Clean(dir)
+	if want == "." || want == "" {
+		return false
+	}
+	return got == want || strings.HasSuffix(got, string(filepath.Separator)+want)
 }
