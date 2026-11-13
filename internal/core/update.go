@@ -1218,7 +1218,18 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	if err := pm.upsertMod(ctx, game.ID, profileName, modRef, fomodRec); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
-		if _, rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName, mod.PreviousFomod); rerr != nil {
+		// The swap makes the version this update installed the rollback
+		// target, so its previous_fomod must be THAT version's choices
+		// (#614 review): the ones it resolved to, none for a plain tree, or
+		// - nothing re-resolved - the recorded ones it was installed with.
+		installedFomod := replacedFomod
+		switch fomodRec.op {
+		case fomodSet:
+			installedFomod = fomodRec.choices
+		case fomodClear:
+			installedFomod = domain.FomodChoices{}
+		}
+		if _, rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName, installedFomod); rerr != nil {
 			s.logger().Warn("rollback after failed install also failed", "step", "rollback_mod_version", "err", rerr)
 		}
 		if rerr := installer.ReplaceForUpdate(rctx, game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs); rerr != nil {

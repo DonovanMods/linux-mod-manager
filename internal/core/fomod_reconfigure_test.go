@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -244,4 +246,50 @@ func TestFomodReconfigure_WithoutFileIDsNeverRelabelsTheLatestFiles(t *testing.T
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "did not record which files of version 1.0 are installed")
 	assert.Contains(t, err.Error(), "lmm install --version 1.0")
+}
+
+// TestFomodUpdate_AFailedProfileWriteKeepsTheNewVersionsChoicesForRollback:
+// an update whose profile write fails is swapped back, and the version it
+// installed becomes the rollback target with ITS choices - not those of
+// the version before the old one - so a rollback then installs that
+// version's tree with the choices it was installed with (#614 review A).
+func TestFomodUpdate_AFailedProfileWriteKeepsTheNewVersionsChoicesForRollback(t *testing.T) {
+	f := newFomodFixture(t)
+	ctx := context.Background()
+	update := func(version string, choices domain.FomodChoices) error {
+		t.Helper()
+		row, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+		require.NoError(t, err)
+		plan, err := f.svc.PlanUpdateFrom(ctx, f.game, "default", domain.Update{InstalledMod: *row, NewVersion: version})
+		require.NoError(t, err)
+		_, err = f.svc.ApplyUpdate(ctx, f.game, plan, core.UpdateOptions{Fomod: map[string]domain.FomodChoices{"src:mod1": choices}}, nil)
+		return err
+	}
+
+	f.serve(t, "mod1", "1.0", "4K", "v1")
+	_, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+	f.serve(t, "mod1", "1.1", "4K", "v2")
+	require.NoError(t, update("1.1", answer("2K")))
+
+	// 1.2 renames the option; its update lands but the profile write fails.
+	f.serve(t, "mod1", "1.2", "Big", "v3")
+	profilePath := filepath.Join(f.svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
+	require.NoError(t, os.Chmod(profilePath, 0o444))
+	err = update("1.2", answer("Big"))
+	require.NoError(t, os.Chmod(profilePath, 0o644))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "updating profile")
+	row, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	require.Equal(t, "1.1", row.Version, "swapped back")
+	require.True(t, strings.HasPrefix(row.PreviousVersion, "1.2"), "1.2 is the rollback target")
+	require.NotEmpty(t, row.PreviousFomod.Steps)
+	assert.Equal(t, "Big", row.PreviousFomod.Steps[0].Groups[0].Choices[0].Name, "with 1.2's own choices")
+
+	rb, err := f.svc.PlanRollback(ctx, f.game, "default", "src", "mod1")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyRollback(ctx, f.game, rb, core.RollbackOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "Big", f.ref(t, "default", "mod1").Fomod.Steps[0].Groups[0].Choices[0].Name, "the rollback restores 1.2's choices")
 }
