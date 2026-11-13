@@ -91,13 +91,13 @@ func TestCollectionImport_UndeclaredPluginOrderIsDerived(t *testing.T) {
 func TestCollectionImport_RefusesPluginNamesItCannotKeepAsWritten(t *testing.T) {
 	svc, _ := recipient(t)
 	for name, block := range map[string]string{
-		"bidi in an order name":    "{order: [{name: \"A‮.esp\"}]}",
+		"bidi in an order name":    "{order: [{name: \"A\u202e.esp\"}]}",
 		"newline in an order name": "{order: [{name: \"A\\n*B.esp\"}]}",
 		"path in an order name":    "{order: [{name: ../A.esp}]}",
 		"empty order name":         "{order: [{name: \"\"}]}",
 		"long rule name":           "{rules: {plugins: [{name: " + strings.Repeat("x", 2000) + "}]}}",
 		"escape in an after name":  "{rules: {plugins: [{name: A.esp, after: [\"B\\e.esp\"]}]}}",
-		"zero-width group":         "{rules: {groups: [{name: \"G​\"}]}}",
+		"zero-width group":         "{rules: {groups: [{name: \"G\u200b\"}]}}",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: []byte(collectionPluginsDoc(block)), GameID: "cyber"})

@@ -46,11 +46,6 @@ func listDirOf(st *PrefixStatus, folder string) prefixPath {
 	return prefixPath{prefix: st.Path, user: st.User, comps: []string{"AppData", "Local", folder}}
 }
 
-// myGamesDirOf is the user directory's Documents/My Games/<folder>.
-func myGamesDirOf(st *PrefixStatus, folder string) prefixPath {
-	return prefixPath{prefix: st.Path, user: st.User, comps: []string{"Documents", "My Games", folder}}
-}
-
 // display is the path as a person reads it, with the canonical spellings.
 func (p prefixPath) display() string {
 	return filepath.Join(append([]string{p.prefix, "drive_c", "users", p.user}, p.comps...)...)
@@ -202,24 +197,4 @@ func removeAt(dir *os.File, name string) error {
 		return &os.PathError{Op: "remove", Path: filepath.Join(dir.Name(), name), Err: err}
 	}
 	return nil
-}
-
-// readPrefixFile reads one file under p, matching every name
-// case-insensitively and following nothing. A missing directory or file is
-// not an error: exists is false.
-func readPrefixFile(p prefixPath, name string) (data []byte, exists bool, err error) {
-	dir, err := p.open(false)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	defer func() { _ = dir.Close() }()
-	real, err := entryFold(dir, name)
-	if err != nil || real == "" {
-		return nil, false, err
-	}
-	data, _, exists, err = readAt(dir, real)
-	return data, exists, err
 }
