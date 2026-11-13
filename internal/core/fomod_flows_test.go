@@ -569,9 +569,9 @@ func TestFomodFileStates_AreTheTargetProfilesAndPartOfTheVariant(t *testing.T) {
 	_, err = f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
 	require.NoError(t, err)
 	// alt has no dep.esp: the switch evaluated the installer against alt,
-	// though default's dep.esp was on disk. (The old tree's patch.txt link
-	// is left where it was: a cross-profile Replace judges ownership by the
-	// target profile's ledger, as it does for any version drift.)
+	// though default's dep.esp was on disk - and replaced default's tree,
+	// so its patch.txt is gone.
+	assert.Empty(t, f.deployed(t, "patch.txt"))
 	altRowNow, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "alt")
 	require.NoError(t, err)
 	altFiles, err := f.svc.GetGameCache(f.game).ListFiles(cacheKeyOf(altRowNow))
