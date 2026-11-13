@@ -89,6 +89,14 @@ overrides:                   # config files written into the game directory
   engine/config/user.ini: |
     [Section]
     key=1
+plugins:                     # a Bethesda game's plugin list (requires: plugin_order)
+  order:
+    - name: SkyUI_SE.esp
+    - name: Optional Thing.esp
+      enabled: false
+  rules:
+    plugins:
+      - { name: Patch.esp, after: [SkyUI_SE.esp] }
 ```
 
 ### Keys
@@ -115,6 +123,7 @@ duplicate keeps `title`, `author`, `description`, `install_instructions` and
 | `external`             | Items lmm cannot fetch, with a URL and the curator's instructions. They are recorded on the imported profile, so a re-export keeps them. |
 | `hooks`                | The profile's hooks, in the profile file's encoding: a hook that is absent inherits the game's, and one set to `""` disables it. |
 | `overrides`            | Config files (path relative to the game directory → content). Deploy keeps them inside the game directory, as it does every override. |
+| `plugins`              | The profile's plugin list: `order` (plugin names, first loads first, each with `enabled: false` when it is listed but not active) and `rules` (`groups` and per-plugin `group`, `after` and `req`, in the shape of a LOOT userlist). Requires `plugin_order`. An importer refuses, rather than rewrites, a name that is empty, holds a control or formatting character or a path separator, or is over 1024 bytes. |
 
 A key the importer does not recognise, and that `requires` does not name,
 is informational and ignored.
@@ -148,6 +157,7 @@ is what lets the format grow without breaking older importers.
 | ---------- | --------------------------------- | -------------- |
 | `external` | any `external` item               | format v1 (lmm with #621) |
 | `fomod`    | any mod with a `fomod` block (its recorded FOMOD installer choices) | format v1 (lmm with #614) |
+| `plugin_order` | a `plugins` block (the profile's plugin load order and rules) | format v1 (lmm with #616) |
 
 ## Importing safely
 

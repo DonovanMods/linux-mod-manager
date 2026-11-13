@@ -13,9 +13,9 @@ import "github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 // list - and asks this capability only where the list lives, how it is
 // spelled, and which header bits mean what.
 //
-// Nothing in core consumes it yet: the profile's plugin list, the sort and
-// the write are a later story (P3, #616). It ships first so that story has
-// tables to read and the tables have their own tests.
+// Core consumes it in the plugin-list sync (#616): after every deploying
+// flow it sorts the deployed plugins with the profile's plugin list and
+// writes the game's list file into its prefix.
 type PluginOrderer interface {
 	// PluginRules returns g's plugin rules, or the zero PluginSpec when the
 	// adapter does not recognise which game g is. The zero spec means "do

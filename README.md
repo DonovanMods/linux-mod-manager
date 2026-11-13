@@ -118,8 +118,11 @@ which is what every game lmm managed before adapters existed. `icarus` and
 lmm's core. See [docs/adapters.md](docs/adapters.md).
 
 **What lmm does not have.** There is no _automated_ LOOT-style plugin
-sorting (masterlists, a generated `plugins.txt`) and no Nexus Collections
-import. Load order itself lmm does have: a profile records
+sorting (masterlists) and no Nexus Collections import. lmm does write a
+Bethesda game's `Plugins.txt` on every deploy, in a deterministic order
+(masters first, then the profile's own plugin rules and mod order), and
+keeps plugins it did not deploy where they were (#616). Load order itself
+lmm does have: a profile records
 it, `lmm profile reorder` and the web UI's reorder modal change it, and it
 decides precedence at merge and deploy time — what is missing is the Bethesda
 ecosystem's _automatic_ sorting of plugins, not ordering as such.
