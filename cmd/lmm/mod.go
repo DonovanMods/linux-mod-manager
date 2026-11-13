@@ -919,6 +919,14 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			policyDisplay = colorGreen(policyDisplay)
 		}
 		fmt.Printf("  Update policy: %s\n", policyDisplay)
+		// #615: a FOMOD mod says how its installer was answered, and how to
+		// change it - or that it was installed before lmm ran installers.
+		switch {
+		case installedInfo.FomodNotRun:
+			fmt.Printf("  Installer: not run - installed before lmm ran FOMOD installers, so every option is deployed; 'lmm mod fomod %s' runs it\n", modID)
+		case installedInfo.Fomod != nil:
+			fmt.Printf("  Installer: FOMOD - 'lmm mod fomod %s' changes its choices\n", modID)
+		}
 		if installedInfo.SkippedVersion != "" {
 			// #542
 			fmt.Printf("  Skipped update: %s — 'lmm mod unskip-update %s' to show it again\n",

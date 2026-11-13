@@ -1839,6 +1839,7 @@ async function confirmPlan() {
           applyOptions,
           context: modal.context,
           title: modal.title,
+          openerSelector: modal.openerSelector,
         });
       }
       store.set({
@@ -2010,6 +2011,10 @@ function openFomodWizard(question, origin) {
       title: req?.title
         ? `${req.title}: installer options`
         : "Installer options",
+      // The wizard opens when a job ends, long after the control that
+      // started the flow was focused: a flow that names a stable opener gets
+      // focus back there on Escape or Cancel (modal.js).
+      openerSelector: req?.openerSelector,
     },
   });
 }
@@ -2515,7 +2520,10 @@ async function onJobDone(summary) {
     const question = await fomodQuestionOf(summary);
     if (question && !store.get().modal) {
       openFomodWizard(question, origin);
-      return;
+      // A failed job's failure IS the question, which the wizard now asks.
+      // A batch that succeeded still says what else happened to it - its
+      // failed items, its tally - so its toast is not swallowed.
+      if (summary.state === "failed") return;
     }
   }
 

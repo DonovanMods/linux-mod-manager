@@ -96,6 +96,7 @@ export function FomodWizardModal({ modal, actions }) {
       <${Modal}
         kind="fomod"
         title=${modal.title || "Installer options"}
+        openerSelector=${modal.openerSelector}
         onClose=${actions.closeModal}
         footer=${html`
           <button type="button" class="button" onClick=${actions.closeModal}>
@@ -180,6 +181,7 @@ export function FomodWizardModal({ modal, actions }) {
     <${Modal}
       kind="fomod"
       title=${modal.title || "Installer options"}
+      openerSelector=${modal.openerSelector}
       onClose=${actions.closeModal}
       footer=${html`
         <button

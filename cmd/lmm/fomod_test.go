@@ -449,3 +449,19 @@ func TestFomodWalk_SanitisesInstallerTextButAnswersRawNames(t *testing.T) {
 		assert.NotContains(t, summary.String(), bad, "the summary printed a raw control")
 	}
 }
+
+// TestDoModShow_SaysHowAFomodModsInstallerWasAnswered: lmm mod show names
+// the reconfigure command for a FOMOD install.
+func TestDoModShow_SaysHowAFomodModsInstallerWasAnswered(t *testing.T) {
+	svc, game, _ := setupFomodInstall(t)
+	fomodDefaults = true
+	_, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	oldSource := modSource
+	modSource = "test-src"
+	t.Cleanup(func() { modSource = oldSource })
+
+	out, err := captureStdoutErr(t, func() error { return doModShow(context.Background(), svc, game, "mod1") })
+	require.NoError(t, err)
+	assert.Contains(t, out, "Installer: FOMOD - 'lmm mod fomod mod1' changes its choices")
+}

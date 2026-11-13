@@ -142,3 +142,61 @@ func TestE2E_FomodWizard_WalksRepostsShowsImagesAndReconfigures(t *testing.T) {
 	assert.Empty(t, e2eDeployed(t, f.Game, "Mods/readme.txt"), "the Extras step's file left with it")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_FomodWizard_ResultShapedQuestionAndEscape: an install with a
+// dependency runs as a batch, which refuses with the question on its
+// RESULT (the job succeeds, nothing written): the wizard opens from that
+// too, and its answer installs both mods. Escape closes the wizard and
+// returns focus to the control that started the flow.
+func TestE2E_FomodWizard_ResultShapedQuestionAndEscape(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+	f.Src.addMod(e2eSearchSourceMod{
+		mod:      domain.Mod{ID: "wizard", SourceID: "fake", Name: "Wizard Mod", Version: "1.0"},
+		files:    []domain.DownloadableFile{{ID: "w1", Name: "Main", FileName: "wizard.zip", Version: "1.0", Category: "MAIN", IsPrimary: true, Size: 512}},
+		archives: map[string][]byte{"w1": e2eFomodArchive(t)},
+	})
+	f.Src.addMod(e2eSearchSourceMod{
+		mod:     domain.Mod{ID: "needs", SourceID: "fake", Name: "Needs Wizard", Version: "1.0"},
+		files:   []domain.DownloadableFile{{ID: "n1", Name: "Main", FileName: "needs.zip", Version: "1.0", Category: "MAIN", IsPrimary: true, Size: 16}},
+		members: map[string]string{"n1": "Mods/needs.pak"},
+	})
+	if f.Src.deps == nil {
+		f.Src.deps = map[string][]domain.ModReference{}
+	}
+	f.Src.deps["needs"] = []domain.ModReference{{SourceID: "fake", ModID: "wizard"}}
+	row := searchResultRow("fake", "needs")
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "Needs", chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Enter),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		clickWhenSettled(row+" .search-result__install"),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+		// The batch job succeeds, refused with the question on its result.
+		chromedp.WaitVisible(fomodModal+` [data-testid="fomod-step"][data-mod="fake:wizard"]`, chromedp.ByQuery),
+		clickWhenSettled(fomodModal+` [data-action="fomod-finish"]`),
+		waitGone(fomodModal),
+	)
+	require.Eventually(t, func() bool { return e2eDeployed(t, f.Game, "Mods/needs.pak") != "" }, 30*time.Second, e2ePollInterval)
+	assert.Equal(t, "2K", e2eDeployed(t, f.Game, "Mods/t.dds"), "the installer's preselection, answered")
+
+	// Escape: reconfigure from the mod page, then dismiss the wizard.
+	var focused string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "wizard")),
+		clickWhenSettled(`[data-action="reconfigure-fomod"]`),
+		chromedp.WaitVisible(`.modal[data-kind="mod_fomod"] .plan`, chromedp.ByQuery),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+		chromedp.WaitVisible(fomodModal+` [data-testid="fomod-step"]`, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+		waitGone(fomodModal),
+		pollUntil(`document.activeElement && document.activeElement.matches('[data-action="reconfigure-fomod"]')`),
+		chromedp.Evaluate(`document.activeElement.getAttribute("data-action")`, &focused),
+	)
+	assert.Equal(t, "reconfigure-fomod", focused)
+	assert.Equal(t, "2K", e2eDeployed(t, f.Game, "Mods/t.dds"), "a dismissed wizard changes nothing")
+	assert.Empty(t, f.BrowserErrors())
+}

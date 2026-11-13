@@ -165,6 +165,13 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
     (state.docStamps?.mods ?? 0) >= (modPage.filesStamp ?? 0);
   const enabled =
     (listingIsFresher ? listing?.enabled : undefined) ?? installedMod.enabled;
+  // issue 615: what core.PlanFomodReconfigure refuses, said up front.
+  const fomodRefusal =
+    sourceID === "local"
+      ? "Imported from a local archive: import the archive again to answer its installer."
+      : enabled === false
+        ? "Enable this mod to change its installer choices."
+        : "";
   const settingsRow = settingsSource && {
     source_id: sourceID,
     id: modID,
@@ -365,6 +372,8 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             type="button"
             class="button"
             data-action="reconfigure-fomod"
+            disabled=${Boolean(fomodRefusal)}
+            title=${fomodRefusal || undefined}
             onClick=${() =>
               actions.openPlan({
                 kind: "mod_fomod",
@@ -372,12 +381,42 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
                 title: `Reconfigure ${installedMod.name}`,
                 confirmLabel: "Continue",
                 options: { source_id: sourceID, mod_id: modID },
+                // The wizard opens once the job asks, after this page has
+                // re-read: focus goes back to this control, found afresh.
+                openerSelector: '[data-action="reconfigure-fomod"]',
               })}
           >
             Reconfigure installer…
           </button>`
         }
       </div>
+      ${
+        // issue 615: a FOMOD mod installed before lmm ran installers has its
+        // whole archive deployed; reconfiguring it runs the installer.
+        installed?.fomod_not_run &&
+        !fomodRefusal &&
+        html`<p
+          class="mod-page__hint empty-state__hint"
+          data-testid="mod-page-fomod-not-run"
+        >
+          Installed before lmm ran FOMOD installers: every option in its archive
+          is deployed. Reconfigure installer… runs its installer.
+        </p>`
+      }
+      ${
+        // issue 615: the reasons the reconfigure plan refuses, said where
+        // a keyboard user can read them (the disabled button's title is
+        // out of reach, issue 394).
+        installed?.fomod &&
+        !installedMod.external &&
+        fomodRefusal &&
+        html`<p
+          class="mod-page__hint empty-state__hint"
+          data-testid="mod-page-fomod-refused"
+        >
+          ${fomodRefusal}
+        </p>`
+      }
       ${
         // issue 394's own aside: a title on a DISABLED button is invisible
         // to a keyboard user, because a disabled button is not focusable.
