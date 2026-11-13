@@ -443,3 +443,11 @@ func FomodVariantForTest(c domain.FomodChoices) string { return fomodVariant(c) 
 // SetReinstallTxnOpenedForTest arms fillPrimaryCache's seam: fn is told the
 // key of every same-version reinstall transaction it opens (#614).
 func (s *Service) SetReinstallTxnOpenedForTest(fn func(cache.Key)) { s.reinstallTxnOpened = fn }
+
+// ImportForTest saves an imported profile document with nothing held back
+// - importDocument with a zero adjustment - for the ProfileManager tests of
+// the save itself (path validation, the default flag, cancellation).
+// Production imports go through ApplyImport and its gates (#621).
+func (pm *ProfileManager) ImportForTest(ctx context.Context, data []byte, force bool) (*domain.Profile, error) {
+	return pm.importDocument(ctx, data, force, importAdjust{})
+}

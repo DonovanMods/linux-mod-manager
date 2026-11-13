@@ -1,0 +1,4 @@
+{
+  "hook": "install.after_all",
+  "command": "/home/author/bin/after.sh"
+}

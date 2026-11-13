@@ -188,10 +188,22 @@ func safeUploadName(filename string) (string, error) {
 	case strings.HasPrefix(name, "."):
 		return "", fmt.Errorf("%q is not a usable file name", filename)
 	}
-	if core.NewExtractor().DetectFormat(name) == "" {
-		return "", fmt.Errorf("%s is not an archive lmm can extract (accepted: .zip, .7z, .rar)", name)
+	if core.NewExtractor().DetectFormat(name) == "" && !isProfileDocumentName(name) {
+		return "", fmt.Errorf("%s is not an archive lmm can extract (accepted: .zip, .7z, .rar) or a profile document (.lmmc, .yaml, .yml, .json)", name)
 	}
 	return name, nil
+}
+
+// isProfileDocumentName reports whether name is a profile document the
+// profile import reads from an upload (#621): an lmm collection container
+// (.lmmc) or a YAML/JSON profile document. Uploading one keeps the web
+// UI's import at the CLI's sizes, past the plan body's 1 MiB cap.
+func isProfileDocumentName(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case core.CollectionContainerExt, ".yaml", ".yml", ".json":
+		return true
+	}
+	return false
 }
 
 // stageUploadedFile copies src to path, creating it 0600, and returns how

@@ -1,0 +1,10 @@
+{
+  "unsupported": [
+    {
+      "feature": "fomod"
+    }
+  ],
+  "supported": [
+    "external"
+  ]
+}

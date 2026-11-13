@@ -28,6 +28,17 @@ type Profile struct {
 	IsDefault          bool              `json:"is_default"`     // Is this the default profile for the game?
 	Hooks              GameHooks         `json:"hooks"`          // Profile-level hook overrides
 	HooksExplicit      GameHooksExplicit `json:"hooks_explicit"` // Tracks which hooks were explicitly set
+
+	// Collection is the profile's collection identity (#621): set on a
+	// profile imported from a collection document, and on an author's own
+	// profile once it is exported as one, so a re-export keeps the
+	// collection's id and its origin's credit. nil for every other profile,
+	// and absent from every document such a profile produces.
+	Collection *CollectionInfo `json:"collection,omitempty"`
+	// External lists the collection items lmm cannot fetch (#621): a tool
+	// or file the curator says to get by hand. Listed, never downloaded;
+	// kept so a re-export stays complete. Absent when empty.
+	External []CollectionExternalItem `json:"external,omitempty"`
 }
 
 // FindRef returns a pointer into p.Mods for the reference matching
@@ -83,4 +94,9 @@ type ExportedProfile struct {
 	// empty) from an unset one (inherit) - see Profile's own pair.
 	Hooks         GameHooks         `json:"hooks"`
 	HooksExplicit GameHooksExplicit `json:"hooks_explicit"`
+
+	// Collection and External are the profile's own (#621), carried so a
+	// snapshot restores them; absent for a profile without them.
+	Collection *CollectionInfo          `json:"collection,omitempty"`
+	External   []CollectionExternalItem `json:"external,omitempty"`
 }

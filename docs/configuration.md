@@ -688,16 +688,21 @@ It runs once per installation. It does not record a mod switched off afterwards 
 
 ### Portable export format
 
-`lmm profile export <name>` writes a portable YAML format suitable for sharing or backup. The same format is accepted by `lmm profile import <file>`.
+`lmm profile export <name>` writes the profile as an **lmm collection**: a portable YAML document (format version 1) for sharing or backup, on stdout, or with `-o <file>` as a compressed `.lmmc` container (`--plain` writes the YAML to the file). `lmm profile import <file>` accepts either, and the version-0 YAML older versions wrote. The full specification is [docs/collection-format.md](collection-format.md).
 
-Exported YAML includes:
+The document includes:
 
-- **name**, **game_id** – Profile identifier and game.
-- **mods** – List of mod references in load order; each has `source_id`, `mod_id`, optional `version`, optional `file_ids`, optional `locked`, optional `disabled`, optional `fomod` (see Per-mod keys above). An export made before `disabled` existed is byte-identical to one made now, and imports unchanged. An imported `fomod` block installs the mod with those choices.
-- **link_method** – Optional: symlink, hardlink, or copy. Preserved through export/import and honored at deploy time as the profile-level override (profile > game > global; see the Profile files table above).
-- **overrides** – Optional map of relative paths (under game install) to file contents (e.g. INI tweaks). Applied when switching to the profile or deploying.
+- **lmm_collection**, **id**, **version** – The format version, the collection's stable id (minted on a profile's first export) and the author's version number. The id and every metadata flag an export sets are recorded in the profile's `collection:` block and reused by the next export.
+- **name**, **game_id** – The profile name and the author's local game id, so an older lmm still imports the document.
+- **game** – The portable game identity (Steam app id, per-source game ids) an importer matches against its own games.
+- **mods** – Mod references in load order; each has `source_id`, `mod_id`, optional `version`, `file_ids`, `locked`, `disabled`, `category`, `fomod` (see Per-mod keys above), plus a display `name`. An imported `fomod` block installs the mod with those choices.
+- **external** – Items lmm cannot fetch, with a URL and instructions.
+- **hooks**, **overrides** – The profile's own hooks and config overrides.
+- **title**, **author**, **description**, **install_instructions**, **origin**, **requires** – The author's metadata, the curator's credit when the collection came from someone else, and the features it needs.
 
-Import preserves load order, link method, overrides, lock markers and disabled markers; missing mods can be installed when you switch to or apply the profile. A mod the document marks `disabled` is imported as part of the profile but is not downloaded or deployed.
+The link method and the default flag are never exported. Import preserves load order, overrides, lock markers and disabled markers; missing mods can be installed when you switch to or apply the profile. A mod the document marks `disabled` is imported as part of the profile but is not downloaded or deployed. Any imported document's hooks - a collection's or a version-0 export's - are imported only with `--with-hooks`, and an override that is not a text config file (`.ini`, `.cfg`, `.conf`, `.txt`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.properties`, `.config`, `.ltx`, `.lsx`, `.cvars`, `.ron`) or that is a loader configuration (`doorstop_config.ini`, `enblocal.ini`) only with `--allow-any-overrides`; both are listed in the import's plan, and its result says what was held back. A version-0 document otherwise imports as before, its `link_method` included.
+
+A profile imported from a collection records the collection's identity in a `collection:` block (id, version, title, author, description, install instructions, origin) and its external items in an `external:` list. Both are optional and absent from every other profile.
 
 ## steam-games.yaml (optional)
 

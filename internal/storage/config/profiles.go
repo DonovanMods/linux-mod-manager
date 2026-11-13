@@ -36,6 +36,12 @@ type ProfileConfig struct {
 	IsDefault  bool                 `yaml:"is_default,omitempty"`
 	Hooks      ProfileHooksYAML     `yaml:"hooks,omitempty"`
 	Overrides  map[string]string    `yaml:"overrides,omitempty"` // path (relative to game install) -> file content (INI tweaks, etc.)
+	// Collection and External are #621's: the collection identity of a
+	// profile imported from (or exported as) a collection document, and
+	// the items lmm cannot fetch. Both omitempty, so a file without them
+	// is unchanged.
+	Collection *domain.CollectionInfo          `yaml:"collection,omitempty"`
+	External   []domain.CollectionExternalItem `yaml:"external,omitempty"`
 }
 
 // ModReferenceConfig is the YAML representation of a mod reference.
@@ -250,6 +256,12 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 	}
 
 	profile.Hooks, profile.HooksExplicit = parseProfileHooks(cfg.Hooks)
+	if !cfg.Collection.IsZero() {
+		profile.Collection = cfg.Collection
+	}
+	if len(cfg.External) > 0 {
+		profile.External = cfg.External
+	}
 
 	if len(cfg.Overrides) > 0 {
 		profile.Overrides = make(map[string][]byte)
@@ -354,7 +366,18 @@ func ExportProfileValue(profile *domain.Profile) *domain.ExportedProfile {
 		Overrides:     overrides,
 		Hooks:         profile.Hooks,
 		HooksExplicit: profile.HooksExplicit,
+		Collection:    collectionOrNil(profile.Collection),
+		External:      profile.External,
 	}
+}
+
+// collectionOrNil is c, or nil when it records nothing - so an empty
+// collection block is never written or emitted.
+func collectionOrNil(c *domain.CollectionInfo) *domain.CollectionInfo {
+	if c.IsZero() {
+		return nil
+	}
+	return c
 }
 
 // ExportProfile exports a profile to a portable format
@@ -393,6 +416,11 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 		LinkMethod: wire.LinkMethod,
 		Overrides:  wire.Overrides,
 	}
+	// A profile's collection: and external: blocks (#621) are neither
+	// written nor read by this pair (review S4): a version-0 document never
+	// carried them legitimately, and a stranger's copy would be unsanitised
+	// and uncapped. The collection import sets them itself, from a document
+	// it has checked (core's PlanCollectionImport).
 	// An export with no hooks: key (every export made before #296 included)
 	// decodes to all-nil pointers, so nothing is marked explicit and the
 	// profile keeps inheriting the game's hooks - the pre-#296 behaviour.
@@ -446,6 +474,8 @@ func ProfileFromExported(exported *domain.ExportedProfile) *domain.Profile {
 		Mods:          exported.Mods,
 		Hooks:         exported.Hooks,
 		HooksExplicit: exported.HooksExplicit,
+		Collection:    collectionOrNil(exported.Collection),
+		External:      exported.External,
 	}
 	// LinkMethod is only carried when it was EXPLICIT: ExportProfileValue
 	// writes it as "" otherwise, and turning "" into a phantom symlink

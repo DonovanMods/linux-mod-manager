@@ -34,6 +34,8 @@ import {
   renameProfile,
   setDefaultProfile,
   profileExportURL,
+  recordProfileCollection,
+  uploadArchive,
 } from "../api.js";
 
 /** ProfilesModal renders only when the shared modal slot holds this shape. */
@@ -184,6 +186,24 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
       await afterMutation();
     } catch (err) {
       setError(err?.message ?? String(err));
+      setBusy(false);
+    }
+  }
+
+  /** exportCollection records the profile's collection identity with a
+   * POST (issue 621: the GET that downloads the .lmmc never writes), then
+   * lets the browser download the link's own URL. */
+  async function exportCollection(e) {
+    e.preventDefault();
+    const href = e.currentTarget.getAttribute("href");
+    setBusy(true);
+    setError(null);
+    try {
+      await recordProfileCollection(profile.name, context);
+      window.location.assign(href);
+    } catch (err) {
+      setError(err?.message ?? String(err));
+    } finally {
       setBusy(false);
     }
   }
@@ -373,7 +393,8 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
         <a
           class="button button--small"
           href=${profileExportURL(profile.name, context)}
-          download=${`${profile.name}.json`}
+          download=${`${profile.name}.lmmc`}
+          onClick=${exportCollection}
         >
           Export
         </a>
@@ -496,13 +517,22 @@ function CreateProfileForm({ context, afterMutation }) {
   `;
 }
 
-/** ImportProfileForm reads the picked file as TEXT and hands it to the
- * confirm-plan framework as the profile-import kind's own request body
- * (kind_profile_import.go: "the SPA reads the file the user picked and
- * posts its contents"). It never uploads the file itself. */
+/** ImportProfileForm uploads the picked file - an lmm collection (.lmmc, or
+ * its YAML) or an older profile export - through POST /api/v1/uploads and
+ * hands the upload to the confirm-plan framework as the profile-import
+ * kind's request (kind_profile_import.go). Uploading, rather than posting
+ * the file inside the plan request, is what lets the web UI import the
+ * sizes the CLI does (issue 621: the plan body is capped at 1 MiB).
+ *
+ * The optional name is `lmm profile import --as`: a collection is
+ * imported under it. An older profile export names its own profile, and
+ * the plan refuses a name for one, saying so. The game is the one selected
+ * here, as `--game` does; the plan warns when the collection names another
+ * game. */
 function ImportProfileForm({ actions, close }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [name, setName] = useState("");
 
   async function onPick(e) {
     const file = e.currentTarget.files?.[0];
@@ -511,14 +541,16 @@ function ImportProfileForm({ actions, close }) {
     setBusy(true);
     setError(null);
     try {
-      const data = await file.text();
+      const upload = await uploadArchive(file);
+      const options = { upload_id: upload.upload_id };
+      if (name.trim()) options.profile_name = name.trim();
       close();
       await actions.openPlan({
         kind: "profile_import",
         origin: "profile-import",
         title: `Import ${file.name}`,
         confirmLabel: "Import",
-        options: { data },
+        options,
       });
     } catch (err) {
       setError(err?.message ?? String(err));
@@ -530,11 +562,19 @@ function ImportProfileForm({ actions, close }) {
   return html`
     <div class="profiles-import">
       <h3 class="plan__heading">Import a profile</h3>
+      <input
+        type="text"
+        aria-label="Name for the imported collection's profile"
+        placeholder="Profile name (optional, collections only)"
+        data-testid="import-profile-name"
+        value=${name}
+        onInput=${(e) => setName(e.currentTarget.value)}
+      />
       <label class="button">
-        ${busy ? "Reading…" : "Choose file…"}
+        ${busy ? "Uploading…" : "Choose file…"}
         <input
           type="file"
-          accept=".json,.yaml,.yml,application/json"
+          accept=".lmmc,.json,.yaml,.yml,application/json"
           disabled=${busy}
           onChange=${onPick}
           hidden

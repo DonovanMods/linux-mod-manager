@@ -83,7 +83,10 @@ var profileDuplicateCmd = &cobra.Command{
 	Long: `Duplicate a profile as a new one.
 
 The copy is faithful: load order, versions, locks, disabled marks, link
-method, hooks and config overrides all carry over. The new profile is not
+method, hooks and config overrides all carry over. A profile that is an lmm
+collection becomes a new collection: the copy gets its own collection id on
+its first export and starts again at version 1, keeping the title, author,
+description, instructions and the original curator's credit. The new profile is not
 made the active profile, and nothing is downloaded. Its mods are recorded as
 installed but are deployed to the game directory only when you switch to it
 ('lmm profile switch'). Duplicating onto a name another profile already uses
@@ -112,13 +115,34 @@ Examples:
 
 var profileExportCmd = &cobra.Command{
 	Use:   "export <name>",
-	Short: "Export a profile",
-	Long: `Export a profile to a portable YAML file.
+	Short: "Export a profile as a shareable collection",
+	Long: `Export a profile as an lmm collection: a portable, shareable document
+(format version 1, see docs/collection-format.md).
 
-The exported file can be shared with others or used as a backup.
+Without -o the document is written to stdout as YAML, so it can be
+redirected to a file, diffed or kept in git. -o <file> writes a compressed
+.lmmc container instead; add --plain to write the YAML to the file.
+
+The document lists the profile's mods (with their names, so a recipient
+without the source still sees what each is), its hooks and config
+overrides, and the game by a portable identity (its Steam app id and its
+ids on each source) beside this machine's game id. Your link method and
+the default flag stay on this machine.
+
+A collection has a stable id: the first export of a profile records one in
+the profile, and every later export keeps it. --title, --author,
+--description and --instructions add the words a recipient sees before
+importing, and --collection-version numbers each version you publish. What
+these flags set is saved in the profile, so the next export reuses it and
+you only pass what changes; the version is never raised for you.
+
+--json prints the profile document of #309 instead, unchanged.
 
 Examples:
-  lmm profile export survival --game skyrim-se > survival.yaml`,
+  lmm profile export survival --game skyrim-se > survival.yaml
+  lmm profile export survival --game skyrim-se -o survival.lmmc
+  lmm profile export survival --game skyrim-se -o survival.yaml --plain
+  lmm profile export survival --game skyrim-se -o survival.lmmc --author me --collection-version 2`,
 	Args: cobra.ExactArgs(1),
 	RunE: runProfileExport,
 }
@@ -126,13 +150,32 @@ Examples:
 var profileImportCmd = &cobra.Command{
 	Use:   "import [file]",
 	Short: "Import a profile",
-	Long: `Import a profile from a YAML file, or from a Steam Workshop collection.
+	Long: `Import a profile from a file - an lmm collection (.lmmc, or its YAML
+document) or an older profile export - or from a Steam Workshop collection.
 
 Missing mods are downloaded and installed automatically, after a
 confirmation prompt; pass -y/--yes to skip the prompt and answer yes. Use
 --no-install to skip that entirely and just save the profile, installing
 nothing. Use --force to overwrite an existing profile with the same name
 instead of failing.
+
+An lmm collection (what 'lmm profile export' writes) is matched to one of
+your games by its Steam app id, then by its source ids; when none or
+several match, choose with --game. The plan shows the collection's
+description and instructions, its hooks, its config overrides, the items
+lmm cannot fetch (to get by hand), and mods from sources you do not have.
+A collection that needs features this version of lmm does not have is
+refused, with nothing written. --as names the imported profile.
+
+Whatever the file's format, two things are held back until you ask, and
+both are listed before anything is written. Hooks are scripts lmm would
+run, so they are imported only with --with-hooks. Config overrides are
+imported when they are text config files (.ini, .cfg, .conf, .txt, .json,
+.xml, .toml, .yaml, .yml, .properties, .config, .ltx, .lsx, .cvars,
+.ron), except loader configurations that can make the game load a DLL
+(doorstop_config.ini, enblocal.ini); those and any other file type are
+skipped unless you pass --allow-any-overrides. The result says what was
+held back.
 
 --workshop-collection takes a Steam Workshop collection id or the URL of
 its page, and imports the collection AS a profile: a collection is a mod
@@ -153,6 +196,8 @@ Examples:
   lmm profile import survival.yaml --game skyrim-se --yes
   lmm profile import survival.yaml --game skyrim-se --no-install
   lmm profile import survival.yaml --game skyrim-se --force
+  lmm profile import survival.lmmc
+  lmm profile import survival.lmmc --game skyrim-se --with-hooks --as survival-2
   lmm profile import --workshop-collection 2500900001 --game space-engineers-2
   lmm profile import --workshop-collection https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001 --as ships`,
 	Args: cobra.MaximumNArgs(1),
@@ -233,19 +278,24 @@ Examples:
 }
 
 var (
-	profileImportForce      bool
-	profileImportNoInstall  bool
-	profileImportYes        bool
-	profileImportCollection string
-	profileImportAs         string
-	profileApplyYes         bool
-	profileApplyDryRun      bool
-	profileSwitchYes        bool
-	profileSwitchDryRun     bool
-	profileSyncYes          bool
-	profileSyncDryRun       bool
-	profileReorderProfile   string
-	profileReorderInteract  bool
+	profileImportForce        bool
+	profileImportNoInstall    bool
+	profileImportYes          bool
+	profileImportCollection   string
+	profileImportAs           string
+	profileImportWithHooks    bool
+	profileImportAnyOverrides bool
+	profileExportOutput       string
+	profileExportPlain        bool
+	profileExportMeta         core.CollectionExportOptions
+	profileApplyYes           bool
+	profileApplyDryRun        bool
+	profileSwitchYes          bool
+	profileSwitchDryRun       bool
+	profileSyncYes            bool
+	profileSyncDryRun         bool
+	profileReorderProfile     string
+	profileReorderInteract    bool
 )
 
 func init() {
@@ -269,7 +319,20 @@ func init() {
 	profileImportCmd.Flags().StringVar(&profileImportCollection, "workshop-collection", "",
 		"import a Steam Workshop collection (its id, or the URL of its page) instead of a file")
 	profileImportCmd.Flags().StringVar(&profileImportAs, "as", "",
-		"name the imported profile (--workshop-collection only; a file names its own profile)")
+		"name the imported profile (a collection or --workshop-collection; an older profile export names its own)")
+	profileImportCmd.Flags().BoolVar(&profileImportWithHooks, "with-hooks", false,
+		"import the hooks the file carries (they are scripts lmm runs; listed in the plan)")
+	profileImportCmd.Flags().BoolVar(&profileImportAnyOverrides, "allow-any-overrides", false,
+		"import overrides that are not text config files too (listed in the plan; skipped without this)")
+
+	// Export flags
+	profileExportCmd.Flags().StringVarP(&profileExportOutput, "output", "o", "", "write the collection to this file (a compressed .lmmc unless --plain)")
+	profileExportCmd.Flags().BoolVar(&profileExportPlain, "plain", false, "with -o, write the YAML document instead of a .lmmc container")
+	profileExportCmd.Flags().StringVar(&profileExportMeta.Title, "title", "", "the collection's display name")
+	profileExportCmd.Flags().StringVar(&profileExportMeta.Author, "author", "", "the collection's author")
+	profileExportCmd.Flags().StringVar(&profileExportMeta.Description, "description", "", "a description shown to the recipient")
+	profileExportCmd.Flags().StringVar(&profileExportMeta.InstallInstructions, "instructions", "", "install instructions shown to the recipient")
+	profileExportCmd.Flags().IntVar(&profileExportMeta.Version, "collection-version", 0, "this publish's version number (default: the profile's, else 1)")
 	profileImportCmd.Flags().BoolVar(&profileImportForce, "force", false, "overwrite existing profile")
 	profileImportCmd.Flags().BoolVar(&profileImportNoInstall, "no-install", false, "skip installing missing mods")
 	profileImportCmd.Flags().BoolVarP(&profileImportYes, "yes", "y", false, "auto-confirm downloading/installing missing mods")
@@ -725,11 +788,15 @@ func runProfileExport(cmd *cobra.Command, args []string) error {
 	})
 }
 
-// doProfileExport honours --json (#309) with the exported profile's JSON
-// form (core.Service.ExportProfile); the plain path is unchanged - it still
-// writes the YAML document ProfileManager.Export produces.
+// doProfileExport writes the profile as a version-1 collection (#621):
+// YAML on stdout, or with -o a .lmmc container (or YAML with --plain).
+// --json keeps #309's document (core.Service.ExportProfile), unchanged.
+// The export's notes go to stderr, so stdout carries exactly one document.
 func doProfileExport(ctx context.Context, service *core.Service, game *domain.Game, name string) error {
 	if jsonOutput {
+		if profileExportOutput != "" || profileExportPlain || profileExportMeta != (core.CollectionExportOptions{}) {
+			return fmt.Errorf("--json prints the profile document; it cannot be combined with -o, --plain or the collection metadata flags")
+		}
 		exported, err := service.ExportProfile(ctx, game.ID, name)
 		if err != nil {
 			return fmt.Errorf("exporting profile: %w", err)
@@ -737,14 +804,27 @@ func doProfileExport(ctx context.Context, service *core.Service, game *domain.Ga
 		return emitJSON(exported)
 	}
 
-	pm := getProfileManager(service)
-
-	data, err := pm.Export(ctx, game.ID, name)
+	export, err := service.ExportCollection(ctx, game.ID, name, profileExportMeta)
 	if err != nil {
 		return fmt.Errorf("exporting profile: %w", err)
 	}
-
-	fmt.Print(string(data))
+	for _, note := range export.Notes {
+		fmt.Fprintf(os.Stderr, "Note: %s\n", note)
+	}
+	if profileExportOutput == "" {
+		_, err := os.Stdout.Write(export.Document)
+		return err
+	}
+	data := export.Document
+	if !profileExportPlain {
+		if data, err = export.Container(); err != nil {
+			return fmt.Errorf("exporting profile: %w", err)
+		}
+	}
+	if err := os.WriteFile(profileExportOutput, data, 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", profileExportOutput, err)
+	}
+	fmt.Printf("✓ Exported %s to %s\n", name, profileExportOutput)
 	return nil
 }
 
@@ -787,13 +867,24 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("a profile file is required (or use --workshop-collection <id|url>)")
 	}
-	if profileImportAs != "" {
-		return fmt.Errorf("--as names a profile imported from a Steam Workshop collection; a profile FILE names its own profile")
-	}
 	filePath := args[0]
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
+	}
+	// #621: a collection (a .lmmc container, or YAML with lmm_collection)
+	// takes the collection path; anything else is a version-0 export and
+	// keeps today's path exactly. The game is the one --game names, never
+	// the default: a collection names its own game, matched by portable
+	// identity.
+	if core.IsCollectionDocument(data) {
+		explicitGame := gameID
+		return withService(cmd, func(ctx context.Context, service *core.Service) error {
+			return doCollectionImport(ctx, service, data, explicitGame)
+		})
+	}
+	if profileImportAs != "" {
+		return fmt.Errorf("--as names a profile imported from a collection; an older profile export names its own profile")
 	}
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
 		return doProfileImport(ctx, service, game, data)
@@ -901,6 +992,43 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		// wrapping exactly.
 		return err
 	}
+	return runImportPlan(ctx, service, game, plan)
+}
+
+// doCollectionImport is `lmm profile import <file>` for an lmm collection
+// (#621): core.PlanCollectionImport matches the game (explicitGame when
+// --game named one) and plans; the preview, prompt and summary are the
+// ordinary import's (runImportPlan), with the collection's own part
+// printed first.
+func doCollectionImport(ctx context.Context, service *core.Service, data []byte, explicitGame string) error {
+	plan, err := service.PlanCollectionImport(ctx, core.CollectionImportRequest{
+		Data: data, Input: core.CollectionFromFile, GameID: explicitGame, ProfileName: profileImportAs,
+	})
+	if err != nil {
+		return err
+	}
+	game, err := service.GetGame(plan.Collection.GameID)
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, plan.Collection.GameID)
+	}
+	return runImportPlan(ctx, service, game, plan)
+}
+
+// runImportPlan previews, confirms and applies an import plan - a
+// version-0 document's, or a collection's (plan.Collection set), which
+// adds its own preview, refuses on the feature gate before any prompt,
+// and applies through core.ApplyCollectionImport.
+func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game, plan *core.ImportPlan) error {
+	collection := plan.Collection
+	if collection != nil && !jsonOutput {
+		printCollectionPlan(collection, game)
+	}
+	if collection != nil && len(collection.Unsupported) > 0 {
+		// The plan always renders; the apply refuses, writing nothing,
+		// and there is nothing to ask first.
+		_, err := service.ApplyCollectionImport(ctx, game, plan, core.ProfileImportOptions{}, nil)
+		return err
+	}
 
 	// Show summary - printed purely from the plan, matching the
 	// pre-extraction CLI's preview exactly. Not under --json: the document
@@ -944,6 +1072,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 			fmt.Printf("\n%s is not the active profile of %s (%s is), so the import records these mods in it - downloading what the cache lacks - and deploys nothing; `lmm profile switch %s` deploys them.\n",
 				plan.Profile.Name, game.Name, plan.ActiveProfile, plan.Profile.Name)
 		}
+		printImportGates(plan)
 	}
 
 	// #371: AlreadyCached counts as pending too - it is installed, just not
@@ -952,7 +1081,10 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 
 	declined := false
 
-	opts := core.ProfileImportOptions{Force: profileImportForce, NoInstall: profileImportNoInstall}
+	opts := core.ProfileImportOptions{
+		Force: profileImportForce, NoInstall: profileImportNoInstall,
+		WithHooks: profileImportWithHooks, AllowAnyOverrides: profileImportAnyOverrides,
+	}
 	if pendingCount > 0 && !profileImportNoInstall {
 		if profileImportYes {
 			opts.Install = true
@@ -1039,6 +1171,9 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 	result, err := applyAnsweringFomod(fa, func(answers map[string]domain.FomodChoices) (*core.ProfileImportResult, error) {
 		opts.Fomod = answers
+		if collection != nil {
+			return service.ApplyCollectionImport(ctx, game, plan, opts, quietSink(progress))
+		}
 		return service.ApplyImport(ctx, game, plan, opts, quietSink(progress))
 	}, func(r *core.ProfileImportResult) *core.FomodChoicesRequiredError {
 		if r == nil {
@@ -1069,11 +1204,25 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	// Ruling 15: the ProfileImportResult document, which carries Warnings
 	// and the Installed/Failed/Skipped counters the summary below renders.
 	if jsonOutput {
-		if err := emitJSON(result); err != nil {
+		doc := any(result)
+		if collection != nil {
+			doc = &core.CollectionImportResult{Collection: collection, Result: result}
+		}
+		if err := emitJSON(doc); err != nil {
 			return err
 		}
 		return fomodUnanswered(result.FomodChoicesRequired)
 	}
+
+	// #621: a collection's notes (its external items) are appended after
+	// the apply, never as events, so they print here; and what the import
+	// gates held back prints for every import, plainly, with its flag.
+	if collection != nil {
+		for _, note := range result.Notes {
+			fmt.Printf("  %s\n", note)
+		}
+	}
+	printImportGatesResult(plan, result)
 
 	// #197 postsmoke fix: result.Warnings was never read - a merged-pak
 	// sync failure only ever reached the ImportNote progress event above

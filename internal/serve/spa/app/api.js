@@ -327,9 +327,17 @@ export const deleteSnapshot = (name, context) =>
 /** The profile export download's URL - a plain GET the browser downloads
  * via <a download>, never fetched through this module: the server sets
  * Content-Disposition itself (api_profiles.go), so there is no blob to
- * build and no filename to invent. */
+ * build and no filename to invent. It asks for the `.lmmc` collection
+ * container (issue 621), what `lmm profile export -o` writes. */
 export const profileExportURL = (name, context) =>
-  scoped(`${profilePath(name)}/export`, context);
+  scoped(`${profilePath(name)}/export?format=lmmc`, context);
+
+/** Records a profile's collection identity (issue 621) - minting its
+ * collection id on the first call - so the side-effect-free GET at
+ * profileExportURL can serve it. Returns domain.CollectionInfo. The GET
+ * answers 409 until this has run once. */
+export const recordProfileCollection = (name, context) =>
+  post(scoped(`${profilePath(name)}/collection`, context), {});
 
 /** Commits a new load order. Returns core.ProfileResult, re-read after the
  * write, so profile.mods IS the persisted order. ids are lowest-priority

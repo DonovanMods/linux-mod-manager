@@ -1,0 +1,30 @@
+lmm_collection: 1
+id: 2f8c7a3e-0000-4000-8000-000000000002
+version: 1
+name: fomod
+game_id: cp
+game:
+    name: Cyberpunk 2077
+    steam_app_id: "1091500"
+    sources:
+        steamworkshop: "1091500"
+requires:
+    - fomod
+mods:
+    - source_id: nexusmods
+      mod_id: "1"
+      version: "1.0"
+      fomod:
+        config_sha256: abababababababababababababababababababababababababababababababab
+        steps:
+            - name: Main
+              groups:
+                - name: Textures
+                  choices:
+                    - name: 4K
+                      idx: 1
+        file_states:
+            skse64_loader.exe: Active
+    - source_id: nexusmods
+      mod_id: "2"
+      version: "2.0"

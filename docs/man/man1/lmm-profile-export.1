@@ -2,7 +2,7 @@
 .TH "LMM" "1" "Nov 2026" "lmm 2.3.0" "User Commands"
 
 .SH NAME
-lmm-profile-export - Export a profile
+lmm-profile-export - Export a profile as a shareable collection
 
 
 .SH SYNOPSIS
@@ -10,19 +10,71 @@ lmm-profile-export - Export a profile
 
 
 .SH DESCRIPTION
-Export a profile to a portable YAML file.
+Export a profile as an lmm collection: a portable, shareable document
+(format version 1, see docs/collection-format.md).
 
 .PP
-The exported file can be shared with others or used as a backup.
+Without -o the document is written to stdout as YAML, so it can be
+redirected to a file, diffed or kept in git. -o <file> writes a compressed
+\&.lmmc container instead; add --plain to write the YAML to the file.
+
+.PP
+The document lists the profile's mods (with their names, so a recipient
+without the source still sees what each is), its hooks and config
+overrides, and the game by a portable identity (its Steam app id and its
+ids on each source) beside this machine's game id. Your link method and
+the default flag stay on this machine.
+
+.PP
+A collection has a stable id: the first export of a profile records one in
+the profile, and every later export keeps it. --title, --author,
+--description and --instructions add the words a recipient sees before
+importing, and --collection-version numbers each version you publish. What
+these flags set is saved in the profile, so the next export reuses it and
+you only pass what changes; the version is never raised for you.
+
+.PP
+--json prints the profile document of #309 instead, unchanged.
 
 .PP
 Examples:
   lmm profile export survival --game skyrim-se > survival.yaml
+  lmm profile export survival --game skyrim-se -o survival.lmmc
+  lmm profile export survival --game skyrim-se -o survival.yaml --plain
+  lmm profile export survival --game skyrim-se -o survival.lmmc --author me --collection-version 2
 
 
 .SH OPTIONS
+\fB--author\fP=""
+	the collection's author
+
+.PP
+\fB--collection-version\fP=0
+	this publish's version number (default: the profile's, else 1)
+
+.PP
+\fB--description\fP=""
+	a description shown to the recipient
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for export
+
+.PP
+\fB--instructions\fP=""
+	install instructions shown to the recipient
+
+.PP
+\fB-o\fP, \fB--output\fP=""
+	write the collection to this file (a compressed .lmmc unless --plain)
+
+.PP
+\fB--plain\fP[=false]
+	with -o, write the YAML document instead of a .lmmc container
+
+.PP
+\fB--title\fP=""
+	the collection's display name
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

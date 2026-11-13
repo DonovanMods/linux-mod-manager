@@ -18,7 +18,12 @@ import (
 // its version, file IDs, lock and disabled markers (#97, #431), the link
 // method and its explicit flag, the hooks and their explicit flags, and the
 // config overrides - everything but is_default: a duplicate is never the
-// active profile by the act of being made. Every installed row of source
+// active profile by the act of being made - and its collection identity
+// (#621, owner ruling 2026-11-12): the copy is a new collection, so it
+// drops the collection id (its first export mints a fresh one) and resets
+// the version, while keeping the curator's origin credit and the title,
+// author, description and install instructions as starting values the
+// next export's flags can change (duplicateCollection). Every installed row of source
 // gets a twin under newName (copyRowToProfile, keeping its settings and
 // its enabled flag), so the duplicate lists as installed from the moment
 // it exists; none is deployed, because the files in the game directory are
@@ -75,6 +80,7 @@ func (s *Service) DuplicateProfile(ctx context.Context, gameID, source, newName 
 	dup.Name = newName
 	dup.IsDefault = false
 	dup.Mods = append([]domain.ModReference(nil), profile.Mods...)
+	dup.Collection = duplicateCollection(profile.Collection)
 
 	err = completeProfileWrite(ctx, func(ctx context.Context) error {
 		if err := pm.save(&dup); err != nil {
@@ -118,4 +124,24 @@ func (s *Service) undoDuplicate(ctx context.Context, gameID, newName string, cop
 		return fmt.Errorf("duplicating profile: %w (compensation also failed: could not remove %s: %v)", cause, newName, err)
 	}
 	return fmt.Errorf("duplicating profile: %w (compensated: removed the partial %s)", cause, newName)
+}
+
+// duplicateCollection is the collection block a duplicate of a profile
+// starts with: a new collection (no id, no version - the first export
+// mints the id and publishes version 1) that keeps the origin's credit and
+// the author's words as editable starting values. nil when nothing is left.
+func duplicateCollection(c *domain.CollectionInfo) *domain.CollectionInfo {
+	if c == nil {
+		return nil
+	}
+	dup := *c
+	dup.ID, dup.Version = "", 0
+	if c.Origin != nil {
+		origin := *c.Origin
+		dup.Origin = &origin
+	}
+	if dup.IsZero() {
+		return nil
+	}
+	return &dup
 }

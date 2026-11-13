@@ -88,6 +88,9 @@ var allowedRawVersionReads = map[string]map[string]versionAllowance{
 		"version":     {3, "Two are a dependency's domain.ModReference (no External field, and a dependency is never an adopted Workshop item); one compares against the SOURCE's own version list to mark the installed row, and renders nothing."},
 		"new_version": {1, "The versions table's update target. That table renders only when the source answers GetModFiles, which the Workshop source does not (source.ErrNotSupported), so it never has an external mod in it."},
 	},
+	"components/plan_profile_import.js": {
+		"version": {2, "core.CollectionImport.Version (#621): the collection's own publish number (an int the author bumps), never a mod's version, so no external content id can reach it."},
+	},
 	"components/plan_deploy.js": {
 		"version": {2, "core.DeployPlanMod.Ref.Version, rendered only under `mod.class !== \"external\"` - the external row's own detail line says what lmm will not do with it instead."},
 	},
