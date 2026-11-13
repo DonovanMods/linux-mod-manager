@@ -105,6 +105,11 @@ type FomodQuestion struct {
 	// or the recorded choices as far as they still apply. A frontend edits
 	// it and sends it back as the answer.
 	Choices []fomod.StepChoice `json:"choices"`
+	// Defaults are the installer's own preselection - what it would
+	// install with no answers at all (--fomod-defaults, #615) - when they
+	// differ from Choices (a recording, or answers so far, chose otherwise).
+	// Omitted when Choices already are the defaults.
+	Defaults []fomod.StepChoice `json:"defaults,omitempty"`
 	// Unanswered are the visible groups no answer covers yet.
 	Unanswered []FomodGroupRef `json:"unanswered,omitempty"`
 	// Unmatched are recorded choices that selected nothing.

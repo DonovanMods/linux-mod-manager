@@ -334,3 +334,77 @@ func TestDoModFomod_ChangingOneStepKeepsTheOtherRecordedPicks(t *testing.T) {
 		assert.Equal(t, "B", deployedFile(t, game, "s"+strconv.Itoa(i)+".txt"), "step %d keeps its recorded pick", i)
 	}
 }
+
+// TestApplyUpdateBatch_FomodFlagsAnswerTheSkips: the update batch never
+// asks, but --fomod-defaults answers the questions its skips carry and the
+// batch runs again over just those mods (#615 review item 5).
+func TestApplyUpdateBatch_FomodFlagsAnswerTheSkips(t *testing.T) {
+	svc, game, src := setupFomodInstall(t)
+	fomodDefaults = true
+	_, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	require.Equal(t, "2K", deployedFile(t, game, "textures/t.dds"))
+
+	// 1.1 renames the recorded option: the recording no longer fits.
+	path := filepath.Join(t.TempDir(), "v11.zip")
+	createTestArchive(t, path, map[string]string{
+		"fomod/ModuleConfig.xml": strings.Replace(cliFomodConfig, `plugin name="2K"`, `plugin name="Small"`, 1),
+		"core/plugin.esp":        "PLUGIN11", "tex/2k.dds": "2K11", "tex/4k.dds": "4K11", "docs/readme.txt": "README",
+	})
+	archive, err := os.ReadFile(path)
+	require.NoError(t, err)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.1", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main11", FileName: "mod1-1.1.zip", Version: "1.1", IsPrimary: true}})
+	src.AddDownload("main11", archive)
+	row, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	updates := []domain.Update{{InstalledMod: *row, NewVersion: "1.1"}}
+	keys := []string{"test-src:mod1"}
+
+	// Without an answer the mod is skipped, with its question.
+	fomodDefaults = false
+	var result *core.UpdateBatchResult
+	_, err = captureStdoutErr(t, func() error {
+		var e error
+		result, e = applyUpdateBatch(context.Background(), svc, game, "default", updates, keys, 1)
+		return e
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Skipped, 1)
+	require.NotNil(t, result.Skipped[0].FomodChoicesRequired)
+	assert.Equal(t, "2K", deployedFile(t, game, "textures/t.dds"))
+
+	// --fomod-defaults answers it, and the batch applies the update.
+	fomodDefaults = true
+	_, err = captureStdoutErr(t, func() error {
+		var e error
+		result, e = applyUpdateBatch(context.Background(), svc, game, "default", updates, keys, 1)
+		return e
+	})
+	require.NoError(t, err)
+	assert.Empty(t, result.Skipped)
+	require.Len(t, result.Applied, 1)
+	assert.Equal(t, "2K11", deployedFile(t, game, "textures/t.dds"), "the installer's default (its first option) at 1.1")
+}
+
+// TestDoModFomod_DefaultsResetToTheInstallersOwn: --fomod-defaults on a
+// reconfigure installs the installer's defaults, not the recorded choices
+// the question is preselected with (#615 review item 7).
+func TestDoModFomod_DefaultsResetToTheInstallersOwn(t *testing.T) {
+	svc, game, _ := setupFomodInstall(t)
+	fomodChoicesPath = filepath.Join(t.TempDir(), "choices.json")
+	require.NoError(t, os.WriteFile(fomodChoicesPath, []byte(`[{"name":"Size","groups":[{"name":"Texture","choices":[{"name":"4K","idx":1}]}]},
+		{"name":"Extras","groups":[{"name":"Docs","choices":[]}]}]`), 0o600))
+	_, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	require.Equal(t, "4K", deployedFile(t, game, "textures/t.dds"))
+
+	oldSource := modSource
+	modSource = "test-src"
+	t.Cleanup(func() { modSource = oldSource })
+	fomodChoicesPath, fomodDefaults = "", true
+	_, err = captureStdoutErr(t, func() error { return doModFomod(context.Background(), svc, game, "mod1") })
+	require.NoError(t, err)
+	assert.Equal(t, "2K", deployedFile(t, game, "textures/t.dds"), "the installer's default, not the recorded 4K")
+	assert.Empty(t, deployedFile(t, game, "readme.txt"), "the Extras step is gone with 4K")
+}

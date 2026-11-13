@@ -2498,6 +2498,19 @@ func TestJSONGoldens(t *testing.T) {
 			&core.FomodChoicesRequiredError{Mods: []core.FomodQuestion{sampleFomodQuestion()}},
 		},
 		{"fomod_question", sampleFomodQuestion()},
+		{
+			// #615: a question whose preselection is not the installer's
+			// own carries the defaults too (--fomod-defaults).
+			"fomod_question_defaults",
+			func() core.FomodQuestion {
+				q := sampleFomodQuestion()
+				q.Defaults = []fomod.StepChoice{{Name: "Main Files", Groups: []fomod.GroupChoice{
+					{Name: "Texture Resolution", Choices: []fomod.OptionChoice{{Name: "4K", Idx: 1}}},
+					{Name: "Patches", Choices: []fomod.OptionChoice{}},
+				}}}
+				return q
+			}(),
+		},
 		{"fomod_question_step", sampleFomodQuestion().Steps[0]},
 		{"fomod_question_group", sampleFomodQuestion().Steps[0].Groups[0]},
 		{"fomod_question_option", sampleFomodQuestion().Steps[0].Groups[0].Options[0]},

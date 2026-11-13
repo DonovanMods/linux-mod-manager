@@ -932,7 +932,77 @@ func applyUpdateBatch(ctx context.Context, service *core.Service, game *domain.G
 	}
 
 	opts := core.UpdateBatchOptions{Force: updateForce, SkipHooks: noHooks}
-	return service.ApplyUpdateBatch(ctx, game, plan, opts, quietSink(batchProgress(service, updates)))
+	// #615: the batch never asks a FOMOD installer's questions - it skips
+	// the mod with the question on its result. The FOMOD flags (or a walk
+	// at a terminal) answer those, and the batch runs again over just the
+	// mods that asked, with the answers.
+	fa, err := newFomodAnswerer(service)
+	if err != nil {
+		return nil, err
+	}
+	result, err := service.ApplyUpdateBatch(ctx, game, plan, opts, quietSink(batchProgress(service, updates)))
+	for err == nil && result != nil {
+		q := batchFomodQuestion(result)
+		if q == nil {
+			break
+		}
+		answers, aerr := fa.answer(q)
+		if aerr != nil {
+			if aerr == error(q) {
+				break // nothing answers it: the skips stand, and say why
+			}
+			return result, aerr
+		}
+		keys := make([]string, 0, len(q.Mods))
+		for _, m := range q.Mods {
+			keys = append(keys, domain.ModKey(m.SourceID, m.ModID))
+		}
+		again, perr := service.PlanUpdateBatchFrom(ctx, game, profileName, updates, keys)
+		if perr != nil {
+			return result, perr
+		}
+		opts.Fomod = answers
+		var round *core.UpdateBatchResult
+		round, err = service.ApplyUpdateBatch(ctx, game, again, opts, quietSink(batchProgress(service, updates)))
+		result = mergeBatchRound(result, round, keys)
+	}
+	return result, err
+}
+
+// batchFomodQuestion merges the FOMOD questions an update batch's skips
+// carry (#615) into one, or nil when none asks.
+func batchFomodQuestion(r *core.UpdateBatchResult) *core.FomodChoicesRequiredError {
+	var q *core.FomodChoicesRequiredError
+	for _, sk := range r.Skipped {
+		if sk.FomodChoicesRequired == nil {
+			continue
+		}
+		if q == nil {
+			q = &core.FomodChoicesRequiredError{}
+		}
+		q.Mods = append(q.Mods, sk.FomodChoicesRequired.Mods...)
+	}
+	return q
+}
+
+// mergeBatchRound folds a re-run over keys (the mods whose installers
+// asked) into the batch's result: their skips give way to the re-run's
+// outcome.
+func mergeBatchRound(result, round *core.UpdateBatchResult, keys []string) *core.UpdateBatchResult {
+	if round == nil {
+		return result
+	}
+	merged := *result
+	merged.Skipped = slices.DeleteFunc(slices.Clone(result.Skipped), func(sk core.UpdateApplyResult) bool {
+		return slices.Contains(keys, domain.ModKey(sk.Mod.SourceID, sk.Mod.ModID))
+	})
+	merged.Applied = append(slices.Clone(result.Applied), round.Applied...)
+	merged.Failed = append(slices.Clone(result.Failed), round.Failed...)
+	merged.Skipped = append(merged.Skipped, round.Skipped...)
+	if round.ErrorMessage != "" {
+		merged.ErrorMessage = round.ErrorMessage
+	}
+	return &merged
 }
 
 // batchProgress renders a batch run's events: the per-item bracket #324

@@ -150,7 +150,13 @@ func (f *fomodAnswerer) answer(q *core.FomodChoicesRequiredError) (map[string]do
 			continue
 		}
 		if f.defaults {
-			a := domain.FomodChoices{ConfigSHA256: m.ConfigSHA256, Steps: m.Choices}
+			// The installer's own preselection, not the question's: on a
+			// reconfigure or a stale recording the two differ.
+			steps := m.Choices
+			if len(m.Defaults) > 0 {
+				steps = m.Defaults
+			}
+			a := domain.FomodChoices{ConfigSHA256: m.ConfigSHA256, Steps: steps}
 			if f.sendOnce(key, a) {
 				f.answers[key] = a
 				continue

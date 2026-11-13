@@ -232,6 +232,10 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 		if in.answered && !in.recorded.IsZero() {
 			preselectRecorded(&q, cfg, in, rels)
 		}
+		if def, derr := fomod.Evaluate(cfg, fomod.Request{Mode: fomod.ModeDefaults, Files: in.files, Members: rels}); derr == nil &&
+			!(domain.FomodChoices{Steps: def.Choices}).Equal(domain.FomodChoices{Steps: q.Choices}) {
+			q.Defaults = def.Choices
+		}
 		s.stashFomodImages(tree, byRel, &q)
 		return nil, &FomodChoicesRequiredError{Mods: []FomodQuestion{q}}
 	}
