@@ -107,6 +107,10 @@ type fomodInput struct {
 	// files answers fileDependency conditions; nil means every file is
 	// missing.
 	files fomod.FileStates
+	// ask makes the step ask even when the choices fit (#615's
+	// reconfigure): the question carries them as its preselection. An
+	// answered input never asks for this reason.
+	ask bool
 }
 
 // fomodResolved is one archive's resolve outcome.
@@ -169,7 +173,11 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 
 	recorded := !in.choices.IsZero()
 	req := fomod.Request{Choices: in.choices.Steps, Mode: fomod.ModeDefaults, Files: in.files, Members: rels}
-	if recorded {
+	if recorded && !in.answered && !in.ask {
+		// A replay fills what it does not answer as Vortex's headless
+		// replay does. A fresh answer (or a reconfigure) keeps the dialog's
+		// preselection - Recommended included - for the groups it has not
+		// reached yet (#615): those are what the next question shows.
 		req.Mode = fomod.ModeReplay
 	}
 	res, err := fomod.Evaluate(cfg, req)
@@ -182,10 +190,17 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 		return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: reason, err: err}
 	}
 
-	if len(res.Unanswered) > 0 || (recorded && (len(res.Unmatched) > 0 || len(res.Violations) > 0)) {
+	misfit := len(res.Unanswered) > 0 || (recorded && (len(res.Unmatched) > 0 || len(res.Violations) > 0))
+	if misfit || (in.ask && !in.answered) {
 		// A replay's recording is stale; a fresh answer is incomplete or
-		// wrong, which is asked about the same way but not called stale.
-		return nil, &FomodChoicesRequiredError{Mods: []FomodQuestion{fomodQuestion(mod, inst, cfg, configSHA, res, recorded && !in.answered)}}
+		// wrong, which is asked about the same way but not called stale. A
+		// reconfigure asks about choices that still fit.
+		q := fomodQuestion(mod, inst, cfg, configSHA, res, misfit && recorded && !in.answered)
+		if !misfit {
+			q.Reason = FomodReasonReconfigure
+		}
+		s.stashFomodImages(tree, byRel, &q)
+		return nil, &FomodChoicesRequiredError{Mods: []FomodQuestion{q}}
 	}
 
 	warnings := slices.Clone(res.Warnings)

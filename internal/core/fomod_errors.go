@@ -18,6 +18,10 @@ const (
 	// recording never saw is visible now. The installer changed under the
 	// recording.
 	FomodReasonStale = "stale"
+	// FomodReasonReconfigure: the user asked to change a FOMOD mod's
+	// choices (`lmm mod fomod`, the web UI's "Reconfigure installer…",
+	// #615). The recorded choices still fit; they are the preselection.
+	FomodReasonReconfigure = "reconfigure"
 )
 
 // RefusalFomodChoicesRequired is the refusal code (ItemFailure.Refusal,
@@ -92,7 +96,8 @@ type FomodQuestion struct {
 	// archive root, or one wrapper directory with a trailing '/'): option
 	// images are relative to it.
 	InstallerRoot string `json:"installer_root"`
-	// Reason is FomodReasonUnanswered or FomodReasonStale.
+	// Reason is FomodReasonUnanswered, FomodReasonStale or
+	// FomodReasonReconfigure.
 	Reason string `json:"reason"`
 	// Steps are the visible steps, in walk order.
 	Steps []FomodQuestionStep `json:"steps"`

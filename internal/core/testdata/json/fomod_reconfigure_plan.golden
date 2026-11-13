@@ -1,0 +1,50 @@
+{
+  "game_id": "skyrimse",
+  "profile": "default",
+  "mod": {
+    "id": "12604",
+    "source_id": "nexusmods",
+    "name": "Sample Mod",
+    "version": "1.0",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "skyrimse",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "profile_name": "default",
+    "update_policy": "notify",
+    "installed_at": "2026-11-12T12:00:00Z",
+    "enabled": true,
+    "deployed": true,
+    "link_method": "symlink",
+    "file_ids": [
+      "37471"
+    ],
+    "manual_download": false,
+    "convert_paks": false
+  },
+  "choices": {
+    "config_sha256": "ab12",
+    "steps": [
+      {
+        "name": "Main Files",
+        "groups": [
+          {
+            "name": "Texture Resolution",
+            "choices": [
+              {
+                "name": "2K",
+                "idx": 0
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

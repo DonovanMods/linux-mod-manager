@@ -1343,6 +1343,16 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #615: a FOMOD install's recorded choices, which the full mod
+			// page's "Reconfigure installer…" keys on.
+			"installed_detail_fomod",
+			core.InstalledDetail{
+				Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateNotify,
+				Fomod: &domain.FomodChoices{ConfigSHA256: "ab12", Steps: []fomod.StepChoice{{Name: "Main Files",
+					Groups: []fomod.GroupChoice{{Name: "Texture Resolution", Choices: []fomod.OptionChoice{{Name: "2K", Idx: 0}}}}}}},
+			},
+		},
+		{
 			"installed_detail",
 			core.InstalledDetail{
 				Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateAuto,
@@ -2468,6 +2478,17 @@ func TestJSONGoldens(t *testing.T) {
 			core.CopyModEntry{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3",
 				Fomod: domain.FomodChoices{ConfigSHA256: "ab12", Steps: []fomod.StepChoice{{Name: "Main Files",
 					Groups: []fomod.GroupChoice{{Name: "Texture Resolution", Choices: []fomod.OptionChoice{{Name: "2K", Idx: 1}}}}}}}},
+		},
+		{
+			// #615: `lmm mod fomod`'s plan - the installed row and the
+			// recorded choices the question is preselected from.
+			"fomod_reconfigure_plan",
+			core.FomodReconfigurePlan{GameID: "skyrimse", Profile: "default",
+				Mod: domain.InstalledMod{Mod: domain.Mod{ID: "12604", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.0", GameID: "skyrimse"},
+					ProfileName: "default", UpdatePolicy: domain.UpdateNotify, InstalledAt: time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC),
+					Enabled: true, Deployed: true, LinkMethod: domain.LinkSymlink, FileIDs: []string{"37471"}},
+				Choices: domain.FomodChoices{ConfigSHA256: "ab12", Steps: []fomod.StepChoice{{Name: "Main Files",
+					Groups: []fomod.GroupChoice{{Name: "Texture Resolution", Choices: []fomod.OptionChoice{{Name: "2K", Idx: 0}}}}}}}},
 		},
 		{
 			"copy_mod_skip",

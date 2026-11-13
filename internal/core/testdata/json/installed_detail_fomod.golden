@@ -1,0 +1,25 @@
+{
+  "version": "1.2.3",
+  "profile": "default",
+  "update_policy": "notify",
+  "locked": false,
+  "fomod": {
+    "config_sha256": "ab12",
+    "steps": [
+      {
+        "name": "Main Files",
+        "groups": [
+          {
+            "name": "Texture Resolution",
+            "choices": [
+              {
+                "name": "2K",
+                "idx": 0
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

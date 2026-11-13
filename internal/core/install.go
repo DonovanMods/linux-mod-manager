@@ -790,6 +790,11 @@ type InstallOptions struct {
 	// own separate, always-non-blocking inline conflict warning - and it
 	// already computed its conflicts after its own download.
 	AcceptConflicts bool
+
+	// fomodReconfigure, set only by ApplyFomodReconfigure (#615), names the
+	// mod (domain.ModKey) whose FOMOD installer asks even when its recorded
+	// choices fit, unless Fomod answers it.
+	fomodReconfigure string
 }
 
 // InstalledRef identifies one mod on an InstallResult.Installed/Skipped/
@@ -2439,6 +2444,9 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	// the profile's recorded choices; those name the entry a reinstall
 	// replaces and a warm cache already holds (fomodVariant).
 	fx := s.fomodInputFor(ctx, game, plan.Profile, s.recordedRef(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod)
+	// #615: a reconfigure asks about choices that fit, so the installer
+	// must be read again - never skipped for a warm entry.
+	fx.ask = opts.fomodReconfigure != "" && opts.fomodReconfigure == domain.ModKey(mod.SourceID, mod.ID) && !fx.answered
 	expectedVariant := fomodVariant(fx.choices)
 
 	if plan.Replaces != nil && plan.Replaces.Version == mod.Version && plan.Replaces.Variant == expectedVariant {
@@ -2486,7 +2494,7 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	servesLocalFiles := servesLocal && lfs.ServesLocalFiles()
 	warmKey := modCacheKey(game.ID, mod)
 	warmKey.Variant = expectedVariant
-	cacheWarm := !servesLocalFiles &&
+	cacheWarm := !servesLocalFiles && !fx.ask &&
 		len(plannedFileIDs) > 0 &&
 		downloadCache.HasFileIDs(warmKey, plannedFileIDs)
 	if cacheWarm && expectedVariant != "" {

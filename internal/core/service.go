@@ -329,6 +329,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	// ReadDir of a directory that is usually absent, so it costs an open
 	// nothing measurable.
 	svc.sweepRetainedDownloads()
+	svc.sweepFomodImages()
 
 	return svc, nil
 }
