@@ -1,0 +1,7 @@
+{
+  "version": "1.2.3",
+  "profile": "default",
+  "update_policy": "notify",
+  "locked": false,
+  "fomod_not_run": true
+}

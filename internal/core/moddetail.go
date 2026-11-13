@@ -93,6 +93,12 @@ type InstalledDetail struct {
 	// which a later update check records on the row. omitempty.
 	EffectiveCategory string `json:"effective_category,omitempty"`
 	CategorySource    string `json:"category_source,omitempty"`
+	// FomodNotRun reports a FOMOD mod installed before lmm ran FOMOD
+	// installers (#614, Service.IsLegacyFomodInstall): the archive's raw
+	// contents, every option at once, are what is deployed. It keeps
+	// working as it always did; reconfiguring it runs its installer.
+	// omitzero.
+	FomodNotRun bool `json:"fomod_not_run,omitzero"`
 }
 
 // ModDetail fetches modID from sourceID and joins whatever local install
@@ -177,6 +183,7 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		}
 	}
 	info.EffectiveCategory, info.CategorySource = effectiveCategory(userCategory, installed.CategoryName)
+	info.FomodNotRun = s.IsLegacyFomodInstall(game, installed)
 	detail.Installed = info
 	return detail, nil
 }

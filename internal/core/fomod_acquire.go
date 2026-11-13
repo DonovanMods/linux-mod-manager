@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
@@ -231,4 +232,24 @@ func cmpFomod(r *fomodResolved) *fomodResolved {
 		return plainTree()
 	}
 	return r
+}
+
+// IsLegacyFomodInstall reports whether row is a FOMOD mod installed before
+// lmm ran FOMOD installers (#614): its plain cache entry (no variant) still
+// holds the archive's own fomod/ModuleConfig.xml - the raw archive, every
+// option's files at once, was what got deployed. Such an install keeps
+// working exactly as before (deploy's self-heal and verify --fix rebuild it
+// raw); reconfiguring it runs its installer and installs the chosen tree.
+// A row with a variant, an external one, or one whose entry is not cached
+// is not one.
+func (s *Service) IsLegacyFomodInstall(game *domain.Game, row *domain.InstalledMod) bool {
+	if game == nil || row == nil || row.Variant != "" || row.External {
+		return false
+	}
+	files, err := s.GetGameCache(game).ListFiles(modCacheKey(game.ID, row.Mod))
+	if err != nil {
+		return false
+	}
+	inst, err := fomod.Locate("", slashMembers(files))
+	return err == nil && inst != nil
 }

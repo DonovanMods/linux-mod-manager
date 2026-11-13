@@ -720,3 +720,78 @@ func TestFomodInstall_AnUnsafeMemberOnlyWarnsEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "4K", f.deployed(t, "textures/t.dds"))
 }
+
+// seedLegacyFomodInstall installs mod1 the way lmm did before it ran FOMOD
+// installers: the archive's raw tree in the plain entry, a row with no
+// variant and a ref with no choices.
+func seedLegacyFomodInstall(t *testing.T, f *fomodFixture) *domain.InstalledMod {
+	t.Helper()
+	ctx := context.Background()
+	key := cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}
+	c := f.svc.GetGameCache(f.game)
+	for rel, body := range map[string]string{
+		"fomod/ModuleConfig.xml": flowModuleConfig("4K"), "core/plugin.esp": "PLUGIN-v1", "tex/2k.dds": "2K-v1", "tex/4k.dds": "4K-v1",
+	} {
+		require.NoError(t, c.Store(key, filepath.FromSlash(rel), []byte(body)))
+	}
+	require.NoError(t, cache.MarkFileCompleteWithMembers(c.ModPath(key), "mod1", []string{"core/plugin.esp", "fomod/ModuleConfig.xml", "tex/2k.dds", "tex/4k.dds"}))
+	row := &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod mod1", Version: "1.0", GameID: "g1"},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true, FileIDs: []string{"mod1"},
+	}
+	require.NoError(t, f.svc.SaveInstalledMod(ctx, row))
+	pm := f.svc.NewProfileManager()
+	_, err := pm.Create(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, "g1", "default"))
+	require.NoError(t, pm.UpsertMod(ctx, "g1", "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0", FileIDs: []string{"mod1"}}))
+	return row
+}
+
+// TestFomodLegacyInstall_KeepsWorkingAndSaysItCanBeReconfigured (#614
+// review should-fix 2): a FOMOD mod installed before F2 - its raw archive in
+// the plain entry - is reported as such (mod show's fomod_not_run,
+// IsLegacyFomodInstall), and deploy's self-heal and verify --fix rebuild it
+// raw, as before: no question, no variant.
+func TestFomodLegacyInstall_KeepsWorkingAndSaysItCanBeReconfigured(t *testing.T) {
+	f := newFomodFixture(t)
+	f.serve(t, "mod1", "1.0", "4K", "v1")
+	ctx := context.Background()
+	row := seedLegacyFomodInstall(t, f)
+	assert.True(t, f.svc.IsLegacyFomodInstall(f.game, row))
+	detail, err := f.svc.ModDetail(ctx, f.game, "default", "src", "mod1")
+	require.NoError(t, err)
+	require.NotNil(t, detail.Installed)
+	assert.True(t, detail.Installed.FomodNotRun, "mod show says it can be reconfigured")
+
+	key := cacheKeyOf(row)
+	c := f.svc.GetGameCache(f.game)
+
+	// Deploy's self-heal: the entry is gone, the rebuild is raw.
+	require.NoError(t, c.Delete(key))
+	result, err := f.svc.DeployProfile(ctx, f.game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Skipped, "%+v", result.Skipped)
+	assert.FileExists(t, filepath.Join(c.ModPath(key), "fomod", "ModuleConfig.xml"), "the raw tree, installer included")
+	assert.Equal(t, "4K-v1", f.deployed(t, "tex/4k.dds"))
+	after, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Empty(t, after.Variant)
+
+	// verify --fix's redownload: the same.
+	require.NoError(t, f.svc.SaveFileChecksum(ctx, "src", "mod1", "g1", "default", "mod1", "0123456789abcdef0123456789abcdef"))
+	require.NoError(t, c.Delete(key))
+	_, err = f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Fix: true}, nil)
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(c.ModPath(key), "fomod", "ModuleConfig.xml"))
+	assert.True(t, f.svc.IsLegacyFomodInstall(f.game, after), "still the legacy raw install")
+
+	// A mod installed with its installer is not legacy.
+	f2 := newFomodFixture(t)
+	f2.serve(t, "mod1", "1.0", "4K", "v1")
+	_, err = f2.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+	resolved, err := f2.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, f2.svc.IsLegacyFomodInstall(f2.game, resolved))
+}
