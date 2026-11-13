@@ -161,7 +161,7 @@ func writeOverriddenCopy(root, rel string, content []byte) error {
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	name := filepath.Base(filepath.FromSlash(rel))
 	st, exists, err := lstatAt(dir, name)
 	if err != nil {
@@ -277,7 +277,7 @@ func sameContentAt(dir *os.File, name string, content []byte) bool {
 		return false
 	}
 	f := os.NewFile(uintptr(fd), filepath.Join(dir.Name(), name))
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(content)) {
 		return false
@@ -340,7 +340,7 @@ func holdsOverriddenCopy(dst string, content []byte) bool {
 	if err != nil {
 		return false
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	return sameContentAt(dir, filepath.Base(dst), content)
 }
 
@@ -370,7 +370,14 @@ func ownCopy(ctx context.Context, jd deployedJudge, rel, dst string) bool {
 // directory holds (#462), and only when the game's adapter allows a deploy
 // at all (deployRefusal): a flow that ends with another profile live, or
 // with a refused adapter, converges nothing here.
+//
+// It runs to the end once started, on a context its caller's cancellation
+// does not reach: it finishes the on-disk state of a flow that has already
+// succeeded, its work is bounded by the profile's few overrides (and one
+// lstat per deployed file), and a cancellation halfway would leave some of
+// a profile's overridden files converged and others not.
 func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game, profileName string) []string {
+	ctx = context.WithoutCancel(ctx)
 	if s.db == nil || game.ModPath == "" {
 		return nil
 	}
@@ -419,16 +426,13 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 	jd := installer.judgeFor(game, profileName, others, nil)
 	var warnings []string
 	for _, row := range rows {
-		if ctx.Err() != nil {
-			break
-		}
 		rel := row.RelativePath
 		if !underCurrentRoot(game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(rel)) {
 			continue
 		}
 		dst := filepath.Join(game.ModPath, filepath.FromSlash(rel))
 		content, overridden := mine.content(rel)
-		if !overridden && !elsewhere[filepath.ToSlash(rel)] && !(linked && soleRegularFile(dst)) {
+		if !overridden && !elsewhere[filepath.ToSlash(rel)] && (!linked || !soleRegularFile(dst)) {
 			continue
 		}
 		if overridden && holdsOverriddenCopy(dst, content) {

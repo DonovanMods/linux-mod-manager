@@ -131,7 +131,7 @@ func applyOneOverride(base, realBase, relPath string, profile *domain.Profile, e
 	if err != nil {
 		return fmt.Errorf("creating its directory: %w", err)
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	name := filepath.Base(dest)
 	content := profile.Overrides[relPath]
 
