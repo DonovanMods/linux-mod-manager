@@ -94,6 +94,12 @@ export function Modal({
         ? document.querySelector(openerSelector)
         : opener;
       if (target instanceof HTMLElement && target.isConnected) target.focus();
+      // A modal that closes as a job ends (the FOMOD wizard, issue 615) can
+      // race the page's own re-read, which may replace the named control a
+      // moment after it was focused - leaving focus on <body>. For a short
+      // while, a named opener takes focus back, but only from <body>: never
+      // from wherever the user has since moved it.
+      if (openerSelector) refocusWhileLost(openerSelector);
     };
   }, []);
 
@@ -129,4 +135,24 @@ export function Modal({
       </div>
     </div>
   `;
+}
+
+// refocusWindowMs and refocusStepMs bound refocusWhileLost's retries.
+const refocusWindowMs = 2000;
+const refocusStepMs = 100;
+
+/** refocusWhileLost re-focuses the control selector names whenever focus
+ * has fallen to <body> during the next refocusWindowMs. */
+function refocusWhileLost(selector) {
+  let waited = 0;
+  const step = () => {
+    const lost =
+      document.activeElement === null ||
+      document.activeElement === document.body;
+    const el = document.querySelector(selector);
+    if (lost && el instanceof HTMLElement && el.isConnected) el.focus();
+    waited += refocusStepMs;
+    if (waited < refocusWindowMs) setTimeout(step, refocusStepMs);
+  };
+  setTimeout(step, refocusStepMs);
 }
