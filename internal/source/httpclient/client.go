@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -73,9 +74,18 @@ type Options struct {
 // Client is a small JSON HTTP client wrapping net/http for use by mod-source
 // SDKs. Construct via New; configure via Options.
 type Client struct {
-	httpClient       *http.Client
-	baseURL          string
-	apiKey           string
+	httpClient *http.Client
+	baseURL    string
+
+	// apiKey is read and written only under keyMu, and read only through
+	// key() (#626): `lmm serve` re-keys a live source (SetAPIKey) while
+	// requests are in flight. A request reads it ONCE, at its start, and
+	// carries that snapshot (a credential) through to the redaction of its
+	// own errors - so the key a request sends and the key it masks can
+	// never be two different values.
+	keyMu  sync.RWMutex
+	apiKey string
+
 	authHeader       string
 	authQueryParam   string
 	authLabel        string
@@ -120,15 +130,30 @@ func New(opts Options) *Client {
 	}
 }
 
-// SetAPIKey updates the API key used for subsequent requests.
-func (c *Client) SetAPIKey(key string) { c.apiKey = key }
+// SetAPIKey updates the API key used for subsequent requests. It is safe to
+// call while requests are in flight (#626): a request already started keeps
+// the key it read at its start, for sending and for redaction alike.
+func (c *Client) SetAPIKey(key string) {
+	c.keyMu.Lock()
+	defer c.keyMu.Unlock()
+	c.apiKey = key
+}
+
+// key returns the configured API key as a credential: the one read of the
+// key field a request makes, and the snapshot every later step of that
+// request uses.
+func (c *Client) key() credential {
+	c.keyMu.RLock()
+	defer c.keyMu.RUnlock()
+	return credential(c.apiKey)
+}
 
 // SetBaseURL replaces the configured base URL. Used by tests that wire a
 // httptest server in front of the real client.
 func (c *Client) SetBaseURL(u string) { c.baseURL = u }
 
 // IsAuthenticated reports whether the client has a non-empty API key.
-func (c *Client) IsAuthenticated() bool { return c.apiKey != "" }
+func (c *Client) IsAuthenticated() bool { return c.key() != "" }
 
 // BaseURL returns the configured base URL (used by callers that need to
 // build URLs outside of DoJSON, e.g. download endpoints).
@@ -168,16 +193,17 @@ func (c *Client) DoJSONBody(ctx context.Context, method, path string, body, resu
 		reader = bytes.NewReader(encoded)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.authURL(path), reader)
+	key := c.key()
+	req, err := http.NewRequestWithContext(ctx, method, c.authURL(path, key), reader)
 	if err != nil {
-		return c.requestError("creating request", path, err)
+		return c.requestError("creating request", path, key, err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	c.applyAuthHeader(req)
+	c.applyAuthHeader(req, key)
 	req.Header.Set("Accept", "application/json")
-	return c.do(req, path, result)
+	return c.do(req, path, key, result)
 }
 
 // DoForm performs a form POST against baseURL+path and JSON-decodes the
@@ -191,35 +217,37 @@ func (c *Client) DoJSONBody(ctx context.Context, method, path string, body, resu
 // than as a JSON body or a query string.
 func (c *Client) DoForm(ctx context.Context, path string, form url.Values, result any) error {
 	body := form.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.authURL(path), strings.NewReader(body))
+	key := c.key()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.authURL(path, key), strings.NewReader(body))
 	if err != nil {
-		return c.requestError("creating request", path, err)
+		return c.requestError("creating request", path, key, err)
 	}
-	c.applyAuthHeader(req)
+	c.applyAuthHeader(req, key)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	return c.do(req, path, result)
+	return c.do(req, path, key, result)
 }
 
-// authURL returns the absolute request URL for path, appending the API key
-// as a query parameter when the client is configured for query-parameter
-// auth (and a key is set). A path that already carries its own query string
-// keeps it. Header-auth clients — every source that predates #269 — get
+// authURL returns the absolute request URL for path, appending key as a
+// query parameter when the client is configured for query-parameter auth
+// (and key is set). A path that already carries its own query string keeps
+// it. Header-auth clients — every source that predates #269 — get
 // baseURL+path back unchanged.
-func (c *Client) authURL(path string) string {
+func (c *Client) authURL(path string, key credential) string {
 	full := c.baseURL + path
-	if c.authHeader != "" || c.authQueryParam == "" || c.apiKey == "" {
+	if c.authHeader != "" || c.authQueryParam == "" || key == "" {
 		return full
 	}
 	sep := "?"
 	if strings.Contains(full, "?") {
 		sep = "&"
 	}
-	return full + sep + url.QueryEscape(c.authQueryParam) + "=" + url.QueryEscape(c.apiKey)
+	return full + sep + url.QueryEscape(c.authQueryParam) + "=" + url.QueryEscape(string(key))
 }
 
 // requestError reports a failure that never produced a response, naming the
-// caller-supplied PATH rather than the resolved URL.
+// caller-supplied PATH rather than the resolved URL, and redacting key - the
+// credential the failed request was built with.
 //
 // net/http reports both an unparseable URL and a transport failure as a
 // *url.Error whose Error() embeds the RESOLVED url — which, for a
@@ -229,31 +257,37 @@ func (c *Client) authURL(path string) string {
 // dropped here rather than at each of the dozens of call sites downstream
 // (W2 review, Critical 1). Unwrapping to the inner error keeps
 // errors.Is/errors.As working for every caller that classifies on it.
-func (c *Client) requestError(op, requestPath string, err error) error {
+func (c *Client) requestError(op, requestPath string, key credential, err error) error {
 	var ue *url.Error
 	if errors.As(err, &ue) {
 		err = ue.Err
 	}
-	return fmt.Errorf("%s to %s: %w", op, requestPath, c.redactError(err))
+	return fmt.Errorf("%s to %s: %w", op, requestPath, key.redactError(err))
 }
 
-// redact replaces the configured API key wherever it appears in s, in every
-// form that can reach a message - see keyForms. It is the belt to
-// requestError's braces: an upstream error page is free to echo the request
-// back, and nothing this client returns may carry the credential.
-func (c *Client) redact(s string) string {
-	if c.apiKey == "" {
+// credential is one request's snapshot of the client's API key (#626).
+// Redaction hangs off it rather than off the Client so that a request masks
+// the key it SENT: reading the client's key again at error time would, after
+// a concurrent SetAPIKey, look for the new key and pass the sent one through.
+type credential string
+
+// redact replaces the key wherever it appears in s, in every form that can
+// reach a message - see forms. It is the belt to requestError's braces: an
+// upstream error page is free to echo the request back, and nothing this
+// client returns may carry the credential.
+func (k credential) redact(s string) string {
+	if k == "" {
 		return s
 	}
-	for _, form := range c.keyForms() {
+	for _, form := range k.forms() {
 		s = strings.ReplaceAll(s, form, redactedKey)
 	}
 	return s
 }
 
-// keyForms are the encodings of the configured key that can appear in a
-// message: the raw value, and the url.QueryEscape form authURL actually
-// puts on the wire, when the two differ (W2 re-review, N1).
+// forms are the encodings of the key that can appear in a message: the raw
+// value, and the url.QueryEscape form authURL actually puts on the wire,
+// when the two differ (W2 re-review, N1).
 //
 // The escaped form is the one a body-echoing upstream quotes back, so
 // matching only the raw value would walk straight past a key carrying a
@@ -264,17 +298,17 @@ func (c *Client) redact(s string) string {
 // ever stored. QueryEscape is the only encoding to check because authURL
 // is the only place this client puts a key in a URL, and it puts it in the
 // QUERY; nothing here builds a path from the key.
-func (c *Client) keyForms() []string {
-	forms := []string{c.apiKey}
-	if esc := url.QueryEscape(c.apiKey); esc != c.apiKey {
+func (k credential) forms() []string {
+	forms := []string{string(k)}
+	if esc := url.QueryEscape(string(k)); esc != string(k) {
 		forms = append(forms, esc)
 	}
 	return forms
 }
 
-// carriesKey reports whether s contains the key in any of keyForms.
-func (c *Client) carriesKey(s string) bool {
-	for _, form := range c.keyForms() {
+// carriedBy reports whether s contains the key in any of forms.
+func (k credential) carriedBy(s string) bool {
+	for _, form := range k.forms() {
 		if strings.Contains(s, form) {
 			return true
 		}
@@ -286,32 +320,33 @@ func (c *Client) carriesKey(s string) bool {
 // nothing to redact (the overwhelmingly common case) and flattening it to a
 // scrubbed message when there is — a wrapped error's text cannot be
 // rewritten any other way, and a leaked key outranks a preserved Unwrap.
-func (c *Client) redactError(err error) error {
-	if c.apiKey == "" || !c.carriesKey(err.Error()) {
+func (k credential) redactError(err error) error {
+	if k == "" || !k.carriedBy(err.Error()) {
 		return err
 	}
-	return errors.New(c.redact(err.Error()))
+	return errors.New(k.redact(err.Error()))
 }
 
-// applyAuthHeader sets the auth header when the client is configured for
-// header auth and a key is set. A query-parameter client never sends one.
-func (c *Client) applyAuthHeader(req *http.Request) {
-	if c.authHeader != "" && c.apiKey != "" {
-		req.Header.Set(c.authHeader, c.apiKey)
+// applyAuthHeader sets the auth header to key when the client is configured
+// for header auth and key is set. A query-parameter client never sends one.
+func (c *Client) applyAuthHeader(req *http.Request, key credential) {
+	if c.authHeader != "" && key != "" {
+		req.Header.Set(c.authHeader, string(key))
 	}
 }
 
 // do executes req and applies the shared response contract DoJSON and
 // DoForm both promise. requestPath is the caller-supplied path (not the
 // resolved URL) so an ErrorMapper never sees a key that auth injection
-// appended.
-func (c *Client) do(req *http.Request, requestPath string, result any) (err error) {
+// appended; key is the credential req was built with, and the only one its
+// errors are redacted against.
+func (c *Client) do(req *http.Request, requestPath string, key credential, result any) (err error) {
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return c.requestError("executing request", requestPath, err)
+		return c.requestError("executing request", requestPath, key, err)
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); err == nil && cerr != nil {
@@ -331,7 +366,7 @@ func (c *Client) do(req *http.Request, requestPath string, result any) (err erro
 		// interpolate the body into its own message (CurseForge's 403 does),
 		// and an upstream error page that echoes the request back is exactly
 		// how a key reaches a terminal.
-		errBody = []byte(c.redact(string(errBody)))
+		errBody = []byte(key.redact(string(errBody)))
 		if c.errorMapper != nil {
 			if mapped := c.errorMapper(resp.StatusCode, errBody, requestPath); mapped != nil {
 				return mapped

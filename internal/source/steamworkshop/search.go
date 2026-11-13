@@ -163,7 +163,7 @@ func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.S
 		return source.SearchResult{}, fmt.Errorf("%w: Steam Web API key required (run `lmm auth login steamworkshop`)", domain.ErrAuthRequired)
 	}
 
-	cacheKey := searchKey(query, s.client.keyID)
+	cacheKey := searchKey(query, s.client.currentKeyID())
 	if cached, ok := s.client.search.get(cacheKey); ok {
 		return cached, nil
 	}

@@ -358,6 +358,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Internally, sources can now report the account's tier (`free`/`premium`)
   for later plans to use.
 
+- **Saving a source's key while the web UI is busy can no longer race or
+  leak the old key (#626).** `lmm serve` re-keys a source live when a key is
+  saved in Setup. That re-key was a data race with any NexusMods,
+  CurseForge, Steam Workshop or custom-source request already in flight,
+  and a request could send one key and mask another in its own error, so
+  the key it actually sent could reach an error message unmasked. Each
+  request now reads the key once, and sends and masks that same key. No
+  visible change in the terminal or the web UI.
+
 - **Setup no longer says `make install` gives a self-updating lmm (#599).**
   The Updates tab, `lmm self-update --help`, the README and the
   configuration guide listed `make install` as self-managed. Only a

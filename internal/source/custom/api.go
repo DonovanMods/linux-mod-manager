@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -35,6 +36,10 @@ type API struct {
 	endpoints APIEndpoints
 	mappings  APIMappings
 
+	// apiKey is read and written only under keyMu, and read only through
+	// key() (#626): `lmm serve` re-keys a live source (SetAPIKey) while
+	// requests are in flight. Each request reads it once.
+	keyMu      sync.RWMutex
 	apiKey     string
 	httpClient *http.Client
 }
@@ -143,11 +148,24 @@ func (a *API) listFromDoc(doc any, listPath, subject string) ([]any, error) {
 	return items, nil
 }
 
-// SetAPIKey provides the API key resolved at startup (env var or token store).
-func (a *API) SetAPIKey(key string) { a.apiKey = key }
+// SetAPIKey provides the API key resolved at startup (env var or token
+// store), and replaces it when `lmm serve` re-keys the live source. It is
+// safe to call while requests are in flight (#626).
+func (a *API) SetAPIKey(key string) {
+	a.keyMu.Lock()
+	defer a.keyMu.Unlock()
+	a.apiKey = key
+}
+
+// key returns the configured API key: the one read of it a request makes.
+func (a *API) key() string {
+	a.keyMu.RLock()
+	defer a.keyMu.RUnlock()
+	return a.apiKey
+}
 
 // IsAuthenticated reports whether an API key is configured.
-func (a *API) IsAuthenticated() bool { return a.apiKey != "" }
+func (a *API) IsAuthenticated() bool { return a.key() != "" }
 
 // Capabilities implements source.CapabilityReporter: an undefined endpoint is
 // an unsupported capability (design §4/§7).
@@ -201,13 +219,14 @@ func (a *API) IgnoresGameIdentifier() bool {
 // DownloadHeaders implements source.DownloadHeaderProvider: header-mode keys
 // go only to downloads on the API's own origin (design §9).
 func (a *API) DownloadHeaders(fileURL string) map[string]string {
-	if a.auth == nil || a.auth.APIKey.In != "header" || a.apiKey == "" {
+	key := a.key()
+	if a.auth == nil || a.auth.APIKey.In != "header" || key == "" {
 		return nil
 	}
 	if !sameOriginURLs(fileURL, a.baseURL) {
 		return nil
 	}
-	return map[string]string{a.auth.APIKey.Name: a.apiKey}
+	return map[string]string{a.auth.APIKey.Name: key}
 }
 
 // buildEndpointURL substitutes {placeholder} tokens in an endpoint path
@@ -230,8 +249,9 @@ func buildEndpointURL(pathTemplate string, vals map[string]string) string {
 // manifest fetcher's redaction.
 func (a *API) getJSON(ctx context.Context, rawURL string) (any, error) {
 	reqURL := rawURL
-	if a.auth != nil && a.auth.APIKey.In == "query" && a.apiKey != "" {
-		u, err := addQueryParam(reqURL, a.auth.APIKey.Name, a.apiKey)
+	key := a.key()
+	if a.auth != nil && a.auth.APIKey.In == "query" && key != "" {
+		u, err := addQueryParam(reqURL, a.auth.APIKey.Name, key)
 		if err != nil {
 			return nil, fmt.Errorf("source %q: %w", a.id, err)
 		}
@@ -242,8 +262,8 @@ func (a *API) getJSON(ctx context.Context, rawURL string) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("source %q: building request: %w", a.id, err)
 	}
-	if a.auth != nil && a.auth.APIKey.In == "header" && a.apiKey != "" {
-		req.Header.Set(a.auth.APIKey.Name, a.apiKey)
+	if a.auth != nil && a.auth.APIKey.In == "header" && key != "" {
+		req.Header.Set(a.auth.APIKey.Name, key)
 	}
 
 	resp, err := a.httpClient.Do(req)
@@ -460,8 +480,8 @@ func (a *API) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string
 		return "", fmt.Errorf("source %q: file %s: %q is not a URL string", a.id, fileID, ep.Field)
 	}
 
-	if a.auth != nil && a.auth.APIKey.In == "query" && a.apiKey != "" && sameOriginURLs(dlURL, a.baseURL) {
-		withKey, err := addQueryParam(dlURL, a.auth.APIKey.Name, a.apiKey)
+	if key := a.key(); a.auth != nil && a.auth.APIKey.In == "query" && key != "" && sameOriginURLs(dlURL, a.baseURL) {
+		withKey, err := addQueryParam(dlURL, a.auth.APIKey.Name, key)
 		if err != nil {
 			return "", fmt.Errorf("source %q: file %s: %w", a.id, fileID, err)
 		}
