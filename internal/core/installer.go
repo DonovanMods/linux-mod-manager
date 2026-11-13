@@ -923,8 +923,11 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 	if err != nil {
 		return fmt.Errorf("listing old cached files: %w", err)
 	}
-	// #629: the old entry's members as the deployed paths they take.
-	oldFiles = deployedPaths(i.adapter, game, oldFiles)
+	// #629: the old entry's members as the deployed paths they take, and
+	// where the old deployment's records put any of them under the other
+	// root (withRecordedRoots) - so the obsolete-file loop removes that copy
+	// instead of the record going and the file staying.
+	oldFiles = i.withRecordedRoots(ctx, game, oldMod, profileName, oldFiles, deployedPaths(i.adapter, game, oldFiles))
 	newFiles, err := deployableFiles(newCache, i.adapter, game, modCacheKey(game.ID, *newMod))
 	if err != nil {
 		return fmt.Errorf("resolving deployable new-side files: %w", err)

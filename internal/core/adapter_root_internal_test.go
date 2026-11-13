@@ -137,3 +137,37 @@ func TestRootForStatedModType(t *testing.T) {
 	_, err = deployedPathsForType(adapter.Generic{}, game, "dinput", files)
 	require.ErrorAs(t, err, &unknown, "an adapter with no RootRouter knows no type")
 }
+
+// An update made after the game's adapter started routing a file to the
+// game root removes the copy an earlier routing put under mod_path - by
+// its record - rather than dropping the record and leaving the file.
+func TestReplace_RemovesAFileWhereAnEarlierRoutingPutIt(t *testing.T) {
+	c := cache.New(t.TempDir())
+	oldKey := cache.Key{GameID: "g", SourceID: "src", ModID: "skse", Version: "1.0"}
+	newKey := cache.Key{GameID: "g", SourceID: "src", ModID: "skse", Version: "2.0"}
+	for _, k := range []cache.Key{oldKey, newKey} {
+		require.NoError(t, c.Store(k, "skse64_loader.exe", []byte("loader "+k.Version)))
+		require.NoError(t, c.Store(k, "Scripts/SKSE.pex", []byte("script")))
+	}
+	game := rootGame(t, domain.LinkSymlink)
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+	inst := NewInstaller(c, linker.New(domain.LinkSymlink), database)
+	oldMod := &domain.Mod{ID: "skse", SourceID: "src", Version: "1.0", GameID: "g"}
+	newMod := &domain.Mod{ID: "skse", SourceID: "src", Version: "2.0", GameID: "g"}
+	require.NoError(t, inst.Install(context.Background(), game, oldMod, "default"))
+	_, err = os.Lstat(filepath.Join(game.ModPath, "skse64_loader.exe"))
+	require.NoError(t, err, "the generic routing put it under mod_path")
+
+	inst.setAdapter(rootRouter{})
+	require.NoError(t, inst.Replace(context.Background(), game, oldMod, newMod, "default"))
+	_, err = os.Lstat(filepath.Join(game.ModPath, "skse64_loader.exe"))
+	assert.True(t, os.IsNotExist(err), "the mod_path copy is removed")
+	target, err := os.Readlink(filepath.Join(game.InstallPath, "skse64_loader.exe"))
+	require.NoError(t, err)
+	assert.Equal(t, c.GetFilePath(newKey, "skse64_loader.exe"), target)
+	paths, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "skse")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"Scripts/SKSE.pex", domain.InstallPathKey("skse64_loader.exe")}, paths)
+}
