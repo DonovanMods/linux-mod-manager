@@ -16,8 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extra request, since the check already fetches every installed mod, and
   a mod with no pending update is cleared all the same. The mod takes part
   in **Update all**, `lmm update --all` and automatic updates again. The
-  check says so once: `lmm update` prints "<mod>: automatic downloads are
-  available again - <source> serves it through its API now", the web UI's
+  check says so once: `lmm update` prints that automatic downloads are
+  available again for the mod, the web UI's
   Updates card shows the same line until the next explicit **Check for
   updates**, and the update check's `--json` document (and
   `GET /api/v1/updates`) gains a `manual_only_cleared` list. Only an
