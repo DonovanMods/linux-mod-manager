@@ -2408,6 +2408,28 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #627: the check cleared a manual-only mod's record because its
+			// source serves the mod through its API again, and says so.
+			"update_check_report_manual_only_cleared",
+			core.UpdateCheckReport{
+				GameID:  "minecraft",
+				Profile: "default",
+				Updates: []domain.Update{},
+				Skipped: core.UpdateSkips{},
+				ManualOnlyCleared: []core.ManualOnlyCleared{{
+					SourceID: "curseforge", ModID: "238222", Name: "Opted Back In",
+					Message: "Opted Back In: automatic downloads are available again - CurseForge serves it through its API now",
+				}},
+			},
+		},
+		{
+			"manual_only_cleared",
+			core.ManualOnlyCleared{
+				SourceID: "curseforge", ModID: "238222", Name: "Opted Back In",
+				Message: "Opted Back In: automatic downloads are available again - CurseForge serves it through its API now",
+			},
+		},
+		{
 			// #587: lmm serve's automatic pass, waiting for the game to
 			// close before applying the auto-policy update the check found.
 			"update_check_report_auto_update_waiting",

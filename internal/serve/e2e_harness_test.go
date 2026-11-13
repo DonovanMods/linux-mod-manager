@@ -1543,7 +1543,16 @@ func (s *e2eSearchSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, f
 	return s.server.URL + "/" + mod.ID + "/" + fileID, nil
 }
 
-func (s *e2eSearchSource) CheckUpdates(_ context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+func (s *e2eSearchSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	// #627: a mod whose catalog entry carries the source's classification
+	// is reported with it, as curseforge's check reports every mod it
+	// fetches. Only those: a report also backfills category names, which
+	// the scenarios written before it do not expect.
+	for _, im := range installed {
+		if entry, ok := s.mods[im.ID]; ok && entry.mod.Distributable != nil {
+			source.ReportFetchedMod(ctx, domain.Mod{ID: im.ID, SourceID: s.id, GameID: im.GameID, Distributable: entry.mod.Distributable})
+		}
+	}
 	if s.fileIDUpdates != nil {
 		return s.fileIDCheck(installed), nil
 	}

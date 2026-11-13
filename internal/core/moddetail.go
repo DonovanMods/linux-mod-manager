@@ -138,6 +138,10 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		s.resolveAuthorNames(ctx, sourceID, mod)
 	}
 	detail := &ModDetail{Mod: mod}
+	// #627: a source that says it serves the mod clears lmm's record first.
+	if liveSource && explicitlyDistributable(mod) {
+		s.clearManualOnly(ctx, game.ID, sourceID, modID)
+	}
 	// #543: the source's own classification, or a refusal lmm recorded -
 	// installed or not, since a refused install is when the user looks.
 	mod.ManualOnly = mod.ManualOnly || s.manualOnlyRecorded(ctx, game.ID, sourceID, modID)

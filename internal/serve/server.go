@@ -122,6 +122,10 @@ type Server struct {
 	// the job in flight per game/profile, the re-links made and the ones
 	// that failed. Process-lifetime, like jobs.
 	autoRelinks autoRelinker
+	// manualOnlyCleared is the manual-only mods the server's update checks
+	// cleared (#627, manual_only_cleared.go), said on every report until
+	// the user's explicit check. Process-lifetime, like jobs.
+	manualOnlyCleared manualOnlyNotices
 
 	// uploads indexes the archives a browser has streamed into the
 	// service's staging directory, awaiting an import (uploads.go). Like

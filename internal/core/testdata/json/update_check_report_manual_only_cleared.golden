@@ -1,0 +1,17 @@
+{
+  "game_id": "minecraft",
+  "profile": "default",
+  "updates": [],
+  "skipped": {
+    "pinned": 0,
+    "local": 0
+  },
+  "manual_only_cleared": [
+    {
+      "source_id": "curseforge",
+      "mod_id": "238222",
+      "name": "Opted Back In",
+      "message": "Opted Back In: automatic downloads are available again - CurseForge serves it through its API now"
+    }
+  ]
+}

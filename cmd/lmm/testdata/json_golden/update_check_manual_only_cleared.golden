@@ -1,0 +1,84 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "updates": [
+    {
+      "installed_mod": {
+        "id": "modA",
+        "source_id": "test-src",
+        "name": "Mod A",
+        "version": "1.0",
+        "author": "",
+        "summary": "",
+        "description": "",
+        "game_id": "g1",
+        "category": "",
+        "downloads": 0,
+        "picture_url": "",
+        "source_url": "https://example.test/mods/mod-a",
+        "files": [],
+        "dependencies": [],
+        "profile_name": "default",
+        "update_policy": "notify",
+        "installed_at": "<TIME>",
+        "last_updated_at": "<TIME>",
+        "enabled": true,
+        "deployed": true,
+        "link_method": "symlink",
+        "file_ids": [
+          "a-old"
+        ],
+        "manual_download": false,
+        "convert_paks": true
+      },
+      "new_version": "2.0",
+      "recompile_needed": false,
+      "locked": false
+    },
+    {
+      "installed_mod": {
+        "id": "modB",
+        "source_id": "test-src",
+        "name": "Mod B",
+        "version": "1.0",
+        "author": "",
+        "summary": "",
+        "description": "",
+        "game_id": "g1",
+        "category": "",
+        "downloads": 0,
+        "picture_url": "",
+        "source_url": "",
+        "files": [],
+        "dependencies": [],
+        "profile_name": "default",
+        "update_policy": "notify",
+        "installed_at": "<TIME>",
+        "last_updated_at": "<TIME>",
+        "enabled": true,
+        "deployed": true,
+        "link_method": "symlink",
+        "file_ids": [
+          "b-old"
+        ],
+        "manual_download": false,
+        "convert_paks": true
+      },
+      "new_version": "2.0",
+      "recompile_needed": false,
+      "locked": false
+    }
+  ],
+  "skipped": {
+    "pinned": 0,
+    "local": 0
+  },
+  "manual_only_cleared": [
+    {
+      "source_id": "test-src",
+      "mod_id": "modA",
+      "name": "Mod A",
+      "message": "Mod A: automatic downloads are available again - Fake Update Source serves it through its API now"
+    }
+  ]
+}
