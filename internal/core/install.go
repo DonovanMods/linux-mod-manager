@@ -2499,6 +2499,12 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	cacheWarm := !servesLocalFiles &&
 		len(plannedFileIDs) > 0 &&
 		downloadCache.HasFileIDs(warmKey, plannedFileIDs)
+	if cacheWarm && expectedVariant == "" && holdsFomodInstaller(downloadCache, warmKey) {
+		// #614: a plain entry that still holds a FOMOD installer is a legacy
+		// raw install's (another profile's, from before lmm ran installers):
+		// not this install's tree. Download and resolve, which asks.
+		cacheWarm = false
+	}
 	if cacheWarm && expectedVariant != "" {
 		// The entry these choices build is cached: nothing to resolve.
 		mod.Variant = expectedVariant
