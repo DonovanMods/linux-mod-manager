@@ -83,9 +83,10 @@ export function initialState() {
     // versionsError}. filesReport (core.ModFilesReport) is the PRIMARY
     // read - error is fatal, and only ever set from IT, never from detail/
     // versions, which are optional (main.js's hydrateModPage doc comment
-    // explains why). key is "source/id" - the same fencing modalSeq gives
-    // a slow plan, applied to a fetch that resolves after the user has
-    // already arrowed or linked away to a different mod. null until that
+    // explains why). key is router.js#modPageKey (game, profile, source,
+    // id) - the same fencing modalSeq gives a slow plan, applied to a fetch
+    // that resolves after the user has already arrowed or linked away to a
+    // different mod, or to the same mod in another profile. null until that
     // route is visited at least once.
     modPage: null,
     // jobsIndex is the activity tray's rows: every job the registry still

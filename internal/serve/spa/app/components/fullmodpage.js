@@ -48,7 +48,7 @@
 // what ApplyRollback/ApplyUpdate would refuse server-side anyway.
 
 import { html, useEffect, useMemo, useState } from "../render.js";
-import { contextPath } from "../router.js";
+import { contextPath, modPageKey } from "../router.js";
 import { loadModJobHistory, candidateJobKey } from "../jobhistory.js";
 import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
@@ -78,7 +78,7 @@ import {
 export function FullModPage({ state, route, onThemeChange, actions }) {
   const home = contextPath(route.game, route.profile);
   const modPage = state.modPage;
-  const key = `${route.sourceID}/${route.modID}`;
+  const key = modPageKey(route);
 
   const header = html`
     <${AwayBar}

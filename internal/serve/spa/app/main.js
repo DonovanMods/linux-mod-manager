@@ -13,6 +13,7 @@ import {
   onRouteChange,
   navigate,
   documentTitle,
+  modPageKey,
 } from "./router.js";
 import { currentTheme, setTheme } from "./theme.js";
 import { installTooltips } from "./tooltip.js";
@@ -543,9 +544,12 @@ function cancelDeferredHealthRetry() {
  * this page's EXTRAS, never blanks the identity/files a real install
  * record already answered for.
  *
- * modPage.key ("source/id") fences a stale write the same way modalSeq
- * does: a slow fetch for a mod the user has already arrowed away from must
- * not land on the page after the faster one for the mod now on screen.
+ * modPage.key (router.js#modPageKey: game, profile, source and id) fences a
+ * stale write the same way modalSeq does: a slow fetch for a mod the user
+ * has already arrowed away from must not land on the page after the faster
+ * one for the mod now on screen. The context is part of it because every
+ * document here is profile-scoped: the same mod reached in another profile
+ * (Back, or a link) is a navigation, not a re-hydrate.
  *
  * A RE-hydrate (onJobDone runs this on every job completion, not just a
  * route change) for the mod ALREADY on screen must not blank it - the same
@@ -556,7 +560,7 @@ function cancelDeferredHealthRetry() {
  * on screen through the re-hydrate a job's own completion triggers.
  */
 async function hydrateModPage(route, context, seq = hydrateSeq) {
-  const key = `${route.sourceID}/${route.modID}`;
+  const key = modPageKey(route);
   // The per-key fence (slices) covers what modPage.key cannot: two loads of
   // the SAME mod page - the pair refreshAfterModSetting and onJobDone
   // create - are equally capable of landing out of order, and this function
@@ -620,6 +624,18 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
   // and updates to null. The newer hydration has already written its
   // extras by then, so they stay blank until something hydrates again.
   // Narrow, but it is the class C-1 closed everywhere else.
+  //
+  // A RE-hydrate keeps the extras already on screen until its own answers
+  // replace them below (issue 615 follow-up). Blanking them here took down
+  // everything the live detail gates - the Reconfigure installer… button
+  // among them - for the one render between this write and the next, so
+  // the button a just-closed modal had returned focus to was unmounted and
+  // a new one mounted in its place: focus fell to <body>. The extras are
+  // this same mod's, in this same game and profile (key is checked just
+  // above, and modPageKey carries the context), and the extras commit
+  // below overwrites each field this load is current for, so nothing stale
+  // outlives the re-read.
+  const prior = reHydrating ? store.get().modPage : null;
   if (
     !commitSlices(
       seq,
@@ -631,11 +647,11 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
           // When this files report was asked for (issue 454 N1).
           filesStamp: pageClaim.get("modPage").stamp,
           error: null,
-          detail: null,
-          detailError: null,
-          versions: null,
-          versionsError: null,
-          updates: null,
+          detail: prior?.detail ?? null,
+          detailError: prior?.detailError ?? null,
+          versions: prior?.versions ?? null,
+          versionsError: prior?.versionsError ?? null,
+          updates: prior?.updates ?? null,
         },
       },
       {},
