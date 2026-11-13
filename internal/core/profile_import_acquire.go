@@ -192,7 +192,7 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 			result.Warnings = append(result.Warnings, msg)
 			emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
 		}
-		if cerr := s.recordImportedRef(ctx, pm, game.ID, profileName, modRef, scope, result, emit); cerr != nil {
+		if cerr := s.recordImportedRef(ctx, pm, game.ID, profileName, modRef, fomodRecord{op: fomodKeep}, scope, result, emit); cerr != nil {
 			return cerr
 		}
 		result.countImported(deploy)
@@ -241,8 +241,9 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 		emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
 	}
 
-	modRef := withFomod(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: st.fileIDs}, st.fomod)
-	if cerr := s.recordImportedRef(ctx, pm, game.ID, profileName, modRef, scope, result, emit); cerr != nil {
+	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: st.fileIDs}
+	fomodRec := fomodRecordOf(st.fomod)
+	if cerr := s.recordImportedRef(ctx, pm, game.ID, profileName, modRef, fomodRec, scope, result, emit); cerr != nil {
 		return cerr
 	}
 	result.countImported(deploy)

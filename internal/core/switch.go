@@ -878,37 +878,31 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				}
 			} else {
 				mod.Variant = ""
-				downloadFailed := false
-				for _, file := range filesToDownload {
-					progressFn := func(e Event) {
-						if forwardFetchStep(e, scope, emit) {
-							return
-						}
-						d, ok := e.(DownloadEvent)
-						if !ok || d.TotalBytes <= 0 {
-							return
-						}
-						emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
+				progressFn := func(e Event) {
+					if forwardFetchStep(e, scope, emit) {
+						return
 					}
-					downloadResult, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, fx, progressFn)
-					if err == nil && downloadResult.fomod != nil {
-						resolved = downloadResult.fomod
+					d, ok := e.(DownloadEvent)
+					if !ok || d.TotalBytes <= 0 {
+						return
 					}
-					if err != nil {
-						// Not fail(): SwitchDownloadFailed renders this
-						// mod's Error line already.
-						failed.Reason = fmt.Sprintf("download failed: %v", err)
-						result.recordFailure(failed, version)
-						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: failed.Reason})
-						downloadFailed = true
-						break
-					}
-					checksums = appendChecksum(checksums, file.ID, downloadResult)
+					emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
+				}
+				results, got, err := s.downloadModFiles(ctx, s.GetGameCache(game), ref.SourceID, game, mod, filesToDownload, fx,
+					modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }})
+				if err != nil {
+					// Not fail(): SwitchDownloadFailed renders this
+					// mod's Error line already.
+					failed.Reason = fmt.Sprintf("download failed: %v", err)
+					result.recordFailure(failed, version)
+					emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: failed.Reason})
+					emit(StepEvent{Scope: scope, Phase: SwitchDownloadDone})
+					continue
 				}
 				emit(StepEvent{Scope: scope, Phase: SwitchDownloadDone})
-
-				if downloadFailed {
-					continue
+				resolved = got
+				for i, file := range filesToDownload {
+					checksums = appendChecksum(checksums, file.ID, results[i])
 				}
 			}
 
@@ -970,9 +964,10 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				emit(WarningEvent{Scope: scope, Phase: SwitchInstallWarning, Message: msg})
 			}
 
-			modRef := withFomod(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}, resolved)
+			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
+			fomodRec := fomodRecordOf(resolved)
 			if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-				return pm.UpsertMod(ctx, game.ID, plan.To, modRef)
+				return pm.upsertMod(ctx, game.ID, plan.To, modRef, fomodRec)
 			}); err != nil {
 				// Ruling 16 (A): the DB row and the deployment are already in
 				// place, so the ref that completes them is written even under

@@ -708,7 +708,7 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 		hooks:     hooks,
 		runner:    runner,
 		hookCtx:   hookContextFor(game),
-		fomod:     imported.fomod,
+		fomod:     cmpFomod(imported.fomod),
 	}, UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks}, result, emit)
 	if err != nil {
 		s.discardUpdateArchiveEntry(game, plan, newMod.Variant, warn)

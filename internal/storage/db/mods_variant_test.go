@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
@@ -148,4 +149,28 @@ func TestSwapModVersions_SwapsVariants(t *testing.T) {
 	require.NoError(t, database.SwapModVersions(ctx, "nexusmods", "12345", "skyrim-se", "default"))
 	version, variant, prevVersion, prevVariant = readVariants(t, database)
 	assert.Equal(t, []string{"2.0", "aaaaaaaaaaaa", "1.0", ""}, []string{version, variant, prevVersion, prevVariant})
+}
+
+// TestPreviousFomod_RoundTripsAndIsSetOnItsOwn (#614): the choices the
+// previous version was installed with survive a save and a read, and
+// SetModPreviousFomod writes that one column.
+func TestPreviousFomod_RoundTripsAndIsSetOnItsOwn(t *testing.T) {
+	database := variantTestDB(t)
+	ctx := context.Background()
+	choices := domain.FomodChoices{ConfigSHA256: "ab", Steps: []fomod.StepChoice{{Name: "Main", Groups: []fomod.GroupChoice{{Name: "T", Choices: []fomod.OptionChoice{{Name: "4K", Idx: 1}}}}}}}
+	row := variantRow("aaaaaaaaaaaa")
+	row.PreviousFomod = choices
+	require.NoError(t, database.SaveInstalledMod(ctx, row))
+	got, err := database.GetInstalledMod(ctx, "nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.True(t, choices.Equal(got.PreviousFomod))
+	mods, err := database.GetInstalledMods(ctx, "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.True(t, choices.Equal(mods[0].PreviousFomod))
+
+	require.NoError(t, database.SetModPreviousFomod(ctx, "nexusmods", "12345", "skyrim-se", "default", domain.FomodChoices{}))
+	got, err = database.GetInstalledMod(ctx, "nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.True(t, got.PreviousFomod.IsZero())
+	assert.ErrorIs(t, database.SetModPreviousFomod(ctx, "nexusmods", "nope", "skyrim-se", "default", choices), domain.ErrModNotFound)
 }

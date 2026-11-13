@@ -47,9 +47,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -85,6 +87,16 @@ func fomodVariant(c domain.FomodChoices) string {
 	h := sha256.New()
 	_, _ = io.WriteString(h, fomodVariantScheme+"\n"+c.ConfigSHA256+"\n")
 	_, _ = h.Write(enc)
+	// The file states the installer consulted are tree inputs too (a
+	// conditional install, an option's type): sorted, so the hash is
+	// independent of the order they were tested in.
+	if len(c.FileStates) > 0 {
+		paths := slices.Sorted(maps.Keys(c.FileStates))
+		_, _ = io.WriteString(h, "\nfiles")
+		for _, p := range paths {
+			_, _ = io.WriteString(h, "\n"+strconv.Quote(p)+" "+c.FileStates[p])
+		}
+	}
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
@@ -111,6 +123,9 @@ type fomodInput struct {
 	// reconfigure): the question carries them as its preselection. An
 	// answered input never asks for this reason.
 	ask bool
+	// raw installs the archive as it is, never running an installer in it:
+	// the rebuild of a row installed before FOMOD support (rebuildInput).
+	raw bool
 }
 
 // fomodResolved is one archive's resolve outcome.
@@ -137,6 +152,9 @@ const maxFomodQuestionSteps = 1000
 // holds exactly what the installer installs, and the outcome names its
 // variant and the choices to record.
 func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fomodInput) (*fomodResolved, error) {
+	if in.raw {
+		return nil, nil
+	}
 	listed, err := relativeFileMembers(tree)
 	if err != nil {
 		return nil, fmt.Errorf("listing extracted members: %w", err)
@@ -178,12 +196,13 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 	}
 
 	recorded := !in.choices.IsZero()
-	req := fomod.Request{Choices: in.choices.Steps, Mode: fomod.ModeDefaults, Files: in.files, Members: rels}
+	// A REPLAY of a recording fills an unanswered group as Vortex's
+	// headless replay does; a fresh answer, a reconfigure (#615) or none
+	// gets the dialog's preselection (design §4), which is what a question
+	// then shows.
+	consulted := &recordingFileStates{inner: in.files, seen: map[string]fomod.FileState{}}
+	req := fomod.Request{Choices: in.choices.Steps, Mode: fomod.ModeDefaults, Files: consulted, Members: rels}
 	if recorded && !in.answered && !in.ask {
-		// A replay fills what it does not answer as Vortex's headless
-		// replay does. A fresh answer (or a reconfigure) keeps the dialog's
-		// preselection - Recommended included - for the groups it has not
-		// reached yet (#615): those are what the next question shows.
 		req.Mode = fomod.ModeReplay
 	}
 	res, err := fomod.Evaluate(cfg, req)
@@ -222,7 +241,7 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 	if err != nil {
 		return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: "installing its chosen files failed: " + err.Error(), err: err}
 	}
-	choices := domain.FomodChoices{ConfigSHA256: configSHA, Steps: res.Choices}
+	choices := domain.FomodChoices{ConfigSHA256: configSHA, Steps: res.Choices, FileStates: consulted.outcomes()}
 	if choices.Steps == nil {
 		choices.Steps = []fomod.StepChoice{}
 	}
@@ -407,4 +426,37 @@ func fomodQuestion(mod *domain.Mod, inst *fomod.Installer, cfg *fomod.Config, co
 		q.Violations = append(q.Violations, FomodRuleViolation{Step: v.Step, Group: v.Group, Type: v.Type.String(), Selected: v.Selected})
 	}
 	return q
+}
+
+// recordingFileStates answers through inner and remembers every path the
+// installer tested and the state it got: those outcomes are tree inputs,
+// recorded with the choices and folded into the variant (#614).
+type recordingFileStates struct {
+	inner fomod.FileStates
+	seen  map[string]fomod.FileState
+}
+
+// State implements fomod.FileStates.
+func (r *recordingFileStates) State(path string) fomod.FileState {
+	if st, ok := r.seen[path]; ok {
+		return st
+	}
+	st := fomod.FileMissing
+	if r.inner != nil {
+		st = r.inner.State(path)
+	}
+	r.seen[path] = st
+	return st
+}
+
+// outcomes is what was consulted, by state name; nil when nothing was.
+func (r *recordingFileStates) outcomes() map[string]string {
+	if len(r.seen) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(r.seen))
+	for p, st := range r.seen {
+		out[p] = st.String()
+	}
+	return out
 }

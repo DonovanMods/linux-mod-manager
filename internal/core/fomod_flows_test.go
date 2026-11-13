@@ -510,3 +510,178 @@ func TestFomodInstall_CancellationAtTheProfileWriteKeepsTheChoicesPaired(t *test
 		})
 	}
 }
+
+// conditionalZip is an installer whose conditional install adds patch.txt
+// when dep.esp is active - a tree that depends on the profile's files.
+func conditionalZip(t *testing.T) []byte {
+	t.Helper()
+	cfg := strings.Replace(flowModuleConfig("4K"), "</installSteps>", `</installSteps>
+<conditionalFileInstalls><patterns><pattern><dependencies><fileDependency file="dep.esp" state="Active"/></dependencies>
+<files><file source="core\plugin.esp" destination="patch.txt"/></files></pattern></patterns></conditionalFileInstalls>`, 1)
+	zipPath := createTestZip(t, t.TempDir(), map[string]string{
+		"fomod/ModuleConfig.xml": cfg,
+		"core/plugin.esp":        "PLUGIN",
+		"tex/2k.dds":             "2K",
+		"tex/4k.dds":             "4K",
+	})
+	b, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	return b
+}
+
+// TestFomodFileStates_AreTheTargetProfilesAndPartOfTheVariant (#614 review
+// B2): the same choices in two profiles - one with the mod that provides
+// dep.esp, one without - are two trees and two cache variants, and a switch
+// evaluates the installer against the profile it switches TO, not the
+// deployed one.
+func TestFomodFileStates_AreTheTargetProfilesAndPartOfTheVariant(t *testing.T) {
+	f := newFomodFixture(t)
+	ctx := context.Background()
+	pm := f.svc.NewProfileManager()
+	depZip := createTestZip(t, t.TempDir(), map[string]string{"dep.esp": "DEP"})
+	dep, err := os.ReadFile(depZip)
+	require.NoError(t, err)
+	f.mock.AddDownload("dep", dep)
+	f.mock.AddMod("g1", &domain.Mod{ID: "dep", SourceID: "src", Name: "Dep", Version: "1.0", GameID: "g1"})
+	f.mock.AddDownload("mod1", conditionalZip(t))
+	f.mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod mod1", Version: "1.0", GameID: "g1"})
+
+	// default: dep first, then the FOMOD mod, which sees dep.esp.
+	_, err = f.install(t, "dep", nil)
+	require.NoError(t, err)
+	_, err = f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, "g1", "default"))
+	assert.Equal(t, "PLUGIN", f.deployed(t, "patch.txt"), "dep.esp is active in this profile")
+	defRef := f.ref(t, "default", "mod1")
+	assert.Equal(t, map[string]string{"dep.esp": "Active"}, defRef.Fomod.FileStates, "the outcome is recorded with the choices")
+
+	// alt lists the FOMOD mod with the same choices, and not dep.
+	_, err = pm.Create(ctx, "g1", "alt")
+	require.NoError(t, err)
+	alt, err := pm.Get(ctx, "g1", "alt")
+	require.NoError(t, err)
+	alt.Mods = []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0", Fomod: answer("4K")}}
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), alt))
+
+	plan, err := f.svc.PlanProfileSwitch(ctx, f.game, "alt")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
+	require.NoError(t, err)
+	// alt has no dep.esp: the switch evaluated the installer against alt,
+	// though default's dep.esp was on disk. (The old tree's patch.txt link
+	// is left where it was: a cross-profile Replace judges ownership by the
+	// target profile's ledger, as it does for any version drift.)
+	altRowNow, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "alt")
+	require.NoError(t, err)
+	altFiles, err := f.svc.GetGameCache(f.game).ListFiles(cacheKeyOf(altRowNow))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"plugin.esp", filepath.Join("textures", "t.dds")}, altFiles, "alt's tree has no patch")
+	altDeployed, err := f.svc.GetDeployedFilesForMod(ctx, "g1", "alt", "src", "mod1")
+	require.NoError(t, err)
+	assert.NotContains(t, altDeployed, "patch.txt")
+	assert.Equal(t, "4K", f.deployed(t, "textures/t.dds"))
+	altRef := f.ref(t, "alt", "mod1")
+	assert.Equal(t, map[string]string{"dep.esp": "Missing"}, altRef.Fomod.FileStates)
+
+	defRow, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	altRow, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "alt")
+	require.NoError(t, err)
+	assert.NotEqual(t, defRow.Variant, altRow.Variant, "two trees, two variants, though the choices are the same")
+	assert.Equal(t, core.FomodVariantForTest(altRef.Fomod), altRow.Variant)
+
+	// And back: default's tree, from its own warm entry, with the patch.
+	plan, err = f.svc.PlanProfileSwitch(ctx, f.game, "default")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
+	require.NoError(t, err)
+	defDeployed, err := f.svc.GetDeployedFilesForMod(ctx, "g1", "default", "src", "mod1")
+	require.NoError(t, err)
+	assert.Contains(t, defDeployed, "patch.txt", "default deploys its own tree again")
+}
+
+// TestFomodReinstall_RawAnswersUseTheTransaction (#614 review should-fix
+// 3): answers without a config hash name no cache entry, so a reinstall
+// with them always downloads - into the reinstall transaction's staging,
+// never over the live entry - and lands on the right tree whether the
+// answers are the same as the installed ones or not.
+func TestFomodReinstall_RawAnswersUseTheTransaction(t *testing.T) {
+	f := newFomodFixture(t)
+	f.serve(t, "mod1", "1.0", "4K", "v1")
+	ctx := context.Background()
+	_, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+	first, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+
+	_, err = f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+	same, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, first.Variant, same.Variant, "the same answers are the same tree")
+	assert.Equal(t, "4K-v1", f.deployed(t, "textures/t.dds"))
+
+	_, err = f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("2K")})
+	require.NoError(t, err)
+	other, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Variant, other.Variant)
+	assert.Equal(t, "2K-v1", f.deployed(t, "textures/t.dds"))
+	c := f.svc.GetGameCache(f.game)
+	assert.True(t, c.Exists(cacheKeyOf(other)))
+	assert.False(t, c.Exists(cacheKeyOf(first)), "the replaced tree's entry goes, as any replaced entry does")
+}
+
+// twoFileSource serves a mod as two files: a plain archive FIRST, then the
+// FOMOD installer.
+type twoFileSource struct {
+	*mockSourceWithDownloads
+}
+
+func (s *twoFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return []domain.DownloadableFile{
+		{ID: "extra", Name: "Extra", FileName: "extra.zip", IsPrimary: true},
+		{ID: "installer", Name: "Installer", FileName: "installer.zip"},
+	}, nil
+}
+
+// TestFomodInstall_InstallerNotTheFirstFileIsOneEntry (#614 review): a mod
+// whose installer is its SECOND file lands in one cache entry, the
+// resolved variant's, holding both files' trees - no stray plain entry.
+func TestFomodInstall_InstallerNotTheFirstFileIsOneEntry(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	src := &twoFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	t.Cleanup(src.Close)
+	svc.RegisterSource(src)
+	extra := createTestZip(t, t.TempDir(), map[string]string{"extra.esp": "EXTRA"})
+	b, err := os.ReadFile(extra)
+	require.NoError(t, err)
+	src.AddDownload("extra", b)
+	src.AddDownload("installer", fomodZip(t, "4K", "v1"))
+	src.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	ctx := context.Background()
+
+	plan, err := svc.PlanInstall(ctx, game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	_, err = svc.ApplyInstall(ctx, game, plan, core.InstallOptions{TargetFileIDs: []string{"extra", "installer"},
+		Fomod: map[string]domain.FomodChoices{"src:mod1": answer("4K")}}, nil)
+	require.NoError(t, err)
+
+	row, err := svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	require.NotEmpty(t, row.Variant)
+	c := svc.GetGameCache(game)
+	files, err := c.ListFiles(cacheKeyOf(row))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"extra.esp", "plugin.esp", filepath.Join("textures", "t.dds")}, files)
+	plain := cacheKeyOf(row)
+	plain.Variant = ""
+	assert.False(t, c.Exists(plain), "no stray plain entry from the first file")
+	for _, rel := range []string{"extra.esp", "plugin.esp", "textures/t.dds"} {
+		_, err := os.Stat(filepath.Join(gameDir, filepath.FromSlash(rel)))
+		assert.NoError(t, err, rel)
+	}
+}

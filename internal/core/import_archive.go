@@ -923,17 +923,18 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		}
 		note(ImportArchiveProfileNote, "Warning: could not create profile: %v", err)
 	}
-	modRef := withFomod(domain.ModReference{
+	modRef := domain.ModReference{
 		SourceID: result.Mod.SourceID,
 		ModID:    result.Mod.ID,
 		Version:  result.Mod.Version,
 		FileIDs:  result.FileIDs,
-	}, imported.fomod)
+	}
+	fomodRec := fomodRecordOf(cmpFomod(imported.fomod))
 	// Ruling 16 (A): the DB row is already saved, so the profile ref that
 	// completes it is written even under a cancelled ctx; the cancellation
 	// itself is then fatal rather than a Note.
 	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.UpsertMod(ctx, game.ID, profileName, modRef)
+		return pm.upsertMod(ctx, game.ID, profileName, modRef, fomodRec)
 	}); err != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			return result, cerr

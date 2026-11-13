@@ -25,7 +25,7 @@ func TestMigrateV24_AddsVariantColumnsAndIsIdempotent(t *testing.T) {
 
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	assert.Equal(t, 24, version)
+	assert.Equal(t, 25, version)
 
 	_, err = d.Exec(`INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, summary, source_url, link_method)
 		VALUES ('s', 'm', 'g', 'default', 'n', '1', '', '', '', 0)`)
@@ -51,7 +51,8 @@ func TestMigrateV24_MigratesAV23Database(t *testing.T) {
 	for _, stmt := range []string{
 		`ALTER TABLE installed_mods DROP COLUMN variant`,
 		`ALTER TABLE installed_mods DROP COLUMN previous_variant`,
-		`DELETE FROM schema_migrations WHERE version = 24`,
+		`ALTER TABLE installed_mods DROP COLUMN previous_fomod`,
+		`DELETE FROM schema_migrations WHERE version >= 24`,
 	} {
 		_, err := d.Exec(stmt)
 		require.NoError(t, err, stmt)
@@ -64,11 +65,12 @@ func TestMigrateV24_MigratesAV23Database(t *testing.T) {
 
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	assert.Equal(t, 24, version)
+	assert.Equal(t, 25, version, "V24 and V25 both ran")
 	row, err := d.GetInstalledMod(ctx, "s", "m", "g", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", row.Version)
 	assert.Equal(t, "1.0", row.PreviousVersion)
 	assert.Empty(t, row.Variant, "a pre-existing row is the plain tree")
 	assert.Empty(t, row.PreviousVariant)
+	assert.True(t, row.PreviousFomod.IsZero())
 }

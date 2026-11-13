@@ -942,9 +942,9 @@ func (s *Service) rowChecksums(ctx context.Context, game *domain.Game, row domai
 // than swallowed into a note; anything else is the note. A write that
 // SUCCEEDED returns nil whatever the ctx says, so the caller counts the mod
 // it genuinely finished and stops at its next top-of-loop check.
-func (s *Service) recordImportedRef(ctx context.Context, pm *ProfileManager, gameID, profileName string, ref domain.ModReference, scope Scope, result *ProfileImportResult, emit func(Event)) error {
+func (s *Service) recordImportedRef(ctx context.Context, pm *ProfileManager, gameID, profileName string, ref domain.ModReference, fomodRec fomodRecord, scope Scope, result *ProfileImportResult, emit func(Event)) error {
 	err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.UpsertMod(ctx, gameID, profileName, ref)
+		return pm.upsertMod(ctx, gameID, profileName, ref, fomodRec)
 	})
 	if err == nil {
 		return nil

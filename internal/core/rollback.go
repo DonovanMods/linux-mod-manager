@@ -400,6 +400,14 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
 
+	// #614: the choices the rolled-away-from version was installed with,
+	// read before the swap: they become previous_fomod, and the row's
+	// previous_fomod becomes the profile's choices again.
+	var currentFomod domain.FomodChoices
+	if cur := s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID); cur != nil {
+		currentFomod = cur.Fomod
+	}
+
 	if err := s.rollbackModVersion(ctx, mod.SourceID, mod.ID, game.ID, profileName); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		if rerr := installer.ReplaceForUpdate(context.WithoutCancel(ctx), game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs); rerr != nil {
@@ -426,7 +434,14 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 		Version:  rolledBackMod.Version,
 		FileIDs:  rolledBackMod.FileIDs,
 	}
-	if err := pm.UpsertMod(ctx, game.ID, profileName, restoredRef); err != nil {
+	restoredRec := fomodRecord{op: fomodClear}
+	if !mod.PreviousFomod.IsZero() {
+		restoredRec = fomodRecord{op: fomodSet, choices: mod.PreviousFomod}
+	}
+	if err := s.db.SetModPreviousFomod(context.WithoutCancel(ctx), mod.SourceID, mod.ID, game.ID, profileName, currentFomod); err != nil {
+		s.logger().Debug("recording previous FOMOD choices", "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
+	}
+	if err := pm.upsertMod(ctx, game.ID, profileName, restoredRef, restoredRec); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
 		if rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName); rerr != nil {
