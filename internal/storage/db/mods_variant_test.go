@@ -130,3 +130,22 @@ func TestModVersionRows_CarriesVariants(t *testing.T) {
 	assert.Equal(t, "aaaaaaaaaaaa", rows[0].Variant)
 	assert.Equal(t, "cccccccccccc", rows[0].PreviousVariant)
 }
+
+// TestSwapModVersions_SwapsVariants: rollback swaps the variant with the
+// version, both ways.
+func TestSwapModVersions_SwapsVariants(t *testing.T) {
+	database := variantTestDB(t)
+	ctx := context.Background()
+	row := variantRow("aaaaaaaaaaaa")
+	row.Version, row.PreviousVersion, row.PreviousVariant = "2.0", "1.0", ""
+	require.NoError(t, database.SaveInstalledMod(ctx, row))
+
+	require.NoError(t, database.SwapModVersions(ctx, "nexusmods", "12345", "skyrim-se", "default"))
+	version, variant, prevVersion, prevVariant := readVariants(t, database)
+	assert.Equal(t, []string{"1.0", "", "2.0", "aaaaaaaaaaaa"}, []string{version, variant, prevVersion, prevVariant},
+		"a plain previous version swaps in, and the variant moves to previous")
+
+	require.NoError(t, database.SwapModVersions(ctx, "nexusmods", "12345", "skyrim-se", "default"))
+	version, variant, prevVersion, prevVariant = readVariants(t, database)
+	assert.Equal(t, []string{"2.0", "aaaaaaaaaaaa", "1.0", ""}, []string{version, variant, prevVersion, prevVariant})
+}

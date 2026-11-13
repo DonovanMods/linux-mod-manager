@@ -748,9 +748,22 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 				note(ImportArchiveNote, "Warning: could not rename cache entry: %v", err)
 			} else if err := os.Rename(oldPath, newPath); err != nil {
 				note(ImportArchiveNote, "Warning: could not rename cache entry: %v", err)
+			} else if err := cache.StampKey(newPath, newKey); err != nil && newKey.Variant != "" {
+				// A variant entry needs its marker to be its key's
+				// (cache.CheckKey): undo the rename, the same outcome as a
+				// rename that failed.
+				if undoErr := os.Rename(newPath, oldPath); undoErr != nil {
+					result.Renamed = true
+					note(ImportArchiveNote, "Warning: could not stamp the renamed cache entry: %v (and moving it back failed: %v)", err, undoErr)
+				} else {
+					note(ImportArchiveNote, "Warning: could not rename cache entry: %v", err)
+				}
 			} else {
 				result.Renamed = true
-				if err := cache.StampKey(newPath, newKey); err != nil {
+				if err != nil {
+					// A plain entry with its old key's marker is stale, and
+					// a stale marker reads as legacy plain (cache.CheckKey):
+					// the entry is still this key's.
 					note(ImportArchiveNote, "Warning: could not stamp the renamed cache entry: %v", err)
 				}
 			}

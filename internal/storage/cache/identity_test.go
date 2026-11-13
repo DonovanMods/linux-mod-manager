@@ -119,14 +119,16 @@ func TestIdentity_StoreClaimsItsEntry(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(c.ModPath(collidingPlain), "b.pak"))
 }
 
-// TestIdentity_DeleteLeavesAnotherKeysEntry: deleting a key whose directory
-// belongs to a colliding key removes nothing - uninstalling the plain
-// version must not take the variant's files with it.
-func TestIdentity_DeleteLeavesAnotherKeysEntry(t *testing.T) {
+// TestIdentity_DeleteRefusesAnotherKeysEntry: deleting a key whose
+// directory belongs to a colliding key removes nothing and says so -
+// uninstalling the plain version must not take variant "abc" of version
+// "1.0" with it, nor report a removal that did not happen.
+func TestIdentity_DeleteRefusesAnotherKeysEntry(t *testing.T) {
 	c := cache.New(t.TempDir())
 	require.NoError(t, c.Store(collidingVariant, "a.pak", []byte("x")))
 
-	require.NoError(t, c.Delete(collidingPlain))
+	var collision *cache.KeyCollisionError
+	require.ErrorAs(t, c.Delete(collidingPlain), &collision)
 	assert.True(t, c.Exists(collidingVariant))
 	assert.FileExists(t, filepath.Join(c.ModPath(collidingVariant), "a.pak"))
 
@@ -134,38 +136,81 @@ func TestIdentity_DeleteLeavesAnotherKeysEntry(t *testing.T) {
 	assert.NoDirExists(t, c.ModPath(collidingVariant))
 }
 
-// TestIdentity_UnreadableMarkerIsNotAMatch: a marker that cannot be parsed
-// vouches for no key, so neither colliding key claims the entry.
-func TestIdentity_UnreadableMarkerIsNotAMatch(t *testing.T) {
-	c := cache.New(t.TempDir())
-	dir := c.ModPath(collidingPlain)
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.KeyMarkerName), []byte("garbage"), 0o644))
+// TestIdentity_GarbledMarkerIsLegacy: an empty or unparseable marker (a
+// crash mid-write, a hand edit) vouches for no key, so the entry is legacy:
+// a plain key still owns it - it exists, a commit may claim it, and a
+// delete removes it - while a variant key is refused.
+func TestIdentity_GarbledMarkerIsLegacy(t *testing.T) {
+	for name, body := range map[string]string{"empty": "", "garbage": "garbage", "half": "lmm cache key 1\nversion \"1.0"} {
+		t.Run(name, func(t *testing.T) {
+			c := cache.New(t.TempDir())
+			dir := c.ModPath(collidingPlain)
+			require.NoError(t, os.MkdirAll(dir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, cache.KeyMarkerName), []byte(body), 0o644))
 
-	assert.False(t, c.Exists(collidingPlain))
-	assert.False(t, c.Exists(collidingVariant))
-	var collision *cache.KeyCollisionError
-	assert.True(t, errors.As(c.Claim(collidingPlain), &collision))
+			assert.True(t, c.Exists(collidingPlain))
+			assert.NoError(t, c.Claim(collidingPlain))
+			assert.False(t, c.Exists(collidingVariant))
+			var collision *cache.KeyCollisionError
+			assert.True(t, errors.As(c.Claim(collidingVariant), &collision))
+
+			require.NoError(t, c.Delete(collidingPlain))
+			assert.NoDirExists(t, dir, "a delete never silently skips a plain entry")
+		})
+	}
+}
+
+// TestIdentity_StaleMarkerIsLegacy: a marker whose key spells another
+// directory belongs to an entry renamed after it was stamped (an identity
+// rename whose restamp failed, a manual mv). It vouches for no key here:
+// the entry is legacy - its plain key owns it, a variant is refused.
+func TestIdentity_StaleMarkerIsLegacy(t *testing.T) {
+	c := cache.New(t.TempDir())
+	old := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}
+	moved := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.1"}
+	require.NoError(t, os.MkdirAll(c.ModPath(old), 0o755))
+	require.NoError(t, cache.StampKey(c.ModPath(old), old))
+	require.NoError(t, os.WriteFile(filepath.Join(c.ModPath(old), "a.pak"), []byte("x"), 0o644))
+	require.NoError(t, os.Rename(c.ModPath(old), c.ModPath(moved))) // a manual mv
+
+	assert.True(t, c.Exists(moved), "the moved entry is its directory's plain version")
+	assert.NoError(t, c.Claim(moved))
+	movedVariant := moved
+	movedVariant.Variant = "abcdef123456"
+	assert.False(t, c.Exists(movedVariant))
+
+	// A variant entry moved under a plain version's name is stale too.
+	v := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "2.0", Variant: "abcdef123456"}
+	require.NoError(t, c.Store(v, "b.pak", []byte("y")))
+	plain2 := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "2.1"}
+	require.NoError(t, os.Rename(c.ModPath(v), c.ModPath(plain2)))
+	assert.True(t, c.Exists(plain2))
 }
 
 // TestIdentity_StampKeyRoundTrips: what StampKey writes, CheckKey accepts
-// for that key alone - including versions carrying newlines or the
-// separator, which a source may publish.
+// for that key in its own directory - including versions carrying quotes or
+// the separator, which a source may publish - and leaves no temporary file.
 func TestIdentity_StampKeyRoundTrips(t *testing.T) {
 	for _, k := range []cache.Key{
-		{Version: "1.0"},
-		{Version: "1.0", Variant: "abcdef123456"},
-		{Version: "1.0@beta"},
-		{Version: "odd\nversion \"quoted\""},
-		{Version: ""},
+		{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"},
+		{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0", Variant: "abcdef123456"},
+		{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0@beta"},
+		{GameID: "g", SourceID: "s", ModID: "m", Version: "odd version \"quoted\""},
 	} {
-		dir := t.TempDir()
+		c := cache.New(t.TempDir())
+		dir := c.ModPath(k)
+		require.NoError(t, os.MkdirAll(dir, 0o755))
 		require.NoError(t, cache.StampKey(dir, k))
 		assert.NoError(t, cache.CheckKey(dir, k), "%q", k.Version)
-		other := k
-		other.Variant += "x"
-		assert.Error(t, cache.CheckKey(dir, other), "%q", k.Version)
+		_, err := os.Stat(filepath.Join(dir, cache.KeyMarkerName+".tmp"))
+		assert.True(t, os.IsNotExist(err), "no temporary file is left behind")
 	}
+	// The colliding pair: each key's current marker refuses the other.
+	c := cache.New(t.TempDir())
+	dir := c.ModPath(collidingVariant)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, cache.StampKey(dir, collidingVariant))
+	assert.Error(t, cache.CheckKey(dir, collidingPlain))
 }
 
 // TestIdentity_UnreadableDirectoryKeepsThePlainAnswer: a directory whose

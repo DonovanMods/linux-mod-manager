@@ -370,6 +370,12 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 		} else if renameErr := os.Rename(oldPath, newPath); renameErr != nil {
 			return "", 0, fmt.Errorf("renaming cache entry: %w", renameErr)
 		} else if stampErr := cache.StampKey(newPath, newKey); stampErr != nil {
+			// The moved entry would carry its old key's marker and read as
+			// another key's: put it back, so the row, the profile and the
+			// cache still agree, and the next run retries the repair.
+			if undoErr := os.Rename(newPath, oldPath); undoErr != nil {
+				return "", 0, fmt.Errorf("renaming cache entry: %w (and moving it back failed: %v)", stampErr, undoErr)
+			}
 			return "", 0, fmt.Errorf("renaming cache entry: %w", stampErr)
 		} else {
 			renamed = true
@@ -635,7 +641,9 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 			}
 			continue
 		}
-		if sibling.Version != recorded {
+		// #614: a sibling with another tree of the version lives in a
+		// directory the rename did not move - it is not this entry's.
+		if sibling.Version != recorded || sibling.Variant != mod.Variant {
 			continue
 		}
 		if !fileIDsEqual(sibling.FileIDs, mod.FileIDs) {
