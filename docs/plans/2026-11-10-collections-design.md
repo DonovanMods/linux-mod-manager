@@ -62,7 +62,7 @@ The flag is a sibling of `--workshop-collection`, not a generic `--collection`: 
 |---|---|
 | `exact` (and every `bundle`) | `file_ids` pinned, `version` set, `locked: true` |
 | `prefer` | `file_ids` pinned, `version` set, not locked (`lmm update` may offer newer; the user decides) |
-| `latest` | no `version` pin; the file is the *newest file of the same logical file* the curator picked, resolved by the manifest's `logicalFilename`/`fileExpression`, never "the mod's primary file" (the curator's file may be an optional or alternate one). The semantics of those two fields are INFERRED from Vortex; when neither resolves, the item falls back to the pinned `fileId` with a plan warning |
+| `latest` | **Ruled 2026-11-13 (owner, #607):** `file_ids` pinned to the curator's exact file, `version` set, **not locked**, and the installed mod's update policy set to **`auto`**, so the next update check moves it to the newest file. It is fast (no lookup at plan time: `latest` is 17% of surveyed items, spike findings Part 6), and what installs first is the file the collection was tested with. The plan notes it per item ("curator asks for the latest file; installs the tested file now, then auto-updates"). A mod with another file pinned `exact` stays locked and does not auto-update. *Superseded:* resolving the newest file of the same logical file at plan time, by `logicalFilename`/`fileExpression` |
 
 `locked` already refuses version changes at install, update, rollback, auto-update and converge (#294/#311), so an `exact` collection stays exact with no new enforcement code.
 
@@ -176,6 +176,8 @@ The plan derives a **feature set** from the manifest, and the acquire phase (§1
 | `file_load_order:<id>` | a non-empty `fbLoadOrders` entry (Vortex's file-based load order: the first sample orders 275 Cyberpunk `.archive` files under `cyberpunk2077-archive`) | C9 (#620), one id at a time |
 | `manifest:<key>` | a manifest key the parser did not recognise and does not allowlist. An **empty** value (`loadOrder: []`, an `fbLoadOrders` entry with no entries) is treated as absent and raises nothing. `tools` is allowlisted and never raises a feature (§11 Q8) | never, until a story names it |
 | `manifest_unavailable` | the recipe could not be fetched | never |
+
+**Update policies (ruled 2026-11-13, beside the rule ruling above):** every item installs the curator's exact file id; `exact` locks it, `prefer` leaves it unlocked, and `latest` leaves it unlocked with the installed mod's update policy `auto` (§1). None raises a feature. The profile document has no update policy (it belongs to the installed row), so the converter names the auto entries and the import sets them.
 
 `modRules` of type `requires`/`recommends`/`conflicts`/`provides` are informational for lmm's purposes (the list already *is* the requirement set) and raise no feature; they are shown in the plan.
 
@@ -664,7 +666,7 @@ Core owns every arrow, and the converters are pure (manifest → document). The 
 - 2026-11-12 (L1): `lmm profile export` keeps writing YAML to stdout; `-o` writes `.lmmc`; version 1 keeps `game_id` beside `game:` (§12).
 - 2026-11-12 (L1): export keeps hooks; import never applies them from a URL, and from a local file only with `--with-hooks`, after the plan lists them (§12).
 - 2026-11-12 (F2/F3): F2 is built to ask for missing FOMOD choices as designed, and F2 and F3 merge into `develop` together, so there is no window in which a FOMOD install is refused with no way to answer.
-- 2026-11-13 (C2, #607): C2 is split into C2a (seam, fetch, parse, converter, fixtures) and C2b (plan/apply, frontends, mod-type persistence). A `before`/`after` rule naming a mod outside the collection is dropped with a note and raises no feature (§3). `extensionVersion` is informational. A stated mod type is persisted (`ModReference.mod_type`, an `installed_mods` column), and a v1 document relying on one requires `mod_type:<type>`, supported for a game whose adapter routes it. The `latest` update policy pins the curator's file, unlocked, until the owner rules (a converter option either way).
+- 2026-11-13 (C2, #607): C2 is split into C2a (seam, fetch, parse, converter, fixtures) and C2b (plan/apply, frontends, mod-type persistence). A `before`/`after` rule naming a mod outside the collection is dropped with a note and raises no feature (§3). `extensionVersion` is informational. A stated mod type is persisted (`ModReference.mod_type`, an `installed_mods` column), and a v1 document relying on one requires `mod_type:<type>`, supported for a game whose adapter routes it. The `latest` update policy installs the curator's exact file, unlocked, with the installed mod's update policy `auto`, and the plan says so per item (owner ruling, the same day; §1).
 
 **Story issues:**
 

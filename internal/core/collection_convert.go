@@ -127,6 +127,13 @@ type ConvertedCollection struct {
 	Tools []CollectionTool
 	// Notes are what the conversion did that a person should know.
 	Notes []string
+	// AutoUpdate names the document's entries (by domain.ModKey) whose
+	// installed mod the import sets to the auto update policy: a mod whose
+	// every file the curator marked "latest" installs the tested file now
+	// and follows the newest one from the next update check on (owner
+	// ruling, 2026-11-13). The profile document has no update policy - it
+	// is the installed row's - so the import applies it.
+	AutoUpdate []string
 	// ManifestError says why the recipe could not be read; empty when it
 	// was.
 	ManifestError string
@@ -165,6 +172,11 @@ type ConvertedCollectionItem struct {
 	Installer bool
 	// Instructions are the curator's words for the item.
 	Instructions string
+	// AutoUpdate reports that the import sets the installed mod's update
+	// policy to auto (ConvertedCollection.AutoUpdate), and Note is what
+	// the conversion did with the item that a person should know.
+	AutoUpdate bool
+	Note       string
 	// Features are the features the item raises that lmm cannot import.
 	Features []string
 	// MD5 and SizeBytes describe the curator's file.
@@ -192,11 +204,6 @@ type convertInput struct {
 	// it names (ConvertedCollectionItem.ID).
 	withOptional bool
 	optional     map[string]bool
-	// latest resolves an item whose update policy is "latest" to the file
-	// to install instead of the curator's. nil, or ok false, pins the
-	// curator's file, unlocked (the default until the owner rules on #607's
-	// Q3).
-	latest func(m source.ManifestMod) (fileID, version string, ok bool)
 	// modTypeSupported reports whether the game routes a stated mod type;
 	// nil supports none.
 	modTypeSupported func(modType string) bool
@@ -617,7 +624,6 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 	}
 	var entries []*entry
 	entryOf := map[*convItem]*entry{}
-	var latestPinned, latestFallback []string
 	for _, g := range groupByMod(items) {
 		var e *entry
 		rank := -1
@@ -638,25 +644,11 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 			e.members = append(e.members, it)
 			entryOf[it] = e
 			e.phase = min(e.phase, it.Phase)
-			fileID, file := it.FileID, domain.CollectionFileRef{ID: it.FileID, MD5: it.MD5, Size: it.SizeBytes}
-			if it.UpdatePolicy == "latest" {
-				resolved := false
-				if in.latest != nil && in.manifest != nil {
-					if fid, version, ok := in.latest(in.manifest.Mods[it.index]); ok && fid != "" {
-						fileID, file, resolved = fid, domain.CollectionFileRef{ID: fid}, true
-						if len(e.members) == 1 {
-							e.item.Ref.Version = version
-						}
-					} else {
-						latestFallback = append(latestFallback, it.Name)
-					}
-				}
-				if !resolved {
-					latestPinned = append(latestPinned, it.Name)
-				}
-			}
-			e.item.Ref.FileIDs = append(e.item.Ref.FileIDs, fileID)
-			e.item.Files = append(e.item.Files, file)
+			// Every policy installs the curator's exact file: it is the one the
+			// collection was tested with, and it costs no lookup (ruled
+			// 2026-11-13). What the policy changes is what follows.
+			e.item.Ref.FileIDs = append(e.item.Ref.FileIDs, it.FileID)
+			e.item.Files = append(e.item.Files, domain.CollectionFileRef{ID: it.FileID, MD5: it.MD5, Size: it.SizeBytes})
 			if r := policyRank(it.UpdatePolicy); r > rank {
 				rank = r
 			}
@@ -664,16 +656,29 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 				e.item.Ref.Fomod = domain.FomodChoices{Steps: slices.Clone(it.choices)}
 			}
 		}
-		if e != nil && rank == 2 && e.item.Ref.Version != "" {
-			e.item.Ref.Locked = true
+		if e == nil {
+			continue
 		}
-	}
-	if len(latestFallback) > 0 {
-		out.Notes = append(out.Notes, fmt.Sprintf("No newer file of the same logical file was found for %s, so the curator's file is installed.",
-			strings.Join(latestFallback, ", ")))
-	}
-	if n := len(latestPinned) - len(latestFallback); n > 0 && in.latest == nil {
-		out.Notes = append(out.Notes, fmt.Sprintf("%d item(s) follow their newest file upstream (update policy \"latest\"): lmm installs the file the curator pinned and leaves it unlocked, so an update can move it.", n))
+		// exact locks the entry; prefer leaves it unlocked; latest leaves
+		// it unlocked AND auto-updating - but only when every file of the
+		// mod is latest, since one exact file keeps the whole entry locked.
+		switch rank {
+		case 2:
+			e.item.Ref.Locked = e.item.Ref.Version != ""
+		case 0:
+			out.AutoUpdate = append(out.AutoUpdate, domain.ModKey(in.sourceID, e.item.Ref.ModID))
+		}
+		for _, it := range e.members {
+			if it.UpdatePolicy != "latest" {
+				continue
+			}
+			if rank == 0 {
+				it.AutoUpdate = true
+				it.Note = "curator asks for the latest file; installs the tested file now, then auto-updates"
+			} else {
+				it.Note = "curator asks for the latest file, but another file of this mod is pinned exactly, so it stays on the tested file"
+			}
+		}
 	}
 
 	// Install order: phase first, then the collection's own order, with the

@@ -95,32 +95,44 @@ func TestConvert_IdentityOriginAndPins(t *testing.T) {
 	assert.Equal(t, domain.ModReference{SourceID: "nexusmods", ModID: "2", Version: "1.0", FileIDs: []string{"22"}}, doc.Items[1].Ref,
 		"prefer: pinned, not locked")
 	assert.Equal(t, domain.ModReference{SourceID: "nexusmods", ModID: "3", Version: "1.0", FileIDs: []string{"33"}}, doc.Items[2].Ref,
-		"latest, by default: the curator's file, unlocked")
+		"latest: the curator's file, unlocked")
+	assert.Equal(t, []string{"nexusmods:3"}, c.AutoUpdate, "and auto-updating from then on")
 	assert.Empty(t, c.Unsupported)
 	assert.Empty(t, doc.Requires)
-	assert.True(t, containsSubstring(c.Notes, "latest"), "the latest pin is explained: %v", c.Notes)
 	for _, it := range c.Items {
 		assert.Equal(t, CollectionItemWillInstall, it.State)
 	}
 }
 
-func TestConvert_LatestResolverSlotsIn(t *testing.T) {
+// Owner ruling 2026-11-13 (#607 Q3): a "latest" item installs the
+// curator's tested file now, unlocked, and its update policy becomes auto,
+// so the next update check moves it to the newest file. No API call at plan
+// time.
+func TestConvert_LatestInstallsTheTestedFileThenAutoUpdates(t *testing.T) {
 	latest := nexusMod("Latest", "3", "33", "cc")
 	latest.UpdatePolicy = "latest"
-	unresolved := nexusMod("Unresolved", "4", "44", "dd")
-	unresolved.UpdatePolicy = "latest"
-	in := convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{latest, unresolved}})
-	in.latest = func(m source.ManifestMod) (string, string, bool) {
-		if m.ModID == "3" {
-			return "99", "2.0", true
-		}
-		return "", "", false
-	}
-	c := convertCollection(in)
-	assert.Equal(t, domain.ModReference{SourceID: "nexusmods", ModID: "3", Version: "2.0", FileIDs: []string{"99"}}, c.Document.Items[0].Ref)
-	assert.Equal(t, []domain.CollectionFileRef{{ID: "99"}}, c.Document.Items[0].Files, "the curator's md5 is not the newer file's")
-	assert.Equal(t, []string{"44"}, c.Document.Items[1].Ref.FileIDs, "an unresolved latest falls back to the pin")
-	assert.True(t, containsSubstring(c.Notes, "Unresolved"), "%v", c.Notes)
+	mixedExact := nexusMod("Mixed Main", "4", "41", "dd")
+	mixedLatest := nexusMod("Mixed Extra", "4", "42", "de")
+	mixedLatest.UpdatePolicy = "latest"
+	exact := nexusMod("Exact", "5", "51", "ee")
+	c := convertCollection(convertInputFor(&source.CollectionManifest{Name: "C",
+		Mods: []source.ManifestMod{latest, mixedExact, mixedLatest, exact}}))
+
+	require.Len(t, c.Document.Items, 3)
+	assert.Equal(t, domain.ModReference{SourceID: "nexusmods", ModID: "3", Version: "1.0", FileIDs: []string{"33"}}, c.Document.Items[0].Ref,
+		"the curator's exact file id, unlocked")
+	assert.Equal(t, []domain.CollectionFileRef{{ID: "33", MD5: "cc", Size: 100}}, c.Document.Items[0].Files)
+	assert.Equal(t, []string{"nexusmods:3"}, c.AutoUpdate, "only an entry whose every file is latest auto-updates")
+	assert.True(t, c.Document.Items[1].Ref.Locked, "a mod with an exact file stays locked")
+
+	l := itemByName(t, c, "Latest")
+	assert.True(t, l.AutoUpdate)
+	assert.Equal(t, "curator asks for the latest file; installs the tested file now, then auto-updates", l.Note)
+	m := itemByName(t, c, "Mixed Extra")
+	assert.False(t, m.AutoUpdate)
+	assert.Contains(t, m.Note, "pinned exactly")
+	assert.Empty(t, itemByName(t, c, "Exact").Note)
+	assert.False(t, itemByName(t, c, "Exact").AutoUpdate)
 }
 
 func TestConvert_FomodChoicesBecomeRecordedChoices(t *testing.T) {
