@@ -40,7 +40,9 @@ import {
   ApiError,
   NoAnswerError,
   launchGame as apiLaunchGame,
+  jobStatus,
 } from "./api.js";
+import { fomodQuestionFor, mergeQuestions } from "./fomod.js";
 import { DEPLOY_ORIGIN } from "./components/topbar.js";
 import { PLAY_NOT_ACTIVE_REASON } from "./components/playbutton.js";
 import { updateFromFileInputID } from "./components/updatefromfile.js";
@@ -1830,6 +1832,15 @@ async function confirmPlan() {
           modal.applyOptions,
         );
       }
+      if (fomodKinds.has(modal.kind)) {
+        rememberFomodRequest(modal.origin, {
+          kind: modal.kind,
+          planOptions: modal.options,
+          applyOptions,
+          context: modal.context,
+          title: modal.title,
+        });
+      }
       store.set({
         modal: null,
         origins: { ...store.get().origins, [modal.origin]: jobID },
@@ -1926,6 +1937,13 @@ async function retryInstallOverwrite(jobID) {
         ...req.applyOptions,
         accept_conflicts: true,
       });
+      const fomodReq = fomodRequests.get(origin);
+      if (fomodReq) {
+        fomodRequests.set(origin, {
+          ...fomodReq,
+          applyOptions: { ...fomodReq.applyOptions, accept_conflicts: true },
+        });
+      }
       rememberInstallRequest(
         origin,
         req.kind,
@@ -1941,6 +1959,144 @@ async function retryInstallOverwrite(jobID) {
       });
     }
   });
+}
+
+// fomodKinds is every plan kind whose job can come back with a FOMOD
+// installer's question (issue 615): as its failure (a single install, an
+// archive import, an update from a file, a reconfigure) or on its result (a
+// batch install, a profile import, an update batch's skips). Each takes
+// the answers as the identical "fomod" apply-time option.
+const fomodKinds = new Set([
+  "install",
+  "import_archive",
+  "profile_import",
+  "update_from_archive",
+  "mod_fomod",
+  "updates",
+]);
+
+// fomodRequests remembers, per origin, the request behind the last job of a
+// fomodKinds kind it started - {kind, planOptions, applyOptions, context,
+// title} - so a question that job raises can be answered by re-posting the
+// same plan and job with the answers (installRequests' reason, for the
+// conflict round trip). fomodWalks remembers where each mod's walk stopped
+// last round (fomod.js#wizardPages). Both are page-lifetime: after a
+// reload the question is still shown, but answering starts afresh.
+const fomodRequests = new Map();
+const fomodWalks = new Map();
+
+function rememberFomodRequest(origin, req) {
+  fomodRequests.set(origin, req);
+  fomodWalks.delete(origin);
+}
+
+/** canAnswerFomod reports whether answerFomod can re-post jobID's request. */
+function canAnswerFomod(jobID) {
+  const origin = originOf(jobID);
+  return Boolean(origin && fomodRequests.get(origin));
+}
+
+/** openFomodWizard opens the installer wizard over question for origin. */
+function openFomodWizard(question, origin) {
+  modalSeq += 1;
+  const req = fomodRequests.get(origin);
+  store.set({
+    modal: {
+      type: "fomod",
+      seq: modalSeq,
+      question,
+      origin,
+      start: fomodWalks.get(origin) ?? {},
+      title: req?.title
+        ? `${req.title}: installer options`
+        : "Installer options",
+    },
+  });
+}
+
+/** answerFomod opens the wizard for a failed job's question (the tray's
+ * "Answer installer…"). */
+function answerFomod(job) {
+  const question = fomodQuestionFor(job?.error?.details);
+  const origin = originOf(job?.id);
+  if (!question || !origin || !fomodRequests.get(origin)) {
+    pushToast({
+      tone: "failure",
+      title: "Can't answer",
+      detail:
+        "This installer must be answered from a fresh attempt - the page was reloaded since it started.",
+    });
+    return;
+  }
+  openFomodWizard(question, origin);
+}
+
+/**
+ * submitFomod answers a question the way every mid-flight decision is
+ * answered (v2 Phase 3 Ruling 1): a fresh Plan/Apply of the same request
+ * with the answers in "fomod", merged over the answers earlier rounds
+ * gave. The server kept the downloads, so the re-run fetches nothing again;
+ * a question it raises again (a step the answers made visible) opens the
+ * wizard once more, where this round stopped.
+ */
+async function submitFomod(origin, answers, walked) {
+  const req = fomodRequests.get(origin);
+  closeModal();
+  if (!req) return;
+  const fomod = { ...(req.applyOptions?.fomod ?? {}), ...answers };
+  const applyOptions = { ...(req.applyOptions ?? {}), fomod };
+  // An update batch re-posts only the mods that asked; the rest are done.
+  const planOptions =
+    req.kind === "updates"
+      ? { ...(req.planOptions ?? {}), mods: Object.keys(fomod) }
+      : req.planOptions;
+  const context = req.context ?? routeContext();
+  await startBinding(origin, async () => {
+    try {
+      const response = await planMutation(req.kind, planOptions, context);
+      const { id: jobID } = await startJob(response.plan_id, applyOptions);
+      fomodRequests.set(origin, { ...req, planOptions, applyOptions });
+      fomodWalks.set(origin, { ...(fomodWalks.get(origin) ?? {}), ...walked });
+      if (overwriteRetryKinds.has(req.kind))
+        rememberInstallRequest(origin, req.kind, planOptions, applyOptions);
+      store.set({ origins: { ...store.get().origins, [origin]: jobID } });
+    } catch (err) {
+      pushToast({
+        tone: "failure",
+        title: "Installer answers not applied",
+        detail: err instanceof ApiError ? err.message : String(err),
+      });
+    }
+  });
+}
+
+/**
+ * fomodQuestionOf finds the FOMOD question a finished job raised: its
+ * failure's details, or - for a batch that reports it on its result - the
+ * result's fomod_choices_required (an install batch, a profile import) or
+ * its skipped updates' questions. Null when there is none.
+ */
+// resultQuestionKinds are the kinds that report a question on their RESULT
+// (the job succeeds, having refused with nothing written, or skipped).
+const resultQuestionKinds = new Set(["install", "updates", "profile_import"]);
+
+async function fomodQuestionOf(summary) {
+  if (summary.state === "failed")
+    return fomodQuestionFor(summary.error?.details);
+  if (!resultQuestionKinds.has(summary.kind)) return null;
+  let status;
+  try {
+    status = await jobStatus(summary.id);
+  } catch {
+    return null;
+  }
+  const result = status?.result;
+  const asked = fomodQuestionFor(result?.fomod_choices_required);
+  if (asked) return asked;
+  const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
+  return fomodQuestionFor(
+    mergeQuestions(skipped.map((s) => s?.fomod_choices_required)),
+  );
 }
 
 /**
@@ -2351,6 +2507,18 @@ async function onJobDone(summary) {
   if (origin && summary.state === "succeeded")
     releaseSucceededOrigin(origin, summary);
 
+  // Issue 615: a job this page started that came back with a FOMOD
+  // installer's question opens the wizard straight away - the user just
+  // asked for this install - unless another modal holds the screen, in
+  // which case the tray's "Answer installer…" stays the way in.
+  if (origin && fomodRequests.has(origin)) {
+    const question = await fomodQuestionOf(summary);
+    if (question && !store.get().modal) {
+      openFomodWizard(question, origin);
+      return;
+    }
+  }
+
   // Either tense counts as "in view": the snapshot answers for a control
   // this function's own refresh took off screen, and the live check for a
   // control that only MOUNTED once the binding landed (a row rendered by
@@ -2722,6 +2890,9 @@ const actions = {
   pushToast,
   retryInstallOverwrite,
   canRetryInstallOverwrite,
+  answerFomod,
+  canAnswerFomod,
+  submitFomod,
   openReorderModal,
   openProfilesModal,
   openShortcutsModal,

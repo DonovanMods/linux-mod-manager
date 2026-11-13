@@ -2305,6 +2305,18 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #615: an automatic update held back for re-answering its
+			// FOMOD installer's choices.
+			"mod_auto_update_failure_fomod_reanswer",
+			core.ModAutoUpdateFailure{
+				UpdateBatchFailure: core.UpdateBatchFailure{
+					Mod: "nexusmods:12604", Name: "Sample Mod", FromVersion: "1.0", ToVersion: "1.1",
+					Error: core.ReasonFomodReanswer,
+				},
+				JobID: "0f1e2d3c4b5a6978", FomodReanswer: true,
+			},
+		},
+		{
 			// #587: an automatic update that failed, held back until the
 			// user checks again - the card says so instead of listing it
 			// unexplained.

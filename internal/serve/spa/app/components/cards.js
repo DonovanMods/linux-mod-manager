@@ -390,6 +390,10 @@ function AuthRequiredNote({ sourceID }) {
 function autoUpdateFailedNote(failure) {
   const name = failure.name || failure.mod;
   const target = failure.to_version ? ` ${failure.to_version}` : "";
+  if (failure.fomod_reanswer) {
+    // issue 615: automatic updates never ask an installer's questions.
+    return `${name}${target} was not updated automatically: its installer (FOMOD) changed and needs your choices. Update it here to answer them.`;
+  }
   const reason = failure.error ? ` - ${failure.error.replace(/\.$/, "")}` : "";
   return `Automatic update failed for ${name}${target}${reason}. Check for updates to retry.`;
 }

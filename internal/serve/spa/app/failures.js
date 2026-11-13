@@ -22,6 +22,7 @@
 // action under them.
 
 import { safeWebUrl } from "./weburl.js";
+import { fomodQuestionFor } from "./fomod.js";
 
 // conflictKinds is every plan kind whose *core.ConflictError this failure
 // implies "re-plan and set accept_conflicts" for - both take that exact
@@ -40,6 +41,11 @@ const conflictKinds = new Set(["install", "import_archive"]);
  */
 export function nextStepFor(job) {
   const envelope = job?.error ?? {};
+  // Issue 615: a FOMOD installer's question is answered in the installer
+  // wizard, and the job re-posted with the answers.
+  if (fomodQuestionFor(envelope?.details)) {
+    return { action: "fomod", label: "Answer installer…" };
+  }
   const conflicts = envelope?.details?.conflicts;
   if (
     conflictKinds.has(job?.kind) &&

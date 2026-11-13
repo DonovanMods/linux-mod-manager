@@ -1393,6 +1393,9 @@ type e2eSearchSourceMod struct {
 	mod     domain.Mod
 	files   []domain.DownloadableFile
 	members map[string]string // file ID -> the single path inside its zip
+	// archives, when set for a file ID, is that file's whole zip, served as
+	// is (#615's FOMOD installers) instead of members' one-member zip.
+	archives map[string][]byte
 }
 
 // e2eSearchSource is a searchable, REALLY-downloading source.ModSource: a
@@ -1435,6 +1438,11 @@ func newE2ESearchSource(t *testing.T, id string) *e2eSearchSource {
 		entry, ok := s.mods[modID]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if archive, ok := entry.archives[fileID]; ok {
+			w.Header().Set("Content-Type", "application/zip")
+			_, _ = w.Write(archive)
 			return
 		}
 		member, ok := entry.members[fileID]

@@ -254,6 +254,7 @@ func TestAutoUpdater_AFomodReanswerSkipIsAnnounced(t *testing.T) {
 	assert.Equal(t, []core.ModAutoUpdateFailure{{
 		UpdateBatchFailure: core.UpdateBatchFailure{Mod: "src:f", Name: "F", FromVersion: "1", ToVersion: "2", Error: core.ReasonFomodReanswer},
 		JobID:              "j1",
+		FomodReanswer:      true,
 	}}, a.failures(key, planned))
 }
 

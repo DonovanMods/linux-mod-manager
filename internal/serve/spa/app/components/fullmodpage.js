@@ -356,6 +356,27 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             Re-link…
           </button>`
         }
+        ${
+          // issue 615: a mod installed through a FOMOD installer can have
+          // its choices changed - the installer asks again, preselected.
+          installed?.fomod &&
+          !installedMod.external &&
+          html`<button
+            type="button"
+            class="button"
+            data-action="reconfigure-fomod"
+            onClick=${() =>
+              actions.openPlan({
+                kind: "mod_fomod",
+                origin: origin("fomod"),
+                title: `Reconfigure ${installedMod.name}`,
+                confirmLabel: "Continue",
+                options: { source_id: sourceID, mod_id: modID },
+              })}
+          >
+            Reconfigure installer…
+          </button>`
+        }
       </div>
       ${
         // issue 394's own aside: a title on a DISABLED button is invisible

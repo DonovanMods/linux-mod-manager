@@ -1,0 +1,9 @@
+{
+  "mod": "nexusmods:12604",
+  "name": "Sample Mod",
+  "from_version": "1.0",
+  "to_version": "1.1",
+  "error": "installer choices need re-answering",
+  "job_id": "0f1e2d3c4b5a6978",
+  "fomod_reanswer": true
+}
