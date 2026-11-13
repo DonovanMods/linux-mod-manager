@@ -339,21 +339,21 @@ func (f *fomodAnswerer) printQuestionHeader(m core.FomodQuestion, start int) {
 		title = "FOMOD installer"
 	}
 	if start > 0 {
-		fmt.Fprintf(f.out, "\n%s: %s - continued\n", name, title)
+		_, _ = fmt.Fprintf(f.out, "\n%s: %s - continued\n", name, title)
 		return
 	}
-	fmt.Fprintf(f.out, "\n%s: %s\n", name, title)
+	_, _ = fmt.Fprintf(f.out, "\n%s: %s\n", name, title)
 	switch m.Reason {
 	case core.FomodReasonStale:
-		fmt.Fprintln(f.out, "The recorded installer choices no longer fit this installer; review them:")
+		_, _ = fmt.Fprintln(f.out, "The recorded installer choices no longer fit this installer; review them:")
 	case core.FomodReasonReconfigure:
-		fmt.Fprintln(f.out, "Change the installer choices (your recorded ones are preselected):")
+		_, _ = fmt.Fprintln(f.out, "Change the installer choices (your recorded ones are preselected):")
 	}
 	for _, u := range m.Unmatched {
-		fmt.Fprintf(f.out, "  - recorded choice %s no longer matches (%s)\n", fomodPath(u.Step, u.Group, u.Option), u.Reason)
+		_, _ = fmt.Fprintf(f.out, "  - recorded choice %s no longer matches (%s)\n", fomodPath(u.Step, u.Group, u.Option), u.Reason)
 	}
 	for _, v := range m.Violations {
-		fmt.Fprintf(f.out, "  - %s breaks its rule (%s, %d selected)\n", fomodPath(v.Step, v.Group, ""), groupRule(v.Type), v.Selected)
+		_, _ = fmt.Fprintf(f.out, "  - %s breaks its rule (%s, %d selected)\n", fomodPath(v.Step, v.Group, ""), groupRule(v.Type), v.Selected)
 	}
 }
 
@@ -372,7 +372,7 @@ func fomodPath(parts ...string) string {
 // preselection.
 func (f *fomodAnswerer) askStep(m core.FomodQuestion, i int, sc domain.FomodStepChoice) (changed bool, err error) {
 	st := m.Steps[i]
-	fmt.Fprintf(f.out, "\nStep %d of %d: %s\n", i+1, len(m.Steps), displayName(st.Name))
+	_, _ = fmt.Fprintf(f.out, "\nStep %d of %d: %s\n", i+1, len(m.Steps), displayName(st.Name))
 	for j, g := range st.Groups {
 		sel := selectedOf(g)
 		if groupIsFree(g) {
@@ -386,7 +386,7 @@ func (f *fomodAnswerer) askStep(m core.FomodQuestion, i int, sc domain.FomodStep
 			sel = picked
 		} else {
 			f.printGroup(m, g, sel)
-			fmt.Fprintln(f.out, "  (nothing to choose here)")
+			_, _ = fmt.Fprintln(f.out, "  (nothing to choose here)")
 		}
 		sc.Groups[j].Choices = optionChoices(g, sel)
 	}
@@ -433,7 +433,7 @@ func displayName(s string) string {
 // printGroup lists a group's options with their selection, type,
 // description and image.
 func (f *fomodAnswerer) printGroup(m core.FomodQuestion, g core.FomodQuestionGroup, sel []bool) {
-	fmt.Fprintf(f.out, "  %s - %s\n", displayName(g.Name), groupRule(g.Type))
+	_, _ = fmt.Fprintf(f.out, "  %s - %s\n", displayName(g.Name), groupRule(g.Type))
 	for i, o := range g.Options {
 		mark := " "
 		if sel[i] {
@@ -450,15 +450,15 @@ func (f *fomodAnswerer) printGroup(m core.FomodQuestion, g core.FomodQuestionGro
 		case "CouldBeUsable":
 			note = " (may not work)"
 		}
-		fmt.Fprintf(f.out, "    %d) [%s] %s%s\n", i+1, mark, displayName(o.Name), note)
+		_, _ = fmt.Fprintf(f.out, "    %d) [%s] %s%s\n", i+1, mark, displayName(o.Name), note)
 		for _, line := range strings.Split(strings.TrimSpace(o.Description), "\n") {
 			if line = strings.TrimSpace(line); line != "" {
-				fmt.Fprintf(f.out, "           %s\n", line)
+				_, _ = fmt.Fprintf(f.out, "           %s\n", line)
 			}
 		}
 		if o.Image != "" && f.service != nil {
 			if img, err := f.service.FomodImage(m.SourceID, m.ModID, m.ConfigSHA256, o.Image); err == nil {
-				fmt.Fprintf(f.out, "           image: %s\n", img.Path)
+				_, _ = fmt.Fprintf(f.out, "           image: %s\n", img.Path)
 			}
 		}
 	}
@@ -470,7 +470,7 @@ func (f *fomodAnswerer) askGroup(m core.FomodQuestion, g core.FomodQuestionGroup
 	current := selectedOf(g)
 	f.printGroup(m, g, current)
 	for {
-		fmt.Fprintf(f.out, "  Choose %s [Enter keeps %s, q cancels]: ", selectionHint(g), selectionLabel(current))
+		_, _ = fmt.Fprintf(f.out, "  Choose %s [Enter keeps %s, q cancels]: ", selectionHint(g), selectionLabel(current))
 		line, err := f.in.ReadString('\n')
 		if err != nil && (!errors.Is(err, io.EOF) || strings.TrimSpace(line) == "") {
 			return nil, promptReadErrorAs(err, ErrCancelled)
@@ -487,7 +487,7 @@ func (f *fomodAnswerer) askGroup(m core.FomodQuestion, g core.FomodQuestionGroup
 		default:
 			nums, perr := parseRangeSelection(line, len(g.Options))
 			if perr != nil {
-				fmt.Fprintf(f.out, "  Invalid selection: %v\n", perr)
+				_, _ = fmt.Fprintf(f.out, "  Invalid selection: %v\n", perr)
 				continue
 			}
 			picked = make([]bool, len(g.Options))
@@ -496,7 +496,7 @@ func (f *fomodAnswerer) askGroup(m core.FomodQuestion, g core.FomodQuestionGroup
 			}
 		}
 		if problem := groupSelectionProblem(g, picked); problem != "" {
-			fmt.Fprintf(f.out, "  %s\n", problem)
+			_, _ = fmt.Fprintf(f.out, "  %s\n", problem)
 			continue
 		}
 		return picked, nil
@@ -580,24 +580,24 @@ func reportFomodQuestion(err error) {
 // printFomodQuestionSummary lists each mod's steps, groups and options.
 func printFomodQuestionSummary(w io.Writer, q *core.FomodChoicesRequiredError) {
 	for _, m := range q.Mods {
-		fmt.Fprintf(w, "\n%s (%s): %s\n", displayName(m.Name), domain.ModKey(m.SourceID, m.ModID), displayName(m.ModuleName))
+		_, _ = fmt.Fprintf(w, "\n%s (%s): %s\n", displayName(m.Name), domain.ModKey(m.SourceID, m.ModID), displayName(m.ModuleName))
 		for _, st := range m.Steps {
-			fmt.Fprintf(w, "  Step %q\n", st.Name)
+			_, _ = fmt.Fprintf(w, "  Step %q\n", st.Name)
 			for _, g := range st.Groups {
-				fmt.Fprintf(w, "    Group %q - %s:", g.Name, groupRule(g.Type))
+				_, _ = fmt.Fprintf(w, "    Group %q - %s:", g.Name, groupRule(g.Type))
 				for _, o := range g.Options {
 					mark := ""
 					if o.Selected {
 						mark = "*"
 					}
-					fmt.Fprintf(w, " %q%s", o.Name, mark)
+					_, _ = fmt.Fprintf(w, " %q%s", o.Name, mark)
 				}
-				fmt.Fprintln(w)
+				_, _ = fmt.Fprintln(w)
 			}
 		}
 	}
-	fmt.Fprintln(w, "\n(* marks the installer's preselection.) Answer with --fomod-choices <file.json> or --fomod-defaults,")
-	fmt.Fprintln(w, "or run the command in a terminal to choose interactively; --json prints the full question document.")
+	_, _ = fmt.Fprintln(w, "\n(* marks the installer's preselection.) Answer with --fomod-choices <file.json> or --fomod-defaults,")
+	_, _ = fmt.Fprintln(w, "or run the command in a terminal to choose interactively; --json prints the full question document.")
 }
 
 // applyAnsweringFomod runs apply, answering the FOMOD questions it raises
