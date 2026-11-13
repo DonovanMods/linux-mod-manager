@@ -186,5 +186,11 @@ func TestE2E_CopyToProfile_FromTheRowMenuAndTheModPanel(t *testing.T) {
 		ref := alt.FindRef("fake", "both")
 		return ref != nil && ref.Version == "2.0"
 	}, e2eTimeout, e2ePollInterval, "the replace records default's version in alt: the row, and the ref replaced in place")
+	// Re-read after the wait so a regression fails with a specific message.
+	alt, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "alt")
+	require.NoError(t, err)
+	ref := alt.FindRef("fake", "both")
+	require.NotNil(t, ref)
+	assert.Equal(t, "2.0", ref.Version, "the ref is replaced in place")
 	assert.Empty(t, f.BrowserErrors())
 }
