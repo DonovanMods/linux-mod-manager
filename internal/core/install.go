@@ -2037,6 +2037,10 @@ func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *
 	// #614: a FOMOD installer installs with this run's answers, else the
 	// profile's recorded choices (a reinstall).
 	fx := s.fomodInputFor(ctx, game, plan.Profile, s.recordedRef(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod)
+	// The mod's files are not in the run's item set until this returns, so
+	// a panic in a later file's acquire releases the earlier ones here
+	// (#628).
+	defer releaseOnPanic(func() { s.releaseAcquired(st.files, false) })
 	for _, file := range selected {
 		if err := ctx.Err(); err != nil {
 			s.releaseAcquired(st.files, false)

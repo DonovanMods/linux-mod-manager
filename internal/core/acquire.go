@@ -95,6 +95,23 @@ func (a *acquiredFile) release() {
 	a.owned = nil
 }
 
+// releaseOnPanic is deferred by whatever holds acquire scratch directories
+// that nothing else owns yet: if the function panics - an extractor, an
+// adapter's layout - release runs and the panic carries on (#628). A
+// deferred cleanup that keys on the returned error never sees a panic, since
+// err is still nil while one unwinds; `lmm serve` recovers a job's panic and
+// keeps running, so what the panic skipped would stay on disk.
+//
+// recover only stops a panic when the deferred function itself calls it, so
+// this must be deferred directly (`defer releaseOnPanic(f)`), never from
+// inside another deferred closure.
+func releaseOnPanic(release func()) {
+	if p := recover(); p != nil {
+		release()
+		panic(p)
+	}
+}
+
 // acquireTreePath names the pristine tree for one file of one cache entry.
 // Beside the entry - so the commit's merge is a rename on one filesystem,
 // whatever the game's cache_path - and per FILE, so a mod's several files
@@ -220,6 +237,7 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 			pending.release()
 		}
 	}(a)
+	defer releaseOnPanic(a.release)
 
 	// Download the file. safeFileName sanitizes file.FileName - a
 	// SOURCE-CONTROLLED value (NexusMods/CurseForge/Icarus/a custom source's
@@ -372,6 +390,7 @@ func (s *Service) acquireLocal(ctx context.Context, gameCache *cache.Cache, game
 			pending.release()
 		}
 	}(a)
+	defer releaseOnPanic(a.release)
 	a.listed = true
 
 	switch {
@@ -528,6 +547,9 @@ func mergeAcquiredTree(tree, stagePath string) error {
 func (s *Service) extractPristine(ctx context.Context, game *domain.Game, mod *domain.Mod, archivePath, tree string, fx fomodInput, sink EventSink) ([]string, *fomodResolved, error) {
 	if err := s.extractor.Extract(ctx, archivePath, tree); err != nil {
 		return nil, nil, err
+	}
+	if s.afterExtract != nil {
+		s.afterExtract(filepath.Base(archivePath))
 	}
 	resolved, err := s.resolveFomod(mod, filepath.Base(archivePath), tree, fx)
 	if err != nil {

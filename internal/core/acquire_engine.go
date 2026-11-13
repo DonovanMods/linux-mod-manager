@@ -37,7 +37,10 @@
 // install.before_all hook), keeps its downloads; a cancelled one keeps
 // nothing. Every item is released exactly once, a panicking commit
 // included (runAcquire's deferred releaseAll), so no acquire tree or
-// download staging directory outlives the run.
+// download staging directory outlives the run. A panic during an item's
+// own acquire, before the run holds it, is released where it happened
+// (releaseOnPanic, #628): the file's tree and staging, and the mod's
+// earlier files.
 //
 // MODE SELECTION. An install-shaped Apply runs PHASED, as above. A flow runs
 // INTERLEAVED - acquire item i, settle it, then item i+1 - only by explicit

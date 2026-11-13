@@ -132,6 +132,10 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 		}
 		return st, nil
 	}
+	// The mod's files are not in the run's item set until this returns, so
+	// a panic in a later file's acquire releases the earlier ones here
+	// (#628).
+	defer releaseOnPanic(func() { s.releaseAcquired(st.files, false) })
 	for _, file := range filesToDownload {
 		if err := ctx.Err(); err != nil {
 			s.releaseAcquired(st.files, false)

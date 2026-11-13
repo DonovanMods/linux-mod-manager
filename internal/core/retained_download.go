@@ -84,6 +84,16 @@ type retainedIdentity struct {
 	DeclaredSHA256 string `json:"declared_sha256,omitempty"`
 }
 
+// identifies reports whether id says anything a kept archive can be checked
+// against. A mod with no version whose source declares neither the file's
+// size nor its checksum gives an empty identity, and an archive kept for an
+// earlier release under the same file id matches that exactly (#628), so
+// such a download is neither kept nor reused: the retry downloads again,
+// which is what it did before retention existed.
+func (id retainedIdentity) identifies() bool {
+	return id != retainedIdentity{}
+}
+
 // identityOf is the identity a download of file for mod is retained under.
 func identityOf(mod *domain.Mod, file *domain.DownloadableFile) retainedIdentity {
 	return retainedIdentity{Version: mod.Version, DeclaredSize: file.Size, DeclaredSHA256: strings.ToLower(file.SHA256)}
@@ -107,7 +117,8 @@ func (s *Service) retainedDownloadDir(sourceID, modID, fileID string) string {
 }
 
 // reuseRetainedDownload returns the archive a previous refused ingest kept
-// for this (source, mod, file), if there is one.
+// for this (source, mod, file), if there is one. A want that identifies
+// nothing (retainedIdentity.identifies) reuses nothing.
 //
 // It does NOT consume the entry: a retry that is refused again - the user
 // has not run the edit yet - must still have the bytes for the next one.
@@ -127,7 +138,7 @@ func (s *Service) reuseRetainedDownload(sourceID, modID, fileID string, want ret
 	if err := json.Unmarshal(data, &meta); err != nil || meta.FileName == "" {
 		return "", nil, false
 	}
-	if meta.retainedIdentity != want {
+	if !want.identifies() || meta.retainedIdentity != want {
 		s.logger().Debug("discarding a retained download kept for another version", "dir", dir,
 			"kept", meta.Version, "want", want.Version)
 		s.dropRetainedDownload(sourceID, modID, fileID)
@@ -179,7 +190,7 @@ func (s *Service) retainBlocked(a *acquiredFile) {
 // report. It is also a no-op when the archive already IS the retained copy
 // (a second refused retry).
 func (s *Service) retainRefusedDownload(err error, sourceID, modID, fileID, archivePath string, result *DownloadResult, id retainedIdentity) {
-	if !retainsDownload(err) || result == nil {
+	if !retainsDownload(err) || result == nil || !id.identifies() {
 		return
 	}
 	dir := s.retainedDownloadDir(sourceID, modID, fileID)
