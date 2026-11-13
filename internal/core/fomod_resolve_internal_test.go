@@ -216,17 +216,48 @@ func TestResolveFomod_MissingSourcePolicy(t *testing.T) {
 	assert.Contains(t, strings.Join(got.warnings, "\n"), `"docs/gone.txt"`)
 }
 
-func TestResolveFomod_UnsafeMemberPolicy(t *testing.T) {
-	// An unsafe member is never read; a replay refuses the archive, a
-	// fresh answer installs without it and warns.
-	extra := map[string]string{}
-	tree := fomodTree(t, "", testModuleConfig, extra)
-	in := fomodInput{choices: pick("2K"), answered: true}
-	got, err := (&Service{}).resolveFomod(fomodTestMod, "mod.zip", tree, in)
-	require.NoError(t, err)
-	assert.Empty(t, got.warnings, "a clean archive has nothing to warn about")
-	problems := fomodSourceProblems(&fomod.Result{UnsafeMembers: []string{"../evil.esp"}})
-	assert.Equal(t, []string{`the archive member "../evil.esp" is not a safe path and was not read`}, problems)
+// TestResolveFomod_UnsafeMembersOnlyWarn (owner ruling 2026-11-12): a
+// member that is not a safe path - here a file literally named
+// "..\\evil.esp", which a Linux extraction writes as one file - is never
+// read and never written, for a fresh answer and a replay alike, and only
+// warns.
+func TestResolveFomod_UnsafeMembersOnlyWarn(t *testing.T) {
+	for name, in := range map[string]fomodInput{
+		"fresh answer": {choices: pick("2K"), answered: true},
+		"replay":       {choices: pick("2K")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tree := fomodTree(t, "", testModuleConfig, map[string]string{`..\evil.esp`: "EVIL"})
+			got, err := (&Service{}).resolveFomod(fomodTestMod, "mod.zip", tree, in)
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{"plugin.esp": "PLUGIN", "textures/t.dds": "2K"}, fomodTreeFiles(t, tree),
+				"the unsafe member is not installed")
+			assert.Contains(t, strings.Join(got.warnings, "\n"), `evil.esp" is not a safe path and was not read`)
+		})
+	}
+}
+
+// TestResolveFomod_CopyBudget (#614 review should-fix 1): an installer that
+// would copy far more than its archive holds is refused before anything is
+// written.
+func TestResolveFomod_CopyBudget(t *testing.T) {
+	saved := fomodCopyBudget
+	t.Cleanup(func() { fomodCopyBudget = saved })
+	fomodCopyBudget = func(int64) int64 { return 4 } // fewer bytes than the choices copy
+
+	tree := fomodTree(t, "", testModuleConfig, nil)
+	before := fomodTreeFiles(t, tree)
+	_, err := (&Service{}).resolveFomod(fomodTestMod, "mod.zip", tree, fomodInput{choices: pick("4K", "Readme"), answered: true})
+	var refusal *FomodInstallError
+	require.True(t, errors.As(err, &refusal), "got %v", err)
+	assert.Contains(t, refusal.Reason, "refuses an install that large")
+	assert.Equal(t, before, fomodTreeFiles(t, tree), "nothing was written")
+	_, statErr := os.Stat(tree + ".fomod")
+	assert.True(t, os.IsNotExist(statErr), "no half-built tree is left")
+
+	fomodCopyBudget = saved
+	_, err = (&Service{}).resolveFomod(fomodTestMod, "mod.zip", fomodTree(t, "", testModuleConfig, nil), fomodInput{choices: pick("4K", "Readme"), answered: true})
+	assert.NoError(t, err, "the real budget fits an ordinary installer")
 }
 
 func TestResolveFomod_RefusesWhatNoAnswerFixes(t *testing.T) {

@@ -229,13 +229,18 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 	}
 
 	warnings := slices.Clone(res.Warnings)
-	if problems := fomodSourceProblems(res); len(problems) > 0 {
+	if missing := fomodMissingSources(res); len(missing) > 0 {
 		if recorded && !in.answered {
 			return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name,
-				Reason: "its recorded installer choices cannot be reproduced from this archive: " + strings.Join(problems, "; ")}
+				Reason: "its recorded installer choices cannot be reproduced from this archive: " + strings.Join(missing, "; ")}
 		}
-		warnings = append(warnings, problems...)
+		warnings = append(warnings, missing...)
 	}
+	// An unsafe member only ever warns (owner ruling, 2026-11-12): it is
+	// never read, so it can never be an Op.Source or be written, and an
+	// installer that needed it reports a missing source, which still
+	// refuses a replay.
+	warnings = append(warnings, fomodUnsafeMembers(res)...)
 
 	opWarnings, err := executeFomodOps(tree, byRel, res.Ops)
 	if err != nil {
@@ -260,9 +265,8 @@ func fomodLocateReason(err error) string {
 	}
 }
 
-// fomodSourceProblems words the archive-side problems of res: sources that
-// match nothing, and members dropped as unsafe.
-func fomodSourceProblems(res *fomod.Result) []string {
+// fomodMissingSources words res's sources that match nothing.
+func fomodMissingSources(res *fomod.Result) []string {
 	var out []string
 	for _, m := range res.MissingSources {
 		kind := "file"
@@ -275,6 +279,12 @@ func fomodSourceProblems(res *fomod.Result) []string {
 		}
 		out = append(out, fmt.Sprintf("the installer's %s %q %s", kind, strings.ReplaceAll(m.Source, `\`, "/"), why))
 	}
+	return out
+}
+
+// fomodUnsafeMembers words res's members dropped as unsafe.
+func fomodUnsafeMembers(res *fomod.Result) []string {
+	var out []string
 	for _, m := range res.UnsafeMembers {
 		out = append(out, fmt.Sprintf("the archive member %q is not a safe path and was not read", strings.ReplaceAll(m, "\x00", `\0`)))
 	}
@@ -318,6 +328,9 @@ func executeFomodOps(tree string, byRel map[string]string, ops []fomod.Op) ([]st
 		_ = os.RemoveAll(out)
 		return nil, err
 	}
+	if err := checkFomodCopyBudget(tree, byRel, ops); err != nil {
+		return fail(err)
+	}
 	for _, op := range ops {
 		dest, err := fomodDestination(op.Destination)
 		if err != nil {
@@ -337,8 +350,11 @@ func executeFomodOps(tree string, byRel map[string]string, ops []fomod.Op) ([]st
 				continue
 			}
 			member, ok := byRel[op.Source]
-			if !ok || dest == "" {
+			if !ok {
 				return fail(fmt.Errorf("the installer named %q, which is not an archive member", op.Source))
+			}
+			if dest == "" {
+				return fail(fmt.Errorf("the installer copies %q to the mod's root itself, which is not a file", op.Source))
 			}
 			src := filepath.Join(tree, filepath.FromSlash(member))
 			if err := copyFileStreaming(src, filepath.Join(out, dest)); err != nil {
@@ -459,4 +475,39 @@ func (r *recordingFileStates) outcomes() map[string]string {
 		out[p] = st.String()
 	}
 	return out
+}
+
+// fomodCopyBudget is the most a resolve may copy, in bytes, given what the
+// archive extracted to: four times that, plus 64 MiB. An installer may copy
+// one file to several places, but a <folder> over a large member set can
+// expand to a million operations, so a small archive could otherwise fill
+// the disk with copies of one file (#614 review). A variable so a test can
+// lower it.
+var fomodCopyBudget = func(extracted int64) int64 { return 4*extracted + 64<<20 }
+
+// checkFomodCopyBudget sums the bytes ops would copy and refuses, before
+// anything is written, when that exceeds fomodCopyBudget.
+func checkFomodCopyBudget(tree string, byRel map[string]string, ops []fomod.Op) error {
+	sizes := make(map[string]int64, len(byRel))
+	var extracted int64
+	for rel, member := range byRel {
+		info, err := os.Lstat(filepath.Join(tree, filepath.FromSlash(member)))
+		if err != nil {
+			continue
+		}
+		sizes[rel] = info.Size()
+		extracted += info.Size()
+	}
+	limit := fomodCopyBudget(extracted)
+	var total int64
+	for _, op := range ops {
+		if op.Kind != fomod.OpCopy || isFomodDirectory(op.Source) {
+			continue
+		}
+		total += sizes[op.Source]
+		if total > limit {
+			return fmt.Errorf("the installer would copy more than %d MiB from an archive of %d MiB; lmm refuses an install that large", limit>>20, extracted>>20)
+		}
+	}
+	return nil
 }
