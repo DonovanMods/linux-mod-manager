@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // UninstallPlan is PlanUninstall's side-effect-free description of what
@@ -188,7 +189,7 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 	if !opts.KeepCache && !mod.External {
-		usedBy, err := s.cacheEntryUsers(ctx, game, profileName, mod.SourceID, mod.ID, mod.Version)
+		usedBy, err := s.cacheEntryUsers(ctx, game, profileName, modCacheKey(game.ID, mod.Mod))
 		if err != nil {
 			return nil, err
 		}
@@ -412,7 +413,7 @@ func (s *Service) uninstallRecorded(ctx context.Context, game *domain.Game, prof
 			return result, err
 		}
 		if !opts.KeepCache {
-			usedBy, err := s.removeCacheEntry(ctx, game, profileName, mod.SourceID, modID, mod.Version)
+			usedBy, err := s.removeCacheEntry(ctx, game, profileName, cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: modID, Version: mod.Version, Variant: mod.Variant})
 			if err != nil {
 				result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to clean cache: %v", err))
 			}
@@ -491,7 +492,7 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 
 		if !opts.KeepCache {
 			// #445 gate 2, G2-2: not while another row still uses it.
-			usedBy, err := s.removeCacheEntry(ctx, game, profileName, mod.SourceID, modID, mod.Version)
+			usedBy, err := s.removeCacheEntry(ctx, game, profileName, cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: modID, Version: mod.Version, Variant: mod.Variant})
 			if err != nil {
 				result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to clean cache: %v", err))
 			}

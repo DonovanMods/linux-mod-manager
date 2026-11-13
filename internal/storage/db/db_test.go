@@ -272,7 +272,7 @@ func TestUpdateModVersion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Update version
-	err = database.UpdateModVersion(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "2.0.0")
+	err = database.UpdateModVersion(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "2.0.0", "")
 	require.NoError(t, err)
 
 	// Retrieve and verify
@@ -331,7 +331,7 @@ func TestApplyModUpdateAndRollbackRestoresFileIDs(t *testing.T) {
 	}
 	require.NoError(t, database.SaveInstalledMod(context.Background(), mod))
 
-	require.NoError(t, database.ApplyModUpdate(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "2.0.0", []string{"new-main"}))
+	require.NoError(t, database.ApplyModUpdate(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "2.0.0", "", []string{"new-main"}))
 
 	updated, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
@@ -776,7 +776,7 @@ func TestOpen_ConcurrentFirstOpensMigrateExactlyOnce(t *testing.T) {
 			require.NoError(t, err)
 			var recorded int
 			require.NoError(t, check.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&recorded))
-			assert.Equal(t, 23, recorded)
+			assert.Equal(t, 24, recorded)
 			require.NoError(t, check.Close())
 		}
 	})

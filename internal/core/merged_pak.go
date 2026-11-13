@@ -239,7 +239,7 @@ func (s *Service) retainedMergeFiles(ctx context.Context, game *domain.Game, pro
 			continue
 		}
 		for _, fileID := range mod.FileIDs {
-			retainedPath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, cache.RetainedSourceName(fileID))
+			retainedPath := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}, cache.RetainedSourceName(fileID))
 			if _, statErr := os.Stat(retainedPath); statErr != nil {
 				continue // not a retained merge source (nothing ingested for this fileID - a legacy-ingest pak, or a non-convert-eligible one)
 			}
@@ -422,7 +422,7 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 		return warnings, fmt.Errorf("writing merge fingerprint: %w", err)
 	}
 
-	if err := commitStagedCache(cachePath, stagePath); err != nil {
+	if err := commitStagedCache(cache.Key{GameID: game.ID, SourceID: domain.SourceMerged, ModID: mergedPakModID, Version: mergedPakVersion}, cachePath, stagePath); err != nil {
 		return warnings, err
 	}
 
@@ -491,7 +491,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 			continue
 		}
 		for _, fileID := range mod.FileIDs {
-			versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+			versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 			retained := filepath.Join(versionDir, cache.RetainedSourceName(fileID))
 			if _, statErr := os.Stat(retained); statErr != nil {
 				continue // nothing retained (legacy ingest): Task 11's needs_reingest covers it
@@ -509,7 +509,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 			_, failed := failedByRef[ref]
 			participating := game.ConvertPaks && mod.ConvertPaks && !failed
 
-			manifests, merr := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+			manifests, merr := gameCache.FileManifests(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 			if merr != nil {
 				return warnings, merr
 			}
@@ -563,7 +563,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				// by content identity with its retained source - see its
 				// doc comment for why that is the one attribution that
 				// survives a convert flip.
-				files, lerr := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+				files, lerr := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 				if lerr != nil {
 					return warnings, lerr
 				}
@@ -800,7 +800,7 @@ func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Ga
 			continue
 		}
 		for _, fileID := range mod.FileIDs {
-			retained := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, cache.RetainedSourceName(fileID))
+			retained := gameCache.GetFilePath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}, cache.RetainedSourceName(fileID))
 			if _, statErr := os.Stat(retained); statErr != nil {
 				if !os.IsNotExist(statErr) {
 					s.logger().Warn("stat failed while checking retained merge source", "game_id", game.ID, "file_id", fileID, "err", statErr)
@@ -932,7 +932,7 @@ func (s *Service) PakNeedsReingest(ctx context.Context, game *domain.Game, mod *
 		return false, nil
 	}
 	gameCache := s.GetGameCache(game)
-	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 	if _, err := os.Stat(filepath.Join(versionDir, cache.RetainedSourceName(fileID))); err == nil {
 		return false, nil // already retained
 	} else if !os.IsNotExist(err) {
@@ -940,7 +940,7 @@ func (s *Service) PakNeedsReingest(ctx context.Context, game *domain.Game, mod *
 	}
 	// Only flag entries that actually exist (an entirely-missing cache entry
 	// is the MISSING status's business, not ours).
-	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
+	files, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 	if err != nil || len(files) == 0 {
 		return false, err
 	}
@@ -1172,7 +1172,7 @@ func (s *Service) checkMergeMembersCached(ctx context.Context, game *domain.Game
 	}
 	gameCache := s.GetGameCache(game)
 	for _, mod := range mods {
-		if !mod.Enabled || mod.External || gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}) {
+		if !mod.Enabled || mod.External || gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}) {
 			continue
 		}
 		member := false

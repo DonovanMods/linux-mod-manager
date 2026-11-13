@@ -462,7 +462,7 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 		// per mod for a plan that is going to do nothing.
 		if im, ok := installedByKey[key]; ok &&
 			(row.Version == "" || im.Version == row.Version) &&
-			gameCache.Exists(cache.Key{GameID: game.ID, SourceID: im.SourceID, ModID: im.ID, Version: im.Version}) {
+			gameCache.Exists(cache.Key{GameID: game.ID, SourceID: im.SourceID, ModID: im.ID, Version: im.Version, Variant: im.Variant}) {
 			row.Cached = true
 			plan.Mods = append(plan.Mods, row)
 			continue

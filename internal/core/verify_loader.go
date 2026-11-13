@@ -300,7 +300,7 @@ func (r *verifyRun) unlinkedLoaderFiles(mod *domain.InstalledMod) []string {
 	// seeded config is not in this list at all - which is the answer this
 	// check wants (#358): it was written once and then became the user's,
 	// so its absence is a choice, not a failed deploy.
-	files, err := deployableFiles(r.svc.GetGameCache(r.game), gameAdapter, r.game, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(r.svc.GetGameCache(r.game), gameAdapter, r.game, modCacheKey(r.game.ID, mod.Mod))
 	if err != nil {
 		return nil
 	}

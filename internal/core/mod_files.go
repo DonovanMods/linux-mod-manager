@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // ModFileEntry is one file `lmm mod files` reports for a mod: its game-dir-
@@ -54,7 +55,7 @@ func (s *Service) ModFiles(ctx context.Context, game *domain.Game, profileName, 
 	if len(paths) == 0 {
 		gameCache := s.GetGameCache(game)
 		report.MergedPakOnly = game.DeployMode == domain.DeployCompile &&
-			HasRetainedCompileSource(gameCache, game.ID, mod.SourceID, modID, mod.Version, mod.FileIDs)
+			HasRetainedCompileSource(gameCache, cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: modID, Version: mod.Version, Variant: mod.Variant}, mod.FileIDs)
 		return report, nil
 	}
 

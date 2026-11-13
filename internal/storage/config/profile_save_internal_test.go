@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 
 	"github.com/stretchr/testify/assert"
@@ -25,11 +26,20 @@ func canonicalProfile() *domain.Profile {
 		Mods: []domain.ModReference{
 			{SourceID: "nexusmods", ModID: "1", Version: "1.0", FileIDs: []string{"10", "11"}},
 			{SourceID: "nexusmods", ModID: "2", Version: "2.0", Locked: true},
-			{SourceID: "curseforge", ModID: "3", Disabled: true},
+			{SourceID: "curseforge", ModID: "3", Disabled: true, Fomod: testFomodChoices("Main")},
 		},
 		Hooks:         domain.GameHooks{Install: domain.HookConfig{AfterAll: "/bin/after.sh"}},
 		HooksExplicit: domain.GameHooksExplicit{Install: domain.HookExplicitFlags{AfterAll: true}},
 	}
+}
+
+// testFomodChoices is a recorded FOMOD choice set (#614) whose one option
+// is named option.
+func testFomodChoices(option string) domain.FomodChoices {
+	return domain.FomodChoices{ConfigSHA256: "ab12", Steps: []fomod.StepChoice{{
+		Name:   "Main Files",
+		Groups: []fomod.GroupChoice{{Name: "Texture", Choices: []fomod.OptionChoice{{Name: option, Idx: 1}}}},
+	}}}
 }
 
 // profileChanges is every kind of change a save makes, applied to
@@ -66,6 +76,9 @@ var profileChanges = []struct {
 	}},
 	{"no hooks", func(p *domain.Profile) { p.Hooks, p.HooksExplicit = domain.GameHooks{}, domain.GameHooksExplicit{} }},
 	{"overrides", func(p *domain.Profile) { p.Overrides = map[string][]byte{"a.ini": []byte("k=v\n")} }},
+	{"record fomod choices", func(p *domain.Profile) { p.Mods[0].Fomod = testFomodChoices("2K") }},
+	{"change fomod choices", func(p *domain.Profile) { p.Mods[2].Fomod = testFomodChoices("4K") }},
+	{"clear fomod choices", func(p *domain.Profile) { p.Mods[2].Fomod = domain.FomodChoices{} }},
 	{"a duplicate", func(p *domain.Profile) { p.Mods = append(p.Mods, p.Mods[0]) }},
 	{"everything", func(p *domain.Profile) {
 		p.Mods = []domain.ModReference{p.Mods[2], {SourceID: "s", ModID: "9"}, p.Mods[0]}
@@ -128,7 +141,7 @@ func saveFuzzSeeds(t testing.TB) []string {
 // write produces.
 func FuzzSaveProfile(f *testing.F) {
 	for _, seed := range saveFuzzSeeds(f) {
-		for _, change := range []uint64{0, 1, 0b100, 0b1000, 0b10000, 0b100000, 0b1000000000, ^uint64(0)} {
+		for _, change := range []uint64{0, 1, 0b100, 0b1000, 0b10000, 0b100000, 0b1000000000, 1 << 12, ^uint64(0)} {
 			f.Add([]byte(seed), change)
 		}
 	}
@@ -307,6 +320,13 @@ func mutate(p *domain.Profile, change uint64) *domain.Profile {
 	}
 	if bit(11) && len(out.Mods) > 0 {
 		out.Mods[0].Locked = !out.Mods[0].Locked
+	}
+	if bit(12) && len(out.Mods) > 0 {
+		if out.Mods[0].Fomod.IsZero() {
+			out.Mods[0].Fomod = testFomodChoices("2K")
+		} else {
+			out.Mods[0].Fomod = domain.FomodChoices{}
+		}
 	}
 	return &out
 }

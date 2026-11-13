@@ -1146,7 +1146,7 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
 
-	if err := s.applyModUpdate(ctx, mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, downloadedFileIDs); err != nil {
+	if err := s.applyModUpdate(ctx, mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, newMod.Variant, downloadedFileIDs); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		if rerr := installer.ReplaceForUpdate(context.WithoutCancel(ctx), game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs); rerr != nil {
 			s.logger().Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)

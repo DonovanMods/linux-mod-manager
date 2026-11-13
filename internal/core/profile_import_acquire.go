@@ -117,7 +117,7 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	// matters most for exactly this flow's drift convergence: a
 	// downgrade's archived file may have vanished upstream.
 	gameCache := s.GetGameCache(game)
-	if gameCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, st.fileIDs) {
+	if gameCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}, st.fileIDs) {
 		return st, nil
 	}
 	for _, file := range filesToDownload {

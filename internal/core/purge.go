@@ -19,6 +19,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
@@ -941,18 +942,27 @@ func (s *Service) listedVersionShips(ctx context.Context, game *domain.Game, liv
 	shipped := make(map[string]map[string]bool)
 	return func(key, rel string) (string, bool) {
 		ref := refs[key]
-		version := ref.Version
-		if version == "" {
-			// A row that cannot be read leaves the version unknown, and
-			// an unknown version ships every path.
+		version, variant := ref.Version, ""
+		files, seen := shipped[key]
+		// A row that cannot be read leaves the version unknown, and an
+		// unknown version ships every path. The row also names the
+		// version's tree (#614) - read for that only where there can be
+		// one: a variant is built from FOMOD choices, which the ref then
+		// records.
+		if version == "" || (!seen && !ref.Fomod.IsZero()) {
 			if row, err := s.GetInstalledMod(ctx, ref.SourceID, ref.ModID, game.ID, live); err == nil {
-				version = row.Version
+				if version == "" {
+					version = row.Version
+				}
+				if row.Version == version {
+					variant = row.Variant
+				}
 			}
 		}
-		files, seen := shipped[key]
 		if !seen {
 			if version != "" {
-				if listing, err := deployableFiles(gameCache, gameAdapter, game, ref.SourceID, ref.ModID, version); err == nil {
+				k := cache.Key{GameID: game.ID, SourceID: ref.SourceID, ModID: ref.ModID, Version: version, Variant: variant}
+				if listing, err := deployableFiles(gameCache, gameAdapter, game, k); err == nil {
 					files = make(map[string]bool, len(listing))
 					for _, f := range listing {
 						files[filepath.ToSlash(f)] = true

@@ -952,10 +952,8 @@ type reinstallCacheTransaction struct {
 	snapshot *cache.Cache
 	staged   *cache.Cache
 	tempDir  string
-	gameID   string
-	sourceID string
-	modID    string
-	version  string
+	// key is the live entry the reinstall replaces, variant included (#614).
+	key cache.Key
 	// hasOriginal distinguishes a genuinely absent cache entry from an empty
 	// one. The latter still has a directory CloneMod can restore; the former
 	// must be removed again on rollback rather than materialized as empty.
@@ -968,7 +966,12 @@ type reinstallCacheTransaction struct {
 	published bool
 }
 
-func prepareReinstallCacheTransaction(ctx context.Context, live *cache.Cache, gameID, sourceID, modID, version string, logger *slog.Logger) (*reinstallCacheTransaction, error) {
+func prepareReinstallCacheTransaction(ctx context.Context, live *cache.Cache, key cache.Key, logger *slog.Logger) (*reinstallCacheTransaction, error) {
+	// A directory that is another key's entry (#614) is not this mod's to
+	// snapshot, replace or restore.
+	if err := live.Claim(key); err != nil {
+		return nil, err
+	}
 	tempDir, err := os.MkdirTemp("", "lmm-reinstall-cache-*")
 	if err != nil {
 		return nil, fmt.Errorf("creating cache snapshot: %w", err)
@@ -982,23 +985,20 @@ func prepareReinstallCacheTransaction(ctx context.Context, live *cache.Cache, ga
 		snapshot: snapshot,
 		staged:   staged,
 		tempDir:  tempDir,
-		gameID:   gameID,
-		sourceID: sourceID,
-		modID:    modID,
-		version:  version,
+		key:      key,
 	}
 
 	// A wiped cache entry is the precise recovery case this transaction must
 	// allow: the reinstall will download a replacement. Check the entry itself
 	// before cloning, rather than treating any ENOENT from CloneMod as absent;
 	// a missing member underneath an existing entry is still an I/O failure.
-	if _, err := os.Lstat(live.ModPath(cache.Key{GameID: gameID, SourceID: sourceID, ModID: modID, Version: version})); err != nil {
+	if _, err := os.Lstat(live.ModPath(key)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			// ReplaceWithOldCache needs an old-side cache directory even when
 			// there are no old files to remove. This empty snapshot represents
 			// the missing entry only for the forward replace; hasOriginal keeps
 			// recovery from restoring it as a new empty live entry.
-			if err := os.MkdirAll(snapshot.ModPath(cache.Key{GameID: gameID, SourceID: sourceID, ModID: modID, Version: version}), 0755); err != nil {
+			if err := os.MkdirAll(snapshot.ModPath(key), 0755); err != nil {
 				_ = os.RemoveAll(tempDir)
 				return nil, fmt.Errorf("preparing empty cache snapshot: %w", err)
 			}
@@ -1007,7 +1007,7 @@ func prepareReinstallCacheTransaction(ctx context.Context, live *cache.Cache, ga
 		_ = os.RemoveAll(tempDir)
 		return nil, fmt.Errorf("checking existing cache: %w", err)
 	}
-	if err := live.CloneMod(ctx, snapshot, cache.Key{GameID: gameID, SourceID: sourceID, ModID: modID, Version: version}); err != nil {
+	if err := live.CloneMod(ctx, snapshot, key); err != nil {
 		_ = os.RemoveAll(tempDir)
 		return nil, fmt.Errorf("snapshotting existing cache: %w", err)
 	}
@@ -1029,11 +1029,11 @@ func (s *reinstallCacheTransaction) Activate(ctx context.Context) error {
 	if s.activated {
 		return nil
 	}
-	if err := s.live.Delete(cache.Key{GameID: s.gameID, SourceID: s.sourceID, ModID: s.modID, Version: s.version}); err != nil {
+	if err := s.live.Delete(s.key); err != nil {
 		return err
 	}
 	s.activated = true
-	if err := s.staged.CloneMod(ctx, s.live, cache.Key{GameID: s.gameID, SourceID: s.sourceID, ModID: s.modID, Version: s.version}); err != nil {
+	if err := s.staged.CloneMod(ctx, s.live, s.key); err != nil {
 		return err
 	}
 	s.published = true
@@ -1058,14 +1058,14 @@ func (s *reinstallCacheTransaction) RestoreLive(ctx context.Context) error {
 		s.activated = false
 		return nil
 	}
-	if err := s.live.Delete(cache.Key{GameID: s.gameID, SourceID: s.sourceID, ModID: s.modID, Version: s.version}); err != nil {
+	if err := s.live.Delete(s.key); err != nil {
 		return err
 	}
 	if !s.hasOriginal {
 		s.activated = false
 		return nil
 	}
-	if err := s.snapshot.CloneMod(ctx, s.live, cache.Key{GameID: s.gameID, SourceID: s.sourceID, ModID: s.modID, Version: s.version}); err != nil {
+	if err := s.snapshot.CloneMod(ctx, s.live, s.key); err != nil {
 		return err
 	}
 	s.activated = false
@@ -2094,7 +2094,7 @@ func (s *Service) commitBatchMod(ctx context.Context, game *domain.Game, plan *I
 			emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 		}
 		// #445 gate 2, G2-2: not while another row still uses it.
-		if usedBy, err := s.removeCacheEntry(ctx, game, plan.Profile, existing.SourceID, existing.ID, existing.Version); err != nil {
+		if usedBy, err := s.removeCacheEntry(ctx, game, plan.Profile, modCacheKey(game.ID, existing.Mod)); err != nil {
 			msg := fmt.Sprintf("Warning: could not clear old cache: %v", err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
@@ -2292,15 +2292,17 @@ func (s *Service) recordFileChecksums(ctx context.Context, sourceID, modID, game
 // a fresh download once produced. A fileID with no recorded members (a
 // legacy pre-manifest entry) returns "" - honest emptiness, the same
 // convention ingestLocalToCache's own empty-directory case uses.
-func checksumFromCache(gameCache *cache.Cache, gameID, sourceID, modID, version, fileID string) (string, error) {
-	retainedPath := gameCache.GetFilePath(cache.Key{GameID: gameID, SourceID: sourceID, ModID: modID, Version: version}, cache.RetainedSourceName(fileID))
+//
+// k names the entry, variant included (#614).
+func checksumFromCache(gameCache *cache.Cache, k cache.Key, fileID string) (string, error) {
+	retainedPath := gameCache.GetFilePath(k, cache.RetainedSourceName(fileID))
 	if _, err := os.Stat(retainedPath); err == nil {
 		return md5File(retainedPath)
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
 
-	manifests, err := gameCache.FileManifests(cache.Key{GameID: gameID, SourceID: sourceID, ModID: modID, Version: version})
+	manifests, err := gameCache.FileManifests(k)
 	if err != nil {
 		return "", err
 	}
@@ -2308,7 +2310,7 @@ func checksumFromCache(gameCache *cache.Cache, gameID, sourceID, modID, version,
 	if len(members) == 0 {
 		return "", nil
 	}
-	return digestDirectoryMembers(gameCache.ModPath(cache.Key{GameID: gameID, SourceID: sourceID, ModID: modID, Version: version}), members)
+	return digestDirectoryMembers(gameCache.ModPath(k), members)
 }
 
 // primaryStage is the STRICT path's cache fill handed to its deploy half.
@@ -2397,8 +2399,8 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	st.installer = s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 	downloadCache := s.GetGameCache(game)
 
-	if plan.Replaces != nil && plan.Replaces.Version == mod.Version {
-		txn, txnErr := prepareReinstallCacheTransaction(ctx, s.GetGameCache(game), game.ID, plan.Replaces.SourceID, plan.Replaces.ID, plan.Replaces.Version, s.logger())
+	if plan.Replaces != nil && plan.Replaces.Version == mod.Version && plan.Replaces.Variant == mod.Variant {
+		txn, txnErr := prepareReinstallCacheTransaction(ctx, s.GetGameCache(game), modCacheKey(game.ID, plan.Replaces.Mod), s.logger())
 		if txnErr != nil {
 			return st, fmt.Errorf("preparing reinstall cache: %w", txnErr)
 		}
@@ -2442,7 +2444,7 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	servesLocalFiles := servesLocal && lfs.ServesLocalFiles()
 	cacheWarm := !servesLocalFiles &&
 		len(plannedFileIDs) > 0 &&
-		downloadCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}, plannedFileIDs)
+		downloadCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}, plannedFileIDs)
 
 	// compiledFiles accumulates every file this loop actually compiled (game
 	// DeployCompile + a ".exmodz" file - the same condition
@@ -2509,7 +2511,7 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 			// warm fill prints nothing at all - see the CHANGELOG's #303
 			// bullet), and this is a silent DB-only repair of that gap, not
 			// a new user-visible step.
-			if checksum, csErr := checksumFromCache(downloadCache, game.ID, mod.SourceID, mod.ID, mod.Version, file.ID); csErr == nil && checksum != "" {
+			if checksum, csErr := checksumFromCache(downloadCache, modCacheKey(game.ID, mod), file.ID); csErr == nil && checksum != "" {
 				st.checksums = append(st.checksums, fileChecksum{fileID: file.ID, checksum: checksum})
 			}
 		}
@@ -2543,7 +2545,7 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	// (service.go's "Count extracted files") - so a 2-file mod reported
 	// a + (a+b). files_deployed is a json-tagged contract field; both fills
 	// now report the same, correct number.
-	if files, lerr := downloadCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}); lerr == nil {
+	if files, lerr := downloadCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}); lerr == nil {
 		result.FilesDeployed += len(files)
 	}
 
@@ -2599,7 +2601,7 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 	downloadedFileIDs := st.downloadedFileIDs
 	var oldOnlyRecords []db.DeployedFileRecord
 	if st.reinstallTxn != nil && !st.reinstallTxn.hasOriginal && plan.Replaces != nil {
-		newFiles, err := deployableFiles(st.reinstallTxn.staged, installer.adapter, game, mod.SourceID, mod.ID, mod.Version)
+		newFiles, err := deployableFiles(st.reinstallTxn.staged, installer.adapter, game, modCacheKey(game.ID, mod))
 		if err != nil {
 			return nil, fmt.Errorf("resolving repaired files: %w", err)
 		}
@@ -2777,9 +2779,9 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 	}
 
-	if plan.Replaces != nil && plan.Replaces.Version != mod.Version {
+	if plan.Replaces != nil && (plan.Replaces.Version != mod.Version || plan.Replaces.Variant != mod.Variant) {
 		// #445 gate 2, G2-2: not while another row still uses it.
-		if usedBy, err := s.removeCacheEntry(ctx, game, plan.Profile, plan.Replaces.SourceID, plan.Replaces.ID, plan.Replaces.Version); err != nil {
+		if usedBy, err := s.removeCacheEntry(ctx, game, plan.Profile, modCacheKey(game.ID, plan.Replaces.Mod)); err != nil {
 			msg := fmt.Sprintf("Warning: could not clear old cache: %v", err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})

@@ -725,15 +725,36 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 
 	if preEnrichID != result.Mod.ID || preEnrichVersion != result.Mod.Version {
 		oldPath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: preEnrichID, Version: preEnrichVersion})
-		newPath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version})
+		newKey := cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version, Variant: result.Mod.Variant}
+		newPath := gameCache.ModPath(newKey)
 		// A failed MkdirAll is silent, exactly as it was pre-lift: the
 		// rename is not even attempted, and the cascade it causes (the mod
-		// is not cached at its new version) surfaces at the deploy.
+		// is not cached at its new version) surfaces at the deploy. The
+		// renamed entry is re-stamped as its new key's (#614), and a
+		// directory a colliding key owns is never renamed over.
 		if err := os.MkdirAll(filepath.Dir(newPath), 0755); err == nil {
-			if err := os.Rename(oldPath, newPath); err != nil {
+			if err := gameCache.Claim(newKey); err != nil {
 				note(ImportArchiveNote, "Warning: could not rename cache entry: %v", err)
+			} else if err := os.Rename(oldPath, newPath); err != nil {
+				note(ImportArchiveNote, "Warning: could not rename cache entry: %v", err)
+			} else if err := cache.StampKey(newPath, newKey); err != nil && newKey.Variant != "" {
+				// A variant entry needs its marker to be its key's
+				// (cache.CheckKey): undo the rename, the same outcome as a
+				// rename that failed.
+				if undoErr := os.Rename(newPath, oldPath); undoErr != nil {
+					result.Renamed = true
+					note(ImportArchiveNote, "Warning: could not stamp the renamed cache entry: %v (and moving it back failed: %v)", err, undoErr)
+				} else {
+					note(ImportArchiveNote, "Warning: could not rename cache entry: %v", err)
+				}
 			} else {
 				result.Renamed = true
+				if err != nil {
+					// A plain entry with its old key's marker is stale, and
+					// a stale marker reads as legacy plain (cache.CheckKey):
+					// the entry is still this key's.
+					note(ImportArchiveNote, "Warning: could not stamp the renamed cache entry: %v", err)
+				}
 			}
 		}
 	}
@@ -1018,7 +1039,7 @@ func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArc
 	if !result.Renamed {
 		return warnings
 	}
-	if err := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version}); err != nil {
+	if err := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version, Variant: result.Mod.Variant}); err != nil {
 		s.logger().Warn("removing refused import's renamed cache entry", "mod", result.Mod.ID, "version", result.Mod.Version, "err", err)
 		warnings = append(warnings, fmt.Sprintf("could not remove the refused import's cache entry %s@%s: %v", result.Mod.ID, result.Mod.Version, err))
 	}

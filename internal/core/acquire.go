@@ -131,7 +131,7 @@ func (s *Service) commitAcquired(ctx context.Context, a *acquiredFile) (*Downloa
 // newAcquired starts an acquisition for (mod, file) and creates nothing.
 func (s *Service) newAcquired(gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile) *acquiredFile {
 	a := &acquiredFile{gameCache: gameCache, game: game, mod: *mod, file: file, sourceID: sourceID, log: s.logger()}
-	a.tree = acquireTreePath(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}), file.ID)
+	a.tree = acquireTreePath(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}), file.ID)
 	return a
 }
 
@@ -445,7 +445,7 @@ func (s *Service) commitAcquiredRaw(ctx context.Context, a *acquiredFile) (*Down
 	if err := mergeAcquiredTree(a.tree, stagePath); err != nil {
 		return nil, fmt.Errorf("staging acquired members: %w", err)
 	}
-	if err := commitStagedCacheWithMarker(cachePath, stagePath, a.file.ID, a.members); err != nil {
+	if err := commitStagedCacheWithMarker(modCacheKey(a.game.ID, a.mod), cachePath, stagePath, a.file.ID, a.members); err != nil {
 		return nil, err
 	}
 	// The retained copy is dead weight once the bytes are in the cache -
@@ -456,7 +456,7 @@ func (s *Service) commitAcquiredRaw(ctx context.Context, a *acquiredFile) (*Down
 
 	result := &DownloadModResult{FilesExtracted: len(a.members), Checksum: a.checksum}
 	if a.listed {
-		files, err := a.gameCache.ListFiles(cache.Key{GameID: a.game.ID, SourceID: a.mod.SourceID, ModID: a.mod.ID, Version: a.mod.Version})
+		files, err := a.gameCache.ListFiles(cache.Key{GameID: a.game.ID, SourceID: a.mod.SourceID, ModID: a.mod.ID, Version: a.mod.Version, Variant: a.mod.Variant})
 		if err != nil {
 			return nil, err
 		}

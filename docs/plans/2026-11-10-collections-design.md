@@ -240,11 +240,14 @@ mods:
     file_ids: ["37471"]
     fomod:
       config_sha256: 9f2c…        # the ModuleConfig.xml the choices were made against
-      steps:
-        - step: Main Files
+      steps:                      # Vortex's collection.json choices shape (#614)
+        - name: Main Files
           groups:
-            - group: Texture Resolution
-              choices: [2K]
+            - name: Texture Resolution
+              choices:
+                - name: 2K
+                  idx: 1              # Vortex's own position; carried, never compared
+                  # index: 1          # optional: lmm's ordinal among same-named options
 ```
 
 Matching is by name, as Vortex does. Names are not unique in real FOMODs, though (Vortex's own source complains about it), so a recorded entry may carry an `index`: **lmm's own** ordinal among same-named siblings in document order, used only to disambiguate. It is *not* Vortex's `idx` (an option's position in its group, on an INFERRED sort basis, which Vortex itself never compares). A collection replay discards `idx` and matches by name alone, exactly as Vortex does.

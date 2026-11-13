@@ -49,7 +49,10 @@ func (c *Cache) ModPath(k Key) string {
 	return filepath.Join(c.basePath, k.GameID, k.modDir(), k.versionDir())
 }
 
-// Exists checks if a mod version is cached
+// Exists checks if a mod version is cached: k's directory exists AND is
+// k's own entry (CheckKey). A directory a colliding key wrote - the plain
+// version "1.0@abc" where k is version "1.0", variant "abc", or the other
+// way round - is not k's entry, so it reads as absent (#614).
 func (c *Cache) Exists(k Key) bool {
 	path := c.ModPath(k)
 	info, err := os.Stat(path)
@@ -59,7 +62,7 @@ func (c *Cache) Exists(k Key) bool {
 		}
 		return false
 	}
-	return info.IsDir()
+	return info.IsDir() && c.owns(path, k)
 }
 
 // ReservedPrefix marks lmm's own bookkeeping entries inside a cache version
@@ -560,10 +563,23 @@ func MergeFingerprintPath(versionDir string) string {
 	return filepath.Join(versionDir, mergeFingerprintMarkerName)
 }
 
-// Store saves a file to the cache
+// Store saves a file to the cache. It refuses another key's entry
+// (Claim), and stamps the identity marker into an entry it creates for a
+// variant key - a variant entry without one is not its key's (CheckKey).
 func (c *Cache) Store(k Key, relativePath string, content []byte) error {
+	if err := c.Claim(k); err != nil {
+		return err
+	}
 	modPath := c.ModPath(k)
 	fullPath := filepath.Join(modPath, relativePath)
+	if k.Variant != "" {
+		if err := os.MkdirAll(modPath, 0755); err != nil {
+			return fmt.Errorf("creating cache dir: %w", err)
+		}
+		if err := StampKey(modPath, k); err != nil {
+			return err
+		}
+	}
 
 	dir := filepath.Dir(fullPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -638,8 +654,18 @@ func walkEntries(modPath string, includeReserved bool) ([]string, error) {
 // leaving it behind after every version is gone is just litter (#190 item
 // 4). A container that still holds another version, or that never existed,
 // is left alone either way - never an error.
+//
+// A directory that is another key's entry (CheckKey: a colliding key wrote
+// it) is refused with *KeyCollisionError and left alone: deleting the plain
+// version "1.0@abc" must never take variant "abc" of version "1.0" with it
+// (#614), and an uninstall must not report a removal that did not happen.
 func (c *Cache) Delete(k Key) error {
 	modPath := c.ModPath(k)
+	if _, err := os.Lstat(modPath); err == nil {
+		if err := CheckKey(modPath, k); err != nil {
+			return err
+		}
+	}
 	if err := os.RemoveAll(modPath); err != nil {
 		return fmt.Errorf("deleting cached mod: %w", err)
 	}

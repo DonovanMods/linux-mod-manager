@@ -7,42 +7,45 @@ package fomod
 // optional `index` keys, which are omitted when unset so a Vortex document
 // round-trips byte for byte.
 //
+// The yaml tags spell the same keys, so the profile document (#614's
+// `fomod:` block) records a choice set exactly as a collection does.
+//
 // Names are matched exactly: never trimmed, never case-folded (a real
 // collection records " Spicy Clean Hacking Screen" with its leading space,
 // and a step named "").
 type StepChoice struct {
 	// Name is the step's name.
-	Name string `json:"name"`
+	Name string `json:"name" yaml:"name"`
 	// Index, when set, matches only the step with this Ordinal among
 	// same-named steps. Nil matches every step of that name, as Vortex does.
-	Index *int `json:"index,omitempty"`
+	Index *int `json:"index,omitempty" yaml:"index,omitempty"`
 	// Groups are the answered groups. A group absent here is unanswered.
-	Groups []GroupChoice `json:"groups"`
+	Groups []GroupChoice `json:"groups" yaml:"groups"`
 }
 
 // GroupChoice records the answer for one group.
 type GroupChoice struct {
 	// Name is the group's name.
-	Name string `json:"name"`
+	Name string `json:"name" yaml:"name"`
 	// Index, when set, matches only the group with this Ordinal among
 	// same-named groups in the step. Nil matches every group of that name.
-	Index *int `json:"index,omitempty"`
+	Index *int `json:"index,omitempty" yaml:"index,omitempty"`
 	// Choices are the picked options. The group's presence is the answer:
 	// an empty (or nil) list means "pick nothing", not "no answer".
-	Choices []OptionChoice `json:"choices"`
+	Choices []OptionChoice `json:"choices" yaml:"choices"`
 }
 
 // OptionChoice records one picked option.
 type OptionChoice struct {
 	// Name is the option's name.
-	Name string `json:"name"`
+	Name string `json:"name" yaml:"name"`
 	// Idx is Vortex's idx: the option's position in its group as the
 	// installer presented it. It is carried for round-tripping and never
 	// compared, exactly as Vortex never compares it.
-	Idx int `json:"idx"`
+	Idx int `json:"idx" yaml:"idx"`
 	// Index, when set, matches only the option with this Ordinal among
 	// same-named options in the group. Nil matches every option of that name.
-	Index *int `json:"index,omitempty"`
+	Index *int `json:"index,omitempty" yaml:"index,omitempty"`
 }
 
 // matches reports whether a recorded name and optional index select an
