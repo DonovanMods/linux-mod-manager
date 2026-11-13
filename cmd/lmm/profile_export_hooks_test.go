@@ -1,10 +1,10 @@
 package main
 
 // #296 at the CLI seam: `lmm profile export` writes the profile document to
-// stdout verbatim, so the recorded plain-text delta is exactly "an exported
-// profile that HAS hook overrides gains a hooks: block". A profile without
-// overrides prints byte-identically to every export before #296, which the
-// second test pins.
+// stdout verbatim, and an exported profile that HAS hook overrides carries
+// a hooks: block. Since #621 that document is the version-1 collection
+// (owner ruling 2026-11-12: stdout stays YAML, now version 1), which writes
+// only the hooks that are set.
 
 import (
 	"context"
@@ -63,6 +63,8 @@ func TestDoProfileExport_PrintsHookOverrides(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "modded.yaml"), []byte(`name: modded
 game_id: g1
 mods: []
+collection:
+    id: fixed-id
 hooks:
     install:
         after_all: ""
@@ -74,30 +76,29 @@ hooks:
 		return doProfileExport(context.Background(), svc, game, "modded")
 	})
 
-	// The explicit `null`s are the profile FILE's own shape: the export
-	// reuses config's ProfileHooksYAML verbatim (an unset hook is a nil
-	// *string, which parseProfileHooks reads back as "not explicit"), so an
-	// exported profile is a profile file and nothing had to be invented for
-	// the wire.
-	assert.Equal(t, `name: modded
+	// An unset hook is absent (it keeps inheriting the game's), and an
+	// explicitly disabled one is present and empty: the profile file's own
+	// encoding, which an older lmm's reader decodes the same way.
+	assert.Equal(t, `lmm_collection: 1
+id: fixed-id
+version: 1
+name: modded
 game_id: g1
+game:
+    name: Game
 mods: []
 hooks:
     install:
-        before_all: null
-        before_each: null
-        after_each: null
         after_all: ""
     uninstall:
-        before_all: null
-        before_each: null
-        after_each: null
         after_all: /opt/lmm/cleanup.sh
 `, out)
 }
 
-// TestDoProfileExport_NoHooks_PrintsNoHooksBlock is the compatibility half:
-// nothing about an ordinary export moved.
+// TestDoProfileExport_NoHooks_PrintsNoHooksBlock: a profile without hook
+// overrides writes no hooks: key. Its first export mints the collection id
+// and records it in the profile (#621), and stdout still carries exactly
+// the one document.
 func TestDoProfileExport_NoHooks_PrintsNoHooksBlock(t *testing.T) {
 	svc, game, _ := newProfileExportTestService(t)
 	_, err := getProfileManager(svc).Create(context.Background(), game.ID, "plain")
@@ -107,5 +108,8 @@ func TestDoProfileExport_NoHooks_PrintsNoHooksBlock(t *testing.T) {
 		return doProfileExport(context.Background(), svc, game, "plain")
 	})
 
-	assert.Equal(t, "name: plain\ngame_id: g1\nmods: []\n", out)
+	saved, err := getProfileManager(svc).Get(context.Background(), game.ID, "plain")
+	require.NoError(t, err)
+	require.NotEmpty(t, saved.Collection.ID, "the first export records the minted id")
+	assert.Equal(t, "lmm_collection: 1\nid: "+saved.Collection.ID+"\nversion: 1\nname: plain\ngame_id: g1\ngame:\n    name: Game\nmods: []\n", out)
 }

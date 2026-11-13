@@ -1,0 +1,10 @@
+{
+  "name": "Cyberpunk 2077",
+  "steam_app_id": "1091500",
+  "sources": {
+    "nexusmods": "cyberpunk2077"
+  },
+  "versions": [
+    "2.5.0.0"
+  ]
+}

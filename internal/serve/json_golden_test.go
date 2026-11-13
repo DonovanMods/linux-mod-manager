@@ -551,6 +551,29 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileImportApplyRequest{Install: true, Force: true, NoInstall: true},
 		},
 		{
+			// #621: a .lmmc is binary, so the SPA posts it base64-encoded,
+			// optionally naming the profile; the apply half's with_hooks is
+			// `--with-hooks`.
+			"profile_import_plan_request_lmmc",
+			profileImportPlanRequest{DataBase64: "UEsDBA==", ProfileName: "coop"},
+		},
+		{
+			// #621 web parity: a document staged by POST /api/v1/uploads,
+			// so the web UI imports what the CLI does.
+			"profile_import_plan_request_upload",
+			profileImportPlanRequest{UploadID: "a1b2c3", ProfileName: "coop"},
+		},
+		{
+			"profile_import_apply_request_with_hooks",
+			profileImportApplyRequest{Install: true, WithHooks: true},
+		},
+		{
+			// #621's override gate: allow_any_overrides is
+			// `--allow-any-overrides`.
+			"profile_import_apply_request_any_overrides",
+			profileImportApplyRequest{Install: true, AllowAnyOverrides: true},
+		},
+		{
 			// #332's one-member profile body, shared by POST
 			// /api/v1/profiles (the name to create) and POST
 			// /api/v1/profiles/{name}/rename (the name to rename TO).

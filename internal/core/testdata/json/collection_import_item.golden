@@ -1,0 +1,7 @@
+{
+  "source_id": "custom-src",
+  "mod_id": "42",
+  "name": "Much Better Ammo",
+  "version": "1.8.0",
+  "unavailable": "lmm has no source \"custom-src\" here; add it, then re-import (a collection never carries a custom source's definition: ask its author for it)"
+}

@@ -152,6 +152,14 @@ var checkedApplies = map[string]planThenApply{
 			return err
 		}
 	},
+	"ApplyCollectionImport": func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) func() error {
+		plan, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: fx.collectionDoc, GameID: g.ID})
+		require.NoError(t, err)
+		return func() error {
+			_, err := svc.ApplyCollectionImport(context.Background(), g, plan, core.ProfileImportOptions{}, nil)
+			return err
+		}
+	},
 	"ApplyUpdate": func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) func() error {
 		plan, err := svc.PlanUpdateFrom(context.Background(), g, "default", fx.update)
 		require.NoError(t, err)

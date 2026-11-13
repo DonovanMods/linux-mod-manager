@@ -2073,6 +2073,100 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #621: one item of an lmm collection import plan - with, and
+			// below without, the source this machine lacks.
+			"collection_import_item",
+			core.CollectionImportItem{
+				SourceID: "custom-src", ModID: "42", Name: "Much Better Ammo", Version: "1.8.0",
+				Unavailable: `lmm has no source "custom-src" here; add it, then re-import (a collection never carries a custom source's definition: ask its author for it)`,
+			},
+		},
+		{
+			"import_hook",
+			core.ImportHook{Hook: "install.after_all", Command: "/home/author/bin/after.sh"},
+		},
+		{
+			// #621's override gate: an override of an imported document
+			// that does not target a text config file.
+			"restricted_override",
+			core.RestrictedOverride{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .config, .cvars, .ini, .json, .lsx, .ltx, .properties, .ron, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"},
+		},
+		{
+			// A version-0 import's plan with its hooks and a restricted
+			// override listed (#621 gates).
+			"import_plan_gated",
+			core.ImportPlan{
+				Profile:             &domain.Profile{Name: "shared", GameID: "g1"},
+				Installed:           []domain.ModReference{},
+				AlreadyCached:       []domain.ModReference{},
+				NeedsRedownload:     []domain.ModReference{},
+				Missing:             []domain.ModReference{},
+				Hooks:               []core.ImportHook{{Hook: "install.after_all", Command: "/home/author/bin/after.sh"}},
+				Overrides:           []string{"Config/Game.ini", "bin/x64/version.dll"},
+				RestrictedOverrides: []core.RestrictedOverride{{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .config, .cvars, .ini, .json, .lsx, .ltx, .properties, .ron, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"}},
+			},
+		},
+		{
+			// And its result without --with-hooks or --allow-any-overrides.
+			"profile_import_result_gated",
+			core.ProfileImportResult{
+				ProfileName: "shared", Skipped: 1, HooksWithheld: 1,
+				OverridesSkipped: []core.RestrictedOverride{{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .config, .cvars, .ini, .json, .lsx, .ltx, .properties, .ron, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"}},
+			},
+		},
+		{
+			"unsupported_collection_feature",
+			core.UnsupportedCollectionFeature{Feature: "fomod", Items: []string{"nexusmods:107"}},
+		},
+		{
+			// The gate's refusal, which is also its --json envelope details.
+			"collection_unsupported_error",
+			core.CollectionUnsupportedError{
+				Unsupported: []core.UnsupportedCollectionFeature{{Feature: "fomod"}},
+				Supported:   []string{"external"},
+			},
+		},
+		{
+			"collection_import",
+			collectionImportFixture(),
+		},
+		{
+			// The JSON plan of a version-1 import (#621) - the document
+			// POST /api/v1/plans/profile_import answers: the ordinary
+			// buckets with the collection beside them.
+			"import_plan_collection",
+			core.ImportPlan{
+				Profile: &domain.Profile{
+					Name: "coop", GameID: "cyber",
+					Mods: []domain.ModReference{{SourceID: "nexusmods", ModID: "1", Version: "1.8.0", Locked: true}},
+					Collection: &domain.CollectionInfo{
+						ID: "2f8c7a3e-0000-4000-8000-000000000001", Version: 3, Title: "Welcome to Night City",
+						Origin: &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "iszwwe", Revision: 484},
+					},
+					External: []domain.CollectionExternalItem{{Name: "CET", URL: "https://example.invalid/cet"}},
+				},
+				Installed:       []domain.ModReference{},
+				AlreadyCached:   []domain.ModReference{},
+				NeedsRedownload: []domain.ModReference{},
+				Missing:         []domain.ModReference{{SourceID: "nexusmods", ModID: "1", Version: "1.8.0", Locked: true}},
+				Collection:      collectionImportFixture(),
+			},
+		},
+		{
+			// A collection import's result: its hooks withheld, and the
+			// notes saying so and naming the external items.
+			"collection_import_result",
+			core.CollectionImportResult{
+				Collection: collectionImportFixture(),
+				Result: &core.ProfileImportResult{
+					ProfileName: "coop", Installed: 1, HooksWithheld: 1,
+					Notes: []string{
+						"1 item(s) of this collection are not fetched by lmm: get them by hand (the profile records them, with the curator's instructions).",
+					},
+				},
+			},
+		},
+		{
 			// The result half: a collection import installs NOTHING (Tier 3
 			// owns the download path), so every un-subscribed item is
 			// Skipped and the note says what to do about them.
@@ -3540,5 +3634,29 @@ func TestJSONGoldens(t *testing.T) {
 			require.NoError(t, err, "golden %s missing - record it with -update-json-goldens BEFORE relying on this test", path)
 			require.Equal(t, string(want), string(b)+"\n", "%s JSON shape drifted from the recorded golden", tt.name)
 		})
+	}
+}
+
+// collectionImportFixture is one version-1 collection import plan's
+// collection half (#621), shared by the goldens that carry it.
+func collectionImportFixture() *core.CollectionImport {
+	return &core.CollectionImport{
+		FormatVersion: 1, Container: true, Input: core.CollectionFromFile,
+		ID: "2f8c7a3e-0000-4000-8000-000000000001", Version: 3,
+		Name: "Welcome to Night City", ProfileName: "coop",
+		Author: "curator", Description: "A curated list.", InstallInstructions: "Run the game once first.",
+		Origin:    &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "iszwwe", Revision: 484, Author: "curator"},
+		Game:      domain.CollectionGame{Name: "Cyberpunk 2077", SteamAppID: "1091500", Sources: map[string]string{"nexusmods": "cyberpunk2077"}},
+		GameID:    "cyber",
+		MatchedBy: "steam_app_id",
+		Requires:  []string{"external"},
+		Items: []core.CollectionImportItem{
+			{SourceID: "nexusmods", ModID: "1", Name: "Much Better Ammo", Version: "1.8.0"},
+		},
+		External:        []domain.CollectionExternalItem{{Name: "CET", URL: "https://example.invalid/cet", Instructions: "Install by hand."}},
+		Hooks:           []core.ImportHook{{Hook: "install.after_all", Command: "/home/author/bin/after.sh"}},
+		HooksImportable: true,
+		Overrides:       []string{"engine/config/user.ini"},
+		Warnings:        []string{"the container's signature (collection.yaml.sig) was not checked: this version of lmm does not verify collection signatures"},
 	}
 }

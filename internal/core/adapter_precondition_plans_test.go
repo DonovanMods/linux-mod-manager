@@ -115,6 +115,10 @@ var gatedPlans = []gatedPlan{
 		_, err := svc.PlanImport(context.Background(), g, fx.profileDoc)
 		return err
 	}},
+	{"PlanCollectionImport", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: fx.collectionDoc, GameID: g.ID})
+		return err
+	}},
 	{"PlanUpdate", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
 		_, err := svc.PlanUpdate(context.Background(), g, "default", "acme", "m1")
 		return err
@@ -236,8 +240,10 @@ type planFixture struct {
 	archive      string
 	snapshotName string
 	profileDoc   []byte
-	collection   string
-	update       domain.Update
+	// collectionDoc is profileDoc as an lmm collection (#621).
+	collectionDoc []byte
+	collection    string
+	update        domain.Update
 }
 
 func newPreconditionFixture(t *testing.T) (*core.Service, *domain.Game, planFixture) {
@@ -312,10 +318,11 @@ func newPlanFixtureWithAdapter(t *testing.T, _ adapter.GameAdapter) (*core.Servi
 	require.FileExists(t, archive)
 
 	return svc, game, planFixture{
-		archive:      archive,
-		snapshotName: snap.Name,
-		profileDoc:   doc,
-		collection:   "1234",
+		archive:       archive,
+		snapshotName:  snap.Name,
+		profileDoc:    doc,
+		collectionDoc: []byte("lmm_collection: 1\nname: default\nmods:\n  - {source_id: acme, mod_id: m1, version: \"1.0\"}\n"),
+		collection:    "1234",
 		update: domain.Update{
 			InstalledMod: domain.InstalledMod{
 				Mod:         domain.Mod{ID: "m1", SourceID: "acme", Name: "M1", GameID: "g1", Version: "1.0"},

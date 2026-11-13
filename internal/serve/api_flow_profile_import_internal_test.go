@@ -223,7 +223,7 @@ func TestFlowProfileImport_PlanRefusals(t *testing.T) {
 		// or one for a DIFFERENT game than the one selected - used to plan
 		// 200 too, and only fail once the job reached SaveProfile
 		// ("importing profile: invalid game ID: value is empty"), or worse,
-		// silently save under the WRONG game's directory (ImportWithOptions
+		// silently save under the WRONG game's directory (the import save
 		// saves profile.GameID from the document verbatim, never the
 		// selected game's own ID).
 		{"missing game_id", `{"data":"name: x"}`},

@@ -1,0 +1,4 @@
+{
+  "path": "bin/x64/version.dll",
+  "reason": "not a text config file (.cfg, .conf, .config, .cvars, .ini, .json, .lsx, .ltx, .properties, .ron, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"
+}

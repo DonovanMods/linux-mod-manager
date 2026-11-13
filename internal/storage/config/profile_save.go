@@ -30,7 +30,7 @@ const profileBackupSuffix = ".bak"
 // A key an in-place save adds goes after the nearest key before it in this
 // order, so a file lmm wrote stays exactly as a whole write would have it.
 var (
-	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides"}
+	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external"}
 	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "fomod"}
 )
 
@@ -54,13 +54,15 @@ type profileFileHooksYAML struct {
 // ProfileConfig's keys, in its order, with the hooks written as
 // profileFileHooksYAML.
 type profileFileYAML struct {
-	Name       string               `yaml:"name"`
-	GameID     string               `yaml:"game_id"`
-	Mods       []ModReferenceConfig `yaml:"mods"`
-	LinkMethod string               `yaml:"link_method,omitempty"`
-	IsDefault  bool                 `yaml:"is_default,omitempty"`
-	Hooks      profileFileHooksYAML `yaml:"hooks,omitempty"`
-	Overrides  map[string]string    `yaml:"overrides,omitempty"`
+	Name       string                          `yaml:"name"`
+	GameID     string                          `yaml:"game_id"`
+	Mods       []ModReferenceConfig            `yaml:"mods"`
+	LinkMethod string                          `yaml:"link_method,omitempty"`
+	IsDefault  bool                            `yaml:"is_default,omitempty"`
+	Hooks      profileFileHooksYAML            `yaml:"hooks,omitempty"`
+	Overrides  map[string]string               `yaml:"overrides,omitempty"`
+	Collection *domain.CollectionInfo          `yaml:"collection,omitempty"`
+	External   []domain.CollectionExternalItem `yaml:"external,omitempty"`
 }
 
 func fileHook(h ProfileHookConfigYAML) profileFileHookYAML {
@@ -71,12 +73,14 @@ func fileHook(h ProfileHookConfigYAML) profileFileHookYAML {
 func profileFileOf(profile *domain.Profile) profileFileYAML {
 	hooks := serializeProfileHooks(profile.Hooks, profile.HooksExplicit)
 	doc := profileFileYAML{
-		Name:      profile.Name,
-		GameID:    profile.GameID,
-		IsDefault: profile.IsDefault,
-		Mods:      refConfigsOf(profile.Mods),
-		Hooks:     profileFileHooksYAML{Install: fileHook(hooks.Install), Uninstall: fileHook(hooks.Uninstall)},
-		Overrides: overridesOf(profile),
+		Name:       profile.Name,
+		GameID:     profile.GameID,
+		IsDefault:  profile.IsDefault,
+		Mods:       refConfigsOf(profile.Mods),
+		Hooks:      profileFileHooksYAML{Install: fileHook(hooks.Install), Uninstall: fileHook(hooks.Uninstall)},
+		Overrides:  overridesOf(profile),
+		Collection: collectionOrNil(profile.Collection),
+		External:   externalOrNil(profile.External),
 	}
 	// Only write link_method if explicitly set: String() never returns "", so
 	// assigning it unconditionally defeats `omitempty` and bakes a phantom
@@ -102,6 +106,14 @@ func refConfigsOf(mods []domain.ModReference) []ModReferenceConfig {
 		}
 	}
 	return refs
+}
+
+// externalOrNil is items, or nil when there are none.
+func externalOrNil(items []domain.CollectionExternalItem) []domain.CollectionExternalItem {
+	if len(items) == 0 {
+		return nil
+	}
+	return items
 }
 
 func overridesOf(profile *domain.Profile) map[string]string {
@@ -507,6 +519,20 @@ func editProfileDocument(base []byte, fromName string, want *domain.Profile, ren
 			return nil, err
 		}
 	}
+	if !haveProfile.Collection.Equal(want.Collection) {
+		if err := e.setTopBlock("collection", struct {
+			Collection *domain.CollectionInfo `yaml:"collection,omitempty"`
+		}{collectionOrNil(want.Collection)}); err != nil {
+			return nil, err
+		}
+	}
+	if !slices.Equal(haveProfile.External, want.External) {
+		if err := e.setTopBlock("external", struct {
+			External []domain.CollectionExternalItem `yaml:"external,omitempty"`
+		}{externalOrNil(want.External)}); err != nil {
+			return nil, err
+		}
+	}
 
 	edited, err = e.apply()
 	if err != nil {
@@ -534,7 +560,8 @@ func sameProfile(a, b *domain.Profile) bool {
 		a.LinkMethodExplicit != b.LinkMethodExplicit ||
 		(a.LinkMethodExplicit && a.LinkMethod != b.LinkMethod) ||
 		a.Hooks != b.Hooks || a.HooksExplicit != b.HooksExplicit ||
-		!sameOverrides(a.Overrides, b.Overrides) {
+		!sameOverrides(a.Overrides, b.Overrides) ||
+		!a.Collection.Equal(b.Collection) || !slices.Equal(a.External, b.External) {
 		return false
 	}
 	return sameRefs(refConfigsOf(a.Mods), b.Mods)

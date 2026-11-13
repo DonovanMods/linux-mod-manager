@@ -246,7 +246,7 @@ func TestApplyImportNoInstall(t *testing.T) {
 }
 
 // TestApplyImportForceOverwrite covers the existing-profile gate: without
-// Force, saving fails with ImportWithOptions' own "already exists" error and
+// Force, saving fails with importDocument's own "already exists" error and
 // the existing profile is left untouched; with Force, the save proceeds and
 // overwrites it.
 func TestApplyImportForceOverwrite(t *testing.T) {
