@@ -669,6 +669,13 @@ func (c *Cache) Delete(k Key) error {
 	if err := os.RemoveAll(modPath); err != nil {
 		return fmt.Errorf("deleting cached mod: %w", err)
 	}
+	// A PublishMod that crashed between its renames left k's entry under
+	// its set-aside name; the sweep below would put it back, inside the
+	// very Delete meant to remove it. It is k's entry, so it goes too.
+	aside := filepath.Join(filepath.Dir(modPath), copyReplacedPrefix+filepath.Base(modPath))
+	if err := os.RemoveAll(aside); err != nil {
+		return fmt.Errorf("deleting cached mod: %w", err)
+	}
 	c.sweepCopyLeftovers(filepath.Dir(modPath))
 	if err := removeIfEmpty(filepath.Dir(modPath)); err != nil {
 		return fmt.Errorf("removing empty mod cache directory: %w", err)

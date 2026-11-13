@@ -800,3 +800,22 @@ func TestCache_PublishMod_ACrashBetweenTheRenamesIsUndoneBySweep(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"old.esp"}, files, "and the entry is untouched")
 }
+
+// TestCache_Delete_RemovesAnEntrySetAsideByACrashedPublish (#614 final
+// review): after a crash between PublishMod's renames the entry lives only
+// under its set-aside name. Deleting k must delete that copy too - not let
+// the sweep restore it inside the very Delete meant to remove it, leaving
+// an uninstalled mod's files to be found warm by a later reinstall.
+func TestCache_Delete_RemovesAnEntrySetAsideByACrashedPublish(t *testing.T) {
+	k := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0", Variant: "abcdef123456"}
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store(k, "old.esp", []byte("old")))
+	require.NoError(t, cache.StampKey(c.ModPath(k), k))
+	aside := filepath.Join(filepath.Dir(c.ModPath(k)), cache.ReservedPrefix+"copy-replaced-"+filepath.Base(c.ModPath(k)))
+	require.NoError(t, os.Rename(c.ModPath(k), aside))
+
+	require.NoError(t, c.Delete(k))
+	assert.NoDirExists(t, c.ModPath(k), "the entry is not restored")
+	assert.NoDirExists(t, aside, "and its set-aside copy is gone")
+	assert.False(t, c.Exists(k))
+}
