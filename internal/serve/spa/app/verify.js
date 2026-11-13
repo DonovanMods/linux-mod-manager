@@ -40,6 +40,14 @@ export function findingLabel(f) {
   return label;
 }
 
+/** isInformational reports whether a finding is a fact about the install
+ * rather than a problem with it (issue 630): a mod file the profile's
+ * overrides replace ("deployed_overridden") is the profile's own choice.
+ * It is shown wherever findings are, and counted nowhere a problem is. */
+export function isInformational(f) {
+  return f?.status === "deployed_overridden";
+}
+
 /** isRepaired reports whether a --fix run repaired this finding (issue 517).
  *
  * The "fixed_*" statuses say so themselves. A repair that resolves a row to
@@ -61,7 +69,12 @@ export function repairOutcome(findings) {
   const attention = [];
   for (const f of Array.isArray(findings) ? findings : []) {
     if (isRepaired(f)) repaired.push(f);
-    else if (f?.status && f.status !== "ok" && f.status !== "skipped") {
+    else if (
+      f?.status &&
+      f.status !== "ok" &&
+      f.status !== "skipped" &&
+      !isInformational(f)
+    ) {
       attention.push(f);
     }
   }

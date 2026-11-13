@@ -149,6 +149,12 @@ type VerifyFinding struct {
 	//	                      mod
 	//	deployed_modified     never: a copy or hardlink the user changed is
 	//	                      theirs, and --fix leaves it (#466)
+	//	deployed_overridden   never: a mod file the profile's overrides
+	//	                      replace is the profile's choice (#630)
+	//	override_stale        when the mod's cached copy is there, on the
+	//	                      game's active profile: --fix puts the mod's
+	//	                      own file back in place of an overridden copy
+	//	                      the profile no longer overrides (#630)
 	//	orphaned_record       only on the game's active profile: --fix drops
 	//	                      deployed-file records no installed mod owns,
 	//	                      removing nothing (#469); another profile's
@@ -989,6 +995,30 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 // note says how to take the mod's version back.
 const VerifyStatusDeployedModified = "deployed_modified"
 
+// VerifyStatusDeployedOverridden is the status of a verify row for a file a
+// deployed mod ships that the profile's overrides replace (#630): the mod's
+// link was broken into a regular copy holding the override, which is the
+// profile's own choice rather than drift. It is reported so the copy is not
+// a mystery, counted as neither an issue nor a warning, and never fixable -
+// --fix leaves the override exactly where it is. Removing the override from
+// the profile, or switching to a profile without it, puts the plain link
+// back.
+const VerifyStatusDeployedOverridden = "deployed_overridden"
+
+// VerifyStatusOverrideStale is the status of a verify row for an
+// overridden copy (#630) the profile no longer overrides - its override was
+// taken out of the profile by hand, and nothing has deployed since: the
+// copy lmm wrote still stands where the mod's own file belongs. A warning;
+// --fix puts the mod's own file back (VerifyStatusFixedOverrideStale), as
+// `lmm deploy` would. Looked for under the symlink and hardlink methods,
+// where a plain deployment is never a regular file of its own, and at any
+// path another profile overrides.
+const VerifyStatusOverrideStale = "override_stale"
+
+// VerifyStatusFixedOverrideStale is a VerifyStatusOverrideStale row a --fix
+// run resolved by putting the mod's own file back.
+const VerifyStatusFixedOverrideStale = "fixed_override_stale"
+
 // VerifyStatusCatalogMissing is the status of a version-check row whose
 // source's catalog no longer has the mod (#590): its files lookup answered
 // domain.ErrModNotFound - the same typed condition the update check reports
@@ -1038,6 +1068,10 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 		names[domain.ModKey(m.SourceID, m.ID)] = m.Name
 		byKey[domain.ModKey(m.SourceID, m.ID)] = &cachedMod{cache: gameCache, game: r.game, mod: &installedMods[i].Mod, method: m.LinkMethod}
 	}
+	// #630: the files the profile's overrides replace are its own choice,
+	// reported as such rather than as drift.
+	overridden := r.svc.overriddenModFiles(r.game, r.profile)
+	stale := newStaleOverrideCheck(r, overridden)
 	jd := deployedJudge{
 		db: r.svc.db, game: r.game, profile: r.profile, cacheRoots: r.svc.cacheRoots(r.game),
 		cached: func(st db.DeployedFileState, rel string) string {
@@ -1055,6 +1089,19 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 			continue
 		}
 		dst := filepath.Join(r.game.ModPath, filepath.FromSlash(row.RelativePath))
+		if content, ok := overridden.content(row.RelativePath); ok && holdsOverriddenCopy(dst, content) {
+			r.finding(VerifyFinding{
+				ModID:   row.ModID,
+				ModName: names[domain.ModKey(row.SourceID, row.ModID)],
+				FileID:  row.RelativePath,
+				Status:  VerifyStatusDeployedOverridden,
+				Note:    row.RelativePath + ": mod file, overridden by the profile",
+			}, VerifyEvent{})
+			continue
+		}
+		if stale.report(row, dst, names[domain.ModKey(row.SourceID, row.ModID)]) {
+			continue
+		}
 		j := jd.judge(r.ctx, row.RelativePath, dst)
 		if j.verdict != deployedUsers {
 			continue

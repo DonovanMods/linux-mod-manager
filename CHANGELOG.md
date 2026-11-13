@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A profile override can change a mod's own file (#630).** A profile
+  (or a collection) that overrides a file a deployed mod ships, such as a
+  mod's `.ini`, now works under every link method: the deploy replaces
+  that one file with a regular copy holding the override. The mod's link
+  into lmm's shared cache is broken, never written through, so the cached
+  mod every profile uses stays untouched; under `copy` the deployed copy
+  holds the override. Every deploy-side flow treats the copy as the
+  profile's choice: `lmm deploy` leaves it without warnings, `lmm install`,
+  `lmm update`, a rollback and `lmm mod enable` place the copy rather than
+  the link, and `lmm uninstall`, `lmm purge` and `lmm mod disable` remove
+  it as they would the link. `lmm verify` reports it as the new status
+  `deployed_overridden` ("mod file, overridden by the profile"; neither an
+  issue nor a warning, and `--fix` leaves it), and the web UI's Health card
+  shows the same row with an **Overridden** badge, without marking the mod
+  unhealthy. Taking the override out of the profile and deploying again,
+  or switching to (or applying) a profile without it, puts the plain link
+  back; a switch or apply to a profile with it places the copy, even when
+  the switch has no mods to change. A copy left behind after the override
+  is taken out of the profile by hand is reported by `lmm verify` as
+  `override_stale` (a warning), which `--fix` (or the web UI's Repair)
+  resolves by putting the mod's own file back. When the file at the mod's
+  path is your own - you edited the overridden copy, or replaced the mod's
+  file before adding the override - the deploy sets it aside first, says
+  so, and removing the mod or `lmm purge` puts it back; a file another
+  game sharing the mod folder records is left alone, with a warning. An
+  overridden copy that cannot be written (its folder leads outside the mod
+  folder through a link) is deployed as the plain link, with a warning,
+  rather than failing the mod. #621's interim skip and its warning
+  ("this file belongs to a deployed mod; lmm cannot override a mod's own
+  files yet") are gone.
+
 - **A manual-download mod is updated automatically again once its author
   allows it (#627).** When CurseForge reports `allowModDistribution: true`
   for a mod lmm had marked manual-only (#543), the next update check clears
@@ -243,6 +274,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Profile overrides are written more carefully (#630).** Each override
+  now replaces its file atomically (a temporary file renamed into place),
+  and its directory is opened one step at a time from the game folder
+  without following a link, so a directory swapped for a link while the
+  deploy runs can no longer carry the write elsewhere. A directory, pipe
+  or device at an override's path is refused before anything opens it (a
+  pipe used to be able to hang the deploy). The warning for a link or a
+  hard link the override will not write through now says it is one lmm
+  did not deploy, rather than blaming a mod. In the web UI a profile
+  document (`.lmmc`, `.yaml`, `.yml`, `.json`) over 64 MiB is refused when
+  it is uploaded (413) rather than when the import is planned, and a plan
+  no longer reads, and removes, an upload another running import is
+  using.
+
 - **`lmm profile export` writes the collection document (#621).** Its
   stdout output gains the version-1 keys (`lmm_collection`, `id`,
   `version`, `game`, …), writes only the hooks a profile sets (no `null`
@@ -285,11 +330,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lmm's shared mod cache. Now a directory link must stay inside the game
   folder, and a file link that stays inside it is replaced by a regular
   file. An override of a deployed mod's own file (a symlink out of the
-  game folder, or a file with more than one hard link) is skipped, with
-  the deploy warning "this file belongs to a deployed mod; lmm cannot
-  override a mod's own files yet" (#630 will let an override replace a
-  mod's file). Each override stands on its own: one that is refused or
-  skipped is named in a warning, and the rest are still written.
+  game folder, or a file with more than one hard link) was skipped with a
+  warning until #630, which replaces the mod's file with an overridden
+  copy instead (see Added). Each override stands on its own: one that is
+  refused is named in a warning, and the rest are still written.
 - **A version-0 profile document's `collection:` and `external:` keys are
   ignored on import (#621).** No version-0 export carried them; only a
   checked version-1 collection sets them.

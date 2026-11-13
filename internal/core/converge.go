@@ -179,7 +179,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			// method the mod's row was deployed with, as recordedPaths
 			// reads it. The #466 judge cannot say so: a link's record
 			// carries no fingerprint.
-			if m.LinkMethod == domain.LinkSymlink && !installer.notLinkerOwned(game, row.RelativePath) && replacedLink(filepath.Join(game.ModPath, path)) {
+			if m.LinkMethod == domain.LinkSymlink && !installer.notLinkerOwned(game, row.RelativePath) && replacedLink(filepath.Join(game.ModPath, path)) && !ownCopy(ctx, jd, path, filepath.Join(game.ModPath, path)) {
 				return PurgeKeptPath{Path: row.RelativePath, Reason: PurgeKeptUserFile, Note: replacedLinkNote}, true
 			}
 			return keptPath(ctx, row, profileName, live, recordsUnder(game, game, records[row.RelativePath]), listed, others, installer, jd)
@@ -292,7 +292,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				continue
 			}
 
-			if err := lnk.Undeploy(dstPath); err != nil {
+			if err := removeDeployed(lnk, dstPath, j.verdict == deployedOurs && j.regular); err != nil {
 				errs = append(errs, fmt.Errorf("undeploying %s: %w", path, err))
 				continue
 			}

@@ -75,7 +75,14 @@ func (s *Server) handleAPIUploadCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	size, err := stageUploadedFile(filepath.Join(dir, name), part)
+	// A profile document is held to the largest one an import reads
+	// (#630), here at upload rather than at plan time, so a document no
+	// import would read never fills the staging directory.
+	var limit int64 = -1
+	if isProfileDocumentName(name) {
+		limit = s.maxProfileDocumentBytes
+	}
+	size, err := stageUploadedFile(filepath.Join(dir, name), part, limit)
 	if err == nil {
 		// Only now that the body has been consumed can the rest of it be
 		// checked: a second archive means the client misunderstood the
@@ -206,10 +213,26 @@ func isProfileDocumentName(name string) bool {
 	return false
 }
 
+// errProfileDocumentTooLarge refuses a profile document upload over the
+// largest document an import reads (#630).
+type errProfileDocumentTooLarge struct {
+	name  string
+	limit int64
+}
+
+func (e *errProfileDocumentTooLarge) Error() string {
+	return fmt.Sprintf("%s is over the %d-byte limit for a profile document", e.name, e.limit)
+}
+
 // stageUploadedFile copies src to path, creating it 0600, and returns how
 // many bytes were written. The copy is streamed: nothing here holds the
-// archive in memory.
-func stageUploadedFile(path string, src io.Reader) (int64, error) {
+// archive in memory. A limit of zero or more refuses a file longer than
+// that (errProfileDocumentTooLarge); a negative one leaves the body's own
+// cap as the only bound.
+func stageUploadedFile(path string, src io.Reader, limit int64) (int64, error) {
+	if limit >= 0 {
+		src = io.LimitReader(src, limit+1)
+	}
 	// 0600 to match the 0700 staging directory: an in-flight upload is the
 	// user's own content and has no reason to be world-readable.
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -224,15 +247,20 @@ func stageUploadedFile(path string, src io.Reader) (int64, error) {
 	if closeErr != nil {
 		return 0, fmt.Errorf("closing the staged file: %w", closeErr)
 	}
+	if limit >= 0 && size > limit {
+		return 0, &errProfileDocumentTooLarge{name: filepath.Base(path), limit: limit}
+	}
 	return size, nil
 }
 
 // uploadRequestStatus classifies an upload failure: a body over
-// maxUploadBytes is 413, everything else this function sees is the
+// maxUploadBytes, or a profile document over its own cap, is 413,
+// everything else this function sees is the
 // client's malformed request (400).
 func uploadRequestStatus(err error) int {
 	var tooLarge *http.MaxBytesError
-	if errors.As(err, &tooLarge) {
+	var docTooLarge *errProfileDocumentTooLarge
+	if errors.As(err, &tooLarge) || errors.As(err, &docTooLarge) {
 		return http.StatusRequestEntityTooLarge
 	}
 	return http.StatusBadRequest

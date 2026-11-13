@@ -972,7 +972,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 	}
 
 	if profile, err := config.LoadProfile(s.configDir, game.ID, profileName); err == nil && len(profile.Overrides) > 0 {
-		skipped, err := applyProfileOverrides(game, profile, s.originalsStoreFor(game.ID))
+		skipped, err := s.applyOverrides(ctx, game, profileName, profile)
 		if err != nil {
 			skipped = append(skipped, err.Error())
 		}

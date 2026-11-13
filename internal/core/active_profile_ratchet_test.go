@@ -89,8 +89,13 @@ func liveDirSite(fn *coreFunc, c *coreCall) bool {
 	if deploy, _ := deployKind(fn, c); deploy {
 		return true
 	}
-	if fn.recv == "Installer" || !c.method {
+	if fn.recv == "Installer" {
 		return false
+	}
+	if !c.method {
+		// A removal of lmm's own file that may be an overridden copy
+		// (#630), standing in for a linker's Undeploy.
+		return c.name == "removeDeployed"
 	}
 	switch c.name {
 	case "Uninstall", "uninstall":

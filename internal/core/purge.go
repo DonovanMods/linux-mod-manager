@@ -1514,7 +1514,7 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 				}
 				continue
 			}
-			if err := installer.linker.Undeploy(dst); err != nil {
+			if err := removeDeployed(installer.linker, dst, j.verdict == deployedOurs && j.regular); err != nil {
 				left[key]++
 				warn(row.RelativePath, err, "it could not be removed")
 				continue

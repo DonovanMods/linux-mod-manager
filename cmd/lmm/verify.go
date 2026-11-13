@@ -194,7 +194,11 @@ game's mod_path is not a directory while it has mods to deploy, or is not
 the one lmm deployed files under - a warning whose note names the repair),
 "deployed_modified" (a copied or hard-linked file whose content changed
 after lmm deployed it - a warning --fix leaves alone, since the file is
-yours), "orphaned_record" and "fixed_orphaned_record" (deployed-file records
+yours), "deployed_overridden" (a mod's file the profile's overrides replace,
+deployed as a copy holding the override - neither an issue nor a warning,
+and --fix leaves it), "override_stale" and "fixed_override_stale" (such a
+copy left behind after the override was taken out of the profile - --fix
+puts the mod's own file back), "orphaned_record" and "fixed_orphaned_record" (deployed-file records
 of a mod the profile has no installed row for; --fix drops the active
 profile's, leaving the files), "missing_cache" (an installed mod with no
 recorded file whose cache entry is gone), or one of the loader tier's own rows -
@@ -620,6 +624,23 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		// the fixable reason says how to take the mod's version back.
 		fmt.Printf("%s %s - CHANGED SINCE DEPLOY (%s)\n", colorYellow("?"), f.ModName, f.Note)
 		fmt.Printf("  %s\n", f.FixableReason)
+
+	case core.VerifyStatusDeployedOverridden:
+		// #630: a mod file the profile's overrides replace - the profile's
+		// own choice, reported so the copy is no mystery, and no problem.
+		fmt.Printf("~ %s - OVERRIDDEN BY THE PROFILE (%s)\n", cmp.Or(f.ModName, f.ModID), f.Note)
+
+	case core.VerifyStatusOverrideStale:
+		// #630: an overridden copy the profile no longer overrides.
+		fmt.Printf("%s %s - OVERRIDE NO LONGER IN THE PROFILE (%s)\n", colorYellow("?"), cmp.Or(f.ModName, f.ModID), f.Note)
+		if f.Fixable {
+			fmt.Println("  Run 'lmm verify --fix' (or 'lmm deploy') to put the mod's own file back.")
+		} else if f.FixableReason != "" {
+			fmt.Printf("  %s\n", f.FixableReason)
+		}
+
+	case core.VerifyStatusFixedOverrideStale:
+		fmt.Println(colorGreen("Fixed: " + f.Note))
 
 	case core.VerifyStatusDeployedBlocked:
 		// #466: a path the mod ships that lmm left, because what is there

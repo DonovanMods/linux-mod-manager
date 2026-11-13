@@ -333,7 +333,9 @@ func deployKind(fn *coreFunc, c *coreCall) (deploy, unclear bool) {
 		return false, false // the primitives themselves
 	}
 	switch {
-	case !c.method && c.name == "applyProfileOverrides":
+	case !c.method && (c.name == "applyProfileOverrides" || c.name == "writeOverriddenCopy"):
+		// The profile's overrides, and a mod file placed as the
+		// overridden copy of one (#630).
 		return true, false
 	case c.method && c.name == "Deploy":
 		return true, false // a linker, bypassing the Installer
