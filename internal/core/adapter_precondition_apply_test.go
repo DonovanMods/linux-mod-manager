@@ -80,6 +80,19 @@ var checkedApplies = map[string]planThenApply{
 			return err
 		}
 	},
+	"ApplyFomodReconfigure": func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) func() error {
+		// m1 as a FOMOD install: its row names a variant.
+		row, err := svc.GetInstalledMod(context.Background(), "acme", "m1", g.ID, "default")
+		require.NoError(t, err)
+		row.Variant = "abcdef123456"
+		require.NoError(t, svc.SaveInstalledMod(context.Background(), row))
+		plan, err := svc.PlanFomodReconfigure(context.Background(), g, "default", "acme", "m1")
+		require.NoError(t, err)
+		return func() error {
+			_, err := svc.ApplyFomodReconfigure(context.Background(), g, plan, core.FomodReconfigureOptions{}, nil)
+			return err
+		}
+	},
 	"ApplyRelinkMod": func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) func() error {
 		plan, err := svc.PlanRelinkMod(context.Background(), g, "default", "acme", "m1", "acme", "m2")
 		require.NoError(t, err)

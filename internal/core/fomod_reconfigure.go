@@ -60,6 +60,11 @@ type FomodReconfigureOptions struct {
 // or imported from a local archive (which has no source to fetch the
 // installer from again).
 func (s *Service) PlanFomodReconfigure(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*FomodReconfigurePlan, error) {
+	// The adapter's precondition (and a moved mod path) refuse first, as
+	// for every install-shaped plan.
+	if _, err := s.currentInstalledSnapshot(ctx, game.ID, profileName); err != nil {
+		return nil, err
+	}
 	row, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 	if err != nil {
 		return nil, err

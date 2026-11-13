@@ -7,6 +7,7 @@
 // (fomodwizard.js), with the choices recorded now preselected.
 
 import { html } from "../render.js";
+import { displayVersion } from "../version.js";
 
 /** recordedSummary words the recorded choices: each answered group's
  * picks, "Step > Group: A, B". */
@@ -27,10 +28,11 @@ export function FomodReconfigurePlanView({ plan }) {
   return html`
     <div class="plan plan--mod-fomod">
       <p class="plan__summary">
-        lmm fetches <span class="mono">${plan.mod.name}</span>
-        ${" "}${plan.mod.version} again and asks its installer's questions, with
-        your current choices selected. Your answers are installed and deployed
-        in place of the current files.
+        lmm fetches${" "}
+        <span class="mono">${plan.mod.name} ${displayVersion(plan.mod)}</span
+        >${" "} again and asks its installer's questions, with your current
+        choices selected. Your answers are installed and deployed in place of
+        the current files.
       </p>
       ${
         lines.length > 0 &&
