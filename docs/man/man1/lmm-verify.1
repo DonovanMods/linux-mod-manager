@@ -199,7 +199,14 @@ status is one of "ok", "missing", "no_checksum",
 "fixed_needs_reingest", "external_missing", "external_stale" (Steam has
 updated a tracked Workshop item since lmm recorded its revision - recorded
 and effective carry the two content ids, and --fix records Steam's) and
-"fixed_external_stale", "mod_path_missing" (the
+"fixed_external_stale", "plugin_order_cycle", "plugin_missing_master",
+"plugin_limit_exceeded" and "plugin_list_unwritable" (issues: the game's
+plugin list cannot be sorted, needs a master that is not active, holds
+more active plugins than the game loads, or could not be written),
+"plugin_name_unencodable", "plugin_header_unreadable" and
+"plugin_requirement_missing" (warnings), "plugin_drift" (a plugin lmm
+deployed that the game's Plugins.txt has dropped, deactivated or moved
+since - a warning --fix rewrites) and "fixed_plugin_drift", "mod_path_missing" (the
 game's mod_path is not a directory while it has mods to deploy, or is not
 the one lmm deployed files under - a warning whose note names the repair),
 "deployed_modified" (a copied or hard-linked file whose content changed
