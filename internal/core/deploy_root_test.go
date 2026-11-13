@@ -507,7 +507,14 @@ func TestDeployRoot_ENBPresetWithADataFolder(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, 1, res.Deployed)
 			assert.Empty(t, res.Skipped)
-			assert.Empty(t, res.Warnings)
+			// Weather.esp is a plugin, and this game has no prefix for its
+			// Plugins.txt: that is #616's finding, on the plugin list's own
+			// result. The routing has nothing to warn about.
+			require.NotNil(t, res.Plugins)
+			assert.Equal(t, core.PluginListSkipped, res.Plugins.Status)
+			for _, w := range res.Warnings {
+				assert.True(t, strings.HasPrefix(w, "plugins: "), "only the plugin list warns: %s", w)
+			}
 
 			for path, want := range map[string]string{
 				filepath.Join(install, "enbseries.ini"):            "[GLOBAL]",

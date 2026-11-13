@@ -1,0 +1,10 @@
+{
+  "plugins": [
+    {
+      "name": "Patch.esp",
+      "req": [
+        "Base.esm"
+      ]
+    }
+  ]
+}

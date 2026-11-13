@@ -195,8 +195,10 @@ type pluginComputation struct {
 	managed  map[string]bool
 	external int
 	findings []PluginFinding
-	// skipped is set when nothing may be written.
+	// skipped is set when nothing may be written; nothing when there is
+	// nothing to report either (no prefix, and no plugin to list).
 	skipped bool
+	nothing bool
 }
 
 // pluginRules is game's plugin spec, when its adapter manages a plugin
@@ -225,6 +227,9 @@ func (s *Service) syncPluginList(ctx context.Context, game *domain.Game, profile
 	c, err := s.computePluginList(ctx, game, profileName, spec)
 	if err != nil {
 		return &PluginListResult{Status: PluginListSkipped, Findings: []PluginFinding{unwritable(err)}}
+	}
+	if c.nothing {
+		return nil
 	}
 	res := c.result()
 	if c.skipped {
@@ -405,17 +410,7 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 	c := &pluginComputation{spec: spec, managed: map[string]bool{}}
 	st := s.ResolvePrefix(game)
 	c.prefix = st
-	if !st.Resolved {
-		c.skipped = true
-		c.findings = append(c.findings, PluginFinding{Code: FindingPrefixUnresolved, Severity: PluginSeverityWarning,
-			Message: "the game's Plugins.txt was not written, because lmm cannot find the game's Wine prefix: " + st.Problem})
-		return c, nil
-	}
 	folder := appDataFolder(game, spec)
-	c.listDir = listDirOf(st, folder)
-	if err := c.readCurrent(); err != nil {
-		return nil, err
-	}
 
 	profile, _ := config.LoadProfile(s.configDir, game.ID, profileName)
 	if profile == nil {
@@ -461,6 +456,23 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 			idx = -1
 		}
 		modOf[key] = idx
+	}
+	if !st.Resolved {
+		// Nothing to write without the prefix. Worth saying only when the
+		// profile deploys a plugin: a profile of textures and an ENB has no
+		// plugin list to keep in step.
+		c.skipped = true
+		if len(modOf) > 0 {
+			c.findings = append(c.findings, PluginFinding{Code: FindingPrefixUnresolved, Severity: PluginSeverityWarning,
+				Message: "the game's Plugins.txt was not written, because lmm cannot find the game's Wine prefix: " + st.Problem})
+		} else {
+			c.nothing = true
+		}
+		return c, nil
+	}
+	c.listDir = listDirOf(st, folder)
+	if err := c.readCurrent(); err != nil {
+		return nil, err
 	}
 
 	enabled := make(map[string]bool, len(profile.Plugins.Order))

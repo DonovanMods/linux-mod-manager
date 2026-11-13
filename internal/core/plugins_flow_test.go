@@ -380,3 +380,67 @@ func TestPlugins_NonBethesdaGameHasNoPluginList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, res.Plugins)
 }
+
+func (f *pluginFixture) verify(t *testing.T, fix bool) *core.VerifyResult {
+	t.Helper()
+	rep, err := f.svc.VerifyReport(context.Background(), f.game, "default", core.VerifyOptions{Fix: fix, Force: true}, nil)
+	require.NoError(t, err)
+	return rep.Result
+}
+
+func TestPlugins_VerifyReportsDriftForLmmsOwnPluginsAndFixRewrites(t *testing.T) {
+	f := newPluginFixture(t)
+	f.mod(t, "a", map[string][]byte{"A.esp": pluginBytes(0)})
+	f.mod(t, "b", map[string][]byte{"B.esp": pluginBytes(0)})
+	require.NoError(t, os.WriteFile(filepath.Join(f.game.ModPath, "Ext.esp"), pluginBytes(0), 0o644))
+	f.deploy(t)
+	clean := f.verify(t, false)
+	assert.Nil(t, findingWithStatus(clean, core.VerifyStatusPluginDrift), "statuses: %v", findingStatuses(clean))
+
+	// Someone deactivates A.esp, and adds an external plugin: only A.esp
+	// is drift.
+	require.NoError(t, os.WriteFile(filepath.Join(f.listDir, "Plugins.txt"), []byte("A.esp\r\n*B.esp\r\n*Ext.esp\r\n"), 0o644))
+	res := f.verify(t, false)
+	row := findingWithStatus(res, core.VerifyStatusPluginDrift)
+	require.NotNil(t, row, "statuses: %v", findingStatuses(res))
+	assert.Equal(t, "A.esp is inactive in Plugins.txt; the profile activates it", row.Note)
+	assert.True(t, row.Fixable)
+	assert.Equal(t, 1, res.Warnings)
+
+	fixed := f.verify(t, true)
+	require.NotNil(t, findingWithStatus(fixed, core.VerifyStatusFixedPluginDrift), "statuses: %v", findingStatuses(fixed))
+	assert.Equal(t, "*A.esp\r\n*B.esp\r\n*Ext.esp\r\n", f.list(t), "--fix rewrites lmm's plugins and keeps the external one")
+	assert.Nil(t, findingWithStatus(f.verify(t, false), core.VerifyStatusPluginDrift))
+}
+
+func TestPlugins_VerifyReportsAMovedPlugin(t *testing.T) {
+	f := newPluginFixture(t)
+	f.mod(t, "a", map[string][]byte{"A.esp": pluginBytes(0)})
+	f.mod(t, "b", map[string][]byte{"B.esp": pluginBytes(0)})
+	f.deploy(t)
+	require.NoError(t, os.WriteFile(filepath.Join(f.listDir, "Plugins.txt"), []byte("*B.esp\r\n*A.esp\r\n"), 0o644))
+	row := findingWithStatus(f.verify(t, false), core.VerifyStatusPluginDrift)
+	require.NotNil(t, row)
+	assert.Equal(t, "A.esp has moved in Plugins.txt since lmm wrote it", row.Note)
+}
+
+func TestPlugins_VerifyReportsAMissingMasterAsAnIssue(t *testing.T) {
+	f := newPluginFixture(t)
+	f.mod(t, "p", map[string][]byte{"Patch.esp": pluginBytes(0, "Absent.esm")})
+	f.deploy(t)
+	res := f.verify(t, false)
+	row := findingWithStatus(res, core.PluginFindingMissingMaster)
+	require.NotNil(t, row, "statuses: %v", findingStatuses(res))
+	assert.Equal(t, "Patch.esp", row.FileID)
+	assert.False(t, row.Fixable)
+	assert.GreaterOrEqual(t, res.Issues, 1)
+}
+
+func TestPlugins_UnresolvedPrefixWithoutPluginsSaysNothing(t *testing.T) {
+	f := newPluginFixture(t)
+	f.game.Prefix = ""
+	require.NoError(t, f.svc.SaveGame(context.Background(), f.game))
+	f.mod(t, "tex", map[string][]byte{"textures/a.dds": []byte("x")})
+	res := f.deploy(t)
+	assert.Nil(t, res.Plugins, "no plugin to list, so no plugin list to report on")
+}
