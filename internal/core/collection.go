@@ -20,6 +20,12 @@ import (
 // requires: items lmm lists for the user to fetch by hand, never fetches.
 const CollectionFeatureExternal = "external"
 
+// CollectionFeatureFomod is the feature a document with recorded FOMOD
+// installer choices requires (#614): an item's `fomod` block, which an
+// importer must replay - run the installer with those choices - rather
+// than deploy the archive raw.
+const CollectionFeatureFomod = "fomod"
+
 // supportedCollectionFeatures is this lmm's supported set: the features a
 // collection document may require and still import. A later story adds a
 // feature by adding its name here, and that is the whole release
@@ -27,6 +33,7 @@ const CollectionFeatureExternal = "external"
 // half-installing it.
 var supportedCollectionFeatures = map[string]bool{
 	CollectionFeatureExternal: true,
+	CollectionFeatureFomod:    true,
 }
 
 // SupportedCollectionFeatures lists the features this lmm can import, in
@@ -49,6 +56,13 @@ func deriveCollectionRequires(doc *domain.CollectionDocument) []string {
 	if len(doc.External) > 0 {
 		features = append(features, CollectionFeatureExternal)
 	}
+	for _, item := range doc.Items {
+		if !item.Ref.Fomod.IsZero() {
+			features = append(features, CollectionFeatureFomod)
+			break
+		}
+	}
+	sort.Strings(features)
 	return features
 }
 

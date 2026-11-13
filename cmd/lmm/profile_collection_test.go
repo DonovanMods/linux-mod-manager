@@ -195,7 +195,7 @@ func TestDoCollectionImport_JSON(t *testing.T) {
 
 func TestDoCollectionImport_UnsupportedRefusesBeforeAnyPrompt(t *testing.T) {
 	svc, configDir := collectionRecipient(t)
-	doc := []byte("lmm_collection: 1\nname: p\ngame:\n  steam_app_id: \"1091500\"\nrequires: [fomod]\nmods: []\n")
+	doc := []byte("lmm_collection: 1\nname: p\ngame:\n  steam_app_id: \"1091500\"\nrequires: [from-the-future]\nmods: []\n")
 	stdout, _, err := captureStdoutStderrErr(t, func() error {
 		return doCollectionImport(context.Background(), svc, doc, "")
 	})

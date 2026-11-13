@@ -67,6 +67,14 @@ mods:                        # load order, first = lowest priority
     locked: true
     disabled: true           # listed, but switched off
     category: UI             # the author's own category
+    fomod:                   # recorded FOMOD installer choices (requires: fomod)
+      config_sha256: 3f1c…   # the ModuleConfig.xml they answer
+      steps:
+        - name: Main
+          groups:
+            - name: Textures
+              choices: [{ name: 4K, idx: 1 }]
+      file_states: { skse64_loader.exe: Active }
     name: Much Better Ammo   # display: readable without the source
     files:                   # per-file facts, where the source provides them
       - { id: "1234", md5: 25aa…, sha256: …, size: 1234567 }
@@ -139,6 +147,7 @@ is what lets the format grow without breaking older importers.
 | Feature    | Raised by                         | Supported from |
 | ---------- | --------------------------------- | -------------- |
 | `external` | any `external` item               | format v1 (lmm with #621) |
+| `fomod`    | any mod with a `fomod` block (its recorded FOMOD installer choices) | format v1 (lmm with #614) |
 
 ## Importing safely
 
@@ -180,7 +189,13 @@ A collection from someone else is untrusted input.
   credentials; ask the collection's author for it.
 - **Text** is sanitised before it is shown: control characters and
   direction overrides are removed. Names that are identifiers rather than
-  text (`game.sources` keys) are refused instead.
+  text (`game.sources` keys) are refused instead. So are the names in a
+  `fomod` block - step, group and option names, and `file_states` paths -
+  which are matched against the installer exactly as written; a block
+  whose `config_sha256` is not 64 lower-case hex digits, whose file state
+  is not `Missing`, `Inactive` or `Active`, or that holds more than 10,000
+  recorded entries (steps, groups and picks together) or file states is
+  refused too.
 - **A version-0 document** never carries a `collection` or `external`
   block, so the version-0 import ignores both: only a checked version-1
   document sets them.

@@ -127,6 +127,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     is not an installer has its choices cleared, and a rollback restores the
     previous version's. An older lmm drops the block when it rewrites the
     profile.
+  - A collection (#621) carries the choices in its `mods` entries and, when
+    any mod records some, declares `requires: fomod`; `fomod` joins the
+    features an import supports. An imported collection's choices are
+    matched against the installer exactly as written, so a step, group,
+    option or file name holding a control, escape or bidi/format character
+    refuses the document rather than being cleaned, as do a malformed
+    `config_sha256` or file state and more than 10,000 recorded entries or
+    file states.
   - The installer's `fileDependency` conditions are answered from the
     profile being installed into: a file is present when a mod of that
     profile, or the game itself, provides it. The outcomes are recorded with
