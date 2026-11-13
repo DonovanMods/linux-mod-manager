@@ -215,7 +215,7 @@ func (s *Service) ApplyModUpdateForTest(ctx context.Context, sourceID, modID, ga
 		return err
 	}
 	defer release()
-	return s.applyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, "", fileIDs)
+	return s.applyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, "", domain.FomodChoices{}, fileIDs)
 }
 
 // ConvergeDeployedFilesForTest exposes convergeDeployedFiles behind the same

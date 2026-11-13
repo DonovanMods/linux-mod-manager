@@ -872,7 +872,16 @@ func (d *DB) SetModFileIDs(ctx context.Context, sourceID, modID, gameID, profile
 // has acted on the update the skip was holding off. newVariant is the new
 // version's tree (#614); the current variant moves to previous_variant with
 // the version.
-func (d *DB) ApplyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion, newVariant string, newFileIDs []string) error {
+//
+// previousFomod is the FOMOD choices the replaced version was installed
+// with (#614): recorded as previous_fomod in the same transaction as
+// previous_version and previous_variant, so a rollback never restores
+// choices that disagree with the version it restores.
+func (d *DB) ApplyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion, newVariant string, previousFomod domain.FomodChoices, newFileIDs []string) error {
+	prevFomod, err := encodeFomod(previousFomod)
+	if err != nil {
+		return err
+	}
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
@@ -903,10 +912,10 @@ func (d *DB) ApplyModUpdate(ctx context.Context, sourceID, modID, gameID, profil
 	_, err = tx.ExecContext(ctx, `
 		UPDATE installed_mods
 		SET previous_version = ?, previous_file_ids = ?, version = ?, skipped_version = NULL,
-			previous_variant = variant, variant = ?,
+			previous_variant = variant, variant = ?, previous_fomod = ?,
 			last_updated_at = CASE WHEN version IS NOT ? THEN ? ELSE last_updated_at END
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
-	`, currentVersion, prevFileIDs, newVersion, newVariant, newVersion, formatTime(d.clock()), sourceID, modID, gameID, profileName)
+	`, currentVersion, prevFileIDs, newVersion, newVariant, prevFomod, newVersion, formatTime(d.clock()), sourceID, modID, gameID, profileName)
 	if err != nil {
 		return fmt.Errorf("updating mod version: %w", err)
 	}
@@ -922,59 +931,75 @@ func (d *DB) ApplyModUpdate(ctx context.Context, sourceID, modID, gameID, profil
 // with them variant and previous_variant (#614), so the rolled-back row
 // names the tree it had.
 // The read/write and file ID restoration are performed atomically within a transaction.
-func (d *DB) SwapModVersions(ctx context.Context, sourceID, modID, gameID, profileName string) error {
+//
+// currentFomod is the FOMOD choices the version being rolled away from
+// was installed with (#614): it becomes previous_fomod in the same
+// transaction, and the choices previous_fomod held - the ones the restored
+// version was installed with - are returned for the caller to record.
+func (d *DB) SwapModVersions(ctx context.Context, sourceID, modID, gameID, profileName string, currentFomod domain.FomodChoices) (restored domain.FomodChoices, err error) {
+	curFomod, err := encodeFomod(currentFomod)
+	if err != nil {
+		return restored, err
+	}
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("starting transaction: %w", err)
+		return restored, fmt.Errorf("starting transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
 	var version string
 	var prevVersion *string
 	var prevFileIDsRaw *string
+	var prevFomodRaw string
 	err = tx.QueryRowContext(ctx, `
-		SELECT version, previous_version, previous_file_ids FROM installed_mods
+		SELECT version, previous_version, previous_file_ids, previous_fomod FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
-	`, sourceID, modID, gameID, profileName).Scan(&version, &prevVersion, &prevFileIDsRaw)
+	`, sourceID, modID, gameID, profileName).Scan(&version, &prevVersion, &prevFileIDsRaw, &prevFomodRaw)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.ErrModNotFound
+			return restored, domain.ErrModNotFound
 		}
-		return fmt.Errorf("checking versions: %w", err)
+		return restored, fmt.Errorf("checking versions: %w", err)
 	}
 
 	if prevVersion == nil || *prevVersion == "" {
-		return fmt.Errorf("no previous version available for rollback")
+		return restored, fmt.Errorf("no previous version available for rollback")
 	}
 	prevVal := *prevVersion
 	prevFileIDs, err := decodeFileIDs(prevFileIDsRaw)
 	if err != nil {
-		return err
+		return restored, err
 	}
 	currentFileIDs, err := getModFileIDsTx(ctx, tx, sourceID, modID, gameID, profileName)
 	if err != nil {
-		return err
+		return restored, err
 	}
 	currentFileIDsRaw, err := encodeFileIDs(currentFileIDs)
 	if err != nil {
-		return err
+		return restored, err
 	}
 
 	_, err = tx.ExecContext(ctx, `
 		UPDATE installed_mods
 		SET version = ?, previous_version = ?, previous_file_ids = ?,
-			variant = previous_variant, previous_variant = variant,
+			variant = previous_variant, previous_variant = variant, previous_fomod = ?,
 			last_updated_at = CASE WHEN version IS NOT ? THEN ? ELSE last_updated_at END
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
-	`, prevVal, version, currentFileIDsRaw, prevVal, formatTime(d.clock()), sourceID, modID, gameID, profileName)
+	`, prevVal, version, currentFileIDsRaw, curFomod, prevVal, formatTime(d.clock()), sourceID, modID, gameID, profileName)
 	if err != nil {
-		return fmt.Errorf("swapping mod versions: %w", err)
+		return restored, fmt.Errorf("swapping mod versions: %w", err)
 	}
 	if err := replaceModFileIDsTx(ctx, tx, sourceID, modID, gameID, profileName, prevFileIDs); err != nil {
-		return err
+		return restored, err
 	}
 
-	return tx.Commit()
+	if restored, err = decodeFomod(prevFomodRaw); err != nil {
+		return domain.FomodChoices{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.FomodChoices{}, err
+	}
+	return restored, nil
 }
 
 // FileWithChecksum represents a file record with its checksum
@@ -1127,30 +1152,4 @@ func decodeFomod(raw string) (domain.FomodChoices, error) {
 		return c, fmt.Errorf("decoding previous FOMOD choices: %w", err)
 	}
 	return c, nil
-}
-
-// SetModPreviousFomod records the FOMOD installer choices the row's
-// previous version was installed with (#614): an update records the ones
-// it replaces, a rollback the ones it rolls away from. A plain UPDATE of
-// that one column.
-func (d *DB) SetModPreviousFomod(ctx context.Context, sourceID, modID, gameID, profileName string, choices domain.FomodChoices) error {
-	raw, err := encodeFomod(choices)
-	if err != nil {
-		return err
-	}
-	result, err := d.ExecContext(ctx, `
-		UPDATE installed_mods SET previous_fomod = ?
-		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
-	`, raw, sourceID, modID, gameID, profileName)
-	if err != nil {
-		return fmt.Errorf("setting previous FOMOD choices: %w", err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("setting previous FOMOD choices: checking rows affected: %w", err)
-	}
-	if rows == 0 {
-		return domain.ErrModNotFound
-	}
-	return nil
 }

@@ -1170,20 +1170,19 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
 
-	if err := s.applyModUpdate(ctx, mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, newMod.Variant, downloadedFileIDs); err != nil {
+	// #614: the choices the replaced version was installed with become
+	// previous_fomod, in the same transaction as previous_version, so a
+	// rollback restores them with it.
+	var replacedFomod domain.FomodChoices
+	if prev := s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID); prev != nil {
+		replacedFomod = prev.Fomod
+	}
+	if err := s.applyModUpdate(ctx, mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, newMod.Variant, replacedFomod, downloadedFileIDs); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		if rerr := installer.ReplaceForUpdate(context.WithoutCancel(ctx), game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs); rerr != nil {
 			s.logger().Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
 		}
 		return fmt.Errorf("updating database: %w", err)
-	}
-	// #614: the choices the replaced version was installed with go to
-	// previous_fomod beside previous_version, so a rollback restores them.
-	// Best-effort, like the category name below: the update has landed.
-	if prev := s.recordedRef(context.WithoutCancel(ctx), game.ID, profileName, mod.SourceID, mod.ID); prev != nil {
-		if err := s.db.SetModPreviousFomod(context.WithoutCancel(ctx), mod.SourceID, mod.ID, game.ID, profileName, prev.Fomod); err != nil {
-			s.logger().Debug("recording previous FOMOD choices", "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
-		}
 	}
 
 	// #592: the new version's source category name, when it has one the row
@@ -1214,7 +1213,7 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	if err := pm.upsertMod(ctx, game.ID, profileName, modRef, fomodRec); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
-		if rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName); rerr != nil {
+		if _, rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName, mod.PreviousFomod); rerr != nil {
 			s.logger().Warn("rollback after failed install also failed", "step", "rollback_mod_version", "err", rerr)
 		}
 		if rerr := installer.ReplaceForUpdate(rctx, game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs); rerr != nil {
