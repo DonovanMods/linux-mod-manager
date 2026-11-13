@@ -13,7 +13,7 @@ import (
 // else the choices recorded on its reference (a replay), else none. The
 // file states are the profile's (fileStatesFor).
 func (s *Service) fomodInputFor(ctx context.Context, game *domain.Game, profileName string, ref *domain.ModReference, sourceID, modID string, answers map[string]domain.FomodChoices) fomodInput {
-	in := fomodInput{files: s.fileStatesFor(ctx, game, profileName)}
+	in := fomodInput{files: s.fileStatesFor(ctx, game, profileName, domain.ModKey(sourceID, modID))}
 	if a, ok := answers[domain.ModKey(sourceID, modID)]; ok && !a.IsZero() {
 		in.choices, in.answered = a, true
 		return in

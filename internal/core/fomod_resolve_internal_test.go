@@ -304,10 +304,14 @@ func TestProfileFileStates(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "Data"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "Data", "Skyrim.esm"), []byte("x"), 0o644))
-	f := &profileFileStates{root: root, deployed: map[string]bool{"patch.esp": true}, seen: map[string]fomod.FileState{}}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "Other.esp"), []byte("x"), 0o644))
+	f := &profileFileStates{seen: map[string]fomod.FileState{}, dirs: map[string][]os.DirEntry{},
+		load: func() (map[string]bool, map[string]bool, string) {
+			return map[string]bool{"patch.esp": true}, map[string]bool{"other.esp": true}, root
+		}}
 
 	got := map[string]fomod.FileState{}
-	for _, p := range []string{"data/skyrim.esm", "patch.esp", "missing.esp", "data", "../etc/passwd", ""} {
+	for _, p := range []string{"data/skyrim.esm", "patch.esp", "other.esp", "missing.esp", "data", "../etc/passwd", ""} {
 		got[p] = f.State(p)
 	}
 	keys := make([]string, 0, len(got))
@@ -316,8 +320,9 @@ func TestProfileFileStates(t *testing.T) {
 	}
 	sort.Strings(keys)
 	assert.Equal(t, map[string]fomod.FileState{
-		"data/skyrim.esm": fomod.FileActive, // on disk, case-insensitively: present is active until P5
-		"patch.esp":       fomod.FileActive, // deployed by the profile
+		"data/skyrim.esm": fomod.FileActive,  // the game's own file, case-insensitively: present is active until P5
+		"patch.esp":       fomod.FileActive,  // a mod of the target profile provides it
+		"other.esp":       fomod.FileMissing, // on disk, but another profile's deployment put it there
 		"missing.esp":     fomod.FileMissing,
 		"data":            fomod.FileMissing, // a directory is not a file
 		"../etc/passwd":   fomod.FileMissing,
