@@ -10,7 +10,7 @@
 // `lmm game edit --adapter` makes.
 
 import { html, useState } from "../render.js";
-import { ApiError, updateGame } from "../api.js";
+import { ApiError, getGameStatus, updateGame } from "../api.js";
 
 /**
  * AdapterSuggestion renders nothing for a game with nothing to suggest.
@@ -21,11 +21,14 @@ import { ApiError, updateGame } from "../api.js";
  * (core.Service.AdapterSwitchWarning): they keep the layout they were
  * installed with. When there is one, the button asks first - the warning,
  * then "Switch anyway" or "Cancel" - because the switch cannot re-lay out
- * what is already in the cache.
+ * what is already in the cache. The button re-reads the game's status before
+ * it decides, so the question is asked about the mods installed NOW, not
+ * when the page loaded; if that read fails, the page's own warning stands.
  */
 export function AdapterSuggestion({ suggested, warning, gameID, onApplied }) {
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
   const [error, setError] = useState("");
   if (!suggested) return null;
 
@@ -43,7 +46,32 @@ export function AdapterSuggestion({ suggested, warning, gameID, onApplied }) {
     }
   }
 
-  const offer = () => (warning ? setConfirming(true) : apply());
+  async function offer() {
+    setBusy(true);
+    setError("");
+    let current = warning;
+    try {
+      const status = await getGameStatus(gameID);
+      if (status?.suggested_adapter !== suggested) {
+        // Taken, or no longer offered, since the page loaded: show the
+        // game as it is rather than switching it.
+        setBusy(false);
+        await onApplied?.();
+        return;
+      }
+      current = status.suggested_adapter_warning ?? "";
+    } catch {
+      // The page's own warning is the best answer left; asking on it is
+      // the safe side.
+    }
+    setBusy(false);
+    if (current) {
+      setConfirmText(current);
+      setConfirming(true);
+      return;
+    }
+    await apply();
+  }
 
   return html`
     <div
@@ -67,7 +95,7 @@ export function AdapterSuggestion({ suggested, warning, gameID, onApplied }) {
                 role="alertdialog"
                 aria-label="Switch adapter?"
               >
-                <p class="adapter-suggestion__text">${warning}.</p>
+                <p class="adapter-suggestion__text">${confirmText}.</p>
                 <button
                   type="button"
                   class="button button--small"

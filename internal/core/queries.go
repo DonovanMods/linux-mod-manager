@@ -497,9 +497,12 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		SuggestedAdapter:    s.SuggestedAdapter(game),
 	}
 	if status.SuggestedAdapter != "" {
+		// A courtesy, not part of the answer: a count the database cannot
+		// give costs the warning, never the status the page needs (#606).
 		warning, err := s.AdapterSwitchWarning(ctx, game, status.SuggestedAdapter)
 		if err != nil {
-			return nil, err
+			s.logger().Warn("could not count the game's installed mods for the adapter-switch warning", "game", game.ID, "err", err)
+			warning = ""
 		}
 		status.SuggestedAdapterWarning = warning
 	}

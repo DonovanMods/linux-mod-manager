@@ -73,8 +73,9 @@ func recognisedSlugs() []string {
 // own is recognised, #606), its launch.steam_app_id or a numeric
 // steamworkshop source mapping (the two places games.yaml states a Steam
 // app id, read the way core's launcher reads them), and its game id. A
-// stated catalog entry or app id that is not a Tier 1 game is an answer
-// too: the game is something else, whatever its id says.
+// stated app id that is not a Tier 1 game is an answer too: the game is
+// something else, whatever its id says. A catalog entry the adapter does
+// not know is not: it is skipped (see below).
 //
 // It never reads the NexusMods domain: Skyrim VR and Fallout 4 VR mods are
 // hosted on the Skyrim SE and Fallout 4 domains, so the domain cannot tell
@@ -83,13 +84,17 @@ func kindFor(g *domain.Game) (gameKind, bool) {
 	if g == nil {
 		return gameKind{}, false
 	}
+	// A catalog entry that is not one of these games - a typo, or a game
+	// the catalog has that is not Tier 1 - is ignored, as core ignores an
+	// unknown slug (verify's catalog_unknown note): the adapter cannot see
+	// the catalog to tell the two apart, and falling through to the app id
+	// and the game id is what the key's absence would do.
 	if g.Catalog != "" {
 		for _, k := range games {
 			if k.slug == g.Catalog {
 				return k, true
 			}
 		}
-		return gameKind{}, false
 	}
 	if id := statedAppID(g); id != "" {
 		for _, k := range games {

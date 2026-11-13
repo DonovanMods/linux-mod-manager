@@ -54,11 +54,22 @@ func TestPluginRules_CatalogEntryComesFirst(t *testing.T) {
 	vr := rulesFor(t, &domain.Game{ID: "skyrim-se", Catalog: "skyrim-vr", Launch: &domain.GameLaunch{SteamAppID: "489830"}})
 	assert.Equal(t, "Skyrim VR", vr.AppDataFolders[0].Name, "the catalog entry beats both the app id and the game id")
 
-	// A catalog entry that is some other game is an answer too: the game
-	// is that one, whatever its id says.
-	_, ok := adapter.PluginRules(New(), &domain.Game{ID: "skyrim-se", Catalog: "witcher3"})
-	assert.False(t, ok)
 	assert.True(t, New().UsesPrefix(&domain.Game{ID: "x", Catalog: "starfield"}))
+}
+
+// A catalog: the adapter does not know - a typo, or an entry that is not
+// one of its games - is ignored, exactly as core ignores an unknown slug
+// (its catalog_unknown note): the game is recognised by its Steam app id,
+// then its game id, as if the key were absent.
+func TestPluginRules_UnknownCatalogEntryFallsThrough(t *testing.T) {
+	typo := rulesFor(t, &domain.Game{ID: "my-skyrim", Catalog: "skyrim-sx", Launch: &domain.GameLaunch{SteamAppID: "489830"}})
+	assert.Equal(t, rulesFor(t, &domain.Game{ID: "skyrim-se"}), typo, "falls back to the app id")
+
+	byID := rulesFor(t, &domain.Game{ID: "fallout4", Catalog: "skyrim-sx"})
+	assert.Equal(t, "Fallout4", byID.AppDataFolders[len(byID.AppDataFolders)-1].Name, "falls back to the game id")
+
+	_, ok := adapter.PluginRules(New(), &domain.Game{ID: "my-game", Catalog: "skyrim-sx"})
+	assert.False(t, ok, "and with nothing else to go on, the game is unknown")
 }
 
 // A game the adapter cannot identify gets no rules: it never guesses, and

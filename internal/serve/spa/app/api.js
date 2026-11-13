@@ -418,6 +418,12 @@ export const updateGameSources = (gameID, sources) =>
 export const updateGame = (gameID, body) =>
   put(`/api/v1/games/${encodeURIComponent(gameID)}`, body);
 
+/** Reads ONE game's status (core.GameStatus) - what Mission Control shows
+ * for it - fresh, for a control that must act on the state as it is now
+ * rather than as the page loaded it (issue 606's adapter-switch warning). */
+export const getGameStatus = (gameID) =>
+  get(scoped("/api/v1/status", { game: gameID }));
+
 /** Lists lmm's own game catalog (issue 606): core.KnownGame rows - slug,
  * name, Steam app id, adapter - sorted by name. The game editor offers them
  * as the choices for a game's `catalog:`. Not the same thing as

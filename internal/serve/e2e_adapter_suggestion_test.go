@@ -101,3 +101,37 @@ func TestE2E_AdapterSuggestion_ConfirmsWhenModsAreInstalled(t *testing.T) {
 	assert.Equal(t, "bethesda", game.Adapter, "Switch anyway wrote the adapter")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// #606 re-review item 2: the confirmation states what is installed NOW, not
+// what was installed when the page loaded. A mod installed after the page
+// rendered (here, behind its back) still makes the button ask, and the
+// sentence counts it.
+func TestE2E_AdapterSuggestion_ConfirmationIsCurrent(t *testing.T) {
+	f := newE2EFixture(t)
+	f.Svc.RegisterAdapter(bethesda.New())
+	f.Svc.SetKnownGames(func() []core.KnownGame {
+		return []core.KnownGame{{Slug: "skyrim-se", Name: "Skyrim Special Edition", SteamAppID: "489830", Adapter: "bethesda"}}
+	})
+	f.Game.Launch = &domain.GameLaunch{SteamAppID: "489830"}
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+
+	var warning string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		pollUntil(`document.querySelector('[data-testid="adapter-suggestion"]') !== null`),
+	)
+	// Installed after the page loaded its status, which said "no mods".
+	seedInstalledMod(t, f.Svc, f.Game, domain.Mod{ID: "late", SourceID: "fake", Name: "Late Mod", Version: "1.0", GameID: f.Game.ID}, true, nil)
+
+	f.runInBrowser(t,
+		clickWhenSettled(`[data-testid="adapter-suggestion"] [data-action="use-suggested-adapter"]`),
+		pollUntil(`document.querySelector('[data-testid="adapter-suggestion-confirm"]') !== null`),
+		textContent(`[data-testid="adapter-suggestion-confirm"]`, &warning),
+	)
+	assert.Contains(t, warning, "1 mod(s) already installed for this game keep the layout they were installed with")
+	game, err := f.Svc.GetGame(f.Game.ID)
+	require.NoError(t, err)
+	assert.Empty(t, game.Adapter, "nothing switched without the confirmation")
+	assert.Empty(t, f.BrowserErrors())
+}
