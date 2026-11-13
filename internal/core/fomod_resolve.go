@@ -123,6 +123,11 @@ type fomodInput struct {
 	// reconfigure): the question carries them as its preselection. An
 	// answered input never asks for this reason.
 	ask bool
+	// recorded are the profile's recorded choices behind answered ones
+	// (#615): a question re-asked after a partial answer preselects them,
+	// before the installer's defaults, in the groups the answers do not
+	// cover. Never installed from: only the answers are.
+	recorded domain.FomodChoices
 	// raw installs the archive as it is, never running an installer in it:
 	// the rebuild of a row installed before FOMOD support (rebuildInput).
 	raw bool
@@ -223,6 +228,9 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 		q := fomodQuestion(mod, inst, cfg, configSHA, res, misfit && recorded && !in.answered)
 		if !misfit {
 			q.Reason = FomodReasonReconfigure
+		}
+		if in.answered && !in.recorded.IsZero() {
+			preselectRecorded(&q, cfg, in, rels)
 		}
 		s.stashFomodImages(tree, byRel, &q)
 		return nil, &FomodChoicesRequiredError{Mods: []FomodQuestion{q}}
@@ -511,3 +519,95 @@ func checkFomodCopyBudget(tree string, byRel map[string]string, ops []fomod.Op) 
 	}
 	return nil
 }
+
+// preselectRecorded re-bases a question asked after a partial answer
+// (#615) on the recording: the groups the answers cover keep their
+// answers, the groups they do not cover are preselected as the recording
+// chose (falling back to the installer's defaults where it chose nothing),
+// so walking on with Next keeps the recorded picks rather than silently
+// replacing them with defaults. The steps shown are the ones visible under
+// that preselection. Which groups are still to be answered is unchanged:
+// a recorded pick is a suggestion here, never an answer.
+func preselectRecorded(q *FomodQuestion, cfg *fomod.Config, in fomodInput, members []string) {
+	merged := mergeChoiceSteps(in.choices.Steps, in.recorded.Steps)
+	res, err := fomod.Evaluate(cfg, fomod.Request{Choices: merged, Mode: fomod.ModeDefaults, Files: in.files, Members: members})
+	if err != nil {
+		return
+	}
+	pre := fomodQuestion(&domain.Mod{SourceID: q.SourceID, ID: q.ModID, Name: q.Name}, &fomod.Installer{Root: q.InstallerRoot}, cfg, q.ConfigSHA256, res, false)
+	q.Steps, q.Choices = pre.Steps, pre.Choices
+	q.Unanswered = nil
+	for si := range q.Steps {
+		st := &q.Steps[si]
+		for gi := range st.Groups {
+			g := &st.Groups[gi]
+			g.Answered = answersCover(in.choices.Steps, st.Name, st.Ordinal, g.Name, g.Ordinal)
+			if !g.Answered && questionGroupIsFree(*g) {
+				q.Unanswered = append(q.Unanswered, FomodGroupRef{Step: st.Name, Group: g.Name})
+			}
+		}
+	}
+}
+
+// mergeChoiceSteps is answers plus every recorded group the answers do
+// not cover, matched by name and index as the evaluator matches them.
+func mergeChoiceSteps(answers, recorded []fomod.StepChoice) []fomod.StepChoice {
+	out := slices.Clone(answers)
+	for _, rs := range recorded {
+		at := -1
+		for i := range out {
+			if out[i].Name == rs.Name && intPtrEq(out[i].Index, rs.Index) {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			out = append(out, rs)
+			continue
+		}
+		step := out[at]
+		step.Groups = slices.Clone(step.Groups)
+		for _, rg := range rs.Groups {
+			covered := slices.ContainsFunc(step.Groups, func(g fomod.GroupChoice) bool {
+				return g.Name == rg.Name && intPtrEq(g.Index, rg.Index)
+			})
+			if !covered {
+				step.Groups = append(step.Groups, rg)
+			}
+		}
+		out[at] = step
+	}
+	return out
+}
+
+// answersCover reports whether the answers answer the group named by its
+// step's and its own name and ordinal.
+func answersCover(answers []fomod.StepChoice, step string, stepOrdinal int, group string, groupOrdinal int) bool {
+	for _, sc := range answers {
+		if sc.Name != step || (sc.Index != nil && *sc.Index != stepOrdinal) {
+			continue
+		}
+		for _, gc := range sc.Groups {
+			if gc.Name == group && (gc.Index == nil || *gc.Index == groupOrdinal) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// questionGroupIsFree is the evaluator's "the user could change it": not
+// SelectAll, with an option that is neither Required nor NotUsable.
+func questionGroupIsFree(g FomodQuestionGroup) bool {
+	if g.Type == fomod.SelectAll.String() {
+		return false
+	}
+	for _, o := range g.Options {
+		if o.Type != fomod.Required.String() && o.Type != fomod.NotUsable.String() {
+			return true
+		}
+	}
+	return false
+}
+
+func intPtrEq(a, b *int) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }

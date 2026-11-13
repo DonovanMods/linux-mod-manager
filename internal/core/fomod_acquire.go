@@ -17,6 +17,11 @@ func (s *Service) fomodInputFor(ctx context.Context, game *domain.Game, profileN
 	in := fomodInput{files: s.fileStatesFor(ctx, game, profileName, domain.ModKey(sourceID, modID))}
 	if a, ok := answers[domain.ModKey(sourceID, modID)]; ok && !a.IsZero() {
 		in.choices, in.answered = a, true
+		if ref != nil {
+			// #615: a re-asked question preselects what the recording
+			// chose for the groups these answers have not reached.
+			in.recorded = ref.Fomod
+		}
 		return in
 	}
 	if ref != nil {

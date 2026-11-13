@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -276,4 +277,60 @@ func TestPrintBatchSkips_FomodReanswer(t *testing.T) {
 	assert.Contains(t, out, "1 mod(s) not applied — their installer (FOMOD) changed")
 	assert.Contains(t, out, "lmm update 12604 --source nexusmods")
 	assert.NotContains(t, out, "Steam Workshop")
+}
+
+// fiveStepConfig: five steps, each an exactly-one group of A (the default)
+// and B, each installing its pick as s<N>.txt.
+func fiveStepConfig() string {
+	var b strings.Builder
+	b.WriteString(`<config><moduleName>Five Steps</moduleName><installSteps order="Explicit">`)
+	for i := 1; i <= 5; i++ {
+		n := strconv.Itoa(i)
+		b.WriteString(`<installStep name="S` + n + `"><optionalFileGroups order="Explicit"><group name="G` + n + `" type="SelectExactlyOne"><plugins order="Explicit">`)
+		for _, opt := range []string{"A", "B"} {
+			b.WriteString(`<plugin name="` + opt + `"><files><file source="` + strings.ToLower(opt) + `.txt" destination="s` + n + `.txt"/></files><typeDescriptor><type name="Optional"/></typeDescriptor></plugin>`)
+		}
+		b.WriteString(`</plugins></group></optionalFileGroups></installStep>`)
+	}
+	b.WriteString(`</installSteps></config>`)
+	return b.String()
+}
+
+// TestDoModFomod_ChangingOneStepKeepsTheOtherRecordedPicks: a reconfigure
+// that changes step 1 of 5 and accepts the rest keeps steps 2-5's recorded
+// picks - the re-asked steps are preselected from the recording, not from
+// the installer's defaults (#615 review item 3).
+func TestDoModFomod_ChangingOneStepKeepsTheOtherRecordedPicks(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	path := filepath.Join(t.TempDir(), "five.zip")
+	createTestArchive(t, path, map[string]string{"fomod/ModuleConfig.xml": fiveStepConfig(), "a.txt": "A", "b.txt": "B"})
+	archive, err := os.ReadFile(path)
+	require.NoError(t, err)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Five", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "five.zip", IsPrimary: true}})
+	src.AddDownload("main", archive)
+	oldPath, oldDefaults, oldIn, oldTerm := fomodChoicesPath, fomodDefaults, fomodStdin, fomodIsTerminal
+	t.Cleanup(func() {
+		fomodChoicesPath, fomodDefaults, fomodStdin, fomodIsTerminal = oldPath, oldDefaults, oldIn, oldTerm
+	})
+	oldSource := modSource
+	modSource = "test-src"
+	t.Cleanup(func() { modSource = oldSource })
+
+	// Record B everywhere.
+	terminalInput("2", "2", "2", "2", "2")
+	_, err = captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	for i := 1; i <= 5; i++ {
+		require.Equal(t, "B", deployedFile(t, game, "s"+strconv.Itoa(i)+".txt"))
+	}
+
+	// Reconfigure: change step 1 to A, press Enter through the rest.
+	terminalInput("1", "", "", "", "")
+	out, err := captureStdoutErr(t, func() error { return doModFomod(context.Background(), svc, game, "mod1") })
+	require.NoError(t, err, out)
+	assert.Equal(t, "A", deployedFile(t, game, "s1.txt"))
+	for i := 2; i <= 5; i++ {
+		assert.Equal(t, "B", deployedFile(t, game, "s"+strconv.Itoa(i)+".txt"), "step %d keeps its recorded pick", i)
+	}
 }
