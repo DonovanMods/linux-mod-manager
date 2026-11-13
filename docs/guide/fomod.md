@@ -58,7 +58,8 @@ The same happens in every command that can install a mod: `lmm install`,
 When there is no terminal to ask in (a script, a cron job, `--json`), give
 the answers some other way:
 
-- `--fomod-defaults` takes the options the installer itself suggests.
+- `--fomod-defaults` takes the options the installer itself suggests, even
+  when you are changing choices you made before.
 - `--fomod-choices <file.json>` takes your answers from a file.
 
 If neither is given, lmm stops with an error that lists the installer's
@@ -116,9 +117,10 @@ answers no longer fit (an option was renamed or removed), lmm doesn't guess:
 - `lmm update <mod-id>`, and updating one mod in the web interface, ask the
   installer's questions again, with your old answers selected where they
   still apply.
-- Updating several mods at once (`lmm update --all`, **Update all**) skips
-  that mod and says its installer needs answering. Update it on its own to
-  answer.
+- Updating several mods at once skips that mod and says its installer
+  needs answering. In the terminal, `lmm update --all` then asks (or takes
+  `--fomod-choices`/`--fomod-defaults`) and updates it; in the web
+  interface the installer window opens.
 - Automatic updates never ask. The Updates card says the mod was not
   updated and why.
 

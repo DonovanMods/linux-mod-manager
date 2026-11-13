@@ -128,7 +128,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     comes next is checked against the installer first; nothing is
     downloaded twice.
   - Without a terminal, or under `--json`, `--fomod-defaults` takes the
-    installer's own preselection and `--fomod-choices <file.json>` takes the
+    installer's own preselection (the question's new `defaults`, also on a
+    reconfigure or when the recorded choices no longer fit) and `--fomod-choices <file.json>` takes the
     answers from a file (the profile's `fomod:` shape, or a collection's
     `choices` list; keyed by `source:id` when several mods ask). With
     neither, the command exits non-zero with the question: the `--json`
@@ -137,7 +138,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     non-zero now.
   - `lmm mod fomod <mod-id>` re-runs an installed mod's installer with its
     recorded choices preselected and installs and deploys the new selection
-    in place of the old one, at the same version. It also runs the
+    in place of the old one, at the same version, keeping the mod's
+    rollback history. When a changed answer brings up later steps again,
+    they start from what was recorded, not from the installer's defaults.
+    `lmm mod show` says whether a mod's installer was answered or never
+    run. It also runs the
     installer of a FOMOD mod installed before lmm ran installers (which
     went in as the raw archive), replacing that install.
   - The web UI asks in a wizard, one step per page, with option
@@ -152,7 +157,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     carries the recorded choices as `installed.fomod`.
   - An update batch's `fomod_reanswer` skip now carries its question as
     `fomod_choices_required`, and the batch accepts answers, so the web UI
-    asks when you update one mod. The update batch's terminal summary lists
+    asks when you update one mod, and `lmm update`'s batch answers it with
+    the FOMOD flags (or at a terminal) and runs again over those mods. The
+    update batch's terminal summary lists
     these mods with the `lmm update` command that asks, instead of under
     Steam Workshop items, and an automatic update held back for it is
     marked `fomod_reanswer` and says so on the Updates card.
