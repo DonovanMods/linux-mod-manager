@@ -136,3 +136,43 @@ func TestE2E_ManualOnly_SlideOverAndModPageSaySo(t *testing.T) {
 	assert.True(t, updateDisabled, "the slide-over's Update would only be skipped")
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
+
+// TestE2E_ManualOnly_AvailableAgain_UpdatesCardSaysSo (#627): once the
+// source says it serves Manual Up through its API again, the update check
+// clears the mark, the Updates card says automatic downloads are available
+// again - still saying it after a reload, until the next explicit check -
+// and the row is an ordinary one: a checkbox, no Manual badge, counted by
+// "Update all".
+func TestE2E_ManualOnly_AvailableAgain_UpdatesCardSaysSo(t *testing.T) {
+	f := newE2EFixtureWithManualOnlyMod(t)
+	yes := true
+	f.Src.mods["manualup"].mod.Distributable = &yes
+	delete(f.Src.urlErrs, "manualup")
+
+	const notice = `.card--updates [data-testid="updates-downloads-available"][data-mod="fake:manualup"]`
+	var view manualCardView
+	var text, afterReload string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(notice, chromedp.ByQuery),
+		textContent(notice, &text),
+		chromedp.Evaluate(manualCardJS, &view),
+		chromedp.Reload(),
+		chromedp.WaitVisible(notice, chromedp.ByQuery),
+		textContent(notice, &afterReload),
+	)
+	assert.Contains(t, text, "Manual Up: automatic downloads are available again")
+	assert.Equal(t, text, afterReload, "the server keeps saying so through a re-read")
+	assert.True(t, view.Checkbox, "an ordinary update again, so it can be ticked")
+	assert.Empty(t, view.Badge, "and it is not marked manual")
+	assert.Equal(t, fmt.Sprintf("Update all (%d)", view.Others+1), view.UpdateAll, "Update all counts it")
+	assert.False(t, manualUpRow(t, f).ManualOnly, "core cleared the record")
+
+	var gone bool
+	f.runInBrowser(t,
+		clickWhenSettled(`.card--updates [data-action="check-updates"]`),
+		chromedp.Poll(`!document.querySelector('`+notice+`')`, &gone, chromedp.WithPollingTimeout(e2eTimeout)),
+	)
+	assert.True(t, gone, "the explicit check is when the card stops saying it")
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}

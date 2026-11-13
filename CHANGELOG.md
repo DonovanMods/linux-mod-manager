@@ -30,6 +30,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ("this file belongs to a deployed mod; lmm cannot override a mod's own
   files yet") are gone.
 
+- **A manual-download mod is updated automatically again once its author
+  allows it (#627).** When CurseForge reports `allowModDistribution: true`
+  for a mod lmm had marked manual-only (#543), the next update check clears
+  the mark: from `lmm update`, or any check `lmm serve` makes. It costs no
+  extra request, since the check already fetches every installed mod, and
+  a mod with no pending update is cleared all the same. The mod takes part
+  in **Update all**, `lmm update --all` and automatic updates again. The
+  check says so once: `lmm update` (bulk or `lmm update <id>`) prints that
+  automatic downloads are available again for the mod, the web UI's
+  Updates card shows the same line until the next explicit **Check for
+  updates**, and a `manual_only_cleared` list is added to the update
+  check's `--json` document (and `GET /api/v1/updates`), to the batch
+  result `lmm update --all --json` emits, and to the single-mod update
+  plan. Only an
+  explicit "allowed" clears the mark; a source that says nothing leaves it,
+  and a later refusal records it again. `lmm mod show`, an update or
+  install from a hand-downloaded file, an archive import, an adoption and a
+  re-link clear it the same way when the source's metadata they read says
+  so. Any source that reports the classification gets the same treatment.
+
 - **lmm collections: a shareable, versioned profile export (#621).**
   `lmm profile export` now writes version 1 of lmm's collection format
   (spec: `docs/collection-format.md`): still YAML on stdout, so

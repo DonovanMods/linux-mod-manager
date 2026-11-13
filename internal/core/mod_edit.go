@@ -300,7 +300,7 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		newModID := plan.To.ModID
 		// #543: the old id's manual-only record is not the new one's; only
 		// the new source's own classification is recorded for it.
-		sourceManualOnly := false
+		sourceManualOnly, sourceDistributable := false, false
 		// #592: the old identity's source category name is not the new
 		// one's either - set below from the new source's mod, or cleared.
 		newCategoryName := ""
@@ -333,6 +333,7 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 				mod.PictureURL = fetched.PictureURL
 				mod.AdoptedInPlace = false // now linked, updates may work
 				sourceManualOnly = fetched.ManualOnly
+				sourceDistributable = explicitlyDistributable(fetched) // #627
 				newCategoryName = fetched.CategoryName
 			}
 		}
@@ -357,8 +358,11 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		if err := s.db.RelinkInstalledMod(ctx, oldSourceID, oldModID, &mod); err != nil {
 			return nil, fmt.Errorf("moving installed record: %w", err)
 		}
-		if sourceManualOnly {
+		switch {
+		case sourceManualOnly:
 			s.recordManualOnly(ctx, game.ID, mod.SourceID, mod.ID)
+		case sourceDistributable:
+			s.clearManualOnly(ctx, game.ID, mod.SourceID, mod.ID) // #627
 		}
 		mod.CategoryName = newCategoryName
 		// The row has moved: finish its category column with it, even if

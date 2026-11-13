@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"testing"
 
@@ -131,4 +132,108 @@ func TestModShow_SaysAManualOnlyModIsUpdatedFromAFile(t *testing.T) {
 
 	out = captureStdout(t, func() error { return doModShow(context.Background(), svc, game, "modB") })
 	assert.NotContains(t, out, "manual")
+}
+
+// #627: once the source says it serves a manual-only mod again, the check
+// clears the mark and says so - once - and the mod is an ordinary update.
+func TestDoUpdate_Check_SaysAutomaticDownloadsAreAvailableAgainOnce(t *testing.T) {
+	svc, game, src := setupManualOnlyUpdate(t)
+	yes := true
+	src.mods["modA"].Distributable = &yes
+	src.manualOnly = nil
+
+	out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+
+	assert.Contains(t, out, "Mod A: automatic downloads are available again - Fake Update Source serves it through its API now\n")
+	assert.Equal(t, "notify", policyCell(t, out, "Mod A"), "no longer marked manual")
+	a, err := svc.GetInstalledMod(context.Background(), "test-src", "modA", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, a.ManualOnly)
+
+	out = captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+	assert.NotContains(t, out, "available again", "the notice is given once")
+}
+
+// An absent classification, or an explicit "no", says nothing and keeps the
+// mark.
+func TestDoUpdate_Check_SourceSaysNothingOrNo_KeepsTheMark(t *testing.T) {
+	no := false
+	for name, d := range map[string]*bool{"absent": nil, "false": &no} {
+		t.Run(name, func(t *testing.T) {
+			svc, game, src := setupManualOnlyUpdate(t)
+			src.mods["modA"].Distributable = d
+
+			out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+
+			assert.NotContains(t, out, "available again")
+			assert.Equal(t, "notify [manual]", policyCell(t, out, "Mod A"))
+		})
+	}
+}
+
+// With --all, the cleared mod is in the batch again and updated.
+func TestDoUpdate_All_UpdatesAModClearedByTheSameCheck(t *testing.T) {
+	svc, game, src := setupManualOnlyUpdate(t)
+	yes := true
+	src.mods["modA"].Distributable = &yes
+	src.manualOnly = nil
+	src.AddDownload("a-new", []byte("new"))
+	updateAll = true
+
+	out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+
+	assert.Contains(t, out, "Mod A: automatic downloads are available again")
+	assert.NotContains(t, out, "not applied")
+	a, err := svc.GetInstalledMod(context.Background(), "test-src", "modA", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", a.Version)
+}
+
+func TestJSONGolden_UpdateCheckManualOnlyCleared(t *testing.T) {
+	withJSONOutput(t)
+	svc, game, src := setupManualOnlyUpdate(t)
+	yes := true
+	src.mods["modA"].Distributable = &yes
+
+	out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+	assertJSONCLIGolden(t, "update_check_manual_only_cleared", out)
+}
+
+// #627 review: `lmm update --all --json` emits the batch result, not the
+// check document, whenever an update remains - so the batch result carries
+// what the check cleared, or it is lost for good with the record.
+func TestJSONGolden_UpdateBulkAllManualOnlyCleared(t *testing.T) {
+	withJSONOutput(t)
+	svc, game, src := setupManualOnlyUpdate(t)
+	yes := true
+	src.mods["modA"].Distributable = &yes
+	src.manualOnly = nil
+	src.AddDownload("a-new", []byte("new"))
+	updateAll = true
+
+	out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+
+	var result core.UpdateBatchResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	require.Len(t, result.ManualOnlyCleared, 1)
+	assert.Equal(t, "modA", result.ManualOnlyCleared[0].ModID)
+	assert.Len(t, result.Applied, 2, "the cleared mod is applied with the rest")
+	assertJSONCLIGolden(t, "update_bulk_all_manual_only_cleared", out)
+}
+
+// `lmm update <id>` says it too: its own check is the one that cleared it.
+func TestDoUpdate_Single_SaysAutomaticDownloadsAreAvailableAgain(t *testing.T) {
+	svc, game, src := setupManualOnlyUpdate(t)
+	yes := true
+	src.mods["modA"].Distributable = &yes
+	src.manualOnly = nil
+	src.AddDownload("a-new", []byte("new"))
+
+	out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, []string{"modA"}) })
+
+	assert.Contains(t, out, "Mod A: automatic downloads are available again - Fake Update Source serves it through its API now\n")
+	a, err := svc.GetInstalledMod(context.Background(), "test-src", "modA", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", a.Version)
+	assert.False(t, a.ManualOnly)
 }

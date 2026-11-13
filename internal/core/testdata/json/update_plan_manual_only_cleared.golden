@@ -1,0 +1,38 @@
+{
+  "mod": {
+    "id": "238222",
+    "source_id": "curseforge",
+    "name": "Opted Back In",
+    "version": "2.0",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "minecraft",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "updated_at": "2026-08-27T12:00:00Z",
+    "profile_name": "default",
+    "update_policy": "notify",
+    "installed_at": "2026-08-27T12:00:00Z",
+    "enabled": false,
+    "deployed": false,
+    "link_method": "symlink",
+    "manual_download": false,
+    "convert_paks": false
+  },
+  "manual_only_cleared": [
+    {
+      "source_id": "curseforge",
+      "mod_id": "238222",
+      "name": "Opted Back In",
+      "message": "Opted Back In: automatic downloads are available again - CurseForge serves it through its API now"
+    }
+  ],
+  "locked": false,
+  "pinned": false,
+  "recompile_needed": false
+}

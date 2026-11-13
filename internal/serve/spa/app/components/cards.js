@@ -121,6 +121,9 @@ export function AttentionCards({
   // its own (a source whose IDs can change), and the ones it has.
   const autoRelink = updates?.auto_relink ?? null;
   const relinked = autoRelink?.relinked ?? [];
+  // issue 627: manual-only mods whose source serves them again - the check
+  // cleared the mark, and the card says so until the next explicit check.
+  const restored = updates?.manual_only_cleared ?? [];
   const findings = (health?.result?.findings ?? []).filter(
     (f) => f.status !== "ok",
   );
@@ -143,6 +146,7 @@ export function AttentionCards({
     skippedRows.length === 0 &&
     authRequired.length === 0 &&
     !autoRelink &&
+    restored.length === 0 &&
     findings.length === 0 &&
     !healthDeferred &&
     conflictRows.length === 0 &&
@@ -162,6 +166,7 @@ export function AttentionCards({
           goneRows.length > 0 ||
           authRequired.length > 0 ||
           autoRelink ||
+          restored.length > 0 ||
           errors.updates) &&
         html`<${UpdatesCard}
           state=${state}
@@ -171,6 +176,7 @@ export function AttentionCards({
           authRequired=${authRequired}
           autoUpdate=${autoUpdate}
           autoRelink=${autoRelink}
+          restored=${restored}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
           onRefresh=${actions.refreshUpdates}
@@ -435,6 +441,7 @@ function UpdatesCard({
   authRequired = [],
   autoUpdate = null,
   autoRelink = null,
+  restored = [],
   error,
   onRetry,
   onRefresh,
@@ -556,6 +563,17 @@ function UpdatesCard({
         </p>`
       }
       <${RelinkedNotes} relinked=${autoRelink?.relinked ?? []} />
+      ${restored.map(
+        (r) =>
+          html`<p
+            key=${`${r.source_id}:${r.mod_id}`}
+            class="card__meta"
+            data-testid="updates-downloads-available"
+            data-mod=${`${r.source_id}:${r.mod_id}`}
+          >
+            ${r.message}
+          </p>`,
+      )}
       ${
         missing.length > 0 &&
         html`<p class="card__meta" data-testid="updates-external-missing">

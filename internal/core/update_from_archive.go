@@ -152,6 +152,9 @@ type UpdateFromArchivePlan struct {
 	// sourceManualOnly: the source classified the mod manual-only in the
 	// metadata identifyUpdateArchive fetched (#543), so Apply records it.
 	sourceManualOnly bool `json:"-"`
+	// sourceDistributable: the source said explicitly that it serves the
+	// mod (#627), so Apply clears any manual-only record of it.
+	sourceDistributable bool `json:"-"`
 	// entryPreExists: a cache entry already lived at ToVersion, so a failed
 	// apply leaves it alone (discardImportedCacheEntry's rule).
 	entryPreExists bool               `json:"-"`
@@ -358,6 +361,7 @@ func (s *Service) identifyUpdateArchive(ctx context.Context, game *domain.Game, 
 		return
 	}
 	plan.sourceManualOnly = srcMod.ManualOnly
+	plan.sourceDistributable = explicitlyDistributable(srcMod) // #627
 	files, err := s.GetModFiles(ctx, game, mod.SourceID, srcMod)
 	if err != nil {
 		warn("could not fetch %s's files from %s: %v", mod.Name, mod.SourceID, err)
@@ -714,8 +718,11 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 		s.discardUpdateArchiveEntry(game, plan, newMod.Variant, warn)
 		return result, err
 	}
-	if plan.sourceManualOnly {
+	switch {
+	case plan.sourceManualOnly:
 		s.recordManualOnly(ctx, game.ID, mod.SourceID, mod.ID) // #543
+	case plan.sourceDistributable:
+		s.clearManualOnly(ctx, game.ID, mod.SourceID, mod.ID) // #627
 	}
 	return result, nil
 }
