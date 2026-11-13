@@ -836,10 +836,13 @@ func (c *Cache) PublishMod(ctx context.Context, dest *Cache, k Key) (err error) 
 	if err := StampKey(tmp, k); err != nil {
 		return err
 	}
-	// The replaced entry waits under a reserved name, so a crash between
-	// the two renames leaves litter the next copy sweeps, never a
-	// half-replaced entry.
-	old := tmp + "-old"
+	// The replaced entry waits under a reserved name that says which entry
+	// it is, so a crash between the two renames leaves it for the next
+	// sweep to put back (sweepCopyLeftovers), never a missing entry.
+	old := filepath.Join(parent, copyReplacedPrefix+filepath.Base(dst))
+	if err := os.RemoveAll(old); err != nil {
+		return fmt.Errorf("clearing a replaced cache entry: %w", err)
+	}
 	hadOld := false
 	if _, statErr := os.Lstat(dst); statErr == nil {
 		if err := os.Rename(dst, old); err != nil {
@@ -871,8 +874,15 @@ func (c *Cache) PublishMod(ctx context.Context, dest *Cache, k Key) (err error) 
 // listing the container, so it is never taken for a version either.
 const copyTempPrefix = ReservedPrefix + "copy-"
 
+// copyReplacedPrefix names where PublishMod moves the entry it replaces
+// while the new one is renamed in: the prefix and the entry's own
+// directory name. Under copyTempPrefix, so the sweep finds it; never a name
+// MkdirTemp's random suffix can produce.
+const copyReplacedPrefix = copyTempPrefix + "replaced-"
+
 // sweepCopyLeftovers removes the .lmm-copy-* directories a CopyModAs that
-// crashed mid-copy left in a mod's container (#590). No copy can be in
+// crashed mid-copy left in a mod's container (#590), and puts back an
+// entry a crashed PublishMod moved aside and never replaced (#614). No copy can be in
 // flight: cache mutations run one at a time, under the Service's
 // mutation slot. Best-effort: a sweep that fails leaves litter, never an
 // error.
@@ -885,8 +895,21 @@ func (c *Cache) sweepCopyLeftovers(container string) {
 		if !e.IsDir() || !strings.HasPrefix(e.Name(), copyTempPrefix) {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(container, e.Name())); err != nil {
-			c.log.Debug("sweeping a leftover cache copy failed", "path", filepath.Join(container, e.Name()), "err", err)
+		path := filepath.Join(container, e.Name())
+		// A PublishMod that crashed after moving the replaced entry aside,
+		// before the new one took its place, left the entry missing: put
+		// it back. Only an entry whose place is taken is deleted.
+		if entry, ok := strings.CutPrefix(e.Name(), copyReplacedPrefix); ok && entry != "" && entry == filepath.Base(entry) && filepath.IsLocal(entry) {
+			target := filepath.Join(container, entry)
+			if _, err := os.Lstat(target); errors.Is(err, os.ErrNotExist) {
+				if err := os.Rename(path, target); err != nil {
+					c.log.Warn("restoring a replaced cache entry failed", "path", target, "err", err)
+				}
+				continue
+			}
+		}
+		if err := os.RemoveAll(path); err != nil {
+			c.log.Debug("sweeping a leftover cache copy failed", "path", path, "err", err)
 		}
 	}
 }

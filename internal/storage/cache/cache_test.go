@@ -768,3 +768,35 @@ func TestCache_PublishMod_ReplacesTheEntryOnlyOnceTheCopyIsWhole(t *testing.T) {
 	var collision *cache.KeyCollisionError
 	assert.ErrorAs(t, plain.PublishMod(context.Background(), live, other), &collision, "another key's directory is refused")
 }
+
+// TestCache_PublishMod_ACrashBetweenTheRenamesIsUndoneBySweep (#614 review
+// B): a PublishMod that crashed after moving the replaced entry aside, and
+// before the new one took its place, left the entry missing. The next
+// publish into the container puts the entry back; when the new entry did
+// land, the set-aside copy is deleted instead.
+func TestCache_PublishMod_ACrashBetweenTheRenamesIsUndoneBySweep(t *testing.T) {
+	k := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0", Variant: "abcdef123456"}
+	next := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "2.0"}
+	staged, live := cache.New(t.TempDir()), cache.New(t.TempDir())
+	require.NoError(t, live.Store(k, "old.esp", []byte("old")))
+	require.NoError(t, cache.StampKey(live.ModPath(k), k))
+	require.NoError(t, staged.Store(next, "next.esp", []byte("next")))
+	aside := filepath.Join(filepath.Dir(live.ModPath(k)), cache.ReservedPrefix+"copy-replaced-"+filepath.Base(live.ModPath(k)))
+
+	// Crash 1: the entry moved aside, its replacement never renamed in.
+	require.NoError(t, os.Rename(live.ModPath(k), aside))
+	require.NoError(t, staged.PublishMod(context.Background(), live, next))
+	files, err := live.ListFiles(k)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"old.esp"}, files, "the entry is put back, not deleted")
+	assert.NoDirExists(t, aside)
+
+	// Crash 2: the replacement landed, the set-aside copy was not removed.
+	require.NoError(t, os.MkdirAll(aside, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(aside, "stale.esp"), []byte("stale"), 0o644))
+	require.NoError(t, staged.PublishMod(context.Background(), live, next))
+	assert.NoDirExists(t, aside, "a leftover whose entry exists is deleted")
+	files, err = live.ListFiles(k)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"old.esp"}, files, "and the entry is untouched")
+}
