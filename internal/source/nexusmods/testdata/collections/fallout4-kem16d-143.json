@@ -1,0 +1,4502 @@
+{
+  "info": {
+    "author": "curator",
+    "authorUrl": "",
+    "name": "A StoryWealth aSW harder / survival",
+    "description": "(curator text removed)",
+    "installInstructions": "(curator text removed)",
+    "domainName": "fallout4",
+    "gameVersions": ["1.10.163.0"]
+  },
+  "mods": [
+    {
+      "name": "Manual Reload - F4SE",
+      "version": "1.2",
+      "optional": true,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 76076,
+        "fileId": 303860,
+        "md5": "a56f225b2b3a6c50cda585ae40f125dd",
+        "fileSize": 1988462,
+        "logicalFilename": "Manual Reload - F4SE",
+        "updatePolicy": "prefer",
+        "tag": "vc5sMEogKB"
+      },
+      "instructions": "(curator text removed)",
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 666
+    },
+    {
+      "name": "Power Armor Reduced Spawn - PARSaSW",
+      "version": "1.0.6",
+      "optional": true,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 83595,
+        "fileId": 368642,
+        "md5": "b725cd392f63c8ffd4d2d0e2006a7c6d",
+        "fileSize": 260076,
+        "logicalFilename": "Power Armor Reduced Spawn - PARSaSW",
+        "updatePolicy": "exact",
+        "tag": "uqtm_ImORI"
+      },
+      "instructions": "(curator text removed)",
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 666
+    },
+    {
+      "name": "Rant - Loot Reduction",
+      "version": "1.0.0",
+      "optional": true,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 80690,
+        "fileId": 310281,
+        "md5": "971026a1e983fc6c5493e870eb3973d3",
+        "fileSize": 5980,
+        "logicalFilename": "Rant - NPC Loot Reduction",
+        "updatePolicy": "prefer",
+        "tag": "xM2IwOL7eF"
+      },
+      "instructions": "(curator text removed)",
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 666
+    },
+    {
+      "name": "Rant - Hunter otC aSW Patch",
+      "version": "1.0.6",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 73401,
+        "fileId": 351564,
+        "md5": "f93ace776ef16730d8f61b1af2b0752f",
+        "fileSize": 3192,
+        "logicalFilename": "Rant - Hunter otC aSW Patch",
+        "updatePolicy": "prefer",
+        "tag": "mex_d108mg"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Blaze - An Immersive Molotov Cocktail Overhaul",
+      "version": "3.5",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 67791,
+        "fileId": 353776,
+        "md5": "b3ca37c7f55f51943667980d5bbfad49",
+        "fileSize": 3920,
+        "logicalFilename": "Blaze - An Immersive Molotov Cocktail Overhaul",
+        "updatePolicy": "prefer",
+        "tag": "BvWrhHzkLE"
+      },
+      "author": "author",
+      "details": {
+        "category": "Immersion",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MUTATION",
+      "version": "4.0.4",
+      "optional": true,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 79288,
+        "fileId": 398091,
+        "md5": "e92000eded1ed29641c7548d23d1b726",
+        "fileSize": 2061893,
+        "logicalFilename": "MUTATION",
+        "updatePolicy": "exact",
+        "tag": "vThJC-IA6k"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 666
+    },
+    {
+      "name": "A StoryWealth Location - Diamond City - Subway Runner - Revised",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 64140,
+        "fileId": 326437,
+        "md5": "01a28403e95e169479b6e00c6a335700",
+        "fileSize": 12878,
+        "logicalFilename": "Subway Runner - Revival",
+        "updatePolicy": "prefer",
+        "tag": "MlZj3-PrSq"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Installation",
+            "groups": [
+              {
+                "name": "Subway Runner - Revival Version",
+                "choices": [
+                  {
+                    "name": "Loose Files Expanded",
+                    "idx": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Locations - Vanilla",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MAIM Redux - Lite - Storywealth",
+      "version": "1.0.5",
+      "optional": true,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 97694,
+        "fileId": 385634,
+        "md5": "3b3bd804ce577087b7aadfdb994fc897",
+        "fileSize": 17357,
+        "logicalFilename": "MAIM Redux - Lite - Storywealth",
+        "updatePolicy": "exact",
+        "tag": "aG_TMzW0bO"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 666
+    },
+    {
+      "name": "Looted World",
+      "version": "4.0.0",
+      "optional": true,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 62110,
+        "fileId": 373287,
+        "md5": "28133c0ac75c4c42bb346f22392c3ac3",
+        "fileSize": 5634120,
+        "logicalFilename": "Looted World",
+        "updatePolicy": "prefer",
+        "tag": "M1Csa46CPX"
+      },
+      "instructions": "(curator text removed)",
+      "author": "author",
+      "details": {
+        "category": "Environment",
+        "type": ""
+      },
+      "phase": 666
+    },
+    {
+      "name": "RobCo - Storywealth Gasmasks 4 AN76",
+      "version": "1.0.4",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 79743,
+        "fileId": 379688,
+        "md5": "efc741a3d397f17400cf4f85632cf7c2",
+        "fileSize": 2095,
+        "logicalFilename": "RobCo - Storywealth Gasmasks 4 AN76",
+        "updatePolicy": "prefer",
+        "tag": "B6KpkH0gKh"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Mutant Menagerie LFAW CS IAF",
+      "version": "1.0.4",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 78693,
+        "fileId": 305518,
+        "md5": "e72893d2b666052418c74df580d12302",
+        "fileSize": 350697,
+        "logicalFilename": "Mutant Menagerie LFAW CS IAF",
+        "updatePolicy": "prefer",
+        "tag": "woH-siOIoQ"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Condition Boy and Girl",
+      "version": "2.4.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 56602,
+        "fileId": 245202,
+        "md5": "fb5d4add08f1e991498f47db3e1bb3f8",
+        "fileSize": 248966,
+        "logicalFilename": "Condition Boy and Girl",
+        "updatePolicy": "prefer",
+        "tag": "g71pWBy20j"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Minuteman Watchtowers (ESL)",
+      "version": "1.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 67115,
+        "fileId": 264033,
+        "md5": "e6e604e55f07e0ddfed094c846be487f",
+        "fileSize": 1233193,
+        "logicalFilename": "Minuteman Watchtowers (ESL)",
+        "updatePolicy": "prefer",
+        "tag": "siaRRldCMj"
+      },
+      "author": "author",
+      "details": {
+        "category": "Locations - New",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "WheelMenu",
+      "version": "1.5.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 36706,
+        "fileId": 154619,
+        "md5": "5caf0b5ef5240941627552c1b1a762bb",
+        "fileSize": 94245,
+        "logicalFilename": "WheelMenu",
+        "updatePolicy": "prefer",
+        "tag": "sWNNUGOrfJ"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Custom",
+            "groups": [
+              {
+                "name": "Configuration preset",
+                "choices": [
+                  {
+                    "name": "Vanilla",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "instructions": "(curator text removed)",
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SKKCombatStalkers_26.1",
+      "version": "26.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 57842,
+        "fileId": 231958,
+        "md5": "f2379c5640ba93177d9c11ef7d2a8055",
+        "fileSize": 40733,
+        "logicalFilename": "SKKCombatStalkers_26.1",
+        "updatePolicy": "prefer",
+        "tag": "uurCeNbFcY"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Advanced Needs 76 - Main File",
+      "version": "v1.8.9",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 58440,
+        "fileId": 295190,
+        "md5": "0dcb722d0ac9eaf13054ade897d15df8",
+        "fileSize": 22732102,
+        "logicalFilename": "Advanced Needs 76 - Main File",
+        "updatePolicy": "prefer",
+        "tag": "xjL5n0ww1Wv"
+      },
+      "author": "author",
+      "details": {
+        "category": "Immersion",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "RobCo - Advanced Needs 76 Wood Chopping",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 81841,
+        "fileId": 323232,
+        "md5": "d5efe6e3bd2d7a396dd5c1109533f40d",
+        "fileSize": 2586,
+        "logicalFilename": "RobCo - Advanced Needs 76 Wood Chopping",
+        "updatePolicy": "prefer",
+        "tag": "ooNDXKoNCft"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SKK Random Encounter Manager - MCM Settings Menu",
+      "version": "1.12",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 56580,
+        "fileId": 254172,
+        "md5": "ce3d0f71761e45567af2e06a8c1fb8f3",
+        "fileSize": 1591760,
+        "logicalFilename": "SKK Random Encounter Manager - MCM Settings Menu",
+        "updatePolicy": "prefer",
+        "tag": "ogkeRYBZbe1"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Automatically Lowered Weapons But Only When Flashlight Off Patch - ALWBOWFO",
+      "version": "0.9",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 72601,
+        "fileId": 282136,
+        "md5": "c5690f17aa96fb581051a164229eb821",
+        "fileSize": 3682,
+        "logicalFilename": "ALWBOWFO",
+        "updatePolicy": "prefer",
+        "tag": "9LHmRgG9DiB"
+      },
+      "author": "author",
+      "details": {
+        "category": "Immersion",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Combat AI Empowered - Storywealth",
+      "version": "1.1.6",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 72678,
+        "fileId": 312867,
+        "md5": "a3718ab1f56d8622dd18d2b069fc6a17",
+        "fileSize": 55348,
+        "logicalFilename": "Combat AI Empowered - Storywealth",
+        "updatePolicy": "prefer",
+        "tag": "dwPDJZyAQpb"
+      },
+      "author": "author",
+      "details": {
+        "category": "NPC",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Mutant LFAW - HotC Patch",
+      "version": "0.99",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 74428,
+        "fileId": 288726,
+        "md5": "e912d3f1059c7e3147416db04cc7e650",
+        "fileSize": 6466,
+        "logicalFilename": "Mutant LFAW - HotC Patch",
+        "updatePolicy": "prefer",
+        "tag": "qbQrUBc1eJr"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Hunter of the Commonwealth",
+      "version": "2.0.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 48853,
+        "fileId": 289023,
+        "md5": "daa386e1aec7aea55a267d6b50742f41",
+        "fileSize": 138978,
+        "logicalFilename": "Hunter of the Commonwealth",
+        "updatePolicy": "prefer",
+        "tag": "yPC0Div9GrB"
+      },
+      "instructions": "(curator text removed)",
+      "author": "author",
+      "details": {
+        "category": "Overhauls",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Reduce Grenade Spam - Storywealth",
+      "version": "1.0.3",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 72951,
+        "fileId": 312563,
+        "md5": "cbd81240a91247b31c575b43989e275f",
+        "fileSize": 1486,
+        "logicalFilename": "Reduce Grenade Spam - Storywealth",
+        "updatePolicy": "prefer",
+        "tag": "YK2weFiivTy"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "NPCs Use Items",
+      "version": "1.2.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 73717,
+        "fileId": 288795,
+        "md5": "80fd86ee723e476708da59fd916b56f3",
+        "fileSize": 9167,
+        "logicalFilename": "NPCs Use Items",
+        "updatePolicy": "prefer",
+        "tag": "R1hbWScv7Ke"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "PipboyTabs - pbt 1.10.163.0",
+      "version": "1.10.163.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 29568,
+        "fileId": 172069,
+        "md5": "473f7e77820fc6543bd8910c9aa0fddd",
+        "fileSize": 195466,
+        "logicalFilename": "pbt 1.10.163.0",
+        "updatePolicy": "exact",
+        "tag": "Q2ekq4TZ5w2"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Bullet in the Chamber",
+      "version": "1.4",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 65834,
+        "fileId": 282782,
+        "md5": "698cac8bbacee3033351747ff551a5e5",
+        "fileSize": 1433852,
+        "logicalFilename": "Bullet in the Chamber",
+        "updatePolicy": "exact",
+        "tag": "TldJZn-hKXV"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "CHALLENGES",
+      "version": "3.0.5",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 76347,
+        "fileId": 361651,
+        "md5": "6e37264e7fa96d9aa998b56b932b6e2e",
+        "fileSize": 90380,
+        "logicalFilename": "CHALLENGES",
+        "updatePolicy": "prefer",
+        "tag": "ch3ArgYUI1v"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "77wanderer's AN76 and Mutant Menagerie Patch",
+      "version": "0.77",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 79195,
+        "fileId": 305275,
+        "md5": "3548914d5cd38ddcfb8dcd745f66f09a",
+        "fileSize": 1145,
+        "logicalFilename": "77wanderer's AN76 and Mutant Menagerie Patch",
+        "updatePolicy": "prefer",
+        "tag": "Hg6SfXdYgJZ"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Abandoned Tunnels - Underground Railroad Redux",
+      "version": "3",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 52227,
+        "fileId": 224093,
+        "md5": "a65c41452a0f435634ba908deb3892b3",
+        "fileSize": 1640531,
+        "logicalFilename": "Abandoned Tunnels - Underground Railroad Redux",
+        "updatePolicy": "prefer",
+        "tag": "7xgkFvfASla"
+      },
+      "author": "author",
+      "details": {
+        "category": "Locations - New",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Actor Velocity Framework (Stable)",
+      "version": "1.4",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 56604,
+        "fileId": 225388,
+        "md5": "573dbb4250ed5aeace4c969ce8065346",
+        "fileSize": 104842,
+        "logicalFilename": "Actor Velocity Framework OG (Stable)",
+        "updatePolicy": "prefer",
+        "tag": "UIWDtNKVqt-"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SKKDynamicLootReduction - aSW",
+      "version": "1.0.7",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 72099,
+        "fileId": 374223,
+        "md5": "c8ff7f2c4db4e6ae62456fc7c3af86c9",
+        "fileSize": 571,
+        "logicalFilename": "SKKDynamicLootReduction - aSW",
+        "updatePolicy": "prefer",
+        "tag": "aWqkTDnIoeL"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Companion Combat Distance",
+      "version": "1.01",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 76382,
+        "fileId": 295426,
+        "md5": "448d2af8cbcf0916fdbdac1202ea46fd",
+        "fileSize": 3461621,
+        "logicalFilename": "Companion Combat Distance",
+        "updatePolicy": "prefer",
+        "tag": "u-0y3kMLxmb"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Lootable Vertibirds - America Rising 2 Legacy of the Enclave Patch",
+      "version": "1.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 46217,
+        "fileId": 397118,
+        "md5": "93478c70e56dda19ff24e16a6b77e692",
+        "fileSize": 14236,
+        "logicalFilename": "America Rising 2 Legacy of the Enclave Patch",
+        "updatePolicy": "exact",
+        "tag": "rcjP_7LB90_"
+      },
+      "author": "author",
+      "details": {
+        "category": "Vehicles",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Helipads from Hap",
+      "version": "1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 83932,
+        "fileId": 321849,
+        "md5": "d11d6f76f33ec958b8c1c584e29a26c3",
+        "fileSize": 666418,
+        "logicalFilename": "Helipads from Hap",
+        "updatePolicy": "exact",
+        "tag": "eUMq98pwOrE"
+      },
+      "author": "author",
+      "details": {
+        "category": "Locations - Vanilla",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Lima Detachment Patch",
+      "version": "1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 46217,
+        "fileId": 284648,
+        "md5": "9472009a213f0f56eac2c37bf3738821",
+        "fileSize": 12656,
+        "logicalFilename": "Lima Detachment Patch",
+        "updatePolicy": "exact",
+        "tag": "2TQY2PUHWXh"
+      },
+      "author": "author",
+      "details": {
+        "category": "Vehicles",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Pip-Boy Light Detection Fix",
+      "version": "1.1.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 101467,
+        "fileId": 412533,
+        "md5": "8289815c4ce8756c0fee61648d7dfc79",
+        "fileSize": 340756,
+        "logicalFilename": "Pip-Boy Light Detection Fix",
+        "updatePolicy": "exact",
+        "tag": "I3niXSIFQ_8"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Addiction Overhaul",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 80520,
+        "fileId": 309774,
+        "md5": "f7e3c158569abe62b9caafb4d2d4d660",
+        "fileSize": 3605,
+        "logicalFilename": "Addiction Overhaul",
+        "updatePolicy": "exact",
+        "tag": "0hWRtTftv8d"
+      },
+      "author": "author",
+      "details": {
+        "category": "Overhauls",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Additional Combat Rifle Receivers",
+      "version": "1.0.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 78600,
+        "fileId": 366799,
+        "md5": "ddbe7a917e71a4c0f13180f28e5d2a22",
+        "fileSize": 2086,
+        "logicalFilename": "Additional Combat Rifle Receivers",
+        "updatePolicy": "exact",
+        "tag": "IUhsdx8Ywv4"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Additional Hunting Rifle Receivers",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 74791,
+        "fileId": 289855,
+        "md5": "b2bc40db4ecf31b9b4b757f63bd0f2a2",
+        "fileSize": 1574,
+        "logicalFilename": "Additional Hunting Rifle Receivers",
+        "updatePolicy": "exact",
+        "tag": "CwPI9qeSgZY"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Advanced Needs - True Storms Patch",
+      "version": "2.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 79894,
+        "fileId": 372851,
+        "md5": "1e52f0392c1ac7467a8a8e4ab8c9e329",
+        "fileSize": 922,
+        "logicalFilename": "Advanced Needs - True Storms Patch",
+        "updatePolicy": "exact",
+        "tag": "hGPntR_GHSm"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Advanced Needs 76 (AN76) - Storywealth and MAIM",
+      "version": "2.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 72059,
+        "fileId": 350724,
+        "md5": "8072ecfb4b00bbf9d58caf4e2211cf2d",
+        "fileSize": 10520,
+        "logicalFilename": "Advanced Needs 76 (AN76) - Storywealth and MAIM",
+        "updatePolicy": "exact",
+        "tag": "EUUxCkq6Ch8"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "AN76 - CS IAF Patch",
+      "version": "1.0.4",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 78694,
+        "fileId": 407289,
+        "md5": "38e4c97bfbcb3aa83c17cd843d203eb5",
+        "fileSize": 6409,
+        "logicalFilename": "AN76 - CS IAF Patch",
+        "updatePolicy": "exact",
+        "tag": "mzC_0Vw2GAx"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Armor Penetration Bug Fix - F4SE",
+      "version": "1.0.4",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 73849,
+        "fileId": 410864,
+        "md5": "86e003b6f23bd80c90fe6aacb6b34659",
+        "fileSize": 345179,
+        "logicalFilename": "Armor Penetration Bug Fix - F4SE",
+        "updatePolicy": "exact",
+        "tag": "IzqNB3BCusK"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "aSW Addon - various Patches - Post Apocalyptic Survivor 1.4CBBERobCo",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 73401,
+        "fileId": 350801,
+        "md5": "7e83b386c3d8b90b10afe53b99b3599c",
+        "fileSize": 38963948,
+        "logicalFilename": "Post Apocalyptic Survivor 1.4CBBERobCo",
+        "updatePolicy": "exact",
+        "tag": "Fnx7zcyABVD"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "aSW Expanded Hud",
+      "version": "2.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 81765,
+        "fileId": 314517,
+        "md5": "a68d8c4662a42cb835f4e3de3f1b693f",
+        "fileSize": 3663,
+        "logicalFilename": "aSW Expanded Hud",
+        "updatePolicy": "exact",
+        "tag": "N7iZH2TrReM"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Bastion - A Power Armor Overhaul",
+      "version": "2.1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 75184,
+        "fileId": 409915,
+        "md5": "7d5499b59e1ab60da673d4255c22362a",
+        "fileSize": 361410,
+        "logicalFilename": "Bastion - A Power Armor Overhaul",
+        "updatePolicy": "exact",
+        "tag": "HVEhHJOVVRE"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Blocking Overhaul",
+      "version": "1.2.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 73333,
+        "fileId": 285200,
+        "md5": "6eb0c5a68415bd680fd79f133f6dcab1",
+        "fileSize": 124823,
+        "logicalFilename": "Blocking Overhaul",
+        "updatePolicy": "exact",
+        "tag": "tgwyU_nwP7K"
+      },
+      "author": "author",
+      "details": {
+        "category": "Overhauls",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "CCD aSW Patch (Storywealth harder-survival Addon) - CCD aSW Patch",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 77424,
+        "fileId": 299212,
+        "md5": "eb8f2592f16a96c81779d804f84bcf23",
+        "fileSize": 820,
+        "logicalFilename": "CCD aSW Patch",
+        "updatePolicy": "exact",
+        "tag": "spauQBaUH4Z"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Clock Widget - Show Real Time While Loading - Clock Widget",
+      "version": "v1.5.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 26759,
+        "fileId": 315920,
+        "md5": "1273a381b0b0189b584a964c341a5f97",
+        "fileSize": 116712,
+        "logicalFilename": "Clock Widget",
+        "updatePolicy": "exact",
+        "tag": "lVR7hO0dwx9"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Combined Arms Auto Beam no beam when holstered CHW",
+      "version": "v1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 63658,
+        "fileId": 248753,
+        "md5": "dc7c497b35960c9649dc53368aee39c3",
+        "fileSize": 386906,
+        "logicalFilename": "Combined Arms Auto Beam no beam when holstered CHW",
+        "updatePolicy": "exact",
+        "tag": "aJlh-YxCjRW"
+      },
+      "author": "author",
+      "details": {
+        "category": "Weapons",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Companion Command Animations",
+      "version": "1.1.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 98662,
+        "fileId": 390110,
+        "md5": "8ef2f5f05f33f408b09832d1712b6797",
+        "fileSize": 36126,
+        "logicalFilename": "Companion Command Animations",
+        "updatePolicy": "exact",
+        "tag": "6Qj45CBz1Tx"
+      },
+      "author": "author",
+      "details": {
+        "category": "Animation",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Consumables Of The Commonwealth - BA2",
+      "version": "V1.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 96549,
+        "fileId": 393847,
+        "md5": "83e0c29e5914bfb6f67b5f886749e264",
+        "fileSize": 154343496,
+        "logicalFilename": "Consumables Of The Commonwealth - BA2",
+        "updatePolicy": "exact",
+        "tag": "CJhO7iHOxy1"
+      },
+      "author": "author",
+      "details": {
+        "category": "Items (Food, Drinks, Chems, etc)",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Enhanced Movement",
+      "version": "2.0.3",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 86278,
+        "fileId": 341085,
+        "md5": "94ad02771f21faebe74f3878fe414eca",
+        "fileSize": 578617,
+        "logicalFilename": "Enhanced Movement",
+        "updatePolicy": "exact",
+        "tag": "Bd_DDnF9123"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Enhanced Movement - aSW Patch",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 91793,
+        "fileId": 348836,
+        "md5": "1783836443c2a7d6f6dd5f63d735d7fa",
+        "fileSize": 2925,
+        "logicalFilename": "Enhanced Movement - aSW Patch",
+        "updatePolicy": "exact",
+        "tag": "opvlpPTS_NV"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "eXofied Goodneighbor - Subway Runner - Revival",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 96182,
+        "fileId": 379789,
+        "md5": "f96923719e5b0c1848c60bd1e95fb6a5",
+        "fileSize": 11290,
+        "logicalFilename": "Subway Runner - Revival",
+        "updatePolicy": "exact",
+        "tag": "pFTyAFqpNGC"
+      },
+      "author": "author",
+      "details": {
+        "category": "Locations - Vanilla",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Explosion Reactions",
+      "version": "1.1.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 98217,
+        "fileId": 396797,
+        "md5": "9a914204b2cc7c8f2c6723df59da35a2",
+        "fileSize": 32692,
+        "logicalFilename": "Explosion Reactions",
+        "updatePolicy": "exact",
+        "tag": "tIx4_ggeSka"
+      },
+      "author": "author",
+      "details": {
+        "category": "Animation",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "FallUI Preset - aSW harder survival Collection - aSW FallUI Preset",
+      "version": "1.0.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 72412,
+        "fileId": 288679,
+        "md5": "f2d399bea92672b52ad0de426bd98439",
+        "fileSize": 2956,
+        "logicalFilename": "aSW FallUI Preset",
+        "updatePolicy": "exact",
+        "tag": "Uy5NMoR1Xpo"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Flashlight Stealth Fix 1.0",
+      "version": "1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 76586,
+        "fileId": 296325,
+        "md5": "dd26030a74045a6c33189af8097da403",
+        "fileSize": 3848,
+        "logicalFilename": "Flashlight Stealth Fix 1.0",
+        "updatePolicy": "exact",
+        "tag": "Pr10T5ygbXt"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Flyable Personal Vertibird - FPVertibird V1.6.8i",
+      "version": "1.6.9",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 47187,
+        "fileId": 399379,
+        "md5": "b194592c1efde2d526d64214004a8c47",
+        "fileSize": 3602583,
+        "logicalFilename": "FPVertibird V1.6.9o",
+        "updatePolicy": "exact",
+        "tag": "OT3KDOQVCI_"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "",
+            "groups": [
+              {
+                "name": "Game Style",
+                "choices": [
+                  {
+                    "name": "Realistic",
+                    "idx": 1
+                  }
+                ]
+              },
+              {
+                "name": "Extra DLC features",
+                "choices": [
+                  {
+                    "name": "DLC MapMarkers and Automatrons",
+                    "idx": 0
+                  }
+                ]
+              },
+              {
+                "name": "Install Mode",
+                "choices": [
+                  {
+                    "name": "Upgrade from 1.6.8 (or lower)",
+                    "idx": 0
+                  }
+                ]
+              },
+              {
+                "name": "Other Options",
+                "choices": [
+                  {
+                    "name": "Pilot Dialogue Fix",
+                    "idx": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Vehicles",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Friendly Fire",
+      "version": "1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 74000,
+        "fileId": 288853,
+        "md5": "a4df9b6e2ca6e767ea686ccc608acab5",
+        "fileSize": 88877,
+        "logicalFilename": "Friendly Fire",
+        "updatePolicy": "exact",
+        "tag": "bjU7b0SGjZ4"
+      },
+      "author": "author",
+      "details": {
+        "category": "Ammo",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Hit Those Explosives",
+      "version": "1.6.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 82592,
+        "fileId": 345597,
+        "md5": "f1daded2b1b3c3100b2a846fb5caa39d",
+        "fileSize": 2435,
+        "logicalFilename": "Hit Those Explosives",
+        "updatePolicy": "exact",
+        "tag": "q7nv2YC2v3G"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "HotC - Knife at V111 Elevator",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 95257,
+        "fileId": 362052,
+        "md5": "d44673237c406508083fa16d365d9378",
+        "fileSize": 3625,
+        "logicalFilename": "HotC - Knife at V111 Elevator",
+        "updatePolicy": "exact",
+        "tag": "hML7YdjE_sz"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Hunter of the Commonwealth - Item Sorter and IAF",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 79012,
+        "fileId": 304666,
+        "md5": "fc3bf49435babac2dfb77ca1b5bad636",
+        "fileSize": 2603,
+        "logicalFilename": "Hunter of the Commonwealth - Item Sorter and IAF",
+        "updatePolicy": "exact",
+        "tag": "L45tJ5AfemK"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Infiltrator - Lockpicking Overhaul - (FULL)",
+      "version": "5.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 79843,
+        "fileId": 307860,
+        "md5": "e68dee3d6a0e59b8d04a8a92cb5f4670",
+        "fileSize": 23791,
+        "logicalFilename": "Infiltrator - Lockpicking Overhaul - (FULL)",
+        "updatePolicy": "exact",
+        "tag": "Kyz9_PR5Lyx"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Jet Script Bugfix",
+      "version": "1.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 48770,
+        "fileId": 196281,
+        "md5": "e5c28599e935c52c28ec2c13ca17178c",
+        "fileSize": 1429,
+        "logicalFilename": "Jet Script Bugfix",
+        "updatePolicy": "exact",
+        "tag": "a-loUF5zLmY"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "KACHAREP - StoryWealth aSW harder - survival",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 89352,
+        "fileId": 340700,
+        "md5": "821732e2244252efe4551a758f327294",
+        "fileSize": 414,
+        "logicalFilename": "KACHAREP - StoryWealth aSW harder - survival",
+        "updatePolicy": "exact",
+        "tag": "ntex8hu0SxN"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "KARMA",
+      "version": "3.4.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 80425,
+        "fileId": 416526,
+        "md5": "4749273ae2bbc790b77af4e7f52ccea1",
+        "fileSize": 1405195,
+        "logicalFilename": "KARMA",
+        "updatePolicy": "exact",
+        "tag": "ImEB5vmcv-a"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Karma - Ashland Station Integration",
+      "version": "1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 78033,
+        "fileId": 315846,
+        "md5": "910dc9ffcd75cd665bcad4ae18d448c8",
+        "fileSize": 5323,
+        "logicalFilename": "Karma - Ashland Station Integration",
+        "updatePolicy": "exact",
+        "tag": "HZOi1E_gscA"
+      },
+      "author": "author",
+      "details": {
+        "category": "Locations - New",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MAIM Redux - ELFX Patch",
+      "version": "1.0.4",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 92422,
+        "fileId": 402095,
+        "md5": "c5e52778e408d5270c88f8c3a609c030",
+        "fileSize": 3725,
+        "logicalFilename": "MAIM Redux - ELFX Patch",
+        "updatePolicy": "exact",
+        "tag": "rxs33n8mIxc"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MAIM Redux - Items at V111 Elevator",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 95256,
+        "fileId": 362054,
+        "md5": "e2979708592e5291408a14cbef19944c",
+        "fileSize": 3733,
+        "logicalFilename": "MAIM Redux - Items at V111 Elevator",
+        "updatePolicy": "exact",
+        "tag": "1XKhgDI5yd7"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MAIM Redux - RobCo Patcher Patch",
+      "version": "1.0.3.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 92276,
+        "fileId": 364439,
+        "md5": "5a7e17baaa3ccbcfb78f57c2f97d61a8",
+        "fileSize": 2496,
+        "logicalFilename": "MAIM Redux - RobCo Patcher Patch",
+        "updatePolicy": "exact",
+        "tag": "PNmHNQne44l"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MAIM Redux - Storywealth Patch",
+      "version": "3.3.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 74650,
+        "fileId": 367412,
+        "md5": "acd1a862c7da37cecae2fb36a279d1f9",
+        "fileSize": 12027,
+        "logicalFilename": "MAIM Redux - Storywealth Patch",
+        "updatePolicy": "exact",
+        "tag": "ZedRI-_LlBd"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MAIM Redux - Wheel Menu Patch",
+      "version": "1.0.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 89985,
+        "fileId": 351261,
+        "md5": "4e6a6ac112974fbe7ca00b0e1c9f173b",
+        "fileSize": 2840,
+        "logicalFilename": "MAIM Redux - Wheel Menu Patch",
+        "updatePolicy": "exact",
+        "tag": "HRbMjAd3zjn"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MAIM Redux FOMOD installer",
+      "version": "1.03",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 72235,
+        "fileId": 356558,
+        "md5": "89fa731ebac01a0a25ef5a295601e55b",
+        "fileSize": 49110615,
+        "logicalFilename": "MAIM Redux FOMOD installer",
+        "updatePolicy": "exact",
+        "tag": "9VFsKXs0chO"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Step 1",
+            "groups": [
+              {
+                "name": "Base Files",
+                "choices": [
+                  {
+                    "name": "Install Base files",
+                    "idx": 0
+                  }
+                ]
+              },
+              {
+                "name": "FIS Icons",
+                "choices": [
+                  {
+                    "name": "Install FIS Icon Tags",
+                    "idx": 0
+                  }
+                ]
+              },
+              {
+                "name": "Wheel Menu",
+                "choices": [
+                  {
+                    "name": "Install Wheel Menu Support",
+                    "idx": 0
+                  }
+                ]
+              },
+              {
+                "name": "EZ Keywords",
+                "choices": []
+              }
+            ]
+          },
+          {
+            "name": "Step 2",
+            "groups": [
+              {
+                "name": "Patches",
+                "choices": [
+                  {
+                    "name": "Point Lookout",
+                    "idx": 7
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Mutant Menagerie - Life Finds a Way - No Boombugs (or other not-radroaches) in Vault 111 Opening - MM_No_Boombugs_In_111_Patch",
+      "version": "1.4",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 78508,
+        "fileId": 342821,
+        "md5": "31e68b0ecedebb4fc062e08041513388",
+        "fileSize": 1029,
+        "logicalFilename": "MM_No_Boombugs_In_111_Patch",
+        "updatePolicy": "exact",
+        "tag": "UMsxr5Cr8Ax"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Mutant Menagerie - Main Files",
+      "version": "1.42",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 68187,
+        "fileId": 317695,
+        "md5": "82ddf71a8842608c2e004c02c0ccb97f",
+        "fileSize": 161074939,
+        "logicalFilename": "Mutant Menagerie Main Files (No Textures)",
+        "updatePolicy": "exact",
+        "tag": "E8wml2bQ46V"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Step1",
+            "groups": [
+              {
+                "name": "Main File Options",
+                "choices": [
+                  {
+                    "name": "Mutant Menagerie - Full",
+                    "idx": 0
+                  }
+                ]
+              },
+              {
+                "name": "Add-On Options",
+                "choices": [
+                  {
+                    "name": "Backwater Beasts",
+                    "idx": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Creatures",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Nick Valentine likes your Clothes",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 78885,
+        "fileId": 304364,
+        "md5": "adafb012a601ceea5dd96b820b5534b5",
+        "fileSize": 2210450,
+        "logicalFilename": "Nick Valentine likes your Clothes",
+        "updatePolicy": "exact",
+        "tag": "0MOAEn0sGV3"
+      },
+      "author": "author",
+      "details": {
+        "category": "Companions",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "No More Useless Beds - ESPless",
+      "version": "1.1.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 86751,
+        "fileId": 333019,
+        "md5": "9630f300a56d8101c8e3b1da31d75673",
+        "fileSize": 630,
+        "logicalFilename": "No More Useless Beds - ESPless",
+        "updatePolicy": "exact",
+        "tag": "AKT8B_ktmLL"
+      },
+      "author": "author",
+      "details": {
+        "category": "Locations - Vanilla",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "P.A.S. - Post Apocalyptic Survivor 2K",
+      "version": "1.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 73270,
+        "fileId": 284835,
+        "md5": "791cd8f3b923c893ab85b72bf5978978",
+        "fileSize": 232768172,
+        "logicalFilename": "P.A.S. - Post Apocalyptic Survivor 2K",
+        "updatePolicy": "exact",
+        "tag": "pcaMCFOuNF4"
+      },
+      "author": "author",
+      "details": {
+        "category": "Armour",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Player Unmasked - Remove Headwear in Dialogue - Advanced Needs 76 Patch",
+      "version": "1.2.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 98772,
+        "fileId": 378150,
+        "md5": "7017e185415319a4b0bb69a663be3035",
+        "fileSize": 503,
+        "logicalFilename": "Advanced Needs 76 Patch",
+        "updatePolicy": "exact",
+        "tag": "iZgSMcBeEnh"
+      },
+      "author": "author",
+      "details": {
+        "category": "Immersion",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Point Lookout Creature Expansion Redux",
+      "version": "1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 95953,
+        "fileId": 364744,
+        "md5": "0af60083ac9ff01f80f2bd7947c55b69",
+        "fileSize": 29546,
+        "logicalFilename": "Point Lookout Creature Expansion Redux",
+        "updatePolicy": "exact",
+        "tag": "qpWR25I3Jgc"
+      },
+      "author": "author",
+      "details": {
+        "category": "Creatures",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Post Apocalyptic Survivor - AN76 Gasmask Patch",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 77553,
+        "fileId": 299731,
+        "md5": "4d3da440617672ad1597bd84a0eaf39d",
+        "fileSize": 700,
+        "logicalFilename": "Post Apocalyptic Survivor - AN76 Gasmask Patch",
+        "updatePolicy": "exact",
+        "tag": "jvNHOl8L4vm"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Project Reality Footsteps FO4 Expansion",
+      "version": "1.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 77346,
+        "fileId": 396976,
+        "md5": "7add6fe8773b4410e935a23146a65491",
+        "fileSize": 10388,
+        "logicalFilename": "Project Reality Footsteps FO4 Expansion",
+        "updatePolicy": "exact",
+        "tag": "4XIg19qYSNt"
+      },
+      "author": "author",
+      "details": {
+        "category": "Audio - SFX",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Railroad Travel Agent ESL",
+      "version": "1.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 71168,
+        "fileId": 294399,
+        "md5": "2e2dd8e66e5741d05c97114e7e0c2eaa",
+        "fileSize": 1963514,
+        "logicalFilename": "Railroad Travel Agent ESL",
+        "updatePolicy": "exact",
+        "tag": "AHooaY0pb3n"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Rant - AN76 - Showers",
+      "version": "1.0.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 82133,
+        "fileId": 325090,
+        "md5": "21642375be932430c701397f862c577b",
+        "fileSize": 1890982,
+        "logicalFilename": "Rant - AN76 - Showers",
+        "updatePolicy": "exact",
+        "tag": "StfmzeTHVbS"
+      },
+      "author": "author",
+      "details": {
+        "category": "Crafting - Home/Settlement",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Rant - Replaceable_Armor_Plates aSW Patch",
+      "version": "1.0.3",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 73769,
+        "fileId": 321634,
+        "md5": "13ef672e83ab1b2d58650c6bf5d58452",
+        "fileSize": 2400,
+        "logicalFilename": "Rant - Replaceable_Armor_Plates aSW Patch",
+        "updatePolicy": "exact",
+        "tag": "ATI0bWe8zY7"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Rant - Service Rifle - noNeed4 Marksman Magazine",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 74324,
+        "fileId": 288354,
+        "md5": "70bc9d67a9c94deba37b3ceb151b9bc5",
+        "fileSize": 1139,
+        "logicalFilename": "Rant - Service Rifle - noNeed4 Marksman Magazine",
+        "updatePolicy": "exact",
+        "tag": "-6Z3bvuqXw2"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Reflex Mode - 0 - Awareness 3 Perk",
+      "version": "1.01",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 96503,
+        "fileId": 367502,
+        "md5": "56528b6e1e126209805303b56281c86f",
+        "fileSize": 50844,
+        "logicalFilename": "0 - Awareness 3 Perk",
+        "updatePolicy": "exact",
+        "tag": "iGSSr58P0dO"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Reflex Mode - 0 - Require Sneaking",
+      "version": "1.01",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 96503,
+        "fileId": 367499,
+        "md5": "340f13574db462d6a947348e1602a12c",
+        "fileSize": 400,
+        "logicalFilename": "0 - Require Sneaking",
+        "updatePolicy": "exact",
+        "tag": "iBZdGQXMCrZ"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Reflex Mode - Loose Files",
+      "version": "1.01",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 96503,
+        "fileId": 367501,
+        "md5": "c9a0a35fdd553921f67f5292a03035d9",
+        "fileSize": 67619,
+        "logicalFilename": "Reflex Mode - Loose Files",
+        "updatePolicy": "exact",
+        "tag": "WKshToGNfsk"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Replaceable Armor Plates 1.4",
+      "version": "1.4",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 67852,
+        "fileId": 313330,
+        "md5": "431b08d4b140845806efe8a58937bbd8",
+        "fileSize": 12094415,
+        "logicalFilename": "Replaceable Armor Plates 1.4",
+        "updatePolicy": "exact",
+        "tag": "1l93j13U_Ro"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Core data",
+            "groups": [
+              {
+                "name": "Core data",
+                "choices": [
+                  {
+                    "name": "Core",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Leveled List Injection",
+            "groups": [
+              {
+                "name": "LL Injection",
+                "choices": [
+                  {
+                    "name": "Injection",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Armour",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "REPUTATION",
+      "version": "2.2.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 79394,
+        "fileId": 415500,
+        "md5": "80de6dccb6e94c064933a8cac910eab7",
+        "fileSize": 6547295,
+        "logicalFilename": "REPUTATION",
+        "updatePolicy": "exact",
+        "tag": "JWFT_PMcmGm"
+      },
+      "author": "author",
+      "details": {
+        "category": "Overhauls",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "RobCo - Bullet in the Chamber Tactical Reload Exclude - RobCo - Bitch Storywealth",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 77983,
+        "fileId": 314719,
+        "md5": "fdd001df54122c86953bd74e05de6f16",
+        "fileSize": 2321,
+        "logicalFilename": "RobCo - Bitch Storywealth",
+        "updatePolicy": "exact",
+        "tag": "l7Se4E0wfhf"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "RobCo - Empowered Giants",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 84065,
+        "fileId": 367808,
+        "md5": "be403fd76d045cdacf1b5913b52fd6fa",
+        "fileSize": 1842,
+        "logicalFilename": "RobCo - Empowered Giants",
+        "updatePolicy": "exact",
+        "tag": "8oSm0ZjtCcK"
+      },
+      "author": "author",
+      "details": {
+        "category": "NPC",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "RobCo - Smarter Bastion Penetration",
+      "version": "1.0.6",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 83142,
+        "fileId": 381522,
+        "md5": "6b00a2f3d38bf606ad8923a41d079985",
+        "fileSize": 4220,
+        "logicalFilename": "RobCo - Smarter Bastion Penetration",
+        "updatePolicy": "exact",
+        "tag": "uBn_A70Drag"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Scrapable Lootable Cars Exiguous 4 AN76",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 80106,
+        "fileId": 308428,
+        "md5": "7d9f5c662c96b4f15503490d303f859f",
+        "fileSize": 720,
+        "logicalFilename": "Scrapable Lootable Cars Exiguous 4 AN76",
+        "updatePolicy": "exact",
+        "tag": "vZsdetIF5Ob"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SKK Combat Stalkers - MCM Settings Menu",
+      "version": "26.1c",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 65337,
+        "fileId": 260121,
+        "md5": "2a4d7e89b72bd7e665eb2f2ed0774363",
+        "fileSize": 491466,
+        "logicalFilename": "SKK Combat Stalkers - MCM Settings Menu",
+        "updatePolicy": "exact",
+        "tag": "0yYAGd5xxG7"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SKKDynamicLootReduction_MCM",
+      "version": "1.0.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 95930,
+        "fileId": 364665,
+        "md5": "3dc6c4d895e95953790065192806118d",
+        "fileSize": 1523,
+        "logicalFilename": "SKKDynamicLootReduction_MCM",
+        "updatePolicy": "exact",
+        "tag": "ZfVxWB8SAzM"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SMR WTF light version hounds fix",
+      "version": "1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 96804,
+        "fileId": 368256,
+        "md5": "92ec03fd62d6f4f587b1cc5e35849454",
+        "fileSize": 3392,
+        "logicalFilename": "SMR WTF light version hounds fix",
+        "updatePolicy": "exact",
+        "tag": "lLKYTfKA4SM"
+      },
+      "author": "author",
+      "details": {
+        "category": "Creatures",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Stealthy Takedowns",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 88597,
+        "fileId": 342410,
+        "md5": "bdd5056dfd2de8c91f88441411b71e19",
+        "fileSize": 10399,
+        "logicalFilename": "Stealthy Takedowns",
+        "updatePolicy": "exact",
+        "tag": "mTD97GZxWyt"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Tactical Distraction System",
+      "version": "1.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 28923,
+        "fileId": 118911,
+        "md5": "cccc6e2e052070abc7220d941695650f",
+        "fileSize": 2643847,
+        "logicalFilename": "Tactical Distraction System",
+        "updatePolicy": "exact",
+        "tag": "4E8oIYTRgtv"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Tactical Distraction System - aSW Patch",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 92390,
+        "fileId": 351496,
+        "md5": "a197cfc2389174dc11a2e563e3506fd8",
+        "fileSize": 1310,
+        "logicalFilename": "Tactical Distraction System - aSW Patch",
+        "updatePolicy": "exact",
+        "tag": "Km6Sh00oyZl"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "TMVaultSurvivorOutfits_1.1_ESL-flagged",
+      "version": "1.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 94443,
+        "fileId": 360305,
+        "md5": "af473b6c6c8e5900dbbd3508d1407238",
+        "fileSize": 8551,
+        "logicalFilename": "TMVaultSurvivorOutfits_1.1_ESL-flagged",
+        "updatePolicy": "exact",
+        "tag": "2lu8_8cAVFz"
+      },
+      "author": "author",
+      "details": {
+        "category": "Clothing",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Vault Survivor - BSA_Unpacked",
+      "version": "1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 94443,
+        "fileId": 359452,
+        "md5": "b8cceae812a86f98884f3f8a33912b11",
+        "fileSize": 48109819,
+        "logicalFilename": "Vault Survivor Outfits Loose",
+        "updatePolicy": "exact",
+        "tag": "m7ASd3V3pA-"
+      },
+      "author": "author",
+      "details": {
+        "category": "Clothing",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Vault Survivor - CBBE",
+      "version": "1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 94443,
+        "fileId": 359261,
+        "md5": "6db4b46eacd225a30669b62b8617d9b6",
+        "fileSize": 10193521,
+        "logicalFilename": "CBBE",
+        "updatePolicy": "exact",
+        "tag": "pAg_DiNdzeK"
+      },
+      "author": "author",
+      "details": {
+        "category": "Clothing",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Vulture - Looting Takes Time And Actions Make Sound - DLC Patch",
+      "version": "0.01",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 76179,
+        "fileId": 357649,
+        "md5": "c4401c36ebaf2fbaed5a7da1048b653f",
+        "fileSize": 5891,
+        "logicalFilename": "DLC Patch",
+        "updatePolicy": "exact",
+        "tag": "OI1kJ7LWH8N"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Vulture - Looting Takes Time And Actions Make Sound - Main File",
+      "version": "1.00",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 76179,
+        "fileId": 349445,
+        "md5": "af3651082727717f165711bad342c9cd",
+        "fileSize": 5121830,
+        "logicalFilename": "Main File",
+        "updatePolicy": "exact",
+        "tag": "kKwoQ6J-cyd"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Vulture - noContainer Search",
+      "version": "1.0.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 93522,
+        "fileId": 372469,
+        "md5": "a194136ed92cbe0335d8b77ce9feacb6",
+        "fileSize": 573,
+        "logicalFilename": "Vulture - noContainer Search",
+        "updatePolicy": "exact",
+        "tag": "HCYLnkMXRzA"
+      },
+      "instructions": "(curator text removed)",
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Water Pumps Snap Together - Loose files version",
+      "version": "1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 96601,
+        "fileId": 367638,
+        "md5": "a58b1d22f02091fd23015a4fc3ec512e",
+        "fileSize": 160682,
+        "logicalFilename": "Water Pumps Snap Together - Loose files version",
+        "updatePolicy": "exact",
+        "tag": "Bd-ZYA0mHb0"
+      },
+      "author": "author",
+      "details": {
+        "category": "Player Settlement",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Water Pumps Snap Together - Vault Tec Pumps",
+      "version": "1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 96601,
+        "fileId": 368094,
+        "md5": "59c18eaac0c7ce4d10d8a5ef8f2f6cde",
+        "fileSize": 550434,
+        "logicalFilename": "Water Pumps Snap Together - Vault Tec Pumps",
+        "updatePolicy": "exact",
+        "tag": "NHUFuhH97oB"
+      },
+      "author": "author",
+      "details": {
+        "category": "Player Settlement",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Wheel Menu - FallUIified",
+      "version": "1.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 60831,
+        "fileId": 239186,
+        "md5": "405bbeed543dfc423a4999096104b8a2",
+        "fileSize": 506177,
+        "logicalFilename": "Wheel Menu - FallUIified",
+        "updatePolicy": "exact",
+        "tag": "XbdlbkIvjkb"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Select installation options",
+            "groups": [
+              {
+                "name": "Main files",
+                "choices": [
+                  {
+                    "name": "Fallout 4 Wheel Menu - FallUIified",
+                    "idx": 0
+                  }
+                ]
+              },
+              {
+                "name": "Categories",
+                "choices": [
+                  {
+                    "name": "Standard",
+                    "idx": 2
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Whose Quest Is It Anyway",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 51979,
+        "fileId": 207575,
+        "md5": "6b18a0db6d610d9d2ea31df6f43080ca",
+        "fileSize": 133593,
+        "logicalFilename": "Whose Quest Is It Anyway",
+        "updatePolicy": "exact",
+        "tag": "SG0hjTSMhKe"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "You And What Army 2 - 1 - Mutant Menagerie - Life Finds A Way Patch",
+      "version": "1.07",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 78925,
+        "fileId": 360360,
+        "md5": "f105127ecd250c2d3ddeb1205871cf96",
+        "fileSize": 15340,
+        "logicalFilename": "1 - Mutant Menagerie - Life Finds A Way Patch",
+        "updatePolicy": "exact",
+        "tag": "gV46N4TU58c"
+      },
+      "author": "author",
+      "details": {
+        "category": "Factions",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "You And What Army 2 - 1 - Minutemen Watchtowers (ESL) Patch",
+      "version": "1.07",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 78925,
+        "fileId": 360355,
+        "md5": "ba22616b29a4019c14b8f91dfe2276b7",
+        "fileSize": 13751,
+        "logicalFilename": "1 - Minutemen Watchtowers (ESL) Patch",
+        "updatePolicy": "exact",
+        "tag": "ubqxQs51msk"
+      },
+      "author": "author",
+      "details": {
+        "category": "Factions",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Vault 28 - eXoPatch - Minuteman Watchtowers Navmesh Patch",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 77228,
+        "fileId": 353128,
+        "md5": "bd4dff2889186b44694c698a470e466e",
+        "fileSize": 135358,
+        "logicalFilename": "Minuteman Watchtowers Navmesh Patch",
+        "updatePolicy": "exact",
+        "tag": "U9UYR3gl3Ti"
+      },
+      "author": "author",
+      "details": {
+        "category": "Quests and Adventures",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "The Rooftops",
+      "version": "1.50",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 73192,
+        "fileId": 363137,
+        "md5": "78e122d31555d82287dff4cc917690cc",
+        "fileSize": 15216150,
+        "logicalFilename": "The Rooftops",
+        "updatePolicy": "exact",
+        "tag": "PbwfOTgXmNy"
+      },
+      "author": "author",
+      "details": {
+        "category": "Locations - New",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Rebuild AIO - eXoPatch",
+      "version": "1.0.10",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 80291,
+        "fileId": 370125,
+        "md5": "8d98316d1007c8c0a1eb5194a48a9577",
+        "fileSize": 7403339,
+        "logicalFilename": "Rebuild AIO - eXoPatch",
+        "updatePolicy": "exact",
+        "tag": "I-txQ-svZJU"
+      },
+      "author": "author",
+      "details": {
+        "category": "Player Settlement",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Minuteman Watchtowers - Survey Addon",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 90200,
+        "fileId": 344422,
+        "md5": "fca21cbb13707690be11632e55357b9a",
+        "fileSize": 26302,
+        "logicalFilename": "Minuteman Watchtowers - Survey Addon",
+        "updatePolicy": "exact",
+        "tag": "8zeIHb2LDj6"
+      },
+      "author": "author",
+      "details": {
+        "category": "Locations - New",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MAIM Redux - Dismemberment Patch",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 101915,
+        "fileId": 387226,
+        "md5": "91197c0ac938f3ecb29d7a795c902a6b",
+        "fileSize": 1513,
+        "logicalFilename": "MAIM Redux - Dismemberment",
+        "updatePolicy": "exact",
+        "tag": "vhUm10xqpOm"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Dynamic Dismember System - OG",
+      "version": "1.3.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 101805,
+        "fileId": 404401,
+        "md5": "271fa7d66b49589230173a786f94f97b",
+        "fileSize": 3399891,
+        "logicalFilename": "Dynamic Dismember System - OG",
+        "updatePolicy": "exact",
+        "tag": "1-C8TvN6Sbf"
+      },
+      "author": "author",
+      "details": {
+        "category": "Overhauls",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "RobCo - Smarter Dynamic Dismember System",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 101915,
+        "fileId": 387456,
+        "md5": "15442efee65c96414f8a27bee58e0cb6",
+        "fileSize": 2583,
+        "logicalFilename": "RobCo - Smarter Dynamic Dismember System",
+        "updatePolicy": "exact",
+        "tag": "NmXDD5XJ6J3"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Mutant Menagerie Textures - Standard",
+      "version": "1.4",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 68187,
+        "fileId": 313093,
+        "md5": "0fd30b8921d73d9d3787044c8c10df74",
+        "fileSize": 1834230551,
+        "logicalFilename": "Mutant Menagerie Textures - Standard",
+        "updatePolicy": "exact",
+        "tag": "krzvTviLw4Z"
+      },
+      "author": "author",
+      "details": {
+        "category": "Creatures",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "APC Transport V2.2.9",
+      "version": "V2.2.9",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 16211,
+        "fileId": 404445,
+        "md5": "c5329d927534b81141b3d07a2fc9f53d",
+        "fileSize": 36999232,
+        "logicalFilename": "APC Transport V2.2.9",
+        "updatePolicy": "exact",
+        "tag": "9AKSw7fovnD"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Decals",
+            "groups": [
+              {
+                "name": "DLC Expansion",
+                "choices": [
+                  {
+                    "name": "Nuka World",
+                    "idx": 0
+                  },
+                  {
+                    "name": "Far Harbor",
+                    "idx": 1
+                  }
+                ]
+              },
+              {
+                "name": "Optional decals",
+                "choices": []
+              },
+              {
+                "name": "Source Scripts",
+                "choices": []
+              }
+            ]
+          },
+          {
+            "name": "patches",
+            "groups": [
+              {
+                "name": "VR Patch",
+                "choices": []
+              },
+              {
+                "name": "Other Patches",
+                "choices": []
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Immersion",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Project Reality Footsteps FO4 1.7 BA2",
+      "version": "1.7",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 35904,
+        "fileId": 156466,
+        "md5": "94370b454d11493e031e34711e692ad7",
+        "fileSize": 3829420,
+        "logicalFilename": "Project Reality Footsteps FO4 1.7 BA2",
+        "updatePolicy": "exact",
+        "tag": "GpljpbeUIGh"
+      },
+      "author": "author",
+      "details": {
+        "category": "Audio - SFX",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SKKDynamicLootReduction_004",
+      "version": "008",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 58701,
+        "fileId": 385648,
+        "md5": "40b72490c0af70ff8491f6ab18190ebd",
+        "fileSize": 15249,
+        "logicalFilename": "SKKDynamicLootReduction_008",
+        "updatePolicy": "prefer",
+        "tag": "7ruGMP48eLD"
+      },
+      "instructions": "(curator text removed)",
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Infested Ferals",
+      "version": "1.02",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 98116,
+        "fileId": 412699,
+        "md5": "b5cce2d44a6a7f2565e7bba0b91d6f81",
+        "fileSize": 13884667,
+        "logicalFilename": "Infested Ferals",
+        "updatePolicy": "exact",
+        "tag": "bnyC4GpkvnQ"
+      },
+      "author": "author",
+      "details": {
+        "category": "Creatures",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Goremites",
+      "version": "1.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 93671,
+        "fileId": 359351,
+        "md5": "65f0c72de7b0a7bc779053617f8fe742",
+        "fileSize": 38940572,
+        "logicalFilename": "Goremites",
+        "updatePolicy": "exact",
+        "tag": "ZrfrHf9SaRE"
+      },
+      "author": "author",
+      "details": {
+        "category": "Creatures",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Campsite AN76 Bedbugs Patch",
+      "version": "1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 70905,
+        "fileId": 275621,
+        "md5": "1950b142afc8eb605ba08d7256936fec",
+        "fileSize": 1862,
+        "logicalFilename": "Campsite AN76 Bedbugs Patch",
+        "updatePolicy": "exact",
+        "tag": "0uprq1sCrms"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Campsite - Simple Wasteland Camping",
+      "version": "1.0.4",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 11734,
+        "fileId": 238612,
+        "md5": "1187df2635ee0c4166fca7cf38fd486d",
+        "fileSize": 82300428,
+        "logicalFilename": "Campsite - Simple Wasteland Camping",
+        "updatePolicy": "exact",
+        "tag": "2fI0a0xc92v"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Campsite - Simple Wasteland Camping (and HD Sleeping Bags) - Pillows for Sleeping Bags and Tents",
+      "version": "1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 11734,
+        "fileId": 46669,
+        "md5": "395003a9bfe13c0d80dc9acc1d8fe21b",
+        "fileSize": 97740,
+        "logicalFilename": "Pillows for Sleeping Bags and Tents",
+        "updatePolicy": "exact",
+        "tag": "1v5bHrJhOCC"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Reinforcements and Retribution",
+      "version": "1.01",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 98034,
+        "fileId": 412560,
+        "md5": "e57471016af079cab3c2a0e1ca7775c0",
+        "fileSize": 85672,
+        "logicalFilename": "Reinforcements and Retribution",
+        "updatePolicy": "exact",
+        "tag": "wWX_n1YXjMs"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Subway Runner Revival - Optimized",
+      "version": "2.02",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 83405,
+        "fileId": 323644,
+        "md5": "06b2e63eb7ebcf95f9fad1b541921d44",
+        "fileSize": 182641050,
+        "logicalFilename": "Subway Runner Revival - Optimized",
+        "updatePolicy": "exact",
+        "tag": "a_J8lWon2ng"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Optional Files",
+            "groups": [
+              {
+                "name": "Tunnel Lighting",
+                "choices": [
+                  {
+                    "name": "Vanilla Tunnel Lighting",
+                    "idx": 0
+                  }
+                ]
+              },
+              {
+                "name": "Patches",
+                "choices": []
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Locations - New",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Subway Runner Revival OE - NPC Addon",
+      "version": "2.0.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 83752,
+        "fileId": 323699,
+        "md5": "76a6d03d1c3201c43ff4d59874fb6fd9",
+        "fileSize": 66633,
+        "logicalFilename": "Subway Runner Revival OE - NPC Addon",
+        "updatePolicy": "exact",
+        "tag": "NteBeCUBI0M"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "LootableVertibirds",
+      "version": "3.2",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 46217,
+        "fileId": 196972,
+        "md5": "99f9cc98fb537dfbf78475297e8771a8",
+        "fileSize": 297355,
+        "logicalFilename": "LootableVertibirds",
+        "updatePolicy": "exact",
+        "tag": "JPNUyksFFar"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "default",
+            "groups": [
+              {
+                "name": "Make Lootable:",
+                "choices": [
+                  {
+                    "name": "Wrecks in NW and FH as well",
+                    "idx": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Vehicles",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Consumables Of The Commonwealth .ESL Version",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 96682,
+        "fileId": 371933,
+        "md5": "1b72d00c5481b459ee68f3009ac19d06",
+        "fileSize": 3554,
+        "logicalFilename": "Consumables Of The Commonwealth .ESL Version",
+        "updatePolicy": "exact",
+        "tag": "HHa7So5_byX"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Chemfluence AI Combat Dynamics",
+      "version": "1.2.3",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 73741,
+        "fileId": 412310,
+        "md5": "2aa37b9cf92af028bcb72cbc066cd76e",
+        "fileSize": 11624,
+        "logicalFilename": "Chemfluence AI Combat Dynamics",
+        "updatePolicy": "prefer",
+        "tag": "oPaTqAWN1rP"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Inertia - Physical Movement Response System - F4SE - Inertia",
+      "version": "2.3.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 101561,
+        "fileId": 411109,
+        "md5": "5ac26ddb619c6c4f6300f1a71fa5c3f9",
+        "fileSize": 376834,
+        "logicalFilename": "Inertia",
+        "updatePolicy": "exact",
+        "tag": "8BohxV1hK_G"
+      },
+      "author": "author",
+      "details": {
+        "category": "Immersion",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Ammo Has Weight - in All Difficulties - Advanced Needs 76 Patch",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 109260,
+        "fileId": 412273,
+        "md5": "edb8b4f8c963f14cb349dc8590ed6ce8",
+        "fileSize": 297,
+        "logicalFilename": "Advanced Needs 76 Patch",
+        "updatePolicy": "exact",
+        "tag": "nqSZ98KcGIm"
+      },
+      "author": "author",
+      "details": {
+        "category": "Ammo",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Ammo Has Weight",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 109260,
+        "fileId": 414984,
+        "md5": "46ccf46e3858eceaf0ad597ad2f9aca2",
+        "fileSize": 88765,
+        "logicalFilename": "Ammo Has Weight",
+        "updatePolicy": "exact",
+        "tag": "cTnseuWooQp"
+      },
+      "author": "author",
+      "details": {
+        "category": "Ammo",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Runtime Database",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 108394,
+        "fileId": 408886,
+        "md5": "daef5a0319ab6ca6ed63b2cb2a438647",
+        "fileSize": 46364783,
+        "logicalFilename": "Runtime Database",
+        "updatePolicy": "exact",
+        "tag": "sNj38K--qhH"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Random Encounter Manager by SKK - SKKRESystemManager_012",
+      "version": "013",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 42081,
+        "fileId": 412998,
+        "md5": "85f5a7f32e2b6292f17f307dffc47610",
+        "fileSize": 161344,
+        "logicalFilename": "SKKRESystemManager_013",
+        "updatePolicy": "exact",
+        "tag": "CDrsitorapu"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Hit Those Objects",
+      "version": "2.1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 85755,
+        "fileId": 346362,
+        "md5": "61a3487c1faf9a669c3a8552760e95fc",
+        "fileSize": 5138,
+        "logicalFilename": "Hit Those Objects",
+        "updatePolicy": "exact",
+        "tag": "l9vy7fgKN42"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Hunter of the Commonwealth x Mutant Menagerie - Life Finds a Way compatibility patch - HotC MM MissingRaces 1.0",
+      "version": "1",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 110229,
+        "fileId": 416559,
+        "md5": "a756bc598a336f13544a9ca3fa4d389b",
+        "fileSize": 798,
+        "logicalFilename": "HotC MM MissingRaces 1.0",
+        "updatePolicy": "exact",
+        "tag": "HW97aj_CyZ-"
+      },
+      "author": "author",
+      "details": {
+        "category": "Patches",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "True Gunners Plaza - .ESL",
+      "version": "1.0b",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 109608,
+        "fileId": 414161,
+        "md5": "0f542f3eb2daa9023184bd1e92101767",
+        "fileSize": 61965,
+        "logicalFilename": "True Gunners Plaza - .ESL",
+        "updatePolicy": "exact",
+        "tag": "pByu2u0eiUP"
+      },
+      "author": "author",
+      "details": {
+        "category": "Locations - Vanilla",
+        "type": ""
+      },
+      "phase": 0
+    }
+  ],
+  "modRules": [
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "MAIM Redux FOMOD installer-72235-1-03-1747516758",
+        "fileMD5": "89fa731ebac01a0a25ef5a295601e55b",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux FOMOD installer"
+      },
+      "source": {
+        "fileExpression": "MAIM Redux - Lite - Storywealth-97694-1-0-5-1771060972",
+        "fileMD5": "3b3bd804ce577087b7aadfdb994fc897",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux - Lite - Storywealth"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "MAIM Redux - Storywealth Patch-74650-3-3-2-1757777872",
+        "fileMD5": "acd1a862c7da37cecae2fb36a279d1f9",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux - Storywealth Patch"
+      },
+      "source": {
+        "fileExpression": "MAIM Redux - Lite - Storywealth-97694-1-0-5-1771060972",
+        "fileMD5": "3b3bd804ce577087b7aadfdb994fc897",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux - Lite - Storywealth"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "MAIM 3",
+        "fileMD5": "f6af2d18303b2b1327a33222783124a7",
+        "versionMatch": ""
+      },
+      "source": {
+        "fileExpression": "WheelMenu-36706-1-5-0-1553049462",
+        "fileMD5": "5caf0b5ef5240941627552c1b1a762bb",
+        "versionMatch": "*",
+        "logicalFileName": "WheelMenu"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileMD5": "d3cc33a9c9db75d9fc9fc239d3e3de31",
+        "versionMatch": "*",
+        "logicalFileName": "Wheel Menu aSW SWF"
+      },
+      "source": {
+        "fileExpression": "WheelMenu-36706-1-5-0-1553049462",
+        "fileMD5": "5caf0b5ef5240941627552c1b1a762bb",
+        "versionMatch": "*",
+        "logicalFileName": "WheelMenu"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "MAIM Redux - Wheel Menu Patch-89985-1-0-2-1742407225",
+        "fileMD5": "4e6a6ac112974fbe7ca00b0e1c9f173b",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux - Wheel Menu Patch"
+      },
+      "source": {
+        "fileExpression": "WheelMenu-36706-1-5-0-1553049462",
+        "fileMD5": "5caf0b5ef5240941627552c1b1a762bb",
+        "versionMatch": "*",
+        "logicalFileName": "WheelMenu"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Advanced Needs 76 (AN76) - Storywealth and MAIM-72059-2-0-0-1741970109",
+        "fileMD5": "8072ecfb4b00bbf9d58caf4e2211cf2d",
+        "versionMatch": "*",
+        "logicalFileName": "Advanced Needs 76 (AN76) - Storywealth and MAIM"
+      },
+      "source": {
+        "fileExpression": "Advanced Needs 76 - Main File-58440-v1-8-9-1701008761",
+        "fileMD5": "0dcb722d0ac9eaf13054ade897d15df8",
+        "versionMatch": "*",
+        "logicalFileName": "Advanced Needs 76 - Main File"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "P.A.S. - Post Apocalyptic Survivor 2K-73270-1-1-1690671846",
+        "fileMD5": "791cd8f3b923c893ab85b72bf5978978",
+        "versionMatch": "*",
+        "logicalFileName": "P.A.S. - Post Apocalyptic Survivor 2K"
+      },
+      "source": {
+        "fileExpression": "Post Apocalyptic Survivor 1.4CBBERobCo-73401-1-0-1-1742033054",
+        "fileMD5": "7e83b386c3d8b90b10afe53b99b3599c",
+        "versionMatch": "*",
+        "logicalFileName": "Post Apocalyptic Survivor 1.4CBBERobCo"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Companion Combat Distance-76382-1-01-1701309992",
+        "fileMD5": "448d2af8cbcf0916fdbdac1202ea46fd",
+        "versionMatch": "*",
+        "logicalFileName": "Companion Combat Distance"
+      },
+      "source": {
+        "fileExpression": "CCD aSW Patch-77424-1-0-0-1704905969",
+        "fileMD5": "eb8f2592f16a96c81779d804f84bcf23",
+        "versionMatch": "*",
+        "logicalFileName": "CCD aSW Patch"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Consumables Of The Commonwealth ESLified-96549-V1-0-1761235032",
+        "fileMD5": "3b8d4fb5628aa232980da4a351d79870",
+        "versionMatch": "V1.0",
+        "logicalFileName": "Consumables Of The Commonwealth ESLified"
+      },
+      "source": {
+        "fileExpression": "Consumables Of The Commonwealth - BA2-96549-V1-2-1776525002",
+        "fileMD5": "83e0c29e5914bfb6f67b5f886749e264",
+        "versionMatch": "*",
+        "logicalFileName": "Consumables Of The Commonwealth - BA2"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Enhanced Movement-86278-2-0-3-1732333810",
+        "fileMD5": "94ad02771f21faebe74f3878fe414eca",
+        "versionMatch": "*",
+        "logicalFileName": "Enhanced Movement"
+      },
+      "source": {
+        "fileExpression": "Enhanced Movement - aSW Patch-91793-1-0-0-1740391136",
+        "fileMD5": "1783836443c2a7d6f6dd5f63d735d7fa",
+        "versionMatch": "*",
+        "logicalFileName": "Enhanced Movement - aSW Patch"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "MAIM Redux FOMOD installer-72235-1-03-1747516758",
+        "fileMD5": "89fa731ebac01a0a25ef5a295601e55b",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux FOMOD installer"
+      },
+      "source": {
+        "fileExpression": "MAIM Redux - RobCo Patcher Patch-92276-1-0-3-1-1755281802",
+        "fileMD5": "5a7e17baaa3ccbcfb78f57c2f97d61a8",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux - RobCo Patcher Patch"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "MAIM Redux FOMOD installer-72235-1-03-1747516758",
+        "fileMD5": "89fa731ebac01a0a25ef5a295601e55b",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux FOMOD installer"
+      },
+      "source": {
+        "fileExpression": "MAIM Redux - Wheel Menu Patch-89985-1-0-2-1742407225",
+        "fileMD5": "4e6a6ac112974fbe7ca00b0e1c9f173b",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux - Wheel Menu Patch"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "WheelMenu-36706-1-5-0-1553049462",
+        "fileMD5": "5caf0b5ef5240941627552c1b1a762bb",
+        "versionMatch": "*",
+        "logicalFileName": "WheelMenu"
+      },
+      "source": {
+        "fileExpression": "MAIM Redux FOMOD installer-72235-1-03-1747516758",
+        "fileMD5": "89fa731ebac01a0a25ef5a295601e55b",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux FOMOD installer"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Wheel Menu - FallUIified-60831-1-2-1654035012",
+        "fileMD5": "405bbeed543dfc423a4999096104b8a2",
+        "versionMatch": "*",
+        "logicalFileName": "Wheel Menu - FallUIified"
+      },
+      "source": {
+        "fileExpression": "MAIM Redux FOMOD installer-72235-1-03-1747516758",
+        "fileMD5": "89fa731ebac01a0a25ef5a295601e55b",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux FOMOD installer"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "MAIM Redux - Storywealth Patch-74650-3-3-2-1757777872",
+        "fileMD5": "acd1a862c7da37cecae2fb36a279d1f9",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux - Storywealth Patch"
+      },
+      "source": {
+        "fileExpression": "MAIM Redux FOMOD installer-72235-1-03-1747516758",
+        "fileMD5": "89fa731ebac01a0a25ef5a295601e55b",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux FOMOD installer"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "0 - Awareness 3 Perk-96503-1-01-1757822570",
+        "fileMD5": "56528b6e1e126209805303b56281c86f",
+        "versionMatch": "*",
+        "logicalFileName": "0 - Awareness 3 Perk"
+      },
+      "source": {
+        "fileExpression": "Reflex Mode - Loose Files-96503-1-01-1757822505",
+        "fileMD5": "c9a0a35fdd553921f67f5292a03035d9",
+        "versionMatch": "*",
+        "logicalFileName": "Reflex Mode - Loose Files"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "VS_Unpacked-94443-1-0-1750365733",
+        "fileMD5": "b8cceae812a86f98884f3f8a33912b11",
+        "versionMatch": "*",
+        "logicalFileName": "BSA_Unpacked"
+      },
+      "source": {
+        "fileExpression": "ESLflag_TMVaultSurvivorOutfits-94443-1-1-1751301572",
+        "fileMD5": "af473b6c6c8e5900dbbd3508d1407238",
+        "versionMatch": "*",
+        "logicalFileName": "TMVaultSurvivorOutfits_1.1_ESL-flagged"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "CBBE-94443-1-0-1750108382",
+        "fileMD5": "6db4b46eacd225a30669b62b8617d9b6",
+        "versionMatch": "*",
+        "logicalFileName": "CBBE"
+      },
+      "source": {
+        "fileExpression": "VS_Unpacked-94443-1-0-1750365733",
+        "fileMD5": "b8cceae812a86f98884f3f8a33912b11",
+        "versionMatch": "*",
+        "logicalFileName": "BSA_Unpacked"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "MAIM 3",
+        "fileMD5": "f6af2d18303b2b1327a33222783124a7",
+        "versionMatch": ""
+      },
+      "source": {
+        "fileExpression": "Wheel Menu - FallUIified-60831-1-2-1654035012",
+        "fileMD5": "405bbeed543dfc423a4999096104b8a2",
+        "versionMatch": "*",
+        "logicalFileName": "Wheel Menu - FallUIified"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "WheelMenu-36706-1-5-0-1553049462",
+        "fileMD5": "5caf0b5ef5240941627552c1b1a762bb",
+        "versionMatch": "*",
+        "logicalFileName": "WheelMenu"
+      },
+      "source": {
+        "fileExpression": "Wheel Menu - FallUIified-60831-1-2-1654035012",
+        "fileMD5": "405bbeed543dfc423a4999096104b8a2",
+        "versionMatch": "*",
+        "logicalFileName": "Wheel Menu - FallUIified"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "MAIM Redux - Wheel Menu Patch-89985-1-0-2-1742407225",
+        "fileMD5": "4e6a6ac112974fbe7ca00b0e1c9f173b",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux - Wheel Menu Patch"
+      },
+      "source": {
+        "fileExpression": "Wheel Menu - FallUIified-60831-1-2-1654035012",
+        "fileMD5": "405bbeed543dfc423a4999096104b8a2",
+        "versionMatch": "*",
+        "logicalFileName": "Wheel Menu - FallUIified"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "All-In-One (No PreCombines)-73500-1-2-0-1711539755",
+        "fileMD5": "1e9f1b01bf322f673e568a52020fc33b",
+        "versionMatch": "1.2.0",
+        "logicalFileName": "Rebuild Me Home - Sanctuary Roads (No PreCombines)"
+      },
+      "source": {
+        "fileExpression": "Rebuild AIO - eXoPatch-80291-1-0-10-1760521853",
+        "fileMD5": "8d98316d1007c8c0a1eb5194a48a9577",
+        "versionMatch": "*",
+        "logicalFileName": "Rebuild AIO - eXoPatch"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "MAIM Redux FOMOD installer-72235-1-03-1747516758",
+        "fileMD5": "89fa731ebac01a0a25ef5a295601e55b",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM Redux FOMOD installer"
+      },
+      "source": {
+        "fileExpression": "MAIM - Dismemberment Patch-101915-1-0-0-1771959124",
+        "fileMD5": "91197c0ac938f3ecb29d7a795c902a6b",
+        "versionMatch": "*",
+        "logicalFileName": "MAIM - Dismemberment Patch"
+      }
+    }
+  ],
+  "tools": [],
+  "plugins": [
+    {
+      "name": "MutantMenagerie.esm",
+      "enabled": true
+    },
+    {
+      "name": "SSTMinutemanWatchtowers.esl",
+      "enabled": true
+    },
+    {
+      "name": "LootedWorld.esl",
+      "enabled": true
+    },
+    {
+      "name": "MutantMenagerie_BackwaterBeasts.esm",
+      "enabled": true
+    },
+    {
+      "name": "TheRooftops.esm",
+      "enabled": true
+    },
+    {
+      "name": "HelipadsFromHap.esp",
+      "enabled": true
+    },
+    {
+      "name": "SubwayRunnnerDynamicLighting.esp",
+      "enabled": true
+    },
+    {
+      "name": "REPUTATION.esm",
+      "enabled": true
+    },
+    {
+      "name": "TrueGunnersPlaza.esl",
+      "enabled": true
+    },
+    {
+      "name": "RailroadTravelAgent.esl",
+      "enabled": true
+    },
+    {
+      "name": "Minuteman Watchtowers - Survey Addon.esm",
+      "enabled": true
+    },
+    {
+      "name": "CHALLENGES.esm",
+      "enabled": true
+    },
+    {
+      "name": "Enhanced Movement.esm",
+      "enabled": true
+    },
+    {
+      "name": "Stealthy Takedowns.esm",
+      "enabled": true
+    },
+    {
+      "name": "MUTATION.esm",
+      "enabled": true
+    },
+    {
+      "name": "KARMA.esm",
+      "enabled": true
+    },
+    {
+      "name": "Hit Those Objects.esm",
+      "enabled": true
+    },
+    {
+      "name": "Rebuild_AIO-eXoPatch.esp",
+      "enabled": true
+    },
+    {
+      "name": "Rant - Loot Reduction.esp",
+      "enabled": true
+    },
+    {
+      "name": "Hunter of the Commonwealth.esp",
+      "enabled": true
+    },
+    {
+      "name": "HotC_MM_MissingRaces.esp",
+      "enabled": true
+    },
+    {
+      "name": "SKKRESystemManager.esp",
+      "enabled": true
+    },
+    {
+      "name": "Underground RailroadALLDLC.esp",
+      "enabled": true
+    },
+    {
+      "name": "PARSAW.esp",
+      "enabled": true
+    },
+    {
+      "name": "Flashy_PersonalEssentials.esp",
+      "enabled": true
+    },
+    {
+      "name": "AN76 - CS IAF Patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "LR_APCTransport.esp",
+      "enabled": true
+    },
+    {
+      "name": "YAWA2_MW_Patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "Goremites.esp",
+      "enabled": true
+    },
+    {
+      "name": "LR_APCNukaWorldExspansion.esp",
+      "enabled": true
+    },
+    {
+      "name": "SKKDynamicLootReduction.esp",
+      "enabled": true
+    },
+    {
+      "name": "YAWA2_MutantMenagerieLifeFindsAWay_Patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "LR_APCFarHarborExspansion.esp",
+      "enabled": true
+    },
+    {
+      "name": "ConsumablesOfTheCommonwealth.esp",
+      "enabled": true
+    },
+    {
+      "name": "FPVertibird.esp",
+      "enabled": true
+    },
+    {
+      "name": "LootableVertibirds.esp",
+      "enabled": true
+    },
+    {
+      "name": "AmericaRising2LVPatch.esp",
+      "enabled": true
+    },
+    {
+      "name": "SubwayRunnnerDynamicLighting OE - NPC Addon.esp",
+      "enabled": true
+    },
+    {
+      "name": "eXofied Goodneighbor - Subway Runner.esp",
+      "enabled": true
+    },
+    {
+      "name": "FPV_Armored.esp",
+      "enabled": true
+    },
+    {
+      "name": "Project Reality Footsteps FO4.esp",
+      "enabled": true
+    },
+    {
+      "name": "Project Reality Footsteps FO4 Expansion.esp",
+      "enabled": true
+    },
+    {
+      "name": "ReflexMode.esp",
+      "enabled": true
+    },
+    {
+      "name": "ReflexMode_Awareness3Perk.esp",
+      "enabled": true
+    },
+    {
+      "name": "ReflexMode_RequireSneaking.esp",
+      "enabled": true
+    },
+    {
+      "name": "77wanderer_AN76-MutantMenagerie.esp",
+      "enabled": true
+    },
+    {
+      "name": "Addiction Overhaul.esp",
+      "enabled": true
+    },
+    {
+      "name": "CombatRifle Receivers.esp",
+      "enabled": true
+    },
+    {
+      "name": "AN76 - TrueStorms.esp",
+      "enabled": true
+    },
+    {
+      "name": "PlayerUnmasked-AN76.esp",
+      "enabled": true
+    },
+    {
+      "name": "Flashy_PersonalEssentials - Storywealth and MAIM.esp",
+      "enabled": true
+    },
+    {
+      "name": "LimaOutpost_LV_Patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "Blaze.esp",
+      "enabled": true
+    },
+    {
+      "name": "BlockingOverhaul.esp",
+      "enabled": true
+    },
+    {
+      "name": "Bullet in the Chamber.esp",
+      "enabled": true
+    },
+    {
+      "name": "ConditionBoy.esp",
+      "enabled": true
+    },
+    {
+      "name": "Vulture.esp",
+      "enabled": true
+    },
+    {
+      "name": "Vulture - DLC.esp",
+      "enabled": true
+    },
+    {
+      "name": "TMVaultSurvivorOutfits.esp",
+      "enabled": true
+    },
+    {
+      "name": "TMVaultSurvivorOutfits.esp",
+      "enabled": true
+    },
+    {
+      "name": "Enhanced Movement - aSW Patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "HotC - V111 Knife.esp",
+      "enabled": true
+    },
+    {
+      "name": "Hunter of the Commonwealth - Item Sorter and IAF.esp",
+      "enabled": true
+    },
+    {
+      "name": "Infiltrator - Lockpicking Overhaul.esp",
+      "enabled": true
+    },
+    {
+      "name": "KACHAREP - Storywealth.esp",
+      "enabled": true
+    },
+    {
+      "name": "LureEnemies.esp",
+      "enabled": true
+    },
+    {
+      "name": "LureEnemies - aSW Patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "MMLFAW_No_Boombugs_In_111_Patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "NPCs Use Items.esp",
+      "enabled": true
+    },
+    {
+      "name": "Point Lookout Creature Expansion Redux.esp",
+      "enabled": true
+    },
+    {
+      "name": "Rant - AN76 - Showers.esp",
+      "enabled": true
+    },
+    {
+      "name": "Replaceable_Armor_Plates.esp",
+      "enabled": true
+    },
+    {
+      "name": "RAP_Plate_LL.esp",
+      "enabled": true
+    },
+    {
+      "name": "SKKCombatStalkers.esp",
+      "enabled": true
+    },
+    {
+      "name": "SMR_MutantHoundFix.esp",
+      "enabled": true
+    },
+    {
+      "name": "Scrapable Lootable Cars Exiguous 4 AN76.esp",
+      "enabled": true
+    },
+    {
+      "name": "StoryWealthLocation-DiamondCity-SubwayRunner.esp",
+      "enabled": true
+    },
+    {
+      "name": "Vulture - noContainer.esp",
+      "enabled": true
+    },
+    {
+      "name": "WheelMenu.esp",
+      "enabled": true
+    },
+    {
+      "name": "Bastion.esp",
+      "enabled": true
+    },
+    {
+      "name": "Campsite.esp",
+      "enabled": true
+    },
+    {
+      "name": "CompanionCommandAnimations.esp",
+      "enabled": true
+    },
+    {
+      "name": "ExplosionReactions.esp",
+      "enabled": true
+    },
+    {
+      "name": "FPVPilotDialogueFix.esp",
+      "enabled": true
+    },
+    {
+      "name": "DynamicDismemberSystem.esp",
+      "enabled": true
+    },
+    {
+      "name": "AmmoHasWeight_AN76.esp",
+      "enabled": true
+    },
+    {
+      "name": "ReinforcementsAndRetribution.esp",
+      "enabled": true
+    },
+    {
+      "name": "InfestedFerals.esp",
+      "enabled": true
+    },
+    {
+      "name": "Chemfluence AI Combat Dynamics.esp",
+      "enabled": true
+    },
+    {
+      "name": "The House - SSTMM-NavMeshPatch.esp",
+      "enabled": true
+    },
+    {
+      "name": "MAIM.esp",
+      "enabled": true
+    },
+    {
+      "name": "MAIM - Point Lookout.esp",
+      "enabled": true
+    },
+    {
+      "name": "MAIM Redux - V111 Items.esp",
+      "enabled": true
+    },
+    {
+      "name": "ConsumablesOfTheCommonwealth-Storywealth.esp",
+      "enabled": true
+    },
+    {
+      "name": "AN76_patch_campsite.esp",
+      "enabled": true
+    },
+    {
+      "name": "MAIM - Dismemberment Patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "Additional Hunting Rifle Receivers.esp",
+      "enabled": true
+    },
+    {
+      "name": "Combat AI Empowered - Storywealth.esp",
+      "enabled": true
+    },
+    {
+      "name": "Flashlight Stealth Fix.esp",
+      "enabled": true
+    },
+    {
+      "name": "MAIM Redux - Storywealth.esp",
+      "enabled": true
+    },
+    {
+      "name": "MAIM Redux - Lite - Storywealth.esp",
+      "enabled": true
+    },
+    {
+      "name": "Mutant LFAW - HotC Patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "Mutant Menagerie LFAW CS IAF.esp",
+      "enabled": true
+    },
+    {
+      "name": "Nick Valentine likes your Clothes.esp",
+      "enabled": true
+    },
+    {
+      "name": "Post Apocalyptic Survivor Outfit.esp",
+      "enabled": true
+    },
+    {
+      "name": "Post Apocalyptic Survivor Outfit.esp",
+      "enabled": true
+    },
+    {
+      "name": "Post Apocalyptic Survivor Outfit - AN76 Gasmask Patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "Rant - Hunter otC aSW Patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "Rant - Service Rifle - noNeed4 Marksman Magazine.esp",
+      "enabled": true
+    },
+    {
+      "name": "Rant - Replaceable_Armor_Plates aSW Patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "Combat AI Empowered - Reduce Grenade Spam - Storywealth.esp",
+      "enabled": true
+    },
+    {
+      "name": "SmarterBastionPenetration.esp",
+      "enabled": true
+    },
+    {
+      "name": "SKKDynamicLootReduction - aSW.esp",
+      "enabled": true
+    },
+    {
+      "name": "lowered_weapons_lighting_patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "MAIM Redux - ELFX Patch.esp",
+      "enabled": true
+    }
+  ],
+  "pluginRules": {
+    "plugins": [
+      {
+        "name": "wheelmenu.esp",
+        "group": "default"
+      },
+      {
+        "name": "campsite.esp",
+        "group": "default"
+      },
+      {
+        "name": "conditionboy.esp",
+        "group": "default"
+      },
+      {
+        "name": "subwayrunnnerdynamiclighting.esp",
+        "after": [],
+        "group": "default"
+      },
+      {
+        "name": "bullet in the chamber.esp",
+        "group": "default"
+      },
+      {
+        "name": "hunter of the commonwealth.esp",
+        "group": "default"
+      },
+      {
+        "name": "Flashy_PersonalEssentials.esp",
+        "after": ["hunter of the commonwealth.esp"]
+      },
+      {
+        "name": "AN76_patch_campsite.esp",
+        "after": ["campsite.esp"],
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "skkdynamiclootreduction - asw.esp",
+        "after": [],
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "lowered_weapons_lighting_patch.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "rant - hunter otc asw patch.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "rant - replaceable_armor_plates asw patch.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "rant - service rifle - noneed4 marksman magazine.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "mutant lfaw - hotc patch.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "post apocalyptic survivor outfit.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "additional hunting rifle receivers.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "flashlight stealth fix.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "post apocalyptic survivor outfit - an76 gasmask patch.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "an76 - cs iaf patch.esp",
+        "after": ["pie_iaf.esp"]
+      },
+      {
+        "name": "mutant menagerie lfaw cs iaf.esp",
+        "after": ["mutant lfaw - hotc patch.esp"],
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "sstminutemanwatchtowers.esl",
+        "group": "Creation Club"
+      },
+      {
+        "name": "rebuild_aio-exopatch.esp",
+        "group": "Resources & Frameworks",
+        "after": ["ine_boonisland.esp"]
+      },
+      {
+        "name": "rant - loot reduction.esp",
+        "after": ["npc lld rebalance.esp"]
+      },
+      {
+        "name": "mutantmenagerie.esm",
+        "group": "DLC"
+      },
+      {
+        "name": "smarterbastionpenetration.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "maim.esp",
+        "group": "Late Loaders"
+      },
+      {
+        "name": "maim redux - storywealth.esp",
+        "after": [],
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "maim redux - elfx patch.esp",
+        "after": ["elfx-exopatch.esp", "maim redux - storywealth.esp"],
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "parsaw.esp",
+        "after": []
+      },
+      {
+        "name": "the house - sstmm-navmeshpatch.esp",
+        "group": "Low Priority Overrides"
+      },
+      {
+        "name": "combat ai empowered - storywealth.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "nick valentine likes your clothes.esp",
+        "group": "Dynamic Patches",
+        "after": ["storywealth-cplx-sorter.esp"]
+      },
+      {
+        "name": "combat ai empowered - reduce grenade spam - storywealth.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "maim redux - lite - storywealth.esp",
+        "after": ["maim redux - storywealth.esp"],
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "consumablesofthecommonwealth-storywealth.esp",
+        "group": "Dynamic Patches"
+      },
+      {
+        "name": "maim - dismemberment patch.esp",
+        "group": "Dynamic Patches"
+      }
+    ],
+    "groups": [
+      {
+        "name": "Underrides",
+        "after": []
+      },
+      {
+        "name": "PreVis & PreCombined Fixes",
+        "after": []
+      },
+      {
+        "name": "Low Priority Overrides",
+        "after": []
+      },
+      {
+        "name": "default",
+        "after": []
+      },
+      {
+        "name": "Worldspace Settings",
+        "after": []
+      },
+      {
+        "name": "Resources & Frameworks",
+        "after": []
+      },
+      {
+        "name": "Fixes",
+        "after": []
+      }
+    ]
+  },
+  "collectionConfig": {
+    "recommendNewProfile": false,
+    "excludePluginRules": false,
+    "referenceTagScheme": "v1"
+  }
+}

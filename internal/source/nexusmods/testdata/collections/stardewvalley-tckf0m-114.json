@@ -1,0 +1,3948 @@
+{
+  "info": {
+    "author": "curator",
+    "authorUrl": "",
+    "name": "Stardew Valley VERY Expanded",
+    "description": "",
+    "installInstructions": "(curator text removed)",
+    "domainName": "stardewvalley",
+    "gameVersions": ["1.6.15.24356"]
+  },
+  "mods": [
+    {
+      "name": "Stardew Valley VERY Expanded Collection",
+      "version": "2.0.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "bundle",
+        "fileSize": 8872,
+        "logicalFilename": "Bundled - Stardew Valley VERY Expanded Collection (v2.0.0).7z",
+        "updatePolicy": "exact",
+        "tag": "p8GYcQCiML",
+        "fileExpression": "Bundled - Stardew Valley VERY Expanded Collection (v2.0.0)"
+      },
+      "details": {
+        "category": "",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "VERY Configured Stardew Valley VERY Expanded",
+      "version": "2.0.114",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 20870,
+        "fileId": 188857,
+        "md5": "31700457a84123b03390491a17a532e8",
+        "fileSize": 28359,
+        "logicalFilename": "VERY Configured Stardew Valley VERY Expanded",
+        "updatePolicy": "exact",
+        "tag": "KaK8iMIgbL"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "World Maps Everywhere",
+      "version": "1.0.3",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 24210,
+        "fileId": 116312,
+        "md5": "dd6b740c880539b7d93afff2785dc2a9",
+        "fileSize": 35835,
+        "logicalFilename": "World Maps Everywhere 1.0.3",
+        "updatePolicy": "exact",
+        "tag": "7khX7VgV0v"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Animated Fish [CP-A] ",
+      "version": "1.4.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 5735,
+        "fileId": 120871,
+        "md5": "0740a8f3a0c8c3770934c423fad55208",
+        "fileSize": 195095,
+        "logicalFilename": "Animated Fish",
+        "updatePolicy": "exact",
+        "tag": "oJKDGTXxPG"
+      },
+      "author": "author",
+      "details": {
+        "category": "Fishing",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "[CP] Additional Farm Cave",
+      "version": "4.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 14109,
+        "fileId": 169503,
+        "md5": "bc20e71f7d59a07e5625f8a7a493634a",
+        "fileSize": 303848,
+        "logicalFilename": "Additional Farm Cave",
+        "updatePolicy": "exact",
+        "tag": "53poS9fInB"
+      },
+      "patches": {
+        "Additional Farm Cave\\[CP] Additional Farm Cave\\manifest.json": "FF5EF52D",
+        "Additional Farm Cave\\[FTM] Additional Farm Cave\\content.json": "338E56B2"
+      },
+      "author": "author",
+      "details": {
+        "category": "Maps",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Add Berry Seasons to Calendar",
+      "version": "1.1.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 10477,
+        "fileId": 52886,
+        "md5": "5b3fb7951d6fc82c067b89a317c94d97",
+        "fileSize": 3233,
+        "logicalFilename": "Add Berry seasons to calendar",
+        "updatePolicy": "exact",
+        "tag": "YxfKkjjqgR"
+      },
+      "author": "author",
+      "details": {
+        "category": "Visuals and Graphics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Animated Clothes [CP-A]",
+      "version": "1.2.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 6117,
+        "fileId": 27686,
+        "md5": "05c320747b7d955f06559b027c377e59",
+        "fileSize": 59681,
+        "logicalFilename": "Animated Clothes",
+        "updatePolicy": "exact",
+        "tag": "R8EVCY2Hg_"
+      },
+      "author": "author",
+      "details": {
+        "category": "Clothing",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Animated Fish for East Scarp [CP-A] ",
+      "version": "1.3.2",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 10913,
+        "fileId": 154411,
+        "md5": "8ec4002295f4f9eec3c78e6c80c4cc1a",
+        "fileSize": 13696,
+        "logicalFilename": "Animated East Scarp Fish",
+        "updatePolicy": "exact",
+        "tag": "Mtkn4B5_-H"
+      },
+      "author": "author",
+      "details": {
+        "category": "Fishing",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Animated Fish for Ridgeside Village [CP-A] ",
+      "version": "1.4.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 7353,
+        "fileId": 120976,
+        "md5": "2a853802b80333bd5914908af64cdbc6",
+        "fileSize": 71286,
+        "logicalFilename": "Animated Ridgeside Village Fish",
+        "updatePolicy": "exact",
+        "tag": "FwmQ7CIRf-"
+      },
+      "author": "author",
+      "details": {
+        "category": "Fishing",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Animated Fish for SVE [CP-A] ",
+      "version": "1.9.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 6089,
+        "fileId": 120873,
+        "md5": "4643e104fa741a44612afdd2c52322ef",
+        "fileSize": 45306,
+        "logicalFilename": "Animated Fish SVE",
+        "updatePolicy": "exact",
+        "tag": "bdFvjJ1s_o"
+      },
+      "author": "author",
+      "details": {
+        "category": "Fishing",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Animated Food and Drinks [CP-A] ",
+      "version": "3.5.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 5607,
+        "fileId": 120874,
+        "md5": "2ef07442cb6d6cfacd229dc39d70d597",
+        "fileSize": 169557,
+        "logicalFilename": "Animated Food and Drinks",
+        "updatePolicy": "exact",
+        "tag": "IrpBzncK_8"
+      },
+      "author": "author",
+      "details": {
+        "category": "Items",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Animated Furniture and Stuff",
+      "version": "1.2.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 5662,
+        "fileId": 120872,
+        "md5": "5ccd03f8f60a490e9554bb6080300830",
+        "fileSize": 340850,
+        "logicalFilename": "Animated Furniture and Stuff",
+        "updatePolicy": "exact",
+        "tag": "INgNyRYPGo"
+      },
+      "patches": {
+        "[CP] Animated Furniture and Stuff\\content.json": "CABDDFC4"
+      },
+      "author": "author",
+      "details": {
+        "category": "Furniture",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Animated Gemstones 1.1.6 [CP-A] ",
+      "version": "1.1.8",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 4986,
+        "fileId": 123182,
+        "md5": "df29ea761cf34255a3db21aa42be9da0",
+        "fileSize": 88634,
+        "logicalFilename": "Animated Gemstones 1.1.8 SpaceCore conversion",
+        "updatePolicy": "exact",
+        "tag": "HX8Fu4vTBo"
+      },
+      "author": "author",
+      "details": {
+        "category": "Items",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Animated Slime Eggs and Loot [CP-A] ",
+      "version": "2.2.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 5642,
+        "fileId": 120875,
+        "md5": "432ef7ed9c4a42730e3d58792024f294",
+        "fileSize": 74567,
+        "logicalFilename": "Animated Slime Eggs and Loot",
+        "updatePolicy": "exact",
+        "tag": "W-qBArbsr-"
+      },
+      "author": "author",
+      "details": {
+        "category": "Items",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Anniversary on Calendar",
+      "version": "1.3.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 8351,
+        "fileId": 101122,
+        "md5": "cc4defdb779205547f897dd5de21b056",
+        "fileSize": 48264,
+        "logicalFilename": "Anniversary on Calendar (1.3.1)",
+        "updatePolicy": "exact",
+        "tag": "KV0-qNVJby"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Automate",
+      "version": "2.6.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 1063,
+        "fileId": 160585,
+        "md5": "f7be18121cd0c87bebec1c0480b1b415",
+        "fileSize": 224321,
+        "logicalFilename": "Automate 2.6.1",
+        "updatePolicy": "exact",
+        "tag": "enNcneFMzXb"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay Mechanics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Better Always Active",
+      "version": "0.0.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 43356,
+        "fileId": 159535,
+        "md5": "c7373c3ebbbabdba406e9cf91428332b",
+        "fileSize": 11836,
+        "logicalFilename": "Better Always Active (0.0.1)",
+        "updatePolicy": "exact",
+        "tag": "YyMg3KgkaFx"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Better Crafting",
+      "version": "2.18.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 11115,
+        "fileId": 128398,
+        "md5": "3a225c2240d3f5d86eed114547b50480",
+        "fileSize": 531389,
+        "logicalFilename": "Better Crafting",
+        "updatePolicy": "exact",
+        "tag": "QX7gM5GqUGp"
+      },
+      "author": "author",
+      "details": {
+        "category": "Crafting",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Buildable Ginger Island Farm",
+      "version": "1.1.7",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 20600,
+        "fileId": 179223,
+        "md5": "c4e0331198ece71b0bad86c1455c2a09",
+        "fileSize": 56652,
+        "logicalFilename": "Buildable Ginger Island Farm 1.1.7",
+        "updatePolicy": "exact",
+        "tag": "Q7tW1RNjDdR"
+      },
+      "author": "author",
+      "details": {
+        "category": "Buildings",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Button's Extra Trigger Action Stuff (betas)",
+      "version": "3.5.2",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 27100,
+        "fileId": 182388,
+        "md5": "a315446eaad04cd7b898cf00ae530a7e",
+        "fileSize": 125455,
+        "logicalFilename": "Button's Extra Trigger Action Stuff",
+        "updatePolicy": "exact",
+        "tag": "cLqSArNWCJW"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Chests Anywhere",
+      "version": "1.30.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 518,
+        "fileId": 160464,
+        "md5": "08c4d772c5958928e0b23d756ba3fb37",
+        "fileSize": 190526,
+        "logicalFilename": "Chests Anywhere 1.30.1",
+        "updatePolicy": "exact",
+        "tag": "zccHdIhmQti"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Clint Reforged (CP)",
+      "version": "1.2.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 18345,
+        "fileId": 92441,
+        "md5": "879e230266accc51145b509f10fd6d25",
+        "fileSize": 1030973,
+        "logicalFilename": "Clint Reforged 1.2.1",
+        "updatePolicy": "exact",
+        "tag": "hTbGC0FfwSP"
+      },
+      "author": "author",
+      "details": {
+        "category": "Characters",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Community Center Reimagined (CP)",
+      "version": "1.3.2",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 6966,
+        "fileId": 152808,
+        "md5": "450d5895b73117acf6b87cafa4bcf7d9",
+        "fileSize": 140271,
+        "logicalFilename": "Community Center Reimagined",
+        "updatePolicy": "exact",
+        "tag": "WCV0211sWqX"
+      },
+      "author": "author",
+      "details": {
+        "category": "Events",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Content Patcher",
+      "version": "2.9.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 1915,
+        "fileId": 160463,
+        "md5": "16011e28f5521b7cc9bf1a37482ce6a6",
+        "fileSize": 389967,
+        "logicalFilename": "Content Patcher 2.9.1",
+        "updatePolicy": "exact",
+        "tag": "lsbdtM9zHF1"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Content Patcher Animations 1.2.4",
+      "version": "1.2.4",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 3853,
+        "fileId": 62104,
+        "md5": "938f635bd383cd2f834f6aeae6f1cb77",
+        "fileSize": 114307,
+        "logicalFilename": "Content Patcher Animations 1.2.4",
+        "updatePolicy": "exact",
+        "tag": "Oq2AAi5dIxY"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Convenient Inventory",
+      "version": "1.6.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 10384,
+        "fileId": 168904,
+        "md5": "00d48149c4fa831563be99f37bad1fa3",
+        "fileSize": 118781,
+        "logicalFilename": "ConvenientInventory-1.6.1",
+        "updatePolicy": "exact",
+        "tag": "6-KhxMeNmcC"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay Mechanics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Creative Differences - NPC Rodney O'Brien",
+      "version": "3.3.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 13437,
+        "fileId": 173863,
+        "md5": "5832fc42808783e4ddde1eb7842b3296",
+        "fileSize": 15584100,
+        "logicalFilename": "Creative Differences 3.3.1",
+        "updatePolicy": "exact",
+        "tag": "OgEVtJ7l4wx"
+      },
+      "author": "author",
+      "details": {
+        "category": "New Characters",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Custom Companions",
+      "version": "5.1.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 8626,
+        "fileId": 150992,
+        "md5": "f11bfe93ab12abca5f6a75a5e6002e30",
+        "fileSize": 79573,
+        "logicalFilename": "Custom Companions 5.1.0",
+        "updatePolicy": "exact",
+        "tag": "zr6BH6AJ7Sw"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Customizable Slime Hutch",
+      "version": "1.1.2",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 45529,
+        "fileId": 187962,
+        "md5": "683f0b6a955b095c8ac6768047af2ba4",
+        "fileSize": 45820,
+        "logicalFilename": "Customizable Slime Hutch",
+        "updatePolicy": "exact",
+        "tag": "PSuMH-cPrsQ"
+      },
+      "author": "author",
+      "details": {
+        "category": "Buildings",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Cuter Slimes Refreshed (CP)",
+      "version": "1.2.8",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 21889,
+        "fileId": 170635,
+        "md5": "8a6569aae6130a575480dfae92680490",
+        "fileSize": 89092,
+        "logicalFilename": "Cuter Slimes Refreshed",
+        "updatePolicy": "exact",
+        "tag": "Tzq8lN26aYT"
+      },
+      "author": "author",
+      "details": {
+        "category": "Livestock and Animals",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "DaisyNiko's Tilesheets",
+      "version": "2.0.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 4736,
+        "fileId": 187319,
+        "md5": "20cabab6d9612edc157afced6623d6b9",
+        "fileSize": 5549914,
+        "logicalFilename": "DaisyNiko's Tilesheets",
+        "updatePolicy": "exact",
+        "tag": "taf2OMfwY5o"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Deluxe Journal",
+      "version": "1.4.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 11436,
+        "fileId": 117934,
+        "md5": "e567f61c6809bf76d2c5dac80e874950",
+        "fileSize": 189540,
+        "logicalFilename": "Deluxe Journal",
+        "updatePolicy": "exact",
+        "tag": "GrWpBAj4Fnd"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Downhill Project",
+      "version": "1.0.16",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 32872,
+        "fileId": 188217,
+        "md5": "80d979726ecc18e2c35de43ac96d8b81",
+        "fileSize": 2232997,
+        "logicalFilename": "Downhill Project",
+        "updatePolicy": "exact",
+        "tag": "c2AGa0ir6Uh"
+      },
+      "author": "author",
+      "details": {
+        "category": "Expansions",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Dynamic Reflections",
+      "version": "4.0.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 12831,
+        "fileId": 153083,
+        "md5": "415d6e504b7a6e0ba1143e88055ad481",
+        "fileSize": 119796,
+        "logicalFilename": "Dynamic Reflections 4.0.1",
+        "updatePolicy": "exact",
+        "tag": "oFr0RqqsEWi"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "East Scarp Remastered",
+      "version": "3.0.9",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 5787,
+        "fileId": 169442,
+        "md5": "eba02c5aa138e7ac289e0887ce1ffed1",
+        "fileSize": 40751667,
+        "logicalFilename": "East Scarp Remastered",
+        "updatePolicy": "exact",
+        "tag": "b46Ig6_A04_"
+      },
+      "patches": {
+        "East Scarp REMASTERED\\East Scarp NPCs\\content.json": "595A4744"
+      },
+      "author": "author",
+      "details": {
+        "category": "Expansions",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "East Scarp TileSheet Fixes",
+      "version": "3.0.6",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 5787,
+        "fileId": 153588,
+        "md5": "d15fea7c643b35bdf6e7f84b375420ae",
+        "fileSize": 1276736,
+        "logicalFilename": "Compatibility Fixes",
+        "updatePolicy": "exact",
+        "tag": "3RNPTbts9xF"
+      },
+      "author": "author",
+      "details": {
+        "category": "Expansions",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Eli and Dylan (Requires East Scarp)",
+      "version": "1.4.4",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 13883,
+        "fileId": 147734,
+        "md5": "d78220360a78fc6f9278c4f90b6f75ca",
+        "fileSize": 20597065,
+        "logicalFilename": "Eli and Dylan",
+        "updatePolicy": "exact",
+        "tag": "GvRqB3mwbyM"
+      },
+      "patches": {
+        "[NPC] Eli and Dylan\\[CP] Eli and Dylan\\Data\\LocationsData.json": "3EBEBA55",
+        "[NPC] Eli and Dylan\\[CP] Eli and Dylan\\Data\\Objects.json": "2360F756"
+      },
+      "author": "author",
+      "details": {
+        "category": "New Characters",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "ES Seasonal Cute Characters",
+      "version": "1.0.6",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 16045,
+        "fileId": 155122,
+        "md5": "d52288b1ee6f259eb6573d64d61482ef",
+        "fileSize": 5429560,
+        "logicalFilename": "Seasonal Cute Characters for East Scarp",
+        "updatePolicy": "exact",
+        "tag": "ArakzMush1A"
+      },
+      "author": "author",
+      "details": {
+        "category": "Characters",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Event Limiter",
+      "version": "1.3.2",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 10735,
+        "fileId": 175229,
+        "md5": "55240509bafa78b7f8d341ff1c104fce",
+        "fileSize": 18606,
+        "logicalFilename": "Event Limiter",
+        "updatePolicy": "exact",
+        "tag": "kI8ThlTNe0M"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay Mechanics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Farm Type Manager (FTM)",
+      "version": "1.26.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 3231,
+        "fileId": 148044,
+        "md5": "6980d0d7dff0bb78080638071752a9a2",
+        "fileSize": 133975,
+        "logicalFilename": "Farm Type Manager",
+        "updatePolicy": "exact",
+        "tag": "X7PjOKlWyqy"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Faster Path Speed",
+      "version": "1.3.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 9344,
+        "fileId": 101554,
+        "md5": "62960c8fdc235ccfcfa2004012dbdd07",
+        "fileSize": 18261,
+        "logicalFilename": "FasterPathSpeed-1.3.1",
+        "updatePolicy": "exact",
+        "tag": "8ZR9Y0GeAlT"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay Mechanics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Font Smasher",
+      "version": "1.1.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 38900,
+        "fileId": 149766,
+        "md5": "a34bdfafbca14fa9e11b229604000236",
+        "fileSize": 35184,
+        "logicalFilename": "FontSmasher-1.1.1",
+        "updatePolicy": "exact",
+        "tag": "u4UpGBc1vz5"
+      },
+      "hashes": [
+        {
+          "path": "FontSmasher\\FontSmasher.dll",
+          "md5": "a8842e74aa57af6d038d163ef31df62f"
+        },
+        {
+          "path": "FontSmasher\\manifest.json",
+          "md5": "c90a771d7412576ee3d4c8dfb5962c9c"
+        }
+      ],
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Friends Forever",
+      "version": "1.2.11",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 20702,
+        "fileId": 173112,
+        "md5": "5f1b61fc39e51d276314c1ceb5851343",
+        "fileSize": 8787,
+        "logicalFilename": "Friends Forever",
+        "updatePolicy": "exact",
+        "tag": "ZzeIBuAuED6"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay Mechanics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Frontier Farm",
+      "version": "1.15.11",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 3753,
+        "fileId": 135999,
+        "md5": "eecb89b10d262fc02c8cf80ad1bef82e",
+        "fileSize": 2520526,
+        "logicalFilename": "Frontier Farm",
+        "updatePolicy": "exact",
+        "tag": "ot9iELZXglq"
+      },
+      "instructions": "(curator text removed)",
+      "author": "author",
+      "details": {
+        "category": "Expansions",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Generic Mod Config Menu",
+      "version": "1.16.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 5098,
+        "fileId": 145906,
+        "md5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "fileSize": 108656,
+        "logicalFilename": "Generic Mod Config Menu 1.16.0",
+        "updatePolicy": "exact",
+        "tag": "FD5kKN54uq6"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Ginger Island Extra Locations - redux",
+      "version": "1.5.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 42648,
+        "fileId": 158600,
+        "md5": "b11b944eda3c04514d45dccfa77408b6",
+        "fileSize": 18082584,
+        "logicalFilename": "Ginger Island Extra Locations - Redux",
+        "updatePolicy": "exact",
+        "tag": "KkRhBRHUOoa"
+      },
+      "patches": {
+        "GI Extra Locations - Redux\\ExtraGIMapsRedux\\ExtraGIMapsRedux.dll": "E292E3E9",
+        "GI Extra Locations - Redux\\[CP] GiEX redux\\content.json": "D03A41D6"
+      },
+      "author": "author",
+      "details": {
+        "category": "Expansions",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "HxW Tilesheets",
+      "version": "2.0.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 20139,
+        "fileId": 137494,
+        "md5": "8227bcfcc8c58b7a046beeae99b2cc4e",
+        "fileSize": 11988980,
+        "logicalFilename": "HxW Tilesheets",
+        "updatePolicy": "exact",
+        "tag": "YvoWuIgEBaI"
+      },
+      "author": "author",
+      "details": {
+        "category": "Visuals and Graphics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "I Fixed Him - A Shane Consistency Mod (CP)",
+      "version": "1.4.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 21660,
+        "fileId": 92685,
+        "md5": "d1e4b28bdb754a9dcf06de713c41d262",
+        "fileSize": 21687,
+        "logicalFilename": "(CP) I Fixed Him 1.4.0",
+        "updatePolicy": "exact",
+        "tag": "fYuE6SzN_sO"
+      },
+      "author": "author",
+      "details": {
+        "category": "Characters",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Integrated Minecarts",
+      "version": "4.6.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 11881,
+        "fileId": 160534,
+        "md5": "78e48222c4711917110205b5ade0cc06",
+        "fileSize": 119204,
+        "logicalFilename": "Integrated Minecarts for SDV 1.6.15",
+        "updatePolicy": "exact",
+        "tag": "zeuC9rWr00a"
+      },
+      "author": "author",
+      "details": {
+        "category": "Expansions",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Item extensions",
+      "version": "1.16.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 20357,
+        "fileId": 136272,
+        "md5": "504294381151fcfa254b61ee2eb1f2b5",
+        "fileSize": 156286,
+        "logicalFilename": "Item Extensions",
+        "updatePolicy": "exact",
+        "tag": "mXMi9z-nOjR"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "ItsStardewTime",
+      "version": "1.0.2",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 43187,
+        "fileId": 159891,
+        "md5": "68d03ada5ee5ca6e1ce1221cf0f22bc6",
+        "fileSize": 108922,
+        "logicalFilename": "ItsStardewTime",
+        "updatePolicy": "exact",
+        "tag": "5d9ON2pxRyn"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay Mechanics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Leilani (Requires Ridgeside Village)",
+      "version": "1.5.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 9375,
+        "fileId": 133216,
+        "md5": "236de7dea762f1114e9b6c40e69cc08f",
+        "fileSize": 329230,
+        "logicalFilename": "Leilani (NPC for Ridgeside Village)",
+        "updatePolicy": "exact",
+        "tag": "tFTG9hI2850"
+      },
+      "author": "author",
+      "details": {
+        "category": "New Characters",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Livestock Bazaar",
+      "version": "1.8.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 29997,
+        "fileId": 182582,
+        "md5": "b0ee5f477f116cae3d26595a38f89b62",
+        "fileSize": 124220,
+        "logicalFilename": "Livestock Bazaar",
+        "updatePolicy": "exact",
+        "tag": "U1aSLYT3yXV"
+      },
+      "author": "author",
+      "details": {
+        "category": "Livestock and Animals",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Lookup Anything",
+      "version": "1.55.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 541,
+        "fileId": 160470,
+        "md5": "20b19191096730b6b77399455b90e814",
+        "fileSize": 631425,
+        "logicalFilename": "Lookup Anything 1.55.0",
+        "updatePolicy": "exact",
+        "tag": "h121Egxq7Qm"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Lumisteria Tilesheets - Indoor (CP)",
+      "version": "1.4.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 9599,
+        "fileId": 83792,
+        "md5": "37ee601e81605161003d784db1e98d02",
+        "fileSize": 1560547,
+        "logicalFilename": "Lumisteria Tilesheets - Indoor",
+        "updatePolicy": "exact",
+        "tag": "mpyhQHyt2rc"
+      },
+      "author": "author",
+      "details": {
+        "category": "Visuals and Graphics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Lumisteria Tilesheets - Outdoor (CP)",
+      "version": "1.4.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 10448,
+        "fileId": 83413,
+        "md5": "99d768097c65e1c3374f111804055935",
+        "fileSize": 1099863,
+        "logicalFilename": "Lumisteria Tilesheets - Outdoor",
+        "updatePolicy": "exact",
+        "tag": "peu84TxuUen"
+      },
+      "author": "author",
+      "details": {
+        "category": "Visuals and Graphics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Lurking in the Dark (Requires East Scarp)",
+      "version": "3.0.11",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 10770,
+        "fileId": 147258,
+        "md5": "1c55c08c54c2d0cc9f27519f8ec5bb8a",
+        "fileSize": 7168300,
+        "logicalFilename": "Lurking in the Dark (ESR)",
+        "updatePolicy": "exact",
+        "tag": "fHezQjqd0wo"
+      },
+      "author": "author",
+      "details": {
+        "category": "New Characters",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Mail Framework Mod",
+      "version": "1.20.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 1536,
+        "fileId": 128517,
+        "md5": "2c28c8ccafac173f8ec58dd547d73aa7",
+        "fileSize": 50662,
+        "logicalFilename": "MailFrameworkMod-v1.20.0",
+        "updatePolicy": "exact",
+        "tag": "ib3AlR9osWh"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Mapping Extensions and Extra Properties (MEEP)",
+      "version": "2.5.3",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 14493,
+        "fileId": 165323,
+        "md5": "e5187599650405e68f9ac5ea1633228c",
+        "fileSize": 88852,
+        "logicalFilename": "MEEP",
+        "updatePolicy": "exact",
+        "tag": "gPTGuPqJsgR"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Marnie Deserves Better (CP)",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 7686,
+        "fileId": 41271,
+        "md5": "7eff7b1009dd14591fcfe54339fc9baf",
+        "fileSize": 6883,
+        "logicalFilename": "CP - Marnie Deserves Better",
+        "updatePolicy": "exact",
+        "tag": "4OVz0fN0ooS"
+      },
+      "author": "author",
+      "details": {
+        "category": "Events",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Mini Bars",
+      "version": "1.0.5",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 8329,
+        "fileId": 121810,
+        "md5": "c0e50881257d5024984833f50855d238",
+        "fileSize": 113702,
+        "logicalFilename": "Mini Bars 1.0.5",
+        "updatePolicy": "exact",
+        "tag": "3kgvOLnk1BT"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MistyCore",
+      "version": "1.1.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 41330,
+        "fileId": 157667,
+        "md5": "5280731773e61e5216f1365488513202",
+        "fileSize": 51594,
+        "logicalFilename": "MistyCore",
+        "updatePolicy": "exact",
+        "tag": "QDlmNuR3y5R"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Mod Name Tooltip",
+      "version": "1.5.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 50688,
+        "fileId": 185043,
+        "md5": "6ebd9d0a8060aa56a1545f7a3b9285ed",
+        "fileSize": 56857,
+        "logicalFilename": "ModNameTooltip",
+        "updatePolicy": "exact",
+        "tag": "d8Ly0XZyTOZ"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MultiSave - Continued",
+      "version": "1.0.7",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 22953,
+        "fileId": 169184,
+        "md5": "838473710c42cff22373f990296f7cfa",
+        "fileSize": 23197,
+        "logicalFilename": "MultiSaveContinued 1.0.7",
+        "updatePolicy": "exact",
+        "tag": "_ovDg3lSirk"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay Mechanics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "No Font Shadow",
+      "version": "1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 20870,
+        "fileId": 187571,
+        "md5": "9bcde70617cbe5dd300663aaa14e90e2",
+        "fileSize": 1003,
+        "logicalFilename": "No Font Shadow",
+        "updatePolicy": "exact",
+        "tag": "79J9s66pTfn"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "No Pam Enabling (CP)",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 23080,
+        "fileId": 94759,
+        "md5": "63ab45ff24827f8d95584cfaadd3eb91",
+        "fileSize": 5518,
+        "logicalFilename": "No Pam Enabling",
+        "updatePolicy": "exact",
+        "tag": "tL5U5tZkSq_"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay Mechanics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Nora The Herpetologist",
+      "version": "2.9.2",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 18176,
+        "fileId": 155655,
+        "md5": "b5044bb8287a8b5a12b3d9b055aa153e",
+        "fileSize": 6086450,
+        "logicalFilename": "Nora the Herpetologist",
+        "updatePolicy": "exact",
+        "tag": "0309QXpwhtG"
+      },
+      "author": "author",
+      "details": {
+        "category": "New Characters",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "NPC Map Locations",
+      "version": "3.5.2",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 239,
+        "fileId": 165575,
+        "md5": "8f54863178d746a0958946c9685328e6",
+        "fileSize": 122700,
+        "logicalFilename": "NPC Map Locations 3.5.2",
+        "updatePolicy": "exact",
+        "tag": "Nh5OUj2dpGY"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Part of the Community",
+      "version": "2.0.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 923,
+        "fileId": 184061,
+        "md5": "b64dc9bbccd6e2274b06dd0c9635aa92",
+        "fileSize": 51231,
+        "logicalFilename": "Part of the Community",
+        "updatePolicy": "exact",
+        "tag": "MvllupeRADI"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay Mechanics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "PredictReactionToGift",
+      "version": "1.0.5",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 28556,
+        "fileId": 115290,
+        "md5": "1beb8265e16acf57f1d3a23f98eb94e1",
+        "fileSize": 39611,
+        "logicalFilename": "PredictReactionToGift_1.0.5.zip",
+        "updatePolicy": "exact",
+        "tag": "q2nlzAddpX8"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Quest Helper",
+      "version": "0.4.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 41150,
+        "fileId": 188109,
+        "md5": "2e798888a83ccadb599c34e758f23335",
+        "fileSize": 21437,
+        "logicalFilename": "Quest Helper",
+        "updatePolicy": "exact",
+        "tag": "z4Cmt9S2xeZ"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay Mechanics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Relocate Farm Animals",
+      "version": "1.0.3",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 20606,
+        "fileId": 115125,
+        "md5": "deef92a7249f0b15fa097e18f88387cc",
+        "fileSize": 20102,
+        "logicalFilename": "Relocate Buildings And Farm Animals 1.0.3",
+        "updatePolicy": "exact",
+        "tag": "NrZQCii7XPk"
+      },
+      "author": "author",
+      "details": {
+        "category": "Livestock and Animals",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Remapping",
+      "version": "1.6.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 29049,
+        "fileId": 173010,
+        "md5": "8c5a898a26e7ebbb0856a24b82905657",
+        "fileSize": 695766,
+        "logicalFilename": "Remapping",
+        "updatePolicy": "exact",
+        "tag": "U5lmoeCmIvX"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Renamer",
+      "version": "1.0.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 47846,
+        "fileId": 171717,
+        "md5": "0188190faa2e657f030f97f06d8b1aa8",
+        "fileSize": 32205,
+        "logicalFilename": "Renamer",
+        "updatePolicy": "exact",
+        "tag": "Q_6yNK15328"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Ridgeside Village (CP)",
+      "version": "2.5.17",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 7286,
+        "fileId": 116329,
+        "md5": "d47a2fecc63702557e461c1960093474",
+        "fileSize": 55644254,
+        "logicalFilename": "Ridgeside Village",
+        "updatePolicy": "exact",
+        "tag": "SQb27-XWQNV"
+      },
+      "patches": {
+        "Ridgeside Village\\RidgesideVillage\\RidgesideVillage.dll": "EA4AFECF",
+        "Ridgeside Village\\RidgesideVillage\\config.json": "A3A75AA6"
+      },
+      "author": "author",
+      "details": {
+        "category": "Expansions",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "RSV Seasonal Outfits",
+      "version": "1.1.3",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 18202,
+        "fileId": 102874,
+        "md5": "32a27cb027bfb26874ebf4d60087dd1e",
+        "fileSize": 3208190,
+        "logicalFilename": "Seasonal Outfits for Ridgeside Village",
+        "updatePolicy": "exact",
+        "tag": "1qt4rSQzbOi"
+      },
+      "author": "author",
+      "details": {
+        "category": "Clothing",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Seasonal Cute Characters",
+      "version": "6.1.4",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 5450,
+        "fileId": 188508,
+        "md5": "c169f7c8edbb948a34d83e37dbfda315",
+        "fileSize": 33371765,
+        "logicalFilename": "Seasonal Cute Characters",
+        "updatePolicy": "exact",
+        "tag": "3Jgg_Ul6aZM"
+      },
+      "author": "author",
+      "details": {
+        "category": "Characters",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Seasonal Cute Characters SVE",
+      "version": "3.0.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 5969,
+        "fileId": 99115,
+        "md5": "a0c13594859d7e83c47c9112b350c698",
+        "fileSize": 17610112,
+        "logicalFilename": "Seasonal Cute Characters- SVE",
+        "updatePolicy": "exact",
+        "tag": "GBF94vQZIEG"
+      },
+      "author": "author",
+      "details": {
+        "category": "Characters",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Seasonal Mariner to Mermaid",
+      "version": "1.6.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 22799,
+        "fileId": 183777,
+        "md5": "3a22d45f97cc9f631561dafcfcfab174",
+        "fileSize": 107548,
+        "logicalFilename": "Seasonal Mariner To Mermaid",
+        "updatePolicy": "exact",
+        "tag": "v9kJSO_EXNo"
+      },
+      "author": "author",
+      "details": {
+        "category": "Characters",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Show Missing Collection Entries",
+      "version": "0.2.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 47916,
+        "fileId": 172730,
+        "md5": "9adba84880e75e46a3526e456f79e12a",
+        "fileSize": 22316,
+        "logicalFilename": "ShowMissingCollectionEntries",
+        "updatePolicy": "exact",
+        "tag": "7zww1Ymqu3V"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Sign Lock",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 52538,
+        "fileId": 187963,
+        "md5": "286ca0c95e7e5fea33cb61de38c28790",
+        "fileSize": 18563,
+        "logicalFilename": "Sign Lock",
+        "updatePolicy": "exact",
+        "tag": "AbEbwK5JAW8"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SinZational Speedy Solutions",
+      "version": "1.1.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 37301,
+        "fileId": 146062,
+        "md5": "d5a4542c89bfbd4c3e9d91f6e6c09c43",
+        "fileSize": 23877,
+        "logicalFilename": "SinZational Speedy Solutions",
+        "updatePolicy": "exact",
+        "tag": "jdlklkOfS6R"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Sitting Restores Energy",
+      "version": "0.0.8",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 42891,
+        "fileId": 165633,
+        "md5": "1a0d2cc90ae3b63c4aaf85d21de5c237",
+        "fileSize": 12876,
+        "logicalFilename": "Sitting Restores Energy (0.0.8)",
+        "updatePolicy": "exact",
+        "tag": "AJkYbNYxxaZ"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay Mechanics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Skip or Socialize",
+      "version": "0.1.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 42940,
+        "fileId": 188011,
+        "md5": "e7f759a071eaaa81b6b1b58a22788ba4",
+        "fileSize": 33827,
+        "logicalFilename": "Skip or Socialize (0.1.0)",
+        "updatePolicy": "exact",
+        "tag": "knWPDVGyFRw"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Small Mods For Collections",
+      "version": "0.0.2",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 49704,
+        "fileId": 184124,
+        "md5": "fbfd0f725a9006fc4675014956a7f6cc",
+        "fileSize": 26438,
+        "logicalFilename": "Small Mods (0.0.2)",
+        "updatePolicy": "exact",
+        "tag": "g5ZxPUMNu96"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SMAPI - Stardew Modding API ",
+      "version": "4.5.2",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 2400,
+        "fileId": 160380,
+        "md5": "5500de6546148d05bd8fe8d8952c6007",
+        "fileSize": 41889142,
+        "logicalFilename": "SMAPI 4.5.2",
+        "updatePolicy": "exact",
+        "tag": "TXZJtAc2IKA"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": "SMAPI"
+      },
+      "phase": 0
+    },
+    {
+      "name": "Social Page Order Redux",
+      "version": "1.3.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 23374,
+        "fileId": 133512,
+        "md5": "0901bca0ce6a6f33a0af39b5ee01bb82",
+        "fileSize": 46996,
+        "logicalFilename": "Social Page Order Redux",
+        "updatePolicy": "exact",
+        "tag": "rFUgacLIoM1"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Solarium at the Spa Revisited",
+      "version": "1.1.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 42636,
+        "fileId": 187966,
+        "md5": "8846f0ce40e4eb0e19fe69a65d7853bd",
+        "fileSize": 90350,
+        "logicalFilename": "Solarium At The Spa Revisited",
+        "updatePolicy": "exact",
+        "tag": "hSjS9wyoESW"
+      },
+      "author": "author",
+      "details": {
+        "category": "Locations",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SpaceCore",
+      "version": "1.28.4",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 1348,
+        "fileId": 145986,
+        "md5": "218837482c84e26a60427ef7ac68e9ea",
+        "fileSize": 366701,
+        "logicalFilename": "SpaceCore 1.28.4",
+        "updatePolicy": "exact",
+        "tag": "Pt25UQexqtO"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Spouses React to Player 'Death' (CP)",
+      "version": "1.1.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 7493,
+        "fileId": 36534,
+        "md5": "1d07c87d3cb35280ba36a6517a0f972b",
+        "fileSize": 35290,
+        "logicalFilename": "Spouses React to Player 'Death'",
+        "updatePolicy": "exact",
+        "tag": "-yspEDtxelX"
+      },
+      "author": "author",
+      "details": {
+        "category": "Events",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Standardized Seed Sprites",
+      "version": "2.3.3",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 21305,
+        "fileId": 185313,
+        "md5": "baf3c2e3dc0d65e2415d93b9bfdafb45",
+        "fileSize": 1043396,
+        "logicalFilename": "Standardized Seed Sprites v2.3.3",
+        "updatePolicy": "exact",
+        "tag": "uQX0svTP0LH"
+      },
+      "author": "author",
+      "details": {
+        "category": "Visuals and Graphics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Stardew Valley Expanded",
+      "version": "1.15.11",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 3753,
+        "fileId": 135998,
+        "md5": "0afb06db0f00dc78d4958ac8b728ab73",
+        "fileSize": 102328355,
+        "logicalFilename": "Stardew Valley Expanded",
+        "updatePolicy": "exact",
+        "tag": "9dHb5O_pcrN"
+      },
+      "patches": {
+        "Stardew Valley Expanded\\[CP] Stardew Valley Expanded\\code\\NPCs\\Henchman.json": "E83A40C8",
+        "Stardew Valley Expanded\\[CP] Stardew Valley Expanded\\code\\NPCs\\Scarlett.json": "71BA0EA0"
+      },
+      "author": "author",
+      "details": {
+        "category": "Expansions",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "StardewUI",
+      "version": "0.6.4-unofficial-mushymato.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 43861,
+        "fileId": 183068,
+        "md5": "3902765539349dc590e66f1bbc40f972",
+        "fileSize": 894495,
+        "logicalFilename": "StardewUI Continued",
+        "updatePolicy": "exact",
+        "tag": "hYs9Sw2dlaV"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Sword & Sorcery (CP)",
+      "version": "2.3.10",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 12369,
+        "fileId": 149916,
+        "md5": "a795588bd536fb50eb5b45abf67d192a",
+        "fileSize": 71720699,
+        "logicalFilename": "Sword and Sorcery for East Scarp Remastered",
+        "updatePolicy": "exact",
+        "tag": "0hepHa3Z9M3"
+      },
+      "author": "author",
+      "details": {
+        "category": "New Characters",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "TDIT - Portraits for East Scarp",
+      "version": "1.0.3",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 48630,
+        "fileId": 183081,
+        "md5": "49134ebb535d0faca9b99ecb10f468d1",
+        "fileSize": 52246,
+        "logicalFilename": "TDIT   Portraits For East Scarp",
+        "updatePolicy": "exact",
+        "tag": "R4m15W8MQ30"
+      },
+      "author": "author",
+      "details": {
+        "category": "Portraits",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "They Deserve It Too (TDIT) -  Portraits for Extras",
+      "version": "1.4.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 35358,
+        "fileId": 183725,
+        "md5": "f2414619baa35d0b0ea725f2740526e9",
+        "fileSize": 617891,
+        "logicalFilename": "Portraits for Extras - All the Rest",
+        "updatePolicy": "exact",
+        "tag": "_JxskeCh8hj"
+      },
+      "author": "author",
+      "details": {
+        "category": "Portraits",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "They Deserve It Too (TDIT) - Portraits for Vendors",
+      "version": "1.10.4",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 20414,
+        "fileId": 180655,
+        "md5": "2e4137a16a06243aa92f7ad5d423b58f",
+        "fileSize": 683136,
+        "logicalFilename": "Portraits for Vendors - ESR",
+        "updatePolicy": "exact",
+        "tag": "viS6bspbox-"
+      },
+      "author": "author",
+      "details": {
+        "category": "Portraits",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Tidy Pam (CP)",
+      "version": "3.0",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 2306,
+        "fileId": 92532,
+        "md5": "6cf9405148fd2e79621d927d851afee5",
+        "fileSize": 759387,
+        "logicalFilename": "Tidy Pam 3.0",
+        "updatePolicy": "exact",
+        "tag": "AkKmiO1Jqvj"
+      },
+      "author": "author",
+      "details": {
+        "category": "Buildings",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Tiny Totem Statue Obelisks (CP)",
+      "version": "2.2.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 23118,
+        "fileId": 164388,
+        "md5": "64d1a60007412d5fe090f81008d135d6",
+        "fileSize": 181092,
+        "logicalFilename": "Tiny Totem Statue Obelisks",
+        "updatePolicy": "exact",
+        "tag": "Fe2vD3aRfvX"
+      },
+      "author": "author",
+      "details": {
+        "category": "Visuals and Graphics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "TrinketTinker",
+      "version": "1.9.3",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 29073,
+        "fileId": 183829,
+        "md5": "c83c973307d0bc5ea5bde750d9fe1d17",
+        "fileSize": 164795,
+        "logicalFilename": "TrinketTinker",
+        "updatePolicy": "exact",
+        "tag": "4a8TmoR8x_a"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "UI Info Suite 2 Alternative",
+      "version": "2.9.3",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 43127,
+        "fileId": 188951,
+        "md5": "393b29e727d3efd9e741d80a04c5851c",
+        "fileSize": 481388,
+        "logicalFilename": "UI Info Suite 2 Alternative",
+        "updatePolicy": "exact",
+        "tag": "WrFufMwd4AW"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Unlockable Bundles",
+      "version": "4.3.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 17265,
+        "fileId": 167635,
+        "md5": "386105ad17ac45235b7418b995482344",
+        "fileSize": 1179154,
+        "logicalFilename": "Unlockable Bundles",
+        "updatePolicy": "exact",
+        "tag": "ph_mEm6AXQY"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modding Tools",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "What Does Trash Bear Want",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 28577,
+        "fileId": 122739,
+        "md5": "459449495d614132f03a4a83de4c9b3e",
+        "fileSize": 11807,
+        "logicalFilename": "WhatDoesTrashBearWant 1.0.1.zip",
+        "updatePolicy": "exact",
+        "tag": "V2NIQ9XMsMh"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "World Navigator",
+      "version": "1.4.4",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 28256,
+        "fileId": 185320,
+        "md5": "add59cecd1930ee1ae093e7c5c0a4a7e",
+        "fileSize": 370460,
+        "logicalFilename": "World Navigator",
+        "updatePolicy": "exact",
+        "tag": "L4e_1YvXMFO"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay Mechanics",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Yagisan - Custom NPCs for NPC Map Locations (CP)",
+      "version": "1.2.1",
+      "optional": false,
+      "domainName": "stardewvalley",
+      "source": {
+        "type": "nexus",
+        "modId": 8174,
+        "fileId": 101078,
+        "md5": "1868edc76b7669f37337fb72b992eaa6",
+        "fileSize": 7226,
+        "logicalFilename": "Yagisan - Custom NPCs for NPC Map Locations",
+        "updatePolicy": "exact",
+        "tag": "1hTSlwFCEgO"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    }
+  ],
+  "modRules": [
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Standardized Seed Sprites v2.3",
+        "fileMD5": "b0b6f28b63dff085e6594ae14b3b5f93",
+        "versionMatch": "2.3.1",
+        "logicalFileName": "Standardized Seed Sprites v2.3.1"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Event Limiter-10735-1-3-1-1714968865",
+        "fileMD5": "5e4e51727f3b97b1e56ebd556b03e4c0",
+        "versionMatch": "1.3.1",
+        "logicalFileName": "Event Limiter"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "32_7d_e2_327de2a4-90f5-4b3a-a746-b6f574e2ade6",
+        "fileMD5": "c1f2e4e0ee2ce38ab9d44cbb0df4bf2e",
+        "versionMatch": "1.4.2",
+        "logicalFileName": "World Navigator"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Remapping 1.6-29049-1-5-3-1775881951",
+        "fileMD5": "d930e82dbf6289e049d5418aea6de6ec",
+        "versionMatch": "1.5.3",
+        "logicalFileName": "Remapping 1.6"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Fairycore-20870-2-0-47-1777356861",
+        "fileMD5": "1c18c104aa98b18a7712f63d81c4c228",
+        "versionMatch": "2.0.47",
+        "logicalFileName": "VERY Configured Fairycore-20870-2-0-47-1777356861.zip"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Witchcore-20870-2-0-63-1777566662",
+        "fileMD5": "460ce59e25cd22dc23658098a2052ea6",
+        "versionMatch": "2.0.63",
+        "logicalFileName": "VERY Configured Witchcore"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "logicalFileName": "Deluxe Journal Continued",
+        "versionMatch": "^1.5.0"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "NPC Map Locations 3.5.2-239-3-5-2-1777140225",
+        "fileMD5": "8f54863178d746a0958946c9685328e6",
+        "versionMatch": "3.5.2",
+        "logicalFileName": "NPC Map Locations 3.5.2"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Downhill Project 32872 1.0.16 2026-10-24T03-39Z hwxa9nQAG",
+        "fileMD5": "80d979726ecc18e2c35de43ac96d8b81",
+        "versionMatch": "1.0.16",
+        "logicalFileName": "Downhill Project"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Frontier Farm-3753-1-15-11-1751325482",
+        "fileMD5": "eecb89b10d262fc02c8cf80ad1bef82e",
+        "versionMatch": "1.15.11",
+        "logicalFileName": "Frontier Farm"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Social Page Order Redux-23374-1-3-1-1748640863",
+        "fileMD5": "0901bca0ce6a6f33a0af39b5ee01bb82",
+        "versionMatch": "1.3.1",
+        "logicalFileName": "Social Page Order Redux"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Part of the Community 923 2.0.1 2026-09-24T22-13Z LKuxQ4HsG",
+        "fileMD5": "b64dc9bbccd6e2274b06dd0c9635aa92",
+        "versionMatch": "2.0.1",
+        "logicalFileName": "Part of the Community"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Event Limiter 10735 1.3.2 2026-07-17T05-44Z CvWHxpPnz",
+        "fileMD5": "55240509bafa78b7f8d341ff1c104fce",
+        "versionMatch": "1.3.2",
+        "logicalFileName": "Event Limiter"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Integrated Minecarts for SDV 1.6.15-11881-4-6-0-1773566501",
+        "fileMD5": "78e48222c4711917110205b5ade0cc06",
+        "versionMatch": "4.6.0",
+        "logicalFileName": "Integrated Minecarts for SDV 1.6.15"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Dynamic Reflections 4.0.1-12831-4-0-1-1768098608",
+        "fileMD5": "415d6e504b7a6e0ba1143e88055ad481",
+        "versionMatch": "4.0.1",
+        "logicalFileName": "Dynamic Reflections 4.0.1"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Small Mods (0.0.2) 49704 0.0.2 2026-09-25T13-43Z KAEi8ab6K",
+        "fileMD5": "fbfd0f725a9006fc4675014956a7f6cc",
+        "versionMatch": "0.0.2",
+        "logicalFileName": "Small Mods (0.0.2)"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "World Navigator 28256 1.4.4 2026-10-03T00-43Z OtbsrflfQ",
+        "fileMD5": "add59cecd1930ee1ae093e7c5c0a4a7e",
+        "versionMatch": "1.4.4",
+        "logicalFileName": "World Navigator"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Eli and Dylan-13883-1-4-4-1762808696",
+        "fileMD5": "d78220360a78fc6f9278c4f90b6f75ca",
+        "versionMatch": "1.4.4",
+        "logicalFileName": "Eli and Dylan"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Ginger Island Extra Locations - Redux-42648-1-5-1-1772362265",
+        "fileMD5": "b11b944eda3c04514d45dccfa77408b6",
+        "versionMatch": "1.5.1",
+        "logicalFileName": "Ginger Island Extra Locations - Redux"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "East Scarp Remastered-5787-3-0-10-1780105585",
+        "fileMD5": "eba02c5aa138e7ac289e0887ce1ffed1",
+        "versionMatch": "3.0.9",
+        "logicalFileName": "East Scarp Remastered"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Ridgeside Village 2.5.17-7286-2-5-17-1731446698",
+        "fileMD5": "d47a2fecc63702557e461c1960093474",
+        "versionMatch": "2.5.17",
+        "logicalFileName": "Ridgeside Village 2.5.17"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "-Stardew Valley Expanded--3753-1-15-11-1751325459",
+        "fileMD5": "0afb06db0f00dc78d4958ac8b728ab73",
+        "versionMatch": "1.15.11",
+        "logicalFileName": "Stardew Valley Expanded"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Additional Farm Cave-14109-4-0-1780166846",
+        "fileMD5": "bc20e71f7d59a07e5625f8a7a493634a",
+        "versionMatch": "4.0.0",
+        "logicalFileName": "Additional Farm Cave"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Buildable Ginger Island Farm 1.1.7 20600 1.1.7 2026-08-19T03-55Z Zq5fWP4Q9",
+        "fileMD5": "c4e0331198ece71b0bad86c1455c2a09",
+        "versionMatch": "1.1.7",
+        "logicalFileName": "Buildable Ginger Island Farm 1.1.7"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Skip or Socialize (0.1.0) 42940 0.1.0 2026-10-22T21-27Z p52oAOXgN",
+        "fileMD5": "e7f759a071eaaa81b6b1b58a22788ba4",
+        "versionMatch": "0.1.0",
+        "logicalFileName": "Skip or Socialize (0.1.0)"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Deluxe Journal-11436-1-4-0-1732915787",
+        "fileMD5": "e567f61c6809bf76d2c5dac80e874950",
+        "versionMatch": "1.4.0",
+        "logicalFileName": "Deluxe Journal"
+      },
+      "source": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Additional Farm Cave - ESP Files 3.2-32904-3-2-1743901346",
+        "fileMD5": "00a5d35bd29e65f3c828e265c56a2589",
+        "versionMatch": "3.2.0",
+        "logicalFileName": "Additional Farm Cave - ESP Files 3.2"
+      },
+      "source": {
+        "fileExpression": "Additional Farm Cave-14109-4-0-1780166846",
+        "fileMD5": "bc20e71f7d59a07e5625f8a7a493634a",
+        "versionMatch": "4.0.0",
+        "logicalFileName": "Additional Farm Cave"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Various ore-producing versions-14109-4-0-1780166992",
+        "fileMD5": "2b76046efd435a35af1c050bd8cee607",
+        "versionMatch": "4.0.0",
+        "logicalFileName": "Various ore-producing versions"
+      },
+      "source": {
+        "fileExpression": "Additional Farm Cave-14109-4-0-1780166846",
+        "fileMD5": "bc20e71f7d59a07e5625f8a7a493634a",
+        "versionMatch": "4.0.0",
+        "logicalFileName": "Additional Farm Cave"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Buildable Ginger Island Farm chinese-22502-1-0-2-1713094918",
+        "fileMD5": "e99771f3ea6b302d3d10b307fd1ae23a",
+        "versionMatch": "1.0.2",
+        "logicalFileName": "Buildable Ginger Island Farm chinese"
+      },
+      "source": {
+        "fileExpression": "Buildable Ginger Island Farm 1.1.7 20600 1.1.7 2026-08-19T03-55Z Zq5fWP4Q9",
+        "fileMD5": "c4e0331198ece71b0bad86c1455c2a09",
+        "versionMatch": "1.1.7",
+        "logicalFileName": "Buildable Ginger Island Farm 1.1.7"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Chests Anywhere 1.30.1-518-1-30-1-1773542861",
+        "fileMD5": "08c4d772c5958928e0b23d756ba3fb37",
+        "versionMatch": "1.30.1",
+        "logicalFileName": "Chests Anywhere 1.30.1"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Chests Anywhere 1.30.1-518-1-30-1-1773542861",
+        "fileMD5": "08c4d772c5958928e0b23d756ba3fb37",
+        "versionMatch": "1.30.1",
+        "logicalFileName": "Chests Anywhere 1.30.1"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Clint Reforged 1.2.1-18345-1-2-1-1713152768",
+        "fileMD5": "879e230266accc51145b509f10fd6d25",
+        "versionMatch": "1.2.1",
+        "logicalFileName": "Clint Reforged 1.2.1"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Clint Reforged 1.2.1-18345-1-2-1-1713152768",
+        "fileMD5": "879e230266accc51145b509f10fd6d25",
+        "versionMatch": "1.2.1",
+        "logicalFileName": "Clint Reforged 1.2.1"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Community Center Reimagined-6966-1-3-2-1767898393",
+        "fileMD5": "450d5895b73117acf6b87cafa4bcf7d9",
+        "versionMatch": "1.3.2",
+        "logicalFileName": "Community Center Reimagined"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Community Center Reimagined-6966-1-3-2-1767898393",
+        "fileMD5": "450d5895b73117acf6b87cafa4bcf7d9",
+        "versionMatch": "1.3.2",
+        "logicalFileName": "Community Center Reimagined"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "versionMatch": "1.0.0",
+        "logicalFileName": "Stardew Valley Mod Configuration"
+      },
+      "source": {
+        "fileExpression": "Content Patcher 2.9.1-1915-2-9-1-1773542770",
+        "fileMD5": "16011e28f5521b7cc9bf1a37482ce6a6",
+        "versionMatch": "2.9.1",
+        "logicalFileName": "Content Patcher 2.9.1"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Convenient Inventory - Fr-41074-1-0-0-1769562321",
+        "fileMD5": "ab04b97e9ff8bedeb62338d0dff34eff",
+        "versionMatch": "1.0.0",
+        "logicalFileName": "Convenient Inventory - Fr"
+      },
+      "source": {
+        "fileExpression": "ConvenientInventory-1.6.1-10384-1-1779724707",
+        "fileMD5": "00d48149c4fa831563be99f37bad1fa3",
+        "versionMatch": "1.6.1",
+        "logicalFileName": "ConvenientInventory-1.6.1"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "ConvenientInventory-1.6.1-10384-1-1779724707",
+        "fileMD5": "00d48149c4fa831563be99f37bad1fa3",
+        "versionMatch": "1.6.1",
+        "logicalFileName": "ConvenientInventory-1.6.1"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "ConvenientInventory-1.6.1-10384-1-1779724707",
+        "fileMD5": "00d48149c4fa831563be99f37bad1fa3",
+        "versionMatch": "1.6.1",
+        "logicalFileName": "ConvenientInventory-1.6.1"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "a5_00_cd_a500cd87-8f6e-4cd8-addf-93a4e3bdee56",
+        "fileMD5": "57d9e90cdfb4879b6722ff51dd60824c",
+        "versionMatch": "2.0.5",
+        "logicalFileName": "VERY Configured Oops All Portraits"
+      },
+      "source": {
+        "fileExpression": "Creative Differences 3.3.1 13437 3.3.1 2026-07-06T00-08Z LKuxQ4e0u",
+        "fileMD5": "5832fc42808783e4ddde1eb7842b3296",
+        "versionMatch": "3.3.1",
+        "logicalFileName": "Creative Differences 3.3.1"
+      }
+    },
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "Universal Recolors - Configurable Version-20749-1-3-1-1729441437",
+        "fileMD5": "ece235cd52f3101333b9a640af21baa3",
+        "versionMatch": "1.3.1",
+        "logicalFileName": "Universal Recolors - Configurable Version"
+      },
+      "source": {
+        "fileExpression": "DaisyNiko's Tilesheets 4736 2.0.1 2026-10-18T05-56Z CvWHxpcrF",
+        "fileMD5": "20cabab6d9612edc157afced6623d6b9",
+        "versionMatch": "2.0.1",
+        "logicalFileName": "DaisyNiko's Tilesheets"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Oops All Portraits-20870-2-0-2-1779040907",
+        "fileMD5": "b2c42f6e45944ed502582ec8d4848e85",
+        "versionMatch": "2.0.2",
+        "logicalFileName": "VERY Configured Oops All Portraits"
+      },
+      "source": {
+        "fileExpression": "East Scarp Remastered-5787-3-0-10-1780105585",
+        "fileMD5": "eba02c5aa138e7ac289e0887ce1ffed1",
+        "versionMatch": "3.0.9",
+        "logicalFileName": "East Scarp Remastered"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "East Scarp - FR (v3.0.5)-29017-3-0-5-1770930155",
+        "fileMD5": "eda8eacb1872b8137c68cadb8422581f",
+        "versionMatch": "3.0.6",
+        "logicalFileName": "East Scarp - FR (v3.0.6)"
+      },
+      "source": {
+        "fileExpression": "East Scarp Remastered-5787-3-0-10-1780105585",
+        "fileMD5": "eba02c5aa138e7ac289e0887ce1ffed1",
+        "versionMatch": "3.0.9",
+        "logicalFileName": "East Scarp Remastered"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Oops All Portraits-20870-2-0-2-1779040907",
+        "fileMD5": "b2c42f6e45944ed502582ec8d4848e85",
+        "versionMatch": "2.0.2",
+        "logicalFileName": "VERY Configured Oops All Portraits"
+      },
+      "source": {
+        "fileExpression": "Seasonal Cute Characters for East Scarp-16045-1-0-6-1769639759",
+        "fileMD5": "d52288b1ee6f259eb6573d64d61482ef",
+        "versionMatch": "1.0.6",
+        "logicalFileName": "Seasonal Cute Characters for East Scarp"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Bundled - Bundled - (Compat) DaisyNiko's Earthy Interface - Generic Mod Config Menu.zip (v1.0.0)",
+        "fileMD5": "ded7fe6340d97bb3fa3a71e922acd23a",
+        "versionMatch": "1.0.0",
+        "logicalFileName": "Bundled - Bundled - (Compat) DaisyNiko's Earthy Interface - Generic Mod Config Menu.zip (v1.0.0).7z"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Bundled - Bundled - (Compat) DaisyNiko's Earthy Interface - Generic Mod Config Menu.zip (v1.0.0)",
+        "fileMD5": "0496e05a99ebe8f8f98b9c83b3008cc5",
+        "versionMatch": "1.0.0",
+        "logicalFileName": "Bundled - Bundled - (Compat) DaisyNiko's Earthy Interface - Generic Mod Config Menu.zip (v1.0.0).7z"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Bundled - Bundled - (Compat) DaisyNiko's Earthy Interface - Generic Mod Config Menu.zip (v1.0.0)",
+        "fileMD5": "a9e955c0f88af8882a30eb5a3347ae66",
+        "versionMatch": "1.0.0",
+        "logicalFileName": "Bundled - Bundled - (Compat) DaisyNiko's Earthy Interface - Generic Mod Config Menu.zip (v1.0.0).7z"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Vintage UI V2 - GenericModConfigMenu-12365-1-0-1654448480",
+        "fileMD5": "2f276097f77930b1b5c727e21dc9e77b",
+        "versionMatch": "1.0.0",
+        "logicalFileName": "Vintage UI V2 - GenericModConfigMenu"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Fairycore-20870-1-1-0-1760044325",
+        "fileMD5": "0bcb12db583577e235a6398290ca491d",
+        "versionMatch": "1.1.0",
+        "logicalFileName": "Fairycore"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Stardew Valley VERY Configured (1.6) - Stardew Val-20870-1-4-1-1763417912",
+        "fileMD5": "ff997c8d6241ddcfc7ae83e267623cf8",
+        "versionMatch": "1.4.1",
+        "logicalFileName": "Stardew Valley VERY Configured (1.6) - Stardew Val"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Fairycore-20870-1-5-1766291101",
+        "fileMD5": "7d76de601728310a0741260c66444940",
+        "versionMatch": "1.5.0",
+        "logicalFileName": "Fairycore"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "versionMatch": "1.0.0",
+        "logicalFileName": "Stardew Valley Mod Configuration"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Stardew Valley VERY Configured (1.6) - Stardew Val-20870-1-5-1766291130",
+        "fileMD5": "857aae30908fc8498c5b2811008cdff0",
+        "versionMatch": "1.5.0",
+        "logicalFileName": "Stardew Valley VERY Configured (1.6) - Stardew Val"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Fairycore-20870-1-6-1769985733",
+        "fileMD5": "602af0a28c0d5b903b0e55ada2eee8ca",
+        "versionMatch": "1.6.0",
+        "logicalFileName": "Fairycore"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Fairycore-20870-1-7-1772418838",
+        "fileMD5": "8e3ebd655bb64695328e98e238dd6b96",
+        "versionMatch": "1.7.0",
+        "logicalFileName": "Fairycore"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Bundled - Bundled - (Compat) DaisyNiko's Earthy Interface - Generic Mod Config Menu.zip (v1.0.0)",
+        "fileMD5": "67b0e521b01b5f9f43f2fb475344c9f3",
+        "versionMatch": "1.0.0",
+        "logicalFileName": "Bundled - Bundled - (Compat) DaisyNiko's Earthy Interface - Generic Mod Config Menu.zip (v1.0.0).7z"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Bundled - Bundled - (Compat) DaisyNiko's Earthy Interface - Generic Mod Config Menu.zip (v1.0.0)",
+        "fileMD5": "eb8ff3ff01d1fab1d5dfaa61a1ea7116",
+        "versionMatch": "1.0.0",
+        "logicalFileName": "Bundled - Bundled - (Compat) DaisyNiko's Earthy Interface - Generic Mod Config Menu.zip (v1.0.0).7z"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded-20870-2-0-109-1779040948",
+        "fileMD5": "ac97d8f71acc8be083d78e3dc766e29a",
+        "versionMatch": "2.0.109",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Fairycore-20870-2-0-47-1777356861",
+        "fileMD5": "1c18c104aa98b18a7712f63d81c4c228",
+        "versionMatch": "2.0.47",
+        "logicalFileName": "VERY Configured Fairycore-20870-2-0-47-1777356861.zip"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded-20870-2-0-109-1779737120",
+        "fileMD5": "977f5a78231c06c6f13f8c8e1020d000",
+        "versionMatch": "2.0.109",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Generic Mod Config Menu TR-19163-1-11-2-1699989302",
+        "fileMD5": "fe148c6eda37e6caa37a1eadf1faa1a9",
+        "versionMatch": "1.11.2",
+        "logicalFileName": "Generic Mod Config Menu TR"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY_Configured_Stardew_Valley_VERY_Expanded_2.0.110_GpzvK78k7",
+        "fileMD5": "37f77fe2cccfa639716adf5671ea42ac",
+        "versionMatch": "2.0.111",
+        "logicalFileName": "VERY_Configured_Stardew_Valley_VERY_Expanded_2.0.110_GpzvK78k7.zip"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Fairycore 20870 2.0.52 2026-09-24T05-24Z CvWHxpco5",
+        "fileMD5": "a128355fc4b81e511f3a0e366e0c68c5",
+        "versionMatch": "2.0.52",
+        "logicalFileName": "VERY Configured Fairycore"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.113 2026-09-24T03-51Z ARjN6rng0",
+        "fileMD5": "0378c01ed3e5749e2fd906a2a67a565c",
+        "versionMatch": "2.0.113",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Generic Mod Config Menu 1.16.0-5098-1-16-0-1760816937",
+        "fileMD5": "d3bf58cc8940a7abf6b4425977c04dc1",
+        "versionMatch": "1.16.0",
+        "logicalFileName": "Generic Mod Config Menu 1.16.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "(CP) I Fixed Him - A Shane Consistency Mod-37657-1-0-1757970888",
+        "fileMD5": "4226b735656f0f793a8aca2bf2e5a26c",
+        "versionMatch": "1.0.0",
+        "logicalFileName": "(CP) I Fixed Him - A Shane Consistency Mod"
+      },
+      "source": {
+        "fileExpression": "(CP) I Fixed Him 1.4.0-21660-1-4-0-1713231622",
+        "fileMD5": "d1e4b28bdb754a9dcf06de713c41d262",
+        "versionMatch": "1.4.0",
+        "logicalFileName": "(CP) I Fixed Him 1.4.0"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "ItsStardewTime-43187-1-0-2-1773176734",
+        "fileMD5": "68d03ada5ee5ca6e1ce1221cf0f22bc6",
+        "versionMatch": "1.0.2",
+        "logicalFileName": "ItsStardewTime"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "ItsStardewTime-43187-1-0-2-1773176734",
+        "fileMD5": "68d03ada5ee5ca6e1ce1221cf0f22bc6",
+        "versionMatch": "1.0.2",
+        "logicalFileName": "ItsStardewTime"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Leilani (NPC for Ridgeside Village)-9375-1-5-0-1748348708",
+        "fileMD5": "236de7dea762f1114e9b6c40e69cc08f",
+        "versionMatch": "1.5.0",
+        "logicalFileName": "Leilani (NPC for Ridgeside Village)"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Leilani (NPC for Ridgeside Village)-9375-1-5-0-1748348708",
+        "fileMD5": "236de7dea762f1114e9b6c40e69cc08f",
+        "versionMatch": "1.5.0",
+        "logicalFileName": "Leilani (NPC for Ridgeside Village)"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Marnie Deserves Better Chinese Translation-39542-1-0-1-1763738264",
+        "fileMD5": "0c4949373f6d73fa531fda2acd9e30e8",
+        "versionMatch": "1.0.1",
+        "logicalFileName": "Marnie Deserves Better Chinese Translation"
+      },
+      "source": {
+        "fileExpression": "CP - Marnie Deserves Better-7686-1-0-1-1621149711",
+        "fileMD5": "7eff7b1009dd14591fcfe54339fc9baf",
+        "versionMatch": "1.0.1",
+        "logicalFileName": "CP - Marnie Deserves Better"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "ModNameTooltip 50688 1.5.1 2026-10-01T02-38Z oD4nNsBKN",
+        "fileMD5": "6ebd9d0a8060aa56a1545f7a3b9285ed",
+        "versionMatch": "1.5.1",
+        "logicalFileName": "ModNameTooltip"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "ModNameTooltip 50688 1.5.1 2026-10-01T02-38Z oD4nNsBKN",
+        "fileMD5": "6ebd9d0a8060aa56a1545f7a3b9285ed",
+        "versionMatch": "1.5.1",
+        "logicalFileName": "ModNameTooltip"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded-20870-2-0-109-1779737120",
+        "fileMD5": "977f5a78231c06c6f13f8c8e1020d000",
+        "versionMatch": "2.0.109",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "MultiSaveContinued 1.0.7-22953-1-0-7-1779905914",
+        "fileMD5": "838473710c42cff22373f990296f7cfa",
+        "versionMatch": "1.0.7",
+        "logicalFileName": "MultiSaveContinued 1.0.7"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Witchcore 20870 2.0.69 2026-09-24T16-31Z 3T8U7ur49",
+        "fileMD5": "92c2ace9abc906afa085f01a7fe75076",
+        "versionMatch": "2.0.69",
+        "logicalFileName": "VERY Configured Witchcore"
+      },
+      "source": {
+        "fileExpression": "MultiSaveContinued 1.0.7-22953-1-0-7-1779905914",
+        "fileMD5": "838473710c42cff22373f990296f7cfa",
+        "versionMatch": "1.0.7",
+        "logicalFileName": "MultiSaveContinued 1.0.7"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY_Configured_Stardew_Valley_VERY_Expanded_2.0.110_GpzvK78k7",
+        "fileMD5": "37f77fe2cccfa639716adf5671ea42ac",
+        "versionMatch": "2.0.111",
+        "logicalFileName": "VERY_Configured_Stardew_Valley_VERY_Expanded_2.0.110_GpzvK78k7.zip"
+      },
+      "source": {
+        "fileExpression": "MultiSaveContinued 1.0.7-22953-1-0-7-1779905914",
+        "fileMD5": "838473710c42cff22373f990296f7cfa",
+        "versionMatch": "1.0.7",
+        "logicalFileName": "MultiSaveContinued 1.0.7"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "MultiSaveContinued 1.0.7-22953-1-0-7-1779905914",
+        "fileMD5": "838473710c42cff22373f990296f7cfa",
+        "versionMatch": "1.0.7",
+        "logicalFileName": "MultiSaveContinued 1.0.7"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Witchcore 20870 2.0.70 2026-10-27T19-04Z OtbsrfiBp",
+        "fileMD5": "06e7f674376e1845f40cc577b3ae4e8f",
+        "versionMatch": "2.0.70",
+        "logicalFileName": "VERY Configured Witchcore"
+      },
+      "source": {
+        "fileExpression": "MultiSaveContinued 1.0.7-22953-1-0-7-1779905914",
+        "fileMD5": "838473710c42cff22373f990296f7cfa",
+        "versionMatch": "1.0.7",
+        "logicalFileName": "MultiSaveContinued 1.0.7"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Witchcore 20870 2.0.70 2026-10-24T15-44Z hwxa9nQsU",
+        "fileMD5": "ee2af5ae2da75ee0922377a37de0c115",
+        "versionMatch": "2.0.70",
+        "logicalFileName": "VERY Configured Witchcore"
+      },
+      "source": {
+        "fileExpression": "MultiSaveContinued 1.0.7-22953-1-0-7-1779905914",
+        "fileMD5": "838473710c42cff22373f990296f7cfa",
+        "versionMatch": "1.0.7",
+        "logicalFileName": "MultiSaveContinued 1.0.7"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "MultiSaveContinued 1.0.7-22953-1-0-7-1779905914",
+        "fileMD5": "838473710c42cff22373f990296f7cfa",
+        "versionMatch": "1.0.7",
+        "logicalFileName": "MultiSaveContinued 1.0.7"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Remapping 29049 1.6.1 2026-06-29T16-27Z 86fcHSMZ9",
+        "fileMD5": "8c5a898a26e7ebbb0856a24b82905657",
+        "versionMatch": "1.6.1",
+        "logicalFileName": "Remapping"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Remapping 29049 1.6.1 2026-06-29T16-27Z 86fcHSMZ9",
+        "fileMD5": "8c5a898a26e7ebbb0856a24b82905657",
+        "versionMatch": "1.6.1",
+        "logicalFileName": "Remapping"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Stardew Valley VERY Configured (1.6) - Stardew Val-20870-1-5-1766291130",
+        "fileMD5": "857aae30908fc8498c5b2811008cdff0",
+        "versionMatch": "1.5.0",
+        "logicalFileName": "Stardew Valley VERY Configured (1.6) - Stardew Val"
+      },
+      "source": {
+        "fileExpression": "SinZational Speedy Solutions-37301-1-1-0-1760967239",
+        "fileMD5": "d5a4542c89bfbd4c3e9d91f6e6c09c43",
+        "versionMatch": "1.1.0",
+        "logicalFileName": "SinZational Speedy Solutions"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded-20870-2-0-109-1779737120",
+        "fileMD5": "977f5a78231c06c6f13f8c8e1020d000",
+        "versionMatch": "2.0.109",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "SinZational Speedy Solutions-37301-1-1-0-1760967239",
+        "fileMD5": "d5a4542c89bfbd4c3e9d91f6e6c09c43",
+        "versionMatch": "1.1.0",
+        "logicalFileName": "SinZational Speedy Solutions"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Fairycore-20870-1-5-1766291101",
+        "fileMD5": "7d76de601728310a0741260c66444940",
+        "versionMatch": "1.5.0",
+        "logicalFileName": "Fairycore"
+      },
+      "source": {
+        "fileExpression": "SinZational Speedy Solutions-37301-1-1-0-1760967239",
+        "fileMD5": "d5a4542c89bfbd4c3e9d91f6e6c09c43",
+        "versionMatch": "1.1.0",
+        "logicalFileName": "SinZational Speedy Solutions"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Fairycore-20870-1-6-1769985733",
+        "fileMD5": "602af0a28c0d5b903b0e55ada2eee8ca",
+        "versionMatch": "1.6.0",
+        "logicalFileName": "Fairycore"
+      },
+      "source": {
+        "fileExpression": "SinZational Speedy Solutions-37301-1-1-0-1760967239",
+        "fileMD5": "d5a4542c89bfbd4c3e9d91f6e6c09c43",
+        "versionMatch": "1.1.0",
+        "logicalFileName": "SinZational Speedy Solutions"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Witchcore-20870-1-5-1766291166",
+        "fileMD5": "253b88509fa3a75813e991509a1b1634",
+        "versionMatch": "1.2.1",
+        "logicalFileName": "Witchcore"
+      },
+      "source": {
+        "fileExpression": "SinZational Speedy Solutions-37301-1-1-0-1760967239",
+        "fileMD5": "d5a4542c89bfbd4c3e9d91f6e6c09c43",
+        "versionMatch": "1.1.0",
+        "logicalFileName": "SinZational Speedy Solutions"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY_Configured_Stardew_Valley_VERY_Expanded_2.0.110_GpzvK78k7",
+        "fileMD5": "37f77fe2cccfa639716adf5671ea42ac",
+        "versionMatch": "2.0.111",
+        "logicalFileName": "VERY_Configured_Stardew_Valley_VERY_Expanded_2.0.110_GpzvK78k7.zip"
+      },
+      "source": {
+        "fileExpression": "SinZational Speedy Solutions-37301-1-1-0-1760967239",
+        "fileMD5": "d5a4542c89bfbd4c3e9d91f6e6c09c43",
+        "versionMatch": "1.1.0",
+        "logicalFileName": "SinZational Speedy Solutions"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "SinZational Speedy Solutions-37301-1-1-0-1760967239",
+        "fileMD5": "d5a4542c89bfbd4c3e9d91f6e6c09c43",
+        "versionMatch": "1.1.0",
+        "logicalFileName": "SinZational Speedy Solutions"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "SinZational Speedy Solutions-37301-1-1-0-1760967239",
+        "fileMD5": "d5a4542c89bfbd4c3e9d91f6e6c09c43",
+        "versionMatch": "1.1.0",
+        "logicalFileName": "SinZational Speedy Solutions"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Standardized Seed Sprites v2.3.3 21305 2.3.3 2026-10-02T22-47Z Ukcm5dgdJ",
+        "fileMD5": "baf3c2e3dc0d65e2415d93b9bfdafb45",
+        "versionMatch": "2.3.3",
+        "logicalFileName": "Standardized Seed Sprites v2.3.3"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Standardized Seed Sprites v2.3.3 21305 2.3.3 2026-10-02T22-47Z Ukcm5dgdJ",
+        "fileMD5": "baf3c2e3dc0d65e2415d93b9bfdafb45",
+        "versionMatch": "2.3.3",
+        "logicalFileName": "Standardized Seed Sprites v2.3.3"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Fairycore-20870-2-0-47-1777356861",
+        "fileMD5": "1c18c104aa98b18a7712f63d81c4c228",
+        "versionMatch": "2.0.47",
+        "logicalFileName": "VERY Configured Fairycore-20870-2-0-47-1777356861.zip"
+      },
+      "source": {
+        "fileExpression": "-Stardew Valley Expanded--3753-1-15-11-1751325459",
+        "fileMD5": "0afb06db0f00dc78d4958ac8b728ab73",
+        "versionMatch": "1.15.11",
+        "logicalFileName": "Stardew Valley Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "aa_95_1a_aa951a8c-d092-4169-81e4-de482f8af3f8",
+        "fileMD5": "a128355fc4b81e511f3a0e366e0c68c5",
+        "versionMatch": "2.0.52",
+        "logicalFileName": "VERY Configured Fairycore"
+      },
+      "source": {
+        "fileExpression": "-Stardew Valley Expanded--3753-1-15-11-1751325459",
+        "fileMD5": "0afb06db0f00dc78d4958ac8b728ab73",
+        "versionMatch": "1.15.11",
+        "logicalFileName": "Stardew Valley Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Fairycore-20870-2-0-47-1777356861",
+        "fileMD5": "1c18c104aa98b18a7712f63d81c4c228",
+        "versionMatch": "2.0.47",
+        "logicalFileName": "VERY Configured Fairycore"
+      },
+      "source": {
+        "fileExpression": "-Stardew Valley Expanded--3753-1-15-11-1751325459",
+        "fileMD5": "0afb06db0f00dc78d4958ac8b728ab73",
+        "versionMatch": "1.15.11",
+        "logicalFileName": "Stardew Valley Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Fairycore 20870 2.0.52 2026-09-24T05-24Z CvWHxpco5",
+        "fileMD5": "a128355fc4b81e511f3a0e366e0c68c5",
+        "versionMatch": "2.0.52",
+        "logicalFileName": "VERY Configured Fairycore"
+      },
+      "source": {
+        "fileExpression": "-Stardew Valley Expanded--3753-1-15-11-1751325459",
+        "fileMD5": "0afb06db0f00dc78d4958ac8b728ab73",
+        "versionMatch": "1.15.11",
+        "logicalFileName": "Stardew Valley Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Fairycore 20870 2.0.53 2026-10-24T15-44Z KAEi8aZne",
+        "fileMD5": "61a8d536f1336e7ab3e4577e66aad0d9",
+        "versionMatch": "2.0.53",
+        "logicalFileName": "VERY Configured Fairycore"
+      },
+      "source": {
+        "fileExpression": "-Stardew Valley Expanded--3753-1-15-11-1751325459",
+        "fileMD5": "0afb06db0f00dc78d4958ac8b728ab73",
+        "versionMatch": "1.15.11",
+        "logicalFileName": "Stardew Valley Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Fairycore 20870 2.0.53 2026-10-27T19-28Z p52oAOX7I",
+        "fileMD5": "60af96dbd159a51cfd026ef96425360e",
+        "versionMatch": "2.0.53",
+        "logicalFileName": "VERY Configured Fairycore"
+      },
+      "source": {
+        "fileExpression": "-Stardew Valley Expanded--3753-1-15-11-1751325459",
+        "fileMD5": "0afb06db0f00dc78d4958ac8b728ab73",
+        "versionMatch": "1.15.11",
+        "logicalFileName": "Stardew Valley Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Fairycore 20870 2.0.53 2026-10-27T19-04Z ARjN6rqao",
+        "fileMD5": "1b60bcada1d5aaa4b7978f173ae806f7",
+        "versionMatch": "2.0.53",
+        "logicalFileName": "VERY Configured Fairycore"
+      },
+      "source": {
+        "fileExpression": "-Stardew Valley Expanded--3753-1-15-11-1751325459",
+        "fileMD5": "0afb06db0f00dc78d4958ac8b728ab73",
+        "versionMatch": "1.15.11",
+        "logicalFileName": "Stardew Valley Expanded"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Bundled - (Compat) Overgrown Flower - Sword & Sorcery  (LOAD AFTER) (v1.1.1)",
+        "fileMD5": "88ea41264bc0d5b85859768ba6425f96",
+        "versionMatch": "1.1.1",
+        "logicalFileName": "Bundled - (Compat) Overgrown Flower - Sword & Sorcery  (LOAD AFTER) (v1.1.1).7z"
+      },
+      "source": {
+        "fileExpression": "Sword and Sorcery for East Scarp Remastered-12369-2-3-10-1764951289",
+        "fileMD5": "a795588bd536fb50eb5b45abf67d192a",
+        "versionMatch": "2.3.10",
+        "logicalFileName": "Sword and Sorcery for East Scarp Remastered"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Bundled - Bundled - (Compat) Overgrown Flower - Sword & Sorcery  (LOAD AFTER) (v1.1.1).7z (v1.1.1)",
+        "fileMD5": "56c8db8f0f1189ec1294f3f3237fb0c2",
+        "versionMatch": "1.1.1",
+        "logicalFileName": "Bundled - Bundled - (Compat) Overgrown Flower - Sword & Sorcery  (LOAD AFTER) (v1.1.1).7z (v1.1.1).7z"
+      },
+      "source": {
+        "fileExpression": "Sword and Sorcery for East Scarp Remastered-12369-2-3-10-1764951289",
+        "fileMD5": "a795588bd536fb50eb5b45abf67d192a",
+        "versionMatch": "2.3.10",
+        "logicalFileName": "Sword and Sorcery for East Scarp Remastered"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "Sword and Sorcery - A Fantasy Expansion Turkce-40351-2-3-10-1765996390",
+        "fileMD5": "fc09912b3f2a0604670cb56e680bb015",
+        "versionMatch": "2.3.10",
+        "logicalFileName": "Sword and Sorcery - A Fantasy Expansion Turkce"
+      },
+      "source": {
+        "fileExpression": "Sword and Sorcery for East Scarp Remastered-12369-2-3-10-1764951289",
+        "fileMD5": "a795588bd536fb50eb5b45abf67d192a",
+        "versionMatch": "2.3.10",
+        "logicalFileName": "Sword and Sorcery for East Scarp Remastered"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Sword and Sorcery for East Scarp Remastered-12369-2-3-10-1764951289",
+        "fileMD5": "a795588bd536fb50eb5b45abf67d192a",
+        "versionMatch": "2.3.10",
+        "logicalFileName": "Sword and Sorcery for East Scarp Remastered"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "Sword and Sorcery for East Scarp Remastered-12369-2-3-10-1764951289",
+        "fileMD5": "a795588bd536fb50eb5b45abf67d192a",
+        "versionMatch": "2.3.10",
+        "logicalFileName": "Sword and Sorcery for East Scarp Remastered"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-25T17-17Z Pct026Fk1",
+        "fileMD5": "5e8eeb97a7d4919f390689a834c27a27",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "UI Info Suite 2 Alternative 43127 2.9.3 2026-10-28T17-33Z q0sG1crzO",
+        "fileMD5": "393b29e727d3efd9e741d80a04c5851c",
+        "versionMatch": "2.9.3",
+        "logicalFileName": "UI Info Suite 2 Alternative"
+      }
+    },
+    {
+      "type": "before",
+      "reference": {
+        "fileExpression": "VERY Configured Stardew Valley VERY Expanded 20870 2.0.114 2026-10-27T19-28Z nWAFTzyDw",
+        "fileMD5": "31700457a84123b03390491a17a532e8",
+        "versionMatch": "2.0.114",
+        "logicalFileName": "VERY Configured Stardew Valley VERY Expanded"
+      },
+      "source": {
+        "fileExpression": "UI Info Suite 2 Alternative 43127 2.9.3 2026-10-28T17-33Z q0sG1crzO",
+        "fileMD5": "393b29e727d3efd9e741d80a04c5851c",
+        "versionMatch": "2.9.3",
+        "logicalFileName": "UI Info Suite 2 Alternative"
+      }
+    }
+  ],
+  "tools": [],
+  "collectionConfig": {
+    "recommendNewProfile": true,
+    "referenceTagScheme": "v1"
+  }
+}

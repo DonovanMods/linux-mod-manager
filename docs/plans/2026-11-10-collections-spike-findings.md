@@ -18,6 +18,7 @@ published documentation, not ported.
 - Part 3 — Plugin load order and LOOT
 - Part 4 — First real manifest (Cyberpunk 2077)
 - Part 5 — Second real manifest (Skyrim SE)
+- Part 6 — Fixture survey: 71 real manifests (#607)
 
 ---
 
@@ -545,7 +546,7 @@ There was no `7z` on the development machine. lmm's extractor shells out to it f
 
 ### The archive
 
-- 6.8 KB 7z holding **only** `collection.json` (48 KB). Unlike the Cyberpunk archive, there are no empty `bundled/` or `patches/` directories, so neither may be assumed to exist.
+- 6.8 KB 7z holding `collection.json` (48 KB). *Corrected 2026-11-13 (Part 6):* `7z l` lists empty `bundled/` and `patches/` directory entries in this archive too. Still, neither may be assumed to exist.
 
 ### `collection.json`
 
@@ -560,3 +561,76 @@ There was no `7z` on the development machine. lmm's extractor shells out to it f
   - `conflicts`: SKSE64 Steam (source, by md5) against `{logicalFileName: "Skyrim Script Extender 64 (SKSE64)", versionMatch: "<2.3.1 || >2.3.1"}`, with no `fileMD5`. It is a semver range against a logical name that is not a member. That is informational under the design's rule, and it shows that `conflicts` references need not resolve.
 - `plugins` (16): an ordered `{name, enabled}` list, all enabled. One name is all lower case (`unofficial skyrim special edition patch.esp`, which is how USSEP ships it) and 15 are mixed case, so plugin matching must be case-insensitive. Base-game masters (`Skyrim.esm`, `Update.esm`, the DLCs) are not listed. Only 16 of the 60 mods ship plugins.
 - **`tools` (2) is non-empty**: Vortex dashboard shortcuts, `{name, exe, args, cwd, detach, shell, onStart}`, both pointing at SSEEdit inside `Data\SSEEdit 4.1.5f\` (`SSEEditQuickAutoClean.exe`, `SSEEdit.exe`). SSEEdit (mod 164) is itself a member. They are launcher entries, not install steps.
+
+## Part 6 — Fixture survey: 71 real manifests (2026-11-13)
+
+#607 C2's survey (design §11 Q2). All VERIFIED (read this session) unless tagged otherwise. The recipes were fetched with the owner's Premium key, the lists over GraphQL; no key, signed URL or curator prose was kept. Five of them, plus two revision lists, are recorded under `internal/source/nexusmods/testdata/collections/`, reduced to names and ids: prose replaced, author names placeholders, hash lists, patch maps and load orders cut to three entries.
+
+### Method
+
+- `collectionsV2(filter: {gameDomain: [{value, op: EQUALS}]}, sort: [{downloads: {direction: DESC}}], count: 40)` for `cyberpunk2077`, `witcher3`, `starfield`, `fallout4`, `skyrimspecialedition`, `stardewvalley` (`gameDomain` takes `String!`). The top 12 per game with at most 400 mods each, plus the owner's two samples and four picked by hand: **71 recipes**.
+- Each revision's `downloadLink` → `download_links[0].URI` → a 7z → `collection.json`, read with `jq`.
+
+### What the recipes hold (collections out of 71)
+
+| Feature | Collections | Notes |
+|---|---|---|
+| FOMOD `choices` | 30 | 630 items, all `type: fomod`; each pick is `{name, idx}` |
+| `optional` items | 30 | |
+| `plugins` (non-empty) | 22 | |
+| `loadOrder` (non-empty) | 15 | BG3 and Starfield (`{id, enabled, name, data…}`); 27 have the key |
+| `hashes` (file list) | 12 | 346 items |
+| `mergedData` | 11 | Witcher 3 script merges: `{scriptMergedData: <hex zip>}` |
+| `bundle` sources | 9 | 25 items |
+| `extensionVersion` | 9 | `"0.7.0"`/`"0.7.1"`: the curator's Vortex collections-extension version (ruled informational, 2026-11-13) |
+| non-empty `tools` | 9 | |
+| `pluginRules` (non-empty) | 8 | 31 have the key |
+| `browse` (external) sources | 8 | 10 items, each with `url`, often `instructions` |
+| `fbLoadOrders` (non-empty) | 7 | a **list** of `{id, entries}` (the Cyberpunk sample's `cyberpunk2077-archive` / `cyberpunk2077-redmod`), not the map Part 4 implied |
+| non-empty `patches` | 4 | 16 items; `patches: []` also occurs (28 items carry the key) and means none |
+
+- **Update policies** (6,741 items): `exact` 4,041, `prefer` 1,546, `latest` 1,154. `latest` is 17% of items, not an edge case.
+- **Mod types** (`details.type`): `""` 4,997, absent 287, `starfield-data-folder` 965, `witcher3menumodroot` 213, `witcher3tl` 195, `dinput` 40, `witcher3dlc` 32, `SMAPI` 12; `bg3-loose` in a BG3 sample outside the 71. Only `dinput` (and `enb`) has an lmm route (#629).
+- **Keys** seen at each level, beyond Parts 4–5: `source.adultContent`, `source.fileExpression`, `source.url`, `source.instructions`; rule references also carry `idHint` (79) and `tag` (16); `collectionConfig.excludePluginRules` (12). These are the parser's allowlist (`internal/source/nexusmods/collection.go`).
+
+### `pluginRules` (answers design §11 Q2's key-name question)
+
+- Shape: `{plugins: [{name, group, after?}], groups: [{name, after}]}`: a LOOT userlist. Keys on plugin entries: `name` 92, `group` 83, `after` 19; **no `req`, `inc`, `requires` or `incompatible` anywhere**. C6 needs the `after` spelling; the parser reports any other key as unknown.
+- `groups` entries are `{name, after: [group names]}`, and an empty `after: []` is common.
+- Recorded: `fallout4-kem16d-143.json` (36 plugin entries, 9 with `after`).
+
+### Mod rules
+
+- 1,968 rules: `before` 1,164, `after` 743, `conflicts` 61. No `requires`, `recommends` or `provides` were seen.
+- Of the 3,814 `before`/`after` sides, 2,671 resolve by `fileMD5`, 94 by `logicalFileName` alone, and 1,049 by neither. Per rule: 859 resolve on both sides, **1,043 name a member and a mod outside the collection** (the curator's own local rules), and 5 name neither side. 28 of 71 collections have at least one such rule.
+- Consequence (ruled 2026-11-13): a rule with a side outside the collection orders nothing among the members, so it is dropped with a plan note. `mod_rule_unresolved` would have refused 39% of collections.
+
+### Files of one mod
+
+- 54 collections pin two or more files of the same mod (286 such mods). lmm's profile has one entry per mod, so these merge into one entry with several `file_ids`.
+- 13 of those mods carry FOMOD `choices` on more than one file. Required ones occur in **4 collections, the owner's Skyrim sample among them** (Scrambled Bugs: two patch files, each its own FOMOD). One entry holds one installer's choices, so this is the gate's `fomod_multi_file`.
+- 20 mix mod types across their files (9 collections with required ones): `mod_type_mixed`.
+
+### Bundled files and patches
+
+- A `bundle` item's source is `{type: bundle, fileSize, logicalFilename, fileExpression, updatePolicy: exact, tag}`, with no `modId`, `fileId` or `md5`. Its files are under `bundled/<logicalFilename stem>/` in the archive (for example `bundled/Bundled - Grandpa's Tools i18n.zip (v1.0.0)/`).
+- `patches` maps a path inside the mod (backslashes) to an 8-hex-digit CRC32, and each patch is `patches/<mod name>/<path>.diff`. Recorded: `stardewvalley-tckf0m-114.json` (bundled files and patches, `SMAPI` types). The patch payloads are not recorded.
+
+### API facts
+
+- **ARCHIVED and OLD_VERSION files are served.** v1 `download_link.json` for an `ARCHIVED` file (cyberpunk2077 mod 22094, file 168559) and an `OLD_VERSION` file returned 200 with 7 links on the Premium key, and `files.json` lists the `ARCHIVED` file (`category_id` 7). Installing by exact file id works for them. Only one test call was made per category, and nothing was downloaded.
+- Omitting `revision` from `collectionRevision` returns the latest published one (`latest: true`). The wrong `domainName` returns `NOT_FOUND`, so a slug is per game.
+- The website (`www.nexusmods.com/games/<domain>/collections/<slug>[/revisions/<n>]`) answers 403 to a non-browser client, so the `/revisions/<n>` URL form is still UNVERIFIED and is not accepted.
+- Revision lists drift: the Cyberpunk sample's file categories now read MAIN 327, OLD_VERSION 22, OPTIONAL 11, ARCHIVED 4 (Part 4: 337/13/11/3), as files were archived upstream after the revision was published.
+- The `collectionRevision` query's types (`Collection`, `CollectionRevision`, `CollectionRevisionMod`, `ExternalResource`, `ModFile`, `Mod`, `Game`, `User`) are recorded in `testdata/collection-schema.json`, and `collection_contract_test.go` checks the query against them.
+
+### What imports, by story (required items only)
+
+Under C2 + C4, with `dinput` routed (#629), `extensionVersion` informational and out-of-collection rules dropped:
+
+- **9 of 71 import as they are** (Cyberpunk 2077 4, Starfield 4, Stardew Valley 1).
+- **16 more need only C6** (plugin order): Fallout 4 9, Skyrim SE 7.
+- Blockers, by collections: `plugin_order` 25, `manifest:loadOrder` 15, `manifest:mergedData` 11, `mod_type:SMAPI` 11, `file_list` 10, `mod_type_mixed` 9, `mod_type:witcher3menumodroot` 9, `bundled` 8, `mod_type:starfield-data-folder` 8, `mod_type:witcher3tl` 8, `mod_type:witcher3dlc` 8, `file_load_order:*` 7, `fomod_multi_file` 4, `patches` 4.
+- The owner's samples: Cyberpunk needs C5 (`file_list`) and C9; Skyrim needs C6 and `fomod_multi_file`.
+- Game-specific mod types (Witcher 3, Starfield, Stardew's SMAPI) block more collections than bundled files and patches together. Adapter routes for them would be a cheaper win than C5.
+
