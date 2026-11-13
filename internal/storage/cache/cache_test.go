@@ -726,3 +726,45 @@ func TestCache_CopyModAs_LeftoverTempDirIsSwept(t *testing.T) {
 	require.NoError(t, c.Delete(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "new", Version: "1.0"}))
 	assert.NoDirExists(t, container, "deleting the last version sweeps a leftover temp dir with the container")
 }
+
+// TestCache_PublishMod_ReplacesTheEntryOnlyOnceTheCopyIsWhole (#614
+// re-review should-fix 4): a reinstall publishing another variant's staged
+// tree into the live cache replaces any entry of that variant already there
+// - its files go, not layered under the new ones - and a publish that fails
+// mid-copy leaves the old entry exactly as it was and no litter.
+func TestCache_PublishMod_ReplacesTheEntryOnlyOnceTheCopyIsWhole(t *testing.T) {
+	k := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0", Variant: "abcdef123456"}
+	staged, live := cache.New(t.TempDir()), cache.New(t.TempDir())
+	require.NoError(t, staged.Store(k, "new.esp", []byte("new")))
+	require.NoError(t, cache.MarkFileComplete(staged.ModPath(k), "f1"))
+	require.NoError(t, live.Store(k, "old.esp", []byte("old")))
+	require.NoError(t, cache.StampKey(live.ModPath(k), k))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, staged.PublishMod(ctx, live, k), context.Canceled)
+	files, err := live.ListFiles(k)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"old.esp"}, files, "a failed publish leaves the old entry")
+	container, err := os.ReadDir(filepath.Dir(live.ModPath(k)))
+	require.NoError(t, err)
+	require.Len(t, container, 1, "and no copy behind")
+
+	require.NoError(t, staged.PublishMod(context.Background(), live, k))
+	files, err = live.ListFiles(k)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"new.esp"}, files, "the old entry's files are replaced, not kept")
+	assert.True(t, live.HasFileIDs(k, []string{"f1"}), "the markers come along")
+	require.NoError(t, cache.CheckKey(live.ModPath(k), k), "stamped as k's")
+	container, err = os.ReadDir(filepath.Dir(live.ModPath(k)))
+	require.NoError(t, err)
+	assert.Len(t, container, 1, "the replaced entry is gone")
+
+	other := k
+	other.Variant = ""
+	other.Version = "1.0@abcdef123456"
+	plain := cache.New(t.TempDir())
+	require.NoError(t, plain.Store(other, "x.esp", []byte("x")))
+	var collision *cache.KeyCollisionError
+	assert.ErrorAs(t, plain.PublishMod(context.Background(), live, other), &collision, "another key's directory is refused")
+}

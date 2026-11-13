@@ -2640,13 +2640,9 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 		// any replaced entry does.
 		live := s.GetGameCache(game)
 		newKey := modCacheKey(game.ID, mod)
-		if err := live.Claim(newKey); err != nil {
-			return st, fmt.Errorf("publishing the reinstalled tree: %w", err)
-		}
-		if err := live.Delete(newKey); err != nil {
-			return st, fmt.Errorf("publishing the reinstalled tree: %w", err)
-		}
-		if err := downloadCache.CloneMod(ctx, live, newKey); err != nil {
+		// Built beside any entry of that variant already there and swapped
+		// in, so a failed publish leaves it as it was (PublishMod).
+		if err := downloadCache.PublishMod(ctx, live, newKey); err != nil {
 			return st, fmt.Errorf("publishing the reinstalled tree: %w", err)
 		}
 		if err := st.reinstallTxn.Rollback(context.WithoutCancel(ctx)); err != nil {
