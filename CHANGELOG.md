@@ -203,6 +203,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     "Answer installer…" on a failed job. Option images are served read-only
     from what the question kept (`GET /api/v1/fomod/images`): only images
     the archive contains, at most 8 MiB each, PNG, JPEG, GIF, WebP or BMP.
+  - A collection import's plan, in the terminal and the web UI, names what
+    the collection requires (`fomod` among it) and each mod's recorded
+    installer choices (`installer_choices` on its items in `--json`), which
+    are replayed as written; a collection whose recorded choices no longer
+    fit asks, in the terminal and in the web UI's wizard.
   - The install, profile import, archive import, update from file and
     update batch jobs accept `fomod` answers; the new `mod_fomod` plan kind
     is the reconfigure. `lmm mod show --json` (and the mod page's document)

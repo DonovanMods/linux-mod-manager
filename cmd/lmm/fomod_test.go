@@ -466,3 +466,56 @@ func TestDoModShow_SaysHowAFomodModsInstallerWasAnswered(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "Installer: FOMOD - 'lmm mod fomod mod1' changes its choices")
 }
+
+// TestPrintCollectionPlan_ShowsRequiresAndInstallerChoices: the collection
+// plan names what it requires and each item's recorded installer choices,
+// as the web UI's plan does (#615).
+func TestPrintCollectionPlan_ShowsRequiresAndInstallerChoices(t *testing.T) {
+	c := &core.CollectionImport{Name: "Pack", Requires: []string{"fomod"}, Items: []core.CollectionImportItem{
+		{SourceID: "nexusmods", ModID: "1", Name: "Textured", InstallerChoices: []string{"Main > Textures: 4K"}},
+		{SourceID: "nexusmods", ModID: "2", Name: "Plain"},
+	}}
+	out := captureStdout(t, func() error {
+		printCollectionPlan(c, &domain.Game{ID: "g1", Name: "Game"})
+		return nil
+	})
+	assert.Contains(t, out, "requires: fomod")
+	assert.Contains(t, out, "replayed as written")
+	assert.Contains(t, out, "Textured")
+	assert.Contains(t, out, "Main > Textures: 4K")
+	assert.NotContains(t, out, "- Plain", "an item with no choices is not listed there")
+}
+
+// TestDoCollectionImport_StaleRecordedChoicesAreAnswered: a collection
+// whose recorded installer choices no longer fit refuses with nothing
+// written and the question as its error's result; --fomod-defaults answers
+// it and the import goes through with the new choices recorded (#615).
+func TestDoCollectionImport_StaleRecordedChoicesAreAnswered(t *testing.T) {
+	svc, game, _ := setupFomodInstall(t)
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	doc := "lmm_collection: 1\nname: Wizard Pack\nrequires: [fomod]\nmods:\n" +
+		"  - {source_id: test-src, mod_id: mod1, version: \"1.0\", fomod: {config_sha256: " + strings.Repeat("ab", 32) +
+		", steps: [{name: Size, groups: [{name: Texture, choices: [{name: Gone, idx: 0}]}]}]}}\n"
+	oldYes := profileImportYes
+	profileImportYes = true
+	t.Cleanup(func() { profileImportYes = oldYes })
+
+	// Nothing answers it: the question, a non-zero exit, nothing written.
+	_, err := captureStdoutErr(t, func() error { return doCollectionImport(context.Background(), svc, []byte(doc), game.ID) })
+	require.Error(t, err)
+	assert.NotZero(t, exitCodeFor(err))
+	var q *core.FomodChoicesRequiredError
+	require.True(t, errors.As(err, &q), "got %v", err)
+	_, perr := svc.NewProfileManager().Get(context.Background(), game.ID, "Wizard Pack")
+	assert.Error(t, perr, "nothing was written")
+
+	fomodDefaults = true
+	out, err := captureStdoutErr(t, func() error { return doCollectionImport(context.Background(), svc, []byte(doc), game.ID) })
+	require.NoError(t, err, out)
+	p, err := svc.NewProfileManager().Get(context.Background(), game.ID, "Wizard Pack")
+	require.NoError(t, err)
+	ref := p.FindRef("test-src", "mod1")
+	require.NotNil(t, ref)
+	require.NotEmpty(t, ref.Fomod.Steps)
+	assert.Equal(t, "2K", ref.Fomod.Steps[0].Groups[0].Choices[0].Name, "the installer's default replaced the stale pick")
+}

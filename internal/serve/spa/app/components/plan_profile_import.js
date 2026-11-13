@@ -145,6 +145,9 @@ function matchLine(c) {
  * was sanitised by core (issue 594), and the preact templates escape it. */
 function LMMCollectionSection({ collection: c }) {
   const unavailable = (c.items ?? []).filter((item) => item.unavailable);
+  const withChoices = (c.items ?? []).filter(
+    (item) => (item.installer_choices ?? []).length > 0,
+  );
   return html`
     <section class="plan__section" data-testid="lmm-collection">
       <h3 class="plan__heading">
@@ -161,6 +164,12 @@ function LMMCollectionSection({ collection: c }) {
         </p>`
       }
       <p class="plan__note">${matchLine(c)}</p>
+      ${
+        (c.requires ?? []).length > 0 &&
+        html`<p class="plan__note" data-testid="collection-requires">
+          Requires: ${c.requires.join(", ")}
+        </p>`
+      }
       ${c.description && html`<p class="plan__note">${c.description}</p>`}
       ${
         c.install_instructions &&
@@ -180,6 +189,40 @@ function LMMCollectionSection({ collection: c }) {
           ${" "}${c.unsupported.map((f) => f.feature).join(", ")}. Importing it
           is refused, with nothing written; update lmm and try again.
         </p>
+      </section>`
+    }
+    ${
+      // issue 615: the FOMOD installer choices the collection records.
+      withChoices.length > 0 &&
+      html`<section
+        class="plan__section"
+        data-testid="collection-installer-choices"
+      >
+        <h3 class="plan__heading">
+          Installer (FOMOD) choices (${withChoices.length})
+        </h3>
+        <p class="plan__note">
+          Replayed as written. An installer that no longer accepts them asks you
+          again when the mod installs.
+        </p>
+        <ul class="plan__mods">
+          ${withChoices.map(
+            (item) =>
+              html`<li
+                key=${`${item.source_id}:${item.mod_id}`}
+                class="plan__mod"
+              >
+                <span class="plan__mod-name"
+                  >${item.name || `${item.source_id}:${item.mod_id}`}</span
+                >
+                <ul class="plan__paths">
+                  ${item.installer_choices.map(
+                    (line) => html`<li key=${line}>${line}</li>`,
+                  )}
+                </ul>
+              </li>`,
+          )}
+        </ul>
       </section>`
     }
     ${

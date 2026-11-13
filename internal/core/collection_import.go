@@ -166,6 +166,12 @@ type CollectionImportItem struct {
 	// Unavailable says why lmm cannot fetch the item here, and what to do
 	// about it; empty when it can.
 	Unavailable string `json:"unavailable,omitempty"`
+	// InstallerChoices are the FOMOD installer choices the collection
+	// records for the item (#615), one "Step > Group: picks" line per
+	// answered group, for a plan to show; empty when it records none. They
+	// are replayed as written; an installer that no longer accepts them is
+	// asked about at install time.
+	InstallerChoices []string `json:"installer_choices,omitempty"`
 }
 
 // CollectionGameError refuses a collection whose portable game identity
@@ -370,6 +376,8 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 			Name:        item.Name,
 			Version:     item.Ref.Version,
 			Unavailable: s.unavailableReason(game, item.Ref.SourceID),
+			// #615: what the collection's installer answers will install.
+			InstallerChoices: installerChoiceLines(item.Ref.Fomod),
 		})
 	}
 	plan.Collection = c
@@ -836,4 +844,25 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// installerChoiceLines words recorded FOMOD choices for a plan (#615): one
+// "Step > Group: A, B" line per answered group ("none" for a group answered
+// with no pick), sanitised for display. Nil for no choices.
+func installerChoiceLines(c domain.FomodChoices) []string {
+	var out []string
+	for _, step := range c.Steps {
+		for _, group := range step.Groups {
+			picks := make([]string, 0, len(group.Choices))
+			for _, o := range group.Choices {
+				picks = append(picks, domain.SanitizeLine(o.Name))
+			}
+			list := strings.Join(picks, ", ")
+			if list == "" {
+				list = "none"
+			}
+			out = append(out, domain.SanitizeLine(step.Name)+" > "+domain.SanitizeLine(group.Name)+": "+list)
+		}
+	}
+	return out
 }

@@ -1,0 +1,10 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "12604",
+  "name": "Sample Mod",
+  "version": "1.0",
+  "installer_choices": [
+    "Main Files > Texture Resolution: 2K",
+    "Main Files > Patches: none"
+  ]
+}

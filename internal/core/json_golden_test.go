@@ -2121,6 +2121,15 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #615: an item whose collection records FOMOD installer
+			// choices, as the plan shows them.
+			"collection_import_item_installer_choices",
+			core.CollectionImportItem{
+				SourceID: "nexusmods", ModID: "12604", Name: "Sample Mod", Version: "1.0",
+				InstallerChoices: []string{"Main Files > Texture Resolution: 2K", "Main Files > Patches: none"},
+			},
+		},
+		{
 			"import_hook",
 			core.ImportHook{Hook: "install.after_all", Command: "/home/author/bin/after.sh"},
 		},

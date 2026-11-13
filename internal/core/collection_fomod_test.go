@@ -138,3 +138,16 @@ func TestCollectionImport_RefusesFomodChoicesItCannotReplayAsWritten(t *testing.
 		})
 	}
 }
+
+// TestCollectionImport_PlanShowsTheRecordedInstallerChoices: a collection
+// plan names `requires: fomod` and each item's recorded installer choices
+// as lines a frontend shows (#615).
+func TestCollectionImport_PlanShowsTheRecordedInstallerChoices(t *testing.T) {
+	svc, _ := recipient(t)
+	doc := collectionFomodDoc("{config_sha256: " + strings.Repeat("ab", 32) + ", steps: [{name: Main, groups: [{name: Textures, choices: [{name: 4K, idx: 1}]}, {name: Extras, choices: []}]}]}")
+	plan, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: []byte(doc), GameID: "cyber"})
+	require.NoError(t, err)
+	require.Contains(t, plan.Collection.Requires, core.CollectionFeatureFomod)
+	require.Len(t, plan.Collection.Items, 1)
+	require.Equal(t, []string{"Main > Textures: 4K", "Main > Extras: none"}, plan.Collection.Items[0].InstallerChoices)
+}

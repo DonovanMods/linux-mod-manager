@@ -43,6 +43,10 @@ func printCollectionPlan(c *core.CollectionImport, game *domain.Game) {
 	for _, w := range c.Warnings {
 		fmt.Printf("\n⚠ %s\n", w)
 	}
+	if len(c.Requires) > 0 {
+		fmt.Printf("  requires: %s\n", strings.Join(c.Requires, ", "))
+	}
+	printCollectionInstallerChoices(c)
 	if len(c.Unsupported) > 0 {
 		fmt.Printf("\n✗ This collection needs features this version of lmm cannot import:\n")
 		for _, f := range c.Unsupported {
@@ -181,4 +185,26 @@ func indentLines(text, prefix string) string {
 		lines[i] = prefix + line
 	}
 	return strings.Join(lines, "\n")
+}
+
+// printCollectionInstallerChoices lists the FOMOD installer choices a
+// collection records (#615): they are replayed as written, and an installer
+// that no longer accepts them is asked about when the mod installs.
+func printCollectionInstallerChoices(c *core.CollectionImport) {
+	var items []core.CollectionImportItem
+	for _, item := range c.Items {
+		if len(item.InstallerChoices) > 0 {
+			items = append(items, item)
+		}
+	}
+	if len(items) == 0 {
+		return
+	}
+	fmt.Printf("\nInstaller (FOMOD) choices the collection records - replayed as written; an installer that no longer accepts them asks:\n")
+	for _, item := range items {
+		fmt.Printf("    - %s\n", collectionItemLabel(item))
+		for _, line := range item.InstallerChoices {
+			fmt.Printf("        %s\n", line)
+		}
+	}
 }

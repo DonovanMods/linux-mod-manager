@@ -542,6 +542,9 @@ function ImportProfileForm({ actions, close }) {
     setError(null);
     try {
       const upload = await uploadArchive(file);
+      // The plan consumes the upload; a FOMOD question the import raises
+      // re-posts it, which uploads the same file again (issue 615).
+      actions.rememberUploadFile(upload.upload_id, file);
       const options = { upload_id: upload.upload_id };
       if (name.trim()) options.profile_name = name.trim();
       close();

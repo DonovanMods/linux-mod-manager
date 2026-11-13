@@ -17,6 +17,10 @@
  * by the message text.
  */
 export function fomodQuestionFor(details) {
+  // A refused profile import's failure carries its whole result, with the
+  // question under fomod_choices_required (core.ProfileImportIncompleteError).
+  if (details?.fomod_choices_required)
+    return fomodQuestionFor(details.fomod_choices_required);
   const mods = details?.mods;
   if (!Array.isArray(mods) || mods.length === 0) return null;
   const ok = mods.every(

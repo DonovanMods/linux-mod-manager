@@ -1986,6 +1986,34 @@ const fomodKinds = new Set([
 const fomodRequests = new Map();
 const fomodWalks = new Map();
 
+// uploadFiles maps a profile-import upload's id to the File it was made
+// from (issue 615). The profile_import plan reads its upload and removes it
+// (kind_profile_import.go), so re-posting that request for a FOMOD answer
+// uploads the same file again under a new id.
+const uploadFiles = new Map();
+
+/** rememberUploadFile records which file an upload was made from. */
+function rememberUploadFile(uploadID, file) {
+  if (uploadID && file) uploadFiles.set(uploadID, file);
+}
+
+/** freshUpload re-uploads the file behind planOptions.upload_id, when
+ * there is one, answering the options to plan with. */
+async function freshUpload(planOptions) {
+  const id = planOptions?.upload_id;
+  if (!id) return planOptions;
+  const file = uploadFiles.get(id);
+  if (!file) {
+    throw new Error(
+      "The imported file is no longer available to this page; import it again to answer its installer.",
+    );
+  }
+  const staged = await uploadArchive(file);
+  uploadFiles.delete(id);
+  uploadFiles.set(staged.upload_id, file);
+  return { ...planOptions, upload_id: staged.upload_id };
+}
+
 function rememberFomodRequest(origin, req) {
   fomodRequests.set(origin, req);
   fomodWalks.delete(origin);
@@ -2051,13 +2079,14 @@ async function submitFomod(origin, answers, walked) {
   const fomod = { ...(req.applyOptions?.fomod ?? {}), ...answers };
   const applyOptions = { ...(req.applyOptions ?? {}), fomod };
   // An update batch re-posts only the mods that asked; the rest are done.
-  const planOptions =
+  const basePlanOptions =
     req.kind === "updates"
       ? { ...(req.planOptions ?? {}), mods: Object.keys(fomod) }
       : req.planOptions;
   const context = req.context ?? routeContext();
   await startBinding(origin, async () => {
     try {
+      const planOptions = await freshUpload(basePlanOptions);
       const response = await planMutation(req.kind, planOptions, context);
       const { id: jobID } = await startJob(response.plan_id, applyOptions);
       fomodRequests.set(origin, { ...req, planOptions, applyOptions });
@@ -2901,6 +2930,7 @@ const actions = {
   answerFomod,
   canAnswerFomod,
   submitFomod,
+  rememberUploadFile,
   openReorderModal,
   openProfilesModal,
   openShortcutsModal,
