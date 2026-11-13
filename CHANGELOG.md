@@ -347,6 +347,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A crash while unpacking a download no longer leaves temporary folders
+  behind (#628).** If an install, import or repair crashed while it was
+  unpacking or laying out a mod (the web UI survives such a crash and
+  keeps running), the unpacking folders beside the mod cache, the download
+  folder and the same mod's earlier files were left on disk. They are now
+  removed on the way out. A download whose mod has no version, and whose
+  source gives neither the file's size nor its checksum, is no longer kept
+  for a retry after a refusal: nothing could tell it apart from an older
+  release under the same file id, so the retry downloads it again.
+
 - **The web UI's mod page no longer blanks its live details when a job
   ends (#615).** After a job, the mod page reloads its documents. It used
   to clear the live description, changelog, versions table and
@@ -373,6 +383,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `account_restricted: true` says the account is why.
   Internally, sources can now report the account's tier (`free`/`premium`)
   for later plans to use.
+
+- **Saving a source's key while the web UI is busy can no longer race or
+  leak the old key (#626).** `lmm serve` re-keys a source live when a key is
+  saved in Setup. That re-key was a data race with any NexusMods,
+  CurseForge, Steam Workshop or custom-source request already in flight,
+  and a request could send one key and mask another in its own error, so
+  the key it actually sent could reach an error message unmasked. Each
+  request now reads the key once, and sends and masks that same key. No
+  visible change in the terminal or the web UI.
 
 - **Setup no longer says `make install` gives a self-updating lmm (#599).**
   The Updates tab, `lmm self-update --help`, the README and the

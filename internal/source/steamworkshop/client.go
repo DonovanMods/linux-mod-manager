@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -90,7 +91,19 @@ type client struct {
 	// 8 hex of its SHA-256, enough for the search cache to tell two
 	// credentials apart and useless to anything else. SetAPIKey maintains
 	// it; nothing reads the plaintext back out of this struct.
+	//
+	// It is read and written only under keyMu, and read only through
+	// currentKeyID (#626): `lmm serve` re-keys a live source while a search
+	// is in flight.
+	keyMu sync.RWMutex
 	keyID string
+}
+
+// currentKeyID returns the registered key's fingerprint (see keyID).
+func (c *client) currentKeyID() string {
+	c.keyMu.RLock()
+	defer c.keyMu.RUnlock()
+	return c.keyID
 }
 
 func newClient(opts Options) *client {

@@ -91,11 +91,12 @@ var ErrResponseTooLarge = errors.New("response body exceeds the maximum size")
 //   - On an error the body is already closed and the returned response is
 //     nil; on success closing it is the caller's job.
 func (c *Client) DoStream(ctx context.Context, method, path string, header map[string]string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, c.authURL(path), nil)
+	key := c.key()
+	req, err := http.NewRequestWithContext(ctx, method, c.authURL(path, key), nil)
 	if err != nil {
-		return nil, c.requestError("creating request", path, err)
+		return nil, c.requestError("creating request", path, key, err)
 	}
-	c.applyAuthHeader(req)
+	c.applyAuthHeader(req, key)
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
 	}
@@ -105,7 +106,7 @@ func (c *Client) DoStream(ctx context.Context, method, path string, header map[s
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, c.requestError("executing request", path, err)
+		return nil, c.requestError("executing request", path, key, err)
 	}
 	if resp.StatusCode == http.StatusNotModified || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
 		if c.maxResponseBytes > 0 {
@@ -133,7 +134,7 @@ func (c *Client) DoStream(ctx context.Context, method, path string, header map[s
 	// Redacted before the mapper, not after: a mapper is free to interpolate
 	// the body into its own message, and an upstream error page that echoes
 	// the request back is exactly how a key reaches a terminal.
-	errBody = []byte(c.redact(string(errBody)))
+	errBody = []byte(key.redact(string(errBody)))
 	if c.errorMapper != nil {
 		if mapped := c.errorMapper(resp.StatusCode, errBody, path); mapped != nil {
 			return nil, mapped

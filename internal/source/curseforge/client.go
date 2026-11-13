@@ -27,11 +27,14 @@ const (
 	maxResponseSize = 10 << 20
 )
 
-// Client wraps the CurseForge REST API v1
+// Client wraps the CurseForge REST API v1.
+//
+// The API key lives only in rest, which guards it (#626): `lmm serve`
+// re-keys a live source while requests are in flight, and a second, unguarded
+// copy here was a data race.
 type Client struct {
 	httpClient *http.Client
 	rest       *httpclient.Client
-	apiKey     string
 }
 
 // NewClient creates a new CurseForge API client
@@ -42,7 +45,6 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 
 	c := &Client{
 		httpClient: httpClient,
-		apiKey:     apiKey,
 	}
 	c.rest = httpclient.New(httpclient.Options{
 		HTTPClient:       httpClient,
@@ -58,7 +60,6 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 
 // SetAPIKey sets the API key for authentication
 func (c *Client) SetAPIKey(key string) {
-	c.apiKey = key
 	c.rest.SetAPIKey(key)
 }
 
@@ -70,7 +71,7 @@ func (c *Client) SetBaseURL(u string) {
 
 // IsAuthenticated returns true if an API key is configured
 func (c *Client) IsAuthenticated() bool {
-	return c.apiKey != ""
+	return c.rest.IsAuthenticated()
 }
 
 // mapError translates CurseForge-specific status codes (403 disambiguation,
@@ -79,7 +80,7 @@ func (c *Client) IsAuthenticated() bool {
 func (c *Client) mapError(status int, body []byte, path string) error {
 	switch status {
 	case http.StatusForbidden:
-		if c.apiKey == "" {
+		if !c.IsAuthenticated() {
 			return fmt.Errorf("%w: CurseForge API key required", domain.ErrAuthRequired)
 		}
 		// File-download endpoints answer 403 when the mod author has opted out

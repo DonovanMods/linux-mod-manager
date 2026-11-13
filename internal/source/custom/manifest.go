@@ -45,6 +45,10 @@ type Manifest struct {
 	allowHTTP bool
 	auth      *AuthConfig
 
+	// apiKey is read and written only under keyMu, and read only through
+	// key() (#626): `lmm serve` re-keys a live source (SetAPIKey) while
+	// requests are in flight. Each request reads it once.
+	keyMu      sync.RWMutex
 	apiKey     string
 	httpClient *http.Client
 	now        func() time.Time // injectable for TTL tests
@@ -106,12 +110,25 @@ func (m *Manifest) ID() string { return m.id }
 // Name returns the source name.
 func (m *Manifest) Name() string { return m.name }
 
-// SetAPIKey provides the API key resolved at startup (env var or token store).
-func (m *Manifest) SetAPIKey(key string) { m.apiKey = key }
+// SetAPIKey provides the API key resolved at startup (env var or token
+// store), and replaces it when `lmm serve` re-keys the live source. It is
+// safe to call while requests are in flight (#626).
+func (m *Manifest) SetAPIKey(key string) {
+	m.keyMu.Lock()
+	defer m.keyMu.Unlock()
+	m.apiKey = key
+}
+
+// key returns the configured API key: the one read of it a request makes.
+func (m *Manifest) key() string {
+	m.keyMu.RLock()
+	defer m.keyMu.RUnlock()
+	return m.apiKey
+}
 
 // IsAuthenticated reports whether an API key is configured. Only meaningful
 // when the definition declares auth (Capabilities().Auth).
-func (m *Manifest) IsAuthenticated() bool { return m.apiKey != "" }
+func (m *Manifest) IsAuthenticated() bool { return m.key() != "" }
 
 // fetch returns the parsed manifest, honoring the TTL cache for remote URLs.
 // The returned document is a deep copy the caller owns exclusively — mutating
@@ -164,8 +181,9 @@ func (m *Manifest) fetch(ctx context.Context) (*manifestDoc, error) {
 // m.mu held: this method performs the network I/O.
 func (m *Manifest) fetchRemote(ctx context.Context) (*manifestDoc, error) {
 	reqURL := m.url
-	if m.auth != nil && m.auth.APIKey.In == "query" && m.apiKey != "" {
-		u, err := addQueryParam(reqURL, m.auth.APIKey.Name, m.apiKey)
+	key := m.key()
+	if m.auth != nil && m.auth.APIKey.In == "query" && key != "" {
+		u, err := addQueryParam(reqURL, m.auth.APIKey.Name, key)
 		if err != nil {
 			return nil, fmt.Errorf("source %q: manifest %s: %w", m.id, m.url, err)
 		}
@@ -176,8 +194,8 @@ func (m *Manifest) fetchRemote(ctx context.Context) (*manifestDoc, error) {
 	if err != nil {
 		return nil, fmt.Errorf("source %q: manifest %s: %w", m.id, m.url, err)
 	}
-	if m.auth != nil && m.auth.APIKey.In == "header" && m.apiKey != "" {
-		req.Header.Set(m.auth.APIKey.Name, m.apiKey)
+	if m.auth != nil && m.auth.APIKey.In == "header" && key != "" {
+		req.Header.Set(m.auth.APIKey.Name, key)
 	}
 
 	resp, err := m.httpClient.Do(req)
@@ -379,8 +397,8 @@ func (m *Manifest) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID s
 			continue
 		}
 		u := f.URL
-		if m.auth != nil && m.auth.APIKey.In == "query" && m.apiKey != "" && (!m.isRemote || m.sameOrigin(u)) {
-			withKey, err := addQueryParam(u, m.auth.APIKey.Name, m.apiKey)
+		if key := m.key(); m.auth != nil && m.auth.APIKey.In == "query" && key != "" && (!m.isRemote || m.sameOrigin(u)) {
+			withKey, err := addQueryParam(u, m.auth.APIKey.Name, key)
 			if err != nil {
 				return "", fmt.Errorf("source %q: file %q: %w", m.id, fileID, err)
 			}
@@ -487,13 +505,14 @@ func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.Installe
 // not ship the repo's key there. Local-path manifests are user-authored and
 // trusted, so their configured key attaches regardless of host.
 func (m *Manifest) DownloadHeaders(fileURL string) map[string]string {
-	if m.auth == nil || m.auth.APIKey.In != "header" || m.apiKey == "" {
+	key := m.key()
+	if m.auth == nil || m.auth.APIKey.In != "header" || key == "" {
 		return nil
 	}
 	if m.isRemote && !m.sameOrigin(fileURL) {
 		return nil
 	}
-	return map[string]string{m.auth.APIKey.Name: m.apiKey}
+	return map[string]string{m.auth.APIKey.Name: key}
 }
 
 var _ source.ModSource = (*Manifest)(nil)
