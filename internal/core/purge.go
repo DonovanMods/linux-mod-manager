@@ -944,11 +944,12 @@ func (s *Service) listedVersionShips(ctx context.Context, game *domain.Game, liv
 		ref := refs[key]
 		version, variant := ref.Version, ""
 		files, seen := shipped[key]
-		if !seen || version == "" {
-			// A row that cannot be read leaves the version unknown, and
-			// an unknown version ships every path. The row also names the
-			// version's tree (#614): the profile records choices, the row
-			// the entry they built.
+		// A row that cannot be read leaves the version unknown, and an
+		// unknown version ships every path. The row also names the
+		// version's tree (#614) - read for that only where there can be
+		// one: a variant is built from FOMOD choices, which the ref then
+		// records.
+		if version == "" || (!seen && !ref.Fomod.IsZero()) {
 			if row, err := s.GetInstalledMod(ctx, ref.SourceID, ref.ModID, game.ID, live); err == nil {
 				if version == "" {
 					version = row.Version

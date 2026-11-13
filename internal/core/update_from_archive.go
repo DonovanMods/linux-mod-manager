@@ -681,6 +681,9 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 
 	newMod := mod.Mod
 	newMod.Version = plan.ToVersion
+	// The tree the ingest wrote: the resolved installer's variant, or the
+	// plain entry - never the installed row's own (#614), which becomes the
+	// row's PREVIOUS variant after the update.
 	newMod.Variant = imported.Mod.Variant
 	fileIDs := slices.Clone(plan.FileIDs)
 	// #197 C1: a DeployCompile merge source is retained under its own

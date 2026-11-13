@@ -655,13 +655,16 @@ func walkEntries(modPath string, includeReserved bool) ([]string, error) {
 // 4). A container that still holds another version, or that never existed,
 // is left alone either way - never an error.
 //
-// A directory that is not k's own entry (CheckKey: a colliding key wrote
-// it) is left alone: deleting the plain version "1.0@abc" must never take
-// variant "abc" of version "1.0" with it (#614).
+// A directory that is another key's entry (CheckKey: a colliding key wrote
+// it) is refused with *KeyCollisionError and left alone: deleting the plain
+// version "1.0@abc" must never take variant "abc" of version "1.0" with it
+// (#614), and an uninstall must not report a removal that did not happen.
 func (c *Cache) Delete(k Key) error {
 	modPath := c.ModPath(k)
-	if _, err := os.Lstat(modPath); err == nil && !c.owns(modPath, k) {
-		return nil
+	if _, err := os.Lstat(modPath); err == nil {
+		if err := CheckKey(modPath, k); err != nil {
+			return err
+		}
 	}
 	if err := os.RemoveAll(modPath); err != nil {
 		return fmt.Errorf("deleting cached mod: %w", err)
