@@ -2207,7 +2207,8 @@ func (s *Service) commitBatchMod(ctx context.Context, game *domain.Game, plan *I
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 	}
-	modRef := withFomod(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}, st.fomod)
+	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
+	fomodRec := fomodRecordOf(st.fomod)
 	// Ruling 16 (A): the DB row and the deployment are already in place, so
 	// the profile ref that completes them is written even under a cancelled
 	// ctx. Returning here skips this mod's Installed entry and its
@@ -2215,7 +2216,7 @@ func (s *Service) commitBatchMod(ctx context.Context, game *domain.Game, plan *I
 	// (review finding I2), which turns the cancellation into ApplyInstall's
 	// own fatal return.
 	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.UpsertMod(ctx, game.ID, plan.Profile, modRef)
+		return pm.upsertMod(ctx, game.ID, plan.Profile, modRef, fomodRec)
 	}); err != nil {
 		if ctx.Err() != nil {
 			return nil
@@ -2823,12 +2824,13 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 	}
-	modRef := withFomod(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}, st.fomod)
+	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
+	fomodRec := fomodRecordOf(st.fomod)
 	// Ruling 16 (A): the DB row and the deployment are already in place, so
 	// the profile ref that completes them is written even under a cancelled
 	// ctx; the cancellation is then fatal to ApplyInstall as a whole.
 	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.UpsertMod(ctx, game.ID, plan.Profile, modRef)
+		return pm.upsertMod(ctx, game.ID, plan.Profile, modRef, fomodRec)
 	}); err != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, cerr

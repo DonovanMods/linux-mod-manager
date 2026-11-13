@@ -120,6 +120,10 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 	if err != nil {
 		return err
 	}
+	prevFomod, err := encodeFomod(mod.PreviousFomod)
+	if err != nil {
+		return err
+	}
 
 	// The manual_download column holds mod.AdoptedInPlace: it keeps its
 	// historical name so an older lmm can still read the database (#516).
@@ -130,8 +134,8 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 	// CASE sees the old version even though version is assigned above it.
 	now := formatTime(d.clock())
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url, external, external_path, updated_at, category_name, last_updated_at, variant, previous_variant)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url, external, external_path, updated_at, category_name, last_updated_at, variant, previous_variant, previous_fomod)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_id, mod_id, game_id, profile_name) DO UPDATE SET
 			name = excluded.name,
 			version = excluded.version,
@@ -151,8 +155,9 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 			last_updated_at = CASE WHEN installed_mods.version IS NOT excluded.version
 				THEN excluded.last_updated_at ELSE installed_mods.last_updated_at END,
 			variant = excluded.variant,
-			previous_variant = excluded.previous_variant
-	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, now, prevVersion, prevFileIDs, mod.LinkMethod, mod.AdoptedInPlace, mod.Summary, mod.SourceURL, mod.External, mod.ExternalPath, updatedAtValue(mod), categoryNameValue(mod), now, mod.Variant, mod.PreviousVariant)
+			previous_variant = excluded.previous_variant,
+			previous_fomod = excluded.previous_fomod
+	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, now, prevVersion, prevFileIDs, mod.LinkMethod, mod.AdoptedInPlace, mod.Summary, mod.SourceURL, mod.External, mod.ExternalPath, updatedAtValue(mod), categoryNameValue(mod), now, mod.Variant, mod.PreviousVariant, prevFomod)
 	if err != nil {
 		return fmt.Errorf("saving installed mod: %w", err)
 	}
@@ -214,6 +219,10 @@ func (d *DB) RelinkInstalledMod(ctx context.Context, oldSourceID, oldModID strin
 	if err != nil {
 		return err
 	}
+	relinkPrevFomod, err := encodeFomod(mod.PreviousFomod)
+	if err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE installed_mods SET
 		source_id = ?, mod_id = ?, name = ?, version = ?, author = ?,
 		enabled = ?, deployed = ?, previous_version = ?, previous_file_ids = ?,
@@ -221,13 +230,13 @@ func (d *DB) RelinkInstalledMod(ctx context.Context, oldSourceID, oldModID strin
 		external = ?, external_path = ?, updated_at = ?,
 		category_name = COALESCE(?, category_name),
 		last_updated_at = CASE WHEN version IS NOT ? THEN ? ELSE last_updated_at END,
-		variant = ?, previous_variant = ?
+		variant = ?, previous_variant = ?, previous_fomod = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?`,
 		mod.SourceID, mod.ID, mod.Name, mod.Version, mod.Author,
 		mod.Enabled, mod.Deployed, prevVersion, prevFileIDs,
 		mod.LinkMethod, mod.AdoptedInPlace, mod.Summary, mod.SourceURL,
 		mod.External, mod.ExternalPath, updatedAtValue(mod), categoryNameValue(mod),
-		mod.Version, formatTime(d.clock()), mod.Variant, mod.PreviousVariant,
+		mod.Version, formatTime(d.clock()), mod.Variant, mod.PreviousVariant, relinkPrevFomod,
 		oldSourceID, oldModID, mod.GameID, mod.ProfileName)
 	if err != nil {
 		return fmt.Errorf("moving installed mod: %w", err)
@@ -264,7 +273,7 @@ func (d *DB) RelinkInstalledMod(ctx context.Context, oldSourceID, oldModID strin
 // GetInstalledMods returns all installed mods for a game/profile combination
 func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (mods []domain.InstalledMod, err error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, CAST(installed_at AS TEXT), previous_version, previous_file_ids, link_method, manual_download, summary, source_url, convert_paks, external, external_path, CAST(updated_at AS TEXT), skipped_version, category_name, CAST(last_updated_at AS TEXT), variant, previous_variant
+		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, CAST(installed_at AS TEXT), previous_version, previous_file_ids, link_method, manual_download, summary, source_url, convert_paks, external, external_path, CAST(updated_at AS TEXT), skipped_version, category_name, CAST(last_updated_at AS TEXT), variant, previous_variant, previous_fomod
 		FROM installed_mods
 		WHERE game_id = ? AND profile_name = ?
 		ORDER BY installed_at ASC
@@ -278,11 +287,12 @@ func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (
 		var prevVersion *string
 		var prevFileIDs *string
 		var installedAt, updatedAt, skipped, category, lastUpdated *string
+		var prevFomodRaw string
 		err := rows.Scan(
 			&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 			&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
 			&mod.Enabled, &mod.Deployed, &installedAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.AdoptedInPlace,
-			&mod.Summary, &mod.SourceURL, &mod.ConvertPaks, &mod.External, &mod.ExternalPath, &updatedAt, &skipped, &category, &lastUpdated, &mod.Variant, &mod.PreviousVariant,
+			&mod.Summary, &mod.SourceURL, &mod.ConvertPaks, &mod.External, &mod.ExternalPath, &updatedAt, &skipped, &category, &lastUpdated, &mod.Variant, &mod.PreviousVariant, &prevFomodRaw,
 		)
 		if err != nil {
 			_ = rows.Close()
@@ -306,6 +316,9 @@ func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (
 			return nil, fmt.Errorf("scanning installed mod: %w", err)
 		}
 		mod.PreviousFileIDs, err = decodeFileIDs(prevFileIDs)
+		if err == nil {
+			mod.PreviousFomod, err = decodeFomod(prevFomodRaw)
+		}
 		if err != nil {
 			_ = rows.Close()
 			return nil, err
@@ -599,17 +612,18 @@ func (d *DB) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profi
 	var prevVersion *string
 	var prevFileIDs *string
 	var installedAt, updatedAt, skipped, category, lastUpdated *string
+	var prevFomodRaw string
 	err := d.QueryRowContext(ctx, `
 		SELECT source_id, mod_id, game_id, profile_name, name, version, author,
 		       update_policy, enabled, deployed, CAST(installed_at AS TEXT), previous_version, previous_file_ids, link_method, manual_download,
-		       summary, source_url, convert_paks, external, external_path, CAST(updated_at AS TEXT), skipped_version, category_name, CAST(last_updated_at AS TEXT), variant, previous_variant
+		       summary, source_url, convert_paks, external, external_path, CAST(updated_at AS TEXT), skipped_version, category_name, CAST(last_updated_at AS TEXT), variant, previous_variant, previous_fomod
 		FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName).Scan(
 		&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 		&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
 		&mod.Enabled, &mod.Deployed, &installedAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.AdoptedInPlace,
-		&mod.Summary, &mod.SourceURL, &mod.ConvertPaks, &mod.External, &mod.ExternalPath, &updatedAt, &skipped, &category, &lastUpdated, &mod.Variant, &mod.PreviousVariant,
+		&mod.Summary, &mod.SourceURL, &mod.ConvertPaks, &mod.External, &mod.ExternalPath, &updatedAt, &skipped, &category, &lastUpdated, &mod.Variant, &mod.PreviousVariant, &prevFomodRaw,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -636,6 +650,9 @@ func (d *DB) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profi
 	}
 	mod.PreviousFileIDs, err = decodeFileIDs(prevFileIDs)
 	if err != nil {
+		return nil, err
+	}
+	if mod.PreviousFomod, err = decodeFomod(prevFomodRaw); err != nil {
 		return nil, err
 	}
 	mod.SanitizeSourceText() // #594: a row stored before ingestion cleaned it
@@ -1067,5 +1084,55 @@ func replaceModFileIDsTx(ctx context.Context, e execer, sourceID, modID, gameID,
 		}
 	}
 
+	return nil
+}
+
+// encodeFomod is previous_fomod's encoding: ” for no choices, else JSON.
+func encodeFomod(c domain.FomodChoices) (string, error) {
+	if c.IsZero() {
+		return "", nil
+	}
+	b, err := json.Marshal(c)
+	if err != nil {
+		return "", fmt.Errorf("encoding previous FOMOD choices: %w", err)
+	}
+	return string(b), nil
+}
+
+// decodeFomod reads encodeFomod's encoding.
+func decodeFomod(raw string) (domain.FomodChoices, error) {
+	var c domain.FomodChoices
+	if raw == "" {
+		return c, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		return c, fmt.Errorf("decoding previous FOMOD choices: %w", err)
+	}
+	return c, nil
+}
+
+// SetModPreviousFomod records the FOMOD installer choices the row's
+// previous version was installed with (#614): an update records the ones
+// it replaces, a rollback the ones it rolls away from. A plain UPDATE of
+// that one column.
+func (d *DB) SetModPreviousFomod(ctx context.Context, sourceID, modID, gameID, profileName string, choices domain.FomodChoices) error {
+	raw, err := encodeFomod(choices)
+	if err != nil {
+		return err
+	}
+	result, err := d.ExecContext(ctx, `
+		UPDATE installed_mods SET previous_fomod = ?
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
+	`, raw, sourceID, modID, gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("setting previous FOMOD choices: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("setting previous FOMOD choices: checking rows affected: %w", err)
+	}
+	if rows == 0 {
+		return domain.ErrModNotFound
+	}
 	return nil
 }

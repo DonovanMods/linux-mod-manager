@@ -776,7 +776,7 @@ func TestOpen_ConcurrentFirstOpensMigrateExactlyOnce(t *testing.T) {
 			require.NoError(t, err)
 			var recorded int
 			require.NoError(t, check.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&recorded))
-			assert.Equal(t, 24, recorded)
+			assert.Equal(t, 25, recorded)
 			require.NoError(t, check.Close())
 		}
 	})

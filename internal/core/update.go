@@ -1031,29 +1031,27 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// variant, and its choices (with the new installer's config hash) are
 	// recorded.
 	fx := s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod)
-	var resolved *fomodResolved
-	for _, file := range filesToDownload {
-		if err := ctx.Err(); err != nil {
+	progressFn := func(e Event) {
+		if forwardFetchStep(e, scope, emit) {
+			return
+		}
+		d, ok := e.(DownloadEvent)
+		if !ok || d.TotalBytes <= 0 {
+			return
+		}
+		emit(DownloadEvent{Scope: scope, Phase: UpdateDownloading, Percent: d.Percent})
+	}
+	newMod.Variant = ""
+	results, resolved, err := s.downloadModFiles(ctx, s.GetGameCache(game), mod.SourceID, game, newMod, filesToDownload, fx,
+		modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, checkCtx: true})
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
 			return result, err
 		}
-		progressFn := func(e Event) {
-			if forwardFetchStep(e, scope, emit) {
-				return
-			}
-			d, ok := e.(DownloadEvent)
-			if !ok || d.TotalBytes <= 0 {
-				return
-			}
-			emit(DownloadEvent{Scope: scope, Phase: UpdateDownloading, Percent: d.Percent})
-		}
-		downloadResult, err := s.downloadMod(ctx, mod.SourceID, game, newMod, file, fx, progressFn)
-		if err != nil {
-			return result, fmt.Errorf("downloading update: %w", err)
-		}
-		if downloadResult.fomod != nil {
-			resolved = downloadResult.fomod
-		}
-		checksums = appendChecksum(checksums, file.ID, downloadResult)
+		return result, fmt.Errorf("downloading update: %w", err)
+	}
+	for i, file := range filesToDownload {
+		checksums = appendChecksum(checksums, file.ID, results[i])
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
 	}
 	emit(StepEvent{Scope: scope, Phase: UpdateDownloadDone})
@@ -1179,6 +1177,14 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 		}
 		return fmt.Errorf("updating database: %w", err)
 	}
+	// #614: the choices the replaced version was installed with go to
+	// previous_fomod beside previous_version, so a rollback restores them.
+	// Best-effort, like the category name below: the update has landed.
+	if prev := s.recordedRef(context.WithoutCancel(ctx), game.ID, profileName, mod.SourceID, mod.ID); prev != nil {
+		if err := s.db.SetModPreviousFomod(context.WithoutCancel(ctx), mod.SourceID, mod.ID, game.ID, profileName, prev.Fomod); err != nil {
+			s.logger().Debug("recording previous FOMOD choices", "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
+		}
+	}
 
 	// #592: the new version's source category name, when it has one the row
 	// does not - applyModUpdate writes only the version columns. Best-effort:
@@ -1203,8 +1209,9 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	}
 
 	pm := s.NewProfileManager()
-	modRef := withFomod(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: effectiveVersion, FileIDs: downloadedFileIDs}, c.fomod)
-	if err := pm.UpsertMod(ctx, game.ID, profileName, modRef); err != nil {
+	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: effectiveVersion, FileIDs: downloadedFileIDs}
+	fomodRec := fomodRecordOf(c.fomod)
+	if err := pm.upsertMod(ctx, game.ID, profileName, modRef, fomodRec); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
 		if rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName); rerr != nil {

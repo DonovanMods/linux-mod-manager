@@ -107,6 +107,9 @@ type fomodInput struct {
 	// files answers fileDependency conditions; nil means every file is
 	// missing.
 	files fomod.FileStates
+	// raw installs the archive as it is, never running an installer in it:
+	// the rebuild of a row installed before FOMOD support (rebuildInput).
+	raw bool
 }
 
 // fomodResolved is one archive's resolve outcome.
@@ -133,6 +136,9 @@ const maxFomodQuestionSteps = 1000
 // holds exactly what the installer installs, and the outcome names its
 // variant and the choices to record.
 func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fomodInput) (*fomodResolved, error) {
+	if in.raw {
+		return nil, nil
+	}
 	listed, err := relativeFileMembers(tree)
 	if err != nil {
 		return nil, fmt.Errorf("listing extracted members: %w", err)

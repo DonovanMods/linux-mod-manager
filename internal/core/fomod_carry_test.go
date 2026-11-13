@@ -17,7 +17,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestApplyImport_KeepsRecordedFomodChoices(t *testing.T) {
+// TestApplyImport_ClearsChoicesRecordedForAPlainArchive (#614 review B1):
+// a document can record choices for a mod whose archive is not a FOMOD
+// installer. They would name a tree the row does not have, so the install
+// clears them - and the profile then converges: apply plans nothing.
+func TestApplyImport_ClearsChoicesRecordedForAPlainArchive(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 	mock := newMockSourceWithDownloads("src")
@@ -45,7 +49,13 @@ func TestApplyImport_KeepsRecordedFomodChoices(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, saved.Mods, 1)
 	assert.Equal(t, []string{"1"}, saved.Mods[0].FileIDs, "the install upserted the reference")
-	assert.True(t, recordedChoices().Equal(saved.Mods[0].Fomod), "and kept its recorded choices")
+	assert.True(t, saved.Mods[0].Fomod.IsZero(), "and cleared choices no tree of this archive uses")
+
+	for i := 0; i < 3; i++ {
+		applyPlan, err := svc.PlanProfileApply(context.Background(), game, "target")
+		require.NoError(t, err)
+		assert.Empty(t, applyPlan.ToInstall, "apply %d: converged", i)
+	}
 }
 
 // TestUpsertMod_PreservesFomod: install, update and converge write a fresh

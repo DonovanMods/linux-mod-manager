@@ -921,40 +921,35 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			if !entry.Cached {
 				mod.Variant = ""
 				fx := s.fomodInputFor(ctx, game, plan.Profile, &entry.Ref, entry.Ref.SourceID, entry.Ref.ModID, nil)
-				downloadFailed := false
-				for _, file := range entry.Files {
-					progressFn := func(e Event) {
-						if forwardFetchStep(e, scope, emit) {
-							return
-						}
-						d, ok := e.(DownloadEvent)
-						if !ok || d.TotalBytes <= 0 {
-							return
-						}
-						emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
+				progressFn := func(e Event) {
+					if forwardFetchStep(e, scope, emit) {
+						return
 					}
-					downloadResult, err := s.downloadMod(ctx, entry.Ref.SourceID, game, mod, file, fx, progressFn)
-					if err == nil && downloadResult.fomod != nil {
-						resolved = downloadResult.fomod
+					d, ok := e.(DownloadEvent)
+					if !ok || d.TotalBytes <= 0 {
+						return
 					}
-					if err != nil {
-						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: fmt.Sprintf("download failed: %v", err)})
-						// Cannot use fail(): SwitchDownloadFailed above already
-						// renders this mod's Error line; fail() would emit a
-						// second SwitchInstallError and print a duplicate one.
-						result.recordFailure(profileApplyFailure(entry, fmt.Sprintf("download failed: %v", err)), failedVersion(entry))
-						downloadFailed = true
-						break
-					}
-					checksums = appendChecksum(checksums, file.ID, downloadResult)
+					emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
+				}
+				results, got, err := s.downloadModFiles(ctx, s.GetGameCache(game), entry.Ref.SourceID, game, mod, entry.Files, fx,
+					modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }})
+				if err != nil {
+					emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: fmt.Sprintf("download failed: %v", err)})
+					// Cannot use fail(): SwitchDownloadFailed above already
+					// renders this mod's Error line; fail() would emit a
+					// second SwitchInstallError and print a duplicate one.
+					result.recordFailure(profileApplyFailure(entry, fmt.Sprintf("download failed: %v", err)), failedVersion(entry))
 				}
 				// Fires on success AND failure: doProfileApply's own
 				// unconditional Println after the download loop, which
 				// terminates the carriage-returned progress line.
 				emit(StepEvent{Scope: scope, Phase: SwitchDownloadDone})
-
-				if downloadFailed {
+				if err != nil {
 					continue
+				}
+				resolved = got
+				for i, file := range entry.Files {
+					checksums = appendChecksum(checksums, file.ID, results[i])
 				}
 			}
 
@@ -994,8 +989,9 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 				warn(scope, SwitchInstallWarning, msg)
 			}
 
-			modRef := withFomod(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}, resolved)
-			if err := pm.UpsertMod(ctx, game.ID, plan.Profile, modRef); err != nil {
+			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
+			fomodRec := fomodRecordOf(resolved)
+			if err := pm.upsertMod(ctx, game.ID, plan.Profile, modRef, fomodRec); err != nil {
 				// v2 Phase 3 Task 18: UpsertMod's own ctx.Err() guard can now
 				// be what makes this call fail, so a cancellation must stay
 				// fatal here exactly as it would at this loop's top-of-
