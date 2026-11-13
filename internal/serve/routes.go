@@ -81,6 +81,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/games/{id}", s.wrap(s.handleAPIGameDetail))
 	s.mux.Handle("PUT /api/v1/games/{id}", s.wrap(s.handleAPIGameSources))
 	s.mux.Handle("GET /api/v1/games/catalog", s.wrap(s.handleAPIGamesCatalog))
+	s.mux.Handle("GET /api/v1/games/known", s.wrap(s.handleAPIKnownGames))
 	s.mux.Handle("GET /api/v1/games/detect", s.wrap(s.handleAPIGamesDetect))
 	s.mux.Handle("POST /api/v1/games/detect", s.wrap(s.handleAPIGameDetectApply))
 	// The Setup page's default-game set/clear (#333, added on top of task

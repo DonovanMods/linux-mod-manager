@@ -79,6 +79,10 @@ type GameEdit struct {
 	// user directory name under the prefix's drive_c/users, trimmed - one
 	// name, no slashes. "" clears it.
 	PrefixUser *string
+	// Catalog, when non-nil, sets `catalog:` (#606): the slug of the
+	// known-games catalog entry the game is, trimmed. It must be a slug of
+	// the registered catalog (KnownGames); "" clears it.
+	Catalog *string
 }
 
 // EditGame applies edit to gameID's games.yaml entry and returns the game's
@@ -107,8 +111,8 @@ type GameEdit struct {
 //   - GameSpecError, whose Field is the wire key PUT /api/v1/games/{id}
 //     takes ("name", "install_path", "sources", "adapter", "mod_path",
 //     "loader.kind", "loader.runtime", "loader.bootstrap",
-//     "curseforge.game_version_types"), so an SPA marks the
-//     offending input rather than parsing a sentence. See validatedSourceMap
+//     "curseforge.game_version_types", "prefix", "prefix_user", "catalog"),
+//     so an SPA marks the offending input rather than parsing a sentence. See validatedSourceMap
 //     for the source map's rules. An adapter must be registered, and must
 //     compose with the rest of the entry the edit leaves (AdapterFor: a
 //     `deploy_mode: compile` game's adapter must compile, and bepinex needs
@@ -213,6 +217,14 @@ func (s *Service) editedGame(ctx context.Context, game *domain.Game, edit GameEd
 			}
 		}
 		updated.PrefixUser, changed = user, true
+	}
+
+	if edit.Catalog != nil {
+		slug, err := s.catalogValue(*edit.Catalog)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		updated.Catalog, changed = slug, true
 	}
 
 	if edit.Sources != nil {

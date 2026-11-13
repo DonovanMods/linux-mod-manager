@@ -301,6 +301,53 @@ w3:
   launch_code: W3
 ```
 
+## Bethesda games
+
+Skyrim Special Edition (and Anniversary Edition), Skyrim VR, Fallout 4,
+Fallout 4 VR, Starfield and Skyrim (2011) use the `bethesda` adapter. When
+`lmm game detect` adds one from Steam it sets that for you. It lays out
+archives packed relative to the game folder, such as SKSE's, into `Data/`,
+and it knows each game's plugin rules for the plugin list to come.
+
+A game you added before lmm knew this keeps the adapter it has: lmm never
+changes it by itself. Mission Control shows a note offering the `bethesda`
+adapter, with a **Use the bethesda adapter** button, and `lmm verify`
+prints the same suggestion. In the terminal:
+
+```bash
+lmm game edit skyrim-se --adapter bethesda
+```
+
+{: .warning }
+Mods you already installed keep the layout they were installed with: the
+switch only changes how mods installed or updated after it are laid out.
+To lay one out again, uninstall it (from every profile that has it) and
+install it again. When the game has mods installed, Mission Control asks
+before it switches, and `lmm game edit` prints the same warning.
+
+## Telling lmm which game a copy is
+
+lmm recognises a game from Steam by itself. A copy from GOG or Epic, added
+by hand through Heroic or Lutris under an id of your own, can say which
+game it is by naming its entry in lmm's game catalog (the games
+`lmm game detect` knows). In the browser, pick it under **Game catalog
+entry** in the game's editor. In the terminal:
+
+```bash
+lmm game edit my-gog-skyrim --catalog skyrim-se
+```
+
+lmm then treats it as that game: a Bethesda game gets its plugin rules,
+and lmm suggests the adapter the catalog sets the game up with. If you
+give an id the catalog doesn't have, lmm lists the ones it does.
+`--catalog ""` takes the setting off again.
+
+{: .note }
+A script extender's loader (`skse64_loader.exe` and its DLLs) and an ENB
+belong in the game folder itself, not in `Data/`. lmm recognises them but
+still deploys them into `Data/` for now, so copy those few files into the
+game folder by hand.
+
 ## Games from other stores
 
 For every other store, adding the game by hand works the same as for any

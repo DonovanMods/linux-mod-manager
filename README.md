@@ -1807,6 +1807,7 @@ GET  /api/v1/health?force=&progress=
 GET  /api/v1/conflicts?order=
 GET  /api/v1/games
 GET  /api/v1/games/catalog?source=&q=
+GET  /api/v1/games/known
 GET  /api/v1/games/detect?all=
 GET  /api/v1/fs/dirs?path=&hidden=&nearest=
 GET  /api/v1/auth
@@ -1979,9 +1980,12 @@ the body's `sources` object is the FULL map the game ends up with, so an
 omitted source id is removed. An id no registered source claims is a 400
 whose `details.field` is `"sources"`, an unknown game is a 404, and an
 empty map is refused — a game must keep at least one source. The same body
-may carry `name`, `install_path`, `mod_path`, `adapter` and `loader` (with
+may carry `name`, `install_path`, `mod_path`, `adapter`, `catalog` (the
+entry of lmm's game catalog the game is; `""` clears it) and `loader` (with
 `loader_set`; `null` removes the declaration): every member present is
-checked before any is written, so a refusal writes nothing. `GET /api/v1/games/catalog` is the
+checked before any is written, so a refusal writes nothing.
+`GET /api/v1/games/known` lists lmm's own game catalog (the games
+`lmm game detect` knows), the choices for `catalog`. `GET /api/v1/games/catalog` is the
 game-add form's search, over any source with a searchable catalog
 (CurseForge today); a source without one answers 400, which is the signal
 to ask for an identifier instead. `POST /api/v1/games` answers 400 with a

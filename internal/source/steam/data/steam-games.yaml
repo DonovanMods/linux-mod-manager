@@ -17,21 +17,27 @@
 # about a particular INSTALL, which `lmm game show` reads off the game
 # directory, and a version pinned here would be compared against the pack the
 # user actually installed, so leave it out.
+# adapter is optional: the generated entry's own `adapter:` (#353), for a game
+# lmm handles with a game adapter. The Tier 1 Bethesda games name bethesda
+# (#606); a game already in games.yaml is never rewritten to match.
 "489830":
   slug: skyrim-se
   name: Skyrim Special Edition
   nexus_id: skyrimspecialedition
   mod_path: Data
+  adapter: bethesda
 "1716740":
   slug: starfield
   name: Starfield
   nexus_id: starfield
   mod_path: Data
+  adapter: bethesda
 "377160":
   slug: fallout4
   name: Fallout 4
   nexus_id: fallout4
   mod_path: Data
+  adapter: bethesda
 "22380":
   slug: fallout3
   name: Fallout 3
@@ -42,6 +48,21 @@
   name: "The Elder Scrolls V: Skyrim"
   nexus_id: skyrim
   mod_path: Data
+  adapter: bethesda
+# The VR editions have no NexusMods domain of their own: their mods are
+# hosted on the Skyrim Special Edition and Fallout 4 sites (#606).
+"611670":
+  slug: skyrim-vr
+  name: Skyrim VR
+  nexus_id: skyrimspecialedition
+  mod_path: Data
+  adapter: bethesda
+"611660":
+  slug: fallout4-vr
+  name: Fallout 4 VR
+  nexus_id: fallout4
+  mod_path: Data
+  adapter: bethesda
 "1245620":
   slug: elden-ring
   name: Elden Ring

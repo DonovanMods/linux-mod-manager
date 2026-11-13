@@ -103,8 +103,17 @@ Proton prefix, else the one user besides Public). '--prefix ""' and
 resolved and where it came from.
 
 .PP
+--catalog says which game in lmm's game catalog (the games 'lmm game
+detect' knows) this entry is, by its id - for an install lmm cannot
+recognise by its Steam app id or a standard game id, such as a GOG or Epic
+copy added under an id of your own: '--catalog skyrim-se'. lmm then treats
+it as that game, for example suggesting the adapter the catalog sets it up
+with. An id the catalog does not have is refused with the list of ids it
+does; '--catalog ""' clears it.
+
+.PP
 --source, --remove-source, --adapter, --mod-path, --install-path,
---curseforge-version-type, --prefix and --prefix-user are one edit: every
+--curseforge-version-type, --prefix, --prefix-user and --catalog are one edit: every
 change is checked before any is written, so a run applies all of them or none. That is also what lets --mod-path and --adapter move a game onto
 bepinex, or off it, in one run.
 
@@ -132,6 +141,10 @@ Examples:
 .SH OPTIONS
 \fB--adapter\fP=""
 	set the game adapter; the empty string ("") clears it, so the game uses its derived adapter (generic-files unless deploy_mode or BepInEx selects one)
+
+.PP
+\fB--catalog\fP=""
+	say which game in lmm's game catalog this is, by its id, e.g. skyrim-se ("" clears it)
 
 .PP
 \fB--curseforge-version-type\fP=[]
