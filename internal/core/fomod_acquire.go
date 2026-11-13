@@ -302,3 +302,16 @@ func (s *Service) IsLegacyFomodInstall(game *domain.Game, row *domain.InstalledM
 	inst, err := fomod.Locate("", slashMembers(files))
 	return err == nil && inst != nil
 }
+
+// holdsFomodInstaller reports whether the cache entry k holds a FOMOD
+// installer's files (fomod/ModuleConfig.xml, or one Locate refuses): a
+// plain entry that does is a legacy raw install's, never the resolved tree
+// of a fresh one (#614).
+func holdsFomodInstaller(c *cache.Cache, k cache.Key) bool {
+	files, err := c.ListFiles(k)
+	if err != nil {
+		return false
+	}
+	inst, err := fomod.Locate("", slashMembers(files))
+	return err != nil || inst != nil
+}

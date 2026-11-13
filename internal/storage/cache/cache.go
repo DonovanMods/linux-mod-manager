@@ -786,6 +786,85 @@ func (c *Cache) CopyModAs(ctx context.Context, k Key, destSourceID, destModID st
 	return nil
 }
 
+// PublishMod copies k's entry from c into dest, replacing dest's entry of
+// k if it has one (#614: a reinstall whose installer resolved to another
+// tree publishes the staged tree into the live cache). Like CopyModAs the
+// copy - lmm's .lmm-* markers included, as CloneMod carries them, and k's
+// identity marker stamped - is built beside the destination and renamed
+// into place, and the entry it replaces is moved aside first and back on a
+// failed rename: a failure at any point leaves dest's entry exactly as it
+// was, never deleted or half-written. A dest directory that is another
+// key's entry is refused (Claim) before anything is written.
+func (c *Cache) PublishMod(ctx context.Context, dest *Cache, k Key) (err error) {
+	if err := dest.Claim(k); err != nil {
+		return err
+	}
+	files, err := walkEntries(c.ModPath(k), true)
+	if err != nil {
+		return err
+	}
+	dst := dest.ModPath(k)
+	parent := filepath.Dir(dst)
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		return fmt.Errorf("creating cache dir: %w", err)
+	}
+	dest.sweepCopyLeftovers(parent)
+	tmp, err := os.MkdirTemp(parent, copyTempPrefix+"*")
+	if err != nil {
+		return fmt.Errorf("creating cache copy: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
+	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		dstPath := filepath.Join(tmp, file)
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+			return fmt.Errorf("creating destination dir: %w", err)
+		}
+		if err := copyFile(c.GetFilePath(k, file), dstPath); err != nil {
+			return err
+		}
+	}
+	if err := os.Chmod(tmp, 0755); err != nil {
+		return fmt.Errorf("opening cache copy: %w", err)
+	}
+	if err := StampKey(tmp, k); err != nil {
+		return err
+	}
+	// The replaced entry waits under a reserved name, so a crash between
+	// the two renames leaves litter the next copy sweeps, never a
+	// half-replaced entry.
+	old := tmp + "-old"
+	hadOld := false
+	if _, statErr := os.Lstat(dst); statErr == nil {
+		if err := os.Rename(dst, old); err != nil {
+			return fmt.Errorf("moving the replaced cache entry aside: %w", err)
+		}
+		hadOld = true
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return fmt.Errorf("checking cache entry %s: %w", dst, statErr)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		if hadOld {
+			if rerr := os.Rename(old, dst); rerr != nil {
+				c.log.Warn("restoring the replaced cache entry failed", "path", dst, "err", rerr)
+			}
+		}
+		return fmt.Errorf("publishing cache copy: %w", err)
+	}
+	if hadOld {
+		if err := os.RemoveAll(old); err != nil {
+			c.log.Debug("removing the replaced cache entry failed", "path", old, "err", err)
+		}
+	}
+	return nil
+}
+
 // copyTempPrefix names the directory CopyModAs builds a copy in, beside
 // the mod's version directories. Reserved (.lmm-*), so no walker takes it
 // for content; a version is only ever reached by its own name, never by

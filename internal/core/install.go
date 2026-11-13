@@ -2507,6 +2507,12 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	cacheWarm := !servesLocalFiles && !fx.ask &&
 		len(plannedFileIDs) > 0 &&
 		downloadCache.HasFileIDs(warmKey, plannedFileIDs)
+	if cacheWarm && expectedVariant == "" && holdsFomodInstaller(downloadCache, warmKey) {
+		// #614: a plain entry that still holds a FOMOD installer is a legacy
+		// raw install's (another profile's, from before lmm ran installers):
+		// not this install's tree. Download and resolve, which asks.
+		cacheWarm = false
+	}
 	if cacheWarm && expectedVariant != "" {
 		// The entry these choices build is cached: nothing to resolve.
 		mod.Variant = expectedVariant
@@ -2648,13 +2654,9 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 		// any replaced entry does.
 		live := s.GetGameCache(game)
 		newKey := modCacheKey(game.ID, mod)
-		if err := live.Claim(newKey); err != nil {
-			return st, fmt.Errorf("publishing the reinstalled tree: %w", err)
-		}
-		if err := live.Delete(newKey); err != nil {
-			return st, fmt.Errorf("publishing the reinstalled tree: %w", err)
-		}
-		if err := downloadCache.CloneMod(ctx, live, newKey); err != nil {
+		// Built beside any entry of that variant already there and swapped
+		// in, so a failed publish leaves it as it was (PublishMod).
+		if err := downloadCache.PublishMod(ctx, live, newKey); err != nil {
 			return st, fmt.Errorf("publishing the reinstalled tree: %w", err)
 		}
 		if err := st.reinstallTxn.Rollback(context.WithoutCancel(ctx)); err != nil {

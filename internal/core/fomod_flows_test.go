@@ -951,3 +951,36 @@ func TestFomodSelfHeal_AStaleRecordingLeavesNoOrphanEntry(t *testing.T) {
 	require.Len(t, result.Skipped, 1)
 	assert.Empty(t, modContainerEntries(t, f, row), "nothing was committed")
 }
+
+// TestFomodInstall_ALegacyRawEntryIsNotWarmForAFreshInstall (#614
+// re-review nit): a fresh install of a FOMOD mod whose cache still holds a
+// legacy raw entry - the plain entry another profile installed before lmm
+// ran installers - does not reuse it raw: it asks, and installs the answer.
+func TestFomodInstall_ALegacyRawEntryIsNotWarmForAFreshInstall(t *testing.T) {
+	f := newFomodFixture(t)
+	f.serve(t, "mod1", "1.0", "4K", "v1")
+	ctx := context.Background()
+	seedLegacyFomodInstall(t, f)
+	pm := f.svc.NewProfileManager()
+	_, err := pm.Create(ctx, "g1", "other")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, "g1", "other"))
+
+	plan, err := f.svc.PlanInstall(ctx, f.game, "other", "src", "mod1", false)
+	require.NoError(t, err)
+	_, err = f.svc.ApplyInstall(ctx, f.game, plan, core.InstallOptions{}, nil)
+	var q *core.FomodChoicesRequiredError
+	require.ErrorAs(t, err, &q, "the installer is asked, not skipped")
+	assert.Equal(t, core.FomodReasonUnanswered, q.Mods[0].Reason)
+
+	plan, err = f.svc.PlanInstall(ctx, f.game, "other", "src", "mod1", false)
+	require.NoError(t, err)
+	_, err = f.svc.ApplyInstall(ctx, f.game, plan, core.InstallOptions{Fomod: map[string]domain.FomodChoices{"src:mod1": answer("4K")}}, nil)
+	require.NoError(t, err)
+	row, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "other")
+	require.NoError(t, err)
+	assert.NotEmpty(t, row.Variant, "the answered tree, not the raw entry")
+	legacy, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.True(t, f.svc.IsLegacyFomodInstall(f.game, legacy), "the other profile's raw install is untouched")
+}

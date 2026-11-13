@@ -303,7 +303,7 @@ func TestSwapModVersions(t *testing.T) {
 	require.NoError(t, err)
 
 	// Swap versions (rollback)
-	err = database.SwapModVersions(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
+	_, err = database.SwapModVersions(context.Background(), "nexusmods", "12345", "skyrim-se", "default", domain.FomodChoices{})
 	require.NoError(t, err)
 
 	// Verify swap
@@ -331,7 +331,7 @@ func TestApplyModUpdateAndRollbackRestoresFileIDs(t *testing.T) {
 	}
 	require.NoError(t, database.SaveInstalledMod(context.Background(), mod))
 
-	require.NoError(t, database.ApplyModUpdate(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "2.0.0", "", []string{"new-main"}))
+	require.NoError(t, database.ApplyModUpdate(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "2.0.0", "", domain.FomodChoices{}, []string{"new-main"}))
 
 	updated, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
@@ -340,7 +340,7 @@ func TestApplyModUpdateAndRollbackRestoresFileIDs(t *testing.T) {
 	assert.Equal(t, []string{"new-main"}, updated.FileIDs)
 	assert.Equal(t, []string{"old-main", "old-patch"}, updated.PreviousFileIDs)
 
-	require.NoError(t, database.SwapModVersions(context.Background(), "nexusmods", "12345", "skyrim-se", "default"))
+	require.NoError(t, swapNoFomod(database.SwapModVersions(context.Background(), "nexusmods", "12345", "skyrim-se", "default", domain.FomodChoices{})))
 
 	rolledBack, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
@@ -370,7 +370,7 @@ func TestSwapModVersions_NoPreviousVersion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Swap should fail - no previous version
-	err = database.SwapModVersions(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
+	_, err = database.SwapModVersions(context.Background(), "nexusmods", "12345", "skyrim-se", "default", domain.FomodChoices{})
 	assert.Error(t, err)
 }
 
