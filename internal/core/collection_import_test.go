@@ -114,17 +114,18 @@ func TestCollectionImport_NeverHooksFromAURL(t *testing.T) {
 
 func TestCollectionImport_UnsupportedFeatureRefusesWithNothingWritten(t *testing.T) {
 	svc, game := recipient(t)
-	doc := "lmm_collection: 1\nname: p\ngame:\n  steam_app_id: \"1091500\"\nrequires: [fomod, external]\nmods:\n  - {source_id: s, mod_id: m}\n"
+	doc := "lmm_collection: 1\nname: p\ngame:\n  steam_app_id: \"1091500\"\nrequires: [from-the-future, external]\nmods:\n  - {source_id: s, mod_id: m}\n"
 	plan, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: []byte(doc)})
 	require.NoError(t, err, "the plan always renders")
-	require.Equal(t, []core.UnsupportedCollectionFeature{{Feature: "fomod"}}, plan.Collection.Unsupported)
+	require.Equal(t, []core.UnsupportedCollectionFeature{{Feature: "from-the-future"}}, plan.Collection.Unsupported)
 
 	_, err = svc.ApplyCollectionImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
 	var unsupported *core.CollectionUnsupportedError
 	require.True(t, errors.As(err, &unsupported))
 	require.True(t, core.IsCollectionUnsupported(err))
-	require.Equal(t, "fomod", unsupported.Unsupported[0].Feature)
+	require.Equal(t, "from-the-future", unsupported.Unsupported[0].Feature)
 	require.Contains(t, unsupported.Supported, "external")
+	require.Contains(t, unsupported.Supported, "fomod")
 	_, err = config.LoadProfile(svc.ConfigDir(), "cyber", "p")
 	require.ErrorIs(t, err, domain.ErrProfileNotFound)
 }

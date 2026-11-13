@@ -453,6 +453,7 @@ func init() {
 	installCmd.Flags().StringVar(&installVersion, "version", "", "specific version to install (default: latest; archived files are searched automatically)")
 	installCmd.Flags().StringVar(&installModID, "id", "", "mod ID (skips search)")
 	installCmd.Flags().StringVar(&installFileID, "file", "", "file ID(s), comma-separated (skips file selection)")
+	addFomodFlags(installCmd)
 	installCmd.Flags().BoolVarP(&installYes, "yes", "y", false, "auto-confirm; of several search results, install the one named exactly like the query (refused if none is), else the first/primary option (no prompts)")
 	installCmd.Flags().BoolVar(&installShowArchived, "show-archived", false, "show archived/old files")
 	installCmd.Flags().BoolVar(&skipVerify, "skip-verify", false, "skip checksum storage and display")
@@ -812,7 +813,17 @@ func doInstallFromSource(ctx context.Context, service *core.Service, game *domai
 		}
 	}
 
-	result, err := service.ApplyInstall(ctx, game, plan, opts, quietSink(progress))
+	// #615: a FOMOD installer's questions are answered (a walk, a file, the
+	// defaults) and the same Apply re-run with the answers.
+	fa, err := newFomodAnswerer(service)
+	if err != nil {
+		return err
+	}
+	applyWithAnswers := func(answers map[string]domain.FomodChoices) (*core.InstallResult, error) {
+		opts.Fomod = answers
+		return service.ApplyInstall(ctx, game, plan, opts, quietSink(progress))
+	}
+	result, err := applyAnsweringFomod(fa, applyWithAnswers, nil)
 
 	// Ruling 1: an unaccepted file conflict comes back as a typed error, not
 	// a callback into this prompt. ApplyInstall stopped before it deployed
@@ -840,7 +851,7 @@ func doInstallFromSource(ctx context.Context, service *core.Service, game *domai
 			return ErrCancelled
 		}
 		opts.AcceptConflicts = true
-		result, err = service.ApplyInstall(ctx, game, plan, opts, quietSink(progress))
+		result, err = applyAnsweringFomod(fa, applyWithAnswers, nil)
 	}
 	if err != nil {
 		// Diagnostics accumulated before a fatal error (ApplyInstall's
@@ -1016,7 +1027,14 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 		}
 	}
 
-	result, err := service.ApplyInstall(ctx, game, plan, opts, quietSink(progress))
+	fa, err := newFomodAnswerer(service)
+	if err != nil {
+		return err
+	}
+	result, err := applyAnsweringFomod(fa, func(answers map[string]domain.FomodChoices) (*core.InstallResult, error) {
+		opts.Fomod = answers
+		return service.ApplyInstall(ctx, game, plan, opts, quietSink(progress))
+	}, installResultQuestion)
 	if err != nil {
 		// Diagnostics accumulated before a fatal error (install.before_all,
 		// forced) were already printed above, live, via progress - nothing
@@ -1035,7 +1053,10 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 	// Ruling 15: the InstallResult document - Installed/Failed/Skipped and
 	// MergedPakSyncFailed are the data behind every line below.
 	if jsonOutput {
-		return emitJSON(result)
+		if err := emitJSON(result); err != nil {
+			return err
+		}
+		return fomodUnanswered(result.FomodChoicesRequired)
 	}
 
 	// The batch's one merged-pak sync attempt (inside ApplyInstall) has
@@ -1052,7 +1073,7 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 	fmt.Printf("\n--- Summary ---\n")
 	if result.Refused {
 		printRefusedInstall(result)
-		return nil
+		return fomodUnanswered(result.FomodChoicesRequired)
 	}
 	fmt.Printf("Installed: %d\n", len(result.Installed))
 	if len(result.Failed) > 0 {
@@ -1271,7 +1292,14 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 		}
 	}
 
-	result, err := service.ApplyInstall(ctx, game, plan, opts, quietSink(progress))
+	fa, err := newFomodAnswerer(service)
+	if err != nil {
+		return err
+	}
+	result, err := applyAnsweringFomod(fa, func(answers map[string]domain.FomodChoices) (*core.InstallResult, error) {
+		opts.Fomod = answers
+		return service.ApplyInstall(ctx, game, plan, opts, quietSink(progress))
+	}, installResultQuestion)
 	if err != nil {
 		// Diagnostics accumulated before a fatal error were already printed
 		// above, live, via progress. No ordinary per-mod failure reaches
@@ -1284,7 +1312,10 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 
 	// Ruling 15: the InstallResult document (see doInstallBatch's twin).
 	if jsonOutput {
-		return emitJSON(result)
+		if err := emitJSON(result); err != nil {
+			return err
+		}
+		return fomodUnanswered(result.FomodChoicesRequired)
 	}
 
 	// The batch's one merged-pak sync attempt (inside ApplyInstall) has now
@@ -1301,7 +1332,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 	fmt.Printf("\n--- Summary ---\n")
 	if result.Refused {
 		printRefusedInstall(result)
-		return nil
+		return fomodUnanswered(result.FomodChoicesRequired)
 	}
 	fmt.Printf("Installed: %d\n", len(result.Installed))
 	if len(result.Failed) > 0 {
@@ -1531,6 +1562,15 @@ func (e *installNoExactMatchError) Unwrap() error { return core.ErrConfirmationR
 
 // Details implements the --json error envelope's extension point.
 func (e *installNoExactMatchError) Details() any { return e }
+
+// installResultQuestion is the FOMOD question a batch install reports on
+// its result (#614), nil when there is none.
+func installResultQuestion(r *core.InstallResult) *core.FomodChoicesRequiredError {
+	if r == nil {
+		return nil
+	}
+	return r.FomodChoicesRequired
+}
 
 // printRefusedInstall renders an install that refused before writing
 // anything (#602): which mods refused and why, which were only held back

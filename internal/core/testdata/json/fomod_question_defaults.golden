@@ -1,0 +1,111 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "12604",
+  "name": "Sample Mod",
+  "config_sha256": "9f2c4e1d0b8a7c6e5f4d3c2b1a0918273645546372819a0b1c2d3e4f5a6b7c8d",
+  "module_name": "Sample Installer",
+  "installer_root": "Sample Mod/",
+  "reason": "stale",
+  "steps": [
+    {
+      "name": "Main Files",
+      "ordinal": 0,
+      "groups": [
+        {
+          "name": "Texture Resolution",
+          "ordinal": 0,
+          "type": "SelectExactlyOne",
+          "answered": true,
+          "options": [
+            {
+              "name": "2K",
+              "ordinal": 0,
+              "description": "Lighter on VRAM.",
+              "image": "fomod/images/2k.png",
+              "type": "Recommended",
+              "selected": true
+            },
+            {
+              "name": "4K",
+              "ordinal": 0,
+              "type": "Optional",
+              "selected": false
+            }
+          ]
+        },
+        {
+          "name": "Patches",
+          "ordinal": 0,
+          "type": "SelectAny",
+          "answered": false,
+          "options": [
+            {
+              "name": "USSEP",
+              "ordinal": 0,
+              "type": "CouldBeUsable",
+              "selected": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "choices": [
+    {
+      "name": "Main Files",
+      "groups": [
+        {
+          "name": "Texture Resolution",
+          "choices": [
+            {
+              "name": "2K",
+              "idx": 0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "defaults": [
+    {
+      "name": "Main Files",
+      "groups": [
+        {
+          "name": "Texture Resolution",
+          "choices": [
+            {
+              "name": "4K",
+              "idx": 1
+            }
+          ]
+        },
+        {
+          "name": "Patches",
+          "choices": []
+        }
+      ]
+    }
+  ],
+  "unanswered": [
+    {
+      "step": "Main Files",
+      "group": "Patches"
+    }
+  ],
+  "unmatched": [
+    {
+      "step": "Main Files",
+      "group": "Texture Resolution",
+      "option": "8K",
+      "reason": "no such option"
+    }
+  ],
+  "violations": [
+    {
+      "step": "Main Files",
+      "group": "Texture Resolution",
+      "type": "SelectExactlyOne",
+      "selected": 2
+    }
+  ]
+}

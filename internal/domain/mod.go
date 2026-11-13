@@ -285,9 +285,13 @@ type InstalledMod struct {
 	// PreviousVariant is the Variant of PreviousVersion's tree (#614), so a
 	// rollback restores the right cache entry. Moves with PreviousVersion;
 	// not on the wire, like Variant.
-	PreviousVariant string     `json:"-"`
-	LinkMethod      LinkMethod `json:"link_method"`        // How the mod was deployed (symlink, hardlink, copy)
-	FileIDs         []string   `json:"file_ids,omitempty"` // Source-specific file IDs that were downloaded
+	PreviousVariant string `json:"-"`
+	// PreviousFomod is the FOMOD installer choices PreviousVersion was
+	// installed with (#614), restored to the profile by a rollback. Not on
+	// the wire.
+	PreviousFomod FomodChoices `json:"-"`
+	LinkMethod    LinkMethod   `json:"link_method"`        // How the mod was deployed (symlink, hardlink, copy)
+	FileIDs       []string     `json:"file_ids,omitempty"` // Source-specific file IDs that were downloaded
 	// AdoptedInPlace marks a mod `lmm import` scan mode adopted where it
 	// sat in the game directory (#516): lmm never downloaded it, so on a
 	// game not in copy mode it has no cache entry, and verify neither calls

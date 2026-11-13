@@ -1,0 +1,6 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "12604",
+  "name": "Sample Mod",
+  "reason": "it is a scripted installer (fomod/script.cs or an OMOD), which lmm never runs"
+}

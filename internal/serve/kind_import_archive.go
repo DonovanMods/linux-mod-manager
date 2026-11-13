@@ -123,6 +123,11 @@ type importArchiveApplyRequest struct {
 	// AcceptMismatch is "Install anyway" (#535): the archive is not the
 	// file the install would download, and the user installs it regardless.
 	AcceptMismatch bool `json:"accept_mismatch,omitzero"`
+	// Fomod answers FOMOD installer questions (#615): the choices per mod,
+	// keyed by "<source-id>:<mod-id>", that a job refused with a
+	// fomod_choices_required question for - the web UI's installer wizard
+	// re-posts the plan and the job with the answers accumulated so far.
+	Fomod map[string]domain.FomodChoices `json:"fomod,omitzero"`
 }
 
 // pendingImportArchive is what the plan store holds between Plan and Apply:
@@ -200,6 +205,7 @@ func applyImportArchiveKind(ctx context.Context, s *Server, pending, opts any, s
 	applyOpts.Force = req.Force
 	applyOpts.SkipHooks = req.SkipHooks
 	applyOpts.AcceptMismatch = req.AcceptMismatch
+	applyOpts.Fomod = req.Fomod
 	result, err := s.svc.ApplyImportArchive(ctx, p.Game, p.Profile, p.Plan, applyOpts, sink)
 	if err != nil {
 		// Keep the staged archive: a refused conflict, a hook failure or a

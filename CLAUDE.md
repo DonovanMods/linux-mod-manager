@@ -83,6 +83,7 @@ internal/
 │   ├── db/               # SQLite (mod metadata, auth tokens)
 │   ├── config/           # YAML parsing (games, profiles)
 │   └── cache/            # Central mod file cache
+├── fomod/                # FOMOD installer evaluator (#604): Locate/Parse/Evaluate, Vortex semantics, stdlib only; core runs its ops (fomod_resolve.go)
 ├── notices/              # THIRD_PARTY_NOTICES generator + drift test (`make notices`, go run ./tools/notices; stdlib only, dev-time, #522)
 ├── safeyaml/             # The one YAML decode every reader uses: a decoder panic is an error, never a crash (#452)
 ├── releasesig/           # ed25519 sign/verify of a release's checksums.txt (#569); tools/releasekey is its maintainer CLI, docs/release-signing.md the key
@@ -155,13 +156,20 @@ internal/
     ├── plugins_header.go  # ReadPluginHeader/ClassifyPlugin: the stdlib TES4 plugin header reader (flags, MAST masters) and an adapter.PluginSpec applied to it (#606)
     ├── adapter_suggest.go # SuggestedAdapter/SetCatalogAdapters: the Steam catalog's adapter for a game that uses the identity - verify's adapter_suggested note, GameStatus.suggested_adapter (#606)
     ├── source_notices.go  # WithSourceNotices: a source's throttle/suspension/cold-build notices as events (#436)
+    ├── fomod_resolve.go   # the FOMOD resolve step (#614): after extract, before the adapter; executes internal/fomod's ops, the ask/refuse policy, fomodVariant
+    ├── fomod_errors.go    # FomodChoicesRequiredError (the question document, answerable through the acquire engine) and FomodInstallError
+    ├── fomod_acquire.go   # per-flow FOMOD inputs (Options.Fomod answers, else the ref's recorded choices), unifyFomod, fomodDrift for converge
+    ├── fomod_filestates.go # fileDependency answers from the profile: present = in the mod dir or deployed by the profile; active = present until P5
+    ├── fomod_images.go    # a FOMOD question's option images, kept from the extracted archive (hash-named, capped, raster only) for FomodImage (#615)
+    ├── fomod_reconfigure.go # PlanFomodReconfigure/ApplyFomodReconfigure: `lmm mod fomod`, re-ask an installed mod's installer (#615)
+    ├── cache_key.go       # modCacheKey/previousCacheKey: an installed mod's cache entry, variant included (#614)
     └── verify_repair.go   # verify --fix repair actions: redownload, checksum backfill
 └── serve/                # `lmm serve` local web UI: an SPA over /api/v1; imports only app/core/domain (boundary_test.go)
     ├── server.go          # Package doc; New/Listen/Serve/Close, graceful shutdown, CSRF guard
     ├── middleware.go      # Host allow-list (DNS-rebinding guard), Origin/CSRF checks, security headers, request logging
     ├── routes.go          # Registers the SPA routes (spa.go) and every /api/v1 route on the mux
     ├── spa.go             # The SPA shell (a template: it carries the CSRF token), its embedded asset trees, the CSP hash, the legacy 301s
-    ├── spa/               # index.html shell (+ skip link, the one inline theme script) + app.css (Launcher tokens dark+light, motion tokens, prefers-reduced-motion) + app/*.js (ES modules: render/router/store/api/sse/theme/main, activity+progress+failures+jobhistory+jobresult for the job layer, modrows/navigation/verify/conflicts/shortcuts/relativetime/motion/timers/focustrap/dismiss/slicefence/version/indexnotice, + components/: app, missioncontrol, topbar, awaybar, arrow, cards, library, gamechooser, modpanel, fullmodpage, searchpage, omnibarresults, searchresults, tray, modal, confirmplan, errordetails, planrenderers, planoptions, plan_{deploy,install,uninstall,rollback,updates,verify_fix,profile_import,import_archive,update_from_archive,adopt,switch,profile_apply,purge,profile_sync,mod_relink,mod_copy}, updatefromfile, addapikey, reordermodal, profilesmodal, shortcutsmodal, uninstallbatchmodal, setup{,adopt,auth,games,import,sources,updates}, sourceindexes, sourcesmap, gameadd, documentview, jobprogress, toasts, releasebanner, adaptersuggestion)
+    ├── spa/               # index.html shell (+ skip link, the one inline theme script) + app.css (Launcher tokens dark+light, motion tokens, prefers-reduced-motion) + app/*.js (ES modules: render/router/store/api/sse/theme/main, activity+progress+failures+jobhistory+jobresult for the job layer, fomod/modrows/navigation/verify/conflicts/shortcuts/relativetime/motion/timers/focustrap/dismiss/slicefence/version/indexnotice, + components/: app, missioncontrol, topbar, awaybar, arrow, cards, library, gamechooser, modpanel, fullmodpage, searchpage, omnibarresults, searchresults, tray, modal, confirmplan, errordetails, planrenderers, planoptions, plan_{deploy,install,uninstall,rollback,updates,verify_fix,profile_import,import_archive,update_from_archive,adopt,switch,profile_apply,purge,profile_sync,mod_relink,mod_copy,mod_fomod}, fomodwizard, updatefromfile, addapikey, reordermodal, profilesmodal, shortcutsmodal, uninstallbatchmodal, setup{,adopt,auth,games,import,sources,updates}, sourceindexes, sourcesmap, gameadd, documentview, jobprogress, toasts, releasebanner, adaptersuggestion)
     ├── vendor/            # preact.module.js, hooks.module.js, htm.module.js + the UI fonts (Inter, JetBrains Mono .woff2, OFL-1.1, provenance + sha256 in FONTS.md, #523) - pinned, doc-commented, NEVER fetched by any build
     ├── selection.go       # ?game/?profile resolution shared by every scoped /api/v1 endpoint and the 301s
     ├── api.go             # GET /api/v1/{status,mods,updates,profiles,health,conflicts,search,mods/{source}/{id}}
@@ -182,6 +190,7 @@ internal/
     ├── kind_profile_sync.go # `lmm profile sync` as a job (#326)
     ├── kind_purge.go      # `lmm purge` as a job (#326)
     ├── kind_mod_relink.go # `lmm mod edit` as a job - core's PlanRelinkMod/ApplyRelinkMod (#326)
+    ├── kind_mod_fomod.go  # `lmm mod fomod` as a job (SPA: "Reconfigure installer…", #615)
     ├── kind_mod_copy.go   # `lmm mod copy` as a job (SPA: "Copy to profile…" in the row menu and mod panel, #437)
     ├── kind_profile_import.go # `lmm profile import` as a job (SPA: the profiles modal)
     ├── kind_rollback.go   # `lmm update rollback` as a job (SPA: the full mod page's versions table)
@@ -198,6 +207,7 @@ internal/
     ├── api_version_types.go # GET /api/v1/sources/{id}/version-types?game=: the game editor's CurseForge picker (#563)
     ├── api_source_index.go # the local-index routes (#410): GET/POST /api/v1/sources/{id}/index, GET /api/v1/indexes, POST /api/v1/indexes/prune
     ├── api_mod_settings.go # mod lock/unlock/update-policy/convert - single DB writes, no job
+    ├── api_fomod_images.go # GET /api/v1/fomod/images: a FOMOD question's kept option images, read-only (#615)
     ├── api_mod_files.go   # GET /api/v1/mods/{source}/{id}/{files,versions}
     ├── uploads.go         # streamed archive uploads into the real staging dir (2 GiB cap, 30-min TTL)
     └── api_uploads.go     # POST /api/v1/uploads, DELETE /api/v1/uploads/{id}

@@ -69,6 +69,11 @@ type acquiredFile struct {
 
 	owned []string
 	log   *slog.Logger
+
+	// fomod is the FOMOD resolve step's outcome when this file was an
+	// installer (#614): mod.Variant is then its variant. Nil for any other
+	// file.
+	fomod *fomodResolved
 }
 
 // release removes the acquisition's scratch directories. Safe on nil and
@@ -103,8 +108,11 @@ func acquireTreePath(cachePath, fileID string) string {
 // a pristine tree and nothing committed. A failure is a *DownloadError (or
 // a typed refusal kept bare, see asDownloadError), and a refusal the user
 // answers without re-fetching has kept its archive (retained_download.go).
-func (s *Service) acquireFile(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (*acquiredFile, error) {
-	a, err := s.acquireFileRaw(ctx, gameCache, sourceID, game, mod, file, sink)
+//
+// fx is what a FOMOD installer in the file is installed with (#614,
+// fomod_resolve.go); the zero value records no choices.
+func (s *Service) acquireFile(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, sink EventSink) (*acquiredFile, error) {
+	a, err := s.acquireFileRaw(ctx, gameCache, sourceID, game, mod, file, fx, sink)
 	if err != nil {
 		if game != nil {
 			s.noteDownloadOutcome(ctx, game.ID, sourceID, mod, err) // #543
@@ -141,11 +149,16 @@ func (a *acquiredFile) claimTree() error {
 	if err := os.RemoveAll(a.tree); err != nil {
 		return fmt.Errorf("clearing acquire directory: %w", err)
 	}
+	// A FOMOD resolve that crashed mid-build leaves its half-built tree
+	// beside the acquire tree (executeFomodOps): clear that too.
+	if err := os.RemoveAll(a.tree + ".fomod"); err != nil {
+		return fmt.Errorf("clearing acquire directory: %w", err)
+	}
 	a.owned = append(a.owned, a.tree)
 	return nil
 }
 
-func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (a *acquiredFile, err error) {
+func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, sink EventSink) (a *acquiredFile, err error) {
 	// Note: We intentionally do NOT check if cache exists here.
 	// A mod can have multiple downloadable files (e.g., main mod + optional patches),
 	// and each file should be downloaded and extracted to the cache.
@@ -170,7 +183,7 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 		if !isFetcher || !errors.Is(err, source.ErrNotSupported) {
 			return nil, fmt.Errorf("getting download URL: %w", err)
 		}
-		a, err := s.acquireFetched(ctx, gameCache, fetcher, sourceID, game, mod, file, sink)
+		a, err := s.acquireFetched(ctx, gameCache, fetcher, sourceID, game, mod, file, fx, sink)
 		if a != nil {
 			a.sourceID = sourceID
 		}
@@ -186,7 +199,7 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 		if !servesLocal || !lfs.ServesLocalFiles() {
 			return nil, fmt.Errorf("source %q returned a local file:// URL but is not a directory source", sourceID)
 		}
-		a, err := s.acquireLocal(ctx, gameCache, game, mod, file, localPath, sink)
+		a, err := s.acquireLocal(ctx, gameCache, game, mod, file, localPath, fx, sink)
 		if a != nil {
 			a.sourceID = sourceID
 		}
@@ -319,12 +332,13 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 		return a, nil
 	}
 
-	members, err := s.extractPristine(ctx, game, mod, archivePath, a.tree, sink)
+	members, resolved, err := s.extractPristine(ctx, game, mod, archivePath, a.tree, fx, sink)
 	if err != nil {
 		s.retainRefusedDownload(err, sourceID, mod.ID, file.ID, archivePath, downloadResult, identityOf(mod, file))
 		return nil, fmt.Errorf("extracting mod: %w", err)
 	}
 	a.members, a.listed = members, true
+	a.setFomod(resolved)
 	return a, nil
 }
 
@@ -342,7 +356,7 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 //
 // sink receives the archive's download-time warnings (#425) - the same
 // DownloadWarning events a fetched archive raises - and may be nil.
-func (s *Service) acquireLocal(ctx context.Context, gameCache *cache.Cache, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, localPath string, sink EventSink) (a *acquiredFile, err error) {
+func (s *Service) acquireLocal(ctx context.Context, gameCache *cache.Cache, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, localPath string, fx fomodInput, sink EventSink) (a *acquiredFile, err error) {
 	info, err := os.Stat(localPath)
 	if err != nil {
 		return nil, fmt.Errorf("local mod path: %w", err)
@@ -415,9 +429,11 @@ func (s *Service) acquireLocal(ctx context.Context, gameCache *cache.Cache, game
 			return nil, fmt.Errorf("hashing local mod file: %w", err)
 		}
 	default:
-		if a.members, err = s.extractPristine(ctx, game, mod, localPath, a.tree, sink); err != nil {
+		var resolved *fomodResolved
+		if a.members, resolved, err = s.extractPristine(ctx, game, mod, localPath, a.tree, fx, sink); err != nil {
 			return nil, fmt.Errorf("extracting mod: %w", err)
 		}
+		a.setFomod(resolved)
 		if a.checksum, err = md5File(localPath); err != nil {
 			return nil, fmt.Errorf("hashing local mod archive: %w", err)
 		}
@@ -503,9 +519,31 @@ func mergeAcquiredTree(tree, stagePath string) error {
 // Returned members are tree-relative paths of regular files only, matching
 // cache.ListFiles semantics (directories and symlinks are never listed,
 // deployed, or undeployed).
-func (s *Service) extractPristine(ctx context.Context, game *domain.Game, mod *domain.Mod, archivePath, tree string, sink EventSink) ([]string, error) {
+//
+// Between the extract and the adapter, the FOMOD resolve step (#614,
+// fomod_resolve.go) turns an installer archive into the tree its choices
+// install, so the adapter lays out what the mod IS rather than the
+// installer's raw contents. Its outcome is returned for the caller to
+// record; nil for any other archive.
+func (s *Service) extractPristine(ctx context.Context, game *domain.Game, mod *domain.Mod, archivePath, tree string, fx fomodInput, sink EventSink) ([]string, *fomodResolved, error) {
 	if err := s.extractor.Extract(ctx, archivePath, tree); err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	resolved, err := s.resolveFomod(mod, filepath.Base(archivePath), tree, fx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if resolved != nil {
+		for _, w := range resolved.warnings {
+			s.logger().Warn(w, "mod", mod.Name, "game", game.ID)
+			if sink != nil {
+				sink(WarningEvent{
+					Scope:   Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}},
+					Phase:   DownloadWarning,
+					Message: w,
+				})
+			}
+		}
 	}
 
 	// #353: the game's adapter gets its say on the archive's layout HERE,
@@ -523,7 +561,7 @@ func (s *Service) extractPristine(ctx context.Context, game *domain.Game, mod *d
 	// item's before writing anything at all (#602).
 	layout, err := s.layoutStagedExtract(game, mod.Name, tree)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// A download has no plan to carry the adapter's warnings: its shape is
 	// not knowable until it is extracted, which is this function. So they
@@ -557,7 +595,17 @@ func (s *Service) extractPristine(ctx context.Context, game *domain.Game, mod *d
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing extracted members: %w", err)
+		return nil, nil, fmt.Errorf("listing extracted members: %w", err)
 	}
-	return members, nil
+	return members, resolved, nil
+}
+
+// setFomod records the resolve step's outcome on the acquisition: the cache
+// entry it commits to is the resolved tree's variant.
+func (a *acquiredFile) setFomod(r *fomodResolved) {
+	if r == nil {
+		return
+	}
+	a.fomod = r
+	a.mod.Variant = r.variant
 }

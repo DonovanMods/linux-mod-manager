@@ -99,6 +99,7 @@ func init() {
 	importCmd.Flags().BoolVar(&importSkipMatch, "skip-match", false, "skip source lookup for untracked mods")
 	importCmd.Flags().BoolVar(&importWorkshop, "workshop", false, "track the Steam Workshop items you are subscribed to (lmm never moves their files)")
 	importCmd.Flags().BoolVar(&importRefresh, "refresh", false, "bypass cached source metadata (--workshop)")
+	addFomodFlags(importCmd)
 
 	rootCmd.AddCommand(importCmd)
 }
@@ -217,7 +218,15 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	}
 	opts.AcceptConflicts = accept
 
-	result, err := service.ApplyImportArchive(ctx, game, profileName, plan, opts, sink)
+	// #615: a FOMOD installer's questions are answered and the import re-run.
+	fa, err := newFomodAnswerer(service)
+	if err != nil {
+		return err
+	}
+	result, err := applyAnsweringFomod(fa, func(answers map[string]domain.FomodChoices) (*core.ImportArchiveResult, error) {
+		opts.Fomod = answers
+		return service.ApplyImportArchive(ctx, game, profileName, plan, opts, sink)
+	}, nil)
 	if err != nil {
 		return err
 	}

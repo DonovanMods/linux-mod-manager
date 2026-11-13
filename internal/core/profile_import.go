@@ -304,8 +304,8 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 				// branch below into a reinstall lmm has no way to perform.
 				// "Already installed" is the whole truth about it.
 				installed = append(installed, ref)
-			case ref.Version != "" && im.Version != ref.Version:
-				// #138 convergence, mirroring PlanProfileSwitch's #96 drift
+			case (ref.Version != "" && im.Version != ref.Version) || fomodDrift(ref, &im):
+				// #138 convergence (and #614's FOMOD choices drift), mirroring PlanProfileSwitch's #96 drift
 				// case: the imported profile names a different version than
 				// the installed row - reinstall at the profile's version
 				// (downgrades included). ref is passed as-is: its own
@@ -490,7 +490,9 @@ func pickImportRow(rows []domain.InstalledMod, ref domain.ModReference, cached f
 	best := domain.InstalledMod{}
 	bestScore := -1
 	for _, row := range rows {
-		versionMatches := ref.Version == "" || row.Version == ref.Version
+		// #614: a row of another tree (other FOMOD choices) is not the
+		// one the reference names.
+		versionMatches := (ref.Version == "" || row.Version == ref.Version) && row.Variant == refVariant(&ref)
 		score := 0
 		switch {
 		case row.External:
@@ -580,6 +582,13 @@ type ProfileImportOptions struct {
 	// false and keeps per-mod failure counting.
 	AllOrNothing bool
 
+	// Fomod answers FOMOD installer questions (#614), keyed by
+	// domain.ModKey, as InstallOptions.Fomod does. A mod with no entry
+	// installs with the choices its imported reference records. An import
+	// with an unanswered installer refuses with *FomodChoicesRequiredError
+	// (the result's FomodChoicesRequired), nothing written.
+	Fomod map[string]domain.FomodChoices
+
 	// WithHooks saves the imported document's hooks (#621): `--with-hooks`.
 	// Without it the profile is saved without them, and the result says so
 	// (HooksWithheld). Every document import, version 0 included: a hook is
@@ -655,6 +664,11 @@ type ProfileImportResult struct {
 	// error envelope for a single mod, naming every mod that needs the
 	// loader, with the setup steps both frontends render.
 	LoaderRequired *LoaderRequiredError `json:"loader_required,omitempty"`
+	// FomodChoicesRequired is the FOMOD question behind Refused, when the
+	// refusal includes one (#614): the question document for every mod
+	// whose installer needs answers, which the frontend answers and sends
+	// back in the Apply's Options.Fomod.
+	FomodChoicesRequired *FomodChoicesRequiredError `json:"fomod_choices_required,omitempty"`
 
 	// HooksWithheld counts the hooks the imported document carried that
 	// the import did not save (#621): no --with-hooks, or a collection
@@ -793,7 +807,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		n:      total,
 		key:    func(i int) string { return domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID) },
 		acquire: func(ctx context.Context, i int) (*importStaged, *acquireFailure) {
-			st, failure := s.acquireImportItem(ctx, game, plan, toInstall[i], Scope{Op: OpImport, Index: i + 1, Total: total}, result, emit, failed)
+			st, failure := s.acquireImportItem(ctx, game, plan, toInstall[i], Scope{Op: OpImport, Index: i + 1, Total: total}, opts.Fomod, result, emit, failed)
 			key := domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID)
 			switch {
 			case st != nil:
@@ -993,9 +1007,9 @@ func (s *Service) rowChecksums(ctx context.Context, game *domain.Game, row domai
 // than swallowed into a note; anything else is the note. A write that
 // SUCCEEDED returns nil whatever the ctx says, so the caller counts the mod
 // it genuinely finished and stops at its next top-of-loop check.
-func (s *Service) recordImportedRef(ctx context.Context, pm *ProfileManager, gameID, profileName string, ref domain.ModReference, scope Scope, result *ProfileImportResult, emit func(Event)) error {
+func (s *Service) recordImportedRef(ctx context.Context, pm *ProfileManager, gameID, profileName string, ref domain.ModReference, fomodRec fomodRecord, scope Scope, result *ProfileImportResult, emit func(Event)) error {
 	err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.UpsertMod(ctx, gameID, profileName, ref)
+		return pm.upsertMod(ctx, gameID, profileName, ref, fomodRec)
 	})
 	if err == nil {
 		return nil

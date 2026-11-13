@@ -127,7 +127,7 @@ func TestMigrateV23_BackfillsLastUpdatedFromInstalledAt(t *testing.T) {
 
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	assert.Equal(t, 24, version)
+	assert.Equal(t, 25, version)
 
 	_, err := d.Exec(`INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, summary, source_url, link_method, installed_at, last_updated_at)
 		VALUES ('s', 'm', 'g', 'default', 'n', '1', '', '', '', 0, '2025-05-06T07:08:09Z', NULL)`)
@@ -158,14 +158,14 @@ func TestLastUpdatedAt_UpdateAndRollbackMoveIt(t *testing.T) {
 
 	t1 := t0.Add(time.Hour)
 	*now = t1
-	require.NoError(t, d.ApplyModUpdate(ctx, "s", "m", "g", "default", "2.0", "", []string{"f2"}))
+	require.NoError(t, d.ApplyModUpdate(ctx, "s", "m", "g", "default", "2.0", "", domain.FomodChoices{}, []string{"f2"}))
 	installed, updated := getLastUpdated(t, d)
 	assert.True(t, installed.Equal(t0), "installed_at never moves")
 	assert.True(t, updated.Equal(t1), "ApplyModUpdate moves Updated")
 
 	t2 := t0.Add(2 * time.Hour)
 	*now = t2
-	require.NoError(t, d.SwapModVersions(ctx, "s", "m", "g", "default"))
+	require.NoError(t, swapErrOnly(d.SwapModVersions(ctx, "s", "m", "g", "default", domain.FomodChoices{})))
 	_, updated = getLastUpdated(t, d)
 	assert.True(t, updated.Equal(t2), "a rollback moves Updated")
 
@@ -176,7 +176,10 @@ func TestLastUpdatedAt_UpdateAndRollbackMoveIt(t *testing.T) {
 	assert.True(t, updated.Equal(t3), "UpdateModVersion moves Updated")
 
 	*now = t0.Add(4 * time.Hour)
-	require.NoError(t, d.ApplyModUpdate(ctx, "s", "m", "g", "default", "3.0", "", []string{"f3"}))
+	require.NoError(t, d.ApplyModUpdate(ctx, "s", "m", "g", "default", "3.0", "", domain.FomodChoices{}, []string{"f3"}))
 	_, updated = getLastUpdated(t, d)
 	assert.True(t, updated.Equal(t3), "re-applying the installed version keeps Updated")
 }
+
+// swapErrOnly drops SwapModVersions' restored choices.
+func swapErrOnly(_ domain.FomodChoices, err error) error { return err }

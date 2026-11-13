@@ -238,6 +238,26 @@ func TestAutoUpdater_AnAttemptedUpdateIsNotRetriedUntilAskedTo(t *testing.T) {
 	assert.Empty(t, a.failures(key, planned), "failures included")
 }
 
+// TestAutoUpdater_AFomodReanswerSkipIsAnnounced (#614): automatic updates
+// never ask, so a mod skipped because its installer choices need
+// re-answering is reported with the failures - not held back in silence.
+func TestAutoUpdater_AFomodReanswerSkipIsAnnounced(t *testing.T) {
+	var a autoUpdater
+	key := autoUpdateKey("g1", "default")
+	planned := []domain.Update{{InstalledMod: domain.InstalledMod{Mod: domain.Mod{ID: "f", SourceID: "src"}, UpdatePolicy: domain.UpdateAuto}, NewVersion: "2"}}
+	a.running = map[string]autoUpdateJob{key: {id: "j1"}}
+	a.recordOutcome(key, planned, &core.UpdateBatchResult{Skipped: []core.UpdateApplyResult{{
+		Mod: domain.ModReference{SourceID: "src", ModID: "f"}, Name: "F", FromVersion: "1", ToVersion: "2",
+		Status: core.UpdateSkipped, Reason: core.ReasonFomodReanswer, FomodReanswer: true,
+	}}}, nil)
+	assert.Empty(t, a.retryable(key, planned, false), "not retried at the same version")
+	assert.Equal(t, []core.ModAutoUpdateFailure{{
+		UpdateBatchFailure: core.UpdateBatchFailure{Mod: "src:f", Name: "F", FromVersion: "1", ToVersion: "2", Error: core.ReasonFomodReanswer},
+		JobID:              "j1",
+		FomodReanswer:      true,
+	}}, a.failures(key, planned))
+}
+
 // TestAPIFlow_AutoUpdates_NeverForAnotherProfile is decision 3 over HTTP:
 // checking a profile that is not the deployed one applies nothing.
 func TestAPIFlow_AutoUpdates_NeverForAnotherProfile(t *testing.T) {

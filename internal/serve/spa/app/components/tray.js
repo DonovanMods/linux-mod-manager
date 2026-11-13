@@ -331,9 +331,17 @@ export function OverwriteButton({ job, actions }) {
   const [busy, setBusy] = useState(false);
   if (!step) return null;
 
-  const retryable = actions.canRetryInstallOverwrite(job.id);
+  const fomod = step.action === "fomod";
+  const retryable = fomod
+    ? actions.canAnswerFomod(job.id)
+    : actions.canRetryInstallOverwrite(job.id);
 
   async function fire() {
+    if (fomod) {
+      // issue 615: the wizard opens; its Finish re-posts the job.
+      actions.answerFomod(job);
+      return;
+    }
     setBusy(true);
     try {
       await actions.retryInstallOverwrite(job.id);

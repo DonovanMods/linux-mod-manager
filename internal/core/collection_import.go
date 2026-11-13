@@ -41,6 +41,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
@@ -165,6 +166,12 @@ type CollectionImportItem struct {
 	// Unavailable says why lmm cannot fetch the item here, and what to do
 	// about it; empty when it can.
 	Unavailable string `json:"unavailable,omitempty"`
+	// InstallerChoices are the FOMOD installer choices the collection
+	// records for the item (#615), one "Step > Group: picks" line per
+	// answered group, for a plan to show; empty when it records none. They
+	// are replayed as written; an installer that no longer accepts them is
+	// asked about at install time.
+	InstallerChoices []string `json:"installer_choices,omitempty"`
 }
 
 // CollectionGameError refuses a collection whose portable game identity
@@ -369,6 +376,8 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 			Name:        item.Name,
 			Version:     item.Ref.Version,
 			Unavailable: s.unavailableReason(game, item.Ref.SourceID),
+			// #615: what the collection's installer answers will install.
+			InstallerChoices: installerChoiceLines(item.Ref.Fomod),
 		})
 	}
 	plan.Collection = c
@@ -672,6 +681,9 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 			warnings = append(warnings, fmt.Sprintf("a mods: entry (%q) names no source or mod id and was skipped", item.Name))
 			continue
 		}
+		if err := checkCollectionFomod(r.Fomod); err != nil {
+			return nil, fmt.Errorf("%w: %s:%s's fomod choices %v", ErrInvalidCollection, r.SourceID, r.ModID, err)
+		}
 		items = append(items, item)
 	}
 	doc.Items = items
@@ -679,6 +691,86 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 		warnings = append(warnings, fmt.Sprintf("the document names a signer (%s), which this version of lmm does not verify", doc.Signer))
 	}
 	return warnings, tooLong
+}
+
+// checkCollectionFomod refuses a stranger's recorded FOMOD choices that
+// lmm could not replay as written (#614). Every name is matched against
+// the installer's, so none is rewritten: one holding a control, escape or
+// bidi/format character, or over the line limit, refuses the document, as
+// a hook command does. The config hash must be lmm's own form (64
+// lower-case hex digits, or absent), a file state one of the three the
+// evaluator gives, and the counts stay within what internal/fomod accepts:
+// fomod.MaxChoices recorded entries (steps, groups and picks together),
+// and as many file states.
+func checkCollectionFomod(c domain.FomodChoices) error {
+	if c.IsZero() {
+		return nil
+	}
+	if c.ConfigSHA256 != "" && !isLowerHexSHA256(c.ConfigSHA256) {
+		return fmt.Errorf("name a config_sha256 (%q) that is not 64 lower-case hex digits", c.ConfigSHA256)
+	}
+	entries := len(c.Steps)
+	for _, st := range c.Steps {
+		entries += len(st.Groups)
+		for _, g := range st.Groups {
+			entries += len(g.Choices)
+		}
+	}
+	if entries > fomod.MaxChoices {
+		return fmt.Errorf("hold %d entries, over the %d limit", entries, fomod.MaxChoices)
+	}
+	if len(c.FileStates) > fomod.MaxChoices {
+		return fmt.Errorf("hold %d file states, over the %d limit", len(c.FileStates), fomod.MaxChoices)
+	}
+	name := func(what, s string, index *int) error {
+		if hasUnsafeRunes(s) || len(s) > maxCollectionLine {
+			return fmt.Errorf("name a %s (%q) that contains control or formatting characters, or is over the %d-byte limit", what, s, maxCollectionLine)
+		}
+		if index != nil && *index < 0 {
+			return fmt.Errorf("give the %s %q a negative index", what, s)
+		}
+		return nil
+	}
+	for _, st := range c.Steps {
+		if err := name("step", st.Name, st.Index); err != nil {
+			return err
+		}
+		for _, g := range st.Groups {
+			if err := name("group", g.Name, g.Index); err != nil {
+				return err
+			}
+			for _, o := range g.Choices {
+				if err := name("option", o.Name, o.Index); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	for path, state := range c.FileStates {
+		if path == "" || hasUnsafeRunes(path) || len(path) > maxCollectionLine {
+			return fmt.Errorf("name a file state path (%q) that is empty, contains control or formatting characters, or is over the %d-byte limit", path, maxCollectionLine)
+		}
+		switch state {
+		case fomod.FileMissing.String(), fomod.FileInactive.String(), fomod.FileActive.String():
+		default:
+			return fmt.Errorf("give %q the file state %q, which is not Missing, Inactive or Active", path, state)
+		}
+	}
+	return nil
+}
+
+// isLowerHexSHA256 reports whether s is a sha256 as lmm records one: 64
+// lower-case hex digits.
+func isLowerHexSHA256(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // hasUnsafeRunes reports whether s holds invalid UTF-8, a control
@@ -752,4 +844,25 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// installerChoiceLines words recorded FOMOD choices for a plan (#615): one
+// "Step > Group: A, B" line per answered group ("none" for a group answered
+// with no pick), sanitised for display. Nil for no choices.
+func installerChoiceLines(c domain.FomodChoices) []string {
+	var out []string
+	for _, step := range c.Steps {
+		for _, group := range step.Groups {
+			picks := make([]string, 0, len(group.Choices))
+			for _, o := range group.Choices {
+				picks = append(picks, domain.SanitizeLine(o.Name))
+			}
+			list := strings.Join(picks, ", ")
+			if list == "" {
+				list = "none"
+			}
+			out = append(out, domain.SanitizeLine(step.Name)+" > "+domain.SanitizeLine(group.Name)+": "+list)
+		}
+	}
+	return out
 }

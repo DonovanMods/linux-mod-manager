@@ -726,3 +726,96 @@ func TestCache_CopyModAs_LeftoverTempDirIsSwept(t *testing.T) {
 	require.NoError(t, c.Delete(cache.Key{GameID: "icarus", SourceID: "icarus", ModID: "new", Version: "1.0"}))
 	assert.NoDirExists(t, container, "deleting the last version sweeps a leftover temp dir with the container")
 }
+
+// TestCache_PublishMod_ReplacesTheEntryOnlyOnceTheCopyIsWhole (#614
+// re-review should-fix 4): a reinstall publishing another variant's staged
+// tree into the live cache replaces any entry of that variant already there
+// - its files go, not layered under the new ones - and a publish that fails
+// mid-copy leaves the old entry exactly as it was and no litter.
+func TestCache_PublishMod_ReplacesTheEntryOnlyOnceTheCopyIsWhole(t *testing.T) {
+	k := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0", Variant: "abcdef123456"}
+	staged, live := cache.New(t.TempDir()), cache.New(t.TempDir())
+	require.NoError(t, staged.Store(k, "new.esp", []byte("new")))
+	require.NoError(t, cache.MarkFileComplete(staged.ModPath(k), "f1"))
+	require.NoError(t, live.Store(k, "old.esp", []byte("old")))
+	require.NoError(t, cache.StampKey(live.ModPath(k), k))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, staged.PublishMod(ctx, live, k), context.Canceled)
+	files, err := live.ListFiles(k)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"old.esp"}, files, "a failed publish leaves the old entry")
+	container, err := os.ReadDir(filepath.Dir(live.ModPath(k)))
+	require.NoError(t, err)
+	require.Len(t, container, 1, "and no copy behind")
+
+	require.NoError(t, staged.PublishMod(context.Background(), live, k))
+	files, err = live.ListFiles(k)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"new.esp"}, files, "the old entry's files are replaced, not kept")
+	assert.True(t, live.HasFileIDs(k, []string{"f1"}), "the markers come along")
+	require.NoError(t, cache.CheckKey(live.ModPath(k), k), "stamped as k's")
+	container, err = os.ReadDir(filepath.Dir(live.ModPath(k)))
+	require.NoError(t, err)
+	assert.Len(t, container, 1, "the replaced entry is gone")
+
+	other := k
+	other.Variant = ""
+	other.Version = "1.0@abcdef123456"
+	plain := cache.New(t.TempDir())
+	require.NoError(t, plain.Store(other, "x.esp", []byte("x")))
+	var collision *cache.KeyCollisionError
+	assert.ErrorAs(t, plain.PublishMod(context.Background(), live, other), &collision, "another key's directory is refused")
+}
+
+// TestCache_PublishMod_ACrashBetweenTheRenamesIsUndoneBySweep (#614 review
+// B): a PublishMod that crashed after moving the replaced entry aside, and
+// before the new one took its place, left the entry missing. The next
+// publish into the container puts the entry back; when the new entry did
+// land, the set-aside copy is deleted instead.
+func TestCache_PublishMod_ACrashBetweenTheRenamesIsUndoneBySweep(t *testing.T) {
+	k := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0", Variant: "abcdef123456"}
+	next := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "2.0"}
+	staged, live := cache.New(t.TempDir()), cache.New(t.TempDir())
+	require.NoError(t, live.Store(k, "old.esp", []byte("old")))
+	require.NoError(t, cache.StampKey(live.ModPath(k), k))
+	require.NoError(t, staged.Store(next, "next.esp", []byte("next")))
+	aside := filepath.Join(filepath.Dir(live.ModPath(k)), cache.ReservedPrefix+"copy-replaced-"+filepath.Base(live.ModPath(k)))
+
+	// Crash 1: the entry moved aside, its replacement never renamed in.
+	require.NoError(t, os.Rename(live.ModPath(k), aside))
+	require.NoError(t, staged.PublishMod(context.Background(), live, next))
+	files, err := live.ListFiles(k)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"old.esp"}, files, "the entry is put back, not deleted")
+	assert.NoDirExists(t, aside)
+
+	// Crash 2: the replacement landed, the set-aside copy was not removed.
+	require.NoError(t, os.MkdirAll(aside, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(aside, "stale.esp"), []byte("stale"), 0o644))
+	require.NoError(t, staged.PublishMod(context.Background(), live, next))
+	assert.NoDirExists(t, aside, "a leftover whose entry exists is deleted")
+	files, err = live.ListFiles(k)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"old.esp"}, files, "and the entry is untouched")
+}
+
+// TestCache_Delete_RemovesAnEntrySetAsideByACrashedPublish (#614 final
+// review): after a crash between PublishMod's renames the entry lives only
+// under its set-aside name. Deleting k must delete that copy too - not let
+// the sweep restore it inside the very Delete meant to remove it, leaving
+// an uninstalled mod's files to be found warm by a later reinstall.
+func TestCache_Delete_RemovesAnEntrySetAsideByACrashedPublish(t *testing.T) {
+	k := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0", Variant: "abcdef123456"}
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store(k, "old.esp", []byte("old")))
+	require.NoError(t, cache.StampKey(c.ModPath(k), k))
+	aside := filepath.Join(filepath.Dir(c.ModPath(k)), cache.ReservedPrefix+"copy-replaced-"+filepath.Base(c.ModPath(k)))
+	require.NoError(t, os.Rename(c.ModPath(k), aside))
+
+	require.NoError(t, c.Delete(k))
+	assert.NoDirExists(t, c.ModPath(k), "the entry is not restored")
+	assert.NoDirExists(t, aside, "and its set-aside copy is gone")
+	assert.False(t, c.Exists(k))
+}

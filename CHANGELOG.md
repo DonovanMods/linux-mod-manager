@@ -110,22 +110,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ProfileImportOptions.AllOrNothing` makes every acquire failure, not only
   an answerable one, refuse the whole import with nothing written. No
   frontend uses it yet; collection import will.
-- **Groundwork for FOMOD installs: recorded choices and cache variants
-  (#614).** Nothing uses either yet, so installs behave exactly as before.
-  - A profile can record a mod's FOMOD installer choices as a `fomod:`
-    block beside `disabled:` and `category:`. Profile saves, duplicates,
-    `lmm mod copy`, re-links, export and import all keep it, and no file
-    gains the key until a later release writes one. An older lmm drops the
-    block when it rewrites the profile.
-  - The database gains `installed_mods.variant` and `previous_variant`
-    (schema version 24), which name the tree of a version that FOMOD
-    choices build. Rollback restores the previous tree with the previous
-    version. After the upgrade, an older lmm refuses this database, as
-    with every schema change.
-  - Each cache entry now records which version and variant it belongs to
-    (a reserved `.lmm-key` file). A source version that happens to spell
-    another entry's directory, such as `1.0@abcdef123456`, can never read,
+- **FOMOD installers install, for every game (#614).** A mod whose archive
+  is a FOMOD installer (`fomod/ModuleConfig.xml`) is installed as the
+  installer's choices say, rather than as the raw archive: only the chosen
+  files, at the places the installer puts them, never the installer's own
+  `fomod/` folder. This runs in `lmm install`, `lmm profile import`,
+  `lmm import <archive>`, `lmm update` (and `--from-file`), profile switch
+  and apply, and `verify --fix`. Scripted installers (`fomod/script.cs`)
+  and OMODs are refused, never run.
+  - What was chosen is recorded on the profile as a `fomod:` block beside
+    `disabled:` and `category:`, with the hash of the installer it answers.
+    Reinstalls, export and import, duplicate, `lmm mod copy`, re-links,
+    switch and apply all reuse it, so they install the same files. Editing
+    it, or importing a document with other choices, makes the next
+    `lmm profile apply` reinstall the mod with them. A mod whose new archive
+    is not an installer has its choices cleared, and a rollback restores the
+    previous version's. An older lmm drops the block when it rewrites the
+    profile.
+  - A collection (#621) carries the choices in its `mods` entries and, when
+    any mod records some, declares `requires: fomod`; `fomod` joins the
+    features an import supports. An imported collection's choices are
+    matched against the installer exactly as written, so a step, group,
+    option or file name holding a control, escape or bidi/format character
+    refuses the document rather than being cleaned, as do a malformed
+    `config_sha256` or file state and more than 10,000 recorded entries or
+    file states.
+  - The installer's `fileDependency` conditions are answered from the
+    profile being installed into: a file is present when a mod of that
+    profile, or the game itself, provides it. The outcomes are recorded with
+    the choices (`file_states:`), since they shape which files install.
+  - An install with no recorded choices stops before anything is written,
+    keeps the download, and reports the installer's questions: the error's
+    `--json` details are the question document, and a multi-mod install or
+    an import carries it as `fomod_choices_required` beside the existing
+    `loader_required`, with the refusal code `fomod_choices_required`.
+    Recorded choices that no longer fit the installer are asked about the
+    same way, showing what no longer fits. (The prompts that answer them
+    ship with this change, #615.)
+  - Updates keep the choices. The update batch and automatic updates never
+    ask: a mod whose new installer no longer accepts them is skipped with
+    "installer choices need re-answering", and one that has just become an
+    installer with "installer choices needed" (`fomod_reanswer: true` in
+    `--json` for both); automatic updates list it with their failures.
+  - A FOMOD mod installed before this release keeps its installed files and
+    keeps working as before; `lmm mod show --json` marks it
+    `fomod_not_run`, and reconfiguring it runs its installer (#615).
+  - An archive member whose name is not a safe path is never installed and
+    is reported as a warning. An installer that would copy more than four
+    times its archive's size (plus 64 MiB) is refused.
+  - Each set of choices gets its own cache entry beside the version
+    (`<version>@<variant>`); the version shown everywhere is still the
+    source's. The database gains `installed_mods.variant`,
+    `previous_variant` and `previous_fomod` (schema versions 24 and 25), so
+    rollback restores the right files and choices. After the upgrade, an older lmm refuses this database, as with
+    every schema change.
+  - Each cache entry records which version and variant it belongs to (a
+    reserved `.lmm-key` file), so a source version that happens to spell
+    another entry's folder, such as `1.0@abcdef123456`, can never read,
     replace or delete that entry; lmm refuses with an error naming both.
+- **Answering FOMOD installers, in the terminal and the web UI (#615).**
+  - At a terminal, `lmm install`, `lmm profile import`, `lmm import
+<archive>`, `lmm install --from-file`, `lmm update` and
+    `lmm update --from-file` walk the installer one step at a time, with
+    each option's description (and the path of its image), keep the group
+    rules (exactly one, at most one, at least one, all, any), and run the
+    same command again with the answers. A step whose answer changes what
+    comes next is checked against the installer first; nothing is
+    downloaded twice.
+  - Without a terminal, or under `--json`, `--fomod-defaults` takes the
+    installer's own preselection (the question's new `defaults`, also on a
+    reconfigure or when the recorded choices no longer fit) and `--fomod-choices <file.json>` takes the
+    answers from a file (the profile's `fomod:` shape, or a collection's
+    `choices` list; keyed by `source:id` when several mods ask). With
+    neither, the command exits non-zero with the question: the `--json`
+    error envelope's `details`, or a summary on stderr. A multi-mod install
+    or a profile import whose result carries the question also exits
+    non-zero now.
+  - `lmm mod fomod <mod-id>` re-runs an installed mod's installer with its
+    recorded choices preselected and installs and deploys the new selection
+    in place of the old one, at the same version, keeping the mod's
+    rollback history. When a changed answer brings up later steps again,
+    they start from what was recorded, not from the installer's defaults.
+    `lmm mod show` says whether a mod's installer was answered or never
+    run. It also runs the
+    installer of a FOMOD mod installed before lmm ran installers (which
+    went in as the raw archive), replacing that install.
+  - The web UI asks in a wizard, one step per page, with option
+    descriptions and images, and re-posts the job with the answers; "Use
+    the installer's defaults" answers a mod in one click, as
+    `--fomod-defaults` does; the
+    full mod page offers "Reconfigure installer…", and the activity tray
+    "Answer installer…" on a failed job. Option images are served read-only
+    from what the question kept (`GET /api/v1/fomod/images`): only images
+    the archive contains, at most 8 MiB each, PNG, JPEG, GIF, WebP or BMP.
+  - A collection import's plan, in the terminal and the web UI, names what
+    the collection requires (`fomod` among it) and each mod's recorded
+    installer choices (`installer_choices` on its items in `--json`), which
+    are replayed as written; a collection whose recorded choices no longer
+    fit asks, in the terminal and in the web UI's wizard.
+  - The install, profile import, archive import, update from file and
+    update batch jobs accept `fomod` answers; the new `mod_fomod` plan kind
+    is the reconfigure. `lmm mod show --json` (and the mod page's document)
+    carries the recorded choices as `installed.fomod`.
+  - An update batch's `fomod_reanswer` skip now carries its question as
+    `fomod_choices_required`, and the batch accepts answers, so the web UI
+    asks when you update one mod, and `lmm update`'s batch answers it with
+    the FOMOD flags (or at a terminal) and runs again over those mods. The
+    update batch's terminal summary lists
+    these mods with the `lmm update` command that asks, instead of under
+    Steam Workshop items, and an automatic update held back for it is
+    marked `fomod_reanswer` and says so on the Updates card.
 
 ### Changed
 

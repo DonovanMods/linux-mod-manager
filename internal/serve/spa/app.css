@@ -2264,6 +2264,84 @@ a.row-menu__item.mod-page-link {
   font-size: 0.85em;
 }
 
+/* The FOMOD installer wizard (issue 615): one step per page, a fieldset
+   per group, each option with its type, description and image. */
+.fomod__mod {
+  margin: 0 0 var(--space-2);
+  color: var(--text-secondary);
+}
+
+.fomod__shortcut {
+  margin: 0 0 var(--space-3);
+}
+
+.fomod__step {
+  margin: 0 0 var(--space-3);
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.fomod__group {
+  min-width: 0;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  border: 0;
+}
+
+.fomod__legend {
+  padding: 0;
+  margin-bottom: var(--space-2);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.fomod__rule {
+  margin-left: var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.85em;
+  font-weight: 400;
+}
+
+.fomod__option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.fomod__option-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.fomod__option-name {
+  color: var(--text-primary);
+}
+
+.fomod__option-type {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.fomod__description {
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  white-space: pre-line;
+}
+
+.fomod__image {
+  flex: none;
+  max-width: 12rem;
+  max-height: 8rem;
+  border-radius: var(--radius);
+  object-fit: contain;
+}
+
 /* The game-source mapping editor (C-4), shared by the Games table's own
    "Edit sources…" row and the add form's "Also map" section. */
 .sources-map {

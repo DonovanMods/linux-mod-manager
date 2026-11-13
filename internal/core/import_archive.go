@@ -104,6 +104,13 @@ type ImportArchiveOptions struct {
 	// AcceptMismatch answers the filename gate: install from an archive that
 	// is not the expected file (ArchiveMatchMismatch). Apply-time only.
 	AcceptMismatch bool
+
+	// Fomod answers FOMOD installer questions (#614), keyed by
+	// domain.ModKey of the mod the plan resolved, as InstallOptions.Fomod
+	// does. An archive whose installer needs answers fails the import with
+	// *FomodChoicesRequiredError before anything is cached; the frontend
+	// asks and calls again with the answers here.
+	Fomod map[string]domain.FomodChoices
 }
 
 // ImportArchiveResult reports ImportArchive's outcome. As with every other
@@ -693,6 +700,9 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		SourceID:    opts.SourceID,
 		ModID:       opts.ModID,
 		ProfileName: profileName,
+		// #614: a FOMOD installer installs with this call's answers for
+		// the mod, else the choices its profile ref records.
+		fomod: s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, plan.Mod.SourceID, plan.Mod.ID), plan.Mod.SourceID, plan.Mod.ID, opts.Fomod),
 	}
 
 	gameCache := s.GetGameCache(game)
@@ -712,6 +722,7 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	// readout already printed - rather than the ingest's own pre-enrichment
 	// value, so the ID printed is the ID persisted.
 	planned := plan.Mod
+	planned.Variant = imported.Mod.Variant // #614: the entry the ingest resolved
 	result.Mod = &planned
 	result.LinkedSource = plan.LinkedSource
 	result.AutoDetected = plan.AutoDetected
@@ -719,12 +730,12 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 
 	// The identity the ingest recorded, before the enrichment rename moves it
 	// - the cache entry currently lives under exactly this ID and version.
-	preEnrichID, preEnrichVersion := ident.modID, ident.version
+	preEnrichID, preEnrichVersion, preEnrichVariant := ident.modID, ident.version, imported.Mod.Variant
 
 	resolvedFile := plan.resolvedFile
 
 	if preEnrichID != result.Mod.ID || preEnrichVersion != result.Mod.Version {
-		oldPath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: preEnrichID, Version: preEnrichVersion})
+		oldPath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: preEnrichID, Version: preEnrichVersion, Variant: preEnrichVariant})
 		newKey := cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version, Variant: result.Mod.Variant}
 		newPath := gameCache.ModPath(newKey)
 		// A failed MkdirAll is silent, exactly as it was pre-lift: the
@@ -802,7 +813,7 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		// succeeded), so an orphaned copy of the whole archive was announced
 		// to nobody. warn records it on the Result AND emits the
 		// ImportArchiveWarning step both frontends already render.
-		for _, w := range s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted) {
+		for _, w := range s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, preEnrichVariant, entryPreExisted) {
 			warn("%s", w)
 		}
 		return result, err
@@ -824,12 +835,12 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 			// A stale plan carries no typed payload, so a failed cleanup
 			// rides the Result's own Warnings and the warning event
 			// (#310, review M3 - see the link-method return above).
-			for _, w := range s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted) {
+			for _, w := range s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, preEnrichVariant, entryPreExisted) {
 				warn("%s", w)
 			}
 			return result, fmt.Errorf("%w: file conflicts changed since the plan was computed", ErrStalePlan)
 		case len(conflicts) > 0 && !opts.AcceptConflicts:
-			cleanup := s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted)
+			cleanup := s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, preEnrichVariant, entryPreExisted)
 			return result, &ConflictError{Conflicts: conflicts, CleanupWarnings: cleanup}
 		}
 	}
@@ -918,11 +929,12 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		Version:  result.Mod.Version,
 		FileIDs:  result.FileIDs,
 	}
+	fomodRec := fomodRecordOf(cmpFomod(imported.fomod))
 	// Ruling 16 (A): the DB row is already saved, so the profile ref that
 	// completes it is written even under a cancelled ctx; the cancellation
 	// itself is then fatal rather than a Note.
 	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.UpsertMod(ctx, game.ID, profileName, modRef)
+		return pm.upsertMod(ctx, game.ID, profileName, modRef, fomodRec)
 	}); err != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			return result, cerr
@@ -1026,13 +1038,13 @@ func archiveChecksums(path string, fileIDs []string, warn func(string, ...any)) 
 // EVENTS - which cmd/lmm/import.go prints to stderr unconditionally and
 // serve streams over SSE - as well as landing on the Result. A bare append
 // to Result.Warnings would reach neither frontend on an error return.
-func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArchiveResult, preEnrichID, preEnrichVersion string, entryPreExisted bool) []string {
+func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArchiveResult, preEnrichID, preEnrichVersion, preEnrichVariant string, entryPreExisted bool) []string {
 	if entryPreExisted || result.Mod == nil {
 		return nil
 	}
 	var warnings []string
 	gameCache := s.GetGameCache(game)
-	if err := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: preEnrichID, Version: preEnrichVersion}); err != nil {
+	if err := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: preEnrichID, Version: preEnrichVersion, Variant: preEnrichVariant}); err != nil {
 		s.logger().Warn("removing refused import's cache entry", "mod", preEnrichID, "version", preEnrichVersion, "err", err)
 		warnings = append(warnings, fmt.Sprintf("could not remove the refused import's cache entry %s@%s: %v", preEnrichID, preEnrichVersion, err))
 	}

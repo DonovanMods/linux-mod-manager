@@ -336,6 +336,7 @@ func init() {
 	profileImportCmd.Flags().BoolVar(&profileImportForce, "force", false, "overwrite existing profile")
 	profileImportCmd.Flags().BoolVar(&profileImportNoInstall, "no-install", false, "skip installing missing mods")
 	profileImportCmd.Flags().BoolVarP(&profileImportYes, "yes", "y", false, "auto-confirm downloading/installing missing mods")
+	addFomodFlags(profileImportCmd)
 
 	// Sync flags
 	profileSyncCmd.Flags().BoolVarP(&profileSyncYes, "yes", "y", false, "auto-confirm the sync")
@@ -1162,13 +1163,24 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		}
 	}
 
-	var result *core.ProfileImportResult
-	var err error
-	if collection != nil {
-		result, err = service.ApplyCollectionImport(ctx, game, plan, opts, quietSink(progress))
-	} else {
-		result, err = service.ApplyImport(ctx, game, plan, opts, quietSink(progress))
+	// #615: FOMOD questions the import reports on its result are answered
+	// and the import re-run (it refused with nothing written).
+	fa, err := newFomodAnswerer(service)
+	if err != nil {
+		return err
 	}
+	result, err := applyAnsweringFomod(fa, func(answers map[string]domain.FomodChoices) (*core.ProfileImportResult, error) {
+		opts.Fomod = answers
+		if collection != nil {
+			return service.ApplyCollectionImport(ctx, game, plan, opts, quietSink(progress))
+		}
+		return service.ApplyImport(ctx, game, plan, opts, quietSink(progress))
+	}, func(r *core.ProfileImportResult) *core.FomodChoicesRequiredError {
+		if r == nil {
+			return nil
+		}
+		return r.FomodChoicesRequired
+	})
 	// #485: saving the profile and continuing past a failed mod remains a
 	// useful partial outcome, but it is not a successful import. The typed
 	// error carries result for --json; plain output keeps the summary below.
@@ -1192,10 +1204,14 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 	// Ruling 15: the ProfileImportResult document, which carries Warnings
 	// and the Installed/Failed/Skipped counters the summary below renders.
 	if jsonOutput {
+		doc := any(result)
 		if collection != nil {
-			return emitJSON(&core.CollectionImportResult{Collection: collection, Result: result})
+			doc = &core.CollectionImportResult{Collection: collection, Result: result}
 		}
-		return emitJSON(result)
+		if err := emitJSON(doc); err != nil {
+			return err
+		}
+		return fomodUnanswered(result.FomodChoicesRequired)
 	}
 
 	// #621: a collection's notes (its external items) are appended after
@@ -1233,6 +1249,9 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		fmt.Printf("Nothing was imported: profile %s was not saved and no mod was written.\n", result.ProfileName)
 		for _, f := range result.Failures {
 			printRefusedItem(f.Name, f.SourceID, f.ModID, f.Reason, f.Refusal)
+		}
+		if err := fomodUnanswered(result.FomodChoicesRequired); err != nil && incompleteErr == nil {
+			incompleteErr = err
 		}
 	default:
 		fmt.Printf("\n--- Summary ---\n")

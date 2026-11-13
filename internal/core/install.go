@@ -726,6 +726,16 @@ type InstallOptions struct {
 	// installs plan.Files.
 	TargetFileIDs []string
 
+	// Fomod answers FOMOD installer questions (#614): the choices for a
+	// mod, keyed by domain.ModKey(sourceID, modID), in the profile's
+	// `fomod:` shape (ConfigSHA256 may be left empty). An install whose
+	// installer needs answers refuses with *FomodChoicesRequiredError, with
+	// nothing written and the download kept; the frontend asks, then
+	// re-runs Apply with the answers here. A mod with no entry installs with
+	// the choices its profile reference records, if any. Answers that leave
+	// a later step unanswered are asked about again.
+	Fomod map[string]domain.FomodChoices
+
 	// SkipVerify mirrors doInstall's --skip-verify: when true, a downloaded
 	// file's checksum is neither saved (SaveFileChecksum) nor reported via
 	// an InstallChecksumComputed event, matching downloadSelectedFiles' "if
@@ -780,6 +790,11 @@ type InstallOptions struct {
 	// own separate, always-non-blocking inline conflict warning - and it
 	// already computed its conflicts after its own download.
 	AcceptConflicts bool
+
+	// fomodReconfigure, set only by ApplyFomodReconfigure (#615), names the
+	// mod (domain.ModKey) whose FOMOD installer asks even when its recorded
+	// choices fit, unless Fomod answers it.
+	fomodReconfigure string
 }
 
 // InstalledRef identifies one mod on an InstallResult.Installed/Skipped/
@@ -909,6 +924,11 @@ type InstallResult struct {
 	// error envelope for a single mod, naming every mod that needs the
 	// loader, with the setup steps both frontends render.
 	LoaderRequired *LoaderRequiredError `json:"loader_required,omitempty"`
+	// FomodChoicesRequired is the FOMOD question behind Refused, when the
+	// refusal includes one (#614): the question document for every mod
+	// whose installer needs answers, which the frontend answers and sends
+	// back in the Apply's Options.Fomod.
+	FomodChoicesRequired *FomodChoicesRequiredError `json:"fomod_choices_required,omitempty"`
 
 	Warnings []string `json:"warnings,omitempty"`
 	Notes    []string `json:"notes,omitempty"`
@@ -1869,6 +1889,10 @@ func refusedInstall(targets []batchTarget, refused *AcquireRefusedError, failed 
 	if errors.As(refused, &loaderErr) {
 		result.LoaderRequired = loaderErr
 	}
+	var fomodErr *FomodChoicesRequiredError
+	if errors.As(refused, &fomodErr) {
+		result.FomodChoicesRequired = fomodErr
+	}
 }
 
 // batchStaged is one BATCH-path mod between its acquire and its commit.
@@ -1880,6 +1904,9 @@ type batchStaged struct {
 	// their downloads computed (#372), saved once the DB row exists.
 	files     []*acquiredFile
 	checksums []fileChecksum
+	// fomod is the mod's FOMOD resolve outcome (#614), recorded on its
+	// profile ref; nil when no file was an installer.
+	fomod *fomodResolved
 }
 
 // recordBatchFailure counts one failed BATCH-path mod: Skipped and Failed
@@ -2007,6 +2034,9 @@ func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *
 	// batchInstallMods' historical single-file mechanics (and event
 	// stream) unchanged.
 	gameCache := s.GetGameCache(game)
+	// #614: a FOMOD installer installs with this run's answers, else the
+	// profile's recorded choices (a reinstall).
+	fx := s.fomodInputFor(ctx, game, plan.Profile, s.recordedRef(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod)
 	for _, file := range selected {
 		if err := ctx.Err(); err != nil {
 			s.releaseAcquired(st.files, false)
@@ -2025,7 +2055,7 @@ func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *
 			}
 			emit(DownloadEvent{Scope: scope, Phase: InstallDepDownloading, Percent: d.Percent})
 		}
-		a, err := s.acquireFile(ctx, gameCache, mod.SourceID, game, mod, file, progressFn)
+		a, err := s.acquireFile(ctx, gameCache, mod.SourceID, game, mod, file, fx, progressFn)
 
 		// Unconditional (success OR failure alike), mirroring batchInstallMods'
 		// own `fmt.Println()` immediately after the download call returns -
@@ -2047,6 +2077,13 @@ func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *
 			st.checksums = append(st.checksums, fileChecksum{fileID: file.ID, checksum: a.checksum})
 		}
 	}
+	resolved, err := unifyFomod(mod, st.files)
+	if err != nil {
+		f := skip("Error", err.Error(), err)
+		f.release = s.releaseFilesFunc(st.files)
+		return nil, f
+	}
+	st.fomod = resolved
 	return st, nil
 }
 
@@ -2176,6 +2213,7 @@ func (s *Service) commitBatchMod(ctx context.Context, game *domain.Game, plan *I
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 	}
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
+	fomodRec := fomodRecordOf(st.fomod)
 	// Ruling 16 (A): the DB row and the deployment are already in place, so
 	// the profile ref that completes them is written even under a cancelled
 	// ctx. Returning here skips this mod's Installed entry and its
@@ -2183,7 +2221,7 @@ func (s *Service) commitBatchMod(ctx context.Context, game *domain.Game, plan *I
 	// (review finding I2), which turns the cancellation into ApplyInstall's
 	// own fatal return.
 	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.UpsertMod(ctx, game.ID, plan.Profile, modRef)
+		return pm.upsertMod(ctx, game.ID, plan.Profile, modRef, fomodRec)
 	}); err != nil {
 		if ctx.Err() != nil {
 			return nil
@@ -2340,6 +2378,10 @@ type primaryStage struct {
 	// guards (#96/#138) already behave.
 	downloadedFileIDs []string
 	checksums         []fileChecksum
+	// fomod is the FOMOD resolve outcome when the mod is an installer
+	// (#614): its choices are recorded on the profile ref, and mod.Variant
+	// is its variant. Nil otherwise.
+	fomod *fomodResolved
 }
 
 // rollback restores the live cache when a reinstall transaction is still
@@ -2399,13 +2441,31 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	st.installer = s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 	downloadCache := s.GetGameCache(game)
 
-	if plan.Replaces != nil && plan.Replaces.Version == mod.Version && plan.Replaces.Variant == mod.Variant {
+	// #614: a FOMOD installer is installed with this run's answers, else
+	// the profile's recorded choices; recorded (canonical) choices name the
+	// entry a warm cache already holds (fomodVariant). Answers that are not
+	// canonical - no config hash, say - name no entry, so they always
+	// download, which is slower but never wrong.
+	fx := s.fomodInputFor(ctx, game, plan.Profile, s.recordedRef(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod)
+	// #615: a reconfigure asks about choices that fit, so the installer
+	// must be read again - never skipped for a warm entry.
+	fx.ask = opts.fomodReconfigure != "" && opts.fomodReconfigure == domain.ModKey(mod.SourceID, mod.ID) && !fx.answered
+	expectedVariant := fomodVariant(fx.choices)
+
+	// A same-version reinstall stages its download apart from the live
+	// entry whatever tree it will resolve to: which variant it is is known
+	// only after the download, and committing over a live deployed entry is
+	// exactly what the transaction exists to avoid (#614 review).
+	if plan.Replaces != nil && plan.Replaces.Version == mod.Version {
 		txn, txnErr := prepareReinstallCacheTransaction(ctx, s.GetGameCache(game), modCacheKey(game.ID, plan.Replaces.Mod), s.logger())
 		if txnErr != nil {
 			return st, fmt.Errorf("preparing reinstall cache: %w", txnErr)
 		}
 		st.reinstallTxn = txn
 		downloadCache = txn.staged
+		if s.reinstallTxnOpened != nil {
+			s.reinstallTxnOpened(txn.key)
+		}
 	}
 
 	// Resolve the source the plan names - the download still needs it -
@@ -2442,9 +2502,22 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	// downloadModToCache gates its own file:// ingest branch on.
 	lfs, servesLocal := src.(source.LocalFileServer)
 	servesLocalFiles := servesLocal && lfs.ServesLocalFiles()
-	cacheWarm := !servesLocalFiles &&
+	warmKey := modCacheKey(game.ID, mod)
+	warmKey.Variant = expectedVariant
+	cacheWarm := !servesLocalFiles && !fx.ask &&
 		len(plannedFileIDs) > 0 &&
-		downloadCache.HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}, plannedFileIDs)
+		downloadCache.HasFileIDs(warmKey, plannedFileIDs)
+	if cacheWarm && expectedVariant == "" && holdsFomodInstaller(downloadCache, warmKey) {
+		// #614: a plain entry that still holds a FOMOD installer is a legacy
+		// raw install's (another profile's, from before lmm ran installers):
+		// not this install's tree. Download and resolve, which asks.
+		cacheWarm = false
+	}
+	if cacheWarm && expectedVariant != "" {
+		// The entry these choices build is cached: nothing to resolve.
+		mod.Variant = expectedVariant
+		st.fomod = &fomodResolved{variant: expectedVariant, choices: fx.choices}
+	}
 
 	// compiledFiles accumulates every file this loop actually compiled (game
 	// DeployCompile + a ".exmodz" file - the same condition
@@ -2456,52 +2529,75 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	// implements MergeCompiler, matching the ingest path's predicate.
 	var compiledFiles []*domain.DownloadableFile
 	filesTotal := len(plan.Files)
+	if !cacheWarm {
+		// #614: every file is acquired before any is committed
+		// (downloadModFiles), so a mod whose installer is not its first file
+		// still lands in one entry, the resolved variant's, committed
+		// unseeded so it replaces whatever an earlier resolve left there.
+		fileScope := func(i int) Scope {
+			fs := scope
+			fs.Index, fs.Total = i+1, filesTotal
+			return fs
+		}
+		failedEmitted := false
+		_, resolved, dlErr := s.downloadModFiles(ctx, downloadCache, plan.SourceID, game, &mod, selectedFiles, fx, modFileHooks{
+			checkCtx: true,
+			before: func(i int, file *domain.DownloadableFile) {
+				emit(StepEvent{Scope: fileScope(i), Phase: InstallDownloadStarted, File: file})
+			},
+			sink: func(i int, file *domain.DownloadableFile) EventSink {
+				fs := fileScope(i)
+				return func(e Event) {
+					collectDownloadWarning(e, &result.Warnings)
+					if forwardFetchStep(e, fs, emit) {
+						return
+					}
+					d, ok := e.(DownloadEvent)
+					if !ok {
+						return
+					}
+					emit(DownloadEvent{
+						Scope: fs, Phase: InstallDownloading, File: file,
+						Percent: d.Percent, Downloaded: d.Downloaded, TotalBytes: d.TotalBytes,
+					})
+				}
+			},
+			after: func(i int, file *domain.DownloadableFile, checksum string, err error) {
+				fs := fileScope(i)
+				emit(StepEvent{Scope: fs, Phase: InstallDownloadDone, File: file})
+				if err != nil {
+					emit(ModEvent{Scope: fs, Phase: InstallDownloadFailed, Detail: fmt.Sprintf("download failed: %v", err)})
+					failedEmitted = true
+					return
+				}
+				if !opts.SkipVerify && checksum != "" {
+					emit(StepEvent{Scope: fs, Phase: InstallChecksumComputed, File: file, Detail: checksum})
+					st.checksums = append(st.checksums, fileChecksum{fileID: file.ID, checksum: checksum})
+				}
+			},
+		})
+		if dlErr != nil {
+			if cerr := ctx.Err(); cerr != nil && errors.Is(dlErr, cerr) {
+				return st, dlErr
+			}
+			if !failedEmitted {
+				emit(ModEvent{Scope: scope, Phase: InstallDownloadFailed, Detail: fmt.Sprintf("download failed: %v", dlErr)})
+			}
+			if (errors.Is(dlErr, source.ErrManualDownload) || errors.Is(dlErr, source.ErrAccountRestricted)) && mod.PageURL() != "" {
+				return st, fmt.Errorf("download unavailable via API: %w", dlErr)
+			}
+			return st, fmt.Errorf("download failed: %w", dlErr)
+		}
+		st.fomod = resolved
+	}
+
 	for i := range plan.Files {
 		if err := ctx.Err(); err != nil {
 			return st, err
 		}
 		file := &plan.Files[i]
 
-		if !cacheWarm {
-			fileScope := scope
-			fileScope.Index, fileScope.Total = i+1, filesTotal
-
-			emit(StepEvent{Scope: fileScope, Phase: InstallDownloadStarted, File: file})
-
-			progressFn := func(e Event) {
-				collectDownloadWarning(e, &result.Warnings)
-				if forwardFetchStep(e, fileScope, emit) {
-					return
-				}
-				d, ok := e.(DownloadEvent)
-				if !ok {
-					return
-				}
-				emit(DownloadEvent{
-					Scope: fileScope, Phase: InstallDownloading, File: file,
-					Percent: d.Percent, Downloaded: d.Downloaded, TotalBytes: d.TotalBytes,
-				})
-			}
-
-			downloadResult, dlErr := s.downloadModToCache(ctx, downloadCache, plan.SourceID, game, &mod, file, progressFn)
-
-			emit(StepEvent{Scope: fileScope, Phase: InstallDownloadDone, File: file})
-
-			if dlErr != nil {
-				reason := fmt.Sprintf("download failed: %v", dlErr)
-				emit(ModEvent{Scope: fileScope, Phase: InstallDownloadFailed, Detail: reason})
-				if (errors.Is(dlErr, source.ErrManualDownload) || errors.Is(dlErr, source.ErrAccountRestricted)) && mod.PageURL() != "" {
-					return st, fmt.Errorf("download unavailable via API: %w", dlErr)
-				}
-				return st, fmt.Errorf("download failed: %w", dlErr)
-			}
-
-			if !opts.SkipVerify && downloadResult.Checksum != "" {
-				emit(StepEvent{Scope: fileScope, Phase: InstallChecksumComputed, File: file, Detail: downloadResult.Checksum})
-				st.checksums = append(st.checksums, fileChecksum{fileID: file.ID, checksum: downloadResult.Checksum})
-			}
-
-		} else if !opts.SkipVerify {
+		if cacheWarm && !opts.SkipVerify {
 			// Ruling 2 (task-8 review, Important 2): the cache-first guard
 			// skips the download for ANY install, not only the accept
 			// re-run - so this is the only place left that can still save a
@@ -2545,6 +2641,31 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	// (service.go's "Count extracted files") - so a 2-file mod reported
 	// a + (a+b). files_deployed is a json-tagged contract field; both fills
 	// now report the same, correct number.
+	// #614: the entry the fill committed to - the resolved installer's
+	// variant - is the one the conflict gate, the deploy, the row and the
+	// ref all name. A same-version reinstall's transaction swaps exactly
+	// the entry it snapshotted, so it cannot take a different tree.
+	st.mod.Variant = mod.Variant
+	if st.reinstallTxn != nil && mod.Variant != st.reinstallTxn.key.Variant {
+		// The reinstall resolved to ANOTHER tree than the installed one: a
+		// different entry, so nothing live is overwritten. Publish the
+		// staged entry beside the old one and drop the transaction; the
+		// deploy replaces the old tree with it and its cache entry goes as
+		// any replaced entry does.
+		live := s.GetGameCache(game)
+		newKey := modCacheKey(game.ID, mod)
+		// Built beside any entry of that variant already there and swapped
+		// in, so a failed publish leaves it as it was (PublishMod).
+		if err := downloadCache.PublishMod(ctx, live, newKey); err != nil {
+			return st, fmt.Errorf("publishing the reinstalled tree: %w", err)
+		}
+		if err := st.reinstallTxn.Rollback(context.WithoutCancel(ctx)); err != nil {
+			s.logger().Debug("dropping the reinstall transaction", "err", err)
+		}
+		st.reinstallTxn = nil
+		downloadCache = live
+	}
+
 	if files, lerr := downloadCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}); lerr == nil {
 		result.FilesDeployed += len(files)
 	}
@@ -2690,6 +2811,15 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		FileIDs:      downloadedFileIDs,
 	}
 	installedMod.GameID = game.ID
+	if opts.fomodReconfigure != "" && plan.Replaces != nil {
+		// #615: a reconfigure changes the choices, not the version, so the
+		// update before it stays the rollback target: the replaced row's
+		// Previous* move forward rather than being dropped.
+		installedMod.PreviousVersion = plan.Replaces.PreviousVersion
+		installedMod.PreviousFileIDs = plan.Replaces.PreviousFileIDs
+		installedMod.PreviousVariant = plan.Replaces.PreviousVariant
+		installedMod.PreviousFomod = plan.Replaces.PreviousFomod
+	}
 
 	if s.beforeSaveInstalled != nil {
 		s.beforeSaveInstalled()
@@ -2758,11 +2888,12 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 	}
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
+	fomodRec := fomodRecordOf(st.fomod)
 	// Ruling 16 (A): the DB row and the deployment are already in place, so
 	// the profile ref that completes them is written even under a cancelled
 	// ctx; the cancellation is then fatal to ApplyInstall as a whole.
 	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.UpsertMod(ctx, game.ID, plan.Profile, modRef)
+		return pm.upsertMod(ctx, game.ID, plan.Profile, modRef, fomodRec)
 	}); err != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, cerr

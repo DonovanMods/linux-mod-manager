@@ -58,7 +58,13 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 	// source with a non-identity SourceIDs mapping, while the GetModFiles
 	// lookup directly above was already mapped. The cache side is unaffected
 	// either way: every cache path is keyed off game.ID, not mod.GameID.
-	result, err := r.svc.downloadMod(ctx, mod.SourceID, r.game, SourceMappedMod(r.game, &mod.Mod), downloadFile, r.downloadWarningSink())
+	//
+	// #614: a FOMOD mod's file lands in the row's own variant entry, rebuilt
+	// from the profile's recorded choices - which must still name that
+	// variant, or the repair would fill a tree the row does not use.
+	mapped := SourceMappedMod(r.game, &mod.Mod)
+	fx := asRebuild(r.svc.fomodInputFor(ctx, r.game, r.profile, ref, mod.SourceID, mod.ID, nil), mod)
+	result, err := r.svc.rebuildModFile(ctx, mod.SourceID, r.game, mapped, downloadFile, fx, mod.Variant, r.downloadWarningSink())
 	if err != nil {
 		return false, err
 	}

@@ -82,6 +82,12 @@ type UpdateBatchOptions struct {
 	// would rather stop and be told than half-apply a set it thinks of as
 	// one change; nothing in lmm passes it today.
 	StopOnError bool
+	// Fomod answers FOMOD installer questions, keyed by domain.ModKey, as
+	// UpdateOptions.Fomod does (#615). The batch still never asks: an item
+	// whose installer needs answers this map does not give is skipped
+	// (ReasonFomodReanswer) with the question on its result, which a
+	// frontend answers and sends back here for that item.
+	Fomod map[string]domain.FomodChoices
 }
 
 // UpdateBatchFailure is one item the batch could not update, with the
@@ -483,7 +489,18 @@ func (s *Service) commitUpdateBatchItem(ctx context.Context, game *domain.Game, 
 		applied, err = s.applyMergedPakRegen(ctx, game, plan.Profile, sink)
 	} else {
 		applied, err = s.applyUpdate(ctx, game, st.itemPlan,
-			UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks}, sink)
+			UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks, Fomod: opts.Fomod}, sink)
+	}
+	var question *FomodChoicesRequiredError
+	if err != nil && st.itemPlan != nil && ctx.Err() == nil && errors.As(err, &question) {
+		// #614: a batch never asks. The mod's recorded choices no longer
+		// fit its new installer, so it is skipped - its download kept -
+		// for the user to answer on its own.
+		skip := fomodReanswerSkip(st.itemPlan, st.upd, question)
+		skip.FomodChoicesRequired = question
+		result.Skipped = append(result.Skipped, skip)
+		emit(ModEvent{Scope: st.scope, Phase: UpdateBatchItemSkipped, Detail: skip.Reason})
+		return nil
 	}
 	if err != nil {
 		st.fail(err)
@@ -539,5 +556,28 @@ func planUpdateSkip(plan *UpdatePlan, toVersion string) UpdateApplyResult {
 		ToVersion:   toVersion,
 		Status:      UpdateSkipped,
 		Reason:      plan.Refusal,
+	}
+}
+
+// fomodReanswerSkip renders a batch item whose FOMOD installer needs
+// answers (#614) as the UpdateApplyResult a batch records for it: the
+// manual-only skip's shape, with ReasonFomodReanswer when recorded choices
+// no longer fit, or ReasonFomodChoicesNeeded when the new version is an
+// installer with none recorded. Nothing was written.
+func fomodReanswerSkip(plan *UpdatePlan, upd domain.Update, q *FomodChoicesRequiredError) UpdateApplyResult {
+	reason := ReasonFomodChoicesNeeded
+	for _, m := range q.Mods {
+		if m.Reason == FomodReasonStale {
+			reason = ReasonFomodReanswer
+		}
+	}
+	return UpdateApplyResult{
+		Mod:           domain.ModReference{SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID, Version: plan.Mod.Version},
+		Name:          plan.Mod.Name,
+		FromVersion:   plan.Mod.Version,
+		ToVersion:     upd.NewVersion,
+		Status:        UpdateSkipped,
+		Reason:        reason,
+		FomodReanswer: true,
 	}
 }

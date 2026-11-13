@@ -10,6 +10,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
@@ -28,7 +29,7 @@ func (s *Service) DownloadModForTest(ctx context.Context, sourceID string, game 
 		return nil, err
 	}
 	defer release()
-	return s.downloadMod(ctx, sourceID, game, mod, file, sink)
+	return s.downloadMod(ctx, sourceID, game, mod, file, fomodInput{}, sink)
 }
 
 // NewDownloaderWithoutBackoffForTest is NewDownloader with the retry backoff
@@ -214,7 +215,7 @@ func (s *Service) ApplyModUpdateForTest(ctx context.Context, sourceID, modID, ga
 		return err
 	}
 	defer release()
-	return s.applyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, "", fileIDs)
+	return s.applyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, "", domain.FomodChoices{}, fileIDs)
 }
 
 // ConvergeDeployedFilesForTest exposes convergeDeployedFiles behind the same
@@ -434,6 +435,14 @@ func WithAutoTargetForTest(ref CatalogModRef, modID string) CatalogModRef {
 func (s *Service) SetModCategoryNameForTest(ctx context.Context, sourceID, modID, gameID, profileName, name string) error {
 	return s.db.SetModCategoryName(ctx, sourceID, modID, gameID, profileName, name)
 }
+
+// FomodVariantForTest exposes fomodVariant (#614): the cache variant a
+// recorded choice set names.
+func FomodVariantForTest(c domain.FomodChoices) string { return fomodVariant(c) }
+
+// SetReinstallTxnOpenedForTest arms fillPrimaryCache's seam: fn is told the
+// key of every same-version reinstall transaction it opens (#614).
+func (s *Service) SetReinstallTxnOpenedForTest(fn func(cache.Key)) { s.reinstallTxnOpened = fn }
 
 // ImportForTest saves an imported profile document with nothing held back
 // - importDocument with a zero adjustment - for the ProfileManager tests of

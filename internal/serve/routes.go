@@ -18,6 +18,9 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}", s.wrap(s.handleAPIModDetail))
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}/files", s.wrap(s.handleAPIModFiles))
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}/versions", s.wrap(s.handleAPIModVersions))
+	// A FOMOD question's option images, for the installer wizard (#615,
+	// api_fomod_images.go): read-only, and only what core kept.
+	s.mux.Handle("GET /api/v1/fomod/images", s.wrap(s.handleAPIFomodImage))
 	// The mod panel's category picker suggestions (#592, api_mod_category.go).
 	s.mux.Handle("GET /api/v1/categories", s.wrap(s.handleAPICategories))
 	s.mux.Handle("GET /api/v1/search", s.wrap(s.handleAPISearch))

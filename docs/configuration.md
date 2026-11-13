@@ -611,6 +611,7 @@ Each entry under `mods` is a mod reference:
 | `file_ids`  | list   | Optional. The source's file ids that were installed                                                                                                                                                                                                  |
 | `locked`    | bool   | Optional. `lmm update` refuses this mod while set. Written by `lmm mod lock` / `lmm mod unlock`; omitted when false.                                                                                                                                  |
 | `disabled`  | bool   | Optional. The mod stays in the profile — keeping its load-order position and its pinned version — but is switched off: no deploy, and no converge run re-enables it. Written by `lmm mod disable`; cleared by `lmm mod enable`, by an explicit `lmm install` of the same mod, and by installing a mod that depends on it (which says so first); omitted when false. |
+| `fomod`     | map    | Optional. The choices made in the mod's FOMOD installer, and the installer they answer. Written when a FOMOD mod is installed; see [Recorded FOMOD choices](#recorded-fomod-choices-fomod). Omitted for a mod that is not a FOMOD installer. |
 
 `disabled` is the profile's own record of the off state, not just the database's. **A missing `disabled` key means enabled**, so profile files written by earlier versions of lmm are read exactly as before (see [Upgrading: mods disabled before the marker existed](#upgrading-mods-disabled-before-the-marker-existed) for the one-time step that records some of them). It survives `lmm profile export`/`import`, `lmm profile sync`, `lmm profile switch`, `lmm profile apply` and a rebuilt database; a mod newly added to a profile still defaults to enabled. Setting it by hand is supported, and the next converge run acts on it: `lmm profile apply`, or a switch to the profile, undeploys the mod and clears its enabled flag.
 
@@ -625,6 +626,40 @@ Three things clear the marker, and each is a request for that mod:
 - Installing a mod that **depends** on it. You did not name the dependency, so lmm says so before asking to proceed and again afterwards: the dependency is switched back on in that profile, because the mod you asked for cannot work without it.
 
 Enabling a mod whose files were never downloaded (an imported profile on a fresh machine) needs that download, because lmm never fetches a disabled mod. `lmm list` names such mods under its table ("Listed but not downloaded, switched off") with the exact command that installs each one — `lmm install -g <game> -p <profile> -s <source> --id <mod> --version <version>` — so the CLI installs the same ref, at the same version, into the same profile that the web UI's **Install…** does (`--json` carries the refs as `disabled_not_installed`). The web UI shows them in the library and on the Profile card, each with its own **Install…** that downloads the mod and switches it on.
+
+#### Recorded FOMOD choices (`fomod`)
+
+Many mods ship as a FOMOD installer (`fomod/ModuleConfig.xml` in the archive): a set of steps that ask which options to install. lmm runs the installer itself, for every game, and never executes a scripted installer (`fomod/script.cs`) or an OMOD, which it refuses.
+
+What was chosen is recorded on the mod's entry, so a reinstall, a `lmm profile export`/`import`, a duplicate, a `lmm mod copy`, a profile switch and a profile apply all install exactly the same files:
+
+```yaml
+mods:
+  - source_id: nexusmods
+    mod_id: "12604"
+    version: "2.0"
+    fomod:
+      config_sha256: 9f2c…          # the ModuleConfig.xml the choices answer
+      steps:
+        - name: Main Files
+          groups:
+            - name: Texture Resolution
+              choices:
+                - name: 2K
+                  idx: 1
+```
+
+The `steps` list uses the same shape as a NexusMods collection's recorded choices. Names match exactly, case and spaces included. An `index` on a step, group or choice picks one of several items that share a name; lmm writes one only where names repeat.
+
+- **Installing a FOMOD mod with nothing recorded asks first.** The install stops before anything is written, keeps the download, and reports the installer's questions (in `--json`, the error's `details` is the question document). Running the same command again with the answers installs it: a terminal walks the questions, `--fomod-choices <file.json>` or `--fomod-defaults` answer them without one, and the web UI asks in a wizard ([guide](guide/fomod.md)). `lmm mod fomod <mod-id>` asks again later, to change the choices.
+- **Recorded choices replay without asking.** If they no longer fit the installer (an option was renamed or removed, or a group's rule is broken), the install asks again, showing what no longer fits. If the archive lacks a file the recorded choices need, the install is refused: the recorded install cannot be reproduced.
+- **Updates keep the choices.** When the new version's installer still accepts them, the mod updates and the new installer's `config_sha256` is recorded. When it does not, `lmm update` asks, and the update batch and automatic updates skip the mod with "installer choices need re-answering" (or "installer choices needed", for a mod whose new version is the first to be an installer) and leave the installed version in place. When the new version is not an installer at all, the block is removed. `lmm update rollback` restores the previous version's choices with its files.
+- **The profile is the desired state.** Editing `fomod:` by hand, or importing a document that records different choices, makes the next `lmm profile apply` (or a switch to the profile) reinstall the mod with them.
+- **Each set of choices has its own cache entry.** Two profiles that install the same version with different choices get two copies in the cache, side by side (the folder is `<version>@<variant>`). The version shown everywhere is still the source's own.
+- A FOMOD's `fileDependency` conditions are answered for the profile being installed into: a file is present, and active, when an enabled mod of that profile provides it, or the game itself does (it is in the game's mod directory and no profile's deployment put it there). What the installer tested is recorded as `file_states:` (for example `dep.esp: Active`), because it decides which files are installed; another profile with other files gets its own copy.
+- A mod installed before lmm ran FOMOD installers keeps its files exactly as installed (the whole archive), and repairs rebuild it that way. `lmm mod show --json` marks it `fomod_not_run`; reconfiguring it runs its installer.
+
+An older lmm that rewrites the profile drops the `fomod:` block. After a downgrade, reinstalling such a mod asks the questions again.
 
 #### Upgrading: mods disabled before the marker existed
 
@@ -660,7 +695,7 @@ The document includes:
 - **lmm_collection**, **id**, **version** – The format version, the collection's stable id (minted on a profile's first export) and the author's version number. The id and every metadata flag an export sets are recorded in the profile's `collection:` block and reused by the next export.
 - **name**, **game_id** – The profile name and the author's local game id, so an older lmm still imports the document.
 - **game** – The portable game identity (Steam app id, per-source game ids) an importer matches against its own games.
-- **mods** – Mod references in load order; each has `source_id`, `mod_id`, optional `version`, `file_ids`, `locked`, `disabled`, `category` (see Per-mod keys above), plus a display `name`.
+- **mods** – Mod references in load order; each has `source_id`, `mod_id`, optional `version`, `file_ids`, `locked`, `disabled`, `category`, `fomod` (see Per-mod keys above), plus a display `name`. An imported `fomod` block installs the mod with those choices.
 - **external** – Items lmm cannot fetch, with a URL and instructions.
 - **hooks**, **overrides** – The profile's own hooks and config overrides.
 - **title**, **author**, **description**, **install_instructions**, **origin**, **requires** – The author's metadata, the curator's credit when the collection came from someone else, and the features it needs.

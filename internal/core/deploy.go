@@ -1072,34 +1072,48 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	// not in cache" even though the download just succeeded.
 	fetchedMod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload)
 
+	// #614: a FOMOD mod's tree is rebuilt from the profile's recorded
+	// choices - the same tree only if they still fit and name the row's
+	// own variant, which is checked after the download. A row installed
+	// before FOMOD support (the plain entry, no recorded choices) is
+	// rebuilt raw, exactly as it was installed (rebuildInput).
+	fx := s.rebuildInput(ctx, game, mod)
+
 	var checksums []fileChecksum // #372 - saved at the end of this function
-	for _, file := range filesToDownload {
-		if err := ctx.Err(); err != nil {
-			// Record the skip like every other early exit here: the caller
-			// only sees `continue`, so a bare `true` on the LAST mod of the
-			// profile made a cancelled deploy look successful (review
-			// finding I1).
-			return skip(fmt.Sprintf("cancelled: %v", err))
+	if err := ctx.Err(); err != nil {
+		// Record the skip like every other early exit here: the caller
+		// only sees `continue`, so a bare `true` on the LAST mod of the
+		// profile made a cancelled deploy look successful (review
+		// finding I1).
+		return skip(fmt.Sprintf("cancelled: %v", err))
+	}
+	progressFn := func(e Event) {
+		collectDownloadWarning(e, &result.Warnings)
+		if forwardFetchStep(e, scope, emit) {
+			return
 		}
-		progressFn := func(e Event) {
-			collectDownloadWarning(e, &result.Warnings)
-			if forwardFetchStep(e, scope, emit) {
-				return
-			}
-			d, ok := e.(DownloadEvent)
-			if !ok || d.TotalBytes <= 0 {
-				return
-			}
-			emit(DownloadEvent{Scope: scope, Phase: DeployDownloading, Percent: d.Percent})
+		d, ok := e.(DownloadEvent)
+		if !ok || d.TotalBytes <= 0 {
+			return
 		}
-		downloadResult, err := s.downloadMod(ctx, mod.SourceID, game, fetchedMod, file, progressFn)
-		if err != nil {
-			reason := fmt.Sprintf("download failed: %v", err)
-			emit(ModEvent{Scope: scope, Phase: DeployDownloadFailed, Detail: reason})
-			result.Skipped = append(result.Skipped, skippedRef(mod, reason))
-			return true
+		emit(DownloadEvent{Scope: scope, Phase: DeployDownloading, Percent: d.Percent})
+	}
+	results, _, err := s.downloadModFiles(ctx, s.GetGameCache(game), mod.SourceID, game, fetchedMod, filesToDownload, fx,
+		modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, requireVariant: &mod.Variant})
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return skip(fmt.Sprintf("cancelled: %v", cerr))
 		}
-		checksums = appendChecksum(checksums, file.ID, downloadResult)
+		reason := fmt.Sprintf("download failed: %v", err)
+		emit(ModEvent{Scope: scope, Phase: DeployDownloadFailed, Detail: reason})
+		result.Skipped = append(result.Skipped, skippedRef(mod, reason))
+		return true
+	}
+	for i, file := range filesToDownload {
+		checksums = appendChecksum(checksums, file.ID, results[i])
+	}
+	if fetchedMod.Variant != mod.Variant {
+		return skip(ReasonFomodReanswer)
 	}
 
 	emit(StepEvent{Scope: scope, Phase: DeployDownloadDone})

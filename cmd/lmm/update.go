@@ -155,6 +155,7 @@ func init() {
 	updateCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "show what would update without applying")
 	updateCmd.Flags().BoolVar(&updateRefresh, "refresh", false, "bypass cached source metadata and locally cached source indexes (Steam Workshop caches for hours; the Thunderstore index for six)")
 	updateCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "continue even if hooks fail")
+	addFomodFlags(updateCmd)
 
 	updateRollbackCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source (default: the sole configured source; prompts when several are configured)")
 	updateRollbackCmd.Flags().StringVarP(&updateProfile, "profile", "p", "", "profile (default: active profile)")
@@ -556,8 +557,12 @@ func printBatchDownloadPages(failed []core.UpdateBatchFailure) {
 // own sentence rather than "unlock to update", which would be nonsense.
 func printBatchSkips(skipped []core.UpdateApplyResult) {
 	var locked, external []string
-	var manual []core.UpdateApplyResult
+	var manual, reanswer []core.UpdateApplyResult
 	for _, sk := range skipped {
+		if sk.FomodReanswer {
+			reanswer = append(reanswer, sk)
+			continue
+		}
 		if sk.ManualOnly {
 			manual = append(manual, sk)
 			continue
@@ -576,6 +581,22 @@ func printBatchSkips(skipped []core.UpdateApplyResult) {
 		fmt.Println("the next time you launch the game.")
 	}
 	printManualOnlySkips(manual)
+	printFomodReanswerSkips(reanswer)
+}
+
+// printFomodReanswerSkips is #615's block: each mod the batch declined
+// because its new version's FOMOD installer no longer fits the recorded
+// choices, with the single-mod update that asks them again. Silent when
+// there are none.
+func printFomodReanswerSkips(reanswer []core.UpdateApplyResult) {
+	if len(reanswer) == 0 {
+		return
+	}
+	fmt.Printf("\n%d mod(s) not applied — their installer (FOMOD) needs answering:\n", len(reanswer))
+	for _, sk := range reanswer {
+		fmt.Printf("  %s\n", sk.Name)
+		fmt.Printf("    lmm update %s --source %s\n", sk.Mod.ModID, sk.Mod.SourceID)
+	}
 }
 
 // printManualOnlySkips is #543's block: each mod the batch declined because
@@ -911,7 +932,77 @@ func applyUpdateBatch(ctx context.Context, service *core.Service, game *domain.G
 	}
 
 	opts := core.UpdateBatchOptions{Force: updateForce, SkipHooks: noHooks}
-	return service.ApplyUpdateBatch(ctx, game, plan, opts, quietSink(batchProgress(service, updates)))
+	// #615: the batch never asks a FOMOD installer's questions - it skips
+	// the mod with the question on its result. The FOMOD flags (or a walk
+	// at a terminal) answer those, and the batch runs again over just the
+	// mods that asked, with the answers.
+	fa, err := newFomodAnswerer(service)
+	if err != nil {
+		return nil, err
+	}
+	result, err := service.ApplyUpdateBatch(ctx, game, plan, opts, quietSink(batchProgress(service, updates)))
+	for err == nil && result != nil {
+		q := batchFomodQuestion(result)
+		if q == nil {
+			break
+		}
+		answers, aerr := fa.answer(q)
+		if aerr != nil {
+			if aerr == error(q) {
+				break // nothing answers it: the skips stand, and say why
+			}
+			return result, aerr
+		}
+		keys := make([]string, 0, len(q.Mods))
+		for _, m := range q.Mods {
+			keys = append(keys, domain.ModKey(m.SourceID, m.ModID))
+		}
+		again, perr := service.PlanUpdateBatchFrom(ctx, game, profileName, updates, keys)
+		if perr != nil {
+			return result, perr
+		}
+		opts.Fomod = answers
+		var round *core.UpdateBatchResult
+		round, err = service.ApplyUpdateBatch(ctx, game, again, opts, quietSink(batchProgress(service, updates)))
+		result = mergeBatchRound(result, round, keys)
+	}
+	return result, err
+}
+
+// batchFomodQuestion merges the FOMOD questions an update batch's skips
+// carry (#615) into one, or nil when none asks.
+func batchFomodQuestion(r *core.UpdateBatchResult) *core.FomodChoicesRequiredError {
+	var q *core.FomodChoicesRequiredError
+	for _, sk := range r.Skipped {
+		if sk.FomodChoicesRequired == nil {
+			continue
+		}
+		if q == nil {
+			q = &core.FomodChoicesRequiredError{}
+		}
+		q.Mods = append(q.Mods, sk.FomodChoicesRequired.Mods...)
+	}
+	return q
+}
+
+// mergeBatchRound folds a re-run over keys (the mods whose installers
+// asked) into the batch's result: their skips give way to the re-run's
+// outcome.
+func mergeBatchRound(result, round *core.UpdateBatchResult, keys []string) *core.UpdateBatchResult {
+	if round == nil {
+		return result
+	}
+	merged := *result
+	merged.Skipped = slices.DeleteFunc(slices.Clone(result.Skipped), func(sk core.UpdateApplyResult) bool {
+		return slices.Contains(keys, domain.ModKey(sk.Mod.SourceID, sk.Mod.ModID))
+	})
+	merged.Applied = append(slices.Clone(result.Applied), round.Applied...)
+	merged.Failed = append(slices.Clone(result.Failed), round.Failed...)
+	merged.Skipped = append(merged.Skipped, round.Skipped...)
+	if round.ErrorMessage != "" {
+		merged.ErrorMessage = round.ErrorMessage
+	}
+	return &merged
 }
 
 // batchProgress renders a batch run's events: the per-item bracket #324
@@ -1190,7 +1281,16 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		SkipHooks: noHooks,
 	}
 
-	return service.ApplyUpdate(ctx, game, plan, opts, quietSink(updateProgress))
+	// #615: a new version whose FOMOD installer no longer fits the
+	// recorded choices asks; the answers re-run the same update.
+	fa, err := newFomodAnswerer(service)
+	if err != nil {
+		return nil, err
+	}
+	return applyAnsweringFomod(fa, func(answers map[string]domain.FomodChoices) (*core.UpdateApplyResult, error) {
+		opts.Fomod = answers
+		return service.ApplyUpdate(ctx, game, plan, opts, quietSink(updateProgress))
+	}, nil)
 }
 
 // updateProgress prints an update apply's progress events - shared by

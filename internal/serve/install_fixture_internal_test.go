@@ -45,6 +45,9 @@ type installSourceMod struct {
 	mod     domain.Mod
 	files   []domain.DownloadableFile
 	members map[string]string // file ID -> the single path inside its zip
+	// archives, when set for a file ID, is that file's whole zip, served
+	// as is (#615's FOMOD installers) instead of members' one-member zip.
+	archives map[string][]byte
 	// deps is what GetDependencies answers for this mod - empty for every
 	// entry but "m4", which exists so #326's no_deps option has a real
 	// dependency to drop.
@@ -75,6 +78,11 @@ func newInstallSource(t *testing.T) *installSource {
 		entry, ok := s.mods[modID]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if archive, ok := entry.archives[fileID]; ok {
+			w.Header().Set("Content-Type", "application/zip")
+			_, _ = w.Write(archive)
 			return
 		}
 		member, ok := entry.members[fileID]

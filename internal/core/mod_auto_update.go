@@ -54,6 +54,11 @@ type ModAutoUpdateFailure struct {
 	UpdateBatchFailure
 	// JobID is the frontend's job the update failed in.
 	JobID string `json:"job_id"`
+	// FomodReanswer marks an update that was not applied because the mod's
+	// FOMOD installer changed and its choices need answering again (#615):
+	// automatic updates never ask, so the user updates the mod by hand,
+	// which asks. omitzero.
+	FomodReanswer bool `json:"fomod_reanswer,omitzero"`
 }
 
 // ModAutoUpdate is the automatic pass's state on an update check's report

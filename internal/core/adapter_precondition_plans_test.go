@@ -70,6 +70,10 @@ var gatedPlans = []gatedPlan{
 		_, err := svc.PlanDeploy(context.Background(), g, "default", core.DeployOptions{})
 		return err
 	}},
+	{"PlanFomodReconfigure", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanFomodReconfigure(context.Background(), g, "default", "acme", "m1")
+		return err
+	}},
 	{"PlanRelinkMod", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
 		_, err := svc.PlanRelinkMod(context.Background(), g, "default", "acme", "m1", "acme", "m2")
 		return err

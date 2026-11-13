@@ -333,8 +333,8 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		switch {
 		case !installed:
 			toInstall = append(toInstall, ref)
-		case ref.Version != "" && row.Version != ref.Version:
-			// #96 convergence: the profile names a different version than
+		case (ref.Version != "" && row.Version != ref.Version) || fomodDrift(ref, row):
+			// #96 convergence (and #614's FOMOD choices drift): the profile names a different version than
 			// the installed row - reinstall at the profile's version
 			// (downgrades included). ref is passed as-is: its own FileIDs
 			// (if any) describe the TARGET version; the installed row's
@@ -349,7 +349,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			if live != nil {
 				prior = *live
 			}
-			if prior.Version != ref.Version {
+			if prior.Version != ref.Version || fomodDrift(ref, &prior) {
 				recordPrior(key, prior)
 			}
 		case !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version, Variant: row.Variant}):
@@ -385,7 +385,9 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			// version on disk, whatever the target row claims - only one
 			// version can be deployed, and the enable has to replace it.
 			tr, hasTargetRow := targetInstalled[key]
-			drifted := live != nil && live.Version != row.Version
+			// #614: another tree of the same version (other FOMOD
+			// choices) on disk is a drift too.
+			drifted := live != nil && (live.Version != row.Version || live.Variant != row.Variant)
 			if !hasTargetRow || !tr.Enabled || !tr.Deployed || drifted {
 				toEnable = append(toEnable, *row)
 				if drifted {
@@ -538,13 +540,14 @@ func (s *Service) clearRowUnderProfile(ctx context.Context, gameID, profileName 
 
 // switchReplacement returns the prior row a switch entry for key replaces,
 // and whether to replace it at all: only when that row's files are live, are
-// another version than the one being deployed, and are still in the cache
+// another version or another tree of it (#614: a variant) than the one being
+// deployed, and are still in the cache
 // for Replace to read. Otherwise the entry is a plain Install - with a
 // missing old cache entry the old version's own files cannot be told apart,
 // the caveat doProfileApply shares.
-func (s *Service) switchReplacement(game *domain.Game, plan *SwitchPlan, key, version string) (domain.InstalledMod, bool) {
+func (s *Service) switchReplacement(game *domain.Game, plan *SwitchPlan, key, version, variant string) (domain.InstalledMod, bool) {
 	prior, ok := plan.PriorVersions[key]
-	if !ok || !prior.Deployed || prior.Version == version {
+	if !ok || !prior.Deployed || (prior.Version == version && prior.Variant == variant) {
 		return prior, false
 	}
 	return prior, s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: prior.SourceID, ModID: prior.ID, Version: prior.Version, Variant: prior.Variant})
@@ -732,7 +735,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 		// R7: another version of this mod is live, so the enable replaces
 		// it rather than installing beside it.
-		prior, replacing := s.switchReplacement(game, plan, domain.ModKey(im.SourceID, im.ID), im.Version)
+		prior, replacing := s.switchReplacement(game, plan, domain.ModKey(im.SourceID, im.ID), im.Version, im.Variant)
 		deploy := func() error { return toInstaller.Install(ctx, game, &im.Mod, plan.To) }
 		if replacing {
 			deploy = func() error { return toInstaller.Replace(ctx, game, &prior.Mod, &im.Mod, plan.To) }
@@ -863,36 +866,44 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			// cache entry for an extracted archive holds member names that
 			// match no DownloadableFile, so a name-based check would miss
 			// every archive-based mod and redownload a complete cache.
+			//
+			// #614: a FOMOD mod's entry is the variant the target ref's
+			// recorded choices name, and a download replays them.
 			var checksums []fileChecksum // #372 - saved after the DB row below
-			if !s.GetGameCache(game).HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}, downloadedFileIDs) {
-				downloadFailed := false
-				for _, file := range filesToDownload {
-					progressFn := func(e Event) {
-						if forwardFetchStep(e, scope, emit) {
-							return
-						}
-						d, ok := e.(DownloadEvent)
-						if !ok || d.TotalBytes <= 0 {
-							return
-						}
-						emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
+			fx := s.fomodInputFor(ctx, game, plan.To, &ref, ref.SourceID, ref.ModID, nil)
+			var resolved *fomodResolved
+			mod.Variant = refVariant(&ref)
+			if s.GetGameCache(game).HasFileIDs(modCacheKey(game.ID, *mod), downloadedFileIDs) {
+				if mod.Variant != "" {
+					resolved = &fomodResolved{variant: mod.Variant, choices: ref.Fomod}
+				}
+			} else {
+				mod.Variant = ""
+				progressFn := func(e Event) {
+					if forwardFetchStep(e, scope, emit) {
+						return
 					}
-					downloadResult, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn)
-					if err != nil {
-						// Not fail(): SwitchDownloadFailed renders this
-						// mod's Error line already.
-						failed.Reason = fmt.Sprintf("download failed: %v", err)
-						result.recordFailure(failed, version)
-						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: failed.Reason})
-						downloadFailed = true
-						break
+					d, ok := e.(DownloadEvent)
+					if !ok || d.TotalBytes <= 0 {
+						return
 					}
-					checksums = appendChecksum(checksums, file.ID, downloadResult)
+					emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
+				}
+				results, got, err := s.downloadModFiles(ctx, s.GetGameCache(game), ref.SourceID, game, mod, filesToDownload, fx,
+					modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }})
+				if err != nil {
+					// Not fail(): SwitchDownloadFailed renders this
+					// mod's Error line already.
+					failed.Reason = fmt.Sprintf("download failed: %v", err)
+					result.recordFailure(failed, version)
+					emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: failed.Reason})
+					emit(StepEvent{Scope: scope, Phase: SwitchDownloadDone})
+					continue
 				}
 				emit(StepEvent{Scope: scope, Phase: SwitchDownloadDone})
-
-				if downloadFailed {
-					continue
+				resolved = got
+				for i, file := range filesToDownload {
+					checksums = appendChecksum(checksums, file.ID, results[i])
 				}
 			}
 
@@ -910,7 +921,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			// list, files the new version no longer serves stay behind as
 			// stale deployments (`lmm verify` surfaces them) - strictly
 			// better than failing to converge at all.
-			prior, replacing := s.switchReplacement(game, plan, domain.ModKey(ref.SourceID, ref.ModID), mod.Version)
+			prior, replacing := s.switchReplacement(game, plan, domain.ModKey(ref.SourceID, ref.ModID), mod.Version, mod.Variant)
 			if replacing {
 				if err := toInstaller.Replace(ctx, game, &prior.Mod, mod, plan.To); err != nil {
 					fail(fmt.Sprintf("deploy failed: %v", err))
@@ -955,8 +966,9 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			}
 
 			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
+			fomodRec := fomodRecordOf(resolved)
 			if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-				return pm.UpsertMod(ctx, game.ID, plan.To, modRef)
+				return pm.upsertMod(ctx, game.ID, plan.To, modRef, fomodRec)
 			}); err != nil {
 				// Ruling 16 (A): the DB row and the deployment are already in
 				// place, so the ref that completes them is written even under

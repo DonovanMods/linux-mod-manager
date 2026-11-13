@@ -98,7 +98,7 @@ type workshopFetchErrorDetails struct {
 //
 // The fetch directory belongs to the acquisition (released with it), since
 // what acquireLocal stages from it is not committed until later.
-func (s *Service) acquireFetched(ctx context.Context, gameCache *cache.Cache, fetcher source.Fetcher, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (*acquiredFile, error) {
+func (s *Service) acquireFetched(ctx context.Context, gameCache *cache.Cache, fetcher source.Fetcher, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, sink EventSink) (*acquiredFile, error) {
 	destDir, err := newStagingDir(s.stagingRoot(), "lmm-fetch-*")
 	if err != nil {
 		return nil, err
@@ -116,7 +116,7 @@ func (s *Service) acquireFetched(ctx context.Context, gameCache *cache.Cache, fe
 		_ = os.RemoveAll(destDir)
 		return nil, verr
 	}
-	a, err := s.acquireLocal(ctx, gameCache, game, mod, file, fetched, sink)
+	a, err := s.acquireLocal(ctx, gameCache, game, mod, file, fetched, fx, sink)
 	if err != nil {
 		_ = os.RemoveAll(destDir)
 		return nil, err

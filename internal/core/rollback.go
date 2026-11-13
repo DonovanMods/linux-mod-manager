@@ -400,7 +400,16 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
 
-	if err := s.rollbackModVersion(ctx, mod.SourceID, mod.ID, game.ID, profileName); err != nil {
+	// #614: the choices the rolled-away-from version was installed with,
+	// read before the swap: they become previous_fomod, and the row's
+	// previous_fomod becomes the profile's choices again.
+	var currentFomod domain.FomodChoices
+	if cur := s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID); cur != nil {
+		currentFomod = cur.Fomod
+	}
+
+	restoredFomod, err := s.rollbackModVersion(ctx, mod.SourceID, mod.ID, game.ID, profileName, currentFomod)
+	if err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		if rerr := installer.ReplaceForUpdate(context.WithoutCancel(ctx), game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs); rerr != nil {
 			s.logger().Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
@@ -426,10 +435,17 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 		Version:  rolledBackMod.Version,
 		FileIDs:  rolledBackMod.FileIDs,
 	}
-	if err := pm.UpsertMod(ctx, game.ID, profileName, restoredRef); err != nil {
+	// The swap moved the restored version's choices out of previous_fomod
+	// (and the current ones in), in its own transaction: the profile takes
+	// them now, and a failed profile write swaps every column back.
+	restoredRec := fomodRecord{op: fomodClear}
+	if !restoredFomod.IsZero() {
+		restoredRec = fomodRecord{op: fomodSet, choices: restoredFomod}
+	}
+	if err := pm.upsertMod(ctx, game.ID, profileName, restoredRef, restoredRec); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
-		if rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName); rerr != nil {
+		if _, rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName, restoredFomod); rerr != nil {
 			s.logger().Warn("rollback after failed install also failed", "step", "rollback_mod_version", "err", rerr)
 		}
 		if rerr := installer.ReplaceForUpdate(rctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs); rerr != nil {

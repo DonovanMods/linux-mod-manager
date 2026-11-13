@@ -104,10 +104,12 @@ func (p acquirePolicy) blocks(err error) bool {
 // answers before re-running the same Apply - so collecting it up front,
 // with nothing written, is what helps them. Today that is the loader
 // precondition (answered with `lmm game edit --loader`, or the web UI's game
-// editor); F2 adds FOMOD questions.
+// editor), and FOMOD installer questions (#614: answered and sent back in
+// the Apply's Options.Fomod).
 func answerableRefusal(err error) bool {
 	var loaderErr *LoaderRequiredError
-	return errors.As(err, &loaderErr)
+	var fomodErr *FomodChoicesRequiredError
+	return errors.As(err, &loaderErr) || errors.As(err, &fomodErr)
 }
 
 // AcquireRefusal is one item an install-shaped Apply refused in its acquire
@@ -150,16 +152,31 @@ func newAcquireRefusedError(refusals []AcquireRefusal) *AcquireRefusedError {
 	return &AcquireRefusedError{Refusals: refusals, err: combineRefusals(refusals)}
 }
 
+// combineRefusals folds refusals into the decide step's one error: every
+// loader refusal of one requirement into one *LoaderRequiredError, every
+// FOMOD question into one *FomodChoicesRequiredError (#614: ONE question
+// document per Apply), and anything else joined beside them.
 func combineRefusals(refusals []AcquireRefusal) error {
 	if merged := mergeLoaderRequirements(refusals); merged != nil {
 		return merged
 	}
+	questions, asked := mergeFomodQuestions(refusals)
 	if len(refusals) == 1 {
 		return refusals[0].Err
 	}
 	errs := make([]error, 0, len(refusals))
+	if asked {
+		errs = append(errs, questions)
+	}
 	for _, r := range refusals {
+		var q *FomodChoicesRequiredError
+		if asked && asFomodQuestion(r.Err, &q) {
+			continue
+		}
 		errs = append(errs, fmt.Errorf("%s:%s: %w", r.SourceID, r.ModID, r.Err))
+	}
+	if len(errs) == 1 {
+		return errs[0]
 	}
 	return errors.Join(errs...)
 }

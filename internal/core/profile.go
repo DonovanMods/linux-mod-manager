@@ -513,7 +513,26 @@ func (pm *ProfileManager) AddMod(ctx context.Context, gameID, profileName string
 // install/update-style upsert. The refusal wraps ErrModLocked and leaves the
 // profile unwritten. A same-version upsert (a FileIDs refresh / reinstall
 // repair) stays legitimate and preserves the marker as before.
+//
+// mod.Fomod, when set, is recorded (an install of a FOMOD records the
+// choices it was installed with); a zero one keeps the recorded choices.
+// A flow that must CLEAR them - the mod's new tree is not a FOMOD
+// installer - uses upsertMod with fomodClear (#614).
 func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName string, mod domain.ModReference) error {
+	rec := fomodRecord{op: fomodKeep}
+	if !mod.Fomod.IsZero() {
+		rec = fomodRecord{op: fomodSet, choices: mod.Fomod}
+	}
+	return pm.upsertMod(ctx, gameID, profileName, mod, rec)
+}
+
+// upsertMod is UpsertMod with an explicit say over the ref's recorded FOMOD
+// choices (#614): keep them, set them, or clear them.
+func (pm *ProfileManager) upsertMod(ctx context.Context, gameID, profileName string, mod domain.ModReference, rec fomodRecord) error {
+	mod.Fomod = domain.FomodChoices{}
+	if rec.op == fomodSet {
+		mod.Fomod = rec.choices
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -551,6 +570,17 @@ func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName str
 			}
 			profile.Mods[i].Version = mod.Version
 			profile.Mods[i].FileIDs = mod.FileIDs
+			// #614: an install of a FOMOD records the choices it was
+			// installed with, an install of a tree that is not one clears
+			// them (they would name a tree the row does not have), and
+			// every other write keeps them, as it keeps Disabled and
+			// Category below.
+			switch rec.op {
+			case fomodSet:
+				profile.Mods[i].Fomod = rec.choices
+			case fomodClear:
+				profile.Mods[i].Fomod = domain.FomodChoices{}
+			}
 			// Preserve Locked marker on in-place update (#97: survives UpsertMod).
 			// Do not modify Locked; it is only changed via explicit lock/unlock operations.
 			//

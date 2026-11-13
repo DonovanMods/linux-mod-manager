@@ -1,0 +1,8 @@
+{
+  "name": "2K",
+  "ordinal": 0,
+  "description": "Lighter on VRAM.",
+  "image": "fomod/images/2k.png",
+  "type": "Recommended",
+  "selected": true
+}

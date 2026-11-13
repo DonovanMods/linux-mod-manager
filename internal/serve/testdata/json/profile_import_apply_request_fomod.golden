@@ -1,0 +1,24 @@
+{
+  "install": true,
+  "fomod": {
+    "nexusmods:12604": {
+      "config_sha256": "9f2c4e1d",
+      "steps": [
+        {
+          "name": "Main Files",
+          "groups": [
+            {
+              "name": "Texture Resolution",
+              "choices": [
+                {
+                  "name": "2K",
+                  "idx": 0
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

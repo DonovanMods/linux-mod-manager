@@ -1,0 +1,6 @@
+{
+  "step": "Main Files",
+  "group": "Texture Resolution",
+  "type": "SelectExactlyOne",
+  "selected": 2
+}

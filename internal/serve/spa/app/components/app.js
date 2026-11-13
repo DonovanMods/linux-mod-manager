@@ -22,6 +22,7 @@ import { ProfilesModal } from "./profilesmodal.js";
 import { UninstallBatchModal } from "./uninstallbatchmodal.js";
 import { ShortcutsModal } from "./shortcutsmodal.js";
 import { LaunchDriftModal } from "./launchmodal.js";
+import { FomodWizardModal } from "./fomodwizard.js";
 import { Toasts } from "./toasts.js";
 import { ReleaseBanner } from "./releasebanner.js";
 import { FromFileInput } from "./updatefromfile.js";
@@ -144,6 +145,14 @@ export function App({ state, onThemeChange, actions }) {
     ${
       modalType === "launch-drift" &&
       html`<${LaunchDriftModal} modal=${state.modal} actions=${actions} />`
+    }
+    ${
+      modalType === "fomod" &&
+      html`<${FomodWizardModal}
+        key=${state.modal.seq}
+        modal=${state.modal}
+        actions=${actions}
+      />`
     }
     ${
       modalType === "uninstall-batch" &&

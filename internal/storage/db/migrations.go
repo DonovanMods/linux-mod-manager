@@ -54,6 +54,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV22,
 		migrateV23,
 		migrateV24,
+		migrateV25,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -661,4 +662,20 @@ func migrateV24(ctx context.Context, q migrationExec) error {
 		}
 	}
 	return nil
+}
+
+// migrateV25 adds installed_mods.previous_fomod (#614): the FOMOD
+// installer choices previous_version was installed with, as JSON, so a
+// rollback restores them to the profile with the version and its variant.
+// ” is none, which every existing row has. Guarded like migrateV20.
+func migrateV25(ctx context.Context, q migrationExec) error {
+	var have int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('installed_mods') WHERE name = 'previous_fomod'`).Scan(&have); err != nil {
+		return fmt.Errorf("inspecting installed_mods: %w", err)
+	}
+	if have > 0 {
+		return nil
+	}
+	_, err := q.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN previous_fomod TEXT NOT NULL DEFAULT ''`)
+	return err
 }

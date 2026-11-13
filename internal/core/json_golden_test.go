@@ -163,6 +163,30 @@ func TestJSONGoldens_GameRowsAreWhatProductionEmits(t *testing.T) {
 	}
 }
 
+// sampleFomodQuestion is a question document with every shape a golden
+// should pin: a stale recording's unmatched choice and rule violation, an
+// unanswered group, option types and images.
+func sampleFomodQuestion() core.FomodQuestion {
+	return core.FomodQuestion{
+		SourceID: "nexusmods", ModID: "12604", Name: "Sample Mod",
+		ConfigSHA256: "9f2c4e1d0b8a7c6e5f4d3c2b1a0918273645546372819a0b1c2d3e4f5a6b7c8d",
+		ModuleName:   "Sample Installer", InstallerRoot: "Sample Mod/", Reason: core.FomodReasonStale,
+		Steps: []core.FomodQuestionStep{{Name: "Main Files", Groups: []core.FomodQuestionGroup{
+			{Name: "Texture Resolution", Type: "SelectExactlyOne", Answered: true, Options: []core.FomodQuestionOption{
+				{Name: "2K", Description: "Lighter on VRAM.", Image: "fomod/images/2k.png", Type: "Recommended", Selected: true},
+				{Name: "4K", Type: "Optional"},
+			}},
+			{Name: "Patches", Type: "SelectAny", Options: []core.FomodQuestionOption{{Name: "USSEP", Type: "CouldBeUsable"}}},
+		}}},
+		Choices: []fomod.StepChoice{{Name: "Main Files", Groups: []fomod.GroupChoice{
+			{Name: "Texture Resolution", Choices: []fomod.OptionChoice{{Name: "2K", Idx: 0}}},
+		}}},
+		Unanswered: []core.FomodGroupRef{{Step: "Main Files", Group: "Patches"}},
+		Unmatched:  []core.FomodUnmatchedChoice{{Step: "Main Files", Group: "Texture Resolution", Option: "8K", Reason: "no such option"}},
+		Violations: []core.FomodRuleViolation{{Step: "Main Files", Group: "Texture Resolution", Type: "SelectExactlyOne", Selected: 2}},
+	}
+}
+
 func TestJSONGoldens(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -1319,6 +1343,16 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #615: a FOMOD install's recorded choices, which the full mod
+			// page's "Reconfigure installer…" keys on.
+			"installed_detail_fomod",
+			core.InstalledDetail{
+				Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateNotify,
+				Fomod: &domain.FomodChoices{ConfigSHA256: "ab12", Steps: []fomod.StepChoice{{Name: "Main Files",
+					Groups: []fomod.GroupChoice{{Name: "Texture Resolution", Choices: []fomod.OptionChoice{{Name: "2K", Idx: 0}}}}}}},
+			},
+		},
+		{
 			"installed_detail",
 			core.InstalledDetail{
 				Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateAuto,
@@ -1404,6 +1438,11 @@ func TestJSONGoldens(t *testing.T) {
 				EffectiveCategory: "Armour",
 				CategorySource:    core.CategorySourceSource,
 			}}},
+		},
+		{
+			// #614: a FOMOD mod installed before lmm ran installers.
+			"installed_detail_fomod_not_run",
+			core.InstalledDetail{Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateNotify, FomodNotRun: true},
 		},
 		{
 			// #592: the category on the installed block of `lmm mod show`.
@@ -2082,6 +2121,15 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #615: an item whose collection records FOMOD installer
+			// choices, as the plan shows them.
+			"collection_import_item_installer_choices",
+			core.CollectionImportItem{
+				SourceID: "nexusmods", ModID: "12604", Name: "Sample Mod", Version: "1.0",
+				InstallerChoices: []string{"Main Files > Texture Resolution: 2K", "Main Files > Patches: none"},
+			},
+		},
+		{
 			"import_hook",
 			core.ImportHook{Hook: "install.after_all", Command: "/home/author/bin/after.sh"},
 		},
@@ -2392,6 +2440,18 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #615: an automatic update held back for re-answering its
+			// FOMOD installer's choices.
+			"mod_auto_update_failure_fomod_reanswer",
+			core.ModAutoUpdateFailure{
+				UpdateBatchFailure: core.UpdateBatchFailure{
+					Mod: "nexusmods:12604", Name: "Sample Mod", FromVersion: "1.0", ToVersion: "1.1",
+					Error: core.ReasonFomodReanswer,
+				},
+				JobID: "0f1e2d3c4b5a6978", FomodReanswer: true,
+			},
+		},
+		{
 			// #587: an automatic update that failed, held back until the
 			// user checks again - the card says so instead of listing it
 			// unexplained.
@@ -2536,11 +2596,68 @@ func TestJSONGoldens(t *testing.T) {
 			core.CopyModEntry{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3", Category: "Favourites"},
 		},
 		{
+			// #614: the question document a FOMOD install refuses with.
+			"fomod_choices_required_error",
+			&core.FomodChoicesRequiredError{Mods: []core.FomodQuestion{sampleFomodQuestion()}},
+		},
+		{"fomod_question", sampleFomodQuestion()},
+		{
+			// #615: a question whose preselection is not the installer's
+			// own carries the defaults too (--fomod-defaults).
+			"fomod_question_defaults",
+			func() core.FomodQuestion {
+				q := sampleFomodQuestion()
+				q.Defaults = []fomod.StepChoice{{Name: "Main Files", Groups: []fomod.GroupChoice{
+					{Name: "Texture Resolution", Choices: []fomod.OptionChoice{{Name: "4K", Idx: 1}}},
+					{Name: "Patches", Choices: []fomod.OptionChoice{}},
+				}}}
+				return q
+			}(),
+		},
+		{"fomod_question_step", sampleFomodQuestion().Steps[0]},
+		{"fomod_question_group", sampleFomodQuestion().Steps[0].Groups[0]},
+		{"fomod_question_option", sampleFomodQuestion().Steps[0].Groups[0].Options[0]},
+		{"fomod_group_ref", core.FomodGroupRef{Step: "Main Files", Group: "Texture Resolution"}},
+		{"fomod_unmatched_choice", core.FomodUnmatchedChoice{Step: "Main Files", Group: "Texture Resolution", Option: "8K", Reason: "no such option"}},
+		{"fomod_rule_violation", core.FomodRuleViolation{Step: "Main Files", Group: "Texture Resolution", Type: "SelectExactlyOne", Selected: 2}},
+		{
+			"fomod_install_error",
+			&core.FomodInstallError{SourceID: "nexusmods", ModID: "12604", Name: "Sample Mod",
+				Reason: "it is a scripted installer (fomod/script.cs or an OMOD), which lmm never runs"},
+		},
+		{
+			// #614: the update batch's skip for choices that no longer fit.
+			"update_apply_result_fomod_reanswer",
+			core.UpdateApplyResult{Mod: domain.ModReference{SourceID: "nexusmods", ModID: "12604", Version: "1.0"},
+				Name: "Sample Mod", FromVersion: "1.0", ToVersion: "1.1", Status: core.UpdateSkipped,
+				Reason: core.ReasonFomodReanswer, FomodReanswer: true},
+		},
+		{
+			// #615: the same skip carrying its question, for a frontend to
+			// ask.
+			"update_apply_result_fomod_question",
+			core.UpdateApplyResult{Mod: domain.ModReference{SourceID: "nexusmods", ModID: "12604", Version: "1.0"},
+				Name: "Sample Mod", FromVersion: "1.0", ToVersion: "1.1", Status: core.UpdateSkipped,
+				Reason: core.ReasonFomodReanswer, FomodReanswer: true,
+				FomodChoicesRequired: &core.FomodChoicesRequiredError{Mods: []core.FomodQuestion{sampleFomodQuestion()}}},
+		},
+		{
 			// #614: the recorded FOMOD choices a copy carries.
 			"copy_mod_entry_fomod",
 			core.CopyModEntry{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3",
 				Fomod: domain.FomodChoices{ConfigSHA256: "ab12", Steps: []fomod.StepChoice{{Name: "Main Files",
 					Groups: []fomod.GroupChoice{{Name: "Texture Resolution", Choices: []fomod.OptionChoice{{Name: "2K", Idx: 1}}}}}}}},
+		},
+		{
+			// #615: `lmm mod fomod`'s plan - the installed row and the
+			// recorded choices the question is preselected from.
+			"fomod_reconfigure_plan",
+			core.FomodReconfigurePlan{GameID: "skyrimse", Profile: "default",
+				Mod: domain.InstalledMod{Mod: domain.Mod{ID: "12604", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.0", GameID: "skyrimse"},
+					ProfileName: "default", UpdatePolicy: domain.UpdateNotify, InstalledAt: time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC),
+					Enabled: true, Deployed: true, LinkMethod: domain.LinkSymlink, FileIDs: []string{"37471"}},
+				Choices: domain.FomodChoices{ConfigSHA256: "ab12", Steps: []fomod.StepChoice{{Name: "Main Files",
+					Groups: []fomod.GroupChoice{{Name: "Texture Resolution", Choices: []fomod.OptionChoice{{Name: "2K", Idx: 0}}}}}}}},
 		},
 		{
 			"copy_mod_skip",

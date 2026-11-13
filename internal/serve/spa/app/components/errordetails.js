@@ -32,6 +32,7 @@ import {
   installFromFileOrigin,
 } from "./installfromfile.js";
 import { DocumentView } from "./documentview.js";
+import { fomodQuestionFor, modKey } from "../fomod.js";
 
 /** loaderLabel spells a loader kind the way its own project does. An
  * unrecognised kind is shown as sent - kind is an open string. */
@@ -53,6 +54,9 @@ export function ErrorDetails({ details, actions, headed }) {
 
   const refusal = adapterRefusalFor(details);
   if (refusal) return html`<${AdapterRefusal} refusal=${refusal} />`;
+
+  const question = fomodQuestionFor(details);
+  if (question) return html`<${FomodQuestionSummary} question=${question} />`;
 
   // Issue 513: a failed download names the mod's page. A Steam Workshop
   // failure is also a download failure, and its own keys (the tool's output
@@ -281,6 +285,31 @@ export function AdapterRefusal({ refusal }) {
           >, then try again.
         </p>`
       }
+    </div>
+  `;
+}
+
+/**
+ * FomodQuestionSummary is a FOMOD installer question (issue 615) as a
+ * failure shows it: which mods' installers have choices to make, and how
+ * many steps each shows so far. The wizard (fomodwizard.js) asks the rest;
+ * nothing was installed.
+ */
+export function FomodQuestionSummary({ question }) {
+  return html`
+    <div class="error-details__fomod" data-testid="fomod-question">
+      <p class="plan__note">
+        Nothing was installed yet: the installer needs your choices.
+      </p>
+      <ul class="plan__mods">
+        ${question.mods.map(
+          (m) =>
+            html`<li key=${modKey(m)}>
+              ${m.name || modKey(m)}${m.module_name ? ` (${m.module_name})` : ""}:
+              ${" "}${m.steps.length} step${m.steps.length === 1 ? "" : "s"}
+            </li>`,
+        )}
+      </ul>
     </div>
   `;
 }

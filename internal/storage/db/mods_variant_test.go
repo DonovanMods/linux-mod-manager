@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
@@ -70,11 +71,11 @@ func TestApplyModUpdate_ShiftsVariantWithVersion(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, database.SaveInstalledMod(ctx, variantRow("aaaaaaaaaaaa")))
 
-	require.NoError(t, database.ApplyModUpdate(ctx, "nexusmods", "12345", "skyrim-se", "default", "2.0.0", "bbbbbbbbbbbb", []string{"f2"}))
+	require.NoError(t, database.ApplyModUpdate(ctx, "nexusmods", "12345", "skyrim-se", "default", "2.0.0", "bbbbbbbbbbbb", domain.FomodChoices{}, []string{"f2"}))
 	version, variant, prevVersion, prevVariant := readVariants(t, database)
 	assert.Equal(t, []string{"2.0.0", "bbbbbbbbbbbb", "1.0.0", "aaaaaaaaaaaa"}, []string{version, variant, prevVersion, prevVariant})
 
-	require.NoError(t, database.SwapModVersions(ctx, "nexusmods", "12345", "skyrim-se", "default"))
+	require.NoError(t, swapNoFomod(database.SwapModVersions(ctx, "nexusmods", "12345", "skyrim-se", "default", domain.FomodChoices{})))
 	version, variant, prevVersion, prevVariant = readVariants(t, database)
 	assert.Equal(t, []string{"1.0.0", "aaaaaaaaaaaa", "2.0.0", "bbbbbbbbbbbb"}, []string{version, variant, prevVersion, prevVariant},
 		"a rollback restores the previous version's tree, not just its version")
@@ -140,12 +141,67 @@ func TestSwapModVersions_SwapsVariants(t *testing.T) {
 	row.Version, row.PreviousVersion, row.PreviousVariant = "2.0", "1.0", ""
 	require.NoError(t, database.SaveInstalledMod(ctx, row))
 
-	require.NoError(t, database.SwapModVersions(ctx, "nexusmods", "12345", "skyrim-se", "default"))
+	require.NoError(t, swapNoFomod(database.SwapModVersions(ctx, "nexusmods", "12345", "skyrim-se", "default", domain.FomodChoices{})))
 	version, variant, prevVersion, prevVariant := readVariants(t, database)
 	assert.Equal(t, []string{"1.0", "", "2.0", "aaaaaaaaaaaa"}, []string{version, variant, prevVersion, prevVariant},
 		"a plain previous version swaps in, and the variant moves to previous")
 
-	require.NoError(t, database.SwapModVersions(ctx, "nexusmods", "12345", "skyrim-se", "default"))
+	require.NoError(t, swapNoFomod(database.SwapModVersions(ctx, "nexusmods", "12345", "skyrim-se", "default", domain.FomodChoices{})))
 	version, variant, prevVersion, prevVariant = readVariants(t, database)
 	assert.Equal(t, []string{"2.0", "aaaaaaaaaaaa", "1.0", ""}, []string{version, variant, prevVersion, prevVariant})
+}
+
+// TestPreviousFomod_RoundTrips (#614): the choices the previous version
+// was installed with survive a save and a read.
+func TestPreviousFomod_RoundTrips(t *testing.T) {
+	database := variantTestDB(t)
+	ctx := context.Background()
+	choices := domain.FomodChoices{ConfigSHA256: "ab", Steps: []fomod.StepChoice{{Name: "Main", Groups: []fomod.GroupChoice{{Name: "T", Choices: []fomod.OptionChoice{{Name: "4K", Idx: 1}}}}}}}
+	row := variantRow("aaaaaaaaaaaa")
+	row.PreviousFomod = choices
+	require.NoError(t, database.SaveInstalledMod(ctx, row))
+	got, err := database.GetInstalledMod(ctx, "nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.True(t, choices.Equal(got.PreviousFomod))
+	mods, err := database.GetInstalledMods(ctx, "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.True(t, choices.Equal(mods[0].PreviousFomod))
+
+}
+
+// swapNoFomod drops SwapModVersions' restored choices, for a test that
+// only asks whether the swap succeeded.
+func swapNoFomod(_ domain.FomodChoices, err error) error { return err }
+
+// TestPreviousFomod_UpdateAndRollbackSwapItTransactionally (#614 re-review
+// should-fixes 2 and 3): an update records the replaced choices as
+// previous_fomod in its own transaction, and a rollback swaps them out (and
+// the current ones in) in the swap's - so a second swap restores both.
+func TestPreviousFomod_UpdateAndRollbackSwapItTransactionally(t *testing.T) {
+	database := variantTestDB(t)
+	ctx := context.Background()
+	old := domain.FomodChoices{ConfigSHA256: "aa", Steps: []fomod.StepChoice{{Name: "Main", Groups: []fomod.GroupChoice{{Name: "T", Choices: []fomod.OptionChoice{{Name: "4K"}}}}}}}
+	cur := domain.FomodChoices{ConfigSHA256: "bb", Steps: []fomod.StepChoice{{Name: "Main", Groups: []fomod.GroupChoice{{Name: "T", Choices: []fomod.OptionChoice{{Name: "Ultra"}}}}}}}
+	require.NoError(t, database.SaveInstalledMod(ctx, variantRow("aaaaaaaaaaaa")))
+
+	require.NoError(t, database.ApplyModUpdate(ctx, "nexusmods", "12345", "skyrim-se", "default", "2.0.0", "bbbbbbbbbbbb", old, []string{"f2"}))
+	got, err := database.GetInstalledMod(ctx, "nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.True(t, old.Equal(got.PreviousFomod), "the update recorded the replaced choices")
+
+	restored, err := database.SwapModVersions(ctx, "nexusmods", "12345", "skyrim-se", "default", cur)
+	require.NoError(t, err)
+	assert.True(t, old.Equal(restored), "the rollback hands back the restored version's choices")
+	got, err = database.GetInstalledMod(ctx, "nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.True(t, cur.Equal(got.PreviousFomod), "and keeps the rolled-away-from ones")
+
+	// A failed profile write swaps back with what it restored.
+	back, err := database.SwapModVersions(ctx, "nexusmods", "12345", "skyrim-se", "default", restored)
+	require.NoError(t, err)
+	assert.True(t, cur.Equal(back))
+	got, err = database.GetInstalledMod(ctx, "nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0.0", got.Version)
+	assert.True(t, old.Equal(got.PreviousFomod), "every column is back as the update left it")
 }

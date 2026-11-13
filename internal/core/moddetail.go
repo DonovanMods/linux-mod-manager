@@ -93,6 +93,16 @@ type InstalledDetail struct {
 	// which a later update check records on the row. omitempty.
 	EffectiveCategory string `json:"effective_category,omitempty"`
 	CategorySource    string `json:"category_source,omitempty"`
+	// Fomod reports a mod installed through a FOMOD installer (#615): the
+	// choices its profile reference records, so the full mod page can offer
+	// "Reconfigure installer…" (`lmm mod fomod`). Nil for any other mod.
+	Fomod *domain.FomodChoices `json:"fomod,omitempty"`
+	// FomodNotRun reports a FOMOD mod installed before lmm ran FOMOD
+	// installers (#614, Service.IsLegacyFomodInstall): the archive's raw
+	// contents, every option at once, are what is deployed. It keeps
+	// working as it always did; reconfiguring it runs its installer.
+	// omitzero.
+	FomodNotRun bool `json:"fomod_not_run,omitzero"`
 }
 
 // ModDetail fetches modID from sourceID and joins whatever local install
@@ -174,7 +184,19 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 				info.LockedVersion = ref.Version
 			}
 			userCategory = ref.Category
+			if !ref.Fomod.IsZero() {
+				choices := ref.Fomod
+				info.Fomod = &choices
+			}
 		}
+	}
+	info.FomodNotRun = s.IsLegacyFomodInstall(game, installed)
+	if info.Fomod == nil && (installed.Variant != "" || info.FomodNotRun) {
+		// A FOMOD install whose profile lost its choices (an older lmm
+		// dropped the key on a rewrite), or one installed before lmm ran
+		// FOMOD installers (its cache entry is the raw installer archive),
+		// can still be reconfigured (#615).
+		info.Fomod = &domain.FomodChoices{Steps: []domain.FomodStepChoice{}}
 	}
 	info.EffectiveCategory, info.CategorySource = effectiveCategory(userCategory, installed.CategoryName)
 	detail.Installed = info

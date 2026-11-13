@@ -39,6 +39,7 @@ Then read whichever of these you need:
 | Keep several mod setups for one game         | [Profiles](profiles.md)                                 |
 | Update mods, or go back to an older version  | [Updating, rolling back and locking](updates.md)        |
 | Use a mod I downloaded myself                | [Mods you downloaded yourself](manual-mods.md)          |
+| Install a mod that asks which options I want | [Mods with installer options (FOMOD)](fomod.md)         |
 | Mod a Unity game such as Valheim             | [Unity games and BepInEx](bepinex.md)                   |
 | Start the game from lmm                      | [Launching your game](launch.md)                        |
 | Keep the web interface running all the time  | [Run the web UI in the background](background.md)       |

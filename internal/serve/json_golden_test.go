@@ -393,6 +393,21 @@ func TestServeJSONGoldens(t *testing.T) {
 			"updates_apply_request",
 			updatesApplyRequest{Force: true, SkipHooks: true},
 		},
+		// #615: the FOMOD answers every install-shaped job accepts, keyed
+		// by "<source-id>:<mod-id>" - the installer wizard's re-post. One
+		// golden per request, each with only the new member set, so the
+		// existing goldens above stay byte-identical.
+		{"install_apply_request_fomod", installApplyRequest{Fomod: sampleServeFomodAnswers()}},
+		{"profile_import_apply_request_fomod", profileImportApplyRequest{Install: true, Fomod: sampleServeFomodAnswers()}},
+		{"import_archive_apply_request_fomod", importArchiveApplyRequest{Fomod: sampleServeFomodAnswers()}},
+		{"update_from_archive_apply_request_fomod", updateFromArchiveApplyRequest{Fomod: sampleServeFomodAnswers()}},
+		{"updates_apply_request_fomod", updatesApplyRequest{Fomod: sampleServeFomodAnswers()}},
+		// #615: "Reconfigure installer…" (kind_mod_fomod.go), both halves.
+		{"mod_fomod_plan_request", modFomodPlanRequest{SourceID: "nexusmods", ModID: "12604"}},
+		{
+			"mod_fomod_apply_request",
+			modFomodApplyRequest{Fomod: sampleServeFomodAnswers(), AcceptConflicts: true, Force: true, SkipHooks: true, SkipVerify: true},
+		},
 		{
 			// api_mod_settings.go's two request bodies: an explicit version
 			// (the full mod page's versions-table "lock this version"
@@ -862,5 +877,14 @@ func TestServeJSONGoldens(t *testing.T) {
 			require.NoError(t, err, "missing golden - re-record with -update-serve-json-goldens")
 			require.Equal(t, string(want), buf.String())
 		})
+	}
+}
+
+// sampleServeFomodAnswers is one mod's FOMOD answer, as the installer
+// wizard sends it (#615).
+func sampleServeFomodAnswers() map[string]domain.FomodChoices {
+	return map[string]domain.FomodChoices{
+		"nexusmods:12604": {ConfigSHA256: "9f2c4e1d", Steps: []domain.FomodStepChoice{{Name: "Main Files",
+			Groups: []domain.FomodGroupChoice{{Name: "Texture Resolution", Choices: []domain.FomodOptionChoice{{Name: "2K", Idx: 0}}}}}}},
 	}
 }
