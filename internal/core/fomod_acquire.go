@@ -62,12 +62,49 @@ func (s *Service) replayInput(ctx context.Context, game *domain.Game, profileNam
 // choices - is rebuilt raw, the archive's own tree exactly as it was
 // installed, never re-resolved into a question the flow cannot ask or a
 // variant the row does not name (#614).
+//
+// A rebuild reproduces the row's own tree, so the installer's file
+// conditions are answered as they were when it was installed - the
+// recorded file_states, laid over the current ones for any path the
+// recording does not name - not as the profile's files stand now.
 func (s *Service) rebuildInput(ctx context.Context, game *domain.Game, row *domain.InstalledMod) fomodInput {
-	in := s.replayInput(ctx, game, row.ProfileName, row.SourceID, row.ID)
+	return asRebuild(s.replayInput(ctx, game, row.ProfileName, row.SourceID, row.ID), row)
+}
+
+// asRebuild turns a replay input into a rebuild of row's own tree: raw for
+// a row installed before FOMOD support, else answered by the recorded file
+// states first (rebuildInput).
+func asRebuild(in fomodInput, row *domain.InstalledMod) fomodInput {
 	if row.Variant == "" && in.choices.IsZero() {
 		in.raw = true
+		return in
+	}
+	if len(in.choices.FileStates) > 0 {
+		in.files = recordedFileStates{recorded: in.choices.FileStates, inner: in.files}
 	}
 	return in
+}
+
+// recordedFileStates answers a path the recording names with its recorded
+// state, and any other through inner.
+type recordedFileStates struct {
+	recorded map[string]string
+	inner    fomod.FileStates
+}
+
+// State implements fomod.FileStates.
+func (r recordedFileStates) State(path string) fomod.FileState {
+	if st, ok := r.recorded[path]; ok {
+		for _, s := range []fomod.FileState{fomod.FileMissing, fomod.FileInactive, fomod.FileActive} {
+			if s.String() == st {
+				return s
+			}
+		}
+	}
+	if r.inner == nil {
+		return fomod.FileMissing
+	}
+	return r.inner.State(path)
 }
 
 // unifyFomod gives one mod's acquired files the single cache entry its
@@ -160,6 +197,10 @@ type modFileHooks struct {
 	// checkCtx stops before each file's acquire once ctx is done, for a
 	// flow whose old per-file loop had that check at its head.
 	checkCtx bool
+	// requireVariant, when set, is the only tree a rebuild may commit: a
+	// resolve to any other variant is refused with ReasonFomodReanswer
+	// BEFORE anything is committed, so no unused entry is left behind.
+	requireVariant *string
 }
 
 // downloadModFiles fetches a mod's files into gameCache the way an
@@ -205,6 +246,9 @@ func (s *Service) downloadModFiles(ctx context.Context, gameCache *cache.Cache, 
 	resolved, err := unifyFomod(mod, acquired)
 	if err != nil {
 		return nil, nil, err
+	}
+	if hooks.requireVariant != nil && mod.Variant != *hooks.requireVariant {
+		return nil, nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: ReasonFomodReanswer}
 	}
 	results := make([]*DownloadModResult, 0, len(acquired))
 	for _, a := range acquired {

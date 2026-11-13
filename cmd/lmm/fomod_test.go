@@ -276,7 +276,7 @@ func TestPrintBatchSkips_FomodReanswer(t *testing.T) {
 			Status: core.UpdateSkipped, Reason: core.ReasonFomodReanswer, FomodReanswer: true}})
 		return nil
 	})
-	assert.Contains(t, out, "1 mod(s) not applied — their installer (FOMOD) changed")
+	assert.Contains(t, out, "1 mod(s) not applied — their installer (FOMOD) needs answering")
 	assert.Contains(t, out, "lmm update 12604 --source nexusmods")
 	assert.NotContains(t, out, "Steam Workshop")
 }

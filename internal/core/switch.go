@@ -540,13 +540,14 @@ func (s *Service) clearRowUnderProfile(ctx context.Context, gameID, profileName 
 
 // switchReplacement returns the prior row a switch entry for key replaces,
 // and whether to replace it at all: only when that row's files are live, are
-// another version than the one being deployed, and are still in the cache
+// another version or another tree of it (#614: a variant) than the one being
+// deployed, and are still in the cache
 // for Replace to read. Otherwise the entry is a plain Install - with a
 // missing old cache entry the old version's own files cannot be told apart,
 // the caveat doProfileApply shares.
-func (s *Service) switchReplacement(game *domain.Game, plan *SwitchPlan, key, version string) (domain.InstalledMod, bool) {
+func (s *Service) switchReplacement(game *domain.Game, plan *SwitchPlan, key, version, variant string) (domain.InstalledMod, bool) {
 	prior, ok := plan.PriorVersions[key]
-	if !ok || !prior.Deployed || prior.Version == version {
+	if !ok || !prior.Deployed || (prior.Version == version && prior.Variant == variant) {
 		return prior, false
 	}
 	return prior, s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: prior.SourceID, ModID: prior.ID, Version: prior.Version, Variant: prior.Variant})
@@ -734,7 +735,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 		// R7: another version of this mod is live, so the enable replaces
 		// it rather than installing beside it.
-		prior, replacing := s.switchReplacement(game, plan, domain.ModKey(im.SourceID, im.ID), im.Version)
+		prior, replacing := s.switchReplacement(game, plan, domain.ModKey(im.SourceID, im.ID), im.Version, im.Variant)
 		deploy := func() error { return toInstaller.Install(ctx, game, &im.Mod, plan.To) }
 		if replacing {
 			deploy = func() error { return toInstaller.Replace(ctx, game, &prior.Mod, &im.Mod, plan.To) }
@@ -920,7 +921,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			// list, files the new version no longer serves stay behind as
 			// stale deployments (`lmm verify` surfaces them) - strictly
 			// better than failing to converge at all.
-			prior, replacing := s.switchReplacement(game, plan, domain.ModKey(ref.SourceID, ref.ModID), mod.Version)
+			prior, replacing := s.switchReplacement(game, plan, domain.ModKey(ref.SourceID, ref.ModID), mod.Version, mod.Variant)
 			if replacing {
 				if err := toInstaller.Replace(ctx, game, &prior.Mod, mod, plan.To); err != nil {
 					fail(fmt.Sprintf("deploy failed: %v", err))

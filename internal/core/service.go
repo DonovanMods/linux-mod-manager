@@ -241,6 +241,11 @@ type Service struct {
 	// completeProfileWrite. Test-only seam (export_test.go's
 	// SetAfterInstallSaveForTest); always nil in production.
 	afterInstallSave func()
+	// reinstallTxnOpened, when non-nil, is told the key of every
+	// same-version reinstall transaction fillPrimaryCache opens (#614):
+	// tests pin that a reinstall takes that branch. Always nil in
+	// production.
+	reinstallTxnOpened func(cache.Key)
 
 	// afterDeployLink, when non-nil, runs after the Installer has placed a
 	// file in the game directory and before it records the deployed_files
@@ -1616,6 +1621,26 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 		mod.Variant = a.fomod.variant
 	}
 	return res, nil
+}
+
+// rebuildModFile is downloadMod for a repair of ONE file of an installed
+// row's own cache entry (#614): the file commits into variant's entry only
+// when it resolves to that variant - a FOMOD file whose recorded choices
+// now build another tree is refused with ReasonFomodReanswer before
+// anything is committed - and it commits seeded, beside the row's other
+// files.
+func (s *Service) rebuildModFile(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, variant string, sink EventSink) (*DownloadModResult, error) {
+	mod.Variant = variant
+	a, err := s.acquireFile(ctx, s.GetGameCache(game), sourceID, game, mod, file, fx, sink)
+	if err != nil {
+		return nil, err
+	}
+	defer a.release()
+	if a.fomod != nil && a.mod.Variant != variant {
+		return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: ReasonFomodReanswer}
+	}
+	a.mod.Variant = variant
+	return s.commitAcquired(ctx, a)
 }
 
 // ingestLocalToCache copies a local mod (directory or archive) into the

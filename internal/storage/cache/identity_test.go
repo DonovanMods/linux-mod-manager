@@ -231,3 +231,19 @@ func TestIdentity_UnreadableDirectoryKeepsThePlainAnswer(t *testing.T) {
 	assert.True(t, c.Exists(collidingPlain))
 	assert.False(t, c.Exists(collidingVariant))
 }
+
+// TestIdentity_AVersionWithASeparatorIsItsOwnEntry: a free-text version
+// containing '/' is spelled as nested directories; its marker still
+// matches the directory it sits in, variant included.
+func TestIdentity_AVersionWithASeparatorIsItsOwnEntry(t *testing.T) {
+	c := cache.New(t.TempDir())
+	for _, k := range []cache.Key{
+		{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0/beta", Variant: "abcdef123456"},
+		{GameID: "g", SourceID: "s", ModID: "m", Version: "2.0/rc"},
+	} {
+		require.NoError(t, c.Store(k, "a.pak", []byte("x")))
+		require.NoError(t, cache.StampKey(c.ModPath(k), k))
+		assert.True(t, c.Exists(k), "%+v", k)
+		assert.NoError(t, cache.CheckKey(c.ModPath(k), k))
+	}
+}

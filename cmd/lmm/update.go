@@ -592,7 +592,7 @@ func printFomodReanswerSkips(reanswer []core.UpdateApplyResult) {
 	if len(reanswer) == 0 {
 		return
 	}
-	fmt.Printf("\n%d mod(s) not applied — their installer (FOMOD) changed and its choices need answering again:\n", len(reanswer))
+	fmt.Printf("\n%d mod(s) not applied — their installer (FOMOD) needs answering:\n", len(reanswer))
 	for _, sk := range reanswer {
 		fmt.Printf("  %s\n", sk.Name)
 		fmt.Printf("    lmm update %s --source %s\n", sk.Mod.ModID, sk.Mod.SourceID)

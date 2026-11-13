@@ -248,3 +248,8 @@ func asFomodQuestion(err error, target **FomodChoicesRequiredError) bool {
 // recorded choices no longer fit its installer (#614): the user answers
 // them again, and the mod installs then.
 const ReasonFomodReanswer = "installer choices need re-answering"
+
+// ReasonFomodChoicesNeeded is the same skip for a mod whose new version is
+// a FOMOD installer and has no choices recorded at all: the user answers
+// them for the first time (#614).
+const ReasonFomodChoicesNeeded = "installer choices needed"

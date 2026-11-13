@@ -2463,6 +2463,9 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 		}
 		st.reinstallTxn = txn
 		downloadCache = txn.staged
+		if s.reinstallTxnOpened != nil {
+			s.reinstallTxnOpened(txn.key)
+		}
 	}
 
 	// Resolve the source the plan names - the download still needs it -

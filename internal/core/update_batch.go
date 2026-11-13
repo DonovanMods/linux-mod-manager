@@ -496,7 +496,7 @@ func (s *Service) commitUpdateBatchItem(ctx context.Context, game *domain.Game, 
 		// #614: a batch never asks. The mod's recorded choices no longer
 		// fit its new installer, so it is skipped - its download kept -
 		// for the user to answer on its own.
-		skip := fomodReanswerSkip(st.itemPlan, st.upd)
+		skip := fomodReanswerSkip(st.itemPlan, st.upd, question)
 		skip.FomodChoicesRequired = question
 		result.Skipped = append(result.Skipped, skip)
 		emit(ModEvent{Scope: st.scope, Phase: UpdateBatchItemSkipped, Detail: skip.Reason})
@@ -559,17 +559,25 @@ func planUpdateSkip(plan *UpdatePlan, toVersion string) UpdateApplyResult {
 	}
 }
 
-// fomodReanswerSkip renders a batch item whose FOMOD installer choices need
-// re-answering (#614) as the UpdateApplyResult a batch records for it: the
-// manual-only skip's shape, with ReasonFomodReanswer. Nothing was written.
-func fomodReanswerSkip(plan *UpdatePlan, upd domain.Update) UpdateApplyResult {
+// fomodReanswerSkip renders a batch item whose FOMOD installer needs
+// answers (#614) as the UpdateApplyResult a batch records for it: the
+// manual-only skip's shape, with ReasonFomodReanswer when recorded choices
+// no longer fit, or ReasonFomodChoicesNeeded when the new version is an
+// installer with none recorded. Nothing was written.
+func fomodReanswerSkip(plan *UpdatePlan, upd domain.Update, q *FomodChoicesRequiredError) UpdateApplyResult {
+	reason := ReasonFomodChoicesNeeded
+	for _, m := range q.Mods {
+		if m.Reason == FomodReasonStale {
+			reason = ReasonFomodReanswer
+		}
+	}
 	return UpdateApplyResult{
 		Mod:           domain.ModReference{SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID, Version: plan.Mod.Version},
 		Name:          plan.Mod.Name,
 		FromVersion:   plan.Mod.Version,
 		ToVersion:     upd.NewVersion,
 		Status:        UpdateSkipped,
-		Reason:        ReasonFomodReanswer,
+		Reason:        reason,
 		FomodReanswer: true,
 	}
 }

@@ -94,8 +94,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Reinstalls, export and import, duplicate, `lmm mod copy`, re-links,
     switch and apply all reuse it, so they install the same files. Editing
     it, or importing a document with other choices, makes the next
-    `lmm profile apply` reinstall the mod with them. An older lmm drops the
-    block when it rewrites the profile.
+    `lmm profile apply` reinstall the mod with them. A mod whose new archive
+    is not an installer has its choices cleared, and a rollback restores the
+    previous version's. An older lmm drops the block when it rewrites the
+    profile.
+  - The installer's `fileDependency` conditions are answered from the
+    profile being installed into: a file is present when a mod of that
+    profile, or the game itself, provides it. The outcomes are recorded with
+    the choices (`file_states:`), since they shape which files install.
   - An install with no recorded choices stops before anything is written,
     keeps the download, and reports the installer's questions: the error's
     `--json` details are the question document, and a multi-mod install or
@@ -106,13 +112,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     ship with this change, #615.)
   - Updates keep the choices. The update batch and automatic updates never
     ask: a mod whose new installer no longer accepts them is skipped with
-    "installer choices need re-answering" (`fomod_reanswer: true` in
-    `--json`), and automatic updates list it with their failures.
+    "installer choices need re-answering", and one that has just become an
+    installer with "installer choices needed" (`fomod_reanswer: true` in
+    `--json` for both); automatic updates list it with their failures.
+  - A FOMOD mod installed before this release keeps its installed files and
+    keeps working as before; `lmm mod show --json` marks it
+    `fomod_not_run`, and reconfiguring it runs its installer (#615).
+  - An archive member whose name is not a safe path is never installed and
+    is reported as a warning. An installer that would copy more than four
+    times its archive's size (plus 64 MiB) is refused.
   - Each set of choices gets its own cache entry beside the version
     (`<version>@<variant>`); the version shown everywhere is still the
-    source's. The database gains `installed_mods.variant` and
-    `previous_variant` (schema version 24), so rollback restores the right
-    files. After the upgrade, an older lmm refuses this database, as with
+    source's. The database gains `installed_mods.variant`,
+    `previous_variant` and `previous_fomod` (schema versions 24 and 25), so
+    rollback restores the right files and choices. After the upgrade, an older lmm refuses this database, as with
     every schema change.
   - Each cache entry records which version and variant it belongs to (a
     reserved `.lmm-key` file), so a source version that happens to spell
