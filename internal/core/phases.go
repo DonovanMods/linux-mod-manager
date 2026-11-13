@@ -536,7 +536,7 @@ const (
 	// this reason - see the task report's sharing-decision entry). ---
 
 	// ImportSaved fires once, immediately after the profile is saved
-	// (ProfileManager.ImportWithOptions succeeds), mirroring doProfileImport's
+	// (the import save succeeds), mirroring doProfileImport's
 	// "\n✓ Imported profile: %s\n". ModName carries the saved profile's name.
 	ImportSaved
 	// ImportInstalling fires once, only when the install loop is actually

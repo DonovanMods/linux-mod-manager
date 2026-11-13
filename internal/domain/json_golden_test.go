@@ -578,6 +578,37 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #621: the collection format's portable game identity.
+			"collection_game",
+			domain.CollectionGame{
+				Name: "Cyberpunk 2077", SteamAppID: "1091500",
+				Sources:  map[string]string{"nexusmods": "cyberpunk2077"},
+				Versions: []string{"2.5.0.0"},
+			},
+		},
+		{
+			"collection_origin",
+			domain.CollectionOrigin{SourceID: "nexusmods", Slug: "iszwwe", Revision: 484, URL: "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe", Author: "curator"},
+		},
+		{
+			"collection_external_item",
+			domain.CollectionExternalItem{Name: "Tool", URL: "https://example.invalid/tool", Instructions: "Install it by hand."},
+		},
+		{
+			"collection_file_ref",
+			domain.CollectionFileRef{ID: "123", MD5: "25aa0000000000000000000000000000", Size: 1234567},
+		},
+		{
+			// A profile imported from a collection document: its identity
+			// (with the curator's origin) and its unfetchable items.
+			"collection_info",
+			domain.CollectionInfo{
+				ID: "2f8c7a3e-0000-4000-8000-000000000001", Version: 3, Title: "Welcome to Night City",
+				Author: "curator", Description: "A curated list.", InstallInstructions: "Run the game once first.",
+				Origin: &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "iszwwe", Revision: 484},
+			},
+		},
+		{
 			"hook_config",
 			domain.HookConfig{
 				BeforeAll:  "scripts/before_all.sh",

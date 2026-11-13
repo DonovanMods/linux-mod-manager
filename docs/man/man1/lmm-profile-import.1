@@ -10,7 +10,8 @@ lmm-profile-import - Import a profile
 
 
 .SH DESCRIPTION
-Import a profile from a YAML file, or from a Steam Workshop collection.
+Import a profile from a file - an lmm collection (.lmmc, or its YAML
+document) or an older profile export - or from a Steam Workshop collection.
 
 .PP
 Missing mods are downloaded and installed automatically, after a
@@ -18,6 +19,26 @@ confirmation prompt; pass -y/--yes to skip the prompt and answer yes. Use
 --no-install to skip that entirely and just save the profile, installing
 nothing. Use --force to overwrite an existing profile with the same name
 instead of failing.
+
+.PP
+An lmm collection (what 'lmm profile export' writes) is matched to one of
+your games by its Steam app id, then by its source ids; when none or
+several match, choose with --game. The plan shows the collection's
+description and instructions, its hooks, its config overrides, the items
+lmm cannot fetch (to get by hand), and mods from sources you do not have.
+A collection that needs features this version of lmm does not have is
+refused, with nothing written. --as names the imported profile.
+
+.PP
+Whatever the file's format, two things are held back until you ask, and
+both are listed before anything is written. Hooks are scripts lmm would
+run, so they are imported only with --with-hooks. Config overrides are
+imported when they are text config files (.ini, .cfg, .conf, .txt, .json,
+\&.xml, .toml, .yaml, .yml, .properties, .config, .ltx, .lsx, .cvars,
+\&.ron), except loader configurations that can make the game load a DLL
+(doorstop_config.ini, enblocal.ini); those and any other file type are
+skipped unless you pass --allow-any-overrides. The result says what was
+held back.
 
 .PP
 --workshop-collection takes a Steam Workshop collection id or the URL of
@@ -41,13 +62,19 @@ Examples:
   lmm profile import survival.yaml --game skyrim-se --yes
   lmm profile import survival.yaml --game skyrim-se --no-install
   lmm profile import survival.yaml --game skyrim-se --force
+  lmm profile import survival.lmmc
+  lmm profile import survival.lmmc --game skyrim-se --with-hooks --as survival-2
   lmm profile import --workshop-collection 2500900001 --game space-engineers-2
   lmm profile import --workshop-collection https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001 --as ships
 
 
 .SH OPTIONS
+\fB--allow-any-overrides\fP[=false]
+	import overrides that are not text config files too (listed in the plan; skipped without this)
+
+.PP
 \fB--as\fP=""
-	name the imported profile (--workshop-collection only; a file names its own profile)
+	name the imported profile (a collection or --workshop-collection; an older profile export names its own)
 
 .PP
 \fB--force\fP[=false]
@@ -60,6 +87,10 @@ Examples:
 .PP
 \fB--no-install\fP[=false]
 	skip installing missing mods
+
+.PP
+\fB--with-hooks\fP[=false]
+	import the hooks the file carries (they are scripts lmm runs; listed in the plan)
 
 .PP
 \fB--workshop-collection\fP=""

@@ -1,0 +1,49 @@
+{
+  "profile": {
+    "name": "shared",
+    "game_id": "g1",
+    "mods": [],
+    "link_method": "symlink",
+    "link_method_explicit": false,
+    "is_default": false,
+    "hooks": {
+      "install": {},
+      "uninstall": {}
+    },
+    "hooks_explicit": {
+      "install": {
+        "before_all": false,
+        "before_each": false,
+        "after_each": false,
+        "after_all": false
+      },
+      "uninstall": {
+        "before_all": false,
+        "before_each": false,
+        "after_each": false,
+        "after_all": false
+      }
+    }
+  },
+  "installed": [],
+  "already_cached": [],
+  "needs_redownload": [],
+  "missing": [],
+  "hooks": [
+    {
+      "hook": "install.after_all",
+      "command": "/home/author/bin/after.sh"
+    }
+  ],
+  "restricted_overrides": [
+    {
+      "path": "bin/x64/version.dll",
+      "reason": "not a text config file (.cfg, .conf, .config, .cvars, .ini, .json, .lsx, .ltx, .properties, .ron, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"
+    }
+  ],
+  "overrides": [
+    "Config/Game.ini",
+    "bin/x64/version.dll"
+  ],
+  "exists": false
+}

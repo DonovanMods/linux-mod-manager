@@ -1102,13 +1102,16 @@ func (pm *ProfileManager) Export(ctx context.Context, gameID, profileName string
 	return config.ExportProfile(profile)
 }
 
-// Import imports a profile from portable format
-func (pm *ProfileManager) Import(ctx context.Context, data []byte) (*domain.Profile, error) {
-	return pm.ImportWithOptions(ctx, data, false)
-}
-
-// ImportWithOptions imports a profile with optional force overwrite
-func (pm *ProfileManager) ImportWithOptions(ctx context.Context, data []byte, force bool) (*domain.Profile, error) {
+// importDocument saves an imported profile document - refusing one that
+// would replace a saved profile unless force - with adj, what the import
+// changes in the document's profile before saving it (#621): the collection state a
+// collection import checked itself, which the document's version-0 form
+// never carries, and the hooks and overrides the import gates hold back
+// (import_gates.go). A zero adj changes nothing. Unexported, and reached
+// only through ApplyImport, so nothing saves an imported document without
+// the import gates deciding (#621 review N3): the exported Import and
+// ImportWithOptions that used to sit here are gone.
+func (pm *ProfileManager) importDocument(ctx context.Context, data []byte, force bool, adj importAdjust) (*domain.Profile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -1117,6 +1120,7 @@ func (pm *ProfileManager) ImportWithOptions(ctx context.Context, data []byte, fo
 	if err != nil {
 		return nil, err
 	}
+	adj.applyTo(profile)
 	// An exported document carries no is_default - which profile is active
 	// is local state - so a replaced profile keeps its own (#446): replacing
 	// the active profile must not leave the game with none.
@@ -1152,7 +1156,7 @@ func (pm *ProfileManager) importTarget(data []byte, force bool) (profile, existi
 	return profile, existing, existErr, nil
 }
 
-// checkImportable is ImportWithOptions' refusals without the save: an
+// checkImportable is importDocument's refusals without the save: an
 // import that acquires its mods before saving (#602) asks it first, so a
 // document that cannot be saved fails before anything is downloaded.
 func (pm *ProfileManager) checkImportable(data []byte, force bool) error {

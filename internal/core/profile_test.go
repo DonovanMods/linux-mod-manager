@@ -154,7 +154,7 @@ func TestProfileManager_Import_RejectsPathTraversalGameID(t *testing.T) {
 	require.NoError(t, os.MkdirAll(configDir, 0755))
 	pm := newPM(t, configDir)
 
-	_, err := pm.Import(context.Background(), []byte("name: innocent\ngame_id: ../../../evil\nmods: []\n"))
+	_, err := pm.ImportForTest(context.Background(), []byte("name: innocent\ngame_id: ../../../evil\nmods: []\n"), false)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, domain.ErrInvalidGameID)
 
@@ -375,7 +375,7 @@ func TestProfileManager_ExportImport(t *testing.T) {
 	require.NoError(t, err)
 
 	// Import it back
-	imported, err := pm.Import(context.Background(), data)
+	imported, err := pm.ImportForTest(context.Background(), data, false)
 	require.NoError(t, err)
 	assert.Equal(t, "original", imported.Name)
 	assert.Len(t, imported.Mods, 1)
@@ -782,8 +782,8 @@ func TestProfileManager_Mutators_HonourCancellation(t *testing.T) {
 			_, err := pm.Export(ctx, gameID, profileName)
 			return err
 		}},
-		{"ImportWithOptions", func(ctx context.Context, pm *core.ProfileManager) error {
-			_, err := pm.ImportWithOptions(ctx, nil, false)
+		{"ImportForTest", func(ctx context.Context, pm *core.ProfileManager) error {
+			_, err := pm.ImportForTest(ctx, nil, false)
 			return err
 		}},
 		{"SetDefault", func(ctx context.Context, pm *core.ProfileManager) error {

@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **lmm collections: a shareable, versioned profile export (#621).**
+  `lmm profile export` now writes version 1 of lmm's collection format
+  (spec: `docs/collection-format.md`): still YAML on stdout, so
+  `lmm profile export coop > coop.yaml` works as before, and with
+  `-o <file>` a compressed `.lmmc` container (`--plain` writes the YAML to
+  the file). The document adds a stable collection id (minted on a
+  profile's first export and recorded in the profile's new `collection:`
+  block), the author's metadata (`--title`, `--author`, `--description`,
+  `--instructions`, `--collection-version`; saved in that block too, so the
+  next export reuses them, and the version is never raised for you), the
+  game's portable identity
+  (Steam app id, per-source ids) beside the author's `game_id`, mod display
+  names, external items to get by hand, the curator's `origin` (kept
+  through re-export, with a note that republishing is your call) and the
+  `requires:` features it needs. `lmm profile import <file>` reads a
+  `.lmmc`, a version-1 document or an older export: a collection is matched
+  to your game by Steam app id, then source ids (`--game` when that is
+  ambiguous), may be named with `--as`, lists its hooks, overrides, external
+  items and missing sources before anything is written, imports its hooks
+  only with `--with-hooks`, and is refused with nothing written when it
+  needs a feature this lmm lacks (`CollectionUnsupportedError`). An older
+  export imports exactly as before. In the web UI, **Export** downloads a
+  `.lmmc`, and **Import** takes the same files, at the same sizes, as the
+  terminal (it uploads the file), with a profile-name field for `--as` and
+  a box each for `--with-hooks` and `--allow-any-overrides`.
+  `lmm profile duplicate` makes the copy a new collection: no id (its first
+  export mints one) and version reset, keeping the title, author,
+  description, instructions and the curator's credit.
+
 - **A `bethesda` game adapter for Skyrim SE/AE, Skyrim VR, Fallout 4,
   Fallout 4 VR, Starfield and Skyrim (#606).** `lmm game detect` now sets
   `adapter: bethesda` for those games from Steam, and finds Skyrim VR and
@@ -134,6 +163,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`lmm profile export` writes the collection document (#621).** Its
+  stdout output gains the version-1 keys (`lmm_collection`, `id`,
+  `version`, `game`, …), writes only the hooks a profile sets (no `null`
+  entries), and no longer includes the profile's `link_method` (or its
+  default flag, which no export ever carried): both are machine
+  preferences, so a backup restored by export and import no longer brings
+  back an explicit link method. An older lmm still imports the new
+  document by its `name` and `game_id`. `--json` is unchanged.
+- **The first export of a profile writes to it (#621).** It records the
+  collection id (and any metadata flags) in the profile, which takes lmm's
+  operation lock: while another operation runs (a `lmm serve` job, say)
+  that export fails and asks you to retry, after a shell `>` has already
+  emptied its target file. Later exports with nothing new to record do not
+  write. In the web UI, Export records the identity with a POST before the
+  download, whose GET never writes.
+- **`lmm profile import` now holds back hooks and some overrides from
+  every file, older exports included (#621).** This is a deliberate
+  incompatibility (owner ruling). Re-importing your own older export now
+  needs **`--with-hooks`** to keep its hooks, and
+  **`--allow-any-overrides`** to keep any of your own overrides that are not
+  a text config file - a `.lua`, `.sii` or `.dat` file, a file with no
+  extension, or a loader configuration (`doorstop_config.ini`,
+  `enblocal.ini`). Without those flags the import still succeeds, and
+  what it held back is skipped, so read its last lines. Every hook and
+  every override a file carries is listed before anything is written. An
+  override is imported by default when it is a text config file (`.ini`,
+  `.cfg`, `.conf`, `.txt`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`,
+  `.properties`, `.config`, `.ltx`, `.lsx`, `.cvars`, `.ron`) and not a
+  loader configuration, which can make the game load a DLL. The result
+  says what was held back and names the flag (`--json`: `hooks_withheld`,
+  `overrides_skipped`); the web UI's import has a box for each. A file
+  whose hook or override path holds control or formatting characters, or
+  whose override path is absolute or leaves the game folder - all
+  accepted before - is now refused, with nothing written. A profile you
+  already have, and overrides you set yourself, are unaffected.
+- **A profile override is never written through a link (#621).** Writing
+  an override used to follow links in the game folder: a linked directory
+  could take the file outside the game folder, and a mod file deployed as
+  a symlink (the default) or a hardlink had the override written into
+  lmm's shared mod cache. Now a directory link must stay inside the game
+  folder, and a file link that stays inside it is replaced by a regular
+  file. An override of a deployed mod's own file (a symlink out of the
+  game folder, or a file with more than one hard link) is skipped, with
+  the deploy warning "this file belongs to a deployed mod; lmm cannot
+  override a mod's own files yet" (#630 will let an override replace a
+  mod's file). Each override stands on its own: one that is refused or
+  skipped is named in a warning, and the rest are still written.
+- **A version-0 profile document's `collection:` and `external:` keys are
+  ignored on import (#621).** No version-0 export carried them; only a
+  checked version-1 collection sets them.
 - **Installing several mods, and importing a profile, now download
   everything before writing anything (#602).** A profile import, an install
   with dependencies and a multi-mod install acquire every mod first

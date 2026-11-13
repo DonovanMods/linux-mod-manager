@@ -1,0 +1,41 @@
+lmm_collection: 1
+id: 2f8c7a3e-0000-4000-8000-000000000001
+version: 3
+name: coop
+title: Welcome to Night City
+game_id: cp
+game:
+    name: Cyberpunk 2077
+    steam_app_id: "1091500"
+    sources:
+        nexusmods: cyberpunk2077
+        steamworkshop: "1091500"
+requires:
+    - external
+origin:
+    source_id: nexusmods
+    slug: iszwwe
+    revision: 484
+    author: curator
+mods:
+    - source_id: nexusmods
+      mod_id: "1"
+      version: 1.8.0
+      locked: true
+      name: Much Better Ammo
+    - source_id: nexusmods
+      mod_id: "2"
+      version: "2.0"
+      disabled: true
+      category: UI
+external:
+    - name: CET
+      url: https://example.invalid/cet
+      instructions: Install by hand.
+hooks:
+    install:
+        after_all: /usr/bin/true
+overrides:
+    engine/config/user.ini: |
+        [A]
+        b=1

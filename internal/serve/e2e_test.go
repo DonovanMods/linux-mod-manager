@@ -14,10 +14,15 @@ package serve_test
 // because each needs the modules to have EXECUTED.
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -4329,20 +4334,45 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 	require.NotEmpty(t, exportHref, "the Export control must be a real link to the export route")
 	assert.Contains(t, exportHref, "/api/v1/profiles/default/export")
 
-	var exported string
-	f.runInBrowser(t, chromedp.Evaluate(fmt.Sprintf(`fetch(%q).then((r) => r.text())`, exportHref), &exported,
+	// Since #621 the download is the `.lmmc` collection container, and the
+	// GET serving it never writes: the Export click first POSTs the
+	// profile's collection identity (minting its id), then downloads. The
+	// click is made for real here, and the recorded id is what proves the
+	// POST ran; the download itself is then fetched as bytes (base64
+	// across the CDP boundary) and its collection.yaml read here.
+	f.runInBrowser(t, chromedp.Evaluate(`
+		Array.from(document.querySelectorAll(".profiles-row")).find((r) => r.textContent.includes("default"))
+			.querySelector('a[href*="/export"]').click()
+	`, nil))
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
+		return err == nil && p.Collection != nil && p.Collection.ID != ""
+	}, 5*time.Second, 20*time.Millisecond, "the Export click must record the collection identity before downloading")
+	settle()
+
+	var exportedB64 string
+	f.runInBrowser(t, chromedp.Evaluate(fmt.Sprintf(`fetch(%q).then((r) => r.arrayBuffer()).then((b) => {
+		const u = new Uint8Array(b); let s = "";
+		for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]);
+		return btoa(s);
+	})`, exportHref), &exportedB64,
 		func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))
-	assert.Contains(t, exported, `"a"`, "the export must carry the profile's own mods")
-	assert.Contains(t, exported, `"b"`)
+	container, err := base64.StdEncoding.DecodeString(exportedB64)
+	require.NoError(t, err)
+	require.True(t, core.IsCollectionContainer(container), "the Export link must download a .lmmc")
+	exported := e2eCollectionDocument(t, container)
+	assert.Contains(t, exported, `mod_id: a`, "the export must carry the profile's own mods")
+	assert.Contains(t, exported, `mod_id: b`)
 
 	// Doctor the export into a NEW profile's document and import it -
 	// both mods are already fully cached (newE2EFixtureWithDeployableMods)
 	// under "default", so the plan's AlreadyCached bucket (#371) offers to
-	// give the NEW profile its own rows without any network at all.
-	restoredDoc := strings.Replace(string(exported), `"name": "default"`, `"name": "restored"`, 1)
-	require.NotEqual(t, string(exported), restoredDoc, "the exported document's own name field must actually be found and replaced")
-	importPath := filepath.Join(t.TempDir(), "restored.json")
-	require.NoError(t, os.WriteFile(importPath, []byte(restoredDoc), 0o644))
+	// give the NEW profile its own rows without any network at all. It is
+	// re-packed as a .lmmc, so the upload takes the container path.
+	restoredDoc := strings.Replace(exported, "\nname: default\n", "\nname: restored\n", 1)
+	require.NotEqual(t, exported, restoredDoc, "the exported document's own name field must actually be found and replaced")
+	importPath := filepath.Join(t.TempDir(), "restored.lmmc")
+	require.NoError(t, os.WriteFile(importPath, e2eCollectionContainer(t, restoredDoc), 0o644))
 
 	// The profiles modal is still open from the CRUD steps above (nothing
 	// closed it) - reused here rather than reopened, which also avoids
@@ -7834,4 +7864,174 @@ func TestE2E_TheBatchBarStatesNoReasonItCannotKnow(t *testing.T) {
 	assert.Empty(t, disableTitle)
 
 	assert.Empty(t, f.BrowserErrors())
+}
+
+// e2eCollectionDocument is the collection.yaml a `.lmmc` container holds.
+func e2eCollectionDocument(t *testing.T, container []byte) string {
+	t.Helper()
+	zr, err := zip.NewReader(bytes.NewReader(container), int64(len(container)))
+	require.NoError(t, err)
+	for _, f := range zr.File {
+		if f.Name == "collection.yaml" {
+			rc, err := f.Open()
+			require.NoError(t, err)
+			defer func() { _ = rc.Close() }()
+			doc, err := io.ReadAll(rc)
+			require.NoError(t, err)
+			return string(doc)
+		}
+	}
+	t.Fatal("the container holds no collection.yaml")
+	return ""
+}
+
+// e2eCollectionContainer packs doc as a `.lmmc` container.
+func e2eCollectionContainer(t *testing.T, doc string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	f, err := w.Create("collection.yaml")
+	require.NoError(t, err)
+	_, err = f.Write([]byte(doc))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	return buf.Bytes()
+}
+
+// TestE2E_ProfilesModal_ImportsACollectionWithItsHooksOnlyWhenTicked is
+// #621's plan view in a browser: a `.lmmc` picked in the profiles modal
+// renders the collection's own section - its hooks among it - and the
+// hooks reach the imported profile only through the checkbox.
+func TestE2E_ProfilesModal_ImportsACollectionWithItsHooksOnlyWhenTicked(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+	doc := "lmm_collection: 1\nname: hooked\ntitle: Hooked Collection\nauthor: someone\n" +
+		"mods: []\nexternal:\n  - name: A Tool\n    url: https://example.invalid/tool\n" +
+		"hooks:\n  install:\n    after_all: /usr/bin/true\n"
+	importPath := filepath.Join(t.TempDir(), "hooked.lmmc")
+	require.NoError(t, os.WriteFile(importPath, e2eCollectionContainer(t, doc), 0o644))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] [data-testid="lmm-collection"]`, chromedp.ByQuery),
+	)
+	var body string
+	f.runInBrowser(t, textContent(`.modal[data-kind="profile_import"]`, &body))
+	assert.Contains(t, body, "Hooked Collection")
+	assert.Contains(t, body, "by someone")
+	assert.Contains(t, body, "A Tool")
+	assert.Contains(t, body, "install.after_all: /usr/bin/true")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-testid="import-hooks"] input[type="checkbox"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="profile_import"]`),
+	)
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "hooked")
+		return err == nil && p.Hooks.Install.AfterAll == "/usr/bin/true" && len(p.External) == 1
+	}, 5*time.Second, 20*time.Millisecond, "the ticked box must import the hooks, and the external item")
+}
+
+// TestE2E_ProfilesModal_ImportsNonConfigOverridesOnlyWhenTicked is #621's
+// override gate in a browser, for a version-0 document: the plan lists the
+// .dll override, and only the ticked box imports it.
+func TestE2E_ProfilesModal_ImportsNonConfigOverridesOnlyWhenTicked(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+	doc := "name: gated\ngame_id: " + f.Game.ID + "\nmods: []\noverrides:\n  Config/Game.ini: \"[A]\"\n  bin/version.dll: MZ\n"
+	importPath := filepath.Join(t.TempDir(), "gated.yaml")
+	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] [data-testid="import-restricted-overrides"]`, chromedp.ByQuery),
+	)
+	var body string
+	f.runInBrowser(t, textContent(`[data-testid="import-restricted-overrides"]`, &body))
+	assert.Contains(t, body, "bin/version.dll")
+	assert.NotContains(t, body, "Config/Game.ini", "a text config override is not held back")
+	var all string
+	f.runInBrowser(t, textContent(`[data-testid="import-overrides"]`, &all))
+	assert.Contains(t, all, "Config/Game.ini", "every override is listed, held back or not")
+	assert.Contains(t, all, "bin/version.dll")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-testid="import-restricted-overrides"] input[type="checkbox"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="profile_import"]`),
+	)
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "gated")
+		return err == nil && string(p.Overrides["bin/version.dll"]) == "MZ" && len(p.Overrides) == 2
+	}, 5*time.Second, 20*time.Millisecond, "the ticked box must import the .dll override")
+}
+
+// TestE2E_ProfilesModal_ImportsACollectionOverOneMiBUnderAChosenName is
+// the owner's web-parity ruling in a browser: a collection past the old
+// ~700 KiB limit imports through the upload, under the name typed into the
+// form (`--as`).
+func TestE2E_ProfilesModal_ImportsACollectionOverOneMiBUnderAChosenName(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+	importPath := filepath.Join(t.TempDir(), "big.lmmc")
+	random := make([]byte, 1200<<10)
+	_, err := cryptorand.Read(random)
+	require.NoError(t, err)
+	container := e2eCollectionContainer(t, "lmm_collection: 1\nname: big\ntitle: Big Collection\nmods: []\noverrides:\n  Config/big.ini: "+
+		base64.StdEncoding.EncodeToString(random)+"\n")
+	require.Greater(t, len(container), 1<<20, "the fixture must be over the plan body's 1 MiB cap")
+	require.NoError(t, os.WriteFile(importPath, container, 0o644))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.SendKeys(`[data-testid="import-profile-name"]`, "chosen-name", chromedp.ByQuery),
+		settleEffects(),
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] [data-testid="lmm-collection"]`, chromedp.ByQuery),
+	)
+	var body string
+	f.runInBrowser(t, textContent(`.modal[data-kind="profile_import"]`, &body))
+	assert.Contains(t, body, "Big Collection")
+	assert.Contains(t, body, "chosen-name")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="profile_import"]`),
+	)
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "chosen-name")
+		return err == nil && len(p.Overrides["Config/big.ini"]) > 1<<20
+	}, 10*time.Second, 50*time.Millisecond, "the over-1-MiB collection must import under the chosen name")
 }

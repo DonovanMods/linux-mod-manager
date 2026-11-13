@@ -1,0 +1,58 @@
+{
+  "format_version": 1,
+  "container": true,
+  "input": "file",
+  "id": "2f8c7a3e-0000-4000-8000-000000000001",
+  "version": 3,
+  "name": "Welcome to Night City",
+  "profile_name": "coop",
+  "author": "curator",
+  "description": "A curated list.",
+  "install_instructions": "Run the game once first.",
+  "origin": {
+    "source_id": "nexusmods",
+    "slug": "iszwwe",
+    "revision": 484,
+    "author": "curator"
+  },
+  "game": {
+    "name": "Cyberpunk 2077",
+    "steam_app_id": "1091500",
+    "sources": {
+      "nexusmods": "cyberpunk2077"
+    }
+  },
+  "game_id": "cyber",
+  "matched_by": "steam_app_id",
+  "requires": [
+    "external"
+  ],
+  "items": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "1",
+      "name": "Much Better Ammo",
+      "version": "1.8.0"
+    }
+  ],
+  "external": [
+    {
+      "name": "CET",
+      "url": "https://example.invalid/cet",
+      "instructions": "Install by hand."
+    }
+  ],
+  "hooks": [
+    {
+      "hook": "install.after_all",
+      "command": "/home/author/bin/after.sh"
+    }
+  ],
+  "hooks_importable": true,
+  "overrides": [
+    "engine/config/user.ini"
+  ],
+  "warnings": [
+    "the container's signature (collection.yaml.sig) was not checked: this version of lmm does not verify collection signatures"
+  ]
+}

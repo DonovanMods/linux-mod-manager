@@ -51,6 +51,8 @@ the same mods in the same load order, at the same versions, with the same
 locks, the same disabled mods, and the same settings (link method, hooks and
 config overrides). It is not made the active profile: its mods count as
 installed straight away, and they go into the game when you switch to it.
+If you share the profile as a collection, the copy counts as a new one: it
+keeps the title, description and credits, and starts again at version 1.
 
 ```bash
 lmm profile duplicate coop coop-test
@@ -124,16 +126,98 @@ own category, so the site's applies again.
 
 ## Sharing a profile
 
-Exporting a profile saves it as a small text file. Send it to a friend, or
-keep it as a backup, and importing it on another computer downloads and
-installs the same mods at the same versions.
+Exporting a profile saves it as a **collection**: a small file listing its
+mods, their versions and your settings for them. Send it to a friend, or keep
+it as a backup, and importing it on another computer downloads and installs
+the same mods at the same versions.
 
 ```bash
 lmm profile export coop > coop.yaml
-lmm profile import coop.yaml
+lmm profile export coop -o coop.lmmc
+lmm profile import coop.lmmc
 ```
 
+Without `-o`, the export is printed as text (YAML), which you can save,
+compare or keep in git. `-o` saves a compressed `.lmmc` file instead, or a
+text file if you add `--plain`. Both import the same way, and so does a
+file exported by an older version of lmm.
+
 In the browser, **Export** and **Import** are in the Profiles window.
+**Export** downloads a `.lmmc` file. **Import** takes the same files the
+terminal does, of any size it does: choose the file, and the import shows
+its plan before anything is written. To import a collection under another
+profile name (what `--as` does), type the name into the **Profile name**
+field before choosing the file. The import goes into the game you have
+selected, as `--game` does, and the plan warns when the collection names a
+different game. The plan has a box for each thing an import holds back
+(see below): **Import these hooks** for `--with-hooks`, and **Import these
+overrides too** for `--allow-any-overrides`.
+
+A collection names its game in a way that works on any computer (its Steam
+app id, and its id on each mod site), so the import finds the right game
+even if you named it differently. If it can't tell which of your games is
+meant, add `--game <your game id>`.
+
+You can describe the collection for the people you share it with:
+
+```bash
+lmm profile export coop -o coop.lmmc --title "Co-op night" \
+  --author me --description "What we play on Fridays." --collection-version 2
+```
+
+lmm remembers these for the profile, so next time you only give what
+changed, such as `--collection-version 3` when you publish an update.
+
+{: .note }
+The first export of a profile saves its collection id in the profile, and
+that waits for any other lmm operation, such as a job running in the
+browser. If it can't, the export stops and asks you to try again, and a
+file you were writing with `>` is left empty; run the export again once
+the other operation has finished.
+
+The import shows this before it does anything, along with:
+
+- **items to get by hand**, which lmm lists but can't download for you.
+- mods from a site you haven't set up in lmm, and what to do about them.
+
+A collection made by a newer version of lmm that needs something this
+version can't do is refused, and nothing is imported. Update lmm and try
+again.
+
+### What an import holds back
+
+Every import from a file, whether a collection or an older export, lists
+two things before it does anything, and leaves them out unless you ask:
+
+- **Hooks**, the scripts the profile runs. They are only imported if you
+  add `--with-hooks` (in the browser, tick **Import these hooks**), so a
+  file from someone else can't run anything you didn't agree to. This
+  includes your own older exports: to keep their hooks, import them with
+  `--with-hooks`.
+- **Overrides that aren't config files.** An override is a file the
+  profile writes into the game folder. Text config files (`.ini`, `.cfg`,
+  `.conf`, `.txt`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`,
+  `.properties`, `.config`, `.ltx`, `.lsx`, `.cvars`, `.ron`) are imported
+  as usual; anything else, such as a `.dll`, is skipped unless you add
+  `--allow-any-overrides` (in the browser, tick **Import these overrides
+  too**). So is a loader configuration, such as `doorstop_config.ini`
+  (BepInEx) or `enblocal.ini` (ENB): it is a text file, but it can make the
+  game load a DLL. This includes your own older exports: to keep such an
+  override, import them with `--allow-any-overrides`.
+
+When something was held back, the import says so at the end and names the
+option that would include it.
+
+```bash
+lmm profile import coop.yaml --with-hooks
+lmm profile import coop.lmmc --with-hooks --allow-any-overrides
+```
+
+{: .note }
+If a profile came from someone else's collection, exporting it keeps their
+name on it. Whether to share it further is up to you.
+
+`--as <name>` imports a collection under another profile name.
 
 An import downloads every mod before it saves anything. You see the
 **Installing** and download lines for each mod first, then the profile is

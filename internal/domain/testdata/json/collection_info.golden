@@ -1,0 +1,13 @@
+{
+  "id": "2f8c7a3e-0000-4000-8000-000000000001",
+  "version": 3,
+  "title": "Welcome to Night City",
+  "author": "curator",
+  "description": "A curated list.",
+  "install_instructions": "Run the game once first.",
+  "origin": {
+    "source_id": "nexusmods",
+    "slug": "iszwwe",
+    "revision": 484
+  }
+}
