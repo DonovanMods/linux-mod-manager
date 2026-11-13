@@ -261,6 +261,13 @@ type Service struct {
 	// was classified (#413 fix round 4). Test-only seam (export_test.go's
 	// SetNestedTreeHookForTest); always nil in production.
 	nestedTreeHook func(stage string)
+
+	// afterExtract, when non-nil, runs with the archive's base name just
+	// after an acquire extracts it into its pristine tree and before the
+	// FOMOD resolve and the adapter's layout - where a test stands in for
+	// an extractor or a layout that panics (#628). Test-only seam
+	// (export_test.go's SetAfterExtractForTest); always nil in production.
+	afterExtract func(archive string)
 }
 
 // NewService creates a new core service instance

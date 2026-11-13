@@ -103,6 +103,9 @@ func (s *Service) acquireFetched(ctx context.Context, gameCache *cache.Cache, fe
 	if err != nil {
 		return nil, err
 	}
+	// A panicking Fetcher, or one in the acquire of what it fetched, must
+	// not leave destDir behind (#628); acquireLocal releases its own tree.
+	defer releaseOnPanic(func() { _ = os.RemoveAll(destDir) })
 
 	fetchMod := *mod
 	fetchMod.GameID = sourceGameIDFor(game, sourceID)

@@ -331,6 +331,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A crash while unpacking a download no longer leaves temporary folders
+  behind (#628).** If an install, import or repair crashed while it was
+  unpacking or laying out a mod (the web UI survives such a crash and
+  keeps running), the unpacking folders beside the mod cache, the download
+  folder and the same mod's earlier files were left on disk. They are now
+  removed on the way out. A download whose mod has no version, and whose
+  source gives neither the file's size nor its checksum, is no longer kept
+  for a retry after a refusal: nothing could tell it apart from an older
+  release under the same file id, so the retry downloads it again.
+
 - **The web UI's mod page no longer blanks its live details when a job
   ends (#615).** After a job, the mod page reloads its documents. It used
   to clear the live description, changelog, versions table and

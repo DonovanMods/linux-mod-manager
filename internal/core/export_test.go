@@ -344,6 +344,14 @@ func (s *Service) SetProfileMarkerForTest(fn func(path string, mods []domain.Mod
 	s.profileMarker = fn
 }
 
+// SetAfterExtractForTest arms the acquire's post-extract seam: fn runs
+// with the archive's base name once it is extracted into its pristine tree,
+// so a test can panic where an extractor or an adapter's layout would
+// (#628).
+func (s *Service) SetAfterExtractForTest(fn func(archive string)) {
+	s.afterExtract = fn
+}
+
 // SetNestedTreeHookForTest arms verify's nested-BepInEx-tree seam: fn runs
 // with "classify" just before the trees are classified and with "remove"
 // just before a tree's leftovers are removed, so a test can change the

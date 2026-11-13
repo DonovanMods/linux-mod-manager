@@ -8,6 +8,8 @@ package core_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -34,6 +36,15 @@ import (
 type acquireMod struct {
 	id, name string
 	members  map[string]string
+	// declared makes the source declare the archive's size and sha256,
+	// as NexusMods and CurseForge do (#628).
+	declared bool
+}
+
+// declared is m with its archive's size and sha256 declared by the source.
+func declared(m acquireMod) acquireMod {
+	m.declared = true
+	return m
 }
 
 // plainMod is an ordinary mod: an archive no adapter refuses.
@@ -80,6 +91,10 @@ func newAcquireFixture(t *testing.T, mods ...acquireMod) *acquireFixture {
         url: %s/files/%s.zip
         primary: true
 `, m.id, m.name, m.id, m.id, srv.URL, m.id)
+		if m.declared {
+			sum := sha256.Sum256(archive)
+			manifest += fmt.Sprintf("        size: %d\n        sha256: %s\n", len(archive), hex.EncodeToString(sum[:]))
+		}
 		mux.HandleFunc("/files/"+m.id+".zip", func(w http.ResponseWriter, _ *http.Request) {
 			counter.Add(1)
 			_, _ = w.Write(archive)
