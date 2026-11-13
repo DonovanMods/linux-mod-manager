@@ -105,15 +105,15 @@ func TestCollectionImport_RefusesFomodChoicesItCannotReplayAsWritten(t *testing.
 		return fmt.Sprintf("{config_sha256: %s, steps: [], file_states: {%s}}", hash, strings.Join(states, ", "))
 	}
 	for name, block := range map[string]string{
-		"bidi in an option":      choice("Main", "T", "4K‮"),
+		"bidi in an option":      choice("Main", "T", "4K\u202e"),
 		"escape in a step":       choice("Ma\x1b[31min", "T", "4K"),
-		"zero-width in a group":  choice("Main", "T​", "4K"),
+		"zero-width in a group":  choice("Main", "T\u200b", "4K"),
 		"newline in an option":   choice("Main", "T", "4K\nUltra"),
 		"long name":              choice("Main", "T", strings.Repeat("x", 2000)),
 		"upper-case config hash": "{config_sha256: " + strings.ToUpper(hash) + ", steps: []}",
 		"short config hash":      "{config_sha256: abc, steps: []}",
 		"unknown file state":     "{config_sha256: " + hash + ", steps: [], file_states: {a.esp: Present}}",
-		"bidi in a file state":   "{config_sha256: " + hash + ", steps: [], file_states: {\"a‮.esp\": Active}}",
+		"bidi in a file state":   "{config_sha256: " + hash + ", steps: [], file_states: {\"a\u202e.esp\": Active}}",
 		"negative index":         "{config_sha256: " + hash + ", steps: [{name: S, index: -1, groups: []}]}",
 		"too many entries":       many(fomod.MaxChoices),
 		"too many file states":   manyStates(fomod.MaxChoices + 1),
