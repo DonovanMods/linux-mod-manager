@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bethesda"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -514,8 +515,12 @@ func TestAPIGameDetectApply_RefusesAnUnknownRow(t *testing.T) {
 // app id alone adds a curated installed game, with the name, install path,
 // game id, mod path and source map all supplied by the scan - the SPA
 // derives none of them.
+//
+// Since #606 the curated entry also names `adapter: bethesda`, which the
+// Service must register, as production's does.
 func TestAPIGameAdd_FromSteamAppIDPrefillsAKnownGame(t *testing.T) {
 	s := newGamesServer(t)
+	s.svc.RegisterAdapter(bethesda.New())
 	install := fakeSteamApp(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
 
 	rec := doAPI(s, http.MethodPost, "/api/v1/games", `{"from_steam_app_id":"489830"}`)
@@ -528,6 +533,8 @@ func TestAPIGameAdd_FromSteamAppIDPrefillsAKnownGame(t *testing.T) {
 	assert.Equal(t, install, entry.InstallPath)
 	assert.Equal(t, filepath.Join(install, "Data"), entry.ModPath)
 	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, entry.SourceIDs)
+	assert.Equal(t, "bethesda", entry.Adapter, "detection prefills the curated adapter (#606)")
+	assert.Equal(t, "bethesda", entry.EffectiveAdapter)
 }
 
 // TestAPIGameAdd_FromSteamAppIDCarriesTheCuratedLoader is #416's data half on
@@ -760,6 +767,7 @@ func TestAPIGameDetectApply_AddsAWorkshopBearingUncuratedRowBySlug(t *testing.T)
 // named a different slug for it.
 func TestAPIGameAdd_FromSteamAppIDRefusesADuplicateInstallPath(t *testing.T) {
 	s := newGamesServer(t)
+	s.svc.RegisterAdapter(bethesda.New()) // the curated entry names it (#606)
 	install := fakeSteamApp(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
 
 	// What the user already has, under the pre-curation id.

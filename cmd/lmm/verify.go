@@ -674,6 +674,25 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		// removal has no main line of its own to have printed first.
 		fmt.Println(colorGreen(fmt.Sprintf("Fixed: removed %s (%s)", f.FileID, f.Note)))
 
+	case core.VerifyStatusAdapterSuggested, "bethesda_game_unknown":
+		// #606: game-level notes about the game's adapter - core's
+		// suggestion of the catalog's adapter, and the bethesda adapter's
+		// own "cannot tell which game this is". Neither counts towards a
+		// tally; the note is a whole sentence, and the second line says
+		// what to do.
+		fmt.Printf("~ adapter - %s\n", f.Note)
+		if f.FixableReason != "" {
+			fmt.Printf("  %s\n", f.FixableReason)
+		}
+
+	case core.VerifyStatusCatalogUnknown:
+		// #606: a games.yaml `catalog:` naming no catalog entry - ignored,
+		// so a note, with the command that fixes it.
+		fmt.Printf("~ catalog - %s\n", f.Note)
+		if f.FixableReason != "" {
+			fmt.Printf("  %s\n", f.FixableReason)
+		}
+
 	default:
 		renderVerifyLoaderFinding(f)
 	}

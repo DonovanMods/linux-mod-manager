@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -711,8 +712,12 @@ func fakeSteamGame(t *testing.T, appID, name, installDir string) string {
 // name, install path, game id, mod path and source mapping all come from
 // the detection, and the result is the games.yaml entry `game detect`
 // would have written.
+//
+// Since #606 the curated entry also names `adapter: bethesda`, so the
+// Service carries the adapters production registers.
 func TestDoGameAdd_FromDetected_KnownGameNeedsNothingElse(t *testing.T) {
 	svc := setupGameAddTest(t)
+	app.RegisterAdapters(svc)
 	svc.RegisterSource(nexusmods.New(nil, ""))
 	install := fakeSteamGame(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
 	gameAddFromDetected = "489830"
@@ -728,6 +733,7 @@ func TestDoGameAdd_FromDetected_KnownGameNeedsNothingElse(t *testing.T) {
 	assert.Equal(t, install, g.InstallPath)
 	assert.Equal(t, filepath.Join(install, "Data"), g.ModPath)
 	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, g.SourceIDs)
+	assert.Equal(t, "bethesda", g.Adapter, "detection prefills the curated adapter (#606)")
 	assert.Contains(t, buf.String(), "Added Skyrim Special Edition (id: skyrim-se)")
 }
 
@@ -932,6 +938,7 @@ func TestDoGameAdd_FromDetected_IDWithoutSourceOnCuratedGameIsRefused(t *testing
 // Ruling 15: the add's one document on stdout, nothing else.
 func TestDoGameAdd_FromDetected_JSONEmitsTheGameDocument(t *testing.T) {
 	svc := setupGameAddTest(t)
+	app.RegisterAdapters(svc) // the curated entry names adapter: bethesda (#606)
 	svc.RegisterSource(nexusmods.New(nil, ""))
 	fakeSteamGame(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
 	gameAddFromDetected = "489830"

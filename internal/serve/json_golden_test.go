@@ -810,6 +810,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			gameSourcesRequest{Prefix: new("/home/user/Games/Heroic/Prefixes/skyrim"), PrefixUser: new("dyoung")},
 		},
 		{
+			// #606: the catalog member - which known-games catalog entry
+			// the game is; "" clears it.
+			"game_catalog_request",
+			gameSourcesRequest{Catalog: new("skyrim-se")},
+		},
+		{
 			// The detect apply's body: which listing rows to add, named by
 			// 1-based index or slug (core.SelectDetectedGames resolves
 			// both, so the golden carries one of each).

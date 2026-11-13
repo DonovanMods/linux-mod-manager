@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A `bethesda` game adapter for Skyrim SE/AE, Skyrim VR, Fallout 4,
+  Fallout 4 VR, Starfield and Skyrim (#606).** `lmm game detect` now sets
+  `adapter: bethesda` for those games from Steam, and finds Skyrim VR and
+  Fallout 4 VR, which it did not know before. The adapter lays out archives
+  packed relative to the game folder (a `Data/` folder, or SKSE's own
+  archive) into `Data/`, and carries each game's plugin-order rules (where
+  `Plugins.txt` lives, implicit plugins, master/light/medium header flags,
+  the 255/4096/256 active limits) for the plugin list to come (#616). A
+  game already in games.yaml is never switched: `lmm verify` prints an
+  `adapter_suggested` note and the web UI's game page offers a **Use the
+  bethesda adapter** button (`GameStatus` gains `suggested_adapter`, omitted
+  when empty). Core gains a standard-library reader for plugin headers
+  (`.esm`/`.esp`/`.esl` flags and masters). Script extender and ENB files
+  are recognised as game-folder content, but still deploy into `Data/`
+  until #629. The adapter answers #605's "uses a prefix" question for
+  every game it recognises, so an unresolved prefix is reported for them.
+  Switching an existing game to it warns, everywhere the switch is offered
+  or made (`lmm game edit --adapter` on stderr, the verify note, and a
+  confirmation on the game page), that mods already installed keep the
+  layout they were installed with until they are uninstalled and installed
+  again (`GameStatus` gains `suggested_adapter_warning`, omitted when empty).
+- **games.yaml `catalog:` says which known game an entry is (#606).** For
+  an install lmm cannot recognise by its Steam app id or a standard game
+  id, such as a GOG or Epic copy under an id of your own,
+  `catalog: skyrim-se` names its entry in lmm's game catalog (the games
+  `lmm game detect` knows). lmm then treats it as that game: the `bethesda` adapter
+  identifies it, and lmm suggests the catalog's adapter for it. Set it with
+  `lmm game edit --catalog <id>` (`""` clears it) or the new **Game catalog
+  entry** choice in the web UI's game editor; an unknown id is refused with
+  the list of known ones, and one written by hand is a `catalog_unknown`
+  note in `lmm verify`, never a load error. `lmm game show` prints it, the
+  game's `--json` documents gain `catalog` (omitted when empty), and
+  `GET /api/v1/games/known` lists the catalog.
 - **A landing page for the project site (#625).**
   <https://donovanmods.github.io/linux-mod-manager/> now opens on a page that
   says what lmm is and who it is for, with screenshots of the web UI and the
