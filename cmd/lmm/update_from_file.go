@@ -93,7 +93,15 @@ func applyUpdateFromFile(ctx context.Context, service *core.Service, game *domai
 		return nil
 	}
 
-	result, err := service.ApplyUpdateFromArchive(ctx, game, plan, opts, quietSink(updateProgress))
+	// #615: an installer whose recorded choices no longer fit asks.
+	fa, err := newFomodAnswerer(service)
+	if err != nil {
+		return err
+	}
+	result, err := applyAnsweringFomod(fa, func(answers map[string]domain.FomodChoices) (*core.UpdateApplyResult, error) {
+		opts.Fomod = answers
+		return service.ApplyUpdateFromArchive(ctx, game, plan, opts, quietSink(updateProgress))
+	}, nil)
 	if err != nil {
 		return err
 	}

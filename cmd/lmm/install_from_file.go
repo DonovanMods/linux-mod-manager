@@ -119,7 +119,15 @@ func doInstallFromFile(ctx context.Context, service *core.Service, game *domain.
 	}
 	opts.AcceptConflicts = accept
 
-	result, err := service.ApplyImportArchive(ctx, game, profileName, plan, opts, sink)
+	// #615: a FOMOD installer's questions are answered and the import re-run.
+	fa, err := newFomodAnswerer(service)
+	if err != nil {
+		return err
+	}
+	result, err := applyAnsweringFomod(fa, func(answers map[string]domain.FomodChoices) (*core.ImportArchiveResult, error) {
+		opts.Fomod = answers
+		return service.ApplyImportArchive(ctx, game, profileName, plan, opts, sink)
+	}, nil)
 	if err != nil {
 		return err
 	}

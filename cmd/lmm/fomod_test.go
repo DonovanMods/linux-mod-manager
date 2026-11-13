@@ -1,0 +1,279 @@
+package main
+
+// #615: the CLI's FOMOD answers - the terminal walk, --fomod-choices,
+// --fomod-defaults, and the refusal when nothing can answer - through
+// `lmm install`, `lmm mod fomod` and the update batch's skip line.
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// cliFomodConfig: step one picks a texture (2K, 4K; 4K sets a flag), step
+// two is visible only for 4K and recommends a readme.
+const cliFomodConfig = `<config><moduleName>CLI Installer</moduleName>
+<requiredInstallFiles><file source="core\plugin.esp" destination="plugin.esp"/></requiredInstallFiles>
+<installSteps order="Explicit">
+<installStep name="Size"><optionalFileGroups order="Explicit">
+<group name="Texture" type="SelectExactlyOne"><plugins order="Explicit">
+<plugin name="2K"><description>Light on VRAM.</description><files><file source="tex\2k.dds" destination="textures\t.dds"/></files><typeDescriptor><type name="Optional"/></typeDescriptor></plugin>
+<plugin name="4K"><description>Heavy.</description><files><file source="tex\4k.dds" destination="textures\t.dds"/></files><conditionFlags><flag name="big">on</flag></conditionFlags><typeDescriptor><type name="Optional"/></typeDescriptor></plugin>
+</plugins></group></optionalFileGroups></installStep>
+<installStep name="Extras"><visible><flagDependency flag="big" value="on"/></visible><optionalFileGroups order="Explicit">
+<group name="Docs" type="SelectAny"><plugins order="Explicit">
+<plugin name="Readme"><files><file source="docs\readme.txt" destination="readme.txt"/></files><typeDescriptor><type name="Recommended"/></typeDescriptor></plugin>
+</plugins></group></optionalFileGroups></installStep>
+</installSteps></config>`
+
+func cliFomodZip(t *testing.T) []byte {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "mod.zip")
+	createTestArchive(t, path, map[string]string{
+		"fomod/ModuleConfig.xml": cliFomodConfig,
+		"core/plugin.esp":        "PLUGIN",
+		"tex/2k.dds":             "2K",
+		"tex/4k.dds":             "4K",
+		"docs/readme.txt":        "README",
+	})
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return b
+}
+
+// setupFomodInstall serves mod1 as a FOMOD archive and resets the FOMOD
+// flags and the walk's seams.
+func setupFomodInstall(t *testing.T) (*core.Service, *domain.Game, *fakeInstallSource) {
+	t.Helper()
+	svc, game, src := setupDoInstallTest(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.zip", IsPrimary: true}})
+	src.AddDownload("main", cliFomodZip(t))
+	oldPath, oldDefaults, oldIn, oldTerm, oldJSON := fomodChoicesPath, fomodDefaults, fomodStdin, fomodIsTerminal, jsonOutput
+	fomodChoicesPath, fomodDefaults, jsonOutput = "", false, false
+	fomodIsTerminal = func() bool { return false }
+	t.Cleanup(func() {
+		fomodChoicesPath, fomodDefaults, fomodStdin, fomodIsTerminal, jsonOutput = oldPath, oldDefaults, oldIn, oldTerm, oldJSON
+	})
+	return svc, game, src
+}
+
+// terminalInput makes the walk read lines from a fake terminal.
+func terminalInput(lines ...string) {
+	fomodIsTerminal = func() bool { return true }
+	fomodStdin = strings.NewReader(strings.Join(lines, "\n") + "\n")
+}
+
+func deployedFile(t *testing.T, game *domain.Game, rel string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(game.ModPath, filepath.FromSlash(rel)))
+	if os.IsNotExist(err) {
+		return ""
+	}
+	require.NoError(t, err)
+	return string(b)
+}
+
+func TestDoInstall_FomodWithNoTerminalAndNoFlagRefuses(t *testing.T) {
+	svc, game, _ := setupFomodInstall(t)
+
+	_, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	var q *core.FomodChoicesRequiredError
+	require.True(t, errors.As(err, &q), "got %v", err)
+	assert.NotZero(t, exitCodeFor(err), "never silent defaults: a non-zero exit")
+	assert.Empty(t, deployedFile(t, game, "plugin.esp"), "nothing was installed")
+
+	// The text error names the remedies; --json carries the document.
+	stderr := captureStderr(t, func() { reportError(err) })
+	assert.Contains(t, stderr, `Group "Texture" - choose exactly one: "2K"* "4K"`)
+	assert.Contains(t, stderr, "--fomod-choices <file.json> or --fomod-defaults")
+
+	jsonOutput = true
+	out := captureStdout(t, func() error { reportError(err); return nil })
+	var env struct {
+		Error   string                         `json:"error"`
+		Details core.FomodChoicesRequiredError `json:"details"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &env), out)
+	require.Len(t, env.Details.Mods, 1)
+	assert.Equal(t, "CLI Installer", env.Details.Mods[0].ModuleName)
+}
+
+func TestDoInstall_FomodDefaultsInstallsThePreselection(t *testing.T) {
+	svc, game, _ := setupFomodInstall(t)
+	fomodDefaults = true
+
+	_, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	assert.Equal(t, "2K", deployedFile(t, game, "textures/t.dds"), "the first of an exactly-one group")
+	assert.Equal(t, "PLUGIN", deployedFile(t, game, "plugin.esp"))
+}
+
+func TestDoInstall_FomodChoicesFileAnswers(t *testing.T) {
+	for name, body := range map[string]string{
+		"vortex array": `[{"name":"Size","groups":[{"name":"Texture","choices":[{"name":"4K","idx":1}]}]},
+		                  {"name":"Extras","groups":[{"name":"Docs","choices":[]}]}]`,
+		"profile shape": `{"steps":[{"name":"Size","groups":[{"name":"Texture","choices":[{"name":"4K","idx":1}]}]},
+		                  {"name":"Extras","groups":[{"name":"Docs","choices":[]}]}]}`,
+		"keyed by mod": `{"test-src:mod1":[{"name":"Size","groups":[{"name":"Texture","choices":[{"name":"4K","idx":1}]}]},
+		                  {"name":"Extras","groups":[{"name":"Docs","choices":[]}]}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, game, src := setupFomodInstall(t)
+			fomodChoicesPath = filepath.Join(t.TempDir(), "choices.json")
+			require.NoError(t, os.WriteFile(fomodChoicesPath, []byte(body), 0o600))
+
+			_, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+			require.NoError(t, err)
+			assert.Equal(t, "4K", deployedFile(t, game, "textures/t.dds"))
+			assert.Empty(t, deployedFile(t, game, "readme.txt"), "the file chose no docs")
+			assert.Equal(t, 1, src.DownloadCount(), "the answer re-run used the kept download")
+		})
+	}
+}
+
+func TestDoInstall_FomodChoicesFileThatDoesNotSettleRefuses(t *testing.T) {
+	svc, game, _ := setupFomodInstall(t)
+	fomodChoicesPath = filepath.Join(t.TempDir(), "choices.json")
+	// 4K makes the Extras step visible, which the file does not answer.
+	require.NoError(t, os.WriteFile(fomodChoicesPath, []byte(`[{"name":"Size","groups":[{"name":"Texture","choices":[{"name":"4K","idx":1}]}]}]`), 0o600))
+
+	_, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	var q *core.FomodChoicesRequiredError
+	require.True(t, errors.As(err, &q), "got %v", err)
+	assert.Equal(t, []core.FomodGroupRef{{Step: "Extras", Group: "Docs"}}, q.Mods[0].Unanswered)
+}
+
+// TestDoInstall_FomodWalk: the walk keeps going while the user keeps the
+// preselection, and goes back to core when a pick changes what later steps
+// show - here 4K reveals the Extras step, asked in a second round with its
+// Recommended option preselected.
+func TestDoInstall_FomodWalk(t *testing.T) {
+	svc, game, src := setupFomodInstall(t)
+	terminalInput("2", "") // 4K, then keep Extras' preselection
+
+	out, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "Mod One: CLI Installer")
+	assert.Contains(t, out, "Step 1 of 1: Size")
+	assert.Contains(t, out, "Light on VRAM.", "option descriptions are shown")
+	assert.Contains(t, out, "Mod One: CLI Installer - continued")
+	assert.Contains(t, out, "Step 2 of 2: Extras")
+	assert.Contains(t, out, "1) [x] Readme (recommended)")
+	assert.Equal(t, "4K", deployedFile(t, game, "textures/t.dds"))
+	assert.Equal(t, "README", deployedFile(t, game, "readme.txt"))
+	assert.Equal(t, 1, src.DownloadCount())
+}
+
+func TestDoInstall_FomodWalkEnforcesTheGroupRule(t *testing.T) {
+	svc, game, _ := setupFomodInstall(t)
+	terminalInput("1,2", "none", "1") // two, then none, then a valid one
+
+	out, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	require.NoError(t, err, out)
+	assert.Equal(t, 2, strings.Count(out, "Choose exactly one."), out)
+	assert.Equal(t, "2K", deployedFile(t, game, "textures/t.dds"))
+}
+
+func TestDoInstall_FomodWalkCancels(t *testing.T) {
+	svc, game, _ := setupFomodInstall(t)
+	terminalInput("q")
+
+	_, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	assert.ErrorIs(t, err, ErrCancelled)
+	assert.Empty(t, deployedFile(t, game, "plugin.esp"))
+}
+
+// TestDoInstallBatch_FomodOnTheResult: a dependency install reports the
+// question on its result (nothing written); with no answer the summary
+// shows it and the exit is non-zero, and --fomod-defaults answers it.
+func TestDoInstallBatch_FomodOnTheResult(t *testing.T) {
+	svc, game, src := setupFomodInstall(t)
+	src.AddMod(&domain.Mod{ID: "root", SourceID: "test-src", Name: "Root", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "test-src", ModID: "mod1"}}},
+		[]domain.DownloadableFile{{ID: "root-file", FileName: "root.esp", IsPrimary: true}})
+	src.AddDownload("root-file", []byte("ROOT"))
+	installModID = "root"
+
+	out, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	require.ErrorIs(t, err, ErrReported)
+	assert.NotZero(t, exitCodeFor(err))
+	assert.Contains(t, out, "Nothing was installed")
+	assert.Contains(t, out, `Group "Texture"`)
+	assert.Empty(t, deployedFile(t, game, "root.esp"))
+
+	fomodDefaults = true
+	_, err = captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	assert.Equal(t, "ROOT", deployedFile(t, game, "root.esp"))
+	assert.Equal(t, "2K", deployedFile(t, game, "textures/t.dds"))
+}
+
+func TestDoModFomod_ReconfiguresTheInstalledMod(t *testing.T) {
+	svc, game, _ := setupFomodInstall(t)
+	fomodDefaults = true
+	_, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	require.Equal(t, "2K", deployedFile(t, game, "textures/t.dds"))
+	fomodDefaults = false
+
+	oldSource := modSource
+	modSource = "test-src"
+	t.Cleanup(func() { modSource = oldSource })
+
+	// No terminal, no flag: the question, preselected from the recording.
+	_, err = captureStdoutErr(t, func() error { return doModFomod(context.Background(), svc, game, "mod1") })
+	var q *core.FomodChoicesRequiredError
+	require.True(t, errors.As(err, &q), "got %v", err)
+	assert.Equal(t, core.FomodReasonReconfigure, q.Mods[0].Reason)
+	assert.Equal(t, "2K", deployedFile(t, game, "textures/t.dds"), "nothing changed")
+
+	terminalInput("2", "none")
+	out, err := captureStdoutErr(t, func() error { return doModFomod(context.Background(), svc, game, "mod1") })
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "your recorded ones are preselected")
+	assert.Contains(t, out, "✓ Reconfigured: Mod One 1.0")
+	assert.Equal(t, "4K", deployedFile(t, game, "textures/t.dds"))
+	assert.Empty(t, deployedFile(t, game, "readme.txt"))
+}
+
+func TestParseFomodChoicesFile(t *testing.T) {
+	keyed, single, err := parseFomodChoicesFile([]byte(`{"nexusmods:1":{"config_sha256":"ab","steps":[]},"nexusmods:2":[]}`))
+	require.NoError(t, err)
+	assert.Nil(t, single)
+	assert.Len(t, keyed, 2)
+	assert.Equal(t, "ab", keyed["nexusmods:1"].ConfigSHA256)
+
+	for name, body := range map[string]string{
+		"empty":         ``,
+		"not a mod key": `{"Main": []}`,
+		"unknown field": `{"steps": [], "colour": 1}`,
+		"not json":      `steps`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := parseFomodChoicesFile([]byte(body))
+			assert.Error(t, err)
+		})
+	}
+}
+
+func TestPrintBatchSkips_FomodReanswer(t *testing.T) {
+	out := captureStdout(t, func() error {
+		printBatchSkips([]core.UpdateApplyResult{{Name: "Mod One", Mod: domain.ModReference{SourceID: "nexusmods", ModID: "12604"},
+			Status: core.UpdateSkipped, Reason: core.ReasonFomodReanswer, FomodReanswer: true}})
+		return nil
+	})
+	assert.Contains(t, out, "1 mod(s) not applied — their installer (FOMOD) changed")
+	assert.Contains(t, out, "lmm update 12604 --source nexusmods")
+	assert.NotContains(t, out, "Steam Workshop")
+}

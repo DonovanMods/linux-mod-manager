@@ -431,6 +431,7 @@ func reportError(err error) {
 		reportExternalToolOutput(err)
 		reportDownloadPage(err)
 		reportLoaderSetup(err)
+		reportFomodQuestion(err)
 	}
 }
 
