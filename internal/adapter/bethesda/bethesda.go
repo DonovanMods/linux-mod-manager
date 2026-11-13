@@ -17,8 +17,7 @@
 //	RootRouter        which of a mod's files belong at the game's
 //	                  install_path rather than its mod_path: a script
 //	                  extender's loader and DLLs, an ENB (route.go). Core
-//	                  does not honour this answer yet (#629); see
-//	                  adapter.RootRouter
+//	                  deploys those there (#629); see adapter.RootRouter
 //	Verifier          a note when the adapter cannot tell which of its games
 //	                  a game is (verify.go)
 //	PrefixConsumer    yes for every game it recognises: Plugins.txt lives in

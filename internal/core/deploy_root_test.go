@@ -443,3 +443,32 @@ func TestDeployRoot_OverrideOnAGameRootModFile(t *testing.T) {
 	require.NoError(t, err, "the plain link is back")
 	assert.Equal(t, cached, target)
 }
+
+// `lmm deploy --purge` moves a file an earlier routing put under Data/ to
+// the game root: the purge pass finds it by its record, the deploy puts it
+// at the root.
+func TestDeployRoot_DeployPurgeMovesAFileAnEarlierRoutingPutInData(t *testing.T) {
+	svc, _ := newOriginalsService(t)
+	game := newRootGame(t, svc, domain.LinkSymlink)
+	game.Adapter = ""
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	seedNamedInstalledMod(t, svc, game, "src", "enb", "ENB", "1.0", true, enbFiles)
+	seedProfileWithMod(t, svc, "g1", "default", "src", "enb", "1.0")
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	game.Adapter = rootTestAdapterID
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	_, err = svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{Purge: true}, nil)
+	require.NoError(t, err)
+	assertAbsent(t, filepath.Join(game.ModPath, "d3d11.dll"), "the purge pass took the Data copy down")
+	assertAbsent(t, filepath.Join(game.ModPath, "enbseries"), "")
+	assert.Equal(t, "the ENB's d3d11", readFileString(t, filepath.Join(game.InstallPath, "d3d11.dll")))
+	files, err := svc.ModFiles(context.Background(), game, "default", "src", "enb")
+	require.NoError(t, err)
+	var paths []string
+	for _, f := range files.Files {
+		paths = append(paths, f.Path)
+	}
+	assert.ElementsMatch(t, []string{"<game root>/d3d11.dll", "<game root>/enbseries/effect.fx", "textures/sky/sky.dds"}, paths)
+}

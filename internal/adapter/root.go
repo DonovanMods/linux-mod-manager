@@ -36,13 +36,13 @@ func (r DeployRoot) String() string {
 // mod_path (#606: a Bethesda game's mod_path is Data/, but a script
 // extender's loader and an ENB live beside the executable).
 //
-// CORE DOES NOT HONOUR IT YET. Deploying a file outside mod_path means the
-// deploy, every removal path, converge, verify, purge, conflict detection
-// and the deployed_files record all learning a second root, and that is a
-// story of its own (#629). Until it lands, a file this capability routes to
-// RootInstallPath deploys under mod_path exactly as it did before #606;
-// internal/core's TestRootInstallPathStillDeploysUnderModPath pins that,
-// so the story that changes it has to change the test on purpose.
+// Core honours it (#629): a file routed to RootInstallPath deploys under the
+// game's install_path, is recorded there (deployed_files.root), and every
+// removal, converge, verify, purge and conflict report finds it there. It
+// is written only beneath the install_path, and a stock file it replaces
+// is preserved first and put back when lmm's file goes
+// (internal/core/deploy_root.go). For a game whose mod_path IS its
+// install_path the answer changes nothing: there is one directory.
 //
 // Like every capability it is pure: it answers from file names and the
 // game's configuration, never from the disk.

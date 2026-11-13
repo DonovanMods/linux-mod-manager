@@ -102,6 +102,7 @@ type ModTypeUnsupportedError struct {
 	ModType string
 }
 
+// Error names the type and the adapter that does not know it.
 func (e *ModTypeUnsupportedError) Error() string {
 	return fmt.Sprintf("the mod's type %q is not one game %s's adapter (%s) knows where to deploy", e.ModType, e.GameID, e.Adapter)
 }

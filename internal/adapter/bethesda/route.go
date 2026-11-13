@@ -82,7 +82,8 @@ func containsFold(list []string, s string) bool {
 // and everything else to mod_path. Only the TOP level of the cache entry is
 // ever the game root: an SKSE plugin DLL in SKSE/Plugins/ is Data content.
 //
-// Core does not honour the answer yet (#629, see adapter.RootRouter).
+// Core deploys the RootInstallPath answer under the game's install_path
+// (#629, see adapter.RootRouter).
 func (*Adapter) RouteRoots(_ *domain.Game, files []string) []adapter.DeployRoot {
 	out := make([]adapter.DeployRoot, len(files))
 	for _, f := range files {

@@ -40,6 +40,20 @@ export function findingLabel(f) {
   return label;
 }
 
+/** GAME_ROOT_PREFIX is how core names a file deployed under the game's
+ * install folder rather than its mod folder (issue 629): "<game root>/"
+ * in front of the path - a script extender's loader, an ENB's d3d11.dll.
+ * It is core's spelling (domain.GameRootLabel), passed through as is. */
+export const GAME_ROOT_PREFIX = "<game root>/";
+
+/** isGameRootFinding reports whether a finding is about a file deployed
+ * under the game root, so a row can say so beside its path (issue 629). */
+export function isGameRootFinding(f) {
+  return (
+    typeof f.file_id === "string" && f.file_id.startsWith(GAME_ROOT_PREFIX)
+  );
+}
+
 /** isInformational reports whether a finding is a fact about the install
  * rather than a problem with it (issue 630): a mod file the profile's
  * overrides replace ("deployed_overridden") is the profile's own choice.

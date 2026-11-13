@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mod files that belong in the game folder are deployed there (#629).**
+  On a game with the `bethesda` adapter, a script extender's loader and
+  DLLs (`skse64_loader.exe`, `skse64_*.dll`, and the F4SE/SFSE/SKSEVR
+  equivalents), an ENB's `d3d11.dll` and `enbseries/` folder, and the whole
+  of an ENB preset or a `dinput8.dll` mod now deploy into the game's
+  `install_path`, beside its executable, instead of into `Data/` where the
+  game never loads them; the rest of the same mod still goes into `Data/`.
+  Every flow handles them: `lmm deploy`, `lmm install`, `lmm update` and
+  rollbacks, `lmm uninstall`, `lmm mod disable`/`enable`, `lmm purge`,
+  `lmm profile switch`/`apply`, `lmm verify` (and `--fix`), `lmm
+conflicts`, `lmm mod files`, snapshots, and a profile override on such a
+  file (#630). When a mod's file replaces one the game ships (a stock
+  `d3d11.dll`, say), lmm keeps the game's copy first and puts it back when
+  the mod's file goes, exactly as it does in `Data/`. lmm writes and
+  removes only inside the game folder: a folder there that is a link to
+  somewhere else is refused, and the deploy says so. Wherever lmm lists a
+  deployed file, one in the game folder is shown with the root named in
+  front, `<game root>/d3d11.dll` (in `--json` output too, in the existing
+  path fields), and the web UI's Health card marks such a row with a
+  **Game root** badge. A snapshot's `deployed_files` rows gain a `root`
+  field (`"install_path"`) for such a file, and no field for any other.
+  The database moves to schema version 26 (`deployed_files` records each
+  file's root), so an older lmm refuses to open it, as for every schema
+  change. A mod deployed into `Data/` before its game used the `bethesda`
+  adapter keeps those files there until `lmm deploy --purge` (or `lmm
+purge` and a deploy) moves them to the game folder; `lmm verify --fix`
+  removes the stale `Data/` copies, and an uninstall finds them where they
+  are.
+
 - **A profile override can change a mod's own file (#630).** A profile
   (or a collection) that overrides a file a deployed mod ships, such as a
   mod's `.ini`, now works under every link method: the deploy replaces

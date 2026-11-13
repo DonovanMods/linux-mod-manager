@@ -9,6 +9,7 @@ import { html, useState } from "../render.js";
 import {
   findingLabel,
   findingSubject,
+  isGameRootFinding,
   isInformational,
   successorList,
 } from "../verify.js";
@@ -970,6 +971,16 @@ function HealthCard({
                             class="badge"
                             data-testid="finding-overridden"
                             >Overridden</span
+                          >`
+                        }${
+                          // issue 629: a file in the game folder itself,
+                          // beside the executable - not the mod folder.
+                          isGameRootFinding(f) &&
+                          html` <span
+                            class="badge"
+                            data-testid="finding-game-root"
+                            title="In the game folder, beside the game's executable - not in the mod folder"
+                            >Game root</span
                           >`
                         }</span
                       >

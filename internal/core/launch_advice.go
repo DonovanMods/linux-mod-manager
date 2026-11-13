@@ -46,7 +46,8 @@ func (s *Service) launchAdvice(ctx context.Context, game *domain.Game, profile s
 			continue
 		}
 		for i, f := range files {
-			files[i] = filepath.ToSlash(f)
+			// #629: a game-root file as "<game root>/...", never the key.
+			files[i] = displayPath(f)
 		}
 		deployed = append(deployed, adapter.DeployedMod{Name: m.Name, Files: files})
 	}
