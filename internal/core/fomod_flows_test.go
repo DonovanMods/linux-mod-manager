@@ -685,3 +685,38 @@ func TestFomodInstall_InstallerNotTheFirstFileIsOneEntry(t *testing.T) {
 		assert.NoError(t, err, rel)
 	}
 }
+
+// TestFomodInstall_AnUnsafeMemberOnlyWarnsEndToEnd (owner ruling): an
+// installer archive with a member literally named "..\evil.esp" - which a
+// Linux extraction writes as one file - installs, fresh and replayed alike,
+// without that member, and with a warning.
+func TestFomodInstall_AnUnsafeMemberOnlyWarnsEndToEnd(t *testing.T) {
+	f := newFomodFixture(t)
+	zipPath := createTestZip(t, t.TempDir(), map[string]string{
+		"fomod/ModuleConfig.xml": flowModuleConfig("4K"),
+		"core/plugin.esp":        "PLUGIN",
+		"tex/2k.dds":             "2K",
+		"tex/4k.dds":             "4K",
+		`..\evil.esp`:            "EVIL",
+	})
+	b, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	f.mock.AddDownload("mod1", b)
+	f.mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod mod1", Version: "1.0", GameID: "g1"})
+
+	result, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+	assert.Contains(t, strings.Join(result.Warnings, "\n"), "is not a safe path and was not read")
+	assert.Equal(t, "4K", f.deployed(t, "textures/t.dds"))
+	entries, err := os.ReadDir(f.gameDir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), "evil")
+	}
+
+	// A replay of the recorded choices (a reinstall) warns the same way
+	// rather than refusing.
+	_, err = f.install(t, "mod1", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "4K", f.deployed(t, "textures/t.dds"))
+}
