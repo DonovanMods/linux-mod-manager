@@ -325,6 +325,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		fmt.Printf(", Failed: %d", failed)
 	}
 	fmt.Println()
+	renderPluginList(result.Plugins)
 
 	if deployMethod != "" {
 		fmt.Printf("\nNote: Used %s method for this deployment.\n", methodName)
