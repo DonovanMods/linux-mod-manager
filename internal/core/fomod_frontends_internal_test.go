@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
@@ -189,4 +190,66 @@ func TestResolveFomod_AskOfAPlainArchiveRefuses(t *testing.T) {
 	require.True(t, errors.As(err, &refusal), "got %v", err)
 	assert.ErrorIs(t, err, ErrNotFomodInstalled)
 	assert.False(t, answerableRefusal(err))
+}
+
+// TestFomodImage_ANewQuestionReplacesTheKeptImages: a later archive with
+// the same installer but a new picture serves the new picture, not the one
+// an earlier question kept (#615 review item 8).
+func TestFomodImage_ANewQuestionReplacesTheKeptImages(t *testing.T) {
+	svc := &Service{dataDir: t.TempDir()}
+	ask := func(png []byte) string {
+		tree := fomodTree(t, "", twoStepModuleConfig, map[string]string{"fomod/images/2k.png": string(png)})
+		_, err := svc.resolveFomod(fomodTestMod, "mod.zip", tree, fomodInput{})
+		var q *FomodChoicesRequiredError
+		require.True(t, errors.As(err, &q), "got %v", err)
+		return q.Mods[0].ConfigSHA256
+	}
+	first := ask(pngBytes)
+	second := ask(append(append([]byte{}, pngBytes...), 'X'))
+	require.Equal(t, first, second, "the same installer")
+	img, err := svc.FomodImage("src", "m1", second, "fomod/images/2k.png")
+	require.NoError(t, err)
+	body, err := os.ReadFile(img.Path)
+	require.NoError(t, err)
+	assert.Equal(t, byte('X'), body[len(body)-1], "the newer archive's picture")
+}
+
+// TestFomodImage_CaseVariantMembersResolveDeterministically: an image path
+// two members match case-insensitively serves the member spelled exactly
+// as the installer writes it, every time.
+func TestFomodImage_CaseVariantMembersResolveDeterministically(t *testing.T) {
+	for range 5 {
+		svc := &Service{dataDir: t.TempDir()}
+		tree := fomodTree(t, "", twoStepModuleConfig, map[string]string{
+			"fomod/images/2K.png": string(append(append([]byte{}, pngBytes...), 'U')),
+			"fomod/images/2k.png": string(append(append([]byte{}, pngBytes...), 'L')),
+		})
+		_, err := svc.resolveFomod(fomodTestMod, "mod.zip", tree, fomodInput{})
+		var q *FomodChoicesRequiredError
+		require.True(t, errors.As(err, &q), "got %v", err)
+		img, err := svc.FomodImage("src", "m1", q.Mods[0].ConfigSHA256, `fomod\images\2K.png`)
+		require.NoError(t, err)
+		body, err := os.ReadFile(img.Path)
+		require.NoError(t, err)
+		assert.Equal(t, byte('U'), body[len(body)-1], `the XML writes fomod\images\2K.png`)
+	}
+}
+
+// TestFomodImage_TheKeptImagesHaveAGlobalCap: past maxFomodImagesStash the
+// oldest questions' images are dropped, never the one being written.
+func TestFomodImage_TheKeptImagesHaveAGlobalCap(t *testing.T) {
+	svc := &Service{dataDir: t.TempDir()}
+	base := filepath.Join(svc.stagingRoot(), fomodImagesDirName)
+	old := filepath.Join(base, "old")
+	require.NoError(t, os.MkdirAll(old, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(old, "big"), make([]byte, maxFomodImagesStash), 0o600))
+	past := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(old, past, past))
+
+	_, err := svc.resolveFomod(fomodTestMod, "mod.zip", twoStepTree(t), fomodInput{})
+	var q *FomodChoicesRequiredError
+	require.True(t, errors.As(err, &q), "got %v", err)
+	assert.NoDirExists(t, old, "the oldest question's images were dropped")
+	_, err = svc.FomodImage("src", "m1", q.Mods[0].ConfigSHA256, "fomod/images/2k.png")
+	assert.NoError(t, err, "the new question's images are kept")
 }

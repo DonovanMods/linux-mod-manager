@@ -24,9 +24,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -42,6 +44,9 @@ const (
 	maxFomodImagesTotal = 64 << 20
 	// maxFomodImages caps how many images one question keeps.
 	maxFomodImages = 512
+	// maxFomodImagesStash caps every question's images together: past it
+	// the oldest questions' images are dropped first.
+	maxFomodImagesStash = 256 << 20
 )
 
 // fomodImageTypes are the content types a kept image may sniff as.
@@ -113,10 +118,20 @@ func (s *Service) stashFomodImages(tree string, byRel map[string]string, q *Fomo
 		return
 	}
 	s.sweepFomodImages()
+	s.capFomodImages(dir)
+	// Members by normalised path. Paths are matched case-insensitively, so
+	// two members can share a key; the first in sorted order wins, so the
+	// same archive always serves the same file. A member spelled exactly as
+	// the XML writes the image is preferred over both (exact, below).
+	rels := slices.Sorted(maps.Keys(byRel))
 	members := make(map[string]string, len(byRel))
-	for rel, member := range byRel {
+	exact := make(map[string]string, len(byRel))
+	for _, rel := range rels {
+		exact[strings.ReplaceAll(rel, `\`, "/")] = byRel[rel]
 		if k := fomodImageKey(rel); k != "" {
-			members[k] = member
+			if _, taken := members[k]; !taken {
+				members[k] = byRel[rel]
+			}
 		}
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -127,6 +142,7 @@ func (s *Service) stashFomodImages(tree string, byRel map[string]string, q *Fomo
 	_ = os.Chtimes(dir, now, now)
 	var total int64
 	kept := 0
+	done := map[string]bool{}
 	for _, st := range q.Steps {
 		for _, g := range st.Groups {
 			for _, o := range g.Options {
@@ -134,14 +150,20 @@ func (s *Service) stashFomodImages(tree string, byRel map[string]string, q *Fomo
 					return
 				}
 				key := fomodImageKey(o.Image)
-				member, ok := members[key]
-				if key == "" || !ok {
+				member, ok := exact[strings.ReplaceAll(strings.TrimSpace(o.Image), `\`, "/")]
+				if !ok {
+					member, ok = members[key]
+				}
+				if key == "" || !ok || done[key] {
 					continue
 				}
+				done[key] = true
+				// Written afresh for every question, replacing what an
+				// earlier question kept under the same name: a new version
+				// with the same installer but new pictures shows the new
+				// ones. The write is atomic, so a reader sees one or the
+				// other.
 				dest := filepath.Join(dir, fomodImageFileName(key))
-				if _, err := os.Lstat(dest); err == nil {
-					continue
-				}
 				n, err := copyFomodImage(filepath.Join(tree, filepath.FromSlash(member)), dest, maxFomodImagesTotal-total)
 				if err != nil {
 					s.logger().Debug("keeping an installer image failed", "image", key, "err", err)
@@ -177,7 +199,18 @@ func copyFomodImage(src, dest string, budget int64) (int64, error) {
 	if int64(len(data)) > limit || !fomodImageTypes[http.DetectContentType(data)] {
 		return 0, ErrFomodImageNotFound
 	}
-	if err := os.WriteFile(dest, data, 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".img-*")
+	if err != nil {
+		return 0, err
+	}
+	_, werr := tmp.Write(data)
+	cerr := tmp.Close()
+	if err := errors.Join(werr, cerr); err != nil {
+		_ = os.Remove(tmp.Name())
+		return 0, err
+	}
+	if err := os.Rename(tmp.Name(), dest); err != nil {
+		_ = os.Remove(tmp.Name())
 		return 0, err
 	}
 	return int64(len(data)), nil
@@ -245,6 +278,53 @@ func (s *Service) sweepFomodImages() {
 		}
 		if rerr := os.RemoveAll(filepath.Join(base, e.Name())); rerr != nil {
 			s.logger().Debug("sweeping installer images failed", "name", e.Name(), "err", rerr)
+		}
+	}
+}
+
+// capFomodImages keeps every question's images together under
+// maxFomodImagesStash, with room for one more question: the oldest
+// questions' directories (by their last use) go first. keep, the directory
+// about to be written, is never dropped.
+func (s *Service) capFomodImages(keep string) {
+	base := filepath.Dir(keep)
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return
+	}
+	type stashDir struct {
+		path string
+		mod  time.Time
+		size int64
+	}
+	var dirs []stashDir
+	var total int64
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil || !e.IsDir() {
+			continue
+		}
+		path := filepath.Join(base, e.Name())
+		var size int64
+		files, _ := os.ReadDir(path)
+		for _, f := range files {
+			if fi, err := f.Info(); err == nil {
+				size += fi.Size()
+			}
+		}
+		total += size
+		dirs = append(dirs, stashDir{path: path, mod: info.ModTime(), size: size})
+	}
+	slices.SortFunc(dirs, func(a, b stashDir) int { return a.mod.Compare(b.mod) })
+	for _, d := range dirs {
+		if total <= maxFomodImagesStash-maxFomodImagesTotal {
+			return
+		}
+		if d.path == keep {
+			continue
+		}
+		if err := os.RemoveAll(d.path); err == nil {
+			total -= d.size
 		}
 	}
 }
