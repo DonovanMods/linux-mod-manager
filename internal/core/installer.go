@@ -650,8 +650,15 @@ func (i *Installer) preserveBeforeDeploy(ctx context.Context, game *domain.Game,
 		// now set aside, and the user was told it was kept - so say where
 		// it went.
 		if check.preserve && i.originals.takeKeptUser(filepath.ToSlash(file)) {
-			i.noteHeld(fmt.Sprintf("%s is the file you changed, which lmm left in place when it last removed the mod; this deploy set it aside and put the mod's version there - `lmm purge` puts yours back",
-				filepath.ToSlash(file)))
+			if _, overridden := i.placing.content(file); overridden {
+				// #630 re-review: what goes there is the profile's
+				// override, not the mod's version.
+				i.noteHeld(fmt.Sprintf("%s is the file you changed, which lmm keeps set aside while the profile overrides it; this deploy put the profile's override there again - removing the mod, or `lmm purge`, puts yours back",
+					filepath.ToSlash(file)))
+			} else {
+				i.noteHeld(fmt.Sprintf("%s is the file you changed, which lmm left in place when it last removed the mod; this deploy set it aside and put the mod's version there - `lmm purge` puts yours back",
+					filepath.ToSlash(file)))
+			}
 		}
 		return true
 	}

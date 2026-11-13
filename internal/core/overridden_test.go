@@ -529,3 +529,66 @@ func TestOverriddenModFile_VerifyReportsAStaleCopyAndFixRestoresTheLink(t *testi
 		})
 	}
 }
+
+// TestOverriddenModFile_VerifyLeavesAFileAnotherGameRecords is the #630
+// re-review's blocker: a hardlink or copy deploy over a path another game
+// holds records THAT game's fingerprint on this profile's row, which
+// matched the other game's file and differed from this mod's cache - so
+// verify called it a stale override copy and --fix deleted the other
+// game's file. A path another game records is never one.
+func TestOverriddenModFile_VerifyLeavesAFileAnotherGameRecords(t *testing.T) {
+	ctx := context.Background()
+	for _, method := range []domain.LinkMethod{domain.LinkHardlink, domain.LinkCopy} {
+		t.Run(method.String(), func(t *testing.T) {
+			root := t.TempDir()
+			sky := newLegacyFixture(t, handoffGame(t, "sky", root, method))
+			sky2 := &legacyFixture{svc: sky.svc, game: handoffGame(t, "sky2", root, domain.LinkCopy)}
+			require.NoError(t, sky.svc.SaveGame(ctx, sky2.game))
+			sky.profile(t, "default", true, "k")
+			sky2.profile(t, "default", true, "j")
+			sky2.cachedOnly(t, "default", "j", domain.LinkCopy, map[string]string{"Data/a.esp": "sky2 a"})
+			sky.cachedOnly(t, "default", "k", method, map[string]string{"Data/a.esp": "sky a", "Data/k.esp": "sky k"})
+			sky2.deploy(t, "default", core.DeployOptions{})
+			result := sky.deploy(t, "default", core.DeployOptions{})
+			assert.True(t, containsLine(result.Warnings, "Data/a.esp", "sky2"), "%q", result.Warnings)
+			live := filepath.Join(sky.game.ModPath, "Data", "a.esp")
+			require.Equal(t, "sky2 a", readLive(t, live))
+
+			for _, fix := range []bool{false, true} {
+				report, err := sky.svc.VerifyReport(ctx, sky.game, "default", core.VerifyOptions{Fix: fix, Force: true}, nil)
+				require.NoError(t, err)
+				for _, f := range report.Result.Findings {
+					assert.NotEqual(t, core.VerifyStatusOverrideStale, f.Status, "fix=%v: %+v", fix, f)
+					assert.NotEqual(t, core.VerifyStatusFixedOverrideStale, f.Status, "fix=%v: %+v", fix, f)
+				}
+				assert.Equal(t, "sky2 a", readLive(t, live), "fix=%v: the other game's file is untouched", fix)
+			}
+			// Nor does a profile apply's convergence touch it.
+			applyProfile(t, sky.svc, sky.game, "default")
+			assert.Equal(t, "sky2 a", readLive(t, live))
+		})
+	}
+}
+
+// TestOverriddenModFile_TheNextDeploySaysWhatItPutThere is the re-review's
+// nit: on the deploy after the user's file was set aside, the note said it
+// "put the mod's version there" - it put the profile's override there.
+func TestOverriddenModFile_TheNextDeploySaysWhatItPutThere(t *testing.T) {
+	for _, method := range linkMethods() {
+		t.Run(method.String(), func(t *testing.T) {
+			f := overriddenFixture(t, method)
+			f.deploy(t, "default", core.DeployOptions{})
+			replaceWithUsersFile(t, f.iniPath(), "mine\n")
+			f.deploy(t, "default", core.DeployOptions{})
+
+			result := f.deploy(t, "default", core.DeployOptions{})
+			assertOverriddenCopy(t, f, "tweaked\n")
+			for _, w := range append(result.Warnings, result.Notes...) {
+				assert.NotContains(t, w, "the mod's version", "%q", w)
+			}
+			assert.True(t, containsLine(result.Warnings, "Data/k.ini", "the profile's override there again"), "%q", result.Warnings)
+			purgeDefault(t, f)
+			assert.Equal(t, "mine\n", readLive(t, f.iniPath()), "still the user's file the purge puts back")
+		})
+	}
+}

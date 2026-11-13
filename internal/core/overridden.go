@@ -428,7 +428,7 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 		if _, held := heldElsewhere(others, rel, dst); held {
 			continue
 		}
-		form, src := s.deployedFormOf(ctx, installer, game, profileName, rel, dst)
+		form, src := s.deployedFormOf(ctx, installer, others, game, profileName, rel, dst)
 		if overridden {
 			// Only lmm's own deployment of the file is replaced here; a
 			// file of the user's is left for `lmm deploy`, whose override
@@ -510,7 +510,16 @@ const (
 // happens to hold the same bytes. src is the mod's cached file for rel,
 // or "" when the cache entry is not there - a copy then cannot be told
 // from the plain deployment, so it is formOther.
-func (s *Service) deployedFormOf(ctx context.Context, installer *Installer, game *domain.Game, profileName, rel, dst string) (form deployedForm, src string) {
+//
+// A path another game sharing the mod directory records (others, #445) is
+// always formOther (#630 re-review): a copy or hardlink deploy over it
+// records THAT game's fingerprint on this profile's row (heldFingerprint),
+// which matches that game's file and differs from this mod's cache - read
+// as an override copy, a restore would delete the other game's file.
+func (s *Service) deployedFormOf(ctx context.Context, installer *Installer, others *otherGameRecords, game *domain.Game, profileName, rel, dst string) (form deployedForm, src string) {
+	if len(others.recording(rel)) > 0 {
+		return formOther, ""
+	}
 	states, err := currentStates(ctx, s.db, game, rel)
 	if err != nil {
 		return formOther, ""
@@ -615,6 +624,7 @@ type staleOverrideCheck struct {
 	overridden overriddenFiles
 	elsewhere  map[string]bool
 	installer  *Installer
+	others     *otherGameRecords
 	linked     bool
 }
 
@@ -627,7 +637,11 @@ func newStaleOverrideCheck(r *verifyRun, overridden overriddenFiles) *staleOverr
 	if err != nil {
 		return c
 	}
-	c.installer = installer
+	others, err := r.svc.otherGamesRecording(r.ctx, r.game)
+	if err != nil {
+		return c
+	}
+	c.installer, c.others = installer, others
 	c.linked = installer.linker.Method() != domain.LinkCopy
 	c.elsewhere = r.svc.overriddenElsewhere(r.game, r.profile, overridden)
 	return c
@@ -643,8 +657,13 @@ func (c *staleOverrideCheck) report(row db.DeployedPath, dst, modName string) bo
 	if _, ok := c.overridden.content(row.RelativePath); ok || !staleCopyCandidate(row.RelativePath, dst, c.elsewhere, c.linked) {
 		return false
 	}
+	// A file another game records is that game's (#445), whatever this
+	// profile's row fingerprints - as the convergence leaves it.
+	if _, held := heldElsewhere(c.others, row.RelativePath, dst); held {
+		return false
+	}
 	r := c.r
-	form, src := r.svc.deployedFormOf(r.ctx, c.installer, r.game, r.profile, row.RelativePath, dst)
+	form, src := r.svc.deployedFormOf(r.ctx, c.installer, c.others, r.game, r.profile, row.RelativePath, dst)
 	if form != formOverrideCopy {
 		return false
 	}
