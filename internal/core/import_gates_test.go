@@ -137,6 +137,11 @@ func TestImportGates_TextConfigExtensions(t *testing.T) {
 		{"config.ron", false}, {"UPPER.PROPERTIES", false}, {"Mixed.Ltx", false},
 		{"version.dll", true}, {"game.exe", true}, {"lib.so", true},
 		{"init.lua", true}, {"run.sh", true}, {"noextension", true},
+		// Loader configuration (owner ruling): text, but it names a DLL
+		// to load, so it is held back by name, in any case and directory.
+		{"doorstop_config.ini", true}, {"DOORSTOP_CONFIG.INI", true},
+		{"enblocal.ini", true}, {"sub/EnbLocal.ini", true},
+		{"enbseries.ini", false}, {"doorstop_config.ini.txt", false},
 	}
 	for _, tc := range cases {
 		doc := "name: shared\ngame_id: cyber\nmods: []\noverrides:\n  " + tc.path + ": x\n"
@@ -149,4 +154,24 @@ func TestImportGates_TextConfigExtensions(t *testing.T) {
 		}
 	}
 	require.Len(t, core.TextConfigOverrideExtensions(), 15)
+}
+
+func TestImportGates_LoaderConfigReasonAndEveryOverrideListed(t *testing.T) {
+	svc, game := recipient(t)
+	doc := "name: shared\ngame_id: cyber\nmods: []\noverrides:\n  BepInEx/doorstop_config.ini: x\n  enblocal.ini: x\n  Config/Game.ini: x\n"
+	plan, err := svc.PlanImport(context.Background(), game, []byte(doc))
+	require.NoError(t, err)
+	require.Equal(t, []string{"BepInEx/doorstop_config.ini", "Config/Game.ini", "enblocal.ini"}, plan.Overrides,
+		"the plan lists every override, held back or not")
+	require.Len(t, plan.RestrictedOverrides, 2)
+	for _, o := range plan.RestrictedOverrides {
+		require.Contains(t, o.Reason, "loader configuration: can make the game load a DLL", o.Path)
+	}
+	require.Equal(t, []string{"doorstop_config.ini", "enblocal.ini"}, core.LoaderConfigOverrideFiles())
+
+	result := applyGated(t, svc, game, plan, core.ProfileImportOptions{})
+	require.Len(t, result.OverridesSkipped, 2)
+	saved, err := config.LoadProfile(svc.ConfigDir(), "cyber", "shared")
+	require.NoError(t, err)
+	require.Equal(t, map[string][]byte{"Config/Game.ini": []byte("x")}, saved.Overrides)
 }

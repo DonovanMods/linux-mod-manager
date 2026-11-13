@@ -434,3 +434,11 @@ func WithAutoTargetForTest(ref CatalogModRef, modID string) CatalogModRef {
 func (s *Service) SetModCategoryNameForTest(ctx context.Context, sourceID, modID, gameID, profileName, name string) error {
 	return s.db.SetModCategoryName(ctx, sourceID, modID, gameID, profileName, name)
 }
+
+// ImportForTest saves an imported profile document with nothing held back
+// - importDocument with a zero adjustment - for the ProfileManager tests of
+// the save itself (path validation, the default flag, cancellation).
+// Production imports go through ApplyImport and its gates (#621).
+func (pm *ProfileManager) ImportForTest(ctx context.Context, data []byte, force bool) (*domain.Profile, error) {
+	return pm.importDocument(ctx, data, force, importAdjust{})
+}

@@ -167,7 +167,7 @@ func planProfileImportKind(ctx context.Context, s *Server, sel selection, opts a
 	// the job reaches SaveProfile ("importing profile: invalid game ID:
 	// value is empty" - validateProfilePath, config/profiles.go). Worse, a
 	// document naming a DIFFERENT game's ID doesn't fail at all: ApplyImport
-	// (via ProfileManager.ImportWithOptions) saves profile.GameID from the
+	// (via its import save) saves profile.GameID from the
 	// document verbatim, never sel.Game.ID, so the import would silently
 	// land under the wrong game's directory - never even touching the game
 	// the caller selected. Both are refused here, the same way the nameless

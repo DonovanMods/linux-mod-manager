@@ -107,10 +107,19 @@ func printImportGates(plan *core.ImportPlan) {
 			fmt.Println("  They will not be imported; re-run with --with-hooks to import them.")
 		}
 	}
+	// Every override is listed, held back or not (#621 review N1): a
+	// collection's plan lists them in its own section, so this is the
+	// older format's list.
+	if plan.Collection == nil && len(plan.Overrides) > 0 {
+		fmt.Printf("\nConfig overrides written into the game directory:\n")
+		for _, path := range plan.Overrides {
+			fmt.Printf("    - %s\n", path)
+		}
+	}
 	if len(plan.RestrictedOverrides) > 0 {
-		fmt.Printf("\nOverrides that are not text config files:\n")
+		fmt.Printf("\nOverrides held back (not text config files, or loader configuration):\n")
 		for _, o := range plan.RestrictedOverrides {
-			fmt.Printf("    - %s\n", o.Path)
+			fmt.Printf("    - %s: %s\n", o.Path, o.Reason)
 		}
 		if profileImportAnyOverrides {
 			fmt.Println("  They will be imported (--allow-any-overrides).")
@@ -134,7 +143,7 @@ func printImportGatesResult(plan *core.ImportPlan, result *core.ProfileImportRes
 		}
 	}
 	if skipped := result.OverridesSkipped; len(skipped) > 0 {
-		fmt.Printf("\n%d override(s) were skipped because they are not text config files; re-import with --allow-any-overrides to include them:\n", len(skipped))
+		fmt.Printf("\n%d override(s) were skipped (not text config files, or loader configuration); re-import with --allow-any-overrides to include them:\n", len(skipped))
 		for _, o := range skipped {
 			fmt.Printf("    - %s\n", o.Path)
 		}

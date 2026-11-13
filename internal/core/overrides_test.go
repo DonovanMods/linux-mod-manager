@@ -103,3 +103,60 @@ func TestCheckOverridePath(t *testing.T) {
 		require.Error(t, checkOverridePath(bad), bad)
 	}
 }
+
+// TestApplyProfileOverrides_ADirectorySymlinkCannotCarryTheWriteOutside is
+// #621 review N2's first case: containment by path text alone let a
+// directory symlink inside the game directory take the write outside it.
+func TestApplyProfileOverrides_ADirectorySymlinkCannotCarryTheWriteOutside(t *testing.T) {
+	baseDir, outside := t.TempDir(), t.TempDir()
+	require.NoError(t, os.Symlink(outside, filepath.Join(baseDir, "Config")))
+	game := &domain.Game{InstallPath: baseDir}
+
+	for _, key := range []string{"Config/Game.ini", "Config/sub/new.ini"} {
+		err := applyProfileOverrides(game, &domain.Profile{Overrides: map[string][]byte{key: []byte("evil")}}, nil)
+		require.Error(t, err, key)
+		assert.Contains(t, err.Error(), "through a symlink", key)
+	}
+	entries, err := os.ReadDir(outside)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "nothing was written, and no directory made, outside the game directory")
+
+	// A symlink that stays inside the game directory is followed.
+	require.NoError(t, os.Mkdir(filepath.Join(baseDir, "real"), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(baseDir, "real"), filepath.Join(baseDir, "alias")))
+	require.NoError(t, applyProfileOverrides(game, &domain.Profile{Overrides: map[string][]byte{"alias/a.ini": []byte("ok")}}, nil))
+	got, err := os.ReadFile(filepath.Join(baseDir, "real", "a.ini"))
+	require.NoError(t, err)
+	assert.Equal(t, "ok", string(got))
+}
+
+// TestApplyProfileOverrides_NeverWritesThroughAFileSymlink is N2's second
+// case: a mod file deployed as a symlink (the default link method) points
+// into the shared mod cache, and an override used to be written through it
+// into the cache. Such a link is refused; a link that stays inside the
+// game directory is replaced by a regular file, its target untouched.
+func TestApplyProfileOverrides_NeverWritesThroughAFileSymlink(t *testing.T) {
+	baseDir, cacheDir := t.TempDir(), t.TempDir()
+	game := &domain.Game{InstallPath: baseDir}
+
+	cached := filepath.Join(cacheDir, "mod.ini")
+	require.NoError(t, os.WriteFile(cached, []byte("mod bytes"), 0o644))
+	require.NoError(t, os.Symlink(cached, filepath.Join(baseDir, "mod.ini")))
+	err := applyProfileOverrides(game, &domain.Profile{Overrides: map[string][]byte{"mod.ini": []byte("override")}}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "will not write an override through it")
+	got, err := os.ReadFile(cached)
+	require.NoError(t, err)
+	assert.Equal(t, "mod bytes", string(got), "the cache entry is untouched")
+
+	inside := filepath.Join(baseDir, "stock.ini")
+	require.NoError(t, os.WriteFile(inside, []byte("stock"), 0o644))
+	require.NoError(t, os.Symlink(inside, filepath.Join(baseDir, "linked.ini")))
+	require.NoError(t, applyProfileOverrides(game, &domain.Profile{Overrides: map[string][]byte{"linked.ini": []byte("override")}}, nil))
+	info, err := os.Lstat(filepath.Join(baseDir, "linked.ini"))
+	require.NoError(t, err)
+	assert.True(t, info.Mode().IsRegular(), "the link was replaced by a regular file")
+	got, err = os.ReadFile(inside)
+	require.NoError(t, err)
+	assert.Equal(t, "stock", string(got), "the link's target was not written through")
+}

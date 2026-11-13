@@ -2101,6 +2101,7 @@ func TestJSONGoldens(t *testing.T) {
 				NeedsRedownload:     []domain.ModReference{},
 				Missing:             []domain.ModReference{},
 				Hooks:               []core.ImportHook{{Hook: "install.after_all", Command: "/home/author/bin/after.sh"}},
+				Overrides:           []string{"Config/Game.ini", "bin/x64/version.dll"},
 				RestrictedOverrides: []core.RestrictedOverride{{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .config, .cvars, .ini, .json, .lsx, .ltx, .properties, .ron, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"}},
 			},
 		},

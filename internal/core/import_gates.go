@@ -100,20 +100,69 @@ func checkImportedProfile(profile *domain.Profile) error {
 	return nil
 }
 
-// restrictedOverrides lists profile's overrides that do not target a text
-// config file, in path order.
+// loaderConfigFiles are text config files, by file name, that tell a game
+// or a mod loader which DLL or assembly to load (owner ruling, 2026-11-12):
+// an override of one can make the game run code, so it is held back like
+// a file that is not text config at all. Matched case-insensitively on the
+// file name, wherever it sits. Each entry names the key that loads a
+// library:
+//
+//   - doorstop_config.ini: Unity Doorstop, BepInEx's entry point -
+//     target_assembly names the assembly Doorstop loads into the game.
+//   - enblocal.ini: ENB - [PROXY] ProxyLibrary names a DLL ENB loads
+//     (with EnableProxyLibrary).
+var loaderConfigFiles = map[string]bool{
+	"doorstop_config.ini": true,
+	"enblocal.ini":        true,
+}
+
+// LoaderConfigOverrideFiles lists, in order, the loader configuration file
+// names an imported override may target only with AllowAnyOverrides.
+func LoaderConfigOverrideFiles() []string {
+	out := make([]string, 0, len(loaderConfigFiles))
+	for name := range loaderConfigFiles {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// restrictedOverrideReason is why an imported override at path is held
+// back, or "" when it is a text config file it may write.
+func restrictedOverrideReason(path string) string {
+	base := strings.ToLower(filepath.Base(filepath.FromSlash(path)))
+	if loaderConfigFiles[base] {
+		return "loader configuration: can make the game load a DLL; imported only with --allow-any-overrides"
+	}
+	if !textConfigOverrideExts[strings.ToLower(filepath.Ext(path))] {
+		return "not a text config file (" + strings.Join(TextConfigOverrideExtensions(), ", ") + "); imported only with --allow-any-overrides"
+	}
+	return ""
+}
+
+// restrictedOverrides lists profile's overrides that are held back - not a
+// text config file, or a loader configuration - in path order.
 func restrictedOverrides(profile *domain.Profile) []RestrictedOverride {
 	var out []RestrictedOverride
 	for path := range profile.Overrides {
-		if textConfigOverrideExts[strings.ToLower(filepath.Ext(path))] {
-			continue
+		if reason := restrictedOverrideReason(path); reason != "" {
+			out = append(out, RestrictedOverride{Path: path, Reason: reason})
 		}
-		out = append(out, RestrictedOverride{
-			Path:   path,
-			Reason: "not a text config file (" + strings.Join(TextConfigOverrideExtensions(), ", ") + "); imported only with --allow-any-overrides",
-		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}
+
+// overridePaths is every override path profile carries, in order.
+func overridePaths(profile *domain.Profile) []string {
+	if len(profile.Overrides) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(profile.Overrides))
+	for path := range profile.Overrides {
+		out = append(out, path)
+	}
+	sort.Strings(out)
 	return out
 }
 

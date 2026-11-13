@@ -48,17 +48,38 @@ func applyProfileOverrides(game *domain.Game, profile *domain.Profile, originals
 		return fmt.Errorf("resolving game path: %w", err)
 	}
 	base = filepath.Clean(base)
+	// Containment by path text alone is not enough (#621 review N2): a
+	// directory symlink inside the game directory would carry the write
+	// outside it, and a mod file deployed as a symlink (the default link
+	// method) would be written through into the shared mod cache. So the
+	// game directory and each destination's parent are resolved through
+	// their symlinks and must stay inside the resolved game directory, and
+	// a destination that is itself a symlink is never written through.
+	realBase, err := resolveExisting(base)
+	if err != nil {
+		return fmt.Errorf("resolving game path: %w", err)
+	}
 	// Every key is checked before any is written (#621 review S6): a
 	// profile with one bad key used to fail mid-loop, after writing some of
 	// the others in map order.
-	type overrideWrite struct{ relPath, rel, dest string }
+	type overrideWrite struct {
+		relPath, rel, dest string
+		// replaceLink is set when dest is a symlink that stays inside the
+		// game directory: it is removed, and a regular file written in its
+		// place, rather than written through.
+		replaceLink bool
+	}
 	writes := make([]overrideWrite, 0, len(profile.Overrides))
 	for relPath := range profile.Overrides {
 		dest, rel, err := overrideDest(base, relPath)
 		if err != nil {
 			return err
 		}
-		writes = append(writes, overrideWrite{relPath: relPath, rel: rel, dest: dest})
+		realDest, replaceLink, err := containedOverrideDest(realBase, dest, relPath)
+		if err != nil {
+			return err
+		}
+		writes = append(writes, overrideWrite{relPath: relPath, rel: rel, dest: realDest, replaceLink: replaceLink})
 	}
 	sort.Slice(writes, func(i, j int) bool { return writes[i].relPath < writes[j].relPath })
 	for _, w := range writes {
@@ -66,12 +87,70 @@ func applyProfileOverrides(game *domain.Game, profile *domain.Profile, originals
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("creating override dir %s: %w", dir, err)
 		}
-		captureOverriddenOriginal(originals, profile.Name, w.rel, w.dest)
+		if w.replaceLink {
+			if err := os.Remove(w.dest); err != nil {
+				return fmt.Errorf("replacing the link at override %s: %w", w.relPath, err)
+			}
+		} else {
+			captureOverriddenOriginal(originals, profile.Name, w.rel, w.dest)
+		}
 		if err := os.WriteFile(w.dest, profile.Overrides[w.relPath], 0644); err != nil {
 			return fmt.Errorf("writing override %s: %w", w.relPath, err)
 		}
 	}
 	return nil
+}
+
+// resolveExisting is path with its deepest existing ancestor resolved
+// through every symlink (filepath.EvalSymlinks), and the part that does not
+// exist yet joined back on: the real place a write under path lands,
+// whether or not path exists.
+func resolveExisting(path string) (string, error) {
+	existing, rest := filepath.Clean(path), ""
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			break
+		}
+		rest = filepath.Join(filepath.Base(existing), rest)
+		existing = parent
+	}
+	real, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(real, rest), nil
+}
+
+// containedOverrideDest resolves dest's parent through its symlinks and
+// refuses one that leaves realBase, the resolved game directory. A dest
+// that is itself a symlink is never written through: one whose target
+// stays inside the game directory is replaced by a regular file
+// (replaceLink), and one leading outside it - a mod file deployed as a
+// symlink into the mod cache, or a link of the user's own - is refused.
+func containedOverrideDest(realBase, dest, relPath string) (realDest string, replaceLink bool, err error) {
+	realDir, err := resolveExisting(filepath.Dir(dest))
+	if err != nil {
+		return "", false, fmt.Errorf("override path %q: %w", relPath, err)
+	}
+	if !isWithin(realDir, realBase) {
+		return "", false, fmt.Errorf("override path escapes game directory through a symlink: %q", relPath)
+	}
+	realDest = filepath.Join(realDir, filepath.Base(dest))
+	info, err := os.Lstat(realDest)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return realDest, false, nil
+	}
+	target, err := filepath.EvalSymlinks(realDest)
+	if err != nil || !isWithin(target, realBase) {
+		return "", false, fmt.Errorf("override path %q: the game file there is a symlink leading outside the game directory (a mod file deployed as a link, or a link of your own); lmm will not write an override through it - deploy that mod with the copy or hardlink method, or remove the override", relPath)
+	}
+	return realDest, true, nil
 }
 
 // overrideDest resolves an override key against base, the game's install

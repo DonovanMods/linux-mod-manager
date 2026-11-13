@@ -551,7 +551,7 @@ func TestDoProfileImport_PromptReadFailure_PropagatesErrorWithoutSummary(t *test
 
 // TestDoProfileImport_ExistingProfileWithoutForce_ReturnsError pins the
 // error path: importing over an existing profile without --force must fail
-// with pm.ImportWithOptions' own message, and must not overwrite anything.
+// with the import save's own message, and must not overwrite anything.
 // Ruling 7 delta: the prompt now precedes the save, so it is printed before
 // the failure - the answer is simply thrown away with the failed import.
 func TestDoProfileImport_ExistingProfileWithoutForce_ReturnsError(t *testing.T) {

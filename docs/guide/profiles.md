@@ -192,7 +192,10 @@ two things before it does anything, and leaves them out unless you ask:
   `.properties`, `.config`, `.ltx`, `.lsx`, `.cvars`, `.ron`) are imported
   as usual; anything else, such as a `.dll`, is skipped unless you add
   `--allow-any-overrides` (in the browser, tick **Import these overrides
-  too**).
+  too**). So is a loader configuration, such as `doorstop_config.ini`
+  (BepInEx) or `enblocal.ini` (ENB): it is a text file, but it can make the
+  game load a DLL. This includes your own older exports: to keep such an
+  override, import them with `--allow-any-overrides`.
 
 When something was held back, the import says so at the end and names the
 option that would include it.

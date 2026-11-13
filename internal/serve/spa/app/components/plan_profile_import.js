@@ -264,6 +264,9 @@ function LMMCollectionSection({ collection: c }) {
 function ImportGates({ plan, actions }) {
   const hooks = plan.hooks ?? [];
   const restricted = plan.restricted_overrides ?? [];
+  // Every override the document writes, held back or not (issue 621
+  // review N1). A collection lists them in its own section.
+  const overrides = plan.collection ? [] : (plan.overrides ?? []);
   const hooksImportable = plan.collection
     ? plan.collection.hooks_importable
     : true;
@@ -302,6 +305,17 @@ function ImportGates({ plan, actions }) {
       </section>`
     }
     ${
+      overrides.length > 0 &&
+      html`<section class="plan__section" data-testid="import-overrides">
+        <h3 class="plan__heading">
+          Config overrides written into the game directory
+        </h3>
+        <ul class="plan__paths">
+          ${overrides.map((path) => html`<li key=${path} class="mono">${path}</li>`)}
+        </ul>
+      </section>`
+    }
+    ${
       restricted.length > 0 &&
       html`<section
         class="plan__section"
@@ -310,7 +324,8 @@ function ImportGates({ plan, actions }) {
         <h3 class="plan__heading">Overrides that are not text config files</h3>
         <ul class="plan__paths">
           ${restricted.map(
-            (o) => html`<li key=${o.path} class="mono">${o.path}</li>`,
+            (o) =>
+              html`<li key=${o.path} class="mono">${o.path} - ${o.reason}</li>`,
           )}
         </ul>
         <label class="plan__control">

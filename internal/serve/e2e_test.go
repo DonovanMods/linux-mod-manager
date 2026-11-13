@@ -7971,6 +7971,10 @@ func TestE2E_ProfilesModal_ImportsNonConfigOverridesOnlyWhenTicked(t *testing.T)
 	f.runInBrowser(t, textContent(`[data-testid="import-restricted-overrides"]`, &body))
 	assert.Contains(t, body, "bin/version.dll")
 	assert.NotContains(t, body, "Config/Game.ini", "a text config override is not held back")
+	var all string
+	f.runInBrowser(t, textContent(`[data-testid="import-overrides"]`, &all))
+	assert.Contains(t, all, "Config/Game.ini", "every override is listed, held back or not")
+	assert.Contains(t, all, "bin/version.dll")
 
 	f.runInBrowser(t,
 		chromedp.Click(`[data-testid="import-restricted-overrides"] input[type="checkbox"]`, chromedp.ByQuery),

@@ -242,7 +242,9 @@ func TestDoProfileImport_V0GatesWithholdAndSayWhichFlag(t *testing.T) {
 	assert.Contains(t, stdout, "re-run with --with-hooks")
 	assert.Contains(t, stdout, "    - bin/version.dll", "the plan lists the restricted override")
 	assert.Contains(t, stdout, "1 hook(s) were not imported; re-import with --with-hooks")
-	assert.Contains(t, stdout, "1 override(s) were skipped because they are not text config files; re-import with --allow-any-overrides")
+	assert.Contains(t, stdout, "1 override(s) were skipped (not text config files, or loader configuration); re-import with --allow-any-overrides")
+	assert.Contains(t, stdout, "Config overrides written into the game directory:\n    - Config/Game.ini\n    - bin/version.dll\n",
+		"a version-0 plan lists every override, not only the held-back ones")
 
 	saved, err := config.LoadProfile(configDir, "g1", "shared")
 	require.NoError(t, err)

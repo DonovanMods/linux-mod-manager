@@ -154,13 +154,16 @@ A collection from someone else is untrusted input.
 - **Overrides** are listed in the plan. One that targets a text config
   file (`.ini`, `.cfg`, `.conf`, `.txt`, `.json`, `.xml`, `.toml`, `.yaml`,
   `.yml`, `.properties`, `.config`, `.ltx`, `.lsx`, `.cvars`, `.ron`, in any
-  case) is imported; any other is skipped unless
+  case) is imported, unless it is a loader configuration that can make the
+  game load a DLL (`doorstop_config.ini`, `enblocal.ini`, by file name in
+  any case); any other is skipped unless
   `--allow-any-overrides` (the web UI's **Import these overrides too**),
   and the plan (`restricted_overrides`) and the result
   (`overrides_skipped`) name each. Whatever its type, a path that is
   absolute, escapes the game directory, or holds a control or formatting
   character is refused before anything is written, and deploy writes
-  overrides only inside the game directory.
+  overrides only inside the game directory, never through a symlink that
+  leads out of it.
 - **Version 0 too.** The hooks and overrides rules apply to every profile
   import from a file or upload, a version-0 document included, so the
   older format is no way around them. They do not apply to profiles you

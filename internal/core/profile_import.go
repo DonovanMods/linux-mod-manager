@@ -101,11 +101,16 @@ type ImportPlan struct {
 	// plans exactly as before.
 	Hooks               []ImportHook         `json:"hooks,omitempty"`
 	RestrictedOverrides []RestrictedOverride `json:"restricted_overrides,omitempty"`
+	// Overrides lists every override path the document carries, held back
+	// or not, in path order (#621 review N1): a file the import writes into
+	// the game directory is never one the user did not see. Absent when
+	// the document has none.
+	Overrides []string `json:"overrides,omitempty"`
 
 	// Exists reports whether a profile with this name is already saved for
 	// the game - purely informational (e.g. so a caller can warn before even
 	// attempting the save); ApplyImport does not consult it, instead letting
-	// ProfileManager.ImportWithOptions' own existence check (driven by
+	// ProfileManager.importDocument' own existence check (driven by
 	// ProfileImportOptions.Force) produce the authoritative error.
 	Exists bool `json:"exists"`
 
@@ -121,7 +126,7 @@ type ImportPlan struct {
 	ActiveProfile string `json:"active_profile,omitempty"`
 
 	// data is the raw import bytes, preserved so ApplyImport can hand them
-	// to ProfileManager.ImportWithOptions unchanged - PlanImport parses via
+	// to ProfileManager.importDocument unchanged - PlanImport parses via
 	// ParseProfile purely for preview, without persisting anything.
 	data []byte
 
@@ -282,7 +287,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 		if ref.Disabled {
 			// #431: the document says this mod belongs to the profile but
 			// is switched off. It keeps its place and its pinned version in
-			// the imported document (ImportWithOptions writes the document
+			// the imported document (importDocument writes the document
 			// verbatim), and it reaches none of the four buckets below, so
 			// the import neither fetches nor deploys a mod the profile says
 			// is off. Enabling it later is what fetches it.
@@ -415,6 +420,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	return &ImportPlan{
 		Hooks:               listHooks(profile.Hooks, profile.HooksExplicit),
 		RestrictedOverrides: restrictedOverrides(profile),
+		Overrides:           overridePaths(profile),
 		Profile:             profile,
 		Installed:           installed,
 		AlreadyCached:       alreadyCached,
@@ -545,7 +551,7 @@ func liveOtherVersion(rows []domain.InstalledMod, ref domain.ModReference) (doma
 // ProfileImportOptions configures ApplyImport.
 type ProfileImportOptions struct {
 	// Force mirrors doProfileImport's --force: passed straight through to
-	// ProfileManager.ImportWithOptions, allowing the save to overwrite an
+	// ProfileManager.importDocument, allowing the save to overwrite an
 	// already-saved profile of the same name instead of failing.
 	Force bool
 	// NoInstall mirrors --no-install: a hard override that skips the install
@@ -662,7 +668,7 @@ type ProfileImportResult struct {
 
 // ApplyImport executes a plan produced by PlanImport. With nothing to
 // download (or NoInstall set, or opts.Install false) it saves the profile
-// (ProfileManager.ImportWithOptions) and stops. Otherwise it runs the
+// (ProfileManager.importDocument) and stops. Otherwise it runs the
 // acquire/decide/commit engine (acquire_engine.go, #602): every
 // AlreadyCached/NeedsRedownload/Missing mod, in that order, is resolved and
 // downloaded first, with nothing written; then the profile is saved and each

@@ -72,7 +72,7 @@ func TestImportForce_OverTheActiveProfileKeepsItActive(t *testing.T) {
 	assert.Equal(t, []string{"a"}, defaultsOf(t, svc, game.ID), "the replaced profile is still the active one")
 
 	// ...and one that replaces a profile that is not active leaves it so.
-	_, err = svc.NewProfileManager().ImportWithOptions(ctx, []byte("name: b\ngame_id: g1\nmods: []\n"), true)
+	_, err = svc.NewProfileManager().ImportForTest(ctx, []byte("name: b\ngame_id: g1\nmods: []\n"), true)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a"}, defaultsOf(t, svc, game.ID))
 }
