@@ -562,6 +562,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileImportApplyRequest{Install: true, WithHooks: true},
 		},
 		{
+			// #621's override gate: allow_any_overrides is
+			// `--allow-any-overrides`.
+			"profile_import_apply_request_any_overrides",
+			profileImportApplyRequest{Install: true, AllowAnyOverrides: true},
+		},
+		{
 			// #332's one-member profile body, shared by POST
 			// /api/v1/profiles (the name to create) and POST
 			// /api/v1/profiles/{name}/rename (the name to rename TO).

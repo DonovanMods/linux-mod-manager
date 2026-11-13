@@ -40,9 +40,6 @@
     "installed": 0,
     "failed": 0,
     "skipped": 1,
-    "notes": [
-      "The collection's 1 hook(s) were not imported: re-import with --with-hooks to apply them."
-    ],
     "hooks_withheld": 1
   }
 }

@@ -106,14 +106,18 @@ type profileImportApplyRequest struct {
 	Install   bool `json:"install,omitzero"`
 	Force     bool `json:"force,omitzero"`
 	NoInstall bool `json:"no_install,omitzero"`
-	// WithHooks is `--with-hooks` (#621): apply an lmm collection's hooks,
-	// which its plan lists. Ignored for any other import.
-	WithHooks bool `json:"with_hooks,omitzero"`
+	// WithHooks is `--with-hooks` (#621): save the hooks the document
+	// carries, which its plan lists (ImportPlan.Hooks). AllowAnyOverrides
+	// is `--allow-any-overrides`: save its overrides that are not text
+	// config files too (ImportPlan.RestrictedOverrides). Both apply to
+	// every document import.
+	WithHooks         bool `json:"with_hooks,omitzero"`
+	AllowAnyOverrides bool `json:"allow_any_overrides,omitzero"`
 }
 
 // importOptions renders the request as the core options struct.
 func (r profileImportApplyRequest) importOptions() core.ProfileImportOptions {
-	return core.ProfileImportOptions{Install: r.Install, Force: r.Force, NoInstall: r.NoInstall, WithHooks: r.WithHooks}
+	return core.ProfileImportOptions{Install: r.Install, Force: r.Force, NoInstall: r.NoInstall, WithHooks: r.WithHooks, AllowAnyOverrides: r.AllowAnyOverrides}
 }
 
 // pendingProfileImport is what the plan store holds between Plan and Apply:
@@ -177,6 +181,11 @@ func planProfileImportKind(ctx context.Context, s *Server, sel selection, opts a
 
 	plan, err := s.svc.PlanImport(ctx, sel.Game, []byte(req.Data))
 	if err != nil {
+		// #621: a document whose hooks or overrides are refused outright
+		// is the caller's input, not a failure.
+		if core.IsUnsafeImport(err) {
+			return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
+		}
 		return nil, nil, err
 	}
 	return plan, &pendingProfileImport{Game: sel.Game, Plan: plan}, nil
@@ -213,7 +222,7 @@ func planLMMCollectionImport(ctx context.Context, s *Server, sel selection, req 
 		ProfileName: req.ProfileName,
 	})
 	if err != nil {
-		if core.IsInvalidCollection(err) || core.IsCollectionGameUnresolved(err) || errors.Is(err, domain.ErrInvalidProfileName) {
+		if core.IsInvalidCollection(err) || core.IsUnsafeImport(err) || core.IsCollectionGameUnresolved(err) || errors.Is(err, domain.ErrInvalidProfileName) {
 			return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
 		}
 		return nil, nil, err

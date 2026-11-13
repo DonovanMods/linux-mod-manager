@@ -63,7 +63,6 @@
     "failed": 0,
     "skipped": 0,
     "notes": [
-      "The collection's 1 hook(s) were not imported: re-import with --with-hooks to apply them.",
       "1 item(s) of this collection are not fetched by lmm: get them by hand (the profile records them, with the curator's instructions)."
     ],
     "hooks_withheld": 1

@@ -147,14 +147,23 @@ A collection from someone else is untrusted input.
 - **Hooks are code.** Every hook is listed in the plan. From a local file,
   they are imported only with `--with-hooks` (in the web UI, the **Import
   these hooks** box); without it the profile is imported without them, and
-  the result says so. A collection fetched from a URL never has its hooks
-  imported. A version-0 document keeps its round trip unchanged. A hook
-  command holding a control, escape, or bidi/format character is refused,
-  never cleaned: the plan must show exactly what would run.
-- **Overrides** are listed in the plan. A path that is absolute, escapes
-  the game directory, or holds a control or formatting character is refused
-  before anything is written, and deploy writes overrides only inside the
-  game directory.
+  the result says so (`hooks_withheld`). A collection fetched from a URL
+  never has its hooks imported. A hook command holding a control, escape,
+  or bidi/format character is refused, never cleaned: the plan must show
+  exactly what would run.
+- **Overrides** are listed in the plan. One that targets a text config
+  file (`.ini`, `.cfg`, `.conf`, `.txt`, `.json`, `.xml`, `.toml`, `.yaml`,
+  `.yml`, in any case) is imported; any other is skipped unless
+  `--allow-any-overrides` (the web UI's **Import these overrides too**),
+  and the plan (`restricted_overrides`) and the result
+  (`overrides_skipped`) name each. Whatever its type, a path that is
+  absolute, escapes the game directory, or holds a control or formatting
+  character is refused before anything is written, and deploy writes
+  overrides only inside the game directory.
+- **Version 0 too.** The hooks and overrides rules apply to every profile
+  import from a file or upload, a version-0 document included, so the
+  older format is no way around them. They do not apply to profiles you
+  already have, or to overrides you set yourself.
 - **Links.** Only an absolute `http`/`https` address stays a link (an
   external item's `url`, `origin.url`). Any other - `javascript:`, `data:`,
   `file:`, a relative one - is dropped from the item, and the plan names it

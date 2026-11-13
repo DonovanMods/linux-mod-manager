@@ -169,17 +169,37 @@ the other operation has finished.
 
 The import shows this before it does anything, along with:
 
-- **hooks**, the scripts the profile runs. They are only imported if you
-  add `--with-hooks` (in the browser, tick **Import these hooks**), so a
-  file from someone else can't run anything you didn't agree to.
-- **config overrides**, the settings files the profile writes into the game
-  folder.
 - **items to get by hand**, which lmm lists but can't download for you.
 - mods from a site you haven't set up in lmm, and what to do about them.
 
 A collection made by a newer version of lmm that needs something this
 version can't do is refused, and nothing is imported. Update lmm and try
 again.
+
+### What an import holds back
+
+Every import from a file, whether a collection or an older export, lists
+two things before it does anything, and leaves them out unless you ask:
+
+- **Hooks**, the scripts the profile runs. They are only imported if you
+  add `--with-hooks` (in the browser, tick **Import these hooks**), so a
+  file from someone else can't run anything you didn't agree to. This
+  includes your own older exports: to keep their hooks, import them with
+  `--with-hooks`.
+- **Overrides that aren't config files.** An override is a file the
+  profile writes into the game folder. Text config files (`.ini`, `.cfg`,
+  `.conf`, `.txt`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`) are imported
+  as usual; anything else, such as a `.dll`, is skipped unless you add
+  `--allow-any-overrides` (in the browser, tick **Import these overrides
+  too**).
+
+When something was held back, the import says so at the end and names the
+option that would include it.
+
+```bash
+lmm profile import coop.yaml --with-hooks
+lmm profile import coop.lmmc --with-hooks --allow-any-overrides
+```
 
 {: .note }
 If a profile came from someone else's collection, exporting it keeps their

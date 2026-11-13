@@ -26,10 +26,16 @@ your games by its Steam app id, then by its source ids; when none or
 several match, choose with --game. The plan shows the collection's
 description and instructions, its hooks, its config overrides, the items
 lmm cannot fetch (to get by hand), and mods from sources you do not have.
-A collection's hooks are scripts lmm would run, so they are imported only
-with --with-hooks; without it the profile is imported without them. A
-collection that needs features this version of lmm does not have is
+A collection that needs features this version of lmm does not have is
 refused, with nothing written. --as names the imported profile.
+
+.PP
+Whatever the file's format, two things are held back until you ask, and
+both are listed before anything is written. Hooks are scripts lmm would
+run, so they are imported only with --with-hooks. Config overrides are
+imported when they are text config files (.ini, .cfg, .conf, .txt, .json,
+\&.xml, .toml, .yaml, .yml); any other file type is skipped unless you pass
+--allow-any-overrides. The result says what was held back.
 
 .PP
 --workshop-collection takes a Steam Workshop collection id or the URL of
@@ -60,6 +66,10 @@ Examples:
 
 
 .SH OPTIONS
+\fB--allow-any-overrides\fP[=false]
+	import overrides that are not text config files too (listed in the plan; skipped without this)
+
+.PP
 \fB--as\fP=""
 	name the imported profile (a collection or --workshop-collection; an older profile export names its own)
 
@@ -77,7 +87,7 @@ Examples:
 
 .PP
 \fB--with-hooks\fP[=false]
-	apply the hooks a collection file carries (they are scripts lmm runs; listed in the plan)
+	import the hooks the file carries (they are scripts lmm runs; listed in the plan)
 
 .PP
 \fB--workshop-collection\fP=""

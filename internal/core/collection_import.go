@@ -121,8 +121,8 @@ type CollectionImport struct {
 	// Hooks lists every hook the document carries. HooksImportable is
 	// whether they can be applied at all - from a local file, only with
 	// --with-hooks; from a URL, never.
-	Hooks           []CollectionHook `json:"hooks,omitempty"`
-	HooksImportable bool             `json:"hooks_importable"`
+	Hooks           []ImportHook `json:"hooks,omitempty"`
+	HooksImportable bool         `json:"hooks_importable"`
 	// Overrides lists the config files the profile writes into the game
 	// directory (contained to it at deploy, as every override is).
 	Overrides []string `json:"overrides,omitempty"`
@@ -311,28 +311,24 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 	if !info.IsZero() {
 		profile.Collection = &info
 	}
-	// The profile the plan saves carries no hooks. The hooked copy exists
-	// only for a local file, so an Apply over a URL's plan has nothing to
-	// switch them on with.
+	// The hooks go into the document the plan saves only for a local file,
+	// where the import gate (WithHooks) decides; a URL's document never
+	// holds them, so no option can switch them on.
+	hooks := listHooks(doc.Hooks, doc.HooksExplicit)
+	if req.Input == CollectionFromFile {
+		profile.Hooks, profile.HooksExplicit = doc.Hooks, doc.HooksExplicit
+	}
 	data, err := config.ExportProfile(profile)
 	if err != nil {
 		return nil, fmt.Errorf("building the collection's profile: %w", err)
-	}
-	hooks := listHooks(doc.Hooks, doc.HooksExplicit)
-	var hooked []byte
-	if len(hooks) > 0 && req.Input == CollectionFromFile {
-		withHooks := *profile
-		withHooks.Hooks, withHooks.HooksExplicit = doc.Hooks, doc.HooksExplicit
-		if hooked, err = config.ExportProfile(&withHooks); err != nil {
-			return nil, fmt.Errorf("building the collection's profile: %w", err)
-		}
 	}
 
 	plan, err := s.PlanImport(ctx, game, data)
 	if err != nil {
 		return nil, err
 	}
-	plan.hookedData = hooked
+	// The plan lists every hook the DOCUMENT carries, a URL's included.
+	plan.Hooks = hooks
 	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External}
 	// The preview shows the profile the import will save.
 	plan.Profile.Collection, plan.Profile.External = profile.Collection, profile.External
@@ -383,9 +379,9 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 // refuses, writing nothing, when the document needs a feature this lmm
 // cannot import (*CollectionUnsupportedError), or when opts.WithHooks asks
 // for the hooks of a document fetched from a URL. Otherwise it is
-// ApplyImport over the collection's profile - with the document's hooks
-// when opts.WithHooks is set, and without them (the result says so,
-// HooksWithheld) when it is not.
+// ApplyImport over the collection's profile, whose import gates decide the
+// hooks (opts.WithHooks) and the overrides (opts.AllowAnyOverrides), as
+// they do for every document import.
 func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, sink EventSink) (*ProfileImportResult, error) {
 	c := plan.Collection
 	if c == nil {
@@ -397,23 +393,9 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 	if opts.WithHooks && len(c.Hooks) > 0 && !c.HooksImportable {
 		return &ProfileImportResult{}, ErrCollectionHooksFromURL
 	}
-	applied := *plan
-	withHooks := opts.WithHooks && plan.hookedData != nil
-	if withHooks {
-		applied.data = plan.hookedData
-	}
-
-	result, err := s.ApplyImport(ctx, game, &applied, opts, sink)
+	result, err := s.ApplyImport(ctx, game, plan, opts, sink)
 	if result == nil || result.ProfileName == "" {
 		return result, err
-	}
-	if len(c.Hooks) > 0 && !withHooks {
-		result.HooksWithheld = len(c.Hooks)
-		why := "re-import with --with-hooks to apply them"
-		if !c.HooksImportable {
-			why = "hooks are never imported from a URL"
-		}
-		result.Notes = append(result.Notes, fmt.Sprintf("The collection's %d hook(s) were not imported: %s.", len(c.Hooks), why))
 	}
 	if n := len(c.External); n > 0 {
 		result.Notes = append(result.Notes, fmt.Sprintf("%d item(s) of this collection are not fetched by lmm: get them by hand (the profile records them, with the curator's instructions).", n))

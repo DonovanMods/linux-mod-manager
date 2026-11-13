@@ -1079,14 +1079,15 @@ func (pm *ProfileManager) Import(ctx context.Context, data []byte) (*domain.Prof
 
 // ImportWithOptions imports a profile with optional force overwrite
 func (pm *ProfileManager) ImportWithOptions(ctx context.Context, data []byte, force bool) (*domain.Profile, error) {
-	return pm.importDocument(ctx, data, force, nil)
+	return pm.importDocument(ctx, data, force, importAdjust{})
 }
 
-// importDocument is ImportWithOptions with extra, the profile state a
-// collection import checked itself (#621): its collection identity and
-// external items, which the document's version-0 form never carries
-// (config.ImportProfile ignores them). nil adds nothing.
-func (pm *ProfileManager) importDocument(ctx context.Context, data []byte, force bool, extra *collectionState) (*domain.Profile, error) {
+// importDocument is ImportWithOptions with adj, what the import changes in
+// the document's profile before saving it (#621): the collection state a
+// collection import checked itself, which the document's version-0 form
+// never carries, and the hooks and overrides the import gates hold back
+// (import_gates.go). A zero adj changes nothing.
+func (pm *ProfileManager) importDocument(ctx context.Context, data []byte, force bool, adj importAdjust) (*domain.Profile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -1095,7 +1096,7 @@ func (pm *ProfileManager) importDocument(ctx context.Context, data []byte, force
 	if err != nil {
 		return nil, err
 	}
-	extra.applyTo(profile)
+	adj.applyTo(profile)
 	// An exported document carries no is_default - which profile is active
 	// is local state - so a replaced profile keeps its own (#446): replacing
 	// the active profile must not leave the game with none.

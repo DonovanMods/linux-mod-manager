@@ -91,6 +91,17 @@ type ImportPlan struct {
 	// is unchanged.
 	Collection *CollectionImport `json:"collection,omitempty"`
 
+	// Hooks lists every hook the imported document carries (#621): scripts
+	// lmm runs, so ApplyImport saves them only with
+	// ProfileImportOptions.WithHooks. RestrictedOverrides lists the
+	// document's overrides that do not target a text config file, which
+	// ApplyImport skips unless ProfileImportOptions.AllowAnyOverrides
+	// (import_gates.go). Both apply to every document import, version 0
+	// included, and both are absent when empty, so a document with neither
+	// plans exactly as before.
+	Hooks               []ImportHook         `json:"hooks,omitempty"`
+	RestrictedOverrides []RestrictedOverride `json:"restricted_overrides,omitempty"`
+
 	// Exists reports whether a profile with this name is already saved for
 	// the game - purely informational (e.g. so a caller can warn before even
 	// attempting the save); ApplyImport does not consult it, instead letting
@@ -113,12 +124,6 @@ type ImportPlan struct {
 	// to ProfileManager.ImportWithOptions unchanged - PlanImport parses via
 	// ParseProfile purely for preview, without persisting anything.
 	data []byte
-
-	// hookedData is data with the collection document's hooks, kept only
-	// for a document read from a local file (#621): ApplyCollectionImport
-	// saves it in data's place under opts.WithHooks. Nil for every other
-	// plan - a URL's included - so nothing can switch such hooks on.
-	hookedData []byte
 
 	// collectionState is what a collection import adds to the saved profile
 	// beyond its version-0 document (#621): nil for every other plan.
@@ -187,6 +192,10 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	profile, err := pm.ParseProfile(data)
 	if err != nil {
 		return nil, fmt.Errorf("parsing profile: %w", err)
+	}
+	// #621: what no option lets through is refused before anything else.
+	if err := checkImportedProfile(profile); err != nil {
+		return nil, err
 	}
 
 	_, existErr := pm.Get(ctx, game.ID, profile.Name)
@@ -404,19 +413,21 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	s.stampRefDisplay(profile.Mods, displayRows)
 
 	return &ImportPlan{
-		Profile:         profile,
-		Installed:       installed,
-		AlreadyCached:   alreadyCached,
-		NeedsRedownload: needsRedownload,
-		Missing:         missing,
-		Exists:          exists,
-		RecordedOnly:    recordedOnly,
-		ActiveProfile:   live,
-		data:            data,
-		storedFileIDs:   storedFileIDs,
-		cachedRows:      cachedRows,
-		priorVersions:   priorVersions,
-		snapshot:        snapshot,
+		Hooks:               listHooks(profile.Hooks, profile.HooksExplicit),
+		RestrictedOverrides: restrictedOverrides(profile),
+		Profile:             profile,
+		Installed:           installed,
+		AlreadyCached:       alreadyCached,
+		NeedsRedownload:     needsRedownload,
+		Missing:             missing,
+		Exists:              exists,
+		RecordedOnly:        recordedOnly,
+		ActiveProfile:       live,
+		data:                data,
+		storedFileIDs:       storedFileIDs,
+		cachedRows:          cachedRows,
+		priorVersions:       priorVersions,
+		snapshot:            snapshot,
 	}, nil
 }
 
@@ -563,11 +574,18 @@ type ProfileImportOptions struct {
 	// false and keeps per-mod failure counting.
 	AllOrNothing bool
 
-	// WithHooks applies a collection document's hooks (#621,
-	// ApplyCollectionImport): `--with-hooks`. Without it a collection's
-	// profile is saved without them, and the result says so. Ignored for a
-	// version-0 import, whose hooks round-trip as they always have (#296).
+	// WithHooks saves the imported document's hooks (#621): `--with-hooks`.
+	// Without it the profile is saved without them, and the result says so
+	// (HooksWithheld). Every document import, version 0 included: a hook is
+	// a script lmm runs, and the older format must not be a way around
+	// the choice (owner ruling, 2026-11-12).
 	WithHooks bool
+
+	// AllowAnyOverrides saves every override the imported document carries
+	// (#621): `--allow-any-overrides`. Without it, an override that does not
+	// target a text config file (ImportPlan.RestrictedOverrides) is
+	// skipped, and the result lists it (OverridesSkipped).
+	AllowAnyOverrides bool
 }
 
 // ProfileImportResult reports the outcome of ApplyImport. As with every other
@@ -632,10 +650,14 @@ type ProfileImportResult struct {
 	// loader, with the setup steps both frontends render.
 	LoaderRequired *LoaderRequiredError `json:"loader_required,omitempty"`
 
-	// HooksWithheld counts the hooks a collection document carried that
-	// the import did not apply (#621): no --with-hooks, or a document from
-	// a URL. omitzero, so every other result is unchanged.
-	HooksWithheld int `json:"hooks_withheld,omitzero"`
+	// HooksWithheld counts the hooks the imported document carried that
+	// the import did not save (#621): no --with-hooks, or a collection
+	// from a URL. OverridesSkipped lists the overrides it skipped because
+	// they do not target a text config file and --allow-any-overrides was
+	// not given. Both are absent when nothing was held back, so every
+	// other result is unchanged.
+	HooksWithheld    int                  `json:"hooks_withheld,omitzero"`
+	OverridesSkipped []RestrictedOverride `json:"overrides_skipped,omitempty"`
 }
 
 // ApplyImport executes a plan produced by PlanImport. With nothing to
@@ -716,10 +738,19 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 
 	var profile *domain.Profile
 	saveProfile := func(ctx context.Context) error {
-		saved, err := pm.importDocument(ctx, plan.data, opts.Force, plan.collectionState)
+		adj := importAdjust{collection: plan.collectionState, withholdHooks: !opts.WithHooks}
+		if !opts.AllowAnyOverrides {
+			adj.dropOverrides = plan.RestrictedOverrides
+		}
+		saved, err := pm.importDocument(ctx, plan.data, opts.Force, adj)
 		if err != nil {
 			return fmt.Errorf("importing profile: %w", err)
 		}
+		// #621: what the gates held back is the result's to say.
+		if adj.withholdHooks {
+			result.HooksWithheld = len(plan.Hooks)
+		}
+		result.OverridesSkipped = adj.dropOverrides
 		profile = saved
 		result.ProfileName = profile.Name
 		emit(StepEvent{Scope: Scope{Op: OpImport, ModName: profile.Name}, Phase: ImportSaved})

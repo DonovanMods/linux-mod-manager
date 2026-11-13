@@ -143,11 +143,8 @@ function matchLine(c) {
 
 /** LMMCollectionSection renders core.CollectionImport. Every string in it
  * was sanitised by core (issue 594), and the preact templates escape it. */
-function LMMCollectionSection({ collection: c, actions }) {
+function LMMCollectionSection({ collection: c }) {
   const unavailable = (c.items ?? []).filter((item) => item.unavailable);
-  function setWithHooks(e) {
-    actions.setPlanOptions({ with_hooks: e.currentTarget.checked });
-  }
   return html`
     <section class="plan__section" data-testid="lmm-collection">
       <h3 class="plan__heading">
@@ -254,12 +251,35 @@ function LMMCollectionSection({ collection: c, actions }) {
         </ul>
       </section>`
     }
+  `;
+}
+
+/** ImportGates renders what every document import holds back until the
+ * user says otherwise (issue 621): the hooks the document carries (scripts
+ * lmm would run - core.ImportPlan.hooks, applied only with with_hooks) and
+ * its overrides that are not text config files (restricted_overrides,
+ * applied only with allow_any_overrides). Each list has its checkbox. A
+ * collection fetched from a URL can never have its hooks imported, so it
+ * gets no hooks checkbox. */
+function ImportGates({ plan, actions }) {
+  const hooks = plan.hooks ?? [];
+  const restricted = plan.restricted_overrides ?? [];
+  const hooksImportable = plan.collection
+    ? plan.collection.hooks_importable
+    : true;
+  function setWithHooks(e) {
+    actions.setPlanOptions({ with_hooks: e.currentTarget.checked });
+  }
+  function setAnyOverrides(e) {
+    actions.setPlanOptions({ allow_any_overrides: e.currentTarget.checked });
+  }
+  return html`
     ${
-      (c.hooks ?? []).length > 0 &&
-      html`<section class="plan__section" data-testid="collection-hooks">
+      hooks.length > 0 &&
+      html`<section class="plan__section" data-testid="import-hooks">
         <h3 class="plan__heading">Hooks - scripts lmm would run</h3>
         <ul class="plan__paths">
-          ${c.hooks.map(
+          ${hooks.map(
             (h) =>
               html`<li key=${h.hook} class="mono">
                 ${h.hook}: ${h.command || "(disables the game's hook)"}
@@ -267,7 +287,7 @@ function LMMCollectionSection({ collection: c, actions }) {
           )}
         </ul>
         ${
-          c.hooks_importable
+          hooksImportable
             ? html`<label class="plan__control">
                   <input type="checkbox" onChange=${setWithHooks} />
                   Import these hooks
@@ -279,6 +299,29 @@ function LMMCollectionSection({ collection: c, actions }) {
                 Hooks are never imported from a URL.
               </p>`
         }
+      </section>`
+    }
+    ${
+      restricted.length > 0 &&
+      html`<section
+        class="plan__section"
+        data-testid="import-restricted-overrides"
+      >
+        <h3 class="plan__heading">Overrides that are not text config files</h3>
+        <ul class="plan__paths">
+          ${restricted.map(
+            (o) => html`<li key=${o.path} class="mono">${o.path}</li>`,
+          )}
+        </ul>
+        <label class="plan__control">
+          <input type="checkbox" onChange=${setAnyOverrides} />
+          Import these overrides too
+        </label>
+        <p class="plan__note">
+          Left unchecked, they are skipped: lmm writes an override's content
+          into the game folder, and only text config files are imported without
+          asking.
+        </p>
       </section>`
     }
   `;
@@ -361,11 +404,9 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
       }
       ${
         lmmCollection &&
-        html`<${LMMCollectionSection}
-          collection=${lmmCollection}
-          actions=${actions}
-        />`
+        html`<${LMMCollectionSection} collection=${lmmCollection} />`
       }
+      ${!collection && html`<${ImportGates} plan=${plan} actions=${actions} />`}
       ${collection && html`<${CollectionHeader} collection=${collection} />`}
       ${
         collection

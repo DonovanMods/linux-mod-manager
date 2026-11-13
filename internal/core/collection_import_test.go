@@ -53,7 +53,7 @@ func TestCollectionImport_RoundTripIntoAnotherMachine(t *testing.T) {
 	require.Equal(t, []string{"external"}, c.Requires)
 	require.Empty(t, c.Unsupported)
 	require.True(t, c.HooksImportable)
-	require.Equal(t, []core.CollectionHook{{Hook: "install.after_all", Command: "/usr/bin/true"}}, c.Hooks)
+	require.Equal(t, []core.ImportHook{{Hook: "install.after_all", Command: "/usr/bin/true"}}, c.Hooks)
 	require.Equal(t, []string{"engine/config/user.ini"}, c.Overrides)
 	require.Len(t, c.Items, 2)
 	require.Equal(t, "Much Better Ammo", c.Items[0].Name)
@@ -63,7 +63,6 @@ func TestCollectionImport_RoundTripIntoAnotherMachine(t *testing.T) {
 	result, err := svc.ApplyCollectionImport(context.Background(), game, plan, core.ProfileImportOptions{NoInstall: true}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.HooksWithheld)
-	require.Contains(t, result.Notes[0], "--with-hooks")
 
 	saved, err := config.LoadProfile(svc.ConfigDir(), "cyber", "coop")
 	require.NoError(t, err)
@@ -108,7 +107,9 @@ func TestCollectionImport_NeverHooksFromAURL(t *testing.T) {
 	result, err := svc.ApplyCollectionImport(context.Background(), game, plan, core.ProfileImportOptions{NoInstall: true}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.HooksWithheld)
-	require.Contains(t, result.Notes[0], "never imported from a URL")
+	saved, err := config.LoadProfile(svc.ConfigDir(), "cyber", "coop")
+	require.NoError(t, err)
+	require.Equal(t, domain.GameHooksExplicit{}, saved.HooksExplicit, "a URL's hooks are never saved")
 }
 
 func TestCollectionImport_UnsupportedFeatureRefusesWithNothingWritten(t *testing.T) {

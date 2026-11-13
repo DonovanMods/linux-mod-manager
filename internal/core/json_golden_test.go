@@ -2054,8 +2054,36 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
-			"collection_hook",
-			core.CollectionHook{Hook: "install.after_all", Command: "/home/author/bin/after.sh"},
+			"import_hook",
+			core.ImportHook{Hook: "install.after_all", Command: "/home/author/bin/after.sh"},
+		},
+		{
+			// #621's override gate: an override of an imported document
+			// that does not target a text config file.
+			"restricted_override",
+			core.RestrictedOverride{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .ini, .json, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"},
+		},
+		{
+			// A version-0 import's plan with its hooks and a restricted
+			// override listed (#621 gates).
+			"import_plan_gated",
+			core.ImportPlan{
+				Profile:             &domain.Profile{Name: "shared", GameID: "g1"},
+				Installed:           []domain.ModReference{},
+				AlreadyCached:       []domain.ModReference{},
+				NeedsRedownload:     []domain.ModReference{},
+				Missing:             []domain.ModReference{},
+				Hooks:               []core.ImportHook{{Hook: "install.after_all", Command: "/home/author/bin/after.sh"}},
+				RestrictedOverrides: []core.RestrictedOverride{{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .ini, .json, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"}},
+			},
+		},
+		{
+			// And its result without --with-hooks or --allow-any-overrides.
+			"profile_import_result_gated",
+			core.ProfileImportResult{
+				ProfileName: "shared", Skipped: 1, HooksWithheld: 1,
+				OverridesSkipped: []core.RestrictedOverride{{Path: "bin/x64/version.dll", Reason: "not a text config file (.cfg, .conf, .ini, .json, .toml, .txt, .xml, .yaml, .yml); imported only with --allow-any-overrides"}},
+			},
 		},
 		{
 			"unsupported_collection_feature",
@@ -2104,7 +2132,6 @@ func TestJSONGoldens(t *testing.T) {
 				Result: &core.ProfileImportResult{
 					ProfileName: "coop", Installed: 1, HooksWithheld: 1,
 					Notes: []string{
-						"The collection's 1 hook(s) were not imported: re-import with --with-hooks to apply them.",
 						"1 item(s) of this collection are not fetched by lmm: get them by hand (the profile records them, with the curator's instructions).",
 					},
 				},
@@ -3591,7 +3618,7 @@ func collectionImportFixture() *core.CollectionImport {
 			{SourceID: "nexusmods", ModID: "1", Name: "Much Better Ammo", Version: "1.8.0"},
 		},
 		External:        []domain.CollectionExternalItem{{Name: "CET", URL: "https://example.invalid/cet", Instructions: "Install by hand."}},
-		Hooks:           []core.CollectionHook{{Hook: "install.after_all", Command: "/home/author/bin/after.sh"}},
+		Hooks:           []core.ImportHook{{Hook: "install.after_all", Command: "/home/author/bin/after.sh"}},
 		HooksImportable: true,
 		Overrides:       []string{"engine/config/user.ini"},
 		Warnings:        []string{"the container's signature (collection.yaml.sig) was not checked: this version of lmm does not verify collection signatures"},

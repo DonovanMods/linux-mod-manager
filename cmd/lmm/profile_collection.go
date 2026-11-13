@@ -80,9 +80,18 @@ func printCollectionPlan(c *core.CollectionImport, game *domain.Game) {
 			fmt.Printf("    - %s\n", path)
 		}
 	}
-	if len(c.Hooks) > 0 {
+	fmt.Println()
+}
+
+// printImportGates prints what an import's gates hold back (#621): every
+// hook the document carries, and every override that is not a text config
+// file, each with what will happen to it. For every document import,
+// version 0 included. Hook commands and override paths reach here only
+// after core refused any holding a control or formatting character.
+func printImportGates(plan *core.ImportPlan) {
+	if len(plan.Hooks) > 0 {
 		fmt.Printf("\nHooks (scripts lmm would run):\n")
-		for _, h := range c.Hooks {
+		for _, h := range plan.Hooks {
 			command := h.Command
 			if command == "" {
 				command = "(disables the game's hook)"
@@ -90,7 +99,7 @@ func printCollectionPlan(c *core.CollectionImport, game *domain.Game) {
 			fmt.Printf("    - %s: %s\n", h.Hook, command)
 		}
 		switch {
-		case !c.HooksImportable:
+		case plan.Collection != nil && !plan.Collection.HooksImportable:
 			fmt.Println("  They will not be imported: hooks are never imported from a URL.")
 		case profileImportWithHooks:
 			fmt.Println("  They will be imported (--with-hooks).")
@@ -98,7 +107,38 @@ func printCollectionPlan(c *core.CollectionImport, game *domain.Game) {
 			fmt.Println("  They will not be imported; re-run with --with-hooks to import them.")
 		}
 	}
-	fmt.Println()
+	if len(plan.RestrictedOverrides) > 0 {
+		fmt.Printf("\nOverrides that are not text config files:\n")
+		for _, o := range plan.RestrictedOverrides {
+			fmt.Printf("    - %s\n", o.Path)
+		}
+		if profileImportAnyOverrides {
+			fmt.Println("  They will be imported (--allow-any-overrides).")
+		} else {
+			fmt.Println("  They will be skipped; re-run with --allow-any-overrides to import them.")
+		}
+	}
+}
+
+// printImportGatesResult says, after the import, what its gates held
+// back - plainly, and naming the flag that would include it.
+func printImportGatesResult(plan *core.ImportPlan, result *core.ProfileImportResult) {
+	if result == nil || result.ProfileName == "" {
+		return
+	}
+	if n := result.HooksWithheld; n > 0 {
+		if plan.Collection != nil && !plan.Collection.HooksImportable {
+			fmt.Printf("\n%d hook(s) were not imported: hooks are never imported from a URL.\n", n)
+		} else {
+			fmt.Printf("\n%d hook(s) were not imported; re-import with --with-hooks to import them.\n", n)
+		}
+	}
+	if skipped := result.OverridesSkipped; len(skipped) > 0 {
+		fmt.Printf("\n%d override(s) were skipped because they are not text config files; re-import with --allow-any-overrides to include them:\n", len(skipped))
+		for _, o := range skipped {
+			fmt.Printf("    - %s\n", o.Path)
+		}
+	}
 }
 
 // collectionMatchLine says how a collection was matched to the local game.

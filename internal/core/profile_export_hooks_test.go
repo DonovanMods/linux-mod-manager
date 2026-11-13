@@ -81,8 +81,10 @@ func TestProfileManager_Export_NoHooks_OmitsTheBlock(t *testing.T) {
 }
 
 // TestPlanImport_ApplyImport_RoundTripsHookOverrides is the import half:
-// the plan's parsed profile carries the overrides, and the profile
-// ApplyImport saves keeps them on disk - the whole point of exporting them.
+// the plan's parsed profile carries the overrides and lists them, and with
+// WithHooks (`--with-hooks`) the profile ApplyImport saves keeps them on
+// disk. Since #621 (owner ruling 2026-11-12) a version-0 document's hooks
+// are saved only with that option - the next test pins the default.
 func TestPlanImport_ApplyImport_RoundTripsHookOverrides(t *testing.T) {
 	svc := newFlowsTestService(t)
 	configDir := svc.ConfigDir()
@@ -102,8 +104,14 @@ func TestPlanImport_ApplyImport_RoundTripsHookOverrides(t *testing.T) {
 	assert.True(t, plan.Profile.HooksExplicit.Install.AfterAll, "the plan's preview profile must carry the overrides")
 	assert.Equal(t, "/opt/lmm/cleanup.sh", plan.Profile.Hooks.Uninstall.AfterAll)
 
-	_, err = svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{NoInstall: true}, nil)
+	require.Equal(t, []core.ImportHook{
+		{Hook: "install.after_all", Command: ""},
+		{Hook: "uninstall.after_all", Command: "/opt/lmm/cleanup.sh"},
+	}, plan.Hooks, "the plan lists every hook the document carries")
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{NoInstall: true, WithHooks: true}, nil)
 	require.NoError(t, err)
+	assert.Zero(t, result.HooksWithheld)
 
 	saved, err := config.LoadProfile(configDir, "g1", "shared")
 	require.NoError(t, err)
@@ -111,6 +119,32 @@ func TestPlanImport_ApplyImport_RoundTripsHookOverrides(t *testing.T) {
 	assert.True(t, saved.HooksExplicit.Install.AfterAll)
 	assert.Equal(t, "/opt/lmm/cleanup.sh", saved.Hooks.Uninstall.AfterAll)
 	assert.True(t, saved.HooksExplicit.Uninstall.AfterAll)
+}
+
+// TestPlanImport_ApplyImport_WithholdsHooksByDefault is #621's S5 ruling:
+// a version-0 document's hooks are not saved without WithHooks, and the
+// result says how many were held back - so a stranger's file in the older
+// format cannot set a script lmm would run.
+func TestPlanImport_ApplyImport_WithholdsHooksByDefault(t *testing.T) {
+	svc := newFlowsTestService(t)
+	configDir := svc.ConfigDir()
+	writeProfileWithHooks(t, configDir, "g1", "modded", "/opt/lmm/cleanup.sh")
+	data, err := svc.NewProfileManager().Export(context.Background(), "g1", "modded")
+	require.NoError(t, err)
+	data = []byte(strings.Replace(string(data), "name: modded", "name: shared", 1))
+
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.Hooks, 2)
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{NoInstall: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.HooksWithheld)
+
+	saved, err := config.LoadProfile(configDir, "g1", "shared")
+	require.NoError(t, err)
+	assert.Equal(t, domain.GameHooksExplicit{}, saved.HooksExplicit, "no hook was saved")
 }
 
 // TestPlanImport_LegacyExportWithoutHooks proves the read side stayed

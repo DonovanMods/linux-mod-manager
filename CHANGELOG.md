@@ -93,6 +93,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   emptied its target file. Later exports with nothing new to record do not
   write. In the web UI, Export records the identity with a POST before the
   download, whose GET never writes.
+- **`lmm profile import` now holds back hooks and non-config overrides
+  from every file, older exports included (#621).** This is a deliberate
+  incompatibility (owner ruling): re-importing your own older export now
+  needs `--with-hooks` to keep its hooks. Every hook a file carries is
+  listed before anything is written and imported only with `--with-hooks`;
+  an override that is not a text config file (`.ini`, `.cfg`, `.conf`,
+  `.txt`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`) is skipped unless
+  `--allow-any-overrides`. The result says what was held back and names the
+  flag (`--json`: `hooks_withheld`, `overrides_skipped`); the web UI's
+  import has a box for each. An override path that is absolute or leaves
+  the game folder, or a hook or override holding control characters, is
+  refused before anything is written. A profile you already have, and
+  overrides you set yourself, are unaffected.
 - **A version-0 profile document's `collection:` and `external:` keys are
   ignored on import (#621).** No version-0 export carried them; only a
   checked version-1 collection sets them.

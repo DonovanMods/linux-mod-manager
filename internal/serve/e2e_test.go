@@ -7932,7 +7932,7 @@ func TestE2E_ProfilesModal_ImportsACollectionWithItsHooksOnlyWhenTicked(t *testi
 	assert.Contains(t, body, "install.after_all: /usr/bin/true")
 
 	f.runInBrowser(t,
-		chromedp.Click(`[data-testid="collection-hooks"] input[type="checkbox"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-testid="import-hooks"] input[type="checkbox"]`, chromedp.ByQuery),
 		settleEffects(),
 		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
 		waitGone(`.modal[data-kind="profile_import"]`),
@@ -7941,4 +7941,45 @@ func TestE2E_ProfilesModal_ImportsACollectionWithItsHooksOnlyWhenTicked(t *testi
 		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "hooked")
 		return err == nil && p.Hooks.Install.AfterAll == "/usr/bin/true" && len(p.External) == 1
 	}, 5*time.Second, 20*time.Millisecond, "the ticked box must import the hooks, and the external item")
+}
+
+// TestE2E_ProfilesModal_ImportsNonConfigOverridesOnlyWhenTicked is #621's
+// override gate in a browser, for a version-0 document: the plan lists the
+// .dll override, and only the ticked box imports it.
+func TestE2E_ProfilesModal_ImportsNonConfigOverridesOnlyWhenTicked(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+	doc := "name: gated\ngame_id: " + f.Game.ID + "\nmods: []\noverrides:\n  Config/Game.ini: \"[A]\"\n  bin/version.dll: MZ\n"
+	importPath := filepath.Join(t.TempDir(), "gated.yaml")
+	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] [data-testid="import-restricted-overrides"]`, chromedp.ByQuery),
+	)
+	var body string
+	f.runInBrowser(t, textContent(`[data-testid="import-restricted-overrides"]`, &body))
+	assert.Contains(t, body, "bin/version.dll")
+	assert.NotContains(t, body, "Config/Game.ini", "a text config override is not held back")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-testid="import-restricted-overrides"] input[type="checkbox"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="profile_import"]`),
+	)
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "gated")
+		return err == nil && string(p.Overrides["bin/version.dll"]) == "MZ" && len(p.Overrides) == 2
+	}, 5*time.Second, 20*time.Millisecond, "the ticked box must import the .dll override")
 }

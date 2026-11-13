@@ -134,20 +134,12 @@ func unsupportedFeatures(declared, derived []string) []UnsupportedCollectionFeat
 	return out
 }
 
-// CollectionHook is one hook a collection document carries: the profile
-// hook it sets ("install.after_all") and the command, which is empty for a
-// hook the document explicitly disables.
-type CollectionHook struct {
-	Hook    string `json:"hook"`
-	Command string `json:"command"`
-}
-
 // listHooks lists a profile's explicitly set hooks, in the order they run.
-func listHooks(hooks domain.GameHooks, explicit domain.GameHooksExplicit) []CollectionHook {
-	var out []CollectionHook
+func listHooks(hooks domain.GameHooks, explicit domain.GameHooksExplicit) []ImportHook {
+	var out []ImportHook
 	add := func(set bool, name, command string) {
 		if set {
-			out = append(out, CollectionHook{Hook: name, Command: command})
+			out = append(out, ImportHook{Hook: name, Command: command})
 		}
 	}
 	add(explicit.Install.BeforeAll, "install.before_all", hooks.Install.BeforeAll)

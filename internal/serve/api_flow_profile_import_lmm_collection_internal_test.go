@@ -145,3 +145,58 @@ func TestFlowLMMCollection_TheExportGETNeverWrites(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, recorded, read(), "a served GET writes nothing either")
 }
+
+// gatedImportDocument is a version-0 export with a hook and a .dll
+// override, the two things #621's import gates hold back.
+const gatedImportDocument = `name: gated
+game_id: g1
+mods: []
+hooks:
+  install:
+    after_all: /usr/bin/true
+overrides:
+  Config/Game.ini: "[A]\n"
+  bin/version.dll: "MZ"
+`
+
+// TestFlowProfileImport_GatesHoldBackHooksAndNonConfigOverrides is the
+// owner's S5/S6 ruling over /api/v1, for a version-0 document: the plan
+// lists both, the default apply saves neither, and the apply options
+// include them.
+func TestFlowProfileImport_GatesHoldBackHooksAndNonConfigOverrides(t *testing.T) {
+	s, svc, game := newProfilesFixtureServer(t)
+
+	_, raw := planFlow(t, s, game, "profile_import", importPlanBody(t, gatedImportDocument))
+	var resp struct {
+		Plan core.ImportPlan `json:"plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &resp))
+	require.Len(t, resp.Plan.Hooks, 1)
+	require.Len(t, resp.Plan.RestrictedOverrides, 1)
+	assert.Equal(t, "bin/version.dll", resp.Plan.RestrictedOverrides[0].Path)
+
+	j := runFlow(t, s, game, "profile_import", importPlanBody(t, gatedImportDocument), "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	result := j.status().Result.(*core.ProfileImportResult)
+	assert.Equal(t, 1, result.HooksWithheld)
+	require.Len(t, result.OverridesSkipped, 1)
+	saved, err := config.LoadProfile(svc.ConfigDir(), game.ID, "gated")
+	require.NoError(t, err)
+	assert.False(t, saved.HooksExplicit.Install.AfterAll)
+	assert.NotContains(t, saved.Overrides, "bin/version.dll")
+	assert.Contains(t, saved.Overrides, "Config/Game.ini")
+
+	j = runFlow(t, s, game, "profile_import", importPlanBody(t, gatedImportDocument), `{"with_hooks":true,"allow_any_overrides":true,"force":true}`)
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	saved, err = config.LoadProfile(svc.ConfigDir(), game.ID, "gated")
+	require.NoError(t, err)
+	assert.Equal(t, "/usr/bin/true", saved.Hooks.Install.AfterAll)
+	assert.Contains(t, saved.Overrides, "bin/version.dll")
+}
+
+func TestFlowProfileImport_AnEscapingOverrideIsABadRequest(t *testing.T) {
+	s, _, game := newProfilesFixtureServer(t)
+	doc := "name: gated\ngame_id: g1\nmods: []\noverrides:\n  ../../../.bashrc: x\n"
+	rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/profile_import", game), importPlanBody(t, doc))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+}

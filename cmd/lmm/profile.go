@@ -164,10 +164,15 @@ your games by its Steam app id, then by its source ids; when none or
 several match, choose with --game. The plan shows the collection's
 description and instructions, its hooks, its config overrides, the items
 lmm cannot fetch (to get by hand), and mods from sources you do not have.
-A collection's hooks are scripts lmm would run, so they are imported only
-with --with-hooks; without it the profile is imported without them. A
-collection that needs features this version of lmm does not have is
+A collection that needs features this version of lmm does not have is
 refused, with nothing written. --as names the imported profile.
+
+Whatever the file's format, two things are held back until you ask, and
+both are listed before anything is written. Hooks are scripts lmm would
+run, so they are imported only with --with-hooks. Config overrides are
+imported when they are text config files (.ini, .cfg, .conf, .txt, .json,
+.xml, .toml, .yaml, .yml); any other file type is skipped unless you pass
+--allow-any-overrides. The result says what was held back.
 
 --workshop-collection takes a Steam Workshop collection id or the URL of
 its page, and imports the collection AS a profile: a collection is a mod
@@ -270,23 +275,24 @@ Examples:
 }
 
 var (
-	profileImportForce      bool
-	profileImportNoInstall  bool
-	profileImportYes        bool
-	profileImportCollection string
-	profileImportAs         string
-	profileImportWithHooks  bool
-	profileExportOutput     string
-	profileExportPlain      bool
-	profileExportMeta       core.CollectionExportOptions
-	profileApplyYes         bool
-	profileApplyDryRun      bool
-	profileSwitchYes        bool
-	profileSwitchDryRun     bool
-	profileSyncYes          bool
-	profileSyncDryRun       bool
-	profileReorderProfile   string
-	profileReorderInteract  bool
+	profileImportForce        bool
+	profileImportNoInstall    bool
+	profileImportYes          bool
+	profileImportCollection   string
+	profileImportAs           string
+	profileImportWithHooks    bool
+	profileImportAnyOverrides bool
+	profileExportOutput       string
+	profileExportPlain        bool
+	profileExportMeta         core.CollectionExportOptions
+	profileApplyYes           bool
+	profileApplyDryRun        bool
+	profileSwitchYes          bool
+	profileSwitchDryRun       bool
+	profileSyncYes            bool
+	profileSyncDryRun         bool
+	profileReorderProfile     string
+	profileReorderInteract    bool
 )
 
 func init() {
@@ -312,7 +318,9 @@ func init() {
 	profileImportCmd.Flags().StringVar(&profileImportAs, "as", "",
 		"name the imported profile (a collection or --workshop-collection; an older profile export names its own)")
 	profileImportCmd.Flags().BoolVar(&profileImportWithHooks, "with-hooks", false,
-		"apply the hooks a collection file carries (they are scripts lmm runs; listed in the plan)")
+		"import the hooks the file carries (they are scripts lmm runs; listed in the plan)")
+	profileImportCmd.Flags().BoolVar(&profileImportAnyOverrides, "allow-any-overrides", false,
+		"import overrides that are not text config files too (listed in the plan; skipped without this)")
 
 	// Export flags
 	profileExportCmd.Flags().StringVarP(&profileExportOutput, "output", "o", "", "write the collection to this file (a compressed .lmmc unless --plain)")
@@ -874,9 +882,6 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	if profileImportAs != "" {
 		return fmt.Errorf("--as names a profile imported from a collection; an older profile export names its own profile")
 	}
-	if profileImportWithHooks {
-		return fmt.Errorf("--with-hooks applies to a collection; an older profile export imports its hooks as it always has")
-	}
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
 		return doProfileImport(ctx, service, game, data)
 	})
@@ -1063,6 +1068,7 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 			fmt.Printf("\n%s is not the active profile of %s (%s is), so the import records these mods in it - downloading what the cache lacks - and deploys nothing; `lmm profile switch %s` deploys them.\n",
 				plan.Profile.Name, game.Name, plan.ActiveProfile, plan.Profile.Name)
 		}
+		printImportGates(plan)
 	}
 
 	// #371: AlreadyCached counts as pending too - it is installed, just not
@@ -1071,7 +1077,10 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 
 	declined := false
 
-	opts := core.ProfileImportOptions{Force: profileImportForce, NoInstall: profileImportNoInstall, WithHooks: profileImportWithHooks}
+	opts := core.ProfileImportOptions{
+		Force: profileImportForce, NoInstall: profileImportNoInstall,
+		WithHooks: profileImportWithHooks, AllowAnyOverrides: profileImportAnyOverrides,
+	}
 	if pendingCount > 0 && !profileImportNoInstall {
 		if profileImportYes {
 			opts.Install = true
@@ -1186,13 +1195,15 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		return emitJSON(result)
 	}
 
-	// #621: a collection's notes (withheld hooks, external items) are
-	// appended after the apply, never as events, so they print here.
+	// #621: a collection's notes (its external items) are appended after
+	// the apply, never as events, so they print here; and what the import
+	// gates held back prints for every import, plainly, with its flag.
 	if collection != nil {
 		for _, note := range result.Notes {
 			fmt.Printf("  %s\n", note)
 		}
 	}
+	printImportGatesResult(plan, result)
 
 	// #197 postsmoke fix: result.Warnings was never read - a merged-pak
 	// sync failure only ever reached the ImportNote progress event above

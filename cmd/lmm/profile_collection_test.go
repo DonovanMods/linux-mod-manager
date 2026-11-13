@@ -206,13 +206,87 @@ func TestDoCollectionImport_UnsupportedRefusesBeforeAnyPrompt(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrProfileNotFound)
 }
 
+// gatedV0Doc is a version-0 export with a hook and two overrides, one of
+// them not a text config file (#621's S5/S6 gates).
+const gatedV0Doc = `name: shared
+game_id: g1
+mods: []
+hooks:
+    install:
+        after_all: /usr/bin/true
+overrides:
+    Config/Game.ini: "[A]\n"
+    bin/version.dll: "MZ"
+`
+
+func setGateFlags(t *testing.T, withHooks, anyOverrides bool) {
+	t.Helper()
+	oldHooks, oldAny := profileImportWithHooks, profileImportAnyOverrides
+	profileImportWithHooks, profileImportAnyOverrides = withHooks, anyOverrides
+	t.Cleanup(func() { profileImportWithHooks, profileImportAnyOverrides = oldHooks, oldAny })
+}
+
+// TestDoProfileImport_V0GatesWithholdAndSayWhichFlag is #621's S5/S6
+// owner ruling at the CLI: a version-0 document's hooks and its overrides
+// that are not text config files are listed in the plan, held back by
+// default, and the result says so plainly, naming each flag.
+func TestDoProfileImport_V0GatesWithholdAndSayWhichFlag(t *testing.T) {
+	svc, game, _ := setupDoProfileImportTest(t)
+	setGateFlags(t, false, false)
+
+	stdout, _, err := captureStdoutStderrErr(t, func() error {
+		return doProfileImport(context.Background(), svc, game, []byte(gatedV0Doc))
+	})
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "install.after_all: /usr/bin/true", "the plan lists the hook")
+	assert.Contains(t, stdout, "re-run with --with-hooks")
+	assert.Contains(t, stdout, "    - bin/version.dll", "the plan lists the restricted override")
+	assert.Contains(t, stdout, "1 hook(s) were not imported; re-import with --with-hooks")
+	assert.Contains(t, stdout, "1 override(s) were skipped because they are not text config files; re-import with --allow-any-overrides")
+
+	saved, err := config.LoadProfile(configDir, "g1", "shared")
+	require.NoError(t, err)
+	assert.Equal(t, domain.GameHooksExplicit{}, saved.HooksExplicit)
+	assert.Contains(t, saved.Overrides, "Config/Game.ini")
+	assert.NotContains(t, saved.Overrides, "bin/version.dll")
+}
+
+func TestDoProfileImport_V0GatesJSON(t *testing.T) {
+	svc, game, _ := setupDoProfileImportTest(t)
+	setGateFlags(t, false, false)
+	out := runJSONCommand(t, func() error {
+		return doProfileImport(context.Background(), svc, game, []byte(gatedV0Doc))
+	})
+	var got core.ProfileImportResult
+	decodeStrict(t, out, &got)
+	assert.Equal(t, 1, got.HooksWithheld)
+	require.Len(t, got.OverridesSkipped, 1)
+	assert.Equal(t, "bin/version.dll", got.OverridesSkipped[0].Path)
+}
+
+func TestDoProfileImport_V0GatesFlagsImportEverything(t *testing.T) {
+	svc, game, _ := setupDoProfileImportTest(t)
+	setGateFlags(t, true, true)
+	stdout, _, err := captureStdoutStderrErr(t, func() error {
+		return doProfileImport(context.Background(), svc, game, []byte(gatedV0Doc))
+	})
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "They will be imported (--with-hooks).")
+	assert.Contains(t, stdout, "They will be imported (--allow-any-overrides).")
+	assert.NotContains(t, stdout, "were not imported")
+	assert.NotContains(t, stdout, "were skipped")
+	saved, err := config.LoadProfile(configDir, "g1", "shared")
+	require.NoError(t, err)
+	assert.Equal(t, "/usr/bin/true", saved.Hooks.Install.AfterAll)
+	assert.Contains(t, saved.Overrides, "bin/version.dll")
+}
+
 func TestRunProfileImport_VersionZeroRefusesCollectionFlags(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("name: p\ngame_id: g\nmods: []\n"), 0o644))
-	old := profileImportWithHooks
-	profileImportWithHooks = true
-	t.Cleanup(func() { profileImportWithHooks = old })
+	restore := setImportFlags(t, "", "renamed")
+	defer restore()
 	err := runProfileImport(profileImportCmd, []string{path})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--with-hooks applies to a collection")
+	assert.Contains(t, err.Error(), "an older profile export names its own profile")
 }
