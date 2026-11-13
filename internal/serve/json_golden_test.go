@@ -558,6 +558,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileImportPlanRequest{DataBase64: "UEsDBA==", ProfileName: "coop"},
 		},
 		{
+			// #621 web parity: a document staged by POST /api/v1/uploads,
+			// so the web UI imports what the CLI does.
+			"profile_import_plan_request_upload",
+			profileImportPlanRequest{UploadID: "a1b2c3", ProfileName: "coop"},
+		},
+		{
 			"profile_import_apply_request_with_hooks",
 			profileImportApplyRequest{Install: true, WithHooks: true},
 		},

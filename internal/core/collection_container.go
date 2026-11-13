@@ -49,6 +49,11 @@ const (
 	maxIgnoredWarnings = 20
 )
 
+// MaxCollectionFileBytes is the largest profile document file an import
+// reads: a `.lmmc` container at most, the largest form a collection takes.
+// A frontend reading a file to import (the web UI's upload) stops there.
+const MaxCollectionFileBytes = maxCollectionContainer
+
 // zipMagic is the local-file-header signature every zip starts with: what
 // an import sniffs to tell a container from a YAML document.
 var zipMagic = []byte("PK\x03\x04")

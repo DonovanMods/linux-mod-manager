@@ -30,6 +30,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -55,9 +57,14 @@ func init() {
 // collection's own title, exactly as `lmm profile import --as` does.
 type profileImportPlanRequest struct {
 	Data string `json:"data,omitzero"`
-	// DataBase64 is a document as base64 (#621): how the SPA posts a
-	// `.lmmc` container, which is not text. Mutually exclusive with Data.
+	// DataBase64 is a document as base64 (#621): a `.lmmc` container is not
+	// text. Kept for small files and older clients. Mutually exclusive with
+	// Data and UploadID.
 	DataBase64 string `json:"data_base64,omitzero"`
+	// UploadID names a document staged by POST /api/v1/uploads (#621): how
+	// the SPA posts a file, so the web UI imports what the CLI does, past
+	// the plan body's 1 MiB cap. Read once at plan time and removed.
+	UploadID uploadID `json:"upload_id,omitzero"`
 	// WorkshopCollection is a collection id or the URL of its page,
 	// forwarded to core verbatim: the SOURCE owns what it recognises, and a
 	// second parser here could only disagree with it.
@@ -69,6 +76,17 @@ type profileImportPlanRequest struct {
 // exclusive: with both, the server would be guessing which one the caller
 // meant, and the CLI refuses the same combination.
 func (r *profileImportPlanRequest) validate() error {
+	if r.UploadID != "" {
+		// The document is read from the upload at plan time; until then
+		// only the inputs can be checked.
+		switch {
+		case r.Data != "" || r.DataBase64 != "":
+			return errors.New(`"upload_id" and "data"/"data_base64" are mutually exclusive`)
+		case r.WorkshopCollection != "":
+			return errors.New(`"upload_id" and "workshop_collection" are mutually exclusive`)
+		}
+		return nil
+	}
 	if r.DataBase64 != "" {
 		if r.Data != "" {
 			return errors.New(`"data" and "data_base64" are mutually exclusive`)
@@ -139,6 +157,16 @@ func planProfileImportKind(ctx context.Context, s *Server, sel selection, opts a
 	if req.WorkshopCollection != "" {
 		return planWorkshopCollectionImport(ctx, s, sel, req)
 	}
+	if req.UploadID != "" {
+		data, err := s.readProfileUpload(req.UploadID)
+		if err != nil {
+			return nil, nil, err
+		}
+		req.Data, req.UploadID = string(data), ""
+		if err := req.validate(); err != nil {
+			return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
+		}
+	}
 	if core.IsCollectionDocument([]byte(req.Data)) {
 		return planLMMCollectionImport(ctx, s, sel, req)
 	}
@@ -208,6 +236,31 @@ func planWorkshopCollectionImport(ctx context.Context, s *Server, sel selection,
 		return nil, nil, err
 	}
 	return plan, &pendingProfileImport{Game: sel.Game, Plan: plan}, nil
+}
+
+// readProfileUpload reads the profile document a POST /api/v1/uploads
+// staged, up to core.MaxCollectionFileBytes, and removes the upload: the
+// plan holds the document from here on, so nothing else needs the file.
+// A missing upload, or one over the cap, is the caller's 400.
+func (s *Server) readProfileUpload(id uploadID) ([]byte, error) {
+	staged, ok := s.uploads.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("%w: no staged upload %q (it expired or was cancelled)", errBadPlanRequest, id)
+	}
+	defer s.uploads.Remove(id)
+	f, err := os.Open(staged.Path)
+	if err != nil {
+		return nil, fmt.Errorf("reading the upload: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, core.MaxCollectionFileBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading the upload: %w", err)
+	}
+	if len(data) > core.MaxCollectionFileBytes {
+		return nil, fmt.Errorf("%w: %s is over the %d-byte limit for a profile document", errBadPlanRequest, staged.Filename, core.MaxCollectionFileBytes)
+	}
+	return data, nil
 }
 
 // planLMMCollectionImport is the lmm collection half of the plan kind

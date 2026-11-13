@@ -17,6 +17,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -7986,4 +7987,51 @@ func TestE2E_ProfilesModal_ImportsNonConfigOverridesOnlyWhenTicked(t *testing.T)
 		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "gated")
 		return err == nil && string(p.Overrides["bin/version.dll"]) == "MZ" && len(p.Overrides) == 2
 	}, 5*time.Second, 20*time.Millisecond, "the ticked box must import the .dll override")
+}
+
+// TestE2E_ProfilesModal_ImportsACollectionOverOneMiBUnderAChosenName is
+// the owner's web-parity ruling in a browser: a collection past the old
+// ~700 KiB limit imports through the upload, under the name typed into the
+// form (`--as`).
+func TestE2E_ProfilesModal_ImportsACollectionOverOneMiBUnderAChosenName(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+	importPath := filepath.Join(t.TempDir(), "big.lmmc")
+	random := make([]byte, 1200<<10)
+	_, err := cryptorand.Read(random)
+	require.NoError(t, err)
+	container := e2eCollectionContainer(t, "lmm_collection: 1\nname: big\ntitle: Big Collection\nmods: []\noverrides:\n  Config/big.ini: "+
+		base64.StdEncoding.EncodeToString(random)+"\n")
+	require.Greater(t, len(container), 1<<20, "the fixture must be over the plan body's 1 MiB cap")
+	require.NoError(t, os.WriteFile(importPath, container, 0o644))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.SendKeys(`[data-testid="import-profile-name"]`, "chosen-name", chromedp.ByQuery),
+		settleEffects(),
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] [data-testid="lmm-collection"]`, chromedp.ByQuery),
+	)
+	var body string
+	f.runInBrowser(t, textContent(`.modal[data-kind="profile_import"]`, &body))
+	assert.Contains(t, body, "Big Collection")
+	assert.Contains(t, body, "chosen-name")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="profile_import"]`),
+	)
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "chosen-name")
+		return err == nil && len(p.Overrides["Config/big.ini"]) > 1<<20
+	}, 10*time.Second, 50*time.Millisecond, "the over-1-MiB collection must import under the chosen name")
 }

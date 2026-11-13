@@ -31,7 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only with `--with-hooks`, and is refused with nothing written when it
   needs a feature this lmm lacks (`CollectionUnsupportedError`). An older
   export imports exactly as before. In the web UI, **Export** downloads a
-  `.lmmc`, and **Import** accepts one, with an **Import these hooks** box.
+  `.lmmc`, and **Import** takes the same files, at the same sizes, as the
+  terminal (it uploads the file), with a profile-name field for `--as` and
+  a box each for `--with-hooks` and `--allow-any-overrides`.
   `lmm profile duplicate` makes the copy a new collection: no id (its first
   export mints one) and version reset, keeping the title, author,
   description, instructions and the curator's credit.

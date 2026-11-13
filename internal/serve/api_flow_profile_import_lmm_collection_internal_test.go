@@ -7,6 +7,9 @@ package serve
 // with with_hooks.
 
 import (
+	"archive/zip"
+	"bytes"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json/v2"
 	"net/http"
@@ -199,4 +202,84 @@ func TestFlowProfileImport_AnEscapingOverrideIsABadRequest(t *testing.T) {
 	doc := "name: gated\ngame_id: g1\nmods: []\noverrides:\n  ../../../.bashrc: x\n"
 	rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/profile_import", game), importPlanBody(t, doc))
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+}
+
+// bigCollectionContainer is a `.lmmc` over 1 MiB - past the plan body's
+// cap, so only the upload path can carry it - made big by one override of
+// incompressible text, as a collection with a large config would be.
+func bigCollectionContainer(t *testing.T) []byte {
+	t.Helper()
+	random := make([]byte, 1200<<10)
+	_, err := rand.Read(random)
+	require.NoError(t, err)
+	doc := "lmm_collection: 1\nname: big\ntitle: Big Collection\nmods: []\noverrides:\n  Config/big.ini: " +
+		base64.StdEncoding.EncodeToString(random) + "\n"
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	f, err := w.CreateHeader(&zip.FileHeader{Name: "collection.yaml", Method: zip.Deflate})
+	require.NoError(t, err)
+	_, err = f.Write([]byte(doc))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	require.Greater(t, buf.Len(), 1<<20, "the fixture must be over the plan body's 1 MiB cap")
+	return buf.Bytes()
+}
+
+// TestFlowLMMCollection_AnUploadedContainerOverOneMiBImports is the owner's
+// web-parity ruling: the web UI imports a collection of the size the CLI
+// does. The file goes up through POST /api/v1/uploads, and the plan names
+// the upload.
+func TestFlowLMMCollection_AnUploadedContainerOverOneMiBImports(t *testing.T) {
+	s, svc, game := newProfilesFixtureServer(t)
+	data := bigCollectionContainer(t)
+
+	// The base64 body cannot carry it.
+	rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/profile_import", game), lmmcPlanBody(t, data, ""))
+	require.NotEqual(t, http.StatusOK, rec.Code, "a body over 1 MiB is refused")
+
+	rec = postUpload(t, s, "big.lmmc", data)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var up uploadResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &up))
+
+	body := `{"upload_id":"` + string(up.UploadID) + `","profile_name":"imported-big"}`
+	_, raw := planFlow(t, s, game, "profile_import", body)
+	var resp struct {
+		Plan core.ImportPlan `json:"plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &resp))
+	require.NotNil(t, resp.Plan.Collection)
+	assert.Equal(t, "imported-big", resp.Plan.Collection.ProfileName, "profile_name is --as")
+	_, stillStaged := s.uploads.Get(up.UploadID)
+	assert.False(t, stillStaged, "the plan read the upload and removed it")
+
+	rec = postUpload(t, s, "big.lmmc", data)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &up))
+	j := runFlow(t, s, game, "profile_import", `{"upload_id":"`+string(up.UploadID)+`","profile_name":"imported-big"}`, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	saved, err := config.LoadProfile(svc.ConfigDir(), game.ID, "imported-big")
+	require.NoError(t, err)
+	assert.Greater(t, len(saved.Overrides["Config/big.ini"]), 1<<20)
+}
+
+func TestFlowProfileImport_UploadRequests(t *testing.T) {
+	s, _, game := newProfilesFixtureServer(t)
+	for name, body := range map[string]string{
+		"unknown upload":      `{"upload_id":"nope"}`,
+		"upload and data":     `{"upload_id":"x","data":"name: a"}`,
+		"upload and workshop": `{"upload_id":"x","workshop_collection":"1"}`,
+	} {
+		rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/profile_import", game), body)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, name+": "+rec.Body.String())
+	}
+
+	// An older profile export uploads as a .yaml and still names its own
+	// profile.
+	rec := postUpload(t, s, "old.yaml", []byte(importDocument))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var up uploadResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &up))
+	rec = doAPI(s, http.MethodPost, scoped("/api/v1/plans/profile_import", game), `{"upload_id":"`+string(up.UploadID)+`","profile_name":"renamed"}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "an older export names its own profile: %s", rec.Body.String())
 }

@@ -35,6 +35,7 @@ import {
   setDefaultProfile,
   profileExportURL,
   recordProfileCollection,
+  uploadArchive,
 } from "../api.js";
 
 /** ProfilesModal renders only when the shared modal slot holds this shape. */
@@ -516,41 +517,22 @@ function CreateProfileForm({ context, afterMutation }) {
   `;
 }
 
-/** maxImportFileBytes keeps a picked file inside the plan request's 1 MiB
- * body cap once base64 has grown it by a third. */
-const maxImportFileBytes = 700 * 1024;
-
-/** isZip reports whether bytes start with a zip's local-file-header
- * signature - a `.lmmc` collection container (issue 621), which is binary,
- * rather than a YAML or JSON document. The server sniffs the same bytes. */
-function isZip(bytes) {
-  return (
-    bytes.length >= 4 &&
-    bytes[0] === 0x50 &&
-    bytes[1] === 0x4b &&
-    bytes[2] === 0x03 &&
-    bytes[3] === 0x04
-  );
-}
-
-/** base64Of encodes bytes for the plan request's data_base64 member, in
- * chunks so a large container does not overflow the argument list. */
-function base64Of(bytes) {
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  }
-  return btoa(binary);
-}
-
-/** ImportProfileForm reads the picked file and hands it to the
- * confirm-plan framework as the profile-import kind's own request body
- * (kind_profile_import.go: "the SPA reads the file the user picked and
- * posts its contents"): a document as text, a `.lmmc` container (issue
- * 621) as base64. It never uploads the file itself. */
+/** ImportProfileForm uploads the picked file - an lmm collection (.lmmc, or
+ * its YAML) or an older profile export - through POST /api/v1/uploads and
+ * hands the upload to the confirm-plan framework as the profile-import
+ * kind's request (kind_profile_import.go). Uploading, rather than posting
+ * the file inside the plan request, is what lets the web UI import the
+ * sizes the CLI does (issue 621: the plan body is capped at 1 MiB).
+ *
+ * The optional name is `lmm profile import --as`: a collection is
+ * imported under it. An older profile export names its own profile, and
+ * the plan refuses a name for one, saying so. The game is the one selected
+ * here, as `--game` does; the plan warns when the collection names another
+ * game. */
 function ImportProfileForm({ actions, close }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [name, setName] = useState("");
 
   async function onPick(e) {
     const file = e.currentTarget.files?.[0];
@@ -559,18 +541,9 @@ function ImportProfileForm({ actions, close }) {
     setBusy(true);
     setError(null);
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      // The plan request body is capped (api_jobs.go), and a .lmmc goes
-      // in it base64-encoded. A list-only collection is a few kilobytes;
-      // one this large is said so here, before a 413 (issue 621).
-      if (bytes.length > maxImportFileBytes) {
-        throw new Error(
-          `${file.name} is too large to import here; use \`lmm profile import ${file.name}\` in a terminal`,
-        );
-      }
-      const options = isZip(bytes)
-        ? { data_base64: base64Of(bytes) }
-        : { data: new TextDecoder().decode(bytes) };
+      const upload = await uploadArchive(file);
+      const options = { upload_id: upload.upload_id };
+      if (name.trim()) options.profile_name = name.trim();
       close();
       await actions.openPlan({
         kind: "profile_import",
@@ -589,8 +562,16 @@ function ImportProfileForm({ actions, close }) {
   return html`
     <div class="profiles-import">
       <h3 class="plan__heading">Import a profile</h3>
+      <input
+        type="text"
+        aria-label="Name for the imported collection's profile"
+        placeholder="Profile name (optional, collections only)"
+        data-testid="import-profile-name"
+        value=${name}
+        onInput=${(e) => setName(e.currentTarget.value)}
+      />
       <label class="button">
-        ${busy ? "Reading…" : "Choose file…"}
+        ${busy ? "Uploading…" : "Choose file…"}
         <input
           type="file"
           accept=".lmmc,.json,.yaml,.yml,application/json"

@@ -143,7 +143,15 @@ text file if you add `--plain`. Both import the same way, and so does a
 file exported by an older version of lmm.
 
 In the browser, **Export** and **Import** are in the Profiles window.
-**Export** downloads a `.lmmc` file.
+**Export** downloads a `.lmmc` file. **Import** takes the same files the
+terminal does, of any size it does: choose the file, and the import shows
+its plan before anything is written. To import a collection under another
+profile name (what `--as` does), type the name into the **Profile name**
+field before choosing the file. The import goes into the game you have
+selected, as `--game` does, and the plan warns when the collection names a
+different game. The plan has a box for each thing an import holds back
+(see below): **Import these hooks** for `--with-hooks`, and **Import these
+overrides too** for `--allow-any-overrides`.
 
 A collection names its game in a way that works on any computer (its Steam
 app id, and its id on each mod site), so the import finds the right game
