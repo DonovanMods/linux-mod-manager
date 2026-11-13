@@ -85,6 +85,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reserved `.lmm-key` file), so a source version that happens to spell
     another entry's folder, such as `1.0@abcdef123456`, can never read,
     replace or delete that entry; lmm refuses with an error naming both.
+- **Answering FOMOD installers, in the terminal and the web UI (#615).**
+  - At a terminal, `lmm install`, `lmm profile import`, `lmm import
+<archive>`, `lmm install --from-file`, `lmm update` and
+    `lmm update --from-file` walk the installer one step at a time, with
+    each option's description (and the path of its image), keep the group
+    rules (exactly one, at most one, at least one, all, any), and run the
+    same command again with the answers. A step whose answer changes what
+    comes next is checked against the installer first; nothing is
+    downloaded twice.
+  - Without a terminal, or under `--json`, `--fomod-defaults` takes the
+    installer's own preselection and `--fomod-choices <file.json>` takes the
+    answers from a file (the profile's `fomod:` shape, or a collection's
+    `choices` list; keyed by `source:id` when several mods ask). With
+    neither, the command exits non-zero with the question: the `--json`
+    error envelope's `details`, or a summary on stderr. A multi-mod install
+    or a profile import whose result carries the question also exits
+    non-zero now.
+  - `lmm mod fomod <mod-id>` re-runs an installed mod's installer with its
+    recorded choices preselected and installs and deploys the new selection
+    in place of the old one, at the same version.
+  - The web UI asks in a wizard, one step per page, with option
+    descriptions and images, and re-posts the job with the answers; the
+    full mod page offers "Reconfigure installer…", and the activity tray
+    "Answer installer…" on a failed job. Option images are served read-only
+    from what the question kept (`GET /api/v1/fomod/images`): only images
+    the archive contains, at most 8 MiB each, PNG, JPEG, GIF, WebP or BMP.
+  - The install, profile import, archive import, update from file and
+    update batch jobs accept `fomod` answers; the new `mod_fomod` plan kind
+    is the reconfigure. `lmm mod show --json` (and the mod page's document)
+    carries the recorded choices as `installed.fomod`.
+  - An update batch's `fomod_reanswer` skip now carries its question as
+    `fomod_choices_required`, and the batch accepts answers, so the web UI
+    asks when you update one mod. The update batch's terminal summary lists
+    these mods with the `lmm update` command that asks, instead of under
+    Steam Workshop items, and an automatic update held back for it is
+    marked `fomod_reanswer` and says so on the Updates card.
 
 ### Changed
 
