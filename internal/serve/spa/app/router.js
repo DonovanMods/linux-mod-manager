@@ -119,6 +119,23 @@ export function documentTitle(route) {
   return `${name}${context} · lmm`;
 }
 
+/**
+ * modPageKey identifies the full mod page a route shows: the mod AND the
+ * game/profile it is read in. Every document that page holds is that
+ * profile's - the installed record, its lock and update policy, the update
+ * check the versions table joins - so the same mod in another profile is a
+ * different page, loaded afresh, never a re-read that keeps the other
+ * profile's answers on screen (issue 615 follow-up).
+ */
+export function modPageKey(route) {
+  return JSON.stringify([
+    route.game,
+    route.profile,
+    route.sourceID,
+    route.modID,
+  ]);
+}
+
 /** Builds the /g/{game}/{profile} prefix every scoped URL hangs off. */
 export function contextPath(game, profile) {
   return `/g/${encodeURIComponent(game)}/${encodeURIComponent(profile)}`;

@@ -319,7 +319,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Reconfigure installer…** while it waited for the new answers. That
   swapped the buttons for new ones, so focus fell to the page for a moment
   after the FOMOD wizard closed. The mod page now keeps what it is showing
-  until the new answers arrive.
+  until the new answers arrive. The same mod opened in another profile
+  without reloading the page (Back, or a link) no longer shows the previous
+  profile's lock, versions and update check while it loads: it is a
+  different page, and shows its loading state instead.
 
 - **A free NexusMods account's download refusal now says so, and offers the
   manual download (#601).** NexusMods serves downloads through its API to
