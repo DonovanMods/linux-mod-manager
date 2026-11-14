@@ -334,8 +334,8 @@ func (s *Service) acquireArchive(ctx context.Context, a *acquiredFile, src sourc
 	// from Project Daedalus compiled. One game, one adapter, one answer.
 	mc, isMergeCompiler := s.optionalCompiler(game)
 	convertEligiblePak := isMergeCompiler && isConvertEligibleArtifact(game, mc, safeFileName)
-	extracts := !(game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, safeFileName) || convertEligiblePak)) &&
-		game.DeployMode != domain.DeployCopy && s.extractor.CanExtract(archivePath)
+	compiles := game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, safeFileName) || convertEligiblePak)
+	extracts := !compiles && game.DeployMode != domain.DeployCopy && s.extractor.CanExtract(archivePath)
 	if !fx.tree.IsZero() && !extracts {
 		// #610: a file list or a patch describes an archive's extracted
 		// tree; installing the file whole would silently skip them.

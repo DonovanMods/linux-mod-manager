@@ -312,7 +312,7 @@ func TestSourceCollection_PatchToCodeNeedsAllowAnyOverrides(t *testing.T) {
 		p := filepath.Join(dir, "patches", "Twenty-One", "Mod", "Helper.dll.diff")
 		require.NoError(t, os.WriteFile(p, patch, 0o644))
 	})
-	g.src.mockSourceWithDownloads.AddDownload("210", createTestZipBytes(t, map[string]string{"Mod/Helper.dll": c5ManifestV40}))
+	g.src.AddDownload("210", createTestZipBytes(t, map[string]string{"Mod/Helper.dll": c5ManifestV40}))
 	plan := g.plan(t, core.SourceCollectionImportRequest{})
 	require.Equal(t, 1, plan.Collection.RestrictedPatches)
 	assert.NotEmpty(t, importItem(plan.Collection, "21").Patches[0].Restricted)
