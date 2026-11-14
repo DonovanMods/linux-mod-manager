@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Import a collection from a link (#622).** `lmm profile import
+https://…` (in the web UI, the Profiles window's **From a URL** field)
+  downloads an lmm collection - a `.lmmc`, its YAML, or an older profile
+  export, told apart by the first bytes - and imports it as it would a file.
+  The address must be `https`; a redirect to plain `http` is refused, and
+  the download is capped as it arrives (64 MiB for a `.lmmc`, 4 MiB for a
+  YAML document). Hooks are never imported from a link, even with
+  `--with-hooks`: the plan lists them and the result counts them as held
+  back. The profile records the address as its collection origin
+  (`origin.import_url`), for a later collection update to fetch again; a
+  `user:password@` part is used for the download and never saved. Only the
+  profile file keeps the whole address: the plan, every `--json` document,
+  the web UI and every message show it without its query string, a
+  redirect never passes it on as a `Referer`, and no export carries it. An
+  older export from a link imports into `--game`, or the game its
+  `game_id` names, and takes `--as`.
+
 - **FOMOD choices per file (#634).** A mod whose files each carry their
   own FOMOD installer - a NexusMods collection that pins a mod's main file
   and a patch file, each a FOMOD, such as Scrambled Bugs - now installs:

@@ -31,7 +31,14 @@ func printCollectionPlan(c *core.CollectionImport, game *domain.Game) {
 		if o.Author != "" {
 			from = strings.TrimSpace(from + ", curated by " + o.Author)
 		}
-		fmt.Printf("  from %s\n", from)
+		if from != "" {
+			fmt.Printf("  from %s\n", from)
+		}
+		// #622: the address it was fetched from, without credentials or
+		// query (core redacted it).
+		if o.ImportURL != "" {
+			fmt.Printf("  fetched from %s\n", o.ImportURL)
+		}
 	}
 	fmt.Printf("  for %s (%s)\n", game.Name, collectionMatchLine(c))
 	if c.Description != "" {
@@ -167,6 +174,8 @@ func collectionMatchLine(c *core.CollectionImport) string {
 	switch {
 	case c.MatchedBy == "game":
 		return "--game " + c.GameID
+	case c.MatchedBy == "game_id":
+		return "game " + c.GameID + ", named by the export's game_id"
 	case c.MatchedBy == "steam_app_id":
 		return "game " + c.GameID + ", matched by Steam app id " + c.Game.SteamAppID
 	case strings.HasPrefix(c.MatchedBy, "source:"):

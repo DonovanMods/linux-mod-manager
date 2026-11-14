@@ -134,6 +134,8 @@ function CollectionHeader({ collection }) {
 /** matchLine says how a collection was matched to this game. */
 function matchLine(c) {
   if (c.matched_by === "game") return `imported into ${c.game_id}`;
+  if (c.matched_by === "game_id")
+    return `imported into ${c.game_id}, named by the export's game_id`;
   if (c.matched_by === "steam_app_id")
     return `matched to ${c.game_id} by Steam app id ${c.game?.steam_app_id}`;
   if (c.matched_by?.startsWith("source:")) {
@@ -213,11 +215,22 @@ function LMMCollectionSection({ collection: c, plugins }) {
       ${c.author && html`<p class="plan__note">by ${c.author}</p>`}
       ${
         c.origin &&
+        (c.origin.url ||
+          c.origin.source_id ||
+          c.origin.slug ||
+          c.origin.author) &&
         html`<p class="plan__note">
           from
           ${" "}${c.origin.url || `${c.origin.source_id ?? ""} ${c.origin.slug ?? ""}`}${
             c.origin.author ? `, curated by ${c.origin.author}` : ""
           }
+        </p>`
+      }
+      ${
+        c.origin?.import_url &&
+        html`<p class="plan__note" data-testid="collection-import-url">
+          Fetched from <span class="mono">${c.origin.import_url}</span>. The
+          profile records this address.
         </p>`
       }
       <p class="plan__note">${matchLine(c)}</p>

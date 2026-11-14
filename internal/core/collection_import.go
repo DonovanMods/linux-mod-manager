@@ -329,10 +329,6 @@ func IsCollectionGameUnresolved(err error) bool {
 	return errors.As(err, &target)
 }
 
-// ErrCollectionHooksFromURL refuses WithHooks on a document fetched from a
-// URL: lmm never applies hooks from one.
-var ErrCollectionHooksFromURL = errors.New("hooks are never imported from a collection fetched from a URL")
-
 // ErrInvalidCollection is a collection document the reader refused: over a
 // size cap, or not a collection at all.
 var ErrInvalidCollection = errors.New("invalid collection document")
@@ -360,50 +356,39 @@ const (
 // is an ordinary ImportPlan with Collection attached; a document needing
 // features this lmm lacks still plans, and its Apply refuses.
 func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImportRequest) (*ImportPlan, error) {
+	return s.planCollectionImport(ctx, req, "", nil)
+}
+
+// planCollectionImport is PlanCollectionImport. importURL is the address a
+// URL import fetched Data from (#622), recorded as the profile's
+// origin.import_url; it also lets Data be a version-0 profile export,
+// which a file imports through PlanImport instead. warnings lead the
+// plan's own.
+func (s *Service) planCollectionImport(ctx context.Context, req CollectionImportRequest, importURL string, warnings []string) (*ImportPlan, error) {
 	if req.Input == "" {
 		req.Input = CollectionFromFile
 	}
-	raw := req.Data
-	var warnings []string
-	container := IsCollectionContainer(raw)
-	if container {
-		doc, w, err := readCollectionContainer(raw)
-		if err != nil {
-			return nil, err
-		}
-		raw, warnings = doc, w
-	}
-	if len(raw) > maxCollectionDocument {
-		return nil, fmt.Errorf("%w: the document is %d bytes, over the %d-byte limit", ErrInvalidCollection, len(raw), maxCollectionDocument)
-	}
-	version, err := config.CollectionFormatOf(raw)
+	doc, container, more, err := s.readCollectionData(req.Data, importURL != "")
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidCollection, err)
+		return nil, err
 	}
-	switch {
-	case version < 1:
-		return nil, fmt.Errorf("%w: it has no lmm_collection version (a version-0 profile export imports as one)", ErrInvalidCollection)
-	case version > domain.CollectionFormatVersion:
-		return nil, fmt.Errorf("%w: it is format version %d, and this lmm reads version %d; update lmm",
-			ErrCollectionFormatTooNew, version, domain.CollectionFormatVersion)
-	}
-	doc, err := config.ParseCollection(raw)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidCollection, err)
-	}
-	more, err := sanitizeCollection(doc)
+	warnings = append(warnings, more...)
+	more, err = sanitizeCollection(doc)
 	if err != nil {
 		return nil, err
 	}
 	warnings = append(warnings, more...)
 
-	game, matchedBy, err := s.matchCollectionGame(doc.Game, req.GameID)
+	game, matchedBy, err := s.matchImportGame(doc, req.GameID)
 	if err != nil {
 		return nil, err
 	}
 	if matchedBy == "game" {
 		if w := s.gameMismatch(doc.Game, game); w != "" {
 			warnings = append(warnings, w)
+		}
+		if doc.FormatVersion == 0 && doc.GameID != "" && doc.GameID != game.ID {
+			warnings = append(warnings, fmt.Sprintf("this profile export was made for the game %q; importing into %s as asked", doc.GameID, game.ID))
 		}
 	}
 
@@ -423,6 +408,16 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 		}
 	}
 	info := doc.Info
+	if importURL != "" {
+		// #622: the address is the profile's to fetch again (#613), beside
+		// whatever credit the document's own origin carries.
+		var origin domain.CollectionOrigin
+		if info.Origin != nil {
+			origin = *info.Origin
+		}
+		origin.ImportURL = importURL
+		info.Origin = &origin
+	}
 	if !info.IsZero() {
 		profile.Collection = &info
 	}
@@ -446,7 +441,7 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 	plan.Hooks = hooks
 	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins}
 	// The preview shows the profile the import will save.
-	plan.Profile.Collection, plan.Profile.External = profile.Collection, profile.External
+	plan.Profile.Collection, plan.Profile.External = redactedCollection(profile.Collection), profile.External
 	plan.Profile.Plugins = profile.Plugins.Clone()
 
 	requires := doc.Requires
@@ -462,7 +457,7 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 		Author:              info.Author,
 		Description:         info.Description,
 		InstallInstructions: info.InstallInstructions,
-		Origin:              info.Origin,
+		Origin:              info.Origin.Redacted(),
 		Game:                doc.Game,
 		GameID:              game.ID,
 		MatchedBy:           matchedBy,
@@ -499,10 +494,11 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 	return plan, nil
 }
 
-// ApplyCollectionImport executes a plan PlanCollectionImport produced. It
-// refuses, writing nothing, when the document needs a feature this lmm
-// cannot import (*CollectionUnsupportedError), or when opts.WithHooks asks
-// for the hooks of a document fetched from a URL. Otherwise it is
+// ApplyCollectionImport executes a plan PlanCollectionImport (or
+// PlanCollectionImportURL) produced. It refuses, writing nothing, when the
+// document needs a feature this lmm cannot import
+// (*CollectionUnsupportedError). opts.WithHooks is ignored for a document
+// fetched from a URL, whose hooks are never applied. Otherwise it is
 // ApplyImport over the collection's profile, whose import gates decide the
 // hooks (opts.WithHooks) and the overrides (opts.AllowAnyOverrides), as
 // they do for every document import.
@@ -515,8 +511,11 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 	if len(c.Unsupported) > 0 {
 		return &ProfileImportResult{}, &CollectionUnsupportedError{Unsupported: c.Unsupported, Supported: supportedExcept(c.Unsupported)}
 	}
-	if opts.WithHooks && len(c.Hooks) > 0 && !c.HooksImportable {
-		return &ProfileImportResult{}, ErrCollectionHooksFromURL
+	if !c.HooksImportable {
+		// A URL's hooks are never applied (#622): the plan's profile holds
+		// none, and --with-hooks is ignored rather than refused, so the
+		// result counts every hook the document carried as withheld.
+		opts.WithHooks = false
 	}
 	if c.Source != nil {
 		// A converted source collection is all or nothing at acquire (owner
@@ -744,6 +743,10 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 		line("requires", &doc.Requires[i])
 	}
 	if o := doc.Info.Origin; o != nil {
+		// import_url is this machine's record of a URL import (#622), never
+		// a document's to set: a document naming one could point a later
+		// update anywhere.
+		o.ImportURL = ""
 		line("origin.source_id", &o.SourceID)
 		line("origin.slug", &o.Slug)
 		line("origin.url", &o.URL)
