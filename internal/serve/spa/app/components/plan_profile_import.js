@@ -327,8 +327,9 @@ function LMMCollectionSection({ collection: c, plugins }) {
           Installer (FOMOD) choices (${withChoices.length})
         </h3>
         <p class="plan__note">
-          Replayed as written. An installer that no longer accepts them asks you
-          again when the mod installs.
+          Replayed as written. An installer that no longer accepts them, or an
+          archive other than the one they were recorded against, asks you again
+          when the mod installs.
         </p>
         <ul class="plan__mods">
           ${withChoices.map(

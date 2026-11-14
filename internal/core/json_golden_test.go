@@ -2855,6 +2855,18 @@ func TestJSONGoldens(t *testing.T) {
 		},
 		{"fomod_question", sampleFomodQuestion()},
 		{
+			// #609: a collection's recorded choices not replayed, because
+			// the archive is not the one they were recorded against.
+			"fomod_question_archive_mismatch",
+			func() core.FomodQuestion {
+				q := sampleFomodQuestion()
+				q.Reason = core.FomodReasonArchiveMismatch
+				q.ArchiveMismatch = &core.FomodArchiveMismatch{ExpectedMD5: "0123456789abcdef0123456789abcdef", ActualMD5: "fedcba9876543210fedcba9876543210"}
+				return q
+			}(),
+		},
+		{"fomod_archive_mismatch", core.FomodArchiveMismatch{ExpectedMD5: "0123456789abcdef0123456789abcdef", ActualMD5: "fedcba9876543210fedcba9876543210"}},
+		{
 			// #634: one file's installer of a mod whose files each carry
 			// one - labelled with its file, answered under its file key.
 			"fomod_question_per_file",

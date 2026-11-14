@@ -33,6 +33,7 @@ package core
 
 import (
 	"context"
+	"crypto/md5"
 	"errors"
 	"fmt"
 	"slices"
@@ -488,6 +489,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	// The plan lists every hook the DOCUMENT carries, a URL's included.
 	plan.Hooks = hooks
 	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins, loadOrders: profile.LoadOrders.Clone()}
+	plan.archiveMD5 = collectionArchiveMD5s(doc)
 	// The preview shows the profile the import will save.
 	plan.Profile.Collection, plan.Profile.External = redactedCollection(profile.Collection), profile.External
 	plan.Profile.Plugins = profile.Plugins.Clone()
@@ -602,6 +604,34 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 		result.Notes = append(result.Notes, fmt.Sprintf("%d item(s) of this collection are not fetched by lmm: get them by hand (the profile records them, with the curator's instructions).", n))
 	}
 	return result, err
+}
+
+// collectionArchiveMD5s is the md5 the document records for each of its
+// items' files (#609) - a converted source collection's recipe source.md5,
+// or an lmm collection's files[].md5 - by domain.ModKey, then file id: the
+// archive each item's recorded FOMOD choices were made against. An md5
+// that is not 32 hex digits is a stranger's that can match nothing, and is
+// left out rather than turned into a question no archive answers. Nil when
+// the document records none.
+func collectionArchiveMD5s(doc *domain.CollectionDocument) map[string]map[string]string {
+	var out map[string]map[string]string
+	for _, item := range doc.Items {
+		for _, f := range item.Files {
+			sum := strings.ToLower(f.MD5)
+			if f.ID == "" || !isHexDigest(sum, md5.Size) {
+				continue
+			}
+			key := domain.ModKey(item.Ref.SourceID, item.Ref.ModID)
+			if out == nil {
+				out = map[string]map[string]string{}
+			}
+			if out[key] == nil {
+				out[key] = map[string]string{}
+			}
+			out[key][f.ID] = sum
+		}
+	}
+	return out
 }
 
 // matchCollectionGame picks the local game a collection imports into: the

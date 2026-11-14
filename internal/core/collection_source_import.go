@@ -72,6 +72,7 @@ func (s *Service) PlanSourceCollectionImport(ctx context.Context, game *domain.G
 			c.LoadOrders[i].Files[j].Mod = mods[c.LoadOrders[i].Files[j].Name]
 		}
 	}
+	plan.phases = conv.phases
 	if len(conv.AutoUpdate) > 0 {
 		plan.autoUpdate = make(map[string]bool, len(conv.AutoUpdate))
 		for _, key := range conv.AutoUpdate {

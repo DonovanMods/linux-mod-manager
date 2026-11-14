@@ -79,6 +79,8 @@ func (s *Service) beginOpVia(ctx context.Context, acquire func(context.Context) 
 		s.forgetKeptFiles()
 		// #633: and what its removals learned about a shared path's heirs.
 		s.forgetHeirFlows()
+		// #609: and the collection recipes its FOMOD replays read.
+		s.forgetRecipePins()
 		releaseSlot()
 	}, nil
 }
