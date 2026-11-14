@@ -970,14 +970,33 @@ func describeE2EAction(a chromedp.Action) string {
 // an assertion about what the application says would move every time a
 // style did. Collapsed rather than exact, because htm templates put a
 // component's text on its own indented line.
+//
+// It reads in ONE script evaluation, waiting until the element exists:
+// chromedp.TextContent resolves a node id and then reads it in a second
+// round trip, and a Preact re-render between the two (a job's progress
+// readout settling, say) fails it with "No node with given id found".
 func textContent(sel string, out *string) chromedp.Action {
 	return chromedp.ActionFunc(func(ctx context.Context) error {
-		var raw string
-		if err := chromedp.TextContent(sel, &raw, chromedp.ByQuery).Do(ctx); err != nil {
+		quoted, err := json.Marshal(sel)
+		if err != nil {
 			return err
 		}
-		*out = strings.Join(strings.Fields(raw), " ")
-		return nil
+		script := `(() => { const el = document.querySelector(` + string(quoted) + `); return el === null ? null : el.textContent })()`
+		for {
+			var raw *string
+			if err := chromedp.Evaluate(script, &raw).Do(ctx); err != nil {
+				return err
+			}
+			if raw != nil {
+				*out = strings.Join(strings.Fields(*raw), " ")
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("waiting for %s: %w", sel, ctx.Err())
+			case <-time.After(e2ePollInterval):
+			}
+		}
 	})
 }
 
