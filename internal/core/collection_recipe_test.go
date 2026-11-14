@@ -175,7 +175,10 @@ func TestConvertSourceCollection_FetchesCachesAndConverts(t *testing.T) {
 
 	entry := filepath.Join(f.cacheDir, "skyrim", "collections", "nexusmods-abcdef", "3")
 	assert.FileExists(t, filepath.Join(entry, "collection.json"), "the recipe is kept in its own cache entry")
-	assert.NoDirExists(t, filepath.Join(entry, "bundled"), "only the manifest is extracted until C5 needs the rest")
+	// #610: the recipe's bundled/ and patches/ trees are extracted with it,
+	// and the entry says so.
+	assert.FileExists(t, filepath.Join(entry, "bundled", "file.txt"))
+	assert.FileExists(t, filepath.Join(entry, ".lmm-recipe-files"))
 	assert.Equal(t, int32(1), f.downloads.Load())
 
 	_, err = f.svc.ConvertSourceCollection(ctx, f.game, "nexusmods", "abcdef@3", core.CollectionConvertOptions{})

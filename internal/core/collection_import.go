@@ -32,6 +32,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"crypto/md5"
 	"errors"
@@ -137,6 +138,9 @@ type CollectionImport struct {
 	// Bundled lists the items the container carries files for (#623), in
 	// the document's order: absent when it carries none.
 	Bundled []CollectionBundledItem `json:"bundled,omitempty"`
+	// RestrictedPatches counts the items' patches that patch code (#610):
+	// with any, Apply refuses unless the import allows any override.
+	RestrictedPatches int `json:"restricted_patches,omitzero"`
 	// Plugins summarises the plugin list the import saves on the profile
 	// (#611): absent when the document carries none.
 	Plugins *CollectionPluginSummary `json:"plugins,omitempty"`
@@ -344,6 +348,27 @@ type CollectionImportItem struct {
 	// Bundled marks an item whose files the container carries (#623):
 	// source lmm-collection, listed in CollectionImport.Bundled.
 	Bundled bool `json:"bundled,omitzero"`
+	// FileList counts the files of the item's exact file list (#610):
+	// installing it extracts only those, each checked against its md5.
+	// Zero for none.
+	FileList int `json:"file_list,omitzero"`
+	// Patches are the binary patches its files install with (#610).
+	Patches []CollectionItemPatch `json:"patches,omitempty"`
+}
+
+// CollectionItemPatch is one binary patch of a collection import plan's
+// item (#610): applied at install only to a file whose CRC32 is the
+// baseline's - any other refuses the install, where Vortex would install
+// the file unpatched.
+type CollectionItemPatch struct {
+	// FileID is the item's file it patches, and Path the file inside it.
+	FileID string `json:"file_id"`
+	Path   string `json:"path"`
+	// CRC32 is the baseline: the file the patch was made against.
+	CRC32 string `json:"crc32"`
+	// Restricted says why the patch is applied only with
+	// --allow-any-overrides (it patches code); empty when it is not.
+	Restricted string `json:"restricted,omitempty"`
 }
 
 // CollectionGameError refuses a collection whose portable game identity
@@ -402,7 +427,7 @@ var ErrInvalidCollection = errors.New("invalid collection document")
 // reader refuses (ErrInvalidBundle, #623) are among them.
 func IsInvalidCollection(err error) bool {
 	return errors.Is(err, ErrInvalidCollection) || errors.Is(err, errBadContainer) ||
-		errors.Is(err, ErrCollectionFormatTooNew) || errors.Is(err, ErrInvalidBundle)
+		errors.Is(err, ErrCollectionFormatTooNew) || errors.Is(err, ErrInvalidBundle) || errors.Is(err, ErrCodePatch)
 }
 
 // Caps on a version-1 document, past the byte cap: a document from a
@@ -421,15 +446,17 @@ const (
 // is an ordinary ImportPlan with Collection attached; a document needing
 // features this lmm lacks still plans, and its Apply refuses.
 func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImportRequest) (*ImportPlan, error) {
-	return s.planCollectionImport(ctx, req, "", nil)
+	return s.planCollectionImport(ctx, req, "", nil, nil)
 }
 
 // planCollectionImport is PlanCollectionImport. importURL is the address a
 // URL import fetched Data from (#622), recorded as the profile's
 // origin.import_url; it also lets Data be a version-0 profile export,
 // which a file imports through PlanImport instead. warnings lead the
-// plan's own.
-func (s *Service) planCollectionImport(ctx context.Context, req CollectionImportRequest, importURL string, warnings []string) (*ImportPlan, error) {
+// plan's own. recipe is a converted source collection's recipe files
+// (#610): the bundled trees and patches its document names, which a
+// container would otherwise carry; nil for any other import.
+func (s *Service) planCollectionImport(ctx context.Context, req CollectionImportRequest, importURL string, warnings []string, recipe *recipeFiles) (*ImportPlan, error) {
 	if req.Input == "" {
 		req.Input = CollectionFromFile
 	}
@@ -444,17 +471,31 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	}
 	warnings = append(warnings, more...)
 	// #623: the bundled items, checked against the container and given the
-	// ids and versions the profile records.
-	bundled, pending, more, err := resolveBundledItems(doc, bundle, container)
+	// ids and versions the profile records. #610: a converted source
+	// collection's come from its recipe, kept under the recipe's own id.
+	carriesFiles, bundleID := container, doc.Info.ID
+	if recipe != nil {
+		bundle, carriesFiles, bundleID = recipe.bundle(), true, recipe.collectionID()
+	}
+	bundled, pending, more, err := resolveBundledItems(doc, bundle, carriesFiles, bundleID)
 	if err != nil {
 		return nil, err
 	}
 	warnings = append(warnings, more...)
 	if pending != nil {
 		pending.data = req.Data
+		if recipe != nil {
+			pending.data, pending.recipeDir = nil, recipe.dir
+		}
 	}
 
 	game, matchedBy, err := s.matchImportGame(doc, req.GameID)
+	if err != nil {
+		return nil, err
+	}
+	// #610: every patch the document names, from the container, the
+	// recipe or this machine's patch store.
+	patchSources, err := s.collectionPatchSources(game, doc, bundle, recipe)
 	if err != nil {
 		return nil, err
 	}
@@ -517,6 +558,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	plan.Hooks = hooks
 	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins, loadOrders: profile.LoadOrders.Clone()}
 	plan.bundle = pending
+	plan.patchSources = patchSources
 	plan.archiveMD5 = collectionArchiveMD5s(doc)
 	// The preview shows the profile the import will save.
 	plan.Profile.Collection, plan.Profile.External = redactedCollection(profile.Collection), profile.External
@@ -561,7 +603,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	}
 	sort.Strings(c.Overrides)
 	for _, item := range doc.Items {
-		c.Items = append(c.Items, CollectionImportItem{
+		ci := CollectionImportItem{
 			SourceID:    item.Ref.SourceID,
 			ModID:       item.Ref.ModID,
 			Name:        item.Name,
@@ -570,7 +612,23 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 			// #615: what the collection's installer answers will install.
 			InstallerChoices: installerRecordLines(item),
 			Bundled:          item.Ref.SourceID == domain.SourceCollection,
+		}
+		// #610: the exact file list and the patches its pinned files
+		// install with.
+		for id, in := range refTreeInputs(&item.Ref) {
+			ci.FileList += len(in.FileList)
+			for _, p := range in.Patches {
+				cp := CollectionItemPatch{FileID: id, Path: p.Path, CRC32: strings.ToUpper(p.CRC32), Restricted: patchCodeReason(p.Path)}
+				ci.Patches = append(ci.Patches, cp)
+				if cp.Restricted != "" {
+					c.RestrictedPatches++
+				}
+			}
+		}
+		slices.SortFunc(ci.Patches, func(a, b CollectionItemPatch) int {
+			return cmp.Or(strings.Compare(a.FileID, b.FileID), strings.Compare(a.Path, b.Path))
 		})
+		c.Items = append(c.Items, ci)
 	}
 	plan.Collection = c
 	return plan, nil
@@ -599,6 +657,17 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 		// result counts every hook the document carried as withheld.
 		opts.WithHooks = false
 	}
+	// #610: a patch to code is code a stranger wrote, held back like an
+	// override that is not text config - but a mod installed without the
+	// patch its collection needs is the "looks right, plays wrong" outcome,
+	// so the import is refused rather than the patch dropped.
+	if c.RestrictedPatches > 0 && !opts.AllowAnyOverrides {
+		return &ProfileImportResult{}, fmt.Errorf("%w: %d of its patches change code (%s); import it with --allow-any-overrides to apply them",
+			ErrCodePatch, c.RestrictedPatches, strings.Join(restrictedPatchNames(c), ", "))
+	}
+	if err := s.keepPatches(game, original.patchSources); err != nil {
+		return &ProfileImportResult{}, err
+	}
 	var bundledSkipped []string
 	if b := original.bundle; b != nil {
 		// #623: the container is the lmm-collection source's "download":
@@ -613,7 +682,7 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 			}
 			sort.Strings(bundledSkipped)
 		}
-		if err := s.keepCollectionContainer(game, b.collectionID, b.data, b.bundle, b.names, b.admitted(opts.AllowAnyOverrides)); err != nil {
+		if err := s.keepPendingBundle(game, b, opts.AllowAnyOverrides); err != nil {
 			return &ProfileImportResult{}, err
 		}
 	}
@@ -965,6 +1034,11 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 		if err := checkCollectionFomodOrder(*r); err != nil {
 			return nil, fmt.Errorf("%w: %s:%s's fomod_order %v", ErrInvalidCollection, r.SourceID, r.ModID, err)
 		}
+		// #610: paths and digests are matched as written, never rewritten.
+		if err := checkTreeInputs(r.FileList, r.Patches); err != nil {
+			return nil, fmt.Errorf("%w: %s:%s's %v", ErrInvalidCollection, r.SourceID, r.ModID, err)
+		}
+		r.FileList, r.Patches = pinnedOnly(r.FileList, r.FileIDs), pinnedOnly(r.Patches, r.FileIDs)
 		items = append(items, item)
 	}
 	doc.Items = items

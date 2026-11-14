@@ -184,7 +184,10 @@ func TestConvert_ItemFeaturesBlockRequiredAndSkipOptional(t *testing.T) {
 	in := convertInputFor(m)
 	in.withOptional = true
 	c := mustConvert(t, in)
-	assert.Equal(t, []string{CollectionFeatureBundled, CollectionFeatureFileList, CollectionFeatureFileOverrides}, featureNames(c.Unsupported),
+	// #610: with no recipe files read, a bundle and a patch stay refused,
+	// and a file list lmm cannot use as written (an md5 that is not one)
+	// refuses its item by the recipe's key.
+	assert.Equal(t, []string{CollectionFeatureBundled, CollectionFeatureFileOverrides, CollectionFeatureManifestKeyPrefix + "mods.hashes"}, featureNames(c.Unsupported),
 		"a required item's unsupported feature blocks; the optional item's does not")
 	assert.Equal(t, CollectionItemUnsupported, itemByName(t, c, "Patched").State, "even opted in, it is skipped")
 	assert.Equal(t, []string{CollectionFeaturePatches}, itemByName(t, c, "Patched").Features)

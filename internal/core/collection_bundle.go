@@ -138,9 +138,48 @@ type bundledItem struct {
 	restricted []RestrictedOverride
 }
 
-// collectionBundle is a container's files/ tree, by item name.
+// collectionBundle is a container's files/ tree, by item name, and its
+// patches/ (#610), by sha256.
 type collectionBundle struct {
-	items map[string]*bundledItem
+	items   map[string]*bundledItem
+	patches map[string][]byte
+}
+
+// addPatchMember reads one patches/ member into b: named
+// patches/<sha256>.diff - 64 lower-case hex digits - a regular file within
+// maxPatchBytes whose content hashes to its name and is a BSDIFF40 patch.
+// A member that breaks a rule is refused, never renamed.
+func (b *collectionBundle) addPatchMember(f *zip.File) error {
+	sha, ok := strings.CutSuffix(strings.TrimPrefix(f.Name, collectionPatchesDir), recipePatchExt)
+	switch {
+	case !ok || !isLowerHexSHA256(sha):
+		return fmt.Errorf("the member %q is not patches/<sha256>.diff", f.Name)
+	case !f.Mode().IsRegular():
+		return fmt.Errorf("the member %q is not a regular file", f.Name)
+	case f.UncompressedSize64 > maxPatchBytes:
+		return fmt.Errorf("the patch %q is %d bytes, over the %d-byte limit", f.Name, f.UncompressedSize64, maxPatchBytes)
+	case f.UncompressedSize64 > ratioFloor && f.UncompressedSize64 > maxCollectionRatio*max(f.CompressedSize64, 1):
+		return fmt.Errorf("the patch %q's compression ratio is over %d:1", f.Name, maxCollectionRatio)
+	case b.patches[sha] != nil:
+		return fmt.Errorf("the container holds %q more than once", f.Name)
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rc.Close() }()
+	data, err := io.ReadAll(io.LimitReader(rc, maxPatchBytes+1))
+	if err != nil {
+		return fmt.Errorf("reading %q: %w", f.Name, err)
+	}
+	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != sha || !isBSDIFF40(data) {
+		return fmt.Errorf("the patch %q is not the BSDIFF40 patch its name says", f.Name)
+	}
+	if b.patches == nil {
+		b.patches = map[string][]byte{}
+	}
+	b.patches[sha] = data
+	return nil
 }
 
 // item is the bundle's item name, or nil - a nil bundle holds none.

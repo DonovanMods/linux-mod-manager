@@ -74,6 +74,9 @@ type acquiredFile struct {
 	// installer (#614): mod.Variant is then its variant. Nil for any other
 	// file.
 	fomod *fomodResolved
+	// treeInputs are the file list and patches applied to this file's tree
+	// (#610): mod.Variant then names them too. Zero for none.
+	treeInputs domain.TreeInputs
 }
 
 // release removes the acquisition's scratch directories. Safe on nil and
@@ -331,6 +334,14 @@ func (s *Service) acquireArchive(ctx context.Context, a *acquiredFile, src sourc
 	// from Project Daedalus compiled. One game, one adapter, one answer.
 	mc, isMergeCompiler := s.optionalCompiler(game)
 	convertEligiblePak := isMergeCompiler && isConvertEligibleArtifact(game, mc, safeFileName)
+	extracts := !(game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, safeFileName) || convertEligiblePak)) &&
+		game.DeployMode != domain.DeployCopy && s.extractor.CanExtract(archivePath)
+	if !fx.tree.IsZero() && !extracts {
+		// #610: a file list or a patch describes an archive's extracted
+		// tree; installing the file whole would silently skip them.
+		return &FilePatchError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, FileID: file.ID, Path: safeFileName,
+			Reason: "the collection records a file list or patches for it, which lmm applies only to an archive it extracts, and this game installs the file whole"}
+	}
 	if game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, safeFileName) || convertEligiblePak) {
 		if !isMergeCompiler {
 			return fmt.Errorf("game %q requires DeployCompile but its adapter %q cannot compile (file %q from source %q)", game.ID, s.AdapterName(game), safeFileName, src.ID())
@@ -381,6 +392,7 @@ func (s *Service) acquireArchive(ctx context.Context, a *acquiredFile, src sourc
 	}
 	a.members, a.listed = members, true
 	a.setFomod(resolved)
+	a.setTreeInputs(fx.tree)
 	return nil
 }
 
@@ -436,6 +448,12 @@ func (s *Service) acquireLocal(ctx context.Context, gameCache *cache.Cache, game
 		if err := os.MkdirAll(a.tree, 0755); err != nil {
 			return nil, fmt.Errorf("copying mod directory: %w", err)
 		}
+		// #610: a directory is a tree already; its file list and patches
+		// apply to it as to an extracted archive's.
+		if err := s.applyTreeInputs(game, mod, file.ID, a.tree, fx.tree); err != nil {
+			return nil, err
+		}
+		a.setTreeInputs(fx.tree)
 		// Attribute the COPIES, not localPath's own listing: the tree holds
 		// exactly what the commit publishes, and copyDir DEREFERENCES
 		// in-root symlinks into regular files that a walk of the source
@@ -452,6 +470,11 @@ func (s *Service) acquireLocal(ctx context.Context, gameCache *cache.Cache, game
 			return nil, fmt.Errorf("fingerprinting mod directory: %w", err)
 		}
 	case game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(localPath):
+		if !fx.tree.IsZero() {
+			// #610: see acquireArchive.
+			return nil, &FilePatchError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, FileID: file.ID, Path: filepath.Base(localPath),
+				Reason: "the collection records a file list or patches for it, which lmm applies only to an archive it extracts, and this game installs the file whole"}
+		}
 		// file.FileName is the declared name for this mod file - use it so
 		// the cached file matches what the source/caller advertised (#52
 		// item 12); localPath's own basename is often just a temp file name
@@ -481,6 +504,7 @@ func (s *Service) acquireLocal(ctx context.Context, gameCache *cache.Cache, game
 			return nil, fmt.Errorf("extracting mod: %w", err)
 		}
 		a.setFomod(resolved)
+		a.setTreeInputs(fx.tree)
 		if a.checksum, err = sum(); err != nil {
 			return nil, fmt.Errorf("hashing local mod archive: %w", err)
 		}
@@ -583,6 +607,11 @@ func (s *Service) extractPristine(ctx context.Context, game *domain.Game, mod *d
 	if err != nil {
 		return nil, nil, err
 	}
+	// #610: the file's list and patches, on the tree its installer made
+	// and before the adapter lays it out (tree_inputs.go).
+	if err := s.applyTreeInputs(game, mod, fx.fileID, tree, fx.tree); err != nil {
+		return nil, nil, err
+	}
 	if resolved != nil {
 		for _, w := range resolved.warnings {
 			s.logger().Warn(w, "mod", mod.Name, "game", game.ID)
@@ -658,4 +687,19 @@ func (a *acquiredFile) setFomod(r *fomodResolved) {
 	}
 	a.fomod = r
 	a.mod.Variant = r.variant
+}
+
+// setTreeInputs records the file list and patches applied to the file's
+// tree (#610): the entry it commits to is named by them too, over its
+// FOMOD choices' variant. Zero inputs change nothing.
+func (a *acquiredFile) setTreeInputs(in domain.TreeInputs) {
+	if in.IsZero() {
+		return
+	}
+	a.treeInputs = in
+	fomodPart := ""
+	if a.fomod != nil {
+		fomodPart = a.fomod.variant
+	}
+	a.mod.Variant = treeInputsVariant(fomodPart, map[string]domain.TreeInputs{a.file.ID: in})
 }

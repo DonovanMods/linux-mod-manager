@@ -138,6 +138,10 @@ type ImportPlan struct {
 	// bundle is a collection container's bundled files (#623): what the
 	// apply keeps for the lmm-collection source, and what it holds back.
 	bundle *pendingBundle
+	// patchSources are the patches a collection's document names (#610),
+	// by sha256: what the apply keeps in the patch store before anything
+	// is acquired.
+	patchSources map[string]patchSource
 	// autoUpdate names the mods (domain.ModKey) whose installed rows the
 	// import writes with the auto update policy (#607: a source
 	// collection's "latest" items) - in the same write as the row, inside

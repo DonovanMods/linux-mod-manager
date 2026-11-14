@@ -57,9 +57,9 @@ func (s *Service) PlanSourceCollectionImport(ctx context.Context, game *domain.G
 	if err != nil {
 		return nil, fmt.Errorf("writing the converted collection: %w", err)
 	}
-	plan, err := s.PlanCollectionImport(ctx, CollectionImportRequest{
+	plan, err := s.planCollectionImport(ctx, CollectionImportRequest{
 		Data: data, Input: CollectionFromSource, GameID: game.ID, ProfileName: req.ProfileName,
-	})
+	}, "", nil, conv.recipe)
 	if err != nil {
 		return nil, err
 	}
