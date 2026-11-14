@@ -6,9 +6,18 @@
 //
 // The version ▾ groups InstallPlan.FilePool by each file's own Version -
 // the candidate-pool disclosure kind_install.go's own doc comment promises
-// (issue 331 carry-in) - and a FILE picker appears beneath it only when the
-// chosen version itself resolves to more than one file (a merge-capable
-// source's alternate-format files, say). A selection is written into the
+// (issue 331 carry-in) - and a FILE picker appears beside it only when the
+// chosen version itself resolves to more than one file (a main file and its
+// patch, a merge-capable source's alternate-format files, say). The file
+// picker is checkboxes (issue 637): several files of one mod install in one
+// job, as `lmm install --file a,b` does, each FOMOD installer among them
+// asked about in turn (fomodwizard.js labels each page with its file). The
+// default file starts checked; unchecking every file holds Confirm
+// (confirmplan.js) rather than falling back to the default. The picker
+// offers the chosen version's files only, as `--version` with `--file`
+// does; a pick core refuses (#211's alternate forms of one mod) fails the
+// job with core's own message, the one the CLI prints. A selection is
+// written into the
 // confirm-plan framework's modal.applyOptions via actions.setPlanOptions
 // (main.js) DIRECTLY FROM the select's onChange - never from a useEffect:
 // setPlanOptions calls store.set(), which synchronously re-renders the
@@ -23,7 +32,9 @@
 // event handler (modpanel.js's ModSettingsControls, say) - so nothing here
 // EVER calls setPlanOptions except in response to an actual user pick, and
 // an untouched picker submits no options at all: ApplyInstall's own
-// defaults already resolve to the exact file Files names.
+// defaults already resolve to the exact file Files names. Once touched, the
+// picker always sends the checked files by id, so what it shows checked is
+// exactly what Confirm installs.
 //
 // ApplyInstall resolves TargetVersion/TargetFileIDs from applyOptions
 // itself (issue 96/issue 140), so this renderer never touches plan.Files:
@@ -54,6 +65,29 @@ function fileOptionLabel(f) {
 function withUpdated(label, uploadedAt) {
   const updated = updatedPhrase(uploadedAt);
   return updated ? `${label} · ${updated}` : label;
+}
+
+/** fileHint is a file's archive name beside its display name, when the two
+ * differ - the CLI's displayFileLabel shows both. */
+function fileHint(f) {
+  if (!f.name || !f.file_name || f.name === f.file_name) return null;
+  return html`${" "}<span class="mono plan__option-hint">${f.file_name}</span>`;
+}
+
+/** defaultFileIDs is what an install of version v picks with no file named:
+ * the plan's own Files at the plan's version (PlanInstall's pick, which
+ * ApplyInstall installs verbatim), else that version's primary file, else
+ * its first - core's primaryFile rule. */
+function defaultFileIDs(plan, pool, v, planVersion) {
+  const atVersion = pool.filter((f) => f.version === v);
+  if (v === planVersion) {
+    const planned = (plan.files ?? [])
+      .map((f) => f.id)
+      .filter((id) => atVersion.some((f) => f.id === id));
+    if (planned.length > 0) return planned;
+  }
+  const pick = atVersion.find((f) => f.is_primary) ?? atVersion[0];
+  return pick ? [pick.id] : [];
 }
 
 /** versionUploadedAt is a version's date: the first pool file carrying
@@ -100,20 +134,47 @@ export function InstallPlanView({ plan, modal, actions }) {
   const filesForVersion = pool.filter((f) => f.version === version);
   const showFilePicker = filesForVersion.length > 1;
   const showPicker = showVersionPicker || showFilePicker;
-  const [fileID, setFileID] = useState("");
+  // The checked files (issue 637). Seeded from applyOptions for the same
+  // re-plan reason as version above, else from what an untouched picker
+  // installs: plan.files at the plan's own version (PlanInstall's default
+  // pick, which ApplyInstall installs as is), the primary-or-first file at
+  // any other.
+  const [fileIDs, setFileIDs] = useState(
+    () =>
+      modal?.applyOptions?.file_ids ??
+      defaultFileIDs(plan, pool, version, defaultVersion),
+  );
+  const selectedFiles = filesForVersion.filter((f) => fileIDs.includes(f.id));
+  // The files this install names, for the preview: the checked ones when
+  // there is a picker, else the plan's own pick.
+  const installFiles = showFilePicker
+    ? selectedFiles
+    : filesForVersion.length > 0
+      ? filesForVersion
+      : (plan.files ?? []);
 
   /** pickVersion applies a version change: local display state, AND the
    * confirm-plan framework's own applyOptions - fired together, from the
-   * event handler, never from an effect (see this file's header comment). */
+   * event handler, never from an effect (see this file's header comment).
+   * The version's default file is sent by id, so what the picker shows
+   * checked is exactly what Confirm installs. */
   function pickVersion(v) {
+    const ids = defaultFileIDs(plan, pool, v, defaultVersion);
     setVersion(v);
-    setFileID("");
-    actions.setPlanOptions({ version: v, file_ids: undefined });
+    setFileIDs(ids);
+    actions.setPlanOptions({ version: v, file_ids: ids });
   }
 
-  function pickFile(id) {
-    setFileID(id);
-    actions.setPlanOptions({ version, file_ids: id ? [id] : undefined });
+  /** toggleFile checks or unchecks one file, keeping the pool's order (the
+   * order `lmm install --file` would be given them in). An empty selection
+   * is kept as an empty list: confirmplan.js holds Confirm until a file is
+   * checked, rather than letting "nothing" fall back to the default. */
+  function toggleFile(id, checked) {
+    const next = filesForVersion
+      .map((f) => f.id)
+      .filter((fid) => (fid === id ? checked : fileIDs.includes(fid)));
+    setFileIDs(next);
+    actions.setPlanOptions({ version, file_ids: next });
   }
 
   const deps = plan.dependencies ?? [];
@@ -172,31 +233,74 @@ export function InstallPlanView({ plan, modal, actions }) {
             ${
               showFilePicker &&
               html`
-                <label class="plan__control">
-                  File
-                  <select
-                    name="install-file"
-                    value=${fileID}
-                    onChange=${(e) => pickFile(e.currentTarget.value)}
-                  >
-                    <option value="">Default</option>
-                    ${filesForVersion.map(
-                      (f) => html`
-                        <option
-                          key=${f.id}
+                <fieldset
+                  class="plan__control plan__files-picker"
+                  data-testid="install-files-picker"
+                >
+                  <legend class="plan__files-legend">
+                    Files
+                    <span class="plan__option-hint"
+                      >Check each file to install, like lmm install --file
+                      a,b.</span
+                    >
+                  </legend>
+                  ${filesForVersion.map(
+                    (f) => html`
+                      <label
+                        class="plan__option"
+                        key=${f.id}
+                        title=${absoluteTime(f.uploaded_at) || undefined}
+                      >
+                        <input
+                          type="checkbox"
+                          name="install-file"
                           value=${f.id}
-                          title=${absoluteTime(f.uploaded_at) || undefined}
-                        >
-                          ${fileOptionLabel(f)}
-                        </option>
-                      `,
-                    )}
-                  </select>
-                </label>
+                          checked=${fileIDs.includes(f.id)}
+                          disabled=${modal?.status !== "ready"}
+                          onChange=${(e) =>
+                            toggleFile(f.id, e.currentTarget.checked)}
+                        />
+                        <span class="plan__option-label">
+                          ${fileOptionLabel(f)} ${fileHint(f)}
+                        </span>
+                      </label>
+                    `,
+                  )}
+                </fieldset>
               `
             }
           </section>
         `
+      }
+      ${
+        showFilePicker && selectedFiles.length === 0
+          ? html`<p
+              class="plan__note plan__note--warn"
+              data-testid="install-files-none"
+              role="status"
+            >
+              Select at least one file to install.
+            </p>`
+          : installFiles.length > 0 &&
+            html`
+              <section class="plan__section" data-testid="install-files">
+                <h3 class="plan__heading">
+                  ${
+                    installFiles.length === 1
+                      ? "File"
+                      : `Files (${installFiles.length})`
+                  }
+                </h3>
+                <ul class="plan__mods">
+                  ${installFiles.map(
+                    (f) =>
+                      html`<li key=${f.id}>
+                        ${f.name || f.file_name}${fileHint(f)}
+                      </li>`,
+                  )}
+                </ul>
+              </section>
+            `
       }
       ${
         deps.length > 0 &&

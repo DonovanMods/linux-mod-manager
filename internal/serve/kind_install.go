@@ -86,7 +86,8 @@ func (r *installPlanRequest) validate() error {
 // installApplyRequest is the "options" member POST /api/v1/jobs accepts for
 // an install plan - every decision a confirm page can still change.
 type installApplyRequest struct {
-	// Version and FileIDs are #225's picks, carried into the core options
+	// Version and FileIDs are #225's picks (several files since #637, as
+	// `lmm install --file a,b`), carried into the core options
 	// ApplyInstall resolves up front (#96/#140).
 	Version string   `json:"version,omitzero"`
 	FileIDs []string `json:"file_ids,omitzero"`

@@ -101,6 +101,9 @@ own installer: a NexusMods collection might pin a mod's main file and a
 patch file, each a FOMOD. lmm runs each file's installer and remembers the
 answers per file (under `fomod_files:` in the profile, by file id).
 
+- To install several files of a mod yourself, check each one in the web
+  interface's install preview, or name them with
+  `lmm install <mod> --file <id>,<id>` in the terminal.
 - The questions come one installer at a time, each headed with the file it
   belongs to, in the same window (or terminal walk) as any other.
 - In a choices file, key each file's answers as `source:id#file-id`, as

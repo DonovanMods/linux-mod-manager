@@ -2728,8 +2728,9 @@ func TestE2E_SearchRowReadsInstalledAfterItsOwnJobSucceeds(t *testing.T) {
 }
 
 // TestE2E_InlineInstallWithFilePickWritesToDisk covers plan_install.js's
-// OTHER picker: the FILE sub-select that only renders once the chosen
-// version itself resolves to more than one file (unlike Better Boots
+// OTHER picker: the FILE checkboxes (#637; a select before) that only
+// render once the chosen version itself resolves to more than one file
+// (unlike Better Boots
 // above, whose two files each carry a DIFFERENT version and so exercise
 // only the version ▾). "Multi Edition Mod" has one version and two files -
 // the version ▾ does NOT render (M6, unit 5 fix wave: gated on more than one
@@ -2753,21 +2754,27 @@ func TestE2E_InlineInstallWithFilePickWritesToDisk(t *testing.T) {
 	var fileOptions []string
 	var versionPickerPresent bool
 	f.runInBrowser(t,
-		chromedp.WaitVisible(`select[name="install-file"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`input[name="install-file"]`, chromedp.ByQuery),
 		chromedp.Evaluate(
-			`Array.from(document.querySelectorAll('select[name="install-file"] option')).map(o => o.textContent)`,
+			`Array.from(document.querySelectorAll('input[name="install-file"]')).map(i => i.closest('label').textContent.trim())`,
 			&fileOptions,
 		),
 		chromedp.Evaluate(`document.querySelector('select[name="install-version"]') !== null`, &versionPickerPresent),
 	)
-	assert.Contains(t, fileOptions, "Regular Edition")
-	assert.Contains(t, fileOptions, "Definitive Edition")
+	if assert.Len(t, fileOptions, 2) {
+		assert.Contains(t, fileOptions[0], "Regular Edition")
+		assert.Contains(t, fileOptions[1], "Definitive Edition")
+	}
 	assert.False(t, versionPickerPresent,
 		"a one-version pool with several files must show only the file picker (M6)")
 
+	// The picker is checkboxes since #637: swap the preselected primary
+	// for the other file.
 	f.runInBrowser(t,
-		chromedp.SetValue(`select[name="install-file"]`, "m2", chromedp.ByQuery),
-		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		clickWhenSettled(`input[name="install-file"][value="m2"]`),
+		clickWhenSettled(`input[name="install-file"][value="m1"]`),
+		pollUntil(`!document.querySelector('input[name="install-file"][value="m1"]').checked`),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
 		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
