@@ -2239,6 +2239,18 @@ a.row-menu__item.mod-page-link {
   cursor: pointer;
 }
 
+/* A plan section's list behind a disclosure (issue 611: a collection's
+   plugin load order), closed by default. */
+.plan__disclosure {
+  margin-top: var(--space-2);
+}
+
+.plan__disclosure-summary {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
 .plan__advanced-body {
   display: flex;
   flex-direction: column;

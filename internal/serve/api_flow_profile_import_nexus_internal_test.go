@@ -14,8 +14,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -72,6 +74,12 @@ const nexusFixtureRecipe = `{"Name": "Three Mods", "Mods": [
 // collection's recipe in its cache entry.
 func seedNexusCollection(t *testing.T, svc *core.Service, game *domain.Game, tier source.Tier) *nexusFixtureSource {
 	t.Helper()
+	return seedNexusCollectionRecipe(t, svc, game, tier, nexusFixtureRecipe)
+}
+
+// seedNexusCollectionRecipe is seedNexusCollection with recipe cached.
+func seedNexusCollectionRecipe(t *testing.T, svc *core.Service, game *domain.Game, tier source.Tier, recipe string) *nexusFixtureSource {
+	t.Helper()
 	src := &nexusFixtureSource{tier: tier}
 	svc.RegisterSource(src)
 	if game.SourceIDs == nil {
@@ -85,7 +93,7 @@ func seedNexusCollection(t *testing.T, svc *core.Service, game *domain.Game, tie
 	}
 	entry := filepath.Join(root, "collections", "nexusmods-abcdef", "3")
 	require.NoError(t, os.MkdirAll(entry, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(entry, "collection.json"), []byte(nexusFixtureRecipe), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(entry, "collection.json"), []byte(recipe), 0o644))
 	return src
 }
 
@@ -160,4 +168,84 @@ func TestAPIFlow_ProfileImportNexus_BadRequests(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 		})
 	}
+}
+
+// nexusPluginRecipe is a recipe carrying the curator's plugin order and a
+// LOOT-userlist rule (#611).
+const nexusPluginRecipe = `{"Name": "Three Mods", "Mods": [
+	{"Name": "Ten", "Version": "1.0", "SourceType": "nexus", "ModID": "10", "FileID": "100", "UpdatePolicy": "exact"}],
+	"Plugins": [{"Name": "Ten.esp", "Enabled": true}, {"Name": "Ten - Extra.esp", "Enabled": false}],
+	"PluginRules": {"Plugins": [{"Name": "Ten - Extra.esp", "Group": "Late", "After": ["Ten.esp"]}],
+		"Groups": [{"Name": "Late", "After": ["default"]}]}}`
+
+// TestAPIFlow_ProfileImportNexus_PluginOrder (#611): the plan the web UI
+// renders summarises the collection's plugin list and says lmm writes it
+// (a game the bethesda adapter manages), the plan's profile carries the
+// list itself, and the job saves it as the profile's plugins: block.
+func TestAPIFlow_ProfileImportNexus_PluginOrder(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	app.RegisterAdapters(svc)
+	game.Adapter, game.Catalog = "bethesda", "skyrim-se"
+	seedNexusCollectionRecipe(t, svc, game, source.TierFree, nexusPluginRecipe)
+
+	planID, raw := planFlow(t, s, game, "profile_import", `{"nexus_collection":"abcdef"}`)
+	var resp struct {
+		Plan core.ImportPlan `json:"plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &resp))
+	c := resp.Plan.Collection
+	require.NotNil(t, c)
+	assert.Empty(t, c.Unsupported)
+	require.NotNil(t, c.Plugins)
+	assert.Equal(t, core.CollectionPluginSummary{Plugins: 2, Active: 1, Inactive: []string{"Ten - Extra.esp"}, Rules: 1, Groups: []string{"Late"}, Managed: true}, *c.Plugins)
+	want := domain.ProfilePlugins{
+		Order: []domain.PluginEntry{{Name: "Ten.esp", Enabled: true}, {Name: "Ten - Extra.esp"}},
+		Rules: domain.PluginRules{
+			Groups:  []domain.PluginGroup{{Name: "Late", After: []string{"default"}}},
+			Plugins: []domain.PluginRule{{Name: "Ten - Extra.esp", Group: "Late", After: []string{"Ten.esp"}}},
+		},
+	}
+	require.NotNil(t, resp.Plan.Profile)
+	assert.Equal(t, want, resp.Plan.Profile.Plugins, "the list itself rides on the plan's profile")
+
+	j := startFlowJob(t, s, planID, `{}`)
+	require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
+	profile, err := svc.NewProfileManager().Get(t.Context(), game.ID, "Three Mods")
+	require.NoError(t, err)
+	assert.Equal(t, want, profile.Plugins)
+}
+
+// TestAPIFlow_ProfileImportNexus_WarnsOfAPluginRuleCycle (#611 review):
+// the plan the web UI renders carries the cycle warning among the
+// collection's warnings (the plan view's warning notes), and the job
+// still imports.
+func TestAPIFlow_ProfileImportNexus_WarnsOfAPluginRuleCycle(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	app.RegisterAdapters(svc)
+	game.Adapter, game.Catalog = "bethesda", "skyrim-se"
+	seedNexusCollectionRecipe(t, svc, game, source.TierFree, `{"Name": "Three Mods", "Mods": [
+		{"Name": "Ten", "Version": "1.0", "SourceType": "nexus", "ModID": "10", "FileID": "100", "UpdatePolicy": "exact"}],
+		"Plugins": [{"Name": "Ten.esp", "Enabled": true}, {"Name": "Ten - Extra.esp", "Enabled": true}],
+		"PluginRules": {"Plugins": [{"Name": "Ten - Extra.esp", "After": ["Ten.esp"]}, {"Name": "Ten.esp", "Req": ["Ten - Extra.esp"]}]}}`)
+
+	planID, raw := planFlow(t, s, game, "profile_import", `{"nexus_collection":"abcdef"}`)
+	var resp struct {
+		Plan core.ImportPlan `json:"plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &resp))
+	require.NotNil(t, resp.Plan.Collection)
+	assert.Empty(t, resp.Plan.Collection.Unsupported)
+	var warning string
+	for _, w := range resp.Plan.Collection.Warnings {
+		if strings.Contains(w, "form a cycle") {
+			warning = w
+		}
+	}
+	require.NotEmpty(t, warning, "%v", resp.Plan.Collection.Warnings)
+	assert.Contains(t, warning, "a rule loads Ten - Extra.esp after Ten.esp")
+
+	j := startFlowJob(t, s, planID, `{}`)
+	require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
+	_, err := svc.NewProfileManager().Get(t.Context(), game.ID, "Three Mods")
+	require.NoError(t, err)
 }

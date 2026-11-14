@@ -62,10 +62,16 @@ const (
 	// CollectionFeatureFileOverrides is paths an item must win.
 	CollectionFeatureFileOverrides = "file_overrides"
 	// CollectionFeaturePluginOrder is a plugin list or plugin rules: in an
-	// lmm collection document, the profile's `plugins:` block (#616), which
-	// this lmm imports; in a Nexus recipe, `plugins`/`pluginRules`, which a
-	// conversion cannot carry until C6 maps them (convertPending).
+	// lmm collection document, the profile's `plugins:` block (#616); in a
+	// Nexus recipe, `plugins`/`pluginRules`, which a conversion maps onto
+	// that block (#611) - for a game whose plugin list lmm manages, and
+	// refused for any other, where the list would never be written.
 	CollectionFeaturePluginOrder = "plugin_order"
+	// CollectionFeaturePluginRulesIncompatible is a plugin rule saying two
+	// plugins are incompatible (LOOT's `inc`, Vortex's `incompatible`): the
+	// profile's plugin rules have no place for one, so it is refused rather
+	// than dropped (#611).
+	CollectionFeaturePluginRulesIncompatible = "plugin_rules_incompatible"
 	// CollectionFeatureManifestUnavailable is a collection whose recipe
 	// could not be read, so nothing about how to install it is known.
 	CollectionFeatureManifestUnavailable = "manifest_unavailable"
@@ -93,12 +99,10 @@ var convertSupported = map[string]bool{
 // convertPending are the features an lmm collection document supports but
 // a conversion cannot yet carry into one: the converter refuses them even
 // though the document's supported set has them, so a recipe needing one is
-// never converted with that part dropped. plugin_order is the profile's
-// plugins: block (#616); mapping a Nexus recipe's plugins and pluginRules
-// into it is C6, which removes the entry.
-var convertPending = map[string]bool{
-	CollectionFeaturePluginOrder: true,
-}
+// never converted with that part dropped. Empty since #611 mapped a
+// recipe's plugin order (plugin_order is gated per game instead:
+// convertInput.pluginOrder); kept for the next feature in that position.
+var convertPending = map[string]bool{}
 
 // CollectionItemState is what an import does with one converted item.
 type CollectionItemState string
@@ -240,6 +244,10 @@ type convertInput struct {
 	// modTypeSupported reports whether the game routes a stated mod type;
 	// nil supports none.
 	modTypeSupported func(modType string) bool
+	// pluginOrder reports that lmm manages the game's plugin list (its
+	// adapter is a Tier 1 PluginOrderer), so a recipe's plugin order can
+	// be replayed (#611).
+	pluginOrder bool
 }
 
 // item is one collection entry during a conversion.
@@ -297,8 +305,14 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 	}
 
 	var items []*convItem
+	var plugins domain.ProfilePlugins
 	if in.manifest != nil {
 		items = convertManifestItems(in, out)
+		var pluginFeatures []string
+		plugins, pluginFeatures = convertPlugins(in.manifest, out)
+		for _, f := range pluginFeatures {
+			raiseCollection(f)
+		}
 	} else {
 		out.ManifestError = in.manifestErr
 		raiseCollection(CollectionFeatureManifestUnavailable)
@@ -384,6 +398,9 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 		if convertPending[name] {
 			return false
 		}
+		if name == CollectionFeaturePluginOrder {
+			return in.pluginOrder
+		}
 		if convertSupported[name] || supportedCollectionFeatures[name] {
 			return true
 		}
@@ -424,7 +441,7 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 			len(skippedOptional), strings.Join(skippedOptional, ", ")))
 	}
 
-	out.Document = buildCollectionDocument(in, out, items)
+	out.Document = buildCollectionDocument(in, out, items, plugins)
 	warnings, err := sanitizeCollection(out.Document)
 	if err != nil {
 		return nil, err
@@ -565,9 +582,6 @@ func convertManifestItems(in convertInput, out *ConvertedCollection) []*convItem
 			collectionFeature(out, name)
 		}
 	}
-	if len(m.Plugins) > 0 || !m.PluginRules.IsZero() {
-		collectionFeature(out, CollectionFeaturePluginOrder)
-	}
 	for _, lo := range m.FileLoadOrders {
 		collectionFeature(out, CollectionFeatureFileLoadOrderPrefix+lo.ID)
 	}
@@ -683,13 +697,14 @@ func policyRank(p string) int {
 
 // buildCollectionDocument builds the document from the included items: one
 // entry per mod, in install-phase order with the before/after rules
-// applied, and the external items.
-func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []*convItem) *domain.CollectionDocument {
+// applied, the external items, and the plugin list (convertPlugins).
+func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []*convItem, plugins domain.ProfilePlugins) *domain.CollectionDocument {
 	doc := &domain.CollectionDocument{
 		FormatVersion: domain.CollectionFormatVersion,
 		Name:          out.Name,
 		GameID:        in.gameID,
 		Game:          in.game,
+		Plugins:       plugins,
 		Info: domain.CollectionInfo{
 			ID:      in.sourceID + ":" + out.Slug,
 			Version: out.Revision,

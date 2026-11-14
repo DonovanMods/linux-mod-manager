@@ -1,0 +1,63 @@
+lmm_collection: 1
+id: nexusmods:rules
+version: 1
+name: Plugin rules, loot spelling
+title: Plugin rules, loot spelling
+author: curator
+game_id: fo4
+game:
+    name: Fallout 4
+    sources:
+        nexusmods: fallout4
+requires:
+    - plugin_order
+origin:
+    source_id: nexusmods
+    slug: rules
+    revision: 1
+    url: https://www.nexusmods.com/games/fallout4/collections/rules
+    author: curator
+mods:
+    - source_id: nexusmods
+      mod_id: "100"
+      version: "1.0"
+      file_ids:
+        - "1000"
+      locked: true
+      name: Base Patch
+      files:
+        - id: "1000"
+          md5: 0123456789abcdef0123456789abcdef
+          size: 10
+    - source_id: nexusmods
+      mod_id: "200"
+      version: "2.0"
+      file_ids:
+        - "2000"
+      locked: true
+      name: Late Fix
+      files:
+        - id: "2000"
+          md5: fedcba9876543210fedcba9876543210
+          size: 10
+plugins:
+    order:
+        - name: BasePatch.esm
+        - name: LateFix.esp
+        - name: LateFix - Optional.esp
+          enabled: false
+    rules:
+        groups:
+            - name: Late Loaders
+              after:
+                - default
+            - name: default
+        plugins:
+            - name: LateFix.esp
+              group: Late Loaders
+              after:
+                - basepatch.esm
+              req:
+                - BasePatch.esm
+            - name: LateFix - Optional.esp
+              group: Late Loaders

@@ -35,6 +35,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -132,11 +133,107 @@ type CollectionImport struct {
 	Overrides []string `json:"overrides,omitempty"`
 	// Warnings are what the reader skipped or could not check.
 	Warnings []string `json:"warnings,omitempty"`
+	// Plugins summarises the plugin list the import saves on the profile
+	// (#611): absent when the document carries none.
+	Plugins *CollectionPluginSummary `json:"plugins,omitempty"`
 	// Source is the source collection this document was converted from
 	// (#607): every item with what the import does with it, the features
 	// the collection raised, the curator's tools and the conversion's
 	// notes. Absent for a document read from a file or a URL.
 	Source *ConvertedCollection `json:"source,omitempty"`
+}
+
+// CollectionPluginSummary is what a collection import does with the
+// plugin list it carries (#611): the counts a plan shows, and whether lmm
+// will apply it. The list itself is the plan's profile's (ImportPlan.
+// Profile.Plugins).
+type CollectionPluginSummary struct {
+	// Plugins counts the load order's plugins, and Active the ones it
+	// enables; Inactive names the others, in load order.
+	Plugins  int      `json:"plugins"`
+	Active   int      `json:"active"`
+	Inactive []string `json:"inactive,omitempty"`
+	// Rules counts the per-plugin rules, and Groups names the rule groups,
+	// in the document's order.
+	Rules  int      `json:"rules"`
+	Groups []string `json:"groups,omitempty"`
+	// Managed is whether lmm writes the game's plugin list (its adapter
+	// manages one), so the order applies at every deploy. When false the
+	// list is only recorded on the profile.
+	Managed bool `json:"managed"`
+}
+
+// summarisePlugins is p's CollectionPluginSummary, nil when p records
+// nothing.
+func summarisePlugins(p domain.ProfilePlugins, managed bool) *CollectionPluginSummary {
+	if p.IsZero() {
+		return nil
+	}
+	s := &CollectionPluginSummary{Plugins: len(p.Order), Rules: len(p.Rules.Plugins), Managed: managed}
+	for _, e := range p.Order {
+		if e.Enabled {
+			s.Active++
+		} else {
+			s.Inactive = append(s.Inactive, e.Name)
+		}
+	}
+	for _, g := range p.Rules.Groups {
+		if !slices.Contains(s.Groups, g.Name) {
+			s.Groups = append(s.Groups, g.Name)
+		}
+	}
+	return s
+}
+
+// maxCycleEdgesShown caps the edges pluginRuleCycle's warning names.
+const maxCycleEdgesShown = 8
+
+// pluginRuleCycle is a plan warning naming the cycle p's own rules form
+// over the plugins it lists, or "" when they form none (#611 review). It
+// runs P3's sort (sortPlugins) over the plugins the order and the rules
+// name, with no header facts: a cycle among the rules alone fails every
+// deploy that has those plugins (*PluginOrderCycleError), so the plan says
+// so before the import rather than after. A warning, not a refusal: the
+// rules are the curator's, and the user can change them on the profile.
+// Group edges never form a cycle (addGroupEdges skips one that would).
+func pluginRuleCycle(p domain.ProfilePlugins) string {
+	if len(p.Rules.Plugins) == 0 {
+		return ""
+	}
+	var nodes []pluginNode
+	seen := map[string]bool{}
+	add := func(name string) {
+		if !seen[pluginKey(name)] {
+			seen[pluginKey(name)] = true
+			nodes = append(nodes, pluginNode{name: name, modIndex: -1})
+		}
+	}
+	for _, e := range p.Order {
+		add(e.Name)
+	}
+	for _, r := range p.Rules.Plugins {
+		add(r.Name)
+	}
+	_, err := sortPlugins(sortRequest{nodes: nodes, order: p.Order, rules: p.Rules})
+	var cycle *PluginOrderCycleError
+	if !errors.As(err, &cycle) {
+		return ""
+	}
+	// A stranger's recipe can make the cycle as long as its plugin list:
+	// the warning names the first edges and counts the rest, since it
+	// travels in the plan JSON, its SSE frames, the web plan and the
+	// terminal (#611 re-review).
+	shown := min(len(cycle.Edges), maxCycleEdgesShown)
+	parts := make([]string, shown)
+	for i, edge := range cycle.Edges[:shown] {
+		parts[i] = edge.describe()
+	}
+	edges := strings.Join(parts, "; ")
+	if more := len(cycle.Edges) - shown; more > 0 {
+		edges += fmt.Sprintf("; ... and %d more", more)
+	}
+	return "The collection's plugin rules form a cycle, so no load order satisfies them all: " + edges +
+		". The import goes ahead, but every deploy will leave the game's plugin list as it was and report the cycle, until a rule in the profile's plugins: changes."
 }
 
 // CollectionImportResult is the ONE document `lmm profile import --json`
@@ -377,6 +474,12 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 		Warnings:            warnings,
 		Items:               make([]CollectionImportItem, 0, len(doc.Items)),
 	}
+	_, managed := s.pluginRules(game)
+	c.Plugins = summarisePlugins(profile.Plugins, managed)
+	if w := pluginRuleCycle(profile.Plugins); w != "" {
+		c.Warnings = append(c.Warnings, w)
+	}
+
 	for path := range doc.Overrides {
 		c.Overrides = append(c.Overrides, path)
 	}
