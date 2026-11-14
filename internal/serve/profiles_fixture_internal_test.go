@@ -144,13 +144,22 @@ var _ source.ModSource = (*profilesSource)(nil)
 // top of this file, with the active profile's two mods really deployed.
 func newProfilesFixtureServer(t *testing.T) (*Server, *core.Service, *domain.Game) {
 	t.Helper()
+	return newProfilesFixtureServerWith(t, nil)
+}
+
+// newProfilesFixtureServerWith is newProfilesFixtureServer with the
+// Service's download client given: a test TLS server's, for a fetch over
+// https (#622). nil is the default client.
+func newProfilesFixtureServerWith(t *testing.T, downloads *http.Client) (*Server, *core.Service, *domain.Game) {
+	t.Helper()
 	sandboxEnv(t)
 
 	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-		Logger:    slog.New(slog.DiscardHandler),
+		ConfigDir:      t.TempDir(),
+		DataDir:        t.TempDir(),
+		CacheDir:       t.TempDir(),
+		Logger:         slog.New(slog.DiscardHandler),
+		DownloadClient: downloads,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })

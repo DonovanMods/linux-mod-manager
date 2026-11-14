@@ -187,7 +187,9 @@ again.
 ### What an import holds back
 
 Every import from a file, whether a collection or an older export, lists
-two things before it does anything, and leaves them out unless you ask:
+two things before it does anything, and leaves them out unless you ask (an
+import from a link never imports hooks at all; see
+[Importing a collection from a link](#importing-a-collection-from-a-link)):
 
 - **Hooks**, the scripts the profile runs. They are only imported if you
   add `--with-hooks` (in the browser, tick **Import these hooks**), so a
@@ -234,6 +236,42 @@ are fetched again.)
 To make sure a friend gets *exactly* the version you have, lock the mod
 first (see [Locking a mod](updates.md#locking-a-mod-to-one-version)). Locks
 are saved in the exported file.
+
+### Importing a collection from a link
+
+A collection someone has put online (a gist, a file in a git repository, a
+download link) imports straight from its address:
+
+```bash
+lmm profile import https://example.com/coop.lmmc
+lmm profile import https://example.com/coop.yaml --as coop-friday --game cp2077
+```
+
+In the browser, paste the address into **From a URL** in the Profiles
+window and press **Import from URL**. The address must be `https://`, and
+it must lead to the file itself (a `.lmmc`, its YAML, or an older export),
+not to a web page about it. lmm downloads at most 64 MiB for a `.lmmc` and
+4 MiB for a YAML file, and won't follow a link that sends it on to a plain
+`http://` address.
+
+An import from a link differs from one from a file in two ways:
+
+- **Hooks are never imported**, even with `--with-hooks`. The plan still
+  lists them, so you can see what the collection would have run, and the
+  import says at the end that they were left out. If you trust them,
+  download the file and import it with `--with-hooks`.
+- **The profile remembers the address**, so a later update of the
+  collection can fetch it again. A `user:password@` part of the address is
+  used for the download and never saved. Only the profile file keeps the
+  whole address; everywhere else (the plan, `--json` output, the browser,
+  messages) lmm shows it without anything after a `?`, in case that holds
+  a token.
+
+The overrides rule is the same as for a file. An older export imports into
+the game you name with `--game`, or else the game its `game_id` names (in
+the browser, the selected game). Unlike an older export from a file, one
+from a link takes `--as` (in the browser, the **Profile name** field), since
+it imports the way a collection does.
 
 A Steam Workshop **collection** can be imported as a profile too, by pasting
 its link into the Profiles window, or with

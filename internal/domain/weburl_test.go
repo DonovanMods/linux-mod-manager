@@ -49,3 +49,21 @@ func TestModPageURL(t *testing.T) {
 		t.Errorf("nil Mod PageURL() = %q, want empty", got)
 	}
 }
+
+func TestRedactURL(t *testing.T) {
+	cases := map[string]string{
+		"https://example.com/c.lmmc":                           "https://example.com/c.lmmc",
+		"https://user:secret@example.com/c.lmmc":               "https://example.com/c.lmmc",
+		"https://example.com/c.lmmc?token=abc&dl=1":            "https://example.com/c.lmmc?…",
+		"https://u:p@example.com:8443/a/b.yaml?sig=x#fragment": "https://example.com:8443/a/b.yaml?…",
+		"https://example.com/c.lmmc#only-a-fragment":           "https://example.com/c.lmmc",
+		"":                     "",
+		"::not a url":          "",
+		"/relative/c.lmmc?x=1": "",
+	}
+	for in, want := range cases {
+		if got := RedactURL(in); got != want {
+			t.Errorf("RedactURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

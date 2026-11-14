@@ -106,7 +106,7 @@ func (s *Server) handleAPIProfileReorder(w http.ResponseWriter, r *http.Request)
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, &core.ProfileResult{Profile: *profile})
+	s.writeJSON(w, http.StatusOK, core.NewProfileResult(*profile))
 }
 
 // reorderErrorStatus classifies a ResolveReorder failure. An id naming a

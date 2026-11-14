@@ -23,6 +23,10 @@
 // takes core's collection import instead: PlanCollectionImport into the
 // selected game, ApplyCollectionImport with the apply request's WithHooks.
 // The document is a file the user picked, so its hooks are importable.
+//
+// An https address (#622) - the modal's URL field - is fetched by core
+// (PlanCollectionImportURL) and planned the same way, except that its hooks
+// are never importable and the address is recorded as the profile's origin.
 package serve
 
 import (
@@ -78,13 +82,27 @@ type profileImportPlanRequest struct {
 	NexusCollection string   `json:"nexus_collection,omitzero"`
 	WithOptional    bool     `json:"with_optional,omitzero"`
 	Optional        []string `json:"optional,omitzero"`
-	ProfileName     string   `json:"profile_name,omitzero"`
+	// URL is an https address of an lmm collection or a profile export
+	// (#622): `lmm profile import https://…`. Core fetches it; its hooks
+	// are never applied (the apply's with_hooks is ignored), and the
+	// address becomes the profile's origin. Exclusive of every other input.
+	URL         string `json:"url,omitzero"`
+	ProfileName string `json:"profile_name,omitzero"`
 }
 
 // validate implements validatingOptions. The two inputs are mutually
 // exclusive: with both, the server would be guessing which one the caller
 // meant, and the CLI refuses the same combination.
 func (r *profileImportPlanRequest) validate() error {
+	if r.URL != "" {
+		if r.Data != "" || r.DataBase64 != "" || r.UploadID != "" || r.WorkshopCollection != "" || r.NexusCollection != "" {
+			return errors.New(`"url" and "data"/"data_base64"/"upload_id"/"workshop_collection"/"nexus_collection" are mutually exclusive`)
+		}
+		if r.WithOptional || len(r.Optional) > 0 {
+			return errors.New(`"with_optional" and "optional" apply to "nexus_collection" only`)
+		}
+		return nil
+	}
 	if r.NexusCollection != "" {
 		if r.Data != "" || r.DataBase64 != "" || r.UploadID != "" || r.WorkshopCollection != "" {
 			return errors.New(`"nexus_collection" and "data"/"data_base64"/"upload_id"/"workshop_collection" are mutually exclusive`)
@@ -117,7 +135,7 @@ func (r *profileImportPlanRequest) validate() error {
 	}
 	switch {
 	case r.Data == "" && r.WorkshopCollection == "":
-		return errors.New(`"data", "upload_id", "workshop_collection" or "nexus_collection" is required`)
+		return errors.New(`"data", "upload_id", "url", "workshop_collection" or "nexus_collection" is required`)
 	case r.Data != "" && r.WorkshopCollection != "":
 		return errors.New(`"data" and "workshop_collection" are mutually exclusive`)
 	case r.Data == "" && r.ProfileName == "":
@@ -182,6 +200,9 @@ func planProfileImportKind(ctx context.Context, s *Server, sel selection, opts a
 	}
 	if req.NexusCollection != "" {
 		return planNexusCollectionImport(ctx, s, sel, req)
+	}
+	if req.URL != "" {
+		return planURLCollectionImport(ctx, s, sel, req)
 	}
 	if req.UploadID != "" {
 		data, err := s.readProfileUpload(req.UploadID)
@@ -328,6 +349,25 @@ func planLMMCollectionImport(ctx context.Context, s *Server, sel selection, req 
 	})
 	if err != nil {
 		if core.IsInvalidCollection(err) || core.IsUnsafeImport(err) || core.IsCollectionGameUnresolved(err) || errors.Is(err, domain.ErrInvalidProfileName) {
+			return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
+		}
+		return nil, nil, err
+	}
+	return plan, &pendingProfileImport{Game: sel.Game, Plan: plan}, nil
+}
+
+// planURLCollectionImport is the URL half of the plan kind (#622): core
+// fetches the address and plans its document - a collection, or a
+// version-0 export - into the selected game, as the CLI's `--game` does.
+// An address core refuses, and a document it refuses, are the caller's
+// 400; a fetch that failed is the address's (502, planErrorStatus).
+func planURLCollectionImport(ctx context.Context, s *Server, sel selection, req profileImportPlanRequest) (any, any, error) {
+	plan, err := s.svc.PlanCollectionImportURL(ctx, core.CollectionURLImportRequest{
+		URL: req.URL, GameID: sel.Game.ID, ProfileName: req.ProfileName,
+	})
+	if err != nil {
+		if core.IsCollectionURLInvalid(err) || core.IsInvalidCollection(err) || core.IsUnsafeImport(err) ||
+			core.IsCollectionGameUnresolved(err) || errors.Is(err, domain.ErrInvalidProfileName) {
 			return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
 		}
 		return nil, nil, err

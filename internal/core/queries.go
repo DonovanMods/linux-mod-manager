@@ -255,6 +255,7 @@ func (s *Service) ExportProfile(ctx context.Context, gameID, profileName string)
 	if err != nil {
 		return nil, err
 	}
+	profile.Collection = withoutImportURL(profile.Collection)
 	return config.ExportProfileValue(profile), nil
 }
 

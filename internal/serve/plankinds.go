@@ -194,6 +194,10 @@ func planErrorStatus(err error) int {
 		return http.StatusConflict
 	case core.IsIndexUnavailable(err):
 		return http.StatusBadGateway
+	// #622: a collection address that did not answer, or answered with an
+	// error, is the remote end's failure, not the request's.
+	case core.IsCollectionFetchFailed(err):
+		return http.StatusBadGateway
 	case errors.Is(err, errBadPlanRequest):
 		return http.StatusBadRequest
 	case errors.Is(err, core.ErrProfileNotActive), errors.Is(err, core.ErrActiveProfileUnknown):
