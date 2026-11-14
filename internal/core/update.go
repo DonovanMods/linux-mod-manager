@@ -1052,7 +1052,8 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// else its recorded choices; the tree they resolve to is the new
 	// variant, and its choices (with the new installer's config hash) are
 	// recorded.
-	fx := s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod)
+	recorded := s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID)
+	fx := s.fomodInputFor(ctx, game, profileName, recorded, mod.SourceID, mod.ID, opts.Fomod)
 	// #634: a mod recorded per file replays each old file's choices on the
 	// new file that replaces it.
 	pairs := pairUpdateFiles(mod.FileIDs, files, filesToDownload, upd.FileIDReplacements)
@@ -1075,7 +1076,10 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	}
 	newMod.Variant = ""
 	results, resolved, err := s.downloadModFiles(ctx, s.GetGameCache(game), mod.SourceID, game, newMod, filesToDownload, fx,
-		modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, checkCtx: true})
+		// #639: the new files commit to the entry that is exactly their
+		// tree - never layered onto the old set's at the same version,
+		// which the old row (and any other profile's) still names.
+		modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, checkCtx: true, fileSet: true})
 	if err != nil {
 		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
 			return result, err

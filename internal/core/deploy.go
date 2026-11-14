@@ -1130,8 +1130,16 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		}
 		emit(DownloadEvent{Scope: scope, Phase: DeployDownloading, Percent: d.Percent})
 	}
-	results, _, err := s.downloadModFiles(ctx, s.GetGameCache(game), mod.SourceID, game, fetchedMod, filesToDownload, fx,
-		modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, requireVariant: &mod.Variant})
+	// #639: a heal to another set of the version's files is checked
+	// against the row's own tree, and commits to the entry that set's tree
+	// is - another entry than the row's when the base entry holds another
+	// set.
+	healed := len(mod.FileIDs) > 0 && !sameFileIDSet(filesToDownload, mod.FileIDs)
+	hooks := modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, requireVariant: &mod.Variant}
+	if healed {
+		hooks.healFrom = mod.FileIDs
+	}
+	results, _, err := s.downloadModFiles(ctx, s.GetGameCache(game), mod.SourceID, game, fetchedMod, filesToDownload, fx, hooks)
 	if err != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			return skip(fmt.Sprintf("cancelled: %v", cerr))
@@ -1144,7 +1152,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	for i, file := range filesToDownload {
 		checksums = appendChecksum(checksums, file.ID, results[i])
 	}
-	if fetchedMod.Variant != mod.Variant {
+	if !healed && fetchedMod.Variant != mod.Variant {
 		return skip(ReasonFomodReanswer)
 	}
 
@@ -1169,12 +1177,33 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 			}
 			healedIDs = append(healedIDs, f.ID)
 		}
-		if err := s.setModFileIDs(ctx, mod.SourceID, mod.ID, game.ID, mod.ProfileName, healedIDs); err != nil {
+		// #639: the row's variant moves with its files - the entry the
+		// healed set was committed to - in the same write.
+		if err := s.db.SetModFileSet(ctx, mod.SourceID, mod.ID, game.ID, mod.ProfileName, healedIDs, fetchedMod.Variant); err != nil {
 			msg := fmt.Sprintf("Warning: could not persist healed file IDs for %s: %v", mod.Name, err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: DeployNote, Detail: msg})
+			if fetchedMod.Variant != mod.Variant {
+				// The row still names its old entry, which this deploy
+				// cannot install from.
+				return skip(fmt.Sprintf("could not record the healed files: %v", err))
+			}
 		} else {
+			// #639: the profile follows its row (Ruling 16: written even
+			// under a cancelled ctx once the row moved), so the next apply
+			// sees no file drift and reinstalls nothing.
+			if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+				return s.NewProfileManager().healRefFileIDs(ctx, game.ID, mod.ProfileName, mod.SourceID, mod.ID, mod.FileIDs, healedIDs)
+			}); err != nil {
+				if cerr := ctx.Err(); cerr != nil {
+					return skip(fmt.Sprintf("cancelled: %v", cerr))
+				}
+				msg := fmt.Sprintf("Warning: could not record healed file IDs for %s in profile %s: %v", mod.Name, mod.ProfileName, err)
+				result.Notes = append(result.Notes, msg)
+				emit(StepEvent{Scope: scope, Phase: DeployNote, Detail: msg})
+			}
 			mod.FileIDs = healedIDs
+			mod.Variant = fetchedMod.Variant
 		}
 	}
 

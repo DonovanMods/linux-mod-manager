@@ -130,7 +130,9 @@ func (s *Service) PlanRollback(ctx context.Context, game *domain.Game, profileNa
 		plan.Refusal = lockedRefUnlockOnlyMessage(mod.Mod, profileName, ref)
 	}
 
-	plan.CacheMissing = !s.GetGameCache(game).Exists(previousCacheKey(game.ID, mod))
+	// #639: an entry refilled by another set of the version's files is not
+	// the rollback's tree: missing, as far as a rollback goes.
+	plan.CacheMissing = !s.rollbackTargetHolds(ctx, game, mod)
 
 	return plan, nil
 }
@@ -329,7 +331,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 		return result, fmt.Errorf("no previous version available for rollback")
 	}
 
-	if !s.GetGameCache(game).Exists(previousCacheKey(game.ID, &mod)) {
+	if !s.rollbackTargetHolds(ctx, game, &mod) {
 		return result, fmt.Errorf("previous version %s not found in cache", mod.PreviousVersion)
 	}
 

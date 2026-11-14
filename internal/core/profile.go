@@ -633,6 +633,34 @@ func (pm *ProfileManager) upsertModRef(ctx context.Context, gameID, profileName 
 	return pm.save(profile)
 }
 
+// healRefFileIDs moves every ref of sourceID/modID that pins exactly the
+// files from to the files to (#639): the profile half of a deploy's
+// file-id heal (#139), so the profile keeps naming the files its row was
+// healed to and no converge reinstalls them. A ref that pins nothing, or
+// pins another set, is left alone; an unchanged document is not rewritten.
+func (pm *ProfileManager) healRefFileIDs(ctx context.Context, gameID, profileName, sourceID, modID string, from, to []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i := range profile.Mods {
+		ref := &profile.Mods[i]
+		if ref.SourceID != sourceID || ref.ModID != modID || len(ref.FileIDs) == 0 || !sameFileIDs(ref.FileIDs, from) {
+			continue
+		}
+		ref.FileIDs = slices.Clone(to)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return pm.save(profile)
+}
+
 // setUnlockedRefVersions moves the Version of every UNLOCKED ref whose
 // ModKey is in versions to the version given - the profile half of
 // ReconcileExternalMods (#538). One load and at most one save, whatever

@@ -107,7 +107,7 @@ func (s *Service) rebuildInput(ctx context.Context, game *domain.Game, row *doma
 // states first (rebuildInput) - each file's own, for a mod recorded per
 // file (#634; applied by forFile).
 func asRebuild(in fomodInput, row *domain.InstalledMod) fomodInput {
-	if row.Variant == "" && in.choices.IsZero() && in.fileChoices.IsZero() {
+	if fomodTreeVariant(row) == "" && in.choices.IsZero() && in.fileChoices.IsZero() {
 		in.raw = true
 		return in
 	}
@@ -373,8 +373,18 @@ type modFileHooks struct {
 	checkCtx bool
 	// requireVariant, when set, is the only tree a rebuild may commit: a
 	// resolve to any other variant is refused with ReasonFomodReanswer
-	// BEFORE anything is committed, so no unused entry is left behind.
+	// BEFORE anything is committed, so no unused entry is left behind. The
+	// resolved tree's file-set variant (#639) counts as that tree.
 	requireVariant *string
+	// fileSet is a converge flow's install (#639): unless the base entry of
+	// the mod's version is these files' (fileSetEntry), they commit to
+	// their file-set variant instead (restampFileSet).
+	fileSet bool
+	// healFrom, with requireVariant, is the files the row recorded when a
+	// rebuild downloads another set (deploy's file-id heal, #139):
+	// requireVariant must be their tree, and the healed files commit to
+	// the entry fileSetEntry names for them.
+	healFrom []string
 }
 
 // downloadModFiles fetches a mod's files into gameCache the way an
@@ -443,8 +453,25 @@ func (s *Service) downloadModFiles(ctx context.Context, gameCache *cache.Cache, 
 	if err != nil {
 		return nil, nil, err
 	}
-	if hooks.requireVariant != nil && mod.Variant != *hooks.requireVariant {
-		return nil, nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: ReasonFomodReanswer}
+	// #639: a set of files the base entry does not hold commits to an
+	// entry of its own - and a rebuild of a row installed into one, to it.
+	switch {
+	case hooks.requireVariant != nil:
+		rowIDs := acquiredIDs(committed)
+		if hooks.healFrom != nil {
+			rowIDs = hooks.healFrom
+		}
+		if !isTreeOf(*hooks.requireVariant, mod.Variant, rowIDs) {
+			return nil, nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: ReasonFomodReanswer}
+		}
+		if hooks.healFrom != nil {
+			// Healed files are another set: the entry their tree is.
+			s.restampFileSet(ctx, gameCache, game.ID, mod, committed)
+		} else {
+			moveToVariant(mod, committed, *hooks.requireVariant)
+		}
+	case hooks.fileSet:
+		s.restampFileSet(ctx, gameCache, game.ID, mod, committed)
 	}
 	results := make([]*DownloadModResult, len(acquired))
 	for _, a := range committed {
@@ -463,12 +490,13 @@ func (s *Service) downloadModFiles(ctx context.Context, gameCache *cache.Cache, 
 // version drift. A reference that records no choices never drifts: a row
 // installed with choices the profile does not carry (an older lmm dropped
 // the key on a rewrite) keeps its tree rather than ask a question no
-// converge flow can.
+// converge flow can. The choices' tree moved to its file-set variant
+// (#639) is still theirs.
 //
 // A reference whose files have a file list or patches (#610) drifts the
 // same way: they name the tree too.
 func fomodDrift(ref domain.ModReference, row *domain.InstalledMod) bool {
-	return row != nil && (!ref.FomodRecord().IsZero() || ref.HasTreeInputs()) && row.Variant != refVariant(&ref)
+	return row != nil && (!ref.FomodRecord().IsZero() || ref.HasTreeInputs()) && !rowFitsRef(row, &ref)
 }
 
 // cmpFomod is an ingest's outcome for the profile write: the installer's

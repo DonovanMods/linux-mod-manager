@@ -991,7 +991,12 @@ func seedConflictingMod(t *testing.T, svc *core.Service, game *domain.Game) {
 		Enabled:      true,
 	}))
 	deployInstalledMod(t, svc, game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default")
-	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}, "shared.esp", []byte("n")))
+	mod1 := cache.Key{GameID: game.ID, SourceID: "test-src", ModID: "mod1", Version: "1.0"}
+	require.NoError(t, svc.GetGameCache(game).Store(mod1, "shared.esp", []byte("n")))
+	// #639: the entry is mod1's file "main"'s tree, as its marker says; an
+	// unmarked entry no row pins would be no file set's, and an install
+	// would build its own beside it.
+	require.NoError(t, cache.MarkFileCompleteWithMembers(svc.GetGameCache(game).ModPath(mod1), "main", []string{"shared.esp"}))
 }
 
 // TestDoInstall_ConflictPrompt_ForceSkipsPrompt guards the conflict prompt

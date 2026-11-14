@@ -273,7 +273,7 @@ keeps it. An update then decides each entry:
 
 | The profile's entry | In the new version | The update |
 |---|---|---|
-| marked | changed | follows the new pin (version, files, lock, `fomod`, `mod_type`), locked or not; files that change at the same version apply when the mod is next reinstalled |
+| marked | changed | follows the new pin (version, files, lock, `fomod`, `mod_type`), locked or not; files that change at the same version reinstall the mod with the new files |
 | not marked | changed | a **conflict**: the user's entry is kept, unless overridden (`--override`) |
 | marked | absent | **obsolete**: kept and unmarked, unless removed (`--remove`), which uninstalls it |
 | absent | present | added and installed |

@@ -846,6 +846,41 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **A profile that swaps a mod's file at the same version now reinstalls
+  it (#639).** When a profile entry's `file_ids` changed but its `version`
+  did not (a collection update that swaps a file, a profile edited by
+  hand, an import of an edited profile), `lmm profile apply`,
+  `lmm profile switch`, `lmm profile import` and a collection update all
+  reported nothing to do, and the old file stayed installed. A different
+  set of files is now drift, as a different version is: each of them
+  reinstalls the mod with the new files, and its plan says so
+  (`reinstall: files changed` in the terminal and the web UI;
+  `"reason": "files_changed"` on an apply plan's entry and a
+  `reinstall_reasons` map on a switch or import plan in `--json`, both
+  new and omitted otherwise). File sets compare as sets, so the same files
+  in another order are no change. Each set of files at a version now has
+  a cache entry of its own (`<version>@<variant>` beside the version's
+  own), so one set's tree is never reused for, or layered onto by,
+  another: before, `lmm install --file` of another file at the same
+  version, a multi-select or dependency install, a same-version
+  `lmm update`, `lmm update --from-file` or `lmm import <archive>` with
+  `--source`/`--id` wrote into the entry another profile (or the update's
+  own previous files) was deploying from, so a later `lmm deploy` could
+  bring a superseded file back. A rollback whose previous version's entry
+  was cleared and refilled by another set of files now refuses, as a
+  rollback with no cached previous version does, rather than deploy that
+  other tree. A same-version update now retires the old
+  files whole, as a version change does, even from an entry made before
+  lmm recorded which file put which member there. An
+  entry keeps its key for
+  exactly the files it was built from, so installed mods keep theirs and
+  nothing is re-downloaded after the upgrade; an entry from before lmm
+  recorded its files is reused for the files an installed mod there
+  records. A deploy that heals a mod to another file (#139) now moves the
+  profile's entry to that file too, so the next apply does not reinstall
+  it. A collection update's plan note for a same-version file change now
+  says it reinstalls the mod.
+
 - **A config override whose content starts with a tab now round-trips
   (#640).** Such content was written as a YAML block the reader then
   rejected ("found a tab character where an indentation space is

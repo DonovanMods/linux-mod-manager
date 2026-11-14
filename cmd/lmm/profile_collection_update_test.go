@@ -237,5 +237,5 @@ mods:
 	})
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "~ nexusmods:1 1.0 (files)")
-	assert.Contains(t, stdout, "they apply when the mod is next reinstalled")
+	assert.Contains(t, stdout, "files changed at the same version: the update reinstalls the mod with the new files")
 }

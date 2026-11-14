@@ -869,6 +869,37 @@ func (d *DB) SetModFileIDs(ctx context.Context, sourceID, modID, gameID, profile
 	return d.replaceModFileIDs(ctx, sourceID, modID, gameID, profileName, fileIDs)
 }
 
+// SetModFileSet updates an installed mod's file IDs and the variant of its
+// tree together, in one transaction (#639): a heal to another set of the
+// version's files can move the row to another cache entry, and the row
+// must never name the new files in the old entry or the other way round.
+func (d *DB) SetModFileSet(ctx context.Context, sourceID, modID, gameID, profileName string, fileIDs []string, variant string) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE installed_mods SET variant = ?
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
+	`, variant, sourceID, modID, gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("setting mod variant: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("setting mod variant: checking rows affected: %w", err)
+	}
+	if rows == 0 {
+		return domain.ErrModNotFound
+	}
+	if err := replaceModFileIDsTx(ctx, tx, sourceID, modID, gameID, profileName, fileIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // ApplyModUpdate updates version and file IDs atomically while preserving rollback state.
 // An applied update also clears the row's skipped_version (#542): the user
 // has acted on the update the skip was holding off. newVariant is the new

@@ -412,3 +412,21 @@ func TestModVersionRows(t *testing.T) {
 		{GameID: "sky2", Profile: "x", Version: "1.0"},
 	}, rows)
 }
+
+// #639: a heal's new files and the variant of the entry they live in are
+// one write.
+func TestSetModFileSet_WritesFilesAndVariantTogether(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	ctx := context.Background()
+
+	installTestMod(t, database)
+	require.NoError(t, database.SetModFileSet(ctx, "nexusmods", "12345", "skyrim-se", "default", []string{"333"}, "abcdef123456"))
+	mod, err := database.GetInstalledMod(ctx, "nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"333"}, mod.FileIDs)
+	assert.Equal(t, "abcdef123456", mod.Variant)
+
+	assert.ErrorIs(t, database.SetModFileSet(ctx, "nexusmods", "missing", "skyrim-se", "default", []string{"1"}, ""), domain.ErrModNotFound)
+}

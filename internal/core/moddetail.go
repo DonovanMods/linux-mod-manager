@@ -210,7 +210,7 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		}
 	}
 	info.FomodNotRun = s.IsLegacyFomodInstall(game, installed)
-	if info.Fomod == nil && (installed.Variant != "" || info.FomodNotRun) {
+	if info.Fomod == nil && (fomodTreeVariant(installed) != "" || info.FomodNotRun) {
 		// A FOMOD install whose profile lost its choices (an older lmm
 		// dropped the key on a rewrite), or one installed before lmm ran
 		// FOMOD installers (its cache entry is the raw installer archive),

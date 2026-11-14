@@ -12,7 +12,7 @@
 // row is rendered as a warning, in place, with the source's own words.
 
 import { html } from "../render.js";
-import { displayVersion } from "../version.js";
+import { displayVersion, reinstallReason } from "../version.js";
 import { PlanOverrides } from "./planoverrides.js";
 
 /** ModList renders one bucket of installed mods (to_enable/to_disable),
@@ -111,10 +111,18 @@ export function ProfileApplyPlanView({ plan }) {
                       >`
                     }
                     ${
-                      entry.replaces &&
-                      html`<span class="plan__mod-detail"
-                        >replacing ${entry.replaces.version}</span
-                      >`
+                      // Issue 639: a reinstall at the same version says why,
+                      // where "replacing" would name the version it keeps.
+                      reinstallReason(entry.reason)
+                        ? html`<span
+                            class="plan__mod-detail"
+                            data-testid="reinstall-reason"
+                            >${reinstallReason(entry.reason)}</span
+                          >`
+                        : entry.replaces &&
+                          html`<span class="plan__mod-detail"
+                            >replacing ${entry.replaces.version}</span
+                          >`
                     }
                     ${
                       !entry.error &&

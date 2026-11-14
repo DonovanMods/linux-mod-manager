@@ -73,3 +73,13 @@ export function displayUpdateTarget(update) {
     return "newer";
   return update.new_version ?? "";
 }
+
+/**
+ * reinstallReason words a converge plan's reason for reinstalling a mod at
+ * the version it already has (core.ReinstallFilesChanged, issue 639): the
+ * profile pins another set of its files. "" for no reason, so a plan line
+ * shows nothing extra.
+ */
+export function reinstallReason(reason) {
+  return reason === "files_changed" ? "reinstall: files changed" : "";
+}

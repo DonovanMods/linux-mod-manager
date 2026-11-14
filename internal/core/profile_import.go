@@ -78,6 +78,13 @@ type ImportPlan struct {
 	NeedsRedownload []domain.ModReference `json:"needs_redownload"`
 	Missing         []domain.ModReference `json:"missing"`
 
+	// ReinstallReasons says, keyed by domain.ModKey, why a NeedsRedownload
+	// entry reinstalls a mod the profile already has at that version:
+	// ReinstallFilesChanged, for a document that pins another set of its
+	// files (#639). Absent for every other entry. Additive; omitted when
+	// empty.
+	ReinstallReasons map[string]string `json:"reinstall_reasons,omitempty"`
+
 	// WorkshopCollection describes the Steam Workshop collection this plan
 	// was built from, when it was built from one
 	// (Service.PlanWorkshopCollectionImport, #269 W2): what the collection
@@ -337,6 +344,7 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 	// row the classification used rather than an arbitrary one.
 	pickedElsewhere := make(map[string]domain.InstalledMod)
 	var priorVersions map[string]domain.InstalledMod // #138 - see ImportPlan.priorVersions
+	var reinstallReasons map[string]string           // #639 - see ImportPlan.ReinstallReasons
 	gameCache := s.GetGameCache(game)
 	// seen: a mod listed twice is decided by its first reference, as every
 	// other flow decides it (firstRefs), and lands in one bucket at most.
@@ -368,7 +376,7 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 				// branch below into a reinstall lmm has no way to perform.
 				// "Already installed" is the whole truth about it.
 				installed = append(installed, ref)
-			case (ref.Version != "" && im.Version != ref.Version) || fomodDrift(ref, &im):
+			case (ref.Version != "" && im.Version != ref.Version) || fomodDrift(ref, &im) || fileSetDrift(ref, &im):
 				// #138 convergence (and #614's FOMOD choices drift), mirroring PlanProfileSwitch's #96 drift
 				// case: the imported profile names a different version than
 				// the installed row - reinstall at the profile's version
@@ -383,6 +391,13 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 					priorVersions = make(map[string]domain.InstalledMod)
 				}
 				priorVersions[key] = im
+				// #639: a file-set drift at the same version says why.
+				if why := reinstallReason(ref, &im); why != "" {
+					if reinstallReasons == nil {
+						reinstallReasons = make(map[string]string)
+					}
+					reinstallReasons[key] = why
+				}
 			case gameCache.Exists(cache.Key{GameID: game.ID, SourceID: ref.SourceID, ModID: ref.ModID, Version: im.Version, Variant: im.Variant}):
 				// Bare Exists, deliberately, where the cross-profile branch
 				// below reads HasFileIDs (P1a re-review N5): the two ask
@@ -454,6 +469,11 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 			// was recorded above, by the candidate scan rather than by this
 			// row: the pick is about bytes, not about what is on disk.
 			needsRedownload = append(needsRedownload, ref)
+		case fileSetDrift(ref, &im):
+			// #639: the other profile holds this version from another set
+			// of its files, so this profile's own set is fetched, as
+			// another version would be.
+			needsRedownload = append(needsRedownload, ref)
 		case cached(im):
 			// #371: the bytes are here - install this profile's own row
 			// from the cache entry rather than calling it "installed" and
@@ -491,6 +511,7 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 		AlreadyCached:       alreadyCached,
 		NeedsRedownload:     needsRedownload,
 		Missing:             missing,
+		ReinstallReasons:    reinstallReasons,
 		Exists:              exists,
 		RecordedOnly:        recordedOnly,
 		ActiveProfile:       live,
@@ -557,7 +578,8 @@ func pickImportRow(rows []domain.InstalledMod, ref domain.ModReference, cached f
 	for _, row := range rows {
 		// #614: a row of another tree (other FOMOD choices) is not the
 		// one the reference names.
-		versionMatches := (ref.Version == "" || row.Version == ref.Version) && row.Variant == refVariant(&ref)
+		// #639: nor is a row of another set of the version's files.
+		versionMatches := (ref.Version == "" || row.Version == ref.Version) && rowFitsRef(&row, &ref) && !fileSetDrift(ref, &row)
 		score := 0
 		switch {
 		case row.External:
@@ -608,7 +630,7 @@ func liveOtherVersion(rows []domain.InstalledMod, ref domain.ModReference) (doma
 		return domain.InstalledMod{}, false
 	}
 	for _, row := range rows {
-		if row.Deployed && !row.External && row.Version != ref.Version {
+		if row.Deployed && !row.External && (row.Version != ref.Version || fileSetDrift(ref, &row)) {
 			return row, true
 		}
 	}
