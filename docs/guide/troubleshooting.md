@@ -25,6 +25,11 @@ unchanged, and that the game folder holds what it should. If anything is
 wrong, a **Health** card appears on the main screen, with a **Repair**
 button for each problem lmm can fix by itself.
 
+If a file was deleted from lmm's download cache by hand, verify says the
+mod's cache is incomplete and names the file; **Repair** (or
+`lmm verify --fix`) downloads it again. The copy in the game folder is
+left where it is until then.
+
 The **Verify** button is in the library toolbar. In the terminal:
 
 ```bash
