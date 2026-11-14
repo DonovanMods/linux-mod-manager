@@ -415,6 +415,15 @@ With §4 and §5 in place, replaying a collection's recipe is mostly mapping:
 | `info.installInstructions`, per-mod `instructions` | shown in the plan (CLI: printed before confirmation; SPA: a callout) |
 | `collectionConfig.recommendNewProfile` | ignored. An import always creates a profile |
 
+*As built in C5 (#610, 2026-11-14):*
+
+- **File lists and patches are per file**, not per mod: `ModReference.file_list` and `.patches` are keyed by file id, because a collection item is one file and a mod's files merge into one entry (one file of a mod can be replicate-mode while another is not). The key is `file_list`, not `files:`, which the document already uses for each archive's `{id, md5, size}`. An entry for a file the reference does not pin is inert, so an update that moves the mod to another file installs that file whole, and a rollback that pins the curator's file again brings the list back. A patch entry records `{path, crc32, sha256}`: the patch is named by its sha256 and kept in a content-addressed store, `<cache>/collections/patches/<sha256>.diff`, so every rebuild (switch, apply, deploy's self-heal, `verify --fix`, `install --from-file`) can patch again; a `.lmmc` carries the patches as `patches/<sha256>.diff`.
+- **Order:** extract, FOMOD resolve, file list filter, patches (CRC32 baseline, refusal on mismatch), then each listed file's md5 - the curator's file as installed, so after its patch - then the adapter. Paths match case-insensitively with either separator and must match one file.
+- **Variant:** `treeInputsVariant` hashes the file lists and patches over the FOMOD variant (scheme `lmm-tree-inputs-1`); a mod with neither keeps its variant, byte for byte.
+- **Bundled:** a `bundle` item's tree is the recipe's `bundled/<fileExpression>/` (VERIFIED across the survey), read into L3's `bundledItem` and kept under the recipe's own id `<source>-<slug>`, with an index beside the recipe's entry; the converted document's id `<source>:<slug>` maps onto it on re-export and re-import. A bundled item installs on a free account.
+- **A patch to code** (a DLL, an executable, a system script, a loader configuration, by its file name) needs `--allow-any-overrides`, and without it the import is refused rather than the patch dropped. This was not in the design; two of the survey's patches are to DLLs (one Stardew Valley collection).
+- **Survey:** 51 of the 72 recipes now import (40 after C9); no recipe's bundled files or patches failed to read, and every recipe archive passes the new listing checks.
+
 ### Free accounts
 
 A free account cannot get API download links, and automating the website's "slow download" is not something lmm will do, whatever the ToS says (§11 Q1 notes the ToS wording is unverified). The import still works:
