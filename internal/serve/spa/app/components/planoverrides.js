@@ -10,7 +10,10 @@ import { html } from "../render.js";
 const ACTIONS = {
   place: "write the override",
   update: "rewrite the override",
+  replace_changed:
+    "it changed since lmm wrote an override there: your file is kept, then the override written",
   restore: "take the override away",
+  keep: "kept as it is: it changed since lmm wrote the override",
 };
 
 /** changePath is a change's path as the CLI prints it. */

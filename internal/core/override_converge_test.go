@@ -209,7 +209,7 @@ func TestNonModOverride_AFileTheUserChangedIsKept(t *testing.T) {
 	require.NoError(t, os.WriteFile(f.gameFile("Engine.ini"), []byte("mine\n"), 0o644))
 
 	plan, msgs := f.switchTo(t, "alt")
-	assert.Empty(t, plan.Overrides, "nothing is restored over the user's file")
+	assert.Equal(t, []core.OverrideChange{gameOverride("Engine.ini", core.OverrideKeep)}, plan.Overrides, "nothing is restored over the user's file, and the plan says so")
 	assert.True(t, plan.NoChanges)
 	assert.Equal(t, "mine\n", readLive(t, f.gameFile("Engine.ini")), "the user's file stays")
 	assert.Contains(t, strings.Join(msgs, "\n"), "Engine.ini", "and the switch says why the original did not come back")
@@ -400,8 +400,161 @@ func TestNonModOverride_DeployKeepsAFileTheUserChanged(t *testing.T) {
 	require.NoError(t, os.WriteFile(f.gameFile("Engine.ini"), []byte("mine\n"), 0o644))
 	f.overriddenProfile(t, "default", true, nil, "k")
 
-	assert.Empty(t, f.deployPlan(t, "default").Overrides)
+	assert.Equal(t, []core.OverrideChange{gameOverride("Engine.ini", core.OverrideKeep)}, f.deployPlan(t, "default").Overrides)
 	result := f.deploy(t, "default", core.DeployOptions{})
 	assert.Equal(t, "mine\n", readLive(t, f.gameFile("Engine.ini")))
 	assert.Contains(t, strings.Join(result.Warnings, "\n"), "Engine.ini")
+}
+
+// setAsideFiles is every file under the originals store's set-aside folder,
+// by its content.
+func (f *legacyFixture) setAsideFiles(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	root := filepath.Join(f.svc.DataDirForTest(), "snapshots", f.game.ID, "_originals", "set-aside")
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err == nil && d.Type().IsRegular() {
+			b, rerr := os.ReadFile(path)
+			require.NoError(t, rerr)
+			out[string(b)] = path
+		}
+		return nil
+	})
+	return out
+}
+
+// usersEditOverAnotherOverride is the review's blocker state: default and
+// alt override Engine.ini differently, the game has run both, and default
+// is live with the user's edit over its override.
+func usersEditOverAnotherOverride(t *testing.T) *legacyFixture {
+	t.Helper()
+	f := nonModFixture(t, domain.LinkSymlink, "Engine.ini")
+	f.overriddenProfile(t, "alt", false, map[string]string{"Engine.ini": "alt's\n"}, "k")
+	f.deploy(t, "default", core.DeployOptions{})
+	f.switchTo(t, "alt")
+	f.switchTo(t, "default")
+	require.Equal(t, "tweaked\n", readLive(t, f.gameFile("Engine.ini")))
+	require.NoError(t, os.WriteFile(f.gameFile("Engine.ini"), []byte("mine\n"), 0o644))
+	return f
+}
+
+// Review blocker: an override written over a file the user changed after
+// lmm wrote one, where the game's original is already kept, sets the
+// user's file aside first and says where - by switch, apply and deploy -
+// and the game's original still comes back when no override sets it.
+func TestNonModOverride_TheUsersChangedFileIsSetAsideNotLost(t *testing.T) {
+	flows := []struct {
+		name string
+		run  func(t *testing.T, f *legacyFixture) ([]core.OverrideChange, []string)
+	}{
+		{"switch", func(t *testing.T, f *legacyFixture) ([]core.OverrideChange, []string) {
+			plan, msgs := f.switchTo(t, "alt")
+			return plan.Overrides, msgs
+		}},
+		{"apply", func(t *testing.T, f *legacyFixture) ([]core.OverrideChange, []string) {
+			f.overriddenProfile(t, "default", true, map[string]string{"Engine.ini": "alt's\n"}, "k")
+			plan, msgs := f.applyProfile(t, "default")
+			return plan.Overrides, msgs
+		}},
+		{"deploy", func(t *testing.T, f *legacyFixture) ([]core.OverrideChange, []string) {
+			f.overriddenProfile(t, "default", true, map[string]string{"Engine.ini": "alt's\n"}, "k")
+			plan := f.deployPlan(t, "default")
+			result := f.deploy(t, "default", core.DeployOptions{})
+			return plan.Overrides, append(result.Warnings, result.Notes...)
+		}},
+	}
+	for _, flow := range flows {
+		t.Run(flow.name, func(t *testing.T) {
+			f := usersEditOverAnotherOverride(t)
+			changes, msgs := flow.run(t, f)
+			assert.Equal(t, []core.OverrideChange{gameOverride("Engine.ini", core.OverrideReplaceChanged)}, changes)
+			assert.Equal(t, "alt's\n", readLive(t, f.gameFile("Engine.ini")), "the override still applies")
+			kept := f.setAsideFiles(t)
+			require.Contains(t, kept, "mine\n", "the user's file is kept")
+			assert.Contains(t, strings.Join(msgs, "\n"), kept["mine\n"], "and the flow says where")
+
+			// Nothing overrides it any more: the game's own file returns.
+			f.overriddenProfile(t, "default", false, nil, "k")
+			f.overriddenProfile(t, "alt", false, nil, "k")
+			live := "default"
+			if flow.name == "switch" {
+				live = "alt"
+			}
+			f.overriddenProfile(t, live, true, nil, "k")
+			f.applyProfile(t, live)
+			assert.Equal(t, "stock\n", readLive(t, f.gameFile("Engine.ini")))
+		})
+	}
+}
+
+// Review nit: a file the user changed is listed in the plan as kept, so
+// a switch and an apply show the same thing, and it is no change.
+func TestNonModOverride_AKeptFileIsListedAndIsNoChange(t *testing.T) {
+	f := nonModFixture(t, domain.LinkSymlink, "Engine.ini")
+	f.deploy(t, "default", core.DeployOptions{})
+	require.NoError(t, os.WriteFile(f.gameFile("Engine.ini"), []byte("mine\n"), 0o644))
+	f.overriddenProfile(t, "default", true, nil, "k")
+
+	plan := f.applyPlan(t, "default")
+	assert.True(t, plan.NoChanges)
+	assert.Equal(t, []core.OverrideChange{gameOverride("Engine.ini", core.OverrideKeep)}, plan.Overrides)
+	assert.Equal(t, []core.OverrideChange{gameOverride("Engine.ini", core.OverrideKeep)}, f.deployPlan(t, "default").Overrides)
+}
+
+// Review nit: a file the override created goes with the folders it
+// created, and only those.
+func TestNonModOverride_TheFoldersAnOverrideCreatedGoWithIt(t *testing.T) {
+	f := nonModFixture(t, domain.LinkSymlink, "Engine.ini")
+	require.NoError(t, os.MkdirAll(f.gameFile("Saved"), 0o755))
+	f.overriddenProfile(t, "default", true, map[string]string{"Saved/Config/Linux/New.ini": "made\n", "Saved/Config/Other/Keep.ini": "keep\n"}, "k")
+	f.deploy(t, "default", core.DeployOptions{})
+	require.NoError(t, os.WriteFile(f.gameFile("Saved/Config/Other/Game.sav"), []byte("the game's"), 0o644))
+
+	f.overriddenProfile(t, "default", true, nil, "k")
+	f.applyProfile(t, "default")
+	assertAbsent(t, f.gameFile("Saved/Config/Linux"), "the folder the override created is gone")
+	assertAbsent(t, f.gameFile("Saved/Config/Other/Keep.ini"), "")
+	assert.FileExists(t, f.gameFile("Saved/Config/Other/Game.sav"), "a folder with the game's file in it stays")
+	assert.DirExists(t, f.gameFile("Saved"), "a folder the game had stays")
+}
+
+// Review nit: an override edited between a plan and its confirm makes the
+// plan stale.
+func TestNonModOverride_AnOverrideEditedAfterThePlanIsStale(t *testing.T) {
+	f := nonModFixture(t, domain.LinkSymlink, "Engine.ini")
+	f.deploy(t, "default", core.DeployOptions{})
+	ctx := context.Background()
+
+	f.overriddenProfile(t, "default", true, map[string]string{"Engine.ini": "v2\n"}, "k")
+	apply := f.applyPlan(t, "default")
+	f.overriddenProfile(t, "default", true, map[string]string{"Engine.ini": "v3\n"}, "k")
+	_, err := f.svc.ApplyProfileApply(ctx, f.game, apply, core.ProfileApplyOptions{}, nil)
+	assert.ErrorIs(t, err, core.ErrStalePlan)
+
+	sw := f.switchPlan(t, "alt")
+	f.overriddenProfile(t, "alt", false, map[string]string{"Engine.ini": "alt's\n"}, "k")
+	_, err = f.svc.ApplyProfileSwitch(ctx, f.game, sw, nil)
+	assert.ErrorIs(t, err, core.ErrStalePlan)
+}
+
+// Review nit: the write is recorded before it is made, with the content it
+// replaces, so a crash between the two leaves a record that still knows
+// the file - lmm's own earlier write - and nothing of lmm's is ever taken
+// for the user's file or the game's original.
+func TestNonModOverride_ACrashBetweenRecordAndWriteLosesNothing(t *testing.T) {
+	f := nonModFixture(t, domain.LinkSymlink, "Engine.ini")
+	f.deploy(t, "default", core.DeployOptions{})
+	require.NoError(t, f.svc.RecordOverrideWriteForTest(f.game.ID, "Engine.ini", []byte("v2\n"), []byte("tweaked\n")))
+	require.Equal(t, "tweaked\n", readLive(t, f.gameFile("Engine.ini")), "the write never landed")
+
+	f.overriddenProfile(t, "default", true, map[string]string{"Engine.ini": "v2\n"}, "k")
+	plan, msgs := f.applyProfile(t, "default")
+	assert.Equal(t, []core.OverrideChange{gameOverride("Engine.ini", core.OverrideUpdate)}, plan.Overrides, "the file is still lmm's own")
+	noMessageAbout(t, "Engine.ini", msgs)
+	assert.Empty(t, f.setAsideFiles(t))
+	assert.Equal(t, "v2\n", readLive(t, f.gameFile("Engine.ini")))
+
+	f.overriddenProfile(t, "default", true, nil, "k")
+	f.applyProfile(t, "default")
+	assert.Equal(t, "stock\n", readLive(t, f.gameFile("Engine.ini")), "the game's original is still the game's")
 }

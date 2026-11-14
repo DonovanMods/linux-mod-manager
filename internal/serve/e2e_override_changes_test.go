@@ -55,3 +55,37 @@ func TestE2E_SwitchPlan_ListsTheOverrideChanges(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond, "the switch put the game's own file back")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// #631 (owner ruling): the deploy confirm lists an override taken out of
+// the profile, and the deploy puts the game's own file back.
+func TestE2E_DeployPlan_ListsADroppedOverride(t *testing.T) {
+	f := newE2EFixtureWithASharedDeployment(t)
+	ini := filepath.Join(f.Game.InstallPath, "Engine.ini")
+	require.NoError(t, os.WriteFile(ini, []byte("stock"), 0o644))
+	p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
+	require.NoError(t, err)
+	p.Overrides = map[string][]byte{"Engine.ini": []byte("tweaked")}
+	require.NoError(t, config.SaveProfile(f.Svc.ConfigDir(), p))
+	_, err = f.Svc.DeployProfile(t.Context(), f.Game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	p.Overrides = nil
+	require.NoError(t, config.SaveProfile(f.Svc.ConfigDir(), p))
+
+	var listed string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="deploy"]`),
+		pollUntil(`document.querySelector('[data-testid="deploy-overrides"]') !== null`),
+		textContent(`[data-testid="deploy-overrides"]`, &listed),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+	)
+	assert.Contains(t, listed, "<game root>/Engine.ini")
+	assert.Contains(t, listed, "take the override away")
+	assert.Eventually(t, func() bool {
+		b, err := os.ReadFile(ini)
+		return err == nil && string(b) == "stock"
+	}, 10*time.Second, 50*time.Millisecond, "the deploy put the game's own file back")
+	assert.Empty(t, f.BrowserErrors())
+}

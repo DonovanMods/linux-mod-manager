@@ -175,6 +175,10 @@ type originalsManifest struct {
 	// OverrideCopiesGameRoot is OverrideCopies for files under the game's
 	// install_path (#629), relative to it, in slash form.
 	OverrideCopiesGameRoot []string `json:"override_copies_game_root,omitempty"`
+	// SetAside is the files lmm set aside before an override replaced
+	// them where the game's original was kept already (#631): the user's
+	// changed file, kept under set-aside/.
+	SetAside []setAsideFile `json:"set_aside,omitempty"`
 }
 
 // overrideCopyList is the manifest's OverrideCopies list rel's root is kept

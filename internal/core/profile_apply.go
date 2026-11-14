@@ -94,6 +94,11 @@ type ProfileApplyPlan struct {
 	// outside the wire contract - a frontend round-trips the plan through
 	// its own store, not through JSON.
 	snapshot installedSnapshot `json:"-"`
+
+	// overridesDigest is the profile's overrides as PlanProfileApply saw
+	// them (#631 review): ApplyProfileApply refuses the plan once one
+	// changed. Unset ("") for snapshot restore's converge step.
+	overridesDigest string `json:"-"`
 }
 
 // ProfileApplyInstall is one entry of ProfileApplyPlan.ToInstall, resolved
@@ -329,7 +334,8 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 			skip[domain.ModKey(entry.Ref.SourceID, entry.Ref.ModID)] = true
 		}
 		plan.Overrides = s.planOverrideChanges(ctx, game, profile, skip)
-		plan.NoChanges = plan.NoChanges && len(plan.Overrides) == 0
+		plan.NoChanges = plan.NoChanges && !overrideChanged(plan.Overrides)
+		plan.overridesDigest = overridesDigest(profile)
 	}
 	return plan, nil
 }
@@ -726,6 +732,10 @@ func (s *Service) ApplyProfileApply(ctx context.Context, game *domain.Game, plan
 	// plan and its apply. Snapshot restore's converge step calls
 	// applyProfileApply itself, for the profile it has just made active.
 	if err := s.refuseInactive(ctx, game.ID, plan.Profile, "apply"); err != nil {
+		return &ProfileApplyResult{}, err
+	}
+	// #631 review: an override edited since the plan makes it stale.
+	if err := s.checkOverridesFresh(plan.GameID, plan.Profile, plan.overridesDigest); err != nil {
 		return &ProfileApplyResult{}, err
 	}
 	result, err := s.applyProfileApply(ctx, game, plan, opts, sink)

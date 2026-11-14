@@ -646,6 +646,11 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	if plan.NoChanges {
+		// #631 review: a file the switch keeps as the user changed it is
+		// listed here too, as in every other plan.
+		if !jsonOutput {
+			printOverrideChanges(plan.Overrides)
+		}
 		// No mod changes, just switch the default - ApplyProfileSwitch's
 		// three loops are all empty, so this is exactly a SetDefault call.
 		// A dry run must not make even that one write.
@@ -1724,6 +1729,8 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			return emitJSON(&core.ProfileApplyResult{})
 		}
 		fmt.Printf("System already matches profile %s.\n", profileName)
+		// #631 review: and the files it leaves as the user changed them.
+		printOverrideChanges(plan.Overrides)
 		// #269/#345 N6: design §2's advisory, on the path core cannot emit
 		// it. ApplyProfileApply's own `if plan.NoChanges { return }` sits
 		// ABOVE its DeployExternalSkipped emit - a deliberate contract, so a
@@ -1970,14 +1977,28 @@ func printOverrideChanges(changes []core.OverrideChange) {
 	if len(changes) == 0 {
 		return
 	}
-	fmt.Printf("Will change %d file(s) for the profile's overrides:\n", len(changes))
+	changing := 0
+	for _, c := range changes {
+		if c.Action != core.OverrideKeep {
+			changing++
+		}
+	}
+	if changing > 0 {
+		fmt.Printf("Will change %d file(s) for the profile's overrides:\n", changing)
+	} else {
+		fmt.Println("The profile's overrides change no file:")
+	}
 	for _, c := range changes {
 		mark, what := "+", "write the override"
 		switch c.Action {
 		case core.OverrideUpdate:
 			mark, what = "~", "rewrite the override"
+		case core.OverrideReplaceChanged:
+			mark, what = "!", "it changed since lmm wrote an override there: keep your file, then write the override"
 		case core.OverrideRestore:
 			mark, what = "-", "take the override away"
+		case core.OverrideKeep:
+			mark, what = "=", "kept as it is: it changed since lmm wrote the override"
 		}
 		if c.ModID != "" {
 			what += ", over " + c.SourceID + ":" + c.ModID + "'s own file"

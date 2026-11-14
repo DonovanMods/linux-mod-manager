@@ -162,3 +162,22 @@ func TestDoDeploy_DryRun_ListsAndDeployRestoresADroppedOverride(t *testing.T) {
 	captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
 	assert.Equal(t, "stock\n", readFileText(t, ini), "the deploy put the game's own file back")
 }
+
+// #631 review: a file the user changed after lmm wrote the override is
+// listed as kept, even by an apply with nothing to do.
+func TestDoProfileApply_NoChanges_ListsAKeptFile(t *testing.T) {
+	svc, game, ini := setupOverrideSwitchTest(t)
+	setOverrides(t, svc, game.ID, "default", map[string]string{"Engine.ini": "tweaked\n"})
+	oldYes := profileApplyYes
+	profileApplyYes = true
+	t.Cleanup(func() { profileApplyYes = oldYes })
+	captureStdout(t, func() error { return doProfileApply(context.Background(), svc, game, nil) })
+	require.NoError(t, os.WriteFile(ini, []byte("mine\n"), 0o644))
+	setOverrides(t, svc, game.ID, "default", nil)
+
+	out := captureStdout(t, func() error { return doProfileApply(context.Background(), svc, game, nil) })
+	assert.Equal(t, "System already matches profile default.\n"+
+		"The profile's overrides change no file:\n"+
+		"  = <game root>/Engine.ini (kept as it is: it changed since lmm wrote the override)\n", out)
+	assert.Equal(t, "mine\n", readFileText(t, ini))
+}

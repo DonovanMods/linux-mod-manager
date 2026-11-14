@@ -34,15 +34,19 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
+
+	"golang.org/x/sys/unix"
 )
 
-// OverrideChangeAction is what a switch or an apply does to one file a
-// profile override names (#631).
+// OverrideChangeAction is what a switch, an apply or a deploy does to one
+// file a profile override names (#631).
 type OverrideChangeAction string
 
 const (
@@ -51,18 +55,31 @@ const (
 	// deploy keeps it), in a file of its own where nothing was, or over a
 	// mod's own file, breaking its link (#630).
 	OverridePlace OverrideChangeAction = "place"
-	// OverrideUpdate rewrites a file that holds another override lmm
-	// wrote: another profile's, or this one's before it changed.
+	// OverrideUpdate rewrites a file that holds exactly the override lmm
+	// last wrote there: another profile's, or this one's before it
+	// changed.
 	OverrideUpdate OverrideChangeAction = "update"
+	// OverrideReplaceChanged writes the override over a file that changed
+	// after lmm wrote an override there - the user's edit, or the game's
+	// own rewrite of its INI. The changed file is kept first: set aside in
+	// the originals store (named in the flow's warnings) when the game's
+	// original is kept already, or kept as the original otherwise.
+	OverrideReplaceChanged OverrideChangeAction = "replace_changed"
 	// OverrideRestore takes away an override the profile no longer sets:
 	// the game's original goes back, a file the override created is
 	// removed, or a mod's own file is deployed again (#630).
 	OverrideRestore OverrideChangeAction = "restore"
+	// OverrideKeep is no change: an override the profile no longer sets,
+	// whose file changed after lmm wrote it, is left as it is. The game's
+	// original stays kept. Listed so every flow shows it the same way; it
+	// never makes a plan one with changes.
+	OverrideKeep OverrideChangeAction = "keep"
 )
 
-// OverrideChange is one file a switch or an apply changes because the
-// profile's overrides differ from what the game directory holds (#631):
-// SwitchPlan.Overrides and ProfileApplyPlan.Overrides.
+// OverrideChange is one file a switch, an apply or a deploy changes because
+// the profile's overrides differ from what the game directory holds
+// (#631): SwitchPlan.Overrides, ProfileApplyPlan.Overrides and
+// DeployPlan.Overrides.
 type OverrideChange struct {
 	// Path is the file's path relative to Root, in slash form. For a
 	// game file it is the override's own key.
@@ -79,16 +96,37 @@ type OverrideChange struct {
 	ModID    string `json:"mod_id,omitempty"`
 }
 
+// overrideChanged reports whether changes holds a change - anything but a
+// file kept as it is.
+func overrideChanged(changes []OverrideChange) bool {
+	return slices.ContainsFunc(changes, func(c OverrideChange) bool { return c.Action != OverrideKeep })
+}
+
 // overrideWrite is one file under a game's install_path a profile override
-// last wrote, as the originals manifest records it (#631).
+// last wrote, as the originals manifest records it (#631). It is recorded
+// before the write (review nit: a crash between the two never leaves lmm's
+// own content unrecorded, to be taken later for the game's original).
 type overrideWrite struct {
 	// RelativePath is the override's key, cleaned, in slash form.
 	RelativePath string `json:"relative_path"`
-	// SHA256 is the hex SHA-256 of what lmm wrote.
+	// SHA256 is the hex SHA-256 of what lmm writes.
 	SHA256 string `json:"sha256"`
+	// PrevSHA256 is lmm's own earlier write the file held when this one
+	// was recorded, until this write is known to have landed: the file
+	// holding either is lmm's.
+	PrevSHA256 string `json:"prev_sha256,omitempty"`
 	// Created marks a file the override created where the game had none:
 	// taking the override away removes it.
 	Created bool `json:"created,omitzero"`
+	// CreatedDirs is the folders (slash form, relative to the install
+	// path) the override created for a Created file, outermost first:
+	// taking the override away removes each one left empty.
+	CreatedDirs []string `json:"created_dirs,omitempty"`
+}
+
+// holds reports whether sum is lmm's write at the path.
+func (w overrideWrite) holds(sum string) bool {
+	return sum != "" && (sum == w.SHA256 || (w.PrevSHA256 != "" && sum == w.PrevSHA256))
 }
 
 // sha256Hex is content's hex SHA-256.
@@ -97,83 +135,200 @@ func sha256Hex(content []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// recordOverrideWrite records that a profile override wrote content at
-// rel, under the install_path. Best effort, as markKeptUser is: a record
-// that cannot be written costs only the later restore, which then leaves
-// the file as one lmm cannot vouch for. A nil store records nothing.
-func (s *originalsStore) recordOverrideWrite(rel string, content []byte, created bool) {
+// editOverrideWrite applies edit to rel's record (nil when there is none;
+// returning nil drops it) and writes the manifest when it changed. A nil
+// store records nothing.
+func (s *originalsStore) editOverrideWrite(rel string, edit func(*overrideWrite) *overrideWrite) error {
 	if s == nil {
-		return
+		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, err := s.read()
 	if err != nil {
-		return
+		return err
 	}
-	w := overrideWrite{RelativePath: rel, SHA256: sha256Hex(content), Created: created}
-	if i := slices.IndexFunc(m.OverrideWrites, func(o overrideWrite) bool { return o.RelativePath == rel }); i >= 0 {
-		if m.OverrideWrites[i] == w {
-			return
+	i := slices.IndexFunc(m.OverrideWrites, func(o overrideWrite) bool { return o.RelativePath == rel })
+	var cur *overrideWrite
+	if i >= 0 {
+		c := m.OverrideWrites[i]
+		cur = &c
+	}
+	next := edit(cur)
+	switch {
+	case next == nil && i < 0:
+		return nil
+	case next == nil:
+		m.OverrideWrites = slices.Delete(m.OverrideWrites, i, i+1)
+	case i >= 0:
+		if slices.Equal(next.CreatedDirs, m.OverrideWrites[i].CreatedDirs) &&
+			next.SHA256 == m.OverrideWrites[i].SHA256 && next.PrevSHA256 == m.OverrideWrites[i].PrevSHA256 &&
+			next.Created == m.OverrideWrites[i].Created {
+			return nil
 		}
-		m.OverrideWrites[i] = w
-	} else {
-		m.OverrideWrites = append(m.OverrideWrites, w)
-		slices.SortFunc(m.OverrideWrites, func(a, b overrideWrite) int {
-			switch {
-			case a.RelativePath < b.RelativePath:
-				return -1
-			case a.RelativePath > b.RelativePath:
-				return 1
-			}
-			return 0
-		})
+		m.OverrideWrites[i] = *next
+	default:
+		next.RelativePath = rel
+		m.OverrideWrites = append(m.OverrideWrites, *next)
+		slices.SortFunc(m.OverrideWrites, func(a, b overrideWrite) int { return strings.Compare(a.RelativePath, b.RelativePath) })
 	}
-	if err := s.write(m); err != nil {
-		s.log.Debug("could not record what a profile override wrote", "path", rel, "err", err)
+	return s.write(m)
+}
+
+// recordOverrideWrite records, BEFORE the write, that a profile override
+// is about to write content at rel under the install_path. prev is lmm's
+// own write the file holds now ("" when it holds none); created and dirs
+// say the override makes the file, and which folders. An error refuses the
+// write: unrecorded, lmm's content could later be taken for the game's.
+func (s *originalsStore) recordOverrideWrite(rel string, content []byte, prev string, created bool, dirs []string) error {
+	return s.editOverrideWrite(rel, func(*overrideWrite) *overrideWrite {
+		return &overrideWrite{RelativePath: rel, SHA256: sha256Hex(content), PrevSHA256: prev, Created: created, CreatedDirs: dirs}
+	})
+}
+
+// settleOverrideWrite drops the PrevSHA256 of rel's record once its write
+// has landed. Best effort: a record left with it only answers for one more
+// content.
+func (s *originalsStore) settleOverrideWrite(rel string) {
+	if err := s.editOverrideWrite(rel, func(cur *overrideWrite) *overrideWrite {
+		if cur == nil {
+			return nil
+		}
+		cur.PrevSHA256 = ""
+		return cur
+	}); err != nil {
+		s.log.Debug("could not settle what a profile override wrote", "path", rel, "err", err)
 	}
 }
 
 // forgetOverrideWrite drops rel's record, once the override is gone.
 func (s *originalsStore) forgetOverrideWrite(rel string) {
+	if err := s.editOverrideWrite(rel, func(*overrideWrite) *overrideWrite { return nil }); err != nil {
+		s.log.Debug("could not forget what a profile override wrote", "path", rel, "err", err)
+	}
+}
+
+// gameFile is what lmm knows of a file under the install_path a profile
+// override names (#631): the single judgement the write, the restore and
+// every plan make of it.
+type gameFile struct {
+	// sum is the file's SHA-256; "" when it is no regular file or
+	// cannot be read.
+	sum string
+	// rec is what an override last wrote there, when hasRec.
+	rec    overrideWrite
+	hasRec bool
+	// row is the game's original the store keeps, when hasRow.
+	row    OriginalFile
+	hasRow bool
+	// own: the file holds what lmm wrote there - its record's content,
+	// or, for a write from before records were kept, some profile's
+	// override over an original lmm kept.
+	own bool
+	// stock: the file holds the original the store keeps.
+	stock bool
+}
+
+// changed reports that lmm wrote an override at the path and the file no
+// longer holds it, nor the game's original: the user's edit, or the
+// game's own rewrite.
+func (g gameFile) changed() bool {
+	return g.sum != "" && !g.own && !g.stock && (g.hasRec || g.hasRow)
+}
+
+// judgeGameFile judges the regular file at path, rel under the install
+// path, against rows and writes (overrideRecords). known is every profile's
+// override checksums by path (overrideChecksums), the proof for a write
+// made before records were kept; nil knows none.
+func judgeGameFile(rel, path string, rows map[string]OriginalFile, writes map[string]overrideWrite, known map[string]map[string]bool) gameFile {
+	var g gameFile
+	g.row, g.hasRow = rows[rel]
+	g.rec, g.hasRec = writes[rel]
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return g
+	}
+	sum, _, err := hashFile(path)
+	if err != nil {
+		return g
+	}
+	g.sum = sum
+	g.stock = g.hasRow && sum == g.row.SHA256
+	switch {
+	case g.hasRec:
+		g.own = g.rec.holds(sum)
+	case g.hasRow:
+		g.own = known[rel][sum]
+	}
+	return g
+}
+
+// setAsideFile is one file lmm set aside before an override replaced it,
+// where the originals store already kept the game's own (#631 review): the
+// user's changed file, kept where they can take it back.
+type setAsideFile struct {
+	// Root and RelativePath name the file it was.
+	Root         OriginalRoot `json:"root"`
+	RelativePath string       `json:"relative_path"`
+	// Stored is where its bytes are, relative to the store's directory.
+	Stored string `json:"stored"`
+	// SHA256 and Size describe the bytes kept.
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+	// SetAsideAt is when, and Profile the profile whose override replaced
+	// it.
+	SetAsideAt time.Time `json:"set_aside_at"`
+	Profile    string    `json:"profile,omitempty"`
+}
+
+// setAsideDirName is the store's folder for set-aside files, beside files/:
+// the same per-root layout, each name suffixed with when it was set aside,
+// so a second one never replaces the first.
+const setAsideDirName = "set-aside"
+
+// setAside copies the file at path - rel under root - into the store's
+// set-aside folder and records it, returning where it is. It is the user's
+// only copy, so a failure refuses the write that would replace it.
+func (s *originalsStore) setAside(root OriginalRoot, rel, path, profile string) (string, error) {
 	if s == nil {
-		return
+		return "", errors.New("lmm has nowhere to keep it")
+	}
+	rel, err := cleanOriginalRelPath(rel)
+	if err != nil {
+		return "", err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, err := s.read()
 	if err != nil {
-		return
+		return "", err
 	}
-	n := len(m.OverrideWrites)
-	m.OverrideWrites = slices.DeleteFunc(m.OverrideWrites, func(o overrideWrite) bool { return o.RelativePath == rel })
-	if len(m.OverrideWrites) == n {
-		return
+	at := time.Now().UTC().Truncate(time.Second)
+	base := filepath.Join(s.storeDir(), setAsideDirName, string(root), filepath.FromSlash(rel)) + "." + at.Format("20060102T150405Z")
+	dest := base
+	for n := 2; ; n++ {
+		if _, err := os.Lstat(dest); errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		dest = fmt.Sprintf("%s-%d", base, n)
 	}
-	if err := s.write(m); err != nil {
-		s.log.Debug("could not forget what a profile override wrote", "path", rel, "err", err)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+		return "", err
 	}
-}
-
-// ownOverrideWrite reports whether the regular file at path - rel under the
-// install_path - holds exactly what a profile override last wrote there,
-// and that record.
-func (s *originalsStore) ownOverrideWrite(rel, path string) (overrideWrite, bool) {
-	if s == nil {
-		return overrideWrite{}, false
-	}
-	s.mu.Lock()
-	m, err := s.read()
-	s.mu.Unlock()
+	sum, size, err := copyAndHash(path, dest)
 	if err != nil {
-		return overrideWrite{}, false
+		return "", err
 	}
-	i := slices.IndexFunc(m.OverrideWrites, func(o overrideWrite) bool { return o.RelativePath == rel })
-	if i < 0 {
-		return overrideWrite{}, false
+	stored, _ := filepath.Rel(s.storeDir(), dest)
+	m.SetAside = append(m.SetAside, setAsideFile{
+		Root: root, RelativePath: rel, Stored: filepath.ToSlash(stored),
+		SHA256: sum, Size: size, SetAsideAt: at, Profile: profile,
+	})
+	if err := s.write(m); err != nil {
+		_ = os.Remove(dest)
+		return "", err
 	}
-	sum, _, err := hashFile(path)
-	return m.OverrideWrites[i], err == nil && sum == m.OverrideWrites[i].SHA256
+	return dest, nil
 }
 
 // heldOriginal reports whether the store keeps an original of rel under the
@@ -417,7 +572,7 @@ func (s *Service) restoreGameOverrides(ctx context.Context, game *domain.Game, p
 	}
 	mine := map[string]bool{}
 	for key := range profile.Overrides {
-		if rel, err := cleanOriginalRelPath(key); err == nil {
+		if rel, ok := overrideRel(key); ok {
 			mine[rel] = true
 		}
 	}
@@ -438,6 +593,10 @@ func (s *Service) restoreGameOverrides(ctx context.Context, game *domain.Game, p
 	warn := func(rel, why string) {
 		warnings = append(warnings, fmt.Sprintf("override %s: %s", rel, why))
 	}
+	keep := func(rel, why string) {
+		changes = append(changes, OverrideChange{Path: rel, Root: domain.RootInstallPath, Action: OverrideKeep})
+		warn(rel, why)
+	}
 	for _, rel := range paths {
 		if mine[rel] {
 			continue
@@ -451,74 +610,70 @@ func (s *Service) restoreGameOverrides(ctx context.Context, game *domain.Game, p
 				continue
 			}
 		}
-		row, hasRow := rows[rel]
-		w, hasWrite := writes[rel]
+		if _, hasRec := writes[rel]; !hasRec && known == nil {
+			if env.known != nil {
+				known = env.known()
+			} else {
+				known = s.overrideChecksums(game)
+			}
+		}
+		g := judgeGameFile(rel, realDest, rows, writes, known)
 		forget := func() {
-			if !dryRun && hasWrite {
+			if !dryRun && g.hasRec {
 				store.forgetOverrideWrite(rel)
 			}
 		}
 		info, err := os.Lstat(realDest)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
-			if !hasRow {
-				forget() // created, and already gone
+			if !g.hasRow {
+				// Created, and already gone: so are the records of it, and
+				// the folders it left empty.
+				if !dryRun {
+					removeEmptyDirs(realBase, g.rec.CreatedDirs)
+				}
+				forget()
 				continue
 			}
 		case err != nil:
 			warn(rel, fmt.Sprintf("it could not be checked (%v), so lmm left it", err))
 			continue
 		case !info.Mode().IsRegular():
-			warn(rel, "no profile override sets it any more, but it is no longer the file lmm wrote, so lmm left it")
+			keep(rel, "no profile override sets it any more, but it is no longer the file lmm wrote, so lmm left it")
 			continue
-		default:
-			sum, _, err := hashFile(realDest)
-			if err != nil {
-				warn(rel, fmt.Sprintf("it could not be checked (%v), so lmm left it", err))
-				continue
-			}
-			if hasRow && sum == row.SHA256 {
-				// The game's own file is back already: nothing to do but
-				// let the store go of it.
-				if !dryRun {
-					if _, err := store.release(OriginalRootInstallPath, rel, filepath.Join(base, filepath.FromSlash(rel))); err != nil {
-						s.log.Debug("could not drop an original already back in place", "path", rel, "err", err)
-					}
-					forget()
+		case g.sum == "":
+			warn(rel, "it could not be read to check it, so lmm left it")
+			continue
+		case g.stock:
+			// The game's own file is back already: nothing to do but let
+			// the store go of it.
+			if !dryRun {
+				if _, err := store.release(OriginalRootInstallPath, rel, filepath.Join(base, filepath.FromSlash(rel))); err != nil {
+					s.log.Debug("could not drop an original already back in place", "path", rel, "err", err)
 				}
-				continue
+				forget()
 			}
-			var ours bool
-			if hasWrite {
-				ours = sum == w.SHA256
-			} else {
-				if known == nil {
-					known = s.overrideChecksums(game)
-				}
-				ours = known[rel][sum]
+			continue
+		case !g.own:
+			keep(rel, "no profile override sets it any more, but it changed after lmm wrote the override, so lmm left your file (the game's original is still kept)")
+			continue
+		case !g.hasRow && !(g.hasRec && g.rec.Created):
+			if g.hasRec {
+				warn(rel, "no profile override sets it any more, but lmm kept no original of it to put back, so it left the file")
+				forget()
 			}
-			if !ours {
-				warn(rel, "no profile override sets it any more, but it changed after lmm wrote the override, so lmm left your file (the game's original is still kept)")
-				continue
-			}
-			if !hasRow && (!hasWrite || !w.Created) {
-				if hasWrite {
-					warn(rel, "no profile override sets it any more, but lmm kept no original of it to put back, so it left the file")
-					forget()
-				}
-				continue
-			}
+			continue
 		}
 		changes = append(changes, OverrideChange{Path: rel, Root: domain.RootInstallPath, Action: OverrideRestore})
 		if dryRun {
 			continue
 		}
-		if hasRow {
+		if g.hasRow {
 			if _, err := store.release(OriginalRootInstallPath, rel, filepath.Join(base, filepath.FromSlash(rel))); err != nil {
 				warn(rel, fmt.Sprintf("the game's original could not be put back: %v", err))
 				continue
 			}
-		} else if err := removeCreatedOverride(realBase, dirRel, realDest, w.SHA256); err != nil {
+		} else if err := removeCreatedOverride(realBase, dirRel, realDest, g.rec); err != nil {
 			warn(rel, fmt.Sprintf("the file the override created could not be removed: %v", err))
 			continue
 		}
@@ -527,10 +682,22 @@ func (s *Service) restoreGameOverrides(ctx context.Context, game *domain.Game, p
 	return changes, warnings
 }
 
+// overrideRel is an override key as every record keeps it: cleaned, in
+// slash form, relative to the install path. ok is false for a key a write
+// refuses.
+func overrideRel(key string) (string, bool) {
+	_, rel, err := overrideDest(string(filepath.Separator)+"game", key)
+	if err != nil || rel == "." {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
+}
+
 // removeCreatedOverride removes the file a profile override created at
 // realDest, beneath realBase in dirRel, held by the no-follow walk, after
-// checking once more that it holds what lmm wrote (sum).
-func removeCreatedOverride(realBase, dirRel, realDest, sum string) error {
+// checking once more that it holds what lmm wrote (rec) - then the
+// folders the override created, each one left empty (#631 review).
+func removeCreatedOverride(realBase, dirRel, realDest string, rec overrideWrite) error {
 	dir, err := openDirBeneath(realBase, dirRel, false)
 	if err != nil {
 		return err
@@ -538,19 +705,44 @@ func removeCreatedOverride(realBase, dirRel, realDest, sum string) error {
 	defer func() { _ = dir.Close() }()
 	name := filepath.Base(realDest)
 	st, exists, err := lstatAt(dir, name)
-	if err != nil || !exists {
+	if err != nil {
 		return err
 	}
-	if !isRegular(st) {
-		return errors.New("it is no longer the file lmm wrote")
+	if exists {
+		if !isRegular(st) {
+			return errors.New("it is no longer the file lmm wrote")
+		}
+		if got, _, err := hashFile(realDest); err != nil || !rec.holds(got) {
+			return errors.New("it is no longer the file lmm wrote")
+		}
+		if err := syscall.Unlinkat(int(dir.Fd()), name); err != nil && !errors.Is(err, syscall.ENOENT) {
+			return &os.PathError{Op: "remove", Path: realDest, Err: err}
+		}
 	}
-	if got, _, err := hashFile(realDest); err != nil || got != sum {
-		return errors.New("it is no longer the file lmm wrote")
-	}
-	if err := syscall.Unlinkat(int(dir.Fd()), name); err != nil && !errors.Is(err, syscall.ENOENT) {
-		return &os.PathError{Op: "remove", Path: realDest, Err: err}
-	}
+	removeEmptyDirs(realBase, rec.CreatedDirs)
 	return nil
+}
+
+// removeEmptyDirs removes each of dirs - folders an override created,
+// slash form relative to realBase, outermost first - that is empty now,
+// innermost first, through the no-follow walk. A folder that is not empty,
+// or is no folder, stays, and so does every folder outside it.
+func removeEmptyDirs(realBase string, dirs []string) {
+	for i := len(dirs) - 1; i >= 0; i-- {
+		d := filepath.FromSlash(dirs[i])
+		if !filepath.IsLocal(d) {
+			return
+		}
+		parent, err := openDirBeneath(realBase, filepath.Dir(d), false)
+		if err != nil {
+			return
+		}
+		err = unix.Unlinkat(int(parent.Fd()), filepath.Base(d), unix.AT_REMOVEDIR)
+		_ = parent.Close()
+		if err != nil && !errors.Is(err, unix.ENOENT) {
+			return
+		}
+	}
 }
 
 // overrideChecksums is the checksum of every override some profile of game
@@ -593,11 +785,10 @@ func (s *Service) planGameOverrides(game *domain.Game, profile *domain.Profile, 
 	if err != nil {
 		return nil
 	}
-	rows, writes, _ := env.originals.overrideRecords()
 	var changes []OverrideChange
 	for key, content := range profile.Overrides {
-		rel, err := cleanOriginalRelPath(key)
-		if err != nil {
+		rel, ok := overrideRel(key)
+		if !ok {
 			continue
 		}
 		realDest, _, ok := realOverridePath(base, realBase, key)
@@ -609,6 +800,7 @@ func (s *Service) planGameOverrides(game *domain.Game, profile *domain.Profile, 
 				continue
 			}
 		}
+		action := OverridePlace
 		info, err := os.Lstat(realDest)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
@@ -627,12 +819,14 @@ func (s *Service) planGameOverrides(game *domain.Game, profile *domain.Profile, 
 			if holdsContent(realDest, content) {
 				continue
 			}
-		}
-		action := OverridePlace
-		if _, ok := writes[rel]; ok && err == nil {
-			action = OverrideUpdate
-		} else if _, ok := rows[rel]; ok && err == nil {
-			action = OverrideUpdate
+			// applyOneOverride's own judgement of the file.
+			g := env.judge(rel, realDest)
+			switch {
+			case g.own:
+				action = OverrideUpdate
+			case g.changed():
+				action = OverrideReplaceChanged
+			}
 		}
 		changes = append(changes, OverrideChange{Path: rel, Root: domain.RootInstallPath, Action: action})
 	}
@@ -730,6 +924,45 @@ func (s *Service) planDeployOverrides(ctx context.Context, game *domain.Game, pr
 	changes = append(changes, restores...)
 	sort.SliceStable(changes, func(i, j int) bool { return changes[i].Path < changes[j].Path })
 	return changes
+}
+
+// overridesDigest is a digest of profile's overrides - every key and its
+// content - which a switch or an apply plan records so its Apply refuses
+// it once an override changed (#631 review): the plan's preview, and the
+// files it would write, are those overrides'.
+func overridesDigest(profile *domain.Profile) string {
+	if profile == nil {
+		return ""
+	}
+	keys := make([]string, 0, len(profile.Overrides))
+	for k := range profile.Overrides {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	h := sha256.New()
+	h.Write([]byte("overrides\x00")) // never "", which means unrecorded
+	for _, k := range keys {
+		fmt.Fprintf(h, "%d:%s%d:", len(k), k, len(profile.Overrides[k]))
+		h.Write(profile.Overrides[k])
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// checkOverridesFresh returns a wrapped ErrStalePlan when profileName's
+// overrides of gameID are no longer the ones a plan recorded (want); a plan
+// that recorded none ("") is not checked.
+func (s *Service) checkOverridesFresh(gameID, profileName, want string) error {
+	if want == "" {
+		return nil
+	}
+	profile, err := config.LoadProfile(s.configDir, gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("loading profile %s: %w", profileName, err)
+	}
+	if overridesDigest(profile) != want {
+		return fmt.Errorf("%w: profile %s's overrides changed since it was computed: %s/%s", ErrStalePlan, profileName, gameID, profileName)
+	}
+	return nil
 }
 
 // planSkipKeys is the domain.ModKey of every mod in the lists a plan

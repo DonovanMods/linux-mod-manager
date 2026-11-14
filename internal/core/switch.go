@@ -124,6 +124,10 @@ type SwitchPlan struct {
 	// (markedSnapshotOf): To's `disabled:` markers decide what this plan
 	// enables.
 	targetSnapshot installedSnapshot `json:"-"`
+
+	// overridesDigest is To's overrides as this plan saw them (#631
+	// review): ApplyProfileSwitch refuses the plan once one changed.
+	overridesDigest string `json:"-"`
 }
 
 // PlanProfileSwitch computes the diff between game's currently-active
@@ -437,7 +441,8 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		PriorVersions:     priorVersions,
 		ExternalUnchanged: externalUnchanged,
 		Overrides:         overrides,
-		NoChanges:         len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0 && len(overrides) == 0,
+		NoChanges:         len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0 && !overrideChanged(overrides),
+		overridesDigest:   overridesDigest(targetProfile),
 		snapshot:          snapshot,
 		targetSnapshot:    targetSnapshot,
 	}, nil
@@ -643,6 +648,10 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	// (the enabled/deployed predicate) and writes (the enable loop, and the
 	// disable loop's cross-profile clear below).
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.To, plan.targetSnapshot); err != nil {
+		return result, err
+	}
+	// #631 review: and To's overrides, which the plan previewed.
+	if err := s.checkOverridesFresh(plan.GameID, plan.To, plan.overridesDigest); err != nil {
 		return result, err
 	}
 	// #445 review F5: and the profile files the switch ends by writing
