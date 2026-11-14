@@ -343,3 +343,23 @@ func TestNonModOverride_AGameRootModFileIsAModFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotZero(t, info.Mode()&os.ModeSymlink, "the plain link is back")
 }
+
+// The overridden copy's fingerprint is shared with every profile that
+// records the path; a purge of the profile that is not active still keeps
+// the file the active one uses.
+func TestOverriddenModFile_PurgingTheOtherProfileKeepsTheLiveCopy(t *testing.T) {
+	for _, method := range linkMethods() {
+		t.Run(method.String(), func(t *testing.T) {
+			f := overriddenFixture(t, method)
+			f.overriddenProfile(t, "alt", false, nil, "k")
+			f.cachedOnly(t, "alt", "k", method, map[string]string{"Data/k.ini": "stock\n", "Data/k.esp": "plugin"})
+			f.deploy(t, "default", core.DeployOptions{})
+			f.switchTo(t, "alt")
+			f.switchTo(t, "default")
+			assertOverriddenCopy(t, f, "tweaked\n")
+
+			f.purge(t, "alt")
+			assertOverriddenCopy(t, f, "tweaked\n")
+		})
+	}
+}

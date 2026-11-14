@@ -315,7 +315,19 @@ func shareOverrideCopyRecord(ctx context.Context, database *db.DB, log *slog.Log
 // caller's cancellation does not reach, and acts only for the game's live
 // profile when its adapter allows a deploy.
 func (s *Service) convergeProfileOverrides(ctx context.Context, game *domain.Game, profileName string) []string {
-	ctx = context.WithoutCancel(ctx)
+	warnings := s.convergeOverridesOnce(context.WithoutCancel(ctx), game, profileName)
+	// What the passes above could not keep or put back is this flow's to
+	// report: the flow drained the store before they ran, and the end of
+	// the mutation forgets what is left (forgetKept).
+	if store := s.originalsStoreFor(game.ID); store != nil {
+		warnings = append(warnings, store.takeFailures()...)
+	}
+	return warnings
+}
+
+// convergeOverridesOnce is convergeProfileOverrides' work, before the
+// drain.
+func (s *Service) convergeOverridesOnce(ctx context.Context, game *domain.Game, profileName string) []string {
 	warnings := s.convergeOverriddenFiles(ctx, game, profileName)
 	if s.db == nil || game.InstallPath == "" || game.ModPath == "" {
 		return warnings
