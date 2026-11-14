@@ -530,3 +530,13 @@ func IsArchiveTreeOfForTest(variant, base string) bool { return isArchiveTreeOf(
 func (s *Service) ProfileDriftForTest(ctx context.Context, game *domain.Game) (*ProfileDrift, error) {
 	return s.profileDriftOf(ctx, game)
 }
+
+// ConvergeLastCopiesForTest is the paths convergeDeployedFiles kept because
+// the deployed copy was the only one left (#645).
+func ConvergeLastCopiesForTest(r *ConvergeResult) []ConvergedFile {
+	out := make([]ConvergedFile, 0, len(r.lastCopies))
+	for _, lc := range r.lastCopies {
+		out = append(out, lc.ConvergedFile)
+	}
+	return out
+}

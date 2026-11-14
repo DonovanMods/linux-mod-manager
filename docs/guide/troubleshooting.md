@@ -30,6 +30,11 @@ mod's cache is incomplete and names the file; **Repair** (or
 `lmm verify --fix`) downloads it again. The copy in the game folder is
 left where it is until then.
 
+A mod you imported from an archive has nothing to download it from. If
+the game deploys by copy or hard link, the file in the game folder is then
+the only copy left: verify keeps it, names it, and offers no **Repair**.
+Import the mod's archive again to rebuild its cache.
+
 The **Verify** button is in the library toolbar. In the terminal:
 
 ```bash

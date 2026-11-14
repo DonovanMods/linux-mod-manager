@@ -663,15 +663,34 @@ func (r *verifyRun) copyRelayoutTree(src, dst string) error {
 //
 // A member the layout drops is dropped from the manifest too - it is not in
 // the rebuilt entry, so recording it would recreate the very drift this
-// fixes. A legacy BARE marker stays bare: it never recorded a member list,
-// and inventing one here would turn "unknown provenance", which every
-// consumer handles by falling back to the union, into a claim.
+// fixes. A legacy BARE marker stays bare when the entry has others: it
+// never recorded a member list, and inventing one here would turn "unknown
+// provenance", which every consumer handles by falling back to the union,
+// into a claim.
+//
+// Except when it is the entry's ONLY marker (#645): then its file is the
+// entry's sole contributor, so its members are exactly what the rebuilt
+// entry holds - a fact, not an invention - and they are recorded. Left
+// bare, a profile whose records still name the old layout read the entry
+// as having lost them (lostCacheFiles' judgement of a stamped entry that
+// cannot vouch for its files), a cache_incomplete finding nothing could
+// clear.
 func restampFileManifests(src, dst string, layout adapter.Layout) error {
 	manifests, err := cache.FileManifestsAt(src)
 	if err != nil {
 		return fmt.Errorf("reading the cache entry's completion markers: %w", err)
 	}
 	for fileID, manifest := range manifests {
+		if !manifest.Recorded && len(manifests) == 1 {
+			members, merr := relativeFileMembers(dst)
+			if merr != nil {
+				return fmt.Errorf("listing the re-laid-out entry: %w", merr)
+			}
+			if merr := cache.MarkFileCompleteWithMembers(dst, fileID, members); merr != nil {
+				return merr
+			}
+			continue
+		}
 		if !manifest.Recorded {
 			if merr := cache.MarkFileComplete(dst, fileID); merr != nil {
 				return merr

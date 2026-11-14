@@ -195,7 +195,10 @@ once it does not - and unverified the others lmm has no recorded files for
 status is one of "ok", "missing", "cache_incomplete" (the mod's cache
 entry is there but lost a file's content - note names what is gone - and
 --fix re-downloads it; until it is whole, verify never removes the
-deployed copy as stale), "no_checksum", "file_count_mismatch", "skipped",
+deployed copy as stale. For a mod lmm cannot download again - imported
+from an archive - a copied or hard-linked file whose cache member is gone
+is kept as the only copy left, and its row names that deployed path and is
+not fixable), "no_checksum", "file_count_mismatch", "skipped",
 "version_mismatch", "version_unverifiable", "stale_compile",
 "stale_deployment", "fixed_stale_deployment", "conversion_failed",
 "needs_reingest", "fixed_needs_reingest", "external_missing",

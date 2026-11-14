@@ -130,7 +130,9 @@ type VerifyFinding struct {
 	//	missing               a non-local source: redownloadModFile
 	//	cache_incomplete      a non-local source with a recorded file:
 	//	                      redownloadModFile refills the row's own entry
-	//	                      (#642); a mod with no recorded file is not
+	//	                      (#642); a mod with no recorded file is not,
+	//	                      nor is a deployed copy convergence kept as the
+	//	                      only one left (#645, LastCopyReason)
 	//	no_checksum           a non-local source: redownload-to-populate,
 	//	                      or, for a file the source won't serve, a fill
 	//	                      from the mod's own complete cache entry (#514)
@@ -1582,6 +1584,7 @@ func (r *verifyRun) syncMergedPakPass() {
 func (r *verifyRun) convergencePass() {
 	convResult, convErr := r.svc.convergeDeployedFiles(r.ctx, r.game, r.profile, !r.opts.Fix)
 	if convResult != nil {
+		r.lastCopyFindings(convResult.lastCopies)
 		for _, cf := range convResult.Removed {
 			if r.opts.Fix {
 				r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Root: cf.Root, Status: "fixed_stale_deployment", Note: cf.Reason}, VerifyEvent{})
@@ -1597,6 +1600,40 @@ func (r *verifyRun) convergencePass() {
 			r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("convergence: %v", e)}, VerifyEvent{})
 		}
 	}
+}
+
+// lastCopyFindings reports each deployed copy convergence kept because it
+// is the only one left (#645) as a cache_incomplete issue, not fixable -
+// in a plain run and a --fix run alike, since neither removes it. A path
+// another pass already reported for the mod as cache_incomplete, or a mod
+// archiveEntryPass already reported missing, is not counted again: one
+// finding per mod per path.
+func (r *verifyRun) lastCopyFindings(kept []lastCopy) {
+	for _, lc := range kept {
+		if r.reportedLastCopy(lc) {
+			continue
+		}
+		r.result.Issues++
+		r.finding(VerifyFinding{ModID: lc.ModID, ModName: lc.modName, FileID: lc.Path, Root: lc.Root,
+			Status: VerifyStatusCacheIncomplete, Note: lc.Reason, FixableReason: LastCopyReason}, VerifyEvent{})
+	}
+}
+
+// reportedLastCopy reports whether this run already has a finding for lc's
+// mod that covers its path (lastCopyFindings).
+func (r *verifyRun) reportedLastCopy(lc lastCopy) bool {
+	for _, f := range r.result.Findings {
+		if f.ModID != lc.ModID {
+			continue
+		}
+		switch {
+		case f.Status == VerifyStatusCacheIncomplete && f.FileID == lc.Path && f.Root == lc.Root:
+			return true
+		case f.Status == "missing" && f.FileID == "":
+			return true
+		}
+	}
+	return false
 }
 
 // fileCountPrePass ports cmd/lmm/verify.go's per-mod file-count mismatch

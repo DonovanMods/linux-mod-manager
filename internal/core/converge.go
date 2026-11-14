@@ -45,6 +45,20 @@ type ConvergedFile struct {
 // per-item failures are surfaced via the returned joined error instead.
 type ConvergeResult struct {
 	Removed []ConvergedFile `json:"removed"`
+
+	// lastCopies is every removal candidate the row pass kept because the
+	// deployed copy is the only one left (#645, lastCopyKept): verify
+	// reports each as a cache_incomplete finding. Not part of the wire
+	// document.
+	lastCopies []lastCopy
+}
+
+// lastCopy is a deployed path convergence kept because it is the last copy
+// of a lost cache member lmm cannot download again (#645): ModName is for
+// verify's finding, Reason the note.
+type lastCopy struct {
+	ConvergedFile
+	modName string
 }
 
 // convergeDeployedFiles reconciles gameDir/profileName's on-disk state
@@ -85,6 +99,16 @@ type ConvergeResult struct {
 //     what is wrong, not the deployment, and verify reports the loss and
 //     re-downloads it. Those rows are claimed, so the sweep keeps a link
 //     the loss left dangling too.
+//
+//     A row no download can rebuild (#645, cannotRedownload: a local
+//     import, an archive variant, a row recording no source file) whose
+//     entry carries the identity marker keeps a removal candidate that is
+//     a regular file under copy or hardlink deploy (lastCopyKept): the
+//     entry lost that member - by whatever route lostCacheFiles cannot see
+//     - and the deployed copy is the only one left. It is kept, record and
+//     all, and returned in ConvergeResult.lastCopies for verify to report
+//     as cache_incomplete. A symlink into a lost member still goes:
+//     removing a dangling link loses nothing.
 //
 //  2. Sweep pass: walks gameDir for symlinks with no CLAIMED DB row - "no
 //     surviving row" (a row the row pass judged and kept, or deleted) OR
@@ -234,6 +258,16 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		// claimed, so the sweep below does not take a now-dangling link
 		// either.
 		lostEntry := !unknown && s.entryLostFiles(gameCache, game, &m, rows, own, strandedPaths, provided, &errs)
+		// #645: a row lmm cannot download again keeps a copy the removal
+		// would otherwise take - see lastCopyKept. Asked lazily, once.
+		var irreplaceableAsked, irreplaceableRow bool
+		irreplaceable := func() bool {
+			if !irreplaceableAsked {
+				irreplaceableAsked = true
+				irreplaceableRow = cannotRedownload(&m) && stampedEntry(gameCache.ModPath(modCacheKey(game.ID, m.Mod)))
+			}
+			return irreplaceableRow
+		}
 		for _, path := range rows {
 			// A deployed_files row is bookkeeping, not truth: a corrupted or
 			// hand-edited relative_path (absolute, or escaping the game dir
@@ -310,6 +344,15 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 					}
 					continue
 				}
+			}
+			// #645: the removal would take the last copy of a member the
+			// entry lost and no download can put back. Kept, record and
+			// all, and reported by verify as cache_incomplete.
+			if irreplaceable() && lastCopyKept(m.LinkMethod, method, dstPath) {
+				kept := cf
+				kept.Reason = deployedGoneNote([]domain.DeployPath{path})
+				result.lastCopies = append(result.lastCopies, lastCopy{ConvergedFile: kept, modName: m.Name})
+				continue
 			}
 			if dryRun {
 				result.Removed = append(result.Removed, cf)
@@ -466,6 +509,28 @@ func (s *Service) entryLostFiles(gameCache *cache.Cache, game *domain.Game, m *d
 		return true
 	}
 	return len(lost) > 0
+}
+
+// cannotRedownload reports whether no download can rebuild m's cache entry
+// (#645): a local import has no source, an archive variant's tree is an
+// archive its source does not list (#644), and a row that records no
+// source file has nothing to name to a download.
+func cannotRedownload(m *domain.InstalledMod) bool {
+	return !redownloadRepairs(m) || len(m.FileIDs) == 0
+}
+
+// lastCopyKept reports whether the deployed file at dst, a removal
+// candidate of a row lmm cannot download again whose entry carries the
+// identity marker, is the last copy of the member its entry lost (#645):
+// the mod was deployed by copy or hard link - by its row's recorded method
+// or the profile's effective one - and dst is a regular file, not a link.
+// A symlink into a lost member is dangling, and removing it loses nothing.
+func lastCopyKept(rowMethod, method domain.LinkMethod, dst string) bool {
+	if rowMethod == domain.LinkSymlink && method == domain.LinkSymlink {
+		return false
+	}
+	info, err := os.Lstat(dst)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // strandedRowPaths is the paths of profileName's deployed-file rows in game

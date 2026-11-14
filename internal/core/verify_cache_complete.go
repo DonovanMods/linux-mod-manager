@@ -24,7 +24,18 @@ import (
 // so its row is not fixable), and until the entry is whole again no
 // deployed copy of the lost member is removed as stale. The note names what
 // is gone.
+//
+// #645: it is also the row for a deployed copy convergence kept because no
+// download can rebuild the mod's entry and the copy is the only one left -
+// FileID is then the deployed path (Root saying under which directory), and
+// FixableReason is LastCopyReason.
 const VerifyStatusCacheIncomplete = "cache_incomplete"
+
+// LastCopyReason is why a cache_incomplete finding for a deployed copy lmm
+// kept is not fixable (#645): the row cannot be downloaded again, its
+// entry lost the member, and the copy or hard link in the game directory
+// is all that is left of it.
+const LastCopyReason = "the deployed copy is the only one left"
 
 // lostNoteLimit caps how many lost paths a cache_incomplete note names.
 const lostNoteLimit = 3
