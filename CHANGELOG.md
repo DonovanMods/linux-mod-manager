@@ -812,6 +812,25 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **A profile that swaps a mod's file at the same version now reinstalls
+  it (#639).** When a profile entry's `file_ids` changed but its `version`
+  did not (a collection update that swaps a file, a profile edited by
+  hand, an import of an edited profile), `lmm profile apply`, `lmm profile
+switch`, `lmm profile import` and a collection update all reported
+  nothing to do, and the old file stayed installed. A different set of
+  files is now drift, as a different version is: each of them reinstalls
+  the mod with the new files, and its plan says so (`reinstall: files
+changed` in the terminal and the web UI; `"reason": "files_changed"` on
+  an apply plan's entry and a `reinstall_reasons` map on a switch or
+  import plan in `--json`, both new and omitted otherwise). File sets
+  compare as sets, so the same files in another order are no change. The
+  new files get a cache entry of their own, so the old file's tree is
+  never reused or layered onto: the entry a version's files already fill
+  keeps its key, and only another set of files at that version moves to a
+  new one (`<version>@<variant>`), so no existing cache entry is
+  invalidated. A collection update's plan note for such an entry now says
+  it reinstalls the mod.
+
 - **An override no longer overwrites your edit of a game file for good
   (#631).** When you changed a file after lmm wrote a profile override
   there (or the game rewrote its INI), `lmm deploy` wrote the profile's

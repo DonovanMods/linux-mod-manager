@@ -533,9 +533,8 @@ func TestCollectionUpdate_DuplicateOfASourceCollection(t *testing.T) {
 	assert.Equal(t, []string{"nexusmods:10"}, keys(plan.Changed), "the duplicate keeps the collection's markers")
 }
 
-// A pin whose files change at the same version is recorded, and the plan
-// says it applies when the mod is next reinstalled (#639 tracks
-// reinstalling it at once).
+// A pin whose files change at the same version is a reinstall (#639), and
+// the plan says so.
 func TestCollectionUpdate_SameVersionFilesCarryANote(t *testing.T) {
 	f := newUpdateFixture(t)
 	f.importURL(t, urlDocument(t, "coll-1", 1, nil))
@@ -545,5 +544,40 @@ func TestCollectionUpdate_SameVersionFilesCarryANote(t *testing.T) {
 	plan := f.planUpdate(t)
 	require.Len(t, plan.Changed, 1)
 	assert.Equal(t, []string{"files"}, plan.Changed[0].Changes)
-	assert.Contains(t, plan.Changed[0].Note, "next reinstalled")
+	assert.Contains(t, plan.Changed[0].Note, "files changed")
+	assert.Contains(t, plan.Changed[0].Note, "reinstalls")
+}
+
+// #639: a revision that swaps a mod's file for another at the same version
+// reinstalls the mod with the new file: the old file's member goes, the new
+// one's is deployed, and the profile and the row agree.
+func TestCollectionUpdate_SameVersionFileSwapReinstalls(t *testing.T) {
+	f := newUpdateFixture(t)
+	ctx := context.Background()
+	f.src.filesByMod["10"] = append(f.src.filesByMod["10"], "102")
+	f.src.versions["102"] = "1"
+	f.downloads.AddDownload("102", createTestZipBytes(t, map[string]string{"file102.txt": "content 102"}))
+	f.importURL(t, urlDocument(t, "coll-1", 1, nil))
+	require.FileExists(t, filepath.Join(f.game.ModPath, "file100.txt"))
+
+	f.serve(urlDocument(t, "coll-1", 2, func(doc *domain.CollectionDocument) {
+		doc.Items[0].Ref.FileIDs = []string{"102"}
+	}))
+	plan := f.planUpdate(t)
+	require.Len(t, plan.Changed, 1)
+	assert.Equal(t, []string{"files"}, plan.Changed[0].Changes)
+	_, err := f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"102"}, f.profile(t).FindRef("nexusmods", "10").FileIDs)
+	row, err := f.svc.GetInstalledMod(ctx, "nexusmods", "10", "skyrim", "coll")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"102"}, row.FileIDs, "the row follows the new pin")
+	assert.Equal(t, "1", row.Version)
+	assert.NoFileExists(t, filepath.Join(f.game.ModPath, "file100.txt"), "the old file's member is retired")
+	assert.FileExists(t, filepath.Join(f.game.ModPath, "file102.txt"), "the new file's member is deployed")
+
+	applyPlan, err := f.svc.PlanProfileApply(ctx, f.game, "coll")
+	require.NoError(t, err)
+	assert.True(t, applyPlan.NoChanges, "the profile and the installation agree")
 }

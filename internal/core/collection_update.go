@@ -154,14 +154,15 @@ type CollectionUpdateItem struct {
 	DisplayVersion    string `json:"display_version,omitempty"`
 	NewDisplayVersion string `json:"new_display_version,omitempty"`
 	// Note is what a person should know about the change: today, that an
-	// entry's files change at the same version, which is recorded on the
-	// profile and applies when the mod is next reinstalled (#639).
+	// entry's files change at the same version, so the update reinstalls
+	// the mod with the new files (#639).
 	Note string `json:"note,omitempty"`
 }
 
 // sameVersionFilesNote is CollectionUpdateItem.Note for a pin whose files
-// change and whose version does not.
-const sameVersionFilesNote = "its files change at the same version: the profile records them, and they apply when the mod is next reinstalled"
+// change and whose version does not: a reinstall, as every converge flow
+// treats a file-set change (#639).
+const sameVersionFilesNote = "files changed at the same version: the update reinstalls the mod with the new files"
 
 // noteChanges sets the entry's Note from its Changes.
 func (it *CollectionUpdateItem) noteChanges() {

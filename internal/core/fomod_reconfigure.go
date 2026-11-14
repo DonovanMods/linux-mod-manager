@@ -104,7 +104,7 @@ func (s *Service) PlanFomodReconfigure(ctx context.Context, game *domain.Game, p
 		rec = ref.FomodRecord()
 	}
 	choices := rec.Choices
-	if row.Variant == "" && rec.IsZero() && !s.IsLegacyFomodInstall(game, row) {
+	if fomodTreeVariant(row) == "" && rec.IsZero() && !s.IsLegacyFomodInstall(game, row) {
 		return nil, fmt.Errorf("%s: %w", row.Name, ErrNotFomodInstalled)
 	}
 	if row.SourceID == domain.SourceLocal {

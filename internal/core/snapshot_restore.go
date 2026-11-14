@@ -463,6 +463,7 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 		if im, ok := installedByKey[key]; ok &&
 			(row.Version == "" || im.Version == row.Version) &&
 			!fomodDrift(ref, &im) && // #614: the snapshot's own FOMOD choices' tree
+			!fileSetDrift(ref, &im) && // #639: and its own set of the version's files
 			gameCache.Exists(cache.Key{GameID: game.ID, SourceID: im.SourceID, ModID: im.ID, Version: im.Version, Variant: im.Variant}) {
 			row.Cached = true
 			plan.Mods = append(plan.Mods, row)

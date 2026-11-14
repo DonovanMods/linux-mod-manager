@@ -1,0 +1,15 @@
+{
+  "ref": {
+    "source_id": "nexusmods",
+    "mod_id": "8",
+    "version": "1.0",
+    "file_ids": [
+      "21"
+    ],
+    "locked": false
+  },
+  "files": [],
+  "version": "1.0",
+  "cached": false,
+  "reason": "files_changed"
+}

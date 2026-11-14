@@ -1,0 +1,10 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "10",
+  "version": "1",
+  "new_version": "1",
+  "changes": [
+    "files"
+  ],
+  "note": "files changed at the same version: the update reinstalls the mod with the new files"
+}

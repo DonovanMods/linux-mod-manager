@@ -473,9 +473,8 @@ The plan lists:
   mod's latest file sets it) is not a change of yours, and the mod stays
   the collection's.
 
-A pin whose files change while its version stays the same is recorded on
-the profile, and the plan says it applies when the mod is next
-reinstalled.
+A pin whose files change while its version stays the same reinstalls the
+mod with the new files, and the plan says so.
 
 The plugin list, file load orders (Cyberpunk 2077's archive order, see
 [Load order](load-order.md)) and config overrides follow the same rule. lmm remembers
@@ -578,3 +577,11 @@ for example after you edit a profile file by hand, lmm's main screen shows a
   installed.
 
 The terminal versions are `lmm profile apply` and `lmm profile sync`.
+
+A mod the profile pins to another version, other installer answers or
+other files than the ones installed is reinstalled the same way, by an
+apply or a switch to the profile. A file swapped for another at the same
+version shows in the plan as `reinstall: files changed`. The order the
+files are listed in doesn't matter. (The **Profile** card offers
+**Apply profile…** only when a listed mod isn't installed at all, so after
+a hand edit like this, run `lmm profile apply`.)

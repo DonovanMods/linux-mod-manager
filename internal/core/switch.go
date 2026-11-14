@@ -72,6 +72,13 @@ type SwitchPlan struct {
 	// redeploys of the live version).
 	PriorVersions map[string]domain.InstalledMod `json:"prior_versions,omitempty"`
 
+	// ReinstallReasons says, keyed by domain.ModKey, why a ToInstall entry
+	// reinstalls a mod at the version it already has:
+	// ReinstallFilesChanged, for a target profile that pins another set of
+	// its files (#639). Absent for every other entry. Additive; omitted
+	// when empty.
+	ReinstallReasons map[string]string `json:"reinstall_reasons,omitempty"`
+
 	// ExternalUnchanged counts the EXTERNAL mods (#269) this switch leaves
 	// exactly as they are because it cannot do anything else: a Steam
 	// Workshop item is game-global, lmm profiles are not, and changing what
@@ -238,6 +245,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	var toDisable, toEnable []domain.InstalledMod
 	var toInstall []domain.ModReference
 	var priorVersions map[string]domain.InstalledMod // #96 - see SwitchPlan.PriorVersions
+	var reinstallReasons map[string]string           // #639 - see SwitchPlan.ReinstallReasons
 	// disableKeys is which mods already have a ToDisable entry, so the
 	// target loop below does not list one a second time under its own
 	// profile (fix-round F5).
@@ -344,7 +352,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		switch {
 		case !installed:
 			toInstall = append(toInstall, ref)
-		case (ref.Version != "" && row.Version != ref.Version) || fomodDrift(ref, row) || row.ModType != ref.ModType:
+		case (ref.Version != "" && row.Version != ref.Version) || fomodDrift(ref, row) || row.ModType != ref.ModType || fileSetDrift(ref, row):
 			// #607: a row routed by another stated type than the target
 			// reference's is a drift too - reinstalled by the reference's.
 			// #96 convergence (and #614's FOMOD choices drift): the profile names a different version than
@@ -358,11 +366,18 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			// when its files are the live ones (R7), since the target row's
 			// own claim says nothing about what is on disk.
 			toInstall = append(toInstall, ref)
+			// #639: a file-set drift at the same version says why.
+			if why := reinstallReason(ref, row); why != "" {
+				if reinstallReasons == nil {
+					reinstallReasons = make(map[string]string)
+				}
+				reinstallReasons[key] = why
+			}
 			prior := *row
 			if live != nil {
 				prior = *live
 			}
-			if prior.Version != ref.Version || fomodDrift(ref, &prior) || prior.ModType != ref.ModType {
+			if prior.Version != ref.Version || fomodDrift(ref, &prior) || prior.ModType != ref.ModType || fileSetDrift(ref, &prior) {
 				recordPrior(key, prior)
 			}
 		case !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version, Variant: row.Variant}):
@@ -401,7 +416,8 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			// #614: another tree of the same version (other FOMOD
 			// choices) on disk is a drift too.
 			// #607: so is a live copy routed by another stated type.
-			drifted := live != nil && (live.Version != row.Version || live.Variant != row.Variant || live.ModType != ref.ModType)
+			// #639: and so is another set of the version's files.
+			drifted := live != nil && (live.Version != row.Version || live.Variant != row.Variant || live.ModType != ref.ModType || filesDiffer(live.FileIDs, row.FileIDs))
 			if !hasTargetRow || !tr.Enabled || !tr.Deployed || drifted {
 				toEnable = append(toEnable, *row)
 				if drifted {
@@ -439,6 +455,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		GameID: game.ID, From: currentName, To: target,
 		ToDisable: toDisable, ToEnable: toEnable, ToInstall: toInstall,
 		PriorVersions:     priorVersions,
+		ReinstallReasons:  reinstallReasons,
 		ExternalUnchanged: externalUnchanged,
 		Overrides:         overrides,
 		NoChanges:         len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0 && !overrideChanged(overrides),
@@ -931,6 +948,9 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			mod.ModType = ref.ModType // #607
 			var resolved *fomodResolved
 			mod.Variant = refVariant(&ref)
+			// #639: another set of the version's files than its entry
+			// holds has an entry of its own.
+			mod.Variant = fileSetKey(s.GetGameCache(game), modCacheKey(game.ID, *mod), downloadedFileIDs).Variant
 			if s.GetGameCache(game).HasFileIDs(modCacheKey(game.ID, *mod), downloadedFileIDs) {
 				if mod.Variant != "" {
 					resolved = resolvedFromRef(&ref, mod.Variant)
@@ -948,7 +968,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 					emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
 				}
 				results, got, err := s.downloadModFiles(ctx, s.GetGameCache(game), ref.SourceID, game, mod, filesToDownload, fx,
-					modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }})
+					modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, fileSet: true})
 				if err != nil {
 					// Not fail(): SwitchDownloadFailed renders this
 					// mod's Error line already.

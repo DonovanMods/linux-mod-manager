@@ -1,0 +1,23 @@
+{
+  "game_id": "skyrim-se",
+  "from": "default",
+  "to": "hardcore",
+  "to_enable": [],
+  "to_disable": [],
+  "to_install": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "8",
+      "version": "1.0",
+      "file_ids": [
+        "21"
+      ],
+      "locked": false
+    }
+  ],
+  "reinstall_reasons": {
+    "nexusmods:8": "files_changed"
+  },
+  "no_changes": false,
+  "already_active": false
+}

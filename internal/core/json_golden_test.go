@@ -761,6 +761,37 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #639: a mod reinstalled at the version it has, because the
+			// profile pins another set of its files.
+			"profile_apply_install_files_changed",
+			core.ProfileApplyInstall{
+				Ref:     domain.ModReference{SourceID: "nexusmods", ModID: "8", Version: "1.0", FileIDs: []string{"21"}},
+				Version: "1.0",
+				Reason:  core.ReinstallFilesChanged,
+			},
+		},
+		{
+			// #639: the switch's reinstall reasons, keyed by mod.
+			"switch_plan_reinstall_reasons",
+			core.SwitchPlan{
+				GameID: "skyrim-se", From: "default", To: "hardcore",
+				ToInstall:        []domain.ModReference{{SourceID: "nexusmods", ModID: "8", Version: "1.0", FileIDs: []string{"21"}}},
+				ReinstallReasons: map[string]string{"nexusmods:8": core.ReinstallFilesChanged},
+			},
+		},
+		{
+			// #639: the import's reinstall reasons, keyed by mod.
+			"import_plan_reinstall_reasons",
+			core.ImportPlan{
+				Installed:        []domain.ModReference{},
+				AlreadyCached:    []domain.ModReference{},
+				NeedsRedownload:  []domain.ModReference{{SourceID: "nexusmods", ModID: "8", Version: "1.0", FileIDs: []string{"21"}}},
+				Missing:          []domain.ModReference{},
+				ReinstallReasons: map[string]string{"nexusmods:8": core.ReinstallFilesChanged},
+				Exists:           true,
+			},
+		},
+		{
 			// v2 Phase 3 Ruling 15: the document `lmm profile
 			// create/delete/reorder` emit. The nested domain.Profile is
 			// pinned in full by domain's own golden, so this one only has
@@ -2522,11 +2553,20 @@ func TestJSONGoldens(t *testing.T) {
 			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1", NewVersion: "2", Changes: []string{"version", "files", "lock"}, Locked: true},
 		},
 		{
-			// #613: an entry whose files change at the same version carries
-			// the note that they apply at its next reinstall (#639).
+			// #613: an entry whose files change at the same version carried
+			// the note that they apply at its next reinstall, before #639
+			// reinstalled it (the field's shape; the note text is now
+			// collection_update_item_same_version_files_reinstall's).
 			"collection_update_item_same_version_files",
 			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "10", Version: "1", NewVersion: "1", Changes: []string{"files"},
 				Note: "its files change at the same version: the profile records them, and they apply when the mod is next reinstalled"},
+		},
+		{
+			// #639: the note an entry whose files change at the same version
+			// carries now that the update reinstalls it.
+			"collection_update_item_same_version_files_reinstall",
+			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "10", Version: "1", NewVersion: "1", Changes: []string{"files"},
+				Note: "files changed at the same version: the update reinstalls the mod with the new files"},
 		},
 		{
 			// #613 x #620: what an update does to one file load order.

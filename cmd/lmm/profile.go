@@ -736,7 +736,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		if len(plan.ToInstall) > 0 {
 			fmt.Printf("Will install %d mod(s):\n", len(plan.ToInstall))
 			for _, ref := range plan.ToInstall {
-				fmt.Printf("  ↓ %s\n", planRefLine(ref))
+				fmt.Printf("  ↓ %s%s\n", planRefLine(ref), reinstallNote(plan.ReinstallReasons[domain.ModKey(ref.SourceID, ref.ModID)]))
 			}
 		}
 		printOverrideChanges(plan.Overrides)
@@ -923,6 +923,16 @@ func exportMetaSet(meta core.CollectionExportOptions) bool {
 // content id, and since #365 core stamps the ref's own external /
 // updated_at so this line can say the revision date instead. A ref with
 // neither prints no version at all rather than a bare "v".
+// reinstallNote is a plan line's suffix for a converge plan's reinstall
+// reason (#639): a mod reinstalled at the version it has, because the
+// profile pins another set of its files. Empty for no reason.
+func reinstallNote(reason string) string {
+	if reason == core.ReinstallFilesChanged {
+		return " (reinstall: files changed)"
+	}
+	return ""
+}
+
 func planRefLine(ref domain.ModReference) string {
 	// #607: a stated mod type changes where the mod deploys, so a plan
 	// says so.
@@ -1215,7 +1225,7 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		if len(plan.NeedsRedownload) > 0 && !noInstall && !manual {
 			fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(plan.NeedsRedownload))
 			for _, ref := range plan.NeedsRedownload {
-				fmt.Printf("    - %s\n", planRefLine(ref))
+				fmt.Printf("    - %s%s\n", planRefLine(ref), reinstallNote(plan.ReinstallReasons[domain.ModKey(ref.SourceID, ref.ModID)]))
 			}
 		}
 		if len(plan.Missing) > 0 && !noInstall && !manual {
@@ -1860,7 +1870,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 					fmt.Printf("  = %s (tracked - Steam already has it)\n", planRefLine(entry.Ref))
 					continue
 				}
-				fmt.Printf("  ↓ %s\n", planRefLine(entry.Ref))
+				fmt.Printf("  ↓ %s%s\n", planRefLine(entry.Ref), reinstallNote(entry.Reason))
 			}
 		}
 		printOverrideChanges(plan.Overrides)

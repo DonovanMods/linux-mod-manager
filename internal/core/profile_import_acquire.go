@@ -153,6 +153,9 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	gameCache := s.GetGameCache(game)
 	warmKey := modCacheKey(game.ID, *mod)
 	warmKey.Variant = fx.expectedVariant()
+	// #639: another set of the version's files than that entry holds has
+	// an entry of its own.
+	warmKey = fileSetKey(gameCache, warmKey, st.fileIDs)
 	if gameCache.HasFileIDs(warmKey, st.fileIDs) {
 		if warmKey.Variant != "" {
 			mod.Variant = warmKey.Variant
@@ -215,6 +218,9 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 		f.release = s.releaseFilesFunc(st.files)
 		return nil, f
 	}
+	// #639: a set of files the base entry does not hold commits to an
+	// entry of its own.
+	restampFileSet(gameCache, game.ID, mod, ordered, nil)
 	st.files = ordered
 	st.fomod = resolved
 	return st, nil

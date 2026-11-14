@@ -161,6 +161,10 @@ type ProfileApplyInstall struct {
 	// at that position and continues with the rest, matching
 	// doProfileApply's per-mod continue.
 	Error string `json:"error,omitempty"`
+	// Reason says why an installed mod is reinstalled when its version does
+	// not: ReinstallFilesChanged, for a profile that pins another set of
+	// its files (#639). Empty otherwise.
+	Reason string `json:"reason,omitempty"`
 }
 
 // profileApplyFailure builds the InstalledRef ApplyProfileApply records for
@@ -411,7 +415,7 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 			continue
 		}
 
-		if (ref.Version != "" && im.Version != ref.Version) || fomodDrift(ref, im) || im.ModType != ref.ModType {
+		if (ref.Version != "" && im.Version != ref.Version) || fomodDrift(ref, im) || im.ModType != ref.ModType || fileSetDrift(ref, im) {
 			// #96 convergence (and #614's: the profile records FOMOD choices
 			// whose tree is not the installed one): the profile names a different version than
 			// the installed row - reinstall at the profile's version
@@ -432,7 +436,7 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 				prior := *im
 				replaces = &prior
 			}
-			plan.ToInstall = append(plan.ToInstall, ProfileApplyInstall{Ref: ref, Replaces: replaces})
+			plan.ToInstall = append(plan.ToInstall, ProfileApplyInstall{Ref: ref, Replaces: replaces, Reason: reinstallReason(ref, im)})
 			continue
 		}
 
@@ -572,8 +576,13 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 	}
 
 	mod.Version = domain.EffectiveInstalledVersion(mod.Version, selected) // #94
-	// #614: a FOMOD mod's entry is the variant its recorded choices name.
+	// #614: a FOMOD mod's entry is the variant its recorded choices name;
+	// #639: and the file-set variant of it when that entry holds another
+	// set of the version's files.
 	mod.Variant = refVariant(&entry.Ref)
+	ids := profileApplyFileIDs(selected)
+	key := fileSetKey(s.GetGameCache(game), modCacheKey(game.ID, *mod), ids)
+	mod.Variant = key.Variant
 
 	entry.Mod = mod
 	entry.Files = selected
@@ -583,7 +592,7 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 	// (a partially-populated version directory would be skipped forever) or
 	// by file name (an extracted archive's members match no
 	// DownloadableFile, so every archive-based mod would redownload).
-	entry.Cached = s.GetGameCache(game).HasFileIDs(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}, profileApplyFileIDs(selected))
+	entry.Cached = s.GetGameCache(game).HasFileIDs(key, ids)
 }
 
 // rowsElsewhere collects the installed rows of every saved profile of
@@ -626,7 +635,7 @@ func cachedRowElsewhere(gameCache *cache.Cache, gameID string, ref domain.ModRef
 		return gameCache.HasFileIDs(cache.Key{GameID: gameID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version, Variant: row.Variant}, row.FileIDs)
 	}
 	row := pickImportRow(rows, ref, cached)
-	if row.External || (ref.Version != "" && row.Version != ref.Version) || row.Variant != refVariant(&ref) || !cached(row) {
+	if row.External || (ref.Version != "" && row.Version != ref.Version) || !variantFits(row.Variant, &ref) || fileSetDrift(ref, &row) || !cached(row) {
 		return domain.InstalledMod{}, false
 	}
 	if _, drift := liveOtherVersion(rows, ref); drift {
@@ -995,7 +1004,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 					emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
 				}
 				results, got, err := s.downloadModFiles(ctx, s.GetGameCache(game), entry.Ref.SourceID, game, mod, entry.Files, fx,
-					modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }})
+					modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, fileSet: true})
 				if err != nil {
 					emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: fmt.Sprintf("download failed: %v", err)})
 					// Cannot use fail(): SwitchDownloadFailed above already

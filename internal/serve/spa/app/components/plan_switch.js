@@ -19,6 +19,7 @@ import { html } from "../render.js";
 import { codeSpans } from "../errortext.js";
 import { PlanWarnings } from "./planwarnings.js";
 import { PlanOverrides } from "./planoverrides.js";
+import { reinstallReason } from "../version.js";
 
 /** refLabel names a domain.ModReference the same way plan_profile_import.js
  * does - it carries no display name of its own, so "source:mod @ version"
@@ -55,6 +56,8 @@ export function SwitchPlanView({ plan }) {
   const toEnable = plan.to_enable ?? [];
   const toInstall = plan.to_install ?? [];
   const priorVersions = plan.prior_versions ?? {};
+  // Issue 639: why a to_install entry reinstalls a mod at its version.
+  const reasons = plan.reinstall_reasons ?? {};
 
   // Issue 463: with no single profile marked active (core issue 445, review F2), the
   // switch can only MARK its target - there is no "from" to take down.
@@ -120,14 +123,23 @@ export function SwitchPlanView({ plan }) {
             <ul class="plan__paths" data-testid="switch-to-install">
               ${toInstall.map((ref) => {
                 const prior = priorVersions[`${ref.source_id}:${ref.mod_id}`];
+                const why = reinstallReason(
+                  reasons[`${ref.source_id}:${ref.mod_id}`],
+                );
                 return html`
                   <li key=${`${ref.source_id}:${ref.mod_id}`} class="plan__mod">
                     <span class="mono">${refLabel(ref)}</span>${" "}
                     ${
-                      prior &&
-                      html`<span class="plan__mod-detail"
-                        >replacing ${prior.version}</span
-                      >`
+                      why
+                        ? html`<span
+                            class="plan__mod-detail"
+                            data-testid="reinstall-reason"
+                            >${why}</span
+                          >`
+                        : prior &&
+                          html`<span class="plan__mod-detail"
+                            >replacing ${prior.version}</span
+                          >`
                     }
                   </li>
                 `;

@@ -27,7 +27,7 @@
 // ticks the same box that lets every override through (allow_any_overrides).
 
 import { html } from "../render.js";
-import { displayVersion } from "../version.js";
+import { displayVersion, reinstallReason } from "../version.js";
 import { safeWebUrl } from "../weburl.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 import { formatBytes } from "../progress.js";
@@ -50,18 +50,29 @@ function refLabel(ref) {
   return `${ref.source_id}:${ref.mod_id}${at}${type}`;
 }
 
-function RefList({ heading, refs }) {
+function RefList({ heading, refs, reasons = {} }) {
   if (!refs || refs.length === 0) return null;
   return html`
     <section class="plan__section">
       <h3 class="plan__heading">${heading} (${refs.length})</h3>
       <ul class="plan__paths">
-        ${refs.map(
-          (ref) =>
-            html`<li key=${`${ref.source_id}:${ref.mod_id}`} class="mono">
-              ${refLabel(ref)}
-            </li>`,
-        )}
+        ${refs.map((ref) => {
+          // Issue 639: why a mod the profile has is reinstalled at its
+          // version.
+          const why = reinstallReason(
+            reasons[`${ref.source_id}:${ref.mod_id}`],
+          );
+          return html`<li key=${`${ref.source_id}:${ref.mod_id}`} class="mono">
+            ${refLabel(ref)}${
+              why &&
+              html` <span
+                class="plan__mod-detail"
+                data-testid="reinstall-reason"
+                >(${why})</span
+              >`
+            }
+          </li>`;
+        })}
       </ul>
     </section>
   `;
@@ -865,7 +876,11 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
                 heading="Already downloaded, added to this profile"
                 refs=${alreadyCached}
               />
-              <${RefList} heading="Needs redownload" refs=${needsRedownload} />
+              <${RefList}
+                heading="Needs redownload"
+                refs=${needsRedownload}
+                reasons=${plan.reinstall_reasons}
+              />
               <${RefList} heading="Missing entirely" refs=${missing} />
             `
       }
