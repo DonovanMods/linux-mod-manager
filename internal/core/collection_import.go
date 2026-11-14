@@ -185,6 +185,9 @@ func summarisePlugins(p domain.ProfilePlugins, managed bool) *CollectionPluginSu
 	return s
 }
 
+// maxCycleEdgesShown caps the edges pluginRuleCycle's warning names.
+const maxCycleEdgesShown = 8
+
 // pluginRuleCycle is a plan warning naming the cycle p's own rules form
 // over the plugins it lists, or "" when they form none (#611 review). It
 // runs P3's sort (sortPlugins) over the plugins the order and the rules
@@ -216,11 +219,20 @@ func pluginRuleCycle(p domain.ProfilePlugins) string {
 	if !errors.As(err, &cycle) {
 		return ""
 	}
-	parts := make([]string, len(cycle.Edges))
-	for i, edge := range cycle.Edges {
+	// A stranger's recipe can make the cycle as long as its plugin list:
+	// the warning names the first edges and counts the rest, since it
+	// travels in the plan JSON, its SSE frames, the web plan and the
+	// terminal (#611 re-review).
+	shown := min(len(cycle.Edges), maxCycleEdgesShown)
+	parts := make([]string, shown)
+	for i, edge := range cycle.Edges[:shown] {
 		parts[i] = edge.describe()
 	}
-	return "The collection's plugin rules form a cycle, so no load order satisfies them all: " + strings.Join(parts, "; ") +
+	edges := strings.Join(parts, "; ")
+	if more := len(cycle.Edges) - shown; more > 0 {
+		edges += fmt.Sprintf("; ... and %d more", more)
+	}
+	return "The collection's plugin rules form a cycle, so no load order satisfies them all: " + edges +
 		". The import goes ahead, but every deploy will leave the game's plugin list as it was and report the cycle, until a rule in the profile's plugins: changes."
 }
 

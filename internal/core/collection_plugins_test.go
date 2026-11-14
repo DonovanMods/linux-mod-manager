@@ -8,6 +8,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -173,4 +174,31 @@ func TestCollectionImport_PlanWarnsOfAPluginRuleCycle(t *testing.T) {
 	for _, w := range plan.Collection.Warnings {
 		assert.NotContains(t, w, "cycle", "group edges give way rather than cycle")
 	}
+}
+
+// TestCollectionImport_PluginRuleCycleWarningIsBounded (#611 re-review): a
+// stranger's recipe can make the cycle as long as its plugin list, so the
+// warning names the first edges and counts the rest, rather than carrying
+// every edge through the plan JSON, SSE, the web plan and the terminal.
+func TestCollectionImport_PluginRuleCycleWarningIsBounded(t *testing.T) {
+	svc, _ := recipient(t)
+	const n = 500
+	var order, rules strings.Builder
+	for i := range n {
+		fmt.Fprintf(&order, "{name: P%03d.esp}, ", i)
+		fmt.Fprintf(&rules, "{name: P%03d.esp, after: [P%03d.esp]}, ", i, (i+1)%n)
+	}
+	plan, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
+		Data: []byte(collectionPluginsDoc("{order: [" + order.String() + "], rules: {plugins: [" + rules.String() + "]}}")), GameID: "cyber"})
+	require.NoError(t, err)
+	var warning string
+	for _, w := range plan.Collection.Warnings {
+		if strings.Contains(w, "form a cycle") {
+			warning = w
+		}
+	}
+	require.NotEmpty(t, warning)
+	assert.Less(t, len(warning), 2048, "bounded, whatever the cycle's length")
+	assert.Equal(t, 8, strings.Count(warning, "a rule loads "), "the first 8 edges are named")
+	assert.Contains(t, warning, fmt.Sprintf("... and %d more", n-8))
 }
