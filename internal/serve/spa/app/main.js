@@ -1985,6 +1985,7 @@ async function retryInstallOverwrite(jobID) {
 // the answers as the identical "fomod" apply-time option.
 const fomodKinds = new Set([
   "install",
+  "collection_update",
   "import_archive",
   "profile_import",
   "update_from_archive",

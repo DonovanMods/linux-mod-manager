@@ -11,7 +11,8 @@
 // collection: --remove/--remove-obsolete are remove/remove_obsolete,
 // --override/--override-conflicts override/override_conflicts, and
 // --allow-any-overrides allow_any_overrides. --with-optional is a plan-time
-// option, as on the import (it changes what the plan converts). Installer
+// option, and so is --optional, as on the import (they change what the
+// plan converts). Installer
 // questions come back as the job's failure, answered by re-posting with
 // "fomod", as every FOMOD round trip is.
 //
@@ -40,11 +41,14 @@ func init() {
 }
 
 // collectionUpdatePlanRequest is POST /api/v1/plans/collection_update's
-// request body: the profile to update, and whether to opt a source
-// collection's optional items in (`--with-optional`).
+// request body: the profile to update, and which of a source collection's
+// optional items to opt in - every one (`--with-optional`) or those named
+// by core.ConvertedCollectionItem.ID (`--optional`), as the plan view's
+// per-item toggles re-plan with.
 type collectionUpdatePlanRequest struct {
-	Profile      string `json:"profile"`
-	WithOptional bool   `json:"with_optional,omitzero"`
+	Profile      string   `json:"profile"`
+	WithOptional bool     `json:"with_optional,omitzero"`
+	Optional     []string `json:"optional,omitzero"`
 }
 
 // validate implements validatingOptions.
@@ -93,7 +97,7 @@ func planCollectionUpdateKind(ctx context.Context, s *Server, sel selection, opt
 		return nil, nil, fmt.Errorf("collection update plan: unexpected options type %T", opts)
 	}
 	plan, err := s.svc.PlanCollectionUpdate(ctx, sel.Game, core.CollectionUpdateRequest{
-		Profile: req.Profile, WithOptional: req.WithOptional,
+		Profile: req.Profile, WithOptional: req.WithOptional, Optional: req.Optional,
 	})
 	if err != nil {
 		return nil, nil, err

@@ -251,6 +251,20 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
     });
   }
 
+  // Issue 613: a profile imported from a collection address or a NexusMods
+  // collection updates from it (`lmm profile sync --collection`).
+  function updateCollection() {
+    actions.openPlan({
+      kind: "collection_update",
+      origin: `profile:${profile.name}:collection-update`,
+      title: `Update ${profile.name}'s collection`,
+      confirmLabel: "Update",
+      options: { profile: profile.name },
+      context: rowContext,
+      openerSelector: `[data-action="update-collection"][data-profile="${profile.name}"]`,
+    });
+  }
+
   function syncProfile() {
     actions.openPlan({
       kind: "profile_sync",
@@ -416,6 +430,20 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
         >
           Duplicate
         </button>
+        ${
+          profile.collection_origin &&
+          html`<button
+            type="button"
+            class="button button--small"
+            data-action="update-collection"
+            data-profile=${profile.name}
+            title="Fetch the collection's newer version and update this profile to it"
+            disabled=${busy}
+            onClick=${updateCollection}
+          >
+            Update collection…
+          </button>`
+        }
         <button
           type="button"
           class="button button--small"

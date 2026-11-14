@@ -24,6 +24,7 @@ var (
 	profileSyncOverride          []string
 	profileSyncOverrideConflicts bool
 	profileSyncWithOptional      bool
+	profileSyncOptional          []string
 	profileSyncAnyOverrides      bool
 )
 
@@ -41,6 +42,8 @@ func init() {
 		"with --collection, take the collection's version of every mod you locked or edited (yours is kept by default)")
 	f.BoolVar(&profileSyncWithOptional, "with-optional", false,
 		"with --collection, install a NexusMods collection's optional mods too")
+	f.StringSliceVar(&profileSyncOptional, "optional", nil,
+		"with --collection, install this optional item of a NexusMods collection (its id as the plan lists it, mod-id:file-id; repeatable)")
 	f.BoolVar(&profileSyncAnyOverrides, "allow-any-overrides", false,
 		"with --collection, import the new version's overrides that are not text config files too")
 	addFomodFlags(profileSyncCmd)
@@ -53,8 +56,9 @@ func collectionSyncFlagsUsed() []string {
 	for name, set := range map[string]bool{
 		"--remove": len(profileSyncRemove) > 0, "--remove-obsolete": profileSyncRemoveObsolete,
 		"--override": len(profileSyncOverride) > 0, "--override-conflicts": profileSyncOverrideConflicts,
-		"--with-optional": profileSyncWithOptional, "--allow-any-overrides": profileSyncAnyOverrides,
-		"--fomod-choices": fomodChoicesPath != "", "--fomod-defaults": fomodDefaults,
+		"--with-optional": profileSyncWithOptional, "--optional": len(profileSyncOptional) > 0,
+		"--allow-any-overrides": profileSyncAnyOverrides,
+		"--fomod-choices":       fomodChoicesPath != "", "--fomod-defaults": fomodDefaults,
 	} {
 		if set {
 			used = append(used, name)
@@ -92,7 +96,7 @@ func resolveUpdateKeys(args []string, items []core.CollectionUpdateItem, what, f
 func doCollectionUpdate(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	profileName := profileSyncTarget(ctx, service, game, args)
 	plan, err := service.PlanCollectionUpdate(ctx, game, core.CollectionUpdateRequest{
-		Profile: profileName, WithOptional: profileSyncWithOptional,
+		Profile: profileName, WithOptional: profileSyncWithOptional, Optional: profileSyncOptional,
 	})
 	if err != nil {
 		return err

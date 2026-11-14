@@ -504,7 +504,7 @@ func TestServeJSONGoldens(t *testing.T) {
 			// #613: collection_update names its profile in the body, and
 			// --with-optional is plan-time, as on the import.
 			"collection_update_plan_request",
-			collectionUpdatePlanRequest{Profile: "survival", WithOptional: true},
+			collectionUpdatePlanRequest{Profile: "survival", WithOptional: true, Optional: []string{"12:120"}},
 		},
 		{
 			// #613: every `lmm profile sync --collection` choice is an

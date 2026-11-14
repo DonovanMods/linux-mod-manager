@@ -65,7 +65,7 @@ func collectionUpdateService(t *testing.T) (*core.Service, *domain.Game, func(st
 func setCollectionSyncFlags(t *testing.T, set func()) {
 	t.Helper()
 	old := []any{profileSyncCollection, profileSyncRemove, profileSyncRemoveObsolete, profileSyncOverride,
-		profileSyncOverrideConflicts, profileSyncWithOptional, profileSyncAnyOverrides, profileSyncYes, profileSyncDryRun}
+		profileSyncOverrideConflicts, profileSyncWithOptional, profileSyncAnyOverrides, profileSyncYes, profileSyncDryRun, profileSyncOptional}
 	t.Cleanup(func() {
 		profileSyncCollection = old[0].(bool)
 		profileSyncRemove = old[1].([]string)
@@ -76,6 +76,7 @@ func setCollectionSyncFlags(t *testing.T, set func()) {
 		profileSyncAnyOverrides = old[6].(bool)
 		profileSyncYes = old[7].(bool)
 		profileSyncDryRun = old[8].(bool)
+		profileSyncOptional = old[9].([]string)
 	})
 	profileSyncCollection = true
 	set()
