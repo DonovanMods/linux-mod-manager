@@ -10,7 +10,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -21,6 +24,7 @@ import (
 var (
 	modFomodForce     bool
 	modFomodSkipCheck bool
+	modFomodFile      string
 )
 
 var modFomodCmd = &cobra.Command{
@@ -37,13 +41,19 @@ the profile.
 A mod installed before lmm ran FOMOD installers went in as the whole
 archive; this runs its installer and replaces that install.
 
+A mod whose files each carry their own installer (a collection that pins
+a mod's main file and a patch file, each a FOMOD) is asked per file: pick
+one with --file <file-id>, or, at a terminal, from a list; without one,
+every installer is asked. The others keep their choices.
+
 Without a terminal, answer with --fomod-choices <file.json> or
 --fomod-defaults; with neither, the questions are printed (the full
 document under --json) and lmm exits non-zero.
 
 Examples:
   lmm mod fomod 12604 --game skyrim-se
-  lmm mod fomod 12604 --game skyrim-se --fomod-choices choices.json`,
+  lmm mod fomod 12604 --game skyrim-se --fomod-choices choices.json
+  lmm mod fomod 43532 --game skyrim-se --file 101`,
 	Args: cobra.ExactArgs(1),
 	RunE: runModFomod,
 }
@@ -51,6 +61,7 @@ Examples:
 func init() {
 	modFomodCmd.Flags().BoolVarP(&modFomodForce, "force", "f", false, "overwrite other mods' files without asking, and continue past failing hooks")
 	modFomodCmd.Flags().BoolVar(&modFomodSkipCheck, "skip-verify", false, "skip checksum verification of the download")
+	modFomodCmd.Flags().StringVar(&modFomodFile, "file", "", "for a mod whose files each carry their own installer, the file id whose installer to change (default: every one, or a list to pick from at a terminal)")
 	addFomodFlags(modFomodCmd)
 	modCmd.AddCommand(modFomodCmd)
 }
@@ -77,7 +88,12 @@ func doModFomod(ctx context.Context, service *core.Service, game *domain.Game, m
 	if !jsonOutput {
 		fmt.Printf("Reconfiguring %s %s (profile %s)\n", domain.SanitizeLine(plan.Mod.Name), domain.SanitizeLine(plan.Mod.Version), profileName)
 	}
-	opts := core.FomodReconfigureOptions{Force: modFomodForce, SkipVerify: modFomodSkipCheck, SkipHooks: noHooks}
+	opts := core.FomodReconfigureOptions{Force: modFomodForce, SkipVerify: modFomodSkipCheck, SkipHooks: noHooks, FileID: modFomodFile}
+	if opts.FileID == "" && len(plan.Installers) > 1 && fa.interactive {
+		if opts.FileID, err = fa.pickInstaller(plan); err != nil {
+			return err
+		}
+	}
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
@@ -129,4 +145,36 @@ func doModFomod(ctx context.Context, service *core.Service, game *domain.Game, m
 		fmt.Printf("  NOT recorded on profile: %s\n", profileName)
 	}
 	return nil
+}
+
+// pickInstaller asks which installer of a mod whose files each carry one
+// to change (#634): one of plan.Installers' file ids, or "" for every one.
+func (f *fomodAnswerer) pickInstaller(plan *core.FomodReconfigurePlan) (string, error) {
+	_, _ = fmt.Fprintf(f.out, "%s has %d installers, one per file:\n", domain.SanitizeLine(plan.Mod.Name), len(plan.Installers))
+	for i, inst := range plan.Installers {
+		name := inst.Name
+		if name == "" {
+			name = "file " + inst.FileID
+		}
+		_, _ = fmt.Fprintf(f.out, "  %d) %s (file %s)\n", i+1, domain.SanitizeLine(name), domain.SanitizeLine(inst.FileID))
+	}
+	for {
+		_, _ = fmt.Fprintf(f.out, "Change which? [1-%d, Enter for all, q cancels]: ", len(plan.Installers))
+		line, err := f.in.ReadString('\n')
+		if err != nil && (!errors.Is(err, io.EOF) || strings.TrimSpace(line) == "") {
+			return "", promptReadErrorAs(err, ErrCancelled)
+		}
+		switch line = strings.TrimSpace(line); strings.ToLower(line) {
+		case "":
+			return "", nil
+		case "q":
+			return "", ErrCancelled
+		}
+		n, perr := strconv.Atoi(line)
+		if perr != nil || n < 1 || n > len(plan.Installers) {
+			_, _ = fmt.Fprintf(f.out, "  Choose a number from 1 to %d.\n", len(plan.Installers))
+			continue
+		}
+		return plan.Installers[n-1].FileID, nil
+	}
 }

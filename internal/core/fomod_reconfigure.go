@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -189,8 +190,15 @@ func (s *Service) ApplyFomodReconfigure(ctx context.Context, game *domain.Game, 
 	if len(plan.Mod.FileIDs) > 0 {
 		fileIDs = plan.Mod.FileIDs
 	}
-	if opts.FileID != "" && !slices.ContainsFunc(plan.install.Files, func(f domain.DownloadableFile) bool { return f.ID == opts.FileID }) {
-		return &InstallResult{}, fmt.Errorf("%s: file %q is not one of its installed files", plan.Mod.Name, opts.FileID)
+	if opts.FileID != "" && !slices.ContainsFunc(plan.Installers, func(f FomodInstallerFile) bool { return f.FileID == opts.FileID }) {
+		if len(plan.Installers) == 0 {
+			return &InstallResult{}, fmt.Errorf("%s has one installer, so there is no file to choose; reconfigure it without one", plan.Mod.Name)
+		}
+		ids := make([]string, len(plan.Installers))
+		for i, f := range plan.Installers {
+			ids[i] = f.FileID
+		}
+		return &InstallResult{}, fmt.Errorf("%s: file %q is not one of its installers (%s)", plan.Mod.Name, opts.FileID, strings.Join(ids, ", "))
 	}
 	return s.ApplyInstall(ctx, game, plan.install, InstallOptions{
 		TargetFileIDs:        fileIDs,

@@ -924,6 +924,9 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 		switch {
 		case installedInfo.FomodNotRun:
 			fmt.Printf("  Installer: not run - installed before lmm ran FOMOD installers, so every option is deployed; 'lmm mod fomod %s' runs it\n", modID)
+		case len(installedInfo.FomodFiles) > 1:
+			// #634: one installer per file.
+			fmt.Printf("  Installer: FOMOD, one per file (%d files) - 'lmm mod fomod %s --file <file-id>' changes one file's choices\n", len(installedInfo.FomodFiles), modID)
 		case installedInfo.Fomod != nil:
 			fmt.Printf("  Installer: FOMOD - 'lmm mod fomod %s' changes its choices\n", modID)
 		}
