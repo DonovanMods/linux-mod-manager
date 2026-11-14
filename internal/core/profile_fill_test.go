@@ -477,3 +477,141 @@ func TestApplyProfileFill_CarriesTheStatedModType(t *testing.T) {
 	_, err = os.Stat(filepath.Join(f.game.InstallPath, "mod30.esp"))
 	assert.NoError(t, err, "deployed to the game root, by its type")
 }
+
+// #608 review: two pins whose collection files are the same bytes are both
+// filled by one download.
+func TestApplyProfileFill_TwoPinsShareOneFile(t *testing.T) {
+	f := newFillFixture(t, fillSetup{})
+	f.archives["11"] = f.archives["10"]
+	f.recipe[1].MD5, f.recipe[1].Size = f.recipe[0].MD5, f.recipe[0].Size
+	f.writeRecipe(t)
+	f.download(t, "10", "shared.zip")
+
+	plan := f.plan(t)
+	assert.ElementsMatch(t, []string{"10", "11"}, matchedIDs(plan))
+	result, err := f.svc.ApplyProfileFill(context.Background(), f.game, plan, core.ProfileFillOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Installed)
+}
+
+// #608 review: a mod the curator wants on its newest file, which the user
+// has locked, keeps the lock and its policy, and the plan says why.
+func TestPlanProfileFill_ALockedLatestPinIsNotSetToAuto(t *testing.T) {
+	f := newFillFixture(t, fillSetup{refs: []domain.ModReference{
+		{SourceID: "nexusmods", ModID: "11", Version: "1", FileIDs: []string{"110"}, Locked: true},
+	}})
+	f.download(t, "11", "b.zip")
+	plan := f.plan(t)
+	require.Len(t, plan.Matched, 1)
+	assert.False(t, plan.Matched[0].AutoUpdate)
+	require.NotEmpty(t, plan.Notes)
+	assert.Contains(t, plan.Notes[len(plan.Notes)-1], "they are locked")
+	_, err := f.svc.ApplyProfileFill(context.Background(), f.game, plan, core.ProfileFillOptions{}, nil)
+	require.NoError(t, err)
+	row, err := f.svc.GetInstalledMod(context.Background(), "nexusmods", "11", f.game.ID, "Coll")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdateNotify, row.UpdatePolicy)
+}
+
+// #608 review: a recipe md5 that is not 32 hex digits is no checksum: the
+// pin cannot be matched, nothing is read for it, and the junk is never
+// echoed into the plan.
+func TestPlanProfileFill_AMalformedRecipeChecksumIsNone(t *testing.T) {
+	f := newFillFixture(t, fillSetup{})
+	f.recipe[2].MD5 = strings.Repeat("z", 5000) + "\x00"
+	f.writeRecipe(t)
+	f.download(t, "12", "c.zip")
+	plan := f.plan(t)
+	assert.Empty(t, plan.Matched)
+	var twelve *core.FillPending
+	for i := range plan.Pending {
+		if plan.Pending[i].ModID == "12" {
+			twelve = &plan.Pending[i]
+		}
+	}
+	require.NotNil(t, twelve)
+	assert.Equal(t, core.FillNoChecksum, twelve.Reason)
+	assert.Empty(t, twelve.Files[0].MD5, "the recipe's junk is not echoed")
+	assert.Zero(t, plan.Hashed, "nothing to match it against, so nothing is read")
+}
+
+// #608 review: a matched file swapped for a link between the plan and the
+// apply is never followed - that mod fails, nothing of it is written.
+func TestApplyProfileFill_AFileSwappedForALinkIsNotFollowed(t *testing.T) {
+	f := newFillFixture(t, fillSetup{})
+	p := f.download(t, "12", "c.zip")
+	plan := f.plan(t)
+	require.Len(t, plan.Matched, 1)
+	outside := filepath.Join(t.TempDir(), "c.zip")
+	require.NoError(t, os.WriteFile(outside, f.archives["12"], 0o644))
+	require.NoError(t, os.Remove(p))
+	require.NoError(t, os.Symlink(outside, p))
+
+	result, err := f.svc.ApplyProfileFill(context.Background(), f.game, plan, core.ProfileFillOptions{}, nil)
+	var incomplete *core.ProfileFillIncompleteError
+	require.True(t, errors.As(err, &incomplete), "got %v", err)
+	assert.Equal(t, 0, result.Installed)
+	_, err = f.svc.GetInstalledMod(context.Background(), "nexusmods", "12", f.game.ID, "Coll")
+	assert.Error(t, err)
+}
+
+// #608 review: copies of one file count against the per-size budget, so a
+// folder of duplicates is not read end to end.
+func TestPlanProfileFill_DuplicatesCountAgainstTheBudget(t *testing.T) {
+	f := newFillFixture(t, fillSetup{refs: []domain.ModReference{
+		{SourceID: "nexusmods", ModID: "10", Version: "1", FileIDs: []string{"100"}},
+		{SourceID: "nexusmods", ModID: "11", Version: "1", FileIDs: []string{"110"}},
+	}})
+	// 11's pin is the size of 10's, with other bytes: it stays unmatched,
+	// so every copy of 10 is of a size still wanted.
+	f.recipe[1].Size = f.recipe[0].Size
+	f.recipe[1].MD5 = strings.Repeat("ab", 16)
+	f.writeRecipe(t)
+	for i := range 10 {
+		f.download(t, "10", fmt.Sprintf("copy%02d.zip", i))
+	}
+	plan := f.plan(t)
+	assert.Equal(t, []string{"10"}, matchedIDs(plan))
+	assert.LessOrEqual(t, plan.Hashed, 1+4, "one match, then at most four reads that add nothing")
+	assert.Equal(t, core.FillIgnoredHashLimit, ignoredBy(plan)["copy09.zip"])
+}
+
+// #608 review: the web UI's folder mode scans a chosen folder exactly as
+// the CLI scans a directory, and refuses anything but an absolute path to a
+// real folder.
+func TestPlanProfileFill_Folder(t *testing.T) {
+	f := newFillFixture(t, fillSetup{})
+	f.download(t, "10", "a.zip")
+	ctx := context.Background()
+	plan, err := f.svc.PlanProfileFill(ctx, f.game, core.ProfileFillRequest{Profile: "Coll", Folder: f.downloads})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"10"}, matchedIDs(plan))
+
+	link := filepath.Join(t.TempDir(), "dl")
+	require.NoError(t, os.Symlink(f.downloads, link))
+	for name, folder := range map[string]string{
+		"relative": "Downloads",
+		"a file":   filepath.Join(f.downloads, "a.zip"),
+		"a link":   link,
+		"missing":  filepath.Join(f.downloads, "nope"),
+	} {
+		_, err := f.svc.PlanProfileFill(ctx, f.game, core.ProfileFillRequest{Profile: "Coll", Folder: folder})
+		assert.ErrorIs(t, err, core.ErrFillFolderInvalid, name)
+	}
+}
+
+func TestDownloadsDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DOWNLOAD_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "cfg"))
+	assert.Equal(t, filepath.Join(home, "Downloads"), core.DownloadsDir())
+
+	require.NoError(t, os.MkdirAll(filepath.Join(home, "cfg"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "cfg", "user-dirs.dirs"),
+		[]byte("# written by xdg-user-dirs-update\nXDG_DOWNLOAD_DIR=\"$HOME/Téléchargements\"\n"), 0o644))
+	assert.Equal(t, filepath.Join(home, "Téléchargements"), core.DownloadsDir())
+
+	t.Setenv("XDG_DOWNLOAD_DIR", "/srv/dl")
+	assert.Equal(t, "/srv/dl", core.DownloadsDir())
+}

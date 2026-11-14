@@ -20,7 +20,7 @@ import (
 )
 
 var profileFillCmd = &cobra.Command{
-	Use:   "fill <profile> <dir-or-archive>...",
+	Use:   "fill <profile> [dir-or-archive...]",
 	Short: "Install a collection profile's pending mods from downloaded archives",
 	Long: `Install the pending mods of a profile imported from a NexusMods collection
 from archives you downloaded yourself.
@@ -34,16 +34,21 @@ file, and the matches are installed as if downloaded: with the installer
 (FOMOD) choices and mod type the collection records, and, for a mod the
 curator wants on its newest file, set to update automatically.
 
+With no folder named, it looks in your downloads folder ($XDG_DOWNLOAD_DIR,
+else the one your desktop's user-dirs names, else ~/Downloads).
+
 Only the folder's top level is read and links in it are never followed; a
-file is read only when its size is a pending file's. Your files are copied,
-never moved or deleted. Run it again as you download more: each run installs
-what it finds and says what is still pending.
+link named on the command line is refused too, unless it is the folder
+itself. A file is read only when its size is a pending file's. Your files
+are copied, never moved or deleted. Run it again as you download more: each
+run installs what it finds and says what is still pending.
 
 Examples:
+  lmm profile fill "Essential Mods" --game skyrim-se
   lmm profile fill "Essential Mods" ~/Downloads --game skyrim-se
   lmm profile fill "Essential Mods" ~/Downloads/skse64_2_02_06.7z --game skyrim-se
   lmm profile fill "Essential Mods" ~/Downloads --game skyrim-se --dry-run`,
-	Args: cobra.MinimumNArgs(2),
+	Args: cobra.MinimumNArgs(1),
 	RunE: runProfileFill,
 }
 
@@ -66,6 +71,13 @@ func runProfileFill(cmd *cobra.Command, args []string) error {
 }
 
 func doProfileFill(ctx context.Context, service *core.Service, game *domain.Game, profileName string, paths []string) error {
+	if len(paths) == 0 {
+		dir := core.DownloadsDir()
+		if dir == "" {
+			return errors.New("no downloads folder is known (there is no home folder): name the folder to fill from")
+		}
+		paths = []string{dir}
+	}
 	plan, err := service.PlanProfileFill(ctx, game, core.ProfileFillRequest{Profile: profileName, Paths: paths})
 	if err != nil {
 		return err

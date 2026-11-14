@@ -70,5 +70,6 @@
   "active_profile": "default",
   "notes": [
     "The curator wants these on their newest file, but they are locked, so they stay on the installed file: SkyUI."
-  ]
+  ],
+  "downloads_dir": "/home/user/Downloads"
 }

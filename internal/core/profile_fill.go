@@ -60,6 +60,51 @@ const maxFillScanEntries = 50000
 // checksums a downloaded file is matched by. Callers branch with errors.Is.
 var ErrProfileNotFillable = errors.New("the profile was not imported from a source's collection")
 
+// ErrFillFolderInvalid is PlanProfileFill's refusal of a
+// ProfileFillRequest.Folder that is not an absolute path to a directory
+// (a link to one included). Callers branch with errors.Is.
+var ErrFillFolderInvalid = errors.New("not a folder to fill from")
+
+// DownloadsDir is the user's downloads folder - where a browser saves what
+// the user downloads by hand, and so where `lmm profile fill` looks when it
+// is given no folder: $XDG_DOWNLOAD_DIR, else the XDG user-dirs file's
+// XDG_DOWNLOAD_DIR, else ~/Downloads. Empty when no home folder is known.
+func DownloadsDir() string {
+	home, _ := os.UserHomeDir()
+	expand := func(v string) string {
+		v = strings.Trim(strings.TrimSpace(v), `"`)
+		if rest, ok := strings.CutPrefix(v, "$HOME"); ok && home != "" {
+			v = home + rest
+		}
+		if filepath.IsAbs(v) {
+			return filepath.Clean(v)
+		}
+		return ""
+	}
+	if v := expand(os.Getenv("XDG_DOWNLOAD_DIR")); v != "" {
+		return v
+	}
+	cfg := os.Getenv("XDG_CONFIG_HOME")
+	if cfg == "" && home != "" {
+		cfg = filepath.Join(home, ".config")
+	}
+	if cfg != "" {
+		if data, err := os.ReadFile(filepath.Join(cfg, "user-dirs.dirs")); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				if v, ok := strings.CutPrefix(strings.TrimSpace(line), "XDG_DOWNLOAD_DIR="); ok {
+					if dir := expand(v); dir != "" {
+						return dir
+					}
+				}
+			}
+		}
+	}
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, "Downloads")
+}
+
 // ProfileFillRequest is what PlanProfileFill plans.
 type ProfileFillRequest struct {
 	// Profile is the profile whose pending pins to fill.
@@ -70,6 +115,12 @@ type ProfileFillRequest struct {
 	// Archives are candidate files with the name to show for each - an
 	// upload's own file name rather than its staged path.
 	Archives []FillArchive
+	// Folder is a folder chosen in a frontend that names it by path (the
+	// web UI's folder chooser): its top level is scanned as a directory in
+	// Paths is, and it must be an absolute path to a real directory - a
+	// link to one is refused, as the chooser never follows one
+	// (ErrFillFolderInvalid).
+	Folder string
 }
 
 // FillArchive is one candidate file and the name a plan shows for it.
@@ -187,6 +238,9 @@ type ProfileFillPlan struct {
 	ActiveProfile string `json:"active_profile,omitempty"`
 	// Notes are what a person should know about the plan.
 	Notes []string `json:"notes,omitempty"`
+	// DownloadsDir is where a fill looks by default (DownloadsDir), for a
+	// frontend's folder chooser to open at.
+	DownloadsDir string `json:"downloads_dir,omitempty"`
 
 	items      []fillItem
 	autoUpdate map[string]bool
@@ -292,6 +346,9 @@ type fillCandidate struct {
 	dir     string
 	name    string
 	display string
+	// size is the listing's (lstat) size: the prefilter, re-checked once
+	// the file is open.
+	size int64
 }
 
 // PlanProfileFill matches req's files to the profile's pending pins - its
@@ -303,6 +360,18 @@ type fillCandidate struct {
 func (s *Service) PlanProfileFill(ctx context.Context, game *domain.Game, req ProfileFillRequest) (*ProfileFillPlan, error) {
 	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
 		return nil, err
+	}
+	if req.Folder != "" {
+		info, err := os.Lstat(req.Folder)
+		switch {
+		case !filepath.IsAbs(req.Folder):
+			return nil, fmt.Errorf("%w: %q is not an absolute path", ErrFillFolderInvalid, req.Folder)
+		case err != nil:
+			return nil, fmt.Errorf("%w: %w", ErrFillFolderInvalid, err)
+		case !info.IsDir():
+			return nil, fmt.Errorf("%w: %s is not a folder (a link to one is not followed)", ErrFillFolderInvalid, req.Folder)
+		}
+		req.Folder = filepath.Clean(req.Folder)
 	}
 	profile, err := s.NewProfileManager().Get(ctx, game.ID, req.Profile)
 	if err != nil {
@@ -337,6 +406,7 @@ func (s *Service) PlanProfileFill(ctx context.Context, game *domain.Game, req Pr
 		Profile: profile.Name, GameID: game.ID, Collection: origin,
 		Matched: []FillMatch{}, Pending: []FillPending{}, Ignored: []FillIgnored{},
 		RecordedOnly: recordedOnly, ActiveProfile: live, snapshot: snapshot,
+		DownloadsDir: DownloadsDir(),
 	}
 	manifest, err := s.collectionRecipeFor(ctx, game, *origin)
 	if err != nil {
@@ -389,7 +459,9 @@ func (s *Service) PlanProfileFill(ctx context.Context, game *domain.Game, req Pr
 	}
 
 	if len(bySize) > 0 {
-		s.matchFillFiles(plan, s.fillCandidates(plan, req), bySize)
+		if err := s.matchFillFiles(ctx, plan, s.fillCandidates(plan, req), bySize); err != nil {
+			return nil, err
+		}
 	}
 
 	plan.autoUpdate = map[string]bool{}
@@ -462,8 +534,14 @@ func recipeFacts(m *source.CollectionManifest, sourceID string) (map[string]reci
 		if mod.SourceType != "nexus" || mod.ModID == "" || mod.FileID == "" {
 			continue
 		}
+		// The recipe is a stranger's: an md5 that is not 32 hex digits is
+		// no checksum at all, and is never echoed into a plan.
+		sum := strings.ToLower(mod.MD5)
+		if !isHexDigest(sum, md5.Size) {
+			sum = ""
+		}
 		files[recipeKey(mod.ModID, mod.FileID)] = recipeFile{
-			md5: strings.ToLower(mod.MD5), size: mod.SizeBytes, policy: mod.UpdatePolicy,
+			md5: sum, size: mod.SizeBytes, policy: mod.UpdatePolicy,
 			name: domain.SanitizeLine(cmp.Or(mod.LogicalFilename, mod.Name)),
 		}
 		key := domain.ModKey(sourceID, mod.ModID)
@@ -472,6 +550,19 @@ func recipeFacts(m *source.CollectionManifest, sourceID string) (map[string]reci
 		}
 	}
 	return files, names
+}
+
+// isHexDigest reports whether s is a lower-case hex digest of n bytes.
+func isHexDigest(s string, n int) bool {
+	if len(s) != 2*n {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // latestOnly reports whether the curator marked every one of ref's files
@@ -535,56 +626,77 @@ func (s *Service) collectionRecipeFor(ctx context.Context, game *domain.Game, or
 	return &m, nil
 }
 
-// fillCandidates lists the files req names, in a stable order: each
-// directory's top level (directories inside it skipped, links and other
-// non-regular entries recorded as ignored), each named file, each archive.
+// fillCandidates lists the files req names: the top level of each
+// directory (directories inside it skipped, links and other non-regular
+// entries recorded as ignored, at most maxFillScanEntries entries read from
+// each, in name order), then each named file, then each archive.
 func (s *Service) fillCandidates(plan *ProfileFillPlan, req ProfileFillRequest) []fillCandidate {
 	var out []fillCandidate
 	ignore := func(name string, reason FillIgnoredReason) {
 		plan.Scanned++
 		plan.Ignored = append(plan.Ignored, FillIgnored{Name: domain.SanitizeLine(name), Reason: reason})
 	}
-	consider := func(dir, name, display string, mode os.FileMode) {
-		switch {
+	consider := func(dir, name, display string, info os.FileInfo) {
+		switch mode := info.Mode(); {
 		case mode&os.ModeSymlink != 0:
 			ignore(display, FillIgnoredSymlink)
 		case mode.IsDir():
 		case !mode.IsRegular():
 			ignore(display, FillIgnoredNotRegular)
 		default:
-			out = append(out, fillCandidate{dir: dir, name: name, display: domain.SanitizeLine(display)})
+			out = append(out, fillCandidate{dir: dir, name: name, display: domain.SanitizeLine(display), size: info.Size()})
 		}
 	}
-	scanned := 0
+	scan := func(dir string) {
+		d, err := os.Open(dir)
+		if err != nil {
+			plan.Notes = append(plan.Notes, fmt.Sprintf("%s could not be read: %v", domain.SanitizeLine(dir), err))
+			return
+		}
+		// One bounded read, not the whole directory: a folder with a
+		// million entries costs maxFillScanEntries of them.
+		entries, err := d.ReadDir(maxFillScanEntries + 1)
+		_ = d.Close()
+		if err != nil && !errors.Is(err, io.EOF) {
+			plan.Notes = append(plan.Notes, fmt.Sprintf("%s could not be read: %v", domain.SanitizeLine(dir), err))
+			return
+		}
+		if len(entries) > maxFillScanEntries {
+			entries = entries[:maxFillScanEntries]
+			plan.Notes = append(plan.Notes, fmt.Sprintf("%s has more than %d entries; only %d of them were looked at.", domain.SanitizeLine(dir), maxFillScanEntries, maxFillScanEntries))
+		}
+		slices.SortFunc(entries, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+		for _, e := range entries {
+			info, err := e.Info() // lstat: a link is a link
+			if err != nil {
+				ignore(e.Name(), FillIgnoredUnreadable)
+				continue
+			}
+			consider(dir, e.Name(), e.Name(), info)
+		}
+	}
+	if req.Folder != "" {
+		scan(req.Folder)
+	}
 	for _, p := range req.Paths {
 		info, err := os.Lstat(p)
 		if err != nil {
 			plan.Notes = append(plan.Notes, fmt.Sprintf("%s could not be read: %v", domain.SanitizeLine(p), err))
 			continue
 		}
-		if !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
-			consider(filepath.Dir(p), filepath.Base(p), filepath.Base(p), info.Mode())
+		if info.IsDir() {
+			scan(p)
 			continue
 		}
-		// The directory the user named is theirs to name, link or not;
-		// nothing inside it is followed.
-		entries, err := os.ReadDir(p)
-		if err != nil {
-			if info.Mode()&os.ModeSymlink != 0 {
-				consider(filepath.Dir(p), filepath.Base(p), filepath.Base(p), info.Mode())
+		if info.Mode()&os.ModeSymlink != 0 {
+			// The directory the user named is theirs to name, link or not;
+			// a linked FILE is refused, as one inside a folder is.
+			if target, err := os.Stat(p); err == nil && target.IsDir() {
+				scan(p)
 				continue
 			}
-			plan.Notes = append(plan.Notes, fmt.Sprintf("%s could not be read: %v", domain.SanitizeLine(p), err))
-			continue
 		}
-		for _, e := range entries {
-			if scanned >= maxFillScanEntries {
-				plan.Notes = append(plan.Notes, fmt.Sprintf("%s has more than %d entries; only the first %d were looked at.", domain.SanitizeLine(p), maxFillScanEntries, maxFillScanEntries))
-				break
-			}
-			scanned++
-			consider(p, e.Name(), e.Name(), e.Type())
-		}
+		consider(filepath.Dir(p), filepath.Base(p), filepath.Base(p), info)
 	}
 	for _, a := range req.Archives {
 		info, err := os.Lstat(a.Path)
@@ -593,18 +705,37 @@ func (s *Service) fillCandidates(plan *ProfileFillPlan, req ProfileFillRequest) 
 			ignore(display, FillIgnoredUnreadable)
 			continue
 		}
-		consider(filepath.Dir(a.Path), filepath.Base(a.Path), display, info.Mode())
+		consider(filepath.Dir(a.Path), filepath.Base(a.Path), display, info)
 	}
 	return out
 }
 
 // matchFillFiles matches candidates to the wanted files, by size first:
-// only a file whose size an unmatched want has is read, and each size gets
-// maxFillMismatchesPerSize wrong guesses.
-func (s *Service) matchFillFiles(plan *ProfileFillPlan, candidates []fillCandidate, bySize map[int64][]*fillWant) {
+// a file is opened and read only when an unmatched want has its size, and
+// each size gets maxFillMismatchesPerSize reads that match nothing new (a
+// wrong checksum, or a copy of a file already matched).
+func (s *Service) matchFillFiles(ctx context.Context, plan *ProfileFillPlan, candidates []fillCandidate, bySize map[int64][]*fillWant) error {
 	mismatches := map[int64]int{}
+	unmatched := func(size int64) bool {
+		return slices.ContainsFunc(bySize[size], func(w *fillWant) bool { return w.match == nil })
+	}
 	for _, c := range candidates {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		plan.Scanned++
+		ignored := func(size int64, reason FillIgnoredReason) {
+			plan.Ignored = append(plan.Ignored, FillIgnored{Name: c.display, Size: size, Reason: reason})
+		}
+		// The listing's size decides, before anything is opened.
+		if !unmatched(c.size) {
+			ignored(c.size, FillIgnoredNoMatch)
+			continue
+		}
+		if mismatches[c.size] >= maxFillMismatchesPerSize {
+			ignored(c.size, FillIgnoredHashLimit)
+			continue
+		}
 		f, info, err := openNoFollow(c.dir, c.name)
 		if err != nil {
 			reason := FillIgnoredUnreadable
@@ -614,36 +745,28 @@ func (s *Service) matchFillFiles(plan *ProfileFillPlan, candidates []fillCandida
 			case errors.Is(err, errFillNotRegular):
 				reason = FillIgnoredNotRegular
 			}
-			plan.Ignored = append(plan.Ignored, FillIgnored{Name: c.display, Reason: reason})
+			ignored(0, reason)
 			continue
 		}
 		size := info.Size()
-		ignored := func(reason FillIgnoredReason) {
-			plan.Ignored = append(plan.Ignored, FillIgnored{Name: c.display, Size: size, Reason: reason})
-		}
-		wants := bySize[size]
-		if !slices.ContainsFunc(wants, func(w *fillWant) bool { return w.match == nil }) {
+		if size != c.size {
+			// It changed between the listing and the open.
 			_ = f.Close()
-			ignored(FillIgnoredNoMatch)
-			continue
-		}
-		if mismatches[size] >= maxFillMismatchesPerSize {
-			_ = f.Close()
-			ignored(FillIgnoredHashLimit)
+			ignored(size, FillIgnoredUnreadable)
 			continue
 		}
 		plan.Hashed++
 		h := md5.New()
-		n, err := io.Copy(h, f)
+		n, err := io.Copy(h, io.LimitReader(f, size+1))
 		_ = f.Close()
 		if err != nil || n != size {
-			ignored(FillIgnoredUnreadable)
+			ignored(size, FillIgnoredUnreadable)
 			continue
 		}
 		sum := hex.EncodeToString(h.Sum(nil))
 		sup := &suppliedArchive{dir: c.dir, name: c.name, display: c.display, size: size, md5: sum}
 		used, duplicate := false, false
-		for _, w := range wants {
+		for _, w := range bySize[size] {
 			if w.md5 != sum {
 				continue
 			}
@@ -656,12 +779,14 @@ func (s *Service) matchFillFiles(plan *ProfileFillPlan, candidates []fillCandida
 		switch {
 		case used:
 		case duplicate:
-			ignored(FillIgnoredDuplicate)
+			mismatches[size]++
+			ignored(size, FillIgnoredDuplicate)
 		default:
 			mismatches[size]++
-			ignored(FillIgnoredChecksumMismatch)
+			ignored(size, FillIgnoredChecksumMismatch)
 		}
 	}
+	return nil
 }
 
 // errFillNotRegular is openNoFollow's refusal of anything but a regular
@@ -828,7 +953,7 @@ func (s *Service) applyProfileFill(ctx context.Context, game *domain.Game, plan 
 		supplied: map[string]map[string]suppliedArchive{}, fillNames: map[string]string{}}
 	for i, it := range plan.items {
 		ref := profile.FindRef(it.ref.SourceID, it.ref.ModID)
-		if ref == nil || !slices.Equal(ref.FileIDs, it.ref.FileIDs) || ref.ModType != it.ref.ModType || ref.Disabled {
+		if ref == nil || !slices.Equal(ref.FileIDs, it.ref.FileIDs) || ref.ModType != it.ref.ModType || ref.Disabled || ref.Locked != it.ref.Locked {
 			return result, fmt.Errorf("%w: %s's pin in profile %s changed since this fill was planned", ErrStalePlan, domain.ModKey(it.ref.SourceID, it.ref.ModID), plan.Profile)
 		}
 		refs[i] = *ref

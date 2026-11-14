@@ -1968,7 +1968,8 @@ func TestJSONGoldens(t *testing.T) {
 					{Name: "link.7z", Reason: core.FillIgnoredSymlink},
 				},
 				Scanned: 4, Hashed: 2, RecordedOnly: true, ActiveProfile: "default",
-				Notes: []string{"The curator wants these on their newest file, but they are locked, so they stay on the installed file: SkyUI."},
+				DownloadsDir: "/home/user/Downloads",
+				Notes:        []string{"The curator wants these on their newest file, but they are locked, so they stay on the installed file: SkyUI."},
 			},
 		},
 		{

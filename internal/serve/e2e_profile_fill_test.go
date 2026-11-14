@@ -9,6 +9,7 @@ package serve_test
 
 import (
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -29,13 +30,16 @@ import (
 // a browser can pick them, and a file no pending mod could be.
 type e2eFillFixture struct {
 	e2eFixture
-	ten, eleven, junk string
+	dir, ten, eleven, junk string
+	tenBytes, elevenBytes  []byte
 }
 
 func newE2EFillFixture(t *testing.T) e2eFillFixture {
 	t.Helper()
-	f := newE2ENexusCollectionFixture(t)
 	dir := t.TempDir()
+	// The folder chooser opens at the downloads folder.
+	t.Setenv("XDG_DOWNLOAD_DIR", dir)
+	f := newE2ENexusCollectionFixture(t)
 	write := func(name string, data []byte) string {
 		p := filepath.Join(dir, name)
 		require.NoError(t, os.WriteFile(p, data, 0o644))
@@ -49,7 +53,7 @@ func newE2EFillFixture(t *testing.T) e2eFillFixture {
 	{"Name": "Eleven", "Version": "1.1", "SourceType": "nexus", "ModID": "11", "FileID": "110", "UpdatePolicy": "latest", "MD5": %q, "SizeBytes": %d}]}`,
 		sum(ten), len(ten), sum(eleven), len(eleven))
 	seedE2ENexusRecipe(t, f, "abcdef", recipe)
-	return e2eFillFixture{e2eFixture: f,
+	return e2eFillFixture{e2eFixture: f, dir: dir, tenBytes: ten, elevenBytes: eleven,
 		ten: write("Ten-10-1-0.zip", ten), eleven: write("Eleven-11-1-1.zip", eleven),
 		junk: write("notes.txt", []byte("not a mod"))}
 }
@@ -116,8 +120,11 @@ func TestE2E_ProfileFill_TheImportResultOffersTheDropZone(t *testing.T) {
 		clickWhenSettled(`.modal [data-action="confirm"]`),
 		waitGone(`.modal`),
 		clickWhenSettled(`.activity-bell__trigger`),
-		chromedp.WaitReady(`.tray__row [data-testid="fill-drop"][data-profile="Three Mods"] `+fillInput, chromedp.ByQuery),
-		chromedp.SetUploadFiles(`.tray__row `+fillInput, []string{f.ten, f.eleven}, chromedp.ByQuery),
+		chromedp.WaitReady(`.tray__row [data-testid="fill-drop"][data-profile="Three Mods"]`, chromedp.ByQuery),
+		// A real drop: the files arrive on the zone's drop event.
+		chromedp.Evaluate(dropFilesJS(`.tray__row [data-testid="fill-drop"]`, map[string][]byte{
+			"Ten-10-1-0.zip": f.tenBytes, "Eleven-11-1-1.zip": f.elevenBytes,
+		}), nil),
 		chromedp.WaitVisible(`.modal[data-kind="profile_fill"] [data-testid="fill-matched"]`, chromedp.ByQuery),
 		clickWhenSettled(`.modal [data-action="confirm"]`),
 	)
@@ -129,5 +136,57 @@ func TestE2E_ProfileFill_TheImportResultOffersTheDropZone(t *testing.T) {
 	row, err := f.Svc.GetInstalledMod(t.Context(), "nexusmods", "11", f.Game.ID, "Three Mods")
 	require.NoError(t, err)
 	assert.Equal(t, domain.UpdateAuto, row.UpdatePolicy, "the curator's latest item follows its newest file")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// dropFilesJS dispatches a drop of files (name -> bytes) on the element sel
+// names, as a drag from the desktop delivers them.
+func dropFilesJS(sel string, files map[string][]byte) string {
+	js := "(() => { const dt = new DataTransfer();\n"
+	for name, data := range files {
+		js += fmt.Sprintf("dt.items.add(new File([Uint8Array.from(atob(%q), (c) => c.charCodeAt(0))], %q));\n",
+			base64.StdEncoding.EncodeToString(data), name)
+	}
+	js += fmt.Sprintf("document.querySelector(%q).dispatchEvent(new DragEvent(\"drop\", {dataTransfer: dt, bubbles: true, cancelable: true})); })()", sel)
+	return js
+}
+
+// #608 review: the folder mode - choose the folder with the folder chooser,
+// which opens at the downloads folder, and the server scans it; nothing is
+// uploaded.
+func TestE2E_ProfileFill_ChooseAFolderInstallsWhatItHolds(t *testing.T) {
+	f := newE2EFillFixture(t)
+	f.seedFillProfile(t)
+
+	var plan string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+		chromedp.WaitVisible(`[data-action="fill-profile"][data-profile="Coll"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="fill-profile"][data-profile="Coll"]`),
+		chromedp.WaitVisible(`[data-testid="fill-drop"][data-downloads]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="fill-folder"]`),
+		chromedp.WaitVisible(`[data-testid="folder-picker"]`, chromedp.ByQuery),
+		pollUntil(fmt.Sprintf(`document.querySelector('[data-testid="folder-picker"]')?.textContent.includes(%q)`, filepath.Base(f.dir))),
+		clickWhenSettled(`[data-action="folder-choose"]`),
+		chromedp.WaitVisible(`.modal[data-kind="profile_fill"] [data-testid="fill-matched"]`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="profile_fill"]`, &plan),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+	)
+	assert.Contains(t, plan, "Ten ← Ten-10-1-0.zip")
+	assert.Contains(t, plan, "Eleven ← Eleven-11-1-1.zip")
+	assert.Contains(t, plan, "notes.txt: matches no pending file")
+
+	require.Eventually(t, func() bool {
+		rows, err := f.Svc.GetInstalledMods(t.Context(), f.Game.ID, "Coll")
+		return err == nil && len(rows) == 2
+	}, 15*time.Second, 50*time.Millisecond, "both files in the folder installed")
 	assert.Empty(t, f.BrowserErrors())
 }

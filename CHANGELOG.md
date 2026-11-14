@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Install a collection's pending mods from your downloads (#608).** The
-  new `lmm profile fill <profile> <folder-or-archive>...` installs the mods
+  new `lmm profile fill <profile> [folder-or-archive...]` (your downloads
+  folder when none is named) installs the mods
   a free NexusMods account's collection import left pending, from the files
   you downloaded by hand: each file is recognised by the size and md5 the
   collection's recipe records for it (re-fetched when its cache entry is
@@ -21,10 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--dry-run` and `--json` show it without installing. Only a folder's top
   level is read, links are never followed, a file is read only when its
   size is a pending file's, and your files are copied, never moved or
-  deleted. In the web UI, drop the files on the collection import's entry
-  in the activity tray, or on **Fill from downloads…** for the profile in
-  Manage profiles: only files of a pending size are uploaded, up to four at
-  a time. `lmm profile list --json` (and the web UI's profile list) name a
+  deleted. In the web UI, on the collection import's entry in the activity
+  tray or **Fill from downloads…** for the profile in Manage profiles,
+  either choose the folder (the folder chooser opens at your downloads
+  folder; the server reads it as the command does, nothing is uploaded) or
+  drop the files: only files of a pending size and at most 2 GiB are
+  uploaded, up to four at a time. `lmm profile list --json` (and the web UI's profile list) name a
   profile's source collection under the new `collection` key.
 - **More NexusMods collections import: Starfield, The Witcher 3, Baldur's
   Gate 3 and Stardew Valley mod types (#635).** A collection's mods carry

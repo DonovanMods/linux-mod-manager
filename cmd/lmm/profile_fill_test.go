@@ -80,6 +80,8 @@ func (f *profileFillFixture) download(t *testing.T, modID, name string) {
 
 func withFillFlags(t *testing.T, yes, dryRun bool) {
 	t.Helper()
+	// The plan names the default folder; pin it for the goldens.
+	t.Setenv("XDG_DOWNLOAD_DIR", "/home/user/Downloads")
 	oldYes, oldDry, oldJSON, oldPath, oldDefaults := profileFillYes, profileFillDryRun, jsonOutput, fomodChoicesPath, fomodDefaults
 	profileFillYes, profileFillDryRun, fomodChoicesPath, fomodDefaults = yes, dryRun, "", false
 	t.Cleanup(func() {
@@ -212,4 +214,17 @@ func TestDoProfileFill_JSON_AFailedModIsTheEnvelope(t *testing.T) {
 	assert.Equal(t, 2, doc.Details.Remaining)
 	require.Len(t, doc.Details.Failures, 1)
 	assert.Equal(t, "10", doc.Details.Failures[0].ModID)
+}
+
+// With no folder named, the fill looks in the downloads folder.
+func TestDoProfileFill_DefaultsToTheDownloadsFolder(t *testing.T) {
+	f := newProfileFillFixture(t)
+	withFillFlags(t, false, true)
+	t.Setenv("XDG_DOWNLOAD_DIR", f.downloads)
+	f.download(t, "10", "ten.zip")
+	stdout, _, err := captureStdoutStderrErr(t, func() error {
+		return doProfileFill(context.Background(), f.svc, f.game, "Three Mods", nil)
+	})
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Ten (nexusmods:10) ← ten.zip")
 }

@@ -6,7 +6,7 @@ lmm-profile-fill - Install a collection profile's pending mods from downloaded a
 
 
 .SH SYNOPSIS
-\fBlmm profile fill <profile> <dir-or-archive>\&... [flags]\fP
+\fBlmm profile fill <profile> [dir-or-archive...] [flags]\fP
 
 
 .SH DESCRIPTION
@@ -24,13 +24,19 @@ file, and the matches are installed as if downloaded: with the installer
 curator wants on its newest file, set to update automatically.
 
 .PP
+With no folder named, it looks in your downloads folder ($XDG_DOWNLOAD_DIR,
+else the one your desktop's user-dirs names, else ~/Downloads).
+
+.PP
 Only the folder's top level is read and links in it are never followed; a
-file is read only when its size is a pending file's. Your files are copied,
-never moved or deleted. Run it again as you download more: each run installs
-what it finds and says what is still pending.
+link named on the command line is refused too, unless it is the folder
+itself. A file is read only when its size is a pending file's. Your files
+are copied, never moved or deleted. Run it again as you download more: each
+run installs what it finds and says what is still pending.
 
 .PP
 Examples:
+  lmm profile fill "Essential Mods" --game skyrim-se
   lmm profile fill "Essential Mods" ~/Downloads --game skyrim-se
   lmm profile fill "Essential Mods" ~/Downloads/skse64_2_02_06.7z --game skyrim-se
   lmm profile fill "Essential Mods" ~/Downloads --game skyrim-se --dry-run

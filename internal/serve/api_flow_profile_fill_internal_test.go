@@ -30,9 +30,15 @@ import (
 // file's md5 and size, and returns each mod's archive.
 func seedFillProfile(t *testing.T, svc *core.Service, game *domain.Game) map[string][]byte {
 	t.Helper()
+	return seedFillProfileWith(t, svc, game, zipBytes(t, map[string]string{"ten.esp": "ten"}))
+}
+
+// seedFillProfileWith is seedFillProfile with Ten's archive given.
+func seedFillProfileWith(t *testing.T, svc *core.Service, game *domain.Game, ten []byte) map[string][]byte {
+	t.Helper()
 	seedNexusCollection(t, svc, game, source.TierFree)
 	archives := map[string][]byte{
-		"10": zipBytes(t, map[string]string{"ten.esp": "ten"}),
+		"10": ten,
 		"11": zipBytes(t, map[string]string{"eleven.esp": "eleven" + strings.Repeat(".", 64)}),
 	}
 	type recipeMod struct {
@@ -140,4 +146,88 @@ func TestAPIFlow_ProfileFill_BadRequests(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 		})
 	}
+}
+
+// The folder mode (#608 review): the plan names a folder on this machine,
+// which the server scans as `lmm profile fill <dir>` does - nothing is
+// uploaded.
+func TestAPIFlow_ProfileFill_FromAFolder(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	archives := seedFillProfile(t, svc, game)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Eleven-11.zip"), archives["11"], 0o644))
+
+	body, err := json.Marshal(map[string]string{"folder": dir})
+	require.NoError(t, err)
+	id, plan := planFill(t, s, game, string(body))
+	require.Len(t, plan.Matched, 1)
+	assert.Equal(t, "11", plan.Matched[0].ModID)
+	j := startFlowJob(t, s, id, `{}`)
+	require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
+	row, err := svc.GetInstalledMod(t.Context(), "nexusmods", "11", game.ID, "Coll")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdateAuto, row.UpdatePolicy)
+	_, err = os.Stat(filepath.Join(dir, "Eleven-11.zip"))
+	assert.NoError(t, err, "the user's file stays")
+
+	for name, body := range map[string]string{
+		"relative":          `{"folder":"Downloads"}`,
+		"a file":            `{"folder":` + string(must(json.Marshal(filepath.Join(dir, "Eleven-11.zip")))) + `}`,
+		"folder and upload": `{"folder":"/tmp","upload_ids":["0123456789abcdef0123456789abcdef"]}`,
+	} {
+		rec := doAPI(s, http.MethodPost, scopedTo("/api/v1/plans/profile_fill", game, "Coll"), body)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "%s: %s", name, rec.Body.String())
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+// A matched mod whose installer needs an answer fails the job with the
+// question in its details; re-planning over the same uploads with the
+// answer installs it (#608 review).
+func TestAPIFlow_ProfileFill_AnInstallerQuestionRoundTrip(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	archives := seedFillProfileWith(t, svc, game, fomodTestArchive(t))
+	ten := stage(t, s, "Ten.zip", archives["10"])
+	planBody := `{"upload_ids":["` + string(ten) + `"]}`
+
+	id, plan := planFill(t, s, game, planBody)
+	require.Len(t, plan.Matched, 1)
+	j := startFlowJob(t, s, id, `{}`)
+	st := j.status()
+	require.Equal(t, jobFailed, st.State)
+	require.NotNil(t, st.Error)
+	// The failure's details are the whole fill result, refused, with the
+	// question under fomod_choices_required - as a refused profile import's
+	// are (fomod.js#fomodQuestionFor reads both).
+	raw, err := json.Marshal(st.Error.Details)
+	require.NoError(t, err)
+	var details core.ProfileFillResult
+	require.NoError(t, json.Unmarshal(raw, &details))
+	assert.True(t, details.Refused)
+	require.NotNil(t, details.FomodChoicesRequired, "%s", raw)
+	q := details.FomodChoicesRequired
+	require.Len(t, q.Mods, 1)
+	assert.Equal(t, "nexusmods", q.Mods[0].SourceID)
+	assert.Equal(t, "10", q.Mods[0].ModID)
+	_, staged := s.uploads.Get(ten)
+	require.True(t, staged, "a refused fill keeps its uploads for the re-plan")
+	_, err = svc.GetInstalledMod(t.Context(), "nexusmods", "10", game.ID, "Coll")
+	require.Error(t, err, "nothing was written")
+
+	answer, err := json.Marshal(map[string]any{"fomod": map[string]domain.FomodChoices{
+		"nexusmods:10": {Steps: []domain.FomodStepChoice{sizeStep("2K", 0)}},
+	}})
+	require.NoError(t, err)
+	id, _ = planFill(t, s, game, planBody)
+	j = startFlowJob(t, s, id, string(answer))
+	require.Equal(t, jobSucceeded, j.status().State, "%+v", j.status().Error)
+	row, err := svc.GetInstalledMod(t.Context(), "nexusmods", "10", game.ID, "Coll")
+	require.NoError(t, err)
+	assert.NotEmpty(t, row.Variant, "installed as the answered variant")
 }

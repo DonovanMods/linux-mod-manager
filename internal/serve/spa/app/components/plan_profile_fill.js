@@ -34,6 +34,7 @@ function modName(m) {
 export function ProfileFillPlanView({ plan, modal }) {
   const notUploaded = modal?.extra?.notUploaded ?? [];
   const later = modal?.extra?.later ?? [];
+  const tooLarge = modal?.extra?.tooLarge ?? [];
   const matched = plan.matched ?? [];
   const pending = plan.pending ?? [];
   const ignored = plan.ignored ?? [];
@@ -93,10 +94,10 @@ export function ProfileFillPlanView({ plan, modal }) {
         </section>`
       }
       ${
-        ignored.length + notUploaded.length > 0 &&
+        ignored.length + notUploaded.length + tooLarge.length > 0 &&
         html`<section class="plan__section">
           <h3 class="plan__heading">
-            Not used (${ignored.length + notUploaded.length})
+            Not used (${ignored.length + notUploaded.length + tooLarge.length})
           </h3>
           <ul class="plan__paths" data-testid="fill-ignored">
             ${ignored.map(
@@ -104,6 +105,13 @@ export function ProfileFillPlanView({ plan, modal }) {
                 html`<li key=${`s${i}`}>
                   <span class="mono">${f.name}</span>:${" "}
                   ${ignoredReason[f.reason] ?? f.reason}
+                </li>`,
+            )}
+            ${tooLarge.map(
+              (name, i) =>
+                html`<li key=${`l${i}`}>
+                  <span class="mono">${name}</span>: too large to upload (over 2
+                  GiB) - choose the folder it is in instead
                 </li>`,
             )}
             ${notUploaded.map(

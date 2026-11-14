@@ -5,6 +5,14 @@
 // plans the fill over the staged uploads - the same matching, by size and
 // md5 against the collection's recipe, that the CLI runs over a directory.
 //
+// Or the user picks a folder on this machine with the folder chooser
+// (folderpicker.js, GET /api/v1/fs/dirs) and the plan names it: the server
+// scans it exactly as `lmm profile fill <dir>` does - its top level, no
+// link followed, a file read only when its size is a pending file's - and
+// nothing is uploaded, so neither the 2 GiB upload cap nor the four
+// uploads a plan can name apply. The folder must be an absolute path to a
+// real directory (core.ErrFillFolderInvalid, a 400).
+//
 // A plan with no uploads at all is allowed, and is how the SPA learns the
 // pending files' sizes before uploading anything: a dropped file whose size
 // is no pending file's is never uploaded, as the CLI never reads one.
@@ -45,12 +53,18 @@ type profileFillPlanRequest struct {
 	// against the profile's pending pins. Empty plans the pending pins
 	// alone.
 	UploadIDs []uploadID `json:"upload_ids,omitzero"`
+	// Folder is a folder on this machine to scan instead: an absolute path
+	// the folder chooser gave. It cannot be combined with UploadIDs.
+	Folder string `json:"folder,omitzero"`
 }
 
 // validate implements validatingOptions.
 func (r *profileFillPlanRequest) validate() error {
 	if len(r.UploadIDs) > maxFillUploads {
 		return fmt.Errorf(`"upload_ids" names %d uploads; one plan takes at most %d`, len(r.UploadIDs), maxFillUploads)
+	}
+	if r.Folder != "" && len(r.UploadIDs) > 0 {
+		return errors.New(`"folder" and "upload_ids" are two ways to name the files; send one`)
 	}
 	for _, id := range r.UploadIDs {
 		if id == "" {
@@ -93,10 +107,10 @@ func planProfileFillKind(ctx context.Context, s *Server, sel selection, opts any
 		s.uploads.MarkInUse(id)
 		archives = append(archives, core.FillArchive{Path: staged.Path, Name: staged.Filename})
 	}
-	plan, err := s.svc.PlanProfileFill(ctx, sel.Game, core.ProfileFillRequest{Profile: sel.Profile, Archives: archives})
+	plan, err := s.svc.PlanProfileFill(ctx, sel.Game, core.ProfileFillRequest{Profile: sel.Profile, Archives: archives, Folder: req.Folder})
 	if err != nil {
 		s.clearInUse(req.UploadIDs)
-		if errors.Is(err, core.ErrProfileNotFillable) {
+		if errors.Is(err, core.ErrProfileNotFillable) || errors.Is(err, core.ErrFillFolderInvalid) {
 			return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
 		}
 		return nil, nil, err
