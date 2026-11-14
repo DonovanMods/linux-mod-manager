@@ -69,6 +69,12 @@ there's an optional
 : A mod loader used by many Unity games. See
   [Unity games and BepInEx](bepinex.md).
 
+**Collection**
+: A profile packaged to share: its mods pinned to exact files, with the
+  author's installer choices and load order. lmm imports NexusMods
+  collections and its own `.lmmc` files. See
+  [Sharing a profile](profiles.md#sharing-a-profile).
+
 **Conflict**
 : Two mods that include the same file. The one later in the load order wins.
 
@@ -76,6 +82,10 @@ there's an optional
 : Putting a profile's mods into the game folder. Installing deploys a mod
   straight away; the **Deploy** button brings the game folder up to date if
   anything is waiting.
+
+**FOMOD**
+: An installer inside a mod's archive that asks which options to install.
+  See [Mods with installer options](fomod.md).
 
 **Load order**
 : The order mods are applied in. When mods overlap, the later one wins.
@@ -86,6 +96,11 @@ there's an optional
 
 **Mod folder**
 : The folder inside a game where its mods go, often `Mods` or `Data`.
+
+**Plugin**
+: In a Bethesda game (Skyrim, Fallout, Starfield), a `.esp`, `.esm` or
+  `.esl` file the game loads in the order its plugin list gives. See
+  [Plugin order](plugins.md).
 
 **Profile**
 : A named list of mods for one game. See [Profiles](profiles.md).

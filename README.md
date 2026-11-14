@@ -50,6 +50,10 @@ is the full reference.
 - **Steam Workshop, three ways**: track the items Steam already installed,
   search the Workshop and import a collection as a profile, or download an item
   so lmm manages its own copy — see [Steam Workshop](#steam-workshop)
+- **Collections**: export a profile as a shareable `.lmmc`, import one from
+  a file or an `https` link, and import a NexusMods collection as a profile,
+  its FOMOD answers, plugin order and patches included — see
+  [Collections](#collections)
 - **Update policies and rollback**: `auto`, `notify` (default) or `pinned` per
   mod, with `lmm update rollback` to step back a version
 
@@ -118,8 +122,13 @@ which is what every game lmm managed before adapters existed. `icarus` and
 lmm's core. See [docs/adapters.md](docs/adapters.md).
 
 **What lmm does not have.** There is no LOOT masterlist sorting (the
-community's shared ordering database) and no import of every Nexus
-Collection yet. Plugin order itself lmm does have: it writes a Bethesda
+community's shared ordering database,
+[#619](https://github.com/DonovanMods/linux-mod-manager/issues/619)), and an
+author cannot sign a shared collection yet
+([#624](https://github.com/DonovanMods/linux-mod-manager/issues/624)).
+NexusMods collections import, but some are still refused, each with the
+reason: see [Collections](#collections) for which. Plugin order itself lmm
+does have: it writes a Bethesda
 game's `Plugins.txt` on every deploy, in a deterministic order (masters
 first, then the profile's own plugin order and LOOT-userlist-shaped rules,
 then mod order), keeps plugins it did not deploy where they were (#616),
@@ -129,7 +138,9 @@ records it, `lmm profile reorder` and the web UI's reorder modal change it,
 and it decides precedence at merge and deploy time.
 
 **When to pick something else.** lmm installs, deploys, updates, locks and
-reproduces Skyrim and Fallout mods perfectly well. What it cannot do for that
+reproduces Skyrim and Fallout mods perfectly well, and it imports their
+NexusMods collections with the curator's FOMOD answers, plugin order and
+patches (see [Collections](#collections)). What it cannot do for that
 ecosystem _today_ is sort your plugins from LOOT's masterlist: lmm orders
 them from their masters and your own rules (see
 [Plugin order](#plugin-order-bethesda-games)), and a setup that leans on the
@@ -153,13 +164,12 @@ These are deliberate omissions, tracked so they are not mistaken for oversights:
   plugins' masters and the profile's own order and rules, and
   `lmm plugins` and the web UI's Plugins tab change it (see
   [Plugin order](#plugin-order-bethesda-games)); it is the masterlist that
-  is out of scope for 2.0
-- **Nexus Collections** —
-  [#597](https://github.com/DonovanMods/linux-mod-manager/issues/597), blocked
-  on the plugin sorting above: most collections are for Bethesda games and
-  lean on plugin order (and FOMOD choices, which lmm now records), so
-  importing one without it would install a setup that plays wrong. A Steam Workshop collection already imports as a
-  profile
+  is out of scope for 2.0. Optional suggestions from it are tracked in
+  [#619](https://github.com/DonovanMods/linux-mod-manager/issues/619)
+- **Signed collections** — the `.lmmc` format reserves room for its
+  author's signature (lmm ignores one, with a warning); signing and checking
+  it is tracked in
+  [#624](https://github.com/DonovanMods/linux-mod-manager/issues/624)
 - **A separate native desktop application** — the graphical frontend is
   `lmm serve`, and it is a first-class one: a full web UI over the same `core`
   package the CLI calls, in the same binary, with no Node, no bundler and no
@@ -574,6 +584,94 @@ add|remove` manage the rules: `--after`, `--req` and `--group` on a
 - In the web UI the reorder modal (**Reorder…**) gains a **Plugins** tab
   for these games, with the same order, badges and findings, and the same
   changes. See the [guide](docs/guide/plugins.md).
+
+### Archive load order (Cyberpunk 2077)
+
+On a Cyberpunk 2077 game set up with `adapter: cyberpunk2077` (`lmm game
+detect` sets it, and `lmm verify` suggests it for a game added earlier), a
+profile can keep the order its `.archive` mods load in, and lmm writes it to
+`archive/pc/mod/modlist.txt` on every deploy (#620). It is opt-in: a
+profile with no order leaves the game's list alone.
+
+- `lmm load-order list` shows the order, what placed each archive and the
+  mod it comes from.
+- `lmm load-order move <file> --before|--after <file>` (or
+  `--first`/`--last`) changes it. The first move records the whole order on
+  the profile.
+- `lmm load-order reset` clears the profile's order and puts back the list
+  lmm first replaced, keeping what changed in it since.
+- Every change takes `--dry-run`. An archive lmm did not deploy is never
+  reordered. In the web UI the reorder modal's **Archives** tab shows and
+  changes the same order. The REDmod order is not supported. See the
+  [guide](docs/guide/load-order.md).
+
+### Collections
+
+A collection is a profile packaged to share: its mods pinned to exact
+files, their FOMOD answers, the plugin and archive load orders, config
+overrides and, optionally, files of your own. lmm has its own format, the
+`.lmmc` ([#621](https://github.com/DonovanMods/linux-mod-manager/issues/621),
+specified in [docs/collection-format.md](docs/collection-format.md)), and
+imports NexusMods collections by converting them into it
+([#597](https://github.com/DonovanMods/linux-mod-manager/issues/597)). A
+Steam Workshop collection imports as a list of Workshop items instead (see
+[Importing a collection](#importing-a-collection)).
+
+- **Export.** `lmm profile export <name> -o <file>.lmmc` writes a `.lmmc`;
+  `--bundle <mod>` adds the files of a mod you imported from a file
+  ([#623](https://github.com/DonovanMods/linux-mod-manager/issues/623)), and
+  `--title`, `--author`, `--description` and `--collection-version`
+  describe it. Mods from NexusMods, CurseForge or any other site are never
+  carried, only pinned: the importer downloads them.
+- **Import a file or a link.** `lmm profile import <file>` takes a `.lmmc`,
+  its YAML or an older export, and `lmm profile import https://…` downloads
+  one first ([#622](https://github.com/DonovanMods/linux-mod-manager/issues/622)).
+  The plan lists what an import holds back: hooks (never imported from a
+  link), overrides that are not text config files, and bundled files that
+  are programs.
+- **Import a NexusMods collection.** `lmm profile import --nexus-collection
+<slug|slug@revision|URL>` imports a collection as a new profile
+  ([#607](https://github.com/DonovanMods/linux-mod-manager/issues/607)). It
+  needs a NexusMods API key and the `7z` command. Each mod is pinned to the
+  curator's file, and the curator's install order, FOMOD answers, plugin
+  order and rules, Cyberpunk 2077 archive order, exact file lists, BSDIFF40
+  patches and bundled files come with it. Optional mods are left out
+  unless you add `--with-optional`. The import is all or nothing while
+  files download.
+- **On a free NexusMods account**, which NexusMods serves no downloads to,
+  the plan marks every mod as a manual download with a link to its file's
+  page. Download them by hand, then run `lmm profile fill <profile>
+[folder-or-archive...]`. It installs them and matches each file by the
+  checksum the collection records
+  ([#608](https://github.com/DonovanMods/linux-mod-manager/issues/608)).
+- **Updates.** `lmm profile sync <name> --collection` updates a profile
+  imported from a link or from NexusMods to the collection's newer version
+  ([#613](https://github.com/DonovanMods/linux-mod-manager/issues/613)). Mods,
+  plugins and overrides you changed yourself are kept unless you take the
+  collection's (`--override`, `--override-conflicts`), and a mod the new
+  version drops stays unless you remove it (`--remove`,
+  `--remove-obsolete`). `--dry-run` prints the plan.
+
+A NexusMods collection that needs something lmm cannot do shows its plan,
+names what is missing and which mods need it, and is refused with nothing
+written. That covers The Witcher 3's DLC and menu mod types
+(`witcher3dlc`, `witcher3menumodroot`), Cyberpunk 2077's REDmod order, a
+patch in a format other than BSDIFF40, a plugin rule marking two plugins
+incompatible, and any mod type the game's adapter does not route. A plugin
+order imports only on a game with `adapter: bethesda`, and an archive
+order only with `adapter: cyberpunk2077`. lmm applies a patch only to the
+file it was made against: if your copy's checksum differs, the import is
+refused rather than installed unpatched, which Vortex would do. A
+scripted FOMOD installer is refused in a collection as it is everywhere
+else (see [FOMOD installers](#fomod-installers)).
+
+In the web UI all of this is in the **Profiles** window: **Export**,
+**Export with my files…**, **Import**, the **From a URL** and **NexusMods
+collection** fields, **Fill from downloads…** and **Update collection…**.
+The [guide](docs/guide/profiles.md#sharing-a-profile) walks through each,
+and [A NexusMods collection on a free
+account](docs/guide/manual-mods.md#a-nexusmods-collection-on-a-free-account)
+covers the manual downloads.
 
 ### Update Policies
 
@@ -2363,6 +2461,7 @@ shows up as a diff in review.
 | `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                                                                                                                                                                                                                                                                                       |
 | `lmm plugins list`             | `core.PluginOrderReport` — `{game_id, profile, active, sorted, plugins[], not_deployed[], rules, findings[]}`                                                                                                                                                                                                                                                      |
 | `lmm plugins rules list`       | `core.PluginRulesReport` — `{game_id, profile, rules{groups[], plugins[]}}`                                                                                                                                                                                                                                                                                        |
+| `lmm load-order list`          | `core.FileLoadOrdersReport` — `{game_id, profile, orders[]}`                                                                                                                                                                                                                                                                                                       |
 | `lmm source list`              | `[]app.SourceInfo` — a top-level array                                                                                                                                                                                                                                                                                                                             |
 | `lmm source validate <file>`   | `app.SourceValidationReport` — `{path, id?, type?, valid, errors[], warnings[], probe?}` (an invalid file/failed probe is the error envelope instead, `details` = this report)                                                                                                                                                                                     |
 | `lmm source add <file>`        | `[]app.SourceInfo` — the full registry, re-read (an invalid definition is the error envelope instead, `details` = the validation report)                                                                                                                                                                                                                           |
@@ -2393,8 +2492,11 @@ that run would have applied:
 | `lmm profile apply`                                                                                          | `core.ProfileApplyResult` / `core.ProfileApplyPlan`                                                                                                                                                                                             |
 | `lmm profile switch <name>`                                                                                  | `core.SwitchResult` / `core.SwitchPlan`                                                                                                                                                                                                         |
 | `lmm profile sync`                                                                                           | `core.ProfileSyncResult` / `core.ProfileSyncPlan`                                                                                                                                                                                               |
+| `lmm profile sync <name> --collection`                                                                       | `core.CollectionUpdateResult` / `core.CollectionUpdatePlan`                                                                                                                                                                                     |
+| `lmm profile fill <profile>`                                                                                 | `core.ProfileFillResult` / `core.ProfileFillPlan`                                                                                                                                                                                               |
 | `lmm profile import <file>`                                                                                  | `core.ProfileImportResult`; for an lmm collection, `core.CollectionImportResult` — `{collection, result}`                                                                                                                                       |
 | `lmm plugins enable/disable/move/sort`, `lmm plugins rules add/remove`, `lmm plugins rules group add/remove` | `core.PluginEditResult` / `core.PluginEditPlan`                                                                                                                                                                                                 |
+| `lmm load-order move/reset`                                                                                  | `core.FileLoadOrderEditResult` / `core.FileLoadOrderEditPlan`                                                                                                                                                                                   |
 | `lmm profile create/delete/rename/duplicate/reorder`                                                         | `core.ProfileResult` — `{profile{…}}`                                                                                                                                                                                                           |
 | `lmm mod enable/disable`                                                                                     | `core.EnableResult` / `core.DisableResult` — `{changed, …}`                                                                                                                                                                                     |
 | `lmm mod lock/unlock/set-update/convert`                                                                     | `core.ModSettingResult` — `{mod{}, locked, update_policy, …}`                                                                                                                                                                                   |
@@ -2593,6 +2695,9 @@ under its issue number:
 | `lmm profile import <file>`                                    | Import a profile: an lmm collection (`.lmmc` or YAML) or an older export; `--with-hooks` imports its hooks, `--allow-any-overrides` its overrides that are not text config files, `--as` names a collection's profile                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `lmm profile import <file> --force`                            | Import and overwrite existing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `lmm profile import <file> -y`                                 | Answer "Download and install mods?" without a prompt; required under `--json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `lmm profile import https://…`                                 | Import an lmm collection from an `https` address (a `.lmmc`, its YAML or an older export); hooks are never imported from a link                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `lmm profile import --nexus-collection <slug>`                 | Import a NexusMods collection as a new profile (`slug@revision` or the page's URL work too; `--with-optional` adds its optional mods); see [Collections](#collections)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `lmm profile fill <profile> [folder-or-archive...]`            | Install a collection profile's pending mods from files you downloaded by hand (your downloads folder when none is named); `--dry-run` previews                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `lmm profile reorder [mod-id ...]`                             | Show or set load order                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `lmm profile reorder -i`                                       | Pick the new load order from a numbered list — type positions ("1,3,2", ranges "2-5,1"), no mod IDs needed; Enter keeps it, `q` cancels                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `lmm plugins list`                                             | Show a Bethesda game's effective plugin order, flags, needed masters and findings                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -2600,8 +2705,12 @@ under its issue number:
 | `lmm plugins move <plugin> --before/--after <plugin>`          | Move a plugin (`--first`/`--last` too); `--dry-run` previews                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `lmm plugins sort`                                             | Record the effective plugin order in the profile and write `Plugins.txt`; `--dry-run` previews                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `lmm plugins rules list/add/remove`                            | The profile's plugin rules (`--after`, `--req`, `--group`); `lmm plugins rules group add/remove` for groups                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `lmm load-order list`                                          | Show Cyberpunk 2077's archive load order: what placed each archive, and its mod                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `lmm load-order move <file> --before/--after <file>`           | Move an archive (`--first`/`--last` too); `--dry-run` previews                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `lmm load-order reset`                                         | Clear the profile's archive order and put back the list lmm first replaced; `--dry-run` previews                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `lmm profile sync`                                             | Update profile to match installed mods                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `lmm profile sync -y`                                          | Skip the confirmation prompt; required under `--json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm profile sync <name> --collection`                         | Update a collection profile from where it came from (`--remove`, `--remove-obsolete`, `--override`, `--override-conflicts`, `--with-optional`); `--dry-run` previews                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `lmm profile apply`                                            | Install/enable mods to match profile                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `lmm profile apply/switch/sync --dry-run`                      | Preview what an apply/switch/sync would do, changing nothing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `lmm deploy`                                                   | Deploy all enabled mods from cache. Skips a mod the profile marks `disabled: true` and never takes files down: one still deployed is named, and `lmm profile apply` removes it. Acts for the active profile only: `-p` naming another profile is refused (`lmm profile switch` makes it active)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -3266,6 +3375,10 @@ release is cut.
 - [x] Conflict detection (file conflicts, circular dependency warnings)
 - [x] Automatic dependency installation (opt out with `--no-deps`)
 - [x] Snapshots — `lmm snapshot create|list|restore|delete`, over an originals store ([#350](https://github.com/DonovanMods/linux-mod-manager/issues/350))
+- [x] FOMOD installers, run by lmm on every game, with the answers recorded on the profile ([#354](https://github.com/DonovanMods/linux-mod-manager/issues/354))
+- [x] Plugin order for Bethesda games: `Plugins.txt` written on every deploy, `lmm plugins` and the web UI's Plugins tab ([#616](https://github.com/DonovanMods/linux-mod-manager/issues/616), [#617](https://github.com/DonovanMods/linux-mod-manager/issues/617))
+- [x] Cyberpunk 2077's archive load order: `lmm load-order` and the web UI's Archives tab ([#620](https://github.com/DonovanMods/linux-mod-manager/issues/620))
+- [x] Collections: lmm's `.lmmc` format, import from a file or link, NexusMods collection import and collection updates ([#597](https://github.com/DonovanMods/linux-mod-manager/issues/597), [#621](https://github.com/DonovanMods/linux-mod-manager/issues/621), [#607](https://github.com/DonovanMods/linux-mod-manager/issues/607), [#608](https://github.com/DonovanMods/linux-mod-manager/issues/608), [#613](https://github.com/DonovanMods/linux-mod-manager/issues/613), [#622](https://github.com/DonovanMods/linux-mod-manager/issues/622), [#623](https://github.com/DonovanMods/linux-mod-manager/issues/623), [#610](https://github.com/DonovanMods/linux-mod-manager/issues/610))
 
 ### Sources
 
@@ -3301,10 +3414,13 @@ Steam detection works because Steam has one documented on-disk layout, and the
 other launchers each need their own parser against an unstable private schema,
 to save one step of a command most people run once per machine. `lmm game add
 --path` adds any of them by hand today. The issue will be reopened if a
-specific launcher draws real demand. LOOT masterlist sorting
-([#355](https://github.com/DonovanMods/linux-mod-manager/issues/355)) is a
-[non-goal for 2.0](#non-goals-for-20), not backlog — lmm's own mod load
-ordering and plugin ordering are shipped and unaffected by it.
+specific launcher draws real demand. LOOT masterlist suggestions
+([#619](https://github.com/DonovanMods/linux-mod-manager/issues/619)) and
+signed collections
+([#624](https://github.com/DonovanMods/linux-mod-manager/issues/624)) are
+[non-goals for 2.0](#non-goals-for-20), not backlog. lmm's own mod load
+order, plugin order, archive order and collection import ship without
+them.
 
 ## Development
 
