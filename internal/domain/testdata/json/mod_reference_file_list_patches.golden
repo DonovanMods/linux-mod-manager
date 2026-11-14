@@ -1,0 +1,26 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "5662",
+  "version": "1.2.0",
+  "file_ids": [
+    "120872"
+  ],
+  "locked": false,
+  "file_list": {
+    "120872": [
+      {
+        "path": "FontSmasher\\FontSmasher.dll",
+        "md5": "a8842e74aa57af6d038d163ef31df62f"
+      }
+    ]
+  },
+  "patches": {
+    "120872": [
+      {
+        "path": "[CP] Animated Furniture and Stuff\\content.json",
+        "crc32": "CABDDFC4",
+        "sha256": "0f3c4f2bd9f8c7d1ab2f0e3a0d5c6b7a8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b"
+      }
+    ]
+  }
+}

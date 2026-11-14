@@ -81,6 +81,11 @@ type ModReferenceConfig struct {
 	// FomodOrder is #634's layer-order hint for FomodFiles; omitted when
 	// empty.
 	FomodOrder []string `yaml:"fomod_order,omitempty"`
+	// FileList and Patches are #610's exact file lists and binary patches,
+	// keyed by file id; omitted when empty, so a file without them is
+	// unchanged.
+	FileList domain.FileLists   `yaml:"file_list,omitempty"`
+	Patches  domain.FilePatches `yaml:"patches,omitempty"`
 }
 
 // parseProfileHooks converts YAML hooks to domain types, tracking which were explicitly set
@@ -272,6 +277,9 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 			// #634: copied, so the profile's map is its own.
 			FomodFiles: m.FomodFiles.Clone(),
 			FomodOrder: slices.Clone(m.FomodOrder),
+			// #610: copied, so the profile's maps are its own.
+			FileList: m.FileList.Clone(),
+			Patches:  m.Patches.Clone(),
 		}
 	}
 
