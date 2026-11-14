@@ -62,12 +62,18 @@ import (
 //
 // k names the entry, variant included (#614): modCacheKey for an installed
 // mod.
-func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, k cache.Key) ([]deployItem, error) {
+//
+// modType is the mod's stated type (domain.Mod.ModType, #607): "" routes
+// file by file; any other type routes the whole mod by the adapter's
+// RootForModType, and one the adapter does not know is a
+// *ModTypeUnsupportedError - the mod is never deployed where its type says
+// it does not belong.
+func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, k cache.Key, modType string) ([]deployItem, error) {
 	files, err := gameCache.ListFiles(k)
 	if err != nil {
 		return nil, err
 	}
-	return deployableFilesFromListing(gameCache, a, game, k, files)
+	return deployableFilesFromListing(gameCache, a, game, k, modType, files)
 }
 
 // deployableFilesFromListing is deployableFiles' narrowing logic for a
@@ -75,14 +81,22 @@ func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain
 // #5): planDeploy needs both the deploy-direction (this) and the
 // removal-direction (the raw listing itself) result for the same mod, and
 // ListFiles-ing one cache entry twice to build one plan row is wasteful.
-func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, k cache.Key, files []string) ([]deployItem, error) {
+func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, k cache.Key, modType string, files []string) ([]deployItem, error) {
 	manifests, err := gameCache.FileManifests(k)
 	if err != nil {
 		return nil, err
 	}
 	// #629: each member's deployed path, routed over the WHOLE listing -
-	// some of the adapter's root rules are about the mod as a whole.
-	keyed := deployItemIndex(a, game, files)
+	// some of the adapter's root rules are about the mod as a whole. #607:
+	// a stated type routes the whole mod, and an unknown one refuses.
+	items, err := deployItemsForType(a, game, modType, files)
+	if err != nil {
+		return nil, err
+	}
+	keyed := make(itemIndex, len(items))
+	for _, it := range items {
+		keyed[it.member] = it
+	}
 	if len(manifests) == 0 {
 		return keyed.of(routeDeployables(a, game, files)), nil
 	}

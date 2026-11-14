@@ -495,7 +495,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 			plan.Mods = append(plan.Mods, entry)
 			continue
 		}
-		link, err := deployableFilesFromListing(gameCache, planAdapter, game, modCacheKey(game.ID, mod.Mod), files)
+		link, err := deployableFilesFromListing(gameCache, planAdapter, game, modCacheKey(game.ID, mod.Mod), mod.ModType, files)
 		if err != nil {
 			s.logger().Warn("resolving deployable files failed while planning a deploy",
 				"game_id", game.ID, "profile", profileName, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
@@ -508,7 +508,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 			linked[f.path] = true
 			entry.Link = append(entry.Link, f.path.String())
 		}
-		for _, f := range deployItems(planAdapter, game, files) {
+		for _, f := range deployItems(planAdapter, game, mod.ModType, files) {
 			if !linked[f.path] {
 				entry.Remove = append(entry.Remove, f.path.String())
 			}

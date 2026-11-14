@@ -56,6 +56,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV24,
 		migrateV25,
 		migrateV26,
+		migrateV27,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -734,4 +735,22 @@ func migrateV26(ctx context.Context, q migrationExec) error {
 		}
 	}
 	return nil
+}
+
+// migrateV27 adds installed_mods.mod_type (#607): the row's copy of its
+// profile reference's STATED mod type (a NexusMods collection's Vortex
+// details.type, "dinput" for a script extender), which every deploy of the
+// row routes by (adapter.RootForModType). '' is the game's default, per-file
+// routing, which every existing row is, so the column defaults to it.
+// Guarded like migrateV24.
+func migrateV27(ctx context.Context, q migrationExec) error {
+	var have int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('installed_mods') WHERE name = 'mod_type'`).Scan(&have); err != nil {
+		return fmt.Errorf("inspecting installed_mods: %w", err)
+	}
+	if have > 0 {
+		return nil
+	}
+	_, err := q.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN mod_type TEXT NOT NULL DEFAULT ''`)
+	return err
 }

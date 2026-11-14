@@ -753,7 +753,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 	}
 
 	// Get list of files in the cached mod
-	files, err := deployableFiles(i.cache, i.adapter, game, modCacheKey(game.ID, *mod))
+	files, err := deployableFiles(i.cache, i.adapter, game, modCacheKey(game.ID, *mod), mod.ModType)
 	if err != nil {
 		return fmt.Errorf("resolving deployable files: %w", err)
 	}
@@ -934,8 +934,8 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 	// where the old deployment's records put any of them under another
 	// path (withRecordedRoots) - so the obsolete-file loop removes that
 	// copy instead of the record going and the file staying.
-	oldFiles := i.withRecordedRoots(ctx, game, oldMod, profileName, deployItems(i.adapter, game, oldListing))
-	newFiles, err := deployableFiles(newCache, i.adapter, game, modCacheKey(game.ID, *newMod))
+	oldFiles := i.withRecordedRoots(ctx, game, oldMod, profileName, deployItems(i.adapter, game, oldMod.ModType, oldListing))
+	newFiles, err := deployableFiles(newCache, i.adapter, game, modCacheKey(game.ID, *newMod), newMod.ModType)
 	if err != nil {
 		return fmt.Errorf("resolving deployable new-side files: %w", err)
 	}
@@ -960,7 +960,7 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 	// fresh either - using oldFiles here would resurrect it through this
 	// error path even though the #210 narrowing kept it off disk on every
 	// success path.
-	oldRestorable, err := deployableFiles(oldCache, i.adapter, game, modCacheKey(game.ID, *oldMod))
+	oldRestorable, err := deployableFiles(oldCache, i.adapter, game, modCacheKey(game.ID, *oldMod), oldMod.ModType)
 	if err != nil {
 		return fmt.Errorf("resolving deployable old-side files: %w", err)
 	}
@@ -1673,11 +1673,11 @@ func (i *Installer) removalPaths(ctx context.Context, game *domain.Game, mod *do
 			files = append(files, recordedItem(p))
 		}
 	case i.recordedOnly:
-		if files, err = i.onlyRecorded(ctx, game, mod, profileName, i.withRecordedRoots(ctx, game, mod, profileName, deployItems(i.adapter, game, listing))); err != nil {
+		if files, err = i.onlyRecorded(ctx, game, mod, profileName, i.withRecordedRoots(ctx, game, mod, profileName, deployItems(i.adapter, game, mod.ModType, listing))); err != nil {
 			return nil, err
 		}
 	default:
-		files = i.withRecordedRoots(ctx, game, mod, profileName, deployItems(i.adapter, game, listing))
+		files = i.withRecordedRoots(ctx, game, mod, profileName, deployItems(i.adapter, game, mod.ModType, listing))
 	}
 
 	kept := files[:0:0]
@@ -1759,7 +1759,7 @@ func (i *Installer) IsInstalled(ctx context.Context, game *domain.Game, mod *dom
 	}
 
 	// Get list of files in the cached mod
-	files, err := deployableFiles(i.cache, i.adapter, game, modCacheKey(game.ID, *mod))
+	files, err := deployableFiles(i.cache, i.adapter, game, modCacheKey(game.ID, *mod), mod.ModType)
 	if err != nil {
 		return false, fmt.Errorf("resolving deployable files: %w", err)
 	}
@@ -1815,7 +1815,7 @@ func (i *Installer) GetConflicts(ctx context.Context, game *domain.Game, mod *do
 	}
 
 	// Get list of files in the cached mod
-	files, err := deployableFiles(i.cache, i.adapter, game, modCacheKey(game.ID, *mod))
+	files, err := deployableFiles(i.cache, i.adapter, game, modCacheKey(game.ID, *mod), mod.ModType)
 	if err != nil {
 		return nil, fmt.Errorf("resolving deployable files: %w", err)
 	}
@@ -1886,7 +1886,7 @@ func (i *Installer) GetDeployedFiles(ctx context.Context, game *domain.Game, mod
 		return nil, nil
 	}
 
-	files, err := deployableFiles(i.cache, i.adapter, game, modCacheKey(game.ID, *mod))
+	files, err := deployableFiles(i.cache, i.adapter, game, modCacheKey(game.ID, *mod), mod.ModType)
 	if err != nil {
 		return nil, fmt.Errorf("resolving deployable files: %w", err)
 	}

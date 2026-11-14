@@ -926,6 +926,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			if !entry.Cached {
 				mod.Variant = ""
 				fx := s.fomodInputFor(ctx, game, plan.Profile, &entry.Ref, entry.Ref.SourceID, entry.Ref.ModID, nil)
+				mod.ModType = entry.Ref.ModType // #607
 				progressFn := func(e Event) {
 					if forwardFetchStep(e, scope, emit) {
 						return

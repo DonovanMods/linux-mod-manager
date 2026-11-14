@@ -105,6 +105,9 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	}
 
 	mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
+	// #607: the imported reference's stated type is the row's, and every
+	// deploy of it routes by it.
+	mod.ModType = ref.ModType
 	st.mod = mod
 	for _, f := range filesToDownload {
 		st.fileIDs = append(st.fileIDs, f.ID)

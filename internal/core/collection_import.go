@@ -358,7 +358,7 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 		GameID:              game.ID,
 		MatchedBy:           matchedBy,
 		Requires:            unionFeatures(requires, derived),
-		Unsupported:         unsupportedFeatures(requires, derived),
+		Unsupported:         unsupportedFeatures(requires, derived, s.modTypeRoutes(game)),
 		External:            doc.External,
 		Hooks:               hooks,
 		HooksImportable:     req.Input == CollectionFromFile,

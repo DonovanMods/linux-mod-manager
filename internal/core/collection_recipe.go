@@ -85,9 +85,7 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 		game:     s.portableGame(game),
 		list:     list,
 	}
-	if a, err := s.AdapterFor(game); err == nil {
-		in.modTypeSupported = func(t string) bool { return modTypeRouted(a, game, t) }
-	}
+	in.modTypeSupported = s.modTypeRoutes(game)
 	in.withOptional = opts.WithOptional
 	if len(opts.Optional) > 0 {
 		in.optional = make(map[string]bool, len(opts.Optional))
@@ -118,6 +116,18 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 func modTypeRouted(a adapter.GameAdapter, game *domain.Game, modType string) bool {
 	root, ok := adapter.RootForModType(a, game, modType)
 	return ok && (root != adapter.RootInstallPath || game.InstallPath != "")
+}
+
+// modTypeRoutes is the importing game's answer to "does a stated mod type
+// deploy here?" (#607): its adapter's RootForModType, and for a game-root
+// route an install_path to deploy under. nil when the game's adapter cannot
+// be resolved, which routes no type.
+func (s *Service) modTypeRoutes(game *domain.Game) func(modType string) bool {
+	a, err := s.AdapterFor(game)
+	if err != nil {
+		return nil
+	}
+	return func(t string) bool { return modTypeRouted(a, game, t) }
 }
 
 // recipeErrorText words why a recipe could not be read, for a plan.

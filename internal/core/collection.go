@@ -62,6 +62,13 @@ func deriveCollectionRequires(doc *domain.CollectionDocument) []string {
 			break
 		}
 	}
+	// #607: a stated mod type deploys only where the game's adapter routes
+	// it, so a document relying on one says which.
+	for _, item := range doc.Items {
+		if t := item.Ref.ModType; t != "" && !slices.Contains(features, CollectionFeatureModTypePrefix+t) {
+			features = append(features, CollectionFeatureModTypePrefix+t)
+		}
+	}
 	sort.Strings(features)
 	return features
 }
@@ -130,12 +137,17 @@ func IsCollectionUnsupported(err error) bool {
 }
 
 // unsupportedFeatures is the gate: every feature in declared or derived
-// that the supported set lacks, in name order.
-func unsupportedFeatures(declared, derived []string) []UnsupportedCollectionFeature {
+// that the supported set lacks, in name order. routes says whether the
+// importing game routes a stated mod type (mod_type:<type>, #607); nil
+// routes none.
+func unsupportedFeatures(declared, derived []string, routes func(modType string) bool) []UnsupportedCollectionFeature {
 	var names []string
 	for _, name := range slices.Concat(declared, derived) {
 		name = strings.TrimSpace(name)
 		if name == "" || supportedCollectionFeatures[name] || slices.Contains(names, name) {
+			continue
+		}
+		if t, ok := strings.CutPrefix(name, CollectionFeatureModTypePrefix); ok && t != "" && routes != nil && routes(t) {
 			continue
 		}
 		names = append(names, name)

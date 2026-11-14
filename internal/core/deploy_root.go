@@ -110,8 +110,16 @@ func displayStrings(ps []domain.DeployPath) []string {
 // to the deployed files those members become: the adapter's RouteRoots
 // answer, asked once for the whole listing because some of its rules are
 // about the mod as a whole (an ENB preset recognised by one file).
-func deployItems(a adapter.GameAdapter, game *domain.Game, files []string) []deployItem {
-	out, _ := deployItemsForType(a, game, "", files)
+//
+// modType is the mod's stated type (domain.Mod.ModType, #607). A type the
+// adapter does not know routes by file here: this direction lists what a
+// mod may have put on disk, and a mod of an unknown type was never
+// deployed (deployableFiles refuses it).
+func deployItems(a adapter.GameAdapter, game *domain.Game, modType string, files []string) []deployItem {
+	out, err := deployItemsForType(a, game, modType, files)
+	if err != nil {
+		out, _ = deployItemsForType(a, game, "", files)
+	}
 	return out
 }
 
@@ -119,8 +127,8 @@ func deployItems(a adapter.GameAdapter, game *domain.Game, files []string) []dep
 type itemIndex map[string]deployItem
 
 // deployItemIndex is deployItems as a member -> item index.
-func deployItemIndex(a adapter.GameAdapter, game *domain.Game, files []string) itemIndex {
-	items := deployItems(a, game, files)
+func deployItemIndex(a adapter.GameAdapter, game *domain.Game, modType string, files []string) itemIndex {
+	items := deployItems(a, game, modType, files)
 	idx := make(itemIndex, len(files))
 	for _, it := range items {
 		idx[it.member] = it
@@ -159,12 +167,21 @@ func (e *ModTypeUnsupportedError) Error() string {
 	return fmt.Sprintf("the mod's type %q is not one game %s's adapter (%s) knows where to deploy", e.ModType, e.GameID, e.Adapter)
 }
 
+// statedType is ref's stated mod type (#607), "" when there is no ref: what
+// an install from a profile reference stamps on the row it writes, so every
+// later deploy of the row routes by it.
+func statedType(ref *domain.ModReference) string {
+	if ref == nil {
+		return ""
+	}
+	return ref.ModType
+}
+
 // deployItemsForType is deployItems for a mod whose type may have been
 // stated: "" asks the adapter file by file (RouteRoots); any other type
 // routes the WHOLE mod to the root RootForModType names for it, and a type
-// it does not know is a *ModTypeUnsupportedError. Nothing persists a mod
-// type yet - the collections converter (#607) is the first caller that
-// will have one - so every flow today passes "".
+// it does not know is a *ModTypeUnsupportedError. The type is the
+// installed row's (domain.Mod.ModType), from its profile reference (#607).
 func deployItemsForType(a adapter.GameAdapter, game *domain.Game, modType string, files []string) ([]deployItem, error) {
 	var roots []adapter.DeployRoot
 	if modType == "" {

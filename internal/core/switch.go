@@ -877,6 +877,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			// recorded choices name, and a download replays them.
 			var checksums []fileChecksum // #372 - saved after the DB row below
 			fx := s.fomodInputFor(ctx, game, plan.To, &ref, ref.SourceID, ref.ModID, nil)
+			mod.ModType = ref.ModType // #607
 			var resolved *fomodResolved
 			mod.Variant = refVariant(&ref)
 			if s.GetGameCache(game).HasFileIDs(modCacheKey(game.ID, *mod), downloadedFileIDs) {
