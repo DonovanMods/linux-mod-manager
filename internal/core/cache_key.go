@@ -112,12 +112,17 @@ func fileSetKey(c *cache.Cache, k cache.Key, ids []string) cache.Key {
 	return k
 }
 
-// variantFits reports whether variant is a tree of ref: the variant its
-// recorded choices name (refVariant), or that variant's file-set variant of
-// the files ref pins (#639).
-func variantFits(variant string, ref *domain.ModReference) bool {
+// rowFitsRef reports whether row's tree is one ref names: the variant ref's
+// recorded choices name (refVariant), or that variant's file-set variant
+// (#639) of the files ref pins - or, for a ref that pins none, of the
+// files row was installed from.
+func rowFitsRef(row *domain.InstalledMod, ref *domain.ModReference) bool {
 	base := refVariant(ref)
-	return variant == base || (len(ref.FileIDs) > 0 && variant == fileSetVariant(base, ref.FileIDs))
+	ids := ref.FileIDs
+	if len(ids) == 0 {
+		ids = row.FileIDs
+	}
+	return row.Variant == base || (len(ids) > 0 && row.Variant == fileSetVariant(base, ids))
 }
 
 // restampFileSet moves a just-acquired mod's files, whose base variant

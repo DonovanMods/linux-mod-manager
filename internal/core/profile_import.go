@@ -561,7 +561,7 @@ func pickImportRow(rows []domain.InstalledMod, ref domain.ModReference, cached f
 		// #614: a row of another tree (other FOMOD choices) is not the
 		// one the reference names.
 		// #639: nor is a row of another set of the version's files.
-		versionMatches := (ref.Version == "" || row.Version == ref.Version) && variantFits(row.Variant, &ref) && !fileSetDrift(ref, &row)
+		versionMatches := (ref.Version == "" || row.Version == ref.Version) && rowFitsRef(&row, &ref) && !fileSetDrift(ref, &row)
 		score := 0
 		switch {
 		case row.External:

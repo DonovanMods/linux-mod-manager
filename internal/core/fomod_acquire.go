@@ -462,7 +462,7 @@ func (s *Service) downloadModFiles(ctx context.Context, gameCache *cache.Cache, 
 // converge flow can. The choices' tree moved to its file-set variant
 // (#639) is still theirs.
 func fomodDrift(ref domain.ModReference, row *domain.InstalledMod) bool {
-	return row != nil && !ref.FomodRecord().IsZero() && !variantFits(row.Variant, &ref)
+	return row != nil && !ref.FomodRecord().IsZero() && !rowFitsRef(row, &ref)
 }
 
 // cmpFomod is an ingest's outcome for the profile write: the installer's

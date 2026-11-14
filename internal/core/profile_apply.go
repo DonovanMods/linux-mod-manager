@@ -635,7 +635,7 @@ func cachedRowElsewhere(gameCache *cache.Cache, gameID string, ref domain.ModRef
 		return gameCache.HasFileIDs(cache.Key{GameID: gameID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version, Variant: row.Variant}, row.FileIDs)
 	}
 	row := pickImportRow(rows, ref, cached)
-	if row.External || (ref.Version != "" && row.Version != ref.Version) || !variantFits(row.Variant, &ref) || fileSetDrift(ref, &row) || !cached(row) {
+	if row.External || (ref.Version != "" && row.Version != ref.Version) || !rowFitsRef(&row, &ref) || fileSetDrift(ref, &row) || !cached(row) {
 		return domain.InstalledMod{}, false
 	}
 	if _, drift := liveOtherVersion(rows, ref); drift {
