@@ -55,7 +55,10 @@ type Profile struct {
 }
 
 // CollectionBaseline is a collection's last applied plugin list and
-// overrides (Profile.CollectionBaseline, #613).
+// overrides (Profile.CollectionBaseline, #613). An empty one is a record
+// too - the collection applied nothing beyond its entries - and differs
+// from none (a nil *CollectionBaseline), which a collection update merges
+// against as if empty but reads every shared difference as a conflict.
 type CollectionBaseline struct {
 	// Plugins is the collection's plugin list, as it last applied it.
 	Plugins ProfilePlugins

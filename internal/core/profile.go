@@ -702,6 +702,35 @@ func (pm *ProfileManager) SetModLock(ctx context.Context, gameID, profileName, s
 	return fmt.Errorf("mod %s:%s not found in profile %q", sourceID, modID, profileName)
 }
 
+// disownRef clears the from_collection marker of every reference to
+// sourceID/modID (#613): the entry is the user's from now on. A missing
+// profile, one that does not list the mod, or a reference with no marker
+// is left as it is.
+func (pm *ProfileManager) disownRef(ctx context.Context, gameID, profileName, sourceID, modID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
+	if errors.Is(err, domain.ErrProfileNotFound) {
+		// A row with no profile file has no marker to clear.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i := range profile.Mods {
+		if profile.Mods[i].SourceID == sourceID && profile.Mods[i].ModID == modID && profile.Mods[i].FromCollection {
+			profile.Mods[i].FromCollection = false
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return pm.save(profile)
+}
+
 // ClearModLock clears ONLY the locked marker for sourceID/modID; Version is
 // left exactly as it is - it is the installed-version record, not lock-only
 // data, and unlocking must not disturb it. Mirrors SetModLock's

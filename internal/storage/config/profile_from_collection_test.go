@@ -118,3 +118,21 @@ func TestSaveProfile_CollectionBaselineRoundTripsAndIsNeverExported(t *testing.T
 	require.NoError(t, config.SaveProfile(dir, reloaded))
 	require.Equal(t, handEdited, readFile(t, path), "clearing it restores the file")
 }
+
+// #613 re-review: an empty baseline is a record (`collection_baseline: {}`),
+// not the same as none.
+func TestSaveProfile_AnEmptyCollectionBaselineIsKept(t *testing.T) {
+	dir := t.TempDir()
+	profile := &domain.Profile{Name: "p", GameID: "tg", CollectionBaseline: &domain.CollectionBaseline{}}
+	require.NoError(t, config.SaveProfile(dir, profile))
+	path, err := config.ProfilePath(dir, "tg", "p")
+	require.NoError(t, err)
+	require.Contains(t, readFile(t, path), "collection_baseline: {}")
+	reloaded, err := config.LoadProfile(dir, "tg", "p")
+	require.NoError(t, err)
+	require.NotNil(t, reloaded.CollectionBaseline, "empty, not none")
+
+	reloaded.CollectionBaseline = nil
+	require.NoError(t, config.SaveProfile(dir, reloaded))
+	require.NotContains(t, readFile(t, path), "collection_baseline")
+}

@@ -143,8 +143,23 @@ func (s *Service) SetModUpdatePolicy(ctx context.Context, sourceID, modID, gameI
 		return nil, err
 	}
 	defer release()
+	var before domain.UpdatePolicy
+	if row, err := s.GetInstalledMod(ctx, sourceID, modID, gameID, profileName); err == nil {
+		before = row.UpdatePolicy
+	}
 	if err := s.setModUpdatePolicy(ctx, sourceID, modID, gameID, profileName, policy); err != nil {
 		return nil, err
+	}
+	// #613 (owner ruling): moving a collection's pinned item to auto is a
+	// deliberate choice to leave the pin, so the entry is the user's from
+	// now on. The profile write completes the DB write even under a
+	// cancelled ctx (Ruling 16).
+	if policy == domain.UpdateAuto && before != domain.UpdateAuto {
+		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+			return s.NewProfileManager().disownRef(ctx, gameID, profileName, sourceID, modID)
+		}); err != nil {
+			return nil, err
+		}
 	}
 	return s.modSettingResult(ctx, sourceID, modID, gameID, profileName)
 }

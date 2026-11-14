@@ -8,9 +8,12 @@ package core_test
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -272,4 +275,102 @@ func TestCollectionUpdate_PluginListAndOverridesMergeThreeWays(t *testing.T) {
 	}
 	assert.Equal(t, []string{"C.esp", "B.esp", "E.esp", "A.esp", "D.esp"}, names, "overridden: the collection's order, D still after A")
 	assert.Equal(t, "3", string(saved.Overrides["a.ini"]), "overridden: the collection's content")
+}
+
+// #613 re-review: a collection with no plugins and no overrides records an
+// empty baseline, so an override the user adds later is theirs and
+// survives the update.
+func TestCollectionUpdate_AnEmptyBaselineKeepsTheUsersOverride(t *testing.T) {
+	f := newUpdateFixture(t)
+	f.importURL(t, urlDocument(t, "coll-1", 1, nil))
+	require.NotNil(t, f.profile(t).CollectionBaseline, "an empty baseline is recorded")
+	p := f.profile(t)
+	p.Overrides = map[string][]byte{"mine.ini": []byte("user")}
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), p))
+	f.serve(urlDocument(t, "coll-1", 2, versionTwo))
+	plan := f.planUpdate(t)
+	assert.Empty(t, plan.OverridesRemoved)
+	_, err := f.svc.ApplyCollectionUpdate(context.Background(), f.game, plan, core.CollectionUpdateOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "user", string(f.profile(t).Overrides["mine.ini"]), "the user's own override is kept")
+}
+
+// #613 re-review: with no baseline at all (a snapshot restore, an older
+// lmm rewriting the file), nothing is the collection's to remove: the
+// user's additions stay, and a difference on a shared item is a conflict
+// the user wins by default.
+func TestCollectionUpdate_NoBaselineKeepsTheUsersAdditions(t *testing.T) {
+	f := newUpdateFixture(t)
+	on := func(name string) domain.PluginEntry { return domain.PluginEntry{Name: name, Enabled: true} }
+	off := func(name string) domain.PluginEntry { return domain.PluginEntry{Name: name} }
+	f.importURL(t, pluginDoc(t, 1, []domain.PluginEntry{on("A.esp"), on("B.esp")}, map[string]string{"a.ini": "1"}))
+	p := f.profile(t)
+	p.Plugins.Order = []domain.PluginEntry{on("A.esp"), off("B.esp"), on("Mine.esp")}
+	p.Overrides["mine.ini"] = []byte("user")
+	p.CollectionBaseline = nil
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), p))
+	require.Nil(t, f.profile(t).CollectionBaseline)
+
+	f.serve(pluginDoc(t, 2, []domain.PluginEntry{on("A.esp"), on("B.esp"), on("C.esp")}, map[string]string{"a.ini": "2"}))
+	plan := f.planUpdate(t)
+	require.NotNil(t, plan.Plugins)
+	assert.Equal(t, []string{"B.esp"}, plan.Plugins.Conflicts, "a shared difference is a conflict")
+	assert.Equal(t, []string{"a.ini"}, plan.OverrideConflicts)
+	assert.Empty(t, plan.OverridesRemoved)
+	assert.Empty(t, plan.Plugins.Removed)
+
+	_, err := f.svc.ApplyCollectionUpdate(context.Background(), f.game, plan, core.CollectionUpdateOptions{}, nil)
+	require.NoError(t, err)
+	saved := f.profile(t)
+	var names []string
+	for _, e := range saved.Plugins.Order {
+		names = append(names, e.Name)
+	}
+	assert.Contains(t, names, "Mine.esp", "the user's plugin is kept")
+	assert.Contains(t, names, "C.esp", "the collection's new one is added")
+	assert.Equal(t, "user", string(saved.Overrides["mine.ini"]), "the user's override is kept")
+	assert.Equal(t, "1", string(saved.Overrides["a.ini"]), "the user wins the conflict by default")
+	for _, e := range saved.Plugins.Order {
+		if e.Name == "B.esp" {
+			assert.False(t, e.Enabled, "B stays as the user left it")
+		}
+	}
+	require.NotNil(t, saved.CollectionBaseline, "the update records a baseline again")
+}
+
+// #613 re-review (#609 pin): a URL update's new item replays its recorded
+// installer choices only against the archive whose md5 the document
+// records; another archive asks instead.
+func TestCollectionUpdate_CarriesTheMD5Pin(t *testing.T) {
+	for name, wrong := range map[string]bool{"wrong md5": true, "right md5": false} {
+		t.Run(name, func(t *testing.T) {
+			f := newUpdateFixture(t)
+			archive := fomodZip(t, "4K", "v1")
+			f.downloads.AddDownload("130", archive)
+			sum := md5.Sum(archive)
+			recorded := hex.EncodeToString(sum[:])
+			if wrong {
+				recorded = strings.Repeat("0", 32)
+			}
+			f.importURL(t, urlDocument(t, "coll-1", 1, nil))
+			f.serve(urlDocument(t, "coll-1", 2, func(doc *domain.CollectionDocument) {
+				versionTwo(doc)
+				doc.Requires = append(doc.Requires, "fomod")
+				doc.Items[1].Ref.Fomod = answer("4K")
+				doc.Items[1].Files = []domain.CollectionFileRef{{ID: "130", MD5: recorded}}
+			}))
+			plan := f.planUpdate(t)
+			_, err := f.svc.ApplyCollectionUpdate(context.Background(), f.game, plan, core.CollectionUpdateOptions{}, nil)
+			if !wrong {
+				require.NoError(t, err)
+				assert.Equal(t, 2, f.profile(t).Collection.Version)
+				return
+			}
+			var q *core.FomodChoicesRequiredError
+			require.True(t, errors.As(err, &q), "got %v", err)
+			require.Len(t, q.Mods, 1)
+			assert.Equal(t, core.FomodReasonArchiveMismatch, q.Mods[0].Reason)
+			assert.Equal(t, 1, f.profile(t).Collection.Version, "nothing written")
+		})
+	}
 }

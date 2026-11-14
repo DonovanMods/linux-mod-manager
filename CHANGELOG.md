@@ -17,8 +17,9 @@ profile sync --collection` (in the web UI, **Update collection…** beside
   update: the mods the new version adds, the ones whose pin it moves, the
   ones it no longer lists, and conflicts with mods you changed yourself
   (locked, unlocked, updated, rolled back, updated from a file, re-answered
-  the installer of, or re-linked; an update the auto policy makes on its
-  own does not count). A mod the collection brought in follows its new pin even when
+  the installer of, reinstalled at another version or with other answers,
+  set to update automatically, or re-linked; an update the auto policy
+  makes on its own does not count). A mod the collection brought in follows its new pin even when
   locked (the lock was the collection's); a mod it drops is kept, as yours,
   unless you remove it (`--remove`, `--remove-obsolete`, or a tick box);
   and your own version of a conflicting mod is kept unless you take the

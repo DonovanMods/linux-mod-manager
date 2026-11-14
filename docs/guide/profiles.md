@@ -401,7 +401,9 @@ The plan lists:
   too. Any deliberate change makes a collection's mod yours: locking or
   unlocking it, updating it (`lmm update`, or **Update** in the browser),
   rolling it back, updating it from a file, re-answering its installer
-  ([Reconfigure installer…](fomod.md)) or re-linking it to another mod.
+  ([Reconfigure installer…](fomod.md)), reinstalling it at another version
+  or with other installer answers, setting it to update automatically
+  (`lmm mod set-update --auto`), or re-linking it to another mod.
   Your version is kept unless you choose the collection's:
   `--override <mod-id>`, or `--override-conflicts` for all; in the
   browser, **Take the collection's version**. An update that the mod's

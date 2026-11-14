@@ -65,6 +65,7 @@ func TestFromCollection_AnAutoPolicyUpdateKeepsTheMarker(t *testing.T) {
 	ctx := context.Background()
 	_, err := f.svc.SetModUpdatePolicy(ctx, "src", "mod1", "g1", "default", domain.UpdateAuto)
 	require.NoError(t, err)
+	f.markFromCollection(t) // as a collection's "latest" item is: auto, and the collection's
 	f.updateTo(t, "1.1", "v2")
 	ref := f.ref(t, "default", "mod1")
 	assert.Equal(t, "1.1", ref.Version)
@@ -76,6 +77,7 @@ func TestFromCollection_ARollbackMakesTheEntryTheUsers(t *testing.T) {
 	ctx := context.Background()
 	_, err := f.svc.SetModUpdatePolicy(ctx, "src", "mod1", "g1", "default", domain.UpdateAuto)
 	require.NoError(t, err)
+	f.markFromCollection(t) // as a collection's "latest" item is: auto, and the collection's
 	f.updateTo(t, "1.1", "v2")
 	require.True(t, f.ref(t, "default", "mod1").FromCollection)
 
@@ -94,6 +96,7 @@ func TestFromCollection_AnUpdateFromAFileMakesTheEntryTheUsers(t *testing.T) {
 	// Even on the auto policy: the file is the user's pick.
 	_, err := f.svc.SetModUpdatePolicy(ctx, "src", "mod1", "g1", "default", domain.UpdateAuto)
 	require.NoError(t, err)
+	f.markFromCollection(t) // as a collection's "latest" item is: auto, and the collection's
 	archive := writeFomodArchive(t, "mod1-2.0.zip", "4K", "v2")
 	plan, err := f.svc.PlanUpdateFromArchive(ctx, f.game, "default", "src", "mod1", archive, core.UpdateFromArchiveOptions{Version: "2.0"})
 	require.NoError(t, err)
@@ -124,4 +127,46 @@ func TestFromCollection_AReinstallKeepsTheMarker(t *testing.T) {
 	_, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
 	require.NoError(t, err)
 	assert.True(t, f.ref(t, "default", "mod1").FromCollection)
+}
+
+// #613 re-review (owner ruling): an install that changes what the entry
+// records - other installer answers, another version - is the user's
+// edit too, and clears the marker.
+func TestFromCollection_AReinstallWithOtherAnswersMakesTheEntryTheUsers(t *testing.T) {
+	f := installedCollectionMod(t)
+	_, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("2K")})
+	require.NoError(t, err)
+	ref := f.ref(t, "default", "mod1")
+	assert.Equal(t, "2K", ref.Fomod.Steps[0].Groups[0].Choices[0].Name)
+	assert.False(t, ref.FromCollection)
+}
+
+func TestFromCollection_AnInstallOfAnotherVersionMakesTheEntryTheUsers(t *testing.T) {
+	f := installedCollectionMod(t)
+	f.serve(t, "mod1", "1.1", "4K", "v2")
+	_, err := f.install(t, "mod1", map[string]domain.FomodChoices{"src:mod1": answer("4K")})
+	require.NoError(t, err)
+	ref := f.ref(t, "default", "mod1")
+	assert.Equal(t, "1.1", ref.Version)
+	assert.False(t, ref.FromCollection)
+}
+
+// #613 re-review (owner ruling): choosing auto updates for a collection's
+// pinned item is a deliberate choice to leave the pin, so the entry is the
+// user's; an item already on auto (a collection's "latest") is untouched.
+func TestFromCollection_SetUpdateAutoMakesAPinnedEntryTheUsers(t *testing.T) {
+	f := installedCollectionMod(t)
+	ctx := context.Background()
+	_, err := f.svc.SetModUpdatePolicy(ctx, "src", "mod1", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, err)
+	assert.False(t, f.ref(t, "default", "mod1").FromCollection)
+
+	f.markFromCollection(t)
+	_, err = f.svc.SetModUpdatePolicy(ctx, "src", "mod1", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, err)
+	assert.True(t, f.ref(t, "default", "mod1").FromCollection, "already on auto: nothing changes")
+
+	_, err = f.svc.SetModUpdatePolicy(ctx, "src", "mod1", "g1", "default", domain.UpdateNotify)
+	require.NoError(t, err)
+	assert.True(t, f.ref(t, "default", "mod1").FromCollection, "only a move to auto leaves the pin")
 }

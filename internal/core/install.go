@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -2242,6 +2244,7 @@ func (s *Service) commitBatchMod(ctx context.Context, game *domain.Game, plan *I
 	}
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
 	fomodRec := fomodRecordOf(st.fomod)
+	disowns := reconfigures(opts, modRef) || installEditsRef(s.recordedRef(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID), modRef, fomodRec)
 	// Ruling 16 (A): the DB row and the deployment are already in place, so
 	// the profile ref that completes them is written even under a cancelled
 	// ctx. Returning here skips this mod's Installed entry and its
@@ -2249,7 +2252,7 @@ func (s *Service) commitBatchMod(ctx context.Context, game *domain.Game, plan *I
 	// (review finding I2), which turns the cancellation into ApplyInstall's
 	// own fatal return.
 	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.upsertModRef(ctx, game.ID, plan.Profile, modRef, fomodRec, reconfigures(opts, modRef))
+		return pm.upsertModRef(ctx, game.ID, plan.Profile, modRef, fomodRec, disowns)
 	}); err != nil {
 		if ctx.Err() != nil {
 			return nil
@@ -2928,11 +2931,12 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 	}
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
 	fomodRec := fomodRecordOf(st.fomod)
+	disowns := reconfigures(opts, modRef) || installEditsRef(s.recordedRef(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID), modRef, fomodRec)
 	// Ruling 16 (A): the DB row and the deployment are already in place, so
 	// the profile ref that completes them is written even under a cancelled
 	// ctx; the cancellation is then fatal to ApplyInstall as a whole.
 	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.upsertModRef(ctx, game.ID, plan.Profile, modRef, fomodRec, reconfigures(opts, modRef))
+		return pm.upsertModRef(ctx, game.ID, plan.Profile, modRef, fomodRec, disowns)
 	}); err != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, cerr
@@ -2987,4 +2991,50 @@ func plannedFileIDsOf(files []domain.DownloadableFile) []string {
 // theirs (#613: its from_collection marker is cleared in the same write).
 func reconfigures(opts InstallOptions, ref domain.ModReference) bool {
 	return opts.fomodReconfigure != "" && opts.fomodReconfigure == domain.ModKey(ref.SourceID, ref.ModID)
+}
+
+// installEditsRef reports whether an install writes ref differently from
+// prev, the entry the profile records (#613 re-review, owner ruling):
+// another version, another file set, or other installer answers - the
+// user's edit, which clears from_collection. What prev leaves unsaid (no
+// version, no files) is not a difference, and answers are compared by the
+// steps, groups and options they pick, not by the installer hash an
+// install adds to a curator's recording.
+func installEditsRef(prev *domain.ModReference, ref domain.ModReference, rec fomodRecord) bool {
+	if prev == nil {
+		return false
+	}
+	if prev.Version != "" && prev.Version != ref.Version {
+		return true
+	}
+	if len(prev.FileIDs) > 0 && !sameFileIDs(prev.FileIDs, ref.FileIDs) {
+		return true
+	}
+	switch rec.op {
+	case fomodSet:
+		return !slices.Equal(fomodPickLines(prev.FomodRecord()), fomodPickLines(rec.rec))
+	case fomodClear:
+		return !prev.FomodRecord().IsZero()
+	}
+	return false
+}
+
+// fomodPickLines is r's picks as comparable lines, per file in file order
+// for the per-file form.
+func fomodPickLines(r domain.FomodRecord) []string {
+	if !r.PerFile() {
+		return installerChoiceLines(r.Choices)
+	}
+	ids := make([]string, 0, len(r.Files))
+	for id := range r.Files {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var out []string
+	for _, id := range ids {
+		for _, line := range installerChoiceLines(r.Files[id]) {
+			out = append(out, id+": "+line)
+		}
+	}
+	return out
 }

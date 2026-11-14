@@ -61,6 +61,8 @@ type CollectionBaselineConfig struct {
 }
 
 // baselineFromConfig is the domain baseline c records; nil records none.
+// A present but empty block (`collection_baseline: {}`) is an empty
+// baseline, not none: the collection applied nothing beyond its entries.
 func baselineFromConfig(c *CollectionBaselineConfig) *domain.CollectionBaseline {
 	if c == nil {
 		return nil
@@ -69,16 +71,13 @@ func baselineFromConfig(c *CollectionBaselineConfig) *domain.CollectionBaseline 
 	if len(c.Overrides) > 0 {
 		b.Overrides = maps.Clone(c.Overrides)
 	}
-	if b.IsZero() {
-		return nil
-	}
 	return b
 }
 
-// baselineConfigOf is b as the profile file writes it; nil when it records
-// nothing.
+// baselineConfigOf is b as the profile file writes it: nil for none, and
+// an empty block for an empty baseline.
 func baselineConfigOf(b *domain.CollectionBaseline) *CollectionBaselineConfig {
-	if b.IsZero() {
+	if b == nil {
 		return nil
 	}
 	out := &CollectionBaselineConfig{Plugins: pluginsConfigOf(b.Plugins)}
@@ -88,11 +87,11 @@ func baselineConfigOf(b *domain.CollectionBaseline) *CollectionBaselineConfig {
 	return out
 }
 
-// sameBaseline reports whether a and b record the same baseline, nil and
-// a zero one alike.
+// sameBaseline reports whether a and b record the same baseline. None
+// (nil) and an empty one differ: the file says which.
 func sameBaseline(a, b *domain.CollectionBaseline) bool {
-	if a.IsZero() || b.IsZero() {
-		return a.IsZero() && b.IsZero()
+	if a == nil || b == nil {
+		return a == nil && b == nil
 	}
 	return a.Plugins.Equal(b.Plugins) && maps.Equal(a.Overrides, b.Overrides)
 }

@@ -31,10 +31,10 @@ func TestMergePlugins_OnOffAndRulesConflicts(t *testing.T) {
 	assert.Equal(t, []domain.PluginEntry{on("A.esp"), off("X.esp")}, m.result.Order, "overridden")
 	assert.Equal(t, rules("Theirs.esp"), m.result.Rules)
 
-	// No baseline: the profile is read as unedited, so the collection's
-	// side is taken and nothing conflicts.
+	// No baseline: an empty base, so every shared difference is a conflict
+	// the user wins by default.
 	m = mergePlugins(mine, domain.ProfilePlugins{}, theirs, false, none)
-	assert.Empty(t, m.enabled)
-	assert.False(t, m.rules)
-	assert.Equal(t, rules("Theirs.esp"), m.result.Rules)
+	assert.Equal(t, []string{"X.esp"}, m.enabled)
+	assert.True(t, m.rules)
+	assert.Equal(t, rules("Mine.esp"), m.result.Rules)
 }

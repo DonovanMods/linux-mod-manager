@@ -239,7 +239,8 @@ revision. The plan lists the mods the new version adds, the ones whose pin
 it moves (a mod the collection brought in follows it, locked or not), the
 ones it no longer lists, and conflicts: mods you changed yourself (locked,
 unlocked, updated, rolled back, updated from a file, re-answered the
-installer of, or re-linked) that it changes. A mod the new version drops is kept, as your own, unless
+installer of, reinstalled at another version or with other answers, set to
+update automatically, or re-linked) that it changes. A mod the new version drops is kept, as your own, unless
 you name it with --remove (or pass --remove-obsolete); a conflict keeps
 your version unless you name it with --override (or pass
 --override-conflicts). The plugin list and config overrides follow the

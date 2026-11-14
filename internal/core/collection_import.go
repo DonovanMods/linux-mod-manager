@@ -293,9 +293,9 @@ func (c *collectionState) finish(profile *domain.Profile) {
 		b.Plugins = c.baseline.Plugins.Clone()
 	}
 	b.Overrides = overrideHashes(profile.Overrides)
-	if b.IsZero() {
-		b = nil
-	}
+	// An empty baseline is kept, not dropped: it says the collection
+	// applied nothing beyond its entries, so a plugin or override the user
+	// adds later is known to be theirs (#613 re-review).
 	profile.CollectionBaseline = b
 }
 

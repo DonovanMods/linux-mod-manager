@@ -9,7 +9,11 @@
 // caller overrides it. The baseline is what tells the two apart: a plugin
 // whose state matches the baseline is the collection's, one whose state
 // differs is the user's edit. A profile with no baseline (imported before
-// there was one) is read as unedited.
+// there was one, restored from a snapshot, or rewritten by an older lmm)
+// merges against an empty one: nothing in it is the collection's to remove,
+// so the user's own plugins and overrides stay, and where the profile and
+// the new version differ on one they both have, that is a conflict the
+// user wins by default.
 package core
 
 import (
@@ -68,14 +72,15 @@ type pluginMerge struct {
 }
 
 // mergePlugins merges p (the profile's), b (the baseline; hasBase false
-// reads p as unedited) and n (the new version's). override says which
+// merges against an empty one, every shared difference a conflict) and n
+// (the new version's). override says which
 // conflicts take the collection's side. n zero leaves p as it is.
 func mergePlugins(p, b, n domain.ProfilePlugins, hasBase bool, override func(key string) bool) pluginMerge {
 	if n.IsZero() {
 		return pluginMerge{result: p.Clone()}
 	}
 	if !hasBase {
-		b = p
+		b = domain.ProfilePlugins{}
 	}
 	type state struct {
 		enabled bool
@@ -139,8 +144,9 @@ func mergePlugins(p, b, n domain.ProfilePlugins, hasBase bool, override func(key
 	if !slices.Equal(pOrd, nOrd) {
 		inAll := func(k string) bool { return inBoth(k) && bIdx[k].ok }
 		bOrd := common(b.Order, inAll)
-		userMoved := !slices.Equal(common(p.Order, inAll), bOrd)
-		collMoved := !slices.Equal(common(n.Order, inAll), bOrd)
+		// With no baseline there is no telling who moved what: both did.
+		userMoved := !hasBase || !slices.Equal(common(p.Order, inAll), bOrd)
+		collMoved := !hasBase || !slices.Equal(common(n.Order, inAll), bOrd)
 		switch {
 		case !userMoved:
 		case !collMoved:
@@ -305,12 +311,14 @@ type overrideMerge struct {
 }
 
 // mergeOverrides merges the profile's overrides p with the new version's
-// n against the baseline hashes b (hasBase false reads p as unedited).
+// n against the baseline hashes b (hasBase false merges against an empty
+// one: the profile's overrides are all kept, and one the new version
+// rewrites is a conflict).
 // override says which conflicts take the collection's side; allowAny lets
 // restricted overrides through.
 func mergeOverrides(p map[string][]byte, b map[string]string, hasBase bool, n map[string]string, override func(string) bool, allowAny bool) overrideMerge {
 	if !hasBase {
-		b = overrideHashes(p)
+		b = nil
 	}
 	m := overrideMerge{result: map[string][]byte{}, baseline: map[string]string{}}
 	for path, content := range p {

@@ -239,8 +239,10 @@ mods:
 collection import and an update, no document carries it (an export leaves
 it out, and an import ignores it), and any deliberate change the user
 makes to the entry clears it: a lock or unlock, a manual update, a
-rollback, an update from a file, a FOMOD reconfigure, a re-link to another
-mod. An update the auto policy makes on its own (a NexusMods `latest` item)
+rollback, an update from a file, a FOMOD reconfigure, an install that
+changes its version, files or installer answers, a move to the auto update
+policy, a re-link to another mod. An update the auto policy makes on its
+own (a NexusMods `latest` item)
 keeps it. An update then decides each entry:
 
 | The profile's entry | In the new version | The update |
@@ -279,9 +281,18 @@ never exported.
   collection wrote it, and kept when they changed it. A new or rewritten
   override goes through the import's override gate.
 
-A profile with no baseline (imported before there was one) is read as
-unedited: the new version's plugin list and overrides are taken. Every feature gate applies to the new document: a `requires`
-outside the supported set refuses the update with nothing written.
+A collection with no plugins and no overrides records an empty baseline
+(`collection_baseline: {}`), which is a record too: a plugin or override
+the user adds later is theirs. A profile with no baseline at all (imported
+before there was one, restored from a snapshot, or rewritten by an older
+lmm) merges against an empty one, so nothing in it is the collection's to
+remove: the user's plugins and overrides stay, the new version's additions
+are added, and where the profile and the new version differ on a plugin,
+the order, the rules or an override they both have, that is a conflict
+the user's side wins unless overridden.
+
+Every feature gate applies to the new document: a `requires` outside the
+supported set refuses the update with nothing written.
 
 The update converges through the import's two-phase apply: every download
 is acquired first, so a refusal (an installer's questions, or a NexusMods
