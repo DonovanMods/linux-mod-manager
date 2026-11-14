@@ -3700,6 +3700,56 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #617: one plugin of the effective order - a patch a rule holds
+			// after another plugin, with a master that is not active.
+			"plugin_order_entry",
+			goldenPluginOrderEntry,
+		},
+		{
+			// #617: `lmm plugins list`'s document - the game's own master, an
+			// external plugin, lmm's plugins, an undeployed order entry, the
+			// rules and a finding.
+			"plugin_order_report",
+			goldenPluginOrderReport,
+		},
+		{
+			// #617: one plugin edit - a move.
+			"plugin_edit",
+			core.PluginEdit{Op: core.PluginOpMove, Plugin: "Patch.esp", After: "SkyUI_SE.esp"},
+		},
+		{
+			// #617: a rule edit, as `lmm plugins rules add` sends it.
+			"plugin_edit_rule",
+			core.PluginEdit{Op: core.PluginOpRuleAdd, Rule: domain.PluginRule{Name: "Patch.esp", Group: "Late Loaders", After: []string{"SkyUI_SE.esp"}}},
+		},
+		{
+			// #617: `lmm plugins ... --dry-run`'s document.
+			"plugin_edit_plan",
+			core.PluginEditPlan{
+				GameID: "skyrim-se", Profile: "default", Active: true,
+				Edit:    core.PluginEdit{Op: core.PluginOpDisable, Plugins: []string{"Optional.esp"}},
+				Changes: []string{"Optional.esp: disabled"},
+				Notes:   []string{"Patch.esp is already enabled"},
+				Order:   &goldenPluginOrderReport,
+			},
+		},
+		{
+			// #617: what an applied plugin edit did, the list written.
+			"plugin_edit_result",
+			core.PluginEditResult{
+				GameID: "skyrim-se", Profile: "default", Changed: true,
+				Changes: []string{"Patch.esp: moved after SkyUI_SE.esp"},
+				List: &core.PluginListResult{Status: core.PluginListWritten,
+					ListFile: "/pfx/drive_c/users/steamuser/AppData/Local/Skyrim Special Edition/Plugins.txt", Plugins: 3, Active: 2, External: 1},
+				Order: &goldenPluginOrderReport,
+			},
+		},
+		{
+			// #617: `lmm plugins rules list`'s document.
+			"plugin_rules_report",
+			core.PluginRulesReport{GameID: "skyrim-se", Profile: "default", Rules: goldenPluginRules},
+		},
+		{
 			// #605: one library's compatdata prefix, as prefix_status's
 			// candidates list each.
 			"prefix_candidate",
@@ -4017,4 +4067,39 @@ func convertedCollectionFixture() *core.ConvertedCollection {
 		},
 		Optional: []string{"3863:1"}, AccountTier: "free", ManualDownload: true,
 	}
+}
+
+// goldenPluginRules is a profile's plugin rules, as the #617 goldens
+// carry them: a group, and a plugin placed in it after another.
+var goldenPluginRules = domain.PluginRules{
+	Groups:  []domain.PluginGroup{{Name: "Late Loaders", After: []string{"default"}}},
+	Plugins: []domain.PluginRule{{Name: "Patch.esp", Group: "Late Loaders", After: []string{"SkyUI_SE.esp"}}},
+}
+
+// goldenPluginOrderEntry is the #617 goldens' rule-placed plugin.
+var goldenPluginOrderEntry = core.PluginOrderEntry{
+	Position: 4, Name: "Patch.esp", Active: true,
+	Masters: []string{"Skyrim.esm", "Absent.esm"}, MissingMasters: []string{"Absent.esm"},
+	Managed: true, SourceID: "nexusmods", ModID: "1234", ModName: "Sample Patch",
+	Placement:   core.PluginPlacementRule,
+	Constraints: []core.PluginOrderEdge{{From: "SkyUI_SE.esp", To: "Patch.esp", Reason: core.PluginEdgeAfter}},
+}
+
+// goldenPluginOrderReport is `lmm plugins list`'s document for the #617
+// goldens.
+var goldenPluginOrderReport = core.PluginOrderReport{
+	GameID: "skyrim-se", Profile: "default", Active: true, Sorted: true,
+	ListFile: "/pfx/drive_c/users/steamuser/AppData/Local/Skyrim Special Edition/Plugins.txt",
+	Plugins: []core.PluginOrderEntry{
+		{Position: 1, Name: "Skyrim.esm", Active: true, Master: true, Placement: core.PluginPlacementImplicit},
+		{Position: 2, Name: "ccQDRSSE001-SurvivalMode.esl", Active: true, Master: true, Light: true, Placement: core.PluginPlacementExternal},
+		{Position: 3, Name: "SkyUI_SE.esp", Active: true, Managed: true, SourceID: "nexusmods", ModID: "12604", ModName: "SkyUI", Placement: core.PluginPlacementOrder},
+		goldenPluginOrderEntry,
+		{Position: 5, Name: "Optional.esp", Managed: true, SourceID: "nexusmods", ModID: "99", ModName: "Optional", Placement: core.PluginPlacementNew},
+	},
+	NotDeployed: []domain.PluginEntry{{Name: "Removed.esp", Enabled: false}},
+	Rules:       goldenPluginRules,
+	Findings: []core.PluginFinding{{Code: core.PluginFindingMissingMaster, Severity: core.PluginSeverityError, Plugin: "Patch.esp",
+		Missing: []string{"Absent.esm"},
+		Message: "Patch.esp needs the master(s) Absent.esm (not installed) - the game will not start with it active: install and activate them, or deactivate it"}},
 }
