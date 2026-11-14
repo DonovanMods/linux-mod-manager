@@ -499,3 +499,12 @@ func CountHeirListingsForTest(count func()) (restore func()) {
 	heirListingHook = count
 	return func() { heirListingHook = prev }
 }
+
+// SetLoadOrderEditAfterSaveForTest sets the hook ApplyFileLoadOrderEdit
+// calls between its profile write and its list write (#620), until the
+// returned func restores the previous one.
+func SetLoadOrderEditAfterSaveForTest(f func()) (restore func()) {
+	prev := loadOrderEditAfterSave
+	loadOrderEditAfterSave = f
+	return func() { loadOrderEditAfterSave = prev }
+}

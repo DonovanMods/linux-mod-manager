@@ -260,11 +260,20 @@ func withNotDeployed(order, notDeployed, base []string) []string {
 	return out
 }
 
+// loadOrderEditAfterSave is a test seam: called between
+// ApplyFileLoadOrderEdit's profile write and its list write. nil in
+// production.
+var loadOrderEditAfterSave func()
+
 // ApplyFileLoadOrderEdit writes plan's order to the profile and, for the
 // active profile, the game's list file (#620). It refuses a plan whose
-// profile's order changed since it was made (ErrStalePlan). A list the sync
-// could not write is a finding on the result, never an error: the profile
-// was written by then.
+// profile's order changed since it was made (ErrStalePlan). That is the
+// whole freshness check: the plan's only write is the profile's order, so
+// only a change to that order can make it stale; the deployed files and the
+// list file are read again by the sync, which writes them as they are at
+// Apply time, never as the plan saw them. A list the sync could not write
+// is a finding on the result, never an error: the profile was written by
+// then.
 func (s *Service) ApplyFileLoadOrderEdit(ctx context.Context, game *domain.Game, plan *FileLoadOrderEditPlan) (*FileLoadOrderEditResult, error) {
 	if plan == nil {
 		return nil, fmt.Errorf("%w: no plan", ErrInvalidLoadOrderEdit)
@@ -304,6 +313,9 @@ func (s *Service) ApplyFileLoadOrderEdit(ctx context.Context, game *domain.Game,
 			return nil, err
 		}
 		res.Changed = true
+	}
+	if loadOrderEditAfterSave != nil {
+		loadOrderEditAfterSave()
 	}
 	// The profile is written; the list is derived from it, and is written
 	// whatever the caller's context does now (Ruling 16).

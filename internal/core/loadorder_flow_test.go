@@ -376,3 +376,45 @@ func TestVerify_NoLoadOrderNoDrift(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, findingWithStatus(res.Result, core.VerifyStatusLoadOrderDrift))
 }
+
+// #620 review B1: after a purge hands the user's list back, a later flow
+// that deploys none of lmm's archives (a disable, here) leaves it alone: it
+// never takes the list over again, drops a line, or keeps a new original.
+func TestLoadOrder_PurgedListStaysTheUsers(t *testing.T) {
+	f := newArchiveFixture(t)
+	f.mod(t, "a", "a.archive")
+	f.mod(t, "b", "b.archive")
+	require.NoError(t, os.WriteFile(filepath.Join(f.modDir, "mine.archive"), []byte("x"), 0o644))
+	original := "mine.archive\ngone.archive\n"
+	require.NoError(t, os.WriteFile(filepath.Join(f.modDir, "modlist.txt"), []byte(original), 0o644))
+	f.setOrder(t, "b.archive", "a.archive")
+	f.deploy(t)
+	f.purge(t)
+	require.Equal(t, original, f.modlist(t))
+	require.Empty(t, f.originals(t))
+
+	_, err := f.svc.DisableMod(context.Background(), f.game, "default", "src", "a")
+	require.NoError(t, err)
+	assert.Equal(t, original, f.modlist(t), "the user's list is untouched")
+	assert.Empty(t, f.originals(t), "and lmm keeps no original of it")
+}
+
+// #620 review: an archive/pc/mod that is a link (to a folder outside the
+// game) is never written beneath: the list is refused, and the link's
+// target untouched.
+func TestLoadOrder_RefusesAFolderThatIsALink(t *testing.T) {
+	f := newArchiveFixture(t)
+	f.mod(t, "a", "a.archive")
+	f.setOrder(t, "a.archive")
+	f.deploy(t)
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "a.archive"), []byte("x"), 0o644))
+	require.NoError(t, os.RemoveAll(f.modDir))
+	require.NoError(t, os.Symlink(outside, f.modDir))
+
+	results := f.svc.SyncLoadOrdersForTest(context.Background(), f.game, "default")
+	require.Len(t, results, 1)
+	assert.Equal(t, core.PluginListSkipped, results[0].Status)
+	assert.True(t, results[0].HasErrors())
+	assertAbsent(t, filepath.Join(outside, "modlist.txt"), "nothing is written through the link")
+}

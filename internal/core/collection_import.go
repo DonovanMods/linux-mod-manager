@@ -1172,7 +1172,8 @@ const (
 // would not keep as written (#620). An id is a plain token (lower-case
 // letters, digits and .-_), as the game's adapter names its orders. Every
 // name is a file's name in the order's folder, matched against the
-// deployed files and never rewritten: one that is empty, is . or .., holds
+// deployed files and never rewritten: one that is empty, starts or ends
+// with whitespace (the game trims each line), is . or .., holds
 // a path separator, a control, escape or bidi/format character, or runs
 // over a file name's length refuses the document.
 func checkCollectionLoadOrders(orders domain.FileLoadOrders) error {
@@ -1187,8 +1188,8 @@ func checkCollectionLoadOrders(orders domain.FileLoadOrders) error {
 			return fmt.Errorf("the %s load order lists more than %d files", id, maxCollectionLoadOrderFiles)
 		}
 		for _, n := range names {
-			if strings.TrimSpace(n) == "" || n == "." || n == ".." || strings.ContainsAny(n, `/\`) || hasUnsafeRunes(n) || len(n) > maxLoadOrderName {
-				return fmt.Errorf("a file name in the %s load order (%q) is empty, is . or .., contains a path separator or control or formatting characters, or is over the %d-byte limit", id, n, maxLoadOrderName)
+			if strings.TrimSpace(n) == "" || n != strings.TrimSpace(n) || n == "." || n == ".." || strings.ContainsAny(n, `/\`) || hasUnsafeRunes(n) || len(n) > maxLoadOrderName {
+				return fmt.Errorf("a file name in the %s load order (%q) is empty, starts or ends with a space, is . or .., contains a path separator or control or formatting characters, or is over the %d-byte limit", id, n, maxLoadOrderName)
 			}
 		}
 	}

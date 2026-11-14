@@ -1153,9 +1153,17 @@ func (p *manifestParser) fileLoadOrders(raw json.RawMessage) ([]source.ManifestF
 		if err != nil {
 			return nil, fmt.Errorf("fbLoadOrders[%d].%v", i, err)
 		}
+		// The entries are read leniently (#620 review): one that cannot be
+		// read leaves the order reported by its id, with why, rather than
+		// the whole recipe unreadable - an order the game cannot write is
+		// refused by its feature whatever its entries hold.
 		entries, err := array(obj["entries"], "fbLoadOrders."+id+".entries")
 		if err != nil {
-			return nil, err
+			if isEmpty(obj["entries"]) {
+				continue
+			}
+			out = append(out, source.ManifestFileLoadOrder{ID: id, Entries: 1, Invalid: err.Error()})
+			continue
 		}
 		if len(entries) == 0 {
 			continue
@@ -1164,7 +1172,8 @@ func (p *manifestParser) fileLoadOrders(raw json.RawMessage) ([]source.ManifestF
 		for j, raw := range entries {
 			e, err := p.fileLoadOrderEntry(raw, fmt.Sprintf("fbLoadOrders.%s.entries[%d]", id, j))
 			if err != nil {
-				return nil, err
+				lo.Files, lo.Invalid = nil, err.Error()
+				break
 			}
 			lo.Files = append(lo.Files, e)
 		}

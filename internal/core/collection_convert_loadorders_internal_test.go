@@ -76,3 +76,24 @@ func TestConvert_FileLoadOrderRefusesUnsafeNames(t *testing.T) {
 		assert.True(t, errors.Is(err, ErrInvalidCollection), "%q: %v", bad, err)
 	}
 }
+
+// #620 review: an order whose entries could not be read refuses the recipe
+// only when the game writes that order.
+func TestUnreadableLoadOrder(t *testing.T) {
+	m := &source.CollectionManifest{FileLoadOrders: []source.ManifestFileLoadOrder{
+		{ID: "cyberpunk2077-redmod", Entries: 1, Invalid: "entries[0].id is not a string"},
+	}}
+	archive := func(id string) bool { return id == "cyberpunk2077-archive" }
+	assert.NoError(t, unreadableLoadOrder(m, archive), "an unsupported order is refused by its feature instead")
+	assert.NoError(t, unreadableLoadOrder(m, nil))
+	m.FileLoadOrders[0].ID = "cyberpunk2077-archive"
+	err := unreadableLoadOrder(m, archive)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, source.ErrInvalidManifest)
+
+	// The converter still raises the unsupported order's feature.
+	m.FileLoadOrders[0].ID = "cyberpunk2077-redmod"
+	m.Name, m.Mods = "C", []source.ManifestMod{nexusMod("A", "1", "11", "aa")}
+	c := mustConvert(t, withArchiveOrder(convertInputFor(m)))
+	assert.Equal(t, []string{"file_load_order:cyberpunk2077-redmod"}, featureNames(c.Unsupported))
+}

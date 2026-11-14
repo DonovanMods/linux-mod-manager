@@ -277,6 +277,10 @@ type ManifestFileLoadOrder struct {
 	ID      string
 	Entries int
 	Files   []ManifestFileLoadOrderEntry
+	// Invalid says why the entries could not be read, when they could not
+	// (Files is then empty): the order is still reported by its id, and
+	// the importer decides whether that matters.
+	Invalid string
 }
 
 // ManifestFileLoadOrderEntry is one entry of a file-based load order, as

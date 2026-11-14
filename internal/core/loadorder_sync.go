@@ -337,6 +337,14 @@ func (s *Service) computeLoadOrder(ctx context.Context, game *domain.Game, profi
 		c.restore = c.wrote
 		return c, nil
 	}
+	if !report && len(c.managed) == 0 && !c.wrote {
+		// No file of lmm's here, and a list lmm does not hold (never wrote,
+		// or a purge handed back): it is the user's alone, and lmm leaves
+		// it as it is - P3's gate (#620 review B1). The external files are
+		// listed only in a list lmm writes anyway.
+		c.nothing = true
+		return c, nil
+	}
 	c.place()
 	return c, nil
 }

@@ -167,3 +167,25 @@ func TestFileLoadOrderEdit_StalePlanIsRefused(t *testing.T) {
 	_, err = f.svc.ApplyFileLoadOrderEdit(ctx, f.game, plan)
 	assert.ErrorIs(t, err, core.ErrStalePlan)
 }
+
+// #620 review: Ruling 16 - an edit cancelled after its profile write still
+// writes the list it implies, so the profile and modlist.txt never disagree.
+func TestFileLoadOrderEdit_CancelledAfterTheProfileWriteStillWritesTheList(t *testing.T) {
+	f := newArchiveFixture(t)
+	f.mod(t, "a", "a.archive", "b.archive")
+	f.deploy(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	plan, err := f.svc.PlanFileLoadOrderEdit(ctx, f.game, "default", core.FileLoadOrderEdit{Op: core.LoadOrderOpMove, File: "b.archive", To: core.LoadOrderMoveFirst})
+	require.NoError(t, err)
+	t.Cleanup(core.SetLoadOrderEditAfterSaveForTest(cancel))
+
+	res, err := f.svc.ApplyFileLoadOrderEdit(ctx, f.game, plan)
+	require.NoError(t, err)
+	require.NotNil(t, res.List)
+	assert.Equal(t, core.PluginListWritten, res.List.Status)
+	assert.Equal(t, "b.archive\r\na.archive", f.modlist(t), "the list follows the profile written before the cancel")
+	profile, err := config.LoadProfile(f.svc.ConfigDir(), f.game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"b.archive", "a.archive"}, profile.LoadOrders[archiveOrder])
+}

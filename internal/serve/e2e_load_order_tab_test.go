@@ -114,10 +114,22 @@ func TestE2E_LoadOrderTab_ViewsMovesAndResets(t *testing.T) {
 
 	// To the top, then a reset: previewed first, then the user's own list
 	// comes back.
-	var plan string
+	// "First" is disabled once b.archive is the top archive of lmm's, so
+	// focus goes to the row's next usable control (#620 review).
+	var focusedFile, focusedAction string
 	f.runInBrowser(t,
+		chromedp.Focus(`[data-file="b.archive"] [data-action="load-order-first"]`, chromedp.ByQuery),
 		chromedp.Click(`[data-file="b.archive"] [data-action="load-order-first"]`, chromedp.ByQuery),
 		pollUntil(`(`+archiveNamesJS+`)[1] === "b.archive"`),
+		pollUntil(`document.activeElement?.closest("[data-file]")?.dataset.file === "b.archive"`),
+		chromedp.Evaluate(`document.activeElement.closest("[data-file]").dataset.file`, &focusedFile),
+		chromedp.Evaluate(`document.activeElement.dataset.action`, &focusedAction),
+	)
+	assert.Equal(t, "b.archive", focusedFile)
+	assert.Equal(t, "load-order-down", focusedAction)
+
+	var plan string
+	f.runInBrowser(t,
 		clickWhenSettled(`[data-action="load-order-reset"]`),
 		chromedp.WaitVisible(`[data-testid="load-order-reset-plan"]`, chromedp.ByQuery),
 		textContent(`[data-testid="load-order-reset-plan"]`, &plan),

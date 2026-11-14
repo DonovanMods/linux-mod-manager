@@ -13,7 +13,7 @@
 // Parity with the CLI: move (up/down, to the top or the end) and reset,
 // with the reset's dry run shown before it applies.
 
-import { html, useState } from "../render.js";
+import { html, useEffect, useRef, useState } from "../render.js";
 import { editProfileLoadOrder } from "../api.js";
 
 /** placementLabel is a row's "placed by" badge text. */
@@ -49,8 +49,36 @@ export function LoadOrderTab({ profileName, context, report, onReport }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [resetPlan, setResetPlan] = useState(null);
+  // A move disables every control while it runs, and the button that made
+  // it can stay disabled after (Up on a row moved to the top): the browser
+  // then drops focus. pendingFocus is the moved row and the control used,
+  // so focus goes back to that control, or the row's next usable one, once
+  // the tab has re-rendered the new order.
+  const [pendingFocus, setPendingFocus] = useState(null);
+  const rootRef = useRef(null);
+  useEffect(() => {
+    if (busy || !pendingFocus || !rootRef.current) return;
+    const { file, action } = pendingFocus;
+    setPendingFocus(null);
+    const active = document.activeElement;
+    if (active && rootRef.current.contains(active) && !active.disabled) return;
+    const row = [...rootRef.current.querySelectorAll("[data-file]")].find(
+      (r) => r.dataset.file === file,
+    );
+    if (!row) return;
+    const usable = [...row.querySelectorAll("button")].filter(
+      (b) => !b.disabled,
+    );
+    (usable.find((b) => b.dataset.action === action) ?? usable[0])?.focus();
+  }, [busy, pendingFocus, report]);
 
   async function run(edit) {
+    if (edit.op === "move") {
+      setPendingFocus({
+        file: edit.file,
+        action: document.activeElement?.dataset?.action ?? "",
+      });
+    }
     setBusy(true);
     setError(null);
     try {
@@ -101,6 +129,7 @@ export function LoadOrderTab({ profileName, context, report, onReport }) {
   return html`
     <div
       class="plugins-tab"
+      ref=${rootRef}
       data-testid="load-order-tab"
       data-order=${report.id}
     >

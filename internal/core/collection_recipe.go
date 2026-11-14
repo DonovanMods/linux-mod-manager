@@ -113,6 +113,9 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 		if root, err = os.OpenRoot(dir); err == nil {
 			var m source.CollectionManifest
 			if m, err = fetcher.ParseManifest(root.FS()); err == nil {
+				err = unreadableLoadOrder(&m, in.loadOrders)
+			}
+			if err == nil {
 				in.manifest = &m
 			}
 			_ = root.Close()
@@ -146,6 +149,20 @@ func (s *Service) modTypeRoutes(game *domain.Game) func(modType string) bool {
 		return nil
 	}
 	return func(t string) bool { return modTypeRouted(a, game, t) }
+}
+
+// unreadableLoadOrder is the error for a recipe whose file load order the
+// game writes has entries that could not be read (#620 review): that order
+// is the recipe's to replay, so the recipe is unreadable, as a parse error
+// makes it. An order the game does not write is refused by its feature
+// whatever its entries hold, so its unreadable entries change nothing.
+func unreadableLoadOrder(m *source.CollectionManifest, supported func(id string) bool) error {
+	for _, lo := range m.FileLoadOrders {
+		if lo.Invalid != "" && supported != nil && supported(lo.ID) {
+			return fmt.Errorf("%w: the %s load order: %s", source.ErrInvalidManifest, lo.ID, lo.Invalid)
+		}
+	}
+	return nil
 }
 
 // loadOrderSupport reports which file load orders game's adapter writes

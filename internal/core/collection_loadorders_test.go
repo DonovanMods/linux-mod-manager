@@ -110,6 +110,8 @@ func TestCollectionImport_RefusesLoadOrderNamesItCannotKeepAsWritten(t *testing.
 		"path in a name":     "{cyberpunk2077-archive: [../a.archive]}",
 		"backslash":          "{cyberpunk2077-archive: [\"x\\\\a.archive\"]}",
 		"empty name":         "{cyberpunk2077-archive: [\"\"]}",
+		"leading space":      "{cyberpunk2077-archive: [\" a.archive\"]}",
+		"trailing space":     "{cyberpunk2077-archive: [\"a.archive \"]}",
 		"long name":          "{cyberpunk2077-archive: [" + strings.Repeat("x", 300) + "]}",
 		"id with a space":    "{\"cyberpunk2077 archive\": [a.archive]}",
 		"id with upper case": "{Cyberpunk2077-Archive: [a.archive]}",

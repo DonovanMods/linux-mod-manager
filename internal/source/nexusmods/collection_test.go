@@ -496,3 +496,24 @@ func TestParseManifest_PluginRuleSpellings(t *testing.T) {
 		`{"info": {"name": "C"}, "pluginRules": {"plugins": [{"name": "B.esp", "after": [3]}]}}`)}})
 	assert.ErrorIs(t, err, source.ErrInvalidManifest, "a reference that is neither a name nor an object")
 }
+
+// #620 review: an fbLoadOrders entry that cannot be read does not make the
+// whole recipe unreadable - the order is reported by its id, with why its
+// entries could not be read, and the importer decides (a supported order's
+// unreadable entries refuse the recipe; any other order is refused by its
+// feature anyway).
+func TestParseManifest_UnreadableFileLoadOrderEntries(t *testing.T) {
+	doc := `{"info": {"name": "C", "domainName": "cyberpunk2077"}, "mods": [],
+		"fbLoadOrders": [
+			{"id": "cyberpunk2077-redmod", "entries": [{"id": 5, "enabled": "yes"}]},
+			{"id": "cyberpunk2077-archive", "entries": [{"id": "a.archive", "name": "a.archive", "enabled": true, "modId": "A 1"}]}]}`
+	m, err := New(nil, "").ParseManifest(fstest.MapFS{"collection.json": {Data: []byte(doc)}})
+	require.NoError(t, err)
+	require.Len(t, m.FileLoadOrders, 2)
+	assert.Equal(t, "cyberpunk2077-redmod", m.FileLoadOrders[0].ID)
+	assert.Equal(t, 1, m.FileLoadOrders[0].Entries)
+	assert.NotEmpty(t, m.FileLoadOrders[0].Invalid)
+	assert.Nil(t, m.FileLoadOrders[0].Files)
+	assert.Empty(t, m.FileLoadOrders[1].Invalid)
+	assert.Len(t, m.FileLoadOrders[1].Files, 1)
+}
