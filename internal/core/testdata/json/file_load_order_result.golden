@@ -1,0 +1,15 @@
+{
+  "id": "cyberpunk2077-archive",
+  "status": "written",
+  "list_file": "/games/cyberpunk2077/archive/pc/mod/modlist.txt",
+  "files": 3,
+  "external": 1,
+  "findings": [
+    {
+      "code": "load_order_name_unencodable",
+      "severity": "warning",
+      "file": "bad\u0001.archive",
+      "message": "\"bad\\x01.archive\" cannot be written to modlist.txt (its name has a control character), so it is left out and loads after the listed files - rename it"
+    }
+  ]
+}

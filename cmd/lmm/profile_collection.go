@@ -55,6 +55,7 @@ func printCollectionPlan(c *core.CollectionImport, game *domain.Game) {
 	}
 	printCollectionInstallerChoices(c)
 	printCollectionPlugins(c.Plugins, game)
+	printCollectionLoadOrders(c.LoadOrders, game)
 	if c.Source != nil {
 		printSourceCollection(c.Source)
 	}

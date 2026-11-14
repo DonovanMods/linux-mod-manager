@@ -34,6 +34,7 @@ under `internal/adapter/` and one registration line — and *nothing* in
 | `bepinex` | `adapter: bepinex`, or derived from a game whose `mod_path` is its install path and that declares `loader: kind: bepinex` **or** has BepInEx installed in its directory | Plugin archive layout, `BepInEx/config/**` seeding, the "this game has no BepInEx" refusal, and verify's loader-installation tier. |
 | `d2r` | `adapter: d2r` only, which Battle.net detection's Diablo II: Resurrected entry sets (#546) | Lays every archive out as `<name>/<name>.mpq/` under the game's `mods` folder, and names the `-mod <name> -txt` the deployed profile needs (`LaunchAdvisor`). |
 | `bethesda` | `adapter: bethesda` only, which Steam detection sets for Skyrim Special Edition/Anniversary Edition, Skyrim VR, Fallout 4, Fallout 4 VR, Starfield and Skyrim (#606) | Lays a game-root-relative archive (a `Data/` folder, SKSE's version-named wrapper) out relative to `Data/`, and carries each game's plugin rules (`PluginOrderer`, which core sorts and writes `Plugins.txt` by: #616) and game-root file table (`RootRouter`, which core deploys by: #629). |
+| `cyberpunk2077` | `adapter: cyberpunk2077` only, which Steam detection sets for Cyberpunk 2077 (#620) | Carries the game's archive load order (`FileLoadOrderer`: `cyberpunk2077-archive`, written to `archive/pc/mod/modlist.txt`), which core writes from the profile's `load_orders:`; otherwise the identity. |
 | `witcher3`, `baldurs-gate-3` | `adapter: witcher3` / `adapter: baldurs-gate-3` only, which Steam detection sets for The Witcher 3 and Baldur's Gate 3 (#635) | A table of the Vortex mod types a NexusMods collection states for the game and the root each deploys to (`RootRouter`); otherwise the identity. One package, `internal/adapter/modtypes`. |
 
 `lmm game list` always names what *this* build actually ships, and
@@ -164,7 +165,8 @@ adapter.
 | `LaunchAdvisor` | `LaunchAdvice(g, mods, previous) Advice` | `d2r` | shows the advice as a warning after a deploy (a switch's and an apply's too) and on a launch |
 | `PluginOrderer` | `PluginRules(g) PluginSpec` | `bethesda` | the plugin-list sync after every deploying flow (`syncMergedPak`), verify's plugin tier, and purge's restore (#616) |
 | `RootRouter` | `RouteRoots(g, files) []DeployRoot`, `RootForModType(g, type) (DeployRoot, bool)` | `bethesda`, `witcher3`, `baldurs-gate-3` | deploys a root-routed file under `install_path`, and every removal, verify, purge and conflict report finds it there (#629) |
-| `LayoutNeutral` | `LayoutNeutral()` (a marker) | `generic-files`, `witcher3`, `baldurs-gate-3` | treats a switch between two layout-neutral adapters as moving nothing: no reinstall warning on `lmm game edit --adapter`, the game page or verify's `adapter_suggested` note (#635) |
+| `FileLoadOrderer` | `FileLoadOrders(g) []FileLoadOrderSpec` | `cyberpunk2077` | the load-order sync beside the plugin list (`syncMergedPak`), purge's restore, `lmm load-order` and the reorder modal's load-order tab, and the collection gate's `file_load_order:<id>` (#620) |
+| `LayoutNeutral` | `LayoutNeutral()` (a marker) | `generic-files`, `cyberpunk2077`, `witcher3`, `baldurs-gate-3` | treats a switch between two layout-neutral adapters as moving nothing: no reinstall warning on `lmm game edit --adapter`, the game page or verify's `adapter_suggested` note (#635) |
 | `PrefixConsumer` | `UsesPrefix(g) bool` | `bethesda` | reports a prefix it cannot resolve as a `prefix_unresolved` finding (`lmm verify`, `lmm game show`) |
 
 ### FileRouter
@@ -393,6 +395,58 @@ standard-library TES4 reader) and applies the spec to one with
 profile's plugin list and rules (`internal/core/plugins_sort.go`) and writes
 the list into the prefix after every deploying flow
 (`internal/core/plugins_sync.go`, #616).
+
+### FileLoadOrderer
+
+Some games load a set of mod files in the order a list file gives, rather
+than in the order of their names: Cyberpunk 2077 reads the `.archive` files
+in `archive/pc/mod` in the order `archive/pc/mod/modlist.txt` lists them.
+Vortex calls these "file-based load orders", and a NexusMods collection
+records each under an id (`fbLoadOrders`, `cyberpunk2077-archive`).
+`FileLoadOrders(g)` answers, as pure data and keyed by that id, what each
+order covers and how it is written: the directory (a `RootedPath`, its
+components matched case-insensitively), the file extensions it orders, the
+list file's name and format (`FileListLines`: one name per line), a new
+file's line ending, and whether the file listed first wins a conflict
+(display only).
+
+Core does the rest (`internal/core/loadorder_sync.go`, #620), with P3's
+rules for the plugin list: the profile's `load_orders:` list is the user's
+intent and is opt-in (a profile that orders nothing leaves the list alone,
+and one that stops ordering hands it back); a file lmm did not deploy is
+never reordered (owner ruling): every one in the folder is listed at its
+place in the order the game loads them in now (the list's own files in its
+order, then the rest alphabetically, as Vortex lists every archive on disk),
+keeping the external files' order among themselves, and the ones lmm added
+are recorded so a purge or a reset takes them out again; a file lmm deploys that the profile does not
+order goes in straight after the file it sorts next after (Vortex's
+placement, `[CPX]` `load_order.archive.ts` `slotFor`); the list file is
+re-read before every write, its line ending kept; and the file lmm first
+replaced is kept in `originals-loadorders.json` for purge (and a reset) to
+put back. `lmm verify` reports `load_order_drift` for a file of lmm's the
+list has dropped or moved since lmm wrote it, and `--fix` rewrites it.
+
+### The `cyberpunk2077` adapter's facts (#620)
+
+| Fact | Value | Source |
+| --- | --- | --- |
+| The game reads the order from `archive/pc/mod/modlist.txt` | one archive file name per line, extension included; without the file, archives load in binary alphabetical order | `[RED]` "Archive files Load Order" |
+| The archive that changes a file first wins | `FirstWins` | `[RED]`; `[CPX]` `src/load_order.archive.ts:269` (`conflictWinner: "first"`) |
+| Archives the list does not name load after the listed ones | (core's rule for an external archive) | `[CPX]` `src/load_order.archive.ts:58` |
+| The order's id | `cyberpunk2077-archive` | `[CPX]` `src/load_order.types.ts:31` |
+| How Vortex writes it | the names joined with `\r\n`, no trailing line ending, UTF-8 | `[CPX]` `src/load_order.archive.ts:151-165`, `src/load_order.ts:141` |
+| The directory and the extension | `archive/pc/mod/`, `.archive` | `[CPX]` `src/installers.layouts.ts:95, 102` |
+
+Sources: `[RED]` wiki.redmodding.org, *for-mod-users/users-modding-cyberpunk-2077/load-order*
+(read 2026-11-14); `[CPX]` github.com/E1337Kat/cyberpunk2077_ext_redux at
+9aacde8f9e (2026-11-09), the Vortex extension, which is GPL and was read for
+facts only. Vortex removes `modlist.txt` when the order is the default
+alphabetical one; lmm instead writes the list whenever the profile orders it
+and hands it back when the profile stops (a reset or a purge).
+
+Left out: the REDmod order (`cyberpunk2077-redmod`). No surveyed collection
+has an entry in one, so its format is unverified, and a collection that
+needs it stays refused.
 
 ### RootRouter
 

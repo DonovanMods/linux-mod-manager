@@ -95,6 +95,11 @@ func deriveCollectionRequires(doc *domain.CollectionDocument) []string {
 	if !doc.Plugins.IsZero() {
 		features = append(features, CollectionFeaturePluginOrder)
 	}
+	// #620: each file load order needs an importer whose game writes it;
+	// an older lmm, or a game without it, refuses rather than drop it.
+	for _, id := range doc.LoadOrders.IDs() {
+		features = append(features, CollectionFeatureFileLoadOrderPrefix+id)
+	}
 	sort.Strings(features)
 	return features
 }
@@ -165,8 +170,9 @@ func IsCollectionUnsupported(err error) bool {
 // unsupportedFeatures is the gate: every feature in declared or derived
 // that the supported set lacks, in name order. routes says whether the
 // importing game routes a stated mod type (mod_type:<type>, #607); nil
-// routes none.
-func unsupportedFeatures(declared, derived []string, routes func(modType string) bool) []UnsupportedCollectionFeature {
+// routes none. loadOrders says whether its adapter writes a file load
+// order (file_load_order:<id>, #620); nil writes none.
+func unsupportedFeatures(declared, derived []string, routes func(modType string) bool, loadOrders func(id string) bool) []UnsupportedCollectionFeature {
 	var names []string
 	for _, name := range slices.Concat(declared, derived) {
 		name = strings.TrimSpace(name)
@@ -174,6 +180,9 @@ func unsupportedFeatures(declared, derived []string, routes func(modType string)
 			continue
 		}
 		if t, ok := strings.CutPrefix(name, CollectionFeatureModTypePrefix); ok && t != "" && routes != nil && routes(t) {
+			continue
+		}
+		if id, ok := strings.CutPrefix(name, CollectionFeatureFileLoadOrderPrefix); ok && id != "" && loadOrders != nil && loadOrders(id) {
 			continue
 		}
 		names = append(names, name)

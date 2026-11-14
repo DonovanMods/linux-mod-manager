@@ -201,6 +201,10 @@ type DeployResult struct {
 	// on a game whose adapter manages none. Its findings are also
 	// Warnings, so a reader of Warnings alone misses nothing.
 	Plugins *PluginListResult `json:"plugins,omitempty"`
+	// LoadOrders is what the deploy did to the game's file load-order
+	// lists (#620: Cyberpunk 2077's modlist.txt); absent for a game with
+	// none, and for one whose profile orders nothing.
+	LoadOrders []FileLoadOrderResult `json:"load_orders,omitempty"`
 }
 
 // DeployPlan is PlanDeploy's side-effect-free description of what a deploy
@@ -1263,6 +1267,7 @@ func (s *Service) resyncAfterDeploy(ctx context.Context, game *domain.Game, prof
 		return
 	}
 	result.Plugins = plugins.result
+	result.LoadOrders = plugins.loadOrders
 	for _, w := range syncWarnings {
 		result.Warnings = append(result.Warnings, w)
 		emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: w})

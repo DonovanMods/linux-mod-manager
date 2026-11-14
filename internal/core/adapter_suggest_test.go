@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bethesda"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/cyberpunk2077"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/modtypes"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -314,4 +315,26 @@ func TestAdapterSwitchWarning_LayoutNeutralTarget(t *testing.T) {
 	assert.NotContains(t, f.Note, "uninstall")
 	assert.NotContains(t, f.Note, "lays out and loads its mods", "the adapter changes no layout")
 	assert.Contains(t, f.Note, "stated type")
+}
+
+// #620: the suggestion of an adapter whose rule is a file load order
+// (cyberpunk2077) says that, not what a mod-type adapter does.
+func TestVerify_SuggestsTheLoadOrderAdapter(t *testing.T) {
+	svc := newFlowsTestService(t)
+	svc.RegisterAdapter(cyberpunk2077.New())
+	svc.SetKnownGames(func() []core.KnownGame {
+		return []core.KnownGame{{Slug: "cyberpunk2077", Name: "Cyberpunk 2077", SteamAppID: "1091500", Adapter: "cyberpunk2077"}}
+	})
+	ctx := context.Background()
+	install := t.TempDir()
+	game := &domain.Game{ID: "cp", Name: "Cyberpunk 2077", InstallPath: install, ModPath: install,
+		Launch: &domain.GameLaunch{SteamAppID: "1091500"}}
+	require.NoError(t, svc.SaveGame(ctx, game))
+
+	res, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	f := findingWithStatus(res.Result, core.VerifyStatusAdapterSuggested)
+	require.NotNil(t, f)
+	assert.NotContains(t, f.Note, "stated type")
+	assert.Contains(t, f.Note, "file load order (cyberpunk2077-archive (Archives, written to modlist.txt))")
 }

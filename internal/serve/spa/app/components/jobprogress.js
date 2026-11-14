@@ -27,6 +27,7 @@ import {
   useJobResultFailures,
   useJobResultLoader,
   useJobResultPlugins,
+  useJobResultLoadOrders,
   useJobResultPurge,
   useJobResultVerify,
   useJobResultWarnings,
@@ -48,6 +49,7 @@ import {
 import { BatchFailures } from "./batchfailures.js";
 import { PurgeResultDetails } from "./purgeresult.js";
 import { PluginListResult } from "./pluginlistresult.js";
+import { LoadOrderResults, shownLoadOrders } from "./loadorderresult.js";
 import { VerifyFixResult } from "./verifyfixresult.js";
 
 /**
@@ -159,6 +161,8 @@ export function JobProgress({
   const repairResult = useJobResultVerify(jobID, state);
   // Issue 616: what a deploy or a purge did to the game's Plugins.txt.
   const pluginList = useJobResultPlugins(jobID, state);
+  // Issue 620: what it did to the game's file load-order lists.
+  const loadOrders = useJobResultLoadOrders(jobID, state);
   // Issues 530 and 533: every failed update item, named, with its download
   // way out (its page, and "Update from file…" when the source refused the
   // download).
@@ -236,9 +240,10 @@ export function JobProgress({
     Boolean(pluginList) &&
     (pluginList.status !== "unchanged" ||
       (pluginList.findings?.length ?? 0) > 0);
+  const loadOrdersShown = !failed && shownLoadOrders(loadOrders).length > 0;
   return html`
     <div
-      class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || batchFailures.length > 0 || notices.length > 0 || purgeResult || repairResult || pluginShown ? "job-progress--explained" : ""}"
+      class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || batchFailures.length > 0 || notices.length > 0 || purgeResult || repairResult || pluginShown || loadOrdersShown ? "job-progress--explained" : ""}"
       data-job=${jobID}
       data-kind=${summary?.kind}
       data-state=${state}
@@ -287,6 +292,7 @@ export function JobProgress({
       )}
       <${PurgeResultDetails} result=${purgeResult} />
       <${PluginListResult} result=${failed ? null : pluginList} />
+      <${LoadOrderResults} results=${failed ? null : loadOrders} />
       <${VerifyFixResult} outcome=${repairResult} />
       <${BatchFailures} failures=${batchFailures} actions=${actions} />
       ${

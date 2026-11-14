@@ -65,6 +65,13 @@ func (s *Service) PlanSourceCollectionImport(ctx context.Context, game *domain.G
 	}
 	c := plan.Collection
 	c.Source = conv
+	// #620: each load-order file the recipe ties to a member mod says so.
+	for i := range c.LoadOrders {
+		mods := conv.loadOrderMods[c.LoadOrders[i].ID]
+		for j := range c.LoadOrders[i].Files {
+			c.LoadOrders[i].Files[j].Mod = mods[c.LoadOrders[i].Files[j].Name]
+		}
+	}
 	plan.phases = conv.phases
 	if len(conv.AutoUpdate) > 0 {
 		plan.autoUpdate = make(map[string]bool, len(conv.AutoUpdate))

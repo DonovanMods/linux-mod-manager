@@ -3,6 +3,7 @@ package app
 import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bepinex"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bethesda"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/cyberpunk2077"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/d2r"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/icarus"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/modtypes"
@@ -42,12 +43,14 @@ import (
 // detection adds, and a game already in games.yaml gets it only from the
 // user (`lmm game edit --adapter bethesda`), which verify and the game page
 // suggest. The modtypes adapters (#635: witcher3, baldurs-gate-3) are the
-// same: the catalog prefills them, and nothing derives them.
+// same: the catalog prefills them, and nothing derives them, and so is
+// cyberpunk2077 (#620), whose archive load order the catalog brings with it.
 func RegisterAdapters(svc *core.Service) {
 	svc.RegisterAdapter(icarus.New())
 	svc.RegisterAdapter(bepinex.New())
 	svc.RegisterAdapter(d2r.New())
 	svc.RegisterAdapter(bethesda.New())
+	svc.RegisterAdapter(cyberpunk2077.New())
 	for _, a := range modtypes.All() {
 		svc.RegisterAdapter(a)
 	}

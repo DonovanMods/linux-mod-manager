@@ -47,6 +47,9 @@ type ProfileConfig struct {
 	// Plugins is #616's plugin list; omitempty, so a file without one is
 	// unchanged.
 	Plugins *ProfilePluginsConfig `yaml:"plugins,omitempty"`
+	// LoadOrders is #620's file load orders; omitempty, so a file without
+	// one is unchanged.
+	LoadOrders domain.FileLoadOrders `yaml:"load_orders,omitempty"`
 	// CollectionBaseline is #613's record of what the profile's collection
 	// last applied (domain.Profile.CollectionBaseline); omitempty, so a file
 	// without one is unchanged.
@@ -333,6 +336,7 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 		profile.External = cfg.External
 	}
 	profile.Plugins = pluginsFromConfig(cfg.Plugins)
+	profile.LoadOrders = cfg.LoadOrders.Clone()
 	profile.CollectionBaseline = baselineFromConfig(cfg.CollectionBaseline)
 
 	if len(cfg.Overrides) > 0 {
@@ -441,6 +445,7 @@ func ExportProfileValue(profile *domain.Profile) *domain.ExportedProfile {
 		Collection:    collectionOrNil(profile.Collection),
 		External:      profile.External,
 		Plugins:       profile.Plugins.Clone(),
+		LoadOrders:    profile.LoadOrders.Clone(),
 	}
 }
 
@@ -550,6 +555,7 @@ func ProfileFromExported(exported *domain.ExportedProfile) *domain.Profile {
 		Collection:    collectionOrNil(exported.Collection),
 		External:      exported.External,
 		Plugins:       exported.Plugins.Clone(),
+		LoadOrders:    exported.LoadOrders.Clone(),
 	}
 	// LinkMethod is only carried when it was EXPLICIT: ExportProfileValue
 	// writes it as "" otherwise, and turning "" into a phantom symlink

@@ -45,6 +45,11 @@ type Profile struct {
 	// plugins. Absent from every document of a profile without one.
 	Plugins ProfilePlugins `json:"plugins,omitzero"`
 
+	// LoadOrders are the profile's file load orders (#620): per load-order
+	// id, the files of a game whose adapter orders them (Cyberpunk 2077's
+	// archives). Absent from every document of a profile without one.
+	LoadOrders FileLoadOrders `json:"load_orders,omitempty"`
+
 	// CollectionBaseline is what the profile's collection last applied
 	// beyond its mod entries (#613): the base a collection update merges
 	// the profile's plugin list and overrides against, so it can tell the
@@ -134,4 +139,8 @@ type ExportedProfile struct {
 	// Plugins is the profile's plugin list (#616), carried so a snapshot
 	// restores it; absent for a profile without one.
 	Plugins ProfilePlugins `json:"plugins,omitzero"`
+
+	// LoadOrders are the profile's file load orders (#620), carried so a
+	// snapshot restores them; absent for a profile without one.
+	LoadOrders FileLoadOrders `json:"load_orders,omitempty"`
 }

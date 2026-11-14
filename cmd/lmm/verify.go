@@ -198,7 +198,13 @@ more active plugins than the game loads, or could not be written),
 "plugin_name_unencodable", "plugin_header_unreadable" and
 "plugin_requirement_missing" (warnings), "plugin_drift" (a plugin lmm
 deployed that the game's Plugins.txt has dropped, deactivated or moved
-since - a warning --fix rewrites) and "fixed_plugin_drift", "mod_path_missing" (the
+since - a warning --fix rewrites) and "fixed_plugin_drift",
+"load_order_unwritable" and "load_order_list_deployed" (issues: the game's
+load-order list, Cyberpunk 2077's modlist.txt, cannot be written, or a mod
+ships its own), "load_order_name_unencodable" (a warning), "load_order_drift"
+(an archive lmm deployed that modlist.txt has dropped or moved since lmm
+wrote it, or a list that is gone - a warning --fix rewrites) and
+"fixed_load_order_drift", "mod_path_missing" (the
 game's mod_path is not a directory while it has mods to deploy, or is not
 the one lmm deployed files under - a warning whose note names the repair),
 "deployed_modified" (a copied or hard-linked file whose content changed
@@ -644,6 +650,23 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		}
 
 	case core.VerifyStatusFixedPluginDrift:
+		fmt.Println(colorGreen("Fixed: " + f.Note))
+
+	case core.LoadOrderFindingUnwritable, core.LoadOrderFindingDeployed:
+		// #620: the game's load-order list (modlist.txt) cannot be written.
+		fmt.Printf("%s load order - %s\n", colorRed("X"), f.Note)
+
+	case core.LoadOrderFindingUnencodable:
+		fmt.Printf("%s load order - %s\n", colorYellow("?"), f.Note)
+
+	case core.VerifyStatusLoadOrderDrift:
+		// #620: one of lmm's own archives is not where lmm wrote it.
+		fmt.Printf("%s load order - %s\n", colorYellow("?"), f.Note)
+		if f.Fixable {
+			fmt.Println("  Run 'lmm verify --fix' (or 'lmm deploy') to write the list in the profile's order.")
+		}
+
+	case core.VerifyStatusFixedLoadOrderDrift:
 		fmt.Println(colorGreen("Fixed: " + f.Note))
 
 	case core.VerifyStatusDeployedModified:

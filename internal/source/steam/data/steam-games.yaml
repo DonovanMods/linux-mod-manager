@@ -147,6 +147,7 @@
   name: Cyberpunk 2077
   nexus_id: cyberpunk2077
   mod_path: ""
+  adapter: cyberpunk2077
 # Valheim - Unity/Mono; every mod is a BepInEx plugin, landing in
 # <install>/BepInEx/plugins.
 # BepInEx content is GAME-ROOT-relative - a pack lays down BepInEx/ with

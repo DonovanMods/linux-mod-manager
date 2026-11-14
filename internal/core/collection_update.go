@@ -528,7 +528,7 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 	plan.InstallInstructions = info.InstallInstructions
 	plan.Hooks = listHooks(doc.Hooks, doc.HooksExplicit)
 	plan.Requires = unionFeatures(doc.Requires, deriveCollectionRequires(doc))
-	plan.Unsupported = unsupportedFeatures(doc.Requires, deriveCollectionRequires(doc), s.modTypeRoutes(game))
+	plan.Unsupported = unsupportedFeatures(doc.Requires, deriveCollectionRequires(doc), s.modTypeRoutes(game), s.loadOrderSupport(game))
 	if conv != nil {
 		plan.Unsupported = mergeUnsupported(plan.Unsupported, conv.Unsupported)
 	}

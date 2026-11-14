@@ -361,6 +361,21 @@ export const editProfilePlugins = (name, edit, dryRun, context) =>
     dry_run: !!dryRun,
   });
 
+/** Reads a profile's file load orders (issue 620): core.
+ * FileLoadOrdersReport, `lmm load-order list --json`'s document - or null
+ * for a game without one (the route's 204). */
+export const profileLoadOrders = (name, context) =>
+  get(scoped(`${profilePath(name)}/load-orders`, context));
+
+/** Runs one load-order edit (core.FileLoadOrderEdit: move or reset) -
+ * core.FileLoadOrderEditPlan when dryRun, else core.
+ * FileLoadOrderEditResult, whose order is the order now. */
+export const editProfileLoadOrder = (name, edit, dryRun, context) =>
+  post(scoped(`${profilePath(name)}/load-orders`, context), {
+    edit,
+    dry_run: !!dryRun,
+  });
+
 /** Previews a proposed load order without committing it: GET
  * /api/v1/conflicts?order=... - the same core.ConflictReport shape the
  * unordered read returns, so the reorder modal renders it with the exact

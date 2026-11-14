@@ -1,0 +1,54 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "changed": true,
+  "changes": [
+    "move b.archive before a.archive",
+    "the profile now orders the Archives list, so lmm writes modlist.txt at every deploy"
+  ],
+  "list": {
+    "id": "cyberpunk2077-archive",
+    "status": "written",
+    "list_file": "<GAME>/archive/pc/mod/modlist.txt",
+    "files": 3
+  },
+  "order": {
+    "game_id": "g1",
+    "profile": "default",
+    "id": "cyberpunk2077-archive",
+    "label": "Archives",
+    "list_file": "<GAME>/archive/pc/mod/modlist.txt",
+    "first_wins": true,
+    "active": true,
+    "recorded": true,
+    "files": [
+      {
+        "position": 1,
+        "name": "b.archive",
+        "managed": true,
+        "source_id": "src",
+        "mod_id": "a",
+        "mod_name": "a",
+        "placement": "order"
+      },
+      {
+        "position": 2,
+        "name": "a.archive",
+        "managed": true,
+        "source_id": "src",
+        "mod_id": "a",
+        "mod_name": "a",
+        "placement": "order"
+      },
+      {
+        "position": 3,
+        "name": "c.archive",
+        "managed": true,
+        "source_id": "src",
+        "mod_id": "b",
+        "mod_name": "b",
+        "placement": "order"
+      }
+    ]
+  }
+}

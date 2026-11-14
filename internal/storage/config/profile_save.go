@@ -30,7 +30,7 @@ const profileBackupSuffix = ".bak"
 // A key an in-place save adds goes after the nearest key before it in this
 // order, so a file lmm wrote stays exactly as a whole write would have it.
 var (
-	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins", "collection_baseline"}
+	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins", "load_orders", "collection_baseline"}
 	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod", "fomod_files", "fomod_order", "from_collection"}
 )
 
@@ -64,6 +64,7 @@ type profileFileYAML struct {
 	Collection *domain.CollectionInfo          `yaml:"collection,omitempty"`
 	External   []domain.CollectionExternalItem `yaml:"external,omitempty"`
 	Plugins    *ProfilePluginsConfig           `yaml:"plugins,omitempty"`
+	LoadOrders domain.FileLoadOrders           `yaml:"load_orders,omitempty"`
 	// CollectionBaseline is #613's, last.
 	CollectionBaseline *CollectionBaselineConfig `yaml:"collection_baseline,omitempty"`
 }
@@ -85,6 +86,7 @@ func profileFileOf(profile *domain.Profile) profileFileYAML {
 		Collection:         collectionOrNil(profile.Collection),
 		External:           externalOrNil(profile.External),
 		Plugins:            pluginsConfigOf(profile.Plugins),
+		LoadOrders:         profile.LoadOrders.Clone(),
 		CollectionBaseline: baselineConfigOf(profile.CollectionBaseline),
 	}
 	// Only write link_method if explicitly set: String() never returns "", so
@@ -550,6 +552,13 @@ func editProfileDocument(base []byte, fromName string, want *domain.Profile, ren
 			return nil, err
 		}
 	}
+	if !haveProfile.LoadOrders.Equal(want.LoadOrders) {
+		if err := e.setTopBlock("load_orders", struct {
+			LoadOrders domain.FileLoadOrders `yaml:"load_orders,omitempty"`
+		}{want.LoadOrders.Clone()}); err != nil {
+			return nil, err
+		}
+	}
 	if !sameBaseline(haveProfile.CollectionBaseline, want.CollectionBaseline) {
 		if err := e.setTopBlock("collection_baseline", struct {
 			CollectionBaseline *CollectionBaselineConfig `yaml:"collection_baseline,omitempty"`
@@ -586,7 +595,7 @@ func sameProfile(a, b *domain.Profile) bool {
 		a.Hooks != b.Hooks || a.HooksExplicit != b.HooksExplicit ||
 		!sameOverrides(a.Overrides, b.Overrides) ||
 		!a.Collection.Equal(b.Collection) || !slices.Equal(a.External, b.External) ||
-		!a.Plugins.Equal(b.Plugins) || !sameBaseline(a.CollectionBaseline, b.CollectionBaseline) {
+		!a.Plugins.Equal(b.Plugins) || !a.LoadOrders.Equal(b.LoadOrders) || !sameBaseline(a.CollectionBaseline, b.CollectionBaseline) {
 		return false
 	}
 	return sameRefs(refConfigsOf(a.Mods), b.Mods)
