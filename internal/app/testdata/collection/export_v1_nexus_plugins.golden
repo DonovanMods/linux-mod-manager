@@ -1,0 +1,1113 @@
+lmm_collection: 1
+id: nexusmods:kem16d
+version: 143
+name: a-storywealth-asw-harder-survival
+title: A StoryWealth aSW harder / survival
+author: curator
+description: (curator text removed)
+install_instructions: (curator text removed)
+game_id: fo4
+game:
+    name: Fallout 4
+    sources:
+        nexusmods: fallout4
+requires:
+    - fomod
+    - plugin_order
+origin:
+    source_id: nexusmods
+    slug: kem16d
+    revision: 143
+    url: https://www.nexusmods.com/games/fallout4/collections/kem16d
+    author: curator
+mods:
+    - source_id: nexusmods
+      mod_id: "67791"
+      version: "3.5"
+      file_ids:
+        - "353776"
+    - source_id: nexusmods
+      mod_id: "64140"
+      version: 1.0.1
+      file_ids:
+        - "326437"
+      fomod:
+        config_sha256: ""
+        steps:
+            - name: Installation
+              groups:
+                - name: Subway Runner - Revival Version
+                  choices:
+                    - name: Loose Files Expanded
+                      idx: 1
+    - source_id: nexusmods
+      mod_id: "79743"
+      version: 1.0.4
+      file_ids:
+        - "379688"
+    - source_id: nexusmods
+      mod_id: "78693"
+      version: 1.0.4
+      file_ids:
+        - "305518"
+    - source_id: nexusmods
+      mod_id: "56602"
+      version: 2.4.1
+      file_ids:
+        - "245202"
+    - source_id: nexusmods
+      mod_id: "67115"
+      version: "1.2"
+      file_ids:
+        - "264033"
+    - source_id: nexusmods
+      mod_id: "36706"
+      version: 1.5.0
+      file_ids:
+        - "154619"
+      fomod:
+        config_sha256: ""
+        steps:
+            - name: Custom
+              groups:
+                - name: Configuration preset
+                  choices:
+                    - name: Vanilla
+                      idx: 0
+    - source_id: nexusmods
+      mod_id: "57842"
+      version: "26.1"
+      file_ids:
+        - "231958"
+    - source_id: nexusmods
+      mod_id: "58440"
+      version: v1.8.9
+      file_ids:
+        - "295190"
+    - source_id: nexusmods
+      mod_id: "81841"
+      version: 1.0.1
+      file_ids:
+        - "323232"
+    - source_id: nexusmods
+      mod_id: "56580"
+      version: "1.12"
+      file_ids:
+        - "254172"
+    - source_id: nexusmods
+      mod_id: "72601"
+      version: "0.9"
+      file_ids:
+        - "282136"
+    - source_id: nexusmods
+      mod_id: "72678"
+      version: 1.1.6
+      file_ids:
+        - "312867"
+    - source_id: nexusmods
+      mod_id: "74428"
+      version: "0.99"
+      file_ids:
+        - "288726"
+    - source_id: nexusmods
+      mod_id: "48853"
+      version: 2.0.2
+      file_ids:
+        - "289023"
+    - source_id: nexusmods
+      mod_id: "72951"
+      version: 1.0.3
+      file_ids:
+        - "312563"
+    - source_id: nexusmods
+      mod_id: "73717"
+      version: 1.2.1
+      file_ids:
+        - "288795"
+    - source_id: nexusmods
+      mod_id: "29568"
+      version: 1.10.163.0
+      file_ids:
+        - "172069"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "65834"
+      version: "1.4"
+      file_ids:
+        - "282782"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "76347"
+      version: 3.0.5
+      file_ids:
+        - "361651"
+    - source_id: nexusmods
+      mod_id: "79195"
+      version: "0.77"
+      file_ids:
+        - "305275"
+    - source_id: nexusmods
+      mod_id: "52227"
+      version: "3"
+      file_ids:
+        - "224093"
+    - source_id: nexusmods
+      mod_id: "56604"
+      version: "1.4"
+      file_ids:
+        - "225388"
+    - source_id: nexusmods
+      mod_id: "72099"
+      version: 1.0.7
+      file_ids:
+        - "374223"
+    - source_id: nexusmods
+      mod_id: "76382"
+      version: "1.01"
+      file_ids:
+        - "295426"
+    - source_id: nexusmods
+      mod_id: "46217"
+      version: "1.1"
+      file_ids:
+        - "397118"
+        - "284648"
+        - "196972"
+      locked: true
+      fomod:
+        config_sha256: ""
+        steps:
+            - name: default
+              groups:
+                - name: 'Make Lootable:'
+                  choices:
+                    - name: Wrecks in NW and FH as well
+                      idx: 1
+    - source_id: nexusmods
+      mod_id: "83932"
+      version: "1.0"
+      file_ids:
+        - "321849"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "101467"
+      version: 1.1.1
+      file_ids:
+        - "412533"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "80520"
+      version: 1.0.0
+      file_ids:
+        - "309774"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "78600"
+      version: 1.0.2
+      file_ids:
+        - "366799"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "74791"
+      version: 1.0.1
+      file_ids:
+        - "289855"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "79894"
+      version: 2.0.1
+      file_ids:
+        - "372851"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "72059"
+      version: 2.0.0
+      file_ids:
+        - "350724"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "78694"
+      version: 1.0.4
+      file_ids:
+        - "407289"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "73849"
+      version: 1.0.4
+      file_ids:
+        - "410864"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "81765"
+      version: "2.1"
+      file_ids:
+        - "314517"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "75184"
+      version: 2.1.0
+      file_ids:
+        - "409915"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "73333"
+      version: 1.2.0
+      file_ids:
+        - "285200"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "77424"
+      version: 1.0.0
+      file_ids:
+        - "299212"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "26759"
+      version: v1.5.0
+      file_ids:
+        - "315920"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "63658"
+      version: v1
+      file_ids:
+        - "248753"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "98662"
+      version: 1.1.1
+      file_ids:
+        - "390110"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "96549"
+      version: V1.2
+      file_ids:
+        - "393847"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "86278"
+      version: 2.0.3
+      file_ids:
+        - "341085"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "91793"
+      version: 1.0.0
+      file_ids:
+        - "348836"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "96182"
+      version: 1.0.1
+      file_ids:
+        - "379789"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "98217"
+      version: 1.1.2
+      file_ids:
+        - "396797"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "72412"
+      version: 1.0.2
+      file_ids:
+        - "288679"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "76586"
+      version: "1.0"
+      file_ids:
+        - "296325"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "47187"
+      version: 1.6.9
+      file_ids:
+        - "399379"
+      locked: true
+      fomod:
+        config_sha256: ""
+        steps:
+            - name: ""
+              groups:
+                - name: Game Style
+                  choices:
+                    - name: Realistic
+                      idx: 1
+                - name: Extra DLC features
+                  choices:
+                    - name: DLC MapMarkers and Automatrons
+                      idx: 0
+                - name: Install Mode
+                  choices:
+                    - name: Upgrade from 1.6.8 (or lower)
+                      idx: 0
+                - name: Other Options
+                  choices:
+                    - name: Pilot Dialogue Fix
+                      idx: 1
+    - source_id: nexusmods
+      mod_id: "74000"
+      version: "1.0"
+      file_ids:
+        - "288853"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "82592"
+      version: 1.6.1
+      file_ids:
+        - "345597"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "95257"
+      version: 1.0.0
+      file_ids:
+        - "362052"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "79012"
+      version: 1.0.0
+      file_ids:
+        - "304666"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "79843"
+      version: 5.0.0
+      file_ids:
+        - "307860"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "48770"
+      version: "1.1"
+      file_ids:
+        - "196281"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "89352"
+      version: 1.0.0
+      file_ids:
+        - "340700"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "80425"
+      version: 3.4.1
+      file_ids:
+        - "416526"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "78033"
+      version: "1.0"
+      file_ids:
+        - "315846"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "92422"
+      version: 1.0.4
+      file_ids:
+        - "402095"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "95256"
+      version: 1.0.1
+      file_ids:
+        - "362054"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "78508"
+      version: "1.4"
+      file_ids:
+        - "342821"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "68187"
+      version: "1.42"
+      file_ids:
+        - "317695"
+        - "313093"
+      locked: true
+      fomod:
+        config_sha256: ""
+        steps:
+            - name: Step1
+              groups:
+                - name: Main File Options
+                  choices:
+                    - name: Mutant Menagerie - Full
+                      idx: 0
+                - name: Add-On Options
+                  choices:
+                    - name: Backwater Beasts
+                      idx: 1
+    - source_id: nexusmods
+      mod_id: "78885"
+      version: 1.0.1
+      file_ids:
+        - "304364"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "86751"
+      version: 1.1.1
+      file_ids:
+        - "333019"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "73270"
+      version: "1.1"
+      file_ids:
+        - "284835"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "73401"
+      version: 1.0.6
+      file_ids:
+        - "351564"
+        - "350801"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "98772"
+      version: 1.2.0
+      file_ids:
+        - "378150"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "95953"
+      version: "1"
+      file_ids:
+        - "364744"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "77553"
+      version: 1.0.0
+      file_ids:
+        - "299731"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "77346"
+      version: "1.2"
+      file_ids:
+        - "396976"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "71168"
+      version: "1.2"
+      file_ids:
+        - "294399"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "82133"
+      version: 1.0.2
+      file_ids:
+        - "325090"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "73769"
+      version: 1.0.3
+      file_ids:
+        - "321634"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "74324"
+      version: 1.0.1
+      file_ids:
+        - "288354"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "96503"
+      version: "1.01"
+      file_ids:
+        - "367502"
+        - "367499"
+        - "367501"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "67852"
+      version: "1.4"
+      file_ids:
+        - "313330"
+      locked: true
+      fomod:
+        config_sha256: ""
+        steps:
+            - name: Core data
+              groups:
+                - name: Core data
+                  choices:
+                    - name: Core
+                      idx: 0
+            - name: Leveled List Injection
+              groups:
+                - name: LL Injection
+                  choices:
+                    - name: Injection
+                      idx: 0
+    - source_id: nexusmods
+      mod_id: "79394"
+      version: 2.2.1
+      file_ids:
+        - "415500"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "77983"
+      version: 1.0.1
+      file_ids:
+        - "314719"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "84065"
+      version: 1.0.1
+      file_ids:
+        - "367808"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "83142"
+      version: 1.0.6
+      file_ids:
+        - "381522"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "80106"
+      version: 1.0.0
+      file_ids:
+        - "308428"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "65337"
+      version: 26.1c
+      file_ids:
+        - "260121"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "95930"
+      version: 1.0.2
+      file_ids:
+        - "364665"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "96804"
+      version: "1"
+      file_ids:
+        - "368256"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "88597"
+      version: 1.0.0
+      file_ids:
+        - "342410"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "28923"
+      version: "1.1"
+      file_ids:
+        - "118911"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "92390"
+      version: 1.0.0
+      file_ids:
+        - "351496"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "94443"
+      version: "1.1"
+      file_ids:
+        - "360305"
+        - "359452"
+        - "359261"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "76179"
+      version: "0.01"
+      file_ids:
+        - "357649"
+        - "349445"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "93522"
+      version: 1.0.2
+      file_ids:
+        - "372469"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "96601"
+      version: "1.0"
+      file_ids:
+        - "367638"
+        - "368094"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "60831"
+      version: "1.2"
+      file_ids:
+        - "239186"
+      locked: true
+      fomod:
+        config_sha256: ""
+        steps:
+            - name: Select installation options
+              groups:
+                - name: Main files
+                  choices:
+                    - name: Fallout 4 Wheel Menu - FallUIified
+                      idx: 0
+                - name: Categories
+                  choices:
+                    - name: Standard
+                      idx: 2
+    - source_id: nexusmods
+      mod_id: "72235"
+      version: "1.03"
+      file_ids:
+        - "356558"
+      locked: true
+      fomod:
+        config_sha256: ""
+        steps:
+            - name: Step 1
+              groups:
+                - name: Base Files
+                  choices:
+                    - name: Install Base files
+                      idx: 0
+                - name: FIS Icons
+                  choices:
+                    - name: Install FIS Icon Tags
+                      idx: 0
+                - name: Wheel Menu
+                  choices:
+                    - name: Install Wheel Menu Support
+                      idx: 0
+                - name: EZ Keywords
+                  choices: []
+            - name: Step 2
+              groups:
+                - name: Patches
+                  choices:
+                    - name: Point Lookout
+                      idx: 7
+    - source_id: nexusmods
+      mod_id: "92276"
+      version: 1.0.3.1
+      file_ids:
+        - "364439"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "74650"
+      version: 3.3.2
+      file_ids:
+        - "367412"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "89985"
+      version: 1.0.2
+      file_ids:
+        - "351261"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "51979"
+      version: 1.0.0
+      file_ids:
+        - "207575"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "78925"
+      version: "1.07"
+      file_ids:
+        - "360360"
+        - "360355"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "77228"
+      version: 1.0.0
+      file_ids:
+        - "353128"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "73192"
+      version: "1.50"
+      file_ids:
+        - "363137"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "80291"
+      version: 1.0.10
+      file_ids:
+        - "370125"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "90200"
+      version: 1.0.0
+      file_ids:
+        - "344422"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "101915"
+      version: 1.0.0
+      file_ids:
+        - "387226"
+        - "387456"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "101805"
+      version: 1.3.1
+      file_ids:
+        - "404401"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "16211"
+      version: V2.2.9
+      file_ids:
+        - "404445"
+      locked: true
+      fomod:
+        config_sha256: ""
+        steps:
+            - name: Decals
+              groups:
+                - name: DLC Expansion
+                  choices:
+                    - name: Nuka World
+                      idx: 0
+                    - name: Far Harbor
+                      idx: 1
+                - name: Optional decals
+                  choices: []
+                - name: Source Scripts
+                  choices: []
+            - name: patches
+              groups:
+                - name: VR Patch
+                  choices: []
+                - name: Other Patches
+                  choices: []
+    - source_id: nexusmods
+      mod_id: "35904"
+      version: "1.7"
+      file_ids:
+        - "156466"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "58701"
+      version: "008"
+      file_ids:
+        - "385648"
+    - source_id: nexusmods
+      mod_id: "98116"
+      version: "1.02"
+      file_ids:
+        - "412699"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "93671"
+      version: "1.2"
+      file_ids:
+        - "359351"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "70905"
+      version: "1.0"
+      file_ids:
+        - "275621"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "11734"
+      version: 1.0.4
+      file_ids:
+        - "238612"
+        - "46669"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "98034"
+      version: "1.01"
+      file_ids:
+        - "412560"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "83405"
+      version: "2.02"
+      file_ids:
+        - "323644"
+      locked: true
+      fomod:
+        config_sha256: ""
+        steps:
+            - name: Optional Files
+              groups:
+                - name: Tunnel Lighting
+                  choices:
+                    - name: Vanilla Tunnel Lighting
+                      idx: 0
+                - name: Patches
+                  choices: []
+    - source_id: nexusmods
+      mod_id: "83752"
+      version: 2.0.2
+      file_ids:
+        - "323699"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "96682"
+      version: 1.0.1
+      file_ids:
+        - "371933"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "73741"
+      version: 1.2.3
+      file_ids:
+        - "412310"
+    - source_id: nexusmods
+      mod_id: "101561"
+      version: 2.3.0
+      file_ids:
+        - "411109"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "109260"
+      version: 1.0.0
+      file_ids:
+        - "412273"
+        - "414984"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "108394"
+      version: 1.0.0
+      file_ids:
+        - "408886"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "42081"
+      version: "013"
+      file_ids:
+        - "412998"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "85755"
+      version: 2.1.0
+      file_ids:
+        - "346362"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "110229"
+      version: "1"
+      file_ids:
+        - "416559"
+      locked: true
+    - source_id: nexusmods
+      mod_id: "109608"
+      version: 1.0b
+      file_ids:
+        - "414161"
+      locked: true
+plugins:
+    order:
+        - name: MutantMenagerie.esm
+        - name: SSTMinutemanWatchtowers.esl
+        - name: LootedWorld.esl
+        - name: MutantMenagerie_BackwaterBeasts.esm
+        - name: TheRooftops.esm
+        - name: HelipadsFromHap.esp
+        - name: SubwayRunnnerDynamicLighting.esp
+        - name: REPUTATION.esm
+        - name: TrueGunnersPlaza.esl
+        - name: RailroadTravelAgent.esl
+        - name: Minuteman Watchtowers - Survey Addon.esm
+        - name: CHALLENGES.esm
+        - name: Enhanced Movement.esm
+        - name: Stealthy Takedowns.esm
+        - name: MUTATION.esm
+        - name: KARMA.esm
+        - name: Hit Those Objects.esm
+        - name: Rebuild_AIO-eXoPatch.esp
+        - name: Rant - Loot Reduction.esp
+        - name: Hunter of the Commonwealth.esp
+        - name: HotC_MM_MissingRaces.esp
+        - name: SKKRESystemManager.esp
+        - name: Underground RailroadALLDLC.esp
+        - name: PARSAW.esp
+        - name: Flashy_PersonalEssentials.esp
+        - name: AN76 - CS IAF Patch.esp
+        - name: LR_APCTransport.esp
+        - name: YAWA2_MW_Patch.esp
+        - name: Goremites.esp
+        - name: LR_APCNukaWorldExspansion.esp
+        - name: SKKDynamicLootReduction.esp
+        - name: YAWA2_MutantMenagerieLifeFindsAWay_Patch.esp
+        - name: LR_APCFarHarborExspansion.esp
+        - name: ConsumablesOfTheCommonwealth.esp
+        - name: FPVertibird.esp
+        - name: LootableVertibirds.esp
+        - name: AmericaRising2LVPatch.esp
+        - name: SubwayRunnnerDynamicLighting OE - NPC Addon.esp
+        - name: eXofied Goodneighbor - Subway Runner.esp
+        - name: FPV_Armored.esp
+        - name: Project Reality Footsteps FO4.esp
+        - name: Project Reality Footsteps FO4 Expansion.esp
+        - name: ReflexMode.esp
+        - name: ReflexMode_Awareness3Perk.esp
+        - name: ReflexMode_RequireSneaking.esp
+        - name: 77wanderer_AN76-MutantMenagerie.esp
+        - name: Addiction Overhaul.esp
+        - name: CombatRifle Receivers.esp
+        - name: AN76 - TrueStorms.esp
+        - name: PlayerUnmasked-AN76.esp
+        - name: Flashy_PersonalEssentials - Storywealth and MAIM.esp
+        - name: LimaOutpost_LV_Patch.esp
+        - name: Blaze.esp
+        - name: BlockingOverhaul.esp
+        - name: Bullet in the Chamber.esp
+        - name: ConditionBoy.esp
+        - name: Vulture.esp
+        - name: Vulture - DLC.esp
+        - name: TMVaultSurvivorOutfits.esp
+        - name: Enhanced Movement - aSW Patch.esp
+        - name: HotC - V111 Knife.esp
+        - name: Hunter of the Commonwealth - Item Sorter and IAF.esp
+        - name: Infiltrator - Lockpicking Overhaul.esp
+        - name: KACHAREP - Storywealth.esp
+        - name: LureEnemies.esp
+        - name: LureEnemies - aSW Patch.esp
+        - name: MMLFAW_No_Boombugs_In_111_Patch.esp
+        - name: NPCs Use Items.esp
+        - name: Point Lookout Creature Expansion Redux.esp
+        - name: Rant - AN76 - Showers.esp
+        - name: Replaceable_Armor_Plates.esp
+        - name: RAP_Plate_LL.esp
+        - name: SKKCombatStalkers.esp
+        - name: SMR_MutantHoundFix.esp
+        - name: Scrapable Lootable Cars Exiguous 4 AN76.esp
+        - name: StoryWealthLocation-DiamondCity-SubwayRunner.esp
+        - name: Vulture - noContainer.esp
+        - name: WheelMenu.esp
+        - name: Bastion.esp
+        - name: Campsite.esp
+        - name: CompanionCommandAnimations.esp
+        - name: ExplosionReactions.esp
+        - name: FPVPilotDialogueFix.esp
+        - name: DynamicDismemberSystem.esp
+        - name: AmmoHasWeight_AN76.esp
+        - name: ReinforcementsAndRetribution.esp
+        - name: InfestedFerals.esp
+        - name: Chemfluence AI Combat Dynamics.esp
+        - name: The House - SSTMM-NavMeshPatch.esp
+        - name: MAIM.esp
+        - name: MAIM - Point Lookout.esp
+        - name: MAIM Redux - V111 Items.esp
+        - name: ConsumablesOfTheCommonwealth-Storywealth.esp
+        - name: AN76_patch_campsite.esp
+        - name: MAIM - Dismemberment Patch.esp
+        - name: Additional Hunting Rifle Receivers.esp
+        - name: Combat AI Empowered - Storywealth.esp
+        - name: Flashlight Stealth Fix.esp
+        - name: MAIM Redux - Storywealth.esp
+        - name: MAIM Redux - Lite - Storywealth.esp
+        - name: Mutant LFAW - HotC Patch.esp
+        - name: Mutant Menagerie LFAW CS IAF.esp
+        - name: Nick Valentine likes your Clothes.esp
+        - name: Post Apocalyptic Survivor Outfit.esp
+        - name: Post Apocalyptic Survivor Outfit - AN76 Gasmask Patch.esp
+        - name: Rant - Hunter otC aSW Patch.esp
+        - name: Rant - Service Rifle - noNeed4 Marksman Magazine.esp
+        - name: Rant - Replaceable_Armor_Plates aSW Patch.esp
+        - name: Combat AI Empowered - Reduce Grenade Spam - Storywealth.esp
+        - name: SmarterBastionPenetration.esp
+        - name: SKKDynamicLootReduction - aSW.esp
+        - name: lowered_weapons_lighting_patch.esp
+        - name: MAIM Redux - ELFX Patch.esp
+    rules:
+        groups:
+            - name: Underrides
+            - name: PreVis & PreCombined Fixes
+            - name: Low Priority Overrides
+            - name: default
+            - name: Worldspace Settings
+            - name: Resources & Frameworks
+            - name: Fixes
+        plugins:
+            - name: wheelmenu.esp
+              group: default
+            - name: campsite.esp
+              group: default
+            - name: conditionboy.esp
+              group: default
+            - name: subwayrunnnerdynamiclighting.esp
+              group: default
+            - name: bullet in the chamber.esp
+              group: default
+            - name: hunter of the commonwealth.esp
+              group: default
+            - name: Flashy_PersonalEssentials.esp
+              after:
+                - hunter of the commonwealth.esp
+            - name: AN76_patch_campsite.esp
+              group: Dynamic Patches
+              after:
+                - campsite.esp
+            - name: skkdynamiclootreduction - asw.esp
+              group: Dynamic Patches
+            - name: lowered_weapons_lighting_patch.esp
+              group: Dynamic Patches
+            - name: rant - hunter otc asw patch.esp
+              group: Dynamic Patches
+            - name: rant - replaceable_armor_plates asw patch.esp
+              group: Dynamic Patches
+            - name: rant - service rifle - noneed4 marksman magazine.esp
+              group: Dynamic Patches
+            - name: mutant lfaw - hotc patch.esp
+              group: Dynamic Patches
+            - name: post apocalyptic survivor outfit.esp
+              group: Dynamic Patches
+            - name: additional hunting rifle receivers.esp
+              group: Dynamic Patches
+            - name: flashlight stealth fix.esp
+              group: Dynamic Patches
+            - name: post apocalyptic survivor outfit - an76 gasmask patch.esp
+              group: Dynamic Patches
+            - name: an76 - cs iaf patch.esp
+              after:
+                - pie_iaf.esp
+            - name: mutant menagerie lfaw cs iaf.esp
+              group: Dynamic Patches
+              after:
+                - mutant lfaw - hotc patch.esp
+            - name: sstminutemanwatchtowers.esl
+              group: Creation Club
+            - name: rebuild_aio-exopatch.esp
+              group: Resources & Frameworks
+              after:
+                - ine_boonisland.esp
+            - name: rant - loot reduction.esp
+              after:
+                - npc lld rebalance.esp
+            - name: mutantmenagerie.esm
+              group: DLC
+            - name: smarterbastionpenetration.esp
+              group: Dynamic Patches
+            - name: maim.esp
+              group: Late Loaders
+            - name: maim redux - storywealth.esp
+              group: Dynamic Patches
+            - name: maim redux - elfx patch.esp
+              group: Dynamic Patches
+              after:
+                - elfx-exopatch.esp
+                - maim redux - storywealth.esp
+            - name: the house - sstmm-navmeshpatch.esp
+              group: Low Priority Overrides
+            - name: combat ai empowered - storywealth.esp
+              group: Dynamic Patches
+            - name: nick valentine likes your clothes.esp
+              group: Dynamic Patches
+              after:
+                - storywealth-cplx-sorter.esp
+            - name: combat ai empowered - reduce grenade spam - storywealth.esp
+              group: Dynamic Patches
+            - name: maim redux - lite - storywealth.esp
+              group: Dynamic Patches
+              after:
+                - maim redux - storywealth.esp
+            - name: consumablesofthecommonwealth-storywealth.esp
+              group: Dynamic Patches
+            - name: maim - dismemberment patch.esp
+              group: Dynamic Patches

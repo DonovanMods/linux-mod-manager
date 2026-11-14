@@ -90,6 +90,9 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 		list:     list,
 	}
 	in.modTypeSupported = s.modTypeRoutes(game)
+	// A recipe's plugin order is replayed only where lmm writes the game's
+	// plugin list (#611): anywhere else it would be saved and never applied.
+	_, in.pluginOrder = s.pluginRules(game)
 	in.withOptional = opts.WithOptional
 	if len(opts.Optional) > 0 {
 		in.optional = make(map[string]bool, len(opts.Optional))
