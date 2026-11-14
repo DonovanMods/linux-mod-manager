@@ -46,6 +46,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An older lmm still ignores a container's `files/` with its warning, and
   refuses a document requiring `bundled`.
 
+- **A collection's FOMOD answers replay only against the curator's archive
+  (#609).** A collection records each file's md5; before replaying the
+  curator's installer answers, lmm compares it with the md5 of the archive
+  it downloaded (computed by the download itself, so a large archive is
+  never read twice). When they differ, the answers are not replayed: the
+  installer's questions are asked, with the curator's answers selected, and
+  the question says why - its new reason `archive_mismatch`, with the
+  `archive_mismatch` object's `expected_md5` and `actual_md5` in the
+  `--json` error details. The terminal walk prints both md5s and the web
+  UI's installer window shows them. A collection that records no md5
+  replays as before. Nothing new is saved on the profile: a mod installed
+  later (after `--no-install`) is checked against the recipe of the
+  NexusMods collection the profile came from, read once per command, until
+  its answers have been installed once; a recipe that cannot be read is a
+  warning, and the answers replay unchecked.
+- **A NexusMods collection's install phases reach its installers (#609).**
+  An installer's file checks (a patch that installs only when its target
+  is there) see the mods of the collection's earlier phases, though none is
+  installed yet, and never those of its own or a later phase, as Vortex
+  installs a collection. A collection's items now download in phase order.
+- **FOMOD installers see a plugin's real state (#618).** For a game whose
+  plugin list lmm manages (Skyrim, Fallout 4, Starfield, ...), an
+  installer's check that a plugin is active or inactive reads the profile's
+  plugin list: a plugin the profile turns off is Inactive, as is a plugin
+  of the game's own that its `Plugins.txt` leaves off; the game's masters
+  are always active. Before, every plugin that was there counted as active.
+  Recorded `file_states` now say `Inactive` for such a plugin.
+
 - **Install a collection's pending mods from your downloads (#608).** The
   new `lmm profile fill <profile> [folder-or-archive...]` (your downloads
   folder when none is named) installs the mods

@@ -194,6 +194,13 @@ type Service struct {
 	// with the mutation (beginOp).
 	heirFlowsMu sync.Mutex
 	heirFlows   map[string]*heirFlow
+
+	// recipePins are the collection recipes the running mutation read for
+	// a FOMOD replay's md5 pin (#609), by game and collection revision:
+	// each is read - or fails - at most once per flow. beginOp's release
+	// forgets them.
+	recipePinsMu sync.Mutex
+	recipePins   map[string]*recipePin
 	// opLockPath is ServiceConfig.OpLockPath: the advisory lock file
 	// beginOp takes around every mutation, or "" for no cross-process lock.
 	opLockPath string

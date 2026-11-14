@@ -133,6 +133,56 @@ A collection or a shared profile that records answers per file needs an
 lmm that understands them; an older lmm refuses to import it rather than
 install it wrong.
 
+## Collections: the curator's answers
+
+A collection (a NexusMods collection, or an lmm collection someone shared)
+can record the curator's answers for a mod's installer. lmm replays them
+instead of asking, with three checks first:
+
+- **The archive must be the curator's.** A collection records each file's
+  md5, the fingerprint of the archive the answers were chosen for. lmm
+  compares it with the archive it downloaded (the download already computes
+  it, so this costs nothing extra). If they differ, for example because the
+  author replaced the file on NexusMods, lmm doesn't replay answers chosen
+  for another archive. It asks the installer's questions instead, with the
+  curator's answers selected, and says why: the terminal prints both md5s,
+  and the web interface's installer window shows them in its note. A
+  collection that records no md5 replays as before.
+
+  The check also covers mods installed later, for example after
+  `lmm profile import --no-install`: until a mod's answers have been
+  installed once, lmm reads the md5 from the recipe of the NexusMods
+  collection the profile came from. If that recipe can't be read (offline,
+  say), lmm installs with the curator's answers and warns that it could not
+  check the archive. Once a mod is installed, lmm records the installer it
+  answered, and doesn't check the archive again. An lmm collection file
+  that isn't from NexusMods has no recipe to read back, so after a
+  `--no-install` import its md5s are not checked.
+- **Install phases.** A NexusMods collection installs its mods in phases.
+  When an installer asks whether another mod's file is there (a patch that
+  installs only when its target is), it sees the mods of earlier phases,
+  and never those of its own phase or a later one, exactly as Vortex
+  installs a collection.
+- **Plugin state.** See the next section.
+
+## Installers that check for other files
+
+Some installers install a file only when another mod's file is there, or
+only when a plugin is active. lmm answers from the profile you are
+installing into: a file is there when one of the profile's mods provides it
+or the game itself has it.
+
+For Skyrim, Fallout 4, Starfield and the other games whose plugin list lmm
+manages, whether a plugin is _active_ comes from that list. A plugin you
+turned off (`lmm plugins disable`, or the Plugins tab in the web
+interface) is inactive, so an installer that adds a patch only for an
+active plugin leaves the patch out. A plugin the game's own `Plugins.txt`
+leaves off is inactive too, and the game's own master files are always
+active. For other games, a file that is there counts as active.
+
+lmm records what the installer checked with your answers, so reinstalling
+the mod later gives the same files even if the profile changed since.
+
 ## Changing your choices later
 
 To change what an installed mod's installer installed:
