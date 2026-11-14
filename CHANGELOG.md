@@ -456,6 +456,7 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- The web UI's mod page no longer offers **Re-link…** for a moment on a locked mod opened directly, before its library listing has loaded: a lock-gated action now waits until the lock is known. Found by a timing-dependent E2E failure (CI on e1e3bbba).
 - **Two mods that ship the same file over one of the game's own no longer
   leave the game's file in place (#632).** When a file was already there
   (a stock `d3d11.dll`, say, or one you put there yourself) and two mods

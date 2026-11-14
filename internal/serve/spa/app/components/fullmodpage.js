@@ -204,6 +204,16 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   // library-first source as the lock - the listing embeds the installed row.
   const skippedVersion = settingsSource?.skipped_version;
   const lockedActions = Boolean(settingsSource?.locked);
+  // Neither the library listing nor the live ModDetail has answered, and the
+  // library read is still in flight (a direct load of this page, before the
+  // background library read lands): the lock is unknown for now, so a
+  // lock-gated action waits rather than offering itself for a moment on a
+  // mod that may well be locked. Once the library read has FAILED it never
+  // answers, so the action falls back to enabled - core refuses a locked
+  // re-link server-side regardless (issue 394), and a control disabled for
+  // good with no stated reason would be worse.
+  const libraryPending = state.mods == null && !state.fetchErrors?.mods;
+  const lockUnknown = settingsSource === undefined && libraryPending;
   const manual = Boolean(
     installedMod.manual_only || modPage.detail?.mod?.manual_only,
   );
@@ -350,7 +360,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             type="button"
             class="button"
             data-action="relink"
-            disabled=${lockedActions}
+            disabled=${lockedActions || lockUnknown}
             title=${lockedActions ? "Unlock this mod to re-link it" : undefined}
             onClick=${() =>
               actions.openPlan({
