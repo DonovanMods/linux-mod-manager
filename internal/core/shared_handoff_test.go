@@ -476,3 +476,77 @@ func TestSharedPathHandOff_AnApplyHandsAPathToTheLiveVersionOfAModItReinstalls(t
 		}
 	}
 }
+
+// #633 review: an apply that turns d off and reinstalls w, above h, at a
+// new version that is cached. When the new version still ships the path,
+// it is w's new file, recorded as w's; when it drops it, the path passes to
+// h.
+func TestSharedPathHandOff_AnApplyThatReinstallsAModAboveTheHeir(t *testing.T) {
+	for _, c := range sharedOriginalCases {
+		for _, method := range rootMethods {
+			for _, ships := range []bool{true, false} {
+				name := c.name + "/" + method.String() + "/drops_the_path"
+				if ships {
+					name = c.name + "/" + method.String() + "/still_ships_it"
+				}
+				t.Run(name, func(t *testing.T) {
+					ctx := context.Background()
+					f := toInstallFixture(t, c, method, true)
+					files := map[string][]byte{"own/w.txt": []byte("w 3.0")}
+					if ships {
+						files[c.member] = []byte("w 3.0's file")
+					}
+					key := cache.Key{GameID: f.game.ID, SourceID: "src", ModID: "w", Version: "3.0"}
+					var members []string
+					for member, content := range files {
+						require.NoError(t, f.svc.GetGameCache(f.game).Store(key, member, content))
+						members = append(members, member)
+					}
+					// 3.0 is cached under its file ID, as a download leaves
+					// it, and the source names that file - so the apply
+					// reinstalls w from the cache.
+					require.NoError(t, cache.MarkFileCompleteWithMembers(f.svc.GetGameCache(f.game).ModPath(key), "w3", members))
+					src := newAdoptTestSource("src")
+					src.mods["w"] = &domain.Mod{ID: "w", SourceID: "src", Name: handOffName("w"), GameID: f.game.ID, Version: "3.0"}
+					src.files = []domain.DownloadableFile{{ID: "w3", Name: "W", FileName: "w-3.0.zip", Version: "3.0", IsPrimary: true, Category: "MAIN"}}
+					f.svc.RegisterSource(src)
+					f.game.SourceIDs = map[string]string{"src": f.game.ID}
+					require.NoError(t, f.svc.SaveGame(ctx, f.game))
+					pm := f.svc.NewProfileManager()
+					require.NoError(t, pm.SetModDisabled(ctx, f.game.ID, "default", "src", "d", true))
+					require.NoError(t, pm.UpsertMod(ctx, f.game.ID, "default", domain.ModReference{SourceID: "src", ModID: "w", Version: "3.0"}))
+
+					plan, err := f.svc.PlanProfileApply(ctx, f.game, "default")
+					require.NoError(t, err)
+					require.Len(t, plan.ToDisable, 1, "d goes")
+					require.Len(t, plan.ToInstall, 1, "w is reinstalled at 3.0")
+					res, err := f.svc.ApplyProfileApply(ctx, f.game, plan, core.ProfileApplyOptions{}, nil)
+					require.NoError(t, err)
+					require.Empty(t, res.Failed, "the reinstall succeeds: %+v", res.Failed)
+					w, err := f.svc.GetInstalledMod(ctx, "src", "w", f.game.ID, "default")
+					require.NoError(t, err)
+					require.Equal(t, "3.0", w.Version)
+
+					want := f.c.rel
+					if f.c.root == "install_path" {
+						want = domain.DisplayDeployPath(domain.RootInstallPath, f.c.rel)
+					}
+					owned := func(id string) []string {
+						got, err := f.svc.GetDeployedFilesForMod(ctx, f.game.ID, "default", "src", id)
+						require.NoError(t, err)
+						return got
+					}
+					if ships {
+						assert.Equal(t, "w 3.0's file", readFileString(t, f.dst), "w's new version ships the path, so its new file is there")
+						assert.Contains(t, owned("w"), want, "recorded as w's")
+						assert.NotContains(t, owned("h"), want)
+					} else {
+						assert.Equal(t, "the h mod's file", readFileString(t, f.dst), "w's new version drops the path, so it passes to h")
+						assert.Contains(t, owned("h"), want, "recorded as h's")
+						assert.NotContains(t, owned("w"), want)
+					}
+				})
+			}
+		}
+	}
+}
