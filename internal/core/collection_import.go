@@ -405,7 +405,7 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 		return &ProfileImportResult{}, errors.New("not a collection import plan")
 	}
 	if len(c.Unsupported) > 0 {
-		return &ProfileImportResult{}, &CollectionUnsupportedError{Unsupported: c.Unsupported, Supported: SupportedCollectionFeatures()}
+		return &ProfileImportResult{}, &CollectionUnsupportedError{Unsupported: c.Unsupported, Supported: supportedExcept(c.Unsupported)}
 	}
 	if opts.WithHooks && len(c.Hooks) > 0 && !c.HooksImportable {
 		return &ProfileImportResult{}, ErrCollectionHooksFromURL

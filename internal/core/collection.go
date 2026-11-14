@@ -47,6 +47,17 @@ func SupportedCollectionFeatures() []string {
 	return out
 }
 
+// supportedExcept is SupportedCollectionFeatures without any feature the
+// refusal names: a converted source collection can be refused for a feature
+// the document format supports but its converter does not carry yet (#607:
+// plugin_order until C6), and a refusal must never also call it supported.
+func supportedExcept(refused []UnsupportedCollectionFeature) []string {
+	out := SupportedCollectionFeatures()
+	return slices.DeleteFunc(out, func(name string) bool {
+		return slices.ContainsFunc(refused, func(f UnsupportedCollectionFeature) bool { return f.Feature == name })
+	})
+}
+
 // deriveCollectionRequires is the features doc's own content needs. The
 // exporter writes exactly this (`requires:` is never hand-written), and the
 // importer gates on its union with what the document declares, so a

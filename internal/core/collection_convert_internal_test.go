@@ -652,3 +652,15 @@ func TestCheckRecipeTree_RefusesAHardLinkedManifest(t *testing.T) {
 	require.NoError(t, os.Link(other, filepath.Join(dir, "collection.json")))
 	assert.ErrorIs(t, checkRecipeTree(dir), source.ErrInvalidManifest)
 }
+
+// A refusal never names a feature as supported while refusing it (#607,
+// P3 review): once the document format supports plugin_order (P3) but the
+// Nexus converter still refuses it (until C6), the error's supported list
+// must leave it out.
+func TestSupportedExcept_LeavesOutWhatTheRefusalNames(t *testing.T) {
+	supportedCollectionFeatures["plugin_order"] = true
+	t.Cleanup(func() { delete(supportedCollectionFeatures, "plugin_order") })
+	got := supportedExcept([]UnsupportedCollectionFeature{{Feature: "plugin_order"}})
+	assert.NotContains(t, got, "plugin_order")
+	assert.Contains(t, got, CollectionFeatureFomod)
+}
