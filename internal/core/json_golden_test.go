@@ -707,6 +707,44 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #631: the override changes a switch or an apply makes - a
+			// game file (root install_path) and a mod's own file (#630,
+			// root absent for the mod_path, the mod named).
+			"override_change",
+			core.OverrideChange{Path: "Data/k.ini", Action: core.OverrideUpdate, SourceID: "nexusmods", ModID: "7"},
+		},
+		{
+			// #631 (owner ruling): a deploy's override pass previews the
+			// game files it changes.
+			"deploy_plan_overrides",
+			core.DeployPlan{
+				Profile: "default",
+				Mods:    []core.DeployPlanMod{{Ref: domain.ModReference{SourceID: "nexusmods", ModID: "7", Version: "1.0"}, Name: "Realistic Needs"}},
+				Overrides: []core.OverrideChange{
+					{Path: "SkyrimPrefs.ini", Root: domain.RootInstallPath, Action: core.OverrideRestore},
+				},
+			},
+		},
+		{
+			"switch_plan_overrides",
+			core.SwitchPlan{
+				GameID: "skyrim-se", From: "default", To: "hardcore",
+				Overrides: []core.OverrideChange{
+					{Path: "Data/k.ini", Action: core.OverridePlace, SourceID: "nexusmods", ModID: "7"},
+					{Path: "SkyrimPrefs.ini", Root: domain.RootInstallPath, Action: core.OverrideRestore},
+				},
+			},
+		},
+		{
+			"profile_apply_plan_overrides",
+			core.ProfileApplyPlan{
+				GameID: "skyrim-se", Profile: "hardcore",
+				Overrides: []core.OverrideChange{
+					{Path: "Skyrim.ini", Root: domain.RootInstallPath, Action: core.OverrideUpdate},
+				},
+			},
+		},
+		{
 			// The failure shape of a ToInstall entry: no Mod, no Files, the
 			// resolution error as text (#290).
 			"profile_apply_install",
@@ -1567,6 +1605,11 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			"profile_summary",
 			core.ProfileSummary{Name: "default", ModCount: 3, IsDefault: true},
+		},
+		{
+			// #613: a collection profile names where it updates from.
+			"profile_summary_collection_origin",
+			core.ProfileSummary{Name: "coll", ModCount: 2, CollectionOrigin: core.CollectionFromURL},
 		},
 		{
 			// `lmm game show-default --json`'s document (#309): the fully
@@ -2471,6 +2514,83 @@ func TestJSONGoldens(t *testing.T) {
 						"1 item(s) of this collection are not fetched by lmm: get them by hand (the profile records them, with the curator's instructions).",
 					},
 				},
+			},
+		},
+		{
+			// #613: a collection update's plan - every bucket, the plugin
+			// list's change, the overrides and the new document's gate.
+			"collection_update_plan",
+			core.CollectionUpdatePlan{
+				GameID: "skyrim", Profile: "coll", Origin: core.CollectionFromURL,
+				URL: "https://example.com/c.lmmc?…", ID: "coll-1", Name: "Shared", Version: 1, NewVersion: 2,
+				Added:     []core.CollectionUpdateItem{{SourceID: "nexusmods", ModID: "13", Name: "Thirteen", NewVersion: "1"}},
+				Changed:   []core.CollectionUpdateItem{{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1", NewVersion: "2", Changes: []string{"version", "files"}, Locked: true}},
+				Removed:   []core.CollectionUpdateItem{{SourceID: "nexusmods", ModID: "11", Version: "1"}},
+				Conflicts: []core.CollectionUpdateItem{{SourceID: "nexusmods", ModID: "14", Name: "Fourteen", Version: "3", NewVersion: "4", Changes: []string{"version"}, Locked: true}},
+				Plugins: &core.CollectionPluginChange{
+					Added: []string{"Thirteen.esp"}, Removed: []string{"Eleven.esp"}, Reordered: true, Rules: true,
+					Summary: &core.CollectionPluginSummary{Plugins: 2, Active: 2, Managed: true},
+				},
+				OverridesAdded:      []string{"doorstop_config.ini"},
+				OverridesChanged:    []string{"Config/Game.ini"},
+				LoadOrders:          []core.CollectionLoadOrderChange{{ID: "cyberpunk2077-archive", Added: []string{"d.archive"}, Reordered: true}},
+				OverridesRemoved:    []string{"Config/Old.ini"},
+				OverrideConflicts:   []string{"Config/Mine.ini"},
+				RestrictedOverrides: []core.RestrictedOverride{{Path: "doorstop_config.ini", Reason: "loader configuration"}},
+				ExternalAdded:       []domain.CollectionExternalItem{{Name: "ENB", URL: "https://enbdev.com"}},
+				Hooks:               []core.ImportHook{{Hook: "install.after_all", Command: "/usr/bin/false"}},
+				Requires:            []string{"external", "patches"},
+				Unsupported:         []core.UnsupportedCollectionFeature{{Feature: "patches"}},
+				Warnings:            []string{"the new version carries hooks; an update never applies a collection's hooks, and the profile keeps its own"},
+			},
+		},
+		{
+			// #613: one entry of an update plan's buckets, with every field.
+			"collection_update_item",
+			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1", NewVersion: "2", Changes: []string{"version", "files", "lock"}, Locked: true},
+		},
+		{
+			// #613: an entry whose files change at the same version carries
+			// the note that they apply at its next reinstall (#639).
+			"collection_update_item_same_version_files",
+			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "10", Version: "1", NewVersion: "1", Changes: []string{"files"},
+				Note: "its files change at the same version: the profile records them, and they apply when the mod is next reinstalled"},
+		},
+		{
+			// #613 x #620: what an update does to one file load order.
+			"collection_load_order_change",
+			core.CollectionLoadOrderChange{ID: "cyberpunk2077-archive", Added: []string{"d.archive"}, Removed: []string{"old.archive"},
+				Reordered: true, Moved: []string{"a.archive"}},
+		},
+		{
+			// #613: what an update does to the plugin list.
+			"collection_plugin_change",
+			core.CollectionPluginChange{Added: []string{"New.esp"}, Removed: []string{"Old.esp"}, Reordered: true, Rules: true,
+				Summary:   &core.CollectionPluginSummary{Plugins: 3, Active: 2, Inactive: []string{"Off.esp"}, Managed: true},
+				Conflicts: []string{"Mine.esp"}, Moved: []string{"A.esp", "B.esp"}, RulesConflict: true},
+		},
+		{
+			// #613: the --json error envelope's details for an origin
+			// serving an older version.
+			"collection_update_mismatch_error",
+			core.CollectionUpdateMismatchError{Code: core.CollectionUpdateOlderVersion, ID: "coll-1", Version: 5, FetchedID: "coll-1", FetchedVersion: 4},
+		},
+		{
+			// #613: an origin serving the profile's own version.
+			"collection_update_plan_up_to_date",
+			core.CollectionUpdatePlan{
+				GameID: "skyrim", Profile: "coll", Origin: core.CollectionFromSource, SourceID: "nexusmods", Slug: "abcdef",
+				ID: "nexusmods:abcdef", Name: "Three Mods", Version: 4, NewVersion: 4, UpToDate: true, NoChanges: true,
+			},
+		},
+		{
+			// #613: what an update did, with the converge's own result.
+			"collection_update_result",
+			core.CollectionUpdateResult{
+				Profile: "coll", Version: 3, NewVersion: 4, Added: 1, Changed: 1, Overridden: 1, Kept: 1, Conflicts: 1,
+				Removed:  []string{"nexusmods:11"},
+				Import:   &core.ProfileImportResult{ProfileName: "coll", Installed: 2},
+				Warnings: []string{"could not remove revision 3's recipe from the cache: permission denied"},
 			},
 		},
 		{

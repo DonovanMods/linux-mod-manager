@@ -262,10 +262,33 @@ Use this if the profile got out of sync, or to migrate from pre-profile installs
 If no name is given, uses the current/default profile. Prompts for
 confirmation before making any changes; pass -y/--yes to skip the prompt.
 
+With --collection, the sync updates a collection profile from its origin
+instead: a profile imported from an https address fetches it again and
+updates when the document is the same collection (its id) at a newer
+version; one imported from a NexusMods collection updates to its newest
+revision. The plan lists the mods the new version adds, the ones whose pin
+it moves (a mod the collection brought in follows it, locked or not), the
+ones it no longer lists, and conflicts: mods you changed yourself (locked,
+unlocked, updated, rolled back, updated from a file, re-answered the
+installer of, reinstalled at another version or with other answers, set to
+update automatically, or re-linked) that it changes. A mod the new version drops is kept, as your own, unless
+you name it with --remove (or pass --remove-obsolete); a conflict keeps
+your version unless you name it with --override (or pass
+--override-conflicts). The plugin list, file load orders and config
+overrides follow the same rule: what you changed since the collection last
+applied them stays yours, and where you both changed something the plan
+names the conflict and its --override key (plugin:NAME, plugins:order,
+plugins:rules, load_order:ID, override:PATH). The new version passes the same checks an import
+does: features this lmm lacks refuse the update, its hooks are listed and
+never applied, and overrides that are not text config files are held back
+without --allow-any-overrides. --dry-run --json prints the plan.
+
 Examples:
   lmm profile sync --game skyrim-se
   lmm profile sync survival --game skyrim-se
-  lmm profile sync survival --game skyrim-se --yes`,
+  lmm profile sync survival --game skyrim-se --yes
+  lmm profile sync survival --game skyrim-se --collection --dry-run
+  lmm profile sync survival --game skyrim-se --collection --remove-obsolete --override 3863`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runProfileSync,
 }
@@ -679,6 +702,11 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	if plan.NoChanges {
+		// #631 review: a file the switch keeps as the user changed it is
+		// listed here too, as in every other plan.
+		if !jsonOutput {
+			printOverrideChanges(plan.Overrides)
+		}
 		// No mod changes, just switch the default - ApplyProfileSwitch's
 		// three loops are all empty, so this is exactly a SetDefault call.
 		// A dry run must not make even that one write.
@@ -691,6 +719,11 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		}
 		if jsonOutput {
 			return emitJSON(result)
+		}
+		// #631: a file the user changed, which the switch's override
+		// convergence left in place, is said even here.
+		for _, w := range result.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
 		fmt.Printf("✓ Switched to profile: %s\n", targetName)
 		return nil
@@ -719,6 +752,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 				fmt.Printf("  ↓ %s\n", planRefLine(ref))
 			}
 		}
+		printOverrideChanges(plan.Overrides)
 	}
 
 	// A dry run stops here: it has shown the plan and must change nothing.
@@ -1423,6 +1457,17 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 }
 
 func runProfileSync(cmd *cobra.Command, args []string) error {
+	// #613: --collection is the collection update; its flags mean nothing
+	// to the ordinary sync, which is unchanged.
+	if profileSyncCollection {
+		return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+			return doCollectionUpdate(ctx, service, game, args)
+		})
+	}
+	if used := collectionSyncFlagsUsed(); len(used) > 0 {
+		slices.Sort(used)
+		return fmt.Errorf("%s update a collection profile; use them with --collection", strings.Join(used, ", "))
+	}
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
 		return doProfileSync(ctx, service, game, args)
 	})
@@ -1776,6 +1821,8 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			return emitJSON(&core.ProfileApplyResult{})
 		}
 		fmt.Printf("System already matches profile %s.\n", profileName)
+		// #631 review: and the files it leaves as the user changed them.
+		printOverrideChanges(plan.Overrides)
 		// #269/#345 N6: design §2's advisory, on the path core cannot emit
 		// it. ApplyProfileApply's own `if plan.NoChanges { return }` sits
 		// ABOVE its DeployExternalSkipped emit - a deliberate contract, so a
@@ -1839,6 +1886,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				fmt.Printf("  ↓ %s\n", planRefLine(entry.Ref))
 			}
 		}
+		printOverrideChanges(plan.Overrides)
 	}
 
 	// A dry run stops here: it has shown the plan and must change nothing.
@@ -2025,4 +2073,41 @@ func splitBundledRefs(refs []domain.ModReference) (toFetch, bundled []domain.Mod
 		}
 	}
 	return toFetch, bundled
+}
+
+// printOverrideChanges prints a switch or apply plan's override changes
+// (#631): each file the profile's overrides change, game files under
+// "<game root>/", a mod's own file (#630) by its deployed path and mod.
+func printOverrideChanges(changes []core.OverrideChange) {
+	if len(changes) == 0 {
+		return
+	}
+	changing := 0
+	for _, c := range changes {
+		if c.Action != core.OverrideKeep {
+			changing++
+		}
+	}
+	if changing > 0 {
+		fmt.Printf("Will change %d file(s) for the profile's overrides:\n", changing)
+	} else {
+		fmt.Println("The profile's overrides change no file:")
+	}
+	for _, c := range changes {
+		mark, what := "+", "write the override"
+		switch c.Action {
+		case core.OverrideUpdate:
+			mark, what = "~", "rewrite the override"
+		case core.OverrideReplaceChanged:
+			mark, what = "!", "it changed since lmm wrote an override there: keep your file, then write the override"
+		case core.OverrideRestore:
+			mark, what = "-", "take the override away"
+		case core.OverrideKeep:
+			mark, what = "=", "kept as it is: it changed since lmm wrote the override"
+		}
+		if c.ModID != "" {
+			what += ", over " + c.SourceID + ":" + c.ModID + "'s own file"
+		}
+		fmt.Printf("  %s %s (%s)\n", mark, domain.DisplayDeployPath(c.Root, c.Path), what)
+	}
 }

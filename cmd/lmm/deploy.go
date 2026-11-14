@@ -474,6 +474,12 @@ func renderDeployPlan(plan *core.DeployPlan, progress func(core.Event), printHea
 	}
 	fmt.Println()
 
+	// #631: the game files the deploy's override pass changes.
+	if len(plan.Overrides) > 0 {
+		fmt.Println()
+		printOverrideChanges(plan.Overrides)
+	}
+
 	if len(plan.Hooks) > 0 {
 		fmt.Printf("\nHooks that would run: %s\n", strings.Join(plan.Hooks, ", "))
 	}

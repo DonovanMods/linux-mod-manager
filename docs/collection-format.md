@@ -209,8 +209,8 @@ collection from an address instead of a file:
   It is the address as given, without its `user:password@` part (used for
   that one download and never stored) or its `#fragment`. It keeps the
   query string, which some hosts need to serve the file. A collection
-  update (#613) fetches it again and compares the document's `id` and
-  `version`. `import_url` is this machine's record: lmm sets it only at a
+  update fetches it again and compares the document's `id` and `version`
+  (see [Updating from the origin](#updating-from-the-origin)). `import_url` is this machine's record: lmm sets it only at a
   URL import, ignores it in a document, and leaves it out of every export
   (`lmm profile export`, `-o`, `--json`, and the web UI's) and of a
   duplicated profile.
@@ -222,6 +222,120 @@ collection from an address instead of a file:
   logs - it shows it without credentials, and with any query string
   replaced by `?…`. A redirect never carries the address on as a
   `Referer`, and an error never quotes the server's own status text.
+
+## Updating from the origin
+
+`lmm profile sync --collection` (the web UI's **Update collection…**,
+#613) updates a profile from where its collection came from:
+
+- **From a URL** (`origin.import_url`): the address is fetched again under
+  the same rules as the import (https only, the same caps, redirects and
+  deadline), and the document is read as an import reads it. Its `id` must
+  be the profile's (`collection.id`): another collection is refused
+  (`different_collection`). A profile that records no `id` (one imported
+  from a version-0 export) accepts any document, with a warning naming the
+  id it now takes. The `version` decides: newer is an update, the same is
+  nothing to do (`up_to_date: true`), older is refused (`older_version`),
+  and so is a document with no `version` when the profile has one. When
+  neither has a version (a version-0 export), the plan warns that it cannot
+  tell, and compares them entry by entry. A document naming another game
+  than the profile's is planned with the same warning an import gives.
+- **From a source's collection** (`origin.source_id` and `origin.slug`, a
+  converted NexusMods collection): the collection's newest revision is
+  converted as an import converts it, through the same recipe cache. Its
+  `id` is `nexusmods:<slug>` and its `version` the revision number. Once
+  no profile names the old revision, its recipe's cache entry is removed.
+
+An address wins when a profile records both (a re-exported NexusMods
+collection imported from a link).
+
+Each mod entry an import brings in is marked in the profile file as the
+collection's:
+
+```yaml
+mods:
+  - source_id: nexusmods
+    mod_id: "3863"
+    version: 5.2.0
+    locked: true
+    from_collection: true    # this machine's record; never in a document
+```
+
+`from_collection` is profile state like `import_url`: lmm writes it at a
+collection import and an update, no document carries it (an export leaves
+it out, and an import ignores it), and any deliberate change the user
+makes to the entry clears it: a lock or unlock, a manual update, a
+rollback, an update from a file, a FOMOD reconfigure, an install that
+changes its version, files or installer answers, a move to the auto update
+policy, a re-link to another mod. An update the auto policy makes on its
+own (a NexusMods `latest` item)
+keeps it. An update then decides each entry:
+
+| The profile's entry | In the new version | The update |
+|---|---|---|
+| marked | changed | follows the new pin (version, files, lock, `fomod`, `mod_type`), locked or not; files that change at the same version apply when the mod is next reinstalled |
+| not marked | changed | a **conflict**: the user's entry is kept, unless overridden (`--override`) |
+| marked | absent | **obsolete**: kept and unmarked, unless removed (`--remove`), which uninstalls it |
+| absent | present | added and installed |
+| not marked | absent | the user's own: untouched |
+
+Entries the update keeps that the new version doesn't list stay after the
+collection entry they followed, and so does every repeated reference (a
+hand edit) as written. Its `external` items replace the profile's. Its
+hooks are listed and never applied.
+
+The plugin list and the overrides follow the entries' rule through a
+three-way merge against a baseline: what the collection last applied,
+which the profile file records in a `collection_baseline:` block (the
+plugin list, the file load orders, and each override's sha256). Like `from_collection`, it is
+this machine's record, written at a collection import and an update and
+never exported.
+
+- **Plugins.** A plugin's on/off state, the order and the rules each follow
+  the new version when the user has not changed them since the baseline,
+  and stay the user's when the collection has not. When both changed one,
+  it is a conflict: the plan names it (`plugins.conflicts` for a plugin's
+  state, `plugins.moved` for the plugins both reordered,
+  `plugins.rules_conflict`), the user's side is kept, and an override
+  (`plugin:<name>`, `plugins:order`, `plugins:rules`) takes the
+  collection's. A plugin the user added stays, after the plugin it
+  followed; one the collection dropped goes unless the user changed it.
+- **Load orders.** Each file load order (`load_orders:`, #620) follows the
+  plugin list's order rule, id by id: the user's own files stay after the
+  file they followed, and when both reordered the files they share, the
+  plan names them (`load_orders[].moved`) and the user's order is kept
+  unless overridden (`load_order:<id>`).
+- **Overrides.** Each path follows the same rule by content: rewritten when
+  only the collection changed it, kept when only the user did, a conflict
+  (`override_conflicts`, overridden by `override:<path>`) when both did. One
+  the collection no longer carries is removed when the user left it as the
+  collection wrote it, and kept when they changed it. A new or rewritten
+  override goes through the import's override gate.
+
+A collection with no plugins and no overrides records an empty baseline
+(`collection_baseline: {}`), which is a record too: a plugin or override
+the user adds later is theirs. A profile with no baseline at all (imported
+before there was one, restored from a snapshot, or rewritten by an older
+lmm) merges against an empty one, so nothing in it is the collection's to
+remove: the user's plugins and overrides stay, the new version's additions
+are added, and where the profile and the new version differ on a plugin,
+the order, the rules or an override they both have, that is a conflict
+the user's side wins unless overridden.
+
+Every feature gate applies to the new document: a `requires` outside the
+supported set refuses the update with nothing written.
+
+A `.lmmc` origin's bundled items (`files/<item>/`) update as an import
+installs them: the new container is kept for the `lmm-collection` source,
+an item whose files changed moves to the new digest, and an item holding
+code is held back unless the update allows any override. A held-back item
+the profile does not have is not added, and one it has stays at the
+version it has.
+
+The update converges through the import's two-phase apply: every download
+is acquired first, so a refusal (an installer's questions, or a NexusMods
+collection's failed download) writes nothing. An update planned before the
+profile or its installed mods changed is refused as stale.
 
 ## `requires` and the feature gate
 

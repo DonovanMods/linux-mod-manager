@@ -767,6 +767,13 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 		return &ProfileImportResult{}, err
 	}
 	defer release()
+	return s.applyImportHeld(ctx, game, plan, opts, sink)
+}
+
+// applyImportHeld is ApplyImport for a caller already holding the
+// mutation slot (#613: a collection update, which imports and then
+// removes, under one op).
+func (s *Service) applyImportHeld(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, sink EventSink) (*ProfileImportResult, error) {
 	result, err := s.applyImport(ctx, game, plan, opts, sink)
 	// #466 review D7: what the installs left in place is this import's to
 	// report (the CLI prints Warnings, not events, for this flow).

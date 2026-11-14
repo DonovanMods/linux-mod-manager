@@ -376,7 +376,7 @@ func (s *Service) applyTreeInputs(game *domain.Game, mod *domain.Mod, fileID, tr
 				}
 			}
 		}
-		if err := removeEmptyDirs(tree); err != nil {
+		if err := pruneEmptyDirs(tree); err != nil {
 			return err
 		}
 	}
@@ -448,9 +448,9 @@ func replaceFile(path string, data []byte) error {
 	return werr
 }
 
-// removeEmptyDirs removes every directory under root (not root itself)
+// pruneEmptyDirs removes every directory under root (not root itself)
 // left with nothing in it, deepest first.
-func removeEmptyDirs(root string) error {
+func pruneEmptyDirs(root string) error {
 	var dirs []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

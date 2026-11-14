@@ -160,6 +160,34 @@ type originalsManifest struct {
 	// KeptUserGameRoot is KeptUser for files under the game's
 	// install_path (#629), relative to it, in slash form.
 	KeptUserGameRoot []string `json:"kept_user_game_root,omitempty"`
+	// OverrideWrites is what a profile override last wrote at each file
+	// under the game's install_path that is no mod's own (#631), so a
+	// switch or an apply that takes the override away can tell the file
+	// is still lmm's write before it puts the original back. Additive: an
+	// older lmm ignores it, and drops it when it rewrites the manifest,
+	// which costs only that later restore.
+	OverrideWrites []overrideWrite `json:"override_writes,omitempty"`
+	// OverrideCopies is the mod_path files (slash form) a profile
+	// override replaced with an overridden copy (#630, #631): where a copy
+	// an override left may still be, which under the copy method nothing
+	// on disk tells apart from the mod's own file without hashing it.
+	OverrideCopies []string `json:"override_copies,omitempty"`
+	// OverrideCopiesGameRoot is OverrideCopies for files under the game's
+	// install_path (#629), relative to it, in slash form.
+	OverrideCopiesGameRoot []string `json:"override_copies_game_root,omitempty"`
+	// SetAside is the files lmm set aside before an override replaced
+	// them where the game's original was kept already (#631): the user's
+	// changed file, kept under set-aside/.
+	SetAside []setAsideFile `json:"set_aside,omitempty"`
+}
+
+// overrideCopyList is the manifest's OverrideCopies list rel's root is kept
+// in.
+func (m *originalsManifest) overrideCopyList(rel domain.DeployPath) *[]string {
+	if rel.IsGameRoot() {
+		return &m.OverrideCopiesGameRoot
+	}
+	return &m.OverrideCopies
 }
 
 // keptUserList is the manifest's KeptUser list rel's root is kept in.

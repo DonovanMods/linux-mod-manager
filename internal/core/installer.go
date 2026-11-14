@@ -377,11 +377,17 @@ func (i *Installer) heldFingerprint(ctx context.Context, others *otherGameRecord
 // recordDeployed records file as mod's, deployed under game's current
 // mod_path with fingerprint fp (nil for none).
 func (i *Installer) recordDeployed(ctx context.Context, game *domain.Game, profileName string, file domain.DeployPath, mod *domain.Mod, fp *db.FileFingerprint) error {
-	return i.db.RecordDeployedFile(ctx, db.DeployedFileRecord{
+	if err := i.db.RecordDeployedFile(ctx, db.DeployedFileRecord{
 		GameID: game.ID, Profile: profileName, Path: file,
 		SourceID: mod.SourceID, ModID: mod.ID,
 		ModPath: recordRoot(game), Fingerprint: fp,
-	})
+	}); err != nil {
+		return err
+	}
+	if _, overridden := i.placing.content(file); overridden {
+		shareOverrideCopyRecord(ctx, i.db, i.log, game, profileName, file, fp)
+	}
+	return nil
 }
 
 // judgeFor is the deployedJudge an Installer asks about game's paths on
@@ -611,6 +617,9 @@ func (i *Installer) placedFingerprint(file domain.DeployPath, dstPath string) *d
 	if _, ok := i.placing.content(file); !ok {
 		return i.deployedFingerprint(dstPath)
 	}
+	// #631: remembered, so an apply under the copy method finds the copy
+	// once the override is gone without hashing every deployed file.
+	i.originals.noteOverrideCopy(file)
 	fp, err := fingerprintFile(dstPath)
 	if err != nil {
 		i.log.Warn("could not fingerprint an overridden mod file; a removal will not be able to tell it from yours", "path", dstPath, "err", err)
@@ -1222,6 +1231,11 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 					return &domain.DeployError{Op: fmt.Sprintf("tracking deployed file %s", file), Primary: err, Rollback: rollbackErr}
 				}
 				return fmt.Errorf("tracking deployed file %s: %w", file, err)
+			}
+		}
+		for _, file := range replacedOrAdded {
+			if _, overridden := i.placing.content(file); overridden {
+				shareOverrideCopyRecord(ctx, i.db, i.log, game, profileName, file, fingerprints[file])
 			}
 		}
 	}

@@ -1,0 +1,20 @@
+{
+  "profile": "shared",
+  "up_to_date": false,
+  "version": 1,
+  "new_version": 2,
+  "added": 1,
+  "changed": 1,
+  "overridden": 0,
+  "kept": 0,
+  "conflicts": 0,
+  "removed": [
+    "nexusmods:2"
+  ],
+  "import": {
+    "profile_name": "shared",
+    "installed": 0,
+    "failed": 0,
+    "skipped": 0
+  }
+}

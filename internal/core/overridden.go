@@ -430,39 +430,86 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 	if err := s.deployRefusal(ctx, game, profileName); err != nil {
 		return nil
 	}
-	mine := s.overriddenModFiles(game, profileName)
+	steps, installer, warnings := s.overriddenSteps(ctx, game, profileName, s.overriddenModFiles(game, profileName), nil)
+	for _, st := range steps {
+		rel := st.row.Path
+		switch {
+		case st.prune:
+			s.originalsStoreFor(game.ID).forgetOverrideCopy(rel)
+		case st.content != nil:
+			if err := writeOverriddenCopy(deployRootDir(game, rel), rel.Rel, st.content); err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: could not write the profile's override over the mod's file: %v", rel, err))
+				continue
+			}
+			s.recordOverriddenCopy(ctx, game, profileName, rel, st.dst)
+		default:
+			if err := s.restorePlainDeployment(ctx, installer, game, profileName, st.row, st.src, st.dst); err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: could not put the mod's own file back in place of the override another profile left: %v", rel, err))
+			}
+		}
+	}
+	return warnings
+}
+
+// overriddenStep is one thing convergeOverriddenFiles does to a deployed
+// mod file, as overriddenSteps decided it: write the overridden copy
+// (content set), put the plain deployment back (content nil), or only drop
+// the path from the originals store's list of override copies (prune).
+type overriddenStep struct {
+	row     db.DeployedPath
+	dst     string
+	content []byte
+	// update: the file holds an override copy already, of another
+	// override - the write rewrites it.
+	update bool
+	src    string
+	prune  bool
+}
+
+// overriddenSteps decides convergeOverriddenFiles' work for profileName's
+// deployed mod files in game against mine, the mod files its overrides
+// replace, without doing any of it - so a plan can preview the same
+// decisions (#631). A row of a mod in skip (domain.ModKey) is left out:
+// the plan redeploys or removes that mod, which settles its files. What
+// could not be judged comes back as warnings.
+func (s *Service) overriddenSteps(ctx context.Context, game *domain.Game, profileName string, mine overriddenFiles, skip map[string]bool) ([]overriddenStep, *Installer, []string) {
 	elsewhere := s.overriddenElsewhere(game, profileName, mine)
 	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
-		return []string{fmt.Sprintf("checking the profile's overridden mod files: %v", err)}
+		return nil, nil, []string{fmt.Sprintf("checking the profile's overridden mod files: %v", err)}
 	}
 	// Under symlink and hardlink a plain deployment is never a regular
 	// file of its own, so an overridden copy is found by one lstat per
 	// file - including one whose override was deleted from the profile by
 	// hand. A copy deployment is a regular file either way, so for copy
-	// only the paths another profile overrides are looked at; `lmm deploy`
-	// redeploys every file and catches the rest.
+	// only the paths another profile overrides, and the paths lmm
+	// remembers writing an overridden copy at (#631), are looked at:
+	// never a hash of every deployed file.
 	linked := installer.linker.Method() != domain.LinkCopy
-	if len(mine) == 0 && len(elsewhere) == 0 && !linked {
-		return nil
+	copies := s.originalsStoreFor(game.ID).overrideCopies()
+	if len(mine) == 0 && len(elsewhere) == 0 && len(copies) == 0 && !linked {
+		return nil, installer, nil
 	}
 	rows, err := s.db.ListDeployedFiles(ctx, game.ID, profileName)
 	if err != nil {
-		return []string{fmt.Sprintf("checking the profile's overridden mod files: %v", err)}
+		return nil, installer, []string{fmt.Sprintf("checking the profile's overridden mod files: %v", err)}
 	}
 	others, err := s.otherGamesRecording(ctx, game)
 	if err != nil {
-		return []string{fmt.Sprintf("checking the profile's overridden mod files: %v", err)}
+		return nil, installer, []string{fmt.Sprintf("checking the profile's overridden mod files: %v", err)}
 	}
-	var warnings []string
+	var steps []overriddenStep
 	for _, row := range rows {
 		rel := row.Path
+		if skip[domain.ModKey(row.SourceID, row.ModID)] {
+			continue
+		}
 		if !underCurrentRoot(game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(rel.Rel)) {
 			continue
 		}
 		dst := deployTarget(game, rel)
 		content, overridden := mine.content(rel)
-		if !overridden && !staleCopyCandidate(rel, dst, elsewhere, linked) {
+		if !overridden && !staleCopyCandidate(rel, dst, elsewhere, copies, linked) {
 			continue
 		}
 		if overridden && holdsOverriddenCopy(dst, content) {
@@ -479,23 +526,20 @@ func (s *Service) convergeOverriddenFiles(ctx context.Context, game *domain.Game
 			if form == formOther {
 				continue
 			}
-			if err := writeOverriddenCopy(deployRootDir(game, rel), rel.Rel, content); err != nil {
-				warnings = append(warnings, fmt.Sprintf("%s: could not write the profile's override over the mod's file: %v", rel, err))
-				continue
-			}
-			s.recordOverriddenCopy(ctx, game, profileName, rel, dst)
+			steps = append(steps, overriddenStep{row: row, dst: dst, content: content, update: form == formOverrideCopy})
 			continue
 		}
 		// Only a copy this profile's own record says lmm wrote for an
 		// override, whose mod's cached file is there to put back.
+		if form == formPlain && copies[overrideKey(rel)] {
+			steps = append(steps, overriddenStep{row: row, prune: true})
+		}
 		if form != formOverrideCopy || src == "" {
 			continue
 		}
-		if err := s.restorePlainDeployment(ctx, installer, game, profileName, row, src, dst); err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: could not put the mod's own file back in place of the override another profile left: %v", rel, err))
-		}
+		steps = append(steps, overriddenStep{row: row, dst: dst, src: src})
 	}
-	return warnings
+	return steps, installer, nil
 }
 
 // overriddenElsewhere is the mod files the game's other profiles override
@@ -522,11 +566,13 @@ func (s *Service) overriddenElsewhere(game *domain.Game, profileName string, min
 
 // staleCopyCandidate reports whether dst, the deployed path rel the
 // profile does not override, may hold an overridden copy left behind - a
-// path another profile overrides, or, under symlink and hardlink (linked),
-// any regular file of its own, where a plain deployment never is one. Only
+// path another profile overrides, one lmm remembers writing an overridden
+// copy at (copies, #631), or, under symlink and hardlink (linked), any
+// regular file of its own, where a plain deployment never is one. Only
 // a candidate is judged (deployedFormOf), which hashes.
-func staleCopyCandidate(rel domain.DeployPath, dst string, elsewhere map[domain.DeployPath]bool, linked bool) bool {
-	return elsewhere[overrideKey(rel)] || (linked && soleRegularFile(dst))
+func staleCopyCandidate(rel domain.DeployPath, dst string, elsewhere, copies map[domain.DeployPath]bool, linked bool) bool {
+	k := overrideKey(rel)
+	return elsewhere[k] || copies[k] || (linked && soleRegularFile(dst))
 }
 
 // deployedForm is what deployedFormOf finds at a deployed path.
@@ -651,6 +697,7 @@ func (s *Service) restorePlainDeployment(ctx context.Context, installer *Install
 	if err := lnk.Deploy(src, dst); err != nil {
 		return err
 	}
+	s.originalsStoreFor(game.ID).forgetOverrideCopy(row.Path)
 	return installer.recordDeployed(ctx, game, profileName, row.Path, &mod.Mod, installer.deployedFingerprint(dst))
 }
 
@@ -675,6 +722,8 @@ type staleOverrideCheck struct {
 	installer  *Installer
 	others     *otherGameRecords
 	linked     bool
+	// copies is where lmm remembers writing overridden copies (#631).
+	copies map[domain.DeployPath]bool
 }
 
 // newStaleOverrideCheck is a staleOverrideCheck for r's profile, whose
@@ -692,6 +741,7 @@ func newStaleOverrideCheck(r *verifyRun, overridden overriddenFiles) *staleOverr
 	}
 	c.installer, c.others = installer, others
 	c.linked = installer.linker.Method() != domain.LinkCopy
+	c.copies = r.svc.originalsStoreFor(r.game.ID).overrideCopies()
 	c.elsewhere = r.svc.overriddenElsewhere(r.game, r.profile, overridden)
 	return c
 }
@@ -703,7 +753,7 @@ func (c *staleOverrideCheck) report(row db.DeployedPath, dst, modName string) bo
 	if c.installer == nil {
 		return false
 	}
-	if _, ok := c.overridden.content(row.Path); ok || !staleCopyCandidate(row.Path, dst, c.elsewhere, c.linked) {
+	if _, ok := c.overridden.content(row.Path); ok || !staleCopyCandidate(row.Path, dst, c.elsewhere, c.copies, c.linked) {
 		return false
 	}
 	// A file another game records is that game's (#445), whatever this

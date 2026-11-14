@@ -13,6 +13,7 @@
 
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
+import { PlanOverrides } from "./planoverrides.js";
 
 /** ModList renders one bucket of installed mods (to_enable/to_disable),
  * which carry their own names. */
@@ -143,6 +144,10 @@ export function ProfileApplyPlanView({ plan }) {
         heading="Undeploy and disable"
         mods=${plan.to_disable ?? []}
         testID="profile-apply-to-disable"
+      />
+      <${PlanOverrides}
+        changes=${plan.overrides}
+        testID="profile-apply-overrides"
       />
     </div>
   `;

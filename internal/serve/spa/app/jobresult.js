@@ -117,6 +117,9 @@ export const RESULT_WARNING_KINDS = new Set([
   "install",
   "mod_fomod",
   "profile_import",
+  // Issue 613: a collection update - an obsolete member it could not
+  // remove, a recipe it could not drop, and its converge's own warnings.
+  "collection_update",
 ]);
 // PLUGIN_LIST_KINDS are the job kinds whose result has a `plugins` field.
 const PLUGIN_LIST_KINDS = new Set(["deploy", "purge"]);
@@ -177,7 +180,9 @@ function resultWarnings(kind, result) {
       ? result.applied.flatMap((a) =>
           Array.isArray(a?.warnings) ? a.warnings : [],
         )
-      : [];
+      : kind === "collection_update" && Array.isArray(result?.import?.warnings)
+        ? result.import.warnings
+        : [];
   const all = [...own, ...items].filter(
     (w) => typeof w === "string" && w !== "",
   );

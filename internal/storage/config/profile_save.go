@@ -30,8 +30,8 @@ const profileBackupSuffix = ".bak"
 // A key an in-place save adds goes after the nearest key before it in this
 // order, so a file lmm wrote stays exactly as a whole write would have it.
 var (
-	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins", "load_orders"}
-	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod", "fomod_files", "fomod_order", "file_list", "patches"}
+	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins", "load_orders", "collection_baseline"}
+	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod", "fomod_files", "fomod_order", "from_collection", "file_list", "patches"}
 )
 
 // profileFileHookYAML is ProfileHookConfigYAML as a profile file is written:
@@ -60,11 +60,13 @@ type profileFileYAML struct {
 	LinkMethod string                          `yaml:"link_method,omitempty"`
 	IsDefault  bool                            `yaml:"is_default,omitempty"`
 	Hooks      profileFileHooksYAML            `yaml:"hooks,omitempty"`
-	Overrides  map[string]string               `yaml:"overrides,omitempty"`
+	Overrides  overridesYAML                   `yaml:"overrides,omitempty"`
 	Collection *domain.CollectionInfo          `yaml:"collection,omitempty"`
 	External   []domain.CollectionExternalItem `yaml:"external,omitempty"`
 	Plugins    *ProfilePluginsConfig           `yaml:"plugins,omitempty"`
 	LoadOrders domain.FileLoadOrders           `yaml:"load_orders,omitempty"`
+	// CollectionBaseline is #613's, last.
+	CollectionBaseline *CollectionBaselineConfig `yaml:"collection_baseline,omitempty"`
 }
 
 func fileHook(h ProfileHookConfigYAML) profileFileHookYAML {
@@ -75,16 +77,17 @@ func fileHook(h ProfileHookConfigYAML) profileFileHookYAML {
 func profileFileOf(profile *domain.Profile) profileFileYAML {
 	hooks := serializeProfileHooks(profile.Hooks, profile.HooksExplicit)
 	doc := profileFileYAML{
-		Name:       profile.Name,
-		GameID:     profile.GameID,
-		IsDefault:  profile.IsDefault,
-		Mods:       refConfigsOf(profile.Mods),
-		Hooks:      profileFileHooksYAML{Install: fileHook(hooks.Install), Uninstall: fileHook(hooks.Uninstall)},
-		Overrides:  overridesOf(profile),
-		Collection: collectionOrNil(profile.Collection),
-		External:   externalOrNil(profile.External),
-		Plugins:    pluginsConfigOf(profile.Plugins),
-		LoadOrders: profile.LoadOrders.Clone(),
+		Name:               profile.Name,
+		GameID:             profile.GameID,
+		IsDefault:          profile.IsDefault,
+		Mods:               refConfigsOf(profile.Mods),
+		Hooks:              profileFileHooksYAML{Install: fileHook(hooks.Install), Uninstall: fileHook(hooks.Uninstall)},
+		Overrides:          overridesOf(profile),
+		Collection:         collectionOrNil(profile.Collection),
+		External:           externalOrNil(profile.External),
+		Plugins:            pluginsConfigOf(profile.Plugins),
+		LoadOrders:         profile.LoadOrders.Clone(),
+		CollectionBaseline: baselineConfigOf(profile.CollectionBaseline),
 	}
 	// Only write link_method if explicitly set: String() never returns "", so
 	// assigning it unconditionally defeats `omitempty` and bakes a phantom
@@ -109,8 +112,9 @@ func refConfigsOf(mods []domain.ModReference) []ModReferenceConfig {
 			ModType:  m.ModType,
 			Fomod:    m.Fomod,
 			// #634: nil when empty, so the key is not written.
-			FomodFiles: m.FomodFiles.Clone(),
-			FomodOrder: slices.Clone(m.FomodOrder),
+			FomodFiles:     m.FomodFiles.Clone(),
+			FomodOrder:     slices.Clone(m.FomodOrder),
+			FromCollection: m.FromCollection,
 			// #610: nil when empty, so the keys are not written.
 			FileList: m.FileList.Clone(),
 			Patches:  m.Patches.Clone(),
@@ -525,7 +529,7 @@ func editProfileDocument(base []byte, fromName string, want *domain.Profile, ren
 	}
 	if !sameOverrides(haveProfile.Overrides, want.Overrides) {
 		if err := e.setTopBlock("overrides", struct {
-			Overrides map[string]string `yaml:"overrides,omitempty"`
+			Overrides overridesYAML `yaml:"overrides,omitempty"`
 		}{overridesOf(want)}); err != nil {
 			return nil, err
 		}
@@ -558,6 +562,13 @@ func editProfileDocument(base []byte, fromName string, want *domain.Profile, ren
 			return nil, err
 		}
 	}
+	if !sameBaseline(haveProfile.CollectionBaseline, want.CollectionBaseline) {
+		if err := e.setTopBlock("collection_baseline", struct {
+			CollectionBaseline *CollectionBaselineConfig `yaml:"collection_baseline,omitempty"`
+		}{baselineConfigOf(want.CollectionBaseline)}); err != nil {
+			return nil, err
+		}
+	}
 
 	edited, err = e.apply()
 	if err != nil {
@@ -587,7 +598,7 @@ func sameProfile(a, b *domain.Profile) bool {
 		a.Hooks != b.Hooks || a.HooksExplicit != b.HooksExplicit ||
 		!sameOverrides(a.Overrides, b.Overrides) ||
 		!a.Collection.Equal(b.Collection) || !slices.Equal(a.External, b.External) ||
-		!a.Plugins.Equal(b.Plugins) || !a.LoadOrders.Equal(b.LoadOrders) {
+		!a.Plugins.Equal(b.Plugins) || !a.LoadOrders.Equal(b.LoadOrders) || !sameBaseline(a.CollectionBaseline, b.CollectionBaseline) {
 		return false
 	}
 	return sameRefs(refConfigsOf(a.Mods), b.Mods)
@@ -625,7 +636,7 @@ func sameRef(a, b ModReferenceConfig) bool {
 		slices.Equal(a.FileIDs, b.FileIDs) && a.Locked == b.Locked && a.Disabled == b.Disabled &&
 		a.Category == b.Category && a.ModType == b.ModType && a.Fomod.Equal(b.Fomod) &&
 		a.FomodFiles.Equal(b.FomodFiles) && slices.Equal(a.FomodOrder, b.FomodOrder) &&
-		a.FileList.Equal(b.FileList) && a.Patches.Equal(b.Patches)
+		a.FromCollection == b.FromCollection && a.FileList.Equal(b.FileList) && a.Patches.Equal(b.Patches)
 }
 
 // docEditor collects the text edits that turn a profile document into the
@@ -1041,7 +1052,8 @@ func refOf(c ModReferenceConfig) domain.ModReference {
 		SourceID: c.SourceID, ModID: c.ModID, Version: c.Version,
 		FileIDs: c.FileIDs, Locked: c.Locked, Disabled: c.Disabled, Category: c.Category,
 		ModType: c.ModType, Fomod: c.Fomod, FomodFiles: c.FomodFiles.Clone(), FomodOrder: slices.Clone(c.FomodOrder),
-		FileList: c.FileList.Clone(), Patches: c.Patches.Clone(),
+		FromCollection: c.FromCollection,
+		FileList:       c.FileList.Clone(), Patches: c.Patches.Clone(),
 	}
 }
 
@@ -1166,6 +1178,12 @@ func (e *docEditor) editItem(item modItem, have, want ModReferenceConfig) (strin
 				continue
 			}
 			zero = !want.Disabled
+			wantText = "true"
+		case "from_collection":
+			if have.FromCollection == want.FromCollection {
+				continue
+			}
+			zero = !want.FromCollection
 			wantText = "true"
 		case "category":
 			if have.Category == want.Category {

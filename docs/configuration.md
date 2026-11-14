@@ -649,6 +649,36 @@ mods:
 
 The game's adapter decides where a type deploys: on the `bethesda` adapter, `dinput` (script extenders) and `enb` mean the game's install folder. A type the adapter does not know is refused at deploy, with the reason, rather than deployed where the game never reads it. Absent means the game's default. An older lmm that rewrites the profile drops the key.
 
+#### A collection's entry (`from_collection`)
+
+An entry a collection import brought in is marked as the collection's:
+
+```yaml
+mods:
+  - source_id: nexusmods
+    mod_id: "3863"
+    version: 5.2.0
+    locked: true
+    from_collection: true
+```
+
+A [collection update](guide/profiles.md#updating-a-collection-profile) (`lmm profile sync --collection`) moves a marked entry to the new version's pin, even when it is locked, because that lock is the collection's. Any deliberate change you make to the entry clears the marker - locking or unlocking it (`lmm mod lock`, `lmm mod unlock`), updating it, rolling it back, updating it from a file, re-answering its installer (`lmm mod fomod`), reinstalling it at another version or with other answers, setting it to update automatically (`lmm mod set-update --auto`), or re-linking it (`lmm mod edit`) - and the entry is yours (an update its auto policy makes on its own does not count): an update that changes it lists it as a conflict and keeps your version unless you choose the collection's. The marker is this machine's record: no export or collection document carries it. An older lmm that rewrites the profile drops the key, and the next update then lists those entries as conflicts.
+
+#### A collection's baseline (`collection_baseline`)
+
+A profile imported from a collection also records what the collection last applied beyond its mods: its plugin list, its file load orders, and the sha256 of each config override it wrote.
+
+```yaml
+collection_baseline:
+  plugins:
+    order:
+      - name: SkyUI_SE.esp
+  overrides:
+    Config/Game.ini: 9f2c…
+```
+
+A collection update merges the profile's plugin list and overrides against it, so a change you made is told apart from the collection's own ([Updating a collection profile](guide/profiles.md#updating-a-collection-profile)). lmm writes it; you never need to edit it. Like `from_collection`, it is this machine's record: no export or collection document carries it. A collection with nothing beyond its mods records it empty (`collection_baseline: {}`). If the block is missing (an older lmm rewrote the profile, or it was restored from a snapshot), the next update keeps your plugins and overrides and lists every difference on one the collection also has as a conflict, which keeps your side unless you choose the collection's.
+
 #### Recorded FOMOD choices (`fomod`)
 
 Many mods ship as a FOMOD installer (`fomod/ModuleConfig.xml` in the archive): a set of steps that ask which options to install. lmm runs the installer itself, for every game, and never executes a scripted installer (`fomod/script.cs`) or an OMOD, which it refuses.

@@ -1,0 +1,7 @@
+{
+  "profile": "survival",
+  "with_optional": true,
+  "optional": [
+    "12:120"
+  ]
+}

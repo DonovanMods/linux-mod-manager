@@ -1,0 +1,13 @@
+{
+  "game_id": "skyrim",
+  "profile": "coll",
+  "origin": "source",
+  "source_id": "nexusmods",
+  "slug": "abcdef",
+  "id": "nexusmods:abcdef",
+  "name": "Three Mods",
+  "version": 4,
+  "new_version": 4,
+  "up_to_date": true,
+  "no_changes": true
+}

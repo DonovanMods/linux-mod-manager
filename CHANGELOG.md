@@ -36,6 +36,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   51 now import (40 before). See the guide's
   [Importing a NexusMods collection](docs/guide/profiles.md#importing-a-nexusmods-collection)
   and [the collection format](docs/collection-format.md#exact-file-lists-and-patches).
+- **Update a collection profile from where it came from (#613).** `lmm
+profile sync --collection` (in the web UI, **Update collection…** beside
+  the profile in the Profiles window) fetches a profile's collection again
+  (the address it was imported from, compared by the document's `id` and
+  `version`, or its NexusMods collection's newest revision) and plans the
+  update: the mods the new version adds, the ones whose pin it moves, the
+  ones it no longer lists, and conflicts with mods you changed yourself
+  (locked, unlocked, updated, rolled back, updated from a file, re-answered
+  the installer of, reinstalled at another version or with other answers,
+  set to update automatically, or re-linked; an update the auto policy
+  makes on its own does not count). A mod the collection brought in follows its new pin even when
+  locked (the lock was the collection's); a mod it drops is kept, as yours,
+  unless you remove it (`--remove`, `--remove-obsolete`, or a tick box);
+  and your own version of a conflicting mod is kept unless you take the
+  collection's (`--override`, `--override-conflicts`, or a tick box). Mods
+  you added keep their place. The plugin list, the file load orders (#620)
+  and config overrides follow the same rule through a three-way merge against what the collection last
+  applied: your on/off states, moves, added plugins and edited overrides
+  stay yours, and where you and the collection both changed one the plan
+  names the conflict and keeps yours unless you override it. An obsolete
+  mod that fails to uninstall stays in the profile, installed, and the
+  result says so. The new version passes every import check
+  (the feature gate, held-back overrides, hooks listed and never applied),
+  installs through the same all-acquired-first engine, and a NexusMods
+  update drops the old revision's recipe from the cache once nothing uses
+  it. `--dry-run --json` prints the plan. A plain `lmm profile sync` is
+  unchanged. Profiles now mark each entry a collection brought in
+  (`from_collection: true`) and record what the collection last applied
+  to the plugin list and overrides (`collection_baseline:`); both are this
+  machine's record, and no export carries them;
+  and `lmm profile list --json`/`lmm status --json` profile rows carry
+  `collection_origin` (`url` or `source`) for a profile that can update.
+
 - **Cyberpunk 2077's archive load order (#620).** A Cyberpunk 2077 game on
   the new `cyberpunk2077` adapter (Steam detection sets it; `lmm verify`
   suggests it for a game added before) can keep the order its `.archive`
@@ -153,6 +186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drop the files: only files of a pending size and at most 2 GiB are
   uploaded, up to four at a time. `lmm profile list --json` (and the web UI's profile list) name a
   profile's source collection under the new `collection` key.
+
 - **Import a collection from a link (#622).** `lmm profile import
 https://…` (in the web UI, the Profiles window's **From a URL** field)
   downloads an lmm collection - a `.lmmc`, its YAML, or an older profile
@@ -403,6 +437,44 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   rather than failing the mod. #621's interim skip and its warning
   ("this file belongs to a deployed mod; lmm cannot override a mod's own
   files yet") are gone.
+
+- **Profile switch and apply converge every override, and preview it
+  (#631).** `lmm profile switch` and `lmm profile apply` (and the web UI's
+  Switch and Apply profile) now write the profile's overrides on files no
+  mod ships, such as a stock game INI, as `lmm deploy` does - the game's
+  own file is kept in lmm's originals store first. An override the new
+  profile doesn't set goes back: the game's original returns, or a file
+  the override created is removed. `lmm deploy` (and the web UI's Deploy)
+  now does the same for an override taken out of the profile, where it
+  used to leave the override in place. A file you changed after lmm wrote
+  the override is left as it is, with a warning, and its original stays
+  kept; the plans list it as `keep` (no change). An override written over
+  such a file, where the game's original is kept already, first keeps
+  your file in lmm's data folder
+  (`snapshots/<game>/_originals/set-aside/`) and names where (`replace_changed`
+  in the plans); see Fixed for `lmm deploy`. An override edited between a
+  switch or apply plan and its confirm makes the plan stale, and taking
+  away a file an override created also removes the folders it created,
+  when they are empty. The switch and apply plans list every file the overrides change,
+  mod files (#630) included, and the deploy plan lists the game files its
+  overrides change: under "Will change N file(s) for the profile's
+  overrides" in the terminal (write, rewrite or take the override away),
+  as the new `overrides` list in the `--dry-run --json` plan (`path`,
+  `root`, `action`: `place`, `update`, `replace_changed`, `restore` or `keep`, and the mod for a
+  mod's own file), and in the confirm dialog's **Profile overrides**
+  section. A switch or apply whose only changes are overrides is no longer
+  `no_changes: true`: **`lmm profile switch` to a profile that differs
+  only in its overrides now asks "Proceed?"** (pass `--yes` to skip it),
+  where it used to switch without asking, and `lmm profile apply` no
+  longer says "System already matches" when an override is out of date.
+  Under the `copy` link method, an override deleted from the profile by
+  hand is now taken away by the next apply too (#630's gap): lmm remembers
+  where it wrote overridden copies, so it finds them without hashing every
+  deployed file. And a switch to a profile that shares the mod now puts
+  the mod's own file back in place of the other profile's override copy.
+  The originals store's manifest gains three lists for this
+  (`override_writes`, `override_copies`, `override_copies_game_root`) and a
+  `set_aside` list; an older lmm ignores them.
 
 - **A manual-download mod is updated automatically again once its author
   allows it (#627).** When CurseForge reports `allowModDistribution: true`
@@ -767,6 +839,23 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **A config override whose content starts with a tab now round-trips
+  (#640).** Such content was written as a YAML block the reader then
+  rejected ("found a tab character where an indentation space is
+  expected"): a `.lmmc` or YAML collection export carrying it could not be
+  imported again, and saving a profile holding it failed. Every writer of
+  override content (the profile file, the collection export and the
+  version-0 profile export) now writes content its usual form would not
+  read back unchanged as a double-quoted string instead; everything else is
+  written exactly as before, and files already on disk read unchanged.
+- **An override no longer overwrites your edit of a game file for good
+  (#631).** When you changed a file after lmm wrote a profile override
+  there (or the game rewrote its INI), `lmm deploy` wrote the profile's
+  override over it, and with the game's original already kept, your
+  content was lost. lmm now keeps your file first, under
+  `snapshots/<game>/_originals/set-aside/` in its data folder, and the
+  warning names the copy; the override is still written. Profile switch
+  and apply, which now write overrides too, follow the same rule.
 - The web UI's mod page no longer offers **Re-link…** for a moment on a locked mod opened directly, before its library listing has loaded: a lock-gated action now waits until the lock is known. Found by a timing-dependent E2E failure (CI on e1e3bbba).
 - **Two mods that ship the same file over one of the game's own no longer
   leave the game's file in place (#632).** When a file was already there

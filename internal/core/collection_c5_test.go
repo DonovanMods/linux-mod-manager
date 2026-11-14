@@ -448,3 +448,31 @@ func TestSourceCollection_InstallFromFileAppliesTheFileListAndPatch(t *testing.T
 	require.NoError(t, err)
 	assert.True(t, applyPlan.NoChanges, "%+v", applyPlan)
 }
+
+// TestCollectionUpdate_CarriesFileListsPatchesAndBundles (#610 x #613): a
+// revision update of a collection with a file list, a patch and a bundled
+// item plans from the new revision's recipe - its bundled trees and
+// patches, not a container's - and applies, keeping the new revision's
+// bundled items and patches as an import does.
+func TestCollectionUpdate_CarriesFileListsPatchesAndBundles(t *testing.T) {
+	f := newC5Fixture(t, c5Recipe(`Mod\manifest.json`, c5CRC(c5ManifestV40)), c5Trees(t, c5Patch(t)))
+	plan := f.plan(t, core.SourceCollectionImportRequest{})
+	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+
+	f.src.recipe.collection.Revision = 4
+	update, err := f.svc.PlanCollectionUpdate(context.Background(), f.game, core.CollectionUpdateRequest{Profile: "Replicated"})
+	require.NoError(t, err)
+	require.Empty(t, update.Unsupported)
+	assert.Equal(t, 4, update.NewVersion)
+	assert.Zero(t, update.RestrictedPatches)
+	_, err = f.svc.ApplyCollectionUpdate(context.Background(), f.game, update, core.CollectionUpdateOptions{}, nil)
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(f.cacheDir, "skyrim", "collections", "nexusmods-abcdef", "4.json"), "the new revision's bundled items are kept")
+	saved, err := config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Replicated")
+	require.NoError(t, err)
+	assert.NotNil(t, saved.FindRef(domain.SourceCollection, "nexusmods-abcdef.marker-v1-0-0"))
+	assert.Len(t, saved.FindRef("nexusmods", "21").Patches["210"], 1)
+	got, _ := f.deployed(t, "Mod/manifest.json")
+	assert.Equal(t, c5ManifestV41, got)
+}

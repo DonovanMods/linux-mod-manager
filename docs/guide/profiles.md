@@ -452,6 +452,86 @@ other than bsdiff's, a plugin rule marking two plugins incompatible) shows
 its plan, with what is missing and which mods need it, and is refused, with
 nothing written. Optional mods that need such a thing are skipped instead.
 
+### Updating a collection profile
+
+A profile imported from a link or from a NexusMods collection remembers
+where it came from, and updates from there when the collection changes:
+
+```bash
+lmm profile sync coop --collection --dry-run
+lmm profile sync coop --collection
+lmm profile sync coop --collection --remove-obsolete --override 3863
+```
+
+In the browser, **Update collection…** appears beside such a profile in
+the Profiles window. A profile imported from a link fetches the address
+again: if it now serves the same collection (its `id`) at a newer
+`version`, that is the update; the same version means there is nothing to
+do, and another collection, or an older version, is refused. A NexusMods
+collection updates to its newest revision. A profile imported from a file
+has nowhere to update from: import the new file with `--force`.
+
+The plan lists:
+
+- **mods the new version adds**, which the update installs;
+- **mods whose pin it moves** (version, files, lock, installer choices or
+  type). A mod the collection brought in follows the collection, even when
+  it is locked: that lock is the collection's;
+- **mods it no longer lists**. They are kept, as your own mods, unless you
+  choose to remove them: name one with `--remove <mod-id>`, or all with
+  `--remove-obsolete`. In the browser each has a **Remove and uninstall**
+  tick box. lmm never removes one silently;
+- **conflicts**: mods you changed yourself that the new version changes
+  too. Any deliberate change makes a collection's mod yours: locking or
+  unlocking it, updating it (`lmm update`, or **Update** in the browser),
+  rolling it back, updating it from a file, re-answering its installer
+  ([Reconfigure installer…](fomod.md)), reinstalling it at another version
+  or with other installer answers, setting it to update automatically
+  (`lmm mod set-update --auto`), or re-linking it to another mod.
+  Your version is kept unless you choose the collection's:
+  `--override <mod-id>`, or `--override-conflicts` for all; in the
+  browser, **Take the collection's version**. An update that the mod's
+  automatic update policy makes on its own (a collection asking for a
+  mod's latest file sets it) is not a change of yours, and the mod stays
+  the collection's.
+
+A pin whose files change while its version stays the same is recorded on
+the profile, and the plan says it applies when the mod is next
+reinstalled.
+
+The plugin list, file load orders (Cyberpunk 2077's archive order, see
+[Load order](load-order.md)) and config overrides follow the same rule. lmm remembers
+what the collection last applied, so it can tell your changes from the
+collection's: a plugin you switched off or moved, a plugin you added, or an
+override you edited stays yours, and the new version's changes apply to
+everything you left alone. Where you and the collection both changed the
+same thing, the plan names it as a conflict and keeps yours; take the
+collection's with `--override plugin:<name>`, `--override plugins:order`,
+`--override plugins:rules`, `--override load_order:<id>` or
+`--override override:<path>` (the plan
+prints each key), or `--override-conflicts` for all of them. In the
+browser each has its own **Take the collection's** tick box. An override
+the collection no longer carries is removed if you left it as the
+collection wrote it.
+
+If an obsolete mod you chose to remove can't be uninstalled (an uninstall
+hook refuses, say), the update still lands, the mod stays in the profile
+and installed as your own, and the result says so.
+
+Mods you added yourself are left alone and keep their place in the load
+order. The new version passes the same checks as an import: a feature this
+lmm lacks refuses the update with nothing changed, hooks are listed and
+never applied (the profile keeps its own), and overrides that aren't text
+config files are held back unless you pass `--allow-any-overrides` (in the
+browser, **Import these overrides too**). For a NexusMods collection,
+`--with-optional` and `--optional <id>` include optional mods, and an
+optional mod you already have stays in; in the browser, unticking one in
+the plan leaves it out of the new version, where it is listed with the
+mods the collection no longer has. Like an import, a NexusMods update
+installs all or nothing, and an installer that needs answers asks (see
+[FOMOD](fomod.md)). Once no profile uses the old revision (of any game
+that shares its cache folder), lmm drops its recipe from the cache.
+
 ## An override of a mod's own file
 
 An override can change a file that a mod ships, such as a mod's `.ini`.
@@ -472,10 +552,41 @@ before writing the override, and says so. Removing the mod, or
 `lmm purge`, puts your file back.
 
 To go back to the mod's own file, take the override out of the profile and
-deploy again. Switching to a profile without the override does the same.
-Until you do, `lmm verify` reports the leftover copy as `override_stale`,
+deploy or apply it again. Switching to a profile without the override does
+the same. Until you do, `lmm verify` reports the leftover copy as `override_stale`,
 and `lmm verify --fix` (or **Repair** on the Health card) puts the mod's
 own file back.
+
+## Overrides when you switch or apply a profile
+
+A profile's overrides are part of what it describes, so `lmm profile
+switch` and `lmm profile apply` (in the browser, **Switch and deploy…** and
+**Apply profile…**) put them in place as `lmm deploy` does:
+
+- The profile's overrides are written. An override over a file the game
+  shipped, such as an INI, keeps the game's own file aside first.
+- An override the profile doesn't have any more is taken away: the game's
+  own file comes back, or a file the override created is removed. A mod's
+  own file goes back to the mod's.
+- If you changed a file after lmm wrote the override, lmm leaves your file
+  as it is and says so. The game's original stays kept.
+- If another override is written over a file you changed, lmm keeps your
+  file first and names where it is: under
+  `snapshots/<game>/_originals/set-aside/` in lmm's data folder
+  (`~/.local/share/lmm`). Copy it back from there if you want it.
+
+`lmm deploy` takes an override you removed from the profile away the same
+way, and its plan lists the game files its overrides change.
+
+The plan lists each file under "Will change N file(s) for the profile's
+overrides" in the terminal, and under **Profile overrides** in the
+browser, before you confirm. In `--dry-run --json`, the plan's `overrides`
+list has one entry per file, with its `path`, its `root` (`install_path`
+for a game file) and its `action`: `place`, `update`, `replace_changed`
+(your changed file is kept first), `restore`, or `keep` (your changed file
+is left as it is, which is no change). A
+switch or apply that only changes overrides still has changes, so it asks
+you to confirm (`--yes` skips the question).
 
 ## "Your profile and the game don't match"
 

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -45,6 +47,26 @@ type overrideEnv struct {
 	// there (#630), so every removal and deploy judges it lmm's own. Nil
 	// records nothing.
 	recordCopy func(realDest string)
+	// nonModOnly leaves every path a mod deploys alone - recorded in
+	// deployed_files, whether or not a file is there now - for a switch or
+	// an apply (#631), where #630's convergence settles those.
+	nonModOnly bool
+	// known is every profile's override checksums by path
+	// (Service.overrideChecksums), asked at most once: the proof a write
+	// made before #631 kept records is lmm's. Nil knows none.
+	known func() map[string]map[string]bool
+}
+
+// judge is judgeGameFile for rel, at path, against the store's records now.
+func (env overrideEnv) judge(rel, path string) gameFile {
+	rows, writes, _ := env.originals.overrideRecords()
+	var known map[string]map[string]bool
+	if env.known != nil {
+		if _, hasRec := writes[rel]; !hasRec {
+			known = env.known()
+		}
+	}
+	return judgeGameFile(rel, path, rows, writes, known)
 }
 
 // modPathFile is how lmm stands toward the file at a mod path an override
@@ -170,6 +192,9 @@ func applyOneOverride(base, realBase, relPath string, profile *domain.Profile, e
 		return "", fmt.Errorf("override path escapes game directory through a symlink: %q", relPath)
 	}
 	realDest := filepath.Join(realDir, filepath.Base(dest))
+	// #631 review: the folders this write makes, so taking the override
+	// away removes the ones left empty - and only those.
+	madeDirs := missingDirs(realBase, dirRel)
 	dir, err := openDirBeneath(realBase, dirRel, true)
 	if err != nil {
 		return "", fmt.Errorf("creating its directory: %w", err)
@@ -184,8 +209,29 @@ func applyOneOverride(base, realBase, relPath string, profile *domain.Profile, e
 	}
 	var mf modPathFile
 	isMod := false
-	if exists && env.modPathFile != nil {
+	if (exists || env.nonModOnly) && env.modPathFile != nil {
 		mf, isMod = env.modPathFile(realDest)
+	}
+	if isMod && env.nonModOnly {
+		return "", nil
+	}
+	slashRel := filepath.ToSlash(rel)
+	// #631: what a non-mod override writes is recorded before it is
+	// written, so every later flow knows the file is still lmm's - and a
+	// record that cannot be written refuses the write.
+	recordWrite := func(prev string, created bool, dirs []string) error {
+		if isMod {
+			return nil
+		}
+		if err := env.originals.recordOverrideWrite(slashRel, content, prev, created, dirs); err != nil {
+			return fmt.Errorf("lmm could not record what it writes there (%v), so it left the file", err)
+		}
+		return nil
+	}
+	settle := func() {
+		if !isMod {
+			env.originals.settleOverrideWrite(slashRel)
+		}
 	}
 	write := func(perm os.FileMode) error {
 		if err := replaceAt(dir, name, content, perm); err != nil {
@@ -195,7 +241,29 @@ func applyOneOverride(base, realBase, relPath string, profile *domain.Profile, e
 	}
 	switch {
 	case !exists:
-		return "", write(0o644)
+		created := !env.originals.heldOriginal(slashRel)
+		var dirs []string
+		if created {
+			dirs = madeDirs
+			if g := env.judge(slashRel, realDest); g.hasRec && g.rec.Created {
+				// Made by an earlier write the user since deleted: its
+				// folders are still the override's.
+				dirs = slices.Clone(g.rec.CreatedDirs)
+				for _, d := range madeDirs {
+					if !slices.Contains(dirs, d) {
+						dirs = append(dirs, d)
+					}
+				}
+			}
+		}
+		if err := recordWrite("", created, dirs); err != nil {
+			return "", err
+		}
+		if err := write(0o644); err != nil {
+			return "", err
+		}
+		settle()
+		return "", nil
 	case !isRegularOrLink(st):
 		// Refused before anything opens it: a FIFO would block the deploy.
 		return "", errNotRegularTarget
@@ -223,7 +291,14 @@ func applyOneOverride(base, realBase, relPath string, profile *domain.Profile, e
 		// A link that stays inside the game directory (or points into
 		// lmm's cache) is replaced by a regular file; nothing it points at
 		// is written.
-		return "", write(0o644)
+		if err := recordWrite("", false, nil); err != nil {
+			return "", err
+		}
+		if err := write(0o644); err != nil {
+			return "", err
+		}
+		settle()
+		return "", nil
 	case st.Nlink > 1 && !isMod:
 		return "", errOverrideSharedFile
 	}
@@ -248,8 +323,71 @@ func applyOneOverride(base, realBase, relPath string, profile *domain.Profile, e
 		return fmt.Sprintf("%s was yours (%s), so lmm set it aside before writing the override - removing the mod, or `lmm purge`, puts it back",
 			mf.rel, mf.reason), nil
 	}
-	captureOverriddenOriginal(env.originals, profile.Name, rel, realDest)
-	return "", write(perm)
+	if isMod {
+		captureOverriddenOriginal(env.originals, profile.Name, rel, realDest)
+		return "", write(perm)
+	}
+	// #631: the file lmm itself last wrote here - another profile's
+	// override, or this one's before it changed - is no original: the
+	// game's own is kept already, or there was none to keep. One that
+	// changed since lmm wrote it is the user's edit (or the game's own
+	// rewrite), which is never lost (review blocker): with the game's
+	// original kept already it is set aside first, and otherwise it is
+	// kept as the original.
+	g := env.judge(slashRel, realDest)
+	switch {
+	case g.own:
+	case g.changed() && g.hasRow:
+		stored, err := env.originals.setAside(OriginalRootInstallPath, slashRel, realDest, profile.Name)
+		if err != nil {
+			return "", fmt.Errorf("it changed after lmm wrote an override there, and lmm could not keep your file first (%v), so it left it", err)
+		}
+		note = fmt.Sprintf("it changed after lmm wrote an override there, so lmm kept your file as %s before writing the override", stored)
+	default:
+		captureOverriddenOriginal(env.originals, profile.Name, rel, realDest)
+		if g.changed() {
+			note = "it changed after lmm wrote an override there, so lmm kept your file as its original, which comes back when no profile overrides it"
+		}
+	}
+	prev := ""
+	if g.own {
+		prev = g.sum
+	}
+	created := g.own && g.rec.Created && !env.originals.heldOriginal(slashRel)
+	var dirs []string
+	if created {
+		dirs = g.rec.CreatedDirs
+	}
+	if err := recordWrite(prev, created, dirs); err != nil {
+		return "", err
+	}
+	if err := write(perm); err != nil {
+		return "", err
+	}
+	settle()
+	return note, nil
+}
+
+// missingDirs is the folders of dirRel, a folder path relative to
+// realBase, that do not exist yet, outermost first, in slash form relative
+// to realBase: the ones a write there makes.
+func missingDirs(realBase, dirRel string) []string {
+	var out []string
+	cur := ""
+	for _, comp := range strings.Split(filepath.ToSlash(dirRel), "/") {
+		if comp == "" || comp == "." {
+			continue
+		}
+		cur = path.Join(cur, comp)
+		if len(out) > 0 {
+			out = append(out, cur)
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(realBase, filepath.FromSlash(cur))); errors.Is(err, fs.ErrNotExist) {
+			out = append(out, cur)
+		}
+	}
+	return out
 }
 
 // preserveUsersModFile sets the user's own file at rel, a mod path, aside
@@ -303,7 +441,20 @@ func linkStaysInside(path, realBase string, cacheRoots []string) bool {
 // acting profile's record of which an overridden copy's fingerprint is
 // kept (#630).
 func (s *Service) applyOverrides(ctx context.Context, game *domain.Game, profileName string, profile *domain.Profile) ([]string, error) {
+	return applyProfileOverrides(game, profile, s.overrideEnvFor(ctx, game, profileName))
+}
+
+// overrideEnvFor is the overrideEnv applyOverrides writes profileName's
+// overrides of game with.
+func (s *Service) overrideEnvFor(ctx context.Context, game *domain.Game, profileName string) overrideEnv {
 	env := overrideEnv{originals: s.originalsStoreFor(game.ID), cacheRoots: s.cacheRoots(game)}
+	var known map[string]map[string]bool
+	env.known = func() map[string]map[string]bool {
+		if known == nil {
+			known = s.overrideChecksums(game)
+		}
+		return known
+	}
 	if s.db != nil && game.ModPath != "" {
 		if absMod, err := filepath.Abs(game.ModPath); err == nil {
 			if realMod, err := resolveExisting(absMod); err == nil {
@@ -317,7 +468,7 @@ func (s *Service) applyOverrides(ctx context.Context, game *domain.Game, profile
 			}
 		}
 	}
-	return applyProfileOverrides(game, profile, env)
+	return env
 }
 
 // deployedPathAt resolves a real path in game to the deployed path a mod
@@ -422,6 +573,8 @@ func (s *Service) recordOverriddenCopy(ctx context.Context, game *domain.Game, p
 		}); err != nil {
 			s.log.Warn("could not record an overridden mod file", "path", dst, "err", err)
 		}
+		s.originalsStoreFor(game.ID).noteOverrideCopy(rel)
+		shareOverrideCopyRecord(ctx, s.db, s.logger(), game, profileName, rel, fp)
 		return
 	}
 }

@@ -442,7 +442,9 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 	if !restoredFomod.IsZero() {
 		restoredRec = fomodRecord{op: fomodSet, rec: restoredFomod}
 	}
-	if err := pm.upsertMod(ctx, game.ID, profileName, restoredRef, restoredRec); err != nil {
+	// #613: a rollback is the user choosing this version, so the entry is
+	// theirs from now on (from_collection cleared in the same write).
+	if err := pm.upsertModByUser(ctx, game.ID, profileName, restoredRef, restoredRec); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
 		if _, rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName, restoredFomod); rerr != nil {

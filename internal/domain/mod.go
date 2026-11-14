@@ -243,6 +243,20 @@ type ModReference struct {
 	// so every document written before the field existed is byte-identical.
 	ModType string `yaml:"mod_type,omitempty" json:"mod_type,omitempty"`
 
+	// FromCollection marks an entry the profile's collection brought in
+	// (#613, design §1 "Per-file pinning and locks"): a collection update
+	// moves such an entry to the new revision's pin, locked or not, through
+	// a sync-only bypass of the lock (the lock is the collection's). A user
+	// who locks, unlocks or otherwise edits the entry by hand clears it,
+	// and the entry is theirs from then on: an update that changes it is a
+	// conflict the user's version wins by default. It is this machine's
+	// record, like the import address: the profile file carries it
+	// (`from_collection: true`, config.ModReferenceConfig), an export or a
+	// collection document never does (yaml "-"), and a collection import
+	// sets it itself. omitzero in JSON, so every document for an entry
+	// without it is byte-identical.
+	FromCollection bool `yaml:"-" json:"from_collection,omitzero"`
+
 	// External and UpdatedAt are DISPLAY facts a plan document carries so a
 	// renderer never has to print Version raw (#365, part of #269).
 	//

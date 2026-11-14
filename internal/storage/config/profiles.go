@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -49,6 +50,57 @@ type ProfileConfig struct {
 	// LoadOrders is #620's file load orders; omitempty, so a file without
 	// one is unchanged.
 	LoadOrders domain.FileLoadOrders `yaml:"load_orders,omitempty"`
+	// CollectionBaseline is #613's record of what the profile's collection
+	// last applied (domain.Profile.CollectionBaseline); omitempty, so a file
+	// without one is unchanged.
+	CollectionBaseline *CollectionBaselineConfig `yaml:"collection_baseline,omitempty"`
+}
+
+// CollectionBaselineConfig is the profile file's `collection_baseline:`
+// block.
+type CollectionBaselineConfig struct {
+	Plugins    *ProfilePluginsConfig `yaml:"plugins,omitempty"`
+	Overrides  map[string]string     `yaml:"overrides,omitempty"`
+	LoadOrders domain.FileLoadOrders `yaml:"load_orders,omitempty"`
+}
+
+// baselineFromConfig is the domain baseline c records; nil records none.
+// A present but empty block (`collection_baseline: {}`) is an empty
+// baseline, not none: the collection applied nothing beyond its entries.
+func baselineFromConfig(c *CollectionBaselineConfig) *domain.CollectionBaseline {
+	if c == nil {
+		return nil
+	}
+	b := &domain.CollectionBaseline{Plugins: pluginsFromConfig(c.Plugins), LoadOrders: c.LoadOrders.Clone()}
+	if len(c.Overrides) > 0 {
+		b.Overrides = maps.Clone(c.Overrides)
+	}
+	return b
+}
+
+// baselineConfigOf is b as the profile file writes it: nil for none, and
+// an empty block for an empty baseline.
+func baselineConfigOf(b *domain.CollectionBaseline) *CollectionBaselineConfig {
+	if b == nil {
+		return nil
+	}
+	out := &CollectionBaselineConfig{Plugins: pluginsConfigOf(b.Plugins)}
+	if !b.LoadOrders.IsZero() {
+		out.LoadOrders = b.LoadOrders.Clone()
+	}
+	if len(b.Overrides) > 0 {
+		out.Overrides = maps.Clone(b.Overrides)
+	}
+	return out
+}
+
+// sameBaseline reports whether a and b record the same baseline. None
+// (nil) and an empty one differ: the file says which.
+func sameBaseline(a, b *domain.CollectionBaseline) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Plugins.Equal(b.Plugins) && maps.Equal(a.Overrides, b.Overrides) && a.LoadOrders.Equal(b.LoadOrders)
 }
 
 // ModReferenceConfig is the YAML representation of a mod reference.
@@ -81,6 +133,10 @@ type ModReferenceConfig struct {
 	// FomodOrder is #634's layer-order hint for FomodFiles; omitted when
 	// empty.
 	FomodOrder []string `yaml:"fomod_order,omitempty"`
+	// FromCollection is #613's marker for an entry the profile's
+	// collection brought in (domain.ModReference.FromCollection); omitted
+	// when false, so a file without it is unchanged.
+	FromCollection bool `yaml:"from_collection,omitempty"`
 	// FileList and Patches are #610's exact file lists and binary patches,
 	// keyed by file id; omitted when empty, so a file without them is
 	// unchanged.
@@ -275,8 +331,9 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 			ModType:  m.ModType,
 			Fomod:    m.Fomod,
 			// #634: copied, so the profile's map is its own.
-			FomodFiles: m.FomodFiles.Clone(),
-			FomodOrder: slices.Clone(m.FomodOrder),
+			FomodFiles:     m.FomodFiles.Clone(),
+			FomodOrder:     slices.Clone(m.FomodOrder),
+			FromCollection: m.FromCollection,
 			// #610: copied, so the profile's maps are its own.
 			FileList: m.FileList.Clone(),
 			Patches:  m.Patches.Clone(),
@@ -292,6 +349,7 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 	}
 	profile.Plugins = pluginsFromConfig(cfg.Plugins)
 	profile.LoadOrders = cfg.LoadOrders.Clone()
+	profile.CollectionBaseline = baselineFromConfig(cfg.CollectionBaseline)
 
 	if len(cfg.Overrides) > 0 {
 		profile.Overrides = make(map[string][]byte)
@@ -363,7 +421,7 @@ type exportedProfileYAML struct {
 	Mods       []domain.ModReference `yaml:"mods"`
 	LinkMethod string                `yaml:"link_method,omitempty"`
 	Hooks      ProfileHooksYAML      `yaml:"hooks,omitempty"`
-	Overrides  map[string]string     `yaml:"overrides,omitempty"`
+	Overrides  overridesYAML         `yaml:"overrides,omitempty"`
 }
 
 // ExportProfileValue builds profile's portable domain.ExportedProfile
