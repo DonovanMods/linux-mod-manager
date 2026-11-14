@@ -423,9 +423,15 @@ var (
 	// reads, and the ones it knows to be descriptive.
 	refKeys = keySet("fileExpression", "fileMD5", "versionMatch", "logicalFileName", "idHint", "tag",
 		"md5Hint", "fileSize", "gameId", "id", "repo", "description")
-	pluginKeys        = keySet("name", "enabled")
-	pluginRulesKeys   = keySet("plugins", "groups")
-	pluginRuleKeys    = keySet("name", "group", "after")
+	pluginKeys      = keySet("name", "enabled")
+	pluginRulesKeys = keySet("plugins", "groups")
+	// A plugin rule's keys come in LOOT's spelling (req, inc) and in
+	// Vortex's rule-type spelling (requires, incompatible), #611.
+	pluginRuleKeys = keySet("name", "group", "after", "req", "inc", "requires", "incompatible")
+	// A rule's reference to a plugin is a name, or LOOT's object with the
+	// name and a display text; a condition is not evaluated, so it is
+	// reported.
+	pluginRefKeys     = keySet("name", "display")
 	pluginGroupKeys   = keySet("name", "after")
 	fileLoadOrderKeys = keySet("id", "entries")
 	hashKeys          = keySet("path", "md5", "xxh64")
@@ -671,6 +677,9 @@ func (p *manifestParser) parse(data []byte) (source.CollectionManifest, error) {
 		return m, err
 	}
 	p.note(config, configKeys, "collectionConfig.", "")
+	if m.ExcludePluginRules, err = boolean(config, "excludePluginRules", false); err != nil {
+		return m, fmt.Errorf("collectionConfig.%v", err)
+	}
 
 	mods, err := array(top["mods"], "mods")
 	if err != nil {
@@ -991,8 +1000,25 @@ func (p *manifestParser) pluginRules(raw json.RawMessage) (source.ManifestPlugin
 		if r.Group, err = str(o, "group"); err != nil {
 			return out, err
 		}
-		if r.After, err = stringList(o, "after"); err != nil {
-			return out, err
+		for _, ref := range []struct {
+			dst  *[]string
+			keys []string
+		}{
+			{&r.After, []string{"after"}},
+			{&r.Req, []string{"req", "requires"}},
+			{&r.Inc, []string{"inc", "incompatible"}},
+		} {
+			for _, key := range ref.keys {
+				names, err := p.pluginRefs(o, key)
+				if err != nil {
+					return out, fmt.Errorf("pluginRules.plugins[%d].%v", i, err)
+				}
+				for _, n := range names {
+					if !slices.Contains(*ref.dst, n) {
+						*ref.dst = append(*ref.dst, n)
+					}
+				}
+			}
 		}
 		out.Plugins = append(out.Plugins, r)
 	}
@@ -1014,6 +1040,35 @@ func (p *manifestParser) pluginRules(raw json.RawMessage) (source.ManifestPlugin
 			return out, err
 		}
 		out.Groups = append(out.Groups, g)
+	}
+	return out, nil
+}
+
+// pluginRefs reads a plugin rule's list of plugin references: each a
+// name, or LOOT's {name, display, condition} object. A key of the object
+// lmm does not read (a condition, above all: a rule lmm cannot evaluate)
+// is reported as the collection's.
+func (p *manifestParser) pluginRefs(obj map[string]json.RawMessage, key string) ([]string, error) {
+	list, err := array(obj[key], key)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, raw := range list {
+		var name string
+		if json.Unmarshal(raw, &name) == nil {
+			out = append(out, name)
+			continue
+		}
+		o, err := object(raw, key)
+		if err != nil || o == nil {
+			return nil, fmt.Errorf("%s is not a list of plugin names", key)
+		}
+		p.note(o, pluginRefKeys, "pluginRules.plugins."+key+".", "")
+		if name, err = str(o, "name"); err != nil {
+			return nil, fmt.Errorf("%s.%v", key, err)
+		}
+		out = append(out, name)
 	}
 	return out, nil
 }

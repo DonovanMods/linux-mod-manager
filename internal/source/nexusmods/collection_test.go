@@ -449,3 +449,43 @@ func TestResolveGameCollection_RefusesAnotherGamesCollection(t *testing.T) {
 	require.ErrorIs(t, err, source.ErrInvalidReference, "the API's own answer names another game: never imported into this one")
 	assert.Contains(t, err.Error(), "fallout4")
 }
+
+// #611: a plugin rule's keys come in two spellings - LOOT's userlist
+// (`req`, `inc`) and Vortex's own rule types (`requires`, `incompatible`) -
+// and both land in the same fields. A reference may be a bare name or
+// LOOT's {name, display, condition} object; a condition is a key lmm
+// cannot evaluate, so it is reported, never read as unconditional.
+func TestParseManifest_PluginRuleSpellings(t *testing.T) {
+	want := source.ManifestPluginRule{Name: "B.esp", Group: "Late", After: []string{"A.esp"}, Req: []string{"Req.esm"}, Inc: []string{"Bad.esp"}}
+	for name, rule := range map[string]string{
+		"loot":   `{"name": "B.esp", "group": "Late", "after": ["A.esp"], "req": ["Req.esm"], "inc": ["Bad.esp"]}`,
+		"vortex": `{"name": "B.esp", "group": "Late", "after": ["A.esp"], "requires": ["Req.esm"], "incompatible": ["Bad.esp"]}`,
+		"objects": `{"name": "B.esp", "group": "Late", "after": [{"name": "A.esp", "display": "A"}],
+			"req": [{"name": "Req.esm"}], "incompatible": [{"name": "Bad.esp", "display": ""}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			doc := `{"info": {"name": "C"}, "collectionConfig": {"excludePluginRules": false},
+				"pluginRules": {"plugins": [` + rule + `], "groups": [{"name": "Late", "after": ["default"]}]}}`
+			m, err := New(nil, "").ParseManifest(fstest.MapFS{"collection.json": {Data: []byte(doc)}})
+			require.NoError(t, err)
+			assert.Empty(t, m.Unknown)
+			assert.False(t, m.ExcludePluginRules)
+			assert.Equal(t, []source.ManifestPluginRule{want}, m.PluginRules.Plugins)
+			assert.Equal(t, []source.ManifestPluginGroup{{Name: "Late", After: []string{"default"}}}, m.PluginRules.Groups)
+		})
+	}
+
+	doc := `{"info": {"name": "C"}, "collectionConfig": {"excludePluginRules": true},
+		"pluginRules": {"plugins": [{"name": "B.esp", "req": ["X.esp"], "requires": ["Y.esp", "X.esp"],
+			"after": [{"name": "A.esp", "condition": "file(\"Z.esp\")", "odd": 1}]}]}}`
+	m, err := New(nil, "").ParseManifest(fstest.MapFS{"collection.json": {Data: []byte(doc)}})
+	require.NoError(t, err)
+	assert.True(t, m.ExcludePluginRules)
+	assert.Equal(t, []string{"X.esp", "Y.esp"}, m.PluginRules.Plugins[0].Req, "both spellings at once are one list")
+	assert.Equal(t, []string{"A.esp"}, m.PluginRules.Plugins[0].After)
+	assert.ElementsMatch(t, []string{"pluginRules.plugins.after.condition", "pluginRules.plugins.after.odd"}, unknownKeyNames(m))
+
+	_, err = New(nil, "").ParseManifest(fstest.MapFS{"collection.json": {Data: []byte(
+		`{"info": {"name": "C"}, "pluginRules": {"plugins": [{"name": "B.esp", "after": [3]}]}}`)}})
+	assert.ErrorIs(t, err, source.ErrInvalidManifest, "a reference that is neither a name nor an object")
+}

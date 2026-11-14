@@ -8,13 +8,16 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bethesda"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -108,4 +111,94 @@ func TestCollectionImport_RefusesPluginNamesItCannotKeepAsWritten(t *testing.T) 
 	_, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
 		Data: []byte(collectionPluginsDoc("{order: [{name: \"Café – Ultra.esp\", enabled: false}], rules: {groups: [{name: Late, after: [default]}]}}")), GameID: "cyber"})
 	require.NoError(t, err, "unusual but plain names import")
+}
+
+// TestCollectionImport_PlanSummarisesThePluginList (#611): the plan says
+// what plugin list the import saves, and whether lmm will write it - for a
+// game whose plugin list it manages, at every deploy; for any other, the
+// list is only recorded on the profile.
+func TestCollectionImport_PlanSummarisesThePluginList(t *testing.T) {
+	svc, _ := recipient(t)
+	svc.RegisterAdapter(bethesda.New())
+	plan, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
+		Data: []byte(collectionPluginsDoc("{order: [{name: A.esp}, {name: B.esp, enabled: false}, {name: C.esm}], " +
+			"rules: {groups: [{name: Late, after: [default]}, {name: Early}], plugins: [{name: A.esp, group: Late}]}}")), GameID: "cyber"})
+	require.NoError(t, err)
+	require.NotNil(t, plan.Collection.Plugins)
+	assert.Equal(t, core.CollectionPluginSummary{Plugins: 3, Active: 2, Inactive: []string{"B.esp"}, Rules: 1, Groups: []string{"Late", "Early"}, Managed: false},
+		*plan.Collection.Plugins, "Cyberpunk has no plugin list for lmm to write")
+
+	sky := &domain.Game{ID: "sky", Name: "Skyrim SE", ModPath: t.TempDir(), Adapter: "bethesda", Catalog: "skyrim-se",
+		SourceIDs: map[string]string{"steamworkshop": "1091500"}}
+	require.NoError(t, svc.SaveGame(context.Background(), sky))
+	plan, err = svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
+		Data: []byte(collectionPluginsDoc("{order: [{name: A.esp}]}")), GameID: "sky"})
+	require.NoError(t, err)
+	require.NotNil(t, plan.Collection.Plugins)
+	assert.True(t, plan.Collection.Plugins.Managed, "the bethesda adapter manages Skyrim SE's Plugins.txt")
+
+	plan, err = svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
+		Data: []byte(strings.Replace(collectionPluginsDoc("{}"), "plugins: {}\n", "", 1)), GameID: "cyber"})
+	require.NoError(t, err)
+	assert.Nil(t, plan.Collection.Plugins, "no plugin list, no summary")
+}
+
+// TestCollectionImport_PlanWarnsOfAPluginRuleCycle (#611 review): rules
+// that form a cycle import cleanly and then fail every deploy
+// (PluginOrderCycleError), so the plan says so up front - a warning naming
+// the cycle, not a refusal. Group edges never form one: P3's sort skips a
+// group edge that would close a cycle.
+func TestCollectionImport_PlanWarnsOfAPluginRuleCycle(t *testing.T) {
+	svc, _ := recipient(t)
+	plan, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
+		Data: []byte(collectionPluginsDoc("{order: [{name: A.esp}, {name: B.esp}, {name: C.esp}], " +
+			"rules: {plugins: [{name: A.esp, after: [b.ESP]}, {name: B.esp, req: [A.esp]}, {name: C.esp, after: [Elsewhere.esp]}]}}")), GameID: "cyber"})
+	require.NoError(t, err)
+	require.Empty(t, plan.Collection.Unsupported, "a warning, not a refusal")
+	var warning string
+	for _, w := range plan.Collection.Warnings {
+		if strings.Contains(w, "cycle") {
+			warning = w
+		}
+	}
+	require.NotEmpty(t, warning, "%v", plan.Collection.Warnings)
+	assert.Contains(t, warning, "a rule loads A.esp after B.esp")
+	assert.Contains(t, warning, "a rule says B.esp requires A.esp")
+	assert.Contains(t, warning, "every deploy")
+
+	plan, err = svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
+		Data: []byte(collectionPluginsDoc("{order: [{name: A.esp}, {name: B.esp}], " +
+			"rules: {groups: [{name: Early, after: [Late]}, {name: Late, after: [Early]}], " +
+			"plugins: [{name: A.esp, group: Early}, {name: B.esp, group: Late, after: [A.esp]}]}}")), GameID: "cyber"})
+	require.NoError(t, err)
+	for _, w := range plan.Collection.Warnings {
+		assert.NotContains(t, w, "cycle", "group edges give way rather than cycle")
+	}
+}
+
+// TestCollectionImport_PluginRuleCycleWarningIsBounded (#611 re-review): a
+// stranger's recipe can make the cycle as long as its plugin list, so the
+// warning names the first edges and counts the rest, rather than carrying
+// every edge through the plan JSON, SSE, the web plan and the terminal.
+func TestCollectionImport_PluginRuleCycleWarningIsBounded(t *testing.T) {
+	svc, _ := recipient(t)
+	const n = 500
+	var order, rules strings.Builder
+	for i := range n {
+		fmt.Fprintf(&order, "{name: P%03d.esp}, ", i)
+		fmt.Fprintf(&rules, "{name: P%03d.esp, after: [P%03d.esp]}, ", i, (i+1)%n)
+	}
+	plan, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
+		Data: []byte(collectionPluginsDoc("{order: [" + order.String() + "], rules: {plugins: [" + rules.String() + "]}}")), GameID: "cyber"})
+	require.NoError(t, err)
+	var warning string
+	for _, w := range plan.Collection.Warnings {
+		if strings.Contains(w, "form a cycle") {
+			warning = w
+		}
+	}
+	require.NotEmpty(t, warning)
+	assert.Less(t, len(warning), 2048, "bounded, whatever the cycle's length")
+	assert.Equal(t, 8, strings.Count(warning, "a rule loads "), "the first 8 edges are named")
+	assert.Contains(t, warning, fmt.Sprintf("... and %d more", n-8))
 }
