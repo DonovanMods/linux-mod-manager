@@ -1,0 +1,10 @@
+{
+  "op": "rule_add",
+  "rule": {
+    "name": "Patch.esp",
+    "group": "Late Loaders",
+    "after": [
+      "SkyUI_SE.esp"
+    ]
+  }
+}
