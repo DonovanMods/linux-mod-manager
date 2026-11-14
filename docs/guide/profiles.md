@@ -290,6 +290,17 @@ The plan lists every item and what the import does with it:
   replayed, as they are for any [FOMOD](fomod.md) mod.
 - A mod the curator marked for the **game folder** (a script extender, for
   example) is deployed there, on a game whose adapter knows where that is.
+- The curator's **plugin load order** (a Bethesda game's `.esm`, `.esp`
+  and `.esl` files: which load, in what order, and which are left off)
+  becomes the profile's plugin list, with the curator's plugin rules and
+  groups. The plan shows how many plugins it holds, which are inactive and
+  the rule groups, and lists the whole order behind **Show the load order**
+  in the browser (the terminal's `--json` plan has it under
+  `profile.plugins`). lmm writes it to the game's `Plugins.txt` at every
+  deploy, for a game whose plugin list it manages (`adapter: bethesda`); on
+  any other game such a collection is refused. A curator who marked their
+  rules not to be applied gets the order without them, and the plan says
+  so.
 - Items NexusMods doesn't host are listed with where to get them and the
   curator's instructions. The curator's tool shortcuts are listed too; lmm
   never creates or runs them.
@@ -298,8 +309,9 @@ A NexusMods collection installs **all or nothing** while its files are
 fetched: if one mod can't be downloaded, nothing is imported, not even the
 profile. If something goes wrong after that, while the downloaded mods are
 being installed, the import says which mods failed, as any import does. And a collection
-that uses something this version of lmm can't do yet (a plugin load order,
-an exact file list, files bundled in the collection, patches) shows its
+that uses something this version of lmm can't do yet (an exact file list,
+files bundled in the collection, patches, a plugin rule marking two plugins
+incompatible) shows its
 plan, with what is missing and which mods need it, and is refused, with
 nothing written. Optional mods that need such a thing are skipped instead.
 

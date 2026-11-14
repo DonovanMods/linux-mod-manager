@@ -47,6 +47,7 @@ func printCollectionPlan(c *core.CollectionImport, game *domain.Game) {
 		fmt.Printf("  requires: %s\n", strings.Join(c.Requires, ", "))
 	}
 	printCollectionInstallerChoices(c)
+	printCollectionPlugins(c.Plugins, game)
 	if c.Source != nil {
 		printSourceCollection(c.Source)
 	}
@@ -292,5 +293,31 @@ func printSourceCollection(c *core.ConvertedCollection) {
 	}
 	for _, note := range c.Notes {
 		fmt.Printf("  · %s\n", note)
+	}
+}
+
+// printCollectionPlugins summarises the plugin list a collection import
+// saves on the profile (#611): its size, the plugins it leaves inactive,
+// its rules, and whether lmm applies it. The full list is the --json
+// plan's profile.plugins.
+func printCollectionPlugins(p *core.CollectionPluginSummary, game *domain.Game) {
+	if p == nil {
+		return
+	}
+	line := fmt.Sprintf("Plugin order: %d plugin(s), %d active", p.Plugins, p.Active)
+	if p.Rules > 0 || len(p.Groups) > 0 {
+		line += fmt.Sprintf("; %d plugin rule(s)", p.Rules)
+		if len(p.Groups) > 0 {
+			line += ", groups: " + strings.Join(p.Groups, ", ")
+		}
+	}
+	fmt.Printf("\n%s\n", line)
+	if len(p.Inactive) > 0 {
+		fmt.Printf("  Inactive: %s\n", strings.Join(p.Inactive, ", "))
+	}
+	if p.Managed {
+		fmt.Printf("  Saved on the profile and written to %s's plugin list at every deploy.\n", game.Name)
+	} else {
+		fmt.Printf("  Recorded on the profile only: lmm does not manage %s's plugin list.\n", game.Name)
 	}
 }

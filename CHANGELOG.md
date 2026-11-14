@@ -32,12 +32,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mod another profile already has) and saves the profile with the rest
   pending; if a Premium account lapses between the plan and the import, the
   import says once to plan again. A collection that needs something lmm
-  cannot replay yet (a plugin load order, an exact file list, bundled files,
+  cannot replay yet (an exact file list, bundled files,
   patches, a file-based load order, a mod type the game's adapter does not
   route, two installers in one mod) shows its plan, naming what is missing
   and which mods need it, and is refused with nothing written. The recipe is
   a `.7z`, so the import needs the `7z` command and says so when it is
   missing.
+- **A NexusMods collection's plugin load order imports (#611).** The
+  curator's plugin list becomes the profile's `plugins:` order (each
+  plugin's active state kept; a name listed twice keeps its first place)
+  and their LOOT-style plugin rules its `plugins.rules`: groups and the
+  order between them, and each plugin's group, `after` and required
+  plugins. Both spellings of the rule keys are read (`req`/`inc` and
+  `requires`/`incompatible`). A collection whose curator marked the rules
+  not to be applied (`excludePluginRules`) imports its order without them,
+  with a note. lmm writes the order to `Plugins.txt` at every deploy, so a
+  collection with a plugin order imports only into a game whose plugin
+  list lmm manages (`adapter: bethesda`); elsewhere it is refused for
+  `plugin_order`, and a rule marking two plugins incompatible, which the
+  profile's rules cannot hold, is refused as `plugin_rules_incompatible`.
+  Every collection import plan, in the terminal and the web UI, now
+  summarises the plugin list it saves - how many plugins, which are
+  inactive, the rules and groups, and whether lmm writes it - and the web
+  plan lists the whole order behind **Show the load order** (`--json`: the
+  plan's `collection.plugins`, new). Of the 71 collections surveyed for
+  #607, 25 now import (9 before).
 - **A mod can state where it deploys (`mod_type`, #607).** A profile entry
   may carry `mod_type:` (a NexusMods collection's mod type: `dinput` for a
   script extender); every deploy routes the whole mod by it through the

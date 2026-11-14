@@ -143,9 +143,64 @@ function matchLine(c) {
   return c.game_id;
 }
 
+/** PluginOrderSection renders core.CollectionPluginSummary (issue 611):
+ * the plugin list the import saves on the profile, and whether lmm writes
+ * it to the game. `plugins` is the plan's profile's plugins: block - the
+ * list itself, behind a disclosure. */
+function PluginOrderSection({ summary: p, plugins }) {
+  if (!p) return null;
+  const order = plugins?.order ?? [];
+  const groups = p.groups ?? [];
+  const inactive = p.inactive ?? [];
+  return html`
+    <section class="plan__section" data-testid="collection-plugins">
+      <h3 class="plan__heading">Plugin order (${p.plugins})</h3>
+      <p class="plan__note" data-testid="collection-plugins-summary">
+        ${p.plugins} plugin${p.plugins === 1 ? "" : "s"}, ${p.active}
+        ${" "}active${
+          p.rules > 0 || groups.length > 0
+            ? `; ${p.rules} plugin rule${p.rules === 1 ? "" : "s"}`
+            : ""
+        }${groups.length > 0 ? `, groups: ${groups.join(", ")}` : ""}.
+      </p>
+      ${
+        inactive.length > 0 &&
+        html`<p class="plan__note">Inactive: ${inactive.join(", ")}</p>`
+      }
+      <p
+        class=${`plan__note${p.managed ? "" : " plan__note--warn"}`}
+        data-testid="collection-plugins-applied"
+      >
+        ${
+          p.managed
+            ? "Saved on the profile and written to the game's plugin list at every deploy."
+            : "Recorded on the profile only: lmm does not manage this game's plugin list."
+        }
+      </p>
+      ${
+        order.length > 0 &&
+        html`<details class="plan__disclosure">
+          <summary class="plan__disclosure-summary">
+            Show the load order
+          </summary>
+          <ol class="plan__paths" data-testid="collection-plugins-order">
+            ${order.map(
+              (e, i) =>
+                html`<li key=${e.name} class="mono">
+                  ${i + 1}. ${e.name}${e.enabled ? "" : " (inactive)"}
+                </li>`,
+            )}
+          </ol>
+        </details>`
+      }
+    </section>
+  `;
+}
+
 /** LMMCollectionSection renders core.CollectionImport. Every string in it
- * was sanitised by core (issue 594), and the preact templates escape it. */
-function LMMCollectionSection({ collection: c }) {
+ * was sanitised by core (issue 594), and the preact templates escape it.
+ * `plugins` is the plan's profile's plugin list (issue 611). */
+function LMMCollectionSection({ collection: c, plugins }) {
   const unavailable = (c.items ?? []).filter((item) => item.unavailable);
   const withChoices = (c.items ?? []).filter(
     (item) => (item.installer_choices ?? []).length > 0,
@@ -234,6 +289,7 @@ function LMMCollectionSection({ collection: c }) {
         </ul>
       </section>`
     }
+    <${PluginOrderSection} summary=${c.plugins} plugins=${plugins} />
     ${
       unavailable.length > 0 &&
       html`<section class="plan__section">
@@ -632,7 +688,10 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
       }
       ${
         lmmCollection &&
-        html`<${LMMCollectionSection} collection=${lmmCollection} />`
+        html`<${LMMCollectionSection}
+          collection=${lmmCollection}
+          plugins=${plan.profile?.plugins}
+        />`
       }
       ${
         sourceCollection &&
