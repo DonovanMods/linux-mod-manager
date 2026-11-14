@@ -33,7 +33,11 @@ left where it is until then.
 A mod you imported from an archive has nothing to download it from. If
 the game deploys by copy or hard link, the file in the game folder is then
 the only copy left: verify keeps it, names it, and offers no **Repair**.
-Import the mod's archive again to rebuild its cache.
+Import the mod's archive again to rebuild its cache. If the file really
+is stale (you removed it from the mod on purpose), verify cannot tell that
+from a lost file: import the archive again, or delete the file from the
+game folder by hand - verify then lists only its leftover record, which
+**Repair** (or `lmm verify --fix`) drops.
 
 The **Verify** button is in the library toolbar. In the terminal:
 

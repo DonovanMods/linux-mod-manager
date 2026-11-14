@@ -307,3 +307,22 @@ func TestVerify_LoaderTier_RelayoutRecordsABareMarkersMembers(t *testing.T) {
 			"profile %s: the re-layout lost nothing: %+v", profile, again.Result.Findings)
 	}
 }
+
+// A regression guard for #645's narrowness: the last-copy rule is
+// convergence's, reachable only through verify. A deliberate removal - a
+// profile switch away from a local mod deployed by copy - still removes
+// its copy.
+func TestProfileSwitch_LastCopy_SwitchAwayStillRemovesTheCopy(t *testing.T) {
+	svc, game, _ := importLocal(t, domain.LinkCopy)
+	ctx := context.Background()
+	_, err := svc.NewProfileManager().Create(ctx, game.ID, "empty")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "empty")
+	require.NoError(t, err)
+	_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.NoError(t, err)
+
+	assert.False(t, deployedFile(t, game, "local-a.esp"), "the switch removes the copy")
+	assert.False(t, deployedFile(t, game, "local-b.esp"))
+}

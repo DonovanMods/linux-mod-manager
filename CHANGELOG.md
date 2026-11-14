@@ -875,7 +875,11 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   and verify reports it as `cache_incomplete` (`CACHE INCOMPLETE` in the
   terminal, naming the file in the game folder, a Health page row with no
   **Repair**), not fixable, because "the deployed copy is the only one
-  left"; importing the mod's archive again rebuilds the entry. A symlink
+  left"; importing the mod's archive again rebuilds the entry. A file
+  that really is stale (an entry shrunk on purpose) looks the same to
+  verify: import the archive again, or delete the file from the game
+  folder by hand, after which its leftover record is an ordinary stale
+  deployment that `--fix` (or **Repair**) drops. A symlink
   deploy is unchanged: a link to a deleted cache file is removed, which
   loses nothing. Also fixed: after verify `--fix` moved an older
   BepInEx mod's files under `BepInEx/` (#424), a cache entry with a single
