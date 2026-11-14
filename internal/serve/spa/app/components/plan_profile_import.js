@@ -186,7 +186,7 @@ function PluginOrderSection({ summary: p, plugins }) {
           <ol class="plan__paths" data-testid="collection-plugins-order">
             ${order.map(
               (e, i) =>
-                html`<li key=${e.name} class="mono">
+                html`<li key=${`${i}:${e.name.toLowerCase()}`} class="mono">
                   ${i + 1}. ${e.name}${e.enabled ? "" : " (inactive)"}
                 </li>`,
             )}

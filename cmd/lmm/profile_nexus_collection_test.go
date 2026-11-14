@@ -215,3 +215,25 @@ func TestDoNexusCollectionImport_PluginOrder(t *testing.T) {
 		},
 	}, saved.Plugins)
 }
+
+// TestDoNexusCollectionImport_WarnsOfAPluginRuleCycle (#611 review): the
+// plan warns of curator rules that form a cycle, and the import still
+// goes ahead.
+func TestDoNexusCollectionImport_WarnsOfAPluginRuleCycle(t *testing.T) {
+	recipe := `{"Name": "Three Mods", "Mods": [
+		{"Name": "Ten", "Version": "1.0", "SourceType": "nexus", "ModID": "10", "FileID": "100", "UpdatePolicy": "exact"}],
+		"Plugins": [{"Name": "Ten.esp", "Enabled": true}, {"Name": "Ten - Extra.esp", "Enabled": true}],
+		"PluginRules": {"Plugins": [{"Name": "Ten - Extra.esp", "After": ["Ten.esp"]}, {"Name": "Ten.esp", "After": ["Ten - Extra.esp"]}]}}`
+	svc, game, _ := nexusCollectionServiceWith(t, recipe)
+	app.RegisterAdapters(svc)
+	game.Adapter, game.Catalog = "bethesda", "skyrim-se"
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	setNexusFlags(t, "abcdef", false)
+	stdout, _, err := captureStdoutStderrErr(t, func() error {
+		return doNexusCollectionImport(context.Background(), svc, game)
+	})
+	require.NoError(t, err, stdout)
+	assert.Contains(t, stdout, "⚠ The collection's plugin rules form a cycle, so no load order satisfies them all: ")
+	assert.Contains(t, stdout, "a rule loads Ten - Extra.esp after Ten.esp")
+	assert.Contains(t, stdout, "✓ Imported profile: Three Mods", "a warning, not a refusal")
+}

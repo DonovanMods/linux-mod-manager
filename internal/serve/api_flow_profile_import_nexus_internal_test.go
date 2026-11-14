@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
@@ -212,4 +213,39 @@ func TestAPIFlow_ProfileImportNexus_PluginOrder(t *testing.T) {
 	profile, err := svc.NewProfileManager().Get(t.Context(), game.ID, "Three Mods")
 	require.NoError(t, err)
 	assert.Equal(t, want, profile.Plugins)
+}
+
+// TestAPIFlow_ProfileImportNexus_WarnsOfAPluginRuleCycle (#611 review):
+// the plan the web UI renders carries the cycle warning among the
+// collection's warnings (the plan view's warning notes), and the job
+// still imports.
+func TestAPIFlow_ProfileImportNexus_WarnsOfAPluginRuleCycle(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	app.RegisterAdapters(svc)
+	game.Adapter, game.Catalog = "bethesda", "skyrim-se"
+	seedNexusCollectionRecipe(t, svc, game, source.TierFree, `{"Name": "Three Mods", "Mods": [
+		{"Name": "Ten", "Version": "1.0", "SourceType": "nexus", "ModID": "10", "FileID": "100", "UpdatePolicy": "exact"}],
+		"Plugins": [{"Name": "Ten.esp", "Enabled": true}, {"Name": "Ten - Extra.esp", "Enabled": true}],
+		"PluginRules": {"Plugins": [{"Name": "Ten - Extra.esp", "After": ["Ten.esp"]}, {"Name": "Ten.esp", "Req": ["Ten - Extra.esp"]}]}}`)
+
+	planID, raw := planFlow(t, s, game, "profile_import", `{"nexus_collection":"abcdef"}`)
+	var resp struct {
+		Plan core.ImportPlan `json:"plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &resp))
+	require.NotNil(t, resp.Plan.Collection)
+	assert.Empty(t, resp.Plan.Collection.Unsupported)
+	var warning string
+	for _, w := range resp.Plan.Collection.Warnings {
+		if strings.Contains(w, "form a cycle") {
+			warning = w
+		}
+	}
+	require.NotEmpty(t, warning, "%v", resp.Plan.Collection.Warnings)
+	assert.Contains(t, warning, "a rule loads Ten - Extra.esp after Ten.esp")
+
+	j := startFlowJob(t, s, planID, `{}`)
+	require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
+	_, err := svc.NewProfileManager().Get(t.Context(), game.ID, "Three Mods")
+	require.NoError(t, err)
 }

@@ -78,8 +78,11 @@ func convertPlugins(m *source.CollectionManifest, out *ConvertedCollection) (dom
 			rule.Group = ""
 		}
 		if rule.Group == "" && len(rule.After) == 0 && len(rule.Req) == 0 {
-			// A rule that places the plugin nowhere and orders nothing (all
-			// it said was an incompatibility) holds nothing to keep.
+			// A rule that places the plugin in no group and orders nothing
+			// holds nothing to keep (the survey's kem16d has one: a bare
+			// name with an empty after). An incompatibility on it has
+			// already raised plugin_rules_incompatible above, which refuses
+			// the import, so dropping the rule here loses nothing.
 			continue
 		}
 		p.Rules.Plugins = append(p.Rules.Plugins, rule)

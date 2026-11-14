@@ -141,3 +141,36 @@ func TestCollectionImport_PlanSummarisesThePluginList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, plan.Collection.Plugins, "no plugin list, no summary")
 }
+
+// TestCollectionImport_PlanWarnsOfAPluginRuleCycle (#611 review): rules
+// that form a cycle import cleanly and then fail every deploy
+// (PluginOrderCycleError), so the plan says so up front - a warning naming
+// the cycle, not a refusal. Group edges never form one: P3's sort skips a
+// group edge that would close a cycle.
+func TestCollectionImport_PlanWarnsOfAPluginRuleCycle(t *testing.T) {
+	svc, _ := recipient(t)
+	plan, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
+		Data: []byte(collectionPluginsDoc("{order: [{name: A.esp}, {name: B.esp}, {name: C.esp}], " +
+			"rules: {plugins: [{name: A.esp, after: [b.ESP]}, {name: B.esp, req: [A.esp]}, {name: C.esp, after: [Elsewhere.esp]}]}}")), GameID: "cyber"})
+	require.NoError(t, err)
+	require.Empty(t, plan.Collection.Unsupported, "a warning, not a refusal")
+	var warning string
+	for _, w := range plan.Collection.Warnings {
+		if strings.Contains(w, "cycle") {
+			warning = w
+		}
+	}
+	require.NotEmpty(t, warning, "%v", plan.Collection.Warnings)
+	assert.Contains(t, warning, "a rule loads A.esp after B.esp")
+	assert.Contains(t, warning, "a rule says B.esp requires A.esp")
+	assert.Contains(t, warning, "every deploy")
+
+	plan, err = svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
+		Data: []byte(collectionPluginsDoc("{order: [{name: A.esp}, {name: B.esp}], " +
+			"rules: {groups: [{name: Early, after: [Late]}, {name: Late, after: [Early]}], " +
+			"plugins: [{name: A.esp, group: Early}, {name: B.esp, group: Late, after: [A.esp]}]}}")), GameID: "cyber"})
+	require.NoError(t, err)
+	for _, w := range plan.Collection.Warnings {
+		assert.NotContains(t, w, "cycle", "group edges give way rather than cycle")
+	}
+}

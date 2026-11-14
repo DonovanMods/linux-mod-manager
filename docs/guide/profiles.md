@@ -300,7 +300,10 @@ The plan lists every item and what the import does with it:
   deploy, for a game whose plugin list it manages (`adapter: bethesda`); on
   any other game such a collection is refused. A curator who marked their
   rules not to be applied gets the order without them, and the plan says
-  so.
+  so. If the curator's rules contradict each other (a cycle no order can
+  satisfy), the plan warns: the import still goes ahead, but every deploy
+  leaves `Plugins.txt` as it was and names the cycle until you change one
+  of the rules in the profile's `plugins:`.
 - Items NexusMods doesn't host are listed with where to get them and the
   curator's instructions. The curator's tool shortcuts are listed too; lmm
   never creates or runs them.

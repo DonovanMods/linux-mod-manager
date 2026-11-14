@@ -185,6 +185,45 @@ func summarisePlugins(p domain.ProfilePlugins, managed bool) *CollectionPluginSu
 	return s
 }
 
+// pluginRuleCycle is a plan warning naming the cycle p's own rules form
+// over the plugins it lists, or "" when they form none (#611 review). It
+// runs P3's sort (sortPlugins) over the plugins the order and the rules
+// name, with no header facts: a cycle among the rules alone fails every
+// deploy that has those plugins (*PluginOrderCycleError), so the plan says
+// so before the import rather than after. A warning, not a refusal: the
+// rules are the curator's, and the user can change them on the profile.
+// Group edges never form a cycle (addGroupEdges skips one that would).
+func pluginRuleCycle(p domain.ProfilePlugins) string {
+	if len(p.Rules.Plugins) == 0 {
+		return ""
+	}
+	var nodes []pluginNode
+	seen := map[string]bool{}
+	add := func(name string) {
+		if !seen[pluginKey(name)] {
+			seen[pluginKey(name)] = true
+			nodes = append(nodes, pluginNode{name: name, modIndex: -1})
+		}
+	}
+	for _, e := range p.Order {
+		add(e.Name)
+	}
+	for _, r := range p.Rules.Plugins {
+		add(r.Name)
+	}
+	_, err := sortPlugins(sortRequest{nodes: nodes, order: p.Order, rules: p.Rules})
+	var cycle *PluginOrderCycleError
+	if !errors.As(err, &cycle) {
+		return ""
+	}
+	parts := make([]string, len(cycle.Edges))
+	for i, edge := range cycle.Edges {
+		parts[i] = edge.describe()
+	}
+	return "The collection's plugin rules form a cycle, so no load order satisfies them all: " + strings.Join(parts, "; ") +
+		". The import goes ahead, but every deploy will leave the game's plugin list as it was and report the cycle, until a rule in the profile's plugins: changes."
+}
+
 // CollectionImportResult is the ONE document `lmm profile import --json`
 // writes for a collection: the collection beside the import's own result,
 // as WorkshopCollectionImportResult does for a Workshop collection - the
@@ -425,6 +464,9 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 	}
 	_, managed := s.pluginRules(game)
 	c.Plugins = summarisePlugins(profile.Plugins, managed)
+	if w := pluginRuleCycle(profile.Plugins); w != "" {
+		c.Warnings = append(c.Warnings, w)
+	}
 
 	for path := range doc.Overrides {
 		c.Overrides = append(c.Overrides, path)

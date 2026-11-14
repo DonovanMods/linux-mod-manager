@@ -53,7 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile's rules cannot hold, is refused as `plugin_rules_incompatible`.
   Every collection import plan, in the terminal and the web UI, now
   summarises the plugin list it saves - how many plugins, which are
-  inactive, the rules and groups, and whether lmm writes it - and the web
+  inactive, the rules and groups, and whether lmm writes it - and warns
+  when the rules form a cycle no load order satisfies (the import goes
+  ahead; every deploy then reports the cycle until a rule changes). The web
   plan lists the whole order behind **Show the load order** (`--json`: the
   plan's `collection.plugins`, new). Of the 71 collections surveyed for
   #607, 25 now import (9 before).
