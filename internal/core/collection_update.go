@@ -378,6 +378,11 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 		base:     base,
 		snapshot: snapshot,
 	}
+	if plan.Version == 0 && origin.input == CollectionFromSource {
+		// A duplicate keeps the origin's revision but not the version
+		// (duplicateCollection): the revision is what it has.
+		plan.Version = base.Collection.Origin.Revision
+	}
 	var warnings []string
 	var conv *ConvertedCollection
 	var doc *domain.CollectionDocument

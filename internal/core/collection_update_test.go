@@ -513,3 +513,22 @@ func TestCollectionUpdate_WorkshopEntriesShowNoContentID(t *testing.T) {
 	assert.Equal(t, core.NoRevisionDate, update.Changed[0].DisplayVersion)
 	assert.Equal(t, core.NoRevisionDate, update.Changed[0].NewDisplayVersion)
 }
+
+// A duplicate of a NexusMods collection profile is a new collection (no
+// id, no version) that keeps its origin's revision: it updates from it,
+// and is up to date at the same revision.
+func TestCollectionUpdate_DuplicateOfASourceCollection(t *testing.T) {
+	f := newUpdateFixture(t)
+	f.importNexus(t)
+	_, err := f.svc.DuplicateProfile(context.Background(), "skyrim", "coll", "copy")
+	require.NoError(t, err)
+	plan, err := f.svc.PlanCollectionUpdate(context.Background(), f.game, core.CollectionUpdateRequest{Profile: "copy"})
+	require.NoError(t, err)
+	assert.True(t, plan.UpToDate)
+	f.bumpNexus(t)
+	plan, err = f.svc.PlanCollectionUpdate(context.Background(), f.game, core.CollectionUpdateRequest{Profile: "copy"})
+	require.NoError(t, err)
+	assert.Equal(t, 3, plan.Version)
+	assert.Equal(t, 4, plan.NewVersion)
+	assert.Equal(t, []string{"nexusmods:10"}, keys(plan.Changed), "the duplicate keeps the collection's markers")
+}
