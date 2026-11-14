@@ -55,3 +55,93 @@ func TestE2E_SharedHandOff_DisablingTheWinnerSaysWhoHasThePath(t *testing.T) {
 	assert.Equal(t, "Alpha Mod", string(got), "the next mod in load order has the path, with no deploy")
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
+
+// #633 review: an install, an installer reconfigure and a profile import
+// replace a live version of a mod, which hands shared paths on, so their
+// readouts show the result's warnings as a removal's do.
+func TestE2E_SharedHandOff_ReplacingKindsShowTheirWarnings(t *testing.T) {
+	f := newE2EFixture(t)
+	for _, kind := range []string{"install", "mod_fomod", "profile_import"} {
+		var text string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+			chromedp.Evaluate(`(async () => {
+				const kind = `+"`"+kind+"`"+`;
+				const id = "fake-" + kind;
+				const real = window.fetch.bind(window);
+				window.fetch = (input, init) => {
+					const url = typeof input === "string" ? input : (input && input.url) || "";
+					if (url.includes("/api/v1/jobs/" + id)) {
+						return Promise.resolve(new Response(JSON.stringify({
+							id, kind, state: "succeeded",
+							result: { warnings: ["shared.pak: Alpha Mod's file is deployed there now in place of Beta Mod's"] },
+						}), { status: 200, headers: { "Content-Type": "application/json" } }));
+					}
+					return real(input, init);
+				};
+				const { render, h } = await import("/static/app/render.js");
+				const { JobProgress } = await import("/static/app/components/jobprogress.js");
+				const container = document.createElement("div");
+				document.body.appendChild(container);
+				window.__handOffContainer = container;
+				render(h(JobProgress, {
+					jobID: id, summary: { id, kind, state: "succeeded" },
+					frame: {}, actions: null, onDismiss: () => {},
+				}), container);
+			})()`, nil, awaitPromise),
+			pollUntil(`window.__handOffContainer.querySelector('[data-testid="job-result-warning"]') !== null`),
+			chromedp.Evaluate(`window.__handOffContainer.querySelector('[data-testid="job-result-warning"]').textContent`, &text),
+			chromedp.Evaluate(`(() => { window.__handOffContainer.remove(); })()`, nil),
+		)
+		assert.Contains(t, text, "Alpha Mod's file is deployed there now", "%s shows its warnings", kind)
+	}
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// #633 review: an update batch carries a tally, which used to answer for
+// its toast alone - so a batch whose items handed shared paths on ended in
+// a plain toast with no warnings once the page had moved on. Its result is
+// read now, the toast is held, and it carries the items' warnings.
+func TestE2E_SharedHandOff_AnUpdateBatchWithWarningsHoldsItsToast(t *testing.T) {
+	f := newE2EFixture(t)
+	var got struct {
+		MayHold bool     `json:"mayHold"`
+		Held    bool     `json:"held"`
+		Plain   bool     `json:"plain"`
+		Warns   []string `json:"warns"`
+	}
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const real = window.fetch.bind(window);
+			window.fetch = (input, init) => {
+				const url = typeof input === "string" ? input : (input && input.url) || "";
+				if (url.includes("/api/v1/jobs/fake-batch")) {
+					return Promise.resolve(new Response(JSON.stringify({
+						id: "fake-batch", kind: "updates", state: "succeeded",
+						tally: { kind: "updates", applied: 1, failed: 0 },
+						result: { applied: [{ warnings: ["shared.pak: Alpha Mod's file is deployed there now in place of Beta Mod's"] }] },
+					}), { status: 200, headers: { "Content-Type": "application/json" } }));
+				}
+				return real(input, init);
+			};
+			const { resultMayHoldNextStep, readoutHasNextStep, fetchJobResult } = await import("/static/app/jobresult.js");
+			const summary = { id: "fake-batch", kind: "updates", state: "succeeded", tally: { kind: "updates", applied: 1, failed: 0 } };
+			const read = await fetchJobResult("fake-batch");
+			return {
+				mayHold: resultMayHoldNextStep(summary),
+				held: readoutHasNextStep(summary, read),
+				plain: resultMayHoldNextStep({ kind: "verify_fix", tally: { applied: 1, failed: 0 } }),
+				warns: read.warnings,
+			};
+		})()`, &got, awaitPromise),
+	)
+	assert.True(t, got.MayHold, "a tallied batch of a kind that shows warnings is read")
+	assert.True(t, got.Held, "and held by its items' warnings")
+	assert.False(t, got.Plain, "a tally still answers for a kind that shows none")
+	require.Len(t, got.Warns, 1)
+	assert.Contains(t, got.Warns[0], "Alpha Mod's file is deployed there now")
+	assert.Empty(t, f.BrowserErrors())
+}

@@ -25,7 +25,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFlowSharedHandOff_RemovingTheWinnerHandsThePathOn(t *testing.T) {
+// sharedHandOffFixture is gameRootFlowFixture plus Early (m0) and ReShade
+// (m2), which ship d3d11.dll too, deployed: load order m1, m0, m2.
+func sharedHandOffFixture(t *testing.T) (*Server, *core.Service, *domain.Game, string) {
+	t.Helper()
 	s, svc, game := gameRootFlowFixture(t)
 	ctx := context.Background()
 	stock := filepath.Join(game.InstallPath, "d3d11.dll")
@@ -46,8 +49,13 @@ func TestFlowSharedHandOff_RemovingTheWinnerHandsThePathOn(t *testing.T) {
 	j := runFlow(t, s, game, "deploy", `{}`, "")
 	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
 	require.Equal(t, "reshade d3d11", readFile(t, stock), "the load-order winner's file is at the game root")
+	return s, svc, game, stock
+}
 
-	j = runFlow(t, s, game, "uninstall", `{"source_id":"`+fixtureSourceID+`","mod_id":"m2"}`, "")
+func TestFlowSharedHandOff_RemovingTheWinnerHandsThePathOn(t *testing.T) {
+	s, _, game, stock := sharedHandOffFixture(t)
+
+	j := runFlow(t, s, game, "uninstall", `{"source_id":"`+fixtureSourceID+`","mod_id":"m2"}`, "")
 	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
 	uresult, ok := j.status().Result.(*core.UninstallResult)
 	require.True(t, ok, "%T", j.status().Result)
@@ -97,4 +105,26 @@ func anyHas(msgs []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// #633 review: the library's batch uninstall names the batch's other mods
+// in each job's options, so ReShade's path goes straight to the ENB, which
+// the batch keeps, and Early's job, next, hands nothing on.
+func TestFlowSharedHandOff_ABatchUninstallReportsTheFinalOwner(t *testing.T) {
+	s, _, game, stock := sharedHandOffFixture(t)
+
+	j := runFlow(t, s, game, "uninstall", `{"source_id":"`+fixtureSourceID+`","mod_id":"m2"}`,
+		`{"also_removing":[{"source_id":"`+fixtureSourceID+`","mod_id":"m0"}]}`)
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	result, ok := j.status().Result.(*core.UninstallResult)
+	require.True(t, ok, "%T", j.status().Result)
+	assert.True(t, anyHas(result.Warnings, "Mod One's file is deployed there now in place of ReShade's"), "%q", result.Warnings)
+	assert.Equal(t, "enb d3d11", readFile(t, stock), "the mod the batch keeps has the path")
+
+	j = runFlow(t, s, game, "uninstall", `{"source_id":"`+fixtureSourceID+`","mod_id":"m0"}`, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	result, ok = j.status().Result.(*core.UninstallResult)
+	require.True(t, ok, "%T", j.status().Result)
+	assert.False(t, anyHas(result.Warnings, "deployed there now"), "nothing is handed on twice: %q", result.Warnings)
+	assert.Equal(t, "enb d3d11", readFile(t, stock))
 }

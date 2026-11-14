@@ -14,6 +14,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -339,5 +340,78 @@ func TestSharedPathHandOff_TheUsersFileIsNotReplaced(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "the user's own file", readFileString(t, f.dst), "the user's file is never replaced")
 		assert.False(t, anyContains(res.Warnings, handOffName("first")), "nothing was handed on: %q", res.Warnings)
+	})
+}
+
+// #633 review: the removals of one flow list each heir's cache entry once.
+// An apply turning off m of n mods used to list every remaining mod's
+// files once per removal - m×n listings for paths no other mod ships.
+func TestSharedPathHandOff_AFlowListsEachHeirOnce(t *testing.T) {
+	ctx := context.Background()
+	const n, m = 12, 6
+	ids := make([]string, n)
+	for j := range ids {
+		ids[j] = string(rune('a' + j))
+	}
+	f := newHandOffFixture(t, sharedOriginalCases[1], domain.LinkSymlink, false, ids...)
+	pm := f.svc.NewProfileManager()
+	for _, id := range ids[n-m:] {
+		require.NoError(t, pm.SetModDisabled(ctx, f.game.ID, "default", "src", id, true))
+	}
+	plan, err := f.svc.PlanProfileApply(ctx, f.game, "default")
+	require.NoError(t, err)
+	require.Len(t, plan.ToDisable, m)
+
+	var listings int
+	defer core.CountHeirListingsForTest(func() { listings++ })()
+	res, err := f.svc.ApplyProfileApply(ctx, f.game, plan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+
+	last := ids[n-m-1]
+	assert.Equal(t, "the "+last+" mod's file", readFileString(t, f.dst), "the last mod the apply keeps has the path")
+	assert.LessOrEqual(t, listings, n-m, "each mod the apply keeps is listed once, however many mods it turns off")
+	var notes []string
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "deployed there now") {
+			notes = append(notes, w)
+		}
+	}
+	require.Len(t, notes, 1, "the path is reported once, by its final owner: %q", res.Warnings)
+	assert.Contains(t, notes[0], handOffName(last)+"'s file")
+}
+
+// #633 review: the web UI's batch uninstall names the batch's other mods,
+// so the path goes straight to a mod the batch leaves installed, and is
+// reported once.
+func TestSharedPathHandOff_ABatchUninstallReportsTheFinalOwner(t *testing.T) {
+	forEachHandOffCase(t, func(t *testing.T, c sharedOriginalCase, method domain.LinkMethod, withOriginal bool) {
+		ctx := context.Background()
+		f := newHandOffFixture(t, c, method, withOriginal, "first", "second", "third")
+
+		res, err := f.svc.UninstallMod(ctx, f.game, "default", "src", "third", core.UninstallOptions{
+			AlsoRemoving: []domain.ModReference{{SourceID: "src", ModID: "second"}},
+		})
+		require.NoError(t, err)
+		assert.True(t, anyContains(res.Warnings, handOffName("first")+"'s file"), "the path goes to the mod the batch keeps: %q", res.Warnings)
+		f.assertHeld(t, "first", withOriginal, "the batch's first uninstall")
+
+		res, err = f.svc.UninstallMod(ctx, f.game, "default", "src", "second", core.UninstallOptions{})
+		require.NoError(t, err)
+		assert.False(t, anyContains(res.Warnings, "deployed there now"), "nothing is handed on twice: %q", res.Warnings)
+		f.assertHeld(t, "first", withOriginal, "the batch's second uninstall")
+	})
+}
+
+// #633 review: a mod the profile document marks off is not deployed by a
+// deploy, so it does not take a path either, whatever its row says.
+func TestSharedPathHandOff_AModTheDocumentMarksOffDoesNotTakeThePath(t *testing.T) {
+	forEachHandOffCase(t, func(t *testing.T, c sharedOriginalCase, method domain.LinkMethod, withOriginal bool) {
+		ctx := context.Background()
+		f := newHandOffFixture(t, c, method, withOriginal, "first", "second")
+		require.NoError(t, f.svc.NewProfileManager().SetModDisabled(ctx, f.game.ID, "default", "src", "first", true))
+
+		_, err := f.svc.UninstallMod(ctx, f.game, "default", "src", "second", core.UninstallOptions{})
+		require.NoError(t, err)
+		f.assertReleased(t, withOriginal, "the only other provider is marked off")
 	})
 }

@@ -114,7 +114,7 @@ type Installer struct {
 	// uninstallHandingOff; a plain Uninstall - a deploy's undeploy, a
 	// repair's, a purge's - never does. Nil - an Installer built without a
 	// Service - hands nothing on.
-	heirs heirSource
+	heirs *heirSource
 }
 
 // NewInstaller creates a new installer
@@ -751,6 +751,8 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 	if i.refused != nil {
 		return i.refused
 	}
+	// #633: the flow's heirs are read again after a deploy.
+	i.heirFlowChanged(game, mod)
 	if err := i.refuseStranded(ctx, game); err != nil {
 		return err
 	}
@@ -918,6 +920,8 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 	if i.refused != nil {
 		return i.refused
 	}
+	// #633: the flow's heirs are read again after a deploy.
+	i.heirFlowChanged(game, oldMod, newMod)
 	if err := i.refuseStranded(ctx, game); err != nil {
 		return err
 	}
@@ -1249,7 +1253,6 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 		}
 		i.restoreReplacedOriginal(item.path, dstPath)
 	}
-	i.reportHandOffs(ho)
 
 	return nil
 }
@@ -1535,7 +1538,22 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 // the mod deployed right after in mod's place; the paths it ships are left
 // for that deploy.
 func (i *Installer) uninstallHandingOff(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, incoming *domain.Mod) error {
-	return i.uninstallReporting(ctx, game, mod, profileName, i.newHandOff(mod, incoming, game))
+	return i.uninstallHandingOffExcept(ctx, game, mod, profileName, incoming, nil)
+}
+
+// uninstallHandingOffExcept is uninstallHandingOff that never hands a path
+// to a mod exclude names (the keys of the mods a web batch uninstall
+// removes with this one): the path goes to the next mod that stays, which
+// is the owner the batch leaves it with.
+func (i *Installer) uninstallHandingOffExcept(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, incoming *domain.Mod, exclude map[string]bool) error {
+	ho := i.newHandOff(mod, incoming, game)
+	if ho != nil {
+		ho.exclude = exclude
+	}
+	err := i.uninstallReporting(ctx, game, mod, profileName, ho)
+	// The mod is going: no later removal of the flow hands it a path.
+	i.heirLeft(game, profileName, mod)
+	return err
 }
 
 // uninstallReporting is Uninstall's body, handing paths on through ho
@@ -1545,7 +1563,6 @@ func (i *Installer) uninstallReporting(ctx context.Context, game *domain.Game, m
 	for _, h := range held {
 		i.noteHeld(h.removalNote())
 	}
-	i.reportHandOffs(ho)
 	// Pruned even on failure: the paths in removed are gone either way, so
 	// the directories they emptied are lmm's to tidy either way.
 	cleanupRemoved(game, removed)

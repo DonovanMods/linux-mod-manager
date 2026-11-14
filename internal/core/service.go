@@ -188,6 +188,12 @@ type Service struct {
 	// originalsStoreFor's own comment for why sharing matters.
 	originalsMu     sync.Mutex
 	originalsStores map[string]*originalsStore
+
+	// heirFlows is the running mutation's heirFlow per game (#633): what
+	// its removals know about the mods that may take a shared path. Ended
+	// with the mutation (beginOp).
+	heirFlowsMu sync.Mutex
+	heirFlows   map[string]*heirFlow
 	// opLockPath is ServiceConfig.OpLockPath: the advisory lock file
 	// beginOp takes around every mutation, or "" for no cross-process lock.
 	opLockPath string

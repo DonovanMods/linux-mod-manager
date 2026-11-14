@@ -1802,7 +1802,22 @@ async function startUninstallBatch(mods) {
         { mod_id: mod.id, source_id: mod.source_id },
         context,
       );
-      const { id: jobID } = await startJob(response.plan_id, {});
+      // Issue 633: the mods still to come in this batch never take a
+      // shared path this uninstall gives up - it goes straight to a mod
+      // the batch leaves installed, so each path is reported once, with
+      // the owner the batch ends with.
+      const rest = mods.slice(mods.indexOf(mod) + 1);
+      const { id: jobID } = await startJob(
+        response.plan_id,
+        rest.length > 0
+          ? {
+              also_removing: rest.map((m) => ({
+                source_id: m.source_id,
+                mod_id: m.id,
+              })),
+            }
+          : {},
+      );
       return jobID;
     },
     originOf: (mod) => `mod:${mod.source_id}/${mod.id}:uninstall`,
@@ -2473,6 +2488,15 @@ async function releaseSucceededOrigin(origin, summary) {
   }, succeededOriginReleaseMillis);
 }
 
+/** toastDetail is a held job's toast text: its batch tally, then its
+ * result's warnings (issue 633), or undefined for neither. */
+function toastDetail(tally, read) {
+  const parts = [];
+  if (tally) parts.push(resultTallyLabel(tally));
+  if (read?.warnings?.length > 0) parts.push(read.warnings.join(" "));
+  return parts.join(" · ") || undefined;
+}
+
 let toastSeq = 0;
 
 /** Pushes a toast. Successes clear themselves after a while; failures do
@@ -2617,14 +2641,10 @@ async function onJobDone(summary) {
         : "success",
     sticky: held,
     title: `${summary.kind} finished`,
-    // Issue 633: a removal held by its warnings (a shared path handed to
-    // the next mod in load order) says them here, where the page moved on.
-    detail:
-      held && tally
-        ? resultTallyLabel(tally)
-        : held && read?.warnings?.length > 0
-          ? read.warnings.join(" ")
-          : undefined,
+    // Issue 633: a job held by its warnings (a shared path handed to the
+    // next mod in load order) says them here, where the page moved on - a
+    // batch's after its tally.
+    detail: held ? toastDetail(tally, read) : undefined,
     jobID: summary.id,
     ...toastAffordance(summary),
   });

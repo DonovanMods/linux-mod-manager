@@ -483,3 +483,12 @@ func SetRenameRecipeForTest(f func(oldpath, newpath string) error) (restore func
 	renameRecipe = f
 	return func() { renameRecipe = old }
 }
+
+// CountHeirListingsForTest counts the cache entries every flow lists for
+// the heirs of a shared path (#633) until the returned func restores the
+// previous hook.
+func CountHeirListingsForTest(count func()) (restore func()) {
+	prev := heirListingHook
+	heirListingHook = count
+	return func() { heirListingHook = prev }
+}

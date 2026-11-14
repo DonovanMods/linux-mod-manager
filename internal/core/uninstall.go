@@ -281,6 +281,13 @@ type UninstallOptions struct {
 	Force     bool // continue past a failing uninstall.before_* hook (warn instead of fail)
 	SkipHooks bool // run no hooks even when hooks are configured (the CLI's --no-hooks)
 
+	// AlsoRemoving names the mods the caller uninstalls next, one by one,
+	// with this one (the web UI's batch uninstall, #633): a shared path
+	// this uninstall gives up is never handed to one of them, but straight
+	// to the next mod in load order that stays - the owner the batch leaves
+	// it with, so the batch reports each path once.
+	AlsoRemoving []domain.ModReference
+
 	// No verbosity concept lives here: core never gates or prints
 	// diagnostics. UninstallResult.Notes and .Warnings are always fully
 	// populated; it is the caller's job to decide what to display and
@@ -484,7 +491,7 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 			return result, err
 		}
 		// #633: a shared path passes to the next mod in load order.
-		if err := installer.uninstallHandingOff(ctx, game, &mod.Mod, profileName, nil); err != nil {
+		if err := installer.uninstallHandingOffExcept(ctx, game, &mod.Mod, profileName, nil, refKeys(opts.AlsoRemoving)); err != nil {
 			// Non-fatal - files may have been manually removed. Always
 			// recorded; the historical "Warning: " prefix is baked into the
 			// text itself (see UninstallResult's doc comment).

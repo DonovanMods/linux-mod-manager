@@ -462,10 +462,14 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   folder and the game folder) and all three link methods; a file the
   profile overrides stays overridden, and a file that is yours is still
   left alone. Each command says which mod's file now holds the path, as a
-  warning; the web UI's readout for an uninstall, a disable, an update, a
-  rollback, a copy, an apply or a switch now shows a job's warnings where
-  the job finished (only a switch's did before), and `lmm conflicts` and
-  the web UI's conflicts view name the new owner.
+  warning naming the path's final owner once, however many of its steps
+  passed it on; the web UI's readout for an uninstall, a disable, an
+  install, an update, a rollback, a copy, an installer reconfigure, a
+  profile import, an apply or a switch now shows a job's warnings where the
+  job finished (only a switch's did before), an update batch's toast
+  carries its items' warnings, the library's batch uninstall hands each
+  path straight to a mod the batch keeps, and `lmm conflicts` and the web
+  UI's conflicts view name the new owner.
 - **Profile overrides are written more carefully (#630).** Each override
   now replaces its file atomically (a temporary file renamed into place),
   and its directory is opened one step at a time from the game folder

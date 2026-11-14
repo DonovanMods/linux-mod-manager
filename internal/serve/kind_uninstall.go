@@ -69,11 +69,16 @@ type uninstallApplyRequest struct {
 	KeepCache bool `json:"keep_cache,omitzero"`
 	Force     bool `json:"force,omitzero"`
 	SkipHooks bool `json:"skip_hooks,omitzero"`
+	// AlsoRemoving is the other mods of the library's batch uninstall,
+	// which the SPA redeems one job at a time (#633,
+	// core.UninstallOptions.AlsoRemoving): a shared path goes straight to
+	// a mod the batch leaves installed.
+	AlsoRemoving []domain.ModReference `json:"also_removing,omitzero"`
 }
 
 // uninstallOptions renders the request as the core options struct.
 func (r uninstallApplyRequest) uninstallOptions() core.UninstallOptions {
-	return core.UninstallOptions{KeepCache: r.KeepCache, Force: r.Force, SkipHooks: r.SkipHooks}
+	return core.UninstallOptions{KeepCache: r.KeepCache, Force: r.Force, SkipHooks: r.SkipHooks, AlsoRemoving: r.AlsoRemoving}
 }
 
 // pendingUninstall is what the plan store holds between Plan and Apply: the

@@ -672,9 +672,14 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	// TARGET profile's load order that stays deployed through the switch,
 	// placed by the target's Installer and recorded under the target - not
 	// to one the switch turns off or deploys itself.
-	staying := excludeKeys(plan.ToDisable, plan.ToEnable)
-	fromInstaller.heirs = s.pathHeirsFor(plan.To, toInstaller, staying)
-	toInstaller.heirs = s.pathHeirsFor(plan.To, nil, staying)
+	// The switch's own installs are left out too: each one's live row is
+	// another version, which its own deploy replaces.
+	excluded := excludeKeys(plan.ToDisable, plan.ToEnable)
+	for _, ref := range plan.ToInstall {
+		excluded[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
+	fromInstaller.heirs = s.pathHeirsFor(plan.To, toInstaller, excluded)
+	toInstaller.heirs = s.pathHeirsFor(plan.To, nil, excluded)
 	pm := s.NewProfileManager()
 
 	totalDisable := len(plan.ToDisable)

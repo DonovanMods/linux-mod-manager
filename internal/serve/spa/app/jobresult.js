@@ -105,6 +105,11 @@ export const RESULT_WARNING_KINDS = new Set([
   "update_from_archive",
   "mod_copy",
   "profile_apply",
+  // An install, an installer reconfigure and a profile import replace a
+  // live version of a mod, which hands paths on too.
+  "install",
+  "mod_fomod",
+  "profile_import",
 ]);
 // PLUGIN_LIST_KINDS are the job kinds whose result has a `plugins` field.
 const PLUGIN_LIST_KINDS = new Set(["deploy", "purge"]);
@@ -232,8 +237,10 @@ export function readoutHasNextStep(summary, read) {
  * toast for every other kind no longer waits on a second round trip).
  */
 export function resultMayHoldNextStep(summary) {
-  // A tally answers for its batch either way: failures are counted on it.
-  if (summary?.tally) return false;
+  // A tally answers for its batch's failures, which are counted on it -
+  // but not for its warnings (issue 633: an update batch whose items handed
+  // shared paths on), so a batch of a kind that shows them is read.
+  if (summary?.tally && !RESULT_WARNING_KINDS.has(summary?.kind)) return false;
   return RESULT_NEXT_STEP_KINDS.has(summary?.kind);
 }
 

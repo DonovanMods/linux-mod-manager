@@ -198,6 +198,11 @@ type originalsStore struct {
 	// fingerprint to check them against (#466); a drain reports them as
 	// one line.
 	unverified []unverifiedPath
+	// handOffs is every shared path the running flow's removals handed to
+	// the next mod in load order since the last drain (#633), one entry per
+	// path: handed on again, it keeps the mod that first gave it up and
+	// names the new heir, so a drain reports the final owner alone.
+	handOffs []handedPath
 	// kept is Installer.keptUser for every Installer of the running flow,
 	// cleared by the same drain and at the end of every mutation
 	// (Service.beginOp): a value is the fingerprinted record the path was
@@ -268,6 +273,29 @@ func (s *originalsStore) keptBefore(rel domain.DeployPath) (keptFile, bool) {
 	return kf, ok
 }
 
+// noteHandOff records that a removal handed h.path on (#633). A path the
+// flow already handed on keeps its first giver and takes the new heir.
+func (s *originalsStore) noteHandOff(h handedPath) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for j := range s.handOffs {
+		if s.handOffs[j].path == h.path && s.handOffs[j].profile == h.profile {
+			s.handOffs[j].heir = h.heir
+			return
+		}
+	}
+	s.handOffs = append(s.handOffs, h)
+}
+
+// takeHandOffs drains the hand-off ledger.
+func (s *originalsStore) takeHandOffs() []handedPath {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.handOffs
+	s.handOffs = nil
+	return out
+}
+
 // noteUnverified records rel as removed without a content check (#466);
 // legacy says its records all predate schema v18.
 func (s *originalsStore) noteUnverified(rel domain.DeployPath, legacy bool) {
@@ -327,7 +355,7 @@ func (s *originalsStore) takeKeptUser(path domain.DeployPath) bool {
 // that flow's own.
 func (s *originalsStore) forgetKept() {
 	s.mu.Lock()
-	s.kept, s.failures, s.unverified = nil, nil, nil
+	s.kept, s.failures, s.unverified, s.handOffs = nil, nil, nil, nil
 	s.mu.Unlock()
 }
 
@@ -641,7 +669,10 @@ func (s *Service) takeCaptureWarnings(gameID string, op Op, phase DeployPhase, w
 	if store == nil {
 		return
 	}
-	for _, msg := range store.takeFailures() {
+	// #633: and, after them, the shared paths handed to the next mod in
+	// load order, each by its final owner.
+	msgs := append(store.takeFailures(), s.handOffWarnings(gameID, store.takeHandOffs())...)
+	for _, msg := range msgs {
 		*warnings = append(*warnings, msg)
 		if emit != nil {
 			emit(WarningEvent{Scope: Scope{Op: op}, Phase: phase, Message: msg})
