@@ -263,6 +263,12 @@ export function resultTallyLabel(tally) {
   return parts.join(" / ");
 }
 
+// INSTALLED_TALLY_KINDS are the tallies that count `installed`, not
+// `applied`. "profile_import" stays last: spa_internal_test.go's import
+// scanner reads a quoted word that follows `import"` on the same line as a
+// module path.
+const INSTALLED_TALLY_KINDS = new Set(["profile_fill", "profile_import"]);
+
 /**
  * resultTallyTone says how alarmed the tally should look, in the same
  * three words a job's own `state` already uses ("succeeded"/"failed") plus
@@ -277,11 +283,6 @@ export function resultTallyLabel(tally) {
  * nothing (the flow's own default, every pending mod counted as Skipped)
  * has failed === 0 and is "succeeded", never "failed".
  */
-// INSTALLED_TALLY_KINDS are the tallies that count `installed`, not
-// `applied` (one kind per line: spa_internal_test.go's import scanner reads
-// a quoted word right after "import" as a module path).
-const INSTALLED_TALLY_KINDS = new Set(["profile_import", "profile_fill"]);
-
 export function resultTallyTone(tally) {
   if ((tally.failed ?? 0) === 0) return "succeeded";
   const applied = INSTALLED_TALLY_KINDS.has(tally.kind)

@@ -802,11 +802,11 @@ func (s *Service) applyProfileFill(ctx context.Context, game *domain.Game, plan 
 			sink(e)
 		}
 	}
-	if len(plan.items) == 0 {
-		return result, nil
-	}
 	if err := s.checkPlanFresh(ctx, game.ID, plan.Profile, plan.snapshot); err != nil {
 		return result, err
+	}
+	if len(plan.items) == 0 {
+		return result, nil
 	}
 	_, recordedOnly, err := s.importScope(ctx, game.ID, plan.Profile)
 	if err != nil {

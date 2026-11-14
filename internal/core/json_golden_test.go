@@ -1972,6 +1972,26 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #608: the fill plan's parts on their own.
+			"fill_file",
+			core.FillFile{FileID: "1", FileName: "SkyUI", Size: 2048, MD5: "fedcba9876543210fedcba9876543210", Archive: "SkyUI_5_2.7z"},
+		},
+		{
+			"fill_match",
+			core.FillMatch{SourceID: "nexusmods", ModID: "3863", Name: "SkyUI", Version: "5.2",
+				Files: []core.FillFile{{FileID: "1", Size: 2048, MD5: "fedcba9876543210fedcba9876543210", Archive: "SkyUI_5_2.7z"}}},
+		},
+		{
+			"fill_pending",
+			core.FillPending{SourceID: "nexusmods", ModID: "3863", Name: "SkyUI", Version: "5.2",
+				Files:  []core.FillFile{{FileID: "1", Size: 2048, MD5: "fedcba9876543210fedcba9876543210"}, {FileID: "2", Size: 10, MD5: "00112233445566778899aabbccddeeff", Archive: "patch.7z"}},
+				Reason: core.FillPartial},
+		},
+		{
+			"fill_ignored",
+			core.FillIgnored{Name: "SkyUI_5_2.7z", Size: 2048, Reason: core.FillIgnoredChecksumMismatch},
+		},
+		{
 			// #608: an empty fill plan's lists are [], never null.
 			"profile_fill_plan_empty",
 			core.ProfileFillPlan{Profile: "p", GameID: "g", Matched: []core.FillMatch{}, Pending: []core.FillPending{}, Ignored: []core.FillIgnored{}},
