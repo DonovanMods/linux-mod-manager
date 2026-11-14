@@ -7,6 +7,7 @@ package serve
 
 import (
 	"encoding/json/v2"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -141,4 +142,76 @@ func TestFlowCollectionUpdate_UpToDateAndRefusals(t *testing.T) {
 	serve(updateDocV2)
 	j := runFlow(t, s, game, "collection_update", `{"profile":"shared"}`, `{"override":["nexusmods:1"]}`)
 	assert.Equal(t, jobFailed, j.status().State)
+}
+
+// TestFlowCollectionUpdate_AnInstallersQuestionRoundTrips: version 2 adds
+// a FOMOD mod whose installer the document records no answers for. The job
+// fails with the question, nothing written; the re-posted plan and job
+// with the answers in "fomod" land the update.
+func TestFlowCollectionUpdate_AnInstallersQuestionRoundTrips(t *testing.T) {
+	sandboxEnv(t)
+	var body atomic.Pointer[string]
+	v1 := "lmm_collection: 1\nid: coll-1\nversion: 1\nname: shared\ngame_id: g1\nmods: []\n"
+	body.Store(&v1)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(*body.Load()))
+	}))
+	t.Cleanup(srv.Close)
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler), DownloadClient: srv.Client()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	src := newInstallSource(t)
+	svc.RegisterSource(src)
+	addFomodMod(t, src)
+	game := &domain.Game{ID: "g1", Name: "Fixture Game", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		LinkMethod: domain.LinkSymlink, SourceIDs: map[string]string{fixtureSourceID: ""}}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+	_, err = svc.NewProfileManager().Create(t.Context(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetDefaultGame(t.Context(), game.ID))
+	s := New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: internalTestAddr})
+
+	j := runFlow(t, s, game, "profile_import", urlPlanBody(t, srv.URL+"/c.yaml", "shared"), "")
+	require.Equal(t, jobSucceeded, j.status().State, "import failed: %+v", j.status().Error)
+	v2 := "lmm_collection: 1\nid: coll-1\nversion: 2\nname: shared\ngame_id: g1\nmods:\n  - {source_id: " + fixtureSourceID + ", mod_id: " + fomodModID + ", version: \"1.0\", file_ids: [w1]}\n"
+	body.Store(&v2)
+
+	j = runFlow(t, s, game, "collection_update", `{"profile":"shared"}`, "")
+	st := j.status()
+	require.Equal(t, jobFailed, st.State)
+	require.NotNil(t, st.Error)
+	raw, err := json.Marshal(st.Error.Details)
+	require.NoError(t, err)
+	// The import result's question, as a profile import's job reports it
+	// (the web UI's fomodQuestionFor reads it there).
+	var details struct {
+		Question core.FomodChoicesRequiredError `json:"fomod_choices_required"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &details))
+	require.NotEmpty(t, details.Question.Mods, "details: %s", raw)
+	assert.Equal(t, fomodModID, details.Question.Mods[0].ModID)
+	saved, err := config.LoadProfile(svc.ConfigDir(), game.ID, "shared")
+	require.NoError(t, err)
+	assert.Equal(t, 1, saved.Collection.Version, "nothing written")
+
+	j = runFlow(t, s, game, "collection_update", `{"profile":"shared"}`, fomodAnswer(t, sizeStep("2K", 0)))
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	saved, err = config.LoadProfile(svc.ConfigDir(), game.ID, "shared")
+	require.NoError(t, err)
+	assert.Equal(t, 2, saved.Collection.Version)
+	ref := saved.FindRef(fixtureSourceID, fomodModID)
+	require.NotNil(t, ref)
+	assert.Equal(t, "2K", ref.Fomod.Steps[0].Groups[0].Choices[0].Name)
+}
+
+// TestFlowCollectionUpdate_OptionalSelectionDecodes: the plan view's
+// toggles post the whole selection; an empty one is a selection too.
+func TestFlowCollectionUpdate_OptionalSelectionDecodes(t *testing.T) {
+	opts, err := decodeKindOptions[collectionUpdatePlanRequest]([]byte(`{"profile":"p","optional":[]}`))
+	require.NoError(t, err)
+	assert.NotNil(t, opts.(collectionUpdatePlanRequest).Optional, "present and empty is a choice")
+	opts, err = decodeKindOptions[collectionUpdatePlanRequest]([]byte(`{"profile":"p"}`))
+	require.NoError(t, err)
+	assert.Nil(t, opts.(collectionUpdatePlanRequest).Optional, "absent is no choice")
 }

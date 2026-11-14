@@ -259,6 +259,12 @@ type collectionState struct {
 	// no document carries, so a collection update can tell them from the
 	// user's own.
 	fromCollection map[string]bool
+	// baseline is what the collection applies beyond its entries (#613),
+	// recorded on the saved profile. With hashOverrides, its Overrides are
+	// the saved profile's own (an import's are all the collection's), taken
+	// after the import gates held any back.
+	baseline      *domain.CollectionBaseline
+	hashOverrides bool
 }
 
 // applyTo sets c's state on profile; a nil c sets nothing.
@@ -272,6 +278,24 @@ func (c *collectionState) applyTo(profile *domain.Profile) {
 		ref := &profile.Mods[i]
 		ref.FromCollection = c.fromCollection[domain.ModKey(ref.SourceID, ref.ModID)]
 	}
+	profile.CollectionBaseline = c.baseline
+}
+
+// finish completes what applyTo set once the import gates have run: the
+// baseline's override hashes, for an import.
+func (c *collectionState) finish(profile *domain.Profile) {
+	if c == nil || !c.hashOverrides {
+		return
+	}
+	b := &domain.CollectionBaseline{}
+	if c.baseline != nil {
+		b.Plugins = c.baseline.Plugins.Clone()
+	}
+	b.Overrides = overrideHashes(profile.Overrides)
+	if b.IsZero() {
+		b = nil
+	}
+	profile.CollectionBaseline = b
 }
 
 // CollectionImportItem is one mod of a collection import plan.
@@ -452,7 +476,8 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	for _, ref := range profile.Mods {
 		marks[domain.ModKey(ref.SourceID, ref.ModID)] = true
 	}
-	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins, fromCollection: marks}
+	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins, fromCollection: marks,
+		baseline: &domain.CollectionBaseline{Plugins: profile.Plugins.Clone()}, hashOverrides: true}
 	// The preview shows the profile the import will save.
 	plan.Profile.Collection, plan.Profile.External = redactedCollection(profile.Collection), profile.External
 	plan.Profile.Plugins = profile.Plugins.Clone()

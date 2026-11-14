@@ -23,13 +23,21 @@ profile sync --collection` (in the web UI, **Update collection…** beside
   unless you remove it (`--remove`, `--remove-obsolete`, or a tick box);
   and your own version of a conflicting mod is kept unless you take the
   collection's (`--override`, `--override-conflicts`, or a tick box). Mods
-  you added keep their place. The new version passes every import check
+  you added keep their place. The plugin list and config overrides follow
+  the same rule through a three-way merge against what the collection last
+  applied: your on/off states, moves, added plugins and edited overrides
+  stay yours, and where you and the collection both changed one the plan
+  names the conflict and keeps yours unless you override it. An obsolete
+  mod that fails to uninstall stays in the profile, installed, and the
+  result says so. The new version passes every import check
   (the feature gate, held-back overrides, hooks listed and never applied),
   installs through the same all-acquired-first engine, and a NexusMods
   update drops the old revision's recipe from the cache once nothing uses
   it. `--dry-run --json` prints the plan. A plain `lmm profile sync` is
   unchanged. Profiles now mark each entry a collection brought in
-  (`from_collection: true`, this machine's record: no export carries it),
+  (`from_collection: true`) and record what the collection last applied
+  to the plugin list and overrides (`collection_baseline:`); both are this
+  machine's record, and no export carries them;
   and `lmm profile list --json`/`lmm status --json` profile rows carry
   `collection_origin` (`url` or `source`) for a profile that can update.
 

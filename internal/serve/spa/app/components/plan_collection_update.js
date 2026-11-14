@@ -131,20 +131,132 @@ function ChoiceList({
   `;
 }
 
-/** PluginChange summarises what the update does to the plugin list. */
-function PluginChange({ plugins: p }) {
+/** ConflictBox is one conflict's checkbox: checked, its key is in the
+ * apply option "override" and the collection's side is taken. */
+function ConflictBox({ conflictKey, label, modal, actions }) {
+  const chosen = new Set(modal?.applyOptions?.override ?? []);
+  function toggle(on) {
+    const next = new Set(chosen);
+    if (on) next.add(conflictKey);
+    else next.delete(conflictKey);
+    actions.setPlanOptions({ override: [...next].sort() });
+  }
+  return html`
+    <label class="plan__control plan__control--inline">
+      <input
+        type="checkbox"
+        data-key=${conflictKey}
+        checked=${chosen.has(conflictKey)}
+        disabled=${modal?.status !== "ready"}
+        onChange=${(e) => toggle(e.currentTarget.checked)}
+      />
+      ${label}
+    </label>
+  `;
+}
+
+/** PluginChange names what the update does to the plugin list, and each
+ * conflict with its checkbox. */
+function PluginChange({ plugins: p, modal, actions }) {
   if (!p) return null;
-  const parts = [];
-  if (p.added?.length) parts.push(`${p.added.length} added`);
-  if (p.removed?.length) parts.push(`${p.removed.length} dropped`);
-  if (p.reordered) parts.push("reordered");
-  if (p.rules_changed) parts.push("rules changed");
+  const changed = [];
+  if (p.reordered) changed.push("reordered");
+  if (p.rules_changed) changed.push("rules changed");
   return html`
     <section class="plan__section" data-testid="update-plugins">
       <h3 class="plan__heading">Plugin order</h3>
-      <p class="plan__note">
-        The collection's plugin list: ${parts.join(", ")}.
-      </p>
+      ${
+        p.added?.length > 0 &&
+        html`<p class="plan__note">Added: ${p.added.join(", ")}</p>`
+      }
+      ${
+        p.removed?.length > 0 &&
+        html`<p class="plan__note">Dropped: ${p.removed.join(", ")}</p>`
+      }
+      ${
+        changed.length > 0 &&
+        html`<p class="plan__note">The list is ${changed.join(", ")}.</p>`
+      }
+      ${
+        (p.conflicts?.length > 0 || p.moved?.length > 0 || p.rules_conflict) &&
+        html`<p class="plan__note">
+            You and the collection both changed these; yours is kept unless you
+            take the collection's.
+          </p>
+          <ul class="plan__mods" data-testid="update-plugin-conflicts">
+            ${(p.conflicts ?? []).map(
+              (name) =>
+                html`<li key=${name} class="plan__mod">
+                  <span class="plan__mod-name">${name}</span>${" "}
+                  <span class="plan__mod-detail">(switched on or off)</span>
+                  <${ConflictBox}
+                    conflictKey=${`plugin:${name}`}
+                    label="Take the collection's"
+                    modal=${modal}
+                    actions=${actions}
+                  />
+                </li>`,
+            )}
+            ${
+              p.moved?.length > 0 &&
+              html`<li class="plan__mod">
+                <span class="plan__mod-name"
+                  >Order of ${p.moved.join(", ")}</span
+                >
+                <${ConflictBox}
+                  conflictKey="plugins:order"
+                  label="Take the collection's order"
+                  modal=${modal}
+                  actions=${actions}
+                />
+              </li>`
+            }
+            ${
+              p.rules_conflict &&
+              html`<li class="plan__mod">
+                <span class="plan__mod-name">Plugin rules</span>
+                <${ConflictBox}
+                  conflictKey="plugins:rules"
+                  label="Take the collection's rules"
+                  modal=${modal}
+                  actions=${actions}
+                />
+              </li>`
+            }
+          </ul>`
+      }
+    </section>
+  `;
+}
+
+/** External names the items to get by hand the new version adds and
+ * drops. */
+function External({ plan }) {
+  const added = plan.external_added ?? [];
+  const removed = plan.external_removed ?? [];
+  if (added.length === 0 && removed.length === 0) return null;
+  return html`
+    <section class="plan__section" data-testid="update-external">
+      <h3 class="plan__heading">Items to get by hand</h3>
+      <ul class="plan__mods">
+        ${added.map(
+          (e) =>
+            html`<li key=${`+${e.name}`} class="plan__mod">
+              <span class="plan__mod-name">${e.name}</span>${" "}
+              <span class="plan__mod-detail">(new in this version)</span>
+            </li>`,
+        )}
+        ${removed.map(
+          (e) =>
+            html`<li key=${`-${e.name}`} class="plan__mod">
+              <span class="plan__mod-name">${e.name}</span>${" "}
+              <span class="plan__mod-detail"
+                >(no longer in the collection: remove it yourself if you
+                installed it)</span
+              >
+            </li>`,
+        )}
+      </ul>
     </section>
   `;
 }
@@ -155,18 +267,40 @@ function Gate({ plan, modal, actions }) {
     ...(plan.overrides_added ?? []),
     ...(plan.overrides_changed ?? []),
   ];
+  const removedOverrides = plan.overrides_removed ?? [];
+  const overrideConflicts = plan.override_conflicts ?? [];
   const restricted = plan.restricted_overrides ?? [];
   const hooks = plan.hooks ?? [];
   const unsupported = plan.unsupported ?? [];
   return html`
     ${
-      touched.length > 0 &&
+      (touched.length > 0 ||
+        removedOverrides.length > 0 ||
+        overrideConflicts.length > 0) &&
       html`<section class="plan__section" data-testid="update-overrides">
-        <h3 class="plan__heading">
-          Config overrides written into the game directory
-        </h3>
+        <h3 class="plan__heading">Config overrides in the game directory</h3>
         <ul class="plan__paths">
           ${touched.map((path) => html`<li key=${path} class="mono">${path}</li>`)}
+          ${removedOverrides.map(
+            (path) =>
+              html`<li key=${`-${path}`}>
+                <span class="mono">${path}</span> (no longer in the collection:
+                removed)
+              </li>`,
+          )}
+          ${overrideConflicts.map(
+            (path) =>
+              html`<li key=${`!${path}`}>
+                <span class="mono">${path}</span> (you and the collection both
+                changed it; yours is kept unless you take the collection's)
+                <${ConflictBox}
+                  conflictKey=${`override:${path}`}
+                  label="Take the collection's"
+                  modal=${modal}
+                  actions=${actions}
+                />
+              </li>`,
+          )}
         </ul>
       </section>`
     }
@@ -302,7 +436,12 @@ export function CollectionUpdatePlanView({ plan, modal, actions }) {
         actions=${actions}
         testID="update-conflicts"
       />
-      <${PluginChange} plugins=${plan.plugins} />
+      <${PluginChange}
+        plugins=${plan.plugins}
+        modal=${modal}
+        actions=${actions}
+      />
+      <${External} plan=${plan} />
       <${Gate} plan=${plan} modal=${modal} actions=${actions} />
       ${
         plan.source &&

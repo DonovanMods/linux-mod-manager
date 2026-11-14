@@ -206,10 +206,14 @@ collection from an address instead of a file:
   the same rules as the import (https only, the same caps, redirects and
   deadline), and the document is read as an import reads it. Its `id` must
   be the profile's (`collection.id`): another collection is refused
-  (`different_collection`). Its `version` decides: newer is an update, the
-  same is nothing to do (`up_to_date: true`), older is refused
-  (`older_version`). A document with no `version` (a version-0 export) is
-  always compared entry by entry.
+  (`different_collection`). A profile that records no `id` (one imported
+  from a version-0 export) accepts any document, with a warning naming the
+  id it now takes. The `version` decides: newer is an update, the same is
+  nothing to do (`up_to_date: true`), older is refused (`older_version`),
+  and so is a document with no `version` when the profile has one. When
+  neither has a version (a version-0 export), the plan warns that it cannot
+  tell, and compares them entry by entry. A document naming another game
+  than the profile's is planned with the same warning an import gives.
 - **From a source's collection** (`origin.source_id` and `origin.slug`, a
   converted NexusMods collection): the collection's newest revision is
   converted as an import converts it, through the same recipe cache. Its
@@ -248,12 +252,35 @@ keeps it. An update then decides each entry:
 | not marked | absent | the user's own: untouched |
 
 Entries the update keeps that the new version doesn't list stay after the
-collection entry they followed. The new version's `plugins` replace the
-profile's when it carries some; its `external` items replace the
-profile's; its overrides are added or rewritten (an override it no longer
-carries is kept, since it may be the user's), and the new or changed ones
-go through the import's override gate. Its hooks are listed and never
-applied. Every feature gate applies to the new document: a `requires`
+collection entry they followed, and so does every repeated reference (a
+hand edit) as written. Its `external` items replace the profile's. Its
+hooks are listed and never applied.
+
+The plugin list and the overrides follow the entries' rule through a
+three-way merge against a baseline: what the collection last applied,
+which the profile file records in a `collection_baseline:` block (the
+plugin list, and each override's sha256). Like `from_collection`, it is
+this machine's record, written at a collection import and an update and
+never exported.
+
+- **Plugins.** A plugin's on/off state, the order and the rules each follow
+  the new version when the user has not changed them since the baseline,
+  and stay the user's when the collection has not. When both changed one,
+  it is a conflict: the plan names it (`plugins.conflicts` for a plugin's
+  state, `plugins.moved` for the plugins both reordered,
+  `plugins.rules_conflict`), the user's side is kept, and an override
+  (`plugin:<name>`, `plugins:order`, `plugins:rules`) takes the
+  collection's. A plugin the user added stays, after the plugin it
+  followed; one the collection dropped goes unless the user changed it.
+- **Overrides.** Each path follows the same rule by content: rewritten when
+  only the collection changed it, kept when only the user did, a conflict
+  (`override_conflicts`, overridden by `override:<path>`) when both did. One
+  the collection no longer carries is removed when the user left it as the
+  collection wrote it, and kept when they changed it. A new or rewritten
+  override goes through the import's override gate.
+
+A profile with no baseline (imported before there was one) is read as
+unedited: the new version's plugin list and overrides are taken. Every feature gate applies to the new document: a `requires`
 outside the supported set refuses the update with nothing written.
 
 The update converges through the import's two-phase apply: every download

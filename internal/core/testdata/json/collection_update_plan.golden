@@ -73,6 +73,12 @@
   "overrides_changed": [
     "Config/Game.ini"
   ],
+  "overrides_removed": [
+    "Config/Old.ini"
+  ],
+  "override_conflicts": [
+    "Config/Mine.ini"
+  ],
   "restricted_overrides": [
     {
       "path": "doorstop_config.ini",

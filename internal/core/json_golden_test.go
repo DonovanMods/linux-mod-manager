@@ -2433,6 +2433,8 @@ func TestJSONGoldens(t *testing.T) {
 				},
 				OverridesAdded:      []string{"doorstop_config.ini"},
 				OverridesChanged:    []string{"Config/Game.ini"},
+				OverridesRemoved:    []string{"Config/Old.ini"},
+				OverrideConflicts:   []string{"Config/Mine.ini"},
 				RestrictedOverrides: []core.RestrictedOverride{{Path: "doorstop_config.ini", Reason: "loader configuration"}},
 				ExternalAdded:       []domain.CollectionExternalItem{{Name: "ENB", URL: "https://enbdev.com"}},
 				Hooks:               []core.ImportHook{{Hook: "install.after_all", Command: "/usr/bin/false"}},
@@ -2457,7 +2459,8 @@ func TestJSONGoldens(t *testing.T) {
 			// #613: what an update does to the plugin list.
 			"collection_plugin_change",
 			core.CollectionPluginChange{Added: []string{"New.esp"}, Removed: []string{"Old.esp"}, Reordered: true, Rules: true,
-				Summary: &core.CollectionPluginSummary{Plugins: 3, Active: 2, Inactive: []string{"Off.esp"}, Managed: true}},
+				Summary:   &core.CollectionPluginSummary{Plugins: 3, Active: 2, Inactive: []string{"Off.esp"}, Managed: true},
+				Conflicts: []string{"Mine.esp"}, Moved: []string{"A.esp", "B.esp"}, RulesConflict: true},
 		},
 		{
 			// #613: the --json error envelope's details for an origin

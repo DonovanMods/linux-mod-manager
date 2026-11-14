@@ -413,6 +413,23 @@ A pin whose files change while its version stays the same is recorded on
 the profile, and the plan says it applies when the mod is next
 reinstalled.
 
+The plugin list and config overrides follow the same rule. lmm remembers
+what the collection last applied, so it can tell your changes from the
+collection's: a plugin you switched off or moved, a plugin you added, or an
+override you edited stays yours, and the new version's changes apply to
+everything you left alone. Where you and the collection both changed the
+same thing, the plan names it as a conflict and keeps yours; take the
+collection's with `--override plugin:<name>`, `--override plugins:order`,
+`--override plugins:rules` or `--override override:<path>` (the plan
+prints each key), or `--override-conflicts` for all of them. In the
+browser each has its own **Take the collection's** tick box. An override
+the collection no longer carries is removed if you left it as the
+collection wrote it.
+
+If an obsolete mod you chose to remove can't be uninstalled (an uninstall
+hook refuses, say), the update still lands, the mod stays in the profile
+and installed as your own, and the result says so.
+
 Mods you added yourself are left alone and keep their place in the load
 order. The new version passes the same checks as an import: a feature this
 lmm lacks refuses the update with nothing changed, hooks are listed and
@@ -420,10 +437,12 @@ never applied (the profile keeps its own), and overrides that aren't text
 config files are held back unless you pass `--allow-any-overrides` (in the
 browser, **Import these overrides too**). For a NexusMods collection,
 `--with-optional` and `--optional <id>` include optional mods, and an
-optional mod you already have stays in. Like an import, a NexusMods update
+optional mod you already have stays in; in the browser, unticking one in
+the plan leaves it out of the new version, where it is listed with the
+mods the collection no longer has. Like an import, a NexusMods update
 installs all or nothing, and an installer that needs answers asks (see
-[FOMOD](fomod.md)). Once no profile uses the old revision, lmm drops its
-recipe from the cache.
+[FOMOD](fomod.md)). Once no profile uses the old revision (of any game
+that shares its cache folder), lmm drops its recipe from the cache.
 
 ## An override of a mod's own file
 

@@ -30,7 +30,7 @@ const profileBackupSuffix = ".bak"
 // A key an in-place save adds goes after the nearest key before it in this
 // order, so a file lmm wrote stays exactly as a whole write would have it.
 var (
-	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins"}
+	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins", "collection_baseline"}
 	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod", "fomod_files", "fomod_order", "from_collection"}
 )
 
@@ -64,6 +64,8 @@ type profileFileYAML struct {
 	Collection *domain.CollectionInfo          `yaml:"collection,omitempty"`
 	External   []domain.CollectionExternalItem `yaml:"external,omitempty"`
 	Plugins    *ProfilePluginsConfig           `yaml:"plugins,omitempty"`
+	// CollectionBaseline is #613's, last.
+	CollectionBaseline *CollectionBaselineConfig `yaml:"collection_baseline,omitempty"`
 }
 
 func fileHook(h ProfileHookConfigYAML) profileFileHookYAML {
@@ -74,15 +76,16 @@ func fileHook(h ProfileHookConfigYAML) profileFileHookYAML {
 func profileFileOf(profile *domain.Profile) profileFileYAML {
 	hooks := serializeProfileHooks(profile.Hooks, profile.HooksExplicit)
 	doc := profileFileYAML{
-		Name:       profile.Name,
-		GameID:     profile.GameID,
-		IsDefault:  profile.IsDefault,
-		Mods:       refConfigsOf(profile.Mods),
-		Hooks:      profileFileHooksYAML{Install: fileHook(hooks.Install), Uninstall: fileHook(hooks.Uninstall)},
-		Overrides:  overridesOf(profile),
-		Collection: collectionOrNil(profile.Collection),
-		External:   externalOrNil(profile.External),
-		Plugins:    pluginsConfigOf(profile.Plugins),
+		Name:               profile.Name,
+		GameID:             profile.GameID,
+		IsDefault:          profile.IsDefault,
+		Mods:               refConfigsOf(profile.Mods),
+		Hooks:              profileFileHooksYAML{Install: fileHook(hooks.Install), Uninstall: fileHook(hooks.Uninstall)},
+		Overrides:          overridesOf(profile),
+		Collection:         collectionOrNil(profile.Collection),
+		External:           externalOrNil(profile.External),
+		Plugins:            pluginsConfigOf(profile.Plugins),
+		CollectionBaseline: baselineConfigOf(profile.CollectionBaseline),
 	}
 	// Only write link_method if explicitly set: String() never returns "", so
 	// assigning it unconditionally defeats `omitempty` and bakes a phantom
@@ -547,6 +550,13 @@ func editProfileDocument(base []byte, fromName string, want *domain.Profile, ren
 			return nil, err
 		}
 	}
+	if !sameBaseline(haveProfile.CollectionBaseline, want.CollectionBaseline) {
+		if err := e.setTopBlock("collection_baseline", struct {
+			CollectionBaseline *CollectionBaselineConfig `yaml:"collection_baseline,omitempty"`
+		}{baselineConfigOf(want.CollectionBaseline)}); err != nil {
+			return nil, err
+		}
+	}
 
 	edited, err = e.apply()
 	if err != nil {
@@ -576,7 +586,7 @@ func sameProfile(a, b *domain.Profile) bool {
 		a.Hooks != b.Hooks || a.HooksExplicit != b.HooksExplicit ||
 		!sameOverrides(a.Overrides, b.Overrides) ||
 		!a.Collection.Equal(b.Collection) || !slices.Equal(a.External, b.External) ||
-		!a.Plugins.Equal(b.Plugins) {
+		!a.Plugins.Equal(b.Plugins) || !sameBaseline(a.CollectionBaseline, b.CollectionBaseline) {
 		return false
 	}
 	return sameRefs(refConfigsOf(a.Mods), b.Mods)

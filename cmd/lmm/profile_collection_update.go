@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -37,9 +38,9 @@ func init() {
 	f.BoolVar(&profileSyncRemoveObsolete, "remove-obsolete", false,
 		"with --collection, remove every mod the new version drops (they are kept by default)")
 	f.StringSliceVar(&profileSyncOverride, "override", nil,
-		"with --collection, take the collection's version of this mod you locked or edited (source:mod-id, or the mod id; repeatable)")
+		"with --collection, take the collection's side of this conflict: a mod you changed (source:mod-id, or the mod id), plugin:<name>, plugins:order, plugins:rules or override:<path>, as the plan names it; repeatable")
 	f.BoolVar(&profileSyncOverrideConflicts, "override-conflicts", false,
-		"with --collection, take the collection's version of every mod you locked or edited (yours is kept by default)")
+		"with --collection, take the collection's side of every conflict - mods, plugin list and overrides (yours is kept by default)")
 	f.BoolVar(&profileSyncWithOptional, "with-optional", false,
 		"with --collection, install a NexusMods collection's optional mods too")
 	f.StringSliceVar(&profileSyncOptional, "optional", nil,
@@ -67,13 +68,18 @@ func collectionSyncFlagsUsed() []string {
 	return used
 }
 
-// resolveUpdateKeys turns each --remove/--override argument into the
-// domain.ModKey of the plan item it names: a source:mod-id as is, a bare
-// mod id when exactly one item has it. what names the bucket for errors.
-func resolveUpdateKeys(args []string, items []core.CollectionUpdateItem, what, flag string) ([]string, error) {
+// resolveUpdateKeys turns each --remove/--override argument into the key
+// the plan offers: one of keys verbatim (an entry's source:mod-id, or for
+// --override a plugin-list or override conflict's key), else a bare mod id
+// when exactly one item has it. what names the bucket for errors.
+func resolveUpdateKeys(args []string, items []core.CollectionUpdateItem, keys []string, what, flag string) ([]string, error) {
 	var out []string
 	for _, arg := range args {
 		arg = strings.TrimSpace(arg)
+		if slices.Contains(keys, arg) {
+			out = append(out, arg)
+			continue
+		}
 		var hits []string
 		for _, it := range items {
 			if it.Key() == arg || (!strings.Contains(arg, ":") && it.ModID == arg) {
@@ -105,10 +111,10 @@ func doCollectionUpdate(ctx context.Context, service *core.Service, game *domain
 		RemoveObsolete: profileSyncRemoveObsolete, OverrideConflicts: profileSyncOverrideConflicts,
 		AllowAnyOverrides: profileSyncAnyOverrides,
 	}
-	if opts.Remove, err = resolveUpdateKeys(profileSyncRemove, plan.Removed, "mod the new version drops", "--remove"); err != nil {
+	if opts.Remove, err = resolveUpdateKeys(profileSyncRemove, plan.Removed, nil, "mod the new version drops", "--remove"); err != nil {
 		return err
 	}
-	if opts.Override, err = resolveUpdateKeys(profileSyncOverride, plan.Conflicts, "conflicting mod", "--override"); err != nil {
+	if opts.Override, err = resolveUpdateKeys(profileSyncOverride, plan.Conflicts, plan.ConflictKeys(), "conflict", "--override"); err != nil {
 		return err
 	}
 
@@ -313,30 +319,51 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 			fmt.Println("  Take the collection's with --override <mod>, or all with --override-conflicts.")
 		}
 	}
+	overridden := func(key string) bool { return opts.OverrideConflicts || slices.Contains(opts.Override, key) }
+	side := func(key string) string {
+		if overridden(key) {
+			return "will take the collection's"
+		}
+		return "yours is kept"
+	}
 	if p := plan.Plugins; p != nil {
-		fmt.Printf("\nPlugin order changes:")
-		var parts []string
+		fmt.Printf("\nPlugin order:\n")
 		if len(p.Added) > 0 {
-			parts = append(parts, fmt.Sprintf("%d added", len(p.Added)))
+			fmt.Printf("  + added: %s\n", strings.Join(p.Added, ", "))
 		}
 		if len(p.Removed) > 0 {
-			parts = append(parts, fmt.Sprintf("%d dropped", len(p.Removed)))
+			fmt.Printf("  - dropped: %s\n", strings.Join(p.Removed, ", "))
 		}
 		if p.Reordered {
-			parts = append(parts, "reordered")
+			fmt.Println("  ~ reordered")
 		}
 		if p.Rules {
-			parts = append(parts, "rules changed")
+			fmt.Println("  ~ rules changed")
 		}
-		fmt.Printf(" %s\n", strings.Join(parts, ", "))
+		for _, name := range p.Conflicts {
+			fmt.Printf("  ! %s: you and the collection both switched it on or off; %s (--override plugin:%s)\n", name, side("plugin:"+name), name)
+		}
+		if len(p.Moved) > 0 {
+			fmt.Printf("  ! you and the collection both reordered %s; %s order is kept (--override plugins:order)\n",
+				strings.Join(p.Moved, ", "), map[bool]string{true: "the collection's", false: "your"}[overridden("plugins:order")])
+		}
+		if p.RulesConflict {
+			fmt.Printf("  ! you and the collection both changed the plugin rules; %s (--override plugins:rules)\n", side("plugins:rules"))
+		}
 	}
-	if len(plan.OverridesAdded)+len(plan.OverridesChanged) > 0 {
-		fmt.Printf("\nConfig overrides written into the game directory:\n")
+	if len(plan.OverridesAdded)+len(plan.OverridesChanged)+len(plan.OverridesRemoved)+len(plan.OverrideConflicts) > 0 {
+		fmt.Printf("\nConfig overrides in the game directory:\n")
 		for _, path := range plan.OverridesAdded {
 			fmt.Printf("  + %s\n", path)
 		}
 		for _, path := range plan.OverridesChanged {
 			fmt.Printf("  ~ %s\n", path)
+		}
+		for _, path := range plan.OverridesRemoved {
+			fmt.Printf("  - %s (no longer in the collection)\n", path)
+		}
+		for _, path := range plan.OverrideConflicts {
+			fmt.Printf("  ! %s: you and the collection both changed it; %s (--override override:%s)\n", path, side("override:"+path), path)
 		}
 	}
 	if len(plan.RestrictedOverrides) > 0 {
@@ -362,6 +389,9 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 			line += " <" + e.URL + ">"
 		}
 		fmt.Println(line)
+	}
+	for _, e := range plan.ExternalRemoved {
+		fmt.Printf("\nNo longer in the collection, to get by hand: %s (remove it yourself if you installed it)\n", e.Name)
 	}
 	if plan.Source != nil {
 		printSourceCollection(plan.Source)

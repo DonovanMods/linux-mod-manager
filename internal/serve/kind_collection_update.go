@@ -98,6 +98,9 @@ func planCollectionUpdateKind(ctx context.Context, s *Server, sel selection, opt
 	}
 	plan, err := s.svc.PlanCollectionUpdate(ctx, sel.Game, core.CollectionUpdateRequest{
 		Profile: req.Profile, WithOptional: req.WithOptional, Optional: req.Optional,
+		// The plan view's toggles post the whole selection, an empty one
+		// included: an item the user unticks is not re-added.
+		OptionalChosen: req.Optional != nil,
 	})
 	if err != nil {
 		return nil, nil, err

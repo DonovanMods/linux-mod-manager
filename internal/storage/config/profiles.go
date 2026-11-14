@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -46,6 +47,54 @@ type ProfileConfig struct {
 	// Plugins is #616's plugin list; omitempty, so a file without one is
 	// unchanged.
 	Plugins *ProfilePluginsConfig `yaml:"plugins,omitempty"`
+	// CollectionBaseline is #613's record of what the profile's collection
+	// last applied (domain.Profile.CollectionBaseline); omitempty, so a file
+	// without one is unchanged.
+	CollectionBaseline *CollectionBaselineConfig `yaml:"collection_baseline,omitempty"`
+}
+
+// CollectionBaselineConfig is the profile file's `collection_baseline:`
+// block.
+type CollectionBaselineConfig struct {
+	Plugins   *ProfilePluginsConfig `yaml:"plugins,omitempty"`
+	Overrides map[string]string     `yaml:"overrides,omitempty"`
+}
+
+// baselineFromConfig is the domain baseline c records; nil records none.
+func baselineFromConfig(c *CollectionBaselineConfig) *domain.CollectionBaseline {
+	if c == nil {
+		return nil
+	}
+	b := &domain.CollectionBaseline{Plugins: pluginsFromConfig(c.Plugins)}
+	if len(c.Overrides) > 0 {
+		b.Overrides = maps.Clone(c.Overrides)
+	}
+	if b.IsZero() {
+		return nil
+	}
+	return b
+}
+
+// baselineConfigOf is b as the profile file writes it; nil when it records
+// nothing.
+func baselineConfigOf(b *domain.CollectionBaseline) *CollectionBaselineConfig {
+	if b.IsZero() {
+		return nil
+	}
+	out := &CollectionBaselineConfig{Plugins: pluginsConfigOf(b.Plugins)}
+	if len(b.Overrides) > 0 {
+		out.Overrides = maps.Clone(b.Overrides)
+	}
+	return out
+}
+
+// sameBaseline reports whether a and b record the same baseline, nil and
+// a zero one alike.
+func sameBaseline(a, b *domain.CollectionBaseline) bool {
+	if a.IsZero() || b.IsZero() {
+		return a.IsZero() && b.IsZero()
+	}
+	return a.Plugins.Equal(b.Plugins) && maps.Equal(a.Overrides, b.Overrides)
 }
 
 // ModReferenceConfig is the YAML representation of a mod reference.
@@ -285,6 +334,7 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 		profile.External = cfg.External
 	}
 	profile.Plugins = pluginsFromConfig(cfg.Plugins)
+	profile.CollectionBaseline = baselineFromConfig(cfg.CollectionBaseline)
 
 	if len(cfg.Overrides) > 0 {
 		profile.Overrides = make(map[string][]byte)

@@ -136,7 +136,7 @@ func TestDoCollectionUpdate_RefusesAnUnknownChoice(t *testing.T) {
 	setCollectionSyncFlags(t, func() { profileSyncYes, profileSyncOverride = true, []string{"9"} })
 	err := doCollectionUpdate(context.Background(), svc, game, []string{"shared"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `--override 9: no conflicting mod of this update is "9"`)
+	assert.Contains(t, err.Error(), `--override 9: no conflict of this update is "9"`)
 }
 
 func TestDoCollectionUpdate_DryRunJSON(t *testing.T) {

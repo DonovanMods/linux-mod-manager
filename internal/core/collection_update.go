@@ -61,10 +61,13 @@ type CollectionUpdateRequest struct {
 	Profile string
 	// WithOptional opts every optional item of a source collection in, and
 	// Optional the ones it names (ConvertedCollectionItem.ID), as an import
-	// does. An optional item the profile already has stays in without
-	// either. Both apply to a source collection only.
-	WithOptional bool
-	Optional     []string
+	// does. Both apply to a source collection only. Unless OptionalChosen,
+	// an optional item the profile already has stays in without either;
+	// with it, Optional is the whole selection (the web plan view's
+	// toggles, #613 review), so an item the user unticks is not re-added.
+	WithOptional   bool
+	Optional       []string
+	OptionalChosen bool
 }
 
 // ErrCollectionNotUpdatable refuses an update of a profile that records no
@@ -171,14 +174,25 @@ func (it *CollectionUpdateItem) noteChanges() {
 func (i CollectionUpdateItem) Key() string { return domain.ModKey(i.SourceID, i.ModID) }
 
 // CollectionPluginChange is what an update does to the profile's plugin
-// list: the plugins the new list adds and drops, whether it reorders the
-// plugins both have or changes the rules, and the new list's summary.
+// list: the plugins it adds and drops, whether it reorders the plugins or
+// changes the rules, the new version's summary, and the conflicts - where
+// the user and the collection both changed the same thing since the
+// collection last applied its list. The user's side of a conflict is kept
+// unless the apply overrides it: a plugin's on/off state by
+// "plugin:<name>", the order by "plugins:order", the rules by
+// "plugins:rules".
 type CollectionPluginChange struct {
 	Added     []string                 `json:"added,omitempty"`
 	Removed   []string                 `json:"removed,omitempty"`
 	Reordered bool                     `json:"reordered,omitzero"`
 	Rules     bool                     `json:"rules_changed,omitzero"`
 	Summary   *CollectionPluginSummary `json:"summary,omitempty"`
+	// Conflicts names the plugins whose on/off state both changed.
+	Conflicts []string `json:"conflicts,omitempty"`
+	// Moved names the plugins both reordered: the order conflicts.
+	Moved []string `json:"moved,omitempty"`
+	// RulesConflict is whether both changed the rules.
+	RulesConflict bool `json:"rules_conflict,omitzero"`
 }
 
 // CollectionUpdatePlan is PlanCollectionUpdate's preview: the profile's
@@ -232,12 +246,17 @@ type CollectionUpdatePlan struct {
 	// when nothing.
 	Plugins *CollectionPluginChange `json:"plugins,omitempty"`
 	// OverridesAdded and OverridesChanged are the config overrides the new
-	// version adds or rewrites; RestrictedOverrides those of them that are
+	// version adds or rewrites, OverridesRemoved the collection's own it no
+	// longer carries (an override the user changed is kept), and
+	// OverrideConflicts the paths the user and the collection both changed,
+	// whose user content is kept unless the apply overrides it
+	// ("override:<path>"). RestrictedOverrides are those of them that are
 	// not text config files (or are loader configuration), which the apply
-	// skips unless AllowAnyOverrides. An override the new version no longer
-	// carries is kept: it may be the user's.
+	// skips unless AllowAnyOverrides.
 	OverridesAdded      []string             `json:"overrides_added,omitempty"`
 	OverridesChanged    []string             `json:"overrides_changed,omitempty"`
+	OverridesRemoved    []string             `json:"overrides_removed,omitempty"`
+	OverrideConflicts   []string             `json:"override_conflicts,omitempty"`
 	RestrictedOverrides []RestrictedOverride `json:"restricted_overrides,omitempty"`
 	// ExternalAdded and ExternalRemoved are the items to get by hand the
 	// new version adds and drops.
@@ -288,10 +307,13 @@ type CollectionUpdateOptions struct {
 	// all. The rest are kept, as the user's.
 	Remove         []string
 	RemoveObsolete bool
-	// Override names conflicts (CollectionUpdatePlan.Conflicts) to resolve
-	// the collection's way: the entry takes the new pin and follows the
-	// collection again. OverrideConflicts overrides them all. The rest keep
-	// the user's version.
+	// Override names conflicts to resolve the collection's way: an entry
+	// (CollectionUpdatePlan.Conflicts, by domain.ModKey) takes the new pin
+	// and follows the collection again; "plugin:<name>", "plugins:order"
+	// and "plugins:rules" take the collection's side of a plugin-list
+	// conflict (CollectionPluginChange), "override:<path>" its content of a
+	// conflicting override (OverrideConflicts). OverrideConflicts overrides
+	// them all. The rest keep the user's version.
 	Override          []string
 	OverrideConflicts bool
 	// Fomod answers installer questions, as an import's Options.Fomod.
@@ -453,6 +475,14 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 	if plan.Name == base.Name {
 		plan.Name = firstNonEmpty(doc.Info.Title, base.Name)
 	}
+	switch {
+	case fetchedVersion == 0 && plan.Version > 0:
+		// A document that names no version cannot be newer than one the
+		// profile has (#613 review).
+		return nil, &CollectionUpdateMismatchError{Code: CollectionUpdateOlderVersion, ID: plan.ID, Version: plan.Version, FetchedID: fetchedID, FetchedVersion: fetchedVersion}
+	case fetchedVersion == 0:
+		warnings = append(warnings, "neither the profile nor the document names a collection version, so lmm cannot tell whether this is a newer one: the plan compares them entry by entry")
+	}
 	if fetchedVersion > 0 && plan.Version > 0 {
 		switch {
 		case fetchedVersion < plan.Version:
@@ -462,6 +492,12 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 			plan.Warnings = warnings
 			return plan, nil
 		}
+	}
+
+	// The game the document names, against the profile's (as an import
+	// warns when the game it was asked for contradicts the document).
+	if w := s.gameMismatch(doc.Game, game); w != "" && doc.FormatVersion > 0 {
+		warnings = append(warnings, w)
 	}
 
 	info := doc.Info
@@ -512,6 +548,7 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 	plan.Warnings = warnings
 	plan.NoChanges = len(plan.Added) == 0 && len(plan.Changed) == 0 && len(plan.Removed) == 0 && len(plan.Conflicts) == 0 &&
 		plan.Plugins == nil && len(plan.OverridesAdded) == 0 && len(plan.OverridesChanged) == 0 &&
+		len(plan.OverridesRemoved) == 0 && len(plan.OverrideConflicts) == 0 &&
 		len(plan.ExternalAdded) == 0 && len(plan.ExternalRemoved) == 0
 
 	live, recordedOnly, err := s.importScope(ctx, game.ID, base.Name)
@@ -529,7 +566,7 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 func (s *Service) convertForUpdate(ctx context.Context, game *domain.Game, base *domain.Profile, origin collectionOrigin, req CollectionUpdateRequest) (*ConvertedCollection, error) {
 	opts := CollectionConvertOptions{WithOptional: req.WithOptional, Optional: slices.Clone(req.Optional)}
 	conv, err := s.ConvertSourceCollection(ctx, game, origin.sourceID, origin.slug, opts)
-	if err != nil || opts.WithOptional {
+	if err != nil || opts.WithOptional || req.OptionalChosen {
 		return conv, err
 	}
 	have := firstRefs(base.Mods)
@@ -644,62 +681,48 @@ func (p *CollectionUpdatePlan) stampDisplay(s *Service) {
 	}
 }
 
-// diffRest fills the plan's plugin, override and external-item changes.
+// diffRest fills the plan's plugin, override and external-item changes:
+// the three-way merges (collection_update_merge.go) with no conflict
+// overridden, so every conflict is named.
 func (p *CollectionUpdatePlan) diffRest(s *Service, game *domain.Game) {
-	if !p.doc.Plugins.IsZero() && !p.doc.Plugins.Equal(p.base.Plugins) {
-		change := &CollectionPluginChange{}
-		had, has := map[string]bool{}, map[string]bool{}
+	none := func(string) bool { return false }
+	b, hasBase := baselineOf(p.base)
+	if pm := mergePlugins(p.base.Plugins, b.Plugins, p.doc.Plugins, hasBase, none); !pm.result.Equal(p.base.Plugins) || len(pm.enabled)+len(pm.moved) > 0 || pm.rules {
+		change := &CollectionPluginChange{Added: pm.added, Removed: pm.dropped, Conflicts: pm.enabled, Moved: pm.moved, RulesConflict: pm.rules}
+		var before, after []string
+		kept := map[string]bool{}
+		for _, e := range pm.result.Order {
+			kept[pluginKey(e.Name)] = true
+		}
+		had := map[string]bool{}
 		for _, e := range p.base.Plugins.Order {
 			had[pluginKey(e.Name)] = true
-		}
-		for _, e := range p.doc.Plugins.Order {
-			has[pluginKey(e.Name)] = true
-			if !had[pluginKey(e.Name)] {
-				change.Added = append(change.Added, e.Name)
+			if kept[pluginKey(e.Name)] {
+				before = append(before, pluginKey(e.Name))
 			}
 		}
-		var oldOrder, newOrder []string
-		for _, e := range p.base.Plugins.Order {
-			if !has[pluginKey(e.Name)] {
-				change.Removed = append(change.Removed, e.Name)
-			} else {
-				oldOrder = append(oldOrder, pluginKey(e.Name)+fmt.Sprint(e.Enabled))
-			}
-		}
-		for _, e := range p.doc.Plugins.Order {
+		for _, e := range pm.result.Order {
 			if had[pluginKey(e.Name)] {
-				newOrder = append(newOrder, pluginKey(e.Name)+fmt.Sprint(e.Enabled))
+				after = append(after, pluginKey(e.Name))
 			}
 		}
-		change.Reordered = !slices.Equal(oldOrder, newOrder)
-		change.Rules = !reflect.DeepEqual(p.base.Plugins.Rules, p.doc.Plugins.Rules)
+		change.Reordered = !slices.Equal(before, after)
+		change.Rules = !reflect.DeepEqual(p.base.Plugins.Rules, pm.result.Rules)
 		_, managed := s.pluginRules(game)
 		change.Summary = summarisePlugins(p.doc.Plugins, managed)
 		p.Plugins = change
 	}
 
-	var touched []string
-	for path, content := range p.doc.Overrides {
-		old, ok := p.base.Overrides[path]
-		switch {
-		case !ok:
-			p.OverridesAdded = append(p.OverridesAdded, path)
-		case string(old) != content:
-			p.OverridesChanged = append(p.OverridesChanged, path)
-		default:
-			continue
+	om := mergeOverrides(p.base.Overrides, b.Overrides, hasBase, p.doc.Overrides, none, true)
+	p.OverridesAdded, p.OverridesChanged, p.OverridesRemoved, p.OverrideConflicts = om.added, om.changed, om.removed, om.conflicts
+	for _, list := range [][]string{om.added, om.changed, om.conflicts} {
+		for _, path := range list {
+			if reason := restrictedOverrideReason(path); reason != "" {
+				p.RestrictedOverrides = append(p.RestrictedOverrides, RestrictedOverride{Path: path, Reason: reason})
+			}
 		}
-		touched = append(touched, path)
 	}
-	sort.Strings(p.OverridesAdded)
-	sort.Strings(p.OverridesChanged)
-	if len(touched) > 0 {
-		gate := &domain.Profile{Overrides: map[string][]byte{}}
-		for _, path := range touched {
-			gate.Overrides[path] = []byte(p.doc.Overrides[path])
-		}
-		p.RestrictedOverrides = restrictedOverrides(gate)
-	}
+	sort.Slice(p.RestrictedOverrides, func(i, j int) bool { return p.RestrictedOverrides[i].Path < p.RestrictedOverrides[j].Path })
 
 	same := func(a, b domain.CollectionExternalItem) bool { return a.Name == b.Name && a.URL == b.URL }
 	for _, e := range p.doc.External {
@@ -726,10 +749,17 @@ type updateChoices struct {
 // be one of the plan's obsolete members or conflicts.
 func resolveUpdateChoices(plan *CollectionUpdatePlan, opts CollectionUpdateOptions) (updateChoices, error) {
 	c := updateChoices{remove: map[string]bool{}, override: map[string]bool{}, allowAny: opts.AllowAnyOverrides}
-	pick := func(what string, all bool, named []string, items []CollectionUpdateItem, into map[string]bool) error {
+	itemKeys := func(items []CollectionUpdateItem) []string {
+		out := make([]string, len(items))
+		for i, it := range items {
+			out[i] = it.Key()
+		}
+		return out
+	}
+	pick := func(what string, all bool, named []string, valid []string, into map[string]bool) error {
 		keys := map[string]bool{}
-		for _, it := range items {
-			keys[it.Key()] = true
+		for _, key := range valid {
+			keys[key] = true
 		}
 		for _, key := range named {
 			if !keys[key] {
@@ -742,26 +772,68 @@ func resolveUpdateChoices(plan *CollectionUpdatePlan, opts CollectionUpdateOptio
 		}
 		return nil
 	}
-	if err := pick("obsolete members", opts.RemoveObsolete, opts.Remove, plan.Removed, c.remove); err != nil {
+	if err := pick("obsolete members", opts.RemoveObsolete, opts.Remove, itemKeys(plan.Removed), c.remove); err != nil {
 		return c, err
 	}
-	if err := pick("conflicts", opts.OverrideConflicts, opts.Override, plan.Conflicts, c.override); err != nil {
+	if err := pick("conflicts", opts.OverrideConflicts, opts.Override, plan.ConflictKeys(), c.override); err != nil {
 		return c, err
 	}
 	return c, nil
 }
 
+// ConflictKeys is every conflict key the plan offers to override
+// (CollectionUpdateOptions.Override): each conflicting entry's
+// domain.ModKey, then its plugin list's and its overrides'.
+func (p *CollectionUpdatePlan) ConflictKeys() []string {
+	keys := make([]string, 0, len(p.Conflicts))
+	for _, it := range p.Conflicts {
+		keys = append(keys, it.Key())
+	}
+	return append(keys, p.conflictKeys()...)
+}
+
+// conflictKeys are the plan's conflict keys beyond its entries': its
+// plugin list's and its overrides'.
+func (p *CollectionUpdatePlan) conflictKeys() []string {
+	var keys []string
+	if pc := p.Plugins; pc != nil {
+		for _, name := range pc.Conflicts {
+			keys = append(keys, collectionPluginKey(name))
+		}
+		if len(pc.Moved) > 0 {
+			keys = append(keys, collectionPluginOrderKey)
+		}
+		if pc.RulesConflict {
+			keys = append(keys, collectionPluginRulesKey)
+		}
+	}
+	for _, path := range p.OverrideConflicts {
+		keys = append(keys, collectionOverrideKey(path))
+	}
+	return keys
+}
+
+// overrides reports whether the caller resolves the conflict key the
+// collection's way.
+func (c updateChoices) overrides(key string) bool { return c.override[key] }
+
 // ErrBadUpdateChoice refuses an update option naming an entry the plan
 // does not offer the choice for: the caller's input.
 var ErrBadUpdateChoice = errors.New("invalid collection update choice")
 
-// updateTarget is the profile plan leads to under c, and the entries it
-// marks as the collection's. The collection's entries come in the new
-// version's order; every other entry the profile keeps (the user's own, a
-// kept obsolete member, a duplicate) stays just after the collection entry
-// it followed, so a mod the user placed keeps its place among them.
-func updateTarget(plan *CollectionUpdatePlan, c updateChoices) (*domain.Profile, map[string]bool) {
-	base := plan.base
+// updateTarget is the profile plan leads to under c, built on base - the
+// profile as it stands at Apply, which sameProfileState held equal to the
+// plan's in everything the update reads, so an edit the update does not
+// touch (a hook, the link method) is kept - and the entries it marks as the
+// collection's. The collection's entries come in the new version's order;
+// every other entry the profile has stays just after the collection entry
+// it followed, so a mod the user placed keeps its place among them. That
+// includes the user's own entries, kept obsolete members, an obsolete member
+// chosen for removal (unmarked, until its uninstall removes it with its
+// installed row, so the profile never loses a mod still installed) and every
+// repeated reference (a hand edit: a mod listed twice is decided by its
+// first reference, and the copies are kept as written).
+func updateTarget(plan *CollectionUpdatePlan, base *domain.Profile, c updateChoices) (*domain.Profile, map[string]bool, []RestrictedOverride) {
 	target := *base
 	have := firstRefs(base.Mods)
 	marks := map[string]bool{}
@@ -797,20 +869,15 @@ func updateTarget(plan *CollectionUpdatePlan, c updateChoices) (*domain.Profile,
 		key := domain.ModKey(ref.SourceID, ref.ModID)
 		first := !seen[key]
 		seen[key] = true
-		if inDoc[key] {
-			if first {
-				anchor = key
-			}
+		if inDoc[key] && first {
+			anchor = key
 			continue
 		}
-		if !first {
-			continue
+		if first {
+			// A kept obsolete member is the user's now, and so is one
+			// chosen for removal until its uninstall takes it out.
+			ref.FromCollection = false
 		}
-		if ref.FromCollection && c.remove[key] {
-			continue
-		}
-		// A kept obsolete member is the user's now.
-		ref.FromCollection = false
 		after[anchor] = append(after[anchor], ref)
 	}
 	mods := slices.Clone(after[""])
@@ -820,26 +887,12 @@ func updateTarget(plan *CollectionUpdatePlan, c updateChoices) (*domain.Profile,
 	}
 	target.Mods = mods
 
-	if !plan.doc.Plugins.IsZero() {
-		target.Plugins = plan.doc.Plugins.Clone()
-	} else {
-		target.Plugins = base.Plugins.Clone()
-	}
-	target.Overrides = maps.Clone(base.Overrides)
-	for path, content := range plan.doc.Overrides {
-		if !c.allowAny && slices.ContainsFunc(plan.RestrictedOverrides, func(o RestrictedOverride) bool { return o.Path == path }) {
-			// Held back: a new one is not added, and a changed one keeps
-			// the profile's own content.
-			continue
-		}
-		if target.Overrides == nil {
-			target.Overrides = map[string][]byte{}
-		}
-		target.Overrides[path] = []byte(content)
-	}
+	target.Plugins, target.CollectionBaseline = mergeCollectionPlugins(plan, base, c)
+	var heldBack []RestrictedOverride
+	target.Overrides, heldBack = mergeCollectionOverrides(plan, base, c, target.CollectionBaseline)
 	target.External = slices.Clone(plan.doc.External)
 	target.Collection = plan.info
-	return &target, marks
+	return &target, marks, heldBack
 }
 
 // ApplyCollectionUpdate executes plan under opts: it converges the profile
@@ -881,7 +934,7 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		return result, err
 	}
 
-	target, marks := updateTarget(plan, choices)
+	target, marks, heldBack := updateTarget(plan, current, choices)
 	data, err := config.ExportProfile(target)
 	if err != nil {
 		return result, fmt.Errorf("building the updated profile: %w", err)
@@ -890,7 +943,7 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	if err != nil {
 		return result, err
 	}
-	ip.collectionState = &collectionState{collection: target.Collection, external: target.External, plugins: target.Plugins, fromCollection: marks}
+	ip.collectionState = &collectionState{collection: target.Collection, external: target.External, plugins: target.Plugins, fromCollection: marks, baseline: target.CollectionBaseline}
 	// Only what the new version adds or rewrites goes through the
 	// override gate, and updateTarget applied it: the profile's own
 	// overrides stay as they are.
@@ -923,9 +976,7 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	importResult, err := s.applyImportHeld(ctx, game, ip, importOpts, sink)
 	result.Import = importResult
 	if importResult != nil && importResult.ProfileName != "" && !importResult.Refused {
-		if !opts.AllowAnyOverrides {
-			importResult.OverridesSkipped = plan.RestrictedOverrides
-		}
+		importResult.OverridesSkipped = heldBack
 		if pending > 0 {
 			importResult.Skipped += pending
 			importResult.Notes = append(importResult.Notes, fmt.Sprintf("This account is not served downloads through the API, so %d item(s) the new version adds or moves are recorded pending: get each file from its page and install it from the file.", pending))
@@ -950,8 +1001,8 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 			result.Changed++
 		}
 	}
-	for _, it := range plan.Conflicts {
-		if choices.override[it.Key()] {
+	for _, key := range plan.ConflictKeys() {
+		if choices.override[key] {
 			result.Overridden++
 		} else {
 			result.Conflicts++
@@ -963,8 +1014,16 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 			result.Kept++
 			continue
 		}
-		if w := s.removeObsoleteMember(ctx, game, plan.Profile, it); w != "" {
-			result.Warnings = append(result.Warnings, w)
+		if cerr := ctx.Err(); cerr != nil {
+			// Every member not yet removed stays in the profile, installed,
+			// as the user's: nothing is left half-removed.
+			return result, cerr
+		}
+		if rerr := s.removeObsoleteMember(ctx, game, plan.Profile, it); rerr != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return result, cerr
+			}
+			result.Warnings = append(result.Warnings, fmt.Sprintf("could not remove %s: %v; it stays in the profile, installed, as your own mod (uninstall it with `lmm uninstall %s`)", describeUpdateItem(it), rerr, it.ModID))
 			continue
 		}
 		result.Removed = append(result.Removed, key)
@@ -981,48 +1040,68 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 // an update reads and writes.
 func sameProfileState(a, b *domain.Profile) bool {
 	return reflect.DeepEqual(a.Mods, b.Mods) && a.Plugins.Equal(b.Plugins) && a.Collection.Equal(b.Collection) &&
-		reflect.DeepEqual(a.External, b.External) && reflect.DeepEqual(a.Overrides, b.Overrides)
+		reflect.DeepEqual(a.External, b.External) && reflect.DeepEqual(a.Overrides, b.Overrides) &&
+		reflect.DeepEqual(a.CollectionBaseline, b.CollectionBaseline)
 }
 
-// removeObsoleteMember uninstalls it from profileName, the profile already
-// saved without it; "" when done, else what went wrong. A member with no
-// installed row (never installed, or removed by hand) needs nothing.
-func (s *Service) removeObsoleteMember(ctx context.Context, game *domain.Game, profileName string, it CollectionUpdateItem) string {
+// removeObsoleteMember uninstalls it from profileName: its installed row,
+// its deployed files and its profile reference, in the uninstall's own
+// order (Ruling 16: the reference goes after the row, even under a
+// cancelled ctx). A member with no installed row (never installed, or
+// uninstalled by hand) has only its reference to remove. On an error the
+// member stays as it was: in the profile, and installed when it was.
+func (s *Service) removeObsoleteMember(ctx context.Context, game *domain.Game, profileName string, it CollectionUpdateItem) error {
 	if _, err := s.GetInstalledMod(ctx, it.SourceID, it.ModID, game.ID, profileName); err != nil {
-		return ""
+		if !errors.Is(err, domain.ErrModNotFound) {
+			return err
+		}
+		return s.NewProfileManager().RemoveMod(ctx, game.ID, profileName, it.SourceID, it.ModID)
 	}
 	live, recordedOnly, err := s.profileScope(ctx, game.ID, profileName)
-	if err == nil {
-		if recordedOnly {
-			all := func(domain.DeployPath) bool { return true }
-			_, err = s.uninstallRecorded(ctx, game, profileName, it.SourceID, it.ModID, live, UninstallOptions{}, all, all)
-		} else {
-			_, err = s.uninstallMod(ctx, game, profileName, it.SourceID, it.ModID, UninstallOptions{})
-		}
-	}
 	if err != nil {
-		return fmt.Sprintf("could not remove %s: %v (uninstall it with `lmm uninstall %s`)", it.Key(), err, it.ModID)
+		return err
 	}
-	return ""
+	if recordedOnly {
+		all := func(domain.DeployPath) bool { return true }
+		_, err = s.uninstallRecorded(ctx, game, profileName, it.SourceID, it.ModID, live, UninstallOptions{}, all, all)
+		return err
+	}
+	_, err = s.uninstallMod(ctx, game, profileName, it.SourceID, it.ModID, UninstallOptions{})
+	return err
+}
+
+// describeUpdateItem names an update entry for a message.
+func describeUpdateItem(it CollectionUpdateItem) string {
+	if it.Name != "" {
+		return it.Name + " (" + it.Key() + ")"
+	}
+	return it.Key()
 }
 
 // dropCollectionRevision removes a source collection revision's recipe
 // cache entry once no profile of game names that revision; "" when done or
 // still in use, else what went wrong.
 func (s *Service) dropCollectionRevision(ctx context.Context, game *domain.Game, sourceID, slug string, revision int) string {
-	profiles, err := s.NewProfileManager().List(ctx, game.ID)
-	if err != nil {
-		return ""
-	}
-	for _, p := range profiles {
-		if c := p.Collection; c != nil && c.Origin != nil &&
-			c.Origin.SourceID == sourceID && c.Origin.Slug == slug && c.Origin.Revision == revision {
-			return ""
-		}
-	}
 	dir, err := s.collectionCacheDir(game, sourceID, slug, revision)
 	if err != nil {
 		return ""
+	}
+	// Every game whose recipes live in the same place - a cache_path two
+	// games share (#613 review) - is asked, not only this one.
+	for _, g := range s.ListGames() {
+		if other, err := s.collectionCacheDir(g, sourceID, slug, revision); err != nil || other != dir {
+			continue
+		}
+		profiles, err := s.NewProfileManager().List(ctx, g.ID)
+		if err != nil {
+			return ""
+		}
+		for _, p := range profiles {
+			if c := p.Collection; c != nil && c.Origin != nil &&
+				c.Origin.SourceID == sourceID && c.Origin.Slug == slug && c.Origin.Revision == revision {
+				return ""
+			}
+		}
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Sprintf("could not remove revision %d's recipe from the cache: %v", revision, err)

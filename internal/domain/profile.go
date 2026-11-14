@@ -44,6 +44,29 @@ type Profile struct {
 	// for the .esm/.esp/.esl files of a game whose adapter manages its
 	// plugins. Absent from every document of a profile without one.
 	Plugins ProfilePlugins `json:"plugins,omitzero"`
+
+	// CollectionBaseline is what the profile's collection last applied
+	// beyond its mod entries (#613): the base a collection update merges
+	// the profile's plugin list and overrides against, so it can tell the
+	// user's edit from the collection's own change. This machine's record,
+	// like ModReference.FromCollection: the profile file keeps it, no
+	// export, document or JSON carries it. nil for every other profile.
+	CollectionBaseline *CollectionBaseline `json:"-"`
+}
+
+// CollectionBaseline is a collection's last applied plugin list and
+// overrides (Profile.CollectionBaseline, #613).
+type CollectionBaseline struct {
+	// Plugins is the collection's plugin list, as it last applied it.
+	Plugins ProfilePlugins
+	// Overrides maps each override path the collection last wrote to the
+	// sha256 of its content (lower-case hex).
+	Overrides map[string]string
+}
+
+// IsZero reports whether b records nothing.
+func (b *CollectionBaseline) IsZero() bool {
+	return b == nil || (b.Plugins.IsZero() && len(b.Overrides) == 0)
 }
 
 // FindRef returns a pointer into p.Mods for the reference matching

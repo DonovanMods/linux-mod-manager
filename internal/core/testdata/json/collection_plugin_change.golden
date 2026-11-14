@@ -15,5 +15,13 @@
     ],
     "rules": 0,
     "managed": true
-  }
+  },
+  "conflicts": [
+    "Mine.esp"
+  ],
+  "moved": [
+    "A.esp",
+    "B.esp"
+  ],
+  "rules_conflict": true
 }

@@ -88,3 +88,33 @@ func TestSaveProfile_FromCollectionIsNeverExported(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "from_collection", "a collection document never carries the marker")
 }
+
+// #613: the collection's last applied plugin list and override hashes are
+// kept in the profile file as `collection_baseline:`, saved in place like
+// any other block, and never exported.
+func TestSaveProfile_CollectionBaselineRoundTripsAndIsNeverExported(t *testing.T) {
+	dir := t.TempDir()
+	path := writeProfileFile(t, dir, "tg", "default", handEdited)
+	profile, err := config.LoadProfile(dir, "tg", "default")
+	require.NoError(t, err)
+	require.Nil(t, profile.CollectionBaseline)
+	profile.CollectionBaseline = &domain.CollectionBaseline{
+		Plugins:   domain.ProfilePlugins{Order: []domain.PluginEntry{{Name: "A.esp", Enabled: true}, {Name: "B.esp"}}},
+		Overrides: map[string]string{"Config/Game.ini": "ab12"},
+	}
+	require.NoError(t, config.SaveProfile(dir, profile))
+	text := readFile(t, path)
+	require.True(t, strings.HasPrefix(text, handEdited), "only the new block is added")
+	require.Contains(t, text, "collection_baseline:")
+	reloaded, err := config.LoadProfile(dir, "tg", "default")
+	require.NoError(t, err)
+	require.Equal(t, profile.CollectionBaseline, reloaded.CollectionBaseline)
+
+	exported, err := config.ExportProfile(reloaded)
+	require.NoError(t, err)
+	require.NotContains(t, string(exported), "collection_baseline")
+
+	reloaded.CollectionBaseline = nil
+	require.NoError(t, config.SaveProfile(dir, reloaded))
+	require.Equal(t, handEdited, readFile(t, path), "clearing it restores the file")
+}
