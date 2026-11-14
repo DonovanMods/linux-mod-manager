@@ -932,6 +932,19 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   `make install` of a release tag is; any other is a development build,
   which never updates itself.
 
+### Documentation
+
+- **Collections are no longer a non-goal (#612).** The README drops
+  NexusMods collections from "What lmm does not have" and "Non-goals for
+  2.0", and gains a Collections section (lmm's `.lmmc`, import from a file,
+  a link or NexusMods, `lmm profile fill`, `lmm profile sync --collection`,
+  and what a collection import still refuses) and an Archive load order
+  section, with their commands in the command and `--json` tables and the
+  shipped items on the roadmap. LOOT masterlist suggestions (#619) and
+  signed collections (#624) are the non-goals that remain. The guide's home
+  page links collection import and the free-account path, and the glossary
+  gains Collection, FOMOD and Plugin.
+
 ## [2.3.0] - 2026-11-10
 
 ### Added
