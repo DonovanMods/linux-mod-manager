@@ -523,7 +523,10 @@ order. The new version passes the same checks as an import: a feature this
 lmm lacks refuses the update with nothing changed, hooks are listed and
 never applied (the profile keeps its own), and overrides that aren't text
 config files are held back unless you pass `--allow-any-overrides` (in the
-browser, **Import these overrides too**). For a NexusMods collection,
+browser, **Import these overrides too**). The same option lets through
+bundled files that are programs and patches to programs: a new version
+that patches a program is refused without it (in the browser, **Apply
+these patches**), since lmm never updates a mod unpatched. For a NexusMods collection,
 `--with-optional` and `--optional <id>` include optional mods, and an
 optional mod you already have stays in; in the browser, unticking one in
 the plan leaves it out of the new version, where it is listed with the

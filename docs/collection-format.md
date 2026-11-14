@@ -335,6 +335,15 @@ different one). The updated profile may name only the new container's own
 items and the bundled items the profile already records: any other bundled
 reference is refused.
 
+A NexusMods origin's bundled items come from the new revision's recipe
+(`bundled/<fileExpression>/`), kept beside it as at an import, and its
+patches are kept in the patch store before anything installs. A new
+version that patches code (see [Exact file lists and
+patches](#exact-file-lists-and-patches)) refuses the update unless it
+allows any override (`--allow-any-overrides`, the web UI's **Apply these
+patches**): the plan counts them (`restricted_patches`), and a mod is
+never updated unpatched.
+
 The update converges through the import's two-phase apply: every download
 is acquired first, so a refusal (an installer's questions, or a NexusMods
 collection's failed download) writes nothing. An update planned before the
@@ -604,6 +613,14 @@ A collection from someone else is untrusted input.
   override of a deployed mod's own file (a symlink into lmm's mod cache, or
   a hardlink) is skipped with a warning for now (#630); each override is
   written or skipped on its own.
+- **Patches to code** - a patch to a library, an executable, a script the
+  system runs or a loader configuration - are listed in the plan
+  (`items[].patches[].restricted`, counted in `restricted_patches`), and
+  the import is refused unless `--allow-any-overrides` (the web UI's
+  **Apply these patches**, beside the overrides' and the bundled items'
+  boxes, which set the same option). Unlike an override or a bundled item,
+  a patch is not skipped on its own: the mod would install unpatched. See
+  [Exact file lists and patches](#exact-file-lists-and-patches).
 - **Version 0 too.** The hooks and overrides rules apply to every profile
   import from a file or upload, a version-0 document included, so the
   older format is no way around them. They do not apply to profiles you
