@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
@@ -79,6 +80,12 @@ type ConvergeResult struct {
 //     deployment) is never a sweep candidate at all and simply survives,
 //     row intact.
 //
+//     A mod whose entry is there but lost files its row records (#642,
+//     lostCacheFiles) keeps every path it no longer provides: the cache is
+//     what is wrong, not the deployment, and verify reports the loss and
+//     re-downloads it. Those rows are claimed, so the sweep keeps a link
+//     the loss left dangling too.
+//
 //  2. Sweep pass: walks gameDir for symlinks with no CLAIMED DB row - "no
 //     surviving row" (a row the row pass judged and kept, or deleted) OR
 //     "an unknown-provenance mod's row, deliberately left unclaimed" (the
@@ -128,6 +135,10 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	// wholly absent - see the row-pass doc above (Finding 2): such a mod's
 	// rows must be skipped, not judged "no longer provided".
 	unknownProvenance := make(map[string]bool)
+	// own is each mod's own deployable set (#642): what its entry still
+	// provides, for lostCacheFiles' judgement of an entry that cannot vouch
+	// for its files by their markers.
+	own := make(map[string]map[domain.DeployPath]bool, len(mods))
 	for _, m := range mods {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -140,9 +151,12 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			}
 			return nil, fmt.Errorf("listing deployable files for %s: %w", domain.ModKey(m.SourceID, m.ID), err)
 		}
+		mine := make(map[domain.DeployPath]bool, len(files))
 		for _, f := range files {
 			provided[f.path] = true
+			mine[f.path] = true
 		}
+		own[domain.ModKey(m.SourceID, m.ID)] = mine
 	}
 
 	method, err := s.GetEffectiveLinkMethod(ctx, game, profileName)
@@ -214,6 +228,12 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			continue
 		}
 		unknown := unknownProvenance[domain.ModKey(m.SourceID, m.ID)]
+		// #642: a mod whose entry lost files keeps every path it no longer
+		// provides - its cache, not its deployment, is what is wrong, and
+		// verify reports it and re-downloads it. Kept, never removed, and
+		// claimed, so the sweep below does not take a now-dangling link
+		// either.
+		lostEntry := !unknown && s.entryLostFiles(gameCache, game, &m, rows, own, strandedPaths, provided, &errs)
 		for _, path := range rows {
 			// A deployed_files row is bookkeeping, not truth: a corrupted or
 			// hand-edited relative_path (absolute, or escaping the game dir
@@ -238,7 +258,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				continue
 			}
 			handled[path] = true
-			if provided[path] {
+			if provided[path] || lostEntry {
 				continue
 			}
 
@@ -419,6 +439,33 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		return result, errors.Join(errs...)
 	}
 	return result, nil
+}
+
+// entryLostFiles reports whether m's cache entry lost files the row pass
+// would otherwise judge by (#642): asked only when some of its recorded
+// rows is a removal candidate, so a mod whose entry provides everything it
+// deployed costs nothing. A check that fails is collected into errs and
+// reads as lost - never remove what cannot be judged.
+func (s *Service) entryLostFiles(gameCache *cache.Cache, game *domain.Game, m *domain.InstalledMod, rows []domain.DeployPath, own map[string]map[domain.DeployPath]bool, stranded, provided map[domain.DeployPath]bool, errs *[]error) bool {
+	candidate := false
+	for _, p := range rows {
+		if !provided[p] && !stranded[p] {
+			candidate = true
+			break
+		}
+	}
+	if !candidate {
+		return false
+	}
+	key := domain.ModKey(m.SourceID, m.ID)
+	lost, err := lostCacheFiles(gameCache, modCacheKey(game.ID, m.Mod), m.FileIDs, func() ([]domain.DeployPath, error) {
+		return unprovidedPaths(rows, own[key], stranded), nil
+	})
+	if err != nil {
+		*errs = append(*errs, fmt.Errorf("checking the cache entry of %s: %w", key, err))
+		return true
+	}
+	return len(lost) > 0
 }
 
 // strandedRowPaths is the paths of profileName's deployed-file rows in game

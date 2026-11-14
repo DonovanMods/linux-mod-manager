@@ -846,6 +846,21 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **`lmm verify --fix` no longer removes a deployed file whose cache copy
+  was deleted (#642).** When a file inside a mod's cache entry was deleted
+  outside lmm together with the completion marker that vouched for it,
+  `lmm verify` reported the mod OK and `--fix` then removed the deployed
+  copy as no longer provided, so the game lost the file and nothing put
+  it back. verify now checks each cache entry against the files the
+  installed mod records: a file whose cached content is gone is a new
+  `cache_incomplete` finding (an issue: `CACHE INCOMPLETE` in the
+  terminal, a row with **Repair** on the web Health page, its note naming
+  what is gone), and `--fix` re-downloads it into the mod's own entry - a
+  FOMOD mod's tree and a same-version file set's entry (#639) included.
+  Until the entry is whole again no deployed file of that mod is removed
+  as stale: a mod whose source cannot be reached, or one imported from
+  disk, keeps its deployed copy and stays reported.
+
 - **A profile that swaps a mod's file at the same version now reinstalls
   it (#639).** When a profile entry's `file_ids` changed but its `version`
   did not (a collection update that swaps a file, a profile edited by
