@@ -66,6 +66,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checked again after 15 minutes otherwise, and at once after NexusMods
   refuses a download as Premium-only, so an upgrade or a lapse under a
   long-running `lmm serve` is noticed (#607).
+- **`lmm plugins` and the web UI's Plugins tab (#617).** On a game with
+  the `bethesda` adapter, `lmm plugins list` shows the plugin load order
+  lmm writes to `Plugins.txt`: each plugin's state, its master/light/medium
+  flags, the masters it needs (a missing one marked), what placed it (the
+  game, the profile's order, new, a rule, a master, or external) and its
+  mod, then the findings. `lmm plugins enable|disable|move|sort` and
+  `lmm plugins rules list|add|remove` (with `lmm plugins rules group
+add|remove`) change the profile's `plugins:` block and, for the active
+  profile, write `Plugins.txt` at once; each takes `--dry-run`, and
+  `--json` emits the new `core.PluginOrderReport`,
+  `core.PluginEditPlan`/`core.PluginEditResult` and
+  `core.PluginRulesReport` documents. A move or a sort records the order as
+  you see it in the profile, so nothing else moves; a rule that would make
+  the order impossible is refused with the existing
+  `PluginOrderCycleError`; the game's own plugins and plugins lmm did not
+  deploy are refused as not the profile's to change (to switch, to move, or
+  as a rule's subject; they may still be a rule's `after`/`req`). In the web UI the
+  reorder modal gains a **Plugins** tab beside **Mods** for these games,
+  with the same order, badges and findings, and the same changes (sort
+  previews first), over the new `GET`/`POST /api/v1/profiles/{name}/plugins`.
+  See the new guide page, `docs/guide/plugins.md`.
 - **lmm writes a Bethesda game's plugin list (#616).** On a game with the
   `bethesda` adapter, every flow that changes which plugins are deployed
   (`lmm deploy`, `install`, `update` and rollbacks, `mod enable`/`disable`,

@@ -202,6 +202,30 @@ type pluginComputation struct {
 	// nothing to report either (no prefix, and no plugin to list).
 	skipped bool
 	nothing bool
+
+	// The report's facts (#617): the profile read, the final sorted
+	// nodes, the request the managed plugins were sorted by (for which
+	// constraints placed each), a cycle that stopped the sort, the
+	// implicitly active plugins, and the deployed plugins' mods.
+	profile          *domain.Profile
+	sorted           []pluginNode
+	managedReq       sortRequest
+	cycle            *PluginOrderCycleError
+	implicitlyActive map[string]bool
+	dirs             pluginDirs
+	modOf            map[string]int
+}
+
+// pluginComputeOpts changes what computePluginListWith computes.
+type pluginComputeOpts struct {
+	// plugins, when set, stands in for the profile's plugins: block - a
+	// plugin edit's proposal (#617).
+	plugins *domain.ProfilePlugins
+	// report keeps going where a sync would stop with nothing to write -
+	// an unresolved prefix, a profile with no plugin of lmm's - so the
+	// plugins report can still show lmm's own order (#617). Nothing
+	// computed in this mode is ever written.
+	report bool
 }
 
 // pluginRules is game's plugin spec, when its adapter manages a plugin
@@ -430,6 +454,11 @@ func appDataFolder(game *domain.Game, spec adapter.PluginSpec) string {
 // the current file - and sorts. A finding that forbids writing sets
 // c.skipped. The error is for a list file that cannot be read.
 func (s *Service) computePluginList(ctx context.Context, game *domain.Game, profileName string, spec adapter.PluginSpec) (*pluginComputation, error) {
+	return s.computePluginListWith(ctx, game, profileName, spec, pluginComputeOpts{})
+}
+
+// computePluginListWith is computePluginList under opts.
+func (s *Service) computePluginListWith(ctx context.Context, game *domain.Game, profileName string, spec adapter.PluginSpec, opts pluginComputeOpts) (*pluginComputation, error) {
 	c := &pluginComputation{spec: spec, managed: map[string]bool{}}
 	st := s.ResolvePrefix(game)
 	c.prefix = st
@@ -439,6 +468,12 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 	if profile == nil {
 		profile = &domain.Profile{}
 	}
+	if opts.plugins != nil {
+		clone := *profile
+		clone.Plugins = opts.plugins.Clone()
+		profile = &clone
+	}
+	c.profile = profile
 	modIndex := make(map[string]int, len(profile.Mods))
 	for i, m := range profile.Mods {
 		modIndex[domain.ModKey(m.SourceID, m.ModID)] = i
@@ -447,7 +482,9 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 	dirs, scanErr := scanPluginDirs(game, spec, st, folder)
 	implicitKeys, implicit := implicitPlugins(game, spec, st, folder, dirs)
 	c.implicit = implicit
+	c.dirs = dirs
 	implicitlyActive := map[string]bool{}
+	c.implicitlyActive = implicitlyActive
 	for _, name := range spec.ImplicitlyActive {
 		if dirs.has(name) {
 			implicitlyActive[pluginKey(name)] = true
@@ -501,6 +538,7 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 			Message: fmt.Sprintf("the plugin list was not written, because none of the %d plugin(s) this profile deploys is in %s - is its drive mounted? (lmm deploy puts them back)", deployedPlugins, game.ModPath)})
 		return c, nil
 	}
+	c.modOf = modOf
 	if !st.Resolved {
 		// Nothing to write without the prefix. Worth saying only when the
 		// profile deploys a plugin: a profile of textures and an ENB has no
@@ -512,13 +550,19 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 		} else {
 			c.nothing = true
 		}
-		return c, nil
+		if !opts.report {
+			return c, nil
+		}
+		// The report goes on without the file: lmm's own plugins, sorted,
+		// and no external one (only the file names those).
+		c.current = pluginListFile{eol: eolNew}
+	} else {
+		c.listDir = listDirOf(st, folder)
+		if err := c.readCurrent(); err != nil {
+			return nil, err
+		}
 	}
-	c.listDir = listDirOf(st, folder)
-	if err := c.readCurrent(); err != nil {
-		return nil, err
-	}
-	if len(spec.Implicit) > 0 && len(implicit) == 0 && len(modOf) == 0 && len(c.current.entries) > 0 {
+	if st.Resolved && len(spec.Implicit) > 0 && len(implicit) == 0 && len(modOf) == 0 && len(c.current.entries) > 0 {
 		// The game's own masters (Skyrim.esm, ...) are always in its plugin
 		// folder; a folder with neither one of them nor a plugin of lmm's is
 		// not the game's - an empty mount point - and every plugin the list
@@ -592,14 +636,17 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 		// No plugin of lmm's, and a list lmm has never written: it is the
 		// user's (or the game's) alone, and lmm leaves it as it is.
 		c.nothing = true
-		return c, nil
+		if !opts.report {
+			return c, nil
+		}
 	}
 
 	loadedFirst := make(map[string]bool, len(implicit))
 	for _, name := range implicit {
 		loadedFirst[pluginKey(name)] = true
 	}
-	sorted, err := sortPlugins(sortRequest{nodes: nodes, loadedFirst: loadedFirst, order: profile.Plugins.Order, rules: profile.Plugins.Rules})
+	c.managedReq = sortRequest{nodes: nodes, loadedFirst: loadedFirst, order: profile.Plugins.Order, rules: profile.Plugins.Rules}
+	sorted, err := sortPlugins(c.managedReq)
 	if err == nil && len(externals) > 0 {
 		all := append(slices.Clone(sorted), externals...)
 		sorted, err = sortPlugins(sortRequest{nodes: all, loadedFirst: loadedFirst, rules: profile.Plugins.Rules,
@@ -608,10 +655,17 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 	var cycle *PluginOrderCycleError
 	if errors.As(err, &cycle) {
 		c.skipped = true
+		c.cycle = cycle
 		c.findings = append(c.findings, PluginFinding{Code: PluginFindingCycle, Severity: PluginSeverityError, Cycle: cycle.Edges,
 			Message: cycle.Error() + "; the game keeps the plugin list it had"})
+		if opts.report {
+			// The report shows the order the profile asks for, with no
+			// constraint applied, beside the cycle that stopped the sort.
+			c.sorted = append(tiebreakOrder(c.managedReq), externals...)
+		}
 		return c, nil
 	}
+	c.sorted = sorted
 	for _, n := range sorted {
 		c.entries = append(c.entries, listEntry{name: n.name, active: n.active})
 	}

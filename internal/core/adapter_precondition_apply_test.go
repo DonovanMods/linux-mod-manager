@@ -232,6 +232,7 @@ var uncheckedApplies = map[string]string{
 	"ApplyGameDetect":      "adds games.yaml entries; no game's mods are acted on",
 	"ApplyDetectSelection": "adds games.yaml entries; no game's mods are acted on",
 	"ApplyMergedPakRegen":  "no plan: it needs the adapter's compiler, which a refused adapter does not resolve",
+	"ApplyPluginEdit":      "deploys no mod: it writes the profile's plugins: block and the plugin list (TestPluginEditIsNoDeployUnderARefusingAdapter)",
 }
 
 // TestEveryApplyRechecksTheAdapterPrecondition plans each flow while the

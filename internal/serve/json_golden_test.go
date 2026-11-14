@@ -613,6 +613,17 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileReorderRequest{IDs: []string{"fake:m2", "fake:m1"}},
 		},
 		{
+			// #617's plugin edit request: the Plugins tab's move, as the
+			// core.PluginEdit `lmm plugins move` builds, run for real.
+			"plugin_edit_request",
+			pluginEditRequest{Edit: core.PluginEdit{Op: core.PluginOpMove, Plugin: "Patch.esp", Before: "SkyUI_SE.esp"}},
+		},
+		{
+			// #617's sort preview: dry_run stops at the plan.
+			"plugin_edit_request_dry_run",
+			pluginEditRequest{Edit: core.PluginEdit{Op: core.PluginOpSort}, DryRun: true},
+		},
+		{
 			// #332's per-finding Repair: `lmm verify --mod <id>`'s own
 			// filter, set on both halves of the flow from this one request
 			// (kind_verify_fix.go).
