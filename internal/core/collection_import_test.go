@@ -230,3 +230,28 @@ func TestCollectionImport_PerItemFailuresStillImportTheRest(t *testing.T) {
 	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "cyber", "p")
 	require.NoError(t, err)
 }
+
+// #640: an override whose content starts with a tab survives the whole
+// trip - saved, exported as a .lmmc, imported on another machine - byte
+// for byte.
+func TestCollectionImport_TabLeadingOverrideRoundTrips(t *testing.T) {
+	const content = "\t[Display]\n\tfov = 90\n"
+	svc, game := exportFixture(t)
+	profile, err := config.LoadProfile(svc.ConfigDir(), game.ID, "coop")
+	require.NoError(t, err)
+	profile.Overrides["engine/config/user.ini"] = []byte(content)
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
+	export, err := svc.ExportCollection(context.Background(), game.ID, "coop", core.CollectionExportOptions{})
+	require.NoError(t, err)
+	data, err := export.Container()
+	require.NoError(t, err)
+
+	to, toGame := recipient(t)
+	plan, err := to.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: data})
+	require.NoError(t, err)
+	_, err = to.ApplyCollectionImport(context.Background(), toGame, plan, core.ProfileImportOptions{NoInstall: true}, nil)
+	require.NoError(t, err)
+	saved, err := config.LoadProfile(to.ConfigDir(), "cyber", "coop")
+	require.NoError(t, err)
+	require.Equal(t, content, string(saved.Overrides["engine/config/user.ini"]))
+}

@@ -60,7 +60,7 @@ type profileFileYAML struct {
 	LinkMethod string                          `yaml:"link_method,omitempty"`
 	IsDefault  bool                            `yaml:"is_default,omitempty"`
 	Hooks      profileFileHooksYAML            `yaml:"hooks,omitempty"`
-	Overrides  map[string]string               `yaml:"overrides,omitempty"`
+	Overrides  overridesYAML                   `yaml:"overrides,omitempty"`
 	Collection *domain.CollectionInfo          `yaml:"collection,omitempty"`
 	External   []domain.CollectionExternalItem `yaml:"external,omitempty"`
 	Plugins    *ProfilePluginsConfig           `yaml:"plugins,omitempty"`
@@ -526,7 +526,7 @@ func editProfileDocument(base []byte, fromName string, want *domain.Profile, ren
 	}
 	if !sameOverrides(haveProfile.Overrides, want.Overrides) {
 		if err := e.setTopBlock("overrides", struct {
-			Overrides map[string]string `yaml:"overrides,omitempty"`
+			Overrides overridesYAML `yaml:"overrides,omitempty"`
 		}{overridesOf(want)}); err != nil {
 			return nil, err
 		}

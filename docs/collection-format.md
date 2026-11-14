@@ -317,7 +317,10 @@ installs them: the new container is kept for the `lmm-collection` source,
 an item whose files changed moves to the new digest, and an item holding
 code is held back unless the update allows any override. A held-back item
 the profile does not have is not added, and one it has stays at the
-version it has.
+version it has (and is reported as skipped only when the new version is a
+different one). The updated profile may name only the new container's own
+items and the bundled items the profile already records: any other bundled
+reference is refused.
 
 The update converges through the import's two-phase apply: every download
 is acquired first, so a refusal (an installer's questions, or a NexusMods

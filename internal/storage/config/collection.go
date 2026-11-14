@@ -35,7 +35,7 @@ type collectionDocYAML struct {
 	Mods                []collectionModYAML             `yaml:"mods"`
 	External            []domain.CollectionExternalItem `yaml:"external,omitempty"`
 	Hooks               profileFileHooksYAML            `yaml:"hooks,omitempty"`
-	Overrides           map[string]string               `yaml:"overrides,omitempty"`
+	Overrides           overridesYAML                   `yaml:"overrides,omitempty"`
 	// Plugins is the profile's plugin list (#616), whose presence requires
 	// the plugin_order feature.
 	Plugins *ProfilePluginsConfig `yaml:"plugins,omitempty"`

@@ -40,7 +40,10 @@ profile sync --collection` (in the web UI, **Update collection…** beside
   to the plugin list and overrides (`collection_baseline:`); both are this
   machine's record, and no export carries them;
   and `lmm profile list --json`/`lmm status --json` profile rows carry
-  `collection_origin` (`url` or `source`) for a profile that can update.
+  `collection_origin` (`url` or `source`) for a profile that can update. A collection
+  served as a `.lmmc` with bundled items updates them as an import installs
+  them: an item holding code is held back without `--allow-any-overrides`,
+  and one the profile already has stays at its version.
 
 - **Cyberpunk 2077's archive load order (#620).** A Cyberpunk 2077 game on
   the new `cyberpunk2077` adapter (Steam detection sets it; `lmm verify`
@@ -831,6 +834,16 @@ changed` in the terminal and the web UI; `"reason": "files_changed"` on
   invalidated. A collection update's plan note for such an entry now says
   it reinstalls the mod.
 
+- **A config override whose content starts with a tab now round-trips
+  (#640).** Such content was written as a YAML block the reader then
+  rejected ("found a tab character where an indentation space is
+  expected"): a `.lmmc` or YAML collection export carrying it could not be
+  imported again, and saving a profile holding it failed. Every writer of
+  override content (the profile file, the collection export and the
+  version-0 profile export) now writes content its usual form would not
+  read back unchanged as a double-quoted string instead; everything else is
+  written exactly as before, and files already on disk read unchanged.
+
 - **An override no longer overwrites your edit of a game file for good
   (#631).** When you changed a file after lmm wrote a profile override
   there (or the game rewrote its INI), `lmm deploy` wrote the profile's
@@ -839,7 +852,6 @@ changed` in the terminal and the web UI; `"reason": "files_changed"` on
   `snapshots/<game>/_originals/set-aside/` in its data folder, and the
   warning names the copy; the override is still written. Profile switch
   and apply, which now write overrides too, follow the same rule.
-
 - The web UI's mod page no longer offers **Re-link…** for a moment on a locked mod opened directly, before its library listing has loaded: a lock-gated action now waits until the lock is known. Found by a timing-dependent E2E failure (CI on e1e3bbba).
 - **Two mods that ship the same file over one of the game's own no longer
   leave the game's file in place (#632).** When a file was already there

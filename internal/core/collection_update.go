@@ -989,8 +989,12 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		for _, item := range plan.doc.Items {
 			key := domain.ModKey(item.Ref.SourceID, item.Ref.ModID)
 			if name, held := b.restricted[key]; held {
-				bundledSkipped = append(bundledSkipped, name)
 				ref, ok := have[key]
+				// Skipped is what the hold kept from moving: an item the
+				// profile already has at this version moved nowhere.
+				if !ok || ref.Version != item.Ref.Version {
+					bundledSkipped = append(bundledSkipped, name)
+				}
 				if !ok {
 					continue
 				}
@@ -1009,8 +1013,10 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		return result, fmt.Errorf("building the updated profile: %w", err)
 	}
 	// The target names the collection's bundled items (#623): the update
-	// keeps their container below, as an import does.
-	ip, err := s.planImport(ctx, game, data, true)
+	// keeps their container below, as an import does. Only this
+	// container's own items, and the ones the profile already has, may
+	// plan; any other bundled reference is refused.
+	ip, err := s.planImport(ctx, game, data, bundledRefAllowed(plan.bundle, current))
 	if err != nil {
 		return result, err
 	}
@@ -1115,6 +1121,22 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		}
 	}
 	return result, err
+}
+
+// bundledRefAllowed is which bundled references an update's target may
+// name (#623): one of b's own items (the new container, kept by the
+// update), or one current - the profile as it stands on disk - already
+// records at that version, whose container an earlier import kept.
+func bundledRefAllowed(b *pendingBundle, current *domain.Profile) func(domain.ModReference) bool {
+	recorded := map[string]bool{}
+	for _, ref := range current.Mods {
+		if ref.SourceID == domain.SourceCollection {
+			recorded[domain.ModKey(ref.SourceID, ref.ModID)+"@"+ref.Version] = true
+		}
+	}
+	return func(ref domain.ModReference) bool {
+		return b.carries(ref) || recorded[domain.ModKey(ref.SourceID, ref.ModID)+"@"+ref.Version]
+	}
 }
 
 // sameProfileState reports whether a and b record the same profile state
