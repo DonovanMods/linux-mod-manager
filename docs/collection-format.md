@@ -90,7 +90,7 @@ mods:                        # load order, first = lowest priority
     fomod_order: ["101", "100"]  # optional: the order those files layer in (else by file id)
   - source_id: lmm-collection # a bundled item: its files are the container's files/my-patch/
     mod_id: my-patch
-    version: 66a0a9f0ac25f084 # the digest of those files (requires: bundled)
+    version: 66a0a9f0ac25f0849c1e7b3d2f5a8e60 # the digest of those files (requires: bundled)
     name: My Patch
 external:                    # items lmm cannot fetch: listed, never downloaded
   - name: Cyber Engine Tweaks
@@ -242,16 +242,17 @@ root, as an extracted archive's is).
 its place in the load order and takes the keys any entry takes
 (`disabled`, `category`, `mod_type`, `locked`), except installer choices
 (`fomod`, `fomod_files`): its files are installed as they are. `version`
-is the digest of its files - the first 16 hex digits of the sha256 of one
-line per file, in path order, `<path>\0<size>\0<sha256 hex>\n` - which the
-exporter writes and the importer checks. Its presence requires `bundled`.
+is the digest of its files - the first 32 hex digits (128 bits) of the
+sha256 of one line per file, in path order, `<path>\0<size>\0<sha256
+hex>\n` - which the exporter writes and the importer checks. Its presence
+requires `bundled`.
 
 ```yaml
 id: 2f8c7a3e-…            # needed: a bundled item's id on the profile starts with it
 mods:
   - source_id: lmm-collection
     mod_id: my-patch       # the container's files/my-patch/
-    version: 66a0a9f0ac25f084
+    version: 66a0a9f0ac25f0849c1e7b3d2f5a8e60
     name: My Patch
 ```
 
@@ -262,14 +263,34 @@ files always have the same version, wherever they came from.
 
 **Kept with the collection.** There is no remote to download a bundled
 item from again, so an import keeps the container under the game's cache,
-`<cache>/collections/lmm-<collection id>/<digest>.lmmc`, and installs the
-item from it like any mod. Every later install - a profile switch or
-apply, another profile importing it, `lmm verify --fix` rebuilding a
-damaged cache entry - reads the item from the kept container whose copy
-hashes to the version the profile records. A bundled item checks no
+`<cache>/collections/lmm-<collection id>/<sha>.lmmc` (the first 32 hex
+digits of the container's sha256), with an index beside it, `<sha>.json`,
+recording each item's version, its full 256-bit digest, and whether the
+import **admitted** it: named by a `mods:` entry, and holding no code or
+imported with `--allow-any-overrides`. The item is installed from it like
+any mod. Every later install - a profile switch or apply, another profile,
+`lmm verify --fix` rebuilding a damaged cache entry - reads only an
+admitted item, from the kept container whose index admitted it at the
+version the profile records, and checks its files against the full
+digest. A later import of the same container can admit more (with
+`--allow-any-overrides`), never less; a kept copy that was damaged is
+replaced by the next import of the container. A bundled item checks no
 updates; a new version comes with a new import of the collection. The
-kept containers are not removed when a profile is (lmm has no cache-prune
-command yet).
+kept containers are not removed when a profile is, and nothing prunes
+them (lmm has no cache-prune command yet; the NexusMods recipes are kept
+the same way). To reclaim the space, delete the game's
+`<cache>/collections/lmm-*` directories; a profile that still lists a
+bundled item then needs its collection imported again.
+
+**Only the container brings one in.** A bundled item reaches a profile
+only through the import of the `.lmmc` that carries it. Any other profile
+document naming source `lmm-collection` - a plain YAML document, an older
+profile export from a file or a link - is refused; so is filing an
+archive under it (`lmm import --source lmm-collection`), and installing
+one (`lmm install`, or the web UI's install) that no import admitted. A
+hand-edited profile naming an item that was held back fails for that mod
+at deploy. `lmm-collection`, `lmm-merged` and `local` are lmm's own source
+ids: no game maps them, and no custom source may take them.
 
 **Naming the files to bundle.** An author's files reach a profile as a
 mod imported from a file (`lmm import <archive>`, source `local`). An
@@ -301,8 +322,10 @@ makes a container an import would refuse.
   or a device - whose name is relative, has no empty, `.` or `..` segment,
   no backslash and no control or formatting character, and passes the
   zip-slip and reserved-name checks. A name that breaks a rule is refused,
-  never rewritten. So is a member listed twice, and a file named
-  `files/<item>` that is not a directory;
+  never rewritten. So is a member listed twice, two paths differing only in
+  case (`A.esp` and `a.esp`), a path that is both a file and a directory
+  (`files/p/a` beside `files/p/a/b`), and a file named `files/<item>` that
+  is not a directory;
 - an item's name is 1 to 64 letters, digits, `.`, `_` or `-`, starting
   with a letter or digit, and a document with bundled items needs an `id`
   of letters, digits, `-` and `_`;
@@ -315,9 +338,11 @@ makes a container an import would refuse.
   entry names is left out, with a warning;
 - an item holding code - a file whose extension is that of a library, an
   executable or a script the system runs (`.dll`, `.exe`, `.so`, `.asi`,
-  `.bat`, `.sh`, `.ps1`, …), a file that starts like a native executable
-  whatever its name, or a loader configuration (`doorstop_config.ini`,
-  `enblocal.ini`) - is listed in the plan with the files that hold it back,
+  `.bat`, `.sh`, `.ps1`, …), a file that is a native executable whatever
+  its name (a Windows PE file by its `MZ` and `PE` headers, an ELF or a
+  Mach-O file by its first bytes; every file is checked, text extensions
+  included), a file with no extension that starts with `#!`, or a loader
+  configuration (`doorstop_config.ini`, `enblocal.ini`) - is listed in the plan with the files that hold it back,
   and imported only with `--allow-any-overrides` (the web UI's **Import
   these bundled items too**); otherwise it is left out of the profile and
   the result names it (`bundled_skipped`). Game scripts (`.lua`, …) are a

@@ -184,7 +184,44 @@ func (s *Service) bundleItems(ctx context.Context, game *domain.Game, profileNam
 		doc.Items[i].Files = nil
 		out = append(out, exportBundle{item: item})
 	}
+	// The importer's caps, so an export never makes what an import refuses.
+	if len(out) > maxBundleItems {
+		return nil, fmt.Errorf("%w: it would bundle %d items, over the %d an import accepts", ErrBundleTooLarge, len(out), maxBundleItems)
+	}
+	var total int64
+	for _, b := range out {
+		total += b.item.bytes
+	}
+	if total > maxBundleBytes {
+		return nil, fmt.Errorf("%w: the bundled files are %d bytes together, over the %d an import accepts", ErrBundleTooLarge, total, maxBundleBytes)
+	}
 	return out, nil
+}
+
+// CheckCollectionExport reports whether an export of gameID/profileName
+// with opts would succeed - the bundle choice refused, the files over the
+// importer's limits - without building the container unless the files are
+// too large to tell otherwise. It never writes. The web UI's export calls it
+// (with the identity record) before its download, so a refusal shows in
+// place rather than as the downloaded page.
+func (s *Service) CheckCollectionExport(ctx context.Context, gameID, profileName string, opts CollectionExportOptions) error {
+	opts.NoRecord = true
+	export, err := s.ExportCollection(ctx, gameID, profileName, opts)
+	if err != nil {
+		return err
+	}
+	// Deflate never grows content by more than a few bytes a block; the
+	// headers are a few hundred bytes a member. Under the cap with that
+	// margin, the container fits; past it, build it and see.
+	estimate := int64(len(export.Document))
+	for _, b := range export.bundles {
+		estimate += b.item.bytes + b.item.bytes/1024 + int64(len(b.item.members))*(512+2*maxCollectionLine)
+	}
+	if estimate <= maxCollectionContainer {
+		return nil
+	}
+	_, err = export.Container()
+	return err
 }
 
 // bundleSource reads the files an export bundles for ref: a bundled item's

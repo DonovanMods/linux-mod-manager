@@ -204,7 +204,19 @@ type ImportPlan struct {
 // against game's current installed/cache state, without saving anything or
 // touching the network - mirrors doProfileImport's preview step
 // (:411-459) exactly.
+//
+// A document naming a collection's bundled item (source lmm-collection,
+// #623) is refused: such an item comes in only with the `.lmmc` container
+// that carries it (PlanCollectionImport), whose import decides whether it
+// is admitted - a profile document must not bring in an item that import
+// held back.
 func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte) (*ImportPlan, error) {
+	return s.planImport(ctx, game, data, false)
+}
+
+// planImport is PlanImport; allowBundled lets a container's own collection
+// import (PlanCollectionImport) plan the bundled items it carries.
+func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte, allowBundled bool) (*ImportPlan, error) {
 	// #451 F3: a dry run must not promise what its own Apply refuses.
 	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
 		return nil, err
@@ -218,6 +230,11 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	// #621: what no option lets through is refused before anything else.
 	if err := checkImportedProfile(profile); err != nil {
 		return nil, err
+	}
+	if !allowBundled {
+		if err := refuseBundledRefs(profile.Mods); err != nil {
+			return nil, err
+		}
 	}
 
 	_, existErr := pm.Get(ctx, game.ID, profile.Name)

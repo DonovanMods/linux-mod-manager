@@ -409,17 +409,46 @@ func (s *Server) handleAPIProfileBundleCandidates(w http.ResponseWriter, r *http
 // collection identity - minting its collection id on the first call - and
 // answers the domain.CollectionInfo it holds. It is the CSRF-guarded write
 // the SPA's Export makes before its side-effect-free GET of the `.lmmc`.
+//
+// Its optional body names the mods an export will bundle (#623, the GET's
+// bundle= values): the export is then checked as well - the choice and the
+// files' size, without building the container - and a refusal answers 400,
+// so the SPA shows it before the download instead of navigating to it.
 func (s *Server) handleAPIProfileCollection(w http.ResponseWriter, r *http.Request) {
+	var req profileCollectionRequest
+	if err := decodeAPIBody(w, r, &req); err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
 	sel, ok := s.resolveGameAPISelection(w, r)
 	if !ok {
 		return
 	}
-	info, err := s.svc.RecordCollectionIdentity(r.Context(), sel.Game.ID, r.PathValue("name"), core.CollectionExportOptions{})
+	name := r.PathValue("name")
+	info, err := s.svc.RecordCollectionIdentity(r.Context(), sel.Game.ID, name, core.CollectionExportOptions{})
 	if err != nil {
 		s.writeAPIError(w, s.profileErrorStatus(err), err)
 		return
 	}
+	if len(req.Bundle) > 0 {
+		err := s.svc.CheckCollectionExport(r.Context(), sel.Game.ID, name, core.CollectionExportOptions{Bundle: req.Bundle})
+		if core.IsBundleRefused(err) {
+			s.writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err != nil {
+			s.writeAPIError(w, s.profileErrorStatus(err), err)
+			return
+		}
+	}
 	s.writeJSON(w, http.StatusOK, info)
+}
+
+// profileCollectionRequest is POST /api/v1/profiles/{name}/collection's
+// optional body (#623): the mods the export about to be downloaded bundles,
+// as its bundle= values ("source:id", a mod id or a name).
+type profileCollectionRequest struct {
+	Bundle []string `json:"bundle,omitzero"`
 }
 
 // profileErrorStatus classifies a profile CRUD failure: a profile that is

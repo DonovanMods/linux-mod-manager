@@ -97,6 +97,17 @@ func TestE2E_BundledCollection_PlanListsItemsAndHoldsCodeBack(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// clickPlanControl ticks the plan view's checkbox whose label holds text.
+func clickPlanControl(text string) chromedp.Action {
+	return chromedp.Evaluate(fmt.Sprintf(`
+		Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] label.plan__control'))
+			.find((l) => l.textContent.includes(%q))?.querySelector('input').click();
+	`, text), nil)
+}
+
+// TestE2E_BundledCollection_TickedCodeIsImported imports into the active
+// profile (overwriting it), installing, with the bundled-code box ticked:
+// the DLL is deployed into the game.
 func TestE2E_BundledCollection_TickedCodeIsImported(t *testing.T) {
 	f := newE2EFixture(t)
 	importPath := filepath.Join(t.TempDir(), "bundled.lmmc")
@@ -104,17 +115,26 @@ func TestE2E_BundledCollection_TickedCodeIsImported(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		openProfilesModal(),
+		chromedp.SetValue(`[data-testid="import-profile-name"]`, f.Profile, chromedp.ByQuery),
 		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-testid="import-bundled-code"]`, chromedp.ByQuery),
+		clickPlanControl("Overwrite the existing profile"),
+		settleEffects(),
+		clickPlanControl("Download and install"),
+		settleEffects(),
 		chromedp.Click(`[data-testid="import-bundled-code"]`, chromedp.ByQuery),
 		settleEffects(),
 		clickWhenSettled(`.modal[data-kind="profile_import"] [data-action="confirm"]`),
 		waitGone(`.modal[data-kind="profile_import"]`),
 	)
 	require.Eventually(t, func() bool {
-		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "bundled")
-		return err == nil && len(p.Mods) == 2
-	}, 10*time.Second, 50*time.Millisecond, "the ticked box imports the item holding code")
+		_, err := os.Stat(filepath.Join(f.Game.ModPath, "helper.dll"))
+		return err == nil
+	}, 15*time.Second, 50*time.Millisecond, "the ticked box imports the item holding code, and the install deploys its DLL")
+	p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, f.Profile)
+	require.NoError(t, err)
+	assert.Len(t, p.Mods, 2)
+	assert.FileExists(t, filepath.Join(f.Game.ModPath, "patch.esp"))
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -165,4 +185,36 @@ func TestE2E_BundledCollection_ExportWithMyFiles(t *testing.T) {
 	}
 	assert.Contains(t, names, "files/my-tweaks/tweaks/a.ini", "the ticked mod's files travel in the container")
 	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_BundledCollection_ExportErrorShowsInPlace: a bundle the server
+// refuses - here a mod whose installed files are gone from lmm's cache -
+// is reported in the form, and the page is not replaced by the error.
+func TestE2E_BundledCollection_ExportErrorShowsInPlace(t *testing.T) {
+	f := newE2EFixture(t)
+	ctx := t.Context()
+	require.NoError(t, f.Svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "u-1", SourceID: domain.SourceLocal, Name: "My Tweaks", Version: "1.0", GameID: f.Game.ID},
+		ProfileName: f.Profile, Enabled: true,
+	}))
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(ctx, f.Game.ID, f.Profile,
+		domain.ModReference{SourceID: domain.SourceLocal, ModID: "u-1", Version: "1.0"}))
+
+	var msg, location string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		openProfilesModal(),
+		chromedp.Click(fmt.Sprintf(`[data-action="export-bundle"][data-profile=%q]`, f.Profile), chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="bundle-candidate"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-testid="bundle-candidate"][data-mod="local:u-1"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Click(`[data-action="export-bundle-download"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="profile-bundle-row"] .modal__error`, chromedp.ByQuery),
+		textContent(`[data-testid="profile-bundle-row"] .modal__error`, &msg),
+		chromedp.Evaluate(`window.location.pathname`, &location),
+	)
+	assert.Contains(t, msg, "not in lmm's cache")
+	assert.NotContains(t, location, "/export", "the page was not replaced by the error")
+	// The refused POST is the expected 400; nothing else may have failed.
+	assertNoUncaughtErrors(t, f.BrowserErrors())
 }

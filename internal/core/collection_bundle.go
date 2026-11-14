@@ -16,10 +16,15 @@
 //   - the member, ratio, per-file, per-item and total caps hold before a
 //     byte is inflated, and every member is read through a limit that
 //     its header's size must match exactly;
-//   - each item's content has a digest (bundleDigest), the version a
-//     profile records it under: the document states it, and an item whose
-//     files do not hash to it is refused. Same content, same version - so
-//     a cache entry is never shared by two different trees.
+//   - each item's content has a digest (bundleDigest): its first 32 hex
+//     digits are the version a profile records it under, which the
+//     document states and an item whose files do not hash to is refused.
+//     Same content, same version - so a cache entry is never shared by two
+//     different trees. The full 256-bit digest is what an item kept for a
+//     rebuild is checked against (collection_bundle_keep.go);
+//   - a file and a directory of the same path, and two paths differing
+//     only in case, are refused: the tree must unpack the same way on
+//     every filesystem a game reads through.
 //
 // Code is held back like an override that is not text config (import_
 // gates.go): an item holding native code, a system script or a loader
@@ -33,6 +38,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -53,10 +59,13 @@ const (
 	// maxBundleBytes caps every bundled file of a container together,
 	// inflated: what an import reads, hashes and keeps in its cache.
 	maxBundleBytes = 256 << 20
-	// bundleDigestLen is how many hex digits of the sha256 a bundled
-	// item's version keeps: 64 bits, which no accident collides and which
-	// still reads as a version.
-	bundleDigestLen = 16
+	// bundleVersionLen is how many hex digits of the item's sha256 digest
+	// its version keeps: 128 bits, past any birthday collision an author
+	// could search for. The full digest is kept beside it for checking.
+	bundleVersionLen = 32
+	// codeSniffBytes is how much of each bundled file is kept for the
+	// native-code check (a PE header's offset is read from the first 64).
+	codeSniffBytes = 64 << 10
 )
 
 // bundleItemPattern is a bundled item's name: what files/<item>/ is
@@ -117,8 +126,14 @@ type bundledItem struct {
 	display string
 	members []bundleMember
 	bytes   int64
-	// digest is the item's version (bundleDigest), set once read.
+	// digest is the item's version (the first bundleVersionLen hex digits
+	// of sum), and sum its whole sha256 digest (bundleDigest); both set
+	// once read.
 	digest string
+	sum    string
+	// paths are the item's file paths and dirs every directory they or a
+	// directory entry imply, both lower-cased: the clash checks.
+	paths, dirs map[string]bool
 	// restricted lists the members held back as code, with why.
 	restricted []RestrictedOverride
 }
@@ -192,7 +207,7 @@ func (b *collectionBundle) addBundleMember(f *zip.File) error {
 		if len(b.items) == maxBundleItems {
 			return fmt.Errorf("%w: the container bundles more than %d items", ErrInvalidBundle, maxBundleItems)
 		}
-		entry = &bundledItem{name: item}
+		entry = &bundledItem{name: item, paths: map[string]bool{}, dirs: map[string]bool{}}
 		b.items[item] = entry
 	}
 	mode := f.Mode()
@@ -200,7 +215,9 @@ func (b *collectionBundle) addBundleMember(f *zip.File) error {
 		if mode&^(fs.ModePerm|fs.ModeDir) != 0 {
 			return fmt.Errorf("%w: %s is not a plain directory", ErrInvalidBundle, f.Name)
 		}
-		return nil // a directory entry: its files say what it holds
+		// A directory entry: its files say what it holds, but it may not
+		// share a file's path.
+		return entry.addDir(strings.TrimSuffix(rel, "/"), f.Name)
 	}
 	if !mode.IsRegular() {
 		return fmt.Errorf("%w: %s is not a regular file (a link, a device or a directory is refused)", ErrInvalidBundle, f.Name)
@@ -211,19 +228,66 @@ func (b *collectionBundle) addBundleMember(f *zip.File) error {
 	if f.UncompressedSize64 > ratioFloor && f.UncompressedSize64 > maxCollectionRatio*max(f.CompressedSize64, 1) {
 		return fmt.Errorf("%w: %s's compression ratio is over %d:1", ErrInvalidBundle, f.Name, maxCollectionRatio)
 	}
-	for _, m := range entry.members {
-		if m.rel == rel {
-			return fmt.Errorf("%w: the container holds %s more than once", ErrInvalidBundle, f.Name)
-		}
+	if err := entry.addFile(rel, f.Name); err != nil {
+		return err
 	}
 	entry.members = append(entry.members, bundleMember{rel: rel, size: int64(f.UncompressedSize64), open: f.Open})
 	entry.bytes += int64(f.UncompressedSize64)
 	return nil
 }
 
+// addFile records the file rel of the item, refusing one listed twice,
+// one differing from another only in case, and one sharing a directory's
+// path (files/p/a beside files/p/a/b), in either order.
+func (item *bundledItem) addFile(rel, member string) error {
+	key := strings.ToLower(rel)
+	switch {
+	case item.paths[key]:
+		return fmt.Errorf("%w: the container holds %s more than once, or another path that differs from it only in case", ErrInvalidBundle, member)
+	case item.dirs[key]:
+		return fmt.Errorf("%w: %s is both a file and a directory", ErrInvalidBundle, member)
+	}
+	if err := item.addDir(path.Dir(rel), member); err != nil {
+		return err
+	}
+	item.paths[key] = true
+	return nil
+}
+
+// addDir records dir and every directory above it, refusing one that is a
+// file's path.
+func (item *bundledItem) addDir(dir, member string) error {
+	for ; dir != "." && dir != "" && dir != "/"; dir = path.Dir(dir) {
+		key := strings.ToLower(dir)
+		if item.paths[key] {
+			return fmt.Errorf("%w: %s needs %s to be a directory, and it is a file", ErrInvalidBundle, member, collectionFilesDir+item.name+"/"+dir)
+		}
+		if item.dirs[key] {
+			break // its parents are recorded already
+		}
+		item.dirs[key] = true
+	}
+	return nil
+}
+
 // finish checks the bundle as a whole and reads every item: its total
 // size, a file in every item, and each item's digest and restrictions.
 func (b *collectionBundle) finish() error {
+	if err := b.check(); err != nil {
+		return err
+	}
+	for _, name := range b.names() {
+		if err := b.items[name].read(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// check is finish without reading any item: the bundle's total size and a
+// file in every item. A kept container is checked so, and only the item a
+// rebuild asks for is read.
+func (b *collectionBundle) check() error {
 	var total int64
 	for _, item := range b.items {
 		total += item.bytes
@@ -235,9 +299,6 @@ func (b *collectionBundle) finish() error {
 		item := b.items[name]
 		if len(item.members) == 0 {
 			return fmt.Errorf("%w: files/%s/ holds no file", ErrInvalidBundle, name)
-		}
-		if err := item.read(); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -258,7 +319,8 @@ func (item *bundledItem) read() error {
 			item.restricted = append(item.restricted, RestrictedOverride{Path: m.rel, Reason: reason})
 		}
 	}
-	item.digest = bundleDigest(item.members, sums)
+	item.sum = bundleDigest(item.members, sums)
+	item.digest = item.sum[:bundleVersionLen]
 	return nil
 }
 
@@ -273,7 +335,7 @@ func hashBundleMember(m bundleMember) (sum string, head []byte, err error) {
 	defer func() { _ = rc.Close() }()
 	h := sha256.New()
 	var first bytes.Buffer
-	n, err := io.Copy(io.MultiWriter(h, &headWriter{buf: &first, limit: 8}), io.LimitReader(rc, m.size+1))
+	n, err := io.Copy(io.MultiWriter(h, &headWriter{buf: &first, limit: codeSniffBytes}), io.LimitReader(rc, m.size+1))
 	if err != nil {
 		return "", nil, err
 	}
@@ -297,18 +359,18 @@ func (w *headWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// bundleDigest is a bundled item's version: the first bundleDigestLen hex
-// digits of the sha256 of one line per file, in path order -
-// "<path>\x00<size>\x00<sha256 hex>\n". It depends on the files' names and
-// contents only, so the exporter (reading lmm's cache) and the importer
-// (reading the container) agree, and the same tree has the same version
-// wherever it came from. sums[i] is members[i]'s sha256.
+// bundleDigest is a bundled item's digest: the sha256 (hex) of one line
+// per file, in path order - "<path>\x00<size>\x00<sha256 hex>\n". Its first
+// bundleVersionLen digits are the item's version. It depends on the files'
+// names and contents only, so the exporter (reading lmm's cache) and the
+// importer (reading the container) agree, and the same tree has the same
+// version wherever it came from. sums[i] is members[i]'s sha256.
 func bundleDigest(members []bundleMember, sums []string) string {
 	h := sha256.New()
 	for i, m := range members {
 		_, _ = io.WriteString(h, m.rel+"\x00"+strconv.FormatInt(m.size, 10)+"\x00"+sums[i]+"\n")
 	}
-	return hex.EncodeToString(h.Sum(nil))[:bundleDigestLen]
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // bundledCodeExts are file types a bundled item may hold only with
@@ -321,12 +383,29 @@ var bundledCodeExts = map[string]bool{
 	".sh": true, ".jar": true,
 }
 
-// nativeCodeMagic are the first bytes of native executables and libraries
-// (PE, ELF, Mach-O), so a renamed DLL is held back as one.
+// nativeCodeMagic are the first bytes of ELF and Mach-O executables and
+// libraries (and fat Mach-O, which a Java class file shares), so a renamed
+// one is held back whatever its name. A PE file (a DLL or an EXE) is told
+// by isPE.
 var nativeCodeMagic = [][]byte{
-	[]byte("MZ"), []byte("\x7fELF"),
+	[]byte("\x7fELF"),
 	{0xfe, 0xed, 0xfa, 0xce}, {0xfe, 0xed, 0xfa, 0xcf}, {0xce, 0xfa, 0xed, 0xfe}, {0xcf, 0xfa, 0xed, 0xfe},
 	{0xca, 0xfe, 0xba, 0xbe},
+}
+
+// isPE reports whether head, a file's first bytes, is a PE executable or
+// library: "MZ", and "PE\0\0" at the offset its DOS header names (e_lfanew,
+// at 0x3c). A header naming an offset past head is taken for one, since a
+// real loader would read it there and head holds tens of kilobytes.
+func isPE(head []byte) bool {
+	if !bytes.HasPrefix(head, []byte("MZ")) || len(head) < 0x40 {
+		return false
+	}
+	off := int64(binary.LittleEndian.Uint32(head[0x3c:0x40]))
+	if off+4 > int64(len(head)) {
+		return off >= 0x40 && len(head) == codeSniffBytes
+	}
+	return bytes.Equal(head[off:off+4], []byte("PE\x00\x00"))
 }
 
 // bundledCodeReason is why the bundled file rel (whose content starts with
@@ -339,13 +418,16 @@ func bundledCodeReason(rel string, head []byte) string {
 	if bundledCodeExts[strings.ToLower(path.Ext(base))] {
 		return "code the system runs (" + strings.ToLower(path.Ext(base)) + ")"
 	}
-	if textConfigOverrideExts[strings.ToLower(path.Ext(base))] {
-		return "" // a text config file, whatever its first bytes spell
+	if isPE(head) {
+		return "native code (a Windows executable or library, whatever its name)"
 	}
 	for _, magic := range nativeCodeMagic {
 		if bytes.HasPrefix(head, magic) {
 			return "native code (an executable or a library, whatever its name)"
 		}
+	}
+	if path.Ext(base) == "" && bytes.HasPrefix(head, []byte("#!")) {
+		return "a script with an interpreter line (#!), which the system can run"
 	}
 	return ""
 }

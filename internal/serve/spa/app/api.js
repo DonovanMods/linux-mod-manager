@@ -339,30 +339,6 @@ export const profileExportURL = (name, context, bundle = []) => {
   return url + extra;
 };
 
-/** Checks a bundled export (issue 623) before the browser downloads it:
- * the same GET, read here only for its status, so a refusal (a container
- * over the import limit, say) is shown in place instead of replacing the
- * page with an error document. Resolves when the export would succeed. */
-export async function checkProfileExport(url) {
-  const response = await fetch(url, { headers: { "X-CSRF-Token": csrfToken } });
-  if (response.ok) {
-    await response.body?.cancel();
-    return;
-  }
-  const text = await response.text();
-  let payload = null;
-  try {
-    payload = text ? JSON.parse(text) : null;
-  } catch {
-    payload = null;
-  }
-  throw new ApiError(
-    response.status,
-    payload?.error || `GET ${url} failed (${response.status})`,
-    payload?.details,
-  );
-}
-
 /** Lists the mods a profile's export can bundle as the author's own files
  * (issue 623): core.BundleCandidate rows - each mod imported from a file,
  * and each a collection already bundled (`always`: carried regardless). */
@@ -373,8 +349,14 @@ export const getBundleCandidates = (name, context) =>
  * collection id on the first call - so the side-effect-free GET at
  * profileExportURL can serve it. Returns domain.CollectionInfo. The GET
  * answers 409 until this has run once. */
-export const recordProfileCollection = (name, context) =>
-  post(scoped(`${profilePath(name)}/collection`, context), {});
+export const recordProfileCollection = (name, context, bundle = []) =>
+  post(
+    scoped(`${profilePath(name)}/collection`, context),
+    // Issue 623: an export that bundles files is checked here too - the
+    // choice and the files' size, without building the container - so a
+    // refusal shows in place instead of as the downloaded page.
+    bundle.length > 0 ? { bundle } : {},
+  );
 
 /** Commits a new load order. Returns core.ProfileResult, re-read after the
  * write, so profile.mods IS the persisted order. ids are lowest-priority

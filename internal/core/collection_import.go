@@ -459,7 +459,8 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 		return nil, fmt.Errorf("building the collection's profile: %w", err)
 	}
 
-	plan, err := s.PlanImport(ctx, game, data)
+	// #623: the container's own bundled items, checked above, may plan.
+	plan, err := s.planImport(ctx, game, data, true)
 	if err != nil {
 		return nil, err
 	}
@@ -560,7 +561,7 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 			}
 			sort.Strings(bundledSkipped)
 		}
-		if err := s.keepCollectionContainer(game, b.collectionID, b.data); err != nil {
+		if err := s.keepCollectionContainer(game, b.collectionID, b.data, b.bundle, b.names, b.admitted(opts.AllowAnyOverrides)); err != nil {
 			return &ProfileImportResult{}, err
 		}
 	}
@@ -710,7 +711,7 @@ func (s *Service) gameMismatch(want domain.CollectionGame, game *domain.Game) st
 // the source is not registered (a custom source this machine lacks, or one
 // switched off) - with the remedy, or "" when it can.
 func (s *Service) unavailableReason(_ *domain.Game, sourceID string) string {
-	if _, err := s.GetSource(sourceID); err != nil {
+	if _, err := s.sourceByID(sourceID); err != nil { // #623: lmm-collection included
 		return fmt.Sprintf("lmm has no source %q here; add it, then re-import (a collection never carries a custom source's definition: ask its author for it)", sourceID)
 	}
 	return ""

@@ -130,6 +130,14 @@ var errBadContainer = errors.New("not a valid lmm collection container")
 // item read and its digest computed), with a warning for every member it
 // left unread.
 func readCollectionContainer(data []byte) (doc []byte, bundle *collectionBundle, warnings []string, err error) {
+	return parseCollectionContainer(data, true)
+}
+
+// parseCollectionContainer is readCollectionContainer; readItems false
+// leaves the bundle's items unread (each item's own read() hashes it), for
+// a kept container a rebuild needs one item of. Every member is checked
+// either way.
+func parseCollectionContainer(data []byte, readItems bool) (doc []byte, bundle *collectionBundle, warnings []string, err error) {
 	if len(data) > maxCollectionContainer {
 		return nil, nil, nil, fmt.Errorf("%w: it is %d bytes, over the %d-byte limit", errBadContainer, len(data), maxCollectionContainer)
 	}
@@ -207,7 +215,11 @@ func readCollectionContainer(data []byte) (doc []byte, bundle *collectionBundle,
 		warnings = append(warnings, "the container's signature ("+collectionSigMember+") was not checked: this version of lmm does not verify collection signatures")
 	}
 	if bundle != nil {
-		if err := bundle.finish(); err != nil {
+		check := bundle.check
+		if readItems {
+			check = bundle.finish
+		}
+		if err := check(); err != nil {
 			return nil, nil, nil, fmt.Errorf("%w: %v", errBadContainer, err)
 		}
 	}

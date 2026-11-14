@@ -277,3 +277,16 @@ func TestSourceDefinitionValidate(t *testing.T) {
 		})
 	}
 }
+
+// TestValidate_RefusesLmmsOwnSourceIDs is #623 review B2: a custom source
+// may not take an id lmm uses for its own mods.
+func TestValidate_RefusesLmmsOwnSourceIDs(t *testing.T) {
+	for _, id := range []string{"local", "lmm-merged", "lmm-collection"} {
+		def := validDirectoryDef()
+		def.ID = id
+		err := def.Validate()
+		if assert.Error(t, err, id) {
+			assert.Contains(t, err.Error(), "reserved by lmm", id)
+		}
+	}
+}

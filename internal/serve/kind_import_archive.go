@@ -171,6 +171,11 @@ func planImportArchiveKind(ctx context.Context, s *Server, sel selection, opts a
 	plan, err := s.svc.PlanImportArchive(ctx, sel.Game, sel.Profile, staged.Path, req.options())
 	if err != nil {
 		s.uploads.ClearInUse(req.UploadID)
+		// #623: an archive filed under one of lmm's own sources is the
+		// caller's input, not a failure.
+		if core.IsUnsafeImport(err) {
+			return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
+		}
 		return nil, nil, err
 	}
 	return plan, &pendingImportArchive{

@@ -2285,7 +2285,7 @@ func TestJSONGoldens(t *testing.T) {
 			"collection_bundled_item",
 			core.CollectionBundledItem{
 				Item: "my-patch", ModID: "2f8c7a3e-0000-4000-8000-000000000001.my-patch", Name: "My Patch",
-				Version: "66a0a9f0ac25f084", Files: 3, Bytes: 4096,
+				Version: "66a0a9f0ac25f0849c1e7b3d2f5a8e60", Files: 3, Bytes: 4096,
 				Restricted: []core.RestrictedOverride{{Path: "bin/helper.dll", Reason: "code the system runs (.dll)"}},
 			},
 		},
@@ -2294,7 +2294,7 @@ func TestJSONGoldens(t *testing.T) {
 			"collection_import_item_bundled",
 			core.CollectionImportItem{
 				SourceID: domain.SourceCollection, ModID: "2f8c7a3e-0000-4000-8000-000000000001.my-patch",
-				Name: "My Patch", Version: "66a0a9f0ac25f084", Bundled: true,
+				Name: "My Patch", Version: "66a0a9f0ac25f0849c1e7b3d2f5a8e60", Bundled: true,
 			},
 		},
 		{

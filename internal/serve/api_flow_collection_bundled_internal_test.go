@@ -147,3 +147,22 @@ func TestFlowBundledCollection_ExportBundlesTheAuthorsOwnFiles(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, rec.Code, bundle+": "+rec.Body.String())
 	}
 }
+
+// TestFlowBundledCollection_TheRecordChecksTheBundle is the web export's
+// cheap check (#623 review): the POST that records the identity also
+// checks the bundle choice, without building the container.
+func TestFlowBundledCollection_TheRecordChecksTheBundle(t *testing.T) {
+	s, svc, game := newProfilesFixtureServer(t)
+	seedLocalMod(t, svc, game)
+	url := scoped("/api/v1/profiles/"+activeProfile+"/collection", game)
+
+	rec := doAPI(s, http.MethodPost, url, `{"bundle":["local:u-1"]}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = doAPI(s, http.MethodPost, url, `{"bundle":["`+fixtureSourceID+`:p1"]}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "never bundles")
+	rec = doAPI(s, http.MethodPost, url, `{"bundle":["nothing-here"]}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	rec = doAPI(s, http.MethodPost, url, `{"bundles":[]}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "an unknown field is refused")
+}

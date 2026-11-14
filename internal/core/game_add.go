@@ -348,11 +348,19 @@ func (s *Service) addGameLocked(ctx context.Context, spec GameSpec) (*GameListEn
 	// custom one the user never created - and that must fail the same way,
 	// naming the "sources" field so a form marks the offending row.
 	if sourceID := strings.TrimSpace(spec.SourceID); sourceID != "" {
+		if domain.IsReservedSourceID(sourceID) {
+			return nil, newGameSpecError("source_id", spec.SourceID, "the id is reserved by lmm for its own mods, not a source a game maps")
+		}
 		if _, err := s.GetSource(sourceID); err != nil {
 			return nil, &GameSpecError{
 				Field: "source_id", Value: spec.SourceID,
 				Reason: "no source is registered with that id", Err: err,
 			}
+		}
+	}
+	for id := range game.SourceIDs {
+		if domain.IsReservedSourceID(strings.TrimSpace(id)) {
+			return nil, newGameSpecError("sources", id, "the id is reserved by lmm for its own mods, not a source a game maps")
 		}
 	}
 	for id := range game.SourceIDs {

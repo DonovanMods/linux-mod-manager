@@ -38,7 +38,6 @@ import {
   recordProfileCollection,
   uploadArchive,
   getBundleCandidates,
-  checkProfileExport,
 } from "../api.js";
 
 /** ProfilesModal renders only when the shared modal slot holds this shape. */
@@ -570,7 +569,8 @@ function CreateProfileForm({ context, afterMutation }) {
  * imported from a file, with a box - and those a collection already
  * bundled, which every export carries. The server refuses anything else (a
  * mod from a source), and the same limits as the CLI's hold; the export is
- * checked before the browser downloads it, so a refusal shows here. */
+ * checked (with the identity record, without building it) before the
+ * browser downloads it, so a refusal shows here. */
 function BundleExportRow({ profile, context, close }) {
   const [candidates, setCandidates] = useState(null);
   const [chosen, setChosen] = useState([]);
@@ -602,8 +602,9 @@ function BundleExportRow({ profile, context, close }) {
     setBusy(true);
     setError(null);
     try {
-      await recordProfileCollection(profile.name, context);
-      await checkProfileExport(href);
+      // Records the identity and checks the bundle in one request; the
+      // download itself is then the export's only build.
+      await recordProfileCollection(profile.name, context, chosen);
       window.location.assign(href);
     } catch (err) {
       setError(err?.message ?? String(err));

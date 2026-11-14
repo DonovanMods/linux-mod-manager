@@ -21,18 +21,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   upload or an https address - lists each bundled item in the plan, checks
   its files against the version the document records (a digest of the
   files) and installs it like any mod. The container is kept under the
-  game's cache, so a profile switch or apply, another profile, and
-  `lmm verify --fix` rebuild the item from it. The container is untrusted:
-  links, devices, absolute or `..` paths, backslashes and control
-  characters are refused, never rewritten, and items, files and their total
-  size are capped. An item holding code (a DLL or other executable, a
+  game's cache, with an index of the items the import admitted, so a
+  profile switch or apply, another profile, and `lmm verify --fix` rebuild
+  an admitted item from it; nothing else does. A bundled item comes in only
+  with its container: any other profile document naming source
+  `lmm-collection` is refused, and so is an `lmm import --source
+lmm-collection`. `lmm-collection`, `lmm-merged` and `local` are reserved:
+  a game cannot map them, and a custom source definition with one of those
+  ids is now refused (one would have collided with lmm's own mods). The
+  container is untrusted: links, devices, absolute or `..` paths,
+  backslashes, control characters, a path that is both a file and a
+  directory, and paths differing only in case are refused, never
+  rewritten, and items, files and their total size are capped. An item holding code (a DLL or other executable, a
   system script, a loader configuration) is skipped unless
   `--allow-any-overrides` (the web UI's **Import these bundled items
   too**). A plain YAML document cannot carry files, so a bundled item in
   one is refused. Bundled items are skipped by update checks, like local
   mods. New `--json` and `/api/v1` fields, all additive: the import plan's
   `collection.bundled` and each item's `bundled`, the import result's
-  `bundled_skipped`, and `GET /api/v1/profiles/{name}/bundle-candidates`.
+  `bundled_skipped`, `GET /api/v1/profiles/{name}/bundle-candidates`, and an
+  optional `bundle` list in `POST /api/v1/profiles/{name}/collection`.
   An older lmm still ignores a container's `files/` with its warning, and
   refuses a document requiring `bundled`.
 

@@ -1510,6 +1510,9 @@ func (s *Service) validatedSourceMap(sources map[string]string) (map[string]stri
 		if trimmed == "" {
 			return nil, newGameSpecError("sources", id, "a source id is required")
 		}
+		if domain.IsReservedSourceID(trimmed) {
+			return nil, newGameSpecError("sources", trimmed, "the id is reserved by lmm for its own mods, not a source a game maps")
+		}
 		if _, err := s.GetSource(trimmed); err != nil {
 			return nil, &GameSpecError{
 				Field: "sources", Value: trimmed,

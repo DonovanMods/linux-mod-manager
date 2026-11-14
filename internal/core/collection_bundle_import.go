@@ -42,7 +42,27 @@ type CollectionBundledItem struct {
 type pendingBundle struct {
 	collectionID string
 	data         []byte
-	restricted   map[string]string // mod key -> item
+	bundle       *collectionBundle
+	// names maps each item a mods: entry names to its display name; only
+	// a named item can be admitted (collection_bundle_keep.go).
+	names      map[string]string
+	restricted map[string]string // mod key -> item
+}
+
+// admitted is the items an apply lets in: every named item, but one
+// holding code only when anyOverrides.
+func (p *pendingBundle) admitted(anyOverrides bool) map[string]bool {
+	held := map[string]bool{}
+	for _, item := range p.restricted {
+		held[item] = true
+	}
+	out := map[string]bool{}
+	for item := range p.names {
+		if anyOverrides || !held[item] {
+			out[item] = true
+		}
+	}
+	return out
 }
 
 // resolveBundledItems checks doc's bundled items against the container's
@@ -100,8 +120,9 @@ func resolveBundledItems(doc *domain.CollectionDocument, bundle *collectionBundl
 	if len(out) == 0 {
 		return nil, nil, warnings, nil
 	}
-	pending := &pendingBundle{collectionID: doc.Info.ID, restricted: map[string]string{}}
+	pending := &pendingBundle{collectionID: doc.Info.ID, bundle: bundle, names: map[string]string{}, restricted: map[string]string{}}
 	for _, b := range out {
+		pending.names[b.Item] = b.Name
 		if len(b.Restricted) > 0 {
 			pending.restricted[domain.ModKey(domain.SourceCollection, b.ModID)] = b.Item
 		}
@@ -133,4 +154,16 @@ func (p *ImportPlan) withoutMods(keys map[string]string) *ImportPlan {
 	state.dropMods = keys
 	trimmed.collectionState = &state
 	return &trimmed
+}
+
+// refuseBundledRefs refuses a profile document naming a collection's
+// bundled item (#623 review B1): one comes in only with the container that
+// carries it, whose import decides whether it is admitted.
+func refuseBundledRefs(refs []domain.ModReference) error {
+	for _, ref := range refs {
+		if ref.SourceID == domain.SourceCollection {
+			return fmt.Errorf("%w: it names %s:%s, a collection's bundled item, which comes in only with the collection's .lmmc container; import the container", ErrUnsafeImport, ref.SourceID, ref.ModID)
+		}
+	}
+	return nil
 }

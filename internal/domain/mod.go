@@ -27,6 +27,18 @@ const SourceMerged = "lmm-merged"
 // "<collection id>.<item>" and its version is its files' digest.
 const SourceCollection = "lmm-collection"
 
+// IsReservedSourceID reports whether id is one of lmm's own source ids -
+// SourceLocal, SourceMerged, SourceCollection - which name no source a user
+// configures: a game's sources, a custom source definition and a login
+// refuse them (#623 review B2).
+func IsReservedSourceID(id string) bool {
+	switch id {
+	case SourceLocal, SourceMerged, SourceCollection:
+		return true
+	}
+	return false
+}
+
 // UpdatePolicy determines how a mod handles updates
 type UpdatePolicy int
 

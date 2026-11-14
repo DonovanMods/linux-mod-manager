@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // Source type identifiers for SourceDefinition.Type.
@@ -276,6 +278,9 @@ func (d *SourceDefinition) Validate() error {
 	}
 	if !idPattern.MatchString(d.ID) {
 		return fmt.Errorf("id %q must match ^[a-z0-9-]+$", d.ID)
+	}
+	if domain.IsReservedSourceID(d.ID) {
+		return fmt.Errorf("id %q is reserved by lmm for its own mods; choose another", d.ID)
 	}
 	if d.Name == "" {
 		return errors.New("name is required")

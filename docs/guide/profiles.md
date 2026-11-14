@@ -207,6 +207,13 @@ new version arrives with a new version of the collection. If they export
 the profile again, the bundled files go with it.
 
 {: .note }
+lmm keeps every collection file with bundled items that you import, in
+the game's cache folder under `collections/`, and doesn't remove them when
+you delete a profile. They are usually small; to free the space, delete
+the `collections/lmm-*` folders there, and import a collection again if a
+profile still uses its bundled files.
+
+{: .note }
 The first export of a profile saves its collection id in the profile, and
 that waits for any other lmm operation, such as a job running in the
 browser. If it can't, the export stops and asks you to try again, and a

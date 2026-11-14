@@ -107,7 +107,7 @@ func TestBundledCollection_ImportInstallsTheItemFromTheContainer(t *testing.T) {
 	assert.Equal(t, "My Patch", b.Name)
 	assert.Equal(t, 2, b.Files)
 	assert.Equal(t, int64(9), b.Bytes)
-	assert.Len(t, b.Version, 16)
+	assert.Len(t, b.Version, 32)
 	assert.Empty(t, b.Restricted)
 	require.Len(t, c.Items, 1)
 	assert.True(t, c.Items[0].Bundled)
@@ -236,7 +236,7 @@ func TestBundledCollection_Refusals(t *testing.T) {
 		{"plain YAML", func(*testing.T) []byte { return []byte(bundledDoc) }, "plain YAML document cannot carry files"},
 		{"no files for the item", func(t *testing.T) []byte { return bundleContainer(t, bundledDoc) }, "holds no files/patch/"},
 		{"version mismatch", func(t *testing.T) []byte {
-			return bundleContainer(t, strings.Replace(bundledDoc, "name: My Patch", "name: My Patch\n    version: 0123456789abcdef", 1), ok)
+			return bundleContainer(t, strings.Replace(bundledDoc, "name: My Patch", "name: My Patch\n    version: 0123456789abcdef0123456789abcdef", 1), ok)
 		}, "does not match the version"},
 		{"symlink", func(t *testing.T) []byte {
 			return bundleContainer(t, bundledDoc, ok, bundleMember{name: "files/patch/link", content: "/etc/passwd", mode: fs.ModeSymlink | 0o777})
@@ -339,7 +339,7 @@ func TestBundledCollection_ExportBundlesTheAuthorsOwnFiles(t *testing.T) {
 	assert.Equal(t, domain.SourceCollection, bundled.Ref.SourceID)
 	assert.Equal(t, "my-tweaks", bundled.Ref.ModID)
 	assert.Equal(t, "My Tweaks", bundled.Name)
-	assert.Len(t, bundled.Ref.Version, 16)
+	assert.Len(t, bundled.Ref.Version, 32)
 	assert.Contains(t, doc.Requires, "bundled")
 
 	data, err := export.Container()
@@ -434,4 +434,187 @@ func TestBundledCollection_AnOwnModIsNamedAroundACollectionsItem(t *testing.T) {
 	assert.Equal(t, []string{"patch-2", "patch"}, export.Bundled, "the collection's item keeps its name")
 	_, err = export.Container()
 	require.NoError(t, err)
+}
+
+// toolContainer is bundledDoc naming tool, which holds a DLL.
+func toolContainer(t *testing.T) []byte {
+	return bundleContainer(t, strings.Replace(bundledDoc, "mod_id: patch", "mod_id: tool", 1),
+		bundleMember{name: "files/tool/bin/helper.dll", content: "MZ" + strings.Repeat("\x00", 0x3a) + "\x40\x00\x00\x00PE\x00\x00"},
+		bundleMember{name: "files/tool/readme.txt", content: "hi"},
+	)
+}
+
+// heldBackTool imports toolContainer without --allow-any-overrides, so its
+// item is held back, and returns the item's version.
+func heldBackTool(t *testing.T, svc *core.Service, game *domain.Game) string {
+	t.Helper()
+	plan, result, err := importBundled(t, svc, game, toolContainer(t), core.ProfileImportOptions{Install: true})
+	require.NoError(t, err)
+	require.Equal(t, []string{"tool"}, result.BundledSkipped)
+	return plan.Collection.Bundled[0].Version
+}
+
+// TestBundledCollection_AHeldBackItemNeverComesInByAnotherRoute is #623
+// review B1: an item the container import held back is never installed by
+// any other route - a profile document naming it, a hand edit and a
+// converge, an install - until an import admits it.
+func TestBundledCollection_AHeldBackItemNeverComesInByAnotherRoute(t *testing.T) {
+	svc, game := bundledFixture(t)
+	ctx := context.Background()
+	version := heldBackTool(t, svc, game)
+
+	t.Run("a version-0 profile document", func(t *testing.T) {
+		doc := "name: sneaky\ngame_id: g\nmods:\n  - {source_id: lmm-collection, mod_id: c0ffee.tool, version: " + version + "}\n"
+		_, err := svc.PlanImport(ctx, game, []byte(doc))
+		require.Error(t, err)
+		assert.True(t, core.IsUnsafeImport(err), "%v", err)
+		assert.Contains(t, err.Error(), "comes in only with the collection's .lmmc container")
+	})
+	t.Run("a hand edit, then apply", func(t *testing.T) {
+		profile, err := config.LoadProfile(svc.ConfigDir(), game.ID, "coop")
+		require.NoError(t, err)
+		profile.Mods = append(profile.Mods, domain.ModReference{SourceID: domain.SourceCollection, ModID: "c0ffee.tool", Version: version, FileIDs: []string{version}})
+		require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
+		plan, err := svc.PlanProfileApply(ctx, game, "coop")
+		if err == nil {
+			_, err = svc.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, nil)
+		}
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), core.ErrBundleNotKept.Error(), "the mod fails on its own")
+		assert.NoFileExists(t, filepath.Join(game.ModPath, "bin", "helper.dll"))
+	})
+	t.Run("an install", func(t *testing.T) {
+		_, err := svc.PlanInstall(ctx, game, "coop", domain.SourceCollection, "c0ffee.tool", false)
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, core.ErrBundleNotKept), "%v", err)
+	})
+	t.Run("an archive filed under the source", func(t *testing.T) {
+		archive := filepath.Join(t.TempDir(), "x.zip")
+		require.NoError(t, os.WriteFile(archive, bundleContainer(t, "x"), 0o644))
+		_, err := svc.PlanImportArchive(ctx, game, "coop", archive, core.ImportArchiveOptions{SourceID: domain.SourceCollection, ModID: "c0ffee.tool"})
+		require.Error(t, err)
+		assert.True(t, core.IsUnsafeImport(err), "%v", err)
+	})
+
+	// An import that admits it - the same container, with
+	// --allow-any-overrides - lets every route in.
+	_, result, err := importBundled(t, svc, game, toolContainer(t), core.ProfileImportOptions{Install: true, Force: true, AllowAnyOverrides: true})
+	require.NoError(t, err)
+	assert.Empty(t, result.BundledSkipped)
+	assert.FileExists(t, filepath.Join(game.ModPath, "bin", "helper.dll"))
+	_, err = svc.PlanInstall(ctx, game, "coop", domain.SourceCollection, "c0ffee.tool", false)
+	require.NoError(t, err, "an admitted item installs")
+}
+
+// TestBundledCollection_AURLsVersionZeroDocumentCannotNameABundledItem:
+// the URL route's lifted version-0 export is refused like a plain one.
+func TestBundledCollection_AURLsVersionZeroDocumentCannotNameABundledItem(t *testing.T) {
+	doc := "name: sneaky\ngame_id: cyber\nmods:\n  - {source_id: lmm-collection, mod_id: c0ffee.tool}\n"
+	srv := serveBytes(t, []byte(doc))
+	svc, _ := urlRecipient(t, srv)
+	_, err := svc.PlanCollectionImportURL(context.Background(), core.CollectionURLImportRequest{URL: srv.URL + "/p.yaml"})
+	require.Error(t, err)
+	assert.True(t, core.IsInvalidCollection(err), "%v", err)
+}
+
+// TestBundledCollection_AnUnnamedItemIsNeverServed: an item the document
+// names no entry for is kept with its container but never admitted.
+func TestBundledCollection_AnUnnamedItemIsNeverServed(t *testing.T) {
+	svc, game := bundledFixture(t)
+	data := bundleContainer(t, bundledDoc,
+		bundleMember{name: "files/patch/a.txt", content: "a"},
+		bundleMember{name: "files/extra/b.txt", content: "b"},
+	)
+	_, _, err := importBundled(t, svc, game, data, core.ProfileImportOptions{Install: true})
+	require.NoError(t, err)
+	_, err = svc.PlanInstall(context.Background(), game, "coop", domain.SourceCollection, "c0ffee.extra", false)
+	assert.True(t, errors.Is(err, core.ErrBundleNotKept), "%v", err)
+}
+
+// TestBundledCollection_ADamagedKeptContainerIsRepairedByAReimport is
+// review should-fix 3: a kept copy whose bytes changed is rewritten, not
+// skipped because its size matches.
+func TestBundledCollection_ADamagedKeptContainerIsRepairedByAReimport(t *testing.T) {
+	svc, game := bundledFixture(t)
+	data := patchContainer(t)
+	_, _, err := importBundled(t, svc, game, data, core.ProfileImportOptions{Install: true})
+	require.NoError(t, err)
+	kept, err := filepath.Glob(filepath.Join(svc.CacheDir(), game.ID, "collections", "lmm-c0ffee", "*.lmmc"))
+	require.NoError(t, err)
+	require.Len(t, kept, 1)
+	damaged := bytes.Repeat([]byte{0}, len(data))
+	require.NoError(t, os.WriteFile(kept[0], damaged, 0o644))
+
+	row, err := svc.GetInstalledMod(context.Background(), domain.SourceCollection, "c0ffee.patch", game.ID, "coop")
+	require.NoError(t, err)
+	key := cache.Key{GameID: game.ID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version}
+	require.NoError(t, svc.GetGameCache(game).Delete(key))
+	_, err = svc.VerifyReport(context.Background(), game, "coop", core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+	assert.False(t, svc.GetGameCache(game).Exists(key), "a damaged kept copy cannot rebuild the item")
+
+	_, _, err = importBundled(t, svc, game, data, core.ProfileImportOptions{Install: true, Force: true})
+	require.NoError(t, err)
+	got, err := os.ReadFile(kept[0])
+	require.NoError(t, err)
+	assert.Equal(t, data, got, "the re-import replaced the damaged copy")
+}
+
+// TestBundledCollection_CodeChecks is review should-fix 4: a PE renamed to
+// a text extension, an ELF, and an extensionless script are held back; a
+// text file that merely starts with "MZ" is not.
+func TestBundledCollection_CodeChecks(t *testing.T) {
+	pe := "MZ" + strings.Repeat("\x00", 0x3a) + "\x40\x00\x00\x00PE\x00\x00"
+	cases := map[string]struct {
+		name, content string
+		held          bool
+	}{
+		"PE named .txt":         {"payload.txt", pe, true},
+		"ELF named .ini":        {"conf.ini", "\x7fELF\x02\x01", true},
+		"extensionless #!":      {"run", "#!/bin/sh\necho hi\n", true},
+		"#! with an extension":  {"notes.md", "#! not a script\n", false},
+		"text starting with MZ": {"names.txt", "MZ is a label\n" + strings.Repeat("x", 100), false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc, game := bundledFixture(t)
+			data := bundleContainer(t, bundledDoc, bundleMember{name: "files/patch/" + tc.name, content: tc.content})
+			plan, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: data, GameID: game.ID})
+			require.NoError(t, err)
+			assert.Equal(t, tc.held, len(plan.Collection.Bundled[0].Restricted) > 0, "%+v", plan.Collection.Bundled[0].Restricted)
+		})
+	}
+}
+
+// TestBundledCollection_PathClashesAreRefused is review should-fix 5 and
+// its nit: a file and a directory of one path, and paths differing only in
+// case, are refused at the plan, before anything is saved.
+func TestBundledCollection_PathClashesAreRefused(t *testing.T) {
+	for name, members := range map[string][]bundleMember{
+		"file then directory": {{name: "files/patch/a", content: "x"}, {name: "files/patch/a/b", content: "y"}},
+		"directory then file": {{name: "files/patch/a/b", content: "y"}, {name: "files/patch/a", content: "x"}},
+		"directory entry":     {{name: "files/patch/a", content: "x"}, {name: "files/patch/a/", mode: fs.ModeDir | 0o755}},
+		"case only":           {{name: "files/patch/A.esp", content: "x"}, {name: "files/patch/a.esp", content: "y"}},
+		"case only in a dir":  {{name: "files/patch/Data/x", content: "x"}, {name: "files/patch/data", content: "y"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, game := bundledFixture(t)
+			_, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: bundleContainer(t, bundledDoc, members...), GameID: game.ID})
+			require.Error(t, err)
+			assert.True(t, core.IsInvalidCollection(err), "%v", err)
+		})
+	}
+}
+
+// TestBundledCollection_ReservedSourceIDsAreNeverAGamesSource is #623
+// review B2: lmm's own source ids cannot be mapped by a game.
+func TestBundledCollection_ReservedSourceIDsAreNeverAGamesSource(t *testing.T) {
+	svc, game := bundledFixture(t)
+	for _, id := range []string{domain.SourceCollection, domain.SourceMerged, domain.SourceLocal} {
+		_, err := svc.UpdateGameSources(context.Background(), game.ID, map[string]string{id: "x"})
+		require.Error(t, err, id)
+		assert.Contains(t, err.Error(), "reserved by lmm", id)
+		_, err = svc.GetSource(id)
+		assert.Error(t, err, "%s is no registered source", id)
+	}
 }
