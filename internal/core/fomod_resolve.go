@@ -247,6 +247,14 @@ type fomodInput struct {
 	fileMD5    map[string]string
 	expectMD5  string
 	archiveMD5 func() (string, error)
+	// recipeMD5 finds a file's md5 in the recipe of the collection the
+	// profile came from (fomod_recipe_pin.go), for a flow with no
+	// document's md5s: "" when the recipe records none. forFile turns it
+	// into the file's lazyMD5, which resolveFomod calls only when a replay
+	// of a never-installed recording (no config_sha256) reaches an
+	// installer.
+	recipeMD5 func(fileID string) (string, error)
+	lazyMD5   func() (string, error)
 }
 
 // archiveSum is fomodInput.archiveMD5 for the archive at path: known when
@@ -267,7 +275,10 @@ func archiveSum(known, path string) func() (string, error) {
 func (in fomodInput) forFile(fileID string) fomodInput {
 	out := in
 	out.fileChoices, out.fileAnswers, out.askFile, out.orderHint, out.fileIDs = nil, nil, "", nil, nil
-	out.fileMD5, out.expectMD5 = nil, in.fileMD5[fileID]
+	out.fileMD5, out.expectMD5, out.recipeMD5, out.lazyMD5 = nil, in.fileMD5[fileID], nil, nil
+	if in.recipeMD5 != nil {
+		out.lazyMD5 = func() (string, error) { return in.recipeMD5(fileID) }
+	}
 	switch a, ok := in.fileAnswers[fileID]; {
 	case ok && !a.IsZero():
 		out.choices, out.answered = a, true
@@ -409,14 +420,32 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 	// #609: a recording is replayed only against the archive it was made
 	// against, when the collection says which that was.
 	var mismatch *FomodArchiveMismatch
-	if recorded && !in.answered && !in.ask && in.expectMD5 != "" && in.archiveMD5 != nil {
-		actual, err := in.archiveMD5()
+	var pinWarnings []string
+	replay := recorded && !in.answered && !in.ask
+	expect := in.expectMD5
+	if replay && expect == "" && in.lazyMD5 != nil && in.choices.ConfigSHA256 == "" {
+		// A curator's recording lmm has never installed, in a flow with no
+		// document: the profile's collection recipe says which archive.
+		sum, err := in.lazyMD5()
 		if err != nil {
-			return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name,
-				Reason: "its archive could not be checked against the md5 its recorded choices were made against: " + err.Error(), err: err}
+			pinWarnings = append(pinWarnings, fmt.Sprintf("lmm could not check that this is the archive the collection's installer choices were recorded against (%v); they are replayed unchecked", err))
 		}
-		if !strings.EqualFold(actual, in.expectMD5) {
-			mismatch = &FomodArchiveMismatch{ExpectedMD5: in.expectMD5, ActualMD5: strings.ToLower(actual)}
+		expect = sum
+	}
+	if replay && expect != "" {
+		actual := ""
+		if in.archiveMD5 != nil {
+			sum, err := in.archiveMD5()
+			if err != nil {
+				return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name,
+					Reason: "its archive could not be checked against the md5 its recorded choices were made against: " + err.Error(), err: err}
+			}
+			actual = strings.ToLower(sum)
+		}
+		// An archive lmm has no md5 for cannot be shown to be the
+		// curator's, so it is asked about too (ActualMD5 empty).
+		if actual == "" || !strings.EqualFold(actual, expect) {
+			mismatch = &FomodArchiveMismatch{ExpectedMD5: expect, ActualMD5: actual}
 		}
 	}
 	// A REPLAY of a recording fills an unanswered group as Vortex's
@@ -425,7 +454,7 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 	// (design §4), which is what a question then shows.
 	consulted := &recordingFileStates{inner: in.files, seen: map[string]fomod.FileState{}}
 	req := fomod.Request{Choices: in.choices.Steps, Mode: fomod.ModeDefaults, Files: consulted, Members: rels}
-	if recorded && !in.answered && !in.ask && mismatch == nil {
+	if replay && mismatch == nil {
 		req.Mode = fomod.ModeReplay
 	}
 	res, err := fomod.Evaluate(cfg, req)
@@ -463,7 +492,7 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 		return nil, &FomodChoicesRequiredError{Mods: []FomodQuestion{q}}
 	}
 
-	warnings := slices.Clone(res.Warnings)
+	warnings := append(slices.Clone(res.Warnings), pinWarnings...)
 	if missing := fomodMissingSources(res); len(missing) > 0 {
 		if recorded && !in.answered {
 			return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name,

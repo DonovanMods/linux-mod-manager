@@ -990,7 +990,7 @@ func (s *Service) applyProfileFill(ctx context.Context, game *domain.Game, plan 
 		key:    func(i int) string { return domain.ModKey(refs[i].SourceID, refs[i].ModID) },
 		acquire: func(ctx context.Context, i int) (*importStaged, *acquireFailure) {
 			key := domain.ModKey(refs[i].SourceID, refs[i].ModID)
-			st, failure := s.acquireImportItem(ctx, game, iplan, refs[i], Scope{Op: OpProfileFill, Index: i + 1, Total: total}, opts.Fomod, s.importFileStates(game, iplan, key, nil), ir, emit, failed)
+			st, failure := s.acquireImportItem(ctx, game, iplan, refs[i], Scope{Op: OpProfileFill, Index: i + 1, Total: total}, opts.Fomod, s.importFileStates(game, iplan, key, nil, nil), ir, emit, failed)
 			switch {
 			case st != nil:
 				names[key] = st.scope.ModName

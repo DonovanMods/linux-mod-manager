@@ -148,6 +148,16 @@ instead of asking, with three checks first:
   curator's answers selected, and says why: the terminal prints both md5s,
   and the web interface's installer window shows them in its note. A
   collection that records no md5 replays as before.
+
+  The check also covers mods installed later, for example after
+  `lmm profile import --no-install`: until a mod's answers have been
+  installed once, lmm reads the md5 from the recipe of the NexusMods
+  collection the profile came from. If that recipe can't be read (offline,
+  say), lmm installs with the curator's answers and warns that it could not
+  check the archive. Once a mod is installed, lmm records the installer it
+  answered, and doesn't check the archive again. An lmm collection file
+  that isn't from NexusMods has no recipe to read back, so after a
+  `--no-install` import its md5s are not checked.
 - **Install phases.** A NexusMods collection installs its mods in phases.
   When an installer asks whether another mod's file is there (a patch that
   installs only when its target is), it sees the mods of earlier phases,

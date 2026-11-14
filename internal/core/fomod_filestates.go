@@ -160,7 +160,9 @@ type pluginFileStates struct {
 // state is key's state, key a present path as normalizeStatePath spells
 // it; provided says a mod of the profile provides it, rather than the game.
 func (p *pluginFileStates) state(key string, provided bool) fomod.FileState {
-	if p == nil || strings.Contains(key, "/") || !hasPluginExt(key, p.spec) {
+	if p == nil || strings.Contains(key, "/") || !hasPluginExt(key, p.spec) || unlisted(key, p.spec) {
+		// Not a plugin of the list - or one the game strips from it and
+		// loads itself (Starfield's BlueprintShips-*): present is active.
 		return fomod.FileActive
 	}
 	if !p.loaded {

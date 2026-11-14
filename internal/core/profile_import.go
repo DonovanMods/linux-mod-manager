@@ -840,13 +840,17 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	// staged are the items acquired so far, for a later phase's file
 	// states (importFileStates).
 	var staged []*importStaged
+	inRun := make(map[string]bool, len(toInstall))
+	for _, ref := range toInstall {
+		inRun[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
 	run := acquireRun[*importStaged]{
 		policy: acquirePolicy{mode: acquirePhased, blockAll: opts.AllOrNothing},
 		n:      total,
 		key:    func(i int) string { return domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID) },
 		acquire: func(ctx context.Context, i int) (*importStaged, *acquireFailure) {
 			key := domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID)
-			states := s.importFileStates(game, plan, key, staged)
+			states := s.importFileStates(game, plan, key, staged, inRun)
 			st, failure := s.acquireImportItem(ctx, game, plan, toInstall[i], Scope{Op: OpImport, Index: i + 1, Total: total}, opts.Fomod, states, result, emit, failed)
 			if st != nil {
 				staged = append(staged, st)

@@ -29,7 +29,8 @@ func (s *Service) fomodInputFor(ctx context.Context, game *domain.Game, profileN
 // (fileStatesForWith): an import's, which answer from its document and,
 // for a collection, by install phase (#609).
 func (s *Service) fomodInputForWith(ctx context.Context, game *domain.Game, profileName string, ref *domain.ModReference, sourceID, modID string, answers map[string]domain.FomodChoices, states fileStatesOpts) fomodInput {
-	in := fomodInput{files: s.fileStatesForWith(ctx, game, profileName, domain.ModKey(sourceID, modID), states)}
+	in := fomodInput{files: s.fileStatesForWith(ctx, game, profileName, domain.ModKey(sourceID, modID), states),
+		recipeMD5: s.recipeMD5For(ctx, game, profileName, sourceID, modID)}
 	if ref != nil {
 		in.fileChoices = ref.FomodFiles.Clone()
 		in.orderHint, in.fileIDs = slices.Clone(ref.FomodOrder), slices.Clone(ref.FileIDs)

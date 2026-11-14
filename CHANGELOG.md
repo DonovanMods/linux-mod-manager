@@ -19,9 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `archive_mismatch` object's `expected_md5` and `actual_md5` in the
   `--json` error details. The terminal walk prints both md5s and the web
   UI's installer window shows them. A collection that records no md5
-  replays as before. The md5 is the collection document's, not the
-  profile's: the import checks it, and the profile records the answers as
-  installed.
+  replays as before. Nothing new is saved on the profile: a mod installed
+  later (after `--no-install`) is checked against the recipe of the
+  NexusMods collection the profile came from, read once per command, until
+  its answers have been installed once; a recipe that cannot be read is a
+  warning, and the answers replay unchecked.
 - **A NexusMods collection's install phases reach its installers (#609).**
   An installer's file checks (a patch that installs only when its target
   is there) see the mods of the collection's earlier phases, though none is

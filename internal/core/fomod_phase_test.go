@@ -68,6 +68,7 @@ type phasedFixture struct {
 	game      *domain.Game
 	src       *phasedSource
 	installer []byte
+	cacheDir  string
 }
 
 // newPhasedFixture serves a three-item collection: 10 (early.esp) in
@@ -81,8 +82,9 @@ func newPhasedFixture(t *testing.T, recipe string) *phasedFixture {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	cacheDir := t.TempDir()
 	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(), DownloadClient: cdn.Client(),
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: cacheDir, DownloadClient: cdn.Client(),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
@@ -123,7 +125,7 @@ func newPhasedFixture(t *testing.T, recipe string) *phasedFixture {
 	game := &domain.Game{ID: "skyrim", Name: "Skyrim", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"}}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
-	return &phasedFixture{svc: svc, game: game, src: src, installer: installer}
+	return &phasedFixture{svc: svc, game: game, src: src, installer: installer, cacheDir: cacheDir}
 }
 
 const phasedRecipe = `{"name": "Phased", "mods": [

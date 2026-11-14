@@ -382,11 +382,14 @@ func (s *Service) writeImportPolicy(ctx context.Context, game *domain.Game, plan
 // with: the plugin list of the document being imported (its profile is
 // saved only once every item is acquired, #618), and - for a source
 // collection, whose items carry install phases (#609) - Vortex's phased
-// install. Items of the same or a later phase are not present, whatever
-// rows the profile already has, and the items of earlier phases acquired
-// so far (staged: the run's items, in acquire order, which is phase order)
-// are, though nothing of them is committed yet.
-func (s *Service) importFileStates(game *domain.Game, plan *ImportPlan, key string, staged []*importStaged) fileStatesOpts {
+// install. The run's other items (run: the keys this Apply installs) of
+// the same or a later phase are not present - an older row of theirs in
+// the profile included, since this run replaces it - and the items of
+// earlier phases acquired so far (staged: the run's items, in acquire
+// order, which is phase order) are, though nothing of them is committed
+// yet. A mod the profile already has and this run leaves alone is present
+// whatever its phase: it is installed.
+func (s *Service) importFileStates(game *domain.Game, plan *ImportPlan, key string, staged []*importStaged, run map[string]bool) fileStatesOpts {
 	var opts fileStatesOpts
 	if plan.Profile != nil {
 		plugins := plan.Profile.Plugins
@@ -398,7 +401,7 @@ func (s *Service) importFileStates(game *domain.Game, plan *ImportPlan, key stri
 	phase := plan.phases[key]
 	opts.hidden = func(k string) bool {
 		p, ok := plan.phases[k]
-		return ok && p >= phase
+		return ok && run[k] && p >= phase
 	}
 	var before []*importStaged
 	for _, st := range staged {

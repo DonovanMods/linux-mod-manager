@@ -33,6 +33,7 @@ package core
 
 import (
 	"context"
+	"crypto/md5"
 	"errors"
 	"fmt"
 	"slices"
@@ -567,7 +568,7 @@ func collectionArchiveMD5s(doc *domain.CollectionDocument) map[string]map[string
 	for _, item := range doc.Items {
 		for _, f := range item.Files {
 			sum := strings.ToLower(f.MD5)
-			if f.ID == "" || !isMD5Hex(sum) {
+			if f.ID == "" || !isHexDigest(sum, md5.Size) {
 				continue
 			}
 			key := domain.ModKey(item.Ref.SourceID, item.Ref.ModID)
@@ -581,19 +582,6 @@ func collectionArchiveMD5s(doc *domain.CollectionDocument) map[string]map[string
 		}
 	}
 	return out
-}
-
-// isMD5Hex reports whether s is an md5 in lower-case hex.
-func isMD5Hex(s string) bool {
-	if len(s) != 32 {
-		return false
-	}
-	for _, r := range s {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 // matchCollectionGame picks the local game a collection imports into: the
