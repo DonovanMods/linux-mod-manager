@@ -534,14 +534,6 @@ func defaultSlot(order []string, name string) int {
 	return first
 }
 
-// previewNames is names joined, at most n of them, with how many more.
-func previewNames(names []string, n int) string {
-	if len(names) <= n {
-		return strings.Join(names, ", ")
-	}
-	return fmt.Sprintf("%s and %d more", strings.Join(names[:n], ", "), len(names)-n)
-}
-
 // parseLoadOrderList is a list file's names, in order: each line trimmed,
 // blank lines skipped (as the game and Vortex read it).
 func parseLoadOrderList(data []byte) []string {
