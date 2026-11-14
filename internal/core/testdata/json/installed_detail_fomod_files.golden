@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "profile": "default",
+  "update_policy": "notify",
+  "locked": false,
+  "fomod": {
+    "config_sha256": "",
+    "steps": []
+  },
+  "fomod_files": {
+    "100": {
+      "config_sha256": "ab12",
+      "steps": []
+    },
+    "101": {
+      "config_sha256": "cd34",
+      "steps": []
+    }
+  }
+}

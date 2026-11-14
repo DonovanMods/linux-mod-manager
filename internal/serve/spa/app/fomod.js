@@ -33,9 +33,27 @@ export function fomodQuestionFor(details) {
   return ok ? details : null;
 }
 
-/** modKey is the answer map's key for a question's mod. */
+/** modKey is a question's mod, "source:id". */
 export function modKey(mod) {
   return `${mod.source_id}:${mod.mod_id}`;
+}
+
+/**
+ * answerKey is the answer map's key for a question: its mod's, or - for one
+ * file's installer of a mod whose files each carry one (issue 634) - the
+ * mod's then "#" and the file id (core.FomodQuestion.Key).
+ */
+export function answerKey(mod) {
+  return mod.file_id ? `${modKey(mod)}#${mod.file_id}` : modKey(mod);
+}
+
+/** questionTitle names a question for a heading: the mod, and the file
+ * whose installer it is when the mod has several (issue 634). */
+export function questionTitle(mod) {
+  const name = mod.name || modKey(mod);
+  if (mod.file_name) return `${name} - ${mod.file_name}`;
+  if (mod.file_id) return `${name} - file ${mod.file_id}`;
+  return name;
 }
 
 /** mergeQuestions folds several questions (an update batch's skips) into
@@ -197,7 +215,7 @@ export function answerFor(mod, selections, through) {
 export function wizardPages(question, start = {}) {
   const pages = [];
   question.mods.forEach((mod, mi) => {
-    let from = start[modKey(mod)] ?? 0;
+    let from = start[answerKey(mod)] ?? 0;
     if (from >= mod.steps.length) from = 0;
     mod.steps.forEach((step, si) => {
       if (si >= from && stepIsFree(step)) pages.push({ mod: mi, step: si });

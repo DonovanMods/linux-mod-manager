@@ -929,7 +929,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			// download replays them and records what it resolved.
 			var resolved *fomodResolved
 			if entry.Cached && mod.Variant != "" {
-				resolved = &fomodResolved{variant: mod.Variant, choices: entry.Ref.Fomod}
+				resolved = resolvedFromRef(&entry.Ref, mod.Variant)
 			}
 			if !entry.Cached {
 				mod.Variant = ""

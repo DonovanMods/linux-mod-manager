@@ -24,6 +24,12 @@ A mod installed before lmm ran FOMOD installers went in as the whole
 archive; this runs its installer and replaces that install.
 
 .PP
+A mod whose files each carry their own installer (a collection that pins
+a mod's main file and a patch file, each a FOMOD) is asked per file: pick
+one with --file <file-id>, or, at a terminal, from a list; without one,
+every installer is asked. The others keep their choices.
+
+.PP
 Without a terminal, answer with --fomod-choices <file.json> or
 --fomod-defaults; with neither, the questions are printed (the full
 document under --json) and lmm exits non-zero.
@@ -32,11 +38,16 @@ document under --json) and lmm exits non-zero.
 Examples:
   lmm mod fomod 12604 --game skyrim-se
   lmm mod fomod 12604 --game skyrim-se --fomod-choices choices.json
+  lmm mod fomod 43532 --game skyrim-se --file 101
 
 
 .SH OPTIONS
+\fB--file\fP=""
+	for a mod whose files each carry their own installer, the file id whose installer to change (default: every one, or a list to pick from at a terminal)
+
+.PP
 \fB--fomod-choices\fP=""
-	answer FOMOD installer questions from a JSON file (the profile's fomod: shape or Vortex's choices array; key it by source:id when several mods ask)
+	answer FOMOD installer questions from a JSON file (the profile's fomod: shape or Vortex's choices array; key it by source:id when several mods ask, or by source:id#file-id for one file's installer)
 
 .PP
 \fB--fomod-defaults\fP[=false]
