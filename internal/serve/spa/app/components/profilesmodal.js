@@ -584,9 +584,71 @@ function ImportProfileForm({ actions, close }) {
         />
       </label>
       ${error && html`<p class="modal__error">${error}</p>`}
+      <${ImportURLForm} actions=${actions} close=${close} name=${name} />
       <${ImportCollectionForm} actions=${actions} close=${close} />
       <${ImportNexusCollectionForm} actions=${actions} close=${close} />
     </div>
+  `;
+}
+
+/** ImportURLForm imports an lmm collection (or an older profile export)
+ * from an https address (issue 622): `lmm profile import https://…`. The
+ * server fetches it - https only, size-capped - and plans it as a file's
+ * import, into the game selected here, except that its hooks are never
+ * imported (the plan says so and offers no checkbox) and the address is
+ * recorded as the profile's origin. The optional name above it is `--as`,
+ * as it is for a file. */
+export function ImportURLForm({ actions, close, name }) {
+  const [url, setURL] = useState("");
+  const trimmed = url.trim();
+  const plain = /^http:\/\//i.test(trimmed);
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!trimmed || plain) return;
+    close();
+    await actions.openPlan({
+      kind: "profile_import",
+      origin: "profile-import-url",
+      title: "Import a collection from a URL",
+      confirmLabel: "Import",
+      options: {
+        url: trimmed,
+        ...(name?.trim() ? { profile_name: name.trim() } : {}),
+      },
+    });
+  }
+
+  return html`
+    <form class="profiles-import__collection" onSubmit=${submit}>
+      <h4 class="plan__heading">From a URL</h4>
+      <input
+        type="url"
+        aria-label="Collection URL (https)"
+        placeholder="https://… (.lmmc or .yaml)"
+        data-testid="import-url"
+        value=${url}
+        onInput=${(e) => setURL(e.currentTarget.value)}
+      />
+      <button
+        type="submit"
+        class="button button--primary"
+        data-testid="import-url-submit"
+        disabled=${!trimmed || plain}
+      >
+        Import from URL
+      </button>
+      ${
+        plain &&
+        html`<p class="modal__error" data-testid="import-url-error">
+          lmm fetches a collection over https only.
+        </p>`
+      }
+      <p class="empty-state__hint">
+        A link to the file itself: a .lmmc, or its YAML. Hooks are never
+        imported from a URL.
+      </p>
+    </form>
   `;
 }
 

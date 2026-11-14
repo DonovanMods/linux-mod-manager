@@ -1099,7 +1099,20 @@ func (pm *ProfileManager) Export(ctx context.Context, gameID, profileName string
 	if err != nil {
 		return nil, err
 	}
+	profile.Collection = withoutImportURL(profile.Collection)
 	return config.ExportProfile(profile)
+}
+
+// withoutImportURL is c without the address a URL import recorded in its
+// origin (#622): what every export writes, since the address is this
+// machine's subscription, not the collection's. c itself is left as it is.
+func withoutImportURL(c *domain.CollectionInfo) *domain.CollectionInfo {
+	if c == nil || c.Origin == nil || c.Origin.ImportURL == "" {
+		return c
+	}
+	out := *c
+	out.Origin = c.Origin.WithoutImportURL()
+	return &out
 }
 
 // importDocument saves an imported profile document - refusing one that

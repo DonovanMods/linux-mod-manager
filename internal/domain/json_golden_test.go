@@ -591,6 +591,11 @@ func TestJSONGoldens(t *testing.T) {
 			domain.CollectionOrigin{SourceID: "nexusmods", Slug: "iszwwe", Revision: 484, URL: "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe", Author: "curator"},
 		},
 		{
+			// #622: the origin of a profile imported from an https address.
+			"collection_origin_import_url",
+			domain.CollectionOrigin{Author: "curator", ImportURL: "https://example.invalid/shared/coop.lmmc"},
+		},
+		{
 			"collection_external_item",
 			domain.CollectionExternalItem{Name: "Tool", URL: "https://example.invalid/tool", Instructions: "Install it by hand."},
 		},

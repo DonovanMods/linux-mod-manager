@@ -111,6 +111,9 @@ func (s *Service) ExportCollection(ctx context.Context, gameID, profileName stri
 		profile.Collection = recorded
 	}
 	info := collectionInfoForExport(profile.Collection, opts)
+	// The address a URL import recorded (#622) is this machine's, never
+	// the document's.
+	info.Origin = info.Origin.WithoutImportURL()
 	doc := &domain.CollectionDocument{
 		FormatVersion: domain.CollectionFormatVersion,
 		Name:          profile.Name,

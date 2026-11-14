@@ -2226,6 +2226,19 @@ func TestJSONGoldens(t *testing.T) {
 			collectionImportFixture(),
 		},
 		{
+			// #622: a collection fetched from an https address - its hooks
+			// never importable, the address shown redacted in its origin.
+			"collection_import_url",
+			func() *core.CollectionImport {
+				c := collectionImportFixture()
+				c.Input, c.HooksImportable = core.CollectionFromURL, false
+				c.Origin = &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "iszwwe", Revision: 484, Author: "curator",
+					ImportURL: "https://example.invalid/shared/coop.lmmc?…"}
+				c.Warnings = nil
+				return c
+			}(),
+		},
+		{
 			// The JSON plan of a version-1 import (#621) - the document
 			// POST /api/v1/plans/profile_import answers: the ordinary
 			// buckets with the collection beside them.
