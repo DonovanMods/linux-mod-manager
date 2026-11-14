@@ -422,6 +422,11 @@ type GameStatus struct {
 	// confirmation before switching. omitempty: absent when there is no
 	// suggestion or no installed mod.
 	SuggestedAdapterWarning string `json:"suggested_adapter_warning,omitempty"`
+	// ProfileDrift is what `lmm profile apply` would change in the active
+	// profile, counted by reason (#641, Service.ProfileDrift) - what the
+	// web UI's Profile card offers Apply on. omitempty: absent when the
+	// installs match the profile, or no profile is active.
+	ProfileDrift *ProfileDrift `json:"profile_drift,omitempty"`
 }
 
 // Status summarizes every configured game, ordered by ID (ListGames').
@@ -561,7 +566,7 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		status.LinkMethodSource = "profile"
 	}
 
-	mods, _ := s.GetInstalledMods(ctx, game.ID, active.Name)
+	mods, modsErr := s.GetInstalledMods(ctx, game.ID, active.Name)
 	status.ActiveProfile = active.Name
 	status.InstalledModCount = len(mods)
 	status.ExternalCount = countExternal(mods)
@@ -590,6 +595,16 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 				}
 			}
 		}
+	}
+
+	// #641: what an apply would converge. Only from rows that were read:
+	// an unread set would count every listed mod as not installed.
+	if modsErr == nil {
+		drift, err := s.profileDrift(ctx, game, pm, active, profiles, mods, modPathErr == "")
+		if err != nil {
+			return nil, err
+		}
+		status.ProfileDrift = drift
 	}
 
 	s.stampLaunch(ctx, status, game, active.Name)

@@ -1,0 +1,35 @@
+{
+  "header": "Differs from what is installed: ",
+  "cases": [
+    {
+      "drift": {
+        "profile": "default",
+        "not_installed": 1,
+        "version": 2,
+        "mod_type": 1,
+        "files": 1,
+        "fomod": 1,
+        "not_enabled": 1,
+        "unlisted": 3,
+        "switched_off": 2,
+        "overrides": 1
+      },
+      "text": "1 mod not installed, 2 mods at another version, 1 mod of another mod type, 1 mod with other files, 1 mod with other installer choices, 1 mod not enabled, 3 mods enabled but not in the profile, 2 mods enabled that the profile switches off, 1 override changed"
+    },
+    {
+      "drift": {
+        "profile": "default",
+        "not_installed": 2,
+        "version": 1,
+        "unlisted": 1,
+        "switched_off": 1
+      },
+      "skip": ["not_installed", "unlisted"],
+      "text": "1 mod at another version, 1 mod enabled that the profile switches off"
+    },
+    {
+      "drift": { "profile": "default", "overrides": 2 },
+      "text": "2 overrides changed"
+    }
+  ]
+}

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -382,4 +384,60 @@ func TestShowGameStatus_ConversionFailures_ShownInTextAndJSON(t *testing.T) {
 	var decoded core.GameStatus
 	require.NoError(t, json.Unmarshal([]byte(jsonOut), &decoded))
 	assert.Equal(t, 1, decoded.ConversionFailures)
+}
+
+// TestShowGameStatus_ProfileDrift_TextAndJSON is #641: a profile whose
+// version was edited by hand reads as drift in both twins - the text names
+// the reason and the command that converges it, --json carries the counts.
+func TestShowGameStatus_ProfileDrift_TextAndJSON(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	seedDeployableMod(t, svc, game, "2", "Other Mod", "other.esp")
+
+	textOut := captureStdout(t, func() error { return showGameStatus(context.Background(), svc, game.ID) })
+	assert.NotContains(t, textOut, "Differs from what is installed", "a profile that matches its installs shows no drift")
+
+	p, err := config.LoadProfile(svc.ConfigDir(), game.ID, "default")
+	require.NoError(t, err)
+	p.Mods[0].Version = "2.0"
+	p.Mods[1].Version = "0.9"
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), p))
+
+	textOut = captureStdout(t, func() error { return showGameStatus(context.Background(), svc, game.ID) })
+	assert.Contains(t, textOut, "Differs from what is installed: 2 mods at another version")
+	assert.Contains(t, textOut, "lmm profile apply")
+
+	jsonOut := captureStdout(t, func() error { return showGameStatusJSON(context.Background(), svc, game.ID) })
+	var decoded core.GameStatus
+	require.NoError(t, json.Unmarshal([]byte(jsonOut), &decoded))
+	require.NotNil(t, decoded.ProfileDrift)
+	assert.Equal(t, core.ProfileDrift{Profile: "default", Version: 2}, *decoded.ProfileDrift)
+}
+
+// TestDriftSummary_WordsAsTheSharedFixture holds the CLI's drift wording
+// to internal/core/testdata/drift_summary.json, the fixture the web UI's
+// Profile card is held to as well (TestE2E_DriftSummary_WordsAsTheSharedFixture).
+func TestDriftSummary_WordsAsTheSharedFixture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "core", "testdata", "drift_summary.json"))
+	require.NoError(t, err)
+	var fixture struct {
+		Header string `json:"header"`
+		Cases  []struct {
+			Drift core.ProfileDrift `json:"drift"`
+			Skip  []string          `json:"skip"`
+			Text  string            `json:"text"`
+		} `json:"cases"`
+	}
+	require.NoError(t, json.Unmarshal(data, &fixture))
+	assert.Equal(t, fixture.Header, driftHeader)
+	checked := 0
+	for _, c := range fixture.Cases {
+		if len(c.Skip) > 0 {
+			continue // the web card's own leaving-out; the CLI names every reason
+		}
+		assert.Equal(t, c.Text, driftSummary(c.Drift))
+		checked++
+	}
+	assert.NotZero(t, checked)
 }
