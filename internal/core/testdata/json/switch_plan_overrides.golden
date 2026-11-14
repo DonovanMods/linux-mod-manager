@@ -1,0 +1,23 @@
+{
+  "game_id": "skyrim-se",
+  "from": "default",
+  "to": "hardcore",
+  "to_enable": [],
+  "to_disable": [],
+  "to_install": [],
+  "overrides": [
+    {
+      "path": "Data/k.ini",
+      "action": "place",
+      "source_id": "nexusmods",
+      "mod_id": "7"
+    },
+    {
+      "path": "SkyrimPrefs.ini",
+      "root": "install_path",
+      "action": "restore"
+    }
+  ],
+  "no_changes": false,
+  "already_active": false
+}

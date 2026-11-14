@@ -377,6 +377,44 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   ("this file belongs to a deployed mod; lmm cannot override a mod's own
   files yet") are gone.
 
+- **Profile switch and apply converge every override, and preview it
+  (#631).** `lmm profile switch` and `lmm profile apply` (and the web UI's
+  Switch and Apply profile) now write the profile's overrides on files no
+  mod ships, such as a stock game INI, as `lmm deploy` does - the game's
+  own file is kept in lmm's originals store first. An override the new
+  profile doesn't set goes back: the game's original returns, or a file
+  the override created is removed. `lmm deploy` (and the web UI's Deploy)
+  now does the same for an override taken out of the profile, where it
+  used to leave the override in place. A file you changed after lmm wrote
+  the override is left as it is, with a warning, and its original stays
+  kept; the plans list it as `keep` (no change). An override written over
+  such a file, where the game's original is kept already, first keeps
+  your file in lmm's data folder
+  (`snapshots/<game>/_originals/set-aside/`) and names where (`replace_changed`
+  in the plans); see Fixed for `lmm deploy`. An override edited between a
+  switch or apply plan and its confirm makes the plan stale, and taking
+  away a file an override created also removes the folders it created,
+  when they are empty. The switch and apply plans list every file the overrides change,
+  mod files (#630) included, and the deploy plan lists the game files its
+  overrides change: under "Will change N file(s) for the profile's
+  overrides" in the terminal (write, rewrite or take the override away),
+  as the new `overrides` list in the `--dry-run --json` plan (`path`,
+  `root`, `action`: `place`, `update`, `replace_changed`, `restore` or `keep`, and the mod for a
+  mod's own file), and in the confirm dialog's **Profile overrides**
+  section. A switch or apply whose only changes are overrides is no longer
+  `no_changes: true`: **`lmm profile switch` to a profile that differs
+  only in its overrides now asks "Proceed?"** (pass `--yes` to skip it),
+  where it used to switch without asking, and `lmm profile apply` no
+  longer says "System already matches" when an override is out of date.
+  Under the `copy` link method, an override deleted from the profile by
+  hand is now taken away by the next apply too (#630's gap): lmm remembers
+  where it wrote overridden copies, so it finds them without hashing every
+  deployed file. And a switch to a profile that shares the mod now puts
+  the mod's own file back in place of the other profile's override copy.
+  The originals store's manifest gains three lists for this
+  (`override_writes`, `override_copies`, `override_copies_game_root`) and a
+  `set_aside` list; an older lmm ignores them.
+
 - **A manual-download mod is updated automatically again once its author
   allows it (#627).** When CurseForge reports `allowModDistribution: true`
   for a mod lmm had marked manual-only (#543), the next update check clears
@@ -739,6 +777,15 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   version as `<version>@<variant>`.
 
 ### Fixed
+
+- **An override no longer overwrites your edit of a game file for good
+  (#631).** When you changed a file after lmm wrote a profile override
+  there (or the game rewrote its INI), `lmm deploy` wrote the profile's
+  override over it, and with the game's original already kept, your
+  content was lost. lmm now keeps your file first, under
+  `snapshots/<game>/_originals/set-aside/` in its data folder, and the
+  warning names the copy; the override is still written. Profile switch
+  and apply, which now write overrides too, follow the same rule.
 
 - The web UI's mod page no longer offers **Re-link…** for a moment on a locked mod opened directly, before its library listing has loaded: a lock-gated action now waits until the lock is known. Found by a timing-dependent E2E failure (CI on e1e3bbba).
 - **Two mods that ship the same file over one of the game's own no longer

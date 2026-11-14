@@ -500,6 +500,14 @@ func CountHeirListingsForTest(count func()) (restore func()) {
 	return func() { heirListingHook = prev }
 }
 
+// RecordOverrideWriteForTest records, as applyOneOverride does just before
+// a write, that an override is about to write content at rel of gameID's
+// install path, over lmm's own earlier write prev - without writing it: the
+// state a crash between the record and the write leaves (#631 review).
+func (s *Service) RecordOverrideWriteForTest(gameID, rel string, content, prev []byte) error {
+	return s.originalsStoreFor(gameID).recordOverrideWrite(rel, content, sha256Hex(prev), false, nil)
+}
+
 // SetLoadOrderEditAfterSaveForTest sets the hook ApplyFileLoadOrderEdit
 // calls between its profile write and its list write (#620), until the
 // returned func restores the previous one.
