@@ -170,7 +170,7 @@ func TestCollectionImport_RefusesAFomodOrderItCannotKeep(t *testing.T) {
 	for name, entry := range map[string]string{
 		"an unpinned file":  files + `, fomod_order: ["3", "1"]`,
 		"a repeated file":   files + `, fomod_order: ["2", "2"]`,
-		"a control char":    files + `, fomod_order: ["1‮"]`,
+		"a control char":    files + ", fomod_order: [\"1\u202e\"]",
 		"no files to order": `file_ids: ["1", "2"], fomod_order: ["2", "1"]`,
 		"over the limit":    `fomod_files: {"1": {steps: [{name: S, groups: []}]}, "2": {steps: [{name: S, groups: []}]}}, fomod_order: [` + strings.Join(long, ", ") + `]`,
 	} {
