@@ -326,6 +326,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 	fmt.Println()
 	renderPluginList(result.Plugins)
+	renderLoadOrderResults(result.LoadOrders)
 
 	if deployMethod != "" {
 		fmt.Printf("\nNote: Used %s method for this deployment.\n", methodName)

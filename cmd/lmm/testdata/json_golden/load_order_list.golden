@@ -1,0 +1,45 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "orders": [
+    {
+      "game_id": "g1",
+      "profile": "default",
+      "id": "cyberpunk2077-archive",
+      "label": "Archives",
+      "list_file": "<GAME>/archive/pc/mod/modlist.txt",
+      "first_wins": true,
+      "active": true,
+      "recorded": false,
+      "files": [
+        {
+          "position": 1,
+          "name": "a.archive",
+          "managed": true,
+          "source_id": "src",
+          "mod_id": "a",
+          "mod_name": "a",
+          "placement": "default"
+        },
+        {
+          "position": 2,
+          "name": "b.archive",
+          "managed": true,
+          "source_id": "src",
+          "mod_id": "a",
+          "mod_name": "a",
+          "placement": "default"
+        },
+        {
+          "position": 3,
+          "name": "c.archive",
+          "managed": true,
+          "source_id": "src",
+          "mod_id": "b",
+          "mod_name": "b",
+          "placement": "default"
+        }
+      ]
+    }
+  ]
+}
