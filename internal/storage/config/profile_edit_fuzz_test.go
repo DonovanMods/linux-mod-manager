@@ -94,6 +94,8 @@ var markerFuzzSeeds = []string{
 	"name: p\ngame_id: g\nmods:\n  - {source_id: s, mod_id: a, fomod: {config_sha256: ab, steps: [{name: \"\", groups: [{name: G, choices: []}]}]}}\n",
 	"name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: a\n    fomod: {config_sha256: ab, steps: []}\n",
 	"name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: a\n    fomod:\n",
+	// #634: the per-file block, keyed by file id, mid-reference and last.
+	"name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: a\n    fomod_files:\n      \"1\":   # main\n        config_sha256: ab\n        steps: []\n      \"2\":\n        steps:\n          - name: P\n            groups: []\n    file_ids: [\"1\", \"2\"]\n  - source_id: s\n    mod_id: b\n    fomod_files: {\"3\": {steps: []}}\n",
 }
 
 // FuzzMarkModsDisabled is F1's property test over the in-place editor. For

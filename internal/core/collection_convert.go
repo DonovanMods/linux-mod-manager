@@ -45,8 +45,10 @@ const (
 	// installer other than FOMOD.
 	CollectionFeatureFomodUnknownInstaller = "fomod_unknown_installer"
 	// CollectionFeatureFomodMultiFile is one mod whose files carry more
-	// than one set of recorded installer choices: lmm installs one
-	// installer per mod.
+	// than one installer: its choices are recorded per file (an entry's
+	// fomod_files, #634), which an lmm collection document requires by
+	// this name so that an older lmm - which installs one installer per
+	// mod - refuses it.
 	CollectionFeatureFomodMultiFile = "fomod_multi_file"
 	// CollectionFeatureModTypeMixed is one mod whose files state different
 	// mod types: lmm routes a mod's files by one type.
@@ -370,10 +372,12 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 			}
 			types[it.ModType] = true
 		}
-		var extra []string
 		if installers > 1 {
-			extra = append(extra, CollectionFeatureFomodMultiFile)
+			// #634: replayed per file, so it no longer blocks; the feature
+			// is named, as fomod is, for the document's requires.
+			raise(CollectionFeatureFomodMultiFile, "")
 		}
+		var extra []string
 		if len(types) > 1 {
 			extra = append(extra, CollectionFeatureModTypeMixed)
 		}
@@ -735,6 +739,10 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 		members []*convItem
 		phase   int
 		first   int
+		// fileRules are before/after rules between two of the entry's own
+		// files (#634), as edges between members: they order its
+		// file_ids, which is the order its files' trees layer in.
+		fileRules [][2]*convItem
 	}
 	var entries []*entry
 	entryOf := map[*convItem]*entry{}
@@ -768,14 +776,36 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 			if r := policyRank(it.UpdatePolicy); r > rank {
 				rank = r
 			}
-			if it.Installer && len(it.choices) > 0 {
-				e.item.Ref.Fomod = domain.FomodChoices{Steps: slices.Clone(it.choices)}
-			} else if it.Installer {
+			if it.Installer && len(it.choices) == 0 {
 				it.Note = "the collection records an installer for this item but no answers, so its installer will ask at install"
 			}
 		}
 		if e == nil {
 			continue
+		}
+		// The recorded answers: one installer's as the entry's fomod, as
+		// before; several files' per file (#634), keyed by file id - every
+		// installer file counted, so one without answers asks for its own
+		// rather than replay another file's.
+		var installers []*convItem
+		for _, it := range e.members {
+			if it.Installer {
+				installers = append(installers, it)
+			}
+		}
+		switch {
+		case len(installers) == 1 && len(installers[0].choices) > 0:
+			e.item.Ref.Fomod = domain.FomodChoices{Steps: slices.Clone(installers[0].choices)}
+		case len(installers) > 1:
+			for _, it := range installers {
+				if len(it.choices) == 0 {
+					continue
+				}
+				if e.item.Ref.FomodFiles == nil {
+					e.item.Ref.FomodFiles = domain.FomodFiles{}
+				}
+				e.item.Ref.FomodFiles[it.FileID] = domain.FomodChoices{Steps: slices.Clone(it.choices)}
+			}
 		}
 		// exact locks the entry; prefer leaves it unlocked; latest leaves
 		// it unlocked AND auto-updating - but only when every file of the
@@ -860,6 +890,19 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 			for _, k := range r.Unknown {
 				collectionFeature(out, CollectionFeatureManifestKeyPrefix+"modRules."+safeFeatureSuffix(k))
 			}
+			if es == er {
+				// #634: two files of one mod - Vortex installs each as its
+				// own mod, ordered by this rule, so it orders which file's
+				// tree wins a path both write.
+				if src != ref {
+					if r.Type == "before" {
+						es.fileRules = append(es.fileRules, [2]*convItem{src, ref})
+					} else {
+						es.fileRules = append(es.fileRules, [2]*convItem{ref, src})
+					}
+				}
+				continue
+			}
 			if r.Type == "before" {
 				addEdge(es, er)
 			} else {
@@ -886,6 +929,11 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 		}
 		if ordering > 0 {
 			out.Features = appendSorted(out.Features, CollectionFeatureModRules)
+		}
+	}
+	for _, e := range entries {
+		if len(e.fileRules) > 0 {
+			orderEntryFiles(&e.item, e.members, e.fileRules, out)
 		}
 	}
 	order, cycles := stableTopoSort(len(entries), edges, indegree)
@@ -931,6 +979,45 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 	// (each entry's ModType), exactly as an export derives it.
 	doc.Requires = deriveCollectionRequires(doc)
 	return doc
+}
+
+// orderEntryFiles records the order one entry's files layer in, from the
+// before/after rules between its own files (#634), stable on the
+// collection's order: a mod whose files each carry an installer has them
+// share one cache entry, and a later file's tree wins a path an earlier
+// one also writes - as a later-installed mod would in Vortex, which
+// installs each file as its own mod. It is the entry's fomod_order, the
+// hint every flow layers by (canonicalLayerOrder); file_ids keep the
+// collection's order. A cycle among them keeps the collection's order for
+// the files in it, with a note. Only a per-file entry records it: it has
+// no say over any other mod's install.
+func orderEntryFiles(item *domain.CollectionItem, members []*convItem, rules [][2]*convItem, out *ConvertedCollection) {
+	if item.Ref.FomodFiles.IsZero() {
+		return
+	}
+	index := make(map[*convItem]int, len(members))
+	for i, m := range members {
+		index[m] = i
+	}
+	edges := make([][]int, len(members))
+	indegree := make([]int, len(members))
+	for _, r := range rules {
+		a, okA := index[r[0]]
+		b, okB := index[r[1]]
+		if !okA || !okB || a == b || slices.Contains(edges[a], b) {
+			continue
+		}
+		edges[a] = append(edges[a], b)
+		indegree[b]++
+	}
+	order, cycles := stableTopoSort(len(members), edges, indegree)
+	if len(cycles) > 0 {
+		out.Notes = append(out.Notes, fmt.Sprintf("The collection's ordering rules between %s's own files form a cycle; lmm breaks it, and every other rule holds.", item.Name))
+	}
+	item.Ref.FomodOrder = make([]string, 0, len(order))
+	for _, i := range order {
+		item.Ref.FomodOrder = append(item.Ref.FomodOrder, members[i].FileID)
+	}
 }
 
 // appendSorted inserts s into the sorted list unless it is there.

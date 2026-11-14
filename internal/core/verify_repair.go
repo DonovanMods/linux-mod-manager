@@ -64,7 +64,16 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 	// variant, or the repair would fill a tree the row does not use.
 	mapped := SourceMappedMod(r.game, &mod.Mod)
 	fx := asRebuild(r.svc.fomodInputFor(ctx, r.game, r.profile, ref, mod.SourceID, mod.ID, nil), mod)
-	result, err := r.svc.rebuildModFile(ctx, mod.SourceID, r.game, mapped, downloadFile, fx, mod.Variant, r.downloadWarningSink())
+	var result *DownloadModResult
+	if !fx.fileChoices.IsZero() {
+		// #634: the files of a mod with an installer in each layer in one
+		// order, so one file is never copied back on top of the entry: the
+		// whole entry is rebuilt, every file in that order, and only when
+		// it is the row's own tree again.
+		result, err = r.rebuildPerFileEntry(ctx, mod, mapped, files, fileID, fx)
+	} else {
+		result, err = r.svc.rebuildModFile(ctx, mod.SourceID, r.game, mapped, downloadFile, fx, mod.Variant, r.downloadWarningSink())
+	}
 	if err != nil {
 		return false, err
 	}
@@ -882,4 +891,37 @@ func (r *verifyRun) relinkDeployedRow(ctx context.Context, profileName string, m
 		mod.LinkMethod = method
 	}
 	return nil, nil, undeployErr
+}
+
+// rebuildPerFileEntry rebuilds the whole cache entry of a mod recorded per
+// file (#634) - every file the row installed, layered in its canonical
+// order, refused before anything is committed unless it resolves to the
+// row's own variant - and returns fileID's result.
+func (r *verifyRun) rebuildPerFileEntry(ctx context.Context, mod *domain.InstalledMod, mapped *domain.Mod, pool []domain.DownloadableFile, fileID string, fx fomodInput) (*DownloadModResult, error) {
+	var all []*domain.DownloadableFile
+	for _, id := range mod.FileIDs {
+		for i := range pool {
+			if pool[i].ID == id {
+				all = append(all, &pool[i])
+				break
+			}
+		}
+	}
+	if len(all) != len(mod.FileIDs) {
+		return nil, fmt.Errorf("%s: not every installed file is still offered, so its entry cannot be rebuilt", mod.Name)
+	}
+	fx.fileIDs = mod.FileIDs
+	variant := mod.Variant
+	sink := r.downloadWarningSink()
+	results, _, err := r.svc.downloadModFiles(ctx, r.svc.GetGameCache(r.game), mod.SourceID, r.game, mapped, all, fx,
+		modFileHooks{requireVariant: &variant, sink: func(int, *domain.DownloadableFile) EventSink { return sink }})
+	if err != nil {
+		return nil, err
+	}
+	for i, f := range all {
+		if f.ID == fileID {
+			return results[i], nil
+		}
+	}
+	return nil, fmt.Errorf("file %s not found in mod", fileID)
 }

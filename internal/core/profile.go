@@ -514,14 +514,15 @@ func (pm *ProfileManager) AddMod(ctx context.Context, gameID, profileName string
 // profile unwritten. A same-version upsert (a FileIDs refresh / reinstall
 // repair) stays legitimate and preserves the marker as before.
 //
-// mod.Fomod, when set, is recorded (an install of a FOMOD records the
-// choices it was installed with); a zero one keeps the recorded choices.
+// mod.Fomod (or mod.FomodFiles, #634), when set, is recorded (an install
+// of a FOMOD records the choices it was installed with); a zero one keeps
+// the recorded choices.
 // A flow that must CLEAR them - the mod's new tree is not a FOMOD
 // installer - uses upsertMod with fomodClear (#614).
 func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName string, mod domain.ModReference) error {
 	rec := fomodRecord{op: fomodKeep}
-	if !mod.Fomod.IsZero() {
-		rec = fomodRecord{op: fomodSet, choices: mod.Fomod}
+	if !mod.FomodRecord().IsZero() {
+		rec = fomodRecord{op: fomodSet, rec: mod.FomodRecord()}
 	}
 	return pm.upsertMod(ctx, gameID, profileName, mod, rec)
 }
@@ -529,9 +530,9 @@ func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName str
 // upsertMod is UpsertMod with an explicit say over the ref's recorded FOMOD
 // choices (#614): keep them, set them, or clear them.
 func (pm *ProfileManager) upsertMod(ctx context.Context, gameID, profileName string, mod domain.ModReference, rec fomodRecord) error {
-	mod.Fomod = domain.FomodChoices{}
+	mod.SetFomodRecord(domain.FomodRecord{})
 	if rec.op == fomodSet {
-		mod.Fomod = rec.choices
+		mod.SetFomodRecord(rec.rec)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -577,9 +578,9 @@ func (pm *ProfileManager) upsertMod(ctx context.Context, gameID, profileName str
 			// Category below.
 			switch rec.op {
 			case fomodSet:
-				profile.Mods[i].Fomod = rec.choices
+				profile.Mods[i].SetFomodRecord(rec.rec)
 			case fomodClear:
-				profile.Mods[i].Fomod = domain.FomodChoices{}
+				profile.Mods[i].SetFomodRecord(domain.FomodRecord{})
 			}
 			// Preserve Locked marker on in-place update (#97: survives UpsertMod).
 			// Do not modify Locked; it is only changed via explicit lock/unlock operations.

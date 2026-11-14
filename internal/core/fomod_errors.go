@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
 )
 
@@ -59,6 +60,11 @@ func (e *FomodChoicesRequiredError) Error() string {
 		if name == "" {
 			name = q.SourceID + ":" + q.ModID
 		}
+		if q.FileName != "" {
+			name += " (" + q.FileName + ")"
+		} else if q.FileID != "" {
+			name += " (file " + q.FileID + ")"
+		}
 		names = append(names, name)
 		stale = stale || q.Reason == FomodReasonStale
 	}
@@ -87,6 +93,13 @@ type FomodQuestion struct {
 	ModID    string `json:"mod_id"`
 	// Name is the mod's display name.
 	Name string `json:"name"`
+	// FileID and FileName name the file whose installer this is, for a mod
+	// whose files each carry their own (#634): the answer then goes under
+	// domain.FomodFileKey(SourceID, ModID, FileID) - Key - and a frontend
+	// labels the question with FileName. Both are absent for a mod with one
+	// installer, whose question is asked exactly as before.
+	FileID   string `json:"file_id,omitempty"`
+	FileName string `json:"file_name,omitempty"`
 	// ConfigSHA256 is the sha256 of the ModuleConfig.xml asked about; an
 	// answer records it.
 	ConfigSHA256 string `json:"config_sha256"`
@@ -116,6 +129,15 @@ type FomodQuestion struct {
 	Unmatched []FomodUnmatchedChoice `json:"unmatched,omitempty"`
 	// Violations are groups whose recorded selection breaks their rule.
 	Violations []FomodRuleViolation `json:"violations,omitempty"`
+}
+
+// Key is the answer key for the question: domain.FomodFileKey for one
+// file's installer (#634), else domain.ModKey.
+func (q FomodQuestion) Key() string {
+	if q.FileID != "" {
+		return domain.FomodFileKey(q.SourceID, q.ModID, q.FileID)
+	}
+	return domain.ModKey(q.SourceID, q.ModID)
 }
 
 // FomodQuestionStep is one visible installer step.

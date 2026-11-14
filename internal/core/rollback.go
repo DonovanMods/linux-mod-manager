@@ -403,9 +403,9 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 	// #614: the choices the rolled-away-from version was installed with,
 	// read before the swap: they become previous_fomod, and the row's
 	// previous_fomod becomes the profile's choices again.
-	var currentFomod domain.FomodChoices
+	var currentFomod domain.FomodRecord
 	if cur := s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID); cur != nil {
-		currentFomod = cur.Fomod
+		currentFomod = cur.FomodRecord()
 	}
 
 	restoredFomod, err := s.rollbackModVersion(ctx, mod.SourceID, mod.ID, game.ID, profileName, currentFomod)
@@ -440,7 +440,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 	// them now, and a failed profile write swaps every column back.
 	restoredRec := fomodRecord{op: fomodClear}
 	if !restoredFomod.IsZero() {
-		restoredRec = fomodRecord{op: fomodSet, choices: restoredFomod}
+		restoredRec = fomodRecord{op: fomodSet, rec: restoredFomod}
 	}
 	if err := pm.upsertMod(ctx, game.ID, profileName, restoredRef, restoredRec); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)

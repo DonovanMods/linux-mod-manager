@@ -2526,9 +2526,9 @@ func (s *Service) updateModVersion(ctx context.Context, sourceID, modID, gameID,
 //
 // newVariant is the new version's tree (#614), never part of newVersion.
 //
-// previousFomod is the choices the replaced version was installed with,
-// recorded in the same transaction (#614).
-func (s *Service) applyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion, newVariant string, previousFomod domain.FomodChoices, fileIDs []string) error {
+// previousFomod is the choices the replaced version was installed with, in
+// either form (#634), recorded in the same transaction (#614).
+func (s *Service) applyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion, newVariant string, previousFomod domain.FomodRecord, fileIDs []string) error {
 	return s.db.ApplyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, newVariant, previousFomod, fileIDs)
 }
 
@@ -2541,7 +2541,7 @@ func (s *Service) applyModUpdate(ctx context.Context, sourceID, modID, gameID, p
 //
 // currentFomod becomes the row's previous_fomod in the same transaction
 // (#614); the choices the restored version was installed with are returned.
-func (s *Service) rollbackModVersion(ctx context.Context, sourceID, modID, gameID, profileName string, currentFomod domain.FomodChoices) (domain.FomodChoices, error) {
+func (s *Service) rollbackModVersion(ctx context.Context, sourceID, modID, gameID, profileName string, currentFomod domain.FomodRecord) (domain.FomodRecord, error) {
 	return s.db.SwapModVersions(ctx, sourceID, modID, gameID, profileName, currentFomod)
 }
 

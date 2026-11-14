@@ -94,6 +94,45 @@ mods ask at once, key the answers by mod as `source:id`:
 }
 ```
 
+## Mods with an installer in each file
+
+Some mods are installed from more than one file, and each file has its
+own installer: a NexusMods collection might pin a mod's main file and a
+patch file, each a FOMOD. lmm runs each file's installer and remembers the
+answers per file (under `fomod_files:` in the profile, by file id).
+
+- The questions come one installer at a time, each headed with the file it
+  belongs to, in the same window (or terminal walk) as any other.
+- In a choices file, key each file's answers as `source:id#file-id`, as
+  the error that lists the questions shows them:
+
+  ```json
+  {
+    "nexusmods:43532#100": { "steps": [ ... ] },
+    "nexusmods:43532#101": { "steps": [ ... ] }
+  }
+  ```
+
+- To change one file's answers, pick its installer: in the web interface,
+  **Reconfigure installer…** lists them; in the terminal, run
+  `lmm mod fomod <mod-id> --file <file-id>`, or leave `--file` out to pick
+  from a list (with no terminal, every installer is asked). The other
+  files keep their answers.
+- An update asks only about a file whose installer changed.
+- When two of the installers install the same file, one of them wins, the
+  same one every time: the files are laid out in file id order, the ids
+  compared as text (so `10` comes before `9`), and the last one laid out
+  wins, unless the profile's `fomod_order:` list names an order. A
+  NexusMods collection sets that list from its rules between the mod's
+  files.
+- An update gives each file's answers to the file that replaces it,
+  matched by NexusMods' own replacement, else by the file's name or
+  category. A file it cannot match is asked about again.
+
+A collection or a shared profile that records answers per file needs an
+lmm that understands them; an older lmm refuses to import it rather than
+install it wrong.
+
 ## Changing your choices later
 
 To change what an installed mod's installer installed:

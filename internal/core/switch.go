@@ -908,7 +908,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			mod.Variant = refVariant(&ref)
 			if s.GetGameCache(game).HasFileIDs(modCacheKey(game.ID, *mod), downloadedFileIDs) {
 				if mod.Variant != "" {
-					resolved = &fomodResolved{variant: mod.Variant, choices: ref.Fomod}
+					resolved = resolvedFromRef(&ref, mod.Variant)
 				}
 			} else {
 				mod.Variant = ""

@@ -15,6 +15,7 @@ import { html, useState } from "../render.js";
 import { Modal } from "./modal.js";
 import {
   answerFor,
+  answerKey,
   choose,
   groupIsFree,
   groupRule,
@@ -22,6 +23,7 @@ import {
   isSingle,
   modKey,
   preselection,
+  questionTitle,
   selectionProblem,
   stepChanged,
   wizardPages,
@@ -84,21 +86,25 @@ export function FomodWizardModal({ modal, actions }) {
   function submit(finalEnds, finalDefaulted = defaulted) {
     const answers = {};
     const walked = {};
+    // Answers are keyed per question: the mod's, or one file's installer
+    // of a mod with several (issue 634).
     question.mods.forEach((mod, mi) => {
+      const key = answerKey(mod);
       if (finalDefaulted[mi]) {
         // The installer's own preselection: the question's defaults when it
         // carries them (a recording or earlier answers chose otherwise),
         // else its choices, which then ARE the defaults.
         const steps = mod.defaults?.length ? mod.defaults : mod.choices;
-        answers[modKey(mod)] = { config_sha256: mod.config_sha256, steps };
-        walked[modKey(mod)] = mod.steps.length;
+        answers[key] = { config_sha256: mod.config_sha256, steps };
+        walked[key] = mod.steps.length;
         return;
       }
       const through = finalEnds[mi] ?? mod.steps.length;
-      answers[modKey(mod)] = answerFor(mod, selections[mi], through);
-      walked[modKey(mod)] = through;
+      answers[key] = answerFor(mod, selections[mi], through);
+      walked[key] = through;
     });
-    actions.submitFomod(modal.origin, answers, walked);
+    const mods = [...new Set(question.mods.map(modKey))];
+    actions.submitFomod(modal.origin, answers, walked, mods);
   }
 
   if (!page) {
@@ -245,12 +251,20 @@ export function FomodWizardModal({ modal, actions }) {
       <div
         class="fomod"
         data-mod=${modKey(mod)}
+        data-file=${mod.file_id || undefined}
         data-step=${step.name}
         data-testid="fomod-step"
       >
         <p class="fomod__mod">
-          ${mod.name || modKey(mod)}${mod.module_name ? ` - ${mod.module_name}` : ""}
+          ${questionTitle(mod)}${mod.module_name ? ` - ${mod.module_name}` : ""}
         </p>
+        ${
+          mod.file_id &&
+          html`<p class="plan__option-hint" data-testid="fomod-file">
+            This mod has an installer in each of its files; this one is in
+            ${" "}<span class="mono">${mod.file_name || mod.file_id}</span>.
+          </p>`
+        }
         ${note && html`<p class="plan__note plan__note--warn">${note}</p>`}
         <p class="fomod__shortcut">
           <button
@@ -262,8 +276,9 @@ export function FomodWizardModal({ modal, actions }) {
             Use the installer's defaults
           </button>
           ${" "}<span class="plan__option-hint"
-            >Answers ${question.mods.length > 1 ? "this mod" : "every step"} as
-            the installer suggests, like --fomod-defaults.</span
+            >Answers
+            ${question.mods.length > 1 ? (mod.file_id ? "this installer" : "this mod") : "every step"}
+            as the installer suggests, like --fomod-defaults.</span
           >
         </p>
         <h3 class="fomod__step">

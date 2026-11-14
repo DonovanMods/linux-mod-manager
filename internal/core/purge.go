@@ -1007,7 +1007,7 @@ func (s *Service) listedVersionShips(ctx context.Context, game *domain.Game, liv
 		// choices, which the ref then records, so a ref without choices
 		// has the plain tree. C5's file-list and patch variants break that
 		// assumption and must read the row here whenever it may have one.
-		if version == "" || (!seen && !ref.Fomod.IsZero()) {
+		if version == "" || (!seen && !ref.FomodRecord().IsZero()) {
 			if row, err := s.GetInstalledMod(ctx, ref.SourceID, ref.ModID, game.ID, live); err == nil {
 				if version == "" {
 					version = row.Version
