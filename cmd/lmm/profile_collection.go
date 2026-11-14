@@ -100,7 +100,36 @@ func printCollectionPlan(c *core.CollectionImport, game *domain.Game) {
 			fmt.Printf("    - %s\n", path)
 		}
 	}
+	printCollectionBundled(c)
 	fmt.Println()
+}
+
+// printCollectionBundled lists the files a collection bundles (#623): each
+// item with its size, and the code that holds one back.
+func printCollectionBundled(c *core.CollectionImport) {
+	if len(c.Bundled) == 0 {
+		return
+	}
+	fmt.Printf("\nFiles the collection's author bundled (installed like any mod):\n")
+	held := false
+	for _, b := range c.Bundled {
+		label := b.Item
+		if b.Name != "" && b.Name != b.Item {
+			label = b.Name + " (" + b.Item + ")"
+		}
+		fmt.Printf("    - %s: %d file(s), %s\n", label, b.Files, formatSize(b.Bytes))
+		for _, r := range b.Restricted {
+			held = true
+			fmt.Printf("        holds %s: %s\n", r.Path, r.Reason)
+		}
+	}
+	if held {
+		if profileImportAnyOverrides {
+			fmt.Println("  Items that hold code will be imported (--allow-any-overrides).")
+		} else {
+			fmt.Println("  Items that hold code will be skipped; re-run with --allow-any-overrides to import them.")
+		}
+	}
 }
 
 // printImportGates prints what an import's gates hold back (#621): every
@@ -160,6 +189,12 @@ func printImportGatesResult(plan *core.ImportPlan, result *core.ProfileImportRes
 			fmt.Printf("\n%d hook(s) were not imported: hooks are never imported from a URL.\n", n)
 		} else {
 			fmt.Printf("\n%d hook(s) were not imported; re-import with --with-hooks to import them.\n", n)
+		}
+	}
+	if skipped := result.BundledSkipped; len(skipped) > 0 {
+		fmt.Printf("\n%d bundled item(s) were skipped because they hold code; re-import with --allow-any-overrides to include them:\n", len(skipped))
+		for _, item := range skipped {
+			fmt.Printf("    - %s\n", item)
 		}
 	}
 	if skipped := result.OverridesSkipped; len(skipped) > 0 {

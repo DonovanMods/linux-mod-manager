@@ -64,6 +64,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/profiles", s.wrap(s.handleAPIProfileCreate))
 	s.mux.Handle("DELETE /api/v1/profiles/{name}", s.wrap(s.handleAPIProfileDelete))
 	s.mux.Handle("GET /api/v1/profiles/{name}/export", s.wrap(s.handleAPIProfileExport))
+	s.mux.Handle("GET /api/v1/profiles/{name}/bundle-candidates", s.wrap(s.handleAPIProfileBundleCandidates))
 	s.mux.Handle("POST /api/v1/profiles/{name}/collection", s.wrap(s.handleAPIProfileCollection))
 	s.mux.Handle("POST /api/v1/profiles/{name}/rename", s.wrap(s.handleAPIProfileRename))
 	s.mux.Handle("POST /api/v1/profiles/{name}/duplicate", s.wrap(s.handleAPIProfileDuplicate))

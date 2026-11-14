@@ -2280,6 +2280,40 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #623: a bundled item of a collection import plan, holding code
+			// the import holds back without --allow-any-overrides.
+			"collection_bundled_item",
+			core.CollectionBundledItem{
+				Item: "my-patch", ModID: "2f8c7a3e-0000-4000-8000-000000000001.my-patch", Name: "My Patch",
+				Version: "66a0a9f0ac25f0849c1e7b3d2f5a8e60", Files: 3, Bytes: 4096,
+				Restricted: []core.RestrictedOverride{{Path: "bin/helper.dll", Reason: "code the system runs (.dll)"}},
+			},
+		},
+		{
+			// #623: its row in the plan's item list.
+			"collection_import_item_bundled",
+			core.CollectionImportItem{
+				SourceID: domain.SourceCollection, ModID: "2f8c7a3e-0000-4000-8000-000000000001.my-patch",
+				Name: "My Patch", Version: "66a0a9f0ac25f0849c1e7b3d2f5a8e60", Bundled: true,
+			},
+		},
+		{
+			// #623: a result that held a bundled item back.
+			"profile_import_result_bundled_skipped",
+			core.ProfileImportResult{ProfileName: "coop", Installed: 1, BundledSkipped: []string{"my-tool"}},
+		},
+		{
+			// #623: a mod an export can bundle (GET /api/v1/profiles/{name}/
+			// bundle-candidates): one imported from a file, and one a
+			// collection already bundled.
+			"bundle_candidate",
+			core.BundleCandidate{SourceID: domain.SourceLocal, ModID: "6f1d…", Name: "My Tweaks"},
+		},
+		{
+			"bundle_candidate_always",
+			core.BundleCandidate{SourceID: domain.SourceCollection, ModID: "2f8c7a3e-0000-4000-8000-000000000001.my-patch", Name: "My Patch", Always: true},
+		},
+		{
 			"unsupported_collection_feature",
 			core.UnsupportedCollectionFeature{Feature: "fomod", Items: []string{"nexusmods:107"}},
 		},

@@ -57,7 +57,10 @@ const (
 	// mode, C5).
 	CollectionFeatureFileList = "file_list"
 	// CollectionFeatureBundled is an item shipped inside the collection's
-	// own archive (C5/L3).
+	// own archive: in an lmm collection document, a mods: entry whose
+	// source is lmm-collection, its files under the `.lmmc` container's
+	// files/<item>/ (#623); in a Nexus recipe, a `bundle` source (C5, #610,
+	// which maps it onto the same lmm-collection source).
 	CollectionFeatureBundled = "bundled"
 	// CollectionFeaturePatches is binary patches applied to an item (C5).
 	CollectionFeaturePatches = "patches"
@@ -103,8 +106,10 @@ var convertSupported = map[string]bool{
 // though the document's supported set has them, so a recipe needing one is
 // never converted with that part dropped. Empty since #611 mapped a
 // recipe's plugin order (plugin_order is gated per game instead:
-// convertInput.pluginOrder); kept for the next feature in that position.
-var convertPending = map[string]bool{}
+// convertInput.pluginOrder). bundled is here since #623 added it to the
+// document's set: a Nexus recipe's bundled/ tree is not read until C5
+// (#610) maps it onto the lmm-collection source.
+var convertPending = map[string]bool{CollectionFeatureBundled: true}
 
 // CollectionItemState is what an import does with one converted item.
 type CollectionItemState string

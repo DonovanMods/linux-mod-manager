@@ -3506,6 +3506,16 @@ a.row-menu__item.mod-page-link {
   gap: var(--space-2);
 }
 
+/* issue 623: the row's "Export with my files" form - its note, the mods to
+   bundle and its two controls, stacked. */
+.profiles-row__bundle {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
 .profiles-create,
 .profiles-import {
   margin-top: var(--space-4);

@@ -595,6 +595,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileImportPlanRequest{URL: "https://example.invalid/shared/coop.lmmc", ProfileName: "coop"},
 		},
 		{
+			// #623: the mods an export about to be downloaded bundles,
+			// checked when its collection identity is recorded.
+			"profile_collection_request",
+			profileCollectionRequest{Bundle: []string{"local:6f1d…"}},
+		},
+		{
 			"profile_import_apply_request_with_hooks",
 			profileImportApplyRequest{Install: true, WithHooks: true},
 		},

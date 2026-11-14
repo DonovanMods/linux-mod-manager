@@ -626,6 +626,9 @@ func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID, game
 		stack[key] = true
 		defer delete(stack, key)
 
+		if sourceID == domain.SourceCollection {
+			return // #623: a collection's bundled item has no dependencies
+		}
 		modDeps, err := s.GetDependencies(source.WithGame(ctx, s.gameOrNil(gameID)), sourceID, mod)
 		if err != nil {
 			// Degrade to "no dependencies for this mod" either way - but
@@ -2510,7 +2513,9 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	// (#221). Since U2 (#412) the adapter is the only thing asked: the
 	// source type-assertion that stood beside it is gone, so a .pak served
 	// by any source compiles for a compiling game.
-	src, err := s.GetSource(plan.SourceID)
+	// sourceByID: the install path, so a collection's admitted bundled
+	// item (#623, lmm-collection, never registered) installs too.
+	src, err := s.sourceByID(plan.SourceID)
 	if err != nil {
 		return st, fmt.Errorf("resolving source %q: %w", plan.SourceID, err)
 	}

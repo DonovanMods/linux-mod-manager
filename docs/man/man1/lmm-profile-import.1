@@ -52,6 +52,15 @@ skipped unless you pass --allow-any-overrides. The result says what was
 held back.
 
 .PP
+A .lmmc may carry its author's own files (bundled items: a patch, a
+config pack), which install like any mod and are kept with the
+collection, so lmm verify --fix can rebuild them. The plan lists each
+with its file count and size. One that holds code (a DLL or other
+executable, a system script, or a loader configuration) is skipped
+unless you pass --allow-any-overrides. A plain YAML document cannot
+carry files, so a bundled item in one is refused.
+
+.PP
 --workshop-collection takes a Steam Workshop collection id or the URL of
 its page, and imports the collection AS a profile: a collection is a mod
 list, which is what a profile is. It needs no API key. The profile RECORDS
@@ -82,7 +91,7 @@ Examples:
 
 .SH OPTIONS
 \fB--allow-any-overrides\fP[=false]
-	import overrides that are not text config files too (listed in the plan; skipped without this)
+	import overrides that are not text config files, and bundled files that hold code, too (listed in the plan; skipped without this)
 
 .PP
 \fB--as\fP=""

@@ -178,3 +178,20 @@ func TestAPIGames_RowsCarryTheSourcesMap(t *testing.T) {
 	require.Len(t, entries, 1)
 	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, entries[0].SourceIDs)
 }
+
+// TestAPIGameSources_ReservedSourceIDsAre400 is #623 review B2: lmm's own
+// source ids - the bundled-collection source, the merged pak, local - are
+// never a source a game maps, through the web UI's editor either.
+func TestAPIGameSources_ReservedSourceIDsAre400(t *testing.T) {
+	s := newGameSourcesServer(t)
+	for _, id := range []string{domain.SourceCollection, domain.SourceMerged, domain.SourceLocal} {
+		rec := doAPI(s, http.MethodPut, "/api/v1/games/skyrim-se", `{"sources":{"`+id+`":"x"}}`)
+		require.Equal(t, http.StatusBadRequest, rec.Code, "%s: %s", id, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "reserved by lmm", id)
+	}
+	game, err := s.svc.GetGame("skyrim-se")
+	require.NoError(t, err)
+	for _, id := range []string{domain.SourceCollection, domain.SourceMerged, domain.SourceLocal} {
+		assert.NotContains(t, game.SourceIDs, id, "nothing is written")
+	}
+}

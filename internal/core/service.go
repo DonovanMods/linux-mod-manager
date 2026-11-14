@@ -632,6 +632,10 @@ func (s *Service) RegisterSource(src source.ModSource) {
 }
 
 // GetSource retrieves a source by ID
+//
+// Registered sources only: the lmm-collection source (#623) is not one, so
+// it can never be configured as a game's source, logged in to, or indexed.
+// The install paths reach it through sourceByID.
 func (s *Service) GetSource(id string) (source.ModSource, error) {
 	return s.registry.Get(id)
 }
@@ -1501,7 +1505,7 @@ func rankAggregate(mods []domain.Mod, query string) {
 
 // GetMod retrieves a specific mod from a source
 func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*domain.Mod, error) {
-	src, err := s.registry.Get(sourceID)
+	src, err := s.sourceByID(sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1533,7 +1537,7 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 // only the files it accepts (source.WithGame, #544), so a frontend listing
 // files to choose from passes the game it will install into.
 func (s *Service) GetModFiles(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod) ([]domain.DownloadableFile, error) {
-	src, err := s.registry.Get(sourceID)
+	src, err := s.sourceByID(sourceID)
 	if err != nil {
 		return nil, err
 	}

@@ -134,6 +134,9 @@ type CollectionImport struct {
 	Overrides []string `json:"overrides,omitempty"`
 	// Warnings are what the reader skipped or could not check.
 	Warnings []string `json:"warnings,omitempty"`
+	// Bundled lists the items the container carries files for (#623), in
+	// the document's order: absent when it carries none.
+	Bundled []CollectionBundledItem `json:"bundled,omitempty"`
 	// Plugins summarises the plugin list the import saves on the profile
 	// (#611): absent when the document carries none.
 	Plugins *CollectionPluginSummary `json:"plugins,omitempty"`
@@ -302,6 +305,9 @@ type collectionState struct {
 	plugins domain.ProfilePlugins
 	// loadOrders are the document's file load orders (#620).
 	loadOrders domain.FileLoadOrders
+	// dropMods are mod keys the apply holds back (#623: bundled items
+	// holding code, without AllowAnyOverrides): left out of the profile.
+	dropMods map[string]string
 }
 
 // applyTo sets c's state on profile; a nil c sets nothing.
@@ -312,6 +318,12 @@ func (c *collectionState) applyTo(profile *domain.Profile) {
 	profile.Collection, profile.External = c.collection, c.external
 	profile.Plugins = c.plugins.Clone()
 	profile.LoadOrders = c.loadOrders.Clone()
+	if len(c.dropMods) > 0 {
+		profile.Mods = slices.DeleteFunc(profile.Mods, func(r domain.ModReference) bool {
+			_, drop := c.dropMods[domain.ModKey(r.SourceID, r.ModID)]
+			return drop
+		})
+	}
 }
 
 // CollectionImportItem is one mod of a collection import plan.
@@ -329,6 +341,9 @@ type CollectionImportItem struct {
 	// are replayed as written; an installer that no longer accepts them is
 	// asked about at install time.
 	InstallerChoices []string `json:"installer_choices,omitempty"`
+	// Bundled marks an item whose files the container carries (#623):
+	// source lmm-collection, listed in CollectionImport.Bundled.
+	Bundled bool `json:"bundled,omitzero"`
 }
 
 // CollectionGameError refuses a collection whose portable game identity
@@ -383,10 +398,11 @@ func IsCollectionGameUnresolved(err error) bool {
 var ErrInvalidCollection = errors.New("invalid collection document")
 
 // IsInvalidCollection reports whether err is a collection document the
-// reader refused - the caller's input, not a failure.
+// reader refused - the caller's input, not a failure. Bundled files the
+// reader refuses (ErrInvalidBundle, #623) are among them.
 func IsInvalidCollection(err error) bool {
 	return errors.Is(err, ErrInvalidCollection) || errors.Is(err, errBadContainer) ||
-		errors.Is(err, ErrCollectionFormatTooNew)
+		errors.Is(err, ErrCollectionFormatTooNew) || errors.Is(err, ErrInvalidBundle)
 }
 
 // Caps on a version-1 document, past the byte cap: a document from a
@@ -417,7 +433,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	if req.Input == "" {
 		req.Input = CollectionFromFile
 	}
-	doc, container, more, err := s.readCollectionData(req.Data, importURL != "")
+	doc, container, bundle, more, err := s.readCollectionData(req.Data, importURL != "")
 	if err != nil {
 		return nil, err
 	}
@@ -427,6 +443,16 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 		return nil, err
 	}
 	warnings = append(warnings, more...)
+	// #623: the bundled items, checked against the container and given the
+	// ids and versions the profile records.
+	bundled, pending, more, err := resolveBundledItems(doc, bundle, container)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, more...)
+	if pending != nil {
+		pending.data = req.Data
+	}
 
 	game, matchedBy, err := s.matchImportGame(doc, req.GameID)
 	if err != nil {
@@ -482,13 +508,15 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 		return nil, fmt.Errorf("building the collection's profile: %w", err)
 	}
 
-	plan, err := s.PlanImport(ctx, game, data)
+	// #623: the container's own bundled items, checked above, may plan.
+	plan, err := s.planImport(ctx, game, data, true)
 	if err != nil {
 		return nil, err
 	}
 	// The plan lists every hook the DOCUMENT carries, a URL's included.
 	plan.Hooks = hooks
 	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins, loadOrders: profile.LoadOrders.Clone()}
+	plan.bundle = pending
 	plan.archiveMD5 = collectionArchiveMD5s(doc)
 	// The preview shows the profile the import will save.
 	plan.Profile.Collection, plan.Profile.External = redactedCollection(profile.Collection), profile.External
@@ -519,6 +547,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 		HooksImportable:     req.Input == CollectionFromFile,
 		Warnings:            warnings,
 		Items:               make([]CollectionImportItem, 0, len(doc.Items)),
+		Bundled:             bundled,
 	}
 	_, managed := s.pluginRules(game)
 	c.Plugins = summarisePlugins(profile.Plugins, managed)
@@ -540,6 +569,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 			Unavailable: s.unavailableReason(game, item.Ref.SourceID),
 			// #615: what the collection's installer answers will install.
 			InstallerChoices: installerRecordLines(item),
+			Bundled:          item.Ref.SourceID == domain.SourceCollection,
 		})
 	}
 	plan.Collection = c
@@ -569,6 +599,24 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 		// result counts every hook the document carried as withheld.
 		opts.WithHooks = false
 	}
+	var bundledSkipped []string
+	if b := original.bundle; b != nil {
+		// #623: the container is the lmm-collection source's "download":
+		// kept before the apply, so its acquire - and every later rebuild
+		// of the items' cache entries - reads it. An item holding code is
+		// held back, as an override that is not text config is, unless the
+		// import allows any override.
+		if !opts.AllowAnyOverrides && len(b.restricted) > 0 {
+			plan = plan.withoutMods(b.restricted)
+			for _, item := range b.restricted {
+				bundledSkipped = append(bundledSkipped, item)
+			}
+			sort.Strings(bundledSkipped)
+		}
+		if err := s.keepCollectionContainer(game, b.collectionID, b.data, b.bundle, b.names, b.admitted(opts.AllowAnyOverrides)); err != nil {
+			return &ProfileImportResult{}, err
+		}
+	}
 	if c.Source != nil {
 		// A converted source collection is all or nothing at acquire (owner
 		// ruling, #602): a half-installed collection is the outcome that
@@ -591,6 +639,7 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 	if result == nil || result.ProfileName == "" {
 		return result, err
 	}
+	result.BundledSkipped = bundledSkipped
 	if c.Source != nil && err == nil {
 		if plan != original {
 			// The items a free account cannot download were held back
@@ -742,7 +791,7 @@ func (s *Service) gameMismatch(want domain.CollectionGame, game *domain.Game) st
 // the source is not registered (a custom source this machine lacks, or one
 // switched off) - with the remedy, or "" when it can.
 func (s *Service) unavailableReason(_ *domain.Game, sourceID string) string {
-	if _, err := s.GetSource(sourceID); err != nil {
+	if _, err := s.sourceByID(sourceID); err != nil { // #623: lmm-collection included
 		return fmt.Sprintf("lmm has no source %q here; add it, then re-import (a collection never carries a custom source's definition: ask its author for it)", sourceID)
 	}
 	return ""
