@@ -124,6 +124,7 @@ func (s *Service) ExportCollection(ctx context.Context, gameID, profileName stri
 		Hooks:         profile.Hooks,
 		HooksExplicit: profile.HooksExplicit,
 		Plugins:       profile.Plugins.Clone(),
+		LoadOrders:    profile.LoadOrders.Clone(),
 		Items:         make([]domain.CollectionItem, len(profile.Mods)),
 	}
 	for i, ref := range profile.Mods {

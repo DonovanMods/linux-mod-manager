@@ -1,0 +1,21 @@
+lmm_collection: 1
+id: 2f8c7a3e-0000-4000-8000-000000000620
+version: 1
+name: archives
+game_id: cp
+game:
+    name: Cyberpunk 2077
+    steam_app_id: "1091500"
+    sources:
+        steamworkshop: "1091500"
+requires:
+    - file_load_order:cyberpunk2077-archive
+mods:
+    - source_id: nexusmods
+      mod_id: "1"
+      version: "1.0"
+load_orders:
+    cyberpunk2077-archive:
+        - '! fixes.archive'
+        - basegame_b.archive
+        - basegame_a.archive

@@ -1,0 +1,9 @@
+{
+  "position": 1,
+  "name": "b.archive",
+  "managed": true,
+  "source_id": "nexusmods",
+  "mod_id": "29152",
+  "mod_name": "Story Quest Fixes",
+  "placement": "order"
+}

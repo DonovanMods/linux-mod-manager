@@ -176,6 +176,14 @@ type ConvertedCollection struct {
 	// ManifestError says why the recipe could not be read; empty when it
 	// was.
 	ManifestError string `json:"manifest_error,omitempty"`
+	// LoadOrders are the recipe's file load orders the import carries
+	// (#620), with how many of each order's files the recipe ties to one of
+	// the collection's mods.
+	LoadOrders []ConvertedLoadOrder `json:"load_orders,omitempty"`
+
+	// loadOrderMods maps, per load-order id, a file of the order to the
+	// collection mod the recipe's hint ties it to, for the plan.
+	loadOrderMods map[string]map[string]string
 
 	// pendingCollection holds the collection-level features the recipe
 	// raised while its items were read, gated when the document is built.
@@ -255,6 +263,9 @@ type convertInput struct {
 	// adapter is a Tier 1 PluginOrderer), so a recipe's plugin order can
 	// be replayed (#611).
 	pluginOrder bool
+	// loadOrders reports which of a recipe's file load orders the game's
+	// adapter writes (#620); nil supports none.
+	loadOrders func(id string) bool
 }
 
 // item is one collection entry during a conversion.
@@ -319,6 +330,11 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 		plugins, pluginFeatures = convertPlugins(in.manifest, out)
 		for _, f := range pluginFeatures {
 			raiseCollection(f)
+		}
+		// #620: each file load order is gated by whether the game's
+		// adapter writes it (supported, below).
+		for _, lo := range in.manifest.FileLoadOrders {
+			raiseCollection(CollectionFeatureFileLoadOrderPrefix + lo.ID)
 		}
 	} else {
 		out.ManifestError = in.manifestErr
@@ -416,6 +432,9 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 		if t, ok := strings.CutPrefix(name, CollectionFeatureModTypePrefix); ok {
 			return in.modTypeSupported != nil && in.modTypeSupported(t)
 		}
+		if id, ok := strings.CutPrefix(name, CollectionFeatureFileLoadOrderPrefix); ok {
+			return in.loadOrders != nil && in.loadOrders(id)
+		}
 		return false
 	}
 	blocking := map[string][]string{}
@@ -450,7 +469,7 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 			len(skippedOptional), strings.Join(skippedOptional, ", ")))
 	}
 
-	out.Document = buildCollectionDocument(in, out, items, plugins)
+	out.Document = buildCollectionDocument(in, out, items, plugins, convertLoadOrders(in, out, items))
 	warnings, err := sanitizeCollection(out.Document)
 	if err != nil {
 		return nil, err
@@ -596,9 +615,6 @@ func convertManifestItems(in convertInput, out *ConvertedCollection) []*convItem
 			collectionFeature(out, name)
 		}
 	}
-	for _, lo := range m.FileLoadOrders {
-		collectionFeature(out, CollectionFeatureFileLoadOrderPrefix+lo.ID)
-	}
 	for _, t := range m.Tools {
 		out.Tools = append(out.Tools, CollectionTool(t))
 	}
@@ -711,14 +727,16 @@ func policyRank(p string) int {
 
 // buildCollectionDocument builds the document from the included items: one
 // entry per mod, in install-phase order with the before/after rules
-// applied, the external items, and the plugin list (convertPlugins).
-func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []*convItem, plugins domain.ProfilePlugins) *domain.CollectionDocument {
+// applied, the external items, the plugin list (convertPlugins) and the
+// file load orders (convertLoadOrders).
+func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []*convItem, plugins domain.ProfilePlugins, loadOrders domain.FileLoadOrders) *domain.CollectionDocument {
 	doc := &domain.CollectionDocument{
 		FormatVersion: domain.CollectionFormatVersion,
 		Name:          out.Name,
 		GameID:        in.gameID,
 		Game:          in.game,
 		Plugins:       plugins,
+		LoadOrders:    loadOrders,
 		Info: domain.CollectionInfo{
 			ID:      in.sourceID + ":" + out.Slug,
 			Version: out.Revision,

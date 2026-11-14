@@ -126,7 +126,16 @@ func (r *verifyRun) adapterSuggestionPass() {
 		"the %s adapter knows how this game lays out and loads its mods", name, adapter.GenericID, name)
 	suggested := *r.game
 	suggested.Adapter = name
-	if r.svc.layoutNeutral(&suggested) {
+	if specs := r.svc.loadOrderSpecs(&suggested); len(specs) > 0 && r.svc.layoutNeutral(&suggested) {
+		// #620: an adapter whose rule is a file load order says that.
+		labels := make([]string, len(specs))
+		for i, spec := range specs {
+			labels[i] = fmt.Sprintf("%s (%s, written to %s)", spec.ID, spec.Label, spec.ListFile)
+		}
+		note = fmt.Sprintf("lmm's game catalog sets this game up with `adapter: %s`, and it uses %s; "+
+			"the %s adapter writes this game's file load order (%s) from the profile's order, "+
+			"and lays out and deploys every mod as it is now", name, adapter.GenericID, name, strings.Join(labels, "; "))
+	} else if r.svc.layoutNeutral(&suggested) {
 		// #635: an adapter that changes nothing for an untyped mod says what
 		// it is for instead.
 		note = fmt.Sprintf("lmm's game catalog sets this game up with `adapter: %s`, and it uses %s; "+

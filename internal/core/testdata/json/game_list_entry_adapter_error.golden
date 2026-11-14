@@ -14,5 +14,5 @@
   "convert_paks_explicit": false,
   "adapter": "bepinx",
   "default": false,
-  "adapter_error": "game \"valheim\": unknown adapter \"bepinx\" (registered: baldurs-gate-3, bepinex, bethesda, d2r, generic-files, icarus, witcher3)"
+  "adapter_error": "game \"valheim\": unknown adapter \"bepinx\" (registered: baldurs-gate-3, bepinex, bethesda, cyberpunk2077, d2r, generic-files, icarus, witcher3)"
 }

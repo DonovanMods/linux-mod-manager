@@ -299,6 +299,14 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 		}
 		recordPluginList(ctx, res)
 		warnings = append(warnings, res.warnings()...)
+		// #620: the game's file load orders (Cyberpunk 2077's
+		// modlist.txt) follow the same deployed set, in the same step.
+		orders, synced := loadOrdersSyncedOn(ctx, game.ID, profileName)
+		if !synced {
+			orders = s.syncLoadOrders(ctx, game, profileName)
+		}
+		recordLoadOrders(ctx, orders)
+		warnings = append(warnings, loadOrderWarnings(orders)...)
 	}()
 	if game.DeployMode != domain.DeployCompile {
 		return nil, nil

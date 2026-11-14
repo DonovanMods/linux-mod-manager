@@ -212,6 +212,7 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 	printKeptPaths(result.Kept)
 	// #616: the game's plugin list, put back as it was before lmm.
 	renderPluginList(result.Plugins)
+	renderLoadOrderResults(result.LoadOrders)
 
 	if !purgeUninstall {
 		fmt.Println("\nMod records preserved. Use 'lmm deploy' to restore mods.")

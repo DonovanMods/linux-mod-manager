@@ -105,6 +105,10 @@ plugins:                     # a Bethesda game's plugin list (requires: plugin_o
   rules:
     plugins:
       - { name: Patch.esp, after: [SkyUI_SE.esp] }
+load_orders:                 # file load orders (requires: file_load_order:<id>)
+  cyberpunk2077-archive:
+    - '! my fix.archive'
+    - basegame_b.archive
 ```
 
 ### Keys
@@ -131,6 +135,7 @@ duplicate keeps `title`, `author`, `description`, `install_instructions` and
 | `external`             | Items lmm cannot fetch, with a URL and the curator's instructions. They are recorded on the imported profile, so a re-export keeps them. |
 | `hooks`                | The profile's hooks, in the profile file's encoding: a hook that is absent inherits the game's, and one set to `""` disables it. |
 | `overrides`            | Config files (path relative to the game directory → content). Deploy keeps them inside the game directory, as it does every override. |
+| `load_orders`          | The profile's file load orders, by id: each the file names in load order, first loaded first (`cyberpunk2077-archive`: the `.archive` files Cyberpunk 2077 loads in the order of `archive/pc/mod/modlist.txt`). Each id requires `file_load_order:<id>`. An importer refuses, rather than rewrites, an id that is not a plain lower-case token, more than 16 orders or 10,000 names in one, and a name that is empty, starts or ends with whitespace, is `.` or `..`, holds a control or formatting character or a path separator, or is over 255 bytes. |
 | `plugins`              | The profile's plugin list: `order` (plugin names, first loads first, each with `enabled: false` when it is listed but not active) and `rules` (`groups` and per-plugin `group`, `after` and `req`, in the shape of a LOOT userlist). Requires `plugin_order`. An importer refuses, rather than rewrites, a name that is empty, holds a control or formatting character or a path separator, or is over 1024 bytes. |
 
 A key the importer does not recognise, and that `requires` does not name,
@@ -216,6 +221,7 @@ is what lets the format grow without breaking older importers.
 | `fomod`    | any mod with a `fomod` block (its recorded FOMOD installer choices) | format v1 (lmm with #614) |
 | `fomod_multi_file` | any mod with a `fomod_files` block: its FOMOD choices recorded per file, for a mod two or more of whose files each carry an installer (also raises `fomod`) | format v1 (lmm with #634). An older lmm, which installs one installer per mod, refuses it |
 | `plugin_order` | a `plugins` block (the profile's plugin load order and rules) | format v1 (lmm with #616) |
+| `file_load_order:<id>` | a `load_orders` entry for that id (a file-based load order, as a NexusMods collection's `fbLoadOrders` records it: `cyberpunk2077-archive` is Cyberpunk 2077's archive order) | lmm with #620, for a game whose adapter writes that order (the `cyberpunk2077` adapter: `cyberpunk2077-archive`). Elsewhere it is refused, because the order would be saved and never applied |
 | `mod_type:<type>` | any mod with that `mod_type` (a stated mod type, as a NexusMods collection records it: `dinput` is a script extender, deployed to the game folder) | lmm with #607, for a game whose adapter routes the type (the `bethesda` adapter: `dinput`, `enb`). Elsewhere it is refused, because the mod would deploy where the game never reads it |
 
 ## Importing safely

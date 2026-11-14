@@ -1701,6 +1701,9 @@ type PurgeResult struct {
 	// first wrote it (#616): nil when lmm never wrote one. Its findings
 	// are also Warnings.
 	Plugins *PluginListResult `json:"plugins,omitempty"`
+	// LoadOrders is what the purge did to the game's file load-order
+	// lists (#620): each list lmm wrote, put back.
+	LoadOrders []FileLoadOrderResult `json:"load_orders,omitempty"`
 }
 
 // PurgeProfile undeploys every mod in mods from game's directory - the
@@ -1798,11 +1801,13 @@ func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileNa
 	// after the loop, when it had no mod to run hooks for). A warning, not
 	// a failure: the mods are purged either way.
 	var plugins *PluginListResult
+	var loadOrders []FileLoadOrderResult
 	restored := false
 	restorePlugins := func() {
 		if !restored {
 			restored = true
 			plugins = s.restorePluginList(game)
+			loadOrders = s.restoreLoadOrders(game)
 		}
 	}
 	err = s.purgeMods(ctx, game, profileName, mods, purgeSpec{
@@ -1851,6 +1856,13 @@ func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileNa
 			if sink != nil {
 				sink(WarningEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeWarning, Message: w})
 			}
+		}
+	}
+	result.LoadOrders = loadOrders
+	for _, w := range loadOrderWarnings(loadOrders) {
+		result.Warnings = append(result.Warnings, w)
+		if sink != nil {
+			sink(WarningEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeWarning, Message: w})
 		}
 	}
 

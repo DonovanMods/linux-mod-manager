@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -93,6 +94,9 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 	// A recipe's plugin order is replayed only where lmm writes the game's
 	// plugin list (#611): anywhere else it would be saved and never applied.
 	_, in.pluginOrder = s.pluginRules(game)
+	// #620: a recipe's file load order is replayed only where the game's
+	// adapter writes it.
+	in.loadOrders = s.loadOrderSupport(game)
 	in.withOptional = opts.WithOptional
 	if len(opts.Optional) > 0 {
 		in.optional = make(map[string]bool, len(opts.Optional))
@@ -109,6 +113,9 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 		if root, err = os.OpenRoot(dir); err == nil {
 			var m source.CollectionManifest
 			if m, err = fetcher.ParseManifest(root.FS()); err == nil {
+				err = unreadableLoadOrder(&m, in.loadOrders)
+			}
+			if err == nil {
 				in.manifest = &m
 			}
 			_ = root.Close()
@@ -142,6 +149,32 @@ func (s *Service) modTypeRoutes(game *domain.Game) func(modType string) bool {
 		return nil
 	}
 	return func(t string) bool { return modTypeRouted(a, game, t) }
+}
+
+// unreadableLoadOrder is the error for a recipe whose file load order the
+// game writes has entries that could not be read (#620 review): that order
+// is the recipe's to replay, so the recipe is unreadable, as a parse error
+// makes it. An order the game does not write is refused by its feature
+// whatever its entries hold, so its unreadable entries change nothing.
+func unreadableLoadOrder(m *source.CollectionManifest, supported func(id string) bool) error {
+	for _, lo := range m.FileLoadOrders {
+		if lo.Invalid != "" && supported != nil && supported(lo.ID) {
+			return fmt.Errorf("%w: the %s load order: %s", source.ErrInvalidManifest, lo.ID, lo.Invalid)
+		}
+	}
+	return nil
+}
+
+// loadOrderSupport reports which file load orders game's adapter writes
+// (#620), by id; nil when it writes none.
+func (s *Service) loadOrderSupport(game *domain.Game) func(id string) bool {
+	specs := s.loadOrderSpecs(game)
+	if len(specs) == 0 {
+		return nil
+	}
+	return func(id string) bool {
+		return slices.ContainsFunc(specs, func(spec adapter.FileLoadOrderSpec) bool { return spec.ID == id })
+	}
 }
 
 // recipeErrorText words why a recipe could not be read, for a plan: a

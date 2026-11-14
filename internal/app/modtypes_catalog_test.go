@@ -18,6 +18,7 @@ func TestKnownGames_ModTypeAdaptersArePrefilled(t *testing.T) {
 	for appID, want := range map[string]struct{ adapter, modPath string }{
 		"292030":  {modtypes.Witcher3ID, "mods"},     // The Witcher 3: Wild Hunt
 		"1086940": {modtypes.BaldursGate3ID, "Data"}, // Baldur's Gate 3
+		"1091500": {"cyberpunk2077", ""},             // Cyberpunk 2077 (#620: its archive load order)
 	} {
 		info, ok := known[appID]
 		require.True(t, ok, appID)

@@ -21,6 +21,7 @@ var adapterPackages = []string{
 	"internal/adapter",
 	"internal/adapter/bepinex",
 	"internal/adapter/bethesda",
+	"internal/adapter/cyberpunk2077",
 	"internal/adapter/icarus",
 	"internal/adapter/d2r",
 	"internal/adapter/modtypes",

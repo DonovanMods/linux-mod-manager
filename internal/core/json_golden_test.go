@@ -107,7 +107,7 @@ var (
 			LinkMethod: domain.LinkSymlink,
 			Adapter:    "bepinx",
 		},
-		AdapterError: `game "valheim": unknown adapter "bepinx" (registered: baldurs-gate-3, bepinex, bethesda, d2r, generic-files, icarus, witcher3)`,
+		AdapterError: `game "valheim": unknown adapter "bepinx" (registered: baldurs-gate-3, bepinex, bethesda, cyberpunk2077, d2r, generic-files, icarus, witcher3)`,
 	}
 
 	goldenGameDetailEntry = core.GameListEntry{
@@ -3893,6 +3893,78 @@ func TestJSONGoldens(t *testing.T) {
 			core.PluginRulesReport{GameID: "skyrim-se", Profile: "default", Rules: goldenPluginRules},
 		},
 		{
+			// #620: one file load-order finding - a name the list cannot hold.
+			"load_order_finding",
+			goldenLoadOrderFinding,
+		},
+		{
+			// #620: a deploy's file load-order outcome (DeployResult.LoadOrders,
+			// PurgeResult.LoadOrders): written, one external archive kept.
+			"file_load_order_result",
+			goldenLoadOrderResult,
+		},
+		{
+			// #620: one file of a load order, deployed by lmm and placed by
+			// the profile's order.
+			"file_load_order_entry",
+			goldenLoadOrderReport.Files[0],
+		},
+		{
+			// #620: one file load order of a profile - lmm's archives, an
+			// external one, an undeployed entry and an unlisted file.
+			"file_load_order_report",
+			goldenLoadOrderReport,
+		},
+		{
+			// #620: `lmm load-order list --json`'s document.
+			"file_load_orders_report",
+			core.FileLoadOrdersReport{GameID: "cyberpunk2077", Profile: "default", Orders: []core.FileLoadOrderReport{goldenLoadOrderReport}},
+		},
+		{
+			// #620: one load-order edit - a move.
+			"file_load_order_edit",
+			core.FileLoadOrderEdit{ID: "cyberpunk2077-archive", Op: core.LoadOrderOpMove, File: "b.archive", Before: "a.archive"},
+		},
+		{
+			// #620: `lmm load-order move ... --dry-run`'s document.
+			"file_load_order_edit_plan",
+			core.FileLoadOrderEditPlan{
+				GameID: "cyberpunk2077", Profile: "default", Active: true,
+				Edit:    core.FileLoadOrderEdit{ID: "cyberpunk2077-archive", Op: core.LoadOrderOpMove, File: "b.archive", Before: "a.archive"},
+				Changes: []string{"move b.archive before a.archive"},
+				Order:   &goldenLoadOrderReport,
+			},
+		},
+		{
+			// #620: what an applied load-order edit did, the list written.
+			"file_load_order_edit_result",
+			core.FileLoadOrderEditResult{
+				GameID: "cyberpunk2077", Profile: "default", Changed: true,
+				Changes: []string{"move b.archive before a.archive"},
+				List:    &goldenLoadOrderResult,
+				Order:   &goldenLoadOrderReport,
+			},
+		},
+		{
+			// #620: a collection import's file load order (CollectionImport.
+			// LoadOrders), its files tied to the collection's mods where the
+			// source says so.
+			"collection_load_order_summary",
+			core.CollectionLoadOrderSummary{ID: "cyberpunk2077-archive", Label: "Archives", Managed: true, FirstWins: true,
+				Files: []core.CollectionLoadOrderFile{{Name: "! fixes.archive", Mod: "Story Quest Fixes"}, {Name: "basegame_x.archive"}}},
+		},
+		{
+			// #620: one file of a collection's load order.
+			"collection_load_order_file",
+			core.CollectionLoadOrderFile{Name: "! fixes.archive", Mod: "Story Quest Fixes"},
+		},
+		{
+			// #620: what a conversion did with a recipe's load order
+			// (ConvertedCollection.LoadOrders).
+			"converted_load_order",
+			core.ConvertedLoadOrder{ID: "cyberpunk2077-archive", Files: 275, Matched: 181},
+		},
+		{
 			// #605: one library's compatdata prefix, as prefix_status's
 			// candidates list each.
 			"prefix_candidate",
@@ -4246,3 +4318,27 @@ var goldenPluginOrderReport = core.PluginOrderReport{
 		Missing: []string{"Absent.esm"},
 		Message: "Patch.esp needs the master(s) Absent.esm (not installed) - the game will not start with it active: install and activate them, or deactivate it"}},
 }
+
+// #620's load-order golden values.
+var (
+	goldenLoadOrderFinding = core.LoadOrderFinding{
+		Code: core.LoadOrderFindingUnencodable, Severity: core.PluginSeverityWarning, File: "bad\x01.archive",
+		Message: "\"bad\\x01.archive\" cannot be written to modlist.txt (its name has a control character), so it is left out and loads after the listed files - rename it",
+	}
+	goldenLoadOrderResult = core.FileLoadOrderResult{
+		ID: "cyberpunk2077-archive", Status: core.PluginListWritten,
+		ListFile: "/games/cyberpunk2077/archive/pc/mod/modlist.txt", Files: 3, External: 1,
+		Findings: []core.LoadOrderFinding{goldenLoadOrderFinding},
+	}
+	goldenLoadOrderReport = core.FileLoadOrderReport{
+		GameID: "cyberpunk2077", Profile: "default", ID: "cyberpunk2077-archive", Label: "Archives",
+		ListFile: "/games/cyberpunk2077/archive/pc/mod/modlist.txt", FirstWins: true, Active: true, Recorded: true,
+		Files: []core.FileLoadOrderEntry{
+			{Position: 1, Name: "b.archive", Managed: true, SourceID: "nexusmods", ModID: "29152", ModName: "Story Quest Fixes", Placement: core.LoadOrderPlacedOrder},
+			{Position: 2, Name: "mine.archive", Placement: core.LoadOrderPlacedExternal},
+			{Position: 3, Name: "a.archive", Managed: true, SourceID: "nexusmods", ModID: "33808", ModName: "Shadows Fix", Placement: core.LoadOrderPlacedDefault},
+		},
+		NotDeployed: []string{"gone.archive"},
+		Findings:    []core.LoadOrderFinding{goldenLoadOrderFinding},
+	}
+)

@@ -227,12 +227,13 @@ var checkedApplies = map[string]planThenApply{
 // uncheckedApplies are the Apply methods that carry no plan snapshot for
 // the precondition to re-check, each with why.
 var uncheckedApplies = map[string]string{
-	"ApplyPurge":           "a removal: exempt by design (TestRemovalPlansIgnoreTheAdapterPrecondition)",
-	"ApplyUninstall":       "a removal: exempt by design (TestRemovalPlansIgnoreTheAdapterPrecondition)",
-	"ApplyGameDetect":      "adds games.yaml entries; no game's mods are acted on",
-	"ApplyDetectSelection": "adds games.yaml entries; no game's mods are acted on",
-	"ApplyMergedPakRegen":  "no plan: it needs the adapter's compiler, which a refused adapter does not resolve",
-	"ApplyPluginEdit":      "deploys no mod: it writes the profile's plugins: block and the plugin list (TestPluginEditIsNoDeployUnderARefusingAdapter)",
+	"ApplyPurge":             "a removal: exempt by design (TestRemovalPlansIgnoreTheAdapterPrecondition)",
+	"ApplyUninstall":         "a removal: exempt by design (TestRemovalPlansIgnoreTheAdapterPrecondition)",
+	"ApplyGameDetect":        "adds games.yaml entries; no game's mods are acted on",
+	"ApplyDetectSelection":   "adds games.yaml entries; no game's mods are acted on",
+	"ApplyMergedPakRegen":    "no plan: it needs the adapter's compiler, which a refused adapter does not resolve",
+	"ApplyPluginEdit":        "deploys no mod: it writes the profile's plugins: block and the plugin list (TestPluginEditIsNoDeployUnderARefusingAdapter)",
+	"ApplyFileLoadOrderEdit": "deploys no mod: it writes the profile's load_orders: list and the game's list file (TestFileLoadOrderEditIsNoDeployUnderARefusingAdapter)",
 }
 
 // TestEveryApplyRechecksTheAdapterPrecondition plans each flow while the
