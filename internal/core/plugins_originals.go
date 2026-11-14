@@ -56,7 +56,12 @@ type prefixOriginal struct {
 	// Owned names the plugins lmm deployed that its last write listed in
 	// the file: what a purge takes out again, keeping everything else the
 	// file holds by then (#616 review B2).
-	Owned      []string  `json:"owned,omitempty"`
+	Owned []string `json:"owned,omitempty"`
+	// Added names, for a load-order list (#620), the files lmm did not
+	// deploy that lmm itself put in the list: a purge takes them out too,
+	// back to where the game loads them unlisted. Never set on a plugin
+	// list's row.
+	Added      []string  `json:"added,omitempty"`
 	CapturedAt time.Time `json:"captured_at"`
 }
 
@@ -245,6 +250,42 @@ func (p *prefixOriginals) setOwned(prefix, user, path string, owned []string) er
 		return p.write(m)
 	}
 	return nil
+}
+
+// setOwnedAdded is setOwned for a load-order list (#620), recording the
+// external files lmm added to it beside the files it deployed.
+func (p *prefixOriginals) setOwnedAdded(prefix, user, path string, owned, added []string) error {
+	m, err := p.read()
+	if err != nil {
+		return err
+	}
+	key := prefixOriginal{Prefix: prefix, User: user, Path: path}.key()
+	for i := range m.Files {
+		if m.Files[i].key() != key {
+			continue
+		}
+		if slices.Equal(m.Files[i].Owned, owned) && slices.Equal(m.Files[i].Added, added) {
+			return nil
+		}
+		m.Files[i].Owned, m.Files[i].Added = slices.Clone(owned), slices.Clone(added)
+		return p.write(m)
+	}
+	return nil
+}
+
+// row is the kept row for prefix/user/path, if there is one.
+func (p *prefixOriginals) row(prefix, user, path string) (prefixOriginal, bool, error) {
+	m, err := p.read()
+	if err != nil {
+		return prefixOriginal{}, false, err
+	}
+	key := prefixOriginal{Prefix: prefix, User: user, Path: path}.key()
+	for _, r := range m.Files {
+		if r.key() == key {
+			return r, true, nil
+		}
+	}
+	return prefixOriginal{}, false, nil
 }
 
 // rekey moves row to the prefix and user of moved (rekeyPrefixOriginal).

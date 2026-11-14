@@ -63,9 +63,6 @@ type FileLoadOrderReport struct {
 	// NotDeployed are the profile's entries whose file is not deployed:
 	// kept, so re-enabling its mod puts it back where it was.
 	NotDeployed []string `json:"not_deployed,omitempty"`
-	// Unlisted are files lmm did not deploy that the list does not name:
-	// the game loads them after every listed file.
-	Unlisted []string `json:"unlisted,omitempty"`
 	// Findings are the problems the deploy would report, errors first.
 	Findings []LoadOrderFinding `json:"findings,omitempty"`
 }
@@ -158,7 +155,6 @@ func (s *Service) fileLoadOrder(ctx context.Context, game *domain.Game, profileN
 	res := c.result()
 	report.ListFile = res.ListFile
 	report.Findings = res.Findings
-	report.Unlisted = slices.Clone(c.unlisted)
 
 	names := map[string]string{}
 	if mods, err := s.GetInstalledMods(ctx, game.ID, profileName); err == nil {

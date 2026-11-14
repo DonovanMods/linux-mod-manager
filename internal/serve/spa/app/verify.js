@@ -20,6 +20,8 @@ export function findingSubject(f) {
   // issue 616: the plugin list's rows are the game's Plugins.txt, never one
   // mod's; the note names the plugin.
   if (isPluginListFinding(f)) return "Plugin list";
+  // issue 620: likewise the game's load-order list (modlist.txt).
+  if (isLoadOrderFinding(f)) return "Load order";
   return f.mod_name || f.mod_id || f.status.replaceAll("_", " ");
 }
 
@@ -29,6 +31,16 @@ export function isPluginListFinding(f) {
   return (
     typeof f?.status === "string" &&
     (f.status.startsWith("plugin_") || f.status === "fixed_plugin_drift")
+  );
+}
+
+/** isLoadOrderFinding reports whether a finding is one of a file load-order
+ * list's own rows (issue 620): a sync finding, drift, or its repair. */
+export function isLoadOrderFinding(f) {
+  return (
+    typeof f?.status === "string" &&
+    (f.status.startsWith("load_order_") ||
+      f.status === "fixed_load_order_drift")
   );
 }
 

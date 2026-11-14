@@ -34,7 +34,7 @@ function placementTitle(entry) {
     case "order":
       return "the profile's load order puts it here";
     case "external":
-      return "lmm did not deploy it: it keeps the place the list gives it";
+      return "lmm did not deploy it: it keeps its place in the order the game loads it in";
     default:
       return "not in the profile's order yet: its alphabetical place, where the game loads it with no list";
   }
@@ -113,7 +113,7 @@ export function LoadOrderTab({ profileName, context, report, onReport }) {
         }.
         Each change is saved as you make
         it${report.active ? ` and written to ${listName}` : ""}. Files lmm did
-        not deploy keep the place the list gives them.
+        not deploy are never reordered.
       </p>
       ${
         report.list_file &&

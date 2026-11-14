@@ -40,17 +40,12 @@
       "not_deployed": [
         "gone.archive"
       ],
-      "unlisted": [
-        "loose.archive"
-      ],
       "findings": [
         {
-          "code": "load_order_unlisted",
+          "code": "load_order_name_unencodable",
           "severity": "warning",
-          "files": [
-            "loose.archive"
-          ],
-          "message": "1 file(s) in archive/pc/mod were not deployed by lmm and are not in modlist.txt, so the game loads them after every listed file (loose.archive) - add them to the list by hand to place them"
+          "file": "bad\u0001.archive",
+          "message": "\"bad\\x01.archive\" cannot be written to modlist.txt (its name has a control character), so it is left out and loads after the listed files - rename it"
         }
       ]
     }

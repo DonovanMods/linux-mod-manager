@@ -161,9 +161,10 @@ func TestLoadOrder_NewArchiveTakesItsAlphabeticalSlot(t *testing.T) {
 	assert.Equal(t, "x.archive\r\na.archive\r\nc.archive\r\nm.archive", f.modlist(t))
 }
 
-// An archive lmm did not deploy keeps its place in the list relative to
-// its neighbours; one the list does not name is never added, and the
-// result says the game loads it after the listed ones.
+// An archive lmm did not deploy is never reordered (owner ruling): every
+// one on disk is listed at its place in the order the game loads them in
+// now - a listed one after the archive it followed, an unlisted one after
+// the listed ones - and a purge takes back the ones lmm added.
 func TestLoadOrder_KeepsExternalArchives(t *testing.T) {
 	f := newArchiveFixture(t)
 	f.mod(t, "a", "a.archive", "b.archive")
@@ -176,20 +177,43 @@ func TestLoadOrder_KeepsExternalArchives(t *testing.T) {
 	res := f.deploy(t)
 	require.Len(t, res.LoadOrders, 1)
 	lo := res.LoadOrders[0]
-	assert.Equal(t, 1, lo.External)
-	// mine.archive followed b.archive and still does; gone.archive is not
-	// on disk; an existing file keeps its LF endings and trailing newline.
-	assert.Equal(t, "a.archive\nb.archive\nmine.archive\n", f.modlist(t))
-	require.Len(t, lo.Findings, 1)
-	assert.Equal(t, core.LoadOrderFindingUnlisted, lo.Findings[0].Code)
-	assert.Equal(t, []string{"loose.archive"}, lo.Findings[0].Files)
+	assert.Equal(t, 2, lo.External)
+	assert.Empty(t, lo.Findings)
+	// The game loads b, mine, then (unlisted, alphabetically) a and loose:
+	// mine stays straight after b, and loose after mine. gone.archive is
+	// not on disk; an existing file keeps its LF endings and trailing
+	// newline.
+	assert.Equal(t, "a.archive\nb.archive\nmine.archive\nloose.archive\n", f.modlist(t))
+	rows := f.originals(t)
+	require.Len(t, rows, 1)
 
-	// Purge: lmm's archives come out, the user's own list comes back.
+	// Purge: lmm's archives and the one it added come out, the user's own
+	// list comes back.
 	pr := f.purge(t)
 	require.Len(t, pr.LoadOrders, 1)
 	assert.Equal(t, core.PluginListRestored, pr.LoadOrders[0].Status)
 	assert.Equal(t, original, f.modlist(t), "the list the user had is back, byte for byte")
 	assert.Empty(t, f.originals(t))
+}
+
+// External archives keep their order among themselves, whatever the
+// profile does to lmm's own, and a list lmm created goes at purge.
+func TestLoadOrder_ExternalsKeepTheirOrder(t *testing.T) {
+	f := newArchiveFixture(t)
+	f.mod(t, "a", "a.archive", "z.archive")
+	require.NoError(t, os.WriteFile(filepath.Join(f.modDir, "m.archive"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(f.modDir, "c.archive"), []byte("x"), 0o644))
+	f.setOrder(t, "z.archive", "a.archive")
+
+	f.deploy(t)
+	// The game loaded a, c, m, z; c and m followed a, and still do, in
+	// their order.
+	assert.Equal(t, "z.archive\r\na.archive\r\nc.archive\r\nm.archive", f.modlist(t))
+
+	res := f.purge(t)
+	require.Len(t, res.LoadOrders, 1)
+	assert.Equal(t, core.PluginListRemoved, res.LoadOrders[0].Status, "lmm added both externals, so nothing of the user's is left")
+	assertAbsent(t, filepath.Join(f.modDir, "modlist.txt"), "there was no list before lmm's")
 }
 
 func TestLoadOrder_PurgeRemovesAListLmmCreated(t *testing.T) {
@@ -300,4 +324,55 @@ func TestLoadOrder_SkipsAFolderWithoutTheDeployedArchives(t *testing.T) {
 	require.NotEmpty(t, results[0].Findings)
 	assert.Equal(t, core.LoadOrderFindingUnwritable, results[0].Findings[0].Code)
 	assert.Contains(t, results[0].Findings[0].Message, "is its drive mounted?")
+}
+
+// #620, mirroring #616's plugin_drift: verify reports one of lmm's archives
+// the list dropped or moved since lmm wrote it, and --fix rewrites the list.
+// An external archive's place is the user's, never drift.
+func TestVerify_LoadOrderDrift(t *testing.T) {
+	f := newArchiveFixture(t)
+	f.mod(t, "a", "a.archive", "b.archive")
+	f.setOrder(t, "b.archive", "a.archive")
+	f.deploy(t)
+	ctx := context.Background()
+	list := filepath.Join(f.modDir, "modlist.txt")
+
+	res, err := f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(res.Result, core.VerifyStatusLoadOrderDrift), "nothing drifted yet")
+
+	// Someone reorders lmm's archives and adds one of their own.
+	require.NoError(t, os.WriteFile(filepath.Join(f.modDir, "mine.archive"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(list, []byte("mine.archive\r\na.archive\r\nb.archive"), 0o644))
+	res, err = f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	d := findingWithStatus(res.Result, core.VerifyStatusLoadOrderDrift)
+	require.NotNil(t, d)
+	assert.True(t, d.Fixable)
+	assert.Equal(t, "modlist.txt", d.FileID)
+	assert.Contains(t, d.Note, "has moved in modlist.txt")
+
+	res, err = f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Force: true, Fix: true}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, findingWithStatus(res.Result, core.VerifyStatusFixedLoadOrderDrift))
+	assert.Equal(t, "mine.archive\r\nb.archive\r\na.archive", f.modlist(t), "the user's archive keeps its place")
+
+	// A list deleted altogether drifts too.
+	require.NoError(t, os.Remove(list))
+	res, err = f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	d = findingWithStatus(res.Result, core.VerifyStatusLoadOrderDrift)
+	require.NotNil(t, d)
+	assert.Contains(t, d.Note, "modlist.txt is missing")
+}
+
+// A profile that orders nothing has no list to drift.
+func TestVerify_NoLoadOrderNoDrift(t *testing.T) {
+	f := newArchiveFixture(t)
+	f.mod(t, "a", "a.archive", "b.archive")
+	f.deploy(t)
+	require.NoError(t, os.WriteFile(filepath.Join(f.modDir, "modlist.txt"), []byte("b.archive"), 0o644))
+	res, err := f.svc.VerifyReport(context.Background(), f.game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(res.Result, core.VerifyStatusLoadOrderDrift))
 }

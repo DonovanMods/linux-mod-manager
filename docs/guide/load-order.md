@@ -44,9 +44,12 @@ from then on lmm writes `modlist.txt` every time it deploys your mods.
 2. An archive from a mod you added since, which you haven't placed yet,
    goes in next to the archive it sorts after alphabetically: where the
    game would have loaded it without a list.
-3. Archives you didn't install with lmm keep the place `modlist.txt` gave
-   them. lmm never adds one that the list doesn't name; the game loads it
-   after every listed archive, and lmm says so when it deploys.
+3. Archives you didn't install with lmm are never reordered. lmm lists each
+   one where the game loads it now (the ones `modlist.txt` names in its
+   order, the rest alphabetically after them), so they keep their order
+   among themselves and stay as close as they can to the archive they
+   followed. lmm never moves or drops one; a purge or a reset takes back
+   only the ones lmm itself added to the list.
 
 If a mod ships its own `modlist.txt`, lmm doesn't write over it, and says so.
 
@@ -84,6 +87,13 @@ archive order. Importing it saves that order on the new profile, and the
 import plan lists it, with the mod each archive comes from where the
 collection says. A collection exported from lmm carries your order too.
 See [Profiles](profiles.md#importing-a-nexusmods-collection).
+
+## Checking the list
+
+`lmm verify` (and the web UI's Health card) reports an archive lmm wrote
+that `modlist.txt` has dropped or moved since, or a list that has been
+deleted. `lmm verify --fix`, or the next deploy, writes it again. Archives
+you didn't install with lmm are yours to move: they never count.
 
 ## Getting your old list back
 

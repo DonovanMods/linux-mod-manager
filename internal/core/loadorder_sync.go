@@ -30,11 +30,14 @@ import (
 //     order is worked out from it and the files deployed, and never
 //     written back to the profile.
 //   - OWNERSHIP. lmm writes the whole list, re-reading the file before
-//     every write. A file the list names that lmm did not deploy, and that
-//     is in the directory, is EXTERNAL: it keeps its place relative to its
-//     neighbours. lmm never adds an external file to the list - for the
-//     game, a file the list does not name loads after the listed ones, in
-//     its own order - and says so (LoadOrderFindingUnlisted).
+//     every write. A file in the directory that lmm did not deploy is
+//     EXTERNAL, and is never reordered (owner ruling, #620): lmm lists every
+//     one at its place in the order the game loads them in now - the list's
+//     own files in its order, then the rest alphabetically - so no external
+//     file's place among the others changes, as Vortex lists every archive
+//     on disk. An external file stays the user's: lmm records the ones it
+//     added to the list (prefixOriginal.Added), and a purge or a reset
+//     takes them out again, leaving them where the game loads them unlisted.
 //   - A file lmm deploys that the profile does not order yet goes in at its
 //     place in the game's default (byte-wise alphabetical) order, beside
 //     the file it sorts after: where the game would load it without a
@@ -47,9 +50,8 @@ import (
 // with no order (a reset, or a switch to one without) hands the list back,
 // as a purge does, so the game's own order applies again.
 
-// LoadOrderFindingUnwritable, LoadOrderFindingDeployed,
-// LoadOrderFindingUnlisted and LoadOrderFindingUnencodable are
-// LoadOrderFinding.Code's values.
+// LoadOrderFindingUnwritable, LoadOrderFindingDeployed and
+// LoadOrderFindingUnencodable are LoadOrderFinding.Code's values.
 const (
 	// LoadOrderFindingUnwritable: the list could not be read or written (a
 	// link where the file is, a permission error, a folder that is not
@@ -58,9 +60,6 @@ const (
 	// LoadOrderFindingDeployed: a mod deploys the list file itself, so lmm
 	// does not write over it.
 	LoadOrderFindingDeployed = "load_order_list_deployed"
-	// LoadOrderFindingUnlisted: files lmm did not deploy are in the folder
-	// and not in the list; the game loads them after the listed ones.
-	LoadOrderFindingUnlisted = "load_order_unlisted"
 	// LoadOrderFindingUnencodable: a file's name cannot be a line of the
 	// list (it holds a control character); it is left out.
 	LoadOrderFindingUnencodable = "load_order_name_unencodable"
@@ -73,9 +72,6 @@ type LoadOrderFinding struct {
 	Severity string `json:"severity"`
 	// File is the file it is about, when it is about one.
 	File string `json:"file,omitempty"`
-	// Files names the files it is about, when it is about several
-	// (LoadOrderFindingUnlisted).
-	Files []string `json:"files,omitempty"`
 	// Message is the finding in words, with what to do.
 	Message string `json:"message"`
 }
@@ -170,7 +166,6 @@ type loadOrderComputation struct {
 	order     []string
 	entries   []string
 	placement map[string]string
-	unlisted  []string
 	external  int
 	findings  []LoadOrderFinding
 	// wrote reports that lmm keeps an original for this list: it has
@@ -359,16 +354,20 @@ func (c *loadOrderComputation) ownsRow(game *domain.Game, r prefixOriginal) bool
 }
 
 // place works out c's effective order: the profile's order of the files
-// lmm deploys, the external files the current list names after the file
-// they followed there, and every file lmm deploys that the order does not
-// name at its place in the game's default order.
+// lmm deploys, every file lmm did not deploy at its place in the order the
+// game loads them in now (effectiveOrder) - so no external file's place
+// among the others changes - and every file lmm deploys that the order does
+// not name at its place in the game's default order.
 //
 // A profile that orders nothing is never written (computeLoadOrder stops
-// first); its report shows the order the game uses now instead
-// (gameOrder), so the first move a user makes starts from what they see.
+// first); its report shows the order the game uses now instead, so the
+// first move a user makes starts from what they see.
 func (c *loadOrderComputation) place() {
+	effective := c.effectiveOrder()
 	if len(c.order) == 0 {
-		c.gameOrder()
+		for _, name := range effective {
+			c.placeEntry(name)
+		}
 		return
 	}
 	var listed []string
@@ -385,38 +384,12 @@ func (c *loadOrderComputation) place() {
 		}
 	}
 	var externals []string
-	for _, name := range c.current {
-		key := loadOrderKey(name)
-		if seen[key] {
-			continue
+	for _, name := range effective {
+		if _, isManaged := c.managed[loadOrderKey(name)]; !isManaged {
+			externals = append(externals, name)
 		}
-		if _, isManaged := c.managed[key]; isManaged {
-			continue
-		}
-		if _, there := c.onDisk[key]; !there || hasControl(name) {
-			continue
-		}
-		seen[key] = true
-		externals = append(externals, name)
-		c.placement[key] = LoadOrderPlacedExternal
 	}
-	c.external = len(externals)
-	if len(externals) > 0 {
-		nodes := func(names []string) []pluginNode {
-			out := make([]pluginNode, len(names))
-			for i, n := range names {
-				out[i] = pluginNode{name: n}
-			}
-			return out
-		}
-		current := make([]listEntry, len(c.current))
-		for i, n := range c.current {
-			current[i] = listEntry{name: n}
-		}
-		ranks := mergedRanks(nodes(listed), nodes(externals), current)
-		listed = append(listed, externals...)
-		slices.SortStableFunc(listed, func(a, b string) int { return ranks[loadOrderKey(a)] - ranks[loadOrderKey(b)] })
-	}
+	merged := mergeExternals(listed, externals, effective)
 	var rest []string
 	for key := range c.managed {
 		if !seen[key] {
@@ -425,42 +398,44 @@ func (c *loadOrderComputation) place() {
 	}
 	slices.Sort(rest)
 	for _, name := range rest {
-		c.placement[loadOrderKey(name)] = LoadOrderPlacedDefault
-		slot := defaultSlot(listed, name)
-		listed = slices.Insert(listed, slot, name)
+		merged = slices.Insert(merged, defaultSlot(merged, name), name)
 	}
-	for _, name := range listed {
-		if hasControl(name) {
-			c.findings = append(c.findings, LoadOrderFinding{Code: LoadOrderFindingUnencodable, Severity: PluginSeverityWarning, File: name,
-				Message: fmt.Sprintf("%q cannot be written to %s (its name has a control character), so it is left out and loads after the listed files - rename it", name, c.spec.ListFile)})
-			continue
-		}
-		c.entries = append(c.entries, name)
-	}
-	for key, name := range c.onDisk {
-		if _, isManaged := c.managed[key]; !isManaged && !seen[key] {
-			c.unlisted = append(c.unlisted, name)
-		}
-	}
-	slices.Sort(c.unlisted)
-	if len(c.unlisted) > 0 && len(c.entries) > 0 {
-		c.findings = append(c.findings, LoadOrderFinding{Code: LoadOrderFindingUnlisted, Severity: PluginSeverityWarning, Files: slices.Clone(c.unlisted),
-			Message: fmt.Sprintf("%d file(s) in %s were not deployed by lmm and are not in %s, so the game loads them after every listed file (%s) - add them to the list by hand to place them",
-				len(c.unlisted), c.spec.Dir.Path, c.spec.ListFile, previewNames(c.unlisted, 5))})
+	for _, name := range merged {
+		c.placeEntry(name)
 	}
 }
 
-// gameOrder is the order the game loads the files in with the list as it
-// is: every file the list names that is in the folder, in the list's
-// order, then the files lmm deploys that it does not name, in byte-wise
-// order (the game loads every unlisted file after the listed ones). Files
-// lmm did not deploy that the list does not name are Unlisted, as in a
-// written order.
-func (c *loadOrderComputation) gameOrder() {
+// placeEntry appends name to c's entries with its placement: an external
+// file's, a managed one's from the profile's order (set by place), else
+// the default one. A name the list cannot hold is left out, with a
+// finding.
+func (c *loadOrderComputation) placeEntry(name string) {
+	key := loadOrderKey(name)
+	if hasControl(name) {
+		c.findings = append(c.findings, LoadOrderFinding{Code: LoadOrderFindingUnencodable, Severity: PluginSeverityWarning, File: name,
+			Message: fmt.Sprintf("%q cannot be written to %s (its name has a control character), so it is left out and loads after the listed files - rename it", name, c.spec.ListFile)})
+		return
+	}
+	if _, isManaged := c.managed[key]; !isManaged {
+		c.placement[key] = LoadOrderPlacedExternal
+		c.external++
+	} else if c.placement[key] == "" {
+		c.placement[key] = LoadOrderPlacedDefault
+	}
+	c.entries = append(c.entries, name)
+}
+
+// effectiveOrder is the order the game loads the folder's files in with the
+// list as it is: every file the list names that is in the folder, in the
+// list's order (as the list spells it), then every other file, in
+// byte-wise order (the game loads each unlisted file after the listed
+// ones, alphabetically).
+func (c *loadOrderComputation) effectiveOrder() []string {
 	seen := map[string]bool{}
+	var out []string
 	for _, name := range c.current {
 		key := loadOrderKey(name)
-		if seen[key] || hasControl(name) {
+		if seen[key] {
 			continue
 		}
 		if _, there := c.onDisk[key]; !there {
@@ -468,32 +443,61 @@ func (c *loadOrderComputation) gameOrder() {
 		}
 		seen[key] = true
 		if _, isManaged := c.managed[key]; isManaged {
-			c.entries = append(c.entries, c.onDisk[key])
-			c.placement[key] = LoadOrderPlacedDefault
-			continue
+			out = append(out, c.onDisk[key])
+		} else {
+			out = append(out, name)
 		}
-		c.entries = append(c.entries, name)
-		c.placement[key] = LoadOrderPlacedExternal
-		c.external++
 	}
 	var rest []string
-	for key := range c.managed {
+	for key, name := range c.onDisk {
 		if !seen[key] {
-			seen[key] = true
-			rest = append(rest, c.onDisk[key])
+			rest = append(rest, name)
 		}
 	}
 	slices.Sort(rest)
-	for _, name := range rest {
-		c.placement[loadOrderKey(name)] = LoadOrderPlacedDefault
-		c.entries = append(c.entries, name)
+	return append(out, rest...)
+}
+
+// mergeExternals interleaves externals into managed, keeping both orders:
+// each external goes straight after the file of managed that came before
+// it in effective (its anchor), or - when that would put it before an
+// external that came earlier in effective - straight after that one. So an
+// external file keeps its place among the other external files, and stays
+// as close as it can to the file it followed.
+func mergeExternals(managed, externals, effective []string) []string {
+	if len(externals) == 0 {
+		return managed
 	}
-	for key, name := range c.onDisk {
-		if !seen[key] {
-			c.unlisted = append(c.unlisted, name)
+	index := make(map[string]int, len(managed))
+	for i, n := range managed {
+		index[loadOrderKey(n)] = i
+	}
+	slot := map[string]int{} // external key -> number of managed files before it
+	anchor, floor := 0, 0
+	for _, n := range effective {
+		key := loadOrderKey(n)
+		if i, ok := index[key]; ok {
+			anchor = i + 1
+			continue
+		}
+		at := max(anchor, floor)
+		slot[key] = at
+		floor = at
+	}
+	out := make([]string, 0, len(managed)+len(externals))
+	next := 0
+	emit := func(upTo int) {
+		for next < len(externals) && slot[loadOrderKey(externals[next])] <= upTo {
+			out = append(out, externals[next])
+			next++
 		}
 	}
-	slices.Sort(c.unlisted)
+	for i, n := range managed {
+		emit(i)
+		out = append(out, n)
+	}
+	emit(len(managed))
+	return append(out, externals[next:]...)
 }
 
 // defaultSlot is where name goes in order when nothing orders it: just
@@ -739,11 +743,41 @@ func (s *Service) writeLoadOrder(game *domain.Game, c *loadOrderComputation) (bo
 		changed = true
 	}
 	if store != nil {
-		if err := store.setOwned(game.InstallPath, "", rel, c.ownedNames()); err != nil {
+		prev, _, err := store.row(game.InstallPath, "", rel)
+		if err != nil {
+			return changed, err
+		}
+		if err := store.setOwnedAdded(game.InstallPath, "", rel, c.ownedNames(), c.addedNames(prev.Added)); err != nil {
 			return changed, fmt.Errorf("recording which files in %s are lmm's: %w", c.listName, err)
 		}
 	}
 	return changed, nil
+}
+
+// addedNames is the external files c lists that lmm put in the list, sorted:
+// the ones the list did not name when c read it, and the ones lmm had
+// added before (prev) that it still lists.
+func (c *loadOrderComputation) addedNames(prev []string) []string {
+	inFile := map[string]bool{}
+	for _, n := range c.current {
+		inFile[loadOrderKey(n)] = true
+	}
+	before := map[string]bool{}
+	for _, n := range prev {
+		before[loadOrderKey(n)] = true
+	}
+	var out []string
+	for _, n := range c.entries {
+		key := loadOrderKey(n)
+		if _, isManaged := c.managed[key]; isManaged {
+			continue
+		}
+		if !inFile[key] || before[key] {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // restoreLoadOrders puts back every load-order list game had before lmm
@@ -800,7 +834,7 @@ func (s *Service) loadOrderIDFor(game *domain.Game, row prefixOriginal) string {
 }
 
 // restoreLoadOrderRow puts row's list back and forgets it: the CURRENT
-// list without the files lmm deployed in it, plus the entries only the
+// list without the files lmm deployed or added to it, plus the entries only the
 // kept file has, each after the file it followed - so an entry the user
 // added or moved since stays as they left it. When nothing outside lmm
 // changed, the kept file comes back byte for byte; a file lmm created and
@@ -843,7 +877,7 @@ func (s *Service) restoreLoadOrderRow(store *prefixOriginals, game *domain.Game,
 	}
 	content := original
 	if exists {
-		content = mergeRestoredLoadOrder(original, current, row.Existed, row.Owned)
+		content = mergeRestoredLoadOrder(original, current, row.Existed, append(slices.Clone(row.Owned), row.Added...))
 	}
 	switch {
 	case content == nil && !row.Existed:

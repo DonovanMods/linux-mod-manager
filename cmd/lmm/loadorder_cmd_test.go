@@ -172,3 +172,12 @@ func TestCLI_CollectionPlanPrintsTheLoadOrder(t *testing.T) {
 	assert.Contains(t, stdout, "written to Cyberpunk 2077's list at every deploy")
 	assert.Contains(t, stdout, "does not write this load order")
 }
+
+// verify prints a drifted load-order list, and says how to repair it.
+func TestCLI_VerifyPrintsLoadOrderDrift(t *testing.T) {
+	f := core.VerifyFinding{Status: core.VerifyStatusLoadOrderDrift, FileID: "modlist.txt", Fixable: true,
+		Note: "b.archive has moved in modlist.txt since lmm wrote it"}
+	stdout := captureStdout(t, func() error { renderVerifyFinding(core.VerifyEvent{Finding: f}); return nil })
+	assert.Contains(t, stdout, "load order - b.archive has moved in modlist.txt since lmm wrote it")
+	assert.Contains(t, stdout, "lmm verify --fix")
+}

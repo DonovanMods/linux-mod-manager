@@ -17,11 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with no order leaves the list alone. `lmm load-order list|move|reset`
   (with `--dry-run` and `--json`) and the web UI's **Archives** tab in the
   Reorder window show the order (what placed each archive, and its mod) and
-  change it; the first move records the order. As with `Plugins.txt`, an
-  archive lmm did not deploy keeps its place in the list and is never added
-  to it, a mod that ships its own `modlist.txt` is not written over, and the
-  list lmm first replaced is kept: `lmm purge` and `lmm load-order reset` put
-  it back, keeping what changed since. Deploy and purge (`--json`:
+  change it; the first move records the order. An archive lmm
+  did not deploy is never reordered: lmm lists every one where the game
+  loads it now, as Vortex does, and a purge takes back the ones it added. A
+  mod that ships its own `modlist.txt` is not written over, and the list lmm
+  first replaced is kept: `lmm purge` and `lmm load-order reset` put it
+  back, keeping what changed since. `lmm verify` reports an archive of lmm's
+  the list has dropped or moved since (`load_order_drift`, with
+  `fixed_load_order_drift` for `--fix`, which rewrites it). Deploy and purge (`--json`:
   `load_orders`) and their web readouts say what they did to the list.
   A NexusMods collection's archive order (`fbLoadOrders`) imports as the
   profile's order, the plan listing it with each archive's mod where the

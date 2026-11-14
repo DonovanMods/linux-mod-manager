@@ -23,8 +23,8 @@ import (
 // game (and the user) at once, as a purge would.
 //
 // Only lmm's own files are the profile's to move: a file lmm did not
-// deploy keeps the place the list gives it (#616's ownership rule). An edit
-// naming one is refused.
+// deploy keeps its place in the order the game loads it in (#620's
+// ownership ruling). An edit naming one is refused.
 
 // LoadOrderOpMove and LoadOrderOpReset are FileLoadOrderEdit.Op's values.
 const (
@@ -188,7 +188,7 @@ func moveInOrder(report *FileLoadOrderReport, base []string, edit FileLoadOrderE
 		for _, e := range report.Files {
 			if loadOrderKey(e.Name) == loadOrderKey(name) {
 				if !e.Managed {
-					return e, fmt.Errorf("%s: %w; it keeps the place the list gives it", e.Name, ErrLoadOrderFileNotOwned)
+					return e, fmt.Errorf("%s: %w; it keeps its place among the files lmm did not deploy", e.Name, ErrLoadOrderFileNotOwned)
 				}
 				return e, nil
 			}

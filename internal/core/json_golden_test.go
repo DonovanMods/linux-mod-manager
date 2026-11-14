@@ -3881,8 +3881,7 @@ func TestJSONGoldens(t *testing.T) {
 			core.PluginRulesReport{GameID: "skyrim-se", Profile: "default", Rules: goldenPluginRules},
 		},
 		{
-			// #620: one file load-order finding - archives lmm did not deploy
-			// that the list does not name.
+			// #620: one file load-order finding - a name the list cannot hold.
 			"load_order_finding",
 			goldenLoadOrderFinding,
 		},
@@ -4311,8 +4310,8 @@ var goldenPluginOrderReport = core.PluginOrderReport{
 // #620's load-order golden values.
 var (
 	goldenLoadOrderFinding = core.LoadOrderFinding{
-		Code: core.LoadOrderFindingUnlisted, Severity: core.PluginSeverityWarning, Files: []string{"loose.archive"},
-		Message: "1 file(s) in archive/pc/mod were not deployed by lmm and are not in modlist.txt, so the game loads them after every listed file (loose.archive) - add them to the list by hand to place them",
+		Code: core.LoadOrderFindingUnencodable, Severity: core.PluginSeverityWarning, File: "bad\x01.archive",
+		Message: "\"bad\\x01.archive\" cannot be written to modlist.txt (its name has a control character), so it is left out and loads after the listed files - rename it",
 	}
 	goldenLoadOrderResult = core.FileLoadOrderResult{
 		ID: "cyberpunk2077-archive", Status: core.PluginListWritten,
@@ -4328,7 +4327,6 @@ var (
 			{Position: 3, Name: "a.archive", Managed: true, SourceID: "nexusmods", ModID: "33808", ModName: "Shadows Fix", Placement: core.LoadOrderPlacedDefault},
 		},
 		NotDeployed: []string{"gone.archive"},
-		Unlisted:    []string{"loose.archive"},
 		Findings:    []core.LoadOrderFinding{goldenLoadOrderFinding},
 	}
 )

@@ -413,14 +413,18 @@ file's line ending, and whether the file listed first wins a conflict
 Core does the rest (`internal/core/loadorder_sync.go`, #620), with P3's
 rules for the plugin list: the profile's `load_orders:` list is the user's
 intent and is opt-in (a profile that orders nothing leaves the list alone,
-and one that stops ordering hands it back); a file the list names that lmm
-did not deploy keeps its place relative to its neighbours, and one the list
-does not name is never added; a file lmm deploys that the profile does not
+and one that stops ordering hands it back); a file lmm did not deploy is
+never reordered (owner ruling): every one in the folder is listed at its
+place in the order the game loads them in now (the list's own files in its
+order, then the rest alphabetically, as Vortex lists every archive on disk),
+keeping the external files' order among themselves, and the ones lmm added
+are recorded so a purge or a reset takes them out again; a file lmm deploys that the profile does not
 order goes in straight after the file it sorts next after (Vortex's
 placement, `[CPX]` `load_order.archive.ts` `slotFor`); the list file is
 re-read before every write, its line ending kept; and the file lmm first
 replaced is kept in `originals-loadorders.json` for purge (and a reset) to
-put back.
+put back. `lmm verify` reports `load_order_drift` for a file of lmm's the
+list has dropped or moved since lmm wrote it, and `--fix` rewrites it.
 
 ### The `cyberpunk2077` adapter's facts (#620)
 

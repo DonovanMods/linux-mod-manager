@@ -149,3 +149,26 @@ func TestFlowLoadOrders_DeployAndPurge(t *testing.T) {
 	assert.Equal(t, core.PluginListRestored, purged.LoadOrders[0].Status)
 	assert.Equal(t, "mine.archive\n", readFile(t, list))
 }
+
+// #620's verify tier through the web UI: Health shows an archive lmm wrote
+// that the list has moved since, as a repairable warning, and the
+// verify_fix job rewrites the list.
+func TestFlowLoadOrders_HealthDriftAndVerifyFix(t *testing.T) {
+	s, svc, game, list := archivesFlowFixture(t)
+	profile, err := config.LoadProfile(svc.ConfigDir(), game.ID, "default")
+	require.NoError(t, err)
+	profile.LoadOrders = domain.FileLoadOrders{"cyberpunk2077-archive": {"b.archive", "a.archive"}}
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
+	deployFixtureProfile(t, s, game)
+	require.Equal(t, "b.archive\r\na.archive", readFile(t, list))
+
+	require.NoError(t, os.WriteFile(list, []byte("a.archive\r\nb.archive"), 0o644))
+	rec := doAPI(s, http.MethodGet, scoped("/api/v1/health", game)+"&force=1", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"status": "load_order_drift"`)
+	assert.Contains(t, rec.Body.String(), "has moved in modlist.txt since lmm wrote it")
+
+	j := runFlow(t, s, game, "verify_fix", "", "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	assert.Equal(t, "b.archive\r\na.archive", readFile(t, list), "the repair rewrites the list")
+}

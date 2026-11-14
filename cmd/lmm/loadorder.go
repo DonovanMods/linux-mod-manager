@@ -45,8 +45,8 @@ modlist.txt on every deploy; 'reset' clears the order and hands the file
 back as it was before lmm wrote it.
 
 Only the archives lmm deploys are the profile's to move. An archive lmm
-did not deploy keeps the place the list gives it, and one the list does
-not name loads after every listed one. An archive lmm deploys that the
+did not deploy is never reordered: lmm lists each one where the game loads
+it now, keeping its order among the others. An archive lmm deploys that the
 order does not name yet goes in next to the archive it sorts after
 alphabetically, which is where the game would load it with no list.
 

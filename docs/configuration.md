@@ -800,8 +800,9 @@ The key is optional, and it is opt-in: without it lmm leaves the game's
 list alone. With it, every deploy writes the list from it: the archives lmm
 deploys, in this order (a name compared case-insensitively; an archive lmm
 deploys that the order does not name goes in straight after the archive it
-sorts next after); the archives lmm did not deploy that the list already
-names, each kept after the archive it followed there; and no other. The
+sorts next after); and every archive lmm did not deploy, at its place in
+the order the game loads them in now - never reordered among themselves -
+and recorded, when lmm added it, so a purge takes it back out. The
 effective order is never written back here; `lmm load-order move` and the
 reorder window's archive tab record it. An entry whose archive is not
 deployed is kept, so switching its mod off and on again keeps its place.
