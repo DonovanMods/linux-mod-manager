@@ -351,6 +351,9 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 		return a, nil
 	}
 
+	// #609: the md5 a collection's recorded choices are checked against is
+	// the one the download computed - never a second pass over the archive.
+	fx.archiveMD5 = archiveSum(downloadResult.Checksum, archivePath)
 	members, resolved, err := s.extractPristine(ctx, game, mod, archivePath, a.tree, fx, sink)
 	if err != nil {
 		s.retainRefusedDownload(err, sourceID, mod.ID, file.ID, archivePath, downloadResult, identityOf(mod, file))
@@ -450,11 +453,15 @@ func (s *Service) acquireLocal(ctx context.Context, gameCache *cache.Cache, game
 		}
 	default:
 		var resolved *fomodResolved
+		// One hash of the archive serves both the FOMOD step's md5 pin
+		// (#609) and the row's checksum.
+		sum := archiveSum("", localPath)
+		fx.archiveMD5 = sum
 		if a.members, resolved, err = s.extractPristine(ctx, game, mod, localPath, a.tree, fx, sink); err != nil {
 			return nil, fmt.Errorf("extracting mod: %w", err)
 		}
 		a.setFomod(resolved)
-		if a.checksum, err = md5File(localPath); err != nil {
+		if a.checksum, err = sum(); err != nil {
 			return nil, fmt.Errorf("hashing local mod archive: %w", err)
 		}
 	}

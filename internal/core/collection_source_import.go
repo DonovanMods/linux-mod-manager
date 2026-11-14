@@ -65,6 +65,7 @@ func (s *Service) PlanSourceCollectionImport(ctx context.Context, game *domain.G
 	}
 	c := plan.Collection
 	c.Source = conv
+	plan.phases = conv.phases
 	if len(conv.AutoUpdate) > 0 {
 		plan.autoUpdate = make(map[string]bool, len(conv.AutoUpdate))
 		for _, key := range conv.AutoUpdate {

@@ -358,6 +358,13 @@ func (f *fomodAnswerer) printQuestionHeader(m core.FomodQuestion, start int) {
 		_, _ = fmt.Fprintln(f.out, "The recorded installer choices no longer fit this installer; review them:")
 	case core.FomodReasonReconfigure:
 		_, _ = fmt.Fprintln(f.out, "Change the installer choices (your recorded ones are preselected):")
+	case core.FomodReasonArchiveMismatch:
+		// #609: a collection's choices are replayed only against the
+		// archive they were recorded against.
+		_, _ = fmt.Fprintln(f.out, "This is not the archive the collection's installer choices were recorded against, so they were not replayed; review them (the collection's choices are preselected):")
+		if a := m.ArchiveMismatch; a != nil {
+			_, _ = fmt.Fprintf(f.out, "  - the collection records md5 %s; the downloaded archive's is %s\n", shown(a.ExpectedMD5), shown(a.ActualMD5))
+		}
 	}
 	for _, u := range m.Unmatched {
 		_, _ = fmt.Fprintf(f.out, "  - recorded choice %s no longer matches (%s)\n", fomodPath(u.Step, u.Group, u.Option), u.Reason)
