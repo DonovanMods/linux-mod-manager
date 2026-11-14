@@ -228,7 +228,19 @@ type convItem struct {
 func (it *convItem) inEntry() bool { return it.included || (it.unsupported && !it.Optional) }
 
 // convertCollection converts one collection (see the file comment).
-func convertCollection(in convertInput) *ConvertedCollection {
+//
+// Everything the source and the curator wrote is untrusted (#607 review 5):
+// the input is sanitised first (sanitizeConvertInput) - every display
+// string cleaned and capped, every link a plain web address or dropped,
+// every feature-name suffix a safe token or escaped - and the document is
+// then held to L1's own rules (sanitizeCollection, FOMOD names included),
+// so no caller can hand an unsanitised document to the import planner. A
+// document L1 would refuse is an error (ErrInvalidCollection).
+func convertCollection(raw convertInput) (*ConvertedCollection, error) {
+	in, err := sanitizeConvertInput(raw)
+	if err != nil {
+		return nil, err
+	}
 	out := &ConvertedCollection{
 		SourceID: in.sourceID,
 		Slug:     in.list.ID,
@@ -377,10 +389,15 @@ func convertCollection(in convertInput) *ConvertedCollection {
 	}
 
 	out.Document = buildCollectionDocument(in, out, items)
+	warnings, err := sanitizeCollection(out.Document)
+	if err != nil {
+		return nil, err
+	}
+	out.Notes = append(out.Notes, warnings...)
 	for _, it := range items {
 		out.Items = append(out.Items, it.ConvertedCollectionItem)
 	}
-	return out
+	return out, nil
 }
 
 // appendUnique appends s to list unless it is there.
@@ -416,7 +433,14 @@ func convertManifestItems(in convertInput, out *ConvertedCollection) []*convItem
 			listed[li.FileID] = li
 		}
 	}
+	gameSourceID := in.game.Sources[in.sourceID]
+	// #607 review 6: a recipe for another game is refused, never looked up
+	// in this one.
+	if m.GameSourceID != "" && gameSourceID != "" && m.GameSourceID != gameSourceID {
+		collectionFeature(out, CollectionFeatureManifestKeyPrefix+"info.domainName")
+	}
 	recipeFiles := map[string]bool{}
+	var unlisted []string
 	items := make([]*convItem, 0, len(m.Mods))
 	for i, mod := range m.Mods {
 		it := &convItem{index: i}
@@ -446,6 +470,13 @@ func convertManifestItems(in convertInput, out *ConvertedCollection) []*convItem
 				if it.Name == "" {
 					it.Name = li.Name
 				}
+			} else if len(listed) > 0 && it.FileID != "" {
+				unlisted = append(unlisted, it.Name)
+			}
+			// An item of ANOTHER game (its own domainName) would be looked up
+			// in this one, and install a different mod with the same id.
+			if mod.DomainName != "" && mod.DomainName != gameSourceID && gameSourceID != "" {
+				it.Features = append(it.Features, CollectionFeatureManifestKeyPrefix+"mods.domainName")
 			}
 		case "bundle":
 			it.kind = source.CollectionItemBundled
@@ -516,7 +547,28 @@ func convertManifestItems(in convertInput, out *ConvertedCollection) []*convItem
 		}
 	}
 	if missing > 0 {
-		out.Notes = append(out.Notes, fmt.Sprintf("The collection's list and its recipe disagree on %d file(s); the recipe is followed.", missing))
+		out.Notes = append(out.Notes, fmt.Sprintf("%d file(s) of the collection's published list are not in its recipe; the recipe is followed.", missing))
+	}
+	if len(unlisted) > 0 {
+		out.Notes = append(out.Notes, fmt.Sprintf("%d file(s) of the recipe are not in the collection's published list (%s); the recipe is followed.",
+			len(unlisted), strings.Join(unlisted, ", ")))
+	}
+	// #607 review 7: the published list's external resources are items too.
+	// One the recipe already names (by its link) is the same item.
+	recipeLinks := map[string]bool{}
+	for _, it := range items {
+		if it.kind == source.CollectionItemExternal && it.URL != "" {
+			recipeLinks[it.URL] = true
+		}
+	}
+	for i, li := range in.list.Items {
+		if li.Kind != source.CollectionItemExternal || (li.URL != "" && recipeLinks[li.URL]) {
+			continue
+		}
+		it := &convItem{index: len(m.Mods) + i, kind: source.CollectionItemExternal}
+		it.ID = fmt.Sprintf("external:%d", i)
+		it.Name, it.URL, it.Optional, it.Instructions = li.Name, li.URL, li.Optional, li.Instructions
+		items = append(items, it)
 	}
 	return items
 }
@@ -654,6 +706,8 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 			}
 			if it.Installer && len(it.choices) > 0 {
 				e.item.Ref.Fomod = domain.FomodChoices{Steps: slices.Clone(it.choices)}
+			} else if it.Installer {
+				it.Note = "the collection records an installer for this item but no answers, so its installer will ask at install"
 			}
 		}
 		if e == nil {
@@ -665,6 +719,9 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 		switch rank {
 		case 2:
 			e.item.Ref.Locked = e.item.Ref.Version != ""
+			if !e.item.Ref.Locked {
+				out.Notes = append(out.Notes, fmt.Sprintf("%s is pinned to the curator's file but names no version, so it cannot be locked; an update may move it.", e.item.Name))
+			}
 		case 0:
 			out.AutoUpdate = append(out.AutoUpdate, domain.ModKey(in.sourceID, e.item.Ref.ModID))
 		}
@@ -672,10 +729,13 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 			if it.UpdatePolicy != "latest" {
 				continue
 			}
-			if rank == 0 {
+			switch rank {
+			case 0:
 				it.AutoUpdate = true
 				it.Note = "curator asks for the latest file; installs the tested file now, then auto-updates"
-			} else {
+			case 1:
+				it.Note = "curator asks for the latest file, but another file of this mod prefers its tested file, so the mod does not auto-update; an update may move it"
+			default:
 				it.Note = "curator asks for the latest file, but another file of this mod is pinned exactly, so it stays on the tested file"
 			}
 		}
@@ -702,11 +762,12 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 	}
 	if m := in.manifest; m != nil {
 		resolve := ruleResolver(items)
-		var outside, notInstalled, informational int
+		var outside, unmatched, notInstalled, informational, ordering int
 		informationalTypes := map[string]bool{}
 		for _, r := range m.ModRules {
 			switch r.Type {
 			case "before", "after":
+				ordering++
 			case "requires", "recommends", "conflicts", "provides":
 				informational++
 				informationalTypes[r.Type] = true
@@ -715,15 +776,25 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 				collectionFeature(out, CollectionFeatureManifestKeyPrefix+"modRules.type")
 				continue
 			}
-			src, ref := resolve(r.Source), resolve(r.Reference)
+			src, srcHow := resolve(r.Source)
+			ref, refHow := resolve(r.Reference)
 			if src == nil || ref == nil {
-				outside++
+				if srcHow == ruleUnmatched || refHow == ruleUnmatched {
+					unmatched++
+				} else {
+					outside++
+				}
 				continue
 			}
 			es, er := entryOf[src], entryOf[ref]
 			if es == nil || er == nil {
 				notInstalled++
 				continue
+			}
+			// A key lmm does not know on a rule it applies is a feature
+			// of the collection; on a rule it drops, it changes nothing.
+			for _, k := range r.Unknown {
+				collectionFeature(out, CollectionFeatureManifestKeyPrefix+"modRules."+safeFeatureSuffix(k))
 			}
 			if r.Type == "before" {
 				addEdge(es, er)
@@ -733,6 +804,9 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 		}
 		if outside > 0 {
 			out.Notes = append(out.Notes, fmt.Sprintf("%d ordering rule(s) name a mod that is not in this collection, and were ignored: they order nothing among its members.", outside))
+		}
+		if unmatched > 0 {
+			out.Notes = append(out.Notes, fmt.Sprintf("%d ordering rule(s) name a mod lmm cannot match to one item (a version range, a version none of its files has, or several files of that name), and were ignored.", unmatched))
 		}
 		if notInstalled > 0 {
 			out.Notes = append(out.Notes, fmt.Sprintf("%d ordering rule(s) name an item that is not being installed, and were ignored.", notInstalled))
@@ -746,18 +820,34 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 			out.Notes = append(out.Notes, fmt.Sprintf("%d informational rule(s) (%s) are not applied: the collection's list already is what it requires.",
 				informational, strings.Join(types, ", ")))
 		}
-		if len(m.ModRules) > 0 {
+		if ordering > 0 {
 			out.Features = appendSorted(out.Features, CollectionFeatureModRules)
 		}
 	}
-	order, cycle := stableTopoSort(len(entries), edges, indegree)
-	if len(cycle) > 0 {
+	order, cycles := stableTopoSort(len(entries), edges, indegree)
+	for _, cycle := range cycles {
 		names := make([]string, len(cycle))
 		for i, n := range cycle {
 			names[i] = entries[n].item.Name
 		}
-		out.Notes = append(out.Notes, fmt.Sprintf("The collection's ordering rules form a cycle among %s; those mods keep the collection's own order.",
-			strings.Join(names, ", ")))
+		out.Notes = append(out.Notes, fmt.Sprintf("The collection's ordering rules form a cycle among %s; lmm breaks it at %s, and every other rule holds.",
+			strings.Join(names, ", "), names[0]))
+	}
+	lowest := -1
+	var early []string
+	for k := len(order) - 1; k >= 0; k-- {
+		e := entries[order[k]]
+		if lowest >= 0 && e.phase > lowest {
+			early = append(early, e.item.Name)
+		}
+		if lowest < 0 || e.phase < lowest {
+			lowest = e.phase
+		}
+	}
+	if len(early) > 0 {
+		slices.Reverse(early)
+		out.Notes = append(out.Notes, fmt.Sprintf("The collection's ordering rules put %s before a mod of an earlier install phase; the rules are followed.",
+			strings.Join(early, ", ")))
 	}
 	for _, i := range order {
 		doc.Items = append(doc.Items, entries[i].item)
@@ -795,12 +885,28 @@ func appendSorted(list []string, s string) []string {
 	return slices.Insert(list, i, s)
 }
 
+// ruleMatch says how a rule reference resolved.
+type ruleMatch int
+
+const (
+	// ruleMatched: one item.
+	ruleMatched ruleMatch = iota
+	// ruleOutside: no item has the file or the logical name - a mod outside
+	// the collection.
+	ruleOutside
+	// ruleUnmatched: items have the logical name, but the reference cannot
+	// be matched to one of them - a version range lmm does not evaluate, a
+	// version none of them has, or several files of that name.
+	ruleUnmatched
+)
+
 // ruleResolver resolves a rule's reference to the item it names: by the
 // file's md5 first (every rule of the first sample resolved so), then by
-// logical file name with a matching version (any version when the rule
-// says "*" or names none, or when exactly one item has that logical name).
-// A reference matching nothing is a mod outside the collection.
-func ruleResolver(items []*convItem) func(source.ManifestModRef) *convItem {
+// logical file name - the one item of that name when the rule names no
+// version or "*", else the item whose version is exactly the one named. A
+// reference naming another version, a range, or a name several items share
+// is not matched (ruleUnmatched): guessing would order the wrong mod.
+func ruleResolver(items []*convItem) func(source.ManifestModRef) (*convItem, ruleMatch) {
 	byMD5 := map[string]*convItem{}
 	byLogical := map[string][]*convItem{}
 	for _, it := range items {
@@ -813,26 +919,30 @@ func ruleResolver(items []*convItem) func(source.ManifestModRef) *convItem {
 			byLogical[it.logical] = append(byLogical[it.logical], it)
 		}
 	}
-	return func(r source.ManifestModRef) *convItem {
+	return func(r source.ManifestModRef) (*convItem, ruleMatch) {
 		if it, ok := byMD5[r.FileMD5]; ok && r.FileMD5 != "" {
-			return it
-		}
-		if r.LogicalFileName == "" {
-			return nil
+			return it, ruleMatched
 		}
 		cands := byLogical[r.LogicalFileName]
+		if r.LogicalFileName == "" || len(cands) == 0 {
+			return nil, ruleOutside
+		}
 		v := strings.TrimSuffix(r.VersionMatch, "+prefer")
-		if v != "" && v != "*" {
-			for _, it := range cands {
-				if it.Version == v {
-					return it
-				}
+		if v == "" || v == "*" {
+			if len(cands) == 1 {
+				return cands[0], ruleMatched
+			}
+			return nil, ruleUnmatched
+		}
+		if strings.ContainsAny(v, "<>=~^|, ") {
+			return nil, ruleUnmatched
+		}
+		for _, it := range cands {
+			if it.Version == v {
+				return it, ruleMatched
 			}
 		}
-		if len(cands) == 1 {
-			return cands[0]
-		}
-		return nil
+		return nil, ruleUnmatched
 	}
 }
 
@@ -852,11 +962,18 @@ func (h *intHeap) Pop() any {
 
 // stableTopoSort orders n nodes so every edge a->b puts a before b,
 // otherwise keeping the nodes' own order (Kahn's algorithm, always taking
-// the lowest-numbered ready node). A cycle is broken by taking its
-// lowest-numbered node anyway; the nodes taken so are returned as cycle.
-func stableTopoSort(n int, edges [][]int, indegree []int) (order, cycle []int) {
+// the lowest-numbered ready node). When nothing is ready, every remaining
+// node waits on another remaining one, so the remaining graph holds a cycle:
+// its strongly connected components are found, one that no other remaining
+// component points into is a cycle nothing else is holding up, and of those
+// the one holding the lowest-numbered node is broken there - that node is
+// released anyway. A node merely DOWNSTREAM of a cycle is never the one
+// released, so its own rules still hold. cycles lists each cycle broken, its
+// nodes in order, once.
+func stableTopoSort(n int, edges [][]int, indegree []int) (order []int, cycles [][]int) {
 	indegree = slices.Clone(indegree)
 	done := make([]bool, n)
+	reported := make([]bool, n)
 	h := &intHeap{}
 	for i := 0; i < n; i++ {
 		if indegree[i] == 0 {
@@ -865,14 +982,37 @@ func stableTopoSort(n int, edges [][]int, indegree []int) (order, cycle []int) {
 	}
 	for len(order) < n {
 		if h.Len() == 0 {
-			for i := 0; i < n; i++ {
-				if !done[i] {
-					cycle = append(cycle, i)
-					indegree[i] = 0
-					heap.Push(h, i)
+			comp := remainingComponents(n, edges, done)
+			fed := map[int]bool{}
+			for u := 0; u < n; u++ {
+				if done[u] {
+					continue
+				}
+				for _, v := range edges[u] {
+					if !done[v] && comp[u] != comp[v] {
+						fed[comp[v]] = true
+					}
+				}
+			}
+			release := -1
+			for u := 0; u < n; u++ {
+				if !done[u] && !fed[comp[u]] {
+					release = u
 					break
 				}
 			}
+			if !reported[release] {
+				var members []int
+				for u := 0; u < n; u++ {
+					if !done[u] && comp[u] == comp[release] {
+						members = append(members, u)
+						reported[u] = true
+					}
+				}
+				cycles = append(cycles, members)
+			}
+			indegree[release] = 0
+			heap.Push(h, release)
 		}
 		i := heap.Pop(h).(int)
 		if done[i] {
@@ -887,5 +1027,56 @@ func stableTopoSort(n int, edges [][]int, indegree []int) (order, cycle []int) {
 			}
 		}
 	}
-	return order, cycle
+	return order, cycles
+}
+
+// remainingComponents labels each node not yet done with its strongly
+// connected component among the nodes not yet done (Tarjan's algorithm);
+// a done node is -1.
+func remainingComponents(n int, edges [][]int, done []bool) []int {
+	index := make([]int, n)
+	low := make([]int, n)
+	onStack := make([]bool, n)
+	comp := make([]int, n)
+	for i := range index {
+		index[i], comp[i] = -1, -1
+	}
+	var stack []int
+	next, label := 0, 0
+	var visit func(u int)
+	visit = func(u int) {
+		index[u], low[u] = next, next
+		next++
+		stack = append(stack, u)
+		onStack[u] = true
+		for _, v := range edges[u] {
+			if done[v] {
+				continue
+			}
+			if index[v] < 0 {
+				visit(v)
+				low[u] = min(low[u], low[v])
+			} else if onStack[v] {
+				low[u] = min(low[u], index[v])
+			}
+		}
+		if low[u] == index[u] {
+			for {
+				w := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				onStack[w] = false
+				comp[w] = label
+				if w == u {
+					break
+				}
+			}
+			label++
+		}
+	}
+	for u := 0; u < n; u++ {
+		if !done[u] && index[u] < 0 {
+			visit(u)
+		}
+	}
+	return comp
 }

@@ -151,6 +151,11 @@ type ManifestMod struct {
 	Name    string
 	Version string
 	Author  string
+	// DomainName is the game the item itself says it is for (Vortex's
+	// per-mod domainName); empty when it does not say. One that differs
+	// from the collection's game names a mod of ANOTHER game, which the
+	// collection's game has no business looking up.
+	DomainName string
 	// Optional is the curator's "recommended, not required".
 	Optional bool
 	// Phase orders installation: a mod in phase N installs after every
@@ -214,6 +219,11 @@ type ManifestModRule struct {
 	Type      string
 	Source    ManifestModRef
 	Reference ManifestModRef
+	// Unknown lists the keys of the rule (and of its two sides, as
+	// "source.<key>"/"reference.<key>") the parser did not recognise. They
+	// matter only if the rule is applied, so they are the rule's, not the
+	// collection's.
+	Unknown []string
 }
 
 // ManifestPlugin is one entry of the curator's plugin list.

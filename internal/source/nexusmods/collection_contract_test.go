@@ -15,9 +15,12 @@ import (
 // introspection (see its _provenance) of the object types
 // collectionRevisionQuery reads, each field by its named type, and the
 // arguments Query.collectionRevision takes. It is to the collection query
-// what modsfilter-schema.json is to the search filter (#337/#343): a
-// NexusMods schema change fails this test, offline, instead of a user's
-// import.
+// what modsfilter-schema.json is to the search filter (#337/#343): the
+// query is checked against the schema as it was recorded, offline, so a
+// query edit that asks for a field the schema does not have fails here
+// rather than in a user's import. An offline recording cannot notice
+// NexusMods changing the schema later; re-recording it (see the
+// provenance) is what checks the query against the live one.
 type collectionSchema struct {
 	Types map[string]map[string]string `json:"types"`
 	Query map[string]struct {

@@ -466,3 +466,12 @@ func (pm *ProfileManager) ImportForTest(ctx context.Context, data []byte, force 
 func (s *Service) RecordManualOnlyForTest(ctx context.Context, gameID, sourceID, modID string) {
 	s.recordManualOnly(ctx, gameID, sourceID, modID)
 }
+
+// SetRenameRecipeForTest replaces the rename that moves an extracted
+// collection recipe into the cache (#607), so a test can force the
+// cross-device (EXDEV) path; the returned func restores it.
+func SetRenameRecipeForTest(f func(oldpath, newpath string) error) (restore func()) {
+	old := renameRecipe
+	renameRecipe = f
+	return func() { renameRecipe = old }
+}

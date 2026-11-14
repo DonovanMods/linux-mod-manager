@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -71,7 +72,7 @@ func TestConvert_IdentityOriginAndPins(t *testing.T) {
 		GameSourceID: "skyrimspecialedition", GameVersions: []string{"1.6"},
 		Mods: []source.ManifestMod{exact, prefer, latest}}
 
-	c := convertCollection(convertInputFor(m))
+	c := mustConvert(t, convertInputFor(m))
 	doc := c.Document
 	require.NotNil(t, doc)
 	assert.Equal(t, domain.CollectionFormatVersion, doc.FormatVersion)
@@ -115,7 +116,7 @@ func TestConvert_LatestInstallsTheTestedFileThenAutoUpdates(t *testing.T) {
 	mixedLatest := nexusMod("Mixed Extra", "4", "42", "de")
 	mixedLatest.UpdatePolicy = "latest"
 	exact := nexusMod("Exact", "5", "51", "ee")
-	c := convertCollection(convertInputFor(&source.CollectionManifest{Name: "C",
+	c := mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C",
 		Mods: []source.ManifestMod{latest, mixedExact, mixedLatest, exact}}))
 
 	require.Len(t, c.Document.Items, 3)
@@ -144,7 +145,7 @@ func TestConvert_FomodChoicesBecomeRecordedChoices(t *testing.T) {
 	}
 	odd := nexusMod("Odd", "2", "22", "bb")
 	odd.InstallerType = "bain"
-	c := convertCollection(convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{mod, odd}}))
+	c := mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{mod, odd}}))
 
 	ref := c.Document.Items[0].Ref
 	assert.Equal(t, mod.Choices, ref.Fomod.Steps, "the choices are recorded as written: no trimming, an empty pick list kept")
@@ -169,7 +170,7 @@ func TestConvert_ItemFeaturesBlockRequiredAndSkipOptional(t *testing.T) {
 
 	in := convertInputFor(m)
 	in.withOptional = true
-	c := convertCollection(in)
+	c := mustConvert(t, in)
 	assert.Equal(t, []string{CollectionFeatureBundled, CollectionFeatureFileList, CollectionFeatureFileOverrides}, featureNames(c.Unsupported),
 		"a required item's unsupported feature blocks; the optional item's does not")
 	assert.Equal(t, CollectionItemUnsupported, itemByName(t, c, "Patched").State, "even opted in, it is skipped")
@@ -188,7 +189,7 @@ func TestConvert_OptionalItemsAreOptIn(t *testing.T) {
 	opt2.Optional = true
 	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{req, opt, opt2}}
 
-	c := convertCollection(convertInputFor(m))
+	c := mustConvert(t, convertInputFor(m))
 	assert.Equal(t, []string{"1"}, refOrder(c.Document), "optional mods are off by default")
 	assert.Equal(t, CollectionItemOptionalSkipped, itemByName(t, c, "Optional").State)
 	assert.Equal(t, "2:22", itemByName(t, c, "Optional").ID)
@@ -197,12 +198,12 @@ func TestConvert_OptionalItemsAreOptIn(t *testing.T) {
 
 	in := convertInputFor(m)
 	in.optional = map[string]bool{"3:33": true}
-	c = convertCollection(in)
+	c = mustConvert(t, in)
 	assert.Equal(t, []string{"1", "3"}, refOrder(c.Document), "one item opted in by id")
 
 	in = convertInputFor(m)
 	in.withOptional = true
-	c = convertCollection(in)
+	c = mustConvert(t, in)
 	assert.Equal(t, []string{"1", "2", "3"}, refOrder(c.Document))
 	assert.Equal(t, CollectionItemWillInstall, itemByName(t, c, "Optional").State)
 }
@@ -211,7 +212,7 @@ func TestConvert_ExternalItems(t *testing.T) {
 	browse := source.ManifestMod{Name: "F4SE", SourceType: "browse", URL: "https://f4se.silverlock.org", Instructions: "get it", UpdatePolicy: "latest"}
 	direct := source.ManifestMod{Name: "Optional Thing", SourceType: "direct", URL: "https://x.example/a.zip", Optional: true}
 	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{nexusMod("A", "1", "11", "aa"), browse, direct}}
-	c := convertCollection(convertInputFor(m))
+	c := mustConvert(t, convertInputFor(m))
 	assert.Equal(t, []domain.CollectionExternalItem{{Name: "F4SE", URL: "https://f4se.silverlock.org", Instructions: "get it"}}, c.Document.External)
 	assert.Equal(t, []string{CollectionFeatureExternal}, c.Document.Requires)
 	assert.Equal(t, CollectionItemExternal, itemByName(t, c, "F4SE").State)
@@ -228,7 +229,7 @@ func TestConvert_ModTypes(t *testing.T) {
 	in := convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{skse, smapi}})
 	in.withOptional = true
 	in.modTypeSupported = func(t string) bool { return t == "dinput" }
-	c := convertCollection(in)
+	c := mustConvert(t, in)
 
 	assert.Empty(t, c.Unsupported, "dinput routes; the optional SMAPI item is skipped")
 	assert.Equal(t, "dinput", itemByName(t, c, "SKSE64").ModType)
@@ -236,7 +237,7 @@ func TestConvert_ModTypes(t *testing.T) {
 	assert.Equal(t, CollectionItemUnsupported, itemByName(t, c, "SMAPI thing").State)
 
 	in.modTypeSupported = nil
-	c = convertCollection(in)
+	c = mustConvert(t, in)
 	assert.Equal(t, []string{"mod_type:dinput"}, featureNames(c.Unsupported), "no adapter route, no import")
 }
 
@@ -246,7 +247,7 @@ func TestConvert_FilesOfOneModMerge(t *testing.T) {
 	extra.UpdatePolicy = "prefer"
 	other := nexusMod("Other", "2", "21", "bb")
 	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{main, other, extra}}
-	c := convertCollection(convertInputFor(m))
+	c := mustConvert(t, convertInputFor(m))
 	require.Len(t, c.Document.Items, 2, "one profile entry per mod")
 	first := c.Document.Items[0]
 	assert.Equal(t, []string{"11", "12"}, first.Ref.FileIDs)
@@ -266,7 +267,7 @@ func TestConvert_FilesOfOneModMerge(t *testing.T) {
 	e := nexusMod("Data", "6", "62", "y2")
 	in := convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b, d, e}})
 	in.modTypeSupported = func(string) bool { return true }
-	c = convertCollection(in)
+	c = mustConvert(t, in)
 	assert.Equal(t, []string{CollectionFeatureFomodMultiFile, CollectionFeatureModTypeMixed}, featureNames(c.Unsupported))
 }
 
@@ -286,7 +287,7 @@ func TestConvert_PhaseAndRulesOrderTheProfile(t *testing.T) {
 			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{FileMD5: "outsider", LogicalFileName: "Elsewhere"}},
 			{Type: "conflicts", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{LogicalFileName: "X"}},
 		}}
-	c := convertCollection(convertInputFor(m))
+	c := mustConvert(t, convertInputFor(m))
 	// Phase first (C is phase 1, so last), then the rules: D before B, B before A.
 	assert.Equal(t, []string{"4", "2", "1", "3"}, refOrder(c.Document))
 	assert.Empty(t, c.Unsupported, "an unresolved rule raises no feature (ruled 2026-11-13)")
@@ -304,9 +305,46 @@ func TestConvert_RuleCycleKeepsTheBaseOrderWithANote(t *testing.T) {
 			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{FileMD5: "md5b"}},
 			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5b"}, Reference: source.ManifestModRef{FileMD5: "md5a"}},
 		}}
-	c := convertCollection(convertInputFor(m))
+	c := mustConvert(t, convertInputFor(m))
 	assert.Equal(t, []string{"1", "2"}, refOrder(c.Document))
 	assert.True(t, containsSubstring(c.Notes, "cycle"), "%v", c.Notes)
+}
+
+// The reviewer's repro (#607 C2a review, 1): a node DOWNSTREAM of a cycle
+// keeps its rule. C before A; B and C each before the other. The cycle is
+// {B, C}; A only waits on it. Breaking at the lowest-numbered unfinished
+// node (A) would have put A first, against the satisfiable C-before-A, and
+// named the wrong cycle.
+func TestConvert_RuleCycleIsBrokenInsideTheCycle(t *testing.T) {
+	a := nexusMod("A", "1", "11", "md5a")
+	b := nexusMod("B", "2", "21", "md5b")
+	c := nexusMod("C", "3", "31", "md5c")
+	ref := func(md5 string) source.ManifestModRef { return source.ManifestModRef{FileMD5: md5} }
+	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b, c},
+		ModRules: []source.ManifestModRule{
+			{Type: "before", Source: ref("md5c"), Reference: ref("md5a")},
+			{Type: "before", Source: ref("md5b"), Reference: ref("md5c")},
+			{Type: "before", Source: ref("md5c"), Reference: ref("md5b")},
+		}}
+	conv := mustConvert(t, convertInputFor(m))
+	assert.Equal(t, []string{"2", "3", "1"}, refOrder(conv.Document), "B, C, then A: C-before-A holds")
+	var note string
+	for _, n := range conv.Notes {
+		if strings.Contains(n, "cycle") {
+			note = n
+		}
+	}
+	assert.Contains(t, note, "B, C", "the whole cycle is named")
+	assert.NotContains(t, note, "A,", "and only the cycle")
+}
+
+func TestStableTopoSort_CyclesAreReportedOnce(t *testing.T) {
+	// 0 -> 1 -> 2 -> 0, plus a chord 2 -> 1, and 3 downstream of 2.
+	edges := [][]int{{1}, {2}, {0, 1, 3}, {}}
+	indegree := []int{1, 2, 1, 1}
+	order, cycles := stableTopoSort(4, edges, indegree)
+	assert.Equal(t, []int{0, 1, 2, 3}, order)
+	assert.Equal(t, [][]int{{0, 1, 2}}, cycles)
 }
 
 func TestConvert_CollectionLevelFeatures(t *testing.T) {
@@ -318,7 +356,7 @@ func TestConvert_CollectionLevelFeatures(t *testing.T) {
 			{ModIndex: -1, Key: "mergedData"},
 			{ModIndex: 0, Item: "A", Key: "mods.future"},
 		}}
-	c := convertCollection(convertInputFor(m))
+	c := mustConvert(t, convertInputFor(m))
 	assert.Equal(t, []string{"file_load_order:cyberpunk2077-archive", "manifest:mergedData", "manifest:mods.future", CollectionFeaturePluginOrder},
 		featureNames(c.Unsupported))
 	assert.Nil(t, c.Unsupported[1].Items, "a collection-level key names no item")
@@ -328,7 +366,7 @@ func TestConvert_CollectionLevelFeatures(t *testing.T) {
 
 	m = &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{nexusMod("A", "1", "11", "aa")},
 		PluginRules: source.ManifestPluginRules{Groups: []source.ManifestPluginGroup{{Name: "g"}}}}
-	assert.Equal(t, []string{CollectionFeaturePluginOrder}, featureNames(convertCollection(convertInputFor(m)).Unsupported))
+	assert.Equal(t, []string{CollectionFeaturePluginOrder}, featureNames(mustConvert(t, convertInputFor(m)).Unsupported))
 }
 
 func TestConvert_ManifestUnavailableStillRendersTheList(t *testing.T) {
@@ -339,7 +377,7 @@ func TestConvert_ManifestUnavailableStillRendersTheList(t *testing.T) {
 		{Kind: source.CollectionItemModFile, ModID: "2", FileID: "21", Version: "2.0", Name: "B", Optional: true},
 		{Kind: source.CollectionItemExternal, Name: "Ext", URL: "https://e"},
 	}
-	c := convertCollection(in)
+	c := mustConvert(t, in)
 	assert.Equal(t, []string{CollectionFeatureManifestUnavailable}, featureNames(c.Unsupported))
 	assert.Equal(t, "lmm needs the system 7z", c.ManifestError)
 	assert.Equal(t, "List name", c.Document.Name)
@@ -358,11 +396,25 @@ func TestConvert_ListFactsJoinTheRecipe(t *testing.T) {
 		{Kind: source.CollectionItemModFile, ModID: "1", FileID: "11", FileCategory: "OLD_VERSION", URL: "https://page", FileName: "A file"},
 		{Kind: source.CollectionItemModFile, ModID: "9", FileID: "99"},
 	}
-	c := convertCollection(in)
+	c := mustConvert(t, in)
 	a := itemByName(t, c, "A")
 	assert.Equal(t, "OLD_VERSION", a.FileCategory, "an old file installs by its exact id")
 	assert.Equal(t, "https://page", a.URL)
-	assert.True(t, containsSubstring(c.Notes, "disagree"), "%v", c.Notes)
+	assert.True(t, containsSubstring(c.Notes, "published list are not in its recipe"), "%v", c.Notes)
+
+	// And the other way: a recipe file the published list does not have.
+	in = convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{nexusMod("A", "1", "11", "aa"), nexusMod("Extra", "2", "22", "bb")}})
+	in.list.Items = []source.CollectionItem{{Kind: source.CollectionItemModFile, ModID: "1", FileID: "11"}}
+	c = mustConvert(t, in)
+	assert.True(t, containsSubstring(c.Notes, "not in the collection's published list (Extra)"), "%v", c.Notes)
+}
+
+// mustConvert is convertCollection for an input it accepts.
+func mustConvert(t *testing.T, in convertInput) *ConvertedCollection {
+	t.Helper()
+	c, err := convertCollection(in)
+	require.NoError(t, err)
+	return c
 }
 
 func containsSubstring(list []string, sub string) bool {
@@ -385,4 +437,167 @@ func TestRedactLink_CutsTheSignedLinkOutOfAnyError(t *testing.T) {
 	assert.True(t, errors.As(err, &ue), "the cause is still there to classify")
 	plain := errors.New("HTTP error: 403 Forbidden")
 	assert.Same(t, plain, redactLink(plain, link))
+}
+
+// #607 review 5: nothing the curator or the source wrote reaches a plan
+// with a control, escape or bidi character in it, or as a non-web link.
+func TestConvert_SanitisesEveryCuratorString(t *testing.T) {
+	const esc, bidi = "\x1b]8;;https://evil.example\x07", "\u202e"
+	mod := nexusMod("Mod"+esc+"Name", "1", "11", "aa")
+	mod.ModType = "din" + bidi + "put"
+	mod.Instructions = "do" + esc + " this"
+	ext := source.ManifestMod{Name: "Ext" + bidi, SourceType: "browse", URL: "javascript:alert(1)"}
+	m := &source.CollectionManifest{Name: "Coll" + esc, Author: "Cur" + bidi + "ator", Description: "d" + esc,
+		Mods:           []source.ManifestMod{mod, ext},
+		Tools:          []source.ManifestTool{{Name: "Tool" + esc, Exe: `x` + bidi + `.exe`}},
+		FileLoadOrders: []source.ManifestFileLoadOrder{{ID: "lo" + esc, Entries: 1}},
+		Unknown:        []source.ManifestUnknownKey{{ModIndex: -1, Key: "key" + bidi}},
+	}
+	in := convertInputFor(m)
+	in.list.Name = "List" + esc
+	in.list.URL = "javascript:alert(2)"
+	in.list.Items = []source.CollectionItem{
+		{Kind: source.CollectionItemModFile, ModID: "1", FileID: "11", URL: "javascript:alert(3)", FileCategory: "MAIN" + esc},
+		{Kind: source.CollectionItemExternal, Name: "Listed ext" + esc, URL: "data:text/html,x"},
+	}
+	c := mustConvert(t, in)
+
+	var all []string
+	all = append(all, c.Name, c.Author, c.URL)
+	all = append(all, c.Notes...)
+	all = append(all, c.Features...)
+	for _, f := range c.Unsupported {
+		all = append(all, f.Feature)
+		all = append(all, f.Items...)
+	}
+	for _, it := range c.Items {
+		all = append(all, it.Name, it.URL, it.ModType, it.Instructions, it.FileCategory, it.Note)
+		all = append(all, it.Features...)
+	}
+	for _, tl := range c.Tools {
+		all = append(all, tl.Name, tl.Exe)
+	}
+	d := c.Document
+	all = append(all, d.Name, d.Info.Title, d.Info.Author, d.Info.Description)
+	all = append(all, d.Requires...)
+	for _, e := range d.External {
+		all = append(all, e.Name, e.URL)
+	}
+	for _, s := range all {
+		assert.False(t, hasUnsafeRunes(s), "unsafe characters survived in %q", s)
+		assert.NotContains(t, s, "javascript:")
+		assert.NotContains(t, s, "data:text")
+	}
+	assert.Contains(t, c.Features, "mod_type:"+strconv.QuoteToASCII("din"+bidi+"put"), "an unsafe type is escaped, never shown raw")
+	assert.Contains(t, c.Features, "file_load_order:"+strconv.QuoteToASCII("lo"+esc))
+}
+
+func TestConvert_RefusesWhatL1Refuses(t *testing.T) {
+	mod := nexusMod("M", "1", "11", "aa")
+	mod.InstallerType = "fomod"
+	mod.Choices = []domain.FomodStepChoice{{Name: "step\u202e", Groups: []domain.FomodGroupChoice{{Name: "g", Choices: []domain.FomodOptionChoice{}}}}}
+	_, err := convertCollection(convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{mod}}))
+	assert.ErrorIs(t, err, ErrInvalidCollection, "a recorded choice that cannot be shown as it would replay is refused, as L1 refuses it")
+
+	long := nexusMod(strings.Repeat("n", maxCollectionLine+1), "1", "11", "aa")
+	_, err = convertCollection(convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{long}}))
+	assert.ErrorIs(t, err, ErrInvalidCollection, "over the line cap")
+}
+
+// #607 review 6: an item - or a whole recipe - of another game is refused,
+// never looked up in this one.
+func TestConvert_AnotherGamesItemIsRefused(t *testing.T) {
+	other := nexusMod("Other Game's", "1", "11", "aa")
+	other.DomainName = "fallout4"
+	same := nexusMod("Same Game's", "2", "22", "bb")
+	same.DomainName = "skyrimspecialedition"
+	c := mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", GameSourceID: "skyrimspecialedition",
+		Mods: []source.ManifestMod{other, same}}))
+	assert.Equal(t, []string{"manifest:mods.domainName"}, featureNames(c.Unsupported))
+	assert.Equal(t, []string{"nexusmods:1"}, c.Unsupported[0].Items)
+
+	c = mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", GameSourceID: "fallout4",
+		Mods: []source.ManifestMod{nexusMod("A", "1", "11", "aa")}}))
+	assert.Equal(t, []string{"manifest:info.domainName"}, featureNames(c.Unsupported))
+}
+
+// #607 review 7: the published list's external resources reach the
+// document beside the recipe's own, the same link once.
+func TestConvert_ListExternalResourcesJoinTheRecipe(t *testing.T) {
+	browse := source.ManifestMod{Name: "F4SE", SourceType: "browse", URL: "https://f4se.silverlock.org"}
+	in := convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{nexusMod("A", "1", "11", "aa"), browse}})
+	in.list.Items = []source.CollectionItem{
+		{Kind: source.CollectionItemExternal, Name: "F4SE (listed)", URL: "https://f4se.silverlock.org"},
+		{Kind: source.CollectionItemExternal, Name: "ENB", URL: "https://enbdev.example"},
+		{Kind: source.CollectionItemExternal, Name: "Optional ENB preset", URL: "https://preset.example", Optional: true},
+	}
+	c := mustConvert(t, in)
+	assert.Equal(t, []domain.CollectionExternalItem{
+		{Name: "F4SE", URL: "https://f4se.silverlock.org"},
+		{Name: "ENB", URL: "https://enbdev.example"},
+	}, c.Document.External)
+	assert.Contains(t, c.Features, CollectionFeatureExternal)
+	assert.Equal(t, CollectionItemOptionalSkipped, itemByName(t, c, "Optional ENB preset").State)
+}
+
+func TestConvert_NotesTheCasesItCannotSettle(t *testing.T) {
+	empty := nexusMod("Empty Answers", "1", "11", "aa")
+	empty.InstallerType = "fomod"
+	noVersion := nexusMod("No Version", "2", "21", "bb")
+	noVersion.Version = ""
+	preferMain := nexusMod("Mixed Main", "3", "31", "cc")
+	preferMain.UpdatePolicy = "prefer"
+	latestExtra := nexusMod("Mixed Extra", "3", "32", "cd")
+	latestExtra.UpdatePolicy = "latest"
+	c := mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{empty, noVersion, preferMain, latestExtra}}))
+	assert.Contains(t, itemByName(t, c, "Empty Answers").Note, "installer will ask")
+	assert.True(t, containsSubstring(c.Notes, "No Version is pinned to the curator's file but names no version"), "%v", c.Notes)
+	assert.Contains(t, itemByName(t, c, "Mixed Extra").Note, "prefers its tested file")
+	assert.Empty(t, c.AutoUpdate)
+}
+
+func TestConvert_RuleResolutionIsLabelledAccurately(t *testing.T) {
+	a := nexusMod("A", "1", "11", "md5a")
+	b := nexusMod("B", "2", "21", "md5b")
+	b.Version = "2.0"
+	twinOne := nexusMod("Twin", "3", "31", "md5t1")
+	twinTwo := nexusMod("Twin", "4", "41", "md5t2")
+	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b, twinOne, twinTwo},
+		ModRules: []source.ManifestModRule{
+			// another version of a member: not guessed
+			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{LogicalFileName: "B", VersionMatch: "1.0"}},
+			// a range: not evaluated
+			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{LogicalFileName: "B", VersionMatch: ">=1.0"}},
+			// a name two items share
+			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{LogicalFileName: "Twin"}},
+			// the exact version resolves
+			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{LogicalFileName: "B", VersionMatch: "2.0"},
+				Unknown: []string{"reference.oddKey"}},
+			// a dropped rule's unknown key changes nothing
+			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{FileMD5: "outsider"}, Unknown: []string{"weird"}},
+		}}
+	c := mustConvert(t, convertInputFor(m))
+	assert.Equal(t, []string{"2", "1", "3", "4"}, refOrder(c.Document), "only the exact-version rule applied: B before A")
+	assert.True(t, containsSubstring(c.Notes, "3 ordering rule(s) name a mod lmm cannot match to one item"), "%v", c.Notes)
+	assert.True(t, containsSubstring(c.Notes, "1 ordering rule(s) name a mod that is not in this collection"), "%v", c.Notes)
+	assert.Equal(t, []string{"manifest:modRules.reference.oddKey"}, featureNames(c.Unsupported),
+		"an applied rule's unknown key is the collection's; the dropped rule's is not")
+}
+
+func TestConvert_ModRulesFeatureOnlyForOrderingRules(t *testing.T) {
+	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{nexusMod("A", "1", "11", "aa")},
+		ModRules: []source.ManifestModRule{{Type: "conflicts", Source: source.ManifestModRef{FileMD5: "aa"}, Reference: source.ManifestModRef{LogicalFileName: "X"}}}}
+	c := mustConvert(t, convertInputFor(m))
+	assert.NotContains(t, c.Features, CollectionFeatureModRules)
+}
+
+func TestConvert_NotesARuleThatCrossesPhases(t *testing.T) {
+	early := nexusMod("Early", "1", "11", "md5e")
+	late := nexusMod("Late", "2", "21", "md5l")
+	late.Phase = 2
+	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{early, late},
+		ModRules: []source.ManifestModRule{{Type: "before", Source: source.ManifestModRef{FileMD5: "md5l"}, Reference: source.ManifestModRef{FileMD5: "md5e"}}}}
+	c := mustConvert(t, convertInputFor(m))
+	assert.Equal(t, []string{"2", "1"}, refOrder(c.Document))
+	assert.True(t, containsSubstring(c.Notes, "put Late before a mod of an earlier install phase"), "%v", c.Notes)
 }
