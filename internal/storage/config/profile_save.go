@@ -30,7 +30,7 @@ const profileBackupSuffix = ".bak"
 // A key an in-place save adds goes after the nearest key before it in this
 // order, so a file lmm wrote stays exactly as a whole write would have it.
 var (
-	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external"}
+	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins"}
 	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod"}
 )
 
@@ -63,6 +63,7 @@ type profileFileYAML struct {
 	Overrides  map[string]string               `yaml:"overrides,omitempty"`
 	Collection *domain.CollectionInfo          `yaml:"collection,omitempty"`
 	External   []domain.CollectionExternalItem `yaml:"external,omitempty"`
+	Plugins    *ProfilePluginsConfig           `yaml:"plugins,omitempty"`
 }
 
 func fileHook(h ProfileHookConfigYAML) profileFileHookYAML {
@@ -81,6 +82,7 @@ func profileFileOf(profile *domain.Profile) profileFileYAML {
 		Overrides:  overridesOf(profile),
 		Collection: collectionOrNil(profile.Collection),
 		External:   externalOrNil(profile.External),
+		Plugins:    pluginsConfigOf(profile.Plugins),
 	}
 	// Only write link_method if explicitly set: String() never returns "", so
 	// assigning it unconditionally defeats `omitempty` and bakes a phantom
@@ -534,6 +536,13 @@ func editProfileDocument(base []byte, fromName string, want *domain.Profile, ren
 			return nil, err
 		}
 	}
+	if !haveProfile.Plugins.Equal(want.Plugins) {
+		if err := e.setTopBlock("plugins", struct {
+			Plugins *ProfilePluginsConfig `yaml:"plugins,omitempty"`
+		}{pluginsConfigOf(want.Plugins)}); err != nil {
+			return nil, err
+		}
+	}
 
 	edited, err = e.apply()
 	if err != nil {
@@ -562,7 +571,8 @@ func sameProfile(a, b *domain.Profile) bool {
 		(a.LinkMethodExplicit && a.LinkMethod != b.LinkMethod) ||
 		a.Hooks != b.Hooks || a.HooksExplicit != b.HooksExplicit ||
 		!sameOverrides(a.Overrides, b.Overrides) ||
-		!a.Collection.Equal(b.Collection) || !slices.Equal(a.External, b.External) {
+		!a.Collection.Equal(b.Collection) || !slices.Equal(a.External, b.External) ||
+		!a.Plugins.Equal(b.Plugins) {
 		return false
 	}
 	return sameRefs(refConfigsOf(a.Mods), b.Mods)

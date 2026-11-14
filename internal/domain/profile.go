@@ -39,6 +39,11 @@ type Profile struct {
 	// or file the curator says to get by hand. Listed, never downloaded;
 	// kept so a re-export stays complete. Absent when empty.
 	External []CollectionExternalItem `json:"external,omitempty"`
+
+	// Plugins is the profile's plugin list (#616): the load order and rules
+	// for the .esm/.esp/.esl files of a game whose adapter manages its
+	// plugins. Absent from every document of a profile without one.
+	Plugins ProfilePlugins `json:"plugins,omitzero"`
 }
 
 // FindRef returns a pointer into p.Mods for the reference matching
@@ -99,4 +104,8 @@ type ExportedProfile struct {
 	// snapshot restores them; absent for a profile without them.
 	Collection *CollectionInfo          `json:"collection,omitempty"`
 	External   []CollectionExternalItem `json:"external,omitempty"`
+
+	// Plugins is the profile's plugin list (#616), carried so a snapshot
+	// restores it; absent for a profile without one.
+	Plugins ProfilePlugins `json:"plugins,omitzero"`
 }

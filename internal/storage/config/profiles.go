@@ -42,6 +42,9 @@ type ProfileConfig struct {
 	// is unchanged.
 	Collection *domain.CollectionInfo          `yaml:"collection,omitempty"`
 	External   []domain.CollectionExternalItem `yaml:"external,omitempty"`
+	// Plugins is #616's plugin list; omitempty, so a file without one is
+	// unchanged.
+	Plugins *ProfilePluginsConfig `yaml:"plugins,omitempty"`
 }
 
 // ModReferenceConfig is the YAML representation of a mod reference.
@@ -266,6 +269,7 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 	if len(cfg.External) > 0 {
 		profile.External = cfg.External
 	}
+	profile.Plugins = pluginsFromConfig(cfg.Plugins)
 
 	if len(cfg.Overrides) > 0 {
 		profile.Overrides = make(map[string][]byte)
@@ -372,6 +376,7 @@ func ExportProfileValue(profile *domain.Profile) *domain.ExportedProfile {
 		HooksExplicit: profile.HooksExplicit,
 		Collection:    collectionOrNil(profile.Collection),
 		External:      profile.External,
+		Plugins:       profile.Plugins.Clone(),
 	}
 }
 
@@ -480,6 +485,7 @@ func ProfileFromExported(exported *domain.ExportedProfile) *domain.Profile {
 		HooksExplicit: exported.HooksExplicit,
 		Collection:    collectionOrNil(exported.Collection),
 		External:      exported.External,
+		Plugins:       exported.Plugins.Clone(),
 	}
 	// LinkMethod is only carried when it was EXPLICIT: ExportProfileValue
 	// writes it as "" otherwise, and turning "" into a phantom symlink

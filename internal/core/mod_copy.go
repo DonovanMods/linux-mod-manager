@@ -406,7 +406,6 @@ func (s *Service) applyCopyMod(ctx context.Context, game *domain.Game, plan *Cop
 		installer, err = s.getInstallerForProfile(ctx, game, plan.To)
 		return installer, err
 	}
-	deployedAny := false
 
 	for idx, e := range plan.Mods {
 		if err := ctx.Err(); err != nil {
@@ -462,7 +461,6 @@ func (s *Service) applyCopyMod(ctx context.Context, game *domain.Game, plan *Cop
 			if err := s.deployCopiedMod(ctx, game, in, prior, &row.Mod, plan.To); err != nil {
 				warn(scope, fmt.Sprintf("could not deploy %s: %v - it is recorded in %s, and the next deploy puts it in place", e.Name, err, plan.To))
 			} else {
-				deployedAny = true
 				outcome.Deployed = true
 				if err := s.setModDeployed(ctx, e.SourceID, e.ModID, game.ID, plan.To, true); err != nil {
 					warn(scope, fmt.Sprintf("could not mark %s as deployed: %v", e.Name, err))
@@ -483,13 +481,15 @@ func (s *Service) applyCopyMod(ctx context.Context, game *domain.Game, plan *Cop
 		emit(ModEvent{Scope: scope, Phase: ModCopyCopied})
 	}
 
-	if deployedAny {
-		if syncWarnings, syncErr := s.syncMergedPak(ctx, game, plan.To); syncErr != nil {
-			warn(Scope{Op: OpModCopy}, fmt.Sprintf("could not sync merged pak: %v", syncErr))
-		} else {
-			for _, w := range syncWarnings {
-				warn(Scope{Op: OpModCopy}, w)
-			}
+	// Unconditionally (#616 review 4): a copy that replaced a live row with
+	// a disabled one removed files without deploying any, and the merged
+	// artifact and the plugin list follow a removal as much as a deploy.
+	// For a destination that is not the active profile it does nothing.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, plan.To); syncErr != nil {
+		warn(Scope{Op: OpModCopy}, fmt.Sprintf("could not sync merged pak: %v", syncErr))
+	} else {
+		for _, w := range syncWarnings {
+			warn(Scope{Op: OpModCopy}, w)
 		}
 	}
 	return result, nil

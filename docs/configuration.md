@@ -598,6 +598,7 @@ Profiles are stored under `<config>/games/<game-id>/profiles/<name>.yaml`.
 | `is_default`  | bool   | Whether this is the game's active profile — the one `lmm profile switch` last made active, whose mods are in the game directory. lmm keeps exactly one profile per game marked, and marks a game's first profile when it creates it; `lmm profile list` warns when a hand edit leaves none or several, or leaves a profile file lmm cannot read, and until that is fixed lmm refuses to deploy or purge that game's files rather than guess which profile is active (`lmm profile switch <name>` then only marks `<name>`, and names the two commands that make the game directory `<name>`'s: `lmm profile apply <name>`, then `lmm purge -p` for each other profile, which removes only what that profile recorded). A game with a single profile file counts it as active, marked or not                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `hooks`       | object | Optional profile-level hook overrides (same structure as game hooks)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `overrides`   | map    | Optional config overrides: path (relative to game install) → file content (INI tweaks, etc.). Applied on deploy. An override of a file a deployed mod ships replaces that one file with a copy holding the override (the mod's cached copy is never changed); a switch or apply places or removes those copies too, and `lmm verify` reports them as `deployed_overridden`.                                                                                                                                                                                                                                       |
+| `plugins`     | object | Optional. The plugin load order and its rules for a Bethesda game (the `bethesda` adapter): see [The plugin list](#the-plugin-list-plugins). Absent from every other profile.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ### Per-mod keys
 
@@ -675,6 +676,102 @@ The `steps` list uses the same shape as a NexusMods collection's recorded choice
 
 An older lmm that rewrites the profile drops the `fomod:` block. After a downgrade, reinstalling such a mod asks the questions again.
 
+### The plugin list (`plugins`)
+
+A Bethesda game loads plugin files (`.esm`, `.esp`, `.esl`) in an order of
+their own, from a `Plugins.txt` in its Wine prefix. That is a second order
+beside the profile's `mods`, which decides whose files win: one mod can
+ship several plugins. For a game with the `bethesda` adapter, every deploy
+(and every install, update, rollback, enable, disable, uninstall, switch,
+apply, sync, import and `verify --fix`) works out the plugin order and
+writes it to the game's `Plugins.txt` (Skyrim 2011 also gets
+`loadorder.txt`), in the prefix lmm resolves for the game (see
+[Prefix](#prefix-gamesyaml)).
+
+```yaml
+plugins:
+  order:                     # load order, first loads first
+    - name: Unofficial Skyrim Special Edition Patch.esp
+    - name: SkyUI_SE.esp
+    - name: Optional Thing.esp
+      enabled: false         # listed, but not active
+  rules:                     # optional; the shape of a LOOT userlist
+    groups:
+      - { name: Late Loaders, after: [default] }
+    plugins:
+      - { name: Patch.esp, group: Late Loaders, after: [SkyUI_SE.esp], req: [SkyUI_SE.esp] }
+```
+
+- **The order is what you want, not a copy of the file.** lmm never writes
+  the order it computes back to the profile. A plugin in `order` that is not
+  deployed is left out of the file but keeps its place, so disabling and
+  re-enabling its mod does not lose it. Names match case-insensitively. A
+  plugin with no `enabled:` is active.
+- **How the order is worked out.** Masters load before other plugins, and
+  every plugin after its own masters; the game's own plugins (`Skyrim.esm`,
+  `Update.esm`, the DLC, the Creation Club plugins its `.ccc` file names)
+  always load first and are never listed. Then the rules: a plugin loads
+  after each plugin its `after` and `req` name, and a group after every
+  group its `after` names (a plugin no rule places is in the group
+  `default`; a group rule that would contradict a master is set aside).
+  Anything left is decided by `order`, then by the order of the mods that
+  ship the plugins, then by name. A newly installed plugin `order` does not
+  list yet goes in active, at the end (after its own masters), as LOOT, MO2
+  and Vortex place one, so a freshly added mod wins its conflicts.
+- **Plugins lmm did not deploy are kept.** A plugin you installed by hand,
+  or one the game's own Creations menu added, keeps its place next to the
+  plugins it was beside and its active state; lmm never deactivates a
+  plugin it did not deploy. A listed plugin that is no longer installed is
+  dropped.
+- **The file is matched as Wine matches it.** An existing `plugins.txt` is
+  written to under its own spelling (and the AppData folder too); a new one
+  is `Plugins.txt`. An existing file keeps its line endings and its comment
+  lines, each where it was (the game's own header stays at the top); a new
+  one uses LF line endings, as the game writes its own, and has no header.
+  Names are written in Windows-1252, as the game reads them.
+- **Hooks see the final list.** A deploy or install writes the list before
+  its `install.after_all` hook runs, and an uninstall or purge before its
+  `uninstall.after_all`, so the hook can read it, or change it, and lmm does
+  not write over the change.
+- **Nothing is written over.** lmm reads the list again just before writing
+  it; if the game (its Creations menu, say) saved it in between, lmm works
+  the order out again from what is there now, and leaves the list alone if
+  it keeps changing. If lmm cannot read the folder the game loads plugins
+  from - a drive that is not mounted - or that folder holds none of the
+  game's own plugins, lmm does not write the list (`plugin_list_unwritable`),
+  rather than drop every plugin from it.
+- **lmm writes only inside the prefix.** It checks the prefix's user folder
+  again just before writing, and it never writes through a link: a folder
+  or a `Plugins.txt` that is a link to somewhere else is refused, and the
+  deploy says so.
+- **What the deploy reports.** The mods are deployed whatever happens to the
+  list. A plugin that needs a master that is not installed or not active, or
+  more active plugins than the game loads (254 full plugins once light ones
+  are active, 4,096 light), is reported as an error, because the game will
+  not start; the list is still written. A rule that contradicts itself (a
+  cycle) is reported with the chain of rules, and the list is left as it
+  was. A plugin whose name has no Windows-1252 spelling is left out, with a
+  warning. When lmm cannot find the game's prefix, the list is not written
+  and the deploy says why (`prefix_unresolved`).
+- **Backup and purge.** Before lmm first replaces a `Plugins.txt`, the file
+  you had is kept (lmm notes that there was none, if so). `lmm purge` puts
+  it back: lmm takes its own plugins out of the current file and puts back
+  the entries only the kept file has, so whatever changed outside lmm since
+  (a plugin added, turned on or off, or moved) stays as it is. When nothing
+  outside lmm changed, the kept file comes back byte for byte; a file lmm
+  created and nothing else uses is removed. If the game has moved to
+  another prefix, the kept list goes back into the one it uses now (an
+  entry whose plugin is not installed there goes back switched off). If
+  lmm cannot find the prefix at all - a Steam library on a drive that is
+  not plugged in - it keeps the copy, says so, and the next purge puts it
+  back.
+- **`lmm verify`** reports the same findings, and `plugin_drift` when one of
+  lmm's own plugins has been moved, deactivated or dropped in `Plugins.txt`
+  since lmm wrote it. Changes to plugins lmm did not deploy are never drift.
+  `lmm verify --fix` (or the next deploy) writes the list again.
+
+An older lmm that rewrites the profile drops the `plugins:` block.
+
 #### Upgrading: mods disabled before the marker existed
 
 Before the marker existed, a mod you switched off was recorded only in lmm's database, and the profile file said nothing about it. The first `lmm` command after the upgrade records such mods in their profile files, once. Any command does it, a read-only one included, and so does `lmm serve` when it starts. It prints each mod it recorded (game, profile, mod and file) to stderr, followed by the `lmm mod enable <mod-id> --game <game> --source <source> --profile <profile>` command that undoes each one.
@@ -711,6 +808,7 @@ The document includes:
 - **game** – The portable game identity (Steam app id, per-source game ids) an importer matches against its own games.
 - **mods** – Mod references in load order; each has `source_id`, `mod_id`, optional `version`, `file_ids`, `locked`, `disabled`, `category`, `fomod` (see Per-mod keys above), plus a display `name`. An imported `fomod` block installs the mod with those choices.
 - **external** – Items lmm cannot fetch, with a URL and instructions.
+- **plugins** – The profile's plugin list (see [The plugin list](#the-plugin-list-plugins)); a document that has one requires `plugin_order`.
 - **hooks**, **overrides** – The profile's own hooks and config overrides.
 - **title**, **author**, **description**, **install_instructions**, **origin**, **requires** – The author's metadata, the curator's credit when the collection came from someone else, and the features it needs.
 

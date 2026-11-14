@@ -32,8 +32,9 @@ const CollectionFeatureFomod = "fomod"
 // mechanism - an older lmm refuses what it cannot replay instead of
 // half-installing it.
 var supportedCollectionFeatures = map[string]bool{
-	CollectionFeatureExternal: true,
-	CollectionFeatureFomod:    true,
+	CollectionFeatureExternal:    true,
+	CollectionFeatureFomod:       true,
+	CollectionFeaturePluginOrder: true,
 }
 
 // SupportedCollectionFeatures lists the features this lmm can import, in
@@ -79,6 +80,9 @@ func deriveCollectionRequires(doc *domain.CollectionDocument) []string {
 		if t := item.Ref.ModType; t != "" && !slices.Contains(features, CollectionFeatureModTypePrefix+t) {
 			features = append(features, CollectionFeatureModTypePrefix+t)
 		}
+	}
+	if !doc.Plugins.IsZero() {
+		features = append(features, CollectionFeaturePluginOrder)
 	}
 	sort.Strings(features)
 	return features

@@ -353,6 +353,12 @@ func replaceAt(dir *os.File, name string, content []byte, perm os.FileMode) (err
 		_ = f.Close()
 		return cerr
 	}
+	// Flushed before the rename, so a crash leaves the old file or the new
+	// one, never an empty one (#616 review 7: a zero-length Plugins.txt).
+	if serr := f.Sync(); serr != nil {
+		_ = f.Close()
+		return serr
+	}
 	if cerr := f.Close(); cerr != nil {
 		return cerr
 	}

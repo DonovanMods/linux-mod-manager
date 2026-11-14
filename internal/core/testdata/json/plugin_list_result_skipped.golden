@@ -1,0 +1,12 @@
+{
+  "status": "skipped",
+  "plugins": 0,
+  "active": 0,
+  "findings": [
+    {
+      "code": "prefix_unresolved",
+      "severity": "warning",
+      "message": "the game's Plugins.txt was not written, because lmm cannot find the game's Wine prefix: no Steam compatdata prefix for app 489830 in any Steam library: run the game once through Steam (with Proton), or set prefix: (`lmm game edit skyrim-se --prefix <dir>`)"
+    }
+  ]
+}

@@ -155,6 +155,8 @@ type CollectionImportResult struct {
 type collectionState struct {
 	collection *domain.CollectionInfo
 	external   []domain.CollectionExternalItem
+	// plugins is the document's plugin list (#616).
+	plugins domain.ProfilePlugins
 }
 
 // applyTo sets c's state on profile; a nil c sets nothing.
@@ -163,6 +165,7 @@ func (c *collectionState) applyTo(profile *domain.Profile) {
 		return
 	}
 	profile.Collection, profile.External = c.collection, c.external
+	profile.Plugins = c.plugins.Clone()
 }
 
 // CollectionImportItem is one mod of a collection import plan.
@@ -312,7 +315,7 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 		return nil, err
 	}
 
-	profile := &domain.Profile{Name: name, GameID: game.ID, External: doc.External}
+	profile := &domain.Profile{Name: name, GameID: game.ID, External: doc.External, Plugins: doc.Plugins}
 	for _, item := range doc.Items {
 		profile.Mods = append(profile.Mods, item.Ref)
 	}
@@ -344,9 +347,10 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 	}
 	// The plan lists every hook the DOCUMENT carries, a URL's included.
 	plan.Hooks = hooks
-	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External}
+	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins}
 	// The preview shows the profile the import will save.
 	plan.Profile.Collection, plan.Profile.External = profile.Collection, profile.External
+	plan.Profile.Plugins = profile.Plugins.Clone()
 
 	requires := doc.Requires
 	derived := deriveCollectionRequires(doc)
@@ -708,6 +712,9 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 		items = append(items, item)
 	}
 	doc.Items = items
+	if err := checkCollectionPlugins(doc.Plugins); err != nil {
+		return nil, fmt.Errorf("%w: its plugins: %v", ErrInvalidCollection, err)
+	}
 	if doc.Signer != "" {
 		warnings = append(warnings, fmt.Sprintf("the document names a signer (%s), which this version of lmm does not verify", doc.Signer))
 	}
@@ -886,4 +893,68 @@ func installerChoiceLines(c domain.FomodChoices) []string {
 		}
 	}
 	return out
+}
+
+// maxCollectionPlugins bounds a stranger's plugin list: every count in it -
+// order entries, rule groups, per-plugin rules, and each rule's names - is
+// at most this. A game loads 4,351 plugins at most (255 full, 4,096
+// light), so a real list is well inside it.
+const maxCollectionPlugins = 10000
+
+// checkCollectionPlugins refuses a stranger's plugin list that lmm would
+// not keep as written (#616). Every name is a plugin's file name, matched
+// against the deployed plugins and never rewritten: one that is empty,
+// holds a control, escape or bidi/format character or a path separator, or
+// runs over the line limit refuses the document, as a hook command does.
+func checkCollectionPlugins(p domain.ProfilePlugins) error {
+	if len(p.Order) > maxCollectionPlugins || len(p.Rules.Groups) > maxCollectionPlugins || len(p.Rules.Plugins) > maxCollectionPlugins {
+		return fmt.Errorf("it lists more than %d plugins, groups or rules", maxCollectionPlugins)
+	}
+	name := func(what, s string) error {
+		if strings.TrimSpace(s) == "" || hasUnsafeRunes(s) || strings.ContainsAny(s, `/\`) || len(s) > maxCollectionLine {
+			return fmt.Errorf("a %s (%q) is empty, contains control or formatting characters or a path separator, or is over the %d-byte limit", what, s, maxCollectionLine)
+		}
+		return nil
+	}
+	names := func(what string, list []string) error {
+		if len(list) > maxCollectionPlugins {
+			return fmt.Errorf("a %s list holds more than %d names", what, maxCollectionPlugins)
+		}
+		for _, s := range list {
+			if err := name(what, s); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, e := range p.Order {
+		if err := name("plugin name", e.Name); err != nil {
+			return err
+		}
+	}
+	for _, g := range p.Rules.Groups {
+		if err := name("group name", g.Name); err != nil {
+			return err
+		}
+		if err := names("group", g.After); err != nil {
+			return err
+		}
+	}
+	for _, r := range p.Rules.Plugins {
+		if err := name("plugin name", r.Name); err != nil {
+			return err
+		}
+		if r.Group != "" {
+			if err := name("group name", r.Group); err != nil {
+				return err
+			}
+		}
+		if err := names("plugin", r.After); err != nil {
+			return err
+		}
+		if err := names("plugin", r.Req); err != nil {
+			return err
+		}
+	}
+	return nil
 }

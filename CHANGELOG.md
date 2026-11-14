@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Import a NexusMods collection (#607, #609).** `lmm profile import
+- **Import a NexusMods collection (#607).** `lmm profile import
 --nexus-collection <slug|slug@revision|URL>` (in the web UI, the
   Profiles window's **NexusMods collection** field) reads a collection's
   list and its install recipe, converts them into an lmm collection and
@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   set to update automatically. The curator's install phases and
   before/after rules order the profile (a rule naming a mod outside the
   collection is skipped, with a note), recorded FOMOD installer choices are
-  replayed, items NexusMods does not host are listed with where to get
+  replayed (part of #609, which stays open for checking each archive's md5
+  before replaying and for install-phase-aware installer conditions), items NexusMods does not host are listed with where to get
   them, and the curator's tool shortcuts are listed but never run.
   Optional mods are left out unless you add `--with-optional` (in the web
   UI, a tick box on each). On a free NexusMods account, which NexusMods
@@ -41,6 +42,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The NexusMods account tier is checked again after 15 minutes, and at
   once after NexusMods refuses a download as Premium-only, so an upgrade or
   a lapse under a long-running `lmm serve` is noticed (#607).
+
+- **lmm writes a Bethesda game's plugin list (#616).** On a game with the
+  `bethesda` adapter, every flow that changes which plugins are deployed
+  (`lmm deploy`, `install`, `update` and rollbacks, `mod enable`/`disable`,
+  `uninstall`, `profile switch`/`apply`/`sync`, imports, `mod edit`/`copy`,
+  `verify --fix`, and their web UI actions) now writes the game's
+  `Plugins.txt` (and Skyrim 2011's `loadorder.txt`) in its Wine prefix, in a
+  deterministic order: masters first, each plugin after its own masters, the
+  game's own plugins never listed, then the profile's new `plugins:` block
+  (an `order` of `{name, enabled}` and LOOT-userlist-shaped `rules`), then
+  mod order, then name; a plugin the profile's order does not list yet loads
+  last, after its own masters, as in LOOT, MO2 and Vortex. The order lmm
+  computes is never written back to the profile. Plugins lmm did not deploy (installed by hand, or by the game's
+  Creations menu) keep their place and their active state; lmm never
+  deactivates one. An existing file keeps its name's spelling, its line
+  endings and its comment lines where they were (the game's header at the
+  top); a new one is `Plugins.txt` with LF endings, as the game writes its
+  own. The list is written before `install.after_all` and
+  `uninstall.after_all` hooks run, so a hook sees the final file and can
+  adjust it. A list the game saves while lmm works out the order is read
+  again rather than written over, and when lmm cannot read the game's
+  plugin folder (a drive that is not mounted) it leaves the list alone and
+  says so.
+  lmm re-checks the prefix's user folder just before writing and never
+  writes through a link. The deploy's result (`--json` and the web UI) gains
+  a `plugins` object - status, the file, counts, and findings: a cycle among
+  the rules (`plugin_order_cycle`, the list is left as it was), a missing
+  master and too many active plugins (errors), a name with no Windows-1252
+  spelling (a warning), and `prefix_unresolved` when lmm cannot find the
+  prefix (the mods are still deployed). The findings are also the result's
+  warnings. The file lmm first replaced is kept in its own
+  `originals-prefix.json`, which older lmm never reads, and `lmm purge`
+  puts it back (its result gains `plugins` too): lmm's own plugins come
+  out, and every change made outside lmm since - a plugin added, turned on
+  or off, or moved - stays. `lmm verify` reports the same findings and a new
+  `plugin_drift` warning for one of lmm's own plugins that was moved,
+  deactivated or dropped since; `--fix` writes the list again
+  (`fixed_plugin_drift`). The web UI's deploy and purge readouts show the
+  plugin list, and the Health card its rows. A collection document carries
+  the profile's `plugins:` and requires the new `plugin_order` feature, so
+  an older lmm refuses it rather than dropping the load order; a duplicate
+  and a snapshot carry it too. The `lmm plugins` commands and the web UI's
+  Plugins tab follow in #617.
 
 - **Mod files that belong in the game folder are deployed there (#629).**
   On a game with the `bethesda` adapter, a script extender's loader and

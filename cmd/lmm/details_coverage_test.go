@@ -74,6 +74,7 @@ var detailsCoverage = map[string]string{
 	"core.LoaderRequiredError": "TestReportError_JSON_LoaderRequiredError",
 	// #614: the FOMOD question document, and the refusal no answer fixes.
 	"core.FomodChoicesRequiredError": "TestReportError_JSON_FomodChoicesRequiredError",
+	"core.PluginOrderCycleError":     "TestReportError_JSON_PluginOrderCycleError",
 	"core.FomodInstallError":         "TestReportError_JSON_FomodInstallError",
 	// #317's cross-process mutation refusal: the holder's pid/started_at
 	// reach the envelope as data, not only as the sentence.

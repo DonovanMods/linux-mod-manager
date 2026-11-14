@@ -1,0 +1,9 @@
+{
+  "code": "plugin_missing_master",
+  "severity": "error",
+  "plugin": "Patch.esp",
+  "missing": [
+    "Absent.esm"
+  ],
+  "message": "Patch.esp needs the master(s) Absent.esm (not installed) - the game will not start with it active: install and activate them, or deactivate it"
+}

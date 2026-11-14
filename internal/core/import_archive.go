@@ -957,6 +957,9 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	// non-DeployCompile game, so the call is guarded by the same predicate
 	// rather than re-derived from game.DeployMode next to the assignment,
 	// where the two could drift apart.
+	// #616: the game's plugin list follows every import, compile game or
+	// not, and before the install hooks below, so they see the final list.
+	ctx = s.syncPluginListBeforeHooks(ctx, game, profileName)
 	if game.DeployMode == domain.DeployCompile {
 		if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
 			warn("could not sync merged pak: %v", syncErr)
@@ -965,6 +968,10 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 			for _, w := range syncWarnings {
 				warn("%s", w)
 			}
+		}
+	} else if res, _ := pluginListSyncedOn(ctx, game.ID, profileName); res != nil {
+		for _, w := range res.warnings() {
+			warn("%s", w)
 		}
 	}
 

@@ -202,7 +202,14 @@ func (s *Service) verifyFingerprint(ctx context.Context, game *domain.Game, prof
 		for _, ref := range refs {
 			_, _ = fmt.Fprintln(h, ref)
 		}
+		// #616: the plugin list the drift check compares against.
+		if !prof.Plugins.IsZero() {
+			_, _ = fmt.Fprintf(h, "plugins\x1f%q\n", fmt.Sprint(prof.Plugins))
+		}
 	}
+	// #616: the game's own list files, which the game and other tools edit
+	// out of process.
+	_, _ = fmt.Fprintf(h, "pluginlist\x1f%s\n", s.pluginListToken(game))
 
 	// The deployed_files checksum rows - verify's own FIRST read
 	// (GetFilesWithChecksums, verify.go) and the one input that can move

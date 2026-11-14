@@ -524,6 +524,11 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_each hook failed: %v", err))
 	}
 
+	// #616: the game's plugin list is written before uninstall.after_all,
+	// as it is before install.after_all, so the hook sees the final
+	// Plugins.txt; syncMergedPak below reports it.
+	ctx = s.syncPluginListBeforeHooks(ctx, game, profileName)
+
 	hookCtx.ModID = ""
 	hookCtx.ModName = ""
 	hookCtx.ModVersion = ""

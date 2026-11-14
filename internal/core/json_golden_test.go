@@ -3648,6 +3648,58 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #616: one ordering constraint, as a plugin-order cycle names
+			// its edges.
+			"plugin_order_edge",
+			core.PluginOrderEdge{From: "Base.esm", To: "Patch.esp", Reason: core.PluginEdgeMaster},
+		},
+		{
+			// #616: the plugin-order cycle refusal (its Details() is the
+			// cycle, under the same key).
+			"plugin_order_cycle_error",
+			core.PluginOrderCycleError{Edges: []core.PluginOrderEdge{
+				{From: "B.esp", To: "A.esp", Reason: core.PluginEdgeMaster},
+				{From: "A.esp", To: "B.esp", Reason: core.PluginEdgeAfter},
+			}},
+		},
+		{
+			// #616: one plugin-list finding - an active plugin whose master
+			// is not installed.
+			"plugin_finding",
+			core.PluginFinding{
+				Code: core.PluginFindingMissingMaster, Severity: core.PluginSeverityError, Plugin: "Patch.esp",
+				Missing: []string{"Absent.esm"},
+				Message: "Patch.esp needs the master(s) Absent.esm (not installed) - the game will not start with it active: install and activate them, or deactivate it",
+			},
+		},
+		{
+			// #616: a deploy's plugin-list outcome (DeployResult.Plugins,
+			// PurgeResult.Plugins): written, with one external plugin kept
+			// and one finding of each severity.
+			"plugin_list_result",
+			core.PluginListResult{
+				Status:   core.PluginListWritten,
+				ListFile: "/home/user/.steam/steam/steamapps/compatdata/489830/pfx/drive_c/users/steamuser/AppData/Local/Skyrim Special Edition/Plugins.txt",
+				Plugins:  12, Active: 11, External: 1,
+				Findings: []core.PluginFinding{
+					{Code: core.PluginFindingOverLimit, Severity: core.PluginSeverityError, Class: "full", Count: 256, Limit: 254,
+						Message: "256 full plugins are active, but the game loads at most 254 - deactivate 2 of them"},
+					{Code: core.PluginFindingUnencodable, Severity: core.PluginSeverityWarning, Plugin: "日本.esp",
+						Message: "\"日本.esp\" cannot be written to Plugins.txt (its name has a character with no Windows-1252 spelling, or a control character), so it is left out - rename the plugin"},
+				},
+			},
+		},
+		{
+			// #616: a plugin list the sync could not write - the prefix is
+			// unresolved, so the mods are deployed and the list is not.
+			"plugin_list_result_skipped",
+			core.PluginListResult{
+				Status: core.PluginListSkipped,
+				Findings: []core.PluginFinding{{Code: core.FindingPrefixUnresolved, Severity: core.PluginSeverityWarning,
+					Message: "the game's Plugins.txt was not written, because lmm cannot find the game's Wine prefix: no Steam compatdata prefix for app 489830 in any Steam library: run the game once through Steam (with Proton), or set prefix: (`lmm game edit skyrim-se --prefix <dir>`)"}},
+			},
+		},
+		{
 			// #605: one library's compatdata prefix, as prefix_status's
 			// candidates list each.
 			"prefix_candidate",
