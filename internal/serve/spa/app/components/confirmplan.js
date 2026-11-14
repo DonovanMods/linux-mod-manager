@@ -105,6 +105,16 @@ export function ConfirmPlanModal({ modal, state, actions }) {
     status === "ready" &&
     (plan?.matched?.length ?? 0) === 0;
 
+  // Issue 637: an install whose file picker has every file unchecked names
+  // nothing to install. plan_install.js keeps that as an empty file_ids
+  // rather than dropping it, so "none" can never fall through to the
+  // default file; Confirm waits for a file instead.
+  const noInstallFiles =
+    kind === "install" &&
+    status === "ready" &&
+    Array.isArray(modal.applyOptions?.file_ids) &&
+    modal.applyOptions.file_ids.length === 0;
+
   // The type-the-name gate (C-3): a kind listed in typedNameFor keeps
   // Confirm disabled until the user has typed back the thing they are about
   // to destroy. `purge` is the one that earns it - it undeploys an entire
@@ -170,7 +180,7 @@ export function ConfirmPlanModal({ modal, state, actions }) {
             type="button"
             class="button button--primary"
             data-action="confirm"
-            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || fromFileRefused || emptyCopyPlan || collectionUpdateBlocked || emptyFillPlan || !nameTyped}
+            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || fromFileRefused || emptyCopyPlan || collectionUpdateBlocked || emptyFillPlan || noInstallFiles || !nameTyped}
             onClick=${actions.confirmPlan}
           >
             ${busy ? "Starting…" : (effectiveConfirmLabel ?? "Confirm")}

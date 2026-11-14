@@ -45,6 +45,16 @@ verify` (and `--fix`), `lmm conflicts`, `lmm mod files` and snapshots,
   version 28 (`deployed_files` accepts the new root), so an older lmm
   refuses to open it, as for every schema change.
 
+- **The web UI installs several files of a mod at once (#637).** The
+  install preview's file picker is now a checkbox per file instead of a
+  single-choice list, so a main file and its patch install in one job, as
+  `lmm install --file a,b` does. The main file starts checked as before,
+  the preview lists every checked file, and Confirm waits until at least
+  one is checked. When several of the files carry a FOMOD installer, the
+  installer window asks about each file in turn, headed with its name. A
+  selection the CLI refuses (a pak and an exmodz that are two forms of the
+  same mod) fails with the same message.
+
 - **The web UI offers Apply whenever a profile has drifted (#641).** The
   Profile card used to offer **Apply profile…** only when a listed mod was
   not installed at all, so a hand-edited version, other files (#639),
