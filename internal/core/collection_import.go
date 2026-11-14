@@ -694,8 +694,10 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 		// has - and saves the profile with every other item pending.
 		opts.AllOrNothing = true
 		if c.Source.ManualDownload {
+			// #610: a bundled item is no download - the recipe carries it -
+			// so it installs on any account.
 			trimmed := *plan
-			trimmed.NeedsRedownload, trimmed.Missing = nil, nil
+			trimmed.NeedsRedownload, trimmed.Missing = bundledOnly(plan.NeedsRedownload), bundledOnly(plan.Missing)
 			plan = &trimmed
 		}
 	}
@@ -714,7 +716,8 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 			// The items a free account cannot download were held back
 			// from the apply; they are pending, as a --no-install import
 			// counts its pending mods.
-			result.Skipped += len(original.NeedsRedownload) + len(original.Missing)
+			result.Skipped += len(original.NeedsRedownload) + len(original.Missing) -
+				len(plan.NeedsRedownload) - len(plan.Missing)
 		}
 		finishSourceCollection(original, c.Source, result, opts)
 	}
@@ -1429,4 +1432,16 @@ func checkCollectionPlugins(p domain.ProfilePlugins) error {
 		}
 	}
 	return nil
+}
+
+// bundledOnly is refs' collection-bundled items (#610), which need no
+// download whatever the account.
+func bundledOnly(refs []domain.ModReference) []domain.ModReference {
+	var out []domain.ModReference
+	for _, r := range refs {
+		if r.SourceID == domain.SourceCollection {
+			out = append(out, r)
+		}
+	}
+	return out
 }

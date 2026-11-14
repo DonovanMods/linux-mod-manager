@@ -41,7 +41,9 @@ import <archive>\&'), then name that mod with --bundle (as source:id, its
 id, or its name; repeatable). A mod from NexusMods, CurseForge or any
 other source is refused. A mod a collection already bundled is carried
 again whether or not you name it. Bundled files need the .lmmc container,
-so --bundle needs -o and refuses --plain.
+so --bundle needs -o and refuses --plain. So do binary patches a
+collection installed the profile's mods with: the .lmmc carries them, a
+plain YAML document only names them.
 
 .PP
 --json prints the profile document of #309 instead, unchanged.

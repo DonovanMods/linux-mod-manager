@@ -174,7 +174,7 @@ func finishSourceCollection(plan *ImportPlan, c *ConvertedCollection, result *Pr
 		}
 	} else {
 		for _, ref := range slices.Concat(plan.NeedsRedownload, plan.Missing) {
-			if c.ManualDownload {
+			if c.ManualDownload && ref.SourceID != domain.SourceCollection {
 				pending[domain.ModKey(ref.SourceID, ref.ModID)] = true
 			}
 		}

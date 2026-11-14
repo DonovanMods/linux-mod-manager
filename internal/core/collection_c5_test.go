@@ -394,3 +394,21 @@ func TestCollectionExport_CarriesPatchesInTheContainer(t *testing.T) {
 	_, err = recv.svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: []byte(plain), GameID: "skyrim"})
 	require.NoError(t, err, "the store keeps it")
 }
+
+// TestSourceCollection_FreeAccountInstallsBundledItems: a free account's
+// import saves every item to download pending, and still installs the
+// bundled items, which the recipe carries.
+func TestSourceCollection_FreeAccountInstallsBundledItems(t *testing.T) {
+	f := newC5Fixture(t, c5Recipe(`Mod\manifest.json`, c5CRC(c5ManifestV40)), c5Trees(t, c5Patch(t)))
+	f.src.tier = source.TierFree
+	plan := f.plan(t, core.SourceCollectionImportRequest{})
+	require.True(t, plan.Collection.Source.ManualDownload)
+	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	got, ok := f.deployed(t, "Collection Marker/manifest.json")
+	assert.True(t, ok)
+	assert.Equal(t, `{"marker": true}`, got)
+	_, ok = f.deployed(t, "Mod/manifest.json")
+	assert.False(t, ok, "a manual download is pending")
+	assert.Equal(t, 2, result.Skipped, "the two items to download by hand")
+}

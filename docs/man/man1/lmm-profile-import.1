@@ -61,6 +61,18 @@ unless you pass --allow-any-overrides. A plain YAML document cannot
 carry files, so a bundled item in one is refused.
 
 .PP
+A collection may also record, per mod file, an exact file list (only the
+listed files are installed, each checked against its md5) and binary
+patches (BSDIFF40, carried in a .lmmc's patches/ or in a NexusMods
+collection's own archive, with its bundled files). A patch is applied
+only to the file it was made against, by its CRC32: any other file
+refuses the import, with nothing written, where Vortex would install the
+file unpatched. A collection that patches code (a DLL or other
+executable, a system script, or a loader configuration) is refused
+unless you pass --allow-any-overrides. The plan lists every file list and
+patch.
+
+.PP
 --workshop-collection takes a Steam Workshop collection id or the URL of
 its page, and imports the collection AS a profile: a collection is a mod
 list, which is what a profile is. It needs no API key. The profile RECORDS
@@ -91,7 +103,7 @@ Examples:
 
 .SH OPTIONS
 \fB--allow-any-overrides\fP[=false]
-	import overrides that are not text config files, and bundled files that hold code, too (listed in the plan; skipped without this)
+	import overrides that are not text config files, bundled files that hold code, and patches to code, too (listed in the plan; without it the first two are skipped and a collection patching code is refused)
 
 .PP
 \fB--as\fP=""
