@@ -131,6 +131,8 @@ lmm plugins rules remove Patch.esp
 ```
 
 A rule can name a plugin you haven't installed yet; it applies once you do.
+A rule can't be about a plugin lmm didn't install (its place is the
+game's), but such a plugin can be the one another plugin loads after.
 lmm refuses a rule that would make the order impossible, for example one
 that puts a plugin before its own master, and says which rules clash.
 

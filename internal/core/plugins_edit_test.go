@@ -359,3 +359,40 @@ func TestPluginEdit_InactiveProfileEditsTheProfileOnly(t *testing.T) {
 	assert.Equal(t, []domain.PluginEntry{{Name: "B.esp", Enabled: true}, {Name: "A.esp", Enabled: true}}, got.Plugins.Order)
 	assert.Equal(t, before, f.list(t))
 }
+
+// A rule about an external plugin (an in-game Creation, a hand install)
+// would move it, and lmm leaves an external plugin's place to the game: such
+// a rule is refused, as a move is. An external plugin may still be another
+// rule's anchor.
+func TestPluginEdit_RuleSubjectMustBeLmms(t *testing.T) {
+	f := fourPlugins(t)
+	require.NoError(t, os.WriteFile(filepath.Join(f.game.ModPath, "Ext.esp"), pluginBytes(0), 0o644))
+	require.NoError(t, os.MkdirAll(f.listDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.listDir, "Plugins.txt"), []byte("*Ext.esp\n"), 0o644))
+	f.deploy(t)
+	ctx := context.Background()
+
+	for _, rule := range []domain.PluginRule{
+		{Name: "Ext.esp", After: []string{"B.esp"}},
+		{Name: "ext.ESP", Req: []string{"A.esp"}},
+		{Name: "Skyrim.esm", After: []string{"A.esp"}},
+	} {
+		_, err := f.svc.PlanPluginEdit(ctx, f.game, "default", core.PluginEdit{Op: core.PluginOpRuleAdd, Rule: rule})
+		assert.ErrorIs(t, err, core.ErrPluginNotOwned, "%+v", rule)
+	}
+
+	plan, _ := f.edit(t, core.PluginEdit{Op: core.PluginOpRuleAdd, Rule: domain.PluginRule{Name: "A.esp", After: []string{"Ext.esp"}}})
+	assert.Equal(t, []string{"A.esp: loads after Ext.esp"}, plan.Changes, "an external plugin can be a rule's anchor")
+}
+
+// Switching a plugin the order lists but no mod deploys now records the
+// state, and says when it takes effect.
+func TestPluginEdit_SwitchingAnUndeployedPluginSaysWhenItTakesEffect(t *testing.T) {
+	f := fourPlugins(t)
+	f.setPlugins(t, domain.ProfilePlugins{Order: []domain.PluginEntry{{Name: "Gone.esp", Enabled: false}}})
+	f.deploy(t)
+
+	plan, _ := f.edit(t, core.PluginEdit{Op: core.PluginOpEnable, Plugins: []string{"Gone.esp"}})
+	assert.Equal(t, []string{"Gone.esp: enabled"}, plan.Changes)
+	assert.Equal(t, []string{"Gone.esp is not deployed now; it takes effect when it is"}, plan.Notes)
+}

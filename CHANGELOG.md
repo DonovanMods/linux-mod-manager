@@ -64,7 +64,8 @@ add|remove`) change the profile's `plugins:` block and, for the active
   you see it in the profile, so nothing else moves; a rule that would make
   the order impossible is refused with the existing
   `PluginOrderCycleError`; the game's own plugins and plugins lmm did not
-  deploy are refused as not the profile's to change. In the web UI the
+  deploy are refused as not the profile's to change (to switch, to move, or
+  as a rule's subject; they may still be a rule's `after`/`req`). In the web UI the
   reorder modal gains a **Plugins** tab beside **Mods** for these games,
   with the same order, badges and findings, and the same changes (sort
   previews first), over the new `GET`/`POST /api/v1/profiles/{name}/plugins`.

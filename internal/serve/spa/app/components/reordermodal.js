@@ -168,32 +168,80 @@ function ReorderModalBody({ modal, state, actions }) {
   }
 
   // The Plugins tab (issue 617): plugin order, the second axis beside mod
-  // order, for a game whose adapter manages a plugin list. The modal reads
-  // the report once to know whether there is one - no report (the route's
-  // 204) is a game with no plugin list, and no tab - and hands it to the
-  // tab as its start.
+  // order, for a game whose adapter manages a plugin list. The modal owns
+  // the report: it reads it to know whether there is one - no report (the
+  // route's 204) is a game with no plugin list, and no tab - and keeps
+  // each edit's answer (PluginsTab's onReport), so switching to Mods and
+  // back shows the order as edited. A read that FAILS is not "no plugin
+  // list": the tab is still offered, with the error and a retry.
   const [tab, setTab] = useState("mods");
-  const [plugins, setPlugins] = useState({ status: "loading", report: null });
-  useEffect(() => {
-    let live = true;
+  const [plugins, setPlugins] = useState({
+    status: "loading",
+    report: null,
+    error: null,
+  });
+  const pluginsSeq = useRef(0);
+  function loadPlugins() {
+    pluginsSeq.current += 1;
+    const seq = pluginsSeq.current;
+    setPlugins((p) => ({
+      ...p,
+      status: p.status === "error" ? "retrying" : p.status,
+    }));
     profilePlugins(modal.profileName, {
       game: state.route.game,
       profile: modal.profileName,
     }).then(
-      (report) =>
-        live &&
+      (report) => {
+        if (pluginsSeq.current !== seq) return;
         setPlugins(
           report
-            ? { status: "ready", report }
-            : { status: "none", report: null },
-        ),
-      () => live && setPlugins({ status: "none", report: null }),
+            ? { status: "ready", report, error: null }
+            : { status: "none", report: null, error: null },
+        );
+      },
+      (err) => {
+        if (pluginsSeq.current !== seq) return;
+        setPlugins({
+          status: "error",
+          report: null,
+          error: err?.message ?? String(err),
+        });
+      },
     );
+  }
+  useEffect(() => {
+    loadPlugins();
     return () => {
-      live = false;
+      pluginsSeq.current += 1;
     };
   }, [modal.profileName]);
-  const pluginsOffered = plugins.status === "ready";
+  const pluginsOffered =
+    plugins.status === "ready" ||
+    plugins.status === "error" ||
+    plugins.status === "retrying";
+
+  // The tab strip is the WAI-ARIA tabs pattern, as Setup's (setup.js
+  // onTabKeyDown): ArrowLeft/ArrowRight move to and activate the other
+  // tab (wrapping), Home/End the first/last, and a roving tabindex makes
+  // only the active tab a Tab stop.
+  const TABS = [
+    ["mods", "Mods"],
+    ["plugins", "Plugins"],
+  ];
+  const tabRefs = useRef([]);
+  function onTabKeyDown(e, index) {
+    let target = -1;
+    if (e.key === "ArrowRight") target = (index + 1) % TABS.length;
+    else if (e.key === "ArrowLeft")
+      target = (index - 1 + TABS.length) % TABS.length;
+    else if (e.key === "Home") target = 0;
+    else if (e.key === "End") target = TABS.length - 1;
+    else return;
+    e.preventDefault();
+    setTab(TABS[target][0]);
+    tabRefs.current[target]?.focus();
+  }
 
   function move(key, delta) {
     setOrder((prev) => {
@@ -326,16 +374,18 @@ function ReorderModalBody({ modal, state, actions }) {
       ${
         pluginsOffered &&
         html`<div class="reorder-tabs" role="tablist" aria-label="Load order">
-          ${[
-            ["mods", "Mods"],
-            ["plugins", "Plugins"],
-          ].map(
-            ([key, label]) =>
+          ${TABS.map(
+            ([key, label], i) =>
               html`<button
                 type="button"
                 role="tab"
                 id=${`reorder-tab-${key}`}
+                ref=${(el) => {
+                  tabRefs.current[i] = el;
+                }}
                 aria-selected=${tab === key ? "true" : "false"}
+                tabindex=${tab === key ? "0" : "-1"}
+                onKeyDown=${(e) => onTabKeyDown(e, i)}
                 aria-controls="reorder-panel"
                 data-tab=${key}
                 data-label=${label}
@@ -355,11 +405,33 @@ function ReorderModalBody({ modal, state, actions }) {
               role="tabpanel"
               aria-labelledby="reorder-tab-plugins"
             >
-              <${PluginsTab}
-                profileName=${modal.profileName}
-                context=${{ game: state.route.game, profile: modal.profileName }}
-                initialReport=${plugins.report}
-              />
+              ${
+                plugins.report
+                  ? html`<${PluginsTab}
+                      profileName=${modal.profileName}
+                      context=${{
+                        game: state.route.game,
+                        profile: modal.profileName,
+                      }}
+                      report=${plugins.report}
+                      onReport=${(report) =>
+                        setPlugins({ status: "ready", report, error: null })}
+                    />`
+                  : html`<div data-testid="plugins-load-error">
+                      <p class="modal__error">
+                        Couldn't read the plugin order: ${plugins.error}
+                      </p>
+                      <button
+                        type="button"
+                        class="button"
+                        data-action="plugins-retry"
+                        disabled=${plugins.status === "retrying"}
+                        onClick=${loadPlugins}
+                      >
+                        ${plugins.status === "retrying" ? "Retrying…" : "Retry"}
+                      </button>
+                    </div>`
+              }
             </div>`
           : html`<div
               id="reorder-panel"

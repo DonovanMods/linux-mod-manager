@@ -10,6 +10,8 @@ package serve
 import (
 	"encoding/json/v2"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -132,4 +134,40 @@ func TestAPIPlugins_AGameWithNoPluginList(t *testing.T) {
 	rec = doAPI(s, http.MethodPost, pluginsTarget(game), `{"edit":{"op":"sort"}}`)
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "this game has no plugin list")
+}
+
+// A plugin edit with no CSRF token is refused before it is planned: a 403
+// in the envelope, and neither the list nor the profile changes.
+func TestAPIPlugins_EditRefusedWithoutCSRF(t *testing.T) {
+	s, svc, game, list := pluginsTabFixture(t)
+	before, err := config.LoadProfile(svc.ConfigDir(), game.ID, "default")
+	require.NoError(t, err)
+
+	rec := doAPIWithoutCSRF(s, http.MethodPost, pluginsTarget(game), `{"edit":{"op":"disable","plugins":["Mod.esp"]}}`)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	var env apiErrorEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+	assert.Contains(t, env.Error, "CSRF")
+
+	assert.Equal(t, "# the user's\r\n*Mod.esp\r\n*Other.esp\r\n", readFile(t, list))
+	after, err := config.LoadProfile(svc.ConfigDir(), game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, before.Plugins, after.Plugins)
+}
+
+// The route enforces core's ruling on external plugins: a rule about one
+// (an in-game Creation) is refused, since it would move it; one may still
+// be a rule's anchor.
+func TestAPIPlugins_RuleAboutAnExternalPluginIsRefused(t *testing.T) {
+	s, _, game, list := pluginsTabFixture(t)
+	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "Creation.esl"), flowPlugin(0x200), 0o644))
+	require.NoError(t, os.WriteFile(list, []byte("# the user's\r\n*Creation.esl\r\n*Mod.esp\r\n*Other.esp\r\n"), 0o644))
+
+	rec := doAPI(s, http.MethodPost, pluginsTarget(game), `{"edit":{"op":"rule_add","rule":{"name":"Creation.esl","after":["Other.esp"]}}}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "not deployed by lmm")
+	assert.Equal(t, "# the user's\r\n*Creation.esl\r\n*Mod.esp\r\n*Other.esp\r\n", readFile(t, list))
+
+	rec = doAPI(s, http.MethodPost, pluginsTarget(game), `{"edit":{"op":"rule_add","rule":{"name":"Mod.esp","after":["Creation.esl"]}}}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }

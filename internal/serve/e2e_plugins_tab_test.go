@@ -18,6 +18,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -213,4 +214,101 @@ func TestE2E_ReorderModal_NoPluginsTabWithoutAPluginList(t *testing.T) {
 	)
 	assert.Equal(t, 0, tabs)
 	assert.Empty(t, f.BrowserErrors())
+}
+
+// The modal keeps the Plugins tab's order: an edit made there is still
+// shown after switching to Mods and back (the panel unmounts in between).
+func TestE2E_PluginsTab_AnEditSurvivesSwitchingTabs(t *testing.T) {
+	f, list := newE2EPluginsFixture(t)
+
+	var rows []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		openPluginsTab(),
+		chromedp.Click(`[data-plugin="C.esp"] [data-action="plugin-up"]`, chromedp.ByQuery),
+		pollUntil(`JSON.stringify(`+pluginNamesJS+`) === JSON.stringify(["Skyrim.esm","A.esp","C.esp","B.esp"])`),
+		chromedp.Click(`.reorder-tabs [data-tab="mods"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+		chromedp.Click(`.reorder-tabs [data-tab="plugins"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="plugins-list"]`, chromedp.ByQuery),
+		chromedp.Evaluate(pluginNamesJS, &rows),
+	)
+	assert.Equal(t, []string{"Skyrim.esm", "A.esp", "C.esp", "B.esp"}, rows)
+	assert.Equal(t, "*A.esp\n*C.esp\n*B.esp\n", readPluginsTxt(t, list))
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// The tab strip is the ARIA tabs pattern: only the selected tab is a Tab
+// stop, and the arrow keys (and Home/End) move to and open the other tab.
+func TestE2E_ReorderModal_TabStripKeyboard(t *testing.T) {
+	f, _ := newE2EPluginsFixture(t)
+
+	type tabState struct {
+		Selected string `json:"selected"`
+		Focused  string `json:"focused"`
+		Stops    int    `json:"stops"`
+		Plugins  bool   `json:"plugins"`
+	}
+	const stateJS = `(() => ({
+		selected: document.querySelector('.reorder-tabs [aria-selected="true"]').dataset.tab,
+		focused: document.activeElement?.dataset?.tab ?? "",
+		stops: document.querySelectorAll('.reorder-tabs [tabindex="0"]').length,
+		plugins: document.querySelector('[data-testid="plugins-list"]') !== null,
+	}))()`
+	var start, right, wrap, end, home tabState
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		clickWhenSettled(`.library__toolbar [data-action="reorder"]`),
+		chromedp.WaitVisible(`.reorder-tabs [data-tab="plugins"]`, chromedp.ByQuery),
+		chromedp.Focus(`.reorder-tabs [data-tab="mods"]`, chromedp.ByQuery),
+		chromedp.Evaluate(stateJS, &start),
+		chromedp.KeyEvent(kb.ArrowRight),
+		chromedp.WaitVisible(`[data-testid="plugins-list"]`, chromedp.ByQuery),
+		chromedp.Evaluate(stateJS, &right),
+		chromedp.KeyEvent(kb.ArrowRight),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+		chromedp.Evaluate(stateJS, &wrap),
+		chromedp.KeyEvent(kb.End),
+		chromedp.WaitVisible(`[data-testid="plugins-list"]`, chromedp.ByQuery),
+		chromedp.Evaluate(stateJS, &end),
+		chromedp.KeyEvent(kb.Home),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+		chromedp.Evaluate(stateJS, &home),
+	)
+	assert.Equal(t, tabState{Selected: "mods", Focused: "mods", Stops: 1}, start)
+	assert.Equal(t, tabState{Selected: "plugins", Focused: "plugins", Stops: 1, Plugins: true}, right)
+	assert.Equal(t, tabState{Selected: "mods", Focused: "mods", Stops: 1}, wrap, "ArrowRight wraps")
+	assert.Equal(t, tabState{Selected: "plugins", Focused: "plugins", Stops: 1, Plugins: true}, end)
+	assert.Equal(t, tabState{Selected: "mods", Focused: "mods", Stops: 1}, home)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// A plugin read that fails is not "no plugin list": the tab is offered,
+// with the error and a retry that recovers once the fault clears.
+func TestE2E_PluginsTab_AFailedReadOffersARetry(t *testing.T) {
+	f, _ := newE2EPluginsFixture(t)
+	var setFailing func(bool)
+	f.BaseURL, setFailing = startE2EFailingPathProxy(t, f.BaseURL, "/api/v1/profiles/default/plugins")
+
+	var errText string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		clickWhenSettled(`.library__toolbar [data-action="reorder"]`),
+		chromedp.WaitVisible(`.reorder-tabs [data-tab="plugins"]`, chromedp.ByQuery),
+		chromedp.Click(`.reorder-tabs [data-tab="plugins"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="plugins-load-error"]`, chromedp.ByQuery),
+		textContent(`[data-testid="plugins-load-error"] .modal__error`, &errText),
+	)
+	assert.Contains(t, errText, "simulated upstream failure")
+
+	setFailing(false)
+	var rows []string
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="plugins-retry"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="plugins-list"]`, chromedp.ByQuery),
+		chromedp.Evaluate(pluginNamesJS, &rows),
+	)
+	assert.Equal(t, []string{"Skyrim.esm", "A.esp", "B.esp", "C.esp"}, rows)
 }

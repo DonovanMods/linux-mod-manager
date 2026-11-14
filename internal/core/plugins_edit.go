@@ -368,11 +368,8 @@ func (e *pluginEditor) owned(name string) (string, error) {
 		return "", fmt.Errorf("%w: a plugin name is empty", ErrInvalidPluginEdit)
 	}
 	if p, ok := e.entry(name); ok {
-		switch p.Placement {
-		case PluginPlacementImplicit:
-			return "", fmt.Errorf("%s is one of the game's own plugins, which always load first: %w", p.Name, ErrPluginNotOwned)
-		case PluginPlacementExternal:
-			return "", fmt.Errorf("%s was not deployed by lmm (installed by hand, or by the game's Creations menu); lmm leaves its place and state to the game: %w", p.Name, ErrPluginNotOwned)
+		if err := notOwned(p); err != nil {
+			return "", err
 		}
 		return p.Name, nil
 	}
@@ -383,6 +380,18 @@ func (e *pluginEditor) owned(name string) (string, error) {
 		return "", fmt.Errorf("%s is not in profile %s's plugin order (only the active profile's deployed plugins are known): %w", name, e.report.Profile, ErrPluginNotFound)
 	}
 	return "", fmt.Errorf("%s is neither deployed by profile %s nor in its plugin order: %w", name, e.report.Profile, ErrPluginNotFound)
+}
+
+// notOwned is the ErrPluginNotOwned refusal for p when it is one of the
+// game's own plugins or an external one, else nil.
+func notOwned(p PluginOrderEntry) error {
+	switch p.Placement {
+	case PluginPlacementImplicit:
+		return fmt.Errorf("%s is one of the game's own plugins, which always load first: %w", p.Name, ErrPluginNotOwned)
+	case PluginPlacementExternal:
+		return fmt.Errorf("%s was not deployed by lmm (installed by hand, or by the game's Creations menu); lmm leaves its place and state to the game: %w", p.Name, ErrPluginNotOwned)
+	}
+	return nil
 }
 
 // setEnabled switches names on or off. A plugin the order does not list
@@ -413,6 +422,9 @@ func (e *pluginEditor) setEnabled(names []string, on bool) error {
 		}
 		if changed {
 			e.changes = append(e.changes, fmt.Sprintf("%s: %s", spelled, state))
+			if _, placed := e.entry(spelled); e.report.Active && !placed {
+				e.notes = append(e.notes, fmt.Sprintf("%s is not deployed now; it takes effect when it is", spelled))
+			}
 		} else {
 			e.notes = append(e.notes, fmt.Sprintf("%s is already %s", spelled, state))
 		}
@@ -612,6 +624,14 @@ func (e *pluginEditor) ruleAdd(rule domain.PluginRule) error {
 		}
 		if pluginKey(other) == pluginKey(name) {
 			return fmt.Errorf("%w: %s cannot load after itself", ErrInvalidPluginEdit, name)
+		}
+	}
+	// A rule moves its subject, and an external plugin's place - like the
+	// game's own plugins' - is the game's: it can be another rule's anchor,
+	// never a rule's subject (owner ruling, #616).
+	if p, ok := e.entry(name); ok {
+		if err := notOwned(p); err != nil {
+			return err
 		}
 	}
 	if rule.Group != "" && rule.Group != domain.PluginGroupDefault && e.groupIndex(rule.Group) < 0 {

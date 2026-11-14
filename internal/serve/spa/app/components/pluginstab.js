@@ -82,12 +82,13 @@ function rowsOf(report) {
 }
 
 /**
- * PluginsTab renders the tab's panel for profileName, starting from the
- * report the modal already read (it reads it to know whether the game has
- * a plugin list at all, and so whether to offer the tab).
+ * PluginsTab renders the tab's panel for profileName. The report is the
+ * modal's (it reads it to know whether the game has a plugin list at all,
+ * and so whether to offer the tab), and every edit's answer goes back up
+ * through onReport: the Mods tab unmounts this panel, so the order shown
+ * on coming back must be the modal's, not state that left with it.
  */
-export function PluginsTab({ profileName, context, initialReport }) {
-  const [report, setReport] = useState(initialReport);
+export function PluginsTab({ profileName, context, report, onReport }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [notes, setNotes] = useState([]);
@@ -98,7 +99,7 @@ export function PluginsTab({ profileName, context, initialReport }) {
     setError(null);
     try {
       const res = await editProfilePlugins(profileName, edit, false, context);
-      setReport(res.order);
+      onReport(res.order);
       setNotes([
         ...(res.notes ?? []),
         ...(res.changes?.length ? [] : ["Nothing changed."]),
