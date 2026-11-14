@@ -378,7 +378,12 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		// after the name is derived (the plan names it from the archive)
 		// and before the adapter lays it out.
 		if i.resolveFomod != nil {
-			if resolved, err = i.resolveFomod(&domain.Mod{ID: modID, SourceID: sourceID, Name: modName, Version: version, GameID: game.ID}, filename, extractedPath, opts.fomod); err != nil {
+			fx := opts.fomod
+			if fx.archiveMD5 == nil {
+				// #609: hashed only if a pinned replay asks.
+				fx.archiveMD5 = archiveSum("", archivePath)
+			}
+			if resolved, err = i.resolveFomod(&domain.Mod{ID: modID, SourceID: sourceID, Name: modName, Version: version, GameID: game.ID}, filename, extractedPath, fx); err != nil {
 				return nil, err
 			}
 		}

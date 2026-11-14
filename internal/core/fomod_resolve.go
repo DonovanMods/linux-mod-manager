@@ -53,6 +53,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
@@ -235,6 +236,36 @@ type fomodInput struct {
 	// flow refuses a reconfigure none of whose files is one
 	// (modFomodAsks.finish).
 	softAsk bool
+
+	// The archive pin (#609). fileMD5 maps a file id to the md5 a
+	// collection records for it - the archive its recorded choices were
+	// made against - and forFile turns it into the file's expectMD5.
+	// archiveMD5 is the md5 of the archive being resolved, set by acquire:
+	// the downloader's own, else hashed once on first use. A REPLAY whose
+	// archive's md5 is not expectMD5 is not replayed but asked about
+	// (FomodReasonArchiveMismatch).
+	fileMD5    map[string]string
+	expectMD5  string
+	archiveMD5 func() (string, error)
+	// recipeMD5 finds a file's md5 in the recipe of the collection the
+	// profile came from (fomod_recipe_pin.go), for a flow with no
+	// document's md5s: "" when the recipe records none. forFile turns it
+	// into the file's lazyMD5, which resolveFomod calls only when a replay
+	// of a never-installed recording (no config_sha256) reaches an
+	// installer.
+	recipeMD5 func(fileID string) (string, error)
+	lazyMD5   func() (string, error)
+}
+
+// archiveSum is fomodInput.archiveMD5 for the archive at path: known when
+// the download computed it (the downloader hashes as it writes, and a
+// retained download keeps the sum), else the file's md5, read once and
+// only when asked.
+func archiveSum(known, path string) func() (string, error) {
+	if known != "" {
+		return func() (string, error) { return known, nil }
+	}
+	return sync.OnceValues(func() (string, error) { return md5File(path) })
 }
 
 // forFile is in for ONE file of the mod (#634): this run's answer for the
@@ -244,6 +275,10 @@ type fomodInput struct {
 func (in fomodInput) forFile(fileID string) fomodInput {
 	out := in
 	out.fileChoices, out.fileAnswers, out.askFile, out.orderHint, out.fileIDs = nil, nil, "", nil, nil
+	out.fileMD5, out.expectMD5, out.recipeMD5, out.lazyMD5 = nil, in.fileMD5[fileID], nil, nil
+	if in.recipeMD5 != nil {
+		out.lazyMD5 = func() (string, error) { return in.recipeMD5(fileID) }
+	}
 	switch a, ok := in.fileAnswers[fileID]; {
 	case ok && !a.IsZero():
 		out.choices, out.answered = a, true
@@ -382,13 +417,44 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 	}
 
 	recorded := !in.choices.IsZero()
+	// #609: a recording is replayed only against the archive it was made
+	// against, when the collection says which that was.
+	var mismatch *FomodArchiveMismatch
+	var pinWarnings []string
+	replay := recorded && !in.answered && !in.ask
+	expect := in.expectMD5
+	if replay && expect == "" && in.lazyMD5 != nil && in.choices.ConfigSHA256 == "" {
+		// A curator's recording lmm has never installed, in a flow with no
+		// document: the profile's collection recipe says which archive.
+		sum, err := in.lazyMD5()
+		if err != nil {
+			pinWarnings = append(pinWarnings, fmt.Sprintf("lmm could not check that this is the archive the collection's installer choices were recorded against (%v); they are replayed unchecked", err))
+		}
+		expect = sum
+	}
+	if replay && expect != "" {
+		actual := ""
+		if in.archiveMD5 != nil {
+			sum, err := in.archiveMD5()
+			if err != nil {
+				return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name,
+					Reason: "its archive could not be checked against the md5 its recorded choices were made against: " + err.Error(), err: err}
+			}
+			actual = strings.ToLower(sum)
+		}
+		// An archive lmm has no md5 for cannot be shown to be the
+		// curator's, so it is asked about too (ActualMD5 empty).
+		if actual == "" || !strings.EqualFold(actual, expect) {
+			mismatch = &FomodArchiveMismatch{ExpectedMD5: expect, ActualMD5: actual}
+		}
+	}
 	// A REPLAY of a recording fills an unanswered group as Vortex's
-	// headless replay does; a fresh answer, a reconfigure (#615) or none
-	// gets the dialog's preselection (design §4), which is what a question
-	// then shows.
+	// headless replay does; a fresh answer, a reconfigure (#615), a
+	// recording for another archive or none gets the dialog's preselection
+	// (design §4), which is what a question then shows.
 	consulted := &recordingFileStates{inner: in.files, seen: map[string]fomod.FileState{}}
 	req := fomod.Request{Choices: in.choices.Steps, Mode: fomod.ModeDefaults, Files: consulted, Members: rels}
-	if recorded && !in.answered && !in.ask {
+	if replay && mismatch == nil {
 		req.Mode = fomod.ModeReplay
 	}
 	res, err := fomod.Evaluate(cfg, req)
@@ -402,13 +468,18 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 	}
 
 	misfit := len(res.Unanswered) > 0 || (recorded && (len(res.Unmatched) > 0 || len(res.Violations) > 0))
-	if misfit || (in.ask && !in.answered) {
+	if misfit || (in.ask && !in.answered) || mismatch != nil {
 		// A replay's recording is stale; a fresh answer is incomplete or
 		// wrong, which is asked about the same way but not called stale. A
-		// reconfigure asks about choices that still fit.
+		// reconfigure asks about choices that still fit. A recording for
+		// another archive is asked about whether or not it fits this one,
+		// and says so (#609).
 		q := fomodQuestion(mod, inst, cfg, configSHA, res, misfit && recorded && !in.answered)
 		if !misfit {
 			q.Reason = FomodReasonReconfigure
+		}
+		if mismatch != nil {
+			q.Reason, q.ArchiveMismatch = FomodReasonArchiveMismatch, mismatch
 		}
 		if in.answered && !in.recorded.IsZero() {
 			preselectRecorded(&q, cfg, in, rels)
@@ -421,7 +492,7 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 		return nil, &FomodChoicesRequiredError{Mods: []FomodQuestion{q}}
 	}
 
-	warnings := slices.Clone(res.Warnings)
+	warnings := append(slices.Clone(res.Warnings), pinWarnings...)
 	if missing := fomodMissingSources(res); len(missing) > 0 {
 		if recorded && !in.answered {
 			return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name,

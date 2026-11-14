@@ -206,7 +206,9 @@ func indentLines(text, prefix string) string {
 
 // printCollectionInstallerChoices lists the FOMOD installer choices a
 // collection records (#615): they are replayed as written, and an installer
-// that no longer accepts them is asked about when the mod installs.
+// that no longer accepts them - or an archive other than the one the
+// collection recorded them against (#609) - is asked about when the mod
+// installs.
 func printCollectionInstallerChoices(c *core.CollectionImport) {
 	var items []core.CollectionImportItem
 	for _, item := range c.Items {
@@ -217,7 +219,7 @@ func printCollectionInstallerChoices(c *core.CollectionImport) {
 	if len(items) == 0 {
 		return
 	}
-	fmt.Printf("\nInstaller (FOMOD) choices the collection records - replayed as written; an installer that no longer accepts them asks:\n")
+	fmt.Printf("\nInstaller (FOMOD) choices the collection records - replayed as written; an installer that no longer accepts them, or an archive other than the one they were recorded against, asks:\n")
 	for _, item := range items {
 		fmt.Printf("    - %s\n", collectionItemLabel(item))
 		for _, line := range item.InstallerChoices {

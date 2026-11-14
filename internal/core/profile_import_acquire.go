@@ -51,7 +51,10 @@ func recordImportFailure(result *ProfileImportResult, ref domain.ModReference, n
 // Installing line) and COUNTED only when it settles, so an import the
 // engine refuses counts nothing. failed receives the reason of every
 // failure, for the refused document.
-func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan *ImportPlan, ref domain.ModReference, scope Scope, answers map[string]domain.FomodChoices, result *ProfileImportResult, emit func(Event), failed map[string]string) (*importStaged, *acquireFailure) {
+//
+// states are the item's FOMOD file states (importFileStates): the import's
+// document's plugin list, and a collection's install phases.
+func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan *ImportPlan, ref domain.ModReference, scope Scope, answers map[string]domain.FomodChoices, states fileStatesOpts, result *ProfileImportResult, emit func(Event), failed map[string]string) (*importStaged, *acquireFailure) {
 	scope.Mod = &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID}
 	emit(ModEvent{Scope: scope, Phase: ImportModInstalling})
 
@@ -143,7 +146,10 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	//
 	// #614: a FOMOD mod's entry is the variant its choices - this run's
 	// answers, else the imported reference's - name (fomodVariant).
-	fx := s.fomodInputFor(ctx, game, plan.Profile.Name, &ref, ref.SourceID, ref.ModID, answers)
+	fx := s.fomodInputForWith(ctx, game, plan.Profile.Name, &ref, ref.SourceID, ref.ModID, answers, states)
+	// #609: a collection's recorded choices replay only against the
+	// archives it records.
+	fx.fileMD5 = plan.archiveMD5[st.key]
 	gameCache := s.GetGameCache(game)
 	warmKey := modCacheKey(game.ID, *mod)
 	warmKey.Variant = fx.expectedVariant()
@@ -370,6 +376,69 @@ func (s *Service) writeImportPolicy(ctx context.Context, game *domain.Game, plan
 		result.Warnings = append(result.Warnings, msg)
 		emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
 	}
+}
+
+// importFileStates is the fileStatesOpts the import item key installs
+// with: the plugin list of the document being imported (its profile is
+// saved only once every item is acquired, #618), and - for a source
+// collection, whose items carry install phases (#609) - Vortex's phased
+// install. The run's other items (run: the keys this Apply installs) of
+// the same or a later phase are not present - an older row of theirs in
+// the profile included, since this run replaces it - and the items of
+// earlier phases acquired so far (staged: the run's items, in acquire
+// order, which is phase order) are, though nothing of them is committed
+// yet. A mod the profile already has and this run leaves alone is present
+// whatever its phase: it is installed.
+func (s *Service) importFileStates(game *domain.Game, plan *ImportPlan, key string, staged []*importStaged, run map[string]bool) fileStatesOpts {
+	var opts fileStatesOpts
+	if plan.Profile != nil {
+		plugins := plan.Profile.Plugins
+		opts.plugins = &plugins
+	}
+	if len(plan.phases) == 0 {
+		return opts
+	}
+	phase := plan.phases[key]
+	opts.hidden = func(k string) bool {
+		p, ok := plan.phases[k]
+		return ok && run[k] && p >= phase
+	}
+	var before []*importStaged
+	for _, st := range staged {
+		if p, ok := plan.phases[st.key]; ok && p < phase {
+			before = append(before, st)
+		}
+	}
+	opts.earlier = func() []string {
+		var out []string
+		for _, st := range before {
+			out = append(out, s.stagedFiles(game, st)...)
+		}
+		return out
+	}
+	return opts
+}
+
+// stagedFiles is what an acquired import item will install, mod-root
+// relative: its acquired trees' members, or - for an item that needed no
+// download (a row another profile has, a warm cache entry) - its cache
+// entry's files.
+func (s *Service) stagedFiles(game *domain.Game, st *importStaged) []string {
+	switch {
+	case st.cachedRow != nil:
+		files, _ := s.GetGameCache(game).ListFiles(modCacheKey(game.ID, st.cachedRow.Mod))
+		return files
+	case len(st.files) > 0:
+		var out []string
+		for _, a := range st.files {
+			out = append(out, a.members...)
+		}
+		return out
+	case st.mod != nil:
+		files, _ := s.GetGameCache(game).ListFiles(modCacheKey(game.ID, *st.mod))
+		return files
+	}
+	return nil
 }
 
 // suppliedFiles is a profile fill's file list for ref (#608): the source's
