@@ -401,6 +401,18 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 		if err := s.identifyInstallArchive(ctx, game, profileName, plan, srcMod, opts, warn); err != nil {
 			return nil, err
 		}
+	} else if plan.resolvedFile != nil && !ident.minted {
+		// #639: an archive resolved to a source file is ingested into that
+		// file's own entry (ImportOptions.entryFor, judged at the identity
+		// the import persists), so whether a refused import may discard
+		// what it wrote is asked of that entry - at the ingest's identity
+		// and, when enrichment renames it, at the final one - never of the
+		// plain key, which another set (and another profile) may own.
+		ids := []string{plan.resolvedFile.ID}
+		final := s.ingestEntry(ctx, game, profileName, plan.Mod, ids, plan.resolvedFile.ID, opts.Fomod)
+		at := final
+		at.SourceID, at.ModID, at.Version = ident.sourceID, ident.modID, ident.version
+		plan.EntryPreExists = gameCache.Exists(at) || (final != at && gameCache.Exists(final))
 	}
 
 	// Conflicts come from the plan's own path list, not from a cache entry

@@ -346,3 +346,22 @@ func (s *Service) fileSetEntryFor(ctx context.Context, game *domain.Game, ids []
 		return k
 	}
 }
+
+// ingestEntry is the cache entry an archive ingest of the files ids fills
+// at mod's identity (#639), judged before the ingest runs: fileSetEntry
+// over the base the ingest itself builds - the variant the profile's
+// recorded (or answers') FOMOD choices name and, only when the ingest
+// applies them (treeFile, ImportOptions.treeFileID), that file's list and
+// patches (#610). A plan asks it so that its entry-pre-exists answer, which
+// spares or discards the entry a refused ingest leaves, is about the entry
+// the ingest writes - never another set's, or another profile's.
+func (s *Service) ingestEntry(ctx context.Context, game *domain.Game, profileName string, mod domain.Mod, ids []string, treeFile string, answers map[string]domain.FomodChoices) cache.Key {
+	fx := s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID), mod.SourceID, mod.ID, answers)
+	fx.fileIDs = ids
+	if treeFile == "" {
+		fx.fileLists, fx.patches = nil, nil
+	}
+	k := cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: fx.expectedVariant()}
+	k, _ = s.fileSetEntry(ctx, s.GetGameCache(game), k, ids, false)
+	return k
+}

@@ -322,9 +322,11 @@ func (s *Service) PlanUpdateFromArchive(ctx context.Context, game *domain.Game, 
 	}
 
 	plan.Hooks = updateHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks)
-	// #639: the entry the archive's file set fills, never another set's.
-	entry, _ := s.fileSetEntry(ctx, s.GetGameCache(game), cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: plan.ToVersion}, plan.FileIDs, false)
-	plan.entryPreExists = s.GetGameCache(game).Exists(entry)
+	// #639: the entry the ingest fills - its expected FOMOD base, then the
+	// archive's file set's entry - never another set's.
+	target := mod.Mod
+	target.Version = plan.ToVersion
+	plan.entryPreExists = s.GetGameCache(game).Exists(s.ingestEntry(ctx, game, profileName, target, plan.FileIDs, "", opts.Fomod))
 	if plan.snapshot, err = s.currentInstalledSnapshot(ctx, game.ID, profileName); err != nil {
 		return nil, err
 	}

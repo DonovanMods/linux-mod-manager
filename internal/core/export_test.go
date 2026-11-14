@@ -516,3 +516,7 @@ func SetLoadOrderEditAfterSaveForTest(f func()) (restore func()) {
 	loadOrderEditAfterSave = f
 	return func() { loadOrderEditAfterSave = prev }
 }
+
+// FileSetVariantForTest exposes fileSetVariant (#639): the cache variant of
+// base's tree built from exactly the files ids.
+func FileSetVariantForTest(base string, ids []string) string { return fileSetVariant(base, ids) }
