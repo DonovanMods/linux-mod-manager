@@ -82,8 +82,15 @@ func sameFileIDs(a, b []string) bool {
 // installed from (#639): a converge flow reinstalls it, as it does for a
 // version drift. Either side recording no files - an unpinned reference,
 // a row from before lmm recorded them - is no drift: there is no set to
-// compare.
+// compare. The exception is a row on an imported archive's tree (#644),
+// which records no source file because it is none: a ref pinning one
+// drifts from it.
 func fileSetDrift(ref domain.ModReference, row *domain.InstalledMod) bool {
+	if row != nil && isArchiveVariant(row.Variant) && len(ref.FileIDs) > 0 && !sameFileIDs(ref.FileIDs, row.FileIDs) {
+		// #644: an imported archive's tree records no source file, so a ref
+		// that pins one names another tree - the source's.
+		return true
+	}
 	return row != nil && filesDiffer(ref.FileIDs, row.FileIDs)
 }
 
@@ -264,7 +271,16 @@ func rowFitsRef(row *domain.InstalledMod, ref *domain.ModReference) bool {
 	if len(ids) == 0 {
 		ids = row.FileIDs
 	}
-	return row.Variant == base || (len(ids) > 0 && row.Variant == fileSetVariant(base, ids)) || isArchiveTreeOf(row.Variant, base)
+	return row.Variant == base || (len(ids) > 0 && row.Variant == fileSetVariant(base, ids)) || archiveTreeFits(ref, row, base)
+}
+
+// archiveTreeFits reports whether row's archive tree (#644) is one ref
+// names: an archive variant of ref's base, for a ref that pins no source
+// file - or only the files the row itself records (a DeployCompile
+// import's retained archive, #197). A ref naming a source file the row
+// does not record names the source's tree, never an imported archive's.
+func archiveTreeFits(ref *domain.ModReference, row *domain.InstalledMod, base string) bool {
+	return isArchiveTreeOf(row.Variant, base) && (len(ref.FileIDs) == 0 || sameFileIDs(ref.FileIDs, row.FileIDs))
 }
 
 // restampFileSet moves a just-acquired mod's files, whose base variant
@@ -386,12 +402,15 @@ func archiveEntryApplies(sourceID string, ids []string) bool {
 
 // archiveEntryFor is an archive ingest's ImportOptions.entryFor for an
 // archive no source file is (#644): the ingest key's archive variant for
-// the archive at path. An archive that cannot be hashed fails the ingest:
-// the plain entry is never the fallback.
-func archiveEntryFor(path string) (func(cache.Key) cache.Key, error) {
-	sum, _, err := hashFile(path)
-	if err != nil {
-		return nil, err
+// the archive at path, whose sha256 is sum when a plan already hashed it
+// (archiveSum), else hashed here. An archive that cannot be hashed fails
+// the ingest: the plain entry is never the fallback.
+func archiveEntryFor(path, sum string) (func(cache.Key) cache.Key, error) {
+	if sum == "" {
+		var err error
+		if sum, _, err = hashFile(path); err != nil {
+			return nil, err
+		}
 	}
 	return func(k cache.Key) cache.Key {
 		k.Variant = archiveVariant(k.Variant, sum)
@@ -454,16 +473,19 @@ func (s *Service) ingestEntry(ctx context.Context, game *domain.Game, profileNam
 // archiveIngestEntry is the entry an archive no source file is fills at
 // mod's identity (#644), predicted for a plan's entry-pre-exists preview
 // only, as ingestEntry predicts a file's: the archive variant of the base
-// the profile's recorded (or answers') FOMOD choices name. An archive that
-// cannot be hashed predicts the plain entry; the ingest itself refuses it.
-func (s *Service) archiveIngestEntry(ctx context.Context, game *domain.Game, profileName string, mod domain.Mod, archivePath string, answers map[string]domain.FomodChoices) cache.Key {
+// the profile's recorded (or answers') FOMOD choices name. It also returns
+// the archive's sha256, which the plan carries so its apply need not hash
+// the archive again; an archive that cannot be hashed predicts the plain
+// entry and returns no sum - the ingest itself refuses it.
+func (s *Service) archiveIngestEntry(ctx context.Context, game *domain.Game, profileName string, mod domain.Mod, archivePath string, answers map[string]domain.FomodChoices) (cache.Key, string) {
 	k := cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}
-	entryFor, err := archiveEntryFor(archivePath)
+	sum, _, err := hashFile(archivePath)
 	if err != nil {
-		return k
+		return k, ""
 	}
+	entryFor, _ := archiveEntryFor(archivePath, sum)
 	fx := s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID), mod.SourceID, mod.ID, answers)
 	fx.fileLists, fx.patches = nil, nil
 	k.Variant = fx.expectedVariant()
-	return entryFor(k)
+	return entryFor(k), sum
 }

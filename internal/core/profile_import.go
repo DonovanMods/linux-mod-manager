@@ -201,6 +201,11 @@ type ImportPlan struct {
 	// plan-to-apply plumbing no preview renders.
 	cachedRows map[string]domain.InstalledMod
 
+	// archiveGone holds the NeedsRedownload keys whose own row is an
+	// imported archive's tree whose cache entry is gone (#644): no download
+	// rebuilds it, so the apply fails each with ReasonArchiveTree.
+	archiveGone map[string]bool
+
 	// priorVersions maps domain.ModKey keys to the installed row being
 	// converged AWAY from - the import twin of SwitchPlan.PriorVersions (see
 	// its doc comment): ApplyImport needs it to know whether a LIVE
@@ -338,6 +343,7 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 
 	var installed, alreadyCached, needsRedownload, missing []domain.ModReference
 	storedFileIDs := make(map[string][]string)
+	archiveGone := make(map[string]bool)
 	cachedRows := make(map[string]domain.InstalledMod) // #371 - see ImportPlan.cachedRows
 	// pickedElsewhere records which candidate row answered for each
 	// cross-profile mod, so the display stamping below describes the SAME
@@ -413,6 +419,10 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 			default:
 				needsRedownload = append(needsRedownload, ref)
 				storedFileIDs[key] = im.FileIDs
+				if isArchiveVariant(im.Variant) {
+					// #644: an imported archive's tree; no download is it.
+					archiveGone[key] = true
+				}
 			}
 			continue
 		}
@@ -474,6 +484,11 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 			// of its files, so this profile's own set is fetched, as
 			// another version would be.
 			needsRedownload = append(needsRedownload, ref)
+		case isArchiveVariant(im.Variant):
+			// #644: the other profile's row is an archive it imported -
+			// its own custom build, never this profile's: fetched from
+			// the source, as a mod no profile caches would be.
+			needsRedownload = append(needsRedownload, ref)
 		case cached(im):
 			// #371: the bytes are here - install this profile's own row
 			// from the cache entry rather than calling it "installed" and
@@ -517,6 +532,7 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 		ActiveProfile:       live,
 		data:                data,
 		storedFileIDs:       storedFileIDs,
+		archiveGone:         archiveGone,
 		cachedRows:          cachedRows,
 		priorVersions:       priorVersions,
 		snapshot:            snapshot,
@@ -579,7 +595,9 @@ func pickImportRow(rows []domain.InstalledMod, ref domain.ModReference, cached f
 		// #614: a row of another tree (other FOMOD choices) is not the
 		// one the reference names.
 		// #639: nor is a row of another set of the version's files.
-		versionMatches := (ref.Version == "" || row.Version == ref.Version) && rowFitsRef(&row, &ref) && !fileSetDrift(ref, &row)
+		// #644: nor is another profile's imported archive, which is never
+		// borrowed (cachedRowElsewhere, PlanImport).
+		versionMatches := (ref.Version == "" || row.Version == ref.Version) && rowFitsRef(&row, &ref) && !fileSetDrift(ref, &row) && !isArchiveVariant(row.Variant)
 		score := 0
 		switch {
 		case row.External:

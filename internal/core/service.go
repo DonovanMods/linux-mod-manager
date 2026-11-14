@@ -359,6 +359,8 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	// nothing measurable.
 	svc.sweepRetainedDownloads()
 	svc.sweepFomodImages()
+	// #644: and the staged import trees a killed lmm left behind.
+	svc.sweepStaleImportEntries()
 
 	return svc, nil
 }

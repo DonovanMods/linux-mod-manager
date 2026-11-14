@@ -681,7 +681,7 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 	}
 	if archiveEntryApplies(mod.SourceID, plan.FileIDs) {
 		// #644: an archive no source file is: a tree of its own.
-		entryFor, err := archiveEntryFor(plan.Archive)
+		entryFor, err := archiveEntryFor(plan.Archive, "")
 		if err != nil {
 			return result, fmt.Errorf("import failed: %w", err)
 		}

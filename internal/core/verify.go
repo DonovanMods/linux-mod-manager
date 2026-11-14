@@ -283,8 +283,19 @@ func redownloadRefusal(mod *domain.InstalledMod) string {
 	if redownloadRepairs(mod) {
 		return ""
 	}
+	if mod.SourceID != domain.SourceLocal {
+		return notFixableArchive
+	}
 	return notFixableLocal
 }
+
+// notFixableArchive is redownloadRefusal's sentence for a mod whose tree is
+// an imported archive the source does not list (#644).
+const notFixableArchive = "its files came from an imported archive its source does not list, so there is nothing to re-download"
+
+// archiveGoneNote is the archive-entry pass's note: the cache entry of a
+// mod imported from an archive the source does not list is gone (#644).
+const archiveGoneNote = "the imported archive's files are gone from the cache; import the archive again"
 
 // versionMismatchRefusal is versionMismatchRepairs' reason half, on the same
 // terms: the two ways the version repair is refused get their own sentence,
@@ -639,8 +650,11 @@ func lockedSkipDetail(err error) string {
 // a locally imported mod has no source to fetch from, so there is nothing
 // to redownload. Declared here so VerifyFinding.Fixable is computed from
 // the same expression the repair is gated on rather than a copy of it.
+//
+// #644: nor does a mod whose tree is an imported archive the source does
+// not list: a download would put another tree in its place.
 func redownloadRepairs(mod *domain.InstalledMod) bool {
-	return mod.SourceID != domain.SourceLocal
+	return mod.SourceID != domain.SourceLocal && !isArchiveVariant(mod.Variant)
 }
 
 // versionMismatchRepairs reports whether --fix's version repair
@@ -899,6 +913,7 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 		if err := r.externalPresencePass(installedMods); err != nil {
 			return result, err
 		}
+		r.archiveEntryPass(installedMods)
 		// #217: doVerify still runs a deploy-convergence sweep here even
 		// with no checksummed files at all (a game dir can hold stray
 		// lmm-deployed files after everything is uninstalled). The
@@ -947,6 +962,7 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 		// accumulated, same contract Task 3's brief specifies.
 		return result, err
 	}
+	r.archiveEntryPass(installedMods)
 
 	r.mergedPakStalenessPass()
 	if err := r.conversionOutcomesPass(installedMods); err != nil {
@@ -1362,6 +1378,30 @@ func (r *verifyRun) externalPresencePass(installedMods []domain.InstalledMod) er
 	return nil
 }
 
+// archiveEntryPass reports each mod imported from an archive its source
+// does not list (#644) whose cache entry is gone: it records no source
+// file, so no checksum row and no other pass names it, and no download
+// can put it back. Not fixable, and nothing is removed.
+func (r *verifyRun) archiveEntryPass(installedMods []domain.InstalledMod) {
+	gameCache := r.svc.GetGameCache(r.game)
+	for i := range installedMods {
+		mod := &installedMods[i]
+		if r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter {
+			continue
+		}
+		// A row with recorded files is the per-file walk's to report.
+		if mod.External || len(mod.FileIDs) > 0 || !isArchiveVariant(mod.Variant) {
+			continue
+		}
+		if gameCache.Exists(modCacheKey(r.game.ID, mod.Mod)) {
+			continue
+		}
+		r.result.Issues++
+		r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "missing", Version: mod.Version, Note: archiveGoneNote,
+			FixableReason: notFixableArchive}, VerifyEvent{Version: mod.Version})
+	}
+}
+
 // revisionDateSuffix renders an external revision's date for a verify note
 // - " (Steam's revision of 2026-10-05)" - or nothing when the installer gave
 // none. The content id itself is never printed: it means nothing to a
@@ -1651,7 +1691,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 			// redownloadModFile's persisted flag is irrelevant here (a
 			// re-ingest either retains the source or it doesn't reach this
 			// far).
-			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
+			if r.opts.Fix && redownloadRepairs(mod) {
 				if _, rerr := r.redownloadModFile(r.ctx, mod, f.FileID, ref); rerr != nil {
 					if errors.Is(rerr, ErrModLocked) {
 						// #325 (review I2): the SAME distinction the
@@ -1694,7 +1734,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 				Fixable:        redownloadRepairs(mod), FixableReason: redownloadRefusal(mod)}, VerifyEvent{Version: mod.Version})
 			// #224 Task 4: ported verbatim from doVerify (originally lines
 			// 765-799).
-			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
+			if r.opts.Fix && redownloadRepairs(mod) {
 				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID, ref)
 				switch {
 				case errors.Is(err, ErrModLocked):
@@ -1736,7 +1776,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 			// REPLACES the plain no_checksum row emission below - ported
 			// verbatim from doVerify (originally lines 804-846), including
 			// the "ok"+ChecksumPopulated main-line emission on success.
-			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
+			if r.opts.Fix && redownloadRepairs(mod) {
 				// The row waits for the re-download's outcome, so the
 				// re-download's own sub-lines wait for the row.
 				release := r.holdDetails()

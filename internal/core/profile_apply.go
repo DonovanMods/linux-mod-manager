@@ -156,7 +156,9 @@ type ProfileApplyInstall struct {
 	ExternalPath string `json:"external_path,omitempty"`
 	// Error is a plan-time resolution failure, already worded exactly as
 	// the CLI prints it ("failed to fetch mod: ...", "failed to get files:
-	// ...", "no downloadable files", or selectFilesForVersion's own text).
+	// ...", "no downloadable files", or selectFilesForVersion's own text),
+	// or ReasonArchiveTree for a row on an imported archive's tree whose
+	// entry is gone (#644), which is never resolved against its source.
 	// The entry keeps its place in ToInstall: ApplyProfileApply reports it
 	// at that position and continues with the rest, matching
 	// doProfileApply's per-mod continue.
@@ -448,12 +450,17 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 			// Cache gone - it must be fetched again before it can be
 			// deployed. The DB row's FileIDs describe what was installed;
 			// the profile's ref may carry none at all.
-			plan.ToInstall = append(plan.ToInstall, ProfileApplyInstall{Ref: domain.ModReference{
+			entry := ProfileApplyInstall{Ref: domain.ModReference{
 				SourceID: im.SourceID,
 				ModID:    im.ID,
 				Version:  im.Version,
 				FileIDs:  im.FileIDs,
-			}})
+			}}
+			if isArchiveVariant(im.Variant) {
+				// #644: an imported archive's tree; no download is it.
+				entry.Error = ReasonArchiveTree
+			}
+			plan.ToInstall = append(plan.ToInstall, entry)
 		}
 	}
 
@@ -543,9 +550,10 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 // fetch/get-files/select sequence, verbatim, with each failure worded as it
 // printed it.
 func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.Game, entry *ProfileApplyInstall) {
-	if entry.External {
+	if entry.External || entry.Error != "" {
 		// #371: already resolved from the tracking row it was built from,
-		// and the one entry that must never reach a source.
+		// and the one entry that must never reach a source - nor one the
+		// plan already refused (#644: an imported archive's tree).
 		return
 	}
 
@@ -635,7 +643,9 @@ func cachedRowElsewhere(gameCache *cache.Cache, gameID string, ref domain.ModRef
 		return gameCache.HasFileIDs(cache.Key{GameID: gameID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version, Variant: row.Variant}, row.FileIDs)
 	}
 	row := pickImportRow(rows, ref, cached)
-	if row.External || (ref.Version != "" && row.Version != ref.Version) || !rowFitsRef(&row, &ref) || fileSetDrift(ref, &row) || !cached(row) {
+	// #644: an imported archive's tree is its own profile's custom build;
+	// it never silently becomes another profile's mod.
+	if row.External || isArchiveVariant(row.Variant) || (ref.Version != "" && row.Version != ref.Version) || !rowFitsRef(&row, &ref) || fileSetDrift(ref, &row) || !cached(row) {
 		return domain.InstalledMod{}, false
 	}
 	if _, drift := liveOtherVersion(rows, ref); drift {

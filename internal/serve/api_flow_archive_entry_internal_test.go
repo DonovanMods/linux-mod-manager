@@ -6,6 +6,7 @@ package serve
 // commits its tree only once nothing refuses it.
 
 import (
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"testing"
@@ -105,4 +106,34 @@ func TestAPIFlow_UpdateFromArchive_RefusalLeavesAnotherProfilesEntry(t *testing.
 	row, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "m1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", row.Version)
+}
+
+// The review's probe through the web UI: a profile listing the mod at the
+// version, with no row of its own, is not handed another profile's
+// imported archive by "Apply profile" - it installs from the source.
+func TestAPIFlow_ProfileApply_NeverBorrowsAnotherProfilesArchive(t *testing.T) {
+	s, svc, game := newUpdateFromArchiveServer(t)
+	_, err := svc.UninstallMod(t.Context(), game, "default", fixtureSourceID, "m1", core.UninstallOptions{KeepCache: true})
+	require.NoError(t, err)
+	id := uploadArchive(t, s, "ModOne-custom-2.0.zip", map[string]string{deployFixtureFile: "custom bytes"})
+	j := runFlow(t, s, game, "import_archive", `{"upload_id":"`+string(id)+`","source_id":"`+fixtureSourceID+`","mod_id":"m1"}`, "")
+	require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
+
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(t.Context(), game.ID, "third")
+	require.NoError(t, err)
+	j = runFlow(t, s, game, "switch", `{"profile":"third"}`, "")
+	require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
+	require.NoError(t, pm.UpsertMod(t.Context(), game.ID, "third", domain.ModReference{SourceID: fixtureSourceID, ModID: "m1", Version: "2.0", FileIDs: []string{"200"}}))
+
+	_, raw := planFlow(t, s, game, "profile_apply", `{"profile":"third"}`)
+	var planned struct {
+		Plan core.ProfileApplyPlan `json:"plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &planned))
+	for _, im := range planned.Plan.ToEnable {
+		assert.NotEqual(t, "m1", im.ID, "default's custom build must not be enabled in third")
+	}
+	require.Len(t, planned.Plan.ToInstall, 1)
+	assert.Equal(t, "m1", planned.Plan.ToInstall[0].Ref.ModID)
 }

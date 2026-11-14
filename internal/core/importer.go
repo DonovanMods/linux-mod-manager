@@ -118,7 +118,7 @@ func (st *stagedEntry) commit(ctx context.Context, c *cache.Cache, k cache.Key) 
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return false, fmt.Errorf("creating cache directory: %w", err)
 	}
-	if err := os.Rename(st.path(), staging); err != nil {
+	if err := stagedRename(st.path(), staging); err != nil {
 		// A staging root on another filesystem than the cache.
 		if err := copyDir(ctx, st.path(), staging); err != nil {
 			_ = os.RemoveAll(staging)
@@ -131,6 +131,11 @@ func (st *stagedEntry) commit(ctx context.Context, c *cache.Cache, k cache.Key) 
 	}
 	return created, nil
 }
+
+// stagedRename moves a staged tree beside its cache entry: os.Rename, a
+// variable only so a test can make it fail as a rename across filesystems
+// does, which commit answers with a copy.
+var stagedRename = os.Rename
 
 // discard removes the staging directory and whatever tree is left in it.
 // Safe on a nil entry and after a commit.
@@ -313,7 +318,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	c := i.cache
 	var staged *stagedEntry
 	if opts.stage {
-		root, err := newStagingDir(i.stagingRoot, "lmm-import-entry-*")
+		root, err := newStagingDir(i.stagingRoot, importEntryStagingPrefix+"*")
 		if err != nil {
 			return nil, err
 		}

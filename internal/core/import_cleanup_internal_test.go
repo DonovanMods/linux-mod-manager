@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
@@ -120,5 +122,71 @@ func TestStagedEntry_Commit(t *testing.T) {
 	}
 	if data, err := os.ReadFile(real.ModPath(blocked)); err != nil || string(data) != "blocker" {
 		t.Errorf("the blocking file must be left alone: %q %v", data, err)
+	}
+}
+
+// A staged import tree a killed lmm left behind is swept when a Service
+// opens, once it is older than any import runs; a recent one - another
+// process's import in flight - and anything else in the staging root stay.
+func TestSweepStaleImportEntries(t *testing.T) {
+	dataDir := t.TempDir()
+	root := filepath.Join(dataDir, stagingDirName)
+	old := filepath.Join(root, importEntryStagingPrefix+"old")
+	recent := filepath.Join(root, importEntryStagingPrefix+"recent")
+	other := filepath.Join(root, "lmm-download-old")
+	for _, d := range []string{old, recent, other} {
+		if err := os.MkdirAll(filepath.Join(d, "g1"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	past := time.Now().Add(-2 * staleImportEntryAge)
+	for _, d := range []string{old, other} {
+		if err := os.Chtimes(d, past, past); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc, err := NewService(ServiceConfig{ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+
+	if _, err := os.Stat(old); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a stale staged import must be swept: %v", err)
+	}
+	for _, d := range []string{recent, other} {
+		if _, err := os.Stat(d); err != nil {
+			t.Errorf("%s must stay: %v", filepath.Base(d), err)
+		}
+	}
+}
+
+// A staging root on another filesystem than the cache cannot be renamed
+// into it: commit copies the tree instead, with the same result.
+func TestStagedEntry_CommitCopiesAcrossFilesystems(t *testing.T) {
+	orig := stagedRename
+	stagedRename = func(string, string) error { return &os.LinkError{Op: "rename", Err: syscall.EXDEV} }
+	t.Cleanup(func() { stagedRename = orig })
+
+	root := t.TempDir()
+	st := &stagedEntry{root: root, cache: cache.New(root), key: cache.Key{GameID: "g1", SourceID: "s", ModID: "m", Version: "unknown"}}
+	if err := st.cache.Store(st.key, "sub/a.esp", []byte("copied")); err != nil {
+		t.Fatal(err)
+	}
+	real := cache.New(t.TempDir())
+	k := cache.Key{GameID: "g1", SourceID: "s", ModID: "m", Version: "1.0", Variant: "archive-0123abcd-0123456789ab"}
+	created, err := st.commit(context.Background(), real, k)
+	if err != nil || !created {
+		t.Fatalf("commit: created=%v err=%v", created, err)
+	}
+	data, err := os.ReadFile(filepath.Join(real.ModPath(k), "sub", "a.esp"))
+	if err != nil || string(data) != "copied" {
+		t.Fatalf("entry = %q, %v", data, err)
+	}
+	if err := cache.CheckKey(real.ModPath(k), k); err != nil {
+		t.Errorf("the copied entry is stamped as its key's: %v", err)
+	}
+	if _, err := os.Stat(real.ModPath(k) + ".staging"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("no staging directory is left beside the entry: %v", err)
 	}
 }

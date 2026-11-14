@@ -283,6 +283,10 @@ type ImportArchivePlan struct {
 	// fingerprint is the archive's own size+mtime at plan time: the apply
 	// refuses a plan whose archive changed underneath it.
 	fingerprint archiveFingerprint `json:"-"`
+	// archiveSum is the archive's sha256 when the plan hashed it - an
+	// archive no source file is, whose entry it names (#644) - so the
+	// apply does not hash it again. Empty otherwise.
+	archiveSum string `json:"-"`
 	// snapshot is the installed-mod staleness precondition every Apply
 	// re-checks (checkPlanFresh).
 	snapshot installedSnapshot `json:"-"`
@@ -417,7 +421,9 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	} else if !ident.minted && archiveEntryApplies(plan.Mod.SourceID, nil) {
 		// #644: an archive no source file is fills its own entry, keyed by
 		// its sha256, at the identity the import persists.
-		plan.EntryPreExists = gameCache.Exists(s.archiveIngestEntry(ctx, game, profileName, plan.Mod, archivePath, opts.Fomod))
+		var entry cache.Key
+		entry, plan.archiveSum = s.archiveIngestEntry(ctx, game, profileName, plan.Mod, archivePath, opts.Fomod)
+		plan.EntryPreExists = gameCache.Exists(entry)
 	}
 
 	// Conflicts come from the plan's own path list, not from a cache entry
@@ -745,7 +751,9 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	} else if archiveEntryApplies(plan.Mod.SourceID, nil) {
 		// #644: an archive no source file is, under a source's mod ID, is
 		// a tree of its own - never the entry the source's file builds.
-		entryFor, err := archiveEntryFor(archivePath)
+		// The plan's sha256 when it hashed the archive: the fingerprint
+		// check above holds it to the same file.
+		entryFor, err := archiveEntryFor(archivePath, plan.archiveSum)
 		if err != nil {
 			return result, fmt.Errorf("import failed: %w", err)
 		}
@@ -889,7 +897,8 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	// #644: every refusal has passed, so the staged tree becomes the cache
 	// entry now - replacing the one it names, under the enrichment's
 	// identity.
-	if _, err := staged.commit(ctx, gameCache, finalKey); err != nil {
+	created, err := staged.commit(ctx, gameCache, finalKey)
+	if err != nil {
 		return result, fmt.Errorf("import failed: %w", err)
 	}
 	result.Renamed = renames
@@ -899,6 +908,9 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	// plan's, and the deploy and the row route by it.
 	result.Mod.ModType = plan.Mod.ModType
 	if err := installer.Install(ctx, game, result.Mod, profileName); err != nil {
+		for _, w := range s.discardFailedImportEntry(ctx, game, profileName, finalKey, created) {
+			warn("%s", w)
+		}
 		return result, fmt.Errorf("deployment failed: %w", err)
 	}
 	// Only the files the deploy wrote are deployed (#466 review D7, #476):
@@ -1030,6 +1042,27 @@ func archiveChecksums(path string, fileIDs []string, warn func(string, ...any)) 
 		checksums = append(checksums, fileChecksum{fileID: id, checksum: sum})
 	}
 	return checksums
+}
+
+// discardFailedImportEntry removes the cache entry an import committed
+// when its deploy then failed (#644): only an entry the commit created
+// (never one it replaced, which another profile may deploy), and only
+// while nothing deployed from it is recorded - a deploy that broke off
+// with files still linked keeps the entry they point into. It returns
+// what it could not remove.
+func (s *Service) discardFailedImportEntry(ctx context.Context, game *domain.Game, profileName string, k cache.Key, created bool) []string {
+	if !created {
+		return nil
+	}
+	ctx = context.WithoutCancel(ctx)
+	if records, err := s.db.DeployedFileRecordsForMod(ctx, game.ID, profileName, k.SourceID, k.ModID); err != nil || len(records) > 0 {
+		return nil
+	}
+	if err := s.GetGameCache(game).Delete(k); err != nil {
+		s.logger().Warn("removing a failed import's cache entry", "mod", k.ModID, "version", k.Version, "err", err)
+		return []string{fmt.Sprintf("could not remove the failed import's cache entry %s@%s: %v", k.ModID, k.Version, err)}
+	}
+	return nil
 }
 
 // enrichImportedMod folds the source's metadata into imported when the

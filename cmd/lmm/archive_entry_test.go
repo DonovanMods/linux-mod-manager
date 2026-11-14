@@ -120,3 +120,15 @@ func TestDoUpdate_FromFile_RefusalLeavesAnotherProfilesEntry(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", row.Version)
 }
+
+// verify's row for an imported archive whose entry is gone names no file -
+// the mod records none - and says what to do.
+func TestRenderVerifyFinding_ArchiveEntryGone(t *testing.T) {
+	out := captureStdout(t, func() error {
+		renderVerifyFinding(core.VerifyEvent{Finding: core.VerifyFinding{ModID: "42", ModName: "Auctionator", Status: "missing",
+			Note: "the imported archive's files are gone from the cache; import the archive again"}, Version: "2.0"})
+		return nil
+	})
+	assert.Contains(t, out, "Auctionator - MISSING (the imported archive's files are gone from the cache; import the archive again)")
+	assert.NotContains(t, out, "()")
+}

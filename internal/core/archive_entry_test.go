@@ -20,6 +20,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -248,4 +249,211 @@ func TestUnmatchedArchive_MissingEntryIsNotRedownloaded(t *testing.T) {
 	assert.Equal(t, core.ReasonArchiveTree, res.Skipped[0].Reason)
 	assert.False(t, gc.Exists(own))
 	assert.False(t, gc.Exists(cache.Key{GameID: "g1", SourceID: "msrc", ModID: "42", Version: "2.0"}))
+}
+
+// importCustomIntoDefault imports a custom 2.0 build of 42 into default -
+// an archive variant - and returns default's row.
+func importCustomIntoDefault(t *testing.T, f *fromFileFixture) *domain.InstalledMod {
+	t.Helper()
+	ctx := context.Background()
+	_, err := f.svc.UninstallMod(ctx, f.game, "default", "msrc", "42", core.UninstallOptions{KeepCache: true})
+	require.NoError(t, err)
+	_, err = f.svc.ImportArchive(ctx, f.game, "default", customArchive(t, "custom build"), core.ImportArchiveOptions{SourceID: "msrc", ModID: "42"}, nil)
+	require.NoError(t, err)
+	row := f.row(t)
+	require.True(t, core.IsArchiveTreeOfForTest(row.Variant, ""), "precondition: variant %q", row.Variant)
+	return row
+}
+
+// The review's probe: one profile's custom build never becomes another
+// profile's mod. A profile listing 42@2.0 - pinning the source's file 200,
+// or pinning nothing - with no row of its own is not handed default's
+// archive row by an apply: it installs from the source.
+func TestUnmatchedArchive_NeverBorrowedByAnotherProfilesApply(t *testing.T) {
+	for _, ids := range [][]string{{"200"}, nil} {
+		t.Run(map[bool]string{true: "ref pins file 200", false: "ref pins nothing"}[len(ids) > 0], func(t *testing.T) {
+			f := newFromFileFixture(t)
+			ctx := context.Background()
+			importCustomIntoDefault(t, f)
+			pm := f.svc.NewProfileManager()
+			_, err := pm.Create(ctx, "g1", "third")
+			require.NoError(t, err)
+			rrSwitchTo(t, f.svc, f.game, "third")
+			require.NoError(t, pm.UpsertMod(ctx, "g1", "third", domain.ModReference{SourceID: "msrc", ModID: "42", Version: "2.0", FileIDs: ids}))
+
+			plan, err := f.svc.PlanProfileApply(ctx, f.game, "third")
+			require.NoError(t, err)
+			for _, im := range plan.ToEnable {
+				assert.False(t, im.ID == "42", "default's custom build must not be enabled in third: %+v", im)
+			}
+			var installs []string
+			for _, in := range plan.ToInstall {
+				installs = append(installs, in.Ref.ModID)
+			}
+			assert.Contains(t, installs, "42", "third installs 42 from its source")
+		})
+	}
+}
+
+// The same for `lmm profile import`: a document listing 42@2.0 is fetched,
+// never served from default's archive tree.
+func TestUnmatchedArchive_NeverBorrowedByAProfileImport(t *testing.T) {
+	f := newFromFileFixture(t)
+	importCustomIntoDefault(t, f)
+	data, err := config.ExportProfile(&domain.Profile{Name: "third", GameID: "g1", Mods: []domain.ModReference{{SourceID: "msrc", ModID: "42", Version: "2.0", FileIDs: []string{"200"}}}})
+	require.NoError(t, err)
+	plan, err := f.svc.PlanImport(context.Background(), f.game, data)
+	require.NoError(t, err)
+	assert.Empty(t, plan.AlreadyCached)
+	require.Len(t, plan.NeedsRedownload, 1)
+	assert.Equal(t, "42", plan.NeedsRedownload[0].ModID)
+}
+
+// A ref that pins a source file does not fit an archive tree: when the
+// profile's own entry is edited to name file 200, the apply reinstalls the
+// source's file, as for any other set of files (#639).
+func TestUnmatchedArchive_ARefPinningASourceFileDriftsFromTheArchiveTree(t *testing.T) {
+	f := newFromFileFixture(t)
+	ctx := context.Background()
+	importCustomIntoDefault(t, f)
+	require.NoError(t, f.svc.NewProfileManager().UpsertMod(ctx, "g1", "default", domain.ModReference{SourceID: "msrc", ModID: "42", Version: "2.0", FileIDs: []string{"200"}}))
+	plan, err := f.svc.PlanProfileApply(ctx, f.game, "default")
+	require.NoError(t, err)
+	require.False(t, plan.NoChanges)
+	require.Len(t, plan.ToInstall, 1)
+	assert.Equal(t, "42", plan.ToInstall[0].Ref.ModID)
+}
+
+// A switch to a profile that lists 42 with no row of its own does not
+// enable default's custom build there: it installs from the source,
+// replacing default's live tree.
+func TestUnmatchedArchive_NeverBorrowedByASwitch(t *testing.T) {
+	f := newFromFileFixture(t)
+	ctx := context.Background()
+	importCustomIntoDefault(t, f)
+	pm := f.svc.NewProfileManager()
+	_, err := pm.Create(ctx, "g1", "third")
+	require.NoError(t, err)
+	require.NoError(t, pm.UpsertMod(ctx, "g1", "third", domain.ModReference{SourceID: "msrc", ModID: "42", Version: "2.0"}))
+
+	plan, err := f.svc.PlanProfileSwitch(ctx, f.game, "third")
+	require.NoError(t, err)
+	for _, im := range plan.ToEnable {
+		assert.False(t, im.ID == "42", "default's custom build must not be enabled in third: %+v", im)
+	}
+	require.Len(t, plan.ToInstall, 1)
+	assert.Equal(t, "42", plan.ToInstall[0].ModID)
+	prior, ok := plan.PriorVersions[domain.ModKey("msrc", "42")]
+	require.True(t, ok, "default's live custom tree is replaced, not installed over")
+	assert.True(t, core.IsArchiveTreeOfForTest(prior.Variant, ""))
+}
+
+// A profile's own archive tree whose entry is gone is never downloaded
+// back by a switch or an apply: no download is that tree. Both report
+// ReasonArchiveTree for the mod and fetch nothing.
+func TestUnmatchedArchive_MissingEntryIsNotRedownloadedBySwitchOrApply(t *testing.T) {
+	f := newFromFileFixture(t)
+	ctx := context.Background()
+	gc := f.svc.GetGameCache(f.game)
+	row := importCustomIntoDefault(t, f)
+	own := cache.Key{GameID: "g1", SourceID: "msrc", ModID: "42", Version: "2.0", Variant: row.Variant}
+	plain := cache.Key{GameID: "g1", SourceID: "msrc", ModID: "42", Version: "2.0"}
+	pm := f.svc.NewProfileManager()
+	_, err := pm.Create(ctx, "g1", "empty")
+	require.NoError(t, err)
+	rrSwitchTo(t, f.svc, f.game, "empty")
+	require.NoError(t, gc.Delete(own))
+
+	// Switch back: the row's entry is gone.
+	plan, err := f.svc.PlanProfileSwitch(ctx, f.game, "default")
+	require.NoError(t, err)
+	res, err := f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
+	require.Error(t, err, "the switch is incomplete")
+	require.Len(t, res.Failed, 1)
+	assert.Equal(t, core.ReasonArchiveTree, res.Failed[0].Reason)
+	assert.False(t, gc.Exists(plain), "the source's file is not downloaded in its place")
+	assert.False(t, gc.Exists(own))
+
+	// Apply, with the row disabled: the same.
+	r := f.row(t)
+	r.Enabled, r.Deployed = false, false
+	require.NoError(t, f.svc.SaveInstalledMod(ctx, r))
+	ap, err := f.svc.PlanProfileApply(ctx, f.game, "default")
+	require.NoError(t, err)
+	require.Len(t, ap.ToInstall, 1)
+	assert.Equal(t, core.ReasonArchiveTree, ap.ToInstall[0].Error)
+	_, err = f.svc.ApplyProfileApply(ctx, f.game, ap, core.ProfileApplyOptions{}, nil)
+	require.Error(t, err)
+	assert.False(t, gc.Exists(plain))
+}
+
+// `lmm profile import --force` over the profile that imported the archive,
+// its entry gone: the mod fails with ReasonArchiveTree, and nothing is
+// downloaded in its place.
+func TestUnmatchedArchive_MissingEntryIsNotRedownloadedByAProfileImport(t *testing.T) {
+	f := newFromFileFixture(t)
+	ctx := context.Background()
+	gc := f.svc.GetGameCache(f.game)
+	row := importCustomIntoDefault(t, f)
+	data, err := f.svc.NewProfileManager().Export(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, gc.Delete(cache.Key{GameID: "g1", SourceID: "msrc", ModID: "42", Version: "2.0", Variant: row.Variant}))
+
+	plan, err := f.svc.PlanImport(ctx, f.game, data)
+	require.NoError(t, err)
+	res, err := f.svc.ApplyImport(ctx, f.game, plan, core.ProfileImportOptions{Force: true, Install: true}, nil)
+	require.ErrorContains(t, err, "not fully imported")
+	require.Len(t, res.Failures, 1)
+	assert.Equal(t, core.ReasonArchiveTree, res.Failures[0].Reason)
+	assert.False(t, gc.Exists(cache.Key{GameID: "g1", SourceID: "msrc", ModID: "42", Version: "2.0"}))
+}
+
+// verify reports an imported archive's entry that is gone - not fixable,
+// and --fix neither downloads the source's file nor removes the row.
+func TestUnmatchedArchive_VerifyReportsAGoneEntry(t *testing.T) {
+	f := newFromFileFixture(t)
+	ctx := context.Background()
+	gc := f.svc.GetGameCache(f.game)
+	row := importCustomIntoDefault(t, f)
+	require.NoError(t, gc.Delete(cache.Key{GameID: "g1", SourceID: "msrc", ModID: "42", Version: "2.0", Variant: row.Variant}))
+
+	for _, fix := range []bool{false, true} {
+		vr, err := f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Force: true, Fix: fix}, nil)
+		require.NoError(t, err)
+		var found *core.VerifyFinding
+		for i := range vr.Result.Findings {
+			if vr.Result.Findings[i].ModID == "42" && vr.Result.Findings[i].Status == "missing" {
+				found = &vr.Result.Findings[i]
+			}
+		}
+		require.NotNil(t, found, "fix=%v findings: %+v", fix, vr.Result.Findings)
+		assert.Contains(t, found.Note, "import the archive again")
+		assert.False(t, found.Fixable)
+		assert.NotEmpty(t, found.FixableReason)
+		assert.Positive(t, vr.Result.Issues)
+		assert.False(t, gc.Exists(cache.Key{GameID: "g1", SourceID: "msrc", ModID: "42", Version: "2.0"}))
+		assert.Equal(t, row.Variant, f.row(t).Variant, "the row stays")
+	}
+}
+
+// A deploy that fails after the commit removes the entry the commit
+// created - nothing deployed from it is left - and nothing is recorded.
+func TestImportArchive_DeployFailureAfterTheCommitRemovesTheEntryItCreated(t *testing.T) {
+	f := newFromFileFixture(t)
+	ctx := context.Background()
+	gc := f.svc.GetGameCache(f.game)
+	_, err := f.svc.UninstallMod(ctx, f.game, "default", "msrc", "42", core.UninstallOptions{KeepCache: true})
+	require.NoError(t, err)
+	// A file where the mod's folder goes: the deploy cannot place its file.
+	require.NoError(t, os.RemoveAll(filepath.Join(f.gameDir, "Auctionator")))
+	require.NoError(t, os.WriteFile(filepath.Join(f.gameDir, "Auctionator"), []byte("in the way"), 0o644))
+
+	res, err := f.svc.ImportArchive(ctx, f.game, "default", customArchive(t, "custom build"), core.ImportArchiveOptions{SourceID: "msrc", ModID: "42"}, nil)
+	require.ErrorContains(t, err, "deployment failed")
+	require.NotNil(t, res.Mod)
+	require.NotEmpty(t, res.Mod.Variant)
+	assert.False(t, gc.Exists(cache.Key{GameID: "g1", SourceID: "msrc", ModID: "42", Version: "2.0", Variant: res.Mod.Variant}),
+		"the entry the commit created goes with the failed deploy")
+	_, err = f.svc.GetInstalledMod(ctx, "msrc", "42", "g1", "default")
+	assert.True(t, errors.Is(err, domain.ErrModNotFound), "err=%v", err)
 }

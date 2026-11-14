@@ -903,15 +903,32 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   archive's files while its plan reported nothing to do. Such an archive
   is now cached as an entry of its own, `<version>@archive-...`, named by
   its sha256: importing the same archive again finds it, and no other
-  archive or download shares it. A deploy that finds that entry gone skips
-  the mod and says to import the archive again (the deploy plan's
-  `skipped` reason) rather than download a different file into its place.
+  archive or download shares it. That includes an import whose source
+  could not be reached (offline, or the mod lookup failed): lmm cannot
+  tell which of the source's files the archive is, so it is kept as its
+  own build, and nothing re-links it to the source's file later on its
+  own; importing the archive again while the source answers does. The
+  build is that profile's own: another
+  profile that lists the same mod at that version installs the source's
+  file (`lmm profile apply`, `lmm profile switch`, `lmm profile import`
+  and the web UI alike) rather than borrowing it, and a profile entry that
+  names one of the source's files is a change from it, which
+  `lmm profile apply` installs. When the entry is gone, nothing downloads
+  a different file into its place: `lmm deploy` skips the mod (the deploy
+  plan's `skipped` reason), `lmm profile switch`, `lmm profile apply` and
+  `lmm profile import` report it as failed, all saying to import the
+  archive again, and `lmm verify` reports it as missing (not something
+  `--fix` can repair).
   And an import or update from a file now holds the archive's files aside
   until nothing refuses it: before, they were written into the cache
   first, so a refusal - a file conflict you did not accept, a failing
   `install.before_all`/`before_each` hook, a stale plan - left a new entry
   behind, or had already rewritten an entry another profile used. A
-  refused import or update now leaves the cache as it was. One error
+  refused import or update now leaves the cache as it was, and an import
+  whose deploy fails removes the entry it had just created. The held-aside
+  files live in `lmm-import-entry-*` folders under lmm's `downloads`
+  folder; one a killed lmm left behind is removed the next time lmm starts,
+  once it is a day old. One error
   changes with it: an import whose entry's place is taken by something
   that is not a cache entry now fails before deploying, with an
   `import failed:` error naming that path, where it used to fail at the
