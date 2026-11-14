@@ -2418,6 +2418,7 @@ a.row-menu__item.mod-page-link {
  * renderer with something to CHOOSE rather than only read. */
 .plan__section--picker {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-4);
 }
 
@@ -2427,6 +2428,21 @@ a.row-menu__item.mod-page-link {
   gap: var(--space-1);
   color: var(--text-secondary);
   font-size: 0.85em;
+}
+
+/* issue 637: the install picker's files are checkboxes, several of which
+ * may be checked - a fieldset, so its legend names the group to a screen
+ * reader, unstyled to sit beside the version select like any control. */
+.plan__files-picker {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.plan__files-legend {
+  padding: 0;
+  margin-bottom: var(--space-1);
 }
 
 /* ---------------------------------------------------------------------- */

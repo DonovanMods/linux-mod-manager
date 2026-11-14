@@ -90,6 +90,11 @@ listed in the middle (the library), with the game and profile at the top.
 3. lmm shows you a preview: exactly which files it will add and where. Check
    it and confirm.
 
+When a mod offers more than one file, such as a main file and an optional
+patch, the preview lists them with a checkbox each. The main file starts
+checked; check every file you want and they all install together. In the
+terminal, name them with `lmm install --file <id>,<id>`.
+
 The install runs in the background. The bell icon at the top shows its
 progress, and you can keep working while it runs. If the mod needs other mods
 to work, lmm finds and installs those as well.
