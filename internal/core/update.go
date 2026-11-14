@@ -93,7 +93,7 @@ import (
 // files are listed, and a gone main beside a new MAIN and OPTIONAL has a sole
 // MAIN stand-in.
 func selectUpdateDeployFiles(files []domain.DownloadableFile, targetVersion, installedVersion string, currentFileIDs, storedFileIDs []string, replacedIDs map[string]bool) ([]*domain.DownloadableFile, []string, error) {
-	selected, warnings, err := resolveUpdateSelection(files, targetVersion, installedVersion, storedFileIDs, replacedIDs)
+	selected, warnings, err := resolveUpdateSelection(files, targetVersion, installedVersion, storedFileIDs, replacedIDs, supersededFileIDs(currentFileIDs, storedFileIDs))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -117,7 +117,8 @@ func updateAmbiguousFileWarning(f *domain.DownloadableFile, installedVersion, ta
 }
 
 // pairAmbiguousWithReplacement reports which entry of ambiguous the target-
-// version file replacement stands in for: the first one sharing its Category
+// version file replacement stands in for: replacement itself when it is
+// one of them (#643), else the first one sharing its Category
 // (compared case-insensitively, like installFileCategoryPriority), else the
 // first one sharing its IsPrimary flag, else the first entry, else -1 when
 // there is nothing to pair. The candidates are label-identical by
@@ -137,6 +138,14 @@ func pairAmbiguousWithReplacement(ambiguous []*domain.DownloadableFile, replacem
 	if len(ambiguous) == 0 {
 		return -1
 	}
+	// #643: in a same-version update an ambiguous file is itself a
+	// candidate, and when it is the pick it stands in for itself - an
+	// unchanged optional keeps itself rather than displacing another.
+	for i, a := range ambiguous {
+		if a.ID == replacement.ID {
+			return i
+		}
+	}
 	if want := strings.ToUpper(replacement.Category); want != "" {
 		for i, a := range ambiguous {
 			if strings.ToUpper(a.Category) == want {
@@ -152,9 +161,34 @@ func pairAmbiguousWithReplacement(ambiguous []*domain.DownloadableFile, replacem
 	return 0
 }
 
+// supersededFileIDs is the set of installed file IDs a FileIDReplacements hit
+// replaced: the currentFileIDs that the remapped storedFileIDs no longer
+// carry (#643). Without a replacement map the two lists are the same and the
+// set is empty.
+func supersededFileIDs(currentFileIDs, storedFileIDs []string) map[string]bool {
+	stored := make(map[string]bool, len(storedFileIDs))
+	for _, id := range storedFileIDs {
+		stored[id] = true
+	}
+	var superseded map[string]bool
+	for _, id := range currentFileIDs {
+		if !stored[id] {
+			if superseded == nil {
+				superseded = make(map[string]bool)
+			}
+			superseded[id] = true
+		}
+	}
+	return superseded
+}
+
 // resolveUpdateSelection is selectUpdateDeployFiles' classification pass -
 // see that function's doc comment for the per-file rules it implements.
-func resolveUpdateSelection(files []domain.DownloadableFile, targetVersion, installedVersion string, storedFileIDs []string, replacedIDs map[string]bool) ([]*domain.DownloadableFile, []string, error) {
+// superseded holds the installed IDs a replacement hit already replaced
+// (#643): none of them is ever a replacement candidate, so a file is
+// replaced at most once and a superseded old main still listed under the
+// target version cannot come back as another stored file's stand-in.
+func resolveUpdateSelection(files []domain.DownloadableFile, targetVersion, installedVersion string, storedFileIDs []string, replacedIDs, superseded map[string]bool) ([]*domain.DownloadableFile, []string, error) {
 	byID := make(map[string]*domain.DownloadableFile, len(files))
 	var matches []*domain.DownloadableFile
 	for i := range files {
@@ -218,7 +252,7 @@ func resolveUpdateSelection(files []domain.DownloadableFile, targetVersion, inst
 	if needsReplacement {
 		var candidates []*domain.DownloadableFile
 		for _, m := range matches {
-			if !chosen[m.ID] {
+			if !chosen[m.ID] && !superseded[m.ID] {
 				candidates = append(candidates, m)
 			}
 		}
