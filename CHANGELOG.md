@@ -25,14 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile switch or apply, another profile, and `lmm verify --fix` rebuild
   an admitted item from it; nothing else does. A bundled item comes in only
   with its container: any other profile document naming source
-  `lmm-collection` is refused, and so is an `lmm import --source
-lmm-collection`. `lmm-collection`, `lmm-merged` and `local` are reserved:
-  a game cannot map them, and a custom source definition with one of those
-  ids is now refused (one would have collided with lmm's own mods). The
-  container is untrusted: links, devices, absolute or `..` paths,
-  backslashes, control characters, a path that is both a file and a
-  directory, and paths differing only in case are refused, never
-  rewritten, and items, files and their total size are capped. An item holding code (a DLL or other executable, a
+  `lmm-collection` is refused, and so is an
+  `lmm import --source lmm-collection`. `lmm-collection`, `lmm-merged` and
+  `local` are reserved: a game cannot map them, and a custom source
+  definition with one of those ids is now refused (one would have collided
+  with lmm's own mods; rename it, and relink its mods with
+  `lmm mod edit --source`). The container is untrusted: links, devices,
+  absolute or `..` paths, backslashes, control characters, a path that is
+  both a file and a directory, and paths differing only in case are
+  refused, never rewritten, and items, files and their total size are
+  capped. An item holding code (a DLL or other executable, a
   system script, a loader configuration) is skipped unless
   `--allow-any-overrides` (the web UI's **Import these bundled items
   too**). A plain YAML document cannot carry files, so a bundled item in

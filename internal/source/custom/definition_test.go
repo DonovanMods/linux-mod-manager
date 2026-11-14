@@ -287,6 +287,7 @@ func TestValidate_RefusesLmmsOwnSourceIDs(t *testing.T) {
 		err := def.Validate()
 		if assert.Error(t, err, id) {
 			assert.Contains(t, err.Error(), "reserved by lmm", id)
+			assert.Contains(t, err.Error(), "lmm mod edit --source", id)
 		}
 	}
 }

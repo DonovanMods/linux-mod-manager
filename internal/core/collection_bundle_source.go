@@ -123,8 +123,9 @@ func (b *bundledSource) GetMod(ctx context.Context, gameID, modID string) (*doma
 }
 
 // GetModFiles implements source.ModSource: one file per version of the
-// item the kept containers hold, newest first - its id and version are the
-// version's digest.
+// item the kept containers hold, admitted ones first and newest first - its
+// id and version are the version's digest. A version no import admitted is
+// listed as HELD_BACK, never primary, and Fetch refuses it.
 func (b *bundledSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
 	game, err := b.gameFor(ctx, mod.GameID)
 	if err != nil {
@@ -139,6 +140,10 @@ func (b *bundledSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]dom
 		files[i] = domain.DownloadableFile{
 			ID: v.digest, Name: v.name, FileName: v.name, Version: v.digest, Size: v.bytes,
 			IsPrimary: true, Category: "MAIN",
+		}
+		if v.heldBack {
+			files[i].IsPrimary, files[i].Category = false, "HELD_BACK"
+			files[i].Description = "held back by its import: import the collection's .lmmc again (with --allow-any-overrides, for an item holding code)"
 		}
 	}
 	return files, nil
@@ -170,6 +175,9 @@ type bundledVersion struct {
 	name   string
 	digest string
 	bytes  int64
+	// heldBack marks a version kept but never admitted: listed, never
+	// fetched.
+	heldBack bool
 }
 
 // extractBundledItem writes item's files under dir, which must not exist:

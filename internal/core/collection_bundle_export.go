@@ -189,8 +189,13 @@ func (s *Service) bundleItems(ctx context.Context, game *domain.Game, profileNam
 		return nil, fmt.Errorf("%w: it would bundle %d items, over the %d an import accepts", ErrBundleTooLarge, len(out), maxBundleItems)
 	}
 	var total int64
+	members := 1 // collection.yaml
 	for _, b := range out {
 		total += b.item.bytes
+		members += len(b.item.members)
+	}
+	if members > maxCollectionMembers {
+		return nil, fmt.Errorf("%w: the container would hold %d members, over the %d an import accepts", ErrBundleTooLarge, members, maxCollectionMembers)
 	}
 	if total > maxBundleBytes {
 		return nil, fmt.Errorf("%w: the bundled files are %d bytes together, over the %d an import accepts", ErrBundleTooLarge, total, maxBundleBytes)
@@ -285,7 +290,7 @@ func bundledItemFromCache(gameCache *cache.Cache, key cache.Key) (*bundledItem, 
 	if len(rels) == 0 {
 		return nil, fmt.Errorf("%w: it has no installed files (lmm verify --fix repairs a damaged cache)", ErrInvalidBundle)
 	}
-	item := &bundledItem{}
+	item := &bundledItem{paths: map[string]bool{}, dirs: map[string]bool{}}
 	for _, rel := range rels {
 		slash := filepath.ToSlash(rel)
 		if err := checkBundleMemberName(slash); err != nil {
@@ -301,6 +306,11 @@ func bundledItemFromCache(gameCache *cache.Cache, key cache.Key) (*bundledItem, 
 		}
 		if info.Size() > maxBundleFileBytes {
 			return nil, fmt.Errorf("%w: %s is %d bytes, over the %d-byte limit for one bundled file", ErrBundleTooLarge, slash, info.Size(), maxBundleFileBytes)
+		}
+		// The importer's own clash rules (#623 re-review): two names that
+		// differ only in case, or a file where a directory is.
+		if err := item.addFile(slash, slash); err != nil {
+			return nil, err
 		}
 		item.members = append(item.members, bundleMember{rel: slash, size: info.Size(), open: func() (io.ReadCloser, error) { return os.Open(full) }})
 		item.bytes += info.Size()

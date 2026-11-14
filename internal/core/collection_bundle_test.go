@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -617,4 +618,104 @@ func TestBundledCollection_ReservedSourceIDsAreNeverAGamesSource(t *testing.T) {
 		_, err = svc.GetSource(id)
 		assert.Error(t, err, "%s is no registered source", id)
 	}
+}
+
+// TestBundledCollection_AnAdmittedItemInstalls is the #623 re-review's
+// must-fix 1: an admitted item's PlanInstall AND ApplyInstall succeed - the
+// apply resolves the source the plan names through the install path, not
+// the registry.
+func TestBundledCollection_AnAdmittedItemInstalls(t *testing.T) {
+	svc, game := bundledFixture(t)
+	ctx := context.Background()
+	_, _, err := importBundled(t, svc, game, patchContainer(t), core.ProfileImportOptions{NoInstall: true})
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(game.ModPath, "patch.esp"))
+
+	plan, err := svc.PlanInstall(ctx, game, "coop", domain.SourceCollection, "c0ffee.patch", false)
+	require.NoError(t, err)
+	assert.Empty(t, plan.DependencyWarnings, "a bundled item has no dependencies to look up")
+	_, err = svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	got, err := os.ReadFile(filepath.Join(game.ModPath, "patch.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, "PATCH", string(got))
+}
+
+// localFilesFixture is localModFixture with u-1's cache entry holding
+// files instead of its one tweak.
+func localFilesFixture(t *testing.T, files map[string]string) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, game := localModFixture(t)
+	key := cache.Key{GameID: game.ID, SourceID: "local", ModID: "u-1", Version: "1.0"}
+	for name, content := range files {
+		require.NoError(t, svc.GetGameCache(game).Store(key, name, []byte(content)))
+	}
+	return svc, game
+}
+
+// TestBundledCollection_TheExportCheckKeepsToTheImportersRules is the
+// re-review's must-fix 2: what CheckCollectionExport passes, the download
+// builds and an import accepts - the member cap and case-only duplicates
+// included.
+func TestBundledCollection_TheExportCheckKeepsToTheImportersRules(t *testing.T) {
+	ctx := context.Background()
+	opts := core.CollectionExportOptions{Bundle: []string{"local:u-1"}}
+	t.Run("over the member cap", func(t *testing.T) {
+		files := map[string]string{}
+		for i := range 4200 {
+			files[fmt.Sprintf("f/%04d", i)] = "x"
+		}
+		svc, game := localFilesFixture(t, files)
+		_, err := svc.RecordCollectionIdentity(ctx, game.ID, "mine", core.CollectionExportOptions{})
+		require.NoError(t, err)
+		err = svc.CheckCollectionExport(ctx, game.ID, "mine", opts)
+		require.Error(t, err)
+		assert.True(t, core.IsBundleRefused(err), "%v", err)
+		assert.Contains(t, err.Error(), "members")
+	})
+	t.Run("case-only duplicates", func(t *testing.T) {
+		svc, game := localFilesFixture(t, map[string]string{"A.esp": "a", "a.esp": "b"})
+		_, err := svc.RecordCollectionIdentity(ctx, game.ID, "mine", core.CollectionExportOptions{})
+		require.NoError(t, err)
+		err = svc.CheckCollectionExport(ctx, game.ID, "mine", opts)
+		require.Error(t, err)
+		assert.True(t, core.IsBundleRefused(err), "%v", err)
+		assert.Contains(t, err.Error(), "only in case")
+	})
+	t.Run("a clean bundle passes", func(t *testing.T) {
+		svc, game := localFilesFixture(t, map[string]string{"x.esp": "x"})
+		_, err := svc.RecordCollectionIdentity(ctx, game.ID, "mine", core.CollectionExportOptions{})
+		require.NoError(t, err)
+		require.NoError(t, svc.CheckCollectionExport(ctx, game.ID, "mine", opts))
+	})
+}
+
+// TestBundledCollection_APinnedHeldBackVersionSaysToImportAgain is the
+// re-review's nit: a profile pinning a version no import admitted, which a
+// newer admitted version replaced, fails saying to import the collection
+// again - not that the version is gone upstream.
+func TestBundledCollection_APinnedHeldBackVersionSaysToImportAgain(t *testing.T) {
+	svc, game := bundledFixture(t)
+	ctx := context.Background()
+	held := heldBackTool(t, svc, game)
+	clean := bundleContainer(t, strings.Replace(bundledDoc, "mod_id: patch", "mod_id: tool", 1),
+		bundleMember{name: "files/tool/readme.txt", content: "hi, no code"})
+	_, _, err := importBundled(t, svc, game, clean, core.ProfileImportOptions{Install: true, Force: true})
+	require.NoError(t, err)
+
+	profile, err := config.LoadProfile(svc.ConfigDir(), game.ID, "coop")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	require.NotEqual(t, held, profile.Mods[0].Version)
+	profile.Mods[0].Version, profile.Mods[0].FileIDs = held, []string{held}
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
+
+	plan, err := svc.PlanProfileApply(ctx, game, "coop")
+	if err == nil {
+		_, err = svc.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, nil)
+	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "import the collection's .lmmc again")
+	assert.NotContains(t, err.Error(), "upstream")
+	assert.NoFileExists(t, filepath.Join(game.ModPath, "bin", "helper.dll"))
 }

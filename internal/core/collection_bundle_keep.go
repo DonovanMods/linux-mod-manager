@@ -188,6 +188,12 @@ type keptEntry struct {
 // admittedItems lists the admitted versions of modID's item the kept
 // containers' indexes record, newest index first, each version once.
 func (s *Service) admittedItems(game *domain.Game, modID string) (item string, out []keptEntry, err error) {
+	return s.keptItems(game, modID, true)
+}
+
+// keptItems is admittedItems; admitted false lists instead the versions the
+// indexes record but no import admitted (held back, or named by no entry).
+func (s *Service) keptItems(game *domain.Game, modID string, admitted bool) (item string, out []keptEntry, err error) {
 	collectionID, item, ok := splitBundledModID(modID)
 	if !ok {
 		return "", nil, fmt.Errorf("%w: %q is not a bundled item's id (<collection id>.<item>)", ErrInvalidBundle, modID)
@@ -217,7 +223,7 @@ func (s *Service) admittedItems(game *domain.Game, modID string) (item string, o
 		if err != nil {
 			continue
 		}
-		if it, ok := index.Items[item]; ok && it.Admitted && len(it.Version) == bundleVersionLen && strings.HasPrefix(it.Digest, it.Version) {
+		if it, ok := index.Items[item]; ok && it.Admitted == admitted && len(it.Version) == bundleVersionLen && strings.HasPrefix(it.Digest, it.Version) {
 			container := filepath.Join(dir, strings.TrimSuffix(e.Name(), keptIndexSuffix)+CollectionContainerExt)
 			all = append(all, found{keptEntry{container: container, item: it}, info.ModTime().UnixNano()})
 		}
@@ -245,8 +251,24 @@ func (s *Service) bundledVersions(game *domain.Game, modID string) ([]bundledVer
 		return nil, fmt.Errorf("%w: %s (import the collection's .lmmc again; an item holding code needs --allow-any-overrides)", ErrBundleNotKept, modID)
 	}
 	out := make([]bundledVersion, len(entries))
+	seen := map[string]bool{}
 	for i, e := range entries {
 		out[i] = bundledVersion{name: firstNonEmpty(e.item.Name, item), digest: e.item.Version, bytes: e.item.Bytes}
+		seen[e.item.Version] = true
+	}
+	// A version kept but never admitted is listed too, held back: a
+	// profile pinning one then fails at the fetch, which says to import the
+	// collection again, rather than at a selection that calls the version
+	// gone upstream. It is never primary, and the fetch refuses it.
+	_, held, err := s.keptItems(game, modID, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range held {
+		if !seen[e.item.Version] {
+			seen[e.item.Version] = true
+			out = append(out, bundledVersion{name: firstNonEmpty(e.item.Name, item), digest: e.item.Version, bytes: e.item.Bytes, heldBack: true})
+		}
 	}
 	return out, nil
 }
