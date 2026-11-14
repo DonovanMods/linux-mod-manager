@@ -225,7 +225,7 @@ func readManifestFixture(t *testing.T, name string) source.CollectionManifest {
 	return m
 }
 
-func unknownKeys(m source.CollectionManifest) []string {
+func unknownKeyNames(m source.CollectionManifest) []string {
 	var out []string
 	for _, u := range m.Unknown {
 		out = append(out, u.Key)
@@ -374,8 +374,10 @@ func TestParseManifest_UnknownAndEmptyKeys(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{
 		"info.futureInfo", "loadOrder", "mergedData", "collectionConfig.brandNew",
-		"modRules.reference.oddKey", "mods.source.sourceNew", "mods.details.detailNew", "mods.modNew",
-	}, unknownKeys(m), "extensionVersion is informational; empty values are absent")
+		"mods.source.sourceNew", "mods.details.detailNew", "mods.modNew",
+	}, unknownKeyNames(m), "extensionVersion is informational; empty values are absent")
+	assert.Equal(t, []string{"reference.oddKey"}, m.ModRules[0].Unknown,
+		"a rule's unknown key is the rule's: it matters only if the rule is applied")
 	for _, u := range m.Unknown {
 		if strings.HasPrefix(u.Key, "mods.") {
 			assert.Equal(t, "M", u.Item)
@@ -406,4 +408,44 @@ func TestParseManifest_Refusals(t *testing.T) {
 	big := make([]byte, maxManifestBytes+1)
 	_, err = nm.ParseManifest(fstest.MapFS{"collection.json": {Data: big}})
 	assert.ErrorIs(t, err, source.ErrInvalidManifest)
+}
+
+func TestParseManifest_KeysMatchExactlyAtEveryLevel(t *testing.T) {
+	doc := `{
+		"info": {"name": "C", "domainName": "skyrimspecialedition"},
+		"mods": [{"name": "M", "domainName": "fallout4", "phase": 0,
+			"source": {"type": "nexus", "modId": 1, "fileId": 2, "updatePolicy": "exact"},
+			"choices": {"type": "fomod", "options": [
+				{"name": "S", "groups": [{"name": "G", "choices": [{"name": "A", "idx": 1, "extra": true}]}], "stepNew": 1},
+				{"Name": "Wrong case", "groups": []}
+			]},
+			"hashes": [{"path": "a.txt", "md5": "x", "MD5": "y"}]
+		}]
+	}`
+	m, err := New(nil, "").ParseManifest(fstest.MapFS{"collection.json": {Data: []byte(doc)}})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{
+		"mods.choices.options.stepNew", "mods.choices.options.Name",
+		"mods.choices.options.groups.choices.extra", "mods.hashes.MD5",
+	}, unknownKeyNames(m), "Name is not name")
+	mod := m.Mods[0]
+	assert.Equal(t, "fallout4", mod.DomainName, "the item's own game is read")
+	require.Len(t, mod.Choices, 2)
+	assert.Equal(t, "", mod.Choices[1].Name, "the wrong-case key is not taken for the name")
+	assert.Equal(t, 1, mod.Choices[0].Groups[0].Choices[0].Idx)
+	assert.Equal(t, []source.ManifestFileHash{{Path: "a.txt", MD5: "x"}}, mod.FileList)
+}
+
+func TestResolveGameCollection_RefusesAnotherGamesCollection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":{"collectionRevision":{"revisionNumber":2,"downloadLink":"/v2/collections/9/revisions/1/download_link",
+			"collection":{"slug":"abcdef","name":"C","game":{"domainName":"fallout4"}},"externalResources":[],"modFiles":[]}}}`)
+	}))
+	t.Cleanup(srv.Close)
+	nm := New(nil, "testapikey")
+	nm.client.graphqlURL = srv.URL
+	_, err := nm.ResolveGameCollection(context.Background(), "skyrimspecialedition", "abcdef")
+	require.ErrorIs(t, err, source.ErrInvalidReference, "the API's own answer names another game: never imported into this one")
+	assert.Contains(t, err.Error(), "fallout4")
 }

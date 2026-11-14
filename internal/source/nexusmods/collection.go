@@ -239,6 +239,10 @@ func (n *NexusMods) ResolveGameCollection(ctx context.Context, gameSourceID, ref
 	if rev == nil {
 		return source.Collection{}, fmt.Errorf("%w: NexusMods has no collection %s for %s", source.ErrInvalidReference, r.slug, gameSourceID)
 	}
+	if d := rev.Collection.Game.DomainName; d != "" && d != gameSourceID {
+		return source.Collection{}, fmt.Errorf("%w: NexusMods says collection %s is for %s, not %s",
+			source.ErrInvalidReference, r.slug, d, gameSourceID)
+	}
 	slug := rev.Collection.Slug
 	if slug == "" {
 		slug = r.slug
@@ -424,6 +428,10 @@ var (
 	pluginRuleKeys    = keySet("name", "group", "after")
 	pluginGroupKeys   = keySet("name", "after")
 	fileLoadOrderKeys = keySet("id", "entries")
+	hashKeys          = keySet("path", "md5", "xxh64")
+	choiceStepKeys    = keySet("name", "groups")
+	choiceGroupKeys   = keySet("name", "choices")
+	choiceOptionKeys  = keySet("name", "idx")
 )
 
 func keySet(keys ...string) map[string]bool {
@@ -521,17 +529,24 @@ func isEmpty(raw json.RawMessage) bool {
 	return false
 }
 
-// note records obj's non-empty keys outside known as unknown, under
-// prefix, on item.
-func (p *manifestParser) note(obj map[string]json.RawMessage, known map[string]bool, prefix, item string) {
-	keys := make([]string, 0, len(obj))
+// unknownKeys is obj's non-empty keys outside known, under prefix, in name
+// order. Keys match exactly: Vortex writes camelCase, and a key that differs
+// only in case is not one lmm knows.
+func unknownKeys(obj map[string]json.RawMessage, known map[string]bool, prefix string) []string {
+	var keys []string
 	for k, v := range obj {
 		if !known[k] && !isEmpty(v) {
-			keys = append(keys, k)
+			keys = append(keys, prefix+k)
 		}
 	}
 	slices.Sort(keys)
-	for _, k := range keys {
+	return keys
+}
+
+// note records obj's non-empty keys outside known as unknown, under
+// prefix, on item.
+func (p *manifestParser) note(obj map[string]json.RawMessage, known map[string]bool, prefix, item string) {
+	for _, k := range unknownKeys(obj, known, "") {
 		idx := -1
 		if item != "" || strings.HasPrefix(prefix, "mods.") {
 			idx = p.modIndex
@@ -715,6 +730,9 @@ func (p *manifestParser) mod(raw json.RawMessage) (source.ManifestMod, error) {
 	if mod.Author, err = str(obj, "author"); err != nil {
 		return mod, err
 	}
+	if mod.DomainName, err = str(obj, "domainName"); err != nil {
+		return mod, err
+	}
 	if mod.Optional, err = boolean(obj, "optional", false); err != nil {
 		return mod, err
 	}
@@ -787,10 +805,8 @@ func (p *manifestParser) mod(raw json.RawMessage) (source.ManifestMod, error) {
 		if mod.InstallerType == "" {
 			mod.InstallerType = "unknown"
 		}
-		if raw := choices["options"]; !isEmpty(raw) {
-			if err := json.Unmarshal(raw, &mod.Choices); err != nil {
-				return mod, fmt.Errorf("choices.options is not a list of steps: %v", err)
-			}
+		if mod.Choices, err = p.choiceSteps(choices["options"], mod.Name); err != nil {
+			return mod, fmt.Errorf("choices.options: %v", err)
 		}
 	}
 
@@ -798,15 +814,20 @@ func (p *manifestParser) mod(raw json.RawMessage) (source.ManifestMod, error) {
 	if err != nil {
 		return mod, err
 	}
-	for _, raw := range hashes {
-		var h struct {
-			Path string `json:"path"`
-			MD5  string `json:"md5"`
+	for i, raw := range hashes {
+		h, err := object(raw, fmt.Sprintf("hashes[%d]", i))
+		if err != nil {
+			return mod, err
 		}
-		if err := json.Unmarshal(raw, &h); err != nil {
-			return mod, fmt.Errorf("hashes: %v", err)
+		p.note(h, hashKeys, "mods.hashes.", mod.Name)
+		var entry source.ManifestFileHash
+		if entry.Path, err = str(h, "path"); err != nil {
+			return mod, fmt.Errorf("hashes[%d].%v", i, err)
 		}
-		mod.FileList = append(mod.FileList, source.ManifestFileHash{Path: h.Path, MD5: h.MD5})
+		if entry.MD5, err = str(h, "md5"); err != nil {
+			return mod, fmt.Errorf("hashes[%d].%v", i, err)
+		}
+		mod.FileList = append(mod.FileList, entry)
 	}
 
 	if raw := obj["patches"]; !isEmpty(raw) {
@@ -817,13 +838,81 @@ func (p *manifestParser) mod(raw json.RawMessage) (source.ManifestMod, error) {
 	return mod, nil
 }
 
-func (p *manifestParser) ref(raw json.RawMessage, side string) (source.ManifestModRef, error) {
+// choiceSteps reads a FOMOD choices block's options - steps, their groups,
+// and each group's picks - key by key, exactly as Vortex writes them, so an
+// unknown key at any level is reported rather than ignored, and a key that
+// differs only in case is not taken for a known one. An empty pick list is
+// kept as an empty (non-nil) list: it is the answer "pick nothing".
+func (p *manifestParser) choiceSteps(raw json.RawMessage, item string) ([]domain.FomodStepChoice, error) {
+	steps, err := array(raw, "options")
+	if err != nil {
+		return nil, err
+	}
+	var out []domain.FomodStepChoice
+	for i, raw := range steps {
+		obj, err := object(raw, fmt.Sprintf("step %d", i))
+		if err != nil {
+			return nil, err
+		}
+		p.note(obj, choiceStepKeys, "mods.choices.options.", item)
+		var step domain.FomodStepChoice
+		if step.Name, err = str(obj, "name"); err != nil {
+			return nil, err
+		}
+		groups, err := array(obj["groups"], "groups")
+		if err != nil {
+			return nil, err
+		}
+		step.Groups = []domain.FomodGroupChoice{}
+		for j, raw := range groups {
+			gobj, err := object(raw, fmt.Sprintf("group %d", j))
+			if err != nil {
+				return nil, err
+			}
+			p.note(gobj, choiceGroupKeys, "mods.choices.options.groups.", item)
+			var group domain.FomodGroupChoice
+			if group.Name, err = str(gobj, "name"); err != nil {
+				return nil, err
+			}
+			picks, err := array(gobj["choices"], "choices")
+			if err != nil {
+				return nil, err
+			}
+			group.Choices = []domain.FomodOptionChoice{}
+			for k, raw := range picks {
+				cobj, err := object(raw, fmt.Sprintf("choice %d", k))
+				if err != nil {
+					return nil, err
+				}
+				p.note(cobj, choiceOptionKeys, "mods.choices.options.groups.choices.", item)
+				var pick domain.FomodOptionChoice
+				if pick.Name, err = str(cobj, "name"); err != nil {
+					return nil, err
+				}
+				idx, err := integer(cobj, "idx")
+				if err != nil {
+					return nil, err
+				}
+				if idx < 0 || idx > 1<<20 {
+					return nil, fmt.Errorf("choice idx %d is out of range", idx)
+				}
+				pick.Idx = int(idx)
+				group.Choices = append(group.Choices, pick)
+			}
+			step.Groups = append(step.Groups, group)
+		}
+		out = append(out, step)
+	}
+	return out, nil
+}
+
+func (p *manifestParser) ref(raw json.RawMessage, side string, unknown *[]string) (source.ManifestModRef, error) {
 	var r source.ManifestModRef
 	obj, err := object(raw, side)
 	if err != nil {
 		return r, err
 	}
-	p.note(obj, refKeys, "modRules."+side+".", "")
+	*unknown = append(*unknown, unknownKeys(obj, refKeys, side+".")...)
 	for key, dst := range map[string]*string{
 		"fileMD5": &r.FileMD5, "logicalFileName": &r.LogicalFileName, "versionMatch": &r.VersionMatch,
 		"fileExpression": &r.FileExpression, "idHint": &r.IDHint, "tag": &r.Tag,
@@ -841,14 +930,14 @@ func (p *manifestParser) rule(raw json.RawMessage) (source.ManifestModRule, erro
 	if err != nil {
 		return r, err
 	}
-	p.note(obj, ruleKeys, "modRules.", "")
+	r.Unknown = unknownKeys(obj, ruleKeys, "")
 	if r.Type, err = str(obj, "type"); err != nil {
 		return r, err
 	}
-	if r.Source, err = p.ref(obj["source"], "source"); err != nil {
+	if r.Source, err = p.ref(obj["source"], "source", &r.Unknown); err != nil {
 		return r, err
 	}
-	if r.Reference, err = p.ref(obj["reference"], "reference"); err != nil {
+	if r.Reference, err = p.ref(obj["reference"], "reference", &r.Unknown); err != nil {
 		return r, err
 	}
 	return r, nil

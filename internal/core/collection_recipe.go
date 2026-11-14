@@ -11,13 +11,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
+	"io"
+	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -96,9 +99,15 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 
 	dir, err := s.fetchCollectionRecipe(ctx, game, sourceID, fetcher, list)
 	if err == nil {
-		var m source.CollectionManifest
-		if m, err = fetcher.ParseManifest(os.DirFS(dir)); err == nil {
-			in.manifest = &m
+		// Read through an os.Root: nothing the parser opens can leave the
+		// entry, whatever is in it.
+		var root *os.Root
+		if root, err = os.OpenRoot(dir); err == nil {
+			var m source.CollectionManifest
+			if m, err = fetcher.ParseManifest(root.FS()); err == nil {
+				in.manifest = &m
+			}
+			_ = root.Close()
 		}
 	}
 	if err != nil {
@@ -107,7 +116,7 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 		}
 		in.manifestErr = recipeErrorText(err)
 	}
-	return convertCollection(in), nil
+	return convertCollection(in)
 }
 
 // modTypeRouted reports whether game's adapter knows where a mod of the
@@ -145,7 +154,7 @@ func recipeErrorText(err error) string {
 // game's cache root (its cache_path, or the global cache's game directory,
 // as mod entries are), then collections/<source>-<slug>/<revision>/.
 func (s *Service) collectionCacheDir(game *domain.Game, sourceID, slug string, revision int) (string, error) {
-	if !safeCollectionSegment.MatchString(sourceID) || !safeCollectionSegment.MatchString(slug) || revision < 0 {
+	if !safeCollectionSegment.MatchString(sourceID) || !safeCollectionSegment.MatchString(slug) || revision <= 0 {
 		return "", fmt.Errorf("collection %q on %q cannot name a cache entry", slug, sourceID)
 	}
 	root := filepath.Join(s.cacheDir, game.ID)
@@ -155,18 +164,38 @@ func (s *Service) collectionCacheDir(game *domain.Game, sourceID, slug string, r
 	return filepath.Join(root, "collections", sourceID+"-"+slug, strconv.Itoa(revision)), nil
 }
 
-// fetchCollectionRecipe returns the directory holding list's extracted
-// recipe: the cache entry when it is already there, else downloaded and
-// extracted into staging and moved into place whole, so an entry is never
-// half-written. The archive's signed link is a credential, so no error
-// returned here contains it.
+// fetchCollectionRecipe returns the directory holding list's recipe
+// manifest: the cache entry when it is already there, else downloaded,
+// checked, and its collection.json alone extracted into staging and moved
+// into place whole, so an entry is never half-written.
+//
+// The archive is a stranger's file, so (#607 review 2, 3):
+//
+//   - the download is capped as it is written (maxCollectionRecipeBytes);
+//   - the archive is listed before anything is extracted, and refused
+//     unless it holds exactly one top-level collection.json that is a
+//     regular file within the manifest cap - a highly compressed bomb, a
+//     directory or a symlink named collection.json is never extracted;
+//   - only that one member is extracted (bundled/ and patches/ wait for
+//     C5, which needs them), and the extracted tree is walked without
+//     following links: anything but a regular file or a directory refuses;
+//   - a cached entry is trusted only as a regular collection.json within
+//     the cap; anything else is removed and fetched again.
+//
+// The archive's signed link is a credential, so no error returned here
+// contains it.
 func (s *Service) fetchCollectionRecipe(ctx context.Context, game *domain.Game, sourceID string, fetcher source.CollectionManifestFetcher, list source.Collection) (string, error) {
 	dir, err := s.collectionCacheDir(game, sourceID, list.ID, list.Revision)
 	if err != nil {
 		return "", err
 	}
-	if info, err := os.Stat(filepath.Join(dir, collectionRecipeManifest)); err == nil && info.Mode().IsRegular() {
+	if err := checkRecipeTree(dir); err == nil {
 		return dir, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		// Not what lmm writes: fetch it again rather than read it.
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			return "", fmt.Errorf("replacing the recipe cache entry: %w", rmErr)
+		}
 	}
 	// Every recipe is a .7z (VERIFIED across the survey): say so before
 	// downloading anything.
@@ -184,34 +213,183 @@ func (s *Service) fetchCollectionRecipe(ctx context.Context, game *domain.Game, 
 	defer func() { _ = os.RemoveAll(staging) }()
 
 	archive := filepath.Join(staging, "recipe.7z")
-	result, err := s.downloader.Download(ctx, link, archive, nil)
-	if err != nil {
+	if err := s.downloadRecipe(ctx, link, archive); err != nil {
 		return "", redactLink(fmt.Errorf("downloading the recipe: %w", err), link)
 	}
-	if result != nil && result.Size > maxCollectionRecipeBytes {
-		return "", fmt.Errorf("the recipe archive is %d bytes, over the %d-byte limit", result.Size, maxCollectionRecipeBytes)
+	if err := checkRecipeListing(ctx, archive); err != nil {
+		return "", err
 	}
 	tree := filepath.Join(staging, "tree")
 	if err := os.Mkdir(tree, 0o700); err != nil {
 		return "", err
 	}
-	if err := s.extractor.Extract(ctx, archive, tree); err != nil {
-		return "", redactLink(fmt.Errorf("extracting the recipe: %w", err), link)
+	if err := extractRecipeManifest(ctx, archive, tree); err != nil {
+		return "", err
 	}
-	if info, err := os.Stat(filepath.Join(tree, collectionRecipeManifest)); err != nil || !info.Mode().IsRegular() {
-		return "", fmt.Errorf("%w: the recipe archive holds no %s", source.ErrInvalidManifest, collectionRecipeManifest)
+	if err := checkRecipeTree(tree); err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return "", err
 	}
-	if err := os.Rename(tree, dir); err != nil {
+	if err := renameRecipe(tree, dir); err != nil {
 		// Another plan of the same revision may have put it there first.
-		if info, statErr := os.Stat(filepath.Join(dir, collectionRecipeManifest)); statErr == nil && info.Mode().IsRegular() {
+		if checkRecipeTree(dir) == nil {
 			return dir, nil
 		}
-		return "", fmt.Errorf("keeping the recipe: %w", err)
+		if !errors.Is(err, syscall.EXDEV) {
+			return "", fmt.Errorf("keeping the recipe: %w", err)
+		}
+		// A cache_path on another filesystem than the data directory's
+		// staging: copy into a sibling of the entry, then rename there.
+		tmp, mkErr := os.MkdirTemp(filepath.Dir(dir), ".recipe-*")
+		if mkErr != nil {
+			return "", fmt.Errorf("keeping the recipe: %w", mkErr)
+		}
+		defer func() { _ = os.RemoveAll(tmp) }()
+		if err := copyDir(ctx, tree, tmp); err != nil {
+			return "", fmt.Errorf("keeping the recipe: %w", err)
+		}
+		if err := os.Rename(tmp, dir); err != nil {
+			if checkRecipeTree(dir) == nil {
+				return dir, nil
+			}
+			return "", fmt.Errorf("keeping the recipe: %w", err)
+		}
 	}
 	return dir, nil
+}
+
+// renameRecipe moves an extracted recipe into the cache; a seam for the
+// cross-device test.
+var renameRecipe = os.Rename
+
+// maxCollectionManifestBytes caps a recipe's collection.json: the largest
+// surveyed (2,444 items) is about 2 MB.
+const maxCollectionManifestBytes = 32 << 20
+
+// downloadRecipe GETs link into dest, refusing a body over
+// maxCollectionRecipeBytes as it arrives rather than after it is written.
+func (s *Service) downloadRecipe(ctx context.Context, link, dest string) (err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := s.downloader.redirectSafeClient(nil).Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP error: %s", statusText(resp))
+	}
+	if resp.ContentLength > maxCollectionRecipeBytes {
+		return fmt.Errorf("the recipe archive is %d bytes, over the %d-byte limit", resp.ContentLength, maxCollectionRecipeBytes)
+	}
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+	}()
+	n, err := io.Copy(f, io.LimitReader(resp.Body, maxCollectionRecipeBytes+1))
+	if err != nil {
+		return err
+	}
+	if n > maxCollectionRecipeBytes {
+		return fmt.Errorf("the recipe archive is over the %d-byte limit", maxCollectionRecipeBytes)
+	}
+	return nil
+}
+
+// checkRecipeListing lists archive (7z l -slt) and refuses it unless it
+// holds exactly one top-level collection.json that is a regular file within
+// maxCollectionManifestBytes - checked BEFORE anything is extracted, so a
+// highly compressed member is never inflated.
+func checkRecipeListing(ctx context.Context, archive string) error {
+	out, err := exec.CommandContext(ctx, "7z", "l", "-slt", "--", archive).Output()
+	if err != nil {
+		return fmt.Errorf("%w: listing the recipe archive: %v", source.ErrInvalidManifest, err)
+	}
+	_, body, ok := strings.Cut(string(out), "\n----------\n")
+	if !ok {
+		return fmt.Errorf("%w: the recipe archive's listing is not 7z's", source.ErrInvalidManifest)
+	}
+	var found int
+	for block := range strings.SplitSeq(body, "\n\n") {
+		fields := map[string]string{}
+		for line := range strings.Lines(block) {
+			if k, v, ok := strings.Cut(strings.TrimRight(line, "\r\n"), " = "); ok {
+				fields[k] = v
+			}
+		}
+		if fields["Path"] != collectionRecipeManifest {
+			continue
+		}
+		found++
+		mode := ""
+		if attrs := strings.Fields(fields["Attributes"]); len(attrs) > 1 {
+			mode = attrs[1]
+		}
+		if fields["Folder"] == "+" || strings.HasPrefix(mode, "d") || strings.HasPrefix(mode, "l") || strings.Contains(fields["Attributes"], "D") {
+			return fmt.Errorf("%w: the recipe's %s is not a regular file", source.ErrInvalidManifest, collectionRecipeManifest)
+		}
+		size, err := strconv.ParseInt(fields["Size"], 10, 64)
+		if err != nil || size < 0 {
+			return fmt.Errorf("%w: the recipe's %s has no size", source.ErrInvalidManifest, collectionRecipeManifest)
+		}
+		if size > maxCollectionManifestBytes {
+			return fmt.Errorf("%w: the recipe's %s is %d bytes, over the %d-byte limit", source.ErrInvalidManifest, collectionRecipeManifest, size, maxCollectionManifestBytes)
+		}
+	}
+	switch found {
+	case 0:
+		return fmt.Errorf("%w: the recipe archive holds no %s", source.ErrInvalidManifest, collectionRecipeManifest)
+	case 1:
+		return nil
+	}
+	return fmt.Errorf("%w: the recipe archive holds %d entries named %s", source.ErrInvalidManifest, found, collectionRecipeManifest)
+}
+
+// extractRecipeManifest extracts archive's top-level collection.json, and
+// nothing else, into dest.
+func extractRecipeManifest(ctx context.Context, archive, dest string) error {
+	ctx, cancel := context.WithTimeout(ctx, extract7zTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "7z", "x", "-y", "-r-", "-o"+dest, "--", archive, collectionRecipeManifest).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: extracting the recipe: %v: %s", source.ErrInvalidManifest, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// checkRecipeTree checks an extracted (or cached) recipe entry without
+// following any link: a regular collection.json within the cap, and
+// nothing in the tree but regular files and directories. A missing entry
+// is fs.ErrNotExist.
+func checkRecipeTree(dir string) error {
+	info, err := os.Lstat(filepath.Join(dir, collectionRecipeManifest))
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: the recipe's %s is not a regular file", source.ErrInvalidManifest, collectionRecipeManifest)
+	}
+	if info.Size() > maxCollectionManifestBytes {
+		return fmt.Errorf("%w: the recipe's %s is over the %d-byte limit", source.ErrInvalidManifest, collectionRecipeManifest, maxCollectionManifestBytes)
+	}
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() && !d.IsDir() {
+			return fmt.Errorf("%w: the recipe holds %s, which is not a regular file or a directory", source.ErrInvalidManifest, d.Name())
+		}
+		return nil
+	})
 }
 
 // redactedError is an error whose text had a signed link cut out of it;
@@ -224,24 +402,16 @@ type redactedError struct {
 func (e *redactedError) Error() string { return e.msg }
 func (e *redactedError) Unwrap() error { return e.err }
 
-// redactLink removes link - whole, or its query string, in any encoding Go
-// errors print it in - from err's text.
+// redactLink removes link - the whole URL, as written or as an error
+// quotes it - from err's text. Only the URL is cut: its query values are
+// short and could occur anywhere in a message.
 func redactLink(err error, link string) error {
-	if err == nil {
-		return nil
+	if err == nil || link == "" {
+		return err
 	}
 	msg := err.Error()
-	cut := []string{link}
-	if u, perr := url.Parse(link); perr == nil && u.RawQuery != "" {
-		cut = append(cut, u.RawQuery, url.QueryEscape(u.RawQuery))
-		for _, vs := range u.Query() {
-			cut = append(cut, vs...)
-		}
-	}
-	for _, c := range cut {
-		if c != "" {
-			msg = strings.ReplaceAll(msg, c, "<signed link>")
-		}
+	for _, c := range []string{link, strconv.Quote(link)[1 : len(strconv.Quote(link))-1]} {
+		msg = strings.ReplaceAll(msg, c, "<signed link>")
 	}
 	if msg == err.Error() {
 		return err

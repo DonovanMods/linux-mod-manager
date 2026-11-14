@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -78,14 +79,26 @@ func (s *recipeSource) ParseManifest(root fs.FS) (source.CollectionManifest, err
 // when no 7z is installed, as every 7z test here does).
 func recipeArchive(t *testing.T, manifest string) []byte {
 	t.Helper()
+	return recipeArchiveOf(t, func(dir string) {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "collection.json"), []byte(manifest), 0o644))
+		require.NoError(t, os.Mkdir(filepath.Join(dir, "bundled"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "bundled", "file.txt"), []byte("bundled"), 0o644))
+	})
+}
+
+// recipeArchiveOf builds a .7z of whatever fill puts in a directory, links
+// stored as links (-snl).
+func recipeArchiveOf(t *testing.T, fill func(dir string)) []byte {
+	t.Helper()
 	if _, err := exec.LookPath("7z"); err != nil {
 		t.Skip("7z not installed")
 	}
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "collection.json"), []byte(manifest), 0o644))
-	require.NoError(t, os.Mkdir(filepath.Join(dir, "bundled"), 0o755))
+	fill(dir)
 	archive := filepath.Join(t.TempDir(), "recipe.7z")
-	out, err := exec.Command("7z", "a", "-bd", archive, filepath.Join(dir, "collection.json"), filepath.Join(dir, "bundled")).CombinedOutput()
+	cmd := exec.Command("7z", "a", "-bd", "-snl", archive, ".")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	data, err := os.ReadFile(archive)
 	require.NoError(t, err)
@@ -151,7 +164,7 @@ func TestConvertSourceCollection_FetchesCachesAndConverts(t *testing.T) {
 
 	entry := filepath.Join(f.cacheDir, "skyrim", "collections", "nexusmods-abcdef", "3")
 	assert.FileExists(t, filepath.Join(entry, "collection.json"), "the recipe is kept in its own cache entry")
-	assert.DirExists(t, filepath.Join(entry, "bundled"), "with what it ships beside the manifest")
+	assert.NoDirExists(t, filepath.Join(entry, "bundled"), "only the manifest is extracted until C5 needs the rest")
 	assert.Equal(t, int32(1), f.downloads.Load())
 
 	_, err = f.svc.ConvertSourceCollection(ctx, f.game, "nexusmods", "abcdef@3", core.CollectionConvertOptions{})
@@ -235,4 +248,70 @@ func TestConvertSourceCollection_Refusals(t *testing.T) {
 	f.src.resolveErr = errors.Join(source.ErrInvalidReference, errors.New("no such collection"))
 	_, err = f.svc.ConvertSourceCollection(ctx, f.game, "nexusmods", "zzz", core.CollectionConvertOptions{})
 	assert.True(t, core.IsBadCollectionRef(err))
+}
+
+// #607 review 2: a highly compressed collection.json is refused from the
+// archive's listing, before anything is inflated.
+func TestConvertSourceCollection_RefusesAnOversizedManifestBeforeExtracting(t *testing.T) {
+	big := `{"name": "x", "pad": "` + strings.Repeat(" ", 40<<20) + `"}`
+	f := newRecipeFixture(t, recipeArchive(t, big))
+	c, err := f.svc.ConvertSourceCollection(context.Background(), f.game, "nexusmods", "abcdef", core.CollectionConvertOptions{})
+	require.NoError(t, err)
+	assert.Contains(t, c.ManifestError, "byte limit")
+	assert.Equal(t, core.CollectionFeatureManifestUnavailable, c.Unsupported[0].Feature)
+	assert.NoDirExists(t, filepath.Join(f.cacheDir, "skyrim", "collections", "nexusmods-abcdef", "3"), "nothing is cached")
+}
+
+// #607 review 3: a collection.json that is a link - to a file anywhere -
+// is never extracted or read.
+func TestConvertSourceCollection_RefusesASymlinkedManifest(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "secret.json")
+	require.NoError(t, os.WriteFile(outside, []byte(`{"name": "SECRET"}`), 0o600))
+	archive := recipeArchiveOf(t, func(dir string) {
+		require.NoError(t, os.Symlink(outside, filepath.Join(dir, "collection.json")))
+	})
+	f := newRecipeFixture(t, archive)
+	c, err := f.svc.ConvertSourceCollection(context.Background(), f.game, "nexusmods", "abcdef", core.CollectionConvertOptions{})
+	require.NoError(t, err)
+	assert.Contains(t, c.ManifestError, "not a regular file")
+	assert.NotEqual(t, "SECRET", c.Name)
+}
+
+// A cache entry lmm did not write - its collection.json a link out of it -
+// is replaced, never read.
+func TestConvertSourceCollection_ReplacesAPlantedCacheEntry(t *testing.T) {
+	f := newRecipeFixture(t, recipeArchive(t, tinyRecipe))
+	outside := filepath.Join(t.TempDir(), "secret.json")
+	require.NoError(t, os.WriteFile(outside, []byte(`{"name": "SECRET"}`), 0o600))
+	entry := filepath.Join(f.cacheDir, "skyrim", "collections", "nexusmods-abcdef", "3")
+	require.NoError(t, os.MkdirAll(entry, 0o755))
+	require.NoError(t, os.Symlink(outside, filepath.Join(entry, "collection.json")))
+
+	c, err := f.svc.ConvertSourceCollection(context.Background(), f.game, "nexusmods", "abcdef", core.CollectionConvertOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "Recipe Name", c.Name, "the recipe was fetched again")
+	assert.Equal(t, int32(1), f.downloads.Load())
+	info, err := os.Lstat(filepath.Join(entry, "collection.json"))
+	require.NoError(t, err)
+	assert.True(t, info.Mode().IsRegular())
+}
+
+// #607 review 4: a cache_path on another filesystem than the data
+// directory's staging (EXDEV on the rename) is copied into place.
+func TestConvertSourceCollection_CacheOnAnotherFilesystem(t *testing.T) {
+	f := newRecipeFixture(t, recipeArchive(t, tinyRecipe))
+	f.game.CachePath = t.TempDir()
+	var renames int
+	t.Cleanup(core.SetRenameRecipeForTest(func(oldpath, newpath string) error {
+		renames++
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
+	}))
+	c, err := f.svc.ConvertSourceCollection(context.Background(), f.game, "nexusmods", "abcdef", core.CollectionConvertOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, c.ManifestError)
+	assert.Equal(t, 1, renames)
+	assert.FileExists(t, filepath.Join(f.game.CachePath, "collections", "nexusmods-abcdef", "3", "collection.json"))
+	matches, err := filepath.Glob(filepath.Join(f.game.CachePath, "collections", ".recipe-*"))
+	require.NoError(t, err)
+	assert.Empty(t, matches, "the copy's temporary directory is gone")
 }
