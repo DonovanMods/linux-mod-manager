@@ -501,6 +501,23 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileSyncPlanRequest{Profile: "survival"},
 		},
 		{
+			// #613: collection_update names its profile in the body, and
+			// --with-optional is plan-time, as on the import.
+			"collection_update_plan_request",
+			collectionUpdatePlanRequest{Profile: "survival", WithOptional: true},
+		},
+		{
+			// #613: every `lmm profile sync --collection` choice is an
+			// apply-time option, so the plan view's checkboxes never
+			// re-fetch the collection.
+			"collection_update_apply_request",
+			collectionUpdateApplyRequest{
+				Remove: []string{"nexusmods:2"}, RemoveObsolete: true,
+				Override: []string{"nexusmods:4"}, OverrideConflicts: true,
+				AllowAnyOverrides: true, Fomod: sampleServeFomodAnswers(),
+			},
+		},
+		{
 			// issue 269's workshop adopt: refresh is the ONE choice it
 			// offers, and it is a plan-time one - the decision itself is
 			// expressed by starting the job or not. Its apply struct has

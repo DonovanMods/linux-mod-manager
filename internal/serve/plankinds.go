@@ -197,6 +197,11 @@ func planErrorStatus(err error) int {
 	// error, is the remote end's failure, not the request's.
 	case core.IsCollectionFetchFailed(err):
 		return http.StatusBadGateway
+	// #613: a profile with no origin to update from, or an origin now
+	// serving another collection or an older version, is the profile's
+	// state refusing the request, as a moved mod_path is.
+	case core.IsCollectionNotUpdatable(err), core.IsCollectionUpdateMismatch(err):
+		return http.StatusConflict
 	case errors.Is(err, errBadPlanRequest):
 		return http.StatusBadRequest
 	case errors.Is(err, core.ErrProfileNotActive), errors.Is(err, core.ErrActiveProfileUnknown):

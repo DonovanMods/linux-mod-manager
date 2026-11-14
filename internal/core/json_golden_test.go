@@ -1569,6 +1569,11 @@ func TestJSONGoldens(t *testing.T) {
 			core.ProfileSummary{Name: "default", ModCount: 3, IsDefault: true},
 		},
 		{
+			// #613: a collection profile names where it updates from.
+			"profile_summary_collection",
+			core.ProfileSummary{Name: "coll", ModCount: 2, CollectionOrigin: core.CollectionFromURL},
+		},
+		{
 			// `lmm game show-default --json`'s document (#309): the fully
 			// populated shape - a game with no default set is the
 			// zero-value core.DefaultGame{}, already covered by every
