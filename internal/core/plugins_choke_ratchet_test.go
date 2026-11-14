@@ -128,7 +128,7 @@ func changesDeployment(fn *coreFunc, c *coreCall) bool {
 		return false
 	}
 	switch {
-	case c.method && (c.name == "Uninstall" || c.name == "uninstallHandingOff" || c.name == "Undeploy"):
+	case c.method && (c.name == "Uninstall" || c.name == "uninstallHandingOff" || c.name == "uninstallHandingOffExcept" || c.name == "Undeploy"):
 		return true
 	case !c.method && c.name == "purgeMods":
 		return true

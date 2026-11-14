@@ -98,7 +98,7 @@ func liveDirSite(fn *coreFunc, c *coreCall) bool {
 		return c.name == "removeDeployed"
 	}
 	switch c.name {
-	case "Uninstall", "uninstall", "uninstallHandingOff": // #633's removal that hands shared paths on
+	case "Uninstall", "uninstall", "uninstallHandingOff", "uninstallHandingOffExcept": // #633's removals that hand shared paths on
 		return isInstallerReceiver(c.recv)
 	case "Undeploy":
 		return true // a linker, bypassing the Installer
