@@ -67,7 +67,10 @@ profile sync --collection` (in the web UI, **Update collection…** beside
   to the plugin list and overrides (`collection_baseline:`); both are this
   machine's record, and no export carries them;
   and `lmm profile list --json`/`lmm status --json` profile rows carry
-  `collection_origin` (`url` or `source`) for a profile that can update.
+  `collection_origin` (`url` or `source`) for a profile that can update. A collection
+  served as a `.lmmc` with bundled items updates them as an import installs
+  them: an item holding code is held back without `--allow-any-overrides`,
+  and one the profile already has stays at its version.
 
 - **Cyberpunk 2077's archive load order (#620).** A Cyberpunk 2077 game on
   the new `cyberpunk2077` adapter (Steam detection sets it; `lmm verify`

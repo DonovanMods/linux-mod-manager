@@ -228,12 +228,14 @@ type ImportPlan struct {
 // is admitted - a profile document must not bring in an item that import
 // held back.
 func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte) (*ImportPlan, error) {
-	return s.planImport(ctx, game, data, false)
+	return s.planImport(ctx, game, data, nil)
 }
 
-// planImport is PlanImport; allowBundled lets a container's own collection
-// import (PlanCollectionImport) plan the bundled items it carries.
-func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte, allowBundled bool) (*ImportPlan, error) {
+// planImport is PlanImport; allowBundled says which bundled references
+// (#623) the document may name - a container's own items, for its
+// collection import (PlanCollectionImport), and the profile's own, for a
+// collection update - and nil allows none. Any other is refused.
+func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte, allowBundled func(domain.ModReference) bool) (*ImportPlan, error) {
 	// #451 F3: a dry run must not promise what its own Apply refuses.
 	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
 		return nil, err
@@ -248,10 +250,8 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 	if err := checkImportedProfile(profile); err != nil {
 		return nil, err
 	}
-	if !allowBundled {
-		if err := refuseBundledRefs(profile.Mods); err != nil {
-			return nil, err
-		}
+	if err := refuseBundledRefs(profile.Mods, allowBundled); err != nil {
+		return nil, err
 	}
 
 	_, existErr := pm.Get(ctx, game.ID, profile.Name)
