@@ -200,7 +200,9 @@ func CountExternalUpdates(updates []domain.Update) int {
 
 // UpdateCheckable reports whether CheckUpdates will query a source for mod.
 // Two reasons it will not: the mod is pinned (a user choice, reversible with
-// `lmm mod set-update`), or it is a local import with no remote to ask.
+// `lmm mod set-update`), or it has no remote to ask: a local import, or a
+// collection's bundled item (#623), which changes only when its collection
+// is imported again.
 //
 // Exported because both interfaces need to explain the gap between "mods
 // installed" and "mods checked" - without it, a filtered mod silently vanishes
@@ -208,12 +210,19 @@ func CountExternalUpdates(updates []domain.Update) int {
 // must use this rather than re-testing the fields, so the reported counts can
 // never drift from what CheckUpdates actually skipped.
 func UpdateCheckable(mod domain.InstalledMod) bool {
-	return mod.UpdatePolicy != domain.UpdatePinned && mod.SourceID != domain.SourceLocal
+	return mod.UpdatePolicy != domain.UpdatePinned && !noRemote(mod.SourceID)
+}
+
+// noRemote reports whether sourceID has no remote to check for updates:
+// a local import, or a collection's bundled item (#623).
+func noRemote(sourceID string) bool {
+	return sourceID == domain.SourceLocal || sourceID == domain.SourceCollection
 }
 
 // UpdateSkips counts the mods CheckUpdates will filter out, by reason. The two
 // are reported separately because the remedies differ: a pin can be lifted, a
-// local mod can never be checked.
+// local mod can never be checked. Local counts a collection's bundled items
+// (#623) too: like a local import, they have no remote.
 type UpdateSkips struct {
 	Pinned int `json:"pinned"`
 	Local  int `json:"local"`
@@ -326,7 +335,7 @@ func CountUpdateSkips(installed []domain.InstalledMod) UpdateSkips {
 		switch {
 		case mod.UpdatePolicy == domain.UpdatePinned:
 			s.Pinned++
-		case mod.SourceID == domain.SourceLocal:
+		case noRemote(mod.SourceID):
 			s.Local++
 		}
 	}

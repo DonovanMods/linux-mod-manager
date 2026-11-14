@@ -184,7 +184,7 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 
 	// Get the source so we can gate the local-ingest branch below to sources
 	// that are actually allowed to serve local files.
-	src, err := s.registry.Get(sourceID)
+	src, err := s.sourceByID(sourceID) // #623: lmm-collection included
 	if err != nil {
 		return nil, fmt.Errorf("getting source: %w", err)
 	}

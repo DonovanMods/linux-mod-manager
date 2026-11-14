@@ -9,8 +9,10 @@ is one format, the profile export, versioned: a document without the
 `lmm_collection` key is version 0, the export older versions of lmm wrote,
 and it still imports exactly as it always did.
 
-A collection points at each mod on its source. It never carries the mods
-themselves: the recipient downloads each one with their own account.
+A collection points at each mod on its source. It never carries a
+source's mods: the recipient downloads each one with their own account.
+The one exception is the author's own files - a patch, a config pack -
+which a `.lmmc` container can carry (see [Bundled files](#bundled-files)).
 
 ## Files
 
@@ -26,7 +28,7 @@ A collection is either a YAML document or a `.lmmc` container.
   | --------------------- | --------------------------------------------------------------------- |
   | `collection.yaml`     | The YAML document. Required, exactly once.                            |
   | `collection.yaml.sig` | Reserved for a detached signature (#624). Ignored, with a warning.    |
-  | `files/…`             | Reserved for an author's own bundled files (#623). Ignored, with a warning. |
+  | `files/<item>/…`      | An author's own files, one directory per bundled item (#623; see [Bundled files](#bundled-files)). |
 
   Any other member is ignored, with a warning naming it.
 
@@ -86,6 +88,10 @@ mods:                        # load order, first = lowest priority
       "100": { config_sha256: 9e0a…, steps: [ … ] }
       "101": { config_sha256: 51c7…, steps: [ … ] }
     fomod_order: ["101", "100"]  # optional: the order those files layer in (else by file id)
+  - source_id: lmm-collection # a bundled item: its files are the container's files/my-patch/
+    mod_id: my-patch
+    version: 66a0a9f0ac25f0849c1e7b3d2f5a8e60 # the digest of those files (requires: bundled)
+    name: My Patch
 external:                    # items lmm cannot fetch: listed, never downloaded
   - name: Cyber Engine Tweaks
     url: https://…
@@ -151,7 +157,9 @@ the same game id). That is why `external` items are a top-level list and not
 entries in `mods`: an older reader would take such an entry for a mod with
 no source. (The design's §12 sketch put them in `mods` with
 `kind: external`; the format moved them out for this reason.) A `.lmmc`
-container needs version 1 to read.
+container needs version 1 to read. An lmm that reads version 1 but
+predates bundled files ignores a container's `files/` with a warning, and
+refuses a document whose `requires` names `bundled`.
 
 ## Importing from a URL
 
@@ -304,6 +312,13 @@ the user's side wins unless overridden.
 Every feature gate applies to the new document: a `requires` outside the
 supported set refuses the update with nothing written.
 
+A `.lmmc` origin's bundled items (`files/<item>/`) update as an import
+installs them: the new container is kept for the `lmm-collection` source,
+an item whose files changed moves to the new digest, and an item holding
+code is held back unless the update allows any override. A held-back item
+the profile does not have is not added, and one it has stays at the
+version it has.
+
 The update converges through the import's two-phase apply: every download
 is acquired first, so a refusal (an installer's questions, or a NexusMods
 collection's failed download) writes nothing. An update planned before the
@@ -330,6 +345,130 @@ is what lets the format grow without breaking older importers.
 | `plugin_order` | a `plugins` block (the profile's plugin load order and rules) | format v1 (lmm with #616) |
 | `file_load_order:<id>` | a `load_orders` entry for that id (a file-based load order, as a NexusMods collection's `fbLoadOrders` records it: `cyberpunk2077-archive` is Cyberpunk 2077's archive order) | lmm with #620, for a game whose adapter writes that order (the `cyberpunk2077` adapter: `cyberpunk2077-archive`). Elsewhere it is refused, because the order would be saved and never applied |
 | `mod_type:<type>` | any mod with that `mod_type` (a stated mod type, as a NexusMods collection records it: `dinput` is a script extender, deployed to the game folder) | lmm with #607, for a game whose adapter routes the type (the `bethesda` adapter: `dinput`, `enb`). Elsewhere it is refused, because the mod would deploy where the game never reads it |
+| `bundled` | any mod whose `source_id` is `lmm-collection`: a bundled item, whose files the `.lmmc` carries under `files/<item>/` | format v1 (lmm with #623). An older lmm ignores `files/` with a warning and refuses the feature |
+
+## Bundled files
+
+A `.lmmc` container can carry its author's own files - a compatibility
+patch, a config pack - so a recipient gets them with the collection. It
+never carries a source's mod: lmm refuses to bundle one.
+
+**In the container.** Each bundled item is a directory, `files/<item>/`,
+holding the item's files as they deploy (the item's directory is the mod's
+root, as an extracted archive's is).
+
+**In the document.** A bundled item is a `mods:` entry whose `source_id` is
+`lmm-collection` and whose `mod_id` is the item's directory name. It keeps
+its place in the load order and takes the keys any entry takes
+(`disabled`, `category`, `mod_type`, `locked`), except installer choices
+(`fomod`, `fomod_files`): its files are installed as they are. `version`
+is the digest of its files - the first 32 hex digits (128 bits) of the
+sha256 of one line per file, in path order, `<path>\0<size>\0<sha256
+hex>\n` - which the exporter writes and the importer checks. Its presence
+requires `bundled`.
+
+```yaml
+id: 2f8c7a3e-…            # needed: a bundled item's id on the profile starts with it
+mods:
+  - source_id: lmm-collection
+    mod_id: my-patch       # the container's files/my-patch/
+    version: 66a0a9f0ac25f0849c1e7b3d2f5a8e60
+    name: My Patch
+```
+
+**On the recipient's profile** the item is source `lmm-collection` with the
+id `<collection id>.<item>` (`2f8c7a3e-….my-patch`), so two collections'
+items of the same name never meet, and its version is the digest. The same
+files always have the same version, wherever they came from.
+
+**Kept with the collection.** There is no remote to download a bundled
+item from again, so an import keeps the container under the game's cache,
+`<cache>/collections/lmm-<collection id>/<sha>.lmmc` (the first 32 hex
+digits of the container's sha256), with an index beside it, `<sha>.json`,
+recording each item's version, its full 256-bit digest, and whether the
+import **admitted** it: named by a `mods:` entry, and holding no code or
+imported with `--allow-any-overrides`. The item is installed from it like
+any mod. Every later install - a profile switch or apply, another profile,
+`lmm verify --fix` rebuilding a damaged cache entry - reads only an
+admitted item, from the kept container whose index admitted it at the
+version the profile records, and checks its files against the full
+digest. A later import of the same container can admit more (with
+`--allow-any-overrides`), never less; a kept copy that was damaged is
+replaced by the next import of the container. A bundled item checks no
+updates; a new version comes with a new import of the collection. The
+kept containers are not removed when a profile is, and nothing prunes
+them (lmm has no cache-prune command yet; the NexusMods recipes are kept
+the same way). To reclaim the space, delete the game's
+`<cache>/collections/lmm-*` directories; a profile that still lists a
+bundled item then needs its collection imported again.
+
+**Only the container brings one in.** A bundled item reaches a profile
+only through the import of the `.lmmc` that carries it. Any other profile
+document naming source `lmm-collection` - a plain YAML document, an older
+profile export from a file or a link - is refused; so is filing an
+archive under it (`lmm import --source lmm-collection`), and installing
+one (`lmm install`, or the web UI's install) that no import admitted. A
+hand-edited profile naming an item that was held back fails for that mod
+at deploy. `lmm-collection`, `lmm-merged` and `local` are lmm's own source
+ids: no game maps them, and no custom source may take them.
+
+**Naming the files to bundle.** An author's files reach a profile as a
+mod imported from a file (`lmm import <archive>`, source `local`). An
+export carries the files of each such mod it is told to:
+
+```sh
+lmm profile export coop --game skyrim-se -o coop.lmmc --bundle "My Patch"
+```
+
+`--bundle` (repeatable) names a mod of the profile as `source:id`, its id,
+or its name; the web UI's **Export with my files…** offers each such mod
+with a box. The item's directory is named after the mod (a slug of its
+name). A mod from NexusMods, CurseForge or any other source is refused by
+name, and so is a name that matches no mod, or more than one. A mod a
+collection already bundled (source `lmm-collection`) is carried again by
+every container export, named or not, under its own item name and version.
+The files are the installed ones, from lmm's cache.
+
+Bundled files need the container. `--bundle` refuses `--plain` and
+stdout; a plain document of a profile that has bundled items still lists
+them (the export says so), and an import of a plain document refuses a
+bundled item with a message naming the container. The export is read back
+with the importer's own reader before it is written, so an export never
+makes a container an import would refuse.
+
+**What an import checks.** Besides the container's own caps:
+
+- every `files/` member is a regular file or a directory - never a link
+  or a device - whose name is relative, has no empty, `.` or `..` segment,
+  no backslash and no control or formatting character, and passes the
+  zip-slip and reserved-name checks. A name that breaks a rule is refused,
+  never rewritten. So is a member listed twice, two paths differing only in
+  case (`A.esp` and `a.esp`), a path that is both a file and a directory
+  (`files/p/a` beside `files/p/a/b`), and a file named `files/<item>` that
+  is not a directory;
+- an item's name is 1 to 64 letters, digits, `.`, `_` or `-`, starting
+  with a letter or digit, and a document with bundled items needs an `id`
+  of letters, digits, `-` and `_`;
+- a container bundles at most 256 items, a bundled file is at most 64 MiB
+  inflated, and all of them together at most 256 MiB; every file is read
+  through a limit its header's size must match exactly;
+- each named item's files hash to the `version` the document records (a
+  document without one takes the digest), else the container was changed
+  after it was made and is refused. An item the container holds but no
+  entry names is left out, with a warning;
+- an item holding code - a file whose extension is that of a library, an
+  executable or a script the system runs (`.dll`, `.exe`, `.so`, `.asi`,
+  `.bat`, `.sh`, `.ps1`, …), a file that is a native executable whatever
+  its name (a Windows PE file by its `MZ` and `PE` headers, an ELF or a
+  Mach-O file by its first bytes; every file is checked, text extensions
+  included), a file with no extension that starts with `#!`, or a loader
+  configuration (`doorstop_config.ini`, `enblocal.ini`) - is listed in the plan with the files that hold it back,
+  and imported only with `--allow-any-overrides` (the web UI's **Import
+  these bundled items too**); otherwise it is left out of the profile and
+  the result names it (`bundled_skipped`). Game scripts (`.lua`, …) are a
+  mod's ordinary content;
+- nothing in a bundled tree is read as lmm configuration: no hooks, no
+  sources. Bundled files are installed without execute permission.
 
 ## Importing safely
 
@@ -386,9 +525,11 @@ A collection from someone else is untrusted input.
 - **A version-0 document** never carries a `collection` or `external`
   block, so the version-0 import ignores both: only a checked version-1
   document sets them.
-- **Caps.** A container is at most 64 MiB with at most 4096 members, and
-  `collection.yaml` at most 4 MiB, inflated through a limit; a member
-  compressed more than 100:1 past 1 MiB is refused unread. A document lists
+- **Caps.** A container is at most 64 MiB with at most 4096 members (its
+  bundled files included), and `collection.yaml` at most 4 MiB, inflated
+  through a limit; a member compressed more than 100:1 past 1 MiB is
+  refused unread. Bundled files have caps of their own (see
+  [Bundled files](#bundled-files)). A document lists
   at most 10,000 mods, 1,000 external items and 256 overrides; a one-line
   value is at most 1 KiB, a description or instructions at most 64 KiB.
   Member names go through the same zip-slip and reserved-name checks as

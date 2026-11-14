@@ -70,6 +70,43 @@ profile sync --collection` (in the web UI, **Update collection…** beside
   guide's [Archive load order](docs/guide/load-order.md). The REDmod order
   stays unsupported.
 
+- **Bundled files in a collection (#623).** A `.lmmc` can now carry its
+  author's own files - a compatibility patch, a config pack - under
+  `files/<item>/`, named in the document by a `mods:` entry whose source is
+  `lmm-collection` (the `bundled` feature, which leaves the unsupported
+  set). `lmm profile export -o <file>.lmmc --bundle <mod>` (repeatable; in
+  the web UI, **Export with my files…** in the Profiles window) carries the
+  files of a mod imported from a file; a mod from NexusMods, CurseForge or
+  any other source is refused, and a mod a collection already bundled is
+  carried again by every container export. An import - from a file, an
+  upload or an https address - lists each bundled item in the plan, checks
+  its files against the version the document records (a digest of the
+  files) and installs it like any mod. The container is kept under the
+  game's cache, with an index of the items the import admitted, so a
+  profile switch or apply, another profile, and `lmm verify --fix` rebuild
+  an admitted item from it; nothing else does. A bundled item comes in only
+  with its container: any other profile document naming source
+  `lmm-collection` is refused, and so is an
+  `lmm import --source lmm-collection`. `lmm-collection`, `lmm-merged` and
+  `local` are reserved: a game cannot map them, and a custom source
+  definition with one of those ids is now refused (one would have collided
+  with lmm's own mods; rename it, and relink its mods with
+  `lmm mod edit --source`). The container is untrusted: links, devices,
+  absolute or `..` paths, backslashes, control characters, a path that is
+  both a file and a directory, and paths differing only in case are
+  refused, never rewritten, and items, files and their total size are
+  capped. An item holding code (a DLL or other executable, a
+  system script, a loader configuration) is skipped unless
+  `--allow-any-overrides` (the web UI's **Import these bundled items
+  too**). A plain YAML document cannot carry files, so a bundled item in
+  one is refused. Bundled items are skipped by update checks, like local
+  mods. New `--json` and `/api/v1` fields, all additive: the import plan's
+  `collection.bundled` and each item's `bundled`, the import result's
+  `bundled_skipped`, `GET /api/v1/profiles/{name}/bundle-candidates`, and an
+  optional `bundle` list in `POST /api/v1/profiles/{name}/collection`.
+  An older lmm still ignores a container's `files/` with its warning, and
+  refuses a document requiring `bundled`.
+
 - **A collection's FOMOD answers replay only against the curator's archive
   (#609).** A collection records each file's md5; before replaying the
   curator's installer answers, lmm compares it with the md5 of the archive

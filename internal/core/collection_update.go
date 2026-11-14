@@ -299,7 +299,10 @@ type CollectionUpdatePlan struct {
 	// manualDownload: the account is served no downloads (a free NexusMods
 	// account): added and changed entries are recorded pending.
 	manualDownload bool
-	snapshot       installedSnapshot
+	// bundle is the new version's container's bundled files (#623): kept
+	// at Apply for the lmm-collection source, as an import keeps them.
+	bundle   *pendingBundle
+	snapshot installedSnapshot
 }
 
 // CollectionUpdateOptions is the user's say over an update, taken at Apply
@@ -427,6 +430,9 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 	var warnings []string
 	var conv *ConvertedCollection
 	var doc *domain.CollectionDocument
+	var container bool
+	var bundle *collectionBundle
+	var raw []byte
 	switch origin.input {
 	case CollectionFromURL:
 		plan.URL = domain.RedactURL(origin.url)
@@ -439,10 +445,11 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 			return nil, err
 		}
 		var more []string
-		doc, _, more, err = s.readCollectionData(data, true)
+		doc, container, bundle, more, err = s.readCollectionData(data, true)
 		if err != nil {
 			return nil, err
 		}
+		raw = data
 		warnings = append(warnings, more...)
 	default:
 		plan.SourceID, plan.Slug = origin.sourceID, origin.slug
@@ -455,10 +462,11 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 			return nil, fmt.Errorf("writing the converted collection: %w", err)
 		}
 		var more []string
-		doc, _, more, err = s.readCollectionData(data, false)
+		doc, container, bundle, more, err = s.readCollectionData(data, false)
 		if err != nil {
 			return nil, err
 		}
+		raw = data
 		warnings = append(warnings, more...)
 	}
 	more, err := sanitizeCollection(doc)
@@ -466,6 +474,17 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 		return nil, err
 	}
 	warnings = append(warnings, more...)
+	// #623: the container's bundled items, checked and given the ids and
+	// versions the profile records, as an import does.
+	_, pending, more, err := resolveBundledItems(doc, bundle, container)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, more...)
+	if pending != nil {
+		pending.data = raw
+		plan.bundle = pending
+	}
 
 	// Identity: the same collection, and not an older version of it.
 	fetchedID, fetchedVersion := doc.Info.ID, doc.Info.Version
@@ -546,6 +565,16 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 		warnings = append(warnings, "no entry of this profile is marked as the collection's (it was imported by an lmm before collection updates, or every entry was locked or unlocked by hand), so every entry the new version changes is listed as a conflict: override them to take the collection's version")
 	}
 	plan.diffRest(s, game)
+	if b := plan.bundle; b != nil {
+		// #623: a bundled item holding code is held back unless the update
+		// allows any override, as an import holds it back.
+		for _, item := range slices.Sorted(maps.Values(b.restricted)) {
+			plan.RestrictedOverrides = append(plan.RestrictedOverrides, RestrictedOverride{
+				Path:   "files/" + item + "/",
+				Reason: "a bundled item holding native code, a system script or a loader configuration",
+			})
+		}
+	}
 	if w := pluginRuleCycle(doc.Plugins); w != "" {
 		warnings = append(warnings, w)
 	}
@@ -947,12 +976,40 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		return result, err
 	}
 
-	target, marks, heldBack := updateTarget(plan, current, choices)
+	// #623: a bundled item holding code that the update does not allow
+	// stays as the profile has it: not added when new, not moved when the
+	// profile already has it, so nothing installed is left unlisted.
+	var bundledSkipped []string
+	targetPlan := plan
+	if b := plan.bundle; b != nil && !opts.AllowAnyOverrides && len(b.restricted) > 0 {
+		have := firstRefs(current.Mods)
+		doc := *plan.doc
+		doc.Items = nil
+		for _, item := range plan.doc.Items {
+			key := domain.ModKey(item.Ref.SourceID, item.Ref.ModID)
+			if name, held := b.restricted[key]; held {
+				bundledSkipped = append(bundledSkipped, name)
+				ref, ok := have[key]
+				if !ok {
+					continue
+				}
+				item.Ref = ref
+			}
+			doc.Items = append(doc.Items, item)
+		}
+		sort.Strings(bundledSkipped)
+		copied := *plan
+		copied.doc = &doc
+		targetPlan = &copied
+	}
+	target, marks, heldBack := updateTarget(targetPlan, current, choices)
 	data, err := config.ExportProfile(target)
 	if err != nil {
 		return result, fmt.Errorf("building the updated profile: %w", err)
 	}
-	ip, err := s.PlanImport(ctx, game, data)
+	// The target names the collection's bundled items (#623): the update
+	// keeps their container below, as an import does.
+	ip, err := s.planImport(ctx, game, data, true)
 	if err != nil {
 		return result, err
 	}
@@ -990,10 +1047,16 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		pending = len(ip.NeedsRedownload) + len(ip.Missing)
 		ip.NeedsRedownload, ip.Missing = nil, nil
 	}
+	if b := plan.bundle; b != nil {
+		if err := s.keepCollectionContainer(game, b.collectionID, b.data, b.bundle, b.names, b.admitted(opts.AllowAnyOverrides)); err != nil {
+			return result, err
+		}
+	}
 	importResult, err := s.applyImportHeld(ctx, game, ip, importOpts, sink)
 	result.Import = importResult
 	if importResult != nil && importResult.ProfileName != "" && !importResult.Refused {
 		importResult.OverridesSkipped = heldBack
+		importResult.BundledSkipped = bundledSkipped
 		if pending > 0 {
 			importResult.Skipped += pending
 			importResult.Notes = append(importResult.Notes, fmt.Sprintf("This account is not served downloads through the API, so %d item(s) the new version adds or moves are recorded pending: get each file from its page and install it from the file.", pending))

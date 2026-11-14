@@ -334,6 +334,12 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbImportArchive); err != nil {
 		return nil, err
 	}
+	// #623 review B1: an archive is never filed under lmm's own synthetic
+	// sources - a collection's bundled item, or the merged pak - whose
+	// content comes only from what lmm itself builds or admits.
+	if opts.SourceID == domain.SourceCollection || opts.SourceID == domain.SourceMerged {
+		return nil, fmt.Errorf("%w: %q is lmm's own source; import the archive as a local mod, or under the source it came from", ErrUnsafeImport, opts.SourceID)
+	}
 	fingerprint, err := fingerprintArchive(archivePath)
 	if err != nil {
 		return nil, err

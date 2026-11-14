@@ -37,6 +37,7 @@ import {
   profileExportURL,
   recordProfileCollection,
   uploadArchive,
+  getBundleCandidates,
 } from "../api.js";
 
 /** ProfilesModal renders only when the shared modal slot holds this shape. */
@@ -123,8 +124,8 @@ export function ProfilesModal({ modal, state, actions }) {
  * exactly the substitute for a nested confirm modal this file's header
  * comment explains. */
 function ProfileRow({ profile, context, actions, afterMutation }) {
-  // "view" | "renaming" | "duplicating" | "deleting"; filling is the
-  // fill drop zone, open under the row (issue 608).
+  // "view" | "renaming" | "duplicating" | "deleting" | "bundling"; filling
+  // is the fill drop zone, open under the row (issue 608).
   const [mode, setMode] = useState("view");
   const [nameInput, setNameInput] = useState(profile.name);
   const [busy, setBusy] = useState(false);
@@ -280,6 +281,14 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
     });
   }
 
+  if (mode === "bundling") {
+    return html`<${BundleExportRow}
+      profile=${profile}
+      context=${context}
+      close=${reset}
+    />`;
+  }
+
   if (mode === "deleting") {
     return html`
       <li class="profiles-row profiles-row--confirm">
@@ -415,6 +424,16 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
         >
           Export
         </a>
+        <button
+          type="button"
+          class="button button--small"
+          data-action="export-bundle"
+          data-profile=${profile.name}
+          disabled=${busy}
+          onClick=${() => setMode("bundling")}
+        >
+          Export with my files…
+        </button>
         <button
           type="button"
           class="button button--small"
@@ -569,6 +588,120 @@ function CreateProfileForm({ context, afterMutation }) {
       </div>
       ${error && html`<p class="modal__error">${error}</p>`}
     </form>
+  `;
+}
+
+/** BundleExportRow is the row's "Export with my files…" form (issue 623):
+ * `lmm profile export -o <file>.lmmc --bundle <mod>`. It lists the profile's
+ * mods whose files the container can carry as the author's own - each mod
+ * imported from a file, with a box - and those a collection already
+ * bundled, which every export carries. The server refuses anything else (a
+ * mod from a source), and the same limits as the CLI's hold; the export is
+ * checked (with the identity record, without building it) before the
+ * browser downloads it, so a refusal shows here. */
+function BundleExportRow({ profile, context, close }) {
+  const [candidates, setCandidates] = useState(null);
+  const [chosen, setChosen] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let live = true;
+    getBundleCandidates(profile.name, context)
+      .then((rows) => live && setCandidates(rows ?? []))
+      .catch((err) => live && setError(err?.message ?? String(err)));
+    return () => {
+      live = false;
+    };
+  }, [profile.name, context?.game]);
+
+  const own = (candidates ?? []).filter((c) => !c.always);
+  const carried = (candidates ?? []).filter((c) => c.always);
+  const href = profileExportURL(profile.name, context, chosen);
+
+  function toggle(id, on) {
+    setChosen((prev) =>
+      on ? [...prev, id].sort() : prev.filter((x) => x !== id),
+    );
+  }
+
+  async function download(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      // Records the identity and checks the bundle in one request; the
+      // download itself is then the export's only build.
+      await recordProfileCollection(profile.name, context, chosen);
+      window.location.assign(href);
+    } catch (err) {
+      setError(err?.message ?? String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return html`
+    <li class="profiles-row" data-testid="profile-bundle-row">
+      <div class="profiles-row__bundle">
+        <p class="profiles-row__note">
+          Export <span class="mono">${profile.name}</span> as a .lmmc that
+          carries the files of the mods you tick as your own. Share only files
+          you made or may share; a mod from a source is always a reference.
+        </p>
+        ${candidates === null && !error && html`<p class="plan__note">Loading…</p>`}
+        ${
+          candidates !== null &&
+          own.length === 0 &&
+          html`<p class="plan__note" data-testid="bundle-none">
+            This profile has no mods of your own to bundle: import your files as
+            a mod first (<span class="mono">lmm import</span>, or Import an
+            archive).
+          </p>`
+        }
+        ${own.map((c) => {
+          const id = `${c.source_id}:${c.mod_id}`;
+          return html`<label class="plan__control" key=${id}>
+            <input
+              type="checkbox"
+              data-testid="bundle-candidate"
+              data-mod=${id}
+              checked=${chosen.includes(id)}
+              disabled=${busy}
+              onChange=${(e) => toggle(id, e.currentTarget.checked)}
+            />
+            ${c.name || id}
+          </label>`;
+        })}
+        ${
+          carried.length > 0 &&
+          html`<p class="plan__note" data-testid="bundle-carried">
+            Always carried (bundled by a collection):
+            ${" "}${carried.map((c) => c.name || c.mod_id).join(", ")}
+          </p>`
+        }
+        <span class="profiles-row__actions">
+          <a
+            class="button button--primary button--small"
+            data-action="export-bundle-download"
+            href=${href}
+            download=${`${profile.name}.lmmc`}
+            onClick=${download}
+          >
+            ${busy ? "Exporting…" : "Export"}
+          </a>
+          <button
+            type="button"
+            class="button button--small"
+            disabled=${busy}
+            onClick=${close}
+          >
+            Cancel
+          </button>
+        </span>
+        ${error && html`<p class="modal__error">${error}</p>`}
+      </div>
+    </li>
   `;
 }
 

@@ -232,39 +232,39 @@ func safeCause(err error) error {
 // a document of FormatVersion 0 - the collection blocks a version-0
 // document never carries stay empty, as they do on a file's version-0
 // import.
-func (s *Service) readCollectionData(data []byte, allowV0 bool) (doc *domain.CollectionDocument, container bool, warnings []string, err error) {
+func (s *Service) readCollectionData(data []byte, allowV0 bool) (doc *domain.CollectionDocument, container bool, bundle *collectionBundle, warnings []string, err error) {
 	raw := data
 	container = IsCollectionContainer(raw)
 	if container {
-		inner, w, err := readCollectionContainer(raw)
+		inner, b, w, err := readCollectionContainer(raw)
 		if err != nil {
-			return nil, false, nil, err
+			return nil, false, nil, nil, err
 		}
-		raw, warnings = inner, w
+		raw, bundle, warnings = inner, b, w
 	}
 	if len(raw) > maxCollectionDocument {
-		return nil, false, nil, fmt.Errorf("%w: the document is %d bytes, over the %d-byte limit", ErrInvalidCollection, len(raw), maxCollectionDocument)
+		return nil, false, nil, nil, fmt.Errorf("%w: the document is %d bytes, over the %d-byte limit", ErrInvalidCollection, len(raw), maxCollectionDocument)
 	}
 	if allowV0 && !container && !IsCollectionDocument(raw) {
 		doc, err := liftProfileExport(raw)
-		return doc, false, nil, err
+		return doc, false, nil, nil, err
 	}
 	version, err := config.CollectionFormatOf(raw)
 	if err != nil {
-		return nil, false, nil, fmt.Errorf("%w: %v", ErrInvalidCollection, err)
+		return nil, false, nil, nil, fmt.Errorf("%w: %v", ErrInvalidCollection, err)
 	}
 	switch {
 	case version < 1:
-		return nil, false, nil, fmt.Errorf("%w: it has no lmm_collection version (a version-0 profile export imports as one)", ErrInvalidCollection)
+		return nil, false, nil, nil, fmt.Errorf("%w: it has no lmm_collection version (a version-0 profile export imports as one)", ErrInvalidCollection)
 	case version > domain.CollectionFormatVersion:
-		return nil, false, nil, fmt.Errorf("%w: it is format version %d, and this lmm reads version %d; update lmm",
+		return nil, false, nil, nil, fmt.Errorf("%w: it is format version %d, and this lmm reads version %d; update lmm",
 			ErrCollectionFormatTooNew, version, domain.CollectionFormatVersion)
 	}
 	doc, err = config.ParseCollection(raw)
 	if err != nil {
-		return nil, false, nil, fmt.Errorf("%w: %v", ErrInvalidCollection, err)
+		return nil, false, nil, nil, fmt.Errorf("%w: %v", ErrInvalidCollection, err)
 	}
-	return doc, container, warnings, nil
+	return doc, container, bundle, warnings, nil
 }
 
 // errNotADocument is what a URL answered with when it is neither an lmm

@@ -329,15 +329,34 @@ export const deleteSnapshot = (name, context) =>
  * Content-Disposition itself (api_profiles.go), so there is no blob to
  * build and no filename to invent. It asks for the `.lmmc` collection
  * container (issue 621), what `lmm profile export -o` writes. */
-export const profileExportURL = (name, context) =>
-  scoped(`${profilePath(name)}/export?format=lmmc`, context);
+export const profileExportURL = (name, context, bundle = []) => {
+  const url = scoped(`${profilePath(name)}/export?format=lmmc`, context);
+  // Issue 623: each mod whose files the container carries as the author's
+  // own (`lmm profile export --bundle`), as "source:id".
+  const extra = bundle
+    .map((id) => `&bundle=${encodeURIComponent(id)}`)
+    .join("");
+  return url + extra;
+};
+
+/** Lists the mods a profile's export can bundle as the author's own files
+ * (issue 623): core.BundleCandidate rows - each mod imported from a file,
+ * and each a collection already bundled (`always`: carried regardless). */
+export const getBundleCandidates = (name, context) =>
+  get(scoped(`${profilePath(name)}/bundle-candidates`, context));
 
 /** Records a profile's collection identity (issue 621) - minting its
  * collection id on the first call - so the side-effect-free GET at
  * profileExportURL can serve it. Returns domain.CollectionInfo. The GET
  * answers 409 until this has run once. */
-export const recordProfileCollection = (name, context) =>
-  post(scoped(`${profilePath(name)}/collection`, context), {});
+export const recordProfileCollection = (name, context, bundle = []) =>
+  post(
+    scoped(`${profilePath(name)}/collection`, context),
+    // Issue 623: an export that bundles files is checked here too - the
+    // choice and the files' size, without building the container - so a
+    // refusal shows in place instead of as the downloaded page.
+    bundle.length > 0 ? { bundle } : {},
+  );
 
 /** Commits a new load order. Returns core.ProfileResult, re-read after the
  * write, so profile.mods IS the persisted order. ids are lowest-priority
