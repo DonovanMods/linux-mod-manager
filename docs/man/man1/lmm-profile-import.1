@@ -6,12 +6,13 @@ lmm-profile-import - Import a profile
 
 
 .SH SYNOPSIS
-\fBlmm profile import [file] [flags]\fP
+\fBlmm profile import [file|https-url] [flags]\fP
 
 
 .SH DESCRIPTION
-Import a profile from a file - an lmm collection (.lmmc, or its YAML
-document) or an older profile export - or from a Steam Workshop collection.
+Import a profile from a file or an https address - an lmm collection
+(.lmmc, or its YAML document) or an older profile export - or from a Steam
+Workshop or NexusMods collection.
 
 .PP
 Missing mods are downloaded and installed automatically, after a
@@ -28,6 +29,16 @@ description and instructions, its hooks, its config overrides, the items
 lmm cannot fetch (to get by hand), and mods from sources you do not have.
 A collection that needs features this version of lmm does not have is
 refused, with nothing written. --as names the imported profile.
+
+.PP
+An https address is downloaded (at most 64 MiB for a .lmmc, 4 MiB for a
+YAML document; a redirect to plain http is refused) and imported the same
+way, with one difference: hooks are never imported from an address, even
+with --with-hooks; the plan lists them and the result counts them. The
+address is recorded in the profile file as its collection origin, without
+any user:password part; everywhere else, lmm shows it without its query
+string. An older profile export from an address imports into --game, else
+the game its game_id names, and unlike one from a file it takes --as.
 
 .PP
 Whatever the file's format, two things are held back until you ask, and
@@ -64,6 +75,7 @@ Examples:
   lmm profile import survival.yaml --game skyrim-se --force
   lmm profile import survival.lmmc
   lmm profile import survival.lmmc --game skyrim-se --with-hooks --as survival-2
+  lmm profile import https://example.com/survival.lmmc --as survival
   lmm profile import --workshop-collection 2500900001 --game space-engineers-2
   lmm profile import --workshop-collection https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001 --as ships
 

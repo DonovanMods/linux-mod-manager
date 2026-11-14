@@ -149,10 +149,11 @@ Examples:
 }
 
 var profileImportCmd = &cobra.Command{
-	Use:   "import [file]",
+	Use:   "import [file|https-url]",
 	Short: "Import a profile",
-	Long: `Import a profile from a file - an lmm collection (.lmmc, or its YAML
-document) or an older profile export - or from a Steam Workshop collection.
+	Long: `Import a profile from a file or an https address - an lmm collection
+(.lmmc, or its YAML document) or an older profile export - or from a Steam
+Workshop or NexusMods collection.
 
 Missing mods are downloaded and installed automatically, after a
 confirmation prompt; pass -y/--yes to skip the prompt and answer yes. Use
@@ -167,6 +168,15 @@ description and instructions, its hooks, its config overrides, the items
 lmm cannot fetch (to get by hand), and mods from sources you do not have.
 A collection that needs features this version of lmm does not have is
 refused, with nothing written. --as names the imported profile.
+
+An https address is downloaded (at most 64 MiB for a .lmmc, 4 MiB for a
+YAML document; a redirect to plain http is refused) and imported the same
+way, with one difference: hooks are never imported from an address, even
+with --with-hooks; the plan lists them and the result counts them. The
+address is recorded in the profile file as its collection origin, without
+any user:password part; everywhere else, lmm shows it without its query
+string. An older profile export from an address imports into --game, else
+the game its game_id names, and unlike one from a file it takes --as.
 
 Whatever the file's format, two things are held back until you ask, and
 both are listed before anything is written. Hooks are scripts lmm would
@@ -199,6 +209,7 @@ Examples:
   lmm profile import survival.yaml --game skyrim-se --force
   lmm profile import survival.lmmc
   lmm profile import survival.lmmc --game skyrim-se --with-hooks --as survival-2
+  lmm profile import https://example.com/survival.lmmc --as survival
   lmm profile import --workshop-collection 2500900001 --game space-engineers-2
   lmm profile import --workshop-collection https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001 --as ships`,
 	Args: cobra.MaximumNArgs(1),
@@ -434,7 +445,7 @@ func doProfileCreate(ctx context.Context, service *core.Service, game *domain.Ga
 
 	// Ruling 15: the ProfileResult document - the profile as created.
 	if jsonOutput {
-		return emitJSON(&core.ProfileResult{Profile: *profile})
+		return emitJSON(core.NewProfileResult(*profile))
 	}
 
 	fmt.Printf("✓ Created profile: %s\n", profile.Name)
@@ -472,7 +483,7 @@ func doProfileDelete(ctx context.Context, service *core.Service, game *domain.Ga
 	// Ruling 15: the ProfileResult document - the profile as it stood
 	// immediately before the delete (see core.ProfileResult).
 	if jsonOutput {
-		return emitJSON(&core.ProfileResult{Profile: deleted})
+		return emitJSON(core.NewProfileResult(deleted))
 	}
 
 	fmt.Printf("✓ Deleted profile: %s\n", name)
@@ -892,9 +903,18 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 		})
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("a profile file is required (or use --workshop-collection <id|url>, or --nexus-collection <ref>)")
+		return fmt.Errorf("a profile file or https address is required (or use --workshop-collection <id|url>, or --nexus-collection <ref>)")
 	}
 	filePath := args[0]
+	// #622: an https address is fetched by core, whatever the document's
+	// version: a collection or a version-0 export. Its hooks are never
+	// imported. The game is --game's when given, else the document's own.
+	if core.IsCollectionURL(filePath) {
+		explicitGame := gameID
+		return withService(cmd, func(ctx context.Context, service *core.Service) error {
+			return doCollectionURLImport(ctx, service, filePath, explicitGame)
+		})
+	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
@@ -1045,6 +1065,24 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 func doCollectionImport(ctx context.Context, service *core.Service, data []byte, explicitGame string) error {
 	plan, err := service.PlanCollectionImport(ctx, core.CollectionImportRequest{
 		Data: data, Input: core.CollectionFromFile, GameID: explicitGame, ProfileName: profileImportAs,
+	})
+	if err != nil {
+		return err
+	}
+	game, err := service.GetGame(plan.Collection.GameID)
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, plan.Collection.GameID)
+	}
+	return runImportPlan(ctx, service, game, plan)
+}
+
+// doCollectionURLImport is `lmm profile import https://…` (#622):
+// core.PlanCollectionImportURL fetches the document and plans it as a
+// collection import (a version-0 export included), recording the address
+// as the profile's origin; the rest is every collection import's.
+func doCollectionURLImport(ctx context.Context, service *core.Service, link, explicitGame string) error {
+	plan, err := service.PlanCollectionImportURL(ctx, core.CollectionURLImportRequest{
+		URL: link, GameID: explicitGame, ProfileName: profileImportAs,
 	})
 	if err != nil {
 		return err
@@ -1544,7 +1582,7 @@ func doProfileReorder(ctx context.Context, service *core.Service, game *domain.G
 		// Ruling 15: the load-order READOUT is the same profile document a
 		// reorder emits - profile.Mods IS the load order, in order.
 		if jsonOutput {
-			return emitJSON(&core.ProfileResult{Profile: *profile})
+			return emitJSON(core.NewProfileResult(*profile))
 		}
 		// Show current load order
 		if len(profile.Mods) == 0 {
@@ -1596,7 +1634,7 @@ func doProfileReorder(ctx context.Context, service *core.Service, game *domain.G
 		if err != nil {
 			return fmt.Errorf("loading profile: %w", err)
 		}
-		return emitJSON(&core.ProfileResult{Profile: *profile})
+		return emitJSON(core.NewProfileResult(*profile))
 	}
 
 	fmt.Printf("✓ Load order updated for profile %s.\n", profileName)

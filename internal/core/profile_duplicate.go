@@ -109,7 +109,7 @@ func (s *Service) DuplicateProfile(ctx context.Context, gameID, source, newName 
 	if err != nil {
 		return nil, err
 	}
-	return &ProfileResult{Profile: dup}, nil
+	return NewProfileResult(dup), nil
 }
 
 // undoDuplicate is DuplicateProfile's compensation for a row that would not
@@ -130,17 +130,17 @@ func (s *Service) undoDuplicate(ctx context.Context, gameID, newName string, cop
 // duplicateCollection is the collection block a duplicate of a profile
 // starts with: a new collection (no id, no version - the first export
 // mints the id and publishes version 1) that keeps the origin's credit and
-// the author's words as editable starting values. nil when nothing is left.
+// the author's words as editable starting values, and drops the address a
+// URL import recorded. nil when nothing is left.
 func duplicateCollection(c *domain.CollectionInfo) *domain.CollectionInfo {
 	if c == nil {
 		return nil
 	}
 	dup := *c
 	dup.ID, dup.Version = "", 0
-	if c.Origin != nil {
-		origin := *c.Origin
-		dup.Origin = &origin
-	}
+	// A new collection follows no address (#622): the duplicate keeps the
+	// credit, not the source profile's import_url.
+	dup.Origin = c.Origin.WithoutImportURL()
 	if dup.IsZero() {
 		return nil
 	}

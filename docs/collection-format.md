@@ -125,7 +125,7 @@ duplicate keeps `title`, `author`, `description`, `install_instructions` and
 | `game_id`              | The author's local id for the game. A version-1 importer ignores it; an older lmm imports by it. |
 | `game`                 | The portable game identity. An importer matches a local game by `steam_app_id` first, then by any `sources` entry its own game maps to the same id - unless that game's own Steam app id is known and differs (Fallout 4 and Fallout 4 VR share a Nexus id). None, or more than one, needs `--game`. |
 | `requires`             | The features the content needs. Derived by the exporter, never written by hand. |
-| `origin`               | Where the collection came from, when someone else curated it. Carried through every re-export, so the curator stays credited. |
+| `origin`               | Where the collection came from, when someone else curated it. Carried through every re-export, so the curator stays credited. A profile imported from a URL also records `origin.import_url` (below), which no document carries. |
 | `signer`               | Reserved (#624). Ignored, with a warning. |
 | `mods`                 | The mods, in load order. Each entry is a profile mod reference (`source_id`, `mod_id`, `version`, `file_ids`, `locked`, `disabled`, `category`, and every key a profile reference gains later), plus `name` and `files`. |
 | `external`             | Items lmm cannot fetch, with a URL and the curator's instructions. They are recorded on the imported profile, so a re-export keeps them. |
@@ -147,6 +147,55 @@ entries in `mods`: an older reader would take such an entry for a mod with
 no source. (The design's §12 sketch put them in `mods` with
 `kind: external`; the format moved them out for this reason.) A `.lmmc`
 container needs version 1 to read.
+
+## Importing from a URL
+
+`lmm profile import https://…` (the web UI's **From a URL**) fetches a
+collection from an address instead of a file:
+
+- **https only.** An `http://` address is refused, and so is a redirect to
+  anything that is not `https` (before it is requested). At most 10
+  redirects are followed, and the whole download has a two-minute limit.
+- **What it reads.** The first bytes decide, as for a file: `PK\x03\x04` is
+  a `.lmmc` container (at most 64 MiB), anything else a YAML document (at
+  most 4 MiB), version 1 or version 0. Both caps hold as the body arrives,
+  not after it is downloaded. A body that is neither a collection nor a
+  profile export (a web page, say) is refused. A version-0 export imports
+  into `--game`, else the configured game its `game_id` names, and takes
+  `--as` as a collection does.
+- **Hooks are never imported from a URL**, even with `--with-hooks`, which
+  is ignored rather than refused. The plan lists every hook and says so
+  (`hooks_importable: false`), and the result counts them
+  (`hooks_withheld`). The overrides gate is the same as for a file.
+- **The address is recorded** on the imported profile, as
+  `collection.origin.import_url`, beside whatever `origin` the document
+  carries:
+
+  ```yaml
+  collection:
+    id: 2f8c7a3e-…
+    version: 3
+    origin:
+      author: …                                        # the document's own credit, kept
+      import_url: https://example.com/coop.lmmc?dl=1   # where this machine fetched it
+  ```
+
+  It is the address as given, without its `user:password@` part (used for
+  that one download and never stored) or its `#fragment`. It keeps the
+  query string, which some hosts need to serve the file. A collection
+  update (#613) fetches it again and compares the document's `id` and
+  `version`. `import_url` is this machine's record: lmm sets it only at a
+  URL import, ignores it in a document, and leaves it out of every export
+  (`lmm profile export`, `-o`, `--json`, and the web UI's) and of a
+  duplicated profile.
+- **What lmm shows.** The address is unredacted only in the profile file
+  (and lmm's own snapshots of it). Everywhere lmm shows or logs it - the
+  plan, every `--json` document (the profile commands' `profile` result
+  included), every `/api/v1` answer (the profile routes and
+  `POST /api/v1/profiles/{name}/collection` included), messages, errors and
+  logs - it shows it without credentials, and with any query string
+  replaced by `?…`. A redirect never carries the address on as a
+  `Referer`, and an error never quotes the server's own status text.
 
 ## `requires` and the feature gate
 
@@ -177,7 +226,8 @@ A collection from someone else is untrusted input.
   they are imported only with `--with-hooks` (in the web UI, the **Import
   these hooks** box); without it the profile is imported without them, and
   the result says so (`hooks_withheld`). A collection fetched from a URL
-  never has its hooks imported. A hook command holding a control, escape,
+  never has its hooks imported, even with `--with-hooks` (see
+  [Importing from a URL](#importing-from-a-url)). A hook command holding a control, escape,
   or bidi/format character is refused, never cleaned: the plan must show
   exactly what would run.
 - **Overrides** are listed in the plan. One that targets a text config

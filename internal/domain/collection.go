@@ -43,6 +43,40 @@ type CollectionOrigin struct {
 	// URL is the collection's page, and Author its curator.
 	URL    string `yaml:"url,omitempty" json:"url,omitempty"`
 	Author string `yaml:"author,omitempty" json:"author,omitempty"`
+	// ImportURL is the https address this profile's collection was
+	// imported from (#622), which a collection update (#613) fetches again
+	// and compares by the document's id and version. lmm records it at a
+	// URL import, never reads it from a document, and never exports it:
+	// it is this machine's subscription, like the link method. It has no
+	// userinfo and no fragment; it keeps any query string, which the
+	// address may need in order to answer, so lmm shows it only through
+	// RedactURL. Empty for a collection imported from a file or a source.
+	ImportURL string `yaml:"import_url,omitempty" json:"import_url,omitempty"`
+}
+
+// WithoutImportURL is o without its ImportURL - the origin a document
+// carries - or nil when nothing else is left.
+func (o *CollectionOrigin) WithoutImportURL() *CollectionOrigin {
+	if o == nil {
+		return nil
+	}
+	out := *o
+	out.ImportURL = ""
+	if out.IsZero() {
+		return nil
+	}
+	return &out
+}
+
+// Redacted is o as lmm shows it: its ImportURL through RedactURL. nil
+// stays nil.
+func (o *CollectionOrigin) Redacted() *CollectionOrigin {
+	if o == nil || o.ImportURL == "" {
+		return o
+	}
+	out := *o
+	out.ImportURL = RedactURL(out.ImportURL)
+	return &out
 }
 
 // IsZero reports whether o records nothing.

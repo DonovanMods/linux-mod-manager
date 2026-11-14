@@ -34,3 +34,20 @@ func (m *Mod) PageURL() string {
 	}
 	return SafeWebURL(m.SourceURL)
 }
+
+// RedactURL is raw as lmm shows or logs it (#622): an absolute http or
+// https address without its userinfo (credentials) or fragment, and with
+// any query string replaced by "?…", since a query can carry a token. It
+// is "" when raw is not such an address.
+func RedactURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Opaque != "" || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	query := u.RawQuery != "" || u.ForceQuery
+	u.User, u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = nil, "", false, "", ""
+	if query {
+		return u.String() + "?…"
+	}
+	return u.String()
+}
