@@ -241,6 +241,14 @@ type DeployPlan struct {
 	// merge source nor a raw fallback.
 	Merged *MergePlan `json:"merged,omitempty"`
 
+	// Overrides is every game file the deploy's override pass changes
+	// (#631): the profile's overrides on files no mod ships placed or
+	// updated, and a game file an override the profile no longer sets
+	// put back. A mod's own overridden file (#630) is not listed: the
+	// mod's redeploy places it. Additive; absent when there are none, and
+	// whenever no mod is selected (the deploy then writes no override).
+	Overrides []OverrideChange `json:"overrides,omitempty"`
+
 	// NoChanges reports that this deploy has nothing to act on at all: no
 	// mod selected and no purge pass. It is NOT a claim that the deploy
 	// would write no bytes - a selected mod always redeploys its files,
@@ -527,6 +535,9 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 
 	plan.Hooks = planDeployHooks(s.resolvedHooksForPlan(ctx, game, profileName), opts, purgeMods, len(modsToDeploy))
 	plan.Merged = s.planMerge(game, plan.Mods)
+	if len(plan.Mods) > 0 {
+		plan.Overrides = s.planDeployOverrides(ctx, game, profileName)
+	}
 	plan.NoChanges = len(plan.Mods) == 0 && len(plan.Purge) == 0
 	return plan, nil
 }
@@ -996,15 +1007,24 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		deferredWarnings = append(deferredWarnings, WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
 	}
 
-	if profile, err := config.LoadProfile(s.configDir, game.ID, profileName); err == nil && len(profile.Overrides) > 0 {
-		skipped, err := s.applyOverrides(ctx, game, profileName, profile)
-		if err != nil {
-			skipped = append(skipped, err.Error())
+	if profile, err := config.LoadProfile(s.configDir, game.ID, profileName); err == nil {
+		var skipped []string
+		if len(profile.Overrides) > 0 {
+			skipped, err = s.applyOverrides(ctx, game, profileName, profile)
+			if err != nil {
+				skipped = append(skipped, err.Error())
+			}
 		}
 		// #621: each override stands on its own, so each one refused or
 		// skipped is its own warning, and the rest were written.
 		for _, w := range skipped {
 			msg := fmt.Sprintf("applying profile overrides: %s", w)
+			result.Warnings = append(result.Warnings, msg)
+			emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
+		}
+		// #631: and a game file an override the profile no longer sets
+		// replaced goes back, while it is still lmm's write.
+		for _, msg := range s.restoreDroppedOverrides(ctx, game, profileName, profile) {
 			result.Warnings = append(result.Warnings, msg)
 			emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
 		}

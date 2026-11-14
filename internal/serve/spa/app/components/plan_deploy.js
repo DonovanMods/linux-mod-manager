@@ -15,6 +15,7 @@ import {
   PlanSelect,
   ApplyOption,
 } from "./planoptions.js";
+import { PlanOverrides } from "./planoverrides.js";
 
 /** DeployPlanView renders core.DeployPlan (internal/core/deploy.go). */
 export function DeployPlanView({ plan, modal, state, actions }) {
@@ -151,6 +152,7 @@ export function DeployPlanView({ plan, modal, state, actions }) {
           </section>
         `
       }
+      <${PlanOverrides} changes=${plan.overrides} testID="deploy-overrides" />
       ${
         hooks.length > 0 &&
         html`

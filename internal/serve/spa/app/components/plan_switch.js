@@ -18,6 +18,7 @@
 import { html } from "../render.js";
 import { codeSpans } from "../errortext.js";
 import { PlanWarnings } from "./planwarnings.js";
+import { PlanOverrides } from "./planoverrides.js";
 
 /** refLabel names a domain.ModReference the same way plan_profile_import.js
  * does - it carries no display name of its own, so "source:mod @ version"
@@ -135,6 +136,7 @@ export function SwitchPlanView({ plan }) {
           </section>
         `
       }
+      <${PlanOverrides} changes=${plan.overrides} testID="switch-overrides" />
     </div>
   `;
 }

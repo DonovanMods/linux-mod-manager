@@ -707,6 +707,44 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #631: the override changes a switch or an apply makes - a
+			// game file (root install_path) and a mod's own file (#630,
+			// root absent for the mod_path, the mod named).
+			"override_change",
+			core.OverrideChange{Path: "Data/k.ini", Action: core.OverrideUpdate, SourceID: "nexusmods", ModID: "7"},
+		},
+		{
+			// #631 (owner ruling): a deploy's override pass previews the
+			// game files it changes.
+			"deploy_plan_overrides",
+			core.DeployPlan{
+				Profile: "default",
+				Mods:    []core.DeployPlanMod{{Ref: domain.ModReference{SourceID: "nexusmods", ModID: "7", Version: "1.0"}, Name: "Realistic Needs"}},
+				Overrides: []core.OverrideChange{
+					{Path: "SkyrimPrefs.ini", Root: domain.RootInstallPath, Action: core.OverrideRestore},
+				},
+			},
+		},
+		{
+			"switch_plan_overrides",
+			core.SwitchPlan{
+				GameID: "skyrim-se", From: "default", To: "hardcore",
+				Overrides: []core.OverrideChange{
+					{Path: "Data/k.ini", Action: core.OverridePlace, SourceID: "nexusmods", ModID: "7"},
+					{Path: "SkyrimPrefs.ini", Root: domain.RootInstallPath, Action: core.OverrideRestore},
+				},
+			},
+		},
+		{
+			"profile_apply_plan_overrides",
+			core.ProfileApplyPlan{
+				GameID: "skyrim-se", Profile: "hardcore",
+				Overrides: []core.OverrideChange{
+					{Path: "Skyrim.ini", Root: domain.RootInstallPath, Action: core.OverrideUpdate},
+				},
+			},
+		},
+		{
 			// The failure shape of a ToInstall entry: no Mod, no Files, the
 			// resolution error as text (#290).
 			"profile_apply_install",
