@@ -79,6 +79,12 @@ the plan says so and matches nothing. A profile that didn't come from a
 NexusMods collection has no checksums to match against: install its mods one
 at a time from their files, as described above.
 
+Use `lmm profile fill` rather than [adopting](#mods-already-in-the-game-folder)
+a collection's files with `lmm import`: adoption takes files over where
+they are and records no mod type, because lmm won't move files it has no
+copy of in its cache, while a fill installs each mod with the type the
+collection gives it (a script extender into the game folder, for example).
+
 ## When the author turns downloads back on
 
 Once a mod's site refuses to let lmm download it, lmm marks the mod
