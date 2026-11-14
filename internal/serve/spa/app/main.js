@@ -2617,7 +2617,14 @@ async function onJobDone(summary) {
         : "success",
     sticky: held,
     title: `${summary.kind} finished`,
-    detail: held && tally ? resultTallyLabel(tally) : undefined,
+    // Issue 633: a removal held by its warnings (a shared path handed to
+    // the next mod in load order) says them here, where the page moved on.
+    detail:
+      held && tally
+        ? resultTallyLabel(tally)
+        : held && read?.warnings?.length > 0
+          ? read.warnings.join(" ")
+          : undefined,
     jobID: summary.id,
     ...toastAffordance(summary),
   });

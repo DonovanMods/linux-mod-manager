@@ -2307,6 +2307,9 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	// #630: and every one places a file the profile overrides as the
 	// overridden copy.
 	installer.overridden = s.overriddenModFiles
+	// #633: and every removal that takes a mod away for good hands a
+	// shared path to the next mod in the profile's load order.
+	installer.heirs = s.pathHeirsFor("", nil, nil)
 	installer.afterLink = s.afterDeployLink
 	// #353: and every Installer routes its deployable files through the
 	// game's adapter. A resolution failure is reported by the flow's own

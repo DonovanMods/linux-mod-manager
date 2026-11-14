@@ -87,6 +87,25 @@ export function useJobResultLoader(jobID, jobState) {
 }
 
 const NO_WARNINGS = [];
+
+/**
+ * RESULT_WARNING_KINDS are the job kinds whose readout shows the result's
+ * warnings where the job finished, and waits for the user to read them: a
+ * switch's recovery notice (issue 463), and every removal that can hand a
+ * shared path to the next mod in load order (issue 633) - with the other
+ * sentences those results carry for the user (a file left as theirs, a
+ * merged-artifact sync that failed), which the CLI prints too.
+ */
+export const RESULT_WARNING_KINDS = new Set([
+  "switch",
+  "uninstall",
+  "disable",
+  "updates",
+  "rollback",
+  "update_from_archive",
+  "mod_copy",
+  "profile_apply",
+]);
 // PLUGIN_LIST_KINDS are the job kinds whose result has a `plugins` field.
 const PLUGIN_LIST_KINDS = new Set(["deploy", "purge"]);
 const NO_FAILURES = [];
@@ -94,9 +113,7 @@ const NO_FAILURES = [];
 /** readResult is what the cache holds for one finished job's status/result. */
 function readResult(status) {
   const result = status?.result;
-  const warnings = Array.isArray(result?.warnings)
-    ? result.warnings.filter((w) => typeof w === "string" && w !== "")
-    : NO_WARNINGS;
+  const warnings = resultWarnings(status?.kind, result);
   const kept = Array.isArray(result?.kept) ? result.kept : [];
   const removedPaths = Number.isSafeInteger(result?.removed_paths)
     ? result.removed_paths
@@ -131,6 +148,22 @@ function readResult(status) {
       ? result.plugins
       : null;
   return { warnings, purge, verify, failures, loader, plugins };
+}
+
+/** resultWarnings is a result's warnings: its own, and - an update batch's
+ * (issue 633) - each applied item's. */
+function resultWarnings(kind, result) {
+  const own = Array.isArray(result?.warnings) ? result.warnings : [];
+  const items =
+    kind === "updates" && Array.isArray(result?.applied)
+      ? result.applied.flatMap((a) =>
+          Array.isArray(a?.warnings) ? a.warnings : [],
+        )
+      : [];
+  const all = [...own, ...items].filter(
+    (w) => typeof w === "string" && w !== "",
+  );
+  return all.length > 0 ? all : NO_WARNINGS;
 }
 
 /**
@@ -187,7 +220,7 @@ export function readoutHasNextStep(summary, read) {
       read.plugins.status === "removed")
   )
     return true;
-  return summary?.kind === "switch" && read.warnings.length > 0;
+  return RESULT_WARNING_KINDS.has(summary?.kind) && read.warnings.length > 0;
 }
 
 /**
@@ -209,8 +242,7 @@ const RESULT_NEXT_STEP_KINDS = new Set([
   "deploy",
   "purge",
   "verify_fix",
-  "switch",
-  "updates",
+  ...RESULT_WARNING_KINDS,
 ]);
 
 function useJobResultRead(jobID, jobState) {

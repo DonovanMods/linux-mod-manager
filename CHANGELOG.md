@@ -393,6 +393,24 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Changed
 
+- **Removing the mod that wins a shared file hands it to the next mod in
+  load order (#633).** When two enabled mods ship the same file and the one
+  later in the load order goes - `lmm uninstall`, `lmm mod disable`, an
+  `lmm update` (or rollback, or update from a file) to a version without
+  the file, `lmm mod copy --replace` with a version without it, or a
+  `lmm profile switch` / `lmm profile apply` that turns it off - the next
+  enabled mod in load order that ships the file now has its copy deployed
+  there in the same command, instead of the game's original coming back
+  (or the path staying empty) until the next `lmm deploy`. The original
+  lmm set aside stays set aside, and goes back only when no enabled mod is
+  left to ship the file. This works under both deploy roots (the mod
+  folder and the game folder) and all three link methods; a file the
+  profile overrides stays overridden, and a file that is yours is still
+  left alone. Each command says which mod's file now holds the path, as a
+  warning; the web UI's readout for an uninstall, a disable, an update, a
+  rollback, a copy, an apply or a switch now shows a job's warnings where
+  the job finished (only a switch's did before), and `lmm conflicts` and
+  the web UI's conflicts view name the new owner.
 - **Profile overrides are written more carefully (#630).** Each override
   now replaces its file atomically (a temporary file renamed into place),
   and its directory is opened one step at a time from the game folder

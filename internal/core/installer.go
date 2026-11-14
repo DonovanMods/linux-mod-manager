@@ -108,6 +108,13 @@ type Installer struct {
 	// placing is overridden's answer for the Install or replace in
 	// progress, which its rollbacks place and remove by too.
 	placing overriddenFiles
+
+	// heirs lists the mods a removal may hand a shared path to (#633):
+	// Service.pathHeirsFor. Every replace asks it, and so does
+	// uninstallHandingOff; a plain Uninstall - a deploy's undeploy, a
+	// repair's, a purge's - never does. Nil - an Installer built without a
+	// Service - hands nothing on.
+	heirs heirSource
 }
 
 // NewInstaller creates a new installer
@@ -1231,7 +1238,18 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 	// goes once the original is back in place" stays true. A failed put-back
 	// is reported on the always-on channel and keeps its row, so
 	// `lmm snapshot restore` can still do it (restoreReplacedOriginal).
-	i.restoreReplacedOriginals(game, pathsOf(removedOld))
+	//
+	// #633: a path the next mod in load order ships passes to that mod
+	// instead, here for the same reason - nothing can roll it back now.
+	ho := i.newHandOff(oldMod, nil, game)
+	for _, item := range removedOld {
+		dstPath := deployTarget(game, item.path)
+		if i.handOffPath(ctx, game, profileName, ho, others, item.path, dstPath) {
+			continue
+		}
+		i.restoreReplacedOriginal(item.path, dstPath)
+	}
+	i.reportHandOffs(ho)
 
 	return nil
 }
@@ -1506,10 +1524,28 @@ func (i *Installer) rollbackDeploy(game *domain.Game, relativePaths []domain.Dep
 // reported on the flow's Warnings; the profile's record of it goes, as the
 // recorded-only purge's PurgeKeptOtherGame drops it.
 func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) error {
-	removed, held, err := i.uninstall(ctx, game, mod, profileName)
+	return i.uninstallReporting(ctx, game, mod, profileName, nil)
+}
+
+// uninstallHandingOff is Uninstall for a removal that takes mod away for
+// good - an uninstall, a disable, a switch or an apply turning it off
+// (#633): each shared path it takes lmm's file from passes to the next
+// enabled mod of the profile, in load order, that ships it, and only a
+// path no such mod ships gets its original back. incoming, when set, is
+// the mod deployed right after in mod's place; the paths it ships are left
+// for that deploy.
+func (i *Installer) uninstallHandingOff(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, incoming *domain.Mod) error {
+	return i.uninstallReporting(ctx, game, mod, profileName, i.newHandOff(mod, incoming, game))
+}
+
+// uninstallReporting is Uninstall's body, handing paths on through ho
+// (nil: none).
+func (i *Installer) uninstallReporting(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, ho *handOff) error {
+	removed, held, err := i.uninstall(ctx, game, mod, profileName, ho)
 	for _, h := range held {
 		i.noteHeld(h.removalNote())
 	}
+	i.reportHandOffs(ho)
 	// Pruned even on failure: the paths in removed are gone either way, so
 	// the directories they emptied are lmm's to tidy either way.
 	cleanupRemoved(game, removed)
@@ -1521,8 +1557,8 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 // for another game. purgeMods composes it so that a whole purge prunes
 // ONCE, over its whole removal set, instead of per mod - which is what its
 // single trailing CleanupEmptyDirs has always been - and reports the held
-// paths as its own.
-func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) ([]domain.DeployPath, []heldPath, error) {
+// paths as its own. ho, when set, hands each removed path on (#633).
+func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, ho *handOff) ([]domain.DeployPath, []heldPath, error) {
 	files, err := i.removalPaths(ctx, game, mod, profileName)
 	if err != nil {
 		return nil, nil, err
@@ -1613,6 +1649,11 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 			i.noteUnverified(file, rc.legacy)
 		}
 		removed = append(removed, file)
+		// #633: the next mod in load order that ships the path takes it,
+		// over the original lmm keeps set aside.
+		if i.handOffPath(ctx, game, profileName, ho, others, file, dstPath) {
+			continue
+		}
 		// lmm's own file is gone; whatever it displaced goes back.
 		i.restoreReplacedOriginal(file, dstPath)
 	}
