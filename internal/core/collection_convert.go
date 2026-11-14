@@ -100,6 +100,13 @@ const (
 	// CollectionItemUnsupported is an item needing a feature lmm lacks: a
 	// required one blocks the import, an optional one is skipped.
 	CollectionItemUnsupported CollectionItemState = "unsupported"
+	// CollectionItemInstalled is an item the profile already has at the
+	// pinned file: nothing to do.
+	CollectionItemInstalled CollectionItemState = "installed"
+	// CollectionItemManualDownload is an item the account cannot download
+	// through the source's API (a free NexusMods account): the import
+	// records it, and its page is linked for the user to fetch it.
+	CollectionItemManualDownload CollectionItemState = "manual_download"
 )
 
 // ConvertedCollection is a source collection converted into an lmm
@@ -107,36 +114,49 @@ const (
 type ConvertedCollection struct {
 	// SourceID is the source the collection lives on; Slug, Revision, Name,
 	// URL and Author identify it there.
-	SourceID string
-	Slug     string
-	Revision int
-	Name     string
-	URL      string
-	Author   string
+	SourceID string `json:"source_id"`
+	Slug     string `json:"slug"`
+	Revision int    `json:"revision"`
+	Name     string `json:"name"`
+	URL      string `json:"url,omitempty"`
+	Author   string `json:"author,omitempty"`
 	// Document is the version-1 collection document: what an import
-	// installs.
-	Document *domain.CollectionDocument
+	// installs. Not on the wire: the import plan it becomes is.
+	Document *domain.CollectionDocument `json:"-"`
 	// Items is every item of the collection, in the collection's own order,
 	// with what the import does with it.
-	Items []ConvertedCollectionItem
+	Items []ConvertedCollectionItem `json:"items"`
+	// Counts counts Items by state.
+	Counts map[CollectionItemState]int `json:"counts"`
 	// Features is every feature the collection raised, supported or not, in
 	// name order; Unsupported the ones that block the import.
-	Features    []string
-	Unsupported []UnsupportedCollectionFeature
+	Features    []string                       `json:"features"`
+	Unsupported []UnsupportedCollectionFeature `json:"unsupported,omitempty"`
 	// Tools are the curator's tool shortcuts: listed, never created or run.
-	Tools []CollectionTool
+	Tools []CollectionTool `json:"tools,omitempty"`
 	// Notes are what the conversion did that a person should know.
-	Notes []string
+	Notes []string `json:"notes,omitempty"`
+	// WithOptional and Optional echo what was opted in - every optional
+	// item, or those named by ID - so a frontend re-plans with the same
+	// selection.
+	WithOptional bool     `json:"with_optional,omitzero"`
+	Optional     []string `json:"optional,omitempty"`
+	// AccountTier is the source account's tier, when the source reports one
+	// (source.AccountTierReporter); ManualDownload says the account is not
+	// served downloads through the API, so every item to install is a
+	// manual download and the import saves the profile with them pending.
+	AccountTier    string `json:"account_tier,omitempty"`
+	ManualDownload bool   `json:"manual_download,omitzero"`
 	// AutoUpdate names the document's entries (by domain.ModKey) whose
 	// installed mod the import sets to the auto update policy: a mod whose
 	// every file the curator marked "latest" installs the tested file now
 	// and follows the newest one from the next update check on (owner
 	// ruling, 2026-11-13). The profile document has no update policy - it
 	// is the installed row's - so the import applies it.
-	AutoUpdate []string
+	AutoUpdate []string `json:"auto_update,omitempty"`
 	// ManifestError says why the recipe could not be read; empty when it
 	// was.
-	ManifestError string
+	ManifestError string `json:"manifest_error,omitempty"`
 
 	// pendingCollection holds the collection-level features the recipe
 	// raised while its items were read, gated when the document is built.
@@ -148,46 +168,46 @@ type ConvertedCollectionItem struct {
 	// ID identifies the item within the collection - "<mod id>:<file id>"
 	// for a mod file, "item:<n>" otherwise - and is what opting an optional
 	// item in names.
-	ID string
+	ID string `json:"id"`
 	// Name and Version are display facts; ModID and FileID the file on the
 	// source.
-	Name    string
-	Version string
-	ModID   string
-	FileID  string
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+	ModID   string `json:"mod_id,omitempty"`
+	FileID  string `json:"file_id,omitempty"`
 	// FileCategory is the source's category for the file (MAIN, OPTIONAL,
 	// OLD_VERSION, ARCHIVED, ...), and URL its page.
-	FileCategory string
-	URL          string
+	FileCategory string `json:"file_category,omitempty"`
+	URL          string `json:"url,omitempty"`
 	// State is what the import does with the item.
-	State CollectionItemState
+	State CollectionItemState `json:"state"`
 	// Optional, Phase and UpdatePolicy are the curator's.
-	Optional     bool
-	Phase        int
-	UpdatePolicy string
+	Optional     bool   `json:"optional,omitzero"`
+	Phase        int    `json:"phase,omitzero"`
+	UpdatePolicy string `json:"update_policy,omitempty"`
 	// ModType is the item's stated mod type, "" for the game's default.
-	ModType string
+	ModType string `json:"mod_type,omitempty"`
 	// Installer reports that the collection records installer choices for
 	// the item.
-	Installer bool
+	Installer bool `json:"installer,omitzero"`
 	// Instructions are the curator's words for the item.
-	Instructions string
+	Instructions string `json:"instructions,omitempty"`
 	// AutoUpdate reports that the import sets the installed mod's update
 	// policy to auto (ConvertedCollection.AutoUpdate), and Note is what
 	// the conversion did with the item that a person should know.
-	AutoUpdate bool
-	Note       string
+	AutoUpdate bool   `json:"auto_update,omitzero"`
+	Note       string `json:"note,omitempty"`
 	// Features are the features the item raises that lmm cannot import.
-	Features []string
+	Features []string `json:"features,omitempty"`
 	// MD5 and SizeBytes describe the curator's file.
-	MD5       string
-	SizeBytes int64
+	MD5       string `json:"md5,omitempty"`
+	SizeBytes int64  `json:"size_bytes,omitzero"`
 }
 
 // CollectionTool is a curator's tool shortcut, listed for information.
 type CollectionTool struct {
-	Name string
-	Exe  string
+	Name string `json:"name"`
+	Exe  string `json:"exe,omitempty"`
 }
 
 // convertInput is everything one conversion reads.
@@ -397,6 +417,12 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 	for _, it := range items {
 		out.Items = append(out.Items, it.ConvertedCollectionItem)
 	}
+	out.WithOptional = in.withOptional
+	for id := range in.optional {
+		out.Optional = append(out.Optional, id)
+	}
+	sort.Strings(out.Optional)
+	out.recount()
 	return out, nil
 }
 
@@ -690,7 +716,9 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 			if e == nil {
 				e = &entry{phase: it.Phase, first: it.index}
 				e.item.Name = it.Name
-				e.item.Ref = domain.ModReference{SourceID: in.sourceID, ModID: it.ModID, Version: it.Version}
+				// The stated type is the entry's (#607): one mod, one type -
+				// files that disagree were refused as mod_type_mixed.
+				e.item.Ref = domain.ModReference{SourceID: in.sourceID, ModID: it.ModID, Version: it.Version, ModType: it.ModType}
 				entries = append(entries, e)
 			}
 			e.members = append(e.members, it)
@@ -863,16 +891,9 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 	sort.Slice(out.Unsupported, func(i, j int) bool { return out.Unsupported[i].Feature < out.Unsupported[j].Feature })
 	out.pendingCollection = nil
 
-	requires := deriveCollectionRequires(doc)
-	for _, e := range entries {
-		for _, it := range e.members {
-			if it.ModType != "" {
-				requires = appendUnique(requires, CollectionFeatureModTypePrefix+it.ModType)
-			}
-		}
-	}
-	sort.Strings(requires)
-	doc.Requires = requires
+	// The document requires what its content needs, mod types included
+	// (each entry's ModType), exactly as an export derives it.
+	doc.Requires = deriveCollectionRequires(doc)
 	return doc
 }
 
@@ -1079,4 +1100,12 @@ func remainingComponents(n int, edges [][]int, done []bool) []int {
 		}
 	}
 	return comp
+}
+
+// recount sets Counts from Items' states.
+func (c *ConvertedCollection) recount() {
+	c.Counts = make(map[CollectionItemState]int)
+	for _, it := range c.Items {
+		c.Counts[it.State]++
+	}
 }

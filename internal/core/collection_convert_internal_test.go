@@ -234,6 +234,7 @@ func TestConvert_ModTypes(t *testing.T) {
 	assert.Empty(t, c.Unsupported, "dinput routes; the optional SMAPI item is skipped")
 	assert.Equal(t, "dinput", itemByName(t, c, "SKSE64").ModType)
 	assert.Equal(t, []string{"mod_type:dinput"}, c.Document.Requires, "a v1 document that relies on a mod type says so")
+	assert.Equal(t, "dinput", c.Document.Items[0].Ref.ModType, "the profile entry carries the stated type")
 	assert.Equal(t, CollectionItemUnsupported, itemByName(t, c, "SMAPI thing").State)
 
 	in.modTypeSupported = nil
