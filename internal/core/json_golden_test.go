@@ -1725,6 +1725,31 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #641: the drift summary, every reason set.
+			"profile_drift",
+			core.ProfileDrift{
+				Profile: "default", NotInstalled: 1, Version: 2, ModType: 1, Files: 1,
+				Fomod: 1, Disabled: 1, Extra: 3, Overrides: 1,
+			},
+		},
+		{
+			// #641: GameStatus for an active profile an apply would change -
+			// what the web UI's Profile card offers Apply on.
+			"game_status_drift",
+			core.GameStatus{
+				Game:                jsonGoldenGame,
+				LinkMethod:          domain.LinkSymlink,
+				EffectiveLinkMethod: domain.LinkSymlink,
+				LinkMethodSource:    "global",
+				ResolvedCachePath:   "/home/user/.local/share/lmm",
+				Profiles:            []core.ProfileSummary{{Name: "default", ModCount: 3, IsDefault: true}},
+				ActiveProfile:       "default",
+				InstalledModCount:   2,
+				EnabledModCount:     2,
+				ProfileDrift:        &core.ProfileDrift{Profile: "default", NotInstalled: 1, Version: 2, Overrides: 1},
+			},
+		},
+		{
 			// #606: one entry of lmm's game catalog - GET /api/v1/games/known's
 			// row, the game editor's choices for `catalog:`.
 			"known_game",

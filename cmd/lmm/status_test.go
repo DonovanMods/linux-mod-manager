@@ -383,3 +383,40 @@ func TestShowGameStatus_ConversionFailures_ShownInTextAndJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(jsonOut), &decoded))
 	assert.Equal(t, 1, decoded.ConversionFailures)
 }
+
+// TestShowGameStatus_ProfileDrift_TextAndJSON is #641: a profile whose
+// version was edited by hand reads as drift in both twins - the text names
+// the reason and the command that converges it, --json carries the counts.
+func TestShowGameStatus_ProfileDrift_TextAndJSON(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	seedDeployableMod(t, svc, game, "2", "Other Mod", "other.esp")
+
+	textOut := captureStdout(t, func() error { return showGameStatus(context.Background(), svc, game.ID) })
+	assert.NotContains(t, textOut, "Differs from profile", "a profile that matches its installs shows no drift")
+
+	p, err := config.LoadProfile(svc.ConfigDir(), game.ID, "default")
+	require.NoError(t, err)
+	p.Mods[0].Version = "2.0"
+	p.Mods[1].Version = "0.9"
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), p))
+
+	textOut = captureStdout(t, func() error { return showGameStatus(context.Background(), svc, game.ID) })
+	assert.Contains(t, textOut, "Differs from profile: 2 mods at another version")
+	assert.Contains(t, textOut, "lmm profile apply")
+
+	jsonOut := captureStdout(t, func() error { return showGameStatusJSON(context.Background(), svc, game.ID) })
+	var decoded core.GameStatus
+	require.NoError(t, json.Unmarshal([]byte(jsonOut), &decoded))
+	require.NotNil(t, decoded.ProfileDrift)
+	assert.Equal(t, core.ProfileDrift{Profile: "default", Version: 2}, *decoded.ProfileDrift)
+}
+
+func TestDriftSummary_NamesEveryReason(t *testing.T) {
+	assert.Equal(t,
+		"1 mod not installed, 2 mods at another version, 1 mod of another mod type, 1 mod with other files, "+
+			"1 mod with other installer choices, 1 mod disabled, 3 mods enabled that the profile leaves out, 1 override changed",
+		driftSummary(core.ProfileDrift{NotInstalled: 1, Version: 2, ModType: 1, Files: 1, Fomod: 1, Disabled: 1, Extra: 3, Overrides: 1}))
+	assert.Equal(t, "2 overrides changed", driftSummary(core.ProfileDrift{Overrides: 2}))
+}

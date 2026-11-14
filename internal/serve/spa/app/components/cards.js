@@ -138,8 +138,19 @@ export function AttentionCards({
   // a separate mods request. Until it does, subtracting from an empty set
   // invents drift and can briefly offer the wrong repair.
   const listedOff = mods ? listedOffRefs(mods) : [];
-  const notInstalled = mods ? notInstalledCount(state, mods) : 0;
+  // Issue 641: for the active profile, core's drift summary is the exact
+  // answer - the apply plan's own comparison - so its not-installed count
+  // replaces the subtraction below, which stays for a profile being looked
+  // at that is not the active one (core computes no drift for those).
+  const active = isActiveProfile(state);
+  const drift = active ? activeDrift(state) : null;
+  const notInstalled = active
+    ? (drift?.not_installed ?? 0)
+    : mods
+      ? notInstalledCount(state, mods)
+      : 0;
   const notListed = mods ? notListedCount(state, mods) : 0;
+  const driftTotal = drift ? driftCount(drift) : 0;
 
   if (
     updateRows.length === 0 &&
@@ -154,6 +165,7 @@ export function AttentionCards({
     conflictRows.length === 0 &&
     notInstalled === 0 &&
     notListed === 0 &&
+    driftTotal === 0 &&
     listedOff.length === 0 &&
     !hasError
   ) {
@@ -198,12 +210,17 @@ export function AttentionCards({
         />`
       }
       ${
-        (notInstalled > 0 || notListed > 0 || listedOff.length > 0) &&
+        (notInstalled > 0 ||
+          notListed > 0 ||
+          driftTotal > 0 ||
+          listedOff.length > 0) &&
         html`<${ProfileCard}
           state=${state}
           notInstalled=${notInstalled}
           notListed=${notListed}
           listedOff=${listedOff}
+          drift=${drift}
+          active=${active}
           actions=${actions}
         />`
       }
@@ -1124,7 +1141,9 @@ export function verifyCoverage(result) {
 
 /** notInstalledCount is how many of the current profile's listed mods have
  * no install behind them - the number `lmm profile apply` exists to bring
- * to zero, and the only thing the Profile card renders on.
+ * to zero. Since issue 641 it is read only for a profile that is NOT the
+ * active one: the active profile's comes, exactly, from core's drift
+ * summary (activeDrift).
  *
  * It is a SUBTRACTION of two documents this route already has, not a third
  * fetch: core.ProfileSummary.mod_count is the profile YAML's own load order
@@ -1156,6 +1175,62 @@ function notInstalledCount(state, mods) {
     0,
     summary.mod_count - (mods?.mods?.length ?? 0) - listedOffRefs(mods).length,
   );
+}
+
+/** isActiveProfile reports whether the profile this route shows is the
+ * game's active one - the only profile `lmm profile apply` acts on, and the
+ * one GET /api/v1/status reports drift for (issue 641). */
+function isActiveProfile(state) {
+  const profile = state?.route?.profile;
+  return Boolean(profile) && state?.status?.active_profile === profile;
+}
+
+/** activeDrift is core.GameStatus.profile_drift for the active profile, or
+ * null when it has none (issue 641). */
+function activeDrift(state) {
+  const drift = state?.status?.profile_drift;
+  return drift && drift.profile === state?.route?.profile ? drift : null;
+}
+
+/** DRIFT_REASONS names each core.ProfileDrift count, in the struct's own
+ * order, worded as `lmm status --game` words it (cmd/lmm/status.go,
+ * driftSummary): [field, one, many]. */
+const DRIFT_REASONS = [
+  ["not_installed", "mod not installed", "mods not installed"],
+  ["version", "mod at another version", "mods at another version"],
+  ["mod_type", "mod of another mod type", "mods of another mod type"],
+  ["files", "mod with other files", "mods with other files"],
+  [
+    "fomod",
+    "mod with other installer choices",
+    "mods with other installer choices",
+  ],
+  ["disabled", "mod disabled", "mods disabled"],
+  [
+    "extra",
+    "mod enabled that the profile leaves out",
+    "mods enabled that the profile leaves out",
+  ],
+  ["overrides", "override changed", "overrides changed"],
+];
+
+/** driftCount is every change a drift summary counts. */
+function driftCount(drift) {
+  return DRIFT_REASONS.reduce((n, [field]) => n + (drift?.[field] ?? 0), 0);
+}
+
+/** driftSummary names a drift's reasons with their counts - "2 mods at
+ * another version, 1 override changed" - leaving out the fields in skip
+ * (the ones the card already says in a sentence of their own). Exported
+ * for the browser unit test that pins its wording against the CLI's. */
+export function driftSummary(drift, skip = []) {
+  return DRIFT_REASONS.filter(
+    ([field]) => !skip.includes(field) && (drift?.[field] ?? 0) > 0,
+  )
+    .map(([field, one, many]) =>
+      drift[field] === 1 ? `1 ${one}` : `${drift[field]} ${many}`,
+    )
+    .join(", ");
 }
 
 /** notListedCount is the OTHER direction of the same subtraction (C-3):
@@ -1191,8 +1266,18 @@ export function notListedCount(state, mods) {
  * onto what the profile lists, `lmm profile sync` pulls the PROFILE onto
  * what is installed. Which of the two is offered depends on which way the
  * drift runs; Sync is offered either way, because it is the one that can
- * answer both buckets at once. */
-function ProfileCard({ state, notInstalled, notListed, listedOff, actions }) {
+ * answer both buckets at once. For the active profile, Apply is offered on
+ * core's drift summary (issue 641): a hand-edited version, other files,
+ * FOMOD choices, a mod type or an override, not only a mod not installed. */
+function ProfileCard({
+  state,
+  notInstalled,
+  notListed,
+  listedOff,
+  drift,
+  active,
+  actions,
+}) {
   // ONE string rather than three adjacent interpolations: htm collapses
   // JSX-style whitespace between them, which silently fuses "profile" and
   // "is" into "profileis" (the same trap conflictLabel below documents).
@@ -1203,6 +1288,21 @@ function ProfileCard({ state, notInstalled, notListed, listedOff, actions }) {
         ? `${notListed} installed mod${notListed === 1 ? "" : "s"} ${notListed === 1 ? "is" : "are"} not in this profile's load order`
         : "";
   const offSentence = `${listedOff.length} mod${listedOff.length === 1 ? "" : "s"} in this profile ${listedOff.length === 1 ? "is" : "are"} switched off and not downloaded`;
+  // Issue 641: the rest of what an apply would change, named by reason. A
+  // reason the sentence above already says is left out of it: the
+  // not-installed count always, and the enabled-but-unlisted one when the
+  // sentence is the not-listed one.
+  const driftSkip = ["not_installed"];
+  if (notInstalled === 0 && notListed > 0) driftSkip.push("extra");
+  const driftLine = drift ? driftSummary(drift, driftSkip) : "";
+  // Apply is offered on what the apply plan would do: for the active
+  // profile, its drift; for another, the listed mods it lacks (whose plan
+  // then says the profile must be switched to first).
+  const driftTotal = drift ? driftCount(drift) : 0;
+  const offerApply = active ? driftTotal > 0 : notInstalled > 0;
+  const count = active
+    ? Math.max(driftTotal, notListed) + listedOff.length
+    : (notInstalled || notListed) + listedOff.length;
 
   function apply() {
     actions.openPlan({
@@ -1226,14 +1326,20 @@ function ProfileCard({ state, notInstalled, notListed, listedOff, actions }) {
 
   return html`
     <div class="card card--profile">
-      <h2 class="card__title">
-        ${`◎ Profile (${(notInstalled || notListed) + listedOff.length})`}
-      </h2>
+      <h2 class="card__title">${`◎ Profile (${count})`}</h2>
       <ul class="card__list">
         ${
           sentence &&
           html`<li class="card__row">
             <span class="card__row-name">${sentence}</span>
+          </li>`
+        }
+        ${
+          driftLine &&
+          html`<li class="card__row" data-testid="profile-drift">
+            <span class="card__row-name"
+              >${`Differs from what is installed: ${driftLine}`}</span
+            >
           </li>`
         }
         ${
@@ -1246,7 +1352,7 @@ function ProfileCard({ state, notInstalled, notListed, listedOff, actions }) {
       <${ListedOffList} refs=${listedOff} state=${state} actions=${actions} />
       <div class="card__actions">
         ${
-          notInstalled > 0 &&
+          offerApply &&
           html`<${InlineJob}
             origin=${PROFILE_APPLY_ORIGIN}
             state=${state}
