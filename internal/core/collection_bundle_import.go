@@ -10,6 +10,7 @@ package core
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -130,6 +131,21 @@ func resolveBundledItems(doc *domain.CollectionDocument, bundle *collectionBundl
 	return out, pending, warnings, nil
 }
 
+// carries reports whether ref is one of p's own bundled items: the
+// lmm-collection reference "<collection id>.<item>" of an item a mods:
+// entry names. A nil p carries none.
+func (p *pendingBundle) carries(ref domain.ModReference) bool {
+	if p == nil || ref.SourceID != domain.SourceCollection {
+		return false
+	}
+	item, ok := strings.CutPrefix(ref.ModID, p.collectionID+".")
+	if !ok {
+		return false
+	}
+	_, named := p.names[item]
+	return named
+}
+
 // withoutMods is plan with the mods keys names taken out of every bucket
 // and of the profile it saves, for an apply that holds them back.
 func (p *ImportPlan) withoutMods(keys map[string]string) *ImportPlan {
@@ -158,10 +174,12 @@ func (p *ImportPlan) withoutMods(keys map[string]string) *ImportPlan {
 
 // refuseBundledRefs refuses a profile document naming a collection's
 // bundled item (#623 review B1): one comes in only with the container that
-// carries it, whose import decides whether it is admitted.
-func refuseBundledRefs(refs []domain.ModReference) error {
+// carries it, whose import decides whether it is admitted. allowed, when
+// set, names the ones a caller vouches for (#613: a container's own items,
+// the profile's own on an update); nil allows none.
+func refuseBundledRefs(refs []domain.ModReference, allowed func(domain.ModReference) bool) error {
 	for _, ref := range refs {
-		if ref.SourceID == domain.SourceCollection {
+		if ref.SourceID == domain.SourceCollection && (allowed == nil || !allowed(ref)) {
 			return fmt.Errorf("%w: it names %s:%s, a collection's bundled item, which comes in only with the collection's .lmmc container; import the container", ErrUnsafeImport, ref.SourceID, ref.ModID)
 		}
 	}

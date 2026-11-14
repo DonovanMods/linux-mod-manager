@@ -542,8 +542,9 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 		return nil, fmt.Errorf("building the collection's profile: %w", err)
 	}
 
-	// #623: the container's own bundled items, checked above, may plan.
-	plan, err := s.planImport(ctx, game, data, true)
+	// #623: the container's own bundled items, checked above, may plan;
+	// no other bundled reference may.
+	plan, err := s.planImport(ctx, game, data, pending.carries)
 	if err != nil {
 		return nil, err
 	}
