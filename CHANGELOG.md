@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **More NexusMods collections import: Starfield, The Witcher 3, Baldur's
+  Gate 3 and Stardew Valley mod types (#635).** A collection's mods carry
+  Vortex's mod type, and a type the game's adapter does not know refuses
+  the import. Starfield's `starfield-data-folder` now deploys into `Data/`;
+  the new `witcher3` adapter deploys `witcher3tl` and `dinput` mods from the
+  game folder, and the new `baldurs-gate-3` adapter deploys `bg3-loose`
+  mods into `Data/`. `lmm game detect` sets the two new adapters for the
+  games from Steam, and Mission Control and `lmm verify` suggest them for a
+  game added before. Stardew Valley's SMAPI, which has its own installer, is
+  now listed in the plan (CLI and web UI) as a step for you, with its page
+  and how to install it, and the rest of the collection imports. Of the 72
+  surveyed collections, 17 now import, up from 9. Witcher 3's
+  `witcher3dlc` and `witcher3menumodroot` types are still refused.
 - **Import a NexusMods collection (#607).** The new
   `lmm profile import --nexus-collection <slug|slug@revision|URL>` (in the
   web UI, the Profiles window's **NexusMods collection** field) reads a

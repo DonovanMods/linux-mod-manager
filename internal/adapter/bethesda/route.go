@@ -105,14 +105,21 @@ func (*Adapter) RouteRoots(_ *domain.Game, files []string) []adapter.DeployRoot 
 
 // RootForModType maps a Vortex mod type onto the root its whole archive is
 // relative to: the default type ("") is Data/, "dinput" (which Vortex's
-// script-extender installer sets) and "enb" are the game directory.
-func (*Adapter) RootForModType(_ *domain.Game, modType string) (adapter.DeployRoot, bool) {
+// script-extender installer sets) and "enb" are the game directory, for
+// every Tier 1 game. A type one game's own Vortex extension registers
+// ("starfield-data-folder", #635) is known for that game alone, from its
+// row in the games table; a game the adapter cannot identify knows none.
+func (*Adapter) RootForModType(g *domain.Game, modType string) (adapter.DeployRoot, bool) {
 	switch modType {
 	case "":
 		return adapter.RootModPath, true
 	case "dinput", "enb":
 		return adapter.RootInstallPath, true
-	default:
-		return adapter.RootModPath, false
 	}
+	if k, ok := kindFor(g); ok {
+		if r, ok := k.modTypes[modType]; ok {
+			return r, true
+		}
+	}
+	return adapter.RootModPath, false
 }

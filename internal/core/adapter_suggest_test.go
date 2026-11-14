@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bethesda"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/modtypes"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
@@ -277,4 +278,40 @@ func TestEditGame_Catalog(t *testing.T) {
 	empty := ""
 	_, err = bare.EditGame(ctx, "gog", core.GameEdit{Catalog: &empty})
 	require.NoError(t, err, "clearing needs no catalog")
+}
+
+// #635 review: switching to an adapter that lays out and routes an untyped
+// mod exactly as the identity does (adapter.LayoutNeutral: witcher3,
+// baldurs-gate-3) re-lays nothing and moves nothing, so neither the switch
+// nor verify's suggestion tells the user to reinstall, and the suggestion
+// says what the adapter actually does.
+func TestAdapterSwitchWarning_LayoutNeutralTarget(t *testing.T) {
+	svc := newFlowsTestService(t)
+	svc.RegisterAdapter(modtypes.Witcher3())
+	svc.SetKnownGames(func() []core.KnownGame {
+		return []core.KnownGame{{Slug: "witcher3", Name: "The Witcher 3", SteamAppID: "292030", Adapter: "witcher3"}}
+	})
+	ctx := context.Background()
+	install := t.TempDir()
+	game := &domain.Game{ID: "w3", Name: "The Witcher 3", InstallPath: install, ModPath: filepath.Join(install, "mods"),
+		Launch: &domain.GameLaunch{SteamAppID: "292030"}}
+	require.NoError(t, svc.SaveGame(ctx, game))
+	seedInstalledMod(t, svc, game, "src", "a", "1.0", true, nil)
+
+	warning, err := svc.AdapterSwitchWarning(ctx, game, "witcher3")
+	require.NoError(t, err)
+	assert.Empty(t, warning, "nothing to re-lay out or move")
+
+	status, err := svc.GameStatus(ctx, game)
+	require.NoError(t, err)
+	assert.Equal(t, "witcher3", status.SuggestedAdapter)
+	assert.Empty(t, status.SuggestedAdapterWarning, "the game page switches without asking")
+
+	res, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	f := findingWithStatus(res.Result, core.VerifyStatusAdapterSuggested)
+	require.NotNil(t, f)
+	assert.NotContains(t, f.Note, "uninstall")
+	assert.NotContains(t, f.Note, "lays out and loads its mods", "the adapter changes no layout")
+	assert.Contains(t, f.Note, "stated type")
 }

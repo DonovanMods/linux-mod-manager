@@ -32,6 +32,10 @@ func (Generic) ID() string { return GenericID }
 // Label returns the display name frontends show for this adapter.
 func (Generic) Label() string { return "Generic files" }
 
+// LayoutNeutral marks the identity as LayoutNeutral: it is the layout every
+// other neutral adapter promises to match.
+func (Generic) LayoutNeutral() {}
+
 // NormalizeArchive returns the zero Layout for every request: no rewrite,
 // no drop, no warning. This is the identity, and identity_test.go pins it
 // over every archive shape internal/core's import tests exercise.

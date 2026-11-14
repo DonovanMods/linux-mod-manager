@@ -30,6 +30,10 @@ import (
 //	       and blueprint 0x800 (Starfield); .esm/.esl imply master and .esl
 //	       implies light for SSE, FO4 and Starfield only.
 //	[STEAM] store.steampowered.com/api/appdetails for each app id.
+//	[VXSF] github.com/Nexus-Mods/game-starfield at 3d3332d (Vortex's
+//	       Starfield extension, read for behaviour only): src/index.ts
+//	       registers the "starfield-data-folder" mod type for Starfield
+//	       alone, with src/modTypes/dataPath.ts's getDataPath as its target.
 //
 // Omitted on purpose: the Microsoft Store variants ("... MS" folders,
 // appxmanifest.xml, the MS Fallout 4 DLC directories), which do not run on
@@ -46,6 +50,10 @@ type gameKind struct {
 	// spec returns its rules, freshly built on every call so a caller can
 	// never edit the table through the slices it was handed.
 	spec func() adapter.PluginSpec
+	// modTypes are the Vortex mod types this game's own extension
+	// registers, and the root each one's files are relative to (#635).
+	// The types every Tier 1 game shares are in RootForModType.
+	modTypes map[string]adapter.DeployRoot
 }
 
 // games is the Tier 1 table.
@@ -54,7 +62,11 @@ var games = []gameKind{
 	{slug: "skyrim-vr", steamAppIDs: []string{"611670"}, spec: skyrimVR},
 	{slug: "fallout4", steamAppIDs: []string{"377160"}, spec: fallout4},
 	{slug: "fallout4-vr", steamAppIDs: []string{"611660"}, spec: fallout4VR},
-	{slug: "starfield", steamAppIDs: []string{"1716740"}, spec: starfield},
+	{slug: "starfield", steamAppIDs: []string{"1716740"}, spec: starfield, modTypes: map[string]adapter.DeployRoot{
+		// [VXSF] src/modTypes/dataPath.ts getDataPath: the game
+		// directory's Data/, Starfield's mod_path.
+		"starfield-data-folder": adapter.RootModPath,
+	}},
 	{slug: "skyrim", steamAppIDs: []string{"72850"}, spec: skyrimLE},
 }
 
