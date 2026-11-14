@@ -144,6 +144,12 @@ type CollectionUpdateItem struct {
 	// Locked is whether the profile's entry is locked: for a conflict, the
 	// user's lock that wins by default.
 	Locked bool `json:"locked,omitzero"`
+	// DisplayVersion and NewDisplayVersion are what a surface shows in
+	// Version's and NewVersion's place when they are not versions a person
+	// reads (a Steam Workshop item's content id, #458): set for such an
+	// entry only.
+	DisplayVersion    string `json:"display_version,omitempty"`
+	NewDisplayVersion string `json:"new_display_version,omitempty"`
 }
 
 // Key is the entry's domain.ModKey, which CollectionUpdateOptions names.
@@ -475,6 +481,7 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 	}
 
 	plan.diffEntries()
+	plan.stampDisplay(s)
 	if len(plan.Conflicts) > 0 && !slices.ContainsFunc(base.Mods, func(r domain.ModReference) bool { return r.FromCollection }) {
 		warnings = append(warnings, "no entry of this profile is marked as the collection's (it was imported by an lmm before collection updates, or every entry was locked or unlocked by hand), so every entry the new version changes is listed as a conflict: override them to take the collection's version")
 	}
@@ -592,6 +599,26 @@ func (p *CollectionUpdatePlan) diffEntries() {
 		}
 		seen[key] = true
 		p.Removed = append(p.Removed, CollectionUpdateItem{SourceID: ref.SourceID, ModID: ref.ModID, Version: ref.Version, Locked: ref.Locked})
+	}
+}
+
+// stampDisplay sets the display versions of every entry whose source
+// versions by content id (a Steam Workshop item, #458): the revision date
+// the profile's installed row has, or "-".
+func (p *CollectionUpdatePlan) stampDisplay(s *Service) {
+	for _, bucket := range [][]CollectionUpdateItem{p.Added, p.Changed, p.Removed, p.Conflicts} {
+		for i := range bucket {
+			it := &bucket[i]
+			if !s.sourceIsWorkshop(it.SourceID) {
+				continue
+			}
+			if it.Version != "" {
+				it.DisplayVersion = NoRevisionDate
+			}
+			if it.NewVersion != "" {
+				it.NewDisplayVersion = NoRevisionDate
+			}
+		}
 	}
 }
 

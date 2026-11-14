@@ -17,6 +17,7 @@
 // --override-conflicts. Every string was sanitised by core.
 
 import { html } from "../render.js";
+import { displayVersion } from "../version.js";
 import { PlanWarnings } from "./planwarnings.js";
 import { SourceCollectionSection } from "./plan_profile_import.js";
 
@@ -30,11 +31,16 @@ function labelOf(it) {
   return it.name ? `${it.name} (${keyOf(it)})` : keyOf(it);
 }
 
-/** move is "1.0 → 1.1", or the one side an entry has. */
+/** move is "1.0 → 1.1", or the one side an entry has - each side through
+ * displayVersion, with core's display stamp for a Workshop item. */
 function move(it) {
-  if (it.version && it.new_version && it.version !== it.new_version)
-    return `${it.version} → ${it.new_version}`;
-  return it.new_version || it.version || "";
+  const from = displayVersion(it);
+  const to = displayVersion({
+    version: it.new_version,
+    display_version: it.new_display_version,
+  });
+  if (from && to && from !== to) return `${from} → ${to}`;
+  return to || from;
 }
 
 /** changes words an entry's change list. */

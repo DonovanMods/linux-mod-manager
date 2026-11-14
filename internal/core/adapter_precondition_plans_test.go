@@ -28,6 +28,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -127,6 +128,11 @@ var gatedPlans = []gatedPlan{
 	}},
 	{"PlanCollectionImportURL", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
 		_, err := svc.PlanCollectionImportURL(context.Background(), core.CollectionURLImportRequest{URL: fx.collectionURL, GameID: g.ID})
+		return err
+	}},
+	{"PlanCollectionUpdate", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		subscribeToCollectionURL(t, svc, g, fx.collectionURL)
+		_, err := svc.PlanCollectionUpdate(context.Background(), g, core.CollectionUpdateRequest{Profile: "default"})
 		return err
 	}},
 	{"PlanUpdate", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
@@ -374,4 +380,15 @@ func newPlanFixtureWithAdapter(t *testing.T, _ adapter.GameAdapter) (*core.Servi
 			NewVersion: "2.0",
 		},
 	}
+}
+
+// subscribeToCollectionURL records url as the default profile's collection
+// origin (#613), as a URL import would, so a collection update fetches it.
+func subscribeToCollectionURL(t *testing.T, svc *core.Service, g *domain.Game, url string) {
+	t.Helper()
+	pm := svc.NewProfileManager()
+	p, err := pm.Get(context.Background(), g.ID, "default")
+	require.NoError(t, err)
+	p.Collection = &domain.CollectionInfo{Origin: &domain.CollectionOrigin{ImportURL: url}}
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), p))
 }

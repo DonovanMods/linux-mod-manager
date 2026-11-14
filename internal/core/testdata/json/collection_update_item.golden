@@ -1,0 +1,13 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "10",
+  "name": "Ten",
+  "version": "1",
+  "new_version": "2",
+  "changes": [
+    "version",
+    "files",
+    "lock"
+  ],
+  "locked": true
+}

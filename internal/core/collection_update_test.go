@@ -487,3 +487,29 @@ func TestCollectionUpdate_GatesTheNewDocument(t *testing.T) {
 	assert.Contains(t, saved.Overrides, "Config/Game.ini")
 	assert.NotContains(t, saved.Overrides, "doorstop_config.ini")
 }
+
+// TestCollectionUpdate_WorkshopEntriesShowNoContentID: a Steam Workshop
+// item's version is a content id, which no surface may print (#458): its
+// entry carries the display stamp.
+func TestCollectionUpdate_WorkshopEntriesShowNoContentID(t *testing.T) {
+	f := newUpdateFixture(t)
+	f.svc.RegisterSource(newWorkshopTestSource())
+	f.game.SourceIDs["steamworkshop"] = "489830"
+	require.NoError(t, f.svc.SaveGame(context.Background(), f.game))
+	item := func(version string) func(doc *domain.CollectionDocument) {
+		return func(doc *domain.CollectionDocument) {
+			doc.Items = []domain.CollectionItem{{Name: "Ship", Ref: domain.ModReference{SourceID: "steamworkshop", ModID: "9001", Version: version, Disabled: true}}}
+		}
+	}
+	f.serve(urlDocument(t, "coll-1", 1, item("1111111111111111111")))
+	plan, err := f.svc.PlanCollectionImportURL(context.Background(), core.CollectionURLImportRequest{URL: f.server.URL + "/c.yaml"})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{NoInstall: true}, nil)
+	require.NoError(t, err)
+
+	f.serve(urlDocument(t, "coll-1", 2, item("2222222222222222222")))
+	update := f.planUpdate(t)
+	require.Len(t, update.Changed, 1)
+	assert.Equal(t, core.NoRevisionDate, update.Changed[0].DisplayVersion)
+	assert.Equal(t, core.NoRevisionDate, update.Changed[0].NewDisplayVersion)
+}

@@ -2372,6 +2372,23 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #613: one entry of an update plan's buckets, with every field.
+			"collection_update_item",
+			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1", NewVersion: "2", Changes: []string{"version", "files", "lock"}, Locked: true},
+		},
+		{
+			// #613: what an update does to the plugin list.
+			"collection_plugin_change",
+			core.CollectionPluginChange{Added: []string{"New.esp"}, Removed: []string{"Old.esp"}, Reordered: true, Rules: true,
+				Summary: &core.CollectionPluginSummary{Plugins: 3, Active: 2, Inactive: []string{"Off.esp"}, Managed: true}},
+		},
+		{
+			// #613: the --json error envelope's details for an origin
+			// serving an older version.
+			"collection_update_mismatch_error",
+			core.CollectionUpdateMismatchError{Code: core.CollectionUpdateOlderVersion, ID: "coll-1", Version: 5, FetchedID: "coll-1", FetchedVersion: 4},
+		},
+		{
 			// #613: an origin serving the profile's own version.
 			"collection_update_plan_up_to_date",
 			core.CollectionUpdatePlan{
