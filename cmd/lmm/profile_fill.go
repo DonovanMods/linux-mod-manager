@@ -183,6 +183,19 @@ func fillReasonText(r core.FillPendingReason) string {
 	return "not found"
 }
 
+// fillCountText words why counted entries were skipped.
+func fillCountText(r core.FillIgnoredReason) string {
+	switch r {
+	case core.FillIgnoredSymlink:
+		return "links, which are never followed"
+	case core.FillIgnoredNotRegular:
+		return "not regular files"
+	case core.FillIgnoredUnreadable:
+		return "could not be read"
+	}
+	return "no pending file has their size"
+}
+
 // fillIgnoredText words why a file was not used.
 func fillIgnoredText(r core.FillIgnoredReason) string {
 	switch r {
@@ -242,26 +255,16 @@ func printFillPlan(plan *core.ProfileFillPlan) {
 			fmt.Printf("    - %s: %s\n", fillName(p.Name, p.SourceID, p.ModID), fillReasonText(p.Reason))
 		}
 	}
-	var unmatched int
-	var listed []core.FillIgnored
-	for _, ig := range plan.Ignored {
-		if ig.Reason == core.FillIgnoredNoMatch {
-			unmatched++
-			continue
-		}
-		listed = append(listed, ig)
-	}
-	if len(listed) > 0 || (verbose && unmatched > 0) {
+	if len(plan.Ignored) > 0 {
 		fmt.Printf("\n  Not used:\n")
 		for _, ig := range plan.Ignored {
-			if ig.Reason == core.FillIgnoredNoMatch && !verbose {
-				continue
-			}
 			fmt.Printf("    - %s: %s\n", ig.Name, fillIgnoredText(ig.Reason))
 		}
 	}
-	if unmatched > 0 && !verbose {
-		fmt.Printf("  %d other file(s) match no pending file (-v lists them).\n", unmatched)
+	// The rest of the folder is counted, never named: a folder named by
+	// mistake (a home folder) is not listed back.
+	for _, c := range plan.IgnoredCounts {
+		fmt.Printf("  %d other entr%s: %s\n", c.Count, map[bool]string{true: "y", false: "ies"}[c.Count == 1], fillCountText(c.Reason))
 	}
 	if plan.RecordedOnly && len(plan.Matched) > 0 {
 		fmt.Printf("\n%s is not the active profile (%s is), so the fill records these mods in it and deploys nothing; `lmm profile switch %s` deploys them.\n",

@@ -651,6 +651,11 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileFillPlanRequest{UploadIDs: []uploadID{"0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"}},
 		},
 		{
+			// #608: where the fill's folder chooser opens.
+			"downloads_folder",
+			downloadsFolder{Path: "/home/user/Downloads"},
+		},
+		{
 			"profile_fill_plan_request_folder",
 			profileFillPlanRequest{Folder: "/home/user/Downloads"},
 		},

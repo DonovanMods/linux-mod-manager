@@ -80,8 +80,6 @@ func (f *profileFillFixture) download(t *testing.T, modID, name string) {
 
 func withFillFlags(t *testing.T, yes, dryRun bool) {
 	t.Helper()
-	// The plan names the default folder; pin it for the goldens.
-	t.Setenv("XDG_DOWNLOAD_DIR", "/home/user/Downloads")
 	oldYes, oldDry, oldJSON, oldPath, oldDefaults := profileFillYes, profileFillDryRun, jsonOutput, fomodChoicesPath, fomodDefaults
 	profileFillYes, profileFillDryRun, fomodChoicesPath, fomodDefaults = yes, dryRun, "", false
 	t.Cleanup(func() {
@@ -104,7 +102,8 @@ func TestDoProfileFill_InstallsWhatItFindsAndSaysWhatIsLeft(t *testing.T) {
 	assert.Contains(t, stdout, "Twelve (nexusmods:12) ← Twelve-12-1-0.zip (updates automatically)")
 	assert.Contains(t, stdout, "⇣ 1 still pending:")
 	assert.Contains(t, stdout, "Ten (nexusmods:10): not found")
-	assert.Contains(t, stdout, "1 other file(s) match no pending file")
+	assert.Contains(t, stdout, "1 other entry: no pending file has their size")
+	assert.NotContains(t, stdout, "unrelated.pdf", "the rest of the folder is counted, not named")
 	assert.Contains(t, stdout, "✓ Installed: Twelve")
 	assert.Contains(t, stdout, "Installed: 1")
 	assert.Contains(t, stdout, "Still pending: 1")

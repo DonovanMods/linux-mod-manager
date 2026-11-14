@@ -242,10 +242,12 @@ func TestPlanProfileFill_MatchesBySizeThenChecksum(t *testing.T) {
 	assert.Equal(t, "Mod 10", plan.Matched[0].Name)
 	assert.Equal(t, map[string]core.FillIgnoredReason{
 		"impostor.zip": core.FillIgnoredChecksumMismatch,
-		"notes.txt":    core.FillIgnoredNoMatch,
-		"link.zip":     core.FillIgnoredSymlink,
-		"pipe":         core.FillIgnoredNotRegular,
-	}, ignoredBy(plan))
+	}, ignoredBy(plan), "only a file of a pending size is named")
+	assert.Equal(t, []core.FillIgnoredCount{
+		{Reason: core.FillIgnoredNoMatch, Count: 1},
+		{Reason: core.FillIgnoredNotRegular, Count: 1},
+		{Reason: core.FillIgnoredSymlink, Count: 1},
+	}, plan.IgnoredCounts, "the rest of the folder is counted, never listed")
 	assert.Equal(t, 2, plan.Hashed, "only the two files of a pending pin's size were read")
 	require.Len(t, plan.Pending, 2)
 	for _, p := range plan.Pending {
@@ -291,7 +293,8 @@ func TestApplyProfileFill_InstallsTheMatchesAndLeavesTheFilesAlone(t *testing.T)
 	again := f.plan(t)
 	assert.Empty(t, again.Matched, "installed pins are no longer pending")
 	assert.Len(t, again.Pending, 1)
-	assert.Equal(t, core.FillIgnoredNoMatch, ignoredBy(again)["a.zip"])
+	assert.Empty(t, again.Ignored)
+	assert.Equal(t, []core.FillIgnoredCount{{Reason: core.FillIgnoredNoMatch, Count: 2}}, again.IgnoredCounts)
 }
 
 func TestApplyProfileFill_AFileChangedSincePlanFailsThatModOnly(t *testing.T) {
@@ -397,7 +400,8 @@ func TestPlanProfileFill_DuplicateDownloadsAndUploadNames(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"10"}, matchedIDs(plan))
 	assert.Equal(t, "Mod Ten.zip", plan.Matched[0].Files[0].Archive)
-	assert.Equal(t, core.FillIgnoredNoMatch, ignoredBy(plan)["Mod Ten (1).zip"], "its pin is matched; the copy is not read")
+	assert.Empty(t, plan.Ignored, "its pin is matched; the copy is not read, and not named")
+	assert.Equal(t, []core.FillIgnoredCount{{Reason: core.FillIgnoredNoMatch, Count: 1}}, plan.IgnoredCounts)
 }
 
 func TestApplyProfileFill_SourceUnreachableInstallsFromTheCollectionsFacts(t *testing.T) {
@@ -577,8 +581,9 @@ func TestPlanProfileFill_DuplicatesCountAgainstTheBudget(t *testing.T) {
 }
 
 // #608 review: the web UI's folder mode scans a chosen folder exactly as
-// the CLI scans a directory, and refuses anything but an absolute path to a
-// real folder.
+// the CLI scans a directory: a link to a folder is accepted at the top
+// (~/Downloads often is one), and anything but an absolute path to a
+// folder is refused.
 func TestPlanProfileFill_Folder(t *testing.T) {
 	f := newFillFixture(t, fillSetup{})
 	f.download(t, "10", "a.zip")
@@ -589,11 +594,17 @@ func TestPlanProfileFill_Folder(t *testing.T) {
 
 	link := filepath.Join(t.TempDir(), "dl")
 	require.NoError(t, os.Symlink(f.downloads, link))
+	plan, err = f.svc.PlanProfileFill(ctx, f.game, core.ProfileFillRequest{Profile: "Coll", Folder: link})
+	require.NoError(t, err, "a link to a folder, chosen as the folder, is followed at the top")
+	assert.Equal(t, []string{"10"}, matchedIDs(plan))
+
+	fileLink := filepath.Join(t.TempDir(), "file-link")
+	require.NoError(t, os.Symlink(filepath.Join(f.downloads, "a.zip"), fileLink))
 	for name, folder := range map[string]string{
-		"relative": "Downloads",
-		"a file":   filepath.Join(f.downloads, "a.zip"),
-		"a link":   link,
-		"missing":  filepath.Join(f.downloads, "nope"),
+		"relative":       "Downloads",
+		"a file":         filepath.Join(f.downloads, "a.zip"),
+		"a link to file": fileLink,
+		"missing":        filepath.Join(f.downloads, "nope"),
 	} {
 		_, err := f.svc.PlanProfileFill(ctx, f.game, core.ProfileFillRequest{Profile: "Coll", Folder: folder})
 		assert.ErrorIs(t, err, core.ErrFillFolderInvalid, name)
@@ -649,4 +660,34 @@ func TestApplyProfileFill_ReplaysPerFileChoices(t *testing.T) {
 	require.NoError(t, err)
 	ref := saved.FindRef("nexusmods", "40")
 	assert.Equal(t, "Vanilla", picked(ref.FomodFiles["401"]))
+}
+
+// #608 re-review: a lock set between the plan and the apply is a moved pin.
+func TestApplyProfileFill_ALockChangedSincePlanIsStale(t *testing.T) {
+	f := newFillFixture(t, fillSetup{})
+	f.download(t, "12", "c.zip")
+	plan := f.plan(t)
+	require.Len(t, plan.Matched, 1)
+	profile, err := config.LoadProfile(f.svc.ConfigDir(), f.game.ID, "Coll")
+	require.NoError(t, err)
+	profile.FindRef("nexusmods", "12").Locked = true
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), profile))
+
+	_, err = f.svc.ApplyProfileFill(context.Background(), f.game, plan, core.ProfileFillOptions{}, nil)
+	assert.ErrorIs(t, err, core.ErrStalePlan)
+}
+
+// #608 re-review: a file of no pending size is skipped on its listing
+// alone - never opened, so an unreadable one is not "unreadable".
+func TestPlanProfileFill_AFileOfNoPendingSizeIsNeverOpened(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 file")
+	}
+	f := newFillFixture(t, fillSetup{})
+	p := filepath.Join(f.downloads, "secret.bin")
+	require.NoError(t, os.WriteFile(p, []byte("no pending file is this size"), 0o000))
+	plan := f.plan(t)
+	assert.Empty(t, plan.Ignored)
+	assert.Equal(t, []core.FillIgnoredCount{{Reason: core.FillIgnoredNoMatch, Count: 1}}, plan.IgnoredCounts)
+	assert.Zero(t, plan.Hashed)
 }

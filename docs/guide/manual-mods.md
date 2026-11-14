@@ -60,8 +60,9 @@ renamed `SkyUI (1).7z` is still recognised). Each match is installed as if
 lmm had downloaded it: with the installer choices and the mod type the
 collection records, locked when the curator pinned it exactly, and set to
 update automatically when the curator asked for the newest file. The plan
-lists what will be installed, what is still pending, and every file it
-didn't use and why; `--dry-run` shows it without installing anything, and
+lists what will be installed, what is still pending, and why it didn't use
+a file that was the size of a pending one; the folder's other files are
+only counted, never listed; `--dry-run` shows it without installing anything, and
 `-y` skips the question. Run it again as you download more: each run
 installs what it finds.
 
@@ -77,8 +78,8 @@ In the browser, use the import's entry in the activity tray (the bell), or
 open **Manage profiles** and click **Fill from downloads…** on the profile.
 Then either:
 
-- click **Choose a folder…**, which opens at your downloads folder, and
-  pick the folder the files are in. lmm reads the folder exactly as the
+- click **Choose a folder…**, which opens at your downloads folder (a link
+  to another disk is fine), and pick the folder the files are in. lmm reads the folder exactly as the
   terminal command does, and nothing is uploaded, so there's no limit on
   size or number; or
 - drop the files there (or click **Choose files…**). Only files of a

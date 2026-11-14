@@ -24,6 +24,14 @@ const ignoredReason = {
   unreadable: "could not be read",
 };
 
+// countReason words a counted reason (plan.ignored_counts).
+const countReason = {
+  no_match: "no pending file has their size",
+  symlink: "links, which are never followed",
+  not_regular_file: "not regular files",
+  unreadable: "could not be read",
+};
+
 /** modName is a fill entry's name, or its source:mod when the collection
  * gave none. */
 function modName(m) {
@@ -38,6 +46,8 @@ export function ProfileFillPlanView({ plan, modal }) {
   const matched = plan.matched ?? [];
   const pending = plan.pending ?? [];
   const ignored = plan.ignored ?? [];
+  // The rest of the folder is counted, never named (core.FillIgnoredCount).
+  const counts = plan.ignored_counts ?? [];
   return html`
     <div class="plan plan--profile-fill" data-testid="fill-plan">
       <p class="plan__summary">
@@ -123,6 +133,18 @@ export function ProfileFillPlanView({ plan, modal }) {
             )}
           </ul>
         </section>`
+      }
+      ${
+        counts.length > 0 &&
+        html`<ul class="plan__mods" data-testid="fill-ignored-counts">
+          ${counts.map(
+            (c) =>
+              html`<li key=${c.reason}>
+                ${c.count} other ${c.count === 1 ? "entry" : "entries"}:${" "}
+                ${countReason[c.reason] ?? c.reason}
+              </li>`,
+          )}
+        </ul>`
       }
       ${
         later.length > 0 &&

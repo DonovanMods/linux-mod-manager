@@ -113,8 +113,8 @@ func TestAPIFlow_ProfileFill_InstallsTheMatchedUploads(t *testing.T) {
 	require.Len(t, plan.Matched, 1)
 	assert.Equal(t, "10", plan.Matched[0].ModID)
 	assert.Equal(t, "Ten-10-1-0.zip", plan.Matched[0].Files[0].Archive, "the upload's own name, never its staged path")
-	require.Len(t, plan.Ignored, 1)
-	assert.Equal(t, "Other.zip", plan.Ignored[0].Name)
+	assert.Empty(t, plan.Ignored, "a file of no pending size is counted, not named")
+	assert.Equal(t, []core.FillIgnoredCount{{Reason: core.FillIgnoredNoMatch, Count: 1}}, plan.IgnoredCounts)
 	assert.True(t, plan.RecordedOnly, "Coll is not the active profile")
 
 	j := startFlowJob(t, s, id, `{}`)

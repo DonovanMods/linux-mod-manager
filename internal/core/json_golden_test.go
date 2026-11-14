@@ -1963,13 +1963,11 @@ func TestJSONGoldens(t *testing.T) {
 					{SourceID: "nexusmods", ModID: "12604", Files: []core.FillFile{}, Reason: core.FillNoChecksum},
 				},
 				Ignored: []core.FillIgnored{
-					{Name: "notes.txt", Size: 12, Reason: core.FillIgnoredNoMatch},
 					{Name: "SkyUI_5_2.7z", Size: 2048, Reason: core.FillIgnoredChecksumMismatch},
-					{Name: "link.7z", Reason: core.FillIgnoredSymlink},
 				},
 				Scanned: 4, Hashed: 2, RecordedOnly: true, ActiveProfile: "default",
-				DownloadsDir: "/home/user/Downloads",
-				Notes:        []string{"The curator wants these on their newest file, but they are locked, so they stay on the installed file: SkyUI."},
+				IgnoredCounts: []core.FillIgnoredCount{{Reason: core.FillIgnoredNoMatch, Count: 12}, {Reason: core.FillIgnoredSymlink, Count: 1}},
+				Notes:         []string{"The curator wants these on their newest file, but they are locked, so they stay on the installed file: SkyUI."},
 			},
 		},
 		{
@@ -1987,6 +1985,10 @@ func TestJSONGoldens(t *testing.T) {
 			core.FillPending{SourceID: "nexusmods", ModID: "3863", Name: "SkyUI", Version: "5.2",
 				Files:  []core.FillFile{{FileID: "1", Size: 2048, MD5: "fedcba9876543210fedcba9876543210"}, {FileID: "2", Size: 10, MD5: "00112233445566778899aabbccddeeff", Archive: "patch.7z"}},
 				Reason: core.FillPartial},
+		},
+		{
+			"fill_ignored_count",
+			core.FillIgnoredCount{Reason: core.FillIgnoredNoMatch, Count: 12},
 		},
 		{
 			"fill_ignored",

@@ -182,7 +182,8 @@ func TestE2E_ProfileFill_ChooseAFolderInstallsWhatItHolds(t *testing.T) {
 	)
 	assert.Contains(t, plan, "Ten ← Ten-10-1-0.zip")
 	assert.Contains(t, plan, "Eleven ← Eleven-11-1-1.zip")
-	assert.Contains(t, plan, "notes.txt: matches no pending file")
+	assert.Contains(t, plan, "1 other entry: no pending file has their size", "the rest of the folder is counted, not named")
+	assert.NotContains(t, plan, "notes.txt")
 
 	require.Eventually(t, func() bool {
 		rows, err := f.Svc.GetInstalledMods(t.Context(), f.Game.ID, "Coll")

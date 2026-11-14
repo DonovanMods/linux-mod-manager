@@ -50,18 +50,19 @@
   ],
   "ignored": [
     {
-      "name": "notes.txt",
-      "size": 12,
-      "reason": "no_match"
-    },
-    {
       "name": "SkyUI_5_2.7z",
       "size": 2048,
       "reason": "checksum_mismatch"
+    }
+  ],
+  "ignored_counts": [
+    {
+      "reason": "no_match",
+      "count": 12
     },
     {
-      "name": "link.7z",
-      "reason": "symlink"
+      "reason": "symlink",
+      "count": 1
     }
   ],
   "scanned": 4,
@@ -70,6 +71,5 @@
   "active_profile": "default",
   "notes": [
     "The curator wants these on their newest file, but they are locked, so they stay on the installed file: SkyUI."
-  ],
-  "downloads_dir": "/home/user/Downloads"
+  ]
 }

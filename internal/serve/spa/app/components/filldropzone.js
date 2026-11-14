@@ -22,6 +22,7 @@
 import { html, useEffect, useState } from "../render.js";
 import {
   deleteUpload,
+  getDownloadsFolder,
   maxUploadBytes,
   plan as planMutation,
   uploadArchive,
@@ -75,12 +76,13 @@ export function FillDropZone({ profile, game, actions, onStarted }) {
   const [downloads, setDownloads] = useState("");
   const context = { game, profile };
 
-  // Where the folder chooser opens: the plan names the downloads folder.
+  // Where the folder chooser opens: the downloads folder, a cheap read
+  // (no plan is made until the user hands over files or a folder).
   useEffect(() => {
     let live = true;
-    planMutation("profile_fill", {}, context)
-      .then((probe) => {
-        if (live) setDownloads(probe?.plan?.downloads_dir ?? "");
+    getDownloadsFolder()
+      .then((doc) => {
+        if (live) setDownloads(doc?.path ?? "");
       })
       .catch(() => {});
     return () => {

@@ -117,9 +117,10 @@ type ProfileFillRequest struct {
 	Archives []FillArchive
 	// Folder is a folder chosen in a frontend that names it by path (the
 	// web UI's folder chooser): its top level is scanned as a directory in
-	// Paths is, and it must be an absolute path to a real directory - a
-	// link to one is refused, as the chooser never follows one
-	// (ErrFillFolderInvalid).
+	// Paths is. It must be an absolute path to a directory, or to a link
+	// to one - ~/Downloads is often a link to another disk, and the user
+	// named it - and nothing inside it is followed, as in Paths
+	// (ErrFillFolderInvalid otherwise).
 	Folder string
 }
 
@@ -210,11 +211,22 @@ type FillPending struct {
 	Reason   FillPendingReason `json:"reason"`
 }
 
-// FillIgnored is a file the fill looked at and does not use.
+// FillIgnored is a file the fill read, or would have, and does not use:
+// one whose size is a pending file's. Only such a file is named in a plan;
+// the rest of a folder is counted (FillIgnoredCount), so a folder chosen
+// by mistake - a home folder - is not listed back.
 type FillIgnored struct {
 	Name   string            `json:"name"`
 	Size   int64             `json:"size,omitzero"`
 	Reason FillIgnoredReason `json:"reason"`
+}
+
+// FillIgnoredCount counts the entries a fill skipped for one reason
+// without naming them: links, other non-regular entries, ones it could not
+// list, and files of no pending file's size.
+type FillIgnoredCount struct {
+	Reason FillIgnoredReason `json:"reason"`
+	Count  int               `json:"count"`
 }
 
 // ProfileFillPlan is PlanProfileFill's answer: which pending pins the files
@@ -228,6 +240,9 @@ type ProfileFillPlan struct {
 	Matched    []FillMatch              `json:"matched"`
 	Pending    []FillPending            `json:"pending"`
 	Ignored    []FillIgnored            `json:"ignored"`
+	// IgnoredCounts counts, by reason, the entries skipped without being
+	// named (FillIgnored's doc comment), in reason order.
+	IgnoredCounts []FillIgnoredCount `json:"ignored_counts,omitempty"`
 	// Scanned counts the files looked at, Hashed those read to be checked.
 	Scanned int `json:"scanned"`
 	Hashed  int `json:"hashed"`
@@ -238,9 +253,6 @@ type ProfileFillPlan struct {
 	ActiveProfile string `json:"active_profile,omitempty"`
 	// Notes are what a person should know about the plan.
 	Notes []string `json:"notes,omitempty"`
-	// DownloadsDir is where a fill looks by default (DownloadsDir), for a
-	// frontend's folder chooser to open at.
-	DownloadsDir string `json:"downloads_dir,omitempty"`
 
 	items      []fillItem
 	autoUpdate map[string]bool
@@ -362,14 +374,16 @@ func (s *Service) PlanProfileFill(ctx context.Context, game *domain.Game, req Pr
 		return nil, err
 	}
 	if req.Folder != "" {
-		info, err := os.Lstat(req.Folder)
+		// os.Stat: the folder the user chose may itself be a link to one,
+		// as the CLI's may; its entries are still never followed.
+		info, err := os.Stat(req.Folder)
 		switch {
 		case !filepath.IsAbs(req.Folder):
 			return nil, fmt.Errorf("%w: %q is not an absolute path", ErrFillFolderInvalid, req.Folder)
 		case err != nil:
 			return nil, fmt.Errorf("%w: %w", ErrFillFolderInvalid, err)
 		case !info.IsDir():
-			return nil, fmt.Errorf("%w: %s is not a folder (a link to one is not followed)", ErrFillFolderInvalid, req.Folder)
+			return nil, fmt.Errorf("%w: %s is not a folder", ErrFillFolderInvalid, req.Folder)
 		}
 		req.Folder = filepath.Clean(req.Folder)
 	}
@@ -406,7 +420,6 @@ func (s *Service) PlanProfileFill(ctx context.Context, game *domain.Game, req Pr
 		Profile: profile.Name, GameID: game.ID, Collection: origin,
 		Matched: []FillMatch{}, Pending: []FillPending{}, Ignored: []FillIgnored{},
 		RecordedOnly: recordedOnly, ActiveProfile: live, snapshot: snapshot,
-		DownloadsDir: DownloadsDir(),
 	}
 	manifest, err := s.collectionRecipeFor(ctx, game, *origin)
 	if err != nil {
@@ -632,9 +645,9 @@ func (s *Service) collectionRecipeFor(ctx context.Context, game *domain.Game, or
 // each, in name order), then each named file, then each archive.
 func (s *Service) fillCandidates(plan *ProfileFillPlan, req ProfileFillRequest) []fillCandidate {
 	var out []fillCandidate
-	ignore := func(name string, reason FillIgnoredReason) {
+	ignore := func(_ string, reason FillIgnoredReason) {
 		plan.Scanned++
-		plan.Ignored = append(plan.Ignored, FillIgnored{Name: domain.SanitizeLine(name), Reason: reason})
+		plan.countIgnored(reason)
 	}
 	consider := func(dir, name, display string, info os.FileInfo) {
 		switch mode := info.Mode(); {
@@ -727,9 +740,10 @@ func (s *Service) matchFillFiles(ctx context.Context, plan *ProfileFillPlan, can
 		ignored := func(size int64, reason FillIgnoredReason) {
 			plan.Ignored = append(plan.Ignored, FillIgnored{Name: c.display, Size: size, Reason: reason})
 		}
-		// The listing's size decides, before anything is opened.
+		// The listing's size decides, before anything is opened - and a
+		// file of no pending size is counted, not named.
 		if !unmatched(c.size) {
-			ignored(c.size, FillIgnoredNoMatch)
+			plan.countIgnored(FillIgnoredNoMatch)
 			continue
 		}
 		if mismatches[c.size] >= maxFillMismatchesPerSize {
@@ -1035,4 +1049,15 @@ func fillFromImport(result *ProfileFillResult, ir *ProfileImportResult) {
 	result.Refused = ir.Refused
 	result.LoaderRequired, result.FomodChoicesRequired = ir.LoaderRequired, ir.FomodChoicesRequired
 	result.Remaining -= ir.Installed + ir.Recorded
+}
+
+// countIgnored counts one entry skipped for reason without naming it.
+func (p *ProfileFillPlan) countIgnored(reason FillIgnoredReason) {
+	i := slices.IndexFunc(p.IgnoredCounts, func(c FillIgnoredCount) bool { return c.Reason == reason })
+	if i < 0 {
+		p.IgnoredCounts = append(p.IgnoredCounts, FillIgnoredCount{Reason: reason})
+		slices.SortFunc(p.IgnoredCounts, func(a, b FillIgnoredCount) int { return strings.Compare(string(a.Reason), string(b.Reason)) })
+		i = slices.IndexFunc(p.IgnoredCounts, func(c FillIgnoredCount) bool { return c.Reason == reason })
+	}
+	p.IgnoredCounts[i].Count++
 }
