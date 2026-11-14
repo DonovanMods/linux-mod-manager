@@ -519,3 +519,31 @@ func TestDoCollectionImport_StaleRecordedChoicesAreAnswered(t *testing.T) {
 	require.NotEmpty(t, ref.Fomod.Steps)
 	assert.Equal(t, "2K", ref.Fomod.Steps[0].Groups[0].Choices[0].Name, "the installer's default replaced the stale pick")
 }
+
+// TestDoCollectionImport_AnotherArchiveIsAskedWithTheReason: a collection
+// whose recorded choices were made against an archive with another md5 is
+// not replayed (#609). The walk says why, with both md5s, and preselects
+// the collection's choices; the answer is what installs.
+func TestDoCollectionImport_AnotherArchiveIsAskedWithTheReason(t *testing.T) {
+	svc, game, _ := setupFomodInstall(t)
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	recorded := strings.Repeat("0", 32)
+	doc := "lmm_collection: 1\nname: Pinned Pack\nrequires: [fomod]\nmods:\n" +
+		"  - {source_id: test-src, mod_id: mod1, version: \"1.0\", file_ids: [main], files: [{id: main, md5: \"" + recorded + "\"}], " +
+		"fomod: {steps: [{name: Size, groups: [{name: Texture, choices: [{name: 2K}]}]}]}}\n"
+	oldYes := profileImportYes
+	profileImportYes = true
+	t.Cleanup(func() { profileImportYes = oldYes })
+	terminalInput("") // keep the collection's 2K
+
+	out, err := captureStdoutErr(t, func() error { return doCollectionImport(context.Background(), svc, []byte(doc), game.ID) })
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "not the archive the collection's installer choices were recorded against")
+	assert.Contains(t, out, "md5 "+recorded)
+	assert.Contains(t, out, "1) [x] 2K", "the collection's choice is preselected")
+	p, err := svc.NewProfileManager().Get(context.Background(), game.ID, "Pinned Pack")
+	require.NoError(t, err)
+	ref := p.FindRef("test-src", "mod1")
+	require.NotNil(t, ref)
+	assert.Equal(t, "2K", ref.Fomod.Steps[0].Groups[0].Choices[0].Name)
+}

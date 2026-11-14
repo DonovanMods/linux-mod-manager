@@ -51,6 +51,14 @@ function reasonNote(mod) {
     return "The choices recorded for this mod no longer fit its installer. Review them.";
   if (mod.reason === "reconfigure")
     return "Your current choices are selected. Change what you want installed.";
+  if (mod.reason === "archive_mismatch") {
+    // Issue 609: a collection's choices replay only against the archive they
+    // were recorded against.
+    const sums = mod.archive_mismatch
+      ? ` (The collection records md5 ${mod.archive_mismatch.expected_md5}; this archive's is ${mod.archive_mismatch.actual_md5}.)`
+      : "";
+    return `This is not the archive the collection's choices were recorded against, so they were not replayed. The collection's choices are selected: review them.${sums}`;
+  }
   return "";
 }
 
