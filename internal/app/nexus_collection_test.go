@@ -58,7 +58,13 @@ func nexusCollectionServer(t *testing.T, slug string, revision int, revisionFixt
 	if _, err := exec.LookPath("7z"); err != nil {
 		t.Skip("7z not installed")
 	}
-	recipe, err := os.ReadFile(filepath.Join(nexusFixtures, recipeFixture))
+	// A bare name is a recorded survey fixture; a path is this package's
+	// own (testdata/collections: hand-written recipes).
+	recipePath := recipeFixture
+	if !strings.Contains(recipeFixture, "/") {
+		recipePath = filepath.Join(nexusFixtures, recipeFixture)
+	}
+	recipe, err := os.ReadFile(recipePath)
 	require.NoError(t, err)
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "collection.json"), recipe, 0o644))
@@ -185,17 +191,19 @@ func TestNexusCollection_Cyberpunk(t *testing.T) {
 }
 
 // The Skyrim sample: FOMOD items replayed, SKSE64 routed to the game root
-// by the bethesda adapter, and Scrambled Bugs - whose two patch files each
-// carry their own FOMOD choices - recorded per file (#634); refused only
-// for the plugin list (C6).
+// by the bethesda adapter, the plugin list replayed as the profile's (#611),
+// and Scrambled Bugs - whose two patch files each carry their own FOMOD
+// choices - recorded per file (#634): nothing is refused.
 func TestNexusCollection_Skyrim(t *testing.T) {
 	game := &domain.Game{ID: "skyrimse", Name: "Skyrim Special Edition", InstallPath: t.TempDir(), ModPath: t.TempDir(),
-		Adapter: "bethesda", SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"}}
+		Adapter: "bethesda", Catalog: "skyrim-se", SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"}}
 	c := convertNexusFixture(t, game, "xk05aw", "xk05aw", 325,
 		"revision-skyrimspecialedition-xk05aw-325.json", "skyrimspecialedition-xk05aw-325.json", core.CollectionConvertOptions{})
 
-	assert.Equal(t, []string{core.CollectionFeaturePluginOrder}, unsupportedNames(c), "fomod_multi_file is no longer refused")
-	assert.Equal(t, []string{core.CollectionFeatureFomod, core.CollectionFeatureFomodMultiFile, "mod_type:dinput"}, c.Document.Requires)
+	assert.Empty(t, unsupportedNames(c), "fomod_multi_file is no longer refused, and the plugin order is replayed")
+	assert.Equal(t, []string{core.CollectionFeatureFomod, core.CollectionFeatureFomodMultiFile, "mod_type:dinput", core.CollectionFeaturePluginOrder}, c.Document.Requires)
+	assert.Len(t, c.Document.Plugins.Order, 16, "the curator's plugin list is the profile's order")
+	assert.True(t, c.Document.Plugins.Rules.IsZero(), "excludePluginRules, and no rules")
 	assert.Contains(t, c.Features, "mod_type:dinput")
 	assert.Contains(t, c.Features, core.CollectionFeatureFomodMultiFile)
 	var fomods, perFile int
@@ -235,16 +243,18 @@ func TestNexusCollection_Skyrim(t *testing.T) {
 	plain.Adapter = ""
 	c = convertNexusFixture(t, &plain, "xk05aw", "xk05aw", 325,
 		"revision-skyrimspecialedition-xk05aw-325.json", "skyrimspecialedition-xk05aw-325.json", core.CollectionConvertOptions{})
-	assert.Equal(t, []string{"mod_type:dinput", core.CollectionFeaturePluginOrder}, unsupportedNames(c))
+	assert.Equal(t, []string{"mod_type:dinput", core.CollectionFeaturePluginOrder}, unsupportedNames(c),
+		"without the adapter lmm writes no plugin list either, so the order is refused")
 }
 
 // The survey's other three shapes: plugin rules (Fallout 4), bundled files
 // and patches (Stardew Valley), and an external, optional item (Fallout 4).
 func TestNexusCollection_SurveyShapes(t *testing.T) {
 	fo4 := &domain.Game{ID: "fo4", Name: "Fallout 4", InstallPath: t.TempDir(), ModPath: t.TempDir(), Adapter: "bethesda",
-		SourceIDs: map[string]string{"nexusmods": "fallout4"}}
+		Catalog: "fallout4", SourceIDs: map[string]string{"nexusmods": "fallout4"}}
 	c := convertNexusFixture(t, fo4, "kem16d", "kem16d", 143, "", "fallout4-kem16d-143.json", core.CollectionConvertOptions{})
-	assert.Contains(t, unsupportedNames(c), core.CollectionFeaturePluginOrder)
+	assert.NotContains(t, unsupportedNames(c), core.CollectionFeaturePluginOrder)
+	assert.NotEmpty(t, c.Document.Plugins.Rules.Plugins, "the survey's pluginRules sample lands as the profile's rules")
 
 	sdv := &domain.Game{ID: "sdv", Name: "Stardew Valley", InstallPath: t.TempDir(), ModPath: t.TempDir(),
 		SourceIDs: map[string]string{"nexusmods": "stardewvalley"}}
@@ -252,7 +262,18 @@ func TestNexusCollection_SurveyShapes(t *testing.T) {
 	got := unsupportedNames(c)
 	assert.Contains(t, got, core.CollectionFeatureBundled)
 	assert.Contains(t, got, core.CollectionFeaturePatches)
-	assert.Contains(t, got, "mod_type:SMAPI", "no adapter routes SMAPI's type yet")
+	assert.NotContains(t, got, "mod_type:SMAPI", "SMAPI is a prerequisite step, not a mod type to route (#635)")
+	var smapi *core.ConvertedCollectionItem
+	for i := range c.Items {
+		if c.Items[i].ModID == "2400" {
+			smapi = &c.Items[i]
+		}
+	}
+	require.NotNil(t, smapi, "the recorded recipe lists SMAPI")
+	assert.Equal(t, core.CollectionItemExternal, smapi.State)
+	assert.Contains(t, smapi.Instructions, "install on Linux.sh")
+	assert.Contains(t, smapi.URL, "https://www.nexusmods.com/stardewvalley/mods/2400")
+	require.NotEmpty(t, c.Document.External)
 
 	c = convertNexusFixture(t, fo4, "pmmttm", "pmmttm", 2, "", "fallout4-pmmttm-2.json", core.CollectionConvertOptions{})
 	assert.Empty(t, c.Document.External, "the optional F4SE item is off by default")
@@ -261,11 +282,12 @@ func TestNexusCollection_SurveyShapes(t *testing.T) {
 	assert.Equal(t, "https://f4se.silverlock.org", c.Document.External[0].URL)
 }
 
-// The Skyrim sample planned and applied (#607, P3 review): it is refused
-// for its plugin list (which the Nexus converter carries only from C6, though
-// the lmm document format supports plugin_order since #616) - no longer for
-// Scrambled Bugs' two installers (#634) - and the refusal's supported list
-// never names plugin_order while refusing it.
+// The Skyrim sample planned and applied (#607, P3 review) for a game the
+// bethesda adapter cannot identify, so lmm writes no plugin list for it: it
+// is refused for its plugin list (#611: the converter gates plugin_order
+// per game, though the lmm document format supports it since #616) - no
+// longer for Scrambled Bugs' two installers (#634) - and the refusal's
+// supported list never names plugin_order while refusing it.
 func TestNexusCollection_SkyrimApplyRefusesAndNamesWhatIsMissing(t *testing.T) {
 	game := &domain.Game{ID: "skyrimse", Name: "Skyrim Special Edition", InstallPath: t.TempDir(), ModPath: t.TempDir(),
 		Adapter: "bethesda", SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"}}

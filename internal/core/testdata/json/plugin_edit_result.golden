@@ -1,0 +1,136 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "changed": true,
+  "changes": [
+    "Patch.esp: moved after SkyUI_SE.esp"
+  ],
+  "notes": [
+    "Later.esp is not deployed: the rule applies once it is"
+  ],
+  "list": {
+    "status": "written",
+    "list_file": "/pfx/drive_c/users/steamuser/AppData/Local/Skyrim Special Edition/Plugins.txt",
+    "plugins": 3,
+    "active": 2,
+    "external": 1
+  },
+  "order": {
+    "game_id": "skyrim-se",
+    "profile": "default",
+    "active": true,
+    "list_file": "/pfx/drive_c/users/steamuser/AppData/Local/Skyrim Special Edition/Plugins.txt",
+    "sorted": true,
+    "plugins": [
+      {
+        "position": 1,
+        "name": "Skyrim.esm",
+        "active": true,
+        "master": true,
+        "light": false,
+        "medium": false,
+        "managed": false,
+        "placement": "implicit"
+      },
+      {
+        "position": 2,
+        "name": "ccQDRSSE001-SurvivalMode.esl",
+        "active": true,
+        "master": true,
+        "light": true,
+        "medium": false,
+        "managed": false,
+        "placement": "external"
+      },
+      {
+        "position": 3,
+        "name": "SkyUI_SE.esp",
+        "active": true,
+        "master": false,
+        "light": false,
+        "medium": false,
+        "managed": true,
+        "source_id": "nexusmods",
+        "mod_id": "12604",
+        "mod_name": "SkyUI",
+        "placement": "order"
+      },
+      {
+        "position": 4,
+        "name": "Patch.esp",
+        "active": true,
+        "master": false,
+        "light": false,
+        "medium": false,
+        "masters": [
+          "Skyrim.esm",
+          "Absent.esm"
+        ],
+        "missing_masters": [
+          "Absent.esm"
+        ],
+        "managed": true,
+        "source_id": "nexusmods",
+        "mod_id": "1234",
+        "mod_name": "Sample Patch",
+        "placement": "rule",
+        "constraints": [
+          {
+            "from": "SkyUI_SE.esp",
+            "to": "Patch.esp",
+            "reason": "rule_after"
+          }
+        ]
+      },
+      {
+        "position": 5,
+        "name": "Optional.esp",
+        "active": false,
+        "master": false,
+        "light": false,
+        "medium": false,
+        "managed": true,
+        "source_id": "nexusmods",
+        "mod_id": "99",
+        "mod_name": "Optional",
+        "placement": "new"
+      }
+    ],
+    "not_deployed": [
+      {
+        "name": "Removed.esp",
+        "enabled": false
+      }
+    ],
+    "rules": {
+      "groups": [
+        {
+          "name": "Late Loaders",
+          "after": [
+            "default"
+          ]
+        }
+      ],
+      "plugins": [
+        {
+          "name": "Patch.esp",
+          "group": "Late Loaders",
+          "after": [
+            "SkyUI_SE.esp"
+          ]
+        }
+      ]
+    },
+    "findings": [
+      {
+        "code": "plugin_missing_master",
+        "severity": "error",
+        "plugin": "Patch.esp",
+        "missing": [
+          "Absent.esm"
+        ],
+        "message": "Patch.esp needs the master(s) Absent.esm (not installed) - the game will not start with it active: install and activate them, or deactivate it"
+      }
+    ]
+  }
+}

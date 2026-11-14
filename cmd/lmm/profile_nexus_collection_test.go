@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -70,11 +71,24 @@ const nexusDoubleRecipe = `{"Name": "Three Mods", "Mods": [
 // Skyrim game mapped to it.
 func nexusCollectionService(t *testing.T) (*core.Service, *domain.Game, string) {
 	t.Helper()
+	return nexusCollectionServiceFor(t, nexusDoubleRecipe, "skyrimspecialedition")
+}
+
+// nexusCollectionServiceWith is nexusCollectionService serving recipe.
+func nexusCollectionServiceWith(t *testing.T, recipe string) (*core.Service, *domain.Game, string) {
+	t.Helper()
+	return nexusCollectionServiceFor(t, recipe, "skyrimspecialedition")
+}
+
+// nexusCollectionServiceFor is nexusCollectionService with recipe as the
+// collection's recipe, for a game on the NexusMods domain gameSourceID.
+func nexusCollectionServiceFor(t *testing.T, recipe, gameSourceID string) (*core.Service, *domain.Game, string) {
+	t.Helper()
 	if _, err := exec.LookPath("7z"); err != nil {
 		t.Skip("7z not installed")
 	}
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "collection.json"), []byte(nexusDoubleRecipe), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "collection.json"), []byte(recipe), 0o644))
 	archive := filepath.Join(t.TempDir(), "recipe.7z")
 	cmd := exec.Command("7z", "a", "-bd", archive, "collection.json")
 	cmd.Dir = dir
@@ -91,7 +105,7 @@ func nexusCollectionService(t *testing.T) (*core.Service, *domain.Game, string) 
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.RegisterSource(&nexusCollectionDouble{archiveURL: cdn.URL + "/recipe.7z"})
 	game := &domain.Game{ID: "skyrimse", Name: "Skyrim Special Edition", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
-		SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"}}
+		SourceIDs: map[string]string{"nexusmods": gameSourceID}}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	return svc, game, configDir
 }
@@ -173,4 +187,84 @@ func TestPlanRefLine_NamesAStatedModType(t *testing.T) {
 		planRefLine(domain.ModReference{SourceID: "nexusmods", ModID: "30379", Version: "2.2.6", ModType: "dinput"}))
 	assert.Equal(t, "nexusmods:30379 v2.2.6",
 		planRefLine(domain.ModReference{SourceID: "nexusmods", ModID: "30379", Version: "2.2.6"}))
+}
+
+// TestDoNexusCollectionImport_PluginOrder (#611): a collection's plugin
+// list and rules are planned - summarised, with whether lmm writes them -
+// and saved as the profile's plugins: block.
+func TestDoNexusCollectionImport_PluginOrder(t *testing.T) {
+	recipe := `{"Name": "Three Mods", "Mods": [
+		{"Name": "Ten", "Version": "1.0", "SourceType": "nexus", "ModID": "10", "FileID": "100", "UpdatePolicy": "exact"}],
+		"Plugins": [{"Name": "Ten.esp", "Enabled": true}, {"Name": "Ten - Extra.esp", "Enabled": false}],
+		"PluginRules": {"Plugins": [{"Name": "Ten - Extra.esp", "Group": "Late", "After": ["Ten.esp"]}],
+			"Groups": [{"Name": "Late", "After": ["default"]}]}}`
+	svc, game, _ := nexusCollectionServiceWith(t, recipe)
+	app.RegisterAdapters(svc)
+	game.Adapter, game.Catalog = "bethesda", "skyrim-se"
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	setNexusFlags(t, "abcdef", false)
+	stdout, _, err := captureStdoutStderrErr(t, func() error {
+		return doNexusCollectionImport(context.Background(), svc, game)
+	})
+	require.NoError(t, err, stdout)
+	assert.Contains(t, stdout, "Plugin order: 2 plugin(s), 1 active; 1 plugin rule(s), groups: Late")
+	assert.Contains(t, stdout, "Inactive: Ten - Extra.esp")
+	assert.Contains(t, stdout, "written to Skyrim Special Edition's plugin list at every deploy")
+	assert.NotContains(t, stdout, "cannot import")
+
+	saved, err := svc.NewProfileManager().Get(context.Background(), game.ID, "Three Mods")
+	require.NoError(t, err)
+	assert.Equal(t, domain.ProfilePlugins{
+		Order: []domain.PluginEntry{{Name: "Ten.esp", Enabled: true}, {Name: "Ten - Extra.esp"}},
+		Rules: domain.PluginRules{
+			Groups:  []domain.PluginGroup{{Name: "Late", After: []string{"default"}}},
+			Plugins: []domain.PluginRule{{Name: "Ten - Extra.esp", Group: "Late", After: []string{"Ten.esp"}}},
+		},
+	}, saved.Plugins)
+}
+
+// TestDoNexusCollectionImport_WarnsOfAPluginRuleCycle (#611 review): the
+// plan warns of curator rules that form a cycle, and the import still
+// goes ahead.
+func TestDoNexusCollectionImport_WarnsOfAPluginRuleCycle(t *testing.T) {
+	recipe := `{"Name": "Three Mods", "Mods": [
+		{"Name": "Ten", "Version": "1.0", "SourceType": "nexus", "ModID": "10", "FileID": "100", "UpdatePolicy": "exact"}],
+		"Plugins": [{"Name": "Ten.esp", "Enabled": true}, {"Name": "Ten - Extra.esp", "Enabled": true}],
+		"PluginRules": {"Plugins": [{"Name": "Ten - Extra.esp", "After": ["Ten.esp"]}, {"Name": "Ten.esp", "After": ["Ten - Extra.esp"]}]}}`
+	svc, game, _ := nexusCollectionServiceWith(t, recipe)
+	app.RegisterAdapters(svc)
+	game.Adapter, game.Catalog = "bethesda", "skyrim-se"
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	setNexusFlags(t, "abcdef", false)
+	stdout, _, err := captureStdoutStderrErr(t, func() error {
+		return doNexusCollectionImport(context.Background(), svc, game)
+	})
+	require.NoError(t, err, stdout)
+	assert.Contains(t, stdout, "⚠ The collection's plugin rules form a cycle, so no load order satisfies them all: ")
+	assert.Contains(t, stdout, "a rule loads Ten - Extra.esp after Ten.esp")
+	assert.Contains(t, stdout, "✓ Imported profile: Three Mods", "a warning, not a refusal")
+}
+
+// #635, owner ruling: on Stardew Valley the collection's SMAPI item is a
+// step the user takes with SMAPI's own installer, listed with its page and
+// instructions, and the rest of the collection imports.
+func TestDoNexusCollectionImport_SMAPIIsAPrerequisiteStep(t *testing.T) {
+	svc, game, _ := nexusCollectionServiceFor(t, `{"Name": "Three Mods", "Mods": [
+	{"Name": "SMAPI - Stardew Modding API", "Version": "4.0", "SourceType": "nexus", "ModID": "2400", "FileID": "240", "UpdatePolicy": "exact", "ModType": "SMAPI"},
+	{"Name": "Ten", "Version": "1.0", "SourceType": "nexus", "ModID": "10", "FileID": "100", "UpdatePolicy": "exact"}]}`, "stardewvalley")
+	setNexusFlags(t, "abcdef", false)
+	stdout, _, err := captureStdoutStderrErr(t, func() error {
+		return doNexusCollectionImport(context.Background(), svc, game)
+	})
+	require.NoError(t, err, stdout)
+	assert.Contains(t, stdout, "↗ SMAPI - Stardew Modding API 4.0")
+	assert.Contains(t, stdout, "own installer")
+	assert.Contains(t, stdout, "https://www.nexusmods.com/stardewvalley/mods/2400\n")
+	assert.Contains(t, stdout, "install on Linux.sh")
+	assert.NotContains(t, stdout, "mod_type:SMAPI")
+	assert.Contains(t, stdout, "✓ Imported profile: Three Mods")
+	saved, err := svc.NewProfileManager().Get(context.Background(), game.ID, "Three Mods")
+	require.NoError(t, err)
+	require.Len(t, saved.Mods, 1, "SMAPI is never a profile entry")
+	assert.Equal(t, "10", saved.Mods[0].ModID)
 }

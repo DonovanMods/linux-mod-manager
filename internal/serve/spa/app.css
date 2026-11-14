@@ -2239,6 +2239,18 @@ a.row-menu__item.mod-page-link {
   cursor: pointer;
 }
 
+/* A plan section's list behind a disclosure (issue 611: a collection's
+   plugin load order), closed by default. */
+.plan__disclosure {
+  margin-top: var(--space-2);
+}
+
+.plan__disclosure-summary {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
 .plan__advanced-body {
   display: flex;
   flex-direction: column;
@@ -3370,6 +3382,71 @@ a.row-menu__item.mod-page-link {
 .reorder-preview__changed {
   color: var(--accent);
   font-weight: 700;
+}
+
+/* The reorder modal's Plugins tab (issue 617): the tab strip over the two
+ * axes, mod order and plugin order, and the plugin rows - a name with its
+ * flag and placement badges, and a muted detail line for what holds it,
+ * what it needs and which mod ships it. */
+.reorder-tabs {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.plugins-tab__toolbar {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+
+.plugins-row__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.plugins-row__detail {
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
+.plugins-rules__list {
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.plugins-rules__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.plugins-rules__parts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.plugins-rules__part {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+}
+
+.plugins-rules__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
 }
 
 /* ---------------------------------------------------------------------- */

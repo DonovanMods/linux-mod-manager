@@ -1,0 +1,15 @@
+{
+  "plugins": 113,
+  "active": 111,
+  "inactive": [
+    "Optional Patch.esp",
+    "Unused.esp"
+  ],
+  "rules": 35,
+  "groups": [
+    "Underrides",
+    "default",
+    "Fixes"
+  ],
+  "managed": true
+}

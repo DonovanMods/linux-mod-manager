@@ -136,6 +136,9 @@ type CollectionManifest struct {
 	// curator's sorting rules for it.
 	Plugins     []ManifestPlugin
 	PluginRules ManifestPluginRules
+	// ExcludePluginRules is the curator's collectionConfig.excludePluginRules:
+	// the collection's plugin rules are not to be applied (#611).
+	ExcludePluginRules bool
 	// Tools are the curator's tool shortcuts: listed, never created or run.
 	Tools []ManifestTool
 	// FileLoadOrders are the collection's file-based load orders, one per
@@ -242,11 +245,18 @@ type ManifestPluginRules struct {
 // IsZero reports whether r holds no rule.
 func (r ManifestPluginRules) IsZero() bool { return len(r.Plugins) == 0 && len(r.Groups) == 0 }
 
-// ManifestPluginRule is one plugin's userlist entry.
+// ManifestPluginRule is one plugin's userlist entry. Both spellings of
+// the rule keys land here (#611): LOOT's `req`/`inc` and Vortex's
+// `requires`/`incompatible`.
 type ManifestPluginRule struct {
 	Name  string
 	Group string
+	// After names plugins this one loads after; Req plugins it requires
+	// (and loads after); Inc plugins it is incompatible with, which orders
+	// nothing.
 	After []string
+	Req   []string
+	Inc   []string
 }
 
 // ManifestPluginGroup is one userlist group and the groups it loads after.

@@ -1,0 +1,27 @@
+{
+  "position": 4,
+  "name": "Patch.esp",
+  "active": true,
+  "master": false,
+  "light": false,
+  "medium": false,
+  "masters": [
+    "Skyrim.esm",
+    "Absent.esm"
+  ],
+  "missing_masters": [
+    "Absent.esm"
+  ],
+  "managed": true,
+  "source_id": "nexusmods",
+  "mod_id": "1234",
+  "mod_name": "Sample Patch",
+  "placement": "rule",
+  "constraints": [
+    {
+      "from": "SkyUI_SE.esp",
+      "to": "Patch.esp",
+      "reason": "rule_after"
+    }
+  ]
+}

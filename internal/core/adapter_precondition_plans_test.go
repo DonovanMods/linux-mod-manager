@@ -201,6 +201,21 @@ var gatedPlans = []gatedPlan{
 var adapterExemptPlans = map[string]string{
 	"PlanPurge":     "TestRemovalPlansIgnoreTheAdapterPrecondition/purge",
 	"PlanUninstall": "TestRemovalPlansIgnoreTheAdapterPrecondition/uninstall",
+	// #617: a plugin edit deploys no mod - it writes the profile's plugins:
+	// block and the plugin list - and only a PluginOrderer adapter has a
+	// plugin list at all, so another adapter's refusal never reaches it.
+	"PlanPluginEdit": "TestPluginEditIsNoDeployUnderARefusingAdapter",
+}
+
+// TestPluginEditIsNoDeployUnderARefusingAdapter pins PlanPluginEdit's
+// exemption: under an adapter that refuses deploys (and so manages no
+// plugin list) a plugin edit is refused as a game with no plugin list,
+// never planned into a deploy the adapter objects to.
+func TestPluginEditIsNoDeployUnderARefusingAdapter(t *testing.T) {
+	svc, game, _ := newPreconditionFixture(t)
+	_, err := svc.PlanPluginEdit(context.Background(), game, "default", core.PluginEdit{Op: core.PluginOpSort})
+	require.ErrorIs(t, err, core.ErrNoPluginList)
+	assert.NotErrorIs(t, err, adapter.ErrPreconditionUnmet)
 }
 
 // TestEveryPlanChecksTheAdapterPrecondition walks every Plan* entry point

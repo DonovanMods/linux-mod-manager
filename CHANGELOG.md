@@ -21,8 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restores them; `lmm mod fomod <mod-id> --file <file-id>` (in the web UI,
   **Reconfigure installer…**'s installer list) changes one file's answers.
   The NexusMods collection import no longer refuses such a mod
-  (`fomod_multi_file`); the Skyrim sample collection `xk05aw` now waits
-  only on its plugin order (#611). An lmm collection document (`.lmmc`, or
+  (`fomod_multi_file`); with #611's plugin order, the Skyrim sample
+  collection `xk05aw` now converts with nothing refused. An lmm collection document (`.lmmc`, or
   a version-1 YAML export) that records choices per file requires the
   `fomod_multi_file` feature, so an older lmm refuses to import it rather
   than install it wrong. A plain profile file or version-0 export carries no
@@ -38,6 +38,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its own mod. An update pairs each file with the file replacing it by the
   source's own replacement, else by name or category, and asks again about
   a file it cannot pair rather than replay another file's answers.
+- **More NexusMods collections import: Starfield, The Witcher 3, Baldur's
+  Gate 3 and Stardew Valley mod types (#635).** A collection's mods carry
+  Vortex's mod type, and a type the game's adapter does not know refuses
+  the import. Starfield's `starfield-data-folder` now deploys into `Data/`;
+  the new `witcher3` adapter deploys `witcher3tl` and `dinput` mods from the
+  game folder, and the new `baldurs-gate-3` adapter deploys `bg3-loose`
+  mods into `Data/`. `lmm game detect` sets the two new adapters for the
+  games from Steam, and Mission Control and `lmm verify` suggest them for a
+  game added before. Stardew Valley's SMAPI, which has its own installer, is
+  now listed in the plan (CLI and web UI) as a step for you, with its page
+  and how to install it, and the rest of the collection imports. Of the 72
+  surveyed collections, 17 now import, up from 9. Witcher 3's
+  `witcher3dlc` and `witcher3menumodroot` types are still refused.
 - **Import a NexusMods collection (#607).** The new
   `lmm profile import --nexus-collection <slug|slug@revision|URL>` (in the
   web UI, the Profiles window's **NexusMods collection** field) reads a
@@ -61,12 +74,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mod another profile already has) and saves the profile with the rest
   pending; if a Premium account lapses between the plan and the import, the
   import says once to plan again. A collection that needs something lmm
-  cannot replay yet (a plugin load order, an exact file list, bundled files,
+  cannot replay yet (an exact file list, bundled files,
   patches, a file-based load order, a mod type the game's adapter does not
   route) shows its plan, naming what is missing
   and which mods need it, and is refused with nothing written. The recipe is
   a `.7z`, so the import needs the `7z` command and says so when it is
   missing.
+- **A NexusMods collection's plugin load order imports (#611).** The
+  curator's plugin list becomes the profile's `plugins:` order (each
+  plugin's active state kept; a name listed twice keeps its first place)
+  and their LOOT-style plugin rules its `plugins.rules`: groups and the
+  order between them, and each plugin's group, `after` and required
+  plugins. Both spellings of the rule keys are read (`req`/`inc` and
+  `requires`/`incompatible`). A collection whose curator marked the rules
+  not to be applied (`excludePluginRules`) imports its order without them,
+  with a note. lmm writes the order to `Plugins.txt` at every deploy, so a
+  collection with a plugin order imports only into a game whose plugin
+  list lmm manages (`adapter: bethesda`); elsewhere it is refused for
+  `plugin_order`, and a rule marking two plugins incompatible, which the
+  profile's rules cannot hold, is refused as `plugin_rules_incompatible`.
+  Every collection import plan, in the terminal and the web UI, now
+  summarises the plugin list it saves - how many plugins, which are
+  inactive, the rules and groups, and whether lmm writes it - and warns
+  when the rules form a cycle no load order satisfies (the import goes
+  ahead; every deploy then reports the cycle until a rule changes). The web
+  plan lists the whole order behind **Show the load order** (`--json`: the
+  plan's `collection.plugins`, new). Of the 71 collections surveyed for
+  #607, 25 now import (9 before).
 - **A mod can state where it deploys (`mod_type`, #607).** A profile entry
   may carry `mod_type:` (a NexusMods collection's mod type: `dinput` for a
   script extender); every deploy routes the whole mod by it through the
@@ -78,6 +112,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checked again after 15 minutes otherwise, and at once after NexusMods
   refuses a download as Premium-only, so an upgrade or a lapse under a
   long-running `lmm serve` is noticed (#607).
+- **`lmm plugins` and the web UI's Plugins tab (#617).** On a game with
+  the `bethesda` adapter, `lmm plugins list` shows the plugin load order
+  lmm writes to `Plugins.txt`: each plugin's state, its master/light/medium
+  flags, the masters it needs (a missing one marked), what placed it (the
+  game, the profile's order, new, a rule, a master, or external) and its
+  mod, then the findings. `lmm plugins enable|disable|move|sort` and
+  `lmm plugins rules list|add|remove` (with `lmm plugins rules group
+add|remove`) change the profile's `plugins:` block and, for the active
+  profile, write `Plugins.txt` at once; each takes `--dry-run`, and
+  `--json` emits the new `core.PluginOrderReport`,
+  `core.PluginEditPlan`/`core.PluginEditResult` and
+  `core.PluginRulesReport` documents. A move or a sort records the order as
+  you see it in the profile, so nothing else moves; a rule that would make
+  the order impossible is refused with the existing
+  `PluginOrderCycleError`; the game's own plugins and plugins lmm did not
+  deploy are refused as not the profile's to change (to switch, to move, or
+  as a rule's subject; they may still be a rule's `after`/`req`). In the web UI the
+  reorder modal gains a **Plugins** tab beside **Mods** for these games,
+  with the same order, badges and findings, and the same changes (sort
+  previews first), over the new `GET`/`POST /api/v1/profiles/{name}/plugins`.
+  See the new guide page, `docs/guide/plugins.md`.
 - **lmm writes a Bethesda game's plugin list (#616).** On a game with the
   `bethesda` adapter, every flow that changes which plugins are deployed
   (`lmm deploy`, `install`, `update` and rollbacks, `mod enable`/`disable`,
