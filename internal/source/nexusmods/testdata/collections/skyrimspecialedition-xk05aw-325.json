@@ -1,0 +1,1849 @@
+{
+  "info": {
+    "author": "curator",
+    "authorUrl": "",
+    "name": "Essential Mods for Skyrim",
+    "description": "",
+    "installInstructions": "(curator text removed)",
+    "domainName": "skyrimspecialedition",
+    "gameVersions": ["1.7.104.0"]
+  },
+  "mods": [
+    {
+      "name": "Constructible Object Custom Keyword System - Crafting Categories for SkyUI",
+      "version": "1.2.0",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 81409,
+        "fileId": 795909,
+        "md5": "1e18d2362439abeb22d1458c90b9a517",
+        "fileSize": 3264881,
+        "logicalFilename": "Crafting Categories for SkyUI",
+        "updatePolicy": "exact",
+        "tag": "6TAp5GZbxi"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Actor Limit Fix - Actor Limit Fix Anniversary (1.7.99.0 And Later)",
+      "version": "9",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 32349,
+        "fileId": 795423,
+        "md5": "f53502320c55634e5bd68eb2b9af0da8",
+        "fileSize": 3059372,
+        "logicalFilename": "Actor Limit Fix Anniversary (1.7.99.0 And Later)",
+        "updatePolicy": "exact",
+        "tag": "r4nVvIPOOy"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Address Library All in One (1.7.104.0) v13",
+      "version": "13",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 32444,
+        "fileId": 795954,
+        "md5": "c6834bbba3fc6c5983d8b4179484a85b",
+        "fileSize": 6640552,
+        "logicalFilename": "Address Library All in One (1.7.104.0) v13",
+        "updatePolicy": "exact",
+        "tag": "yrA7UZEN4_"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modders Resources",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "AltTabFix 2.0.1",
+      "version": "2.0.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 148466,
+        "fileId": 810013,
+        "md5": "2ca4cb756c61013ecff0f75c4dd3819a",
+        "fileSize": 6234006,
+        "logicalFilename": "AltTabFix 2.0.1",
+        "updatePolicy": "exact",
+        "tag": "yZw-Hyn5Gf"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "AnimObject Swapper",
+      "version": "2.0.0",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 75167,
+        "fileId": 808062,
+        "md5": "24a527f5cae1902ab5d34ba567f1c8c9",
+        "fileSize": 8962357,
+        "logicalFilename": "AnimObject Swapper",
+        "updatePolicy": "exact",
+        "tag": "NSQ_ppq-Mz"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Main",
+            "groups": [
+              {
+                "name": "DLL",
+                "choices": [
+                  {
+                    "name": "SSE/AE v1.7.104+ (\"Anniversary/Special Edition\")",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Auto Input Switch",
+      "version": "1.3.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 54309,
+        "fileId": 795566,
+        "md5": "f5a57ad28674203ab92f76c4a158a471",
+        "fileSize": 2949788,
+        "logicalFilename": "Auto Input Switch",
+        "updatePolicy": "exact",
+        "tag": "BZBLC1yWS6"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Barter Limit Fix",
+      "version": "1.0.2",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 77173,
+        "fileId": 799756,
+        "md5": "6571332ccc48589111004c2ca9f43cab",
+        "fileSize": 11106429,
+        "logicalFilename": "Barter Limit Fix",
+        "updatePolicy": "exact",
+        "tag": "PLKqK0ahkC"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Main",
+            "groups": [
+              {
+                "name": "DLL",
+                "choices": [
+                  {
+                    "name": "SSE/AE v1.7.104+ (\"Anniversary/Special Edition\")",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Base Object Swapper",
+      "version": "3.5.0",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 60805,
+        "fileId": 794962,
+        "md5": "c1729a5203c7172063e73f92dcd76791",
+        "fileSize": 8960093,
+        "logicalFilename": "Base Object Swapper",
+        "updatePolicy": "exact",
+        "tag": "KZUMDAL9Ps"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Main",
+            "groups": [
+              {
+                "name": "DLL",
+                "choices": [
+                  {
+                    "name": "SSE/AE v1.7.99+ (\"Anniversary/Special Edition\")",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Better Jumping NG",
+      "version": "1.9.5",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 18967,
+        "fileId": 808585,
+        "md5": "b0e5c27abdae838770d33a0827dc918a",
+        "fileSize": 457274,
+        "logicalFilename": "Better Jumping NG",
+        "updatePolicy": "exact",
+        "tag": "gwTK16HNp4"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Bug Fixes SSE - Bug Fixes SSE Anniversary (1.7.99.0 And Later)",
+      "version": "10",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 33261,
+        "fileId": 795428,
+        "md5": "52afa6091de1605ff4e23800ec386ae5",
+        "fileSize": 2879088,
+        "logicalFilename": "Bug Fixes SSE Anniversary (1.7.99.0 And Later)",
+        "updatePolicy": "exact",
+        "tag": "ScNw1BXl-w"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "ConsoleUtilSSE NG",
+      "version": "1.6.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 76649,
+        "fileId": 793316,
+        "md5": "7f9bb3d1bf3b2166ed859714017de6ba",
+        "fileSize": 12906567,
+        "logicalFilename": "ConsoleUtilSSE NG",
+        "updatePolicy": "exact",
+        "tag": "5zLJ4CBaQV"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Crash Logger SSE AE VR - PDB support - CrashLogger",
+      "version": "1.25.0",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 59818,
+        "fileId": 792670,
+        "md5": "aa4c62ddd4829c881b983e086288694a",
+        "fileSize": 7201578,
+        "logicalFilename": "CrashLogger",
+        "updatePolicy": "exact",
+        "tag": "Y5opr0Eb2_"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Death Idle Fix - Latest Version",
+      "version": "1.0.2",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 152344,
+        "fileId": 799422,
+        "md5": "5c835eb9f3bc7af6384cae9ac134f3a8",
+        "fileSize": 279403,
+        "logicalFilename": "Death Idle Fix - Latest Version",
+        "updatePolicy": "exact",
+        "tag": "OEFebiLYZr"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Dual Casting Fix",
+      "version": "1.0.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 92454,
+        "fileId": 796677,
+        "md5": "b2cf7a938d3ebff2bd1cbb47dc62e262",
+        "fileSize": 6678665,
+        "logicalFilename": "Dual Casting Fix",
+        "updatePolicy": "exact",
+        "tag": "bM_L6o_2Ba"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Main",
+            "groups": [
+              {
+                "name": "DLL",
+                "choices": [
+                  {
+                    "name": "SSE/AE v1.7.99+ (\"Anniversary/Special Edition\")",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Equip Enchantment Fix for 1.6.629 and newer",
+      "version": "1.3.7",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 42839,
+        "fileId": 807291,
+        "md5": "eaecd2573d0aaa12a5123800a32809f4",
+        "fileSize": 203152,
+        "logicalFilename": "Equip Enchantment Fix for 1.6.629 and newer",
+        "updatePolicy": "exact",
+        "tag": "EVTlhSNtAK"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Face Discoloration Fix SE",
+      "version": "1.0.4",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 42441,
+        "fileId": 796432,
+        "md5": "56e219beceb857c17e479772cf53e087",
+        "fileSize": 3055185,
+        "logicalFilename": "Face Discoloration Fix SE",
+        "updatePolicy": "exact",
+        "tag": "dvjHsWvnUTG"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "I'm Talkin Here",
+      "version": "2.0",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 93694,
+        "fileId": 497980,
+        "md5": "e9fb0badc368b6f3e925000a891ef200",
+        "fileSize": 1192,
+        "logicalFilename": "I'm Talkin Here",
+        "updatePolicy": "exact",
+        "tag": "IiktPS3K6O0"
+      },
+      "author": "author",
+      "details": {
+        "category": "Miscellaneous",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Imperial Thalmor Stormcloak Patrols Fixes",
+      "version": "1.3",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 166044,
+        "fileId": 727849,
+        "md5": "9b0e7861bb11d56176d8de6373257ee5",
+        "fileSize": 775735,
+        "logicalFilename": "Imperial Thalmor Stormcloak Patrols Fixes",
+        "updatePolicy": "exact",
+        "tag": "hEtYErWSUrX"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "",
+            "groups": [
+              {
+                "name": "Installed prisoner mod",
+                "choices": [
+                  {
+                    "name": "Freed Prisoner Uses Items",
+                    "idx": 2
+                  }
+                ]
+              },
+              {
+                "name": "Other installed mods",
+                "choices": []
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Inventory Interface Information Injector (SE)",
+      "version": "1.1.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 85702,
+        "fileId": 796498,
+        "md5": "82fbb90757e899e174dd7445dec550cf",
+        "fileSize": 3646868,
+        "logicalFilename": "Inventory Interface Information Injector (SE)",
+        "updatePolicy": "exact",
+        "tag": "KgPWoh9xmn_"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "JContainers SE",
+      "version": "4.3.2",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 16495,
+        "fileId": 800245,
+        "md5": "287de3e4610bf28096d956d5672f68d6",
+        "fileSize": 841714,
+        "logicalFilename": "JContainers SE",
+        "updatePolicy": "exact",
+        "tag": "FdlS3nNJfKj"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modders Resources",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Keyword Item Distributor (SE AE)",
+      "version": "4.1.0",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 55728,
+        "fileId": 794743,
+        "md5": "b1099c97fb67cda3ba37d176b7d59c91",
+        "fileSize": 10919998,
+        "logicalFilename": "Keyword Item Distributor (SE AE)",
+        "updatePolicy": "exact",
+        "tag": "eVwroXNImfo"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Main",
+            "groups": [
+              {
+                "name": "DLL",
+                "choices": [
+                  {
+                    "name": "SSE/AE v1.7.99+ (\"Anniversary/Special Edition\")",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MCM Helper",
+      "version": "1.6.3",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 53000,
+        "fileId": 795510,
+        "md5": "07350970a169c7628b6270f7030d8b92",
+        "fileSize": 8187265,
+        "logicalFilename": "MCM Helper",
+        "updatePolicy": "exact",
+        "tag": "DQplV39gVx3"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Game Version",
+            "groups": [
+              {
+                "name": "Game Version",
+                "choices": [
+                  {
+                    "name": "Skyrim Special Edition",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Mod Files",
+            "groups": [
+              {
+                "name": "Plugin",
+                "choices": [
+                  {
+                    "name": "ESL",
+                    "idx": 1
+                  }
+                ]
+              },
+              {
+                "name": "Resources",
+                "choices": [
+                  {
+                    "name": "BSA",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MCM Memory - Settings Backup and Restore - MCM Memory",
+      "version": "1.5.4",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 189722,
+        "fileId": 811023,
+        "md5": "8f3f418fbb052cb4be13cf1d12394b27",
+        "fileSize": 9540674,
+        "logicalFilename": "MCM Memory",
+        "updatePolicy": "exact",
+        "tag": "dimB8ELBkwV"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MCM Unlocked - Latest Version",
+      "version": "2.1.6",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 180186,
+        "fileId": 799445,
+        "md5": "fcfd11ec1c258c0096307c6723aedf25",
+        "fileSize": 486844,
+        "logicalFilename": "MCM Unlocked - Latest Version",
+        "updatePolicy": "exact",
+        "tag": "aSh8HTJ3y9d"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MfgFix",
+      "version": "1.6.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 11669,
+        "fileId": 320400,
+        "md5": "b4dcdb8d2d646fdee50c770a740aa6e3",
+        "fileSize": 137416,
+        "logicalFilename": "MfgFix",
+        "updatePolicy": "exact",
+        "tag": "enNClmKWrxP"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "MfgFix NG",
+      "version": "1.0.10",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 133568,
+        "fileId": 806155,
+        "md5": "6c808ee4447916a612667ab72e5743c1",
+        "fileSize": 5207251,
+        "logicalFilename": "MfgFix NG",
+        "updatePolicy": "exact",
+        "tag": "v2tdDKLtAi7"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "More Informative Console 1.2.3.1",
+      "version": "1.2.3.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 19250,
+        "fileId": 797682,
+        "md5": "23efa7793f9fbac918eae30a941c310f",
+        "fileSize": 8025943,
+        "logicalFilename": "More Informative Console 1.2.3.1",
+        "updatePolicy": "exact",
+        "tag": "ICVtw4cb8Ab"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "NPC AI Process Position Fix - NG",
+      "version": "1.1.3",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 69326,
+        "fileId": 794615,
+        "md5": "e80486da5cbb900a665bcad2ed58a70b",
+        "fileSize": 5628979,
+        "logicalFilename": "NPC AI Process Position Fix - NG",
+        "updatePolicy": "exact",
+        "tag": "MAzU4vKRX4a"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Files",
+            "groups": [
+              {
+                "name": "Plugin",
+                "choices": [
+                  {
+                    "name": "DLL and INI file",
+                    "idx": 0
+                  }
+                ]
+              },
+              {
+                "name": "Patches",
+                "choices": []
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "NPCs Run And Walk At Your Pace",
+      "version": "1.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 2482,
+        "fileId": 766495,
+        "md5": "73c7f913e1cec76dc5096f9f76686a01",
+        "fileSize": 547,
+        "logicalFilename": "NPCs Run And Walk At Your Pace",
+        "updatePolicy": "exact",
+        "tag": "GuQaxh98Ikg"
+      },
+      "author": "author",
+      "details": {
+        "category": "Immersion",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Papyrus Extender",
+      "version": "6.5.2",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 22854,
+        "fileId": 800720,
+        "md5": "6c8c71599b14f4ebedb6dfa3d44b8371",
+        "fileSize": 15268955,
+        "logicalFilename": "Papyrus Extender",
+        "updatePolicy": "exact",
+        "tag": "2L23jqHjYYC"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Main",
+            "groups": [
+              {
+                "name": "DLL",
+                "choices": [
+                  {
+                    "name": "SSE/AE v1.7.104+ (\"Anniversary/Special Edition\")",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modders Resources",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Papyrus Tweaks 4.2.1",
+      "version": "4.2.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 77779,
+        "fileId": 810308,
+        "md5": "15c90c26e559b21899f0e0c83225cde0",
+        "fileSize": 2220180,
+        "logicalFilename": "Papyrus Tweaks 4.2.1",
+        "updatePolicy": "exact",
+        "tag": "RRfvWNzWrQY"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "PapyrusUtil AE SE - Scripting Utility Functions",
+      "version": "4.8",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 13048,
+        "fileId": 797330,
+        "md5": "88a87d2031e6c68e261e8626e34ed39f",
+        "fileSize": 574133,
+        "logicalFilename": "PapyrusUtil AE SE - Scripting Utility Functions",
+        "updatePolicy": "exact",
+        "tag": "0WICZTr9e8Q"
+      },
+      "author": "author",
+      "details": {
+        "category": "Modders Resources",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "PlayerPayCrimeGold Tweak",
+      "version": "1.0.8",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 76493,
+        "fileId": 793305,
+        "md5": "ae324fc3835fd9a260fc52c500527717",
+        "fileSize": 5826007,
+        "logicalFilename": "PlayerPayCrimeGold Tweak",
+        "updatePolicy": "exact",
+        "tag": "rR2IviMgyEe"
+      },
+      "author": "author",
+      "details": {
+        "category": "Cheats and God items",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "powerofthree's Tweaks",
+      "version": "1.17.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 51073,
+        "fileId": 794717,
+        "md5": "0aa2c4260bbb74214fbc7cb1c28a1749",
+        "fileSize": 8555518,
+        "logicalFilename": "powerofthree's Tweaks",
+        "updatePolicy": "exact",
+        "tag": "jBhcpXm4PMn"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Main",
+            "groups": [
+              {
+                "name": "DLL",
+                "choices": [
+                  {
+                    "name": "SSE/AE v1.7.99+ (\"Anniversary/Special Edition\")",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Read or Take SKSE",
+      "version": "1.5.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 69588,
+        "fileId": 798039,
+        "md5": "061ecf4aca41aea7360aaaa413fb86e4",
+        "fileSize": 6987699,
+        "logicalFilename": "Read or Take SKSE",
+        "updatePolicy": "exact",
+        "tag": "9H2czeR7mKy"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Main",
+            "groups": [
+              {
+                "name": "DLL",
+                "choices": [
+                  {
+                    "name": "SSE/AE v1.7.104+ (\"Anniversary/Special Edition\")",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Robber's Gorge Fixes",
+      "version": "2.5",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 81495,
+        "fileId": 795084,
+        "md5": "201bee4e2fa28c9abc2074dc12189c8f",
+        "fileSize": 503753,
+        "logicalFilename": "Robber's Gorge Fixes",
+        "updatePolicy": "exact",
+        "tag": "EIvoEd52aNK"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "",
+            "groups": [
+              {
+                "name": "Compatibility Patch",
+                "choices": [
+                  {
+                    "name": "None",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Rock Traps Trigger Fixes",
+      "version": "1.6",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 81587,
+        "fileId": 512888,
+        "md5": "f938321c66badb241fd3f49fbacf41ff",
+        "fileSize": 767297,
+        "logicalFilename": "Rock Traps Trigger Fixes",
+        "updatePolicy": "exact",
+        "tag": "ADc-HZWXHHo"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "",
+            "groups": [
+              {
+                "name": "Patches",
+                "choices": []
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Scrambled Bugs - Scrambled Bugs - Anniversary Edition (1.6.629.0 and later)",
+      "version": "21",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 43532,
+        "fileId": 368378,
+        "md5": "645b40e5405220c93b6242f78524ad9c",
+        "fileSize": 2009006,
+        "logicalFilename": "Scrambled Bugs - Anniversary Edition (1.6.629.0 and later)",
+        "updatePolicy": "exact",
+        "tag": "0r9bg4eQUcU"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Scrambled Bugs - Script Effect Archetype Crash Fix",
+      "version": "1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 43532,
+        "fileId": 368379,
+        "md5": "168eef74907aee17bd3392142d234616",
+        "fileSize": 2289689,
+        "logicalFilename": "Script Effect Archetype Crash Fix",
+        "updatePolicy": "exact",
+        "tag": "eZiDcb0mOXf"
+      },
+      "choices": {
+        "type": "fomod",
+        "options": [
+          {
+            "name": "Options",
+            "groups": [
+              {
+                "name": "Plugin",
+                "choices": [
+                  {
+                    "name": "1.6.318.0+ (Anniversary Edition)",
+                    "idx": 0
+                  }
+                ]
+              },
+              {
+                "name": "Required",
+                "choices": [
+                  {
+                    "name": "Log",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Scrambled Bugs - Vendor Respawn Fix",
+      "version": "1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 43532,
+        "fileId": 368380,
+        "md5": "dc440413b6b31dfce45075043138cb14",
+        "fileSize": 2315018,
+        "logicalFilename": "Vendor Respawn Fix",
+        "updatePolicy": "exact",
+        "tag": "e_M0hYAX6UL"
+      },
+      "choices": {
+        "type": "fomod",
+        "options": [
+          {
+            "name": "Options",
+            "groups": [
+              {
+                "name": "Plugin",
+                "choices": [
+                  {
+                    "name": "1.6.629.0+ (Anniversary Edition)",
+                    "idx": 0
+                  }
+                ]
+              },
+              {
+                "name": "Required",
+                "choices": [
+                  {
+                    "name": "Log",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Scrambled Updates",
+      "version": "1.2.0",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 189511,
+        "fileId": 811209,
+        "md5": "95d08c67cf7f38257ca6919982fd5332",
+        "fileSize": 2528416,
+        "logicalFilename": "Scrambled Updates",
+        "updatePolicy": "exact",
+        "tag": "3Gh_J44ccXB"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Scripts Carefully Reworked Optimized and Tactfully Enhanced (SCROTE) - Simply Optimized Scripts AIO - SCROTE BSA Version",
+      "version": "1.0.3",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 97155,
+        "fileId": 799387,
+        "md5": "282cc34f2eda9ff6970ac8db267c7222",
+        "fileSize": 65508,
+        "logicalFilename": "SCROTE BSA Version",
+        "updatePolicy": "exact",
+        "tag": "hJT467fX3uk"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SKSE Menu Framework",
+      "version": "3.18",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 120352,
+        "fileId": 806684,
+        "md5": "9e89d16d1eeb6922436d1e4a2ec4938b",
+        "fileSize": 10715519,
+        "logicalFilename": "SKSE Menu Framework",
+        "updatePolicy": "exact",
+        "tag": "jYkJAnl51pO"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Skyrim Priority SE AE (3.4.0)",
+      "version": "3.4.0",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 50129,
+        "fileId": 355110,
+        "md5": "7ab0b3dfe691a622d8d6b1d5b64181a7",
+        "fileSize": 61073,
+        "logicalFilename": "Skyrim Priority SE AE (3.4.0)",
+        "updatePolicy": "exact",
+        "tag": "mMvuQVPpMa3"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Skyrim Script Extender (SKSE64) Steam",
+      "version": "2.3.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 30379,
+        "fileId": 795992,
+        "md5": "b30860ba80782fe2e51e37aadd7fb35e",
+        "fileSize": 952607,
+        "logicalFilename": "Skyrim Script Extender (SKSE64) Steam",
+        "updatePolicy": "exact",
+        "tag": "LgXq-glR733"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": "dinput"
+      },
+      "phase": 0
+    },
+    {
+      "name": "SkyUI",
+      "version": "6.11",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 12604,
+        "fileId": 749043,
+        "md5": "cb99578726fe8dd4e30204617ffe7a52",
+        "fileSize": 2693003,
+        "logicalFilename": "SkyUI",
+        "updatePolicy": "exact",
+        "tag": "A6g6q3x9B0Z"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Spell Perk Item Distributor",
+      "version": "7.3.3",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 36869,
+        "fileId": 795621,
+        "md5": "437b59c8fa6e4dd065a2826c1a4c6ca2",
+        "fileSize": 6391725,
+        "logicalFilename": "Spell Perk Item Distributor",
+        "updatePolicy": "exact",
+        "tag": "fxAEtOMJBcJ"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Sprint Sneak Movement Speed Fix",
+      "version": "1.1.3",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 86631,
+        "fileId": 797229,
+        "md5": "aa4a3e203a6fba2282164a15d226a9f0",
+        "fileSize": 188218,
+        "logicalFilename": "Sprint Sneak Movement Speed Fix",
+        "updatePolicy": "exact",
+        "tag": "wzKosv5X--E"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SSE Display Tweaks",
+      "version": "0.5.25",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 34705,
+        "fileId": 797175,
+        "md5": "70bfbd93142c4da802a2d64082c717a5",
+        "fileSize": 187137,
+        "logicalFilename": "SSE Display Tweaks",
+        "updatePolicy": "exact",
+        "tag": "cwYJ0gCSRBd"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SSE Engine Fixes (skse64 plugin) - Engine Fixes 7.0.21 beta for Skyrim AE 1.7.99",
+      "version": "7.0.21",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 17230,
+        "fileId": 794484,
+        "md5": "459ce67760ba205d1beb07de88b3c19e",
+        "fileSize": 9512253,
+        "logicalFilename": "Engine Fixes 7.0.21 beta for Skyrim AE 1.7.99",
+        "updatePolicy": "exact",
+        "tag": "ROed8ITQiTe"
+      },
+      "choices": {
+        "type": "fomod",
+        "options": [
+          {
+            "name": "Main",
+            "groups": [
+              {
+                "name": "DLL",
+                "choices": [
+                  {
+                    "name": "SSE v1.6.1170 (\"Anniversary Edition\")",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "SSEEdit 4.1.5f",
+      "version": "4.1.5f",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 164,
+        "fileId": 495506,
+        "md5": "e59d9492bc7b7ebf7213ae9d483b078a",
+        "fileSize": 23001378,
+        "logicalFilename": "SSEEdit 4.1.5f",
+        "updatePolicy": "exact",
+        "tag": "LyG98VlACR2"
+      },
+      "author": "author",
+      "details": {
+        "category": "Utilities",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Stormcloaks Fight With Thalmor and PO",
+      "version": "4.0",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 159287,
+        "fileId": 723138,
+        "md5": "cb1f9a499c59f438592974d775c0adda",
+        "fileSize": 2353,
+        "logicalFilename": "Stormcloaks Fight With Thalmor and PO",
+        "updatePolicy": "exact",
+        "tag": "W8iELp_IT5X"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Timing is Everything SE",
+      "version": "2.2",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 25464,
+        "fileId": 103670,
+        "md5": "dd7906ce904061a5b44b1385ed316511",
+        "fileSize": 109898,
+        "logicalFilename": "Timing is Everything SE",
+        "updatePolicy": "exact",
+        "tag": "hP5g6-pTtvk"
+      },
+      "author": "author",
+      "details": {
+        "category": "Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "UIExtensions v1-2-0",
+      "version": "1.2.0",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 17561,
+        "fileId": 55628,
+        "md5": "c4fa6bee6057069be701f9fd86c50e16",
+        "fileSize": 459887,
+        "logicalFilename": "UIExtensions v1-2-0",
+        "updatePolicy": "exact",
+        "tag": "51LkIIignzo"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Ultimate Optimized Scripts Compilation",
+      "version": "1.83",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 122999,
+        "fileId": 732690,
+        "md5": "55a3c01cba4233c47ed65c18f9889025",
+        "fileSize": 721395,
+        "logicalFilename": "Ultimate Optimized Scripts Compilation",
+        "updatePolicy": "exact",
+        "tag": "qUppPHbZZDY"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Installation",
+            "groups": [
+              {
+                "name": "USSEP",
+                "choices": [
+                  {
+                    "name": "USSEP - AE",
+                    "idx": 0
+                  }
+                ]
+              },
+              {
+                "name": "ObjectReference.pex",
+                "choices": [
+                  {
+                    "name": "ObjectReference.pex - Non(SKSE-Friendly)",
+                    "idx": 2
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Unofficial Skyrim Special Edition Patch",
+      "version": "4.3.9c",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 266,
+        "fileId": 800977,
+        "md5": "552f65da28d3aa23022a9f54989e2ec2",
+        "fileSize": 182332270,
+        "logicalFilename": "Unofficial Skyrim Special Edition Patch",
+        "updatePolicy": "exact",
+        "tag": "nhJ7LhQQwU6"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Use Or Take",
+      "version": "1.3.2",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 70868,
+        "fileId": 798744,
+        "md5": "394a73b5556ae2ef3af5cf867453791b",
+        "fileSize": 7323091,
+        "logicalFilename": "Use Or Take",
+        "updatePolicy": "exact",
+        "tag": "SiOXXSFWK6P"
+      },
+      "choices": {
+        "options": [
+          {
+            "name": "Main",
+            "groups": [
+              {
+                "name": "DLL",
+                "choices": [
+                  {
+                    "name": "SSE/AE v1.7.104+ (\"Anniversary/Special Edition\")",
+                    "idx": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "fomod"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Use Telekinesis on Traps - po3's Papyrus Extender Version",
+      "version": "0.2.3",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 59350,
+        "fileId": 246095,
+        "md5": "29808f0655f04b253d4e1ec08582930e",
+        "fileSize": 4313,
+        "logicalFilename": "Use Telekinesis on Traps - po3's Papyrus Extender Version",
+        "updatePolicy": "exact",
+        "tag": "dyOa7LnDXkX"
+      },
+      "author": "author",
+      "details": {
+        "category": "Magic - Gameplay",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "YesImSure NG",
+      "version": "1.8",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 76892,
+        "fileId": 802396,
+        "md5": "8c09496be12a4dd12a09a6ec927bff6e",
+        "fileSize": 13911214,
+        "logicalFilename": "YesImSure NG",
+        "updatePolicy": "exact",
+        "tag": "CDCz1ypphVq"
+      },
+      "author": "author",
+      "details": {
+        "category": "User Interface",
+        "type": ""
+      },
+      "phase": 0
+    },
+    {
+      "name": "Zero Bounty Hostility Fix SKSE",
+      "version": "0.8.1",
+      "optional": false,
+      "domainName": "skyrimspecialedition",
+      "source": {
+        "type": "nexus",
+        "modId": 95989,
+        "fileId": 794273,
+        "md5": "2436b4f5273ecacdd71a0fbc57f0748e",
+        "fileSize": 7026717,
+        "logicalFilename": "Zero Bounty Hostility Fix SKSE",
+        "updatePolicy": "exact",
+        "tag": "9VglxSrNAFp"
+      },
+      "author": "author",
+      "details": {
+        "category": "Bug Fixes",
+        "type": ""
+      },
+      "phase": 0
+    }
+  ],
+  "modRules": [
+    {
+      "type": "after",
+      "reference": {
+        "fileExpression": "MfgFix-11669-1-6-1-1664520342",
+        "fileMD5": "b4dcdb8d2d646fdee50c770a740aa6e3",
+        "versionMatch": "*",
+        "logicalFileName": "MfgFix"
+      },
+      "source": {
+        "fileExpression": "MfgFix NG 133568 1.0.10 2026-09-16T14-32Z Dc5uGkvbx",
+        "fileMD5": "6c808ee4447916a612667ab72e5743c1",
+        "versionMatch": "*",
+        "logicalFileName": "MfgFix NG"
+      }
+    },
+    {
+      "type": "conflicts",
+      "reference": {
+        "logicalFileName": "Skyrim Script Extender 64 (SKSE64)",
+        "versionMatch": "<2.3.1 || >2.3.1"
+      },
+      "source": {
+        "fileExpression": "Skyrim Script Extender (SKSE64) Steam 30379 2.3.1 2026-08-27T16-52Z s6Og0dG94",
+        "fileMD5": "b30860ba80782fe2e51e37aadd7fb35e",
+        "versionMatch": "*",
+        "logicalFileName": "Skyrim Script Extender (SKSE64) Steam"
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "SSEEditQuickAutoClean (Clean Dirty Mods)",
+      "exe": "Data\\SSEEdit 4.1.5f\\SSEEditQuickAutoClean.exe",
+      "args": [],
+      "cwd": "",
+      "detach": true,
+      "shell": false,
+      "onStart": "hide_recover"
+    },
+    {
+      "name": "SSEEdit (Create or Patch)",
+      "exe": "Data\\SSEEdit 4.1.5f\\SSEEdit.exe",
+      "args": [],
+      "cwd": "",
+      "detach": true,
+      "shell": false,
+      "onStart": "hide_recover"
+    }
+  ],
+  "plugins": [
+    {
+      "name": "unofficial skyrim special edition patch.esp",
+      "enabled": true
+    },
+    {
+      "name": "UOSC.esl",
+      "enabled": true
+    },
+    {
+      "name": "SimplyOptimizedScripts.esl",
+      "enabled": true
+    },
+    {
+      "name": "SkyUI_SE.esp",
+      "enabled": true
+    },
+    {
+      "name": "I4IconAddon.esp",
+      "enabled": true
+    },
+    {
+      "name": "ImTalkinHere.esp",
+      "enabled": true
+    },
+    {
+      "name": "Imperial Thalmor Stormcloak Patrols Fixes.esp",
+      "enabled": true
+    },
+    {
+      "name": "MCMHelper.esp",
+      "enabled": true
+    },
+    {
+      "name": "MCM Unlocked.esp",
+      "enabled": true
+    },
+    {
+      "name": "Runandwalkpaces.esp",
+      "enabled": true
+    },
+    {
+      "name": "Robber's Gorge Fixes.esp",
+      "enabled": true
+    },
+    {
+      "name": "Rock Traps Trigger Fixes.esp",
+      "enabled": true
+    },
+    {
+      "name": "Stormcloaks Fight With Thalmor and Penitus Oculatus.esp",
+      "enabled": true
+    },
+    {
+      "name": "TimingIsEverything.esp",
+      "enabled": true
+    },
+    {
+      "name": "UIExtensions.esp",
+      "enabled": true
+    },
+    {
+      "name": "Use Telekinesis on Traps.esp",
+      "enabled": true
+    }
+  ],
+  "collectionConfig": {
+    "excludePluginRules": true,
+    "recommendNewProfile": false,
+    "referenceTagScheme": "v1"
+  }
+}

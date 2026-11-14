@@ -3,6 +3,7 @@ package core
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -249,12 +250,17 @@ func (e *Extractor) sanitizePath(destDir, filePath string) (string, error) {
 // extract7zTimeout is the maximum time allowed for 7z extraction (corrupted archives or hangs).
 const extract7zTimeout = 5 * time.Minute
 
+// ErrSevenZipMissing is the system 7z command not being on PATH: lmm reads
+// .7z and .rar archives - every NexusMods collection's recipe among them
+// (#607) - through it.
+var ErrSevenZipMissing = errors.New("7z command not found")
+
 // extract7z extracts archives using the system 7z command.
 // This handles .7z and .rar files. A timeout prevents hangs on corrupted archives.
 func (e *Extractor) extract7z(ctx context.Context, archivePath, destDir string) error {
 	_, err := exec.LookPath("7z")
 	if err != nil {
-		return fmt.Errorf("7z command not found: install p7zip-full to extract .7z and .rar files")
+		return fmt.Errorf("%w: install p7zip-full to extract .7z and .rar files", ErrSevenZipMissing)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, extract7zTimeout)

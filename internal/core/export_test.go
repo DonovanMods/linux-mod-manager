@@ -474,3 +474,12 @@ func SetPluginListBeforeWriteForTest(fn func()) func() {
 	pluginListBeforeWrite = fn
 	return func() { pluginListBeforeWrite = nil }
 }
+
+// SetRenameRecipeForTest replaces the rename that moves an extracted
+// collection recipe into the cache (#607), so a test can force the
+// cross-device (EXDEV) path; the returned func restores it.
+func SetRenameRecipeForTest(f func(oldpath, newpath string) error) (restore func()) {
+	old := renameRecipe
+	renameRecipe = f
+	return func() { renameRecipe = old }
+}

@@ -206,16 +206,7 @@ type BatchModDescriber interface {
 	DescribeMods(ctx context.Context, sourceGameID string, modIDs []string, refresh bool) ([]ModDescription, error)
 }
 
-// Collection is one CollectionResolver answer: a published list of items
-// on the source, in the order its author sequenced them. Name is
-// best-effort (a source that cannot name a collection still resolves one);
-// URL is the collection's own page, for a frontend that wants to link it.
-type Collection struct {
-	ID      string
-	Name    string
-	URL     string
-	ItemIDs []string
-}
+// Collection (collection.go) is a CollectionResolver answer.
 
 // CollectionResolver is implemented by sources that publish CURATED LISTS
 // of their own items - today, a Steam Workshop collection (#269 Tier 2).
