@@ -565,7 +565,7 @@ func TestE2E_LibraryBatch_ARowTheBatchOwesStaysPendingUntilItsOwnJob(t *testing.
 		chromedp.Evaluate(selectLibraryRowJS("Alpha Mod"), nil),
 		chromedp.Evaluate(selectLibraryRowJS("Beta Mod"), nil),
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="batch-enable"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-enable"]`),
 		pollUntil(`document.querySelectorAll(".mod-row--pending").length >= 1`),
 		quietWindow(),
 		chromedp.Evaluate(libraryRowStateJS("Beta Mod"), &beta),
@@ -694,7 +694,7 @@ func TestE2E_LibraryBatch_PendingRowsAreLeftOutOfANewBatch(t *testing.T) {
 	assert.NotContains(t, disableTitle, "Steam")
 	assert.Equal(t, "Disable (1)", disableLabel, "the batch takes Beta, not Alpha a second time")
 
-	f.runInBrowser(t, chromedp.Click(`[data-action="batch-disable"]`, chromedp.ByQuery))
+	f.runInBrowser(t, clickWhenSettled(`[data-action="batch-disable"]`))
 	awaitToggleRequests(t, &wire.toggles, 2)
 	wire.releaseToggles()
 	awaitJobsOver(t, f, wire, map[string]bool{"a": false, "b": false})
@@ -720,7 +720,7 @@ func TestE2E_ActivityGap_ABatchResumesOnceTheStreamReconnects(t *testing.T) {
 		chromedp.Evaluate(selectLibraryRowJS("Alpha Mod"), nil),
 		chromedp.Evaluate(selectLibraryRowJS("Beta Mod"), nil),
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="batch-disable"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-disable"]`),
 		pollUntil(`document.querySelectorAll(".mod-row--pending").length === 2`),
 	)
 	awaitToggleRequests(t, &wire.toggles, 1)
@@ -828,7 +828,7 @@ func TestE2E_ActivityGap_AJobTheServerForgotSettlesAsLost(t *testing.T) {
 			chromedp.Evaluate(selectLibraryRowJS("Alpha Mod"), nil),
 			chromedp.Evaluate(selectLibraryRowJS("Beta Mod"), nil),
 			chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-			chromedp.Click(`[data-action="batch-disable"]`, chromedp.ByQuery),
+			clickWhenSettled(`[data-action="batch-disable"]`),
 			pollUntil(`document.querySelectorAll(".mod-row--pending").length === 2`),
 		)
 		awaitJobsOver(t, f, wire, map[string]bool{"a": false})
@@ -984,7 +984,7 @@ func TestE2E_ActivityGap_AJobKnownOnlyFromASnapshotEndsItsLateBinding(t *testing
 					chromedp.Evaluate(selectLibraryRowJS("Alpha Mod"), nil),
 					chromedp.Evaluate(selectLibraryRowJS("Beta Mod"), nil),
 					chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-					chromedp.Click(`[data-action="batch-disable"]`, chromedp.ByQuery),
+					clickWhenSettled(`[data-action="batch-disable"]`),
 				)
 			} else {
 				start = append(start, chromedp.Evaluate(libraryToggleJS("Alpha Mod"), nil))
@@ -1298,7 +1298,7 @@ func TestE2E_LibraryToggle_ASupersededRereadSettlesNothing(t *testing.T) {
 			// Alpha's job ends, and the page has started the read its
 			// ending asks for.
 			if batch {
-				f.runInBrowser(t, chromedp.Click(`[data-action="batch-disable"]`, chromedp.ByQuery))
+				f.runInBrowser(t, clickWhenSettled(`[data-action="batch-disable"]`))
 			} else {
 				f.runInBrowser(t, chromedp.Evaluate(libraryToggleJS("Alpha Mod"), nil))
 			}
@@ -1561,7 +1561,7 @@ func TestE2E_LibraryBatch_AnUnansweredStartIsAnUnknownOutcome(t *testing.T) {
 		chromedp.Evaluate(selectLibraryRowJS("Alpha Mod"), nil),
 		chromedp.Evaluate(selectLibraryRowJS("Beta Mod"), nil),
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="batch-disable"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-disable"]`),
 		pollUntil(toastSaysJS("did not answer")),
 		pollUntil(toastSaysJS("Disabled 1/2")),
 		pollUntil(toastSaysJS("Outcome unknown: Alpha Mod")),
@@ -1620,7 +1620,7 @@ func TestE2E_LibraryToggle_AStartThatMadeNoJobHandsTheControlBack(t *testing.T) 
 				chromedp.Evaluate(selectLibraryRowJS("Alpha Mod"), nil),
 				chromedp.Evaluate(selectLibraryRowJS("Beta Mod"), nil),
 				chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-				chromedp.Click(`[data-action="batch-disable"]`, chromedp.ByQuery),
+				clickWhenSettled(`[data-action="batch-disable"]`),
 				pollUntil(toastSaysJS("Disabled 1/2")),
 				pollUntil(noRowPendingJS),
 				chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &alpha),
