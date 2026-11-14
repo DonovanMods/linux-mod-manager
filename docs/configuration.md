@@ -702,8 +702,10 @@ plugins:
       - { name: Patch.esp, group: Late Loaders, after: [SkyUI_SE.esp], req: [SkyUI_SE.esp] }
 ```
 
-- **The order is what you want, not a copy of the file.** lmm never writes
-  the order it computes back to the profile. A plugin in `order` that is not
+- **The order is what you want, not a copy of the file.** A deploy never
+  writes the order it computes back to the profile; only `lmm plugins move`
+  and `lmm plugins sort` (and the web UI's Plugins tab) record it, when you
+  ask them to, as the order you see (#617). A plugin in `order` that is not
   deployed is left out of the file but keeps its place, so disabling and
   re-enabling its mod does not lose it. Names match case-insensitively. A
   plugin with no `enabled:` is active.

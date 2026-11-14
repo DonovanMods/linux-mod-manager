@@ -346,6 +346,21 @@ export const recordProfileCollection = (name, context) =>
 export const reorderProfile = (name, ids, context) =>
   post(scoped(`${profilePath(name)}/reorder`, context), { ids });
 
+/** Reads a profile's effective plugin order (issue 617): core.
+ * PluginOrderReport, `lmm plugins list --json`'s document - or null for a
+ * game whose adapter manages no plugin list (the route's 204). */
+export const profilePlugins = (name, context) =>
+  get(scoped(`${profilePath(name)}/plugins`, context));
+
+/** Runs one plugin edit (core.PluginEdit: enable, disable, move, sort, a
+ * rule or a group) - core.PluginEditPlan when dryRun, else core.
+ * PluginEditResult, whose order is the effective order now. */
+export const editProfilePlugins = (name, edit, dryRun, context) =>
+  post(scoped(`${profilePath(name)}/plugins`, context), {
+    edit,
+    dry_run: !!dryRun,
+  });
+
 /** Previews a proposed load order without committing it: GET
  * /api/v1/conflicts?order=... - the same core.ConflictReport shape the
  * unordered read returns, so the reorder modal renders it with the exact

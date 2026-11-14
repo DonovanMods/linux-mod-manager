@@ -143,6 +143,52 @@ type sortRequest struct {
 // *PluginOrderCycleError.
 func sortPlugins(req sortRequest) ([]pluginNode, error) {
 	n := len(req.nodes)
+	g, neededByMaster := buildPluginGraph(req)
+
+	rank := tiebreak(req)
+	placed := make([]bool, n)
+	indeg := slices.Clone(g.indeg)
+	mastersLeft := 0
+	for _, node := range req.nodes {
+		if node.class.Master {
+			mastersLeft++
+		}
+	}
+	available := func(i int) bool {
+		if placed[i] || indeg[i] > 0 {
+			return false
+		}
+		node := req.nodes[i]
+		return node.class.Master || mastersLeft == 0 || neededByMaster[i]
+	}
+	out := make([]pluginNode, 0, n)
+	for len(out) < n {
+		best := -1
+		for i := range req.nodes {
+			if available(i) && (best < 0 || rank(i, best) < 0) {
+				best = i
+			}
+		}
+		if best < 0 {
+			return nil, &PluginOrderCycleError{Edges: g.cycle(req.nodes, placed, mastersLeft > 0, neededByMaster)}
+		}
+		placed[best] = true
+		if req.nodes[best].class.Master {
+			mastersLeft--
+		}
+		for _, j := range g.succ[best] {
+			indeg[j]--
+		}
+		out = append(out, req.nodes[best])
+	}
+	return out, nil
+}
+
+// buildPluginGraph is req's constraint graph - hard edges, the profile's
+// per-plugin rules and its group edges - and, per node, whether some
+// master needs it (so masters-first does not hold it back).
+func buildPluginGraph(req sortRequest) (*pluginGraph, []bool) {
+	n := len(req.nodes)
 	index := make(map[string]int, n)
 	for i, node := range req.nodes {
 		index[pluginKey(node.name)] = i
@@ -189,43 +235,7 @@ func sortPlugins(req sortRequest) ([]pluginNode, error) {
 	// Group edges, each skipped when it would close a cycle.
 	addGroupEdges(g, req, neededByMaster)
 
-	rank := tiebreak(req)
-	placed := make([]bool, n)
-	indeg := slices.Clone(g.indeg)
-	mastersLeft := 0
-	for _, node := range req.nodes {
-		if node.class.Master {
-			mastersLeft++
-		}
-	}
-	available := func(i int) bool {
-		if placed[i] || indeg[i] > 0 {
-			return false
-		}
-		node := req.nodes[i]
-		return node.class.Master || mastersLeft == 0 || neededByMaster[i]
-	}
-	out := make([]pluginNode, 0, n)
-	for len(out) < n {
-		best := -1
-		for i := range req.nodes {
-			if available(i) && (best < 0 || rank(i, best) < 0) {
-				best = i
-			}
-		}
-		if best < 0 {
-			return nil, &PluginOrderCycleError{Edges: g.cycle(req.nodes, placed, mastersLeft > 0, neededByMaster)}
-		}
-		placed[best] = true
-		if req.nodes[best].class.Master {
-			mastersLeft--
-		}
-		for _, j := range g.succ[best] {
-			indeg[j]--
-		}
-		out = append(out, req.nodes[best])
-	}
-	return out, nil
+	return g, neededByMaster
 }
 
 // tiebreak is the comparison that picks among plugins whose constraints
@@ -485,4 +495,41 @@ func (g *pluginGraph) cycle(nodes []pluginNode, placed []bool, mastersLeft bool,
 		}
 	}
 	return nil
+}
+
+// bindingEdges is, per plugin key, the constraints that hold the plugin
+// after one its tiebreak alone would have put it before (#617): the edges
+// that decide its place, rather than the profile's order. It is how `lmm
+// plugins list` marks a position a rule or a master set. Masters-first is
+// left out: it holds every non-master behind every master, which the
+// plugins' flags already say.
+func bindingEdges(req sortRequest) map[string][]PluginOrderEdge {
+	g, _ := buildPluginGraph(req)
+	rank := tiebreak(req)
+	out := map[string][]PluginOrderEdge{}
+	for to := range req.nodes {
+		for _, from := range g.pred[to] {
+			if rank(to, from) < 0 {
+				key := pluginKey(req.nodes[to].name)
+				out[key] = append(out[key], g.why[[2]int{from, to}])
+			}
+		}
+	}
+	return out
+}
+
+// tiebreakOrder is req's nodes by the tiebreak alone, ignoring every
+// constraint: what `lmm plugins list` shows when a cycle stops the sort.
+func tiebreakOrder(req sortRequest) []pluginNode {
+	rank := tiebreak(req)
+	idx := make([]int, len(req.nodes))
+	for i := range idx {
+		idx[i] = i
+	}
+	slices.SortStableFunc(idx, rank)
+	out := make([]pluginNode, len(idx))
+	for i, j := range idx {
+		out[i] = req.nodes[j]
+	}
+	return out
 }

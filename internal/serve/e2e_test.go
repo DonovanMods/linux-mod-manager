@@ -4280,6 +4280,11 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 	var activeDeletes int
 	var activeNote string
 	f.runInBrowser(t,
+		// The row re-renders as active only once the status refresh that
+		// follows set-default lands, after the default badge does: wait for
+		// it, or the Delete count can read the row's earlier render.
+		pollUntil(`Array.from(document.querySelectorAll(".profiles-row")).find((r) => r.textContent.includes("outpost"))
+			?.querySelector('[data-testid="active-profile-note"]') != null`),
 		chromedp.Evaluate(`Array.from(document.querySelectorAll(".profiles-row")).find((r) => r.textContent.includes("outpost"))
 			.querySelectorAll('[data-action="delete-profile"]').length`, &activeDeletes),
 		chromedp.Evaluate(`Array.from(document.querySelectorAll(".profiles-row")).find((r) => r.textContent.includes("outpost"))
