@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cyberpunk 2077's archive load order (#620).** A Cyberpunk 2077 game on
+  the new `cyberpunk2077` adapter (Steam detection sets it; `lmm verify`
+  suggests it for a game added before) can keep the order its `.archive`
+  mods load in, in the profile's new `load_orders:` block, and lmm writes it
+  to `archive/pc/mod/modlist.txt` at every deploy. It is opt-in: a profile
+  with no order leaves the list alone. `lmm load-order list|move|reset`
+  (with `--dry-run` and `--json`) and the web UI's **Archives** tab in the
+  Reorder window show the order (what placed each archive, and its mod) and
+  change it; the first move records the order. As with `Plugins.txt`, an
+  archive lmm did not deploy keeps its place in the list and is never added
+  to it, a mod that ships its own `modlist.txt` is not written over, and the
+  list lmm first replaced is kept: `lmm purge` and `lmm load-order reset` put
+  it back, keeping what changed since. Deploy and purge (`--json`:
+  `load_orders`) and their web readouts say what they did to the list.
+  A NexusMods collection's archive order (`fbLoadOrders`) imports as the
+  profile's order, the plan listing it with each archive's mod where the
+  collection says; such a collection now imports on a game set up with
+  `adapter: cyberpunk2077` (`file_load_order:cyberpunk2077-archive` joins the
+  supported features, per game) and is still refused anywhere else. An lmm
+  collection carries the order and requires that feature. The order's
+  names are checked and never rewritten: a path separator, a control or
+  formatting character, or an over-long name refuses the document. See the
+  guide's [Archive load order](docs/guide/load-order.md). The REDmod order
+  stays unsupported.
+
 - **Import a collection from a link (#622).** `lmm profile import
 https://…` (in the web UI, the Profiles window's **From a URL** field)
   downloads an lmm collection - a `.lmmc`, its YAML, or an older profile

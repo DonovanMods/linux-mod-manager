@@ -351,6 +351,14 @@ The plan lists every item and what the import does with it:
   satisfy), the plan warns: the import still goes ahead, but every deploy
   leaves `Plugins.txt` as it was and names the cycle until you change one
   of the rules in the profile's `plugins:`.
+- The curator's **archive load order** (Cyberpunk 2077's `modlist.txt`:
+  which archive wins when two change the same thing) becomes the profile's
+  archive order. The plan lists it, with the mod each archive comes from
+  where the collection says (the browser behind **Show the load order**;
+  the terminal shows the first ten, and the `--json` plan has them all
+  under `profile.load_orders`). lmm writes it at every deploy, on a game set
+  up with `adapter: cyberpunk2077`; on any other game such a collection is
+  refused. See [Archive load order](load-order.md).
 - Items NexusMods doesn't host are listed with where to get them and the
   curator's instructions. The curator's tool shortcuts are listed too; lmm
   never creates or runs them.
