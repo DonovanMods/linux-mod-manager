@@ -238,7 +238,8 @@ func TestPluginEdit_MoveRecordsTheEffectiveOrder(t *testing.T) {
 	// plan says why it does not take effect.
 	plan, _ = f.edit(t, core.PluginEdit{Op: core.PluginOpMove, Plugin: "Patch.esp", To: core.PluginMoveFirst})
 	assert.Equal(t, "Patch.esp", f.profilePlugins(t).Order[0].Name)
-	require.Empty(t, plan.Notes, "first is no anchor to be held against")
+	require.Len(t, plan.Notes, 1, "its master holds it after Base.esm")
+	assert.Contains(t, plan.Notes[0], "Base.esm is a master of Patch.esp")
 	plan, err := f.svc.PlanPluginEdit(context.Background(), f.game, "default", core.PluginEdit{Op: core.PluginOpMove, Plugin: "Patch.esp", Before: "Base.esm"})
 	require.NoError(t, err)
 	require.Len(t, plan.Notes, 1)

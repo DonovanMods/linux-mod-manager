@@ -251,6 +251,10 @@ func moveHeld(edit PluginEdit, after *PluginOrderReport) []string {
 	case edit.After != "":
 		other, ok := pos[pluginKey(edit.After)]
 		held = ok && at < other
+	case edit.To == PluginMoveFirst:
+		held = slices.ContainsFunc(after.Plugins[:at], func(p PluginOrderEntry) bool { return p.Managed })
+	case edit.To == PluginMoveLast:
+		held = slices.ContainsFunc(after.Plugins[at+1:], func(p PluginOrderEntry) bool { return p.Managed })
 	}
 	if !held {
 		return nil
