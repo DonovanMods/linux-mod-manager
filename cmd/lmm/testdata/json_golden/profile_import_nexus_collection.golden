@@ -90,7 +90,7 @@
     "failed": 0,
     "skipped": 1,
     "notes": [
-      "The profile records 1 item(s) still to download: install each from its page (\"update from file\")."
+      "The profile records 1 item(s) still to download: get each file from its page and install it from the file (lmm install --id <mod-id> --from-file <archive>)."
     ]
   }
 }

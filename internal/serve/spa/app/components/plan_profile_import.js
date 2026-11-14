@@ -380,6 +380,9 @@ function SourceCollectionSection({ source: c, actions }) {
             );
           if (it.mod_type) tags.push(`type ${it.mod_type}`);
           if (it.installer) tags.push("installer choices");
+          // A NexusMods version is readable as is; displayVersion is the
+          // one sanctioned reader of a version (issue 458).
+          const shown = displayVersion(it);
           return html`<li
             key=${it.id}
             class=${`plan__mod${warn ? " plan__mod--warn" : ""}`}
@@ -389,17 +392,20 @@ function SourceCollectionSection({ source: c, actions }) {
             ${
               it.optional &&
               html`<input
-                type="checkbox"
-                aria-label=${`Include ${it.name}`}
-                data-testid="source-optional-toggle"
-                checked=${it.state !== "optional_skipped" && it.state !== "unsupported" && included(it)}
-                disabled=${it.state === "unsupported"}
-                onChange=${(e) => toggle(it, e.currentTarget.checked)}
-              />`
-            }
-            <span class="plan__mod-name">${it.name}</span>
-            ${it.version && html`${" "}<span class="plan__mod-detail mono">${it.version}</span>`}
-            ${" "}<span
+                  type="checkbox"
+                  aria-label=${`Include ${it.name}`}
+                  data-testid="source-optional-toggle"
+                  checked=${it.state !== "optional_skipped" && it.state !== "unsupported" && included(it)}
+                  disabled=${it.state === "unsupported"}
+                  onChange=${(e) => toggle(it, e.currentTarget.checked)}
+                />${" "}`
+            }<span class="plan__mod-name">${it.name}</span>${
+              shown
+                ? html`${" "}<span class="plan__mod-detail mono"
+                      >${shown}</span
+                    >`
+                : null
+            }${" "}<span
               class=${`plan__mod-detail${warn ? " plan__mod-detail--warn" : ""}`}
               >${sourceStateLabel[it.state] ?? it.state}</span
             >
