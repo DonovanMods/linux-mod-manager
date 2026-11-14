@@ -140,7 +140,7 @@ func mergeUnsupported(a, b []UnsupportedCollectionFeature) []UnsupportedCollecti
 func (s *Service) finishSourceCollection(ctx context.Context, game *domain.Game, c *ConvertedCollection, result *ProfileImportResult, opts ProfileImportOptions) {
 	if opts.NoInstall || !opts.Install {
 		if n := c.Counts[CollectionItemManualDownload] + c.Counts[CollectionItemWillInstall]; n > 0 {
-			result.Notes = append(result.Notes, fmt.Sprintf("The profile records %d item(s) still to download: install each from its page (\"update from file\").", n))
+			result.Notes = append(result.Notes, fmt.Sprintf("The profile records %d item(s) still to download: get each file from its page and install it from the file (lmm install --id <mod-id> --from-file <archive>).", n))
 		}
 		if len(c.AutoUpdate) > 0 {
 			result.Notes = append(result.Notes, fmt.Sprintf("%d item(s) the curator wants on their newest file are not installed yet; set them to update automatically once they are.", len(c.AutoUpdate)))

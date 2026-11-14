@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Import a NexusMods collection (#607, #609).** `lmm profile import
+  --nexus-collection <slug|slug@revision|URL>` (in the web UI, the
+  Profiles window's **NexusMods collection** field) reads a collection's
+  list and its install recipe, converts them into an lmm collection and
+  imports it as a new profile, all or nothing. Each mod is pinned to the
+  exact file the curator chose, old and archived files included; an
+  `exact` pin is locked, and a `latest` one installs the tested file and is
+  set to update automatically. The curator's install phases and
+  before/after rules order the profile (a rule naming a mod outside the
+  collection is skipped, with a note), recorded FOMOD installer choices are
+  replayed, items NexusMods does not host are listed with where to get
+  them, and the curator's tool shortcuts are listed but never run.
+  Optional mods are left out unless you add `--with-optional` (in the web
+  UI, a tick box on each). On a free NexusMods account, which NexusMods
+  serves no downloads to, the plan marks every mod a manual download with
+  its file's page, and the import saves the profile with them pending. A
+  collection that needs something lmm cannot replay yet (a plugin load
+  order, an exact file list, bundled files, patches, a file-based load
+  order, a mod type the game's adapter does not route, two installers in
+  one mod) shows its plan, naming what is missing and which mods need it,
+  and is refused with nothing written. The recipe is a `.7z`, so the
+  import needs the `7z` command and says so when it is missing.
+- **A mod can state where it deploys (`mod_type`, #607).** A profile entry
+  may carry `mod_type:` (a NexusMods collection's mod type: `dinput` for a
+  script extender); every deploy routes the whole mod by it through the
+  game's adapter, and a type the adapter does not know is refused with the
+  reason. An lmm collection relying on one requires `mod_type:<type>`,
+  which a game whose adapter routes the type supports. The installed row
+  keeps a copy (database schema version 27).
+- The NexusMods account tier is checked again after 15 minutes, and at
+  once after NexusMods refuses a download as Premium-only, so an upgrade or
+  a lapse under a long-running `lmm serve` is noticed (#607).
+
 - **Mod files that belong in the game folder are deployed there (#629).**
   On a game with the `bethesda` adapter, a script extender's loader and
   DLLs (`skse64_loader.exe`, `skse64_*.dll`, and the F4SE/SFSE/SKSEVR

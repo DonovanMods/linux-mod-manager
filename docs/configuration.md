@@ -627,6 +627,20 @@ Three things clear the marker, and each is a request for that mod:
 
 Enabling a mod whose files were never downloaded (an imported profile on a fresh machine) needs that download, because lmm never fetches a disabled mod. `lmm list` names such mods under its table ("Listed but not downloaded, switched off") with the exact command that installs each one — `lmm install -g <game> -p <profile> -s <source> --id <mod> --version <version>` — so the CLI installs the same ref, at the same version, into the same profile that the web UI's **Install…** does (`--json` carries the refs as `disabled_not_installed`). The web UI shows them in the library and on the Profile card, each with its own **Install…** that downloads the mod and switches it on.
 
+#### Stated mod type (`mod_type`)
+
+A mod imported from a NexusMods collection can carry the type the collection's curator gave it:
+
+```yaml
+mods:
+  - source_id: nexusmods
+    mod_id: "30379"
+    version: 2.2.6
+    mod_type: dinput     # the whole mod deploys to the game folder
+```
+
+The game's adapter decides where a type deploys: on the `bethesda` adapter, `dinput` (script extenders) and `enb` mean the game's install folder. A type the adapter does not know is refused at deploy, with the reason, rather than deployed where the game never reads it. Absent means the game's default. An older lmm that rewrites the profile drops the key.
+
 #### Recorded FOMOD choices (`fomod`)
 
 Many mods ship as a FOMOD installer (`fomod/ModuleConfig.xml` in the archive): a set of steps that ask which options to install. lmm runs the installer itself, for every game, and never executes a scripted installer (`fomod/script.cs`) or an OMOD, which it refuses.
