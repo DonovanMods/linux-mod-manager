@@ -78,6 +78,7 @@ const mutationKindLabels = {
   profile_apply: "Applying profile",
   verify_fix: "Repairing",
   profile_import: "Importing profile",
+  profile_fill: "Installing downloads",
   enable: "Enabling",
   disable: "Disabling",
   snapshot_restore: "Restoring snapshot",
@@ -236,6 +237,12 @@ export function jobStateLabel(summary, frame) {
 export function resultTallyLabel(tally) {
   const failed = tally.failed ?? 0;
   const skipped = tally.skipped ?? 0;
+  if (tally.kind === "profile_fill") {
+    // issue 608: what the files installed, and what is still to download.
+    const parts = [`${tally.installed ?? 0} installed`, `${skipped} pending`];
+    if (failed > 0) parts.push(`${failed} failed`);
+    return parts.join(" · ");
+  }
   if (tally.kind === "profile_import") {
     const parts = [`${tally.installed ?? 0} installed`, `${skipped} skipped`];
     if (failed > 0) parts.push(`${failed} failed`);
@@ -270,10 +277,16 @@ export function resultTallyLabel(tally) {
  * nothing (the flow's own default, every pending mod counted as Skipped)
  * has failed === 0 and is "succeeded", never "failed".
  */
+// INSTALLED_TALLY_KINDS are the tallies that count `installed`, not
+// `applied` (one kind per line: spa_internal_test.go's import scanner reads
+// a quoted word right after "import" as a module path).
+const INSTALLED_TALLY_KINDS = new Set(["profile_import", "profile_fill"]);
+
 export function resultTallyTone(tally) {
   if ((tally.failed ?? 0) === 0) return "succeeded";
-  const applied =
-    tally.kind === "profile_import" ? tally.installed : tally.applied;
+  const applied = INSTALLED_TALLY_KINDS.has(tally.kind)
+    ? tally.installed
+    : tally.applied;
   return (applied ?? 0) === 0 ? "failed" : "mixed";
 }
 

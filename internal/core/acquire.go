@@ -275,9 +275,24 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 	} else {
 		archivePath = retainedPath
 	}
+	if err := s.acquireArchive(ctx, a, src, game, mod, file, archivePath, downloadResult, true, fx, sink); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
 
+// acquireArchive is acquire's half after the bytes are on disk: verify the
+// archive at archivePath against what the source declares, then lay it out
+// in a's pristine tree - stored for a compile, copied, or extracted (with
+// the FOMOD resolve step). network says the archive was downloaded (or is a
+// retained download): only such an archive is what a refused Apply keeps
+// for its re-run. A profile fill's archive is the user's own file, copied
+// (acquireSupplied), and is never retained.
+func (s *Service) acquireArchive(ctx context.Context, a *acquiredFile, src source.ModSource, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, archivePath string, downloadResult *DownloadResult, network bool, fx fomodInput, sink EventSink) error {
+	sourceID := a.sourceID
+	safeFileName := filepath.Base(file.FileName)
 	if file.SHA256 != "" && !strings.EqualFold(downloadResult.SHA256, file.SHA256) {
-		return nil, fmt.Errorf("verifying download of %s: sha256 mismatch: source declares %s, downloaded file is %s",
+		return fmt.Errorf("verifying download of %s: sha256 mismatch: source declares %s, downloaded file is %s",
 			file.FileName, file.SHA256, downloadResult.SHA256)
 	}
 
@@ -289,14 +304,17 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 	// leaves nothing behind.
 	if es, ok := src.(source.ExactFileSizer); ok && es.ExactFileSizes() && file.Size > 0 && downloadResult.Size != file.Size {
 		_ = os.Remove(downloadResult.Path)
-		return nil, fmt.Errorf("verifying download of %s: size mismatch: source declares %d bytes, downloaded file is %d",
+		return fmt.Errorf("verifying download of %s: size mismatch: source declares %d bytes, downloaded file is %d",
 			file.FileName, file.Size, downloadResult.Size)
 	}
 
 	if err := a.claimTree(); err != nil {
-		return nil, err
+		return err
 	}
-	a.archivePath, a.download, a.checksum = archivePath, downloadResult, downloadResult.Checksum
+	a.checksum = downloadResult.Checksum
+	if network {
+		a.archivePath, a.download = archivePath, downloadResult
+	}
 
 	// convertEligiblePak requires BOTH the game's own eligibility (deploy
 	// mode + ConvertPaks) AND a compile-capable ADAPTER (#221 I1 fix, as
@@ -314,16 +332,16 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 	convertEligiblePak := isMergeCompiler && isConvertEligibleArtifact(game, mc, safeFileName)
 	if game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, safeFileName) || convertEligiblePak) {
 		if !isMergeCompiler {
-			return nil, fmt.Errorf("game %q requires DeployCompile but its adapter %q cannot compile (file %q from source %q)", game.ID, s.AdapterName(game), safeFileName, src.ID())
+			return fmt.Errorf("game %q requires DeployCompile but its adapter %q cannot compile (file %q from source %q)", game.ID, s.AdapterName(game), safeFileName, src.ID())
 		}
 		if err := mc.ValidateSource(archivePath); err != nil {
-			return nil, fmt.Errorf("validating %s: %w", safeFileName, err)
+			return fmt.Errorf("validating %s: %w", safeFileName, err)
 		}
 		if err := os.MkdirAll(a.tree, 0755); err != nil {
-			return nil, fmt.Errorf("preparing staging: %w", err)
+			return fmt.Errorf("preparing staging: %w", err)
 		}
 		if err := copyFileStreaming(archivePath, filepath.Join(a.tree, cache.RetainedSourceName(file.ID))); err != nil {
-			return nil, fmt.Errorf("retaining %s: %w", safeFileName, err)
+			return fmt.Errorf("retaining %s: %w", safeFileName, err)
 		}
 		// exmodz: members nil (#197) - the merged pak is the only artifact.
 		// pak (#221): ALSO keep a deployable copy as the sole member, so the
@@ -332,11 +350,11 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 		// reconcile) and the merged pak takes over.
 		if convertEligiblePak {
 			if err := copyFileStreaming(archivePath, filepath.Join(a.tree, safeFileName)); err != nil {
-				return nil, fmt.Errorf("staging deployable pak %s: %w", safeFileName, err)
+				return fmt.Errorf("staging deployable pak %s: %w", safeFileName, err)
 			}
 			a.members = []string{safeFileName}
 		}
-		return a, nil
+		return nil
 	}
 
 	if game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(archivePath) {
@@ -344,20 +362,22 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 		// Or not an archive - just copy to cache. copyFileStreaming mkdirs
 		// its destination itself (importer.go).
 		if err := copyFileStreaming(archivePath, filepath.Join(a.tree, safeFileName)); err != nil {
-			return nil, fmt.Errorf("copying to cache: %w", err)
+			return fmt.Errorf("copying to cache: %w", err)
 		}
 		a.members = []string{safeFileName}
-		return a, nil
+		return nil
 	}
 
 	members, resolved, err := s.extractPristine(ctx, game, mod, archivePath, a.tree, fx, sink)
 	if err != nil {
-		s.retainRefusedDownload(err, sourceID, mod.ID, file.ID, archivePath, downloadResult, identityOf(mod, file))
-		return nil, fmt.Errorf("extracting mod: %w", err)
+		if network {
+			s.retainRefusedDownload(err, sourceID, mod.ID, file.ID, archivePath, downloadResult, identityOf(mod, file))
+		}
+		return fmt.Errorf("extracting mod: %w", err)
 	}
 	a.members, a.listed = members, true
 	a.setFomod(resolved)
-	return a, nil
+	return nil
 }
 
 // acquireLocal is acquire for a local mod (directory or archive), through

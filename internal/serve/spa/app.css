@@ -3460,6 +3460,41 @@ a.row-menu__item.mod-page-link {
   width: 100%;
 }
 
+/* The fill drop zone (issue 608): the archives downloaded by hand for a
+   collection profile's pending mods, dropped or picked. A dashed outline
+   says "drop here"; it turns to the accent while a drag is over it. Full
+   width under the row or tray entry it belongs to. */
+.fill-drop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+
+.fill-drop--over {
+  border-color: var(--accent);
+}
+
+.fill-drop__hint,
+.fill-drop__status {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.fill-drop label.button {
+  cursor: pointer;
+}
+
+.fill-drop__status {
+  flex-basis: 100%;
+}
+
 /* ---------------------------------------------------------------------- */
 /* The uninstall-batch modal (issue 332): one UninstallPlanView per selected     */
 /* mod.                                                                     */

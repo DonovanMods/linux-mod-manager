@@ -1176,6 +1176,7 @@ async function openPlan({
   onConfirmed,
   openerSelector,
   context: contextOverride,
+  extra,
 }) {
   modalSeq += 1;
   const seq = modalSeq;
@@ -1229,6 +1230,10 @@ async function openPlan({
     applyOptions,
     onConfirmed,
     openerSelector,
+    // extra is what the opener knows that the plan document cannot (issue
+    // 608: the dropped files the fill drop zone never uploaded), for the
+    // kind's renderer to show beside the plan.
+    extra,
   };
 
   store.set({ modal: { ...base, status: "planning" } });
@@ -1848,6 +1853,15 @@ async function confirmPlan() {
           modal.applyOptions,
         );
       }
+      if (
+        modal.kind === "profile_import" &&
+        modal.plan?.collection?.source?.manual_download
+      ) {
+        rememberFillTarget(jobID, {
+          game: (modal.context ?? routeContext()).game,
+          profile: modal.plan?.profile?.name,
+        });
+      }
       if (fomodKinds.has(modal.kind)) {
         rememberFomodRequest(modal.origin, {
           kind: modal.kind,
@@ -1990,6 +2004,7 @@ const fomodKinds = new Set([
   "update_from_archive",
   "mod_fomod",
   "updates",
+  "profile_fill",
 ]);
 
 // fomodRequests remembers, per origin, the request behind the last job of a
@@ -2007,6 +2022,23 @@ const fomodWalks = new Map();
 // (kind_profile_import.go), so re-posting that request for a FOMOD answer
 // uploads the same file again under a new id.
 const uploadFiles = new Map();
+
+// fillTargets maps a collection import's job to the profile it saved with
+// mods pending (issue 608): the account is not served downloads, so the
+// finished import's tray row offers the fill drop zone for that profile.
+// Page-lifetime, like fomodRequests: after a reload the profiles modal's
+// "Fill from downloads…" is the way in.
+const fillTargets = new Map();
+
+function rememberFillTarget(jobID, target) {
+  if (jobID && target?.profile) fillTargets.set(jobID, target);
+}
+
+/** fillTargetFor is the {game, profile} jobID's import left pending, or
+ * null. */
+function fillTargetFor(jobID) {
+  return fillTargets.get(jobID) ?? null;
+}
 
 /** rememberUploadFile records which file an upload was made from. */
 function rememberUploadFile(uploadID, file) {
@@ -2693,6 +2725,9 @@ function onJobLost(jobID, err) {
 // state, and the store holds plain data.
 const jobToastAffordances = {
   profile_import: { action: "openProfilesModal", actionLabel: "Open profiles" },
+  // Issue 608: a fill is started from the profiles modal or the tray, and
+  // the profile's pending mods are listed in the modal.
+  profile_fill: { action: "openProfilesModal", actionLabel: "Open profiles" },
 };
 
 /** toastAffordance is summary's own extra offer, or nothing. */
@@ -2953,6 +2988,7 @@ const actions = {
   canAnswerFomod,
   submitFomod,
   rememberUploadFile,
+  fillTargetFor,
   openReorderModal,
   openProfilesModal,
   openShortcutsModal,

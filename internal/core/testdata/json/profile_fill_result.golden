@@ -1,0 +1,20 @@
+{
+  "profile": "Essential Mods",
+  "installed": 2,
+  "failed": 1,
+  "remaining": 3,
+  "warnings": [
+    "could not set nexusmods:1 to update automatically: database is locked"
+  ],
+  "notes": [
+    "1 mod(s) the curator wants on their newest file were installed at the tested file and set to update automatically."
+  ],
+  "failures": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "99",
+      "name": "Sample Mod",
+      "reason": "installing from sample.7z failed: sample.7z changed since the fill was planned"
+    }
+  ]
+}
