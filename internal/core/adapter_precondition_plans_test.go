@@ -28,6 +28,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,6 +91,11 @@ var gatedPlans = []gatedPlan{
 	}},
 	{"PlanProfileApply", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
 		_, err := svc.PlanProfileApply(context.Background(), g, "default")
+		return err
+	}},
+	{"PlanProfileFill", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		markCollectionProfile(t, svc, g.ID, "default")
+		_, err := svc.PlanProfileFill(context.Background(), g, core.ProfileFillRequest{Profile: "default", Paths: []string{t.TempDir()}})
 		return err
 	}},
 	{"PlanProfileSync", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
@@ -304,6 +310,16 @@ func newPreconditionFixture(t *testing.T) (*core.Service, *domain.Game, planFixt
 	game.Adapter = "refuser"
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	return svc, game, fx
+}
+
+// markCollectionProfile records a source collection on profile, as a
+// collection import does, so `lmm profile fill` (#608) plans for it.
+func markCollectionProfile(t *testing.T, svc *core.Service, gameID, profile string) {
+	t.Helper()
+	p, err := config.LoadProfile(svc.ConfigDir(), gameID, profile)
+	require.NoError(t, err)
+	p.Collection = &domain.CollectionInfo{ID: "acme:coll", Origin: &domain.CollectionOrigin{SourceID: "acme", Slug: "coll", Revision: 1}}
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), p))
 }
 
 var errLoaderMissing = &loaderMissing{}

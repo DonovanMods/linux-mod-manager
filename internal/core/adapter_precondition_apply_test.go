@@ -173,6 +173,15 @@ var checkedApplies = map[string]planThenApply{
 			return err
 		}
 	},
+	"ApplyProfileFill": func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) func() error {
+		markCollectionProfile(t, svc, g.ID, "default")
+		plan, err := svc.PlanProfileFill(context.Background(), g, core.ProfileFillRequest{Profile: "default"})
+		require.NoError(t, err)
+		return func() error {
+			_, err := svc.ApplyProfileFill(context.Background(), g, plan, core.ProfileFillOptions{}, nil)
+			return err
+		}
+	},
 	"ApplyUpdate": func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) func() error {
 		plan, err := svc.PlanUpdateFrom(context.Background(), g, "default", fx.update)
 		require.NoError(t, err)

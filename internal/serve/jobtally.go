@@ -28,6 +28,10 @@ import "github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 //     Skipped and Warnings. Skipped is the flow's own documented default
 //     (the plan's "Download and install" left unchecked), not anything
 //     that went wrong.
+//   - "profile_fill" (core.ProfileFillResult, #608): Installed (or, into
+//     a profile that is not the active one, recorded), Failed, Skipped -
+//     the pins still pending, which the fill had no file for - and
+//     Warnings.
 //   - "catalog_relink" (core.AutoRelinkResult, #590): Applied counts the
 //     re-links made, Failed the ones that failed, and Notes says each
 //     re-link in words.
@@ -35,8 +39,8 @@ import "github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 // The shape-specific counts are omitzero, so a client reads an absent one
 // as zero; Failed and Skipped are common to both and always present.
 type jobTally struct {
-	// Kind is the result shape: "updates", "profile_import" or
-	// "catalog_relink".
+	// Kind is the result shape: "updates", "profile_import",
+	// "profile_fill" or "catalog_relink".
 	Kind string `json:"kind"`
 
 	// Applied counts an update batch's completed items.
@@ -98,6 +102,17 @@ func tallyOfResult(result any) *jobTally {
 			tally.Notes = append(tally.Notes, done.Message)
 		}
 		return tally
+	case *core.ProfileFillResult:
+		if r == nil || r.Installed+r.Recorded+r.Failed+r.Remaining == 0 {
+			return nil
+		}
+		return &jobTally{
+			Kind:      "profile_fill",
+			Installed: r.Installed + r.Recorded,
+			Failed:    r.Failed,
+			Skipped:   r.Remaining,
+			Warnings:  len(r.Warnings),
+		}
 	case *core.ProfileImportResult:
 		if r == nil || r.Installed+r.Failed+r.Skipped == 0 {
 			return nil

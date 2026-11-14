@@ -94,6 +94,30 @@ export function useJobResultLoader(jobID, jobState) {
 }
 
 const NO_WARNINGS = [];
+
+/**
+ * RESULT_WARNING_KINDS are the job kinds whose readout shows the result's
+ * warnings where the job finished, and waits for the user to read them: a
+ * switch's recovery notice (issue 463), and every removal that can hand a
+ * shared path to the next mod in load order (issue 633) - with the other
+ * sentences those results carry for the user (a file left as theirs, a
+ * merged-artifact sync that failed), which the CLI prints too.
+ */
+export const RESULT_WARNING_KINDS = new Set([
+  "switch",
+  "uninstall",
+  "disable",
+  "updates",
+  "rollback",
+  "update_from_archive",
+  "mod_copy",
+  "profile_apply",
+  // An install, an installer reconfigure and a profile import replace a
+  // live version of a mod, which hands paths on too.
+  "install",
+  "mod_fomod",
+  "profile_import",
+]);
 // PLUGIN_LIST_KINDS are the job kinds whose result has a `plugins` field.
 const PLUGIN_LIST_KINDS = new Set(["deploy", "purge"]);
 const NO_FAILURES = [];
@@ -102,9 +126,7 @@ const NO_LOAD_ORDERS = [];
 /** readResult is what the cache holds for one finished job's status/result. */
 function readResult(status) {
   const result = status?.result;
-  const warnings = Array.isArray(result?.warnings)
-    ? result.warnings.filter((w) => typeof w === "string" && w !== "")
-    : NO_WARNINGS;
+  const warnings = resultWarnings(status?.kind, result);
   const kept = Array.isArray(result?.kept) ? result.kept : [];
   const removedPaths = Number.isSafeInteger(result?.removed_paths)
     ? result.removed_paths
@@ -144,6 +166,22 @@ function readResult(status) {
       ? result.load_orders.filter((r) => typeof r?.status === "string")
       : NO_LOAD_ORDERS;
   return { warnings, purge, verify, failures, loader, plugins, loadOrders };
+}
+
+/** resultWarnings is a result's warnings: its own, and - an update batch's
+ * (issue 633) - each applied item's. */
+function resultWarnings(kind, result) {
+  const own = Array.isArray(result?.warnings) ? result.warnings : [];
+  const items =
+    kind === "updates" && Array.isArray(result?.applied)
+      ? result.applied.flatMap((a) =>
+          Array.isArray(a?.warnings) ? a.warnings : [],
+        )
+      : [];
+  const all = [...own, ...items].filter(
+    (w) => typeof w === "string" && w !== "",
+  );
+  return all.length > 0 ? all : NO_WARNINGS;
 }
 
 /**
@@ -210,20 +248,25 @@ export function readoutHasNextStep(summary, read) {
     )
   )
     return true;
-  return summary?.kind === "switch" && read.warnings.length > 0;
+  return RESULT_WARNING_KINDS.has(summary?.kind) && read.warnings.length > 0;
 }
 
 /**
  * resultMayHoldNextStep says whether readoutHasNextStep could need the job's
  * RESULT to answer for summary - a purge's or a repair's own outcome, a
- * switch's recovery notice, an update batch's failed items - rather than
- * the summary alone. A batch's failures are on its tally already, so this
- * only ever saves a read; it never changes the answer (issue 583: the
- * toast for every other kind no longer waits on a second round trip).
+ * switch's recovery notice, the warnings of a kind in RESULT_WARNING_KINDS
+ * - rather than the summary alone. A kind it answers false for is never
+ * read, so its toast goes up without a second round trip (issue 583). For
+ * most batches that loses nothing: their failures are on the tally. An
+ * update or import batch is still read (issue 633), because a tally does
+ * not carry its items' warnings - the read can hold a toast the tally
+ * alone would let go.
  */
 export function resultMayHoldNextStep(summary) {
-  // A tally answers for its batch either way: failures are counted on it.
-  if (summary?.tally) return false;
+  // A tally answers for its batch's failures, which are counted on it -
+  // but not for its warnings (issue 633: an update batch whose items handed
+  // shared paths on), so a batch of a kind that shows them is read.
+  if (summary?.tally && !RESULT_WARNING_KINDS.has(summary?.kind)) return false;
   return RESULT_NEXT_STEP_KINDS.has(summary?.kind);
 }
 
@@ -232,8 +275,7 @@ const RESULT_NEXT_STEP_KINDS = new Set([
   "deploy",
   "purge",
   "verify_fix",
-  "switch",
-  "updates",
+  ...RESULT_WARNING_KINDS,
 ]);
 
 function useJobResultRead(jobID, jobState) {

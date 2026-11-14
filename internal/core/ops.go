@@ -77,6 +77,8 @@ func (s *Service) beginOpVia(ctx context.Context, acquire func(context.Context) 
 	releaseSlot := release
 	return func() {
 		s.forgetKeptFiles()
+		// #633: and what its removals learned about a shared path's heirs.
+		s.forgetHeirFlows()
 		releaseSlot()
 	}, nil
 }

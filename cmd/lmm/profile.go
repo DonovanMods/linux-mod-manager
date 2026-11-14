@@ -1312,6 +1312,10 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		for _, note := range result.Notes {
 			fmt.Printf("  %s\n", note)
 		}
+		// #608: the pending items install in one go once downloaded.
+		if collection.Source != nil && collection.Source.ManualDownload && result.Skipped > 0 && result.ProfileName != "" {
+			fmt.Printf("  Once they are downloaded, install them all at once: lmm profile fill %q <download-folder>\n", result.ProfileName)
+		}
 	}
 	printImportGatesResult(plan, result)
 

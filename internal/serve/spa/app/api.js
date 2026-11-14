@@ -678,6 +678,11 @@ export function uploadArchive(file, { onProgress, signal } = {}) {
   });
 }
 
+/** getDownloadsFolder reads GET /api/v1/fs/downloads: {path}, the user's
+ * downloads folder on the server's machine (issue 608), where the fill's
+ * folder chooser opens. */
+export const getDownloadsFolder = () => get("/api/v1/fs/downloads");
+
 /** Cancels a staged upload nobody imported: 204, no document. */
 export const deleteUpload = (uploadID) =>
   del(`/api/v1/uploads/${encodeURIComponent(uploadID)}`);

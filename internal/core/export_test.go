@@ -490,3 +490,12 @@ func SetRenameRecipeForTest(f func(oldpath, newpath string) error) (restore func
 func (s *Service) SyncLoadOrdersForTest(ctx context.Context, game *domain.Game, profileName string) []FileLoadOrderResult {
 	return s.syncLoadOrders(ctx, game, profileName)
 }
+
+// CountHeirListingsForTest counts the cache entries every flow lists for
+// the heirs of a shared path (#633) until the returned func restores the
+// previous hook.
+func CountHeirListingsForTest(count func()) (restore func()) {
+	prev := heirListingHook
+	heirListingHook = count
+	return func() { heirListingHook = prev }
+}

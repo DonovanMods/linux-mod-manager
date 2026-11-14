@@ -31,6 +31,7 @@ import {
   useJobResultPurge,
   useJobResultVerify,
   useJobResultWarnings,
+  RESULT_WARNING_KINDS,
 } from "../jobresult.js";
 import { codeSpans } from "../errortext.js";
 import { OverwriteButton } from "./tray.js";
@@ -226,8 +227,14 @@ export function JobProgress({
   // the game directory that profile's. A bare "Done" would hide the one
   // thing the user still has to do, so a switch's result warnings render
   // where it finished.
+  //
+  // Issue 633: so do a removal's - the shared paths it handed to the next
+  // mod in load order, and anything else it says the CLI prints too
+  // (jobresult.js#RESULT_WARNING_KINDS).
   const notices =
-    !failed && summary?.kind === "switch" ? resultWarnings : NO_NOTICES;
+    !failed && RESULT_WARNING_KINDS.has(summary?.kind)
+      ? resultWarnings
+      : NO_NOTICES;
   const pluginShown =
     !failed &&
     Boolean(pluginList) &&

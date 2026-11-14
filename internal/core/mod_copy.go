@@ -482,7 +482,15 @@ func (s *Service) applyCopyMod(ctx context.Context, game *domain.Game, plan *Cop
 			if err != nil {
 				return result, err
 			}
-			if err := in.Uninstall(ctx, game, &prior.Mod, plan.To); err != nil {
+			// #633: a shared path passes to the next mod in load order -
+			// only in the game's active profile, whose mods are the ones
+			// on disk.
+			if active {
+				err = in.uninstallHandingOff(ctx, game, &prior.Mod, plan.To, nil)
+			} else {
+				err = in.Uninstall(ctx, game, &prior.Mod, plan.To)
+			}
+			if err != nil {
 				warn(scope, fmt.Sprintf("could not remove %s's previous files: %v", e.Name, err))
 			}
 		}
@@ -537,7 +545,9 @@ func (s *Service) deployCopiedMod(ctx context.Context, game *domain.Game, instal
 		if s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: prior.SourceID, ModID: prior.ID, Version: prior.Version, Variant: prior.Variant}) {
 			return installer.Replace(ctx, game, &prior.Mod, mod, profile)
 		}
-		if err := installer.Uninstall(ctx, game, &prior.Mod, profile); err != nil {
+		// #633: a path the copy no longer ships passes to the next mod in
+		// load order; the ones it ships are its own again below.
+		if err := installer.uninstallHandingOff(ctx, game, &prior.Mod, profile, mod); err != nil {
 			return err
 		}
 	}
