@@ -114,7 +114,13 @@ func (s *Service) identifyInstallArchive(ctx context.Context, game *domain.Game,
 	// enrichment rename to make - and whether that entry already exists is
 	// asked of the version it will actually be written at.
 	plan.ident.version = version
-	plan.EntryPreExists = s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: plan.ident.sourceID, ModID: plan.ident.modID, Version: version})
+	// #639: the entry this archive's file fills - its own set's, not
+	// another's at the version.
+	entry := cache.Key{GameID: game.ID, SourceID: plan.ident.sourceID, ModID: plan.ident.modID, Version: version}
+	if fileID != "" {
+		entry, _ = s.fileSetEntry(ctx, s.GetGameCache(game), entry, []string{fileID}, false)
+	}
+	plan.EntryPreExists = s.GetGameCache(game).Exists(entry)
 
 	if srcMod != nil {
 		plan.UnmetDependencies = s.unmetDependencies(ctx, game, profileName, opts.SourceID, srcMod, plan.Mod.Name, warn)

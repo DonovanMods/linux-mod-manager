@@ -149,3 +149,15 @@ func TestFileSetEntry_RowsOnTheEntryDecide(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, manifests, "and is never backfilled")
 }
+
+// #639 x #610: patches (and file lists) are folded into the base variant
+// the file-set variant hashes over, so a patched tree's file-set entry is
+// never an unpatched one's.
+func TestFileSetVariant_KeepsPatchedAndUnpatchedTreesApart(t *testing.T) {
+	ids := []string{"20", "21"}
+	patched := treeInputsVariant("", map[string]domain.TreeInputs{"21": {Patches: []domain.FilePatch{{Path: "a.esp", CRC32: "DEADBEEF", SHA256: "00"}}}})
+	require.NotEmpty(t, patched)
+	assert.NotEqual(t, fileSetVariant("", ids), fileSetVariant(patched, ids))
+	assert.NotEqual(t, patched, fileSetVariant(patched, ids))
+	assert.NotEqual(t, "", fileSetVariant(patched, ids))
+}

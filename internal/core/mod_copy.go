@@ -63,6 +63,11 @@ type CopyModEntry struct {
 	// FomodOrder is the ref's per-file layer-order hint (#634), copied
 	// with FomodFiles; absent when it has none.
 	FomodOrder []string `json:"fomod_order,omitempty"`
+	// FileList and Patches are the ref's exact file lists and binary
+	// patches (#610), copied with it: like the choices, they are what the
+	// copied files were built from. Absent when it has none.
+	FileList domain.FileLists   `json:"file_list,omitempty"`
+	Patches  domain.FilePatches `json:"patches,omitempty"`
 	// ModType is the source ref's stated mod type (#607), carried like the
 	// choices: it is where the copied files deploy. omitempty.
 	ModType string `json:"mod_type,omitempty"`
@@ -238,6 +243,7 @@ func (s *Service) copyEntry(game *domain.Game, row domain.InstalledMod, ref *dom
 		entry.Fomod = ref.Fomod
 		entry.FomodFiles = ref.FomodFiles.Clone()
 		entry.FomodOrder = slices.Clone(ref.FomodOrder)
+		entry.FileList, entry.Patches = ref.FileList.Clone(), ref.Patches.Clone()
 		entry.ModType = ref.ModType
 	}
 	if v, ok := listed[domain.ModKey(row.SourceID, row.ID)]; ok {
@@ -443,7 +449,8 @@ func (s *Service) applyCopyMod(ctx context.Context, game *domain.Game, plan *Cop
 		}
 
 		ref := domain.ModReference{SourceID: e.SourceID, ModID: e.ModID, Version: e.Version,
-			FileIDs: e.FileIDs, Locked: e.Locked, Disabled: e.Disabled, Category: e.Category, ModType: e.ModType, Fomod: e.Fomod, FomodFiles: e.FomodFiles.Clone(), FomodOrder: slices.Clone(e.FomodOrder)}
+			FileIDs: e.FileIDs, Locked: e.Locked, Disabled: e.Disabled, Category: e.Category, ModType: e.ModType, Fomod: e.Fomod, FomodFiles: e.FomodFiles.Clone(), FomodOrder: slices.Clone(e.FomodOrder),
+			FileList: e.FileList.Clone(), Patches: e.Patches.Clone()}
 		msgs, err := s.copyRowToProfile(ctx, game, *row, plan.To, rowCopy{enabled: !e.Disabled, method: method})
 		if err != nil {
 			return result, fmt.Errorf("recording %s under %s: %w", e.Name, plan.To, err)

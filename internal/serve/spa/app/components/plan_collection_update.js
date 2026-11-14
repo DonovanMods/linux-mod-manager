@@ -304,6 +304,12 @@ function External({ plan }) {
   `;
 }
 
+/** restrictedPatchLine words one restricted patch as one string, so no
+ * formatter can split it where htm would drop the space (issue 610). */
+function restrictedPatchLine(item, patch) {
+  return `${item.source_id}:${item.mod_id}: ${patch.path} - ${patch.restricted}`;
+}
+
 /** Gate renders the new version's overrides, hooks and missing features. */
 function Gate({ plan, modal, actions }) {
   const touched = [
@@ -313,6 +319,13 @@ function Gate({ plan, modal, actions }) {
   const removedOverrides = plan.overrides_removed ?? [];
   const overrideConflicts = plan.override_conflicts ?? [];
   const restricted = plan.restricted_overrides ?? [];
+  // Issue 610: patches to code, refused unless the same box is ticked.
+  const codePatches = plan.restricted_patches ?? 0;
+  const restrictedPatches = (plan.tree_inputs ?? []).flatMap((item) =>
+    (item.patches ?? [])
+      .filter((p) => p.restricted)
+      .map((p) => ({ item, patch: p })),
+  );
   const hooks = plan.hooks ?? [];
   const unsupported = plan.unsupported ?? [];
   return html`
@@ -374,6 +387,47 @@ function Gate({ plan, modal, actions }) {
               })}
           />
           Import these overrides too
+        </label>
+      </section>`
+    }
+    ${
+      codePatches > 0 &&
+      html`<section
+        class="plan__section"
+        data-testid="update-restricted-patches"
+      >
+        <h3 class="plan__heading">
+          Patches that change code, or apply to another file
+        </h3>
+        <ul class="plan__paths">
+          ${restrictedPatches.map(
+            ({ item, patch }) =>
+              html`<li
+                key=${`${item.source_id}:${item.mod_id}/${patch.file_id}/${patch.path}`}
+                class="mono"
+              >
+                ${restrictedPatchLine(item, patch)}
+              </li>`,
+          )}
+        </ul>
+        <p class="plan__note plan__note--warn">
+          ${codePatches} patch${codePatches === 1 ? "" : "es"} need this box.
+          Left unchecked, the update is refused: lmm never installs a
+          collection's mod unpatched.
+        </p>
+        <label class="plan__control">
+          <input
+            type="checkbox"
+            name="allow_any_overrides"
+            data-testid="update-patch-code"
+            checked=${Boolean(modal?.applyOptions?.allow_any_overrides)}
+            disabled=${modal?.status !== "ready"}
+            onChange=${(e) =>
+              actions.setPlanOptions({
+                allow_any_overrides: e.currentTarget.checked,
+              })}
+          />
+          Apply these patches
         </label>
       </section>`
     }

@@ -715,6 +715,14 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		// the mod, else the choices its profile ref records.
 		fomod: s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, plan.Mod.SourceID, plan.Mod.ID), plan.Mod.SourceID, plan.Mod.ID, opts.Fomod),
 	}
+	// #610: the archive is the resolved source file, so that file's list
+	// and patches apply to it, as a download's would.
+	if plan.resolvedFile != nil {
+		importOpts.treeFileID = plan.resolvedFile.ID
+		// #639: the archive is that file; it fills the entry its set is
+		// at the identity the import persists, never another set's.
+		importOpts.entryFor = s.fileSetEntryFor(ctx, game, []string{plan.resolvedFile.ID}, &plan.Mod)
+	}
 	// #607: an archive imported over a typed reference deploys by its type.
 	plan.Mod.ModType = statedType(s.recordedRef(ctx, game.ID, profileName, plan.Mod.SourceID, plan.Mod.ID))
 

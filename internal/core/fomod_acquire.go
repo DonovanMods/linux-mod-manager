@@ -34,6 +34,8 @@ func (s *Service) fomodInputForWith(ctx context.Context, game *domain.Game, prof
 	if ref != nil {
 		in.fileChoices = ref.FomodFiles.Clone()
 		in.orderHint, in.fileIDs = slices.Clone(ref.FomodOrder), slices.Clone(ref.FileIDs)
+		// #610: the file lists and patches the files install with.
+		in.fileLists, in.patches = ref.FileList.Clone(), ref.Patches.Clone()
 	}
 	prefix := domain.FomodFileKey(sourceID, modID, "")
 	for key, a := range answers {
@@ -190,6 +192,18 @@ func unifyFomod(mod *domain.Mod, files []*acquiredFile, hint []string) ([]*acqui
 			}
 		}
 		found = &fomodResolved{variant: fomodFilesVariant(perFile, order), files: perFile, order: kept}
+	}
+	// #610: the files' lists and patches name the tree too.
+	inputs := map[string]domain.TreeInputs{}
+	for _, a := range files {
+		if !a.treeInputs.IsZero() {
+			inputs[a.file.ID] = a.treeInputs
+		}
+	}
+	if variant := treeInputsVariant(found.variant, inputs); variant != found.variant {
+		withInputs := *found
+		withInputs.variant = variant
+		found = &withInputs
 	}
 	for _, a := range files {
 		a.mod.Variant = found.variant
@@ -478,8 +492,11 @@ func (s *Service) downloadModFiles(ctx context.Context, gameCache *cache.Cache, 
 // the key on a rewrite) keeps its tree rather than ask a question no
 // converge flow can. The choices' tree moved to its file-set variant
 // (#639) is still theirs.
+//
+// A reference whose files have a file list or patches (#610) drifts the
+// same way: they name the tree too.
 func fomodDrift(ref domain.ModReference, row *domain.InstalledMod) bool {
-	return row != nil && !ref.FomodRecord().IsZero() && !rowFitsRef(row, &ref)
+	return row != nil && (!ref.FomodRecord().IsZero() || ref.HasTreeInputs()) && !rowFitsRef(row, &ref)
 }
 
 // cmpFomod is an ingest's outcome for the profile write: the installer's

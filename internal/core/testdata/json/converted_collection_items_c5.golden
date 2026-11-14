@@ -1,0 +1,23 @@
+[
+  {
+    "id": "42648:158600",
+    "name": "Ginger Island Extra Locations - redux",
+    "version": "1.5.1",
+    "mod_id": "42648",
+    "file_id": "158600",
+    "state": "will_install",
+    "update_policy": "exact",
+    "md5": "b11b944eda3c04514d45dccfa77408b6",
+    "size_bytes": 18082584,
+    "file_list": 3,
+    "patches": 2
+  },
+  {
+    "id": "item:0",
+    "name": "Stardew Valley VERY Expanded Collection",
+    "version": "2.0.0",
+    "state": "bundled",
+    "update_policy": "exact",
+    "bundled": "Bundled - Stardew Valley VERY Expanded Collection (v2.0.0)"
+  }
+]

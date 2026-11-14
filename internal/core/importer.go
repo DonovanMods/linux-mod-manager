@@ -27,6 +27,23 @@ type ImportOptions struct {
 	// (#614); the zero value records no choices. Set by the service flows
 	// that know the target profile and the caller's answers.
 	fomod fomodInput
+	// treeFileID is the source file the archive is (#610): its file list
+	// and patches (fomod's, picked by forFile) apply to the archive's tree
+	// after the resolve, and name its variant. Empty applies none.
+	treeFileID string
+	// entryFor, when set, names the cache entry the ingest commits to from
+	// the one its identity and tree name (#639): the entry the archive's
+	// set of source files is, never another set's of the same version.
+	// Nil keeps that key.
+	entryFor func(cache.Key) cache.Key
+}
+
+// entry is k, or the entry entryFor names for it.
+func (o ImportOptions) entry(k cache.Key) cache.Key {
+	if o.entryFor == nil {
+		return k
+	}
+	return o.entryFor(k)
 }
 
 // ImportResult contains the outcome of importing a local mod
@@ -100,6 +117,9 @@ type Importer struct {
 	// which has no service to run it with: such an archive is cached as
 	// extracted, as before.
 	resolveFomod func(mod *domain.Mod, archiveName, tree string, in fomodInput) (*fomodResolved, error)
+	// applyTree is the tree-inputs step (#610, Service.applyTreeInputs):
+	// a file list and patches, after the resolve.
+	applyTree func(mod *domain.Mod, fileID, tree string, in domain.TreeInputs) error
 }
 
 // NewImporter creates a new Importer that stages extraction in the OS temp
@@ -125,6 +145,9 @@ func (s *Service) newImporter(game *domain.Game) *Importer {
 	imp.resolveMergeCompiler = s.adapterCompiler
 	imp.claimArchive = s.requireAdapterClaim
 	imp.resolveFomod = s.resolveFomod
+	imp.applyTree = func(mod *domain.Mod, fileID, tree string, in domain.TreeInputs) error {
+		return s.applyTreeInputs(game, mod, fileID, tree, in)
+	}
 	imp.log = s.logger()
 	// #353: a resolution failure here (a games.yaml naming an adapter this
 	// build does not ship) is reported by the flow's own AdapterFor call,
@@ -211,6 +234,8 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	var fileCount int
 	var retainedFileID string
 	var resolved *fomodResolved
+	// committed is the entry the ingest wrote (#639: ImportOptions.entry).
+	var committed cache.Key
 
 	// #256: whether filename is the game's NATIVE merge format
 	// (mc.IsNativeMergeSource - the seam-routed successor to core's static
@@ -268,7 +293,8 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 
 		modName = importedModName(game, kind, filename, version, nil)
 
-		cacheMod := &domain.Mod{ID: modID, SourceID: sourceID, Version: version, GameID: game.ID}
+		committed = opts.entry(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
+		cacheMod := &domain.Mod{ID: modID, SourceID: sourceID, Version: version, GameID: game.ID, Variant: committed.Variant}
 		cachePath, stagePath, err := prepareUnseededStaging(i.cache, game, cacheMod)
 		if err != nil {
 			return nil, err
@@ -294,7 +320,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			}
 			fileCount = 1
 		}
-		if err := commitStagedCache(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}, cachePath, stagePath); err != nil {
+		if err := commitStagedCache(committed, cachePath, stagePath); err != nil {
 			return nil, err
 		}
 		retainedFileID = filename
@@ -302,7 +328,8 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		// Copy mode: just copy the file as-is to cache (don't extract)
 		modName = importedModName(game, kind, filename, version, nil)
 
-		entryKey := cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version}
+		entryKey := opts.entry(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
+		committed = entryKey
 		cachePath := i.cache.ModPath(entryKey)
 
 		// Remove existing cache if present (re-import case) - only this
@@ -387,6 +414,22 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 				return nil, err
 			}
 		}
+		// #610: the file's list and patches, as an acquire applies them.
+		if tree := opts.fomod.forFile(opts.treeFileID).tree; opts.treeFileID != "" && !tree.IsZero() && i.applyTree != nil {
+			if err := i.applyTree(&domain.Mod{ID: modID, SourceID: sourceID, Name: modName, Version: version, GameID: game.ID}, opts.treeFileID, extractedPath, tree); err != nil {
+				return nil, err
+			}
+			fomodPart := ""
+			if resolved != nil {
+				fomodPart = resolved.variant
+			}
+			withTree := fomodResolved{}
+			if resolved != nil {
+				withTree = *resolved
+			}
+			withTree.variant = treeInputsVariant(fomodPart, map[string]domain.TreeInputs{opts.treeFileID: tree})
+			resolved = &withTree
+		}
 
 		layout, err := i.layoutExtracted(game, modName, extractedPath)
 		if err != nil {
@@ -402,6 +445,8 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		if resolved != nil {
 			entryKey.Variant = resolved.variant
 		}
+		entryKey = opts.entry(entryKey)
+		committed = entryKey
 		cachePath := i.cache.ModPath(entryKey)
 		if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
 			return nil, fmt.Errorf("creating cache directory: %w", err)
@@ -441,9 +486,9 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		Version:  version,
 		GameID:   game.ID,
 	}
-	if resolved != nil {
-		mod.Variant = resolved.variant
-	}
+	// The entry written: the resolved installer's variant (#614), or the
+	// file-set entry entryFor named (#639).
+	mod.Variant = committed.Variant
 
 	return &ImportResult{
 		Mod:            mod,

@@ -132,6 +132,24 @@ func TestJSONGoldens(t *testing.T) {
 				FomodOrder: []string{"101", "100"}},
 		},
 		{
+			// #610: an exact file list and binary patches, keyed by the file
+			// id they describe; paths as the curator's tool wrote them.
+			"mod_reference_file_list_patches",
+			domain.ModReference{SourceID: "nexusmods", ModID: "5662", Version: "1.2.0", FileIDs: []string{"120872"},
+				FileList: domain.FileLists{"120872": {{Path: `FontSmasher\FontSmasher.dll`, MD5: "a8842e74aa57af6d038d163ef31df62f"}}},
+				Patches: domain.FilePatches{"120872": {{Path: `[CP] Animated Furniture and Stuff\content.json`, CRC32: "CABDDFC4",
+					SHA256: "0f3c4f2bd9f8c7d1ab2f0e3a0d5c6b7a8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b"}}}},
+		},
+		{
+			"file_list_entry",
+			domain.FileListEntry{Path: `r6\scripts\BrowserExtension\browser.reds`, MD5: "25aa7b0b0c4d9b7f4f3f6e5a1c2b3d4e"},
+		},
+		{
+			"file_patch",
+			domain.FilePatch{Path: `Ridgeside Village\RidgesideVillage\config.json`, CRC32: "A3A75AA6",
+				SHA256: "9b1c4f2bd9f8c7d1ab2f0e3a0d5c6b7a8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b"},
+		},
+		{
 			// #592: the source's category id (category) beside its name.
 			"mod_category_name",
 			domain.Mod{ID: "12345", SourceID: "nexusmods", Name: "Sample Mod", Version: "2.0.0", GameID: "skyrimspecialedition",

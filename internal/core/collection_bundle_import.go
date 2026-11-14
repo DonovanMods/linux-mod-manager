@@ -43,7 +43,11 @@ type CollectionBundledItem struct {
 type pendingBundle struct {
 	collectionID string
 	data         []byte
-	bundle       *collectionBundle
+	// recipeDir is a converted source collection's recipe entry (#610):
+	// its bundled/ trees are the items' "download", kept with an index
+	// beside it, and data is nil.
+	recipeDir string
+	bundle    *collectionBundle
 	// names maps each item a mods: entry names to its display name; only
 	// a named item can be admitted (collection_bundle_keep.go).
 	names      map[string]string
@@ -74,7 +78,11 @@ func (p *pendingBundle) admitted(anyOverrides bool) map[string]bool {
 // cannot name one, and an item carrying FOMOD choices are refused: the
 // caller's input. Items of the container no entry names are left out, with
 // a warning.
-func resolveBundledItems(doc *domain.CollectionDocument, bundle *collectionBundle, container bool) ([]CollectionBundledItem, *pendingBundle, []string, error) {
+//
+// collectionID is the id the items are kept under: the document's own for
+// a container, the recipe's ("<source>-<slug>") for a converted source
+// collection (#610).
+func resolveBundledItems(doc *domain.CollectionDocument, bundle *collectionBundle, container bool, collectionID string) ([]CollectionBundledItem, *pendingBundle, []string, error) {
 	var out []CollectionBundledItem
 	named := map[string]bool{}
 	for i := range doc.Items {
@@ -88,10 +96,12 @@ func resolveBundledItems(doc *domain.CollectionDocument, bundle *collectionBundl
 			return nil, nil, nil, fmt.Errorf("%w: the mod %q is bundled (files/%s/ of a .lmmc container), and a plain YAML document cannot carry files; import the .lmmc container it came from", ErrInvalidCollection, item, item)
 		case !validBundleItem(item):
 			return nil, nil, nil, fmt.Errorf("%w: %q cannot name a bundled item: 1 to 64 letters, digits, '.', '_' or '-', starting with a letter or digit", ErrInvalidBundle, item)
-		case !validBundleCollectionID(doc.Info.ID):
+		case !validBundleCollectionID(collectionID):
 			return nil, nil, nil, fmt.Errorf("%w: a collection with bundled items needs an id of letters, digits, '-' and '_' (this one's is %q)", ErrInvalidBundle, doc.Info.ID)
 		case !ref.FomodRecord().IsZero():
 			return nil, nil, nil, fmt.Errorf("%w: the bundled item %q records FOMOD installer choices; a bundled item is installed as its files are", ErrInvalidBundle, item)
+		case !ref.FileList.IsZero() || !ref.Patches.IsZero():
+			return nil, nil, nil, fmt.Errorf("%w: the bundled item %q records a file list or patches; a bundled item is installed as its files are", ErrInvalidBundle, item)
 		}
 		bi := bundle.item(item)
 		if bi == nil {
@@ -100,7 +110,7 @@ func resolveBundledItems(doc *domain.CollectionDocument, bundle *collectionBundl
 		if ref.Version != "" && ref.Version != bi.digest {
 			return nil, nil, nil, fmt.Errorf("%w: files/%s/ does not match the version the document records for it (%s; its files are %s): the container was changed after it was made", ErrInvalidBundle, item, ref.Version, bi.digest)
 		}
-		ref.ModID = BundledModID(doc.Info.ID, item)
+		ref.ModID = BundledModID(collectionID, item)
 		ref.Version = bi.digest
 		ref.FileIDs = []string{bi.digest}
 		if named[item] {
@@ -121,7 +131,7 @@ func resolveBundledItems(doc *domain.CollectionDocument, bundle *collectionBundl
 	if len(out) == 0 {
 		return nil, nil, warnings, nil
 	}
-	pending := &pendingBundle{collectionID: doc.Info.ID, bundle: bundle, names: map[string]string{}, restricted: map[string]string{}}
+	pending := &pendingBundle{collectionID: collectionID, bundle: bundle, names: map[string]string{}, restricted: map[string]string{}}
 	for _, b := range out {
 		pending.names[b.Item] = b.Name
 		if len(b.Restricted) > 0 {

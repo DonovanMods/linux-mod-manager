@@ -322,7 +322,9 @@ func (s *Service) PlanUpdateFromArchive(ctx context.Context, game *domain.Game, 
 	}
 
 	plan.Hooks = updateHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks)
-	plan.entryPreExists = s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: plan.ToVersion})
+	// #639: the entry the archive's file set fills, never another set's.
+	entry, _ := s.fileSetEntry(ctx, s.GetGameCache(game), cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: plan.ToVersion}, plan.FileIDs, false)
+	plan.entryPreExists = s.GetGameCache(game).Exists(entry)
 	if plan.snapshot, err = s.currentInstalledSnapshot(ctx, game.ID, profileName); err != nil {
 		return nil, err
 	}
@@ -677,6 +679,9 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 		// #614: the new version's installer replays the recorded choices,
 		// unless this call answers it.
 		fomod: s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod),
+		// #639: the archive is the files the row will record; it fills the
+		// entry that set is, never another set's at the same version.
+		entryFor: s.fileSetEntryFor(ctx, game, plan.FileIDs, nil),
 	}
 	imported, err := s.newImporter(game).importWithIdentity(ctx, plan.Archive, game, importOpts, ident)
 	if err != nil {

@@ -2364,6 +2364,41 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #610: a plan item installing with an exact file list and
+			// patches, one of them to code (applied only with
+			// --allow-any-overrides).
+			"collection_import_item_file_list_patches",
+			core.CollectionImportItem{
+				SourceID: "nexusmods", ModID: "5662", Name: "Ridgeside Village", Version: "2.5.17", FileList: 2,
+				Patches: []core.CollectionItemPatch{
+					{FileID: "116329", Path: `Ridgeside Village\RidgesideVillage\RidgesideVillage.dll`, CRC32: "EA4AFECF", Restricted: "code the system runs (.dll)"},
+					{FileID: "116329", Path: `Ridgeside Village\RidgesideVillage\config.json`, CRC32: "A3A75AA6"},
+				},
+			},
+		},
+		{
+			// #610 review B1: a version-0 import plan's mods that install
+			// with a file list or patches, one patch re-aimed at a DLL.
+			"import_tree_inputs",
+			core.ImportTreeInputs{SourceID: "nexusmods", ModID: "21", FileList: 2,
+				Patches: []core.CollectionItemPatch{{FileID: "210", Path: `Mod\Helper.dll`, CRC32: "CABDDFC4", Restricted: "code the system runs (.dll)"}}},
+		},
+		{
+			"collection_item_patch",
+			core.CollectionItemPatch{FileID: "120872", Path: `[CP] Animated Furniture and Stuff\content.json`, CRC32: "CABDDFC4"},
+		},
+		{
+			// #610: a converted collection's items: one with an exact file
+			// list and patches, and one bundled in the recipe.
+			"converted_collection_items_c5",
+			[]core.ConvertedCollectionItem{
+				{ID: "42648:158600", Name: "Ginger Island Extra Locations - redux", Version: "1.5.1", ModID: "42648", FileID: "158600",
+					State: core.CollectionItemWillInstall, UpdatePolicy: "exact", FileList: 3, Patches: 2, MD5: "b11b944eda3c04514d45dccfa77408b6", SizeBytes: 18082584},
+				{ID: "item:0", Name: "Stardew Valley VERY Expanded Collection", Version: "2.0.0", State: core.CollectionItemBundled,
+					UpdatePolicy: "exact", Bundled: "Bundled - Stardew Valley VERY Expanded Collection (v2.0.0)"},
+			},
+		},
+		{
 			// #623: its row in the plan's item list.
 			"collection_import_item_bundled",
 			core.CollectionImportItem{

@@ -1642,7 +1642,10 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	}
 	if a.fomod != nil {
 		res.fomod = a.fomod
-		mod.Variant = a.fomod.variant
+	}
+	if a.fomod != nil || !a.treeInputs.IsZero() {
+		// #610: a file list or patches name the entry as choices do.
+		mod.Variant = a.mod.Variant
 	}
 	return res, nil
 }

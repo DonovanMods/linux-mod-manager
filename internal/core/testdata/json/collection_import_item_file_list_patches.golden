@@ -1,0 +1,20 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "5662",
+  "name": "Ridgeside Village",
+  "version": "2.5.17",
+  "file_list": 2,
+  "patches": [
+    {
+      "file_id": "116329",
+      "path": "Ridgeside Village\\RidgesideVillage\\RidgesideVillage.dll",
+      "crc32": "EA4AFECF",
+      "restricted": "code the system runs (.dll)"
+    },
+    {
+      "file_id": "116329",
+      "path": "Ridgeside Village\\RidgesideVillage\\config.json",
+      "crc32": "A3A75AA6"
+    }
+  ]
+}

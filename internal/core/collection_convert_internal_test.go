@@ -184,7 +184,10 @@ func TestConvert_ItemFeaturesBlockRequiredAndSkipOptional(t *testing.T) {
 	in := convertInputFor(m)
 	in.withOptional = true
 	c := mustConvert(t, in)
-	assert.Equal(t, []string{CollectionFeatureBundled, CollectionFeatureFileList, CollectionFeatureFileOverrides}, featureNames(c.Unsupported),
+	// #610: with no recipe files read, a bundle and a patch stay refused,
+	// and a file list lmm cannot use as written (an md5 that is not one)
+	// refuses its item by the recipe's key.
+	assert.Equal(t, []string{CollectionFeatureBundled, CollectionFeatureFileOverrides, CollectionFeatureManifestKeyPrefix + "mods.hashes"}, featureNames(c.Unsupported),
 		"a required item's unsupported feature blocks; the optional item's does not")
 	assert.Equal(t, CollectionItemUnsupported, itemByName(t, c, "Patched").State, "even opted in, it is skipped")
 	assert.Equal(t, []string{CollectionFeaturePatches}, itemByName(t, c, "Patched").Features)
@@ -737,4 +740,37 @@ func TestConvert_RulesBetweenAModsOwnFilesSetItsLayerOrder(t *testing.T) {
 	c = mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b}, ModRules: rules}))
 	assert.Len(t, c.Document.Items[0].Ref.FomodOrder, 2)
 	assert.True(t, slices.ContainsFunc(c.Notes, func(n string) bool { return strings.Contains(n, "own files form a cycle") }), "%v", c.Notes)
+}
+
+// TestConvert_FileListIsCarriedPerFile (#610): an item's exact file list
+// becomes its entry's file_list, keyed by the item's file id, paths as the
+// curator wrote them; the document requires file_list, which imports.
+func TestConvert_FileListIsCarriedPerFile(t *testing.T) {
+	listed := nexusMod("Listed", "1", "11", "aa")
+	listed.FileList = []source.ManifestFileHash{{Path: `r6\scripts\a.reds`, MD5: h("a")}, {Path: "r6/b.yaml", MD5: strings.ToUpper(h("b"))}}
+	second := nexusMod("Listed - Optional", "1", "12", "ab")
+	plain := nexusMod("Plain", "2", "22", "bb")
+	c := mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{listed, second, plain}}))
+	require.Empty(t, c.Unsupported)
+	assert.Contains(t, c.Features, CollectionFeatureFileList)
+	assert.Equal(t, []string{CollectionFeatureFileList}, c.Document.Requires)
+	ref := c.Document.Items[0].Ref
+	assert.Equal(t, []string{"11", "12"}, ref.FileIDs)
+	assert.Equal(t, domain.FileLists{"11": {{Path: `r6\scripts\a.reds`, MD5: h("a")}, {Path: "r6/b.yaml", MD5: strings.ToUpper(h("b"))}}}, ref.FileList,
+		"keyed by the file it describes; the mod's other file installs whole")
+	assert.Equal(t, 2, itemByName(t, c, "Listed").FileList)
+	assert.Nil(t, c.Document.Items[1].Ref.FileList)
+}
+
+// TestConvert_BundleWithoutItsTreeStaysRefused (#610): a bundle item whose
+// bundled/ tree the recipe does not hold - or could not be read - is
+// refused with why, never converted with its files missing.
+func TestConvert_BundleWithoutItsTreeStaysRefused(t *testing.T) {
+	bundle := source.ManifestMod{Name: "Marker", SourceType: "bundle", UpdatePolicy: "exact", FileExpression: "Bundled - Marker (v1)"}
+	in := convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{bundle}})
+	in.recipe = &recipeFiles{sourceID: "nexusmods", slug: "abcdef", bundles: map[int]recipeBundle{0: {problem: "the collection's archive holds no bundled/Bundled - Marker (v1)/ directory"}}}
+	c := mustConvert(t, in)
+	assert.Equal(t, []string{CollectionFeatureBundled}, featureNames(c.Unsupported))
+	assert.Contains(t, itemByName(t, c, "Marker").Note, "holds no bundled/")
+	assert.Equal(t, "Bundled - Marker (v1)", itemByName(t, c, "Marker").Bundled)
 }

@@ -172,23 +172,72 @@ func (s *Service) entryRowsRecord(ctx context.Context, k cache.Key, ids []string
 		return entryOtherSet
 	}
 	out := entryNoSet
-	for _, row := range rows {
-		if row.GameID != k.GameID || row.Version != k.Version || row.Variant != k.Variant {
-			continue
-		}
-		fileIDs, err := s.db.GetModFileIDs(ctx, k.SourceID, k.ModID, row.GameID, row.Profile)
-		if err != nil {
-			return entryOtherSet
-		}
+	record := func(fileIDs []string) bool {
 		switch {
 		case len(fileIDs) == 0:
 		case sameFileIDs(fileIDs, ids):
 			out = entryThisSet
 		default:
+			return false
+		}
+		return true
+	}
+	for _, row := range rows {
+		if row.GameID != k.GameID {
+			continue
+		}
+		current := row.Version == k.Version && row.Variant == k.Variant
+		// A row that rolls back to the entry (its previous version and
+		// variant) names it for its previous files.
+		previous := row.PreviousVersion != "" && row.PreviousVersion == k.Version && row.PreviousVariant == k.Variant
+		if !current && !previous {
+			continue
+		}
+		im, err := s.db.GetInstalledMod(ctx, k.SourceID, k.ModID, row.GameID, row.Profile)
+		if err != nil {
+			return entryOtherSet
+		}
+		if current && !record(im.FileIDs) {
+			return entryOtherSet
+		}
+		if previous && !record(im.PreviousFileIDs) {
 			return entryOtherSet
 		}
 	}
 	return out
+}
+
+// rollbackTargetHolds reports whether row's rollback target - its previous
+// version's entry - is still there and still holds the files row rolls
+// back to (#639), never another set that refilled it:
+//
+//   - its markers name every one of them. More is the shape a same-version
+//     update left before #639 (the old and new files in one entry), which
+//     the rollback narrows to the restored files (#150);
+//   - an entry from before markers is the row's own current entry (that
+//     same pre-#639 shape), or no installed row names it for another set.
+//
+// A row that records no previous files is judged by presence alone, as
+// before.
+func (s *Service) rollbackTargetHolds(ctx context.Context, game *domain.Game, row *domain.InstalledMod) bool {
+	c, k := s.GetGameCache(game), previousCacheKey(game.ID, row)
+	if !c.Exists(k) {
+		return false
+	}
+	if len(row.PreviousFileIDs) == 0 {
+		return true
+	}
+	manifests, err := c.FileManifests(k)
+	if err != nil {
+		return false
+	}
+	if len(manifests) > 0 {
+		return c.HasFileIDs(k, row.PreviousFileIDs)
+	}
+	if k == modCacheKey(game.ID, row.Mod) {
+		return true
+	}
+	return s.entryRowsRecord(ctx, k, row.PreviousFileIDs) != entryOtherSet
 }
 
 // backfillMarkers stamps the bare completion markers of ids into k's
@@ -276,4 +325,24 @@ func reinstallReason(ref domain.ModReference, row *domain.InstalledMod) string {
 		return ReinstallFilesChanged
 	}
 	return ""
+}
+
+// fileSetEntryFor is an archive ingest's ImportOptions.entryFor (#639): it
+// keeps the ingest key's identity and names its variant by fileSetEntry
+// for the files ids - judged at final's identity when the ingest key is
+// renamed to it afterwards (an import's enrichment). Nil for no ids: an
+// archive matched to no source file records no set to keep apart.
+func (s *Service) fileSetEntryFor(ctx context.Context, game *domain.Game, ids []string, final *domain.Mod) func(cache.Key) cache.Key {
+	if len(ids) == 0 {
+		return nil
+	}
+	return func(k cache.Key) cache.Key {
+		at := k
+		if final != nil {
+			at.SourceID, at.ModID, at.Version = final.SourceID, final.ID, final.Version
+		}
+		chosen, _ := s.fileSetEntry(ctx, s.GetGameCache(game), at, ids, false)
+		k.Variant = chosen.Variant
+		return k
+	}
 }

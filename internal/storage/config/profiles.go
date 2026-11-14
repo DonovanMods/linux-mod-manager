@@ -137,6 +137,11 @@ type ModReferenceConfig struct {
 	// collection brought in (domain.ModReference.FromCollection); omitted
 	// when false, so a file without it is unchanged.
 	FromCollection bool `yaml:"from_collection,omitempty"`
+	// FileList and Patches are #610's exact file lists and binary patches,
+	// keyed by file id; omitted when empty, so a file without them is
+	// unchanged.
+	FileList domain.FileLists   `yaml:"file_list,omitempty"`
+	Patches  domain.FilePatches `yaml:"patches,omitempty"`
 }
 
 // parseProfileHooks converts YAML hooks to domain types, tracking which were explicitly set
@@ -329,6 +334,9 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 			FomodFiles:     m.FomodFiles.Clone(),
 			FomodOrder:     slices.Clone(m.FomodOrder),
 			FromCollection: m.FromCollection,
+			// #610: copied, so the profile's maps are its own.
+			FileList: m.FileList.Clone(),
+			Patches:  m.Patches.Clone(),
 		}
 	}
 

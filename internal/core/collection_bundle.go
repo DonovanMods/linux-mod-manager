@@ -88,6 +88,25 @@ func validBundleCollectionID(id string) bool {
 	return bundleCollectionIDPattern.MatchString(id)
 }
 
+// bundleCollectionIDFor is the id a collection's bundled items are kept
+// under, given its document id: the id itself when it can lead a bundled
+// item's mod id, or - for a collection converted from a source, whose id
+// is "<source>:<slug>" (#610) - the recipe's id, "<source>-<slug>", which
+// its bundled items were kept under when it was converted, so a
+// re-export and its import name them as the profile does. "" when
+// neither.
+func bundleCollectionIDFor(id string) string {
+	if validBundleCollectionID(id) {
+		return id
+	}
+	if src, slug, ok := strings.Cut(id, ":"); ok && safeCollectionSegment.MatchString(src) && safeCollectionSegment.MatchString(slug) {
+		if c := src + "-" + slug; validBundleCollectionID(c) {
+			return c
+		}
+	}
+	return ""
+}
+
 // BundledModID is the profile's mod id of collectionID's bundled item:
 // "<collection id>.<item>". The document names the item alone; the
 // collection's own id keeps two collections' items of the same name apart.
@@ -138,9 +157,60 @@ type bundledItem struct {
 	restricted []RestrictedOverride
 }
 
-// collectionBundle is a container's files/ tree, by item name.
+// collectionBundle is a container's files/ tree, by item name, and its
+// patches/ (#610), by sha256.
 type collectionBundle struct {
-	items map[string]*bundledItem
+	items   map[string]*bundledItem
+	patches map[string][]byte
+	// patchBytes is the patches' size together, held to
+	// maxRecipePatchBytes (#610 review B2).
+	patchBytes int64
+}
+
+// addPatchMember reads one patches/ member into b: named
+// patches/<sha256>.diff - 64 lower-case hex digits - a regular file within
+// maxPatchBytes whose content hashes to its name and is a BSDIFF40 patch.
+// A member that breaks a rule is refused, never renamed.
+func (b *collectionBundle) addPatchMember(f *zip.File) error {
+	sha, ok := strings.CutSuffix(strings.TrimPrefix(f.Name, collectionPatchesDir), recipePatchExt)
+	switch {
+	case !ok || !isLowerHexSHA256(sha):
+		return fmt.Errorf("the member %q is not patches/<sha256>.diff", f.Name)
+	case !f.Mode().IsRegular():
+		return fmt.Errorf("the member %q is not a regular file", f.Name)
+	case f.UncompressedSize64 > maxPatchBytes:
+		return fmt.Errorf("the patch %q is %d bytes, over the %d-byte limit", f.Name, f.UncompressedSize64, maxPatchBytes)
+	case f.UncompressedSize64 > ratioFloor && f.UncompressedSize64 > maxCollectionRatio*max(f.CompressedSize64, 1):
+		return fmt.Errorf("the patch %q's compression ratio is over %d:1", f.Name, maxCollectionRatio)
+	case b.patches[sha] != nil:
+		return fmt.Errorf("the container holds %q more than once", f.Name)
+	case b.patchBytes+int64(f.UncompressedSize64) > maxRecipePatchBytes:
+		return fmt.Errorf("the container's patches are over the %d-byte limit together", maxRecipePatchBytes)
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rc.Close() }()
+	// The header's size is a claim: what is read is held to what is left
+	// of both caps.
+	room := min(int64(maxPatchBytes), maxRecipePatchBytes-b.patchBytes)
+	data, err := io.ReadAll(io.LimitReader(rc, room+1))
+	if err != nil {
+		return fmt.Errorf("reading %q: %w", f.Name, err)
+	}
+	if int64(len(data)) > room || uint64(len(data)) != f.UncompressedSize64 {
+		return fmt.Errorf("the patch %q is not the size its header claims, or is over the limit", f.Name)
+	}
+	b.patchBytes += int64(len(data))
+	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != sha || !isBSDIFF40(data) {
+		return fmt.Errorf("the patch %q is not the BSDIFF40 patch its name says", f.Name)
+	}
+	if b.patches == nil {
+		b.patches = map[string][]byte{}
+	}
+	b.patches[sha] = data
+	return nil
 }
 
 // item is the bundle's item name, or nil - a nil bundle holds none.

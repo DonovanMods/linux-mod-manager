@@ -53,8 +53,9 @@ const (
 	// CollectionFeatureModTypeMixed is one mod whose files state different
 	// mod types: lmm routes a mod's files by one type.
 	CollectionFeatureModTypeMixed = "mod_type_mixed"
-	// CollectionFeatureFileList is an exact file list (Vortex's replicate
-	// mode, C5).
+	// CollectionFeatureFileList is an exact file list: in an lmm collection
+	// document, an entry's file_list; in a Nexus recipe, an item's `hashes`
+	// (Vortex's replicate mode, C5, #610), which a conversion maps onto it.
 	CollectionFeatureFileList = "file_list"
 	// CollectionFeatureBundled is an item shipped inside the collection's
 	// own archive: in an lmm collection document, a mods: entry whose
@@ -62,8 +63,14 @@ const (
 	// files/<item>/ (#623); in a Nexus recipe, a `bundle` source (C5, #610,
 	// which maps it onto the same lmm-collection source).
 	CollectionFeatureBundled = "bundled"
-	// CollectionFeaturePatches is binary patches applied to an item (C5).
+	// CollectionFeaturePatches is binary patches applied to an item: in an
+	// lmm collection document, an entry's patches, their files in the
+	// `.lmmc` container's patches/; in a Nexus recipe, an item's `patches`
+	// (C5, #610), BSDIFF40 only.
 	CollectionFeaturePatches = "patches"
+	// CollectionFeaturePatchFormat is a recipe patch in a format other than
+	// BSDIFF40 (Vortex also ships an HDiffPatch applier): never supported.
+	CollectionFeaturePatchFormat = "patch_format"
 	// CollectionFeatureFileOverrides is paths an item must win.
 	CollectionFeatureFileOverrides = "file_overrides"
 	// CollectionFeaturePluginOrder is a plugin list or plugin rules: in an
@@ -104,12 +111,10 @@ var convertSupported = map[string]bool{
 // convertPending are the features an lmm collection document supports but
 // a conversion cannot yet carry into one: the converter refuses them even
 // though the document's supported set has them, so a recipe needing one is
-// never converted with that part dropped. Empty since #611 mapped a
-// recipe's plugin order (plugin_order is gated per game instead:
-// convertInput.pluginOrder). bundled is here since #623 added it to the
-// document's set: a Nexus recipe's bundled/ tree is not read until C5
-// (#610) maps it onto the lmm-collection source.
-var convertPending = map[string]bool{CollectionFeatureBundled: true}
+// never converted with that part dropped. Empty since C5 (#610) mapped a
+// recipe's bundled/ tree onto the lmm-collection source (#611 mapped its
+// plugin order, which is gated per game instead: convertInput.pluginOrder).
+var convertPending = map[string]bool{}
 
 // CollectionItemState is what an import does with one converted item.
 type CollectionItemState string
@@ -131,6 +136,10 @@ const (
 	// through the source's API (a free NexusMods account): the import
 	// records it, and its page is linked for the user to fetch it.
 	CollectionItemManualDownload CollectionItemState = "manual_download"
+	// CollectionItemBundled is an item the collection's own archive
+	// carries (#610): installed from the recipe's bundled/ tree through the
+	// lmm-collection source, never downloaded.
+	CollectionItemBundled CollectionItemState = "bundled"
 )
 
 // ConvertedCollection is a source collection converted into an lmm
@@ -193,6 +202,10 @@ type ConvertedCollection struct {
 	// pendingCollection holds the collection-level features the recipe
 	// raised while its items were read, gated when the document is built.
 	pendingCollection []string
+	// recipe is what the recipe's archive carries for its items (#610):
+	// the bundled trees and patch files the import keeps at apply.
+	recipe *recipeFiles
+
 	// phases is each document entry's install phase (#609), by
 	// domain.ModKey: the lowest phase of its files, which the document
 	// itself does not carry (it is in phase order). The import's apply
@@ -239,6 +252,12 @@ type ConvertedCollectionItem struct {
 	// MD5 and SizeBytes describe the curator's file.
 	MD5       string `json:"md5,omitempty"`
 	SizeBytes int64  `json:"size_bytes,omitzero"`
+	// FileList counts the files of the item's exact file list (#610), and
+	// Patches its binary patches; Bundled names the item's directory in the
+	// recipe's bundled/ tree. Zero or empty when it has none.
+	FileList int    `json:"file_list,omitzero"`
+	Patches  int    `json:"patches,omitzero"`
+	Bundled  string `json:"bundled,omitempty"`
 }
 
 // CollectionTool is a curator's tool shortcut, listed for information.
@@ -271,6 +290,11 @@ type convertInput struct {
 	// loadOrders reports which of a recipe's file load orders the game's
 	// adapter writes (#620); nil supports none.
 	loadOrders func(id string) bool
+	// recipe is what the recipe's archive holds beside its manifest
+	// (#610): its bundled/ trees and patches/ files, read by
+	// ConvertSourceCollection. nil when nothing was read, and then a
+	// bundled item or a patch stays refused.
+	recipe *recipeFiles
 }
 
 // item is one collection entry during a conversion.
@@ -284,6 +308,12 @@ type convItem struct {
 	// unsupported records the item's unsupported features (also kept in
 	// Features).
 	unsupported bool
+	// fileList and patches are the item's exact file list and binary
+	// patches (#610), checked; bundle is a bundled item's tree, read from
+	// the recipe.
+	fileList []domain.FileListEntry
+	patches  []domain.FilePatch
+	bundle   *bundledItem
 }
 
 // inEntry reports whether it belongs in its mod's profile entry: it is
@@ -364,6 +394,17 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 		if it.kind == source.CollectionItemExternal {
 			raise(CollectionFeatureExternal, "")
 		}
+		// #610: carried into the document, so supported; named for its
+		// requires.
+		if it.kind == source.CollectionItemBundled {
+			raise(CollectionFeatureBundled, "")
+		}
+		if len(it.fileList) > 0 {
+			raise(CollectionFeatureFileList, "")
+		}
+		if len(it.patches) > 0 {
+			raise(CollectionFeaturePatches, "")
+		}
 		for _, f := range it.Features {
 			raise(f, "")
 		}
@@ -376,6 +417,9 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 			it.State = CollectionItemOptionalSkipped
 		case it.kind == source.CollectionItemExternal:
 			it.State = CollectionItemExternal
+			it.included = true
+		case it.kind == source.CollectionItemBundled:
+			it.State = CollectionItemBundled
 			it.included = true
 		default:
 			it.State = CollectionItemWillInstall
@@ -577,7 +621,14 @@ func convertManifestItems(in convertInput, out *ConvertedCollection) []*convItem
 			}
 		case "bundle":
 			it.kind = source.CollectionItemBundled
-			it.Features = append(it.Features, CollectionFeatureBundled)
+			it.Bundled = mod.FileExpression
+			// #610: its files are the recipe's bundled/<fileExpression>/.
+			if b, problem := in.recipe.bundleFor(i); b != nil {
+				it.bundle = b
+			} else {
+				it.Features = append(it.Features, CollectionFeatureBundled)
+				it.Note = problem
+			}
 		case "browse", "direct", "manual":
 			it.kind = source.CollectionItemExternal
 			it.URL = mod.URL
@@ -598,10 +649,10 @@ func convertManifestItems(in convertInput, out *ConvertedCollection) []*convItem
 			it.Features = append(it.Features, CollectionFeatureFomodUnknownInstaller)
 		}
 		if len(mod.FileList) > 0 {
-			it.Features = append(it.Features, CollectionFeatureFileList)
+			convertFileList(it, mod)
 		}
 		if len(mod.Patches) > 0 {
-			it.Features = append(it.Features, CollectionFeaturePatches)
+			convertPatches(in, it, i, mod)
 		}
 		if len(mod.FileOverrides) > 0 {
 			it.Features = append(it.Features, CollectionFeatureFileOverrides)
@@ -785,6 +836,19 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 				doc.External = append(doc.External, domain.CollectionExternalItem{Name: it.Name, URL: it.URL, Instructions: it.Instructions})
 				continue
 			}
+			if it.kind == source.CollectionItemBundled {
+				// #610: an lmm-collection entry, as an .lmmc's bundled item
+				// is - its tree the recipe's, its version the tree's digest.
+				// It has no updates, so it is never locked.
+				e = &entry{phase: it.Phase, first: it.index}
+				e.item.Name = it.Name
+				e.item.Ref = domain.ModReference{SourceID: domain.SourceCollection, ModID: it.bundle.name, Version: it.bundle.digest}
+				e.members = append(e.members, it)
+				entryOf[it] = e
+				entries = append(entries, e)
+				rank = -2
+				continue
+			}
 			if e == nil {
 				e = &entry{phase: it.Phase, first: it.index}
 				e.item.Name = it.Name
@@ -801,6 +865,19 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 			// 2026-11-13). What the policy changes is what follows.
 			e.item.Ref.FileIDs = append(e.item.Ref.FileIDs, it.FileID)
 			e.item.Files = append(e.item.Files, domain.CollectionFileRef{ID: it.FileID, MD5: it.MD5, Size: it.SizeBytes})
+			// #610: the file's own list and patches, keyed by its id.
+			if len(it.fileList) > 0 {
+				if e.item.Ref.FileList == nil {
+					e.item.Ref.FileList = domain.FileLists{}
+				}
+				e.item.Ref.FileList[it.FileID] = slices.Clone(it.fileList)
+			}
+			if len(it.patches) > 0 {
+				if e.item.Ref.Patches == nil {
+					e.item.Ref.Patches = domain.FilePatches{}
+				}
+				e.item.Ref.Patches[it.FileID] = slices.Clone(it.patches)
+			}
 			if r := policyRank(it.UpdatePolicy); r > rank {
 				rank = r
 			}
@@ -808,7 +885,7 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 				it.Note = "the collection records an installer for this item but no answers, so its installer will ask at install"
 			}
 		}
-		if e == nil {
+		if e == nil || rank == -2 {
 			continue
 		}
 		// The recorded answers: one installer's as the entry's fomod, as
@@ -992,7 +1069,14 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 	out.phases = make(map[string]int, len(order))
 	for _, i := range order {
 		doc.Items = append(doc.Items, entries[i].item)
-		out.phases[domain.ModKey(in.sourceID, entries[i].item.Ref.ModID)] = entries[i].phase
+		ref := entries[i].item.Ref
+		key := domain.ModKey(in.sourceID, ref.ModID)
+		if ref.SourceID == domain.SourceCollection {
+			// The profile's id for it, once the import gives it one
+			// (resolveBundledItems).
+			key = domain.ModKey(domain.SourceCollection, BundledModID(in.recipe.collectionID(), ref.ModID))
+		}
+		out.phases[key] = entries[i].phase
 	}
 
 	// Collection-level features the recipe raised, gated here.

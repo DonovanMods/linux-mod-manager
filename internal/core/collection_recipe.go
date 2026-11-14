@@ -107,18 +107,22 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 
 	dir, err := s.fetchCollectionRecipe(ctx, game, sourceID, fetcher, list)
 	if err == nil {
-		// Read through an os.Root: nothing the parser opens can leave the
-		// entry, whatever is in it.
-		var root *os.Root
-		if root, err = os.OpenRoot(dir); err == nil {
-			var m source.CollectionManifest
-			if m, err = fetcher.ParseManifest(root.FS()); err == nil {
-				err = unreadableLoadOrder(&m, in.loadOrders)
+		in.manifest, err = parseRecipe(dir, fetcher, in.loadOrders)
+	}
+	if err == nil && recipeNeedsFiles(in.manifest) && !recipeHasFiles(dir) {
+		// #610: an entry C2 extracted holds the manifest alone; this
+		// recipe needs its bundled/ or patches/ trees, so it is fetched
+		// again, whole.
+		in.manifest = nil
+		if err = os.RemoveAll(dir); err == nil {
+			if dir, err = s.fetchCollectionRecipe(ctx, game, sourceID, fetcher, list); err == nil {
+				in.manifest, err = parseRecipe(dir, fetcher, in.loadOrders)
 			}
-			if err == nil {
-				in.manifest = &m
-			}
-			_ = root.Close()
+		}
+	}
+	if err == nil && recipeNeedsFiles(in.manifest) {
+		if in.recipe, err = readRecipeFiles(dir, sourceID, list.ID, in.manifest); err != nil {
+			in.manifest = nil
 		}
 	}
 	if err != nil {
@@ -128,7 +132,31 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 		in.manifestErr = recipeErrorText(err)
 		s.logger().Debug("a collection recipe could not be read", "source", sourceID, "collection", list.ID, "err", err)
 	}
-	return convertCollection(in)
+	conv, err := convertCollection(in)
+	if err != nil {
+		return nil, err
+	}
+	conv.recipe = in.recipe
+	return conv, nil
+}
+
+// parseRecipe parses the recipe in dir through an os.Root - nothing the
+// parser opens can leave the entry, whatever is in it - and refuses a file
+// load order the game writes but could not be read.
+func parseRecipe(dir string, fetcher source.CollectionManifestFetcher, loadOrders func(string) bool) (*source.CollectionManifest, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	m, err := fetcher.ParseManifest(root.FS())
+	if err == nil {
+		err = unreadableLoadOrder(&m, loadOrders)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
 }
 
 // modTypeRouted reports whether game's adapter knows where a mod of the
@@ -420,12 +448,18 @@ func checkRecipeListingText(out string) error {
 		return fmt.Errorf("%w: the recipe archive is not a 7z archive", source.ErrInvalidManifest)
 	}
 	var found int
+	var files recipeFilesBudget
 	for block := range strings.SplitSeq(body, "\n\n") {
 		fields := map[string]string{}
 		for line := range strings.Lines(block) {
 			if k, v, ok := strings.Cut(strings.TrimRight(line, "\r\n"), " = "); ok {
 				fields[k] = v
 			}
+		}
+		// #610: bundled/ and patches/ are extracted too, so every member
+		// of them is checked here first.
+		if err := files.check(fields); err != nil {
+			return err
 		}
 		if fields["Path"] != collectionRecipeManifest {
 			continue
@@ -456,18 +490,21 @@ func checkRecipeListingText(out string) error {
 	return fmt.Errorf("%w: the recipe archive holds %d entries named %s", source.ErrInvalidManifest, found, collectionRecipeManifest)
 }
 
-// extractRecipeManifest extracts archive's top-level collection.json, and
-// nothing else, into dest. 7z's own output names local paths and can carry
-// the archive's text, so it goes to the debug log, never into the message.
+// extractRecipeManifest extracts archive's top-level collection.json and
+// its bundled/ and patches/ trees (#610), and nothing else, into dest -
+// every member of the two trees checked by checkRecipeListing first - and
+// marks the entry as holding them (recipeFilesMarker). 7z's own output
+// names local paths and can carry the archive's text, so it goes to the
+// debug log, never into the message.
 func (s *Service) extractRecipeManifest(ctx context.Context, archive, dest string) error {
 	ctx, cancel := context.WithTimeout(ctx, extract7zTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "7z", "x", "-y", "-r-", "-o"+dest, "--", archive, collectionRecipeManifest).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "7z", "x", "-y", "-r-", "-o"+dest, "--", archive, collectionRecipeManifest, recipeBundledDir, recipePatchesDir).CombinedOutput()
 	if err != nil {
 		s.logger().Debug("extracting a collection recipe failed", "err", err, "output", string(out))
 		return fmt.Errorf("%w: 7z could not extract the recipe's %s", source.ErrInvalidManifest, collectionRecipeManifest)
 	}
-	return nil
+	return os.WriteFile(filepath.Join(dest, recipeFilesMarker), nil, 0o644)
 }
 
 // checkRecipeTree checks an extracted (or cached) recipe entry without

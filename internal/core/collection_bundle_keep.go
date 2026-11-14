@@ -63,6 +63,10 @@ type keptItem struct {
 	// document, and holding no code or imported with AllowAnyOverrides.
 	// Only an admitted item is ever served.
 	Admitted bool `json:"admitted"`
+	// Dir is the item's directory under a recipe's bundled/ (#610): a
+	// converted source collection's item, whose "container" is the
+	// recipe's cache entry. Empty for an item of a kept container.
+	Dir string `json:"dir,omitempty"`
 }
 
 // collectionsRoot is where game's collections are kept: beside its mod
@@ -181,8 +185,45 @@ func readKeptIndex(path string) (*keptIndex, error) {
 
 // keptEntry is one admitted item of one kept container.
 type keptEntry struct {
-	container string // the container's path
+	container string // the container's path, or a recipe's entry (item.Dir set)
 	item      keptItem
+}
+
+// keepRecipeBundle keeps a converted source collection's bundled items
+// (#610): their trees stay in the recipe's cache entry (b.recipeDir), and
+// an index beside it - <entry>.json - records each item's digest and
+// whether this import admitted it, exactly as a kept container's index
+// does. An index already there keeps what it admitted.
+func (s *Service) keepRecipeBundle(game *domain.Game, b *pendingBundle, admitted map[string]bool) error {
+	dir := filepath.Dir(b.recipeDir)
+	if filepath.Base(dir) != b.collectionID || filepath.Dir(dir) != s.collectionsRoot(game) {
+		return fmt.Errorf("%w: the recipe %s is not %s's", ErrInvalidBundle, b.recipeDir, b.collectionID)
+	}
+	path := b.recipeDir + keptIndexSuffix
+	index := keptIndex{Items: map[string]keptItem{}}
+	if old, err := readKeptIndex(path); err == nil {
+		index.Items = old.Items
+	}
+	for _, name := range b.bundle.names() {
+		it := b.bundle.items[name]
+		prev := index.Items[name]
+		// An earlier admission holds only for the same content (#610
+		// review): a recipe entry re-fetched with other files under the
+		// same name is admitted by this import's own decision alone.
+		was := prev.Admitted && prev.Digest == it.sum
+		index.Items[name] = keptItem{
+			Name: firstNonEmpty(b.names[name], prev.Name), Version: it.digest, Digest: it.sum,
+			Bytes: it.bytes, Files: len(it.members), Admitted: was || admitted[name], Dir: it.display,
+		}
+	}
+	encoded, err := json.Marshal(index)
+	if err != nil {
+		return err
+	}
+	if err := writeAtomic(dir, path, encoded); err != nil {
+		return fmt.Errorf("keeping the collection's bundled files: %w", err)
+	}
+	return nil
 }
 
 // admittedItems lists the admitted versions of modID's item the kept
@@ -202,29 +243,43 @@ func (s *Service) keptItems(game *domain.Game, modID string, admitted bool) (ite
 	if err != nil {
 		return "", nil, err
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil && !os.IsNotExist(err) {
-		return "", nil, err
-	}
 	type found struct {
 		keptEntry
 		mod int64
 	}
 	var all []found
-	for _, e := range entries {
-		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), keptIndexSuffix) {
-			continue
+	// The kept containers' indexes, then (#610) the indexes beside a
+	// converted source collection's recipes, whose collection id is the
+	// recipes' directory: <source>-<slug>/<revision>.json beside
+	// <source>-<slug>/<revision>/.
+	for _, place := range []struct {
+		dir    string
+		recipe bool
+	}{{dir, false}, {filepath.Join(s.collectionsRoot(game), collectionID), true}} {
+		entries, err := os.ReadDir(place.dir)
+		if err != nil && !os.IsNotExist(err) {
+			return "", nil, err
 		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		index, err := readKeptIndex(filepath.Join(dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		if it, ok := index.Items[item]; ok && it.Admitted == admitted && len(it.Version) == bundleVersionLen && strings.HasPrefix(it.Digest, it.Version) {
-			container := filepath.Join(dir, strings.TrimSuffix(e.Name(), keptIndexSuffix)+CollectionContainerExt)
+		for _, e := range entries {
+			if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), keptIndexSuffix) {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			index, err := readKeptIndex(filepath.Join(place.dir, e.Name()))
+			if err != nil {
+				continue
+			}
+			it, ok := index.Items[item]
+			if !ok || it.Admitted != admitted || len(it.Version) != bundleVersionLen || !strings.HasPrefix(it.Digest, it.Version) || place.recipe != (it.Dir != "") {
+				continue
+			}
+			container := filepath.Join(place.dir, strings.TrimSuffix(e.Name(), keptIndexSuffix))
+			if !place.recipe {
+				container += CollectionContainerExt
+			}
 			all = append(all, found{keptEntry{container: container, item: it}, info.ModTime().UnixNano()})
 		}
 	}
@@ -284,6 +339,19 @@ func (s *Service) findBundledItem(game *domain.Game, modID, version string) (*bu
 	for _, e := range entries {
 		if e.item.Version != version {
 			continue
+		}
+		if e.item.Dir != "" {
+			// #610: a converted source collection's item, read from its
+			// recipe's entry under the same rules it was imported by.
+			rb := readRecipeBundleAt(e.container, e.item.Dir)
+			if rb.item == nil {
+				return nil, fmt.Errorf("%w: the kept copy of %s's collection is damaged (%s); import the collection again", ErrBundleNotKept, modID, rb.problem)
+			}
+			if rb.item.sum != e.item.Digest {
+				return nil, fmt.Errorf("%w: the kept copy of %s does not match what was imported; import the collection again", ErrBundleNotKept, modID)
+			}
+			rb.item.name, rb.item.display = item, e.item.Name
+			return rb.item, nil
 		}
 		bundle, err := readKeptContainer(e.container)
 		if err != nil {
