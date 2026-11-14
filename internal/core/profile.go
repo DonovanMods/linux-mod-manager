@@ -25,6 +25,16 @@ type ProfileResult struct {
 	Profile domain.Profile `json:"profile"`
 }
 
+// NewProfileResult is the ProfileResult document for profile, as every
+// frontend emits it: the profile with the address a URL import recorded
+// (origin.import_url, #622) redacted, since only the profile file keeps it
+// whole. profile itself is left as it is. Every ProfileResult is built
+// here (TestProfileResultsAreBuiltByNewProfileResult).
+func NewProfileResult(profile domain.Profile) *ProfileResult {
+	profile.Collection = redactedCollection(profile.Collection)
+	return &ProfileResult{Profile: profile}
+}
+
 // ProfileManager handles profile CRUD operations. Profile switching lives in
 // Service.PlanProfileSwitch/ApplyProfileSwitch (internal/core/switch.go).
 //
@@ -1100,7 +1110,20 @@ func (pm *ProfileManager) Export(ctx context.Context, gameID, profileName string
 	if err != nil {
 		return nil, err
 	}
+	profile.Collection = withoutImportURL(profile.Collection)
 	return config.ExportProfile(profile)
+}
+
+// withoutImportURL is c without the address a URL import recorded in its
+// origin (#622): what every export writes, since the address is this
+// machine's subscription, not the collection's. c itself is left as it is.
+func withoutImportURL(c *domain.CollectionInfo) *domain.CollectionInfo {
+	if c == nil || c.Origin == nil || c.Origin.ImportURL == "" {
+		return c
+	}
+	out := *c
+	out.Origin = c.Origin.WithoutImportURL()
+	return &out
 }
 
 // importDocument saves an imported profile document - refusing one that
@@ -1190,7 +1213,7 @@ func (s *Service) RenameProfile(ctx context.Context, gameID, oldName, newName st
 	if err != nil {
 		return nil, err
 	}
-	return &ProfileResult{Profile: *profile}, nil
+	return NewProfileResult(*profile), nil
 }
 
 // CreateProfile is the gated Service seam over ProfileManager.Create: the
@@ -1215,7 +1238,7 @@ func (s *Service) CreateProfile(ctx context.Context, gameID, name string) (*Prof
 	if err != nil {
 		return nil, err
 	}
-	return &ProfileResult{Profile: *profile}, nil
+	return NewProfileResult(*profile), nil
 }
 
 // DeleteProfile is the gated Service seam over ProfileManager.Delete: the
@@ -1245,7 +1268,7 @@ func (s *Service) DeleteProfile(ctx context.Context, gameID, name string) (*Prof
 	if err := pm.Delete(ctx, gameID, name); err != nil {
 		return nil, err
 	}
-	return &ProfileResult{Profile: deleted}, nil
+	return NewProfileResult(deleted), nil
 }
 
 // SetDefaultProfile is the gated Service seam over ProfileManager.
@@ -1270,5 +1293,5 @@ func (s *Service) SetDefaultProfile(ctx context.Context, gameID, name string) (*
 	if err != nil {
 		return nil, err
 	}
-	return &ProfileResult{Profile: *profile}, nil
+	return NewProfileResult(*profile), nil
 }

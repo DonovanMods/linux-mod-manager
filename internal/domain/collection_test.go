@@ -21,3 +21,20 @@ func TestCollectionInfo_IsZeroAndEqual(t *testing.T) {
 	require.False(t, a.Equal(&domain.CollectionInfo{ID: "x", Version: 1}))
 	require.False(t, a.Equal(nil))
 }
+
+func TestCollectionOrigin_ImportURLHelpers(t *testing.T) {
+	var none *domain.CollectionOrigin
+	require.Nil(t, none.WithoutImportURL())
+	require.Nil(t, none.Redacted())
+
+	onlyURL := &domain.CollectionOrigin{ImportURL: "https://example.com/c.lmmc?token=x"}
+	require.Nil(t, onlyURL.WithoutImportURL(), "an origin that only records the import address exports as none")
+	require.Equal(t, "https://example.com/c.lmmc?…", onlyURL.Redacted().ImportURL)
+	require.Equal(t, "https://example.com/c.lmmc?token=x", onlyURL.ImportURL, "Redacted copies")
+
+	credit := &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "abc", Author: "curator", ImportURL: "https://example.com/c.lmmc"}
+	require.Equal(t, &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "abc", Author: "curator"}, credit.WithoutImportURL(),
+		"the curator's credit is kept")
+	plain := &domain.CollectionOrigin{SourceID: "nexusmods"}
+	require.Same(t, plain, plain.Redacted(), "nothing to redact")
+}

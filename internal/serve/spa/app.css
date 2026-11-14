@@ -3524,8 +3524,11 @@ a.row-menu__item.mod-page-link {
 /* The Steam Workshop collection input (issue 269 W2), the modal's second
    import source. A column at every width: two text fields and a button in a
    row would each be a few characters wide inside a modal, and the hint under
-   them is a full sentence. */
-.profiles-import__collection {
+   them is a full sentence. The URL input (issue 622) is laid out the same
+   way, under its own class so a selector for one form never finds the
+   other. */
+.profiles-import__collection,
+.profiles-import__url {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -3533,7 +3536,8 @@ a.row-menu__item.mod-page-link {
   margin-top: var(--space-3);
 }
 
-.profiles-import__collection input {
+.profiles-import__collection input,
+.profiles-import__url input {
   width: 100%;
 }
 

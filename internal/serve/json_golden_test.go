@@ -590,6 +590,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileImportPlanRequest{NexusCollection: "xk05aw@325", Optional: []string{"3863:1"}, ProfileName: "essentials"},
 		},
 		{
+			// #622: an lmm collection (or profile export) at an https
+			// address, which core fetches.
+			"profile_import_plan_request_url",
+			profileImportPlanRequest{URL: "https://example.invalid/shared/coop.lmmc", ProfileName: "coop"},
+		},
+		{
 			"profile_import_apply_request_with_hooks",
 			profileImportApplyRequest{Install: true, WithHooks: true},
 		},

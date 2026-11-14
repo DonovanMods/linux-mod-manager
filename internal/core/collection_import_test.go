@@ -99,12 +99,8 @@ func TestCollectionImport_NeverHooksFromAURL(t *testing.T) {
 	require.False(t, plan.Collection.HooksImportable)
 	require.Len(t, plan.Collection.Hooks, 1, "the plan still lists them")
 
-	_, err = svc.ApplyCollectionImport(context.Background(), game, plan, core.ProfileImportOptions{NoInstall: true, WithHooks: true}, nil)
-	require.ErrorIs(t, err, core.ErrCollectionHooksFromURL)
-	_, err = config.LoadProfile(svc.ConfigDir(), "cyber", "coop")
-	require.ErrorIs(t, err, domain.ErrProfileNotFound, "the refusal wrote nothing")
-
-	result, err := svc.ApplyCollectionImport(context.Background(), game, plan, core.ProfileImportOptions{NoInstall: true}, nil)
+	// #622: --with-hooks is ignored for a URL, never refused.
+	result, err := svc.ApplyCollectionImport(context.Background(), game, plan, core.ProfileImportOptions{NoInstall: true, WithHooks: true}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.HooksWithheld)
 	saved, err := config.LoadProfile(svc.ConfigDir(), "cyber", "coop")
