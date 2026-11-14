@@ -260,14 +260,9 @@ func (s *Service) keptContainers(game *domain.Game, collectionID string) ([]stri
 	return paths, nil
 }
 
-// readKeptContainer reads one kept container's bundle, under the reader's
-// own rules: a kept file is read as warily as the one it was kept from.
-func readKeptContainer(path string) (*collectionBundle, error) {
-	_, bundle, err := readKeptContainerDoc(path)
-	return bundle, err
-}
-
-// readKeptContainerDoc is readKeptContainer with the container's document.
+// readKeptContainerDoc reads one kept container's document and bundle,
+// under the reader's own rules: a kept file is read as warily as the one it
+// was kept from.
 func readKeptContainerDoc(path string) ([]byte, *collectionBundle, error) {
 	f, err := os.Open(path)
 	if err != nil {

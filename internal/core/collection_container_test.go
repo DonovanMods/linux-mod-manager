@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"io"
+	"path"
 	"strings"
 	"testing"
 
@@ -114,4 +116,34 @@ func TestCollectionContainer_StrayMemberWarningsAreCapped(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, warnings, maxIgnoredWarnings+1)
 	require.Contains(t, warnings[maxIgnoredWarnings], "10 more")
+}
+
+// TestCollectionContainer_BundledMembersKeepAnOlderReadersWarning is #623's
+// compatibility promise: an lmm that predates bundled files (#621's reader)
+// files every member under files/ as "bundled" and warns, refusing nothing,
+// as long as each member's name passes the extractor's guards and the
+// container keeps to its size cap - which an export's always do.
+func TestCollectionContainer_BundledMembersKeepAnOlderReadersWarning(t *testing.T) {
+	item := &bundledItem{name: "my-patch"}
+	for _, rel := range []string{"patch.esp", "cfg/deep/a.ini"} {
+		content := []byte(rel)
+		item.members = append(item.members, bundleMember{rel: rel, size: int64(len(content)),
+			open: func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(content)), nil }})
+	}
+	require.NoError(t, item.read())
+	data, err := writeCollectionContainer([]byte("lmm_collection: 1\n"), containerFiles([]exportBundle{{item: item}})...)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(data), maxCollectionContainer)
+
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	require.NoError(t, err)
+	guard := NewExtractor()
+	for _, f := range zr.File {
+		_, err := guard.sanitizePath("/lmmc", f.Name)
+		require.NoError(t, err, f.Name)
+		if f.Name != collectionDocMember {
+			require.True(t, strings.HasPrefix(path.Clean(f.Name)+"/", collectionFilesDir), "%s is read as bundled by an older reader", f.Name)
+			require.True(t, f.Mode().IsRegular(), "%s is a plain file", f.Name)
+		}
+	}
 }

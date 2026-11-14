@@ -147,7 +147,16 @@ func (s *Service) bundleItems(ctx context.Context, game *domain.Game, profileNam
 	}
 
 	var out []exportBundle
-	used := map[string]bool{}
+	// A collection's own item names are kept: a mod of the author's own
+	// is named around them, whatever order the two come in.
+	used, reserved := map[string]bool{}, map[string]bool{}
+	for _, ref := range refs {
+		if ref.SourceID == domain.SourceCollection {
+			if _, item, ok := splitBundledModID(ref.ModID); ok {
+				reserved[item] = true
+			}
+		}
+	}
 	for i := range doc.Items {
 		ref := &doc.Items[i].Ref
 		key := domain.ModKey(ref.SourceID, ref.ModID)
@@ -162,7 +171,7 @@ func (s *Service) bundleItems(ctx context.Context, game *domain.Game, profileNam
 		if err != nil {
 			return nil, fmt.Errorf("bundling %s: %w", firstNonEmpty(row.Name, doc.Items[i].Name, key), err)
 		}
-		item.name = bundleItemName(*ref, row.Name, used)
+		item.name = bundleItemName(*ref, row.Name, used, reserved)
 		used[item.name] = true
 		if doc.Items[i].Name == "" {
 			doc.Items[i].Name = firstNonEmpty(row.Name, item.display)
@@ -198,12 +207,14 @@ func (s *Service) bundleSource(game *domain.Game, ref domain.ModReference, row d
 
 // bundleItemName is the files/<item>/ name an export gives a bundled mod:
 // the item it already has when a collection bundled it, else a slug of its
-// name, made unique among used.
-func bundleItemName(ref domain.ModReference, name string, used map[string]bool) string {
+// name, made unique among used - and, for a mod of the author's own, among
+// reserved, the collection items' names.
+func bundleItemName(ref domain.ModReference, name string, used, reserved map[string]bool) string {
 	base := ""
 	if ref.SourceID == domain.SourceCollection {
 		if _, item, ok := splitBundledModID(ref.ModID); ok {
 			base = item
+			reserved = nil
 		}
 	}
 	if base == "" {
@@ -216,7 +227,7 @@ func bundleItemName(ref domain.ModReference, name string, used map[string]bool) 
 		base = "files"
 	}
 	candidate := base
-	for n := 2; used[candidate]; n++ {
+	for n := 2; used[candidate] || reserved[candidate]; n++ {
 		candidate = fmt.Sprintf("%s-%d", base, n)
 	}
 	return candidate

@@ -409,3 +409,29 @@ func bundledVersionOf(t *testing.T, container []byte) string {
 	require.Len(t, plan.Collection.Bundled, 1)
 	return plan.Collection.Bundled[0].Version
 }
+
+// TestBundledCollection_AnOwnModIsNamedAroundACollectionsItem: a mod of
+// the author's own whose name slugs to a collection item's name is renamed,
+// never the collection's item - whichever comes first in the load order.
+func TestBundledCollection_AnOwnModIsNamedAroundACollectionsItem(t *testing.T) {
+	svc, game := bundledFixture(t)
+	_, _, err := importBundled(t, svc, game, patchContainer(t), core.ProfileImportOptions{Install: true})
+	require.NoError(t, err)
+	ctx := context.Background()
+	key := cache.Key{GameID: game.ID, SourceID: "local", ModID: "u-1", Version: "1.0"}
+	require.NoError(t, svc.GetGameCache(game).Store(key, "mine.txt", []byte("mine")))
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "u-1", SourceID: "local", Name: "Patch", Version: "1.0", GameID: game.ID},
+		ProfileName: "coop", Enabled: true,
+	}))
+	profile, err := config.LoadProfile(svc.ConfigDir(), game.ID, "coop")
+	require.NoError(t, err)
+	profile.Mods = append([]domain.ModReference{{SourceID: "local", ModID: "u-1", Version: "1.0"}}, profile.Mods...)
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
+
+	export, err := svc.ExportCollection(ctx, game.ID, "coop", core.CollectionExportOptions{Bundle: []string{"local:u-1"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"patch-2", "patch"}, export.Bundled, "the collection's item keeps its name")
+	_, err = export.Container()
+	require.NoError(t, err)
+}
