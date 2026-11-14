@@ -207,6 +207,11 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #608: a fill - installed, failed, and the pins still pending.
+			"job_tally_profile_fill",
+			jobTally{Kind: "profile_fill", Installed: 2, Failed: 1, Skipped: 5, Warnings: 1},
+		},
+		{
 			// GET /api/v1/jobs, newest first: one running job above one
 			// finished one, so the golden pins both row shapes and the
 			// order in the same document.
@@ -638,6 +643,25 @@ func TestServeJSONGoldens(t *testing.T) {
 			// starting the job or not - so it pins nothing.
 			"adopt_plan_request",
 			adoptPlanRequest{SkipMatch: true},
+		},
+		{
+			// #608: a fill over staged uploads; an empty list plans the
+			// pending pins alone.
+			"profile_fill_plan_request",
+			profileFillPlanRequest{UploadIDs: []uploadID{"0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"}},
+		},
+		{
+			// #608: where the fill's folder chooser opens.
+			"downloads_folder",
+			downloadsFolder{Path: "/home/user/Downloads"},
+		},
+		{
+			"profile_fill_plan_request_folder",
+			profileFillPlanRequest{Folder: "/home/user/Downloads"},
+		},
+		{
+			"profile_fill_apply_request",
+			profileFillApplyRequest{Fomod: sampleServeFomodAnswers()},
 		},
 		{
 			// #333's import_archive halves. The plan request names a STAGED

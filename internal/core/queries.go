@@ -199,7 +199,12 @@ func (s *Service) ListProfiles(ctx context.Context, gameID string) (*ProfileList
 	}
 	listing := &ProfileListing{GameID: gameID}
 	for _, p := range profiles {
-		listing.Profiles = append(listing.Profiles, ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault})
+		summary := ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault}
+		if c := p.Collection; c != nil && c.Origin != nil && c.Origin.SourceID != "" && c.Origin.Slug != "" && c.Origin.Revision > 0 {
+			origin := *c.Origin
+			summary.Collection = &origin
+		}
+		listing.Profiles = append(listing.Profiles, summary)
 	}
 	// #441: a profile is known by its file name. A hand-copied file whose
 	// `name:` still names another profile is read - and written - as the
@@ -332,6 +337,10 @@ type ProfileSummary struct {
 	// each profile.
 	ModCount  int  `json:"mod_count"`
 	IsDefault bool `json:"is_default"`
+	// Collection is the source collection the profile was imported from
+	// (#608), when it was: a profile with one can be filled from downloaded
+	// archives (PlanProfileFill). Absent for every other profile.
+	Collection *domain.CollectionOrigin `json:"collection,omitempty"`
 }
 
 // GameStatus is everything `lmm status --game <id>` renders for one game.

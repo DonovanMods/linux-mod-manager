@@ -1,0 +1,75 @@
+{
+  "profile": "Essential Mods",
+  "game_id": "skyrim-se",
+  "collection": {
+    "source_id": "nexusmods",
+    "slug": "xk05aw",
+    "revision": 325
+  },
+  "matched": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "30379",
+      "name": "SKSE64",
+      "version": "2.2.6",
+      "mod_type": "dinput",
+      "files": [
+        {
+          "file_id": "400000",
+          "file_name": "SKSE64",
+          "size": 612345,
+          "md5": "0123456789abcdef0123456789abcdef",
+          "archive": "skse64_2_02_06.7z"
+        }
+      ],
+      "installer": true,
+      "auto_update": true
+    }
+  ],
+  "pending": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "3863",
+      "name": "SkyUI",
+      "version": "5.2",
+      "files": [
+        {
+          "file_id": "1",
+          "size": 2048,
+          "md5": "fedcba9876543210fedcba9876543210"
+        }
+      ],
+      "reason": "no_archive"
+    },
+    {
+      "source_id": "nexusmods",
+      "mod_id": "12604",
+      "files": [],
+      "reason": "no_checksum"
+    }
+  ],
+  "ignored": [
+    {
+      "name": "SkyUI_5_2.7z",
+      "size": 2048,
+      "reason": "checksum_mismatch"
+    }
+  ],
+  "ignored_counts": [
+    {
+      "reason": "no_match",
+      "count": 12
+    },
+    {
+      "reason": "symlink",
+      "count": 1
+    }
+  ],
+  "scanned": 4,
+  "hashed": 2,
+  "recorded_only": true,
+  "active_profile": "default",
+  "notes": [
+    "The curator wants these on their newest file, but they are locked, so they stay on the installed file: SkyUI."
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "profile": "Three Mods",
+  "installed": 1,
+  "failed": 0,
+  "remaining": 1,
+  "warnings": [
+    "NexusMods did not describe Ten (mod 10 is not in NexusMods's catalog (removed, or republished under a new ID)), so it is installed under the collection's name for it"
+  ]
+}

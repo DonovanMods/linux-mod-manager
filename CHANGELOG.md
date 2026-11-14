@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Install a collection's pending mods from your downloads (#608).** The
+  new `lmm profile fill <profile> [folder-or-archive...]` (your downloads
+  folder when none is named) installs the mods
+  a free NexusMods account's collection import left pending, from the files
+  you downloaded by hand: each file is recognised by the size and md5 the
+  collection's recipe records for it (re-fetched when its cache entry is
+  gone), and installed as if downloaded, with the recorded installer
+  choices (per file, for a mod with several installers, #634) and mod type, locked as the curator pinned it, and set to update
+  automatically when the curator asked for the newest file. The plan lists
+  what installs, what is still pending and why, and names each file of a
+  pending file's size it did not use; the rest of a folder is only counted,
+  by reason, so a folder chosen by mistake is never listed back;
+  `--dry-run` and `--json` show it without installing. Only a folder's top
+  level is read, links are never followed, a file is read only when its
+  size is a pending file's, and your files are copied, never moved or
+  deleted. In the web UI, on the collection import's entry in the activity
+  tray or **Fill from downloads…** for the profile in Manage profiles,
+  either choose the folder (the folder chooser opens at your downloads
+  folder, from the new `GET /api/v1/fs/downloads`; a link to a folder is
+  accepted as the folder itself; the server reads it as the command does,
+  nothing is uploaded) or
+  drop the files: only files of a pending size and at most 2 GiB are
+  uploaded, up to four at a time. `lmm profile list --json` (and the web UI's profile list) name a
+  profile's source collection under the new `collection` key.
 - **Import a collection from a link (#622).** `lmm profile import
 https://…` (in the web UI, the Profiles window's **From a URL** field)
   downloads an lmm collection - a `.lmmc`, its YAML, or an older profile

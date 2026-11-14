@@ -6,9 +6,11 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -75,13 +77,30 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 		return st, nil
 	}
 
+	// #608: a profile fill installs from the user's own archives, matched
+	// by the collection's checksums - so a source that cannot describe the
+	// mod or list its files right now costs the row its metadata, not the
+	// install.
+	supplied := plan.supplied[st.key]
+	note := func(msg string) {
+		result.Warnings = append(result.Warnings, msg)
+		emit(StepEvent{Scope: st.scope, Phase: ImportNote, Detail: msg})
+	}
 	mod, err := s.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
 	if err != nil {
-		return nil, fail(fmt.Sprintf("failed to fetch mod: %v", err), err)
+		if supplied == nil {
+			return nil, fail(fmt.Sprintf("failed to fetch mod: %v", err), err)
+		}
+		mod = &domain.Mod{ID: ref.ModID, SourceID: ref.SourceID, GameID: game.ID, Version: ref.Version,
+			Name: cmp.Or(plan.fillNames[st.key], domain.ModKey(ref.SourceID, ref.ModID))}
+		note(fmt.Sprintf("%s did not describe %s (%v), so it is installed under the collection's name for it", s.sourceDisplayName(ref.SourceID), mod.Name, err))
 	}
 	st.scope.ModName = mod.Name
 
 	files, err := s.GetModFiles(ctx, game, ref.SourceID, mod)
+	if supplied != nil {
+		files, err = suppliedFiles(files, err, ref, supplied)
+	}
 	if err != nil {
 		return nil, fail(fmt.Sprintf("failed to get files: %v", err), err)
 	}
@@ -155,12 +174,19 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 			}
 			emit(DownloadEvent{Scope: st.scope, Phase: ImportDownloading, Percent: d.Percent})
 		}
-		a, err := s.acquireFile(ctx, gameCache, ref.SourceID, game, mod, file, fx, progressFn)
+		var a *acquiredFile
+		reason := "download failed: %v"
+		if sup, ok := supplied[file.ID]; ok {
+			reason = "installing from " + sup.display + " failed: %v"
+			a, err = s.acquireSupplied(ctx, gameCache, ref.SourceID, game, mod, file, sup, fx, progressFn)
+		} else {
+			a, err = s.acquireFile(ctx, gameCache, ref.SourceID, game, mod, file, fx, progressFn)
+		}
 		if err != nil && asks.take(err, file) {
 			continue
 		}
 		if err != nil {
-			f := fail(fmt.Sprintf("download failed: %v", err), err)
+			f := fail(fmt.Sprintf(reason, err), err)
 			// The mod's earlier files go with the failure, so a refusal
 			// that blocks retains them too: the re-run fetches none of
 			// them again.
@@ -344,4 +370,28 @@ func (s *Service) writeImportPolicy(ctx context.Context, game *domain.Game, plan
 		result.Warnings = append(result.Warnings, msg)
 		emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
 	}
+}
+
+// suppliedFiles is a profile fill's file list for ref (#608): the source's
+// own listing, with every pinned file it does not list - or every one, when
+// the listing failed - described from the user's archive instead, since
+// the archive was matched to the pin by the collection's checksum.
+func suppliedFiles(files []domain.DownloadableFile, listErr error, ref domain.ModReference, supplied map[string]suppliedArchive) ([]domain.DownloadableFile, error) {
+	if listErr != nil {
+		files = nil
+	}
+	for _, id := range ref.FileIDs {
+		if slices.ContainsFunc(files, func(f domain.DownloadableFile) bool { return f.ID == id }) {
+			continue
+		}
+		sup, ok := supplied[id]
+		if !ok {
+			if listErr != nil {
+				return nil, listErr
+			}
+			continue
+		}
+		files = append(files, domain.DownloadableFile{ID: id, Name: sup.display, FileName: sup.name, Version: ref.Version, Size: sup.size})
+	}
+	return files, nil
 }

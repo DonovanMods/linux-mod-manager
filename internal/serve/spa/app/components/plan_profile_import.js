@@ -700,6 +700,16 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
         `
       }
       ${
+        // Issue 608: the pending files install in one go once downloaded.
+        manualOnly &&
+        html`<p class="plan__note" data-testid="fill-hint">
+          Download each pending mod's file from its page; then drop the files on
+          the entry the import leaves in the activity tray, or use${" "}
+          <strong>Fill from downloads…</strong> on the profile in Manage
+          profiles, and they install as if downloaded.
+        </p>`
+      }
+      ${
         lmmCollection &&
         html`<${LMMCollectionSection}
           collection=${lmmCollection}

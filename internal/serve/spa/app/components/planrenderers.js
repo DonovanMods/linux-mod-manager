@@ -41,6 +41,7 @@ import { RelinkPlanView } from "./plan_mod_relink.js";
 import { CopyModPlanView } from "./plan_mod_copy.js";
 import { FomodReconfigurePlanView } from "./plan_mod_fomod.js";
 import { SnapshotRestorePlanView } from "./plan_snapshot_restore.js";
+import { ProfileFillPlanView } from "./plan_profile_fill.js";
 
 // issue 332 (issue 330 carry-2's own promise kept): "updates", "verify_fix" and
 // "profile_import" each get their real renderer here, replacing the
@@ -78,6 +79,9 @@ const renderers = {
   // issue 615: "Reconfigure installer…" - its questions follow in the
   // installer wizard.
   mod_fomod: FomodReconfigurePlanView,
+  // issue 608: filling a collection profile's pending mods from the
+  // archives the user dropped.
+  profile_fill: ProfileFillPlanView,
   // issue 350's one job-shaped snapshot operation. Create and delete are
   // single-step writes with nothing to preview (api_snapshots.go), so
   // they have no plan kind and need no renderer.

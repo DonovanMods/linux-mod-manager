@@ -82,3 +82,20 @@ func TestSPAExitAnimationMatchesTheMotionToken(t *testing.T) {
 		"motion.js's EXIT_MILLIS (%sms) has drifted from app.css's --motion-base (%sms)",
 		jsMatch[1], cssMatch[1])
 }
+
+// maxFillUploadsLiteral matches filldropzone.js's maxFillUploads.
+var maxFillUploadsLiteral = regexp.MustCompile(`(?m)^export const maxFillUploads = (\d+);`)
+
+// TestSPAMaxFillUploadsMatchesTheServerCap holds the fill drop zone's
+// per-plan upload count (#608) to the server's: a plan naming more uploads
+// than the store keeps would name ones it has already evicted.
+func TestSPAMaxFillUploadsMatchesTheServerCap(t *testing.T) {
+	data, err := os.ReadFile("spa/app/components/filldropzone.js")
+	require.NoError(t, err)
+	m := maxFillUploadsLiteral.FindSubmatch(data)
+	require.NotNil(t, m, "filldropzone.js must declare \"export const maxFillUploads = N;\"")
+	n, err := strconv.Atoi(string(m[1]))
+	require.NoError(t, err)
+	require.Equal(t, maxFillUploads, n, "filldropzone.js's maxFillUploads has drifted from kind_profile_fill.go's")
+	require.Equal(t, defaultUploadStoreCap, maxFillUploads)
+}

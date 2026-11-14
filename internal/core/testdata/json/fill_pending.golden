@@ -1,0 +1,20 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "3863",
+  "name": "SkyUI",
+  "version": "5.2",
+  "files": [
+    {
+      "file_id": "1",
+      "size": 2048,
+      "md5": "fedcba9876543210fedcba9876543210"
+    },
+    {
+      "file_id": "2",
+      "size": 10,
+      "md5": "00112233445566778899aabbccddeeff",
+      "archive": "patch.7z"
+    }
+  ],
+  "reason": "partial"
+}
