@@ -1570,7 +1570,7 @@ func TestJSONGoldens(t *testing.T) {
 		},
 		{
 			// #613: a collection profile names where it updates from.
-			"profile_summary_collection",
+			"profile_summary_collection_origin",
 			core.ProfileSummary{Name: "coll", ModCount: 2, CollectionOrigin: core.CollectionFromURL},
 		},
 		{
@@ -1943,6 +1943,76 @@ func TestJSONGoldens(t *testing.T) {
 				Failures: []core.ItemFailure{
 					{SourceID: "nexusmods", ModID: "99", Name: "Sample Mod", Reason: "failed to fetch mod: upstream timeout"},
 				},
+			},
+		},
+		{
+			// #608: a profile imported from a source's collection names it.
+			"profile_summary_collection",
+			core.ProfileSummary{Name: "Essential Mods", ModCount: 2,
+				Collection: &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "xk05aw", Revision: 325}},
+		},
+		{
+			// #608: a fill plan - one match, every pending and ignored kind.
+			"profile_fill_plan",
+			core.ProfileFillPlan{
+				Profile: "Essential Mods", GameID: "skyrim-se",
+				Collection: &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "xk05aw", Revision: 325},
+				Matched: []core.FillMatch{{
+					SourceID: "nexusmods", ModID: "30379", Name: "SKSE64", Version: "2.2.6", ModType: "dinput",
+					Files:     []core.FillFile{{FileID: "400000", FileName: "SKSE64", Size: 612345, MD5: "0123456789abcdef0123456789abcdef", Archive: "skse64_2_02_06.7z"}},
+					Installer: true, AutoUpdate: true,
+				}},
+				Pending: []core.FillPending{
+					{SourceID: "nexusmods", ModID: "3863", Name: "SkyUI", Version: "5.2",
+						Files: []core.FillFile{{FileID: "1", Size: 2048, MD5: "fedcba9876543210fedcba9876543210"}}, Reason: core.FillNoArchive},
+					{SourceID: "nexusmods", ModID: "12604", Files: []core.FillFile{}, Reason: core.FillNoChecksum},
+				},
+				Ignored: []core.FillIgnored{
+					{Name: "SkyUI_5_2.7z", Size: 2048, Reason: core.FillIgnoredChecksumMismatch},
+				},
+				Scanned: 4, Hashed: 2, RecordedOnly: true, ActiveProfile: "default",
+				IgnoredCounts: []core.FillIgnoredCount{{Reason: core.FillIgnoredNoMatch, Count: 12}, {Reason: core.FillIgnoredSymlink, Count: 1}},
+				Notes:         []string{"The curator wants these on their newest file, but they are locked, so they stay on the installed file: SkyUI."},
+			},
+		},
+		{
+			// #608: the fill plan's parts on their own.
+			"fill_file",
+			core.FillFile{FileID: "1", FileName: "SkyUI", Size: 2048, MD5: "fedcba9876543210fedcba9876543210", Archive: "SkyUI_5_2.7z"},
+		},
+		{
+			"fill_match",
+			core.FillMatch{SourceID: "nexusmods", ModID: "3863", Name: "SkyUI", Version: "5.2",
+				Files: []core.FillFile{{FileID: "1", Size: 2048, MD5: "fedcba9876543210fedcba9876543210", Archive: "SkyUI_5_2.7z"}}},
+		},
+		{
+			"fill_pending",
+			core.FillPending{SourceID: "nexusmods", ModID: "3863", Name: "SkyUI", Version: "5.2",
+				Files:  []core.FillFile{{FileID: "1", Size: 2048, MD5: "fedcba9876543210fedcba9876543210"}, {FileID: "2", Size: 10, MD5: "00112233445566778899aabbccddeeff", Archive: "patch.7z"}},
+				Reason: core.FillPartial},
+		},
+		{
+			"fill_ignored_count",
+			core.FillIgnoredCount{Reason: core.FillIgnoredNoMatch, Count: 12},
+		},
+		{
+			"fill_ignored",
+			core.FillIgnored{Name: "SkyUI_5_2.7z", Size: 2048, Reason: core.FillIgnoredChecksumMismatch},
+		},
+		{
+			// #608: an empty fill plan's lists are [], never null.
+			"profile_fill_plan_empty",
+			core.ProfileFillPlan{Profile: "p", GameID: "g", Matched: []core.FillMatch{}, Pending: []core.FillPending{}, Ignored: []core.FillIgnored{}},
+		},
+		{
+			// #608: a fill's outcome.
+			"profile_fill_result",
+			core.ProfileFillResult{
+				Profile: "Essential Mods", Installed: 2, Failed: 1, Remaining: 3,
+				Warnings: []string{"could not set nexusmods:1 to update automatically: database is locked"},
+				Notes:    []string{"1 mod(s) the curator wants on their newest file were installed at the tested file and set to update automatically."},
+				Failures: []core.ItemFailure{{SourceID: "nexusmods", ModID: "99", Name: "Sample Mod",
+					Reason: "installing from sample.7z failed: sample.7z changed since the fill was planned"}},
 			},
 		},
 		{

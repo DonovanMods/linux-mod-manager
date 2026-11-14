@@ -64,6 +64,11 @@ const (
 	// OpModCopy is `lmm mod copy` - ApplyCopyMod's copy of a mod one
 	// profile has into another, without re-installing it (#437).
 	OpModCopy Op = "mod_copy"
+	// OpProfileFill is `lmm profile fill` - installing a collection
+	// profile's pending pins from archives the user downloaded by hand
+	// (#608). It runs the import's per-mod engine, so it emits the Import*
+	// phase family; Scope.Op is what tells the two apart.
+	OpProfileFill Op = "profile_fill"
 )
 
 // Scope is embedded in every event: which operation, which mod (if any),

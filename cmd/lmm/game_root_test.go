@@ -124,3 +124,34 @@ func TestCLI_TwoModsSharingAGameRootFileOverTheGamesOwn(t *testing.T) {
 	require.NoError(t, err, "purge puts the game's own d3d11.dll back")
 	assert.Equal(t, "the game's own", string(got))
 }
+
+// #633 at the CLI: uninstalling the load-order winner of the shared
+// d3d11.dll hands the path to the other mod in the same command - its file
+// is there with no deploy, and the command says so - and the original
+// comes back only when that mod is disabled too.
+func TestCLI_RemovingTheWinnerOfASharedGameRootFileHandsItOn(t *testing.T) {
+	ctx := context.Background()
+	svc, game := setupGameRootCLI(t)
+	stock := filepath.Join(game.InstallPath, "d3d11.dll")
+	require.NoError(t, os.WriteFile(stock, []byte("the game's own"), 0o644))
+	_ = captureCombined(t, func() error { return doDeploy(ctx, svc, game, nil) })
+	got, err := os.ReadFile(stock)
+	require.NoError(t, err)
+	require.Equal(t, "other d3d11", string(got))
+
+	setFlag(t, &uninstallSource, "")
+	out := captureCombined(t, func() error { return doUninstall(ctx, svc, game, "enb2") })
+	assert.Contains(t, out, "Warning: <game root>/d3d11.dll: enb's file is deployed there now in place of enb2's, as the next mod in load order that ships it")
+	got, err = os.ReadFile(stock)
+	require.NoError(t, err)
+	assert.Equal(t, "enb d3d11", string(got), "the other mod's file is there, with no deploy")
+
+	// -s src names a source the game has.
+	game.SourceIDs = map[string]string{"src": game.ID}
+	require.NoError(t, svc.SaveGame(ctx, game))
+	setFlag(t, &modSource, "src")
+	_ = captureCombined(t, func() error { return doModDisable(ctx, svc, game, "enb") })
+	got, err = os.ReadFile(stock)
+	require.NoError(t, err, "no mod ships it now, so the game's own file is back")
+	assert.Equal(t, "the game's own", string(got))
+}

@@ -6,11 +6,12 @@
 //
 // One entry describes one mutation flow end to end - how its request body
 // decodes, how its Plan is computed, what is stored server-side between
-// Plan and Apply, and how its Apply runs. Twenty-one kinds are registered
-// today: the nineteen plan kinds - deploy, install, uninstall, updates,
-// rollback, switch, profile_apply, profile_import, profile_sync, purge,
-// mod_relink, mod_copy, mod_fomod, verify_fix, import_archive, update_from_archive,
-// adopt, workshop_adopt and snapshot_restore - here, plus the two
+// Plan and Apply, and how its Apply runs. Twenty-two kinds are registered
+// today: the twenty plan kinds - deploy, install, uninstall, updates,
+// rollback, switch, profile_apply, profile_import, profile_fill,
+// profile_sync, purge, mod_relink, mod_copy, mod_fomod, verify_fix,
+// import_archive, update_from_archive, adopt, workshop_adopt and
+// snapshot_restore - here, plus the two
 // plan-free toggles in kind_toggle.go.
 //
 // The table used to carry a browser-form half as well (planKind.Form, the

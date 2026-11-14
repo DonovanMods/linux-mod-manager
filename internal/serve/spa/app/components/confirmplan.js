@@ -99,6 +99,11 @@ export function ConfirmPlanModal({ modal, state, actions }) {
     kind === "collection_update" &&
     status === "ready" &&
     (Boolean(plan?.up_to_date) || (plan?.unsupported?.length ?? 0) > 0);
+  // Issue 608: a fill none of whose files matched has nothing to install.
+  const emptyFillPlan =
+    kind === "profile_fill" &&
+    status === "ready" &&
+    (plan?.matched?.length ?? 0) === 0;
 
   // The type-the-name gate (C-3): a kind listed in typedNameFor keeps
   // Confirm disabled until the user has typed back the thing they are about
@@ -165,7 +170,7 @@ export function ConfirmPlanModal({ modal, state, actions }) {
             type="button"
             class="button button--primary"
             data-action="confirm"
-            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || fromFileRefused || emptyCopyPlan || collectionUpdateBlocked || !nameTyped}
+            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || fromFileRefused || emptyCopyPlan || collectionUpdateBlocked || emptyFillPlan || !nameTyped}
             onClick=${actions.confirmPlan}
           >
             ${busy ? "Starting…" : (effectiveConfirmLabel ?? "Confirm")}

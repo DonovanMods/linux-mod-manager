@@ -136,7 +136,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 			continue
 		}
 
-		modRemoved, held, err := installer.uninstall(ctx, game, &mod.Mod, profileName)
+		modRemoved, held, err := installer.uninstall(ctx, game, &mod.Mod, profileName, nil)
 		removed = append(removed, modRemoved...)
 		// #445 gate 2, G2-1: the purge command reports what it left for
 		// another game as a recorded-only purge does; deploy's pass puts it

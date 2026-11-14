@@ -27,6 +27,7 @@
 import { html, useEffect, useState } from "../render.js";
 import { Modal } from "./modal.js";
 import { codeSpans } from "../errortext.js";
+import { FillDropZone } from "./filldropzone.js";
 import {
   createProfile,
   deleteProfile,
@@ -122,11 +123,13 @@ export function ProfilesModal({ modal, state, actions }) {
  * exactly the substitute for a nested confirm modal this file's header
  * comment explains. */
 function ProfileRow({ profile, context, actions, afterMutation }) {
-  // "view" | "renaming" | "duplicating" | "deleting"
+  // "view" | "renaming" | "duplicating" | "deleting"; filling is the
+  // fill drop zone, open under the row (issue 608).
   const [mode, setMode] = useState("view");
   const [nameInput, setNameInput] = useState(profile.name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [filling, setFilling] = useState(false);
 
   function reset() {
     setMode("view");
@@ -444,6 +447,22 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
             Update collection…
           </button>`
         }
+        ${
+          // Issue 608: a profile imported from a source's collection can
+          // have mods pending a manual download; the files install here.
+          profile.collection &&
+          html`<button
+            type="button"
+            class="button button--small"
+            data-action="fill-profile"
+            data-profile=${profile.name}
+            aria-expanded=${filling ? "true" : "false"}
+            disabled=${busy}
+            onClick=${() => setFilling(!filling)}
+          >
+            Fill from downloads…
+          </button>`
+        }
         <button
           type="button"
           class="button button--small"
@@ -483,6 +502,14 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
           </button>`
         }
       </span>
+      ${
+        filling &&
+        html`<${FillDropZone}
+          profile=${profile.name}
+          game=${context.game}
+          actions=${actions}
+        />`
+      }
       ${
         active &&
         html`<p

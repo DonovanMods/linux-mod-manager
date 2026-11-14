@@ -770,6 +770,15 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 	if err != nil {
 		return result, err
 	}
+	// #633: a path a disabled mod gives up passes to the next mod in load
+	// order this apply leaves deployed - not to one it turns off or
+	// deploys again itself. A mod it reinstalls at another version does
+	// take one: its row is the version on disk, which keeps the path if
+	// the reinstall fails, and the reinstall's own replace hands the path
+	// on again if the new version no longer ships it. (A switch differs:
+	// its heirs are the target profile's rows, whose version need not be
+	// the one on disk.)
+	installer.heirs = s.pathHeirsFor("", nil, excludeKeys(plan.ToDisable, plan.ToEnable))
 	pm := s.NewProfileManager()
 
 	totalDisable := len(plan.ToDisable)
@@ -784,7 +793,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		scope := Scope{Op: OpProfileApply, Index: idx + 1, Total: totalDisable, ModName: im.Name,
 			Mod: &domain.ModReference{SourceID: im.SourceID, ModID: im.ID}}
 
-		if err := installer.Uninstall(ctx, game, &im.Mod, plan.Profile); err != nil {
+		if err := installer.uninstallHandingOff(ctx, game, &im.Mod, plan.Profile, nil); err != nil {
 			// #471: files still in the game directory are not a disabled
 			// mod. The row keeps saying enabled and deployed - the next
 			// apply plans the disable again - and the mod is a failure,

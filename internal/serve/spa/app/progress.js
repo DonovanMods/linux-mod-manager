@@ -78,6 +78,7 @@ const mutationKindLabels = {
   profile_apply: "Applying profile",
   verify_fix: "Repairing",
   profile_import: "Importing profile",
+  profile_fill: "Installing downloads",
   enable: "Enabling",
   disable: "Disabling",
   snapshot_restore: "Restoring snapshot",
@@ -236,6 +237,12 @@ export function jobStateLabel(summary, frame) {
 export function resultTallyLabel(tally) {
   const failed = tally.failed ?? 0;
   const skipped = tally.skipped ?? 0;
+  if (tally.kind === "profile_fill") {
+    // issue 608: what the files installed, and what is still to download.
+    const parts = [`${tally.installed ?? 0} installed`, `${skipped} pending`];
+    if (failed > 0) parts.push(`${failed} failed`);
+    return parts.join(" · ");
+  }
   if (tally.kind === "profile_import") {
     const parts = [`${tally.installed ?? 0} installed`, `${skipped} skipped`];
     if (failed > 0) parts.push(`${failed} failed`);
@@ -256,6 +263,12 @@ export function resultTallyLabel(tally) {
   return parts.join(" / ");
 }
 
+// INSTALLED_TALLY_KINDS are the tallies that count `installed`, not
+// `applied`. "profile_import" stays last: spa_internal_test.go's import
+// scanner reads a quoted word that follows `import"` on the same line as a
+// module path.
+const INSTALLED_TALLY_KINDS = new Set(["profile_fill", "profile_import"]);
+
 /**
  * resultTallyTone says how alarmed the tally should look, in the same
  * three words a job's own `state` already uses ("succeeded"/"failed") plus
@@ -272,8 +285,9 @@ export function resultTallyLabel(tally) {
  */
 export function resultTallyTone(tally) {
   if ((tally.failed ?? 0) === 0) return "succeeded";
-  const applied =
-    tally.kind === "profile_import" ? tally.installed : tally.applied;
+  const applied = INSTALLED_TALLY_KINDS.has(tally.kind)
+    ? tally.installed
+    : tally.applied;
   return (applied ?? 0) === 0 ? "failed" : "mixed";
 }
 

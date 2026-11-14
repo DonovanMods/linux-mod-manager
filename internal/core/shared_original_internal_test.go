@@ -75,3 +75,62 @@ func TestUpdate_LeavesASharedPathAnotherModHolds(t *testing.T) {
 		})
 	}
 }
+
+// #633 review: hand-off notes are grouped by the mods' keys, not their
+// names - two mods can share a display name.
+func TestHandOffNotes_GroupByKeyNotName(t *testing.T) {
+	gone := handOffMod{key: "src:gone", label: "Gone"}
+	notes := handOffNotes([]handedPath{
+		{path: domain.DeployPath{Rel: "a.txt"}, from: gone, heir: handOffMod{key: "src:one", label: "Twin"}},
+		{path: domain.DeployPath{Rel: "b.txt"}, from: gone, heir: handOffMod{key: "src:two", label: "Twin"}},
+		{path: domain.DeployPath{Rel: "c.txt"}, from: gone, heir: handOffMod{key: "src:one", label: "Twin"}},
+	})
+	require.Len(t, notes, 2, "one note per heir key: %q", notes)
+	assert.Equal(t, "Twin's files are deployed now in place of Gone's at a.txt, c.txt, as the next mod in load order that ships them", notes[0])
+	assert.Equal(t, "b.txt: Twin's file is deployed there now in place of Gone's, as the next mod in load order that ships it", notes[1])
+}
+
+// #633 review: a path is reported only while its record still names the
+// mod it was handed to - one an update undone after a later failure took
+// back (its record names the updated mod again) is not reported.
+func TestHandOffWarnings_ReportOnlyTheFinalOwner(t *testing.T) {
+	ctx := context.Background()
+	svc, err := NewService(ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	game := &domain.Game{ID: "g", ModPath: t.TempDir()}
+	for _, rec := range []struct{ path, mod string }{{"held.txt", "heir"}, {"undone.txt", "updated"}} {
+		require.NoError(t, svc.db.RecordDeployedFile(ctx, db.DeployedFileRecord{
+			GameID: game.ID, Profile: "default", Path: domain.DeployPath{Rel: rec.path},
+			SourceID: "src", ModID: rec.mod, ModPath: recordRoot(game),
+		}))
+	}
+	from := handOffMod{key: "src:updated", label: "Updated"}
+	heir := handOffMod{key: "src:heir", label: "Heir"}
+	notes := svc.handOffWarnings(game.ID, []handedPath{
+		{path: domain.DeployPath{Rel: "held.txt"}, profile: "default", from: from, heir: heir},
+		{path: domain.DeployPath{Rel: "undone.txt"}, profile: "default", from: from, heir: heir},
+		{path: domain.DeployPath{Rel: "released.txt"}, profile: "default", from: from, heir: heir},
+	})
+	assert.Equal(t, []string{"held.txt: Heir's file is deployed there now in place of Updated's, as the next mod in load order that ships it"}, notes)
+}
+
+// #633 review: a profile document that cannot be read hands nothing on -
+// load order cannot be told, so the original goes back as before - rather
+// than handing the path to the wrong mod.
+func TestPathHeirs_AnUnreadableProfileHandsNothingOn(t *testing.T) {
+	ctx := context.Background()
+	svc, err := NewService(ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	game := &domain.Game{ID: "g", ModPath: t.TempDir()}
+	require.NoError(t, svc.db.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod: domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: "g"}, ProfileName: "default", Enabled: true, Deployed: true,
+	}))
+	dir := filepath.Join(svc.configDir, "games", "g", "profiles")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "default.yaml"), []byte("mods: [unterminated\n"), 0o644))
+
+	_, err = svc.pathHeirsFor("", nil, nil).resolve(ctx, game, "default", &domain.Mod{ID: "going", SourceID: "src"})
+	require.Error(t, err)
+}
