@@ -173,10 +173,15 @@ type Service struct {
 	verifyMemoMu sync.Mutex
 	verifyMemo   map[string]verifyMemoEntry
 	opGen        uint64
-	downloader   *Downloader
-	extractor    *Extractor
-	log          *slog.Logger     // Diagnostics logger; nil means discard (see logger()).
-	nowFunc      func() time.Time // ServiceConfig.Now; nil means time.Now (see now()).
+	// overrideMemo caches the drift summary's override count per (game,
+	// profile), keyed on overrideFingerprint (#641): the status the web UI
+	// polls does not walk the deployed tree again while nothing changed.
+	overrideMemoMu sync.Mutex
+	overrideMemo   map[string]overrideMemoEntry
+	downloader     *Downloader
+	extractor      *Extractor
+	log            *slog.Logger     // Diagnostics logger; nil means discard (see logger()).
+	nowFunc        func() time.Time // ServiceConfig.Now; nil means time.Now (see now()).
 
 	configDir string
 	dataDir   string

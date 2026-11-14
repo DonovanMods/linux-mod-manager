@@ -335,11 +335,7 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 	// planProfileApply: snapshot restore's converge step applies the mods
 	// alone, and restores the originals itself.
 	if profile, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
-		skip := planSkipKeys(plan.ToDisable, plan.ToEnable)
-		for _, entry := range plan.ToInstall {
-			skip[domain.ModKey(entry.Ref.SourceID, entry.Ref.ModID)] = true
-		}
-		plan.Overrides = s.planOverrideChanges(ctx, game, profile, skip)
+		plan.Overrides = s.planOverrideChanges(ctx, game, profile, applySkipKeys(plan))
 		plan.NoChanges = plan.NoChanges && !overrideChanged(plan.Overrides)
 		plan.overridesDigest = overridesDigest(profile)
 	}
@@ -362,6 +358,39 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
 
+	plan, _ := s.diffProfileApply(ctx, pm, game, profileName, profile, installedMods)
+
+	// The snapshot below asks the adapter about this profile's rows; the
+	// rows it borrows from another profile's cache are deployed as its own,
+	// so the adapter has its say on them too (#445 final gate F-D).
+	if err := s.checkBorrowedPreconditions(game.ID, profileName, installedMods, plan.ToEnable); err != nil {
+		return nil, err
+	}
+
+	for i := range plan.ToInstall {
+		s.resolveProfileApplyInstall(ctx, game, &plan.ToInstall[i])
+	}
+
+	// The rows and the document this plan was decided from (see
+	// markedSnapshotOf).
+	snapshot, err := s.markedSnapshotOf(game.ID, installedMods, disabledKeysOf(profile))
+	if err != nil {
+		return nil, err
+	}
+	plan.snapshot = snapshot
+
+	return plan, nil
+}
+
+// diffProfileApply is THE comparison of profile (profileName's document)
+// against the rows installed under it (installedMods): the plan's three buckets, unresolved - no
+// source is asked, nothing is downloaded, and no file's content is read
+// (only a cache entry's existence, and another profile's rows when a listed
+// mod has none here). PlanProfileApply resolves what it returns; the drift
+// summary (#641, ProfileDrift) counts it, by reason - one function, so the
+// two can never disagree about what an apply would change.
+func (s *Service) diffProfileApply(ctx context.Context, pm *ProfileManager, game *domain.Game, profileName string, profile *domain.Profile, installedMods []domain.InstalledMod) (*ProfileApplyPlan, ProfileDrift) {
+	drift := ProfileDrift{Profile: profileName}
 	installedByKey := make(map[string]*domain.InstalledMod, len(installedMods))
 	for i := range installedMods {
 		installedByKey[domain.ModKey(installedMods[i].SourceID, installedMods[i].ID)] = &installedMods[i]
@@ -398,6 +427,7 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 			// Installed but no longer listed - disable it.
 			if im.Enabled {
 				plan.ToDisable = append(plan.ToDisable, *im)
+				drift.Unlisted++
 			}
 			continue
 		}
@@ -413,6 +443,7 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 			// download for a mod the user switched off.
 			if im.Enabled || im.Deployed {
 				plan.ToDisable = append(plan.ToDisable, *im)
+				drift.SwitchedOff++
 			}
 			continue
 		}
@@ -439,10 +470,12 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 				replaces = &prior
 			}
 			plan.ToInstall = append(plan.ToInstall, ProfileApplyInstall{Ref: ref, Replaces: replaces, Reason: reinstallReason(ref, im)})
+			drift.countReinstall(ref, im)
 			continue
 		}
 
 		if !im.Enabled {
+			drift.NotEnabled++
 			if gameCache.Exists(cache.Key{GameID: game.ID, SourceID: im.SourceID, ModID: im.ID, Version: im.Version, Variant: im.Variant}) {
 				plan.ToEnable = append(plan.ToEnable, *im)
 				continue
@@ -488,6 +521,7 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 			// says is switched off; enabling it later is what fetches it.
 			continue
 		}
+		drift.NotInstalled++
 		if externalElsewhere == nil {
 			externalElsewhere = s.externalRowsElsewhere(ctx, pm, game.ID, profileName)
 		}
@@ -522,27 +556,7 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 	}
 
 	plan.NoChanges = len(plan.ToDisable) == 0 && len(plan.ToEnable) == 0 && len(plan.ToInstall) == 0
-
-	// The snapshot below asks the adapter about this profile's rows; the
-	// rows it borrows from another profile's cache are deployed as its own,
-	// so the adapter has its say on them too (#445 final gate F-D).
-	if err := s.checkBorrowedPreconditions(game.ID, profileName, installedMods, plan.ToEnable); err != nil {
-		return nil, err
-	}
-
-	for i := range plan.ToInstall {
-		s.resolveProfileApplyInstall(ctx, game, &plan.ToInstall[i])
-	}
-
-	// The rows and the document this plan was decided from (see
-	// markedSnapshotOf).
-	snapshot, err := s.markedSnapshotOf(game.ID, installedMods, disabledKeysOf(profile))
-	if err != nil {
-		return nil, err
-	}
-	plan.snapshot = snapshot
-
-	return plan, nil
+	return plan, drift
 }
 
 // resolveProfileApplyInstall fills in entry's Mod/Files/Version/Cached from

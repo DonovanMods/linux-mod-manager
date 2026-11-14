@@ -314,3 +314,49 @@ func TestRerootDeployedFiles_MovesOnlyTheNamedRoots(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []db.DeployedRoot{{Profile: "default", ModPath: "/old/mods", Files: 1}}, other)
 }
+
+// TestHasFingerprintedLinkedFiles (#641): a fingerprinted record of a mod
+// that deploys by symlink or hardlink - an overridden copy's - is found; a
+// copy deployment's fingerprints, an unfingerprinted link and another
+// profile's or game's records are not. A record whose installed row is gone
+// is judged by the default method.
+func TestHasFingerprintedLinkedFiles(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	ctx := t.Context()
+
+	has := func(profile string, def domain.LinkMethod) bool {
+		t.Helper()
+		ok, err := database.HasFingerprintedLinkedFiles(ctx, "g", profile, def)
+		require.NoError(t, err)
+		return ok
+	}
+	for _, row := range []domain.InstalledMod{
+		{Mod: domain.Mod{SourceID: "s", ID: "sym", GameID: "g"}, ProfileName: "a", LinkMethod: domain.LinkSymlink},
+		{Mod: domain.Mod{SourceID: "s", ID: "copy", GameID: "g"}, ProfileName: "a", LinkMethod: domain.LinkCopy},
+		{Mod: domain.Mod{SourceID: "s", ID: "hard", GameID: "g"}, ProfileName: "b", LinkMethod: domain.LinkHardlink},
+	} {
+		require.NoError(t, database.SaveInstalledMod(ctx, &row))
+	}
+	fp := &db.FileFingerprint{Checksum: "cc"}
+	for _, rec := range []db.DeployedFileRecord{
+		{GameID: "g", Profile: "a", Path: domain.ModPathFile("sym"), SourceID: "s", ModID: "sym"},
+		{GameID: "g", Profile: "a", Path: domain.ModPathFile("copy"), SourceID: "s", ModID: "copy", Fingerprint: fp},
+		{GameID: "h", Profile: "a", Path: domain.ModPathFile("sym"), SourceID: "s", ModID: "sym", Fingerprint: fp},
+	} {
+		require.NoError(t, database.RecordDeployedFile(ctx, rec))
+	}
+	assert.False(t, has("a", domain.LinkSymlink), "a link without a fingerprint, and a copy's fingerprint")
+
+	require.NoError(t, database.RecordDeployedFile(ctx, db.DeployedFileRecord{GameID: "g", Profile: "a", Path: domain.ModPathFile("sym"), SourceID: "s", ModID: "sym", Fingerprint: fp}))
+	assert.True(t, has("a", domain.LinkSymlink), "a symlink mod's fingerprinted record")
+	assert.False(t, has("b", domain.LinkSymlink), "another profile's record")
+
+	require.NoError(t, database.RecordDeployedFile(ctx, db.DeployedFileRecord{GameID: "g", Profile: "b", Path: domain.ModPathFile("hard"), SourceID: "s", ModID: "hard", Fingerprint: fp}))
+	assert.True(t, has("b", domain.LinkCopy), "a hardlink mod's fingerprinted record")
+
+	require.NoError(t, database.RecordDeployedFile(ctx, db.DeployedFileRecord{GameID: "g", Profile: "c", Path: domain.ModPathFile("r"), SourceID: "s", ModID: "gone", Fingerprint: fp}))
+	assert.True(t, has("c", domain.LinkSymlink), "a residual record, judged by the default method")
+	assert.False(t, has("c", domain.LinkCopy))
+}
