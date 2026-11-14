@@ -191,6 +191,11 @@ type fomodInput struct {
 	// rebuild answers each file's conditions by that file's recorded file
 	// states first (rebuildInput), as asRebuild does for the single form.
 	rebuild bool
+	// fileOrder is the order the mod's files layer in its one cache entry
+	// (#634): the reference's file_ids, which a collection orders by its
+	// rules between the mod's own files. A later file's tree wins a path
+	// an earlier one also writes. Empty keeps the flow's own file order.
+	fileOrder []string
 	// softAsk: ask only an archive that IS an installer, and say nothing
 	// of one that is not (a mod's plain file beside its installer); the
 	// flow refuses a reconfigure none of whose files is one
@@ -204,7 +209,7 @@ type fomodInput struct {
 // mod's recorded choices. A reconfigure of another file replays this one.
 func (in fomodInput) forFile(fileID string) fomodInput {
 	out := in
-	out.fileChoices, out.fileAnswers, out.askFile = nil, nil, ""
+	out.fileChoices, out.fileAnswers, out.askFile, out.fileOrder = nil, nil, "", nil
 	switch a, ok := in.fileAnswers[fileID]; {
 	case ok && !a.IsZero():
 		out.choices, out.answered = a, true

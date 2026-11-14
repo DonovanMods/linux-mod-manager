@@ -79,3 +79,19 @@ func TestRemapFomodFiles(t *testing.T) {
 	assert.True(t, got.IsZero(), "no pairing: each new installer asks")
 	assert.Nil(t, remapFomodFiles(nil, []string{"m1"}, files("m2"), nil))
 }
+
+// TestRemapFileOrder (#634): an update keeps a mod's file layer order,
+// each replacement taking its old file's place.
+func TestRemapFileOrder(t *testing.T) {
+	files := func(ids ...string) []*domain.DownloadableFile {
+		out := make([]*domain.DownloadableFile, len(ids))
+		for i, id := range ids {
+			out[i] = &domain.DownloadableFile{ID: id}
+		}
+		return out
+	}
+	assert.Equal(t, []string{"p2", "m2"}, remapFileOrder([]string{"p1", "m1"}, files("m2", "p2"), map[string]string{"m1": "m2", "p1": "p2"}))
+	assert.Equal(t, []string{"p1", "m2"}, remapFileOrder([]string{"p1", "m1"}, files("m2", "p1"), map[string]string{"m1": "m2"}), "a kept file keeps its place")
+	assert.Empty(t, remapFileOrder([]string{"p1"}, files("x"), nil), "no place maps: the update's own order")
+	assert.Nil(t, remapFileOrder(nil, files("x"), nil))
+}

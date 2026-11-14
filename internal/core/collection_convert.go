@@ -719,6 +719,10 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 		members []*convItem
 		phase   int
 		first   int
+		// fileRules are before/after rules between two of the entry's own
+		// files (#634), as edges between members: they order its
+		// file_ids, which is the order its files' trees layer in.
+		fileRules [][2]*convItem
 	}
 	var entries []*entry
 	entryOf := map[*convItem]*entry{}
@@ -866,6 +870,19 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 			for _, k := range r.Unknown {
 				collectionFeature(out, CollectionFeatureManifestKeyPrefix+"modRules."+safeFeatureSuffix(k))
 			}
+			if es == er {
+				// #634: two files of one mod - Vortex installs each as its
+				// own mod, ordered by this rule, so it orders which file's
+				// tree wins a path both write.
+				if src != ref {
+					if r.Type == "before" {
+						es.fileRules = append(es.fileRules, [2]*convItem{src, ref})
+					} else {
+						es.fileRules = append(es.fileRules, [2]*convItem{ref, src})
+					}
+				}
+				continue
+			}
 			if r.Type == "before" {
 				addEdge(es, er)
 			} else {
@@ -892,6 +909,11 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 		}
 		if ordering > 0 {
 			out.Features = appendSorted(out.Features, CollectionFeatureModRules)
+		}
+	}
+	for _, e := range entries {
+		if len(e.fileRules) > 0 {
+			orderEntryFiles(&e.item, e.members, e.fileRules, out)
 		}
 	}
 	order, cycles := stableTopoSort(len(entries), edges, indegree)
@@ -937,6 +959,45 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 	// (each entry's ModType), exactly as an export derives it.
 	doc.Requires = deriveCollectionRequires(doc)
 	return doc
+}
+
+// orderEntryFiles reorders one entry's file_ids (and its files) by the
+// before/after rules between its own files (#634), stable on the
+// collection's order: a mod's files share one cache entry, laid out in
+// file_ids order, so a later file's tree wins a path an earlier one also
+// writes - as a later-installed mod would in Vortex, which installs each
+// file as its own mod. A cycle among them keeps the collection's order for
+// the files in it, with a note.
+func orderEntryFiles(item *domain.CollectionItem, members []*convItem, rules [][2]*convItem, out *ConvertedCollection) {
+	index := make(map[*convItem]int, len(members))
+	for i, m := range members {
+		index[m] = i
+	}
+	edges := make([][]int, len(members))
+	indegree := make([]int, len(members))
+	for _, r := range rules {
+		a, okA := index[r[0]]
+		b, okB := index[r[1]]
+		if !okA || !okB || a == b || slices.Contains(edges[a], b) {
+			continue
+		}
+		edges[a] = append(edges[a], b)
+		indegree[b]++
+	}
+	order, cycles := stableTopoSort(len(members), edges, indegree)
+	if len(cycles) > 0 {
+		out.Notes = append(out.Notes, fmt.Sprintf("The collection's ordering rules between %s's own files form a cycle; lmm breaks it, and every other rule holds.", item.Name))
+	}
+	byID := make(map[string]domain.CollectionFileRef, len(item.Files))
+	for _, f := range item.Files {
+		byID[f.ID] = f
+	}
+	item.Ref.FileIDs, item.Files = item.Ref.FileIDs[:0], item.Files[:0]
+	for _, i := range order {
+		id := members[i].FileID
+		item.Ref.FileIDs = append(item.Ref.FileIDs, id)
+		item.Files = append(item.Files, byID[id])
+	}
 }
 
 // appendSorted inserts s into the sorted list unless it is there.

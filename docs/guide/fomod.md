@@ -120,6 +120,9 @@ answers per file (under `fomod_files:` in the profile, by file id).
   files keep their answers.
 - An update hands each file's answers to the file that replaces it, and
   asks only about a file whose installer changed.
+- When two of the installers install the same file, the one listed later
+  in the mod's `file_ids` wins. A NexusMods collection sets that order from
+  its rules between the mod's files.
 
 A collection or a shared profile that records answers per file needs an
 lmm that understands them; an older lmm refuses to import it rather than

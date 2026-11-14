@@ -1056,6 +1056,8 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// #634: a mod recorded per file replays each old file's choices on the
 	// new file that replaces it.
 	fx.fileChoices = remapFomodFiles(fx.fileChoices, mod.FileIDs, filesToDownload, upd.FileIDReplacements)
+	// The new files layer in the order the files they replace did.
+	fx.fileOrder = remapFileOrder(fx.fileOrder, filesToDownload, upd.FileIDReplacements)
 	progressFn := func(e Event) {
 		if forwardFetchStep(e, scope, emit) {
 			return
@@ -1325,6 +1327,31 @@ func remapFomodFiles(rec domain.FomodFiles, oldIDs []string, newFiles []*domain.
 	for id, c := range rec {
 		if !slices.Contains(oldIDs, id) && isNew[id] {
 			out[id] = c
+		}
+	}
+	return out
+}
+
+// remapFileOrder carries a mod's file layer order (#634, the reference's
+// file_ids) across an update: each old file's place goes to the file the
+// source names as its replacement, or stays with a file kept as it was. A
+// new file with no place keeps the update's own order after them.
+func remapFileOrder(order []string, newFiles []*domain.DownloadableFile, replacements map[string]string) []string {
+	if len(order) == 0 {
+		return nil
+	}
+	isNew := make(map[string]bool, len(newFiles))
+	for _, f := range newFiles {
+		isNew[f.ID] = true
+	}
+	var out []string
+	for _, old := range order {
+		id := old
+		if to, ok := replacements[old]; ok {
+			id = to
+		}
+		if isNew[id] && !slices.Contains(out, id) {
+			out = append(out, id)
 		}
 	}
 	return out

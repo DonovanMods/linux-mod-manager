@@ -712,3 +712,38 @@ func TestSupportedExcept_LeavesOutWhatTheRefusalNames(t *testing.T) {
 	assert.NotContains(t, got, CollectionFeaturePluginOrder)
 	assert.Contains(t, got, CollectionFeatureFomod)
 }
+
+// TestConvert_RulesBetweenAModsOwnFilesOrderItsFileIDs (#634): a
+// before/after rule between two files of one mod orders the entry's
+// file_ids - the order the files' trees layer in, so the later file wins a
+// path both write, as Vortex installing each file as its own mod would.
+// Without such a rule the collection's own order stands.
+func TestConvert_RulesBetweenAModsOwnFilesOrderItsFileIDs(t *testing.T) {
+	a := nexusMod("Bugs - Main", "5", "51", "main")
+	a.InstallerType = "fomod"
+	a.Choices = []domain.FomodStepChoice{{Name: "s"}}
+	b := nexusMod("Bugs - Patch", "5", "52", "patch")
+	b.InstallerType = "fomod"
+	b.Choices = []domain.FomodStepChoice{{Name: "t"}}
+	other := nexusMod("Other", "6", "61", "other")
+
+	c := mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b, other}}))
+	assert.Equal(t, []string{"51", "52"}, c.Document.Items[0].Ref.FileIDs, "the collection's order")
+
+	// "Main after Patch": the main file layers last.
+	rules := []source.ManifestModRule{{Type: "after", Source: source.ManifestModRef{FileMD5: h("main")}, Reference: source.ManifestModRef{FileMD5: h("patch")}}}
+	c = mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b, other}, ModRules: rules}))
+	item := c.Document.Items[0]
+	assert.Equal(t, []string{"52", "51"}, item.Ref.FileIDs)
+	require.Len(t, item.Files, 2)
+	assert.Equal(t, "52", item.Files[0].ID, "the files' facts follow")
+	assert.Equal(t, h("patch"), item.Files[0].MD5)
+	assert.Len(t, item.Ref.FomodFiles, 2)
+	assert.Equal(t, "6", c.Document.Items[1].Ref.ModID, "the mods' own order is untouched")
+
+	// Contradicting rules: a cycle keeps the collection's order, noted.
+	rules = append(rules, source.ManifestModRule{Type: "before", Source: source.ManifestModRef{FileMD5: h("main")}, Reference: source.ManifestModRef{FileMD5: h("patch")}})
+	c = mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b}, ModRules: rules}))
+	assert.Len(t, c.Document.Items[0].Ref.FileIDs, 2)
+	assert.True(t, slices.ContainsFunc(c.Notes, func(n string) bool { return strings.Contains(n, "own files form a cycle") }), "%v", c.Notes)
+}

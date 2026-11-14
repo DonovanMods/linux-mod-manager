@@ -28,7 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lmm reading a profile file with the block sees no recorded choices for
   that mod and drops the block if it rewrites the file, as with `fomod:`.
   The rollback record keeps the per-file form in the existing database
-  column, so no database migration.
+  column, so no database migration. A mod's files share one install, laid
+  out in the order of its `file_ids`, so when two of its installers write
+  the same file the later one wins; a converted collection orders those
+  ids by its before/after rules between the mod's own files, as Vortex
+  would by installing each file as its own mod, and otherwise keeps the
+  collection's order.
 - **Import a NexusMods collection (#607).** The new
   `lmm profile import --nexus-collection <slug|slug@revision|URL>` (in the
   web UI, the Profiles window's **NexusMods collection** field) reads a
@@ -413,6 +418,11 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Changed
 
+- **The `--fomod-choices` error for several questions names the per-file key
+  (#634).** An unkeyed choices file that meets more than one installer now
+  says "answers one installer, but N ask; key its answers by mod
+  (source:id), or by file (source:id#file-id) for a mod with several
+  installers". The exit status is unchanged.
 - **Profile overrides are written more carefully (#630).** Each override
   now replaces its file atomically (a temporary file renamed into place),
   and its directory is opened one step at a time from the game folder

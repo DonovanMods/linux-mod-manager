@@ -14,6 +14,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -377,4 +378,61 @@ func TestFomodPerFile_ReconfigureOneInstallerBesideAPlainFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "4K-v1", f.deployed(t, "textures/t.dds"))
 	assert.Equal(t, "plain", f.deployed(t, "readme.txt"))
+}
+
+// overlapPatchZip is a patch installer that writes the main installer's
+// own texture path too.
+func overlapPatchZip(t *testing.T) []byte {
+	t.Helper()
+	cfg := strings.ReplaceAll(patchModuleConfig("USSEP"), `destination="bugs_patch.esp"`, `destination="textures\t.dds"`)
+	zipPath := createTestZip(t, t.TempDir(), map[string]string{
+		"fomod/ModuleConfig.xml": cfg,
+		"p/ussep.esp":            "PATCH-TEX",
+		"p/vanilla.esp":          "PATCH-TEX-VANILLA",
+	})
+	b, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	return b
+}
+
+// TestFomodPerFile_FilesLayerInTheReferencesOrder (#634): two installers of
+// one mod that write the same path layer in the reference's file_ids
+// order - which a converted collection orders by its rules between the
+// mod's files - so the later file's tree wins, whatever order the source
+// lists them in.
+func TestFomodPerFile_FilesLayerInTheReferencesOrder(t *testing.T) {
+	for _, tc := range []struct {
+		order []string
+		want  string
+	}{
+		{[]string{"main-1", "patch-1"}, "PATCH-TEX"},
+		{[]string{"patch-1", "main-1"}, "4K-v1"},
+	} {
+		t.Run(strings.Join(tc.order, ","), func(t *testing.T) {
+			f := newPerFileFixture(t)
+			f.serve(t, "1.0", "1", "4K", "USSEP")
+			f.mock.AddDownload("patch-1", overlapPatchZip(t))
+			ctx := context.Background()
+
+			// A document (a converted collection) names the order.
+			data, err := config.ExportProfile(&domain.Profile{Name: "target", GameID: "g1", Mods: []domain.ModReference{{
+				SourceID: "src", ModID: "bugs", Version: "1.0", FileIDs: tc.order,
+				FomodFiles: domain.FomodFiles{"main-1": answer("4K"), "patch-1": patchAnswer("USSEP")},
+			}}})
+			require.NoError(t, err)
+			plan, err := f.svc.PlanImport(ctx, f.game, data)
+			require.NoError(t, err)
+			_, err = f.svc.ApplyImport(ctx, f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, f.deployed(t, "textures/t.dds"))
+
+			// A reinstall of the same reference layers the same way.
+			iplan, err := f.svc.PlanInstall(ctx, f.game, "target", "src", "bugs", false)
+			require.NoError(t, err)
+			iplan.Files = slices.Clone(f.mock.files) // the source's own order: main, patch
+			_, err = f.svc.ApplyInstall(ctx, f.game, iplan, core.InstallOptions{TargetFileIDs: tc.order}, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, f.deployed(t, "textures/t.dds"))
+		})
+	}
 }

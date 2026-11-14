@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -23,6 +24,7 @@ func (s *Service) fomodInputFor(ctx context.Context, game *domain.Game, profileN
 	in := fomodInput{files: s.fileStatesFor(ctx, game, profileName, domain.ModKey(sourceID, modID))}
 	if ref != nil {
 		in.fileChoices = ref.FomodFiles.Clone()
+		in.fileOrder = slices.Clone(ref.FileIDs)
 	}
 	prefix := domain.FomodFileKey(sourceID, modID, "")
 	for key, a := range answers {
@@ -172,6 +174,25 @@ func unifyFomod(mod *domain.Mod, files []*acquiredFile) (*fomodResolved, error) 
 	}
 	mod.Variant = found.variant
 	return found, nil
+}
+
+// layerOrder is the order a mod's acquired files commit - and so layer -
+// in its one cache entry (#634): by their position in pins (the
+// reference's file_ids), any file pins does not name after them, each
+// group in the order acquired. With no pins it is files as they are.
+func layerOrder(files []*acquiredFile, pins []string) []*acquiredFile {
+	if len(pins) == 0 || len(files) < 2 {
+		return files
+	}
+	rank := func(a *acquiredFile) int {
+		if i := slices.Index(pins, a.file.ID); i >= 0 {
+			return i
+		}
+		return len(pins)
+	}
+	out := slices.Clone(files)
+	slices.SortStableFunc(out, func(a, b *acquiredFile) int { return rank(a) - rank(b) })
+	return out
 }
 
 // plainTree is the outcome of a mod whose files were acquired and none was
@@ -355,20 +376,27 @@ func (s *Service) downloadModFiles(ctx context.Context, gameCache *cache.Cache, 
 	if err := asks.finish(mod, fx, acquired); err != nil {
 		return nil, nil, err
 	}
-	resolved, err := unifyFomod(mod, acquired)
+	// #634: the files commit in their layer order; the results stay in the
+	// caller's order.
+	position := make(map[*acquiredFile]int, len(acquired))
+	for i, a := range acquired {
+		position[a] = i
+	}
+	committed := layerOrder(acquired, fx.fileOrder)
+	resolved, err := unifyFomod(mod, committed)
 	if err != nil {
 		return nil, nil, err
 	}
 	if hooks.requireVariant != nil && mod.Variant != *hooks.requireVariant {
 		return nil, nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: ReasonFomodReanswer}
 	}
-	results := make([]*DownloadModResult, 0, len(acquired))
-	for _, a := range acquired {
+	results := make([]*DownloadModResult, len(acquired))
+	for _, a := range committed {
 		res, err := s.commitAcquired(ctx, a)
 		if err != nil {
 			return nil, nil, err
 		}
-		results = append(results, res)
+		results[position[a]] = res
 	}
 	return results, resolved, nil
 }
