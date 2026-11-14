@@ -865,6 +865,28 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **`lmm verify --fix` no longer removes the last copy of a mod lmm cannot
+  download again (#645).** A mod imported from an archive (with no source,
+  or from an archive its source does not list, #644), or one that records
+  no source file, has nothing to download it from. When a file was
+  deleted from such a mod's cache entry and the game deploys by copy or
+  hard link, `--fix` still removed the file in the game folder as no
+  longer provided - and that file was the only copy left. It is now kept,
+  and verify reports it as `cache_incomplete` (`CACHE INCOMPLETE` in the
+  terminal, naming the file in the game folder, a Health page row with no
+  **Repair**), not fixable, because "the deployed copy is the only one
+  left"; importing the mod's archive again rebuilds the entry. A file
+  that really is stale (an entry shrunk on purpose) looks the same to
+  verify: import the archive again, or delete the file from the game
+  folder by hand, after which its leftover record is an ordinary stale
+  deployment that `--fix` (or **Repair**) drops. A symlink
+  deploy is unchanged: a link to a deleted cache file is removed, which
+  loses nothing. Also fixed: after verify `--fix` moved an older
+  BepInEx mod's files under `BepInEx/` (#424), a cache entry with a single
+  completion marker from before lmm recorded each file's members now
+  records them, so another profile still listing the old paths no longer
+  reports the mod as `cache_incomplete` for good.
+
 - **`lmm verify --fix` no longer removes a deployed file whose cache copy
   was deleted (#642).** When a file inside a mod's cache entry was deleted
   outside lmm together with the completion marker that vouched for it,

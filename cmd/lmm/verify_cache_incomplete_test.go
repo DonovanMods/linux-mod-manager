@@ -84,3 +84,70 @@ func TestRenderVerifyFinding_CacheIncomplete(t *testing.T) {
 	assert.Contains(t, out, "X Local Mod - CACHE INCOMPLETE (the cache entry is missing a.esp)")
 	assert.Contains(t, out, "  the mod was imported locally, so there is no source to re-download from")
 }
+
+// #645: a mod imported from an archive, deployed by copy, whose cache entry
+// lost a member: verify names the deployed path, says the copy is the only
+// one left, and --fix keeps it.
+func TestDoVerify_CacheIncomplete_LastCopyIsKept(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	ctx := context.Background()
+	game.LinkMethod, game.LinkMethodExplicit = domain.LinkCopy, true
+	require.NoError(t, svc.SaveGame(ctx, game))
+	pm := svc.NewProfileManager()
+	if _, err := pm.Get(ctx, game.ID, "default"); err != nil {
+		_, err := pm.Create(ctx, game.ID, "default")
+		require.NoError(t, err)
+	}
+	archive := filepath.Join(t.TempDir(), "LocalMod-1.0.zip")
+	createTestArchive(t, archive, map[string]string{"local-a.esp": "a", "local-b.esp": "b"})
+	res, err := svc.ImportArchive(ctx, game, "default", archive, core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+	k := cache.Key{GameID: game.ID, SourceID: res.Mod.SourceID, ModID: res.Mod.ID, Version: res.Mod.Version, Variant: res.Mod.Variant}
+	require.NoError(t, os.Remove(filepath.Join(svc.GetGameCache(game).ModPath(k), "local-a.esp")))
+	deployed := filepath.Join(game.ModPath, "local-a.esp")
+
+	verifyProfile = "default"
+	oldJSON := jsonOutput
+	t.Cleanup(func() { verifyProfile, jsonOutput, verifyFix = "", oldJSON, false })
+
+	for _, fix := range []bool{false, true} {
+		jsonOutput, verifyFix = false, fix
+		out := captureStdout(t, func() error { return doVerify(ctx, svc, game, nil) })
+		assert.Contains(t, out, "(local-a.esp) - CACHE INCOMPLETE (the cache entry is missing local-a.esp, which this profile deployed)", "fix=%v", fix)
+		assert.Contains(t, out, "  "+core.LastCopyReason, "fix=%v", fix)
+		assert.NotContains(t, out, "STALE DEPLOYMENT", "fix=%v", fix)
+		assert.NotContains(t, out, "Fixed: removed local-a.esp", "fix=%v", fix)
+		b, err := os.ReadFile(deployed)
+		require.NoError(t, err, "fix=%v: the deployed copy is kept", fix)
+		assert.Equal(t, "a", string(b))
+	}
+
+	jsonOutput, verifyFix = true, false
+	out := captureStdout(t, func() error { return doVerify(ctx, svc, game, nil) })
+	var doc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &doc))
+	var row *core.VerifyFinding
+	for i := range doc.Result.Findings {
+		if doc.Result.Findings[i].Status == core.VerifyStatusCacheIncomplete {
+			require.Nil(t, row, "one finding: %+v", doc.Result.Findings)
+			row = &doc.Result.Findings[i]
+		}
+	}
+	require.NotNil(t, row, "%+v", doc.Result.Findings)
+	assert.Equal(t, "local-a.esp", row.FileID)
+	assert.False(t, row.Fixable)
+	assert.Equal(t, core.LastCopyReason, row.FixableReason)
+}
+
+// A kept last copy under the game root is named as such.
+func TestRenderVerifyFinding_CacheIncompleteGameRootPath(t *testing.T) {
+	out := captureStdout(t, func() error {
+		renderVerifyFinding(core.VerifyEvent{Finding: core.VerifyFinding{
+			ModName: "Local Mod", Status: core.VerifyStatusCacheIncomplete, FileID: "dxgi.dll", Root: domain.RootInstallPath,
+			Note: "the cache entry is missing <game root>/dxgi.dll, which this profile deployed", FixableReason: core.LastCopyReason,
+		}})
+		return nil
+	})
+	assert.Contains(t, out, "X Local Mod (<game root>/dxgi.dll) - CACHE INCOMPLETE")
+	assert.Contains(t, out, "  "+core.LastCopyReason)
+}
