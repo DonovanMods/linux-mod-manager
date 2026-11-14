@@ -700,6 +700,38 @@ func (s *Service) planOverrideChanges(ctx context.Context, game *domain.Game, ta
 	return changes
 }
 
+// restoreDroppedOverrides is `lmm deploy`'s half of the restore direction
+// (#631, owner ruling): every game file an override profileName no longer
+// sets replaced goes back, under restoreGameOverrides' rule. It returns the
+// warnings, one per file.
+func (s *Service) restoreDroppedOverrides(ctx context.Context, game *domain.Game, profileName string, profile *domain.Profile) []string {
+	if game.InstallPath == "" {
+		return nil
+	}
+	_, warnings := s.restoreGameOverrides(ctx, game, profile, s.overrideEnvFor(ctx, game, profileName), false)
+	return warnings
+}
+
+// planDeployOverrides is the game files a deploy of profileName's override
+// pass changes (#631): planGameOverrides and the restore direction, dry, in
+// path order. A profile that cannot be read changes nothing here; the
+// deploy reports it.
+func (s *Service) planDeployOverrides(ctx context.Context, game *domain.Game, profileName string) []OverrideChange {
+	if game.InstallPath == "" {
+		return nil
+	}
+	profile, err := config.LoadProfile(s.configDir, game.ID, profileName)
+	if err != nil {
+		return nil
+	}
+	env := s.overrideEnvFor(ctx, game, profileName)
+	changes := s.planGameOverrides(game, profile, env)
+	restores, _ := s.restoreGameOverrides(ctx, game, profile, env, true)
+	changes = append(changes, restores...)
+	sort.SliceStable(changes, func(i, j int) bool { return changes[i].Path < changes[j].Path })
+	return changes
+}
+
 // planSkipKeys is the domain.ModKey of every mod in the lists a plan
 // deploys or removes.
 func planSkipKeys(lists ...[]domain.InstalledMod) map[string]bool {

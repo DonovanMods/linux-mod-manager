@@ -407,12 +407,16 @@ switch` and `lmm profile apply` (in the browser, **Switch and deploy…** and
 - If you changed a file after lmm wrote the override, lmm leaves your file
   as it is and says so. The game's original stays kept.
 
+`lmm deploy` takes an override you removed from the profile away the same
+way, and its plan lists the game files its overrides change.
+
 The plan lists each file under "Will change N file(s) for the profile's
 overrides" in the terminal, and under **Profile overrides** in the
 browser, before you confirm. In `--dry-run --json`, the plan's `overrides`
 list has one entry per file, with its `path`, its `root` (`install_path`
 for a game file) and its `action`: `place`, `update` or `restore`. A
-switch or apply that only changes overrides still has changes to confirm.
+switch or apply that only changes overrides still has changes, so it asks
+you to confirm (`--yes` skips the question).
 
 ## "Your profile and the game don't match"
 

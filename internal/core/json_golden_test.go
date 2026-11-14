@@ -714,6 +714,18 @@ func TestJSONGoldens(t *testing.T) {
 			core.OverrideChange{Path: "Data/k.ini", Action: core.OverrideUpdate, SourceID: "nexusmods", ModID: "7"},
 		},
 		{
+			// #631 (owner ruling): a deploy's override pass previews the
+			// game files it changes.
+			"deploy_plan_overrides",
+			core.DeployPlan{
+				Profile: "default",
+				Mods:    []core.DeployPlanMod{{Ref: domain.ModReference{SourceID: "nexusmods", ModID: "7", Version: "1.0"}, Name: "Realistic Needs"}},
+				Overrides: []core.OverrideChange{
+					{Path: "SkyrimPrefs.ini", Root: domain.RootInstallPath, Action: core.OverrideRestore},
+				},
+			},
+		},
+		{
 			"switch_plan_overrides",
 			core.SwitchPlan{
 				GameID: "skyrim-se", From: "default", To: "hardcore",

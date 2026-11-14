@@ -363,3 +363,45 @@ func TestOverriddenModFile_PurgingTheOtherProfileKeepsTheLiveCopy(t *testing.T) 
 		})
 	}
 }
+
+// deployPlan plans a deploy of profile.
+func (f *legacyFixture) deployPlan(t *testing.T, profile string) *core.DeployPlan {
+	t.Helper()
+	plan, err := f.svc.PlanDeploy(context.Background(), f.game, profile, core.DeployOptions{})
+	require.NoError(t, err)
+	return plan
+}
+
+// Owner ruling on #631: `lmm deploy` takes a dropped game-file override
+// away too, by the same rule, and its plan previews the game files its
+// overrides change.
+func TestNonModOverride_DeployRestoresADroppedOverride(t *testing.T) {
+	for _, key := range nonModKeys {
+		t.Run(key, func(t *testing.T) {
+			f := nonModFixture(t, domain.LinkSymlink, key)
+			assert.Equal(t, []core.OverrideChange{gameOverride(key, core.OverridePlace)}, f.deployPlan(t, "default").Overrides)
+			f.deploy(t, "default", core.DeployOptions{})
+			require.Equal(t, "tweaked\n", readLive(t, f.gameFile(key)))
+			assert.Empty(t, f.deployPlan(t, "default").Overrides, "nothing left to change")
+
+			f.overriddenProfile(t, "default", true, nil, "k")
+			assert.Equal(t, []core.OverrideChange{gameOverride(key, core.OverrideRestore)}, f.deployPlan(t, "default").Overrides)
+			result := f.deploy(t, "default", core.DeployOptions{})
+			noMessageAbout(t, key, append(result.Warnings, result.Notes...))
+			assert.Equal(t, "stock\n", readLive(t, f.gameFile(key)), "the deploy put the game's own file back")
+			assert.Empty(t, f.deployPlan(t, "default").Overrides)
+		})
+	}
+}
+
+func TestNonModOverride_DeployKeepsAFileTheUserChanged(t *testing.T) {
+	f := nonModFixture(t, domain.LinkSymlink, "Engine.ini")
+	f.deploy(t, "default", core.DeployOptions{})
+	require.NoError(t, os.WriteFile(f.gameFile("Engine.ini"), []byte("mine\n"), 0o644))
+	f.overriddenProfile(t, "default", true, nil, "k")
+
+	assert.Empty(t, f.deployPlan(t, "default").Overrides)
+	result := f.deploy(t, "default", core.DeployOptions{})
+	assert.Equal(t, "mine\n", readLive(t, f.gameFile("Engine.ini")))
+	assert.Contains(t, strings.Join(result.Warnings, "\n"), "Engine.ini")
+}

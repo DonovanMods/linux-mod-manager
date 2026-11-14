@@ -138,3 +138,27 @@ func readFileText(t *testing.T, path string) string {
 	require.NoError(t, err)
 	return string(data)
 }
+
+// Owner ruling on #631: `lmm deploy` takes a dropped game-file override
+// away too, and its dry run lists the game files its overrides change.
+func TestDoDeploy_DryRun_ListsAndDeployRestoresADroppedOverride(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	game.InstallPath = t.TempDir()
+	ini := filepath.Join(game.InstallPath, "Engine.ini")
+	require.NoError(t, os.WriteFile(ini, []byte("stock\n"), 0o644))
+	seedDeployableMod(t, svc, game, "on", "On Mod", "on.esp")
+	setOverrides(t, svc, game.ID, "default", map[string]string{"Engine.ini": "tweaked\n"})
+	captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	require.Equal(t, "tweaked\n", readFileText(t, ini))
+
+	setOverrides(t, svc, game.ID, "default", nil)
+	deployDryRun = true
+	dry := captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	deployDryRun = false
+	assert.Contains(t, dry, "Will change 1 file(s) for the profile's overrides:\n"+
+		"  - <game root>/Engine.ini (take the override away)\n")
+	assert.Equal(t, "tweaked\n", readFileText(t, ini), "a dry run writes nothing")
+
+	captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	assert.Equal(t, "stock\n", readFileText(t, ini), "the deploy put the game's own file back")
+}

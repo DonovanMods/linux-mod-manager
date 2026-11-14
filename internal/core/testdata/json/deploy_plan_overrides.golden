@@ -1,0 +1,27 @@
+{
+  "profile": "default",
+  "mods": [
+    {
+      "ref": {
+        "source_id": "nexusmods",
+        "mod_id": "7",
+        "version": "1.0",
+        "locked": false
+      },
+      "name": "Realistic Needs",
+      "class": "individual",
+      "link": [],
+      "remove": []
+    }
+  ],
+  "purge": [],
+  "hooks": [],
+  "overrides": [
+    {
+      "path": "SkyrimPrefs.ini",
+      "root": "install_path",
+      "action": "restore"
+    }
+  ],
+  "no_changes": false
+}

@@ -290,16 +290,21 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   mod ships, such as a stock game INI, as `lmm deploy` does - the game's
   own file is kept in lmm's originals store first. An override the new
   profile doesn't set goes back: the game's original returns, or a file
-  the override created is removed. A file you changed after lmm wrote the
-  override is left as it is, with a warning, and its original stays kept.
-  Both plans list every file the overrides change, mod files (#630)
-  included: under "Will change N file(s) for the profile's overrides" in
-  the terminal (write, rewrite or take the override away), as the new
-  `overrides` list in the `--dry-run --json` plan (`path`, `root`,
-  `action`: `place`, `update` or `restore`, and the mod for a mod's own
-  file), and in the confirm dialog's **Profile overrides** section. A
-  switch or apply whose only changes are overrides is no longer
-  `no_changes: true`: it asks to confirm, and `lmm profile apply` no
+  the override created is removed. `lmm deploy` (and the web UI's Deploy)
+  now does the same for an override taken out of the profile, where it
+  used to leave the override in place. A file you changed after lmm wrote
+  the override is left as it is, with a warning, and its original stays
+  kept. The switch and apply plans list every file the overrides change,
+  mod files (#630) included, and the deploy plan lists the game files its
+  overrides change: under "Will change N file(s) for the profile's
+  overrides" in the terminal (write, rewrite or take the override away),
+  as the new `overrides` list in the `--dry-run --json` plan (`path`,
+  `root`, `action`: `place`, `update` or `restore`, and the mod for a
+  mod's own file), and in the confirm dialog's **Profile overrides**
+  section. A switch or apply whose only changes are overrides is no longer
+  `no_changes: true`: **`lmm profile switch` to a profile that differs
+  only in its overrides now asks "Proceed?"** (pass `--yes` to skip it),
+  where it used to switch without asking, and `lmm profile apply` no
   longer says "System already matches" when an override is out of date.
   Under the `copy` link method, an override deleted from the profile by
   hand is now taken away by the next apply too (#630's gap): lmm remembers

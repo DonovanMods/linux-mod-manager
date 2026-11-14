@@ -81,3 +81,23 @@ func TestFlowGameOverrides_SwitchRestoresAndApplyPlaces(t *testing.T) {
 	assert.True(t, noChanges, "the game matches the profile now")
 	assert.Empty(t, overrides)
 }
+
+// Owner ruling on #631: a deploy job takes a dropped game-file override
+// away too, and the deploy plan the SPA renders lists it.
+func TestFlowGameOverrides_DeployRestoresADroppedOverride(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	ini := filepath.Join(game.InstallPath, "Engine.ini")
+	require.NoError(t, os.WriteFile(ini, []byte("stock"), 0o644))
+	setFlowOverrides(t, svc, game.ID, "default", map[string][]byte{"Engine.ini": []byte("tweaked")})
+	j := runFlow(t, s, game, "deploy", `{}`, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	require.Equal(t, "tweaked", readFile(t, ini))
+
+	setFlowOverrides(t, svc, game.ID, "default", nil)
+	id, raw := planFlow(t, s, game, "deploy", `{}`)
+	overrides, _ := planOverrides(t, raw)
+	assert.Equal(t, []core.OverrideChange{{Path: "Engine.ini", Root: domain.RootInstallPath, Action: core.OverrideRestore}}, overrides)
+	j = startFlowJob(t, s, id, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	assert.Equal(t, "stock", readFile(t, ini), "the deploy put the game's own file back")
+}
