@@ -34,6 +34,9 @@ var detailsCoverage = map[string]string{
 	// #621: a collection needing features this lmm cannot import - the
 	// missing features, the items raising each, and the supported set.
 	"core.CollectionUnsupportedError": "TestReportError_JSON_CollectionUnsupportedError",
+	// #613: an update refused for what its origin now serves - another
+	// collection, or an older version - with both identities as data.
+	"core.CollectionUpdateMismatchError": "TestReportError_JSON_CollectionUpdateMismatchError",
 	// #530: update-from-file's two refusals - the advertised and matched
 	// files, and the archive that needs a version - as data.
 	"core.ArchiveMismatchError":        "TestReportError_JSON_ArchiveMismatchError",

@@ -231,10 +231,27 @@ Use this if the profile got out of sync, or to migrate from pre-profile installs
 If no name is given, uses the current/default profile. Prompts for
 confirmation before making any changes; pass -y/--yes to skip the prompt.
 
+With --collection, the sync updates a collection profile from its origin
+instead: a profile imported from an https address fetches it again and
+updates when the document is the same collection (its id) at a newer
+version; one imported from a NexusMods collection updates to its newest
+revision. The plan lists the mods the new version adds, the ones whose pin
+it moves (a mod the collection brought in follows it, locked or not), the
+ones it no longer lists, and conflicts: mods you locked or unlocked by hand
+that it changes. A mod the new version drops is kept, as your own, unless
+you name it with --remove (or pass --remove-obsolete); a conflict keeps
+your version unless you name it with --override (or pass
+--override-conflicts). The new version passes the same checks an import
+does: features this lmm lacks refuse the update, its hooks are listed and
+never applied, and overrides that are not text config files are held back
+without --allow-any-overrides. --dry-run --json prints the plan.
+
 Examples:
   lmm profile sync --game skyrim-se
   lmm profile sync survival --game skyrim-se
-  lmm profile sync survival --game skyrim-se --yes`,
+  lmm profile sync survival --game skyrim-se --yes
+  lmm profile sync survival --game skyrim-se --collection --dry-run
+  lmm profile sync survival --game skyrim-se --collection --remove-obsolete --override 3863`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runProfileSync,
 }
@@ -1361,6 +1378,17 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 }
 
 func runProfileSync(cmd *cobra.Command, args []string) error {
+	// #613: --collection is the collection update; its flags mean nothing
+	// to the ordinary sync, which is unchanged.
+	if profileSyncCollection {
+		return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+			return doCollectionUpdate(ctx, service, game, args)
+		})
+	}
+	if used := collectionSyncFlagsUsed(); len(used) > 0 {
+		slices.Sort(used)
+		return fmt.Errorf("%s update a collection profile; use them with --collection", strings.Join(used, ", "))
+	}
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
 		return doProfileSync(ctx, service, game, args)
 	})
