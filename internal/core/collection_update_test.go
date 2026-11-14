@@ -451,7 +451,8 @@ func TestCollectionUpdate_GatesTheNewDocument(t *testing.T) {
 	f.importURL(t, urlDocument(t, "coll-1", 1, nil))
 	f.serve(urlDocument(t, "coll-1", 2, func(doc *domain.CollectionDocument) {
 		versionTwo(doc)
-		doc.Requires = []string{"patches"}
+		// A feature no lmm supports yet (#610 made `patches` one it does).
+		doc.Requires = []string{"file_overrides"}
 		doc.Hooks = domain.GameHooks{Install: domain.HookConfig{AfterAll: "/usr/bin/false"}}
 		doc.HooksExplicit = domain.GameHooksExplicit{Install: domain.HookExplicitFlags{AfterAll: true}}
 		doc.Overrides = map[string]string{"doorstop_config.ini": "[General]\nenabled=true\n", "Config/Game.ini": "[A]\nb=1\n"}
@@ -459,7 +460,7 @@ func TestCollectionUpdate_GatesTheNewDocument(t *testing.T) {
 
 	plan := f.planUpdate(t)
 	require.Len(t, plan.Unsupported, 1)
-	assert.Equal(t, "patches", plan.Unsupported[0].Feature)
+	assert.Equal(t, "file_overrides", plan.Unsupported[0].Feature)
 	require.Len(t, plan.Hooks, 1, "the new document's hooks are listed")
 	assert.Equal(t, []string{"Config/Game.ini", "doorstop_config.ini"}, plan.OverridesAdded)
 	require.Len(t, plan.RestrictedOverrides, 1)

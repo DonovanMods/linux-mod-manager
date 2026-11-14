@@ -149,26 +149,30 @@ func notesContain(c *core.ConvertedCollection, sub string) bool {
 }
 
 // The Cyberpunk sample: every item pinned and locked, FOMOD replayed, its
-// 27 rules all among members; refused for the exact file lists (C5) and the
-// archive load order (C9) - and for nothing else.
+// 27 rules all among members, its 11 exact file lists carried (C5, #610);
+// refused for the archive load order (C9) on a game without the adapter -
+// and for nothing else.
 func TestNexusCollection_Cyberpunk(t *testing.T) {
 	game := &domain.Game{ID: "cp2077", Name: "Cyberpunk 2077", InstallPath: t.TempDir(), ModPath: t.TempDir(),
 		SourceIDs: map[string]string{"nexusmods": "cyberpunk2077"}}
 	c := convertNexusFixture(t, game, "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe@484", "iszwwe", 484,
 		"revision-cyberpunk2077-iszwwe-484.json", "cyberpunk2077-iszwwe-484.json", core.CollectionConvertOptions{})
 
-	assert.Equal(t, []string{core.CollectionFeatureFileList, "file_load_order:cyberpunk2077-archive"}, unsupportedNames(c))
+	assert.Equal(t, []string{"file_load_order:cyberpunk2077-archive"}, unsupportedNames(c))
 	assert.Equal(t, 484, c.Revision)
 	doc := c.Document
 	assert.Equal(t, "nexusmods:iszwwe", doc.Info.ID)
 	assert.Equal(t, &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "iszwwe", Revision: 484,
 		URL: "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe", Author: "curator"}, doc.Info.Origin)
-	assert.Equal(t, []string{core.CollectionFeatureFomod}, doc.Requires)
+	assert.Equal(t, []string{core.CollectionFeatureFileList, core.CollectionFeatureFomod}, doc.Requires)
 	require.Len(t, c.Items, 364)
 
-	var installer, fileIDs, locked int
+	var installer, fileIDs, locked, lists int
 	for _, it := range doc.Items {
 		fileIDs += len(it.Ref.FileIDs)
+		if !it.Ref.FileList.IsZero() {
+			lists++
+		}
 		if it.Ref.Locked {
 			locked++
 		}
@@ -178,7 +182,8 @@ func TestNexusCollection_Cyberpunk(t *testing.T) {
 	}
 	assert.Equal(t, 1, installer)
 	assert.Equal(t, len(doc.Items), locked, "every item is exact")
-	assert.Equal(t, 364-11, fileIDs, "the 11 file-list items are unsupported; every other file is pinned")
+	assert.Equal(t, 364, fileIDs, "every file is pinned, the 11 file-list items' included")
+	assert.Equal(t, 11, lists, "each file-list item records its list, keyed by its file")
 	assert.False(t, notesContain(c, "not in this collection"), "every rule names members: %v", c.Notes)
 
 	var archived bool
@@ -192,15 +197,15 @@ func TestNexusCollection_Cyberpunk(t *testing.T) {
 
 // #620: the same sample for a game on the cyberpunk2077 adapter - as the
 // Steam catalog sets Cyberpunk 2077 up - imports its archive load order
-// into the profile's load_orders: list, and is refused only for the exact
-// file lists (C5).
+// into the profile's load_orders: list, and with its exact file lists (C5)
+// imports whole.
 func TestNexusCollection_CyberpunkArchiveOrder(t *testing.T) {
 	game := &domain.Game{ID: "cp2077", Name: "Cyberpunk 2077", InstallPath: t.TempDir(), ModPath: t.TempDir(),
 		SourceIDs: map[string]string{"nexusmods": "cyberpunk2077"}, Adapter: "cyberpunk2077"}
 	c := convertNexusFixture(t, game, "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe@484", "iszwwe", 484,
 		"revision-cyberpunk2077-iszwwe-484.json", "cyberpunk2077-iszwwe-484.json", core.CollectionConvertOptions{})
 
-	assert.Equal(t, []string{core.CollectionFeatureFileList}, unsupportedNames(c))
+	assert.Empty(t, unsupportedNames(c), "the owner's first sample imports")
 	assert.Contains(t, c.Features, "file_load_order:cyberpunk2077-archive")
 	assert.Equal(t, []string{
 		"! anygoodname_cp77_story_quest_fixes.archive",
@@ -282,9 +287,12 @@ func TestNexusCollection_SurveyShapes(t *testing.T) {
 	sdv := &domain.Game{ID: "sdv", Name: "Stardew Valley", InstallPath: t.TempDir(), ModPath: t.TempDir(),
 		SourceIDs: map[string]string{"nexusmods": "stardewvalley"}}
 	c = convertNexusFixture(t, sdv, "tckf0m", "tckf0m", 114, "", "stardewvalley-tckf0m-114.json", core.CollectionConvertOptions{})
+	// #610: the recorded recipe keeps no bundled/ or patches/ payloads, so
+	// the bundled item and the patches are refused for what is missing -
+	// never converted with their files gone.
 	got := unsupportedNames(c)
 	assert.Contains(t, got, core.CollectionFeatureBundled)
-	assert.Contains(t, got, core.CollectionFeaturePatches)
+	assert.Contains(t, got, core.CollectionFeatureManifestKeyPrefix+"mods.patches")
 	assert.NotContains(t, got, "mod_type:SMAPI", "SMAPI is a prerequisite step, not a mod type to route (#635)")
 	var smapi *core.ConvertedCollectionItem
 	for i := range c.Items {
