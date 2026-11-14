@@ -238,7 +238,18 @@ func TestNexusCollection_SurveyShapes(t *testing.T) {
 	got := unsupportedNames(c)
 	assert.Contains(t, got, core.CollectionFeatureBundled)
 	assert.Contains(t, got, core.CollectionFeaturePatches)
-	assert.Contains(t, got, "mod_type:SMAPI", "no adapter routes SMAPI's type yet")
+	assert.NotContains(t, got, "mod_type:SMAPI", "SMAPI is a prerequisite step, not a mod type to route (#635)")
+	var smapi *core.ConvertedCollectionItem
+	for i := range c.Items {
+		if c.Items[i].ModID == "2400" {
+			smapi = &c.Items[i]
+		}
+	}
+	require.NotNil(t, smapi, "the recorded recipe lists SMAPI")
+	assert.Equal(t, core.CollectionItemExternal, smapi.State)
+	assert.Contains(t, smapi.Instructions, "install on Linux.sh")
+	assert.Contains(t, smapi.URL, "https://www.nexusmods.com/stardewvalley/mods/2400")
+	require.NotEmpty(t, c.Document.External)
 
 	c = convertNexusFixture(t, fo4, "pmmttm", "pmmttm", 2, "", "fallout4-pmmttm-2.json", core.CollectionConvertOptions{})
 	assert.Empty(t, c.Document.External, "the optional F4SE item is off by default")

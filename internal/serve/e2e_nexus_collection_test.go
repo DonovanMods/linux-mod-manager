@@ -226,3 +226,38 @@ func TestE2E_NexusCollection_PremiumAccountInstalls(t *testing.T) {
 	assert.Equal(t, domain.UpdateAuto, row.UpdatePolicy, "the latest item follows its newest file")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// e2eSMAPIRecipe is a Stardew Valley collection whose SMAPI item states
+// Vortex's "SMAPI" mod type (#635).
+const e2eSMAPIRecipe = `{"Name": "Three Mods", "Mods": [
+	{"Name": "SMAPI - Stardew Modding API", "Version": "4.0", "SourceType": "nexus", "ModID": "2400", "FileID": "240", "UpdatePolicy": "exact", "ModType": "SMAPI"},
+	{"Name": "Ten", "Version": "1.0", "SourceType": "nexus", "ModID": "10", "FileID": "100", "UpdatePolicy": "exact"}]}`
+
+// #635, owner ruling: the plan view lists a Stardew Valley collection's SMAPI
+// as a step to take by hand - its page and SMAPI's own installer - and
+// refuses nothing for it.
+func TestE2E_NexusCollection_SMAPIIsAPrerequisiteStep(t *testing.T) {
+	f := newE2EFixture(t)
+	f.Svc.RegisterSource(e2eNexusSource{newFakeSource("nexusmods")})
+	f.Game.SourceIDs["nexusmods"] = "stardewvalley"
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+	seedE2ENexusRecipe(t, f, "smapi", e2eSMAPIRecipe)
+
+	var item, href string
+	var unsupported bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		openNexusImport("smapi"),
+		textContent(`[data-item="2400:240"]`, &item),
+		chromedp.Evaluate(`document.querySelector('[data-item="2400:240"] a')?.getAttribute("href") ?? ""`, &href),
+		chromedp.Evaluate(`document.querySelector('[data-testid="collection-unsupported"]') !== null`, &unsupported),
+	)
+	assert.Contains(t, item, "get by hand")
+	assert.Contains(t, item, "where to get it")
+	assert.Contains(t, item, "own installer")
+	assert.Contains(t, item, "install on Linux.sh")
+	assert.NotContains(t, item, "type SMAPI", "the type is the prerequisite's, not a deploy route")
+	assert.Equal(t, "https://www.nexusmods.com/stardewvalley/mods/2400", href)
+	assert.False(t, unsupported, "nothing blocks the import")
+	assert.Empty(t, f.BrowserErrors())
+}

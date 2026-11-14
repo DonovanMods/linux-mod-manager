@@ -349,6 +349,22 @@ To lay one out again, uninstall it (from every profile that has it) and
 install it again. When the game has mods installed, Mission Control asks
 before it switches, and `lmm game edit` prints the same warning.
 
+## The Witcher 3 and Baldur's Gate 3
+
+The Witcher 3 uses the `witcher3` adapter, and Baldur's Gate 3 the
+`baldurs-gate-3` adapter; `lmm game detect` sets them when it adds the
+game from Steam. They change nothing about how a mod you install is laid
+out. They tell lmm where the mod types a NexusMods collection gives its
+mods are deployed (see
+[Importing a NexusMods collection](profiles.md#importing-a-nexusmods-collection)),
+so such a collection can be imported. A game you added before keeps its
+adapter; Mission Control and `lmm verify` suggest the new one, and in the
+terminal:
+
+```bash
+lmm game edit witcher3 --adapter witcher3
+```
+
 ## Telling lmm which game a copy is
 
 lmm recognises a game from Steam by itself. A copy from GOG or Epic, added
