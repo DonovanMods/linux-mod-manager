@@ -173,10 +173,10 @@ An https address is downloaded (at most 64 MiB for a .lmmc, 4 MiB for a
 YAML document; a redirect to plain http is refused) and imported the same
 way, with one difference: hooks are never imported from an address, even
 with --with-hooks; the plan lists them and the result counts them. The
-address is recorded as the profile's collection origin, without any
-user:password part; lmm shows it without its query string. An older
-profile export from an address imports into --game, else the game its
-game_id names.
+address is recorded in the profile file as its collection origin, without
+any user:password part; everywhere else, lmm shows it without its query
+string. An older profile export from an address imports into --game, else
+the game its game_id names, and unlike one from a file it takes --as.
 
 Whatever the file's format, two things are held back until you ask, and
 both are listed before anything is written. Hooks are scripts lmm would
@@ -445,7 +445,7 @@ func doProfileCreate(ctx context.Context, service *core.Service, game *domain.Ga
 
 	// Ruling 15: the ProfileResult document - the profile as created.
 	if jsonOutput {
-		return emitJSON(&core.ProfileResult{Profile: *profile})
+		return emitJSON(core.NewProfileResult(*profile))
 	}
 
 	fmt.Printf("✓ Created profile: %s\n", profile.Name)
@@ -483,7 +483,7 @@ func doProfileDelete(ctx context.Context, service *core.Service, game *domain.Ga
 	// Ruling 15: the ProfileResult document - the profile as it stood
 	// immediately before the delete (see core.ProfileResult).
 	if jsonOutput {
-		return emitJSON(&core.ProfileResult{Profile: deleted})
+		return emitJSON(core.NewProfileResult(deleted))
 	}
 
 	fmt.Printf("✓ Deleted profile: %s\n", name)
@@ -1582,7 +1582,7 @@ func doProfileReorder(ctx context.Context, service *core.Service, game *domain.G
 		// Ruling 15: the load-order READOUT is the same profile document a
 		// reorder emits - profile.Mods IS the load order, in order.
 		if jsonOutput {
-			return emitJSON(&core.ProfileResult{Profile: *profile})
+			return emitJSON(core.NewProfileResult(*profile))
 		}
 		// Show current load order
 		if len(profile.Mods) == 0 {
@@ -1634,7 +1634,7 @@ func doProfileReorder(ctx context.Context, service *core.Service, game *domain.G
 		if err != nil {
 			return fmt.Errorf("loading profile: %w", err)
 		}
-		return emitJSON(&core.ProfileResult{Profile: *profile})
+		return emitJSON(core.NewProfileResult(*profile))
 	}
 
 	fmt.Printf("✓ Load order updated for profile %s.\n", profileName)

@@ -146,7 +146,8 @@ func (s *Service) fetchCollectionDocument(ctx context.Context, u *url.URL) ([]by
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrCollectionURL, shown, err)
+		// The error quotes the raw address; only the redacted one is shown.
+		return nil, fmt.Errorf("%w: %s cannot be requested", ErrCollectionURL, shown)
 	}
 	client := *s.downloader.httpClient
 	base := client.CheckRedirect
@@ -154,6 +155,9 @@ func (s *Service) fetchCollectionDocument(ctx context.Context, u *url.URL) ([]by
 		if next.URL.Scheme != "https" {
 			return errCollectionRedirectNotHTTPS
 		}
+		// Go sets Referer to the previous address, query included: a
+		// ?token= would reach whatever host the redirect names.
+		next.Header.Del("Referer")
 		if len(via) >= maxCollectionRedirects {
 			return fmt.Errorf("stopped after %d redirects", maxCollectionRedirects)
 		}
@@ -173,13 +177,15 @@ func (s *Service) fetchCollectionDocument(ctx context.Context, u *url.URL) ([]by
 			if where == "" {
 				where = shown
 			}
-			return nil, fmt.Errorf("%w: requesting %s: %w", ErrCollectionFetch, where, uerr.Err)
+			return nil, fmt.Errorf("%w: requesting %s: %w", ErrCollectionFetch, where, safeCause(uerr.Err))
 		}
-		return nil, fmt.Errorf("%w: requesting %s: %w", ErrCollectionFetch, shown, err)
+		return nil, fmt.Errorf("%w: requesting %s: %w", ErrCollectionFetch, shown, safeCause(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: %s answered HTTP %s", ErrCollectionFetch, shown, statusText(resp))
+		// The status code and Go's own text for it, never the server's
+		// reason phrase, which could carry terminal escapes.
+		return nil, fmt.Errorf("%w: %s answered HTTP %d %s", ErrCollectionFetch, shown, resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 	if resp.ContentLength > maxCollectionContainer {
 		return nil, fmt.Errorf("%w: %s is %d bytes, over the %d-byte limit for a collection", ErrInvalidCollection, shown, resp.ContentLength, maxCollectionContainer)
@@ -189,7 +195,7 @@ func (s *Service) fetchCollectionDocument(ctx context.Context, u *url.URL) ([]by
 	head := make([]byte, len(zipMagic))
 	n, err := io.ReadFull(resp.Body, head)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return nil, fmt.Errorf("%w: reading %s: %w", ErrCollectionFetch, shown, err)
+		return nil, fmt.Errorf("%w: reading %s: %w", ErrCollectionFetch, shown, safeCause(err))
 	}
 	head = head[:n]
 	limit, what := int64(maxCollectionDocument), "document"
@@ -201,12 +207,23 @@ func (s *Service) fetchCollectionDocument(ctx context.Context, u *url.URL) ([]by
 	}
 	data, err := io.ReadAll(io.LimitReader(io.MultiReader(bytes.NewReader(head), resp.Body), limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("%w: reading %s: %w", ErrCollectionFetch, shown, err)
+		return nil, fmt.Errorf("%w: reading %s: %w", ErrCollectionFetch, shown, safeCause(err))
 	}
 	if int64(len(data)) > limit {
 		return nil, fmt.Errorf("%w: the %s at %s is over the %d-byte limit", ErrInvalidCollection, what, shown, limit)
 	}
 	return data, nil
+}
+
+// safeCause is err with control and formatting characters cleaned from
+// its text (domain.SanitizeLine), still unwrapping to err: a transport
+// error can quote what the far end sent, and the message reaches a
+// terminal.
+func safeCause(err error) error {
+	if err == nil || !hasUnsafeRunes(err.Error()) {
+		return err
+	}
+	return &redactedError{msg: domain.SanitizeLine(err.Error()), err: err}
 }
 
 // readCollectionData decodes data, a collection import's bytes: a `.lmmc`

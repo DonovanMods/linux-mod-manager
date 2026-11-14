@@ -331,3 +331,77 @@ func TestCollectionImport_ADocumentCannotPlantAnImportURL(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, &domain.CollectionOrigin{Author: "someone"}, saved.Collection.Origin, "only lmm records where it imported from")
 }
+
+func TestCollectionURLImport_ARedirectCarriesNoRefererOrCredentials(t *testing.T) {
+	data := exportedContainer(t)
+	var referer, auth atomic.Value
+	other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		referer.Store(r.Header.Get("Referer"))
+		auth.Store(r.Header.Get("Authorization"))
+		_, _ = w.Write(data)
+	}))
+	t.Cleanup(other.Close)
+	// The same test certificate serves every httptest TLS server, so one
+	// client trusts both: the target is another server (another port).
+	target := other.URL + "/coop.lmmc"
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target, http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	svc, _ := urlRecipient(t, srv)
+	u, err := url.Parse(srv.URL + "/moved?token=s3cret")
+	require.NoError(t, err)
+	u.User = url.UserPassword("alice", "hunter2")
+
+	_, err = svc.PlanCollectionImportURL(context.Background(), core.CollectionURLImportRequest{URL: u.String()})
+	require.NoError(t, err)
+	require.Equal(t, "", referer.Load(), "the redirect target never learns the address, query and all")
+	require.Equal(t, "", auth.Load(), "nor the credentials typed for the first host")
+}
+
+func TestCollectionURLImport_AStatusLineCannotWriteToTheTerminal(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, buf, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = buf.WriteString("HTTP/1.1 404 \x1b[31mRED\x1b[0m\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+		_ = buf.Flush()
+	}))
+	t.Cleanup(srv.Close)
+	svc, _ := urlRecipient(t, srv)
+	_, err := svc.PlanCollectionImportURL(context.Background(), core.CollectionURLImportRequest{URL: srv.URL + "/c.lmmc"})
+	require.Error(t, err)
+	require.True(t, core.IsCollectionFetchFailed(err))
+	require.Contains(t, err.Error(), "HTTP 404 Not Found")
+	require.NotContains(t, err.Error(), "\x1b")
+	require.NotContains(t, err.Error(), "RED", "the server's own reason phrase is never shown")
+}
+
+func TestCollectionURLImport_JSONOutputsRedactTheAddress(t *testing.T) {
+	data := exportedContainer(t)
+	srv := serveBytes(t, data)
+	svc, game := urlRecipient(t, srv)
+	ctx := context.Background()
+	link := srv.URL + "/coop.lmmc?token=s3cret"
+	plan, err := svc.PlanCollectionImportURL(ctx, core.CollectionURLImportRequest{URL: link})
+	require.NoError(t, err)
+	_, err = svc.ApplyCollectionImport(ctx, game, plan, core.ProfileImportOptions{NoInstall: true}, nil)
+	require.NoError(t, err)
+
+	renamed, err := svc.RenameProfile(ctx, "cyber", "coop", "coop-2")
+	require.NoError(t, err)
+	require.Equal(t, srv.URL+"/coop.lmmc?…", renamed.Profile.Collection.Origin.ImportURL, "a ProfileResult shows the address redacted")
+	saved, err := config.LoadProfile(svc.ConfigDir(), "cyber", "coop-2")
+	require.NoError(t, err)
+	require.Equal(t, link, saved.Collection.Origin.ImportURL, "the profile file keeps it whole")
+
+	info, err := svc.RecordCollectionIdentity(ctx, "cyber", "coop-2", core.CollectionExportOptions{Version: 4})
+	require.NoError(t, err)
+	require.Equal(t, srv.URL+"/coop.lmmc?…", info.Origin.ImportURL, "so does the recorded identity")
+	saved, err = config.LoadProfile(svc.ConfigDir(), "cyber", "coop-2")
+	require.NoError(t, err)
+	require.Equal(t, 4, saved.Collection.Version)
+	require.Equal(t, link, saved.Collection.Origin.ImportURL, "recording the identity keeps the whole address")
+}

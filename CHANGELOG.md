@@ -19,9 +19,12 @@ https://…` (in the web UI, the Profiles window's **From a URL** field)
   `--with-hooks`: the plan lists them and the result counts them as held
   back. The profile records the address as its collection origin
   (`origin.import_url`), for a later collection update to fetch again; a
-  `user:password@` part is used for the download and never saved, lmm shows
-  the address without its query string, and no export carries it. An older
-  export from a link imports into `--game`, or the game its `game_id` names.
+  `user:password@` part is used for the download and never saved. Only the
+  profile file keeps the whole address: the plan, every `--json` document,
+  the web UI and every message show it without its query string, a
+  redirect never passes it on as a `Referer`, and no export carries it. An
+  older export from a link imports into `--game`, or the game its
+  `game_id` names, and takes `--as`.
 
 - **More NexusMods collections import: Starfield, The Witcher 3, Baldur's
   Gate 3 and Stardew Valley mod types (#635).** A collection's mods carry

@@ -109,7 +109,7 @@ func (s *Service) DuplicateProfile(ctx context.Context, gameID, source, newName 
 	if err != nil {
 		return nil, err
 	}
-	return &ProfileResult{Profile: dup}, nil
+	return NewProfileResult(dup), nil
 }
 
 // undoDuplicate is DuplicateProfile's compensation for a row that would not

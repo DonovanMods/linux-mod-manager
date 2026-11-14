@@ -35,10 +35,10 @@ An https address is downloaded (at most 64 MiB for a .lmmc, 4 MiB for a
 YAML document; a redirect to plain http is refused) and imported the same
 way, with one difference: hooks are never imported from an address, even
 with --with-hooks; the plan lists them and the result counts them. The
-address is recorded as the profile's collection origin, without any
-user:password part; lmm shows it without its query string. An older
-profile export from an address imports into --game, else the game its
-game_id names.
+address is recorded in the profile file as its collection origin, without
+any user:password part; everywhere else, lmm shows it without its query
+string. An older profile export from an address imports into --game, else
+the game its game_id names, and unlike one from a file it takes --as.
 
 .PP
 Whatever the file's format, two things are held back until you ask, and

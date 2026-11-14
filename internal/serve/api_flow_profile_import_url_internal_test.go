@@ -100,3 +100,34 @@ func TestFlowCollectionURL_Refusals(t *testing.T) {
 		assert.NotContains(t, rec.Body.String(), "s3cret", name)
 	}
 }
+
+// TestFlowCollectionURL_JSONOutputsRedactTheAddress is #622 review S3:
+// the profile file keeps a URL import's whole address, and every JSON
+// answer - a ProfileResult route, the collection identity route - shows
+// it with its query redacted.
+func TestFlowCollectionURL_JSONOutputsRedactTheAddress(t *testing.T) {
+	srv, s, svc, game := collectionURLServer(t, sharedCollectionDoc)
+	link := srv.URL + "/shared.yaml?token=s3cret"
+	j := runFlow(t, s, game, "profile_import", urlPlanBody(t, link, "mine"), "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+
+	rec := doAPI(s, http.MethodPost, scoped("/api/v1/profiles/mine/rename", game), `{"name":"ours"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "s3cret")
+	var result core.ProfileResult
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
+	assert.Equal(t, srv.URL+"/shared.yaml?…", result.Profile.Collection.Origin.ImportURL)
+
+	rec = doAPI(s, http.MethodPost, scoped("/api/v1/profiles/ours/collection", game), "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "s3cret")
+	var info domain.CollectionInfo
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &info))
+	assert.Equal(t, srv.URL+"/shared.yaml?…", info.Origin.ImportURL)
+	assert.NotEmpty(t, info.ID, "the identity was recorded")
+
+	saved, err := config.LoadProfile(svc.ConfigDir(), game.ID, "ours")
+	require.NoError(t, err)
+	assert.Equal(t, link, saved.Collection.Origin.ImportURL, "only the profile file keeps it whole")
+	assert.Equal(t, info.ID, saved.Collection.ID)
+}

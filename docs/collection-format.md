@@ -154,7 +154,8 @@ collection from an address instead of a file:
   most 4 MiB), version 1 or version 0. Both caps hold as the body arrives,
   not after it is downloaded. A body that is neither a collection nor a
   profile export (a web page, say) is refused. A version-0 export imports
-  into `--game`, else the configured game its `game_id` names.
+  into `--game`, else the configured game its `game_id` names, and takes
+  `--as` as a collection does.
 - **Hooks are never imported from a URL**, even with `--with-hooks`, which
   is ignored rather than refused. The plan lists every hook and says so
   (`hooks_importable: false`), and the result counts them
@@ -180,9 +181,14 @@ collection from an address instead of a file:
   URL import, ignores it in a document, and leaves it out of every export
   (`lmm profile export`, `-o`, `--json`, and the web UI's) and of a
   duplicated profile.
-- **What lmm shows.** Wherever lmm shows or logs the address (the plan,
-  `--json`, messages, errors), it shows it without credentials, and with
-  any query string replaced by `?…`.
+- **What lmm shows.** The address is unredacted only in the profile file
+  (and lmm's own snapshots of it). Everywhere lmm shows or logs it - the
+  plan, every `--json` document (the profile commands' `profile` result
+  included), every `/api/v1` answer (the profile routes and
+  `POST /api/v1/profiles/{name}/collection` included), messages, errors and
+  logs - it shows it without credentials, and with any query string
+  replaced by `?…`. A redirect never carries the address on as a
+  `Referer`, and an error never quotes the server's own status text.
 
 ## `requires` and the feature gate
 

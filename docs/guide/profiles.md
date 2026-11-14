@@ -262,12 +262,16 @@ An import from a link differs from one from a file in two ways:
   download the file and import it with `--with-hooks`.
 - **The profile remembers the address**, so a later update of the
   collection can fetch it again. A `user:password@` part of the address is
-  used for the download and never saved, and lmm shows the address without
-  anything after a `?`, in case that holds a token.
+  used for the download and never saved. Only the profile file keeps the
+  whole address; everywhere else (the plan, `--json` output, the browser,
+  messages) lmm shows it without anything after a `?`, in case that holds
+  a token.
 
 The overrides rule is the same as for a file. An older export imports into
 the game you name with `--game`, or else the game its `game_id` names (in
-the browser, the selected game).
+the browser, the selected game). Unlike an older export from a file, one
+from a link takes `--as` (in the browser, the **Profile name** field), since
+it imports the way a collection does.
 
 A Steam Workshop **collection** can be imported as a profile too, by pasting
 its link into the Profiles window, or with

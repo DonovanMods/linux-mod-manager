@@ -150,15 +150,22 @@ func (s *Service) ExportCollection(ctx context.Context, gameID, profileName stri
 // only when something changed, under the op lock with the text-preserving
 // profile save. It is the write half of ExportCollection, for a caller
 // whose export must not write (`lmm serve`'s GET export, #621 review S8).
+// The identity it returns is for showing: the address a URL import
+// recorded (origin.import_url, #622) is redacted, as in every JSON output;
+// the profile file keeps it whole.
 func (s *Service) RecordCollectionIdentity(ctx context.Context, gameID, profileName string, opts CollectionExportOptions) (*domain.CollectionInfo, error) {
 	profile, err := config.LoadProfile(s.configDir, gameID, profileName)
 	if err != nil {
 		return nil, err
 	}
 	if want := collectionInfoForExport(profile.Collection, opts); want.ID != "" && want.Equal(profile.Collection) {
-		return &want, nil
+		return redactedCollection(&want), nil
 	}
-	return s.recordCollectionInfo(ctx, gameID, profileName, opts)
+	info, err := s.recordCollectionInfo(ctx, gameID, profileName, opts)
+	if err != nil {
+		return nil, err
+	}
+	return redactedCollection(info), nil
 }
 
 // recordCollectionInfo records the identity an export with opts publishes
