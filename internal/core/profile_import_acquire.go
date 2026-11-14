@@ -203,6 +203,7 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 			result.Warnings = append(result.Warnings, msg)
 			emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
 		}
+		s.writeImportPolicy(ctx, game, plan, profileName, st.key, row.SourceID, row.ID, scope, result, emit)
 		if cerr := s.recordImportedRef(ctx, pm, game.ID, profileName, modRef, fomodRecord{op: fomodKeep}, scope, result, emit); cerr != nil {
 			return cerr
 		}
@@ -244,6 +245,7 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 		fail(fmt.Sprintf("save failed: %v", err))
 		return nil
 	}
+	s.writeImportPolicy(ctx, game, plan, profileName, st.key, mod.SourceID, mod.ID, scope, result, emit)
 
 	// #372: the row exists now, so what was downloaded above finally has
 	// somewhere to record its checksum.
@@ -314,4 +316,21 @@ func (p *ImportPlan) updatePolicyFor(key string) domain.UpdatePolicy {
 		return domain.UpdateAuto
 	}
 	return domain.UpdateNotify
+}
+
+// writeImportPolicy sets key's row to the auto update policy when the plan
+// names it (ImportPlan.autoUpdate), inside the import's commit. The row
+// write above already carries it for a new row; an EXISTING row (a
+// re-import over a profile, --force) keeps its policy through the upsert,
+// which never moves one, so this says it explicitly. A failure is a
+// warning: the mod is installed either way.
+func (s *Service) writeImportPolicy(ctx context.Context, game *domain.Game, plan *ImportPlan, profileName, key, sourceID, modID string, scope Scope, result *ProfileImportResult, emit func(Event)) {
+	if !plan.autoUpdate[key] {
+		return
+	}
+	if err := s.setModUpdatePolicy(ctx, sourceID, modID, game.ID, profileName, domain.UpdateAuto); err != nil {
+		msg := fmt.Sprintf("could not set %s to update automatically: %v", key, err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
+	}
 }

@@ -382,7 +382,7 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 			continue
 		}
 
-		if (ref.Version != "" && im.Version != ref.Version) || fomodDrift(ref, im) {
+		if (ref.Version != "" && im.Version != ref.Version) || fomodDrift(ref, im) || im.ModType != ref.ModType {
 			// #96 convergence (and #614's: the profile records FOMOD choices
 			// whose tree is not the installed one): the profile names a different version than
 			// the installed row - reinstall at the profile's version

@@ -9,14 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Import a NexusMods collection (#607).** `lmm profile import
---nexus-collection <slug|slug@revision|URL>` (in the web UI, the Profiles
-  window's **NexusMods collection** field) reads a collection's list and its
-  install recipe, converts them into an lmm collection and imports it as a
-  new profile. The import is all or nothing while files are fetched: if any
-  item cannot be downloaded, nothing is written, the profile included; a
-  failure after that, while the fetched mods are installed, is reported as
-  an incomplete import. Each mod is pinned to the exact file the curator
+- **Import a NexusMods collection (#607).** The new
+  `lmm profile import --nexus-collection <slug|slug@revision|URL>` (in the
+  web UI, the Profiles window's **NexusMods collection** field) reads a
+  collection's list and its install recipe, converts them into an lmm
+  collection and imports it as a new profile. The import is all or nothing
+  while files are fetched: if any item cannot be downloaded, nothing is
+  written, the profile included; a failure after that, while the fetched
+  mods are installed, is reported as an incomplete import. Each mod is pinned to the exact file the curator
   chose, old and archived files included; an `exact` pin is locked, and a
   `latest` one installs the tested file and is set to update automatically.
   The curator's install phases and before/after rules order the profile (a

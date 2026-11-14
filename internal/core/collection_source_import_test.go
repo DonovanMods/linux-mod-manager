@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -230,6 +231,7 @@ func TestSourceCollectionImport_FreeAccountPlansManualDownloads(t *testing.T) {
 	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
 	require.NoError(t, err, "the profile is saved with every item pending")
 	assert.Equal(t, 0, result.Installed)
+	assert.Equal(t, 2, result.Skipped, "pending items count as skipped, as a --no-install import's do")
 	assert.Equal(t, 0, f.src.DownloadCount(), "nothing is downloaded")
 	saved, err := config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Three Mods")
 	require.NoError(t, err)
@@ -333,4 +335,39 @@ func TestApplySourceCollectionImport_ALapsedAccountIsOneRefusal(t *testing.T) {
 	assert.Contains(t, err.Error(), "plan the import again")
 	_, err = config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Three Mods")
 	assert.Error(t, err, "nothing was written")
+}
+
+// #607 C2b re-review B: a re-import over an existing row (--force) whose
+// cache is gone sets the row to auto too - the upsert never moves a policy,
+// so it is written explicitly - and a mod the profile already has at the
+// pinned file keeps the policy the user gave it, which the note does not
+// claim to have changed.
+func TestApplySourceCollectionImport_AutoPolicyOverExistingRows(t *testing.T) {
+	f := newSourceImportFixture(t, source.TierPremium)
+	ctx := context.Background()
+	_, err := f.svc.ApplyCollectionImport(ctx, f.game, f.plan(t, core.SourceCollectionImportRequest{}), core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	_, err = f.svc.SetModUpdatePolicy(ctx, "nexusmods", "11", "skyrim", "Three Mods", domain.UpdateNotify)
+	require.NoError(t, err)
+
+	plan := f.plan(t, core.SourceCollectionImportRequest{})
+	require.Len(t, plan.Installed, 2, "both are this profile's, at the pinned file")
+	result, err := f.svc.ApplyCollectionImport(ctx, f.game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
+	require.NoError(t, err)
+	row, err := f.svc.GetInstalledMod(ctx, "nexusmods", "11", "skyrim", "Three Mods")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdateNotify, row.UpdatePolicy, "an untouched row keeps the user's policy")
+	for _, n := range result.Notes {
+		assert.NotContains(t, n, "set to update automatically", "nothing was set, so nothing is claimed")
+	}
+
+	// Its cache gone, the row is reinstalled - and written as auto.
+	require.NoError(t, os.RemoveAll(filepath.Join(f.svc.GlobalCacheDir(), "skyrim", "nexusmods-11")))
+	plan = f.plan(t, core.SourceCollectionImportRequest{})
+	require.Len(t, plan.NeedsRedownload, 1)
+	_, err = f.svc.ApplyCollectionImport(ctx, f.game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
+	require.NoError(t, err)
+	row, err = f.svc.GetInstalledMod(ctx, "nexusmods", "11", "skyrim", "Three Mods")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdateAuto, row.UpdatePolicy)
 }

@@ -2463,6 +2463,7 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	recorded := s.recordedRef(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID)
 	fx := s.fomodInputFor(ctx, game, plan.Profile, recorded, mod.SourceID, mod.ID, opts.Fomod)
 	mod.ModType = statedType(recorded) // #607
+	st.mod.ModType = mod.ModType       // st holds its own copy, made above
 	// #615: a reconfigure asks about choices that fit, so the installer
 	// must be read again - never skipped for a warm entry.
 	fx.ask = opts.fomodReconfigure != "" && opts.fomodReconfigure == domain.ModKey(mod.SourceID, mod.ID) && !fx.answered

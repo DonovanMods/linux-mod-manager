@@ -157,7 +157,7 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 			variant = excluded.variant,
 			previous_variant = excluded.previous_variant,
 			previous_fomod = excluded.previous_fomod,
-			mod_type = CASE WHEN excluded.mod_type != '' THEN excluded.mod_type ELSE installed_mods.mod_type END
+			mod_type = excluded.mod_type
 	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, now, prevVersion, prevFileIDs, mod.LinkMethod, mod.AdoptedInPlace, mod.Summary, mod.SourceURL, mod.External, mod.ExternalPath, updatedAtValue(mod), categoryNameValue(mod), now, mod.Variant, mod.PreviousVariant, prevFomod, mod.ModType)
 	if err != nil {
 		return fmt.Errorf("saving installed mod: %w", err)
@@ -232,13 +232,13 @@ func (d *DB) RelinkInstalledMod(ctx context.Context, oldSourceID, oldModID strin
 		category_name = COALESCE(?, category_name),
 		last_updated_at = CASE WHEN version IS NOT ? THEN ? ELSE last_updated_at END,
 		variant = ?, previous_variant = ?, previous_fomod = ?,
-		mod_type = CASE WHEN ? != '' THEN ? ELSE mod_type END
+		mod_type = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?`,
 		mod.SourceID, mod.ID, mod.Name, mod.Version, mod.Author,
 		mod.Enabled, mod.Deployed, prevVersion, prevFileIDs,
 		mod.LinkMethod, mod.AdoptedInPlace, mod.Summary, mod.SourceURL,
 		mod.External, mod.ExternalPath, updatedAtValue(mod), categoryNameValue(mod),
-		mod.Version, formatTime(d.clock()), mod.Variant, mod.PreviousVariant, relinkPrevFomod, mod.ModType, mod.ModType,
+		mod.Version, formatTime(d.clock()), mod.Variant, mod.PreviousVariant, relinkPrevFomod, mod.ModType,
 		oldSourceID, oldModID, mod.GameID, mod.ProfileName)
 	if err != nil {
 		return fmt.Errorf("moving installed mod: %w", err)

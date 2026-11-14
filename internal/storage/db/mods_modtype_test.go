@@ -32,11 +32,11 @@ func TestSaveInstalledMod_RoundTripsModType(t *testing.T) {
 	require.NoError(t, database.SaveInstalledMod(context.Background(), row))
 	assert.Equal(t, "dinput", readModType(t, database))
 
-	// A re-save that does not state a type keeps the stored one, as a
-	// category name is kept: a flow that rebuilt the row from the source's
-	// metadata must not route the mod back to the mod_path.
+	// The row's type is what its writer states, an empty one included: a
+	// reference whose type was removed routes the mod by file again. Every
+	// core flow that writes a row stamps it from the profile's reference.
 	require.NoError(t, database.SaveInstalledMod(context.Background(), variantRow("")))
-	assert.Equal(t, "dinput", readModType(t, database))
+	assert.Empty(t, readModType(t, database))
 
 	again := variantRow("")
 	again.ModType = "enb"
@@ -50,6 +50,7 @@ func TestRelinkInstalledMod_CarriesModType(t *testing.T) {
 	row.ModType = "dinput"
 	require.NoError(t, database.SaveInstalledMod(context.Background(), row))
 	moved := variantRow("")
+	moved.ModType = "dinput"
 	require.NoError(t, database.RelinkInstalledMod(context.Background(), "nexusmods", "12345", moved))
 	assert.Equal(t, "dinput", readModType(t, database))
 }

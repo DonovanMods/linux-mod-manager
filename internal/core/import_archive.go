@@ -885,6 +885,9 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	}
 
 	step(ImportArchiveDeploying, "Deploying to game directory...")
+	// #607: the importer builds its own mod; the ref's stated type is the
+	// plan's, and the deploy and the row route by it.
+	result.Mod.ModType = plan.Mod.ModType
 	if err := installer.Install(ctx, game, result.Mod, profileName); err != nil {
 		return result, fmt.Errorf("deployment failed: %w", err)
 	}

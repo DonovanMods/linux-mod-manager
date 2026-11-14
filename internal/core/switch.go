@@ -333,7 +333,9 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		switch {
 		case !installed:
 			toInstall = append(toInstall, ref)
-		case (ref.Version != "" && row.Version != ref.Version) || fomodDrift(ref, row):
+		case (ref.Version != "" && row.Version != ref.Version) || fomodDrift(ref, row) || row.ModType != ref.ModType:
+			// #607: a row routed by another stated type than the target
+			// reference's is a drift too - reinstalled by the reference's.
 			// #96 convergence (and #614's FOMOD choices drift): the profile names a different version than
 			// the installed row - reinstall at the profile's version
 			// (downgrades included). ref is passed as-is: its own FileIDs
@@ -349,7 +351,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			if live != nil {
 				prior = *live
 			}
-			if prior.Version != ref.Version || fomodDrift(ref, &prior) {
+			if prior.Version != ref.Version || fomodDrift(ref, &prior) || prior.ModType != ref.ModType {
 				recordPrior(key, prior)
 			}
 		case !s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: row.SourceID, ModID: row.ID, Version: row.Version, Variant: row.Variant}):
@@ -387,7 +389,8 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			tr, hasTargetRow := targetInstalled[key]
 			// #614: another tree of the same version (other FOMOD
 			// choices) on disk is a drift too.
-			drifted := live != nil && (live.Version != row.Version || live.Variant != row.Variant)
+			// #607: so is a live copy routed by another stated type.
+			drifted := live != nil && (live.Version != row.Version || live.Variant != row.Variant || live.ModType != ref.ModType)
 			if !hasTargetRow || !tr.Enabled || !tr.Deployed || drifted {
 				toEnable = append(toEnable, *row)
 				if drifted {
@@ -551,9 +554,15 @@ func (s *Service) clearRowUnderProfile(ctx context.Context, gameID, profileName 
 // for Replace to read. Otherwise the entry is a plain Install - with a
 // missing old cache entry the old version's own files cannot be told apart,
 // the caveat doProfileApply shares.
-func (s *Service) switchReplacement(game *domain.Game, plan *SwitchPlan, key, version, variant string) (domain.InstalledMod, bool) {
+//
+// modType is the entry's stated mod type (#607): a live copy routed by
+// another type (the same version under another profile, deployed to the
+// game root where this one routes to Data/, or the other way round) is a
+// replacement too, so the old routing's files are undeployed rather than
+// left live beside the new ones.
+func (s *Service) switchReplacement(game *domain.Game, plan *SwitchPlan, key, version, variant, modType string) (domain.InstalledMod, bool) {
 	prior, ok := plan.PriorVersions[key]
-	if !ok || !prior.Deployed || (prior.Version == version && prior.Variant == variant) {
+	if !ok || !prior.Deployed || (prior.Version == version && prior.Variant == variant && prior.ModType == modType) {
 		return prior, false
 	}
 	return prior, s.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: prior.SourceID, ModID: prior.ID, Version: prior.Version, Variant: prior.Variant})
@@ -746,7 +755,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 		// R7: another version of this mod is live, so the enable replaces
 		// it rather than installing beside it.
-		prior, replacing := s.switchReplacement(game, plan, domain.ModKey(im.SourceID, im.ID), im.Version, im.Variant)
+		prior, replacing := s.switchReplacement(game, plan, domain.ModKey(im.SourceID, im.ID), im.Version, im.Variant, im.ModType)
 		deploy := func() error { return toInstaller.Install(ctx, game, &im.Mod, plan.To) }
 		if replacing {
 			deploy = func() error { return toInstaller.Replace(ctx, game, &prior.Mod, &im.Mod, plan.To) }
@@ -933,7 +942,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			// list, files the new version no longer serves stay behind as
 			// stale deployments (`lmm verify` surfaces them) - strictly
 			// better than failing to converge at all.
-			prior, replacing := s.switchReplacement(game, plan, domain.ModKey(ref.SourceID, ref.ModID), mod.Version, mod.Variant)
+			prior, replacing := s.switchReplacement(game, plan, domain.ModKey(ref.SourceID, ref.ModID), mod.Version, mod.Variant, mod.ModType)
 			if replacing {
 				if err := toInstaller.Replace(ctx, game, &prior.Mod, mod, plan.To); err != nil {
 					fail(fmt.Sprintf("deploy failed: %v", err))

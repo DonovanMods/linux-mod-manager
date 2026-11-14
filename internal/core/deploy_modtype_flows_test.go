@@ -15,6 +15,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bethesda"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -148,10 +149,9 @@ func TestImportAndSwitch_CopiedRowTakesTheRefsType(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, row.ModType, "the import's own reference decides")
 
-			// Off in the first profile, so the switch has it to deploy:
-			// it deploys by the imported row's type.
-			_, err = f.svc.DisableMod(context.Background(), f.game, "default", "src", "ext")
-			require.NoError(t, err)
+			// The first profile's copy is live, routed by its own type: the
+			// switch replaces it, so exactly one copy is left, at the
+			// imported row's root.
 			sp, err := f.svc.PlanProfileSwitch(context.Background(), f.game, "other")
 			require.NoError(t, err)
 			_, err = f.svc.ApplyProfileSwitch(context.Background(), f.game, sp, nil)
@@ -178,4 +178,44 @@ func TestPlanImportArchive_UsesTheRefsStatedType(t *testing.T) {
 	plan, err := f.svc.PlanImportArchive(context.Background(), f.game, "default", archive, core.ImportArchiveOptions{SourceID: "src", ModID: "ext"})
 	require.NoError(t, err)
 	assert.Equal(t, "dinput", plan.Mod.ModType, "set at plan time, not only at Apply")
+}
+
+// #607 C2b re-review A: a profile whose reference changes a mod's stated
+// type - nothing else - is converged by apply: the old routing's copy is
+// undeployed and the new one deployed, so exactly one copy is live, both
+// ways round.
+func TestProfileApply_ATypeOnlyChangeMovesTheOneCopy(t *testing.T) {
+	f := newTypedFlowFixture(t, "")
+	f.apply(t)
+	atRoot := filepath.Join(f.game.InstallPath, "extender_readme.txt")
+	inData := filepath.Join(f.game.ModPath, "extender_readme.txt")
+	assert.FileExists(t, inData)
+
+	setType := func(modType string) {
+		t.Helper()
+		p, err := f.svc.NewProfileManager().Get(context.Background(), f.game.ID, "default")
+		require.NoError(t, err)
+		p.Mods[0].ModType = modType
+		require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), p)) // a hand edit
+	}
+
+	setType("dinput")
+	f.apply(t)
+	assert.FileExists(t, atRoot)
+	assertAbsent(t, inData, "the Data/ copy was undeployed")
+	row, err := f.svc.GetInstalledMod(context.Background(), "src", "ext", f.game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "dinput", row.ModType)
+
+	setType("")
+	f.apply(t)
+	assert.FileExists(t, inData)
+	assertAbsent(t, atRoot, "the game-root copy was undeployed")
+	row, err = f.svc.GetInstalledMod(context.Background(), "src", "ext", f.game.ID, "default")
+	require.NoError(t, err)
+	assert.Empty(t, row.ModType, "the row follows the reference back to no type")
+
+	plan, err := f.svc.PlanProfileApply(context.Background(), f.game, "default")
+	require.NoError(t, err)
+	assert.True(t, plan.NoChanges, "and the apply has converged")
 }

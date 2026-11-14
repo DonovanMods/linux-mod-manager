@@ -217,8 +217,9 @@ func (c *Client) validate(ctx context.Context, key string) (v validateResponse, 
 }
 
 // AccountTier reports the configured key's account tier from the validate
-// endpoint's is_premium, cached per key (see Client.tier). No key, or a key
-// the endpoint rejects, is domain.ErrAuthRequired.
+// endpoint's is_premium, cached per key for tierTTL (see Client.tier), and
+// forgotten on a Premium-only download refusal (forgetTier). No key, or a
+// key the endpoint rejects, is domain.ErrAuthRequired.
 func (c *Client) AccountTier(ctx context.Context) (source.Tier, error) {
 	key := c.key()
 	if key == "" {

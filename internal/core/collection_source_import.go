@@ -174,15 +174,27 @@ func finishSourceCollection(plan *ImportPlan, c *ConvertedCollection, result *Pr
 	if len(pending) > 0 {
 		result.Notes = append(result.Notes, fmt.Sprintf("The profile records %d item(s) still to download: get each file from its page and install it from the file (lmm install --id <mod-id> --from-file <archive>).", len(pending)))
 	}
+	// Only the rows this import wrote were set to auto: a mod the profile
+	// already had (ImportPlan.Installed) keeps its own policy.
+	written := map[string]bool{}
+	if installed {
+		for _, ref := range slices.Concat(plan.AlreadyCached, plan.NeedsRedownload, plan.Missing) {
+			if key := domain.ModKey(ref.SourceID, ref.ModID); !pending[key] {
+				written[key] = true
+			}
+		}
+	}
 	var autoInstalled int
 	var autoPending []string
 	for _, it := range c.Items {
 		if !it.AutoUpdate {
 			continue
 		}
-		if pending[domain.ModKey(c.SourceID, it.ModID)] {
+		key := domain.ModKey(c.SourceID, it.ModID)
+		switch {
+		case pending[key]:
 			autoPending = append(autoPending, it.Name)
-		} else if installed {
+		case written[key]:
 			autoInstalled++
 		}
 	}

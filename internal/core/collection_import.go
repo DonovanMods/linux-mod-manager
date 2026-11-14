@@ -438,6 +438,12 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 		return result, err
 	}
 	if c.Source != nil && err == nil {
+		if plan != original {
+			// The items a free account cannot download were held back
+			// from the apply; they are pending, as a --no-install import
+			// counts its pending mods.
+			result.Skipped += len(original.NeedsRedownload) + len(original.Missing)
+		}
 		finishSourceCollection(original, c.Source, result, opts)
 	}
 	if n := len(c.External); n > 0 {
