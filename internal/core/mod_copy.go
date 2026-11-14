@@ -476,13 +476,12 @@ func (s *Service) applyCopyMod(ctx context.Context, game *domain.Game, plan *Cop
 			// #633: a shared path passes to the next mod in load order -
 			// only in the game's active profile, whose mods are the ones
 			// on disk.
-			remove := in.Uninstall
 			if active {
-				remove = func(ctx context.Context, game *domain.Game, mod *domain.Mod, profile string) error {
-					return in.uninstallHandingOff(ctx, game, mod, profile, nil)
-				}
+				err = in.uninstallHandingOff(ctx, game, &prior.Mod, plan.To, nil)
+			} else {
+				err = in.Uninstall(ctx, game, &prior.Mod, plan.To)
 			}
-			if err := remove(ctx, game, &prior.Mod, plan.To); err != nil {
+			if err != nil {
 				warn(scope, fmt.Sprintf("could not remove %s's previous files: %v", e.Name, err))
 			}
 		}
