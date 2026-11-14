@@ -864,6 +864,17 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **An update no longer swaps a mod's unchanged optional file for the
+  file it superseded (#643).** When an update replaced a mod's main file
+  with a new one at the same version and the source still listed the old
+  main as MAIN, `lmm update` (one mod or several) and the web UI's updates
+  could pick that old main as the "new" copy of an unchanged optional
+  file. The mod then recorded the new main and the old one, and since
+  #639 the record is what deploys: the optional disappeared from the game
+  directory and the superseded main came back. A file the update has
+  already replaced is now never chosen again, so each file is replaced at
+  most once and an unchanged optional keeps itself.
+
 - **A profile that swaps a mod's file at the same version now reinstalls
   it (#639).** When a profile entry's `file_ids` changed but its `version`
   did not (a collection update that swaps a file, a profile edited by
