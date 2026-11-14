@@ -518,10 +518,11 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 	if err := c.readCurrent(); err != nil {
 		return nil, err
 	}
-	if len(spec.Implicit) > 0 && len(implicit) == 0 && len(c.current.entries) > 0 {
+	if len(spec.Implicit) > 0 && len(implicit) == 0 && len(modOf) == 0 && len(c.current.entries) > 0 {
 		// The game's own masters (Skyrim.esm, ...) are always in its plugin
-		// folder; a folder without one is not the game's - an empty mount
-		// point - and every plugin the list names would look uninstalled.
+		// folder; a folder with neither one of them nor a plugin of lmm's is
+		// not the game's - an empty mount point - and every plugin the list
+		// names would look uninstalled.
 		c.skipped = true
 		c.findings = append(c.findings, PluginFinding{Code: PluginFindingUnwritable, Severity: PluginSeverityError,
 			Message: fmt.Sprintf("the plugin list was not written, because %s holds none of the game's own plugins (%s) - is its drive mounted?", game.ModPath, spec.Implicit[0])})

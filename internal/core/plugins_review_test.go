@@ -61,12 +61,12 @@ func TestPluginsReview_UnreadableModPathLeavesTheListAlone(t *testing.T) {
 	f.reorder(t)
 	assert.Equal(t, "*Creation.esp\n*A.esp\n", f.list(t), "a plugin folder lmm cannot read is never taken for an empty one")
 
-	res := f.deploy(t)
-	require.NotNil(t, res.Plugins)
-	assert.Equal(t, core.PluginListSkipped, res.Plugins.Status)
-	require.NotEmpty(t, res.Plugins.Findings)
-	assert.Equal(t, core.PluginFindingUnwritable, res.Plugins.Findings[0].Code)
-	assert.Contains(t, res.Plugins.Findings[0].Message, f.game.ModPath, "the finding names the folder")
+	res := f.verify(t, false)
+	row := findingWithStatus(res, core.PluginFindingUnwritable)
+	require.NotNil(t, row, "statuses: %v", findingStatuses(res))
+	assert.Contains(t, row.Note, f.game.ModPath, "the finding names the folder")
+	assert.GreaterOrEqual(t, res.Issues, 1)
+	assert.Equal(t, "*Creation.esp\n*A.esp\n", f.list(t))
 }
 
 // B1, an empty mount point: the folder reads, and holds nothing. The
