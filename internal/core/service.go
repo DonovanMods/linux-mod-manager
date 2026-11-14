@@ -619,15 +619,18 @@ func (s *Service) RegisterSource(src source.ModSource) {
 }
 
 // GetSource retrieves a source by ID
+//
+// The lmm-collection source (#623), which is never registered, is served
+// by its id too (sourceByID).
 func (s *Service) GetSource(id string) (source.ModSource, error) {
-	return s.registry.Get(id)
+	return s.sourceByID(id)
 }
 
 // sourceDisplayName is a registered source's own Name(), or id itself when
 // the source is not registered or names itself nothing - for a sentence
 // read by a person, where "CurseForge" says more than "curseforge".
 func (s *Service) sourceDisplayName(id string) string {
-	if src, err := s.registry.Get(id); err == nil && src.Name() != "" {
+	if src, err := s.sourceByID(id); err == nil && src.Name() != "" {
 		return src.Name()
 	}
 	return id
@@ -1488,7 +1491,7 @@ func rankAggregate(mods []domain.Mod, query string) {
 
 // GetMod retrieves a specific mod from a source
 func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*domain.Mod, error) {
-	src, err := s.registry.Get(sourceID)
+	src, err := s.sourceByID(sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1520,7 +1523,7 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 // only the files it accepts (source.WithGame, #544), so a frontend listing
 // files to choose from passes the game it will install into.
 func (s *Service) GetModFiles(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod) ([]domain.DownloadableFile, error) {
-	src, err := s.registry.Get(sourceID)
+	src, err := s.sourceByID(sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1582,7 +1585,7 @@ func (s *Service) AvailableModVersions(ctx context.Context, game *domain.Game, s
 // lock gating). Mirrors searchAllSources' registry access (service.go's
 // source.CapabilitiesOf(src) call).
 func (s *Service) SourceCapabilities(sourceID string) (source.Capabilities, error) {
-	src, err := s.registry.Get(sourceID)
+	src, err := s.sourceByID(sourceID)
 	if err != nil {
 		return source.Capabilities{}, err
 	}
@@ -2791,7 +2794,7 @@ func (s *Service) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, 
 // as a serve-facing query (Phase 3 Ruling 10) - a frontend previewing a
 // mod's dependency tree ahead of an install needs the same lookup.
 func (s *Service) GetDependencies(ctx context.Context, sourceID string, mod *domain.Mod) ([]domain.ModReference, error) {
-	src, err := s.registry.Get(sourceID)
+	src, err := s.sourceByID(sourceID)
 	if err != nil {
 		return nil, err
 	}

@@ -137,13 +137,23 @@ importing, and --collection-version numbers each version you publish. What
 these flags set is saved in the profile, so the next export reuses it and
 you only pass what changes; the version is never raised for you.
 
+A collection points at each mod on its source; it never carries a
+source's files. Files of your own - a patch, a config pack - can travel
+inside the .lmmc: import them into the profile as a mod first ('lmm
+import <archive>'), then name that mod with --bundle (as source:id, its
+id, or its name; repeatable). A mod from NexusMods, CurseForge or any
+other source is refused. A mod a collection already bundled is carried
+again whether or not you name it. Bundled files need the .lmmc container,
+so --bundle needs -o and refuses --plain.
+
 --json prints the profile document of #309 instead, unchanged.
 
 Examples:
   lmm profile export survival --game skyrim-se > survival.yaml
   lmm profile export survival --game skyrim-se -o survival.lmmc
   lmm profile export survival --game skyrim-se -o survival.yaml --plain
-  lmm profile export survival --game skyrim-se -o survival.lmmc --author me --collection-version 2`,
+  lmm profile export survival --game skyrim-se -o survival.lmmc --author me --collection-version 2
+  lmm profile export survival --game skyrim-se -o survival.lmmc --bundle "My Patch"`,
 	Args: cobra.ExactArgs(1),
 	RunE: runProfileExport,
 }
@@ -187,6 +197,14 @@ imported when they are text config files (.ini, .cfg, .conf, .txt, .json,
 (doorstop_config.ini, enblocal.ini); those and any other file type are
 skipped unless you pass --allow-any-overrides. The result says what was
 held back.
+
+A .lmmc may carry its author's own files (bundled items: a patch, a
+config pack), which install like any mod and are kept with the
+collection, so lmm verify --fix can rebuild them. The plan lists each
+with its file count and size. One that holds code (a DLL or other
+executable, a system script, or a loader configuration) is skipped
+unless you pass --allow-any-overrides. A plain YAML document cannot
+carry files, so a bundled item in one is refused.
 
 --workshop-collection takes a Steam Workshop collection id or the URL of
 its page, and imports the collection AS a profile: a collection is a mod
@@ -341,7 +359,7 @@ func init() {
 	profileImportCmd.Flags().BoolVar(&profileImportWithHooks, "with-hooks", false,
 		"import the hooks the file carries (they are scripts lmm runs; listed in the plan)")
 	profileImportCmd.Flags().BoolVar(&profileImportAnyOverrides, "allow-any-overrides", false,
-		"import overrides that are not text config files too (listed in the plan; skipped without this)")
+		"import overrides that are not text config files, and bundled files that hold code, too (listed in the plan; skipped without this)")
 
 	// Export flags
 	profileExportCmd.Flags().StringVarP(&profileExportOutput, "output", "o", "", "write the collection to this file (a compressed .lmmc unless --plain)")
@@ -351,6 +369,8 @@ func init() {
 	profileExportCmd.Flags().StringVar(&profileExportMeta.Description, "description", "", "a description shown to the recipient")
 	profileExportCmd.Flags().StringVar(&profileExportMeta.InstallInstructions, "instructions", "", "install instructions shown to the recipient")
 	profileExportCmd.Flags().IntVar(&profileExportMeta.Version, "collection-version", 0, "this publish's version number (default: the profile's, else 1)")
+	profileExportCmd.Flags().StringArrayVar(&profileExportMeta.Bundle, "bundle", nil,
+		"carry this mod's files in the .lmmc as your own (repeatable; a mod imported from a file, named as source:id, its id or its name)")
 	profileImportCmd.Flags().BoolVar(&profileImportForce, "force", false, "overwrite existing profile")
 	profileImportCmd.Flags().BoolVar(&profileImportNoInstall, "no-install", false, "skip installing missing mods")
 	profileImportCmd.Flags().BoolVarP(&profileImportYes, "yes", "y", false, "auto-confirm downloading/installing missing mods")
@@ -812,8 +832,8 @@ func runProfileExport(cmd *cobra.Command, args []string) error {
 // The export's notes go to stderr, so stdout carries exactly one document.
 func doProfileExport(ctx context.Context, service *core.Service, game *domain.Game, name string) error {
 	if jsonOutput {
-		if profileExportOutput != "" || profileExportPlain || profileExportMeta != (core.CollectionExportOptions{}) {
-			return fmt.Errorf("--json prints the profile document; it cannot be combined with -o, --plain or the collection metadata flags")
+		if profileExportOutput != "" || profileExportPlain || exportMetaSet(profileExportMeta) {
+			return fmt.Errorf("--json prints the profile document; it cannot be combined with -o, --plain, --bundle or the collection metadata flags")
 		}
 		exported, err := service.ExportProfile(ctx, game.ID, name)
 		if err != nil {
@@ -822,12 +842,20 @@ func doProfileExport(ctx context.Context, service *core.Service, game *domain.Ga
 		return emitJSON(exported)
 	}
 
+	// #623: bundled files travel only in a container.
+	if len(profileExportMeta.Bundle) > 0 && (profileExportOutput == "" || profileExportPlain) {
+		return fmt.Errorf("--bundle carries files, which only a .lmmc container holds: export with -o <file>.lmmc (without --plain)")
+	}
 	export, err := service.ExportCollection(ctx, game.ID, name, profileExportMeta)
 	if err != nil {
 		return fmt.Errorf("exporting profile: %w", err)
 	}
 	for _, note := range export.Notes {
 		fmt.Fprintf(os.Stderr, "Note: %s\n", note)
+	}
+	if n := len(export.Bundled); n > 0 && (profileExportOutput == "" || profileExportPlain) {
+		fmt.Fprintf(os.Stderr, "Note: this profile's %d bundled item(s) (%s) travel only in a .lmmc container: this YAML document lists them, and an import of it refuses them. Export with -o <file>.lmmc to share them.\n",
+			n, strings.Join(export.Bundled, ", "))
 	}
 	if profileExportOutput == "" {
 		_, err := os.Stdout.Write(export.Document)
@@ -844,6 +872,13 @@ func doProfileExport(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 	fmt.Printf("✓ Exported %s to %s\n", name, profileExportOutput)
 	return nil
+}
+
+// exportMetaSet reports whether any collection metadata or --bundle flag
+// was given.
+func exportMetaSet(meta core.CollectionExportOptions) bool {
+	return meta.ID != "" || meta.Version != 0 || meta.Title != "" || meta.Author != "" ||
+		meta.Description != "" || meta.InstallInstructions != "" || len(meta.Bundle) > 0 || meta.NoRecord
 }
 
 // planRefLine renders one mod reference of a plan document - a core.

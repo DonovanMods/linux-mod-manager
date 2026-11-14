@@ -18,6 +18,15 @@ const SourceLocal = "local"
 // string, not a real ModSource registration.
 const SourceMerged = "lmm-merged"
 
+// SourceCollection is the source ID of a bundled collection item (#623):
+// an author's own files carried inside a `.lmmc` container's files/<item>/
+// tree, rather than fetched from a mod source. Like SourceMerged it is a
+// reserved sentinel, not a registered source a user configures: core
+// serves it from the containers it keeps (docs/collection-format.md,
+// "Bundled files"). A mod of this source has the id
+// "<collection id>.<item>" and its version is its files' digest.
+const SourceCollection = "lmm-collection"
+
 // UpdatePolicy determines how a mod handles updates
 type UpdatePolicy int
 

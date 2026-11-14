@@ -21,10 +21,16 @@
 // when the user ticks the box), the config overrides, the items lmm does
 // not fetch, and mods from sources this machine does not have.
 
+// A `.lmmc` may carry its author's own files (issue 623): `collection.bundled`
+// lists each bundled item with what it holds, and one holding code (a DLL,
+// a system script, a loader configuration) is held back unless the user
+// ticks the same box that lets every override through (allow_any_overrides).
+
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
 import { safeWebUrl } from "../weburl.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
+import { formatBytes } from "../progress.js";
 
 /** refLabel names a domain.ModReference - it carries no display name of its
  * own (domain.ModReference's own fields: source_id, mod_id, version,
@@ -362,6 +368,36 @@ function LMMCollectionSection({ collection: c, plugins }) {
       </section>`
     }
     ${
+      (c.bundled ?? []).length > 0 &&
+      html`<section class="plan__section" data-testid="collection-bundled">
+        <h3 class="plan__heading">
+          Files the collection's author bundled (${c.bundled.length})
+        </h3>
+        <p class="plan__note">
+          Installed like any mod, and kept with the collection so lmm can
+          rebuild them.
+        </p>
+        <ul class="plan__mods">
+          ${c.bundled.map(
+            (b) =>
+              html`<li
+                key=${b.item}
+                class=${`plan__mod${(b.restricted ?? []).length > 0 ? " plan__mod--warn" : ""}`}
+                data-item=${b.item}
+              >
+                <span class="plan__mod-name">${b.name || b.item}</span>${" "}
+                <span class="plan__mod-detail mono">files/${b.item}/</span
+                >${" "}
+                <span class="plan__mod-detail"
+                  >${b.files} file${b.files === 1 ? "" : "s"},
+                  ${formatBytes(b.bytes)}</span
+                >
+              </li>`,
+          )}
+        </ul>
+      </section>`
+    }
+    ${
       (c.overrides ?? []).length > 0 &&
       html`<section class="plan__section">
         <h3 class="plan__heading">
@@ -534,9 +570,15 @@ function SourceCollectionSection({ source: c, actions }) {
  * applied only with allow_any_overrides). Each list has its checkbox. A
  * collection fetched from a URL can never have its hooks imported, so it
  * gets no hooks checkbox. */
-function ImportGates({ plan, actions }) {
+function ImportGates({ plan, modal, actions }) {
   const hooks = plan.hooks ?? [];
   const restricted = plan.restricted_overrides ?? [];
+  // Issue 623: bundled items holding code, held back by the same option.
+  const heldBundles = (plan.collection?.bundled ?? []).filter(
+    (b) => (b.restricted ?? []).length > 0,
+  );
+  // Both boxes below set the one option, so both show its state.
+  const anyOverrides = Boolean(modal?.applyOptions?.allow_any_overrides);
   // Every override the document writes, held back or not (issue 621
   // review N1). A collection lists them in its own section.
   const overrides = plan.collection ? [] : (plan.overrides ?? []);
@@ -602,13 +644,50 @@ function ImportGates({ plan, actions }) {
           )}
         </ul>
         <label class="plan__control">
-          <input type="checkbox" onChange=${setAnyOverrides} />
+          <input
+            type="checkbox"
+            checked=${anyOverrides}
+            onChange=${setAnyOverrides}
+          />
           Import these overrides too
         </label>
         <p class="plan__note">
           Left unchecked, they are skipped: lmm writes an override's content
           into the game folder, and only text config files are imported without
           asking.
+        </p>
+      </section>`
+    }
+    ${
+      heldBundles.length > 0 &&
+      html`<section
+        class="plan__section"
+        data-testid="import-restricted-bundled"
+      >
+        <h3 class="plan__heading">Bundled files that hold code</h3>
+        <ul class="plan__paths">
+          ${heldBundles.flatMap((b) =>
+            b.restricted.map(
+              (r) =>
+                html`<li key=${`${b.item}/${r.path}`} class="mono">
+                  ${b.name || b.item}: ${r.path} - ${r.reason}
+                </li>`,
+            ),
+          )}
+        </ul>
+        <label class="plan__control">
+          <input
+            type="checkbox"
+            data-testid="import-bundled-code"
+            checked=${anyOverrides}
+            onChange=${setAnyOverrides}
+          />
+          Import these bundled items too
+        </label>
+        <p class="plan__note">
+          Left unchecked, each item that holds code is skipped: a collection's
+          own files are imported without asking only when the game cannot run
+          them as a program.
         </p>
       </section>`
     }
@@ -713,7 +792,7 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
           actions=${actions}
         />`
       }
-      ${!collection && html`<${ImportGates} plan=${plan} actions=${actions} />`}
+      ${!collection && html`<${ImportGates} plan=${plan} modal=${modal} actions=${actions} />`}
       ${collection && html`<${CollectionHeader} collection=${collection} />`}
       ${
         collection

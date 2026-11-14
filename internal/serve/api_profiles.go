@@ -320,7 +320,11 @@ func (s *Server) handleAPIProfileDuplicate(w http.ResponseWriter, r *http.Reques
 // `.lmmc` container `lmm profile export -o` writes, as an attachment named
 // "<profile>.lmmc" - what the SPA's Export downloads. A profile's first
 // such export records its collection id in the profile (core.
-// ExportCollection). The default answer is unchanged.
+// ExportCollection). The default answer is unchanged. Each bundle=<mod>
+// (#623, repeatable: "source:id", a mod id or a name) carries that mod's
+// files in the container as the author's own - `lmm profile export
+// --bundle`, with its limits; GET .../bundle-candidates lists the mods it
+// accepts. A mod from a source, or a name matching no mod, answers 400.
 func (s *Server) handleAPIProfileExport(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveGameAPISelection(w, r)
 	if !ok {
@@ -331,7 +335,7 @@ func (s *Server) handleAPIProfileExport(w http.ResponseWriter, r *http.Request) 
 	switch format := r.URL.Query().Get("format"); format {
 	case "", "json":
 	case "lmmc":
-		s.writeCollectionExport(w, r, sel.Game.ID, name)
+		s.writeCollectionExport(w, r, sel.Game.ID, name, r.URL.Query()["bundle"])
 		return
 	default:
 		s.writeAPIError(w, http.StatusBadRequest, fmt.Errorf("unknown export format %q (json, lmmc)", format))
@@ -353,10 +357,14 @@ func (s *Server) handleAPIProfileExport(w http.ResponseWriter, r *http.Request) 
 // and a GET must not queue behind a running job. A profile whose collection
 // identity is not recorded yet answers 409 naming the POST that records
 // it (handleAPIProfileCollection), which the SPA's Export calls first.
-func (s *Server) writeCollectionExport(w http.ResponseWriter, r *http.Request, gameID, name string) {
-	export, err := s.svc.ExportCollection(r.Context(), gameID, name, core.CollectionExportOptions{NoRecord: true})
+func (s *Server) writeCollectionExport(w http.ResponseWriter, r *http.Request, gameID, name string, bundle []string) {
+	export, err := s.svc.ExportCollection(r.Context(), gameID, name, core.CollectionExportOptions{NoRecord: true, Bundle: bundle})
 	if errors.Is(err, core.ErrCollectionIdentityUnrecorded) {
 		s.writeAPIError(w, http.StatusConflict, fmt.Errorf("%w: POST /api/v1/profiles/%s/collection records it, then export again", err, name))
+		return
+	}
+	if core.IsBundleRefused(err) {
+		s.writeAPIError(w, http.StatusBadRequest, err)
 		return
 	}
 	if err != nil {
@@ -364,6 +372,10 @@ func (s *Server) writeCollectionExport(w http.ResponseWriter, r *http.Request, g
 		return
 	}
 	data, err := export.Container()
+	if core.IsBundleRefused(err) {
+		s.writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
@@ -372,6 +384,24 @@ func (s *Server) writeCollectionExport(w http.ResponseWriter, r *http.Request, g
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+core.CollectionContainerExt))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// handleAPIProfileBundleCandidates answers GET
+// /api/v1/profiles/{name}/bundle-candidates (#623) with the
+// []core.BundleCandidate an export can bundle: the profile's mods imported
+// from a file, and those a collection already bundled (always carried).
+// Read-only.
+func (s *Server) handleAPIProfileBundleCandidates(w http.ResponseWriter, r *http.Request) {
+	sel, ok := s.resolveGameAPISelection(w, r)
+	if !ok {
+		return
+	}
+	candidates, err := s.svc.BundleCandidates(r.Context(), sel.Game.ID, r.PathValue("name"))
+	if err != nil {
+		s.writeAPIError(w, s.profileErrorStatus(err), err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, candidates)
 }
 
 // handleAPIProfileCollection answers POST

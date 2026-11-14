@@ -168,6 +168,44 @@ lmm profile export coop -o coop.lmmc --title "Co-op night" \
 lmm remembers these for the profile, so next time you only give what
 changed, such as `--collection-version 3` when you publish an update.
 
+### Sharing your own files with a collection
+
+A collection never contains mods from NexusMods, CurseForge or any other
+site: your friend downloads those with their own account. Files you made
+yourself, such as a compatibility patch or a pack of config tweaks, can
+travel inside the `.lmmc` file, so your friend gets them with the
+collection.
+
+First add your files to the profile as a mod, by importing them from an
+archive (see
+[A mod that isn't on any site](manual-mods.md#a-mod-that-isnt-on-any-site)).
+That way they are deployed and you can test them like any other mod, and
+they keep their place in the load order. Then name that mod with `--bundle` when you export:
+
+```bash
+lmm import my-patch.zip --profile coop
+lmm profile export coop -o coop.lmmc --bundle "my-patch"
+```
+
+`--bundle` takes the mod's name, its id, or `source:id` as `lmm list`
+shows it, and you can give it more than once. It only accepts mods you
+imported from a file: lmm refuses to bundle a mod that came from a mod
+site. Bundled files only fit in a `.lmmc` file, so `--bundle` needs `-o`
+and doesn't work with `--plain`.
+
+In the browser, use **Export with my files…** in the Profiles window: tick
+the mods whose files are yours, then **Export**.
+
+{: .note }
+Bundle only files you made, or that you are allowed to share.
+
+When your friend imports the collection, the plan lists each bundled item
+with how many files it has and their size, and lmm installs it like any
+other mod. lmm keeps a copy of the collection file, so `lmm verify --fix`
+can rebuild the files later. A bundled item has no updates of its own: a
+new version arrives with a new version of the collection. If they export
+the profile again, the bundled files go with it.
+
 {: .note }
 The first export of a profile saves its collection id in the profile, and
 that waits for any other lmm operation, such as a job running in the
@@ -206,6 +244,15 @@ import from a link never imports hooks at all; see
   (BepInEx) or `enblocal.ini` (ENB): it is a text file, but it can make the
   game load a DLL. This includes your own older exports: to keep such an
   override, import them with `--allow-any-overrides`.
+
+- **Bundled files that are programs.** A collection's own files (see
+  [Sharing your own files with a collection](#sharing-your-own-files-with-a-collection))
+  are imported as usual, unless one holds something the computer can run
+  as a program: a `.dll`, an `.exe` or another executable, a system script
+  such as a `.sh` or `.bat`, or a loader configuration. Such an item is
+  skipped unless you add `--allow-any-overrides` (in the browser, tick
+  **Import these bundled items too**). The plan names the files that hold
+  it back.
 
 When something was held back, the import says so at the end and names the
 option that would include it.

@@ -133,6 +133,9 @@ type ImportPlan struct {
 	// collectionState is what a collection import adds to the saved profile
 	// beyond its version-0 document (#621): nil for every other plan.
 	collectionState *collectionState
+	// bundle is a collection container's bundled files (#623): what the
+	// apply keeps for the lmm-collection source, and what it holds back.
+	bundle *pendingBundle
 	// autoUpdate names the mods (domain.ModKey) whose installed rows the
 	// import writes with the auto update policy (#607: a source
 	// collection's "latest" items) - in the same write as the row, inside
@@ -684,6 +687,11 @@ type ProfileImportResult struct {
 	// other result is unchanged.
 	HooksWithheld    int                  `json:"hooks_withheld,omitzero"`
 	OverridesSkipped []RestrictedOverride `json:"overrides_skipped,omitempty"`
+	// BundledSkipped names the collection's bundled items (#623) the
+	// import left out because they hold code - native code, a system
+	// script or a loader configuration - and --allow-any-overrides was not
+	// given. Absent when none was, so every other result is unchanged.
+	BundledSkipped []string `json:"bundled_skipped,omitempty"`
 }
 
 // ApplyImport executes a plan produced by PlanImport. With nothing to

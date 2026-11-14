@@ -329,8 +329,45 @@ export const deleteSnapshot = (name, context) =>
  * Content-Disposition itself (api_profiles.go), so there is no blob to
  * build and no filename to invent. It asks for the `.lmmc` collection
  * container (issue 621), what `lmm profile export -o` writes. */
-export const profileExportURL = (name, context) =>
-  scoped(`${profilePath(name)}/export?format=lmmc`, context);
+export const profileExportURL = (name, context, bundle = []) => {
+  const url = scoped(`${profilePath(name)}/export?format=lmmc`, context);
+  // Issue 623: each mod whose files the container carries as the author's
+  // own (`lmm profile export --bundle`), as "source:id".
+  const extra = bundle
+    .map((id) => `&bundle=${encodeURIComponent(id)}`)
+    .join("");
+  return url + extra;
+};
+
+/** Checks a bundled export (issue 623) before the browser downloads it:
+ * the same GET, read here only for its status, so a refusal (a container
+ * over the import limit, say) is shown in place instead of replacing the
+ * page with an error document. Resolves when the export would succeed. */
+export async function checkProfileExport(url) {
+  const response = await fetch(url, { headers: { "X-CSRF-Token": csrfToken } });
+  if (response.ok) {
+    await response.body?.cancel();
+    return;
+  }
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+  throw new ApiError(
+    response.status,
+    payload?.error || `GET ${url} failed (${response.status})`,
+    payload?.details,
+  );
+}
+
+/** Lists the mods a profile's export can bundle as the author's own files
+ * (issue 623): core.BundleCandidate rows - each mod imported from a file,
+ * and each a collection already bundled (`always`: carried regardless). */
+export const getBundleCandidates = (name, context) =>
+  get(scoped(`${profilePath(name)}/bundle-candidates`, context));
 
 /** Records a profile's collection identity (issue 621) - minting its
  * collection id on the first call - so the side-effect-free GET at

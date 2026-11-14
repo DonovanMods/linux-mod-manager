@@ -1,0 +1,9 @@
+{
+  "profile_name": "coop",
+  "installed": 1,
+  "failed": 0,
+  "skipped": 0,
+  "bundled_skipped": [
+    "my-tool"
+  ]
+}

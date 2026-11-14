@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bundled files in a collection (#623).** A `.lmmc` can now carry its
+  author's own files - a compatibility patch, a config pack - under
+  `files/<item>/`, named in the document by a `mods:` entry whose source is
+  `lmm-collection` (the `bundled` feature, which leaves the unsupported
+  set). `lmm profile export -o <file>.lmmc --bundle <mod>` (repeatable; in
+  the web UI, **Export with my files…** in the Profiles window) carries the
+  files of a mod imported from a file; a mod from NexusMods, CurseForge or
+  any other source is refused, and a mod a collection already bundled is
+  carried again by every container export. An import - from a file, an
+  upload or an https address - lists each bundled item in the plan, checks
+  its files against the version the document records (a digest of the
+  files) and installs it like any mod. The container is kept under the
+  game's cache, so a profile switch or apply, another profile, and
+  `lmm verify --fix` rebuild the item from it. The container is untrusted:
+  links, devices, absolute or `..` paths, backslashes and control
+  characters are refused, never rewritten, and items, files and their total
+  size are capped. An item holding code (a DLL or other executable, a
+  system script, a loader configuration) is skipped unless
+  `--allow-any-overrides` (the web UI's **Import these bundled items
+  too**). A plain YAML document cannot carry files, so a bundled item in
+  one is refused. Bundled items are skipped by update checks, like local
+  mods. New `--json` and `/api/v1` fields, all additive: the import plan's
+  `collection.bundled` and each item's `bundled`, the import result's
+  `bundled_skipped`, and `GET /api/v1/profiles/{name}/bundle-candidates`.
+  An older lmm still ignores a container's `files/` with its warning, and
+  refuses a document requiring `bundled`.
+
 - **Import a collection from a link (#622).** `lmm profile import
 https://…` (in the web UI, the Profiles window's **From a URL** field)
   downloads an lmm collection - a `.lmmc`, its YAML, or an older profile

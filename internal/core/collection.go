@@ -37,6 +37,8 @@ var supportedCollectionFeatures = map[string]bool{
 	CollectionFeaturePluginOrder: true,
 	// #634: a mod's choices recorded per file (an entry's fomod_files).
 	CollectionFeatureFomodMultiFile: true,
+	// #623: an author's own files, carried in the container.
+	CollectionFeatureBundled: true,
 }
 
 // SupportedCollectionFeatures lists the features this lmm can import, in
@@ -94,6 +96,14 @@ func deriveCollectionRequires(doc *domain.CollectionDocument) []string {
 	}
 	if !doc.Plugins.IsZero() {
 		features = append(features, CollectionFeaturePluginOrder)
+	}
+	// #623: bundled items need an importer that installs files from the
+	// container; an older lmm, which ignores files/, refuses the feature.
+	for _, item := range doc.Items {
+		if item.Ref.SourceID == domain.SourceCollection {
+			features = append(features, CollectionFeatureBundled)
+			break
+		}
 	}
 	sort.Strings(features)
 	return features

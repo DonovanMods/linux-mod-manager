@@ -35,12 +35,16 @@ func TestCollectionContainer_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, data, again, "the container is deterministic: no timestamps")
 
-	got, warnings, err := readCollectionContainer(data)
+	got, bundle, warnings, err := readCollectionContainer(data)
 	require.NoError(t, err)
 	require.Equal(t, doc, got)
+	require.Nil(t, bundle, "no files/, no bundle")
 	require.Empty(t, warnings)
 }
 
+// TestCollectionContainer_ReservedAndUnknownMembersWarn: the signature and
+// a stray member are named in warnings; files/ is read as the bundle since
+// #623, no longer ignored.
 func TestCollectionContainer_ReservedAndUnknownMembersWarn(t *testing.T) {
 	data := zipOf(t,
 		"collection.yaml", "lmm_collection: 1\n",
@@ -48,13 +52,15 @@ func TestCollectionContainer_ReservedAndUnknownMembersWarn(t *testing.T) {
 		"files/1/readme.txt", "bundled",
 		"notes.txt", "hello",
 	)
-	doc, warnings, err := readCollectionContainer(data)
+	doc, bundle, warnings, err := readCollectionContainer(data)
 	require.NoError(t, err)
 	require.Equal(t, "lmm_collection: 1\n", string(doc))
 	joined := strings.Join(warnings, "\n")
 	require.Contains(t, joined, "signature")
-	require.Contains(t, joined, "files/")
+	require.NotContains(t, joined, "files/")
 	require.Contains(t, joined, "notes.txt")
+	require.Equal(t, []string{"1"}, bundle.names())
+	require.Equal(t, int64(7), bundle.items["1"].bytes)
 }
 
 func TestCollectionContainer_Refusals(t *testing.T) {
@@ -72,7 +78,7 @@ func TestCollectionContainer_Refusals(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := readCollectionContainer(tc.data)
+			_, _, _, err := readCollectionContainer(tc.data)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tc.want)
 		})
@@ -84,7 +90,7 @@ func TestCollectionContainer_MemberCountCap(t *testing.T) {
 	for i := 0; i < maxCollectionMembers; i++ {
 		members = append(members, fmt.Sprintf("files/x/%d", i), "")
 	}
-	_, _, err := readCollectionContainer(zipOf(t, members...))
+	_, _, _, err := readCollectionContainer(zipOf(t, members...))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "members")
 }
@@ -92,7 +98,7 @@ func TestCollectionContainer_MemberCountCap(t *testing.T) {
 func TestCollectionContainer_RatioCap(t *testing.T) {
 	// Highly compressible content under the size cap, over the ratio cap:
 	// a zip bomb's signature, refused before it is inflated.
-	_, _, err := readCollectionContainer(zipOf(t, "collection.yaml", strings.Repeat("a", maxCollectionDocument)))
+	_, _, _, err := readCollectionContainer(zipOf(t, "collection.yaml", strings.Repeat("a", maxCollectionDocument)))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ratio")
 }
@@ -104,7 +110,7 @@ func TestCollectionContainer_StrayMemberWarningsAreCapped(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		members = append(members, fmt.Sprintf("stray-%02d.txt", i), "")
 	}
-	_, warnings, err := readCollectionContainer(zipOf(t, members...))
+	_, _, warnings, err := readCollectionContainer(zipOf(t, members...))
 	require.NoError(t, err)
 	require.Len(t, warnings, maxIgnoredWarnings+1)
 	require.Contains(t, warnings[maxIgnoredWarnings], "10 more")

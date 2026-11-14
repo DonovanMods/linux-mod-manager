@@ -33,6 +33,14 @@ type CollectionExportOptions struct {
 	Description         string
 	InstallInstructions string
 
+	// Bundle names the profile's mods whose files the author bundles as
+	// their own (#623): "source:id", a mod id, or a mod's name. Each must
+	// be a mod imported from a file (source local); a mod from a source is
+	// refused (ErrBundleSourceMod). A mod a collection already bundled is
+	// carried whether named or not. Only the container (Container) carries
+	// the files.
+	Bundle []string
+
 	// NoRecord makes the export read-only: when it would have to record
 	// the collection identity first (a profile's first export, or a
 	// metadata field that changed), it fails with
@@ -54,15 +62,32 @@ type CollectionExport struct {
 	// writes to stdout, and `-o <file> --plain` to a file.
 	Document []byte
 	// Notes are the export's one-time remarks for the author: that
-	// republishing someone else's collection is their call, and that the
-	// document carries hooks.
+	// republishing someone else's collection is their call, that the
+	// document carries hooks, and what it bundles.
 	Notes []string
+	// Bundled names the items whose files the container carries (#623),
+	// in the document's order: the document's lmm-collection entries. A
+	// plain YAML document cannot carry them, so a frontend writing one
+	// says so.
+	Bundled []string
+
+	bundles []exportBundle
 }
 
 // Container returns the export as a `.lmmc` container - what `-o <file>`
-// writes by default, and the web UI downloads.
+// writes by default, and the web UI downloads - with its bundled files
+// (#623), read back with the importer's own reader before it is returned.
 func (e *CollectionExport) Container() ([]byte, error) {
-	return writeCollectionContainer(e.Document)
+	data, err := writeCollectionContainer(e.Document, containerFiles(e.bundles)...)
+	if err != nil {
+		return nil, err
+	}
+	if len(e.bundles) > 0 {
+		if err := checkExportedContainer(data, e.bundles); err != nil {
+			return nil, err
+		}
+	}
+	return data, nil
 }
 
 // ExportCollection exports gameID's profile profileName as a version-1
@@ -135,13 +160,22 @@ func (s *Service) ExportCollection(ctx context.Context, gameID, profileName stri
 			doc.Overrides[path] = string(content)
 		}
 	}
+	// #623: the author's own files, and what a collection already bundled.
+	bundles, err := s.bundleItems(ctx, game, profileName, info.ID, doc, opts.Bundle)
+	if err != nil {
+		return nil, err
+	}
 	doc.Requires = deriveCollectionRequires(doc)
 
 	data, err := config.MarshalCollection(doc)
 	if err != nil {
 		return nil, err
 	}
-	return &CollectionExport{Document: data, Notes: exportNotes(doc)}, nil
+	export := &CollectionExport{Document: data, Notes: append(exportNotes(doc), bundleNotes(bundles)...), bundles: bundles}
+	for _, b := range bundles {
+		export.Bundled = append(export.Bundled, b.item.name)
+	}
+	return export, nil
 }
 
 // RecordCollectionIdentity records the collection identity an export with

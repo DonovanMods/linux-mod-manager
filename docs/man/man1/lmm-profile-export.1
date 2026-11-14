@@ -34,6 +34,16 @@ these flags set is saved in the profile, so the next export reuses it and
 you only pass what changes; the version is never raised for you.
 
 .PP
+A collection points at each mod on its source; it never carries a
+source's files. Files of your own - a patch, a config pack - can travel
+inside the .lmmc: import them into the profile as a mod first ('lmm
+import <archive>\&'), then name that mod with --bundle (as source:id, its
+id, or its name; repeatable). A mod from NexusMods, CurseForge or any
+other source is refused. A mod a collection already bundled is carried
+again whether or not you name it. Bundled files need the .lmmc container,
+so --bundle needs -o and refuses --plain.
+
+.PP
 --json prints the profile document of #309 instead, unchanged.
 
 .PP
@@ -42,11 +52,16 @@ Examples:
   lmm profile export survival --game skyrim-se -o survival.lmmc
   lmm profile export survival --game skyrim-se -o survival.yaml --plain
   lmm profile export survival --game skyrim-se -o survival.lmmc --author me --collection-version 2
+  lmm profile export survival --game skyrim-se -o survival.lmmc --bundle "My Patch"
 
 
 .SH OPTIONS
 \fB--author\fP=""
 	the collection's author
+
+.PP
+\fB--bundle\fP=[]
+	carry this mod's files in the .lmmc as your own (repeatable; a mod imported from a file, named as source:id, its id or its name)
 
 .PP
 \fB--collection-version\fP=0
