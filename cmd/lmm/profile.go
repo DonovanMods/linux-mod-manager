@@ -659,6 +659,11 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		if jsonOutput {
 			return emitJSON(result)
 		}
+		// #631: a file the user changed, which the switch's override
+		// convergence left in place, is said even here.
+		for _, w := range result.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
 		fmt.Printf("✓ Switched to profile: %s\n", targetName)
 		return nil
 	}
@@ -686,6 +691,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 				fmt.Printf("  ↓ %s\n", planRefLine(ref))
 			}
 		}
+		printOverrideChanges(plan.Overrides)
 	}
 
 	// A dry run stops here: it has shown the plan and must change nothing.
@@ -1781,6 +1787,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				fmt.Printf("  ↓ %s\n", planRefLine(entry.Ref))
 			}
 		}
+		printOverrideChanges(plan.Overrides)
 	}
 
 	// A dry run stops here: it has shown the plan and must change nothing.
@@ -1954,4 +1961,27 @@ func profileApplyTarget(ctx context.Context, service *core.Service, game *domain
 		return "default"
 	}
 	return defaultProfile.Name
+}
+
+// printOverrideChanges prints a switch or apply plan's override changes
+// (#631): each file the profile's overrides change, game files under
+// "<game root>/", a mod's own file (#630) by its deployed path and mod.
+func printOverrideChanges(changes []core.OverrideChange) {
+	if len(changes) == 0 {
+		return
+	}
+	fmt.Printf("Will change %d file(s) for the profile's overrides:\n", len(changes))
+	for _, c := range changes {
+		mark, what := "+", "write the override"
+		switch c.Action {
+		case core.OverrideUpdate:
+			mark, what = "~", "rewrite the override"
+		case core.OverrideRestore:
+			mark, what = "-", "take the override away"
+		}
+		if c.ModID != "" {
+			what += ", over " + c.SourceID + ":" + c.ModID + "'s own file"
+		}
+		fmt.Printf("  %s %s (%s)\n", mark, domain.DisplayDeployPath(c.Root, c.Path), what)
+	}
 }
