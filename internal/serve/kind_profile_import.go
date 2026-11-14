@@ -69,13 +69,31 @@ type profileImportPlanRequest struct {
 	// forwarded to core verbatim: the SOURCE owns what it recognises, and a
 	// second parser here could only disagree with it.
 	WorkshopCollection string `json:"workshop_collection,omitzero"`
-	ProfileName        string `json:"profile_name,omitzero"`
+	// NexusCollection is a NexusMods collection - its slug, slug@revision
+	// or the URL of its page (#607) - forwarded to core verbatim, as
+	// WorkshopCollection is. WithOptional opts every optional item in, and
+	// Optional the ones it names (core.ConvertedCollectionItem.ID): the
+	// plan view's per-item toggles re-plan with them. Both apply to
+	// NexusCollection only.
+	NexusCollection string   `json:"nexus_collection,omitzero"`
+	WithOptional    bool     `json:"with_optional,omitzero"`
+	Optional        []string `json:"optional,omitzero"`
+	ProfileName     string   `json:"profile_name,omitzero"`
 }
 
 // validate implements validatingOptions. The two inputs are mutually
 // exclusive: with both, the server would be guessing which one the caller
 // meant, and the CLI refuses the same combination.
 func (r *profileImportPlanRequest) validate() error {
+	if r.NexusCollection != "" {
+		if r.Data != "" || r.DataBase64 != "" || r.UploadID != "" || r.WorkshopCollection != "" {
+			return errors.New(`"nexus_collection" and "data"/"data_base64"/"upload_id"/"workshop_collection" are mutually exclusive`)
+		}
+		return nil
+	}
+	if r.WithOptional || len(r.Optional) > 0 {
+		return errors.New(`"with_optional" and "optional" apply to "nexus_collection" only`)
+	}
 	if r.UploadID != "" {
 		// The document is read from the upload at plan time; until then
 		// only the inputs can be checked.
@@ -99,7 +117,7 @@ func (r *profileImportPlanRequest) validate() error {
 	}
 	switch {
 	case r.Data == "" && r.WorkshopCollection == "":
-		return errors.New(`"data" or "workshop_collection" is required`)
+		return errors.New(`"data", "upload_id", "workshop_collection" or "nexus_collection" is required`)
 	case r.Data != "" && r.WorkshopCollection != "":
 		return errors.New(`"data" and "workshop_collection" are mutually exclusive`)
 	case r.Data == "" && r.ProfileName == "":
@@ -161,6 +179,9 @@ func planProfileImportKind(ctx context.Context, s *Server, sel selection, opts a
 
 	if req.WorkshopCollection != "" {
 		return planWorkshopCollectionImport(ctx, s, sel, req)
+	}
+	if req.NexusCollection != "" {
+		return planNexusCollectionImport(ctx, s, sel, req)
 	}
 	if req.UploadID != "" {
 		data, err := s.readProfileUpload(req.UploadID)
@@ -236,6 +257,26 @@ func planWorkshopCollectionImport(ctx context.Context, s *Server, sel selection,
 	plan, err := s.svc.PlanWorkshopCollectionImport(ctx, sel.Game, req.ProfileName, req.WorkshopCollection)
 	if err != nil {
 		if core.IsBadCollectionRef(err) {
+			return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
+		}
+		return nil, nil, err
+	}
+	return plan, &pendingProfileImport{Game: sel.Game, Plan: plan}, nil
+}
+
+// planNexusCollectionImport is the NexusMods collection half (#607): core
+// converts the collection into an lmm collection document and plans it as
+// one (PlanSourceCollectionImport), so the apply below is the collection
+// apply every lmm collection takes - all or nothing, the free account's
+// manual downloads saved pending. A reference the source cannot resolve,
+// and a converted document lmm would refuse, are the caller's 400.
+func planNexusCollectionImport(ctx context.Context, s *Server, sel selection, req profileImportPlanRequest) (any, any, error) {
+	plan, err := s.svc.PlanSourceCollectionImport(ctx, sel.Game, core.SourceCollectionImportRequest{
+		SourceID: "nexusmods", Ref: req.NexusCollection, ProfileName: req.ProfileName,
+		WithOptional: req.WithOptional, Optional: req.Optional,
+	})
+	if err != nil {
+		if core.IsBadCollectionRef(err) || core.IsInvalidCollection(err) || errors.Is(err, domain.ErrInvalidProfileName) {
 			return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
 		}
 		return nil, nil, err
