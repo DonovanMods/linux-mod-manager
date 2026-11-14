@@ -58,3 +58,18 @@ func fsDirsErrorStatus(err error) int {
 		return http.StatusBadRequest
 	}
 }
+
+// downloadsFolder is GET /api/v1/fs/downloads's document: the user's
+// downloads folder (core.DownloadsDir), where the fill drop zone's folder
+// chooser opens (#608). Path is empty when no home folder is known.
+type downloadsFolder struct {
+	Path string `json:"path"`
+}
+
+// handleAPIFsDownloads answers GET /api/v1/fs/downloads: where the user's
+// downloads folder is, and nothing else - no listing, no read of it. A
+// cheap read the drop zone makes on mount, instead of planning a fill just
+// to learn it.
+func (s *Server) handleAPIFsDownloads(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, downloadsFolder{Path: core.DownloadsDir()})
+}

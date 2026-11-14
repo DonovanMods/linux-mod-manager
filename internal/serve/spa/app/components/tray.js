@@ -15,6 +15,7 @@
 // this file's own call, on the grounds that a tray is opened to find out
 // what went wrong far more often than to admire what went right.
 
+import { FillDropZone } from "./filldropzone.js";
 import { html, useEffect, useRef, useState } from "../render.js";
 import { useMenuPlacement } from "../menuplacement.js";
 import { followJob } from "../sse.js";
@@ -233,6 +234,12 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
   const purgeResult = useJobResultPurge(job.id, job.state);
   const repairResult = useJobResultVerify(job.id, job.state);
   const batchFailures = useJobResultFailures(job.id, job.state);
+  const fillTarget =
+    job.kind === "profile_import" &&
+    job.state === "succeeded" &&
+    (job.tally?.skipped ?? 0) > 0
+      ? (actions.fillTargetFor?.(job.id) ?? null)
+      : null;
   const tone =
     job.state === "succeeded" && tally ? resultTallyTone(tally) : job.state;
   const stateText =
@@ -280,6 +287,17 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
       <${PurgeResultDetails} result=${purgeResult} />
       <${VerifyFixResult} outcome=${repairResult} />
       <${BatchFailures} failures=${batchFailures} actions=${actions} />
+      ${
+        // Issue 608: a collection import that saved mods pending (the
+        // account is not served downloads) offers the drop zone for the
+        // files the user downloads by hand, on its own result.
+        fillTarget &&
+        html`<${FillDropZone}
+          profile=${fillTarget.profile}
+          game=${fillTarget.game}
+          actions=${actions}
+        />`
+      }
       ${
         // I1, unit 8 gate review: a count alone ("1 skipped") leaves the
         // reader to guess, and a lock refusal is not a guessable outcome.

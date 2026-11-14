@@ -79,6 +79,7 @@ func (s *Server) routes() {
 	// comes to exist - so none resolves a ?game= selection.
 	// The folder chooser's read-only listing (#529, api_fs_dirs.go).
 	s.mux.Handle("GET /api/v1/fs/dirs", s.wrap(s.handleAPIFsDirs))
+	s.mux.Handle("GET /api/v1/fs/downloads", s.wrap(s.handleAPIFsDownloads))
 	s.mux.Handle("GET /api/v1/games", s.wrap(s.handleAPIGames))
 	s.mux.Handle("POST /api/v1/games", s.wrap(s.handleAPIGameAdd))
 	// The source<->game mapping (#326, epic live review C-4): the one part

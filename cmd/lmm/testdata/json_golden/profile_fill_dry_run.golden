@@ -1,0 +1,46 @@
+{
+  "profile": "Three Mods",
+  "game_id": "skyrimse",
+  "collection": {
+    "source_id": "nexusmods",
+    "slug": "abcdef",
+    "revision": 3
+  },
+  "matched": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "10",
+      "name": "Ten",
+      "version": "1.0",
+      "files": [
+        {
+          "file_id": "100",
+          "file_name": "Ten",
+          "size": 149,
+          "md5": "<MD5-10>",
+          "archive": "ten.zip"
+        }
+      ]
+    }
+  ],
+  "pending": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "12",
+      "name": "Twelve",
+      "version": "1.0",
+      "files": [
+        {
+          "file_id": "120",
+          "file_name": "Twelve",
+          "size": 199,
+          "md5": "<MD5-12>"
+        }
+      ],
+      "reason": "no_archive"
+    }
+  ],
+  "ignored": [],
+  "scanned": 1,
+  "hashed": 1
+}

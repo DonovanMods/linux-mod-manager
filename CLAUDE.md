@@ -169,6 +169,7 @@ internal/
     ├── fomod_images.go    # a FOMOD question's option images, kept from the extracted archive (hash-named, capped, raster only) for FomodImage (#615)
     ├── fomod_reconfigure.go # PlanFomodReconfigure/ApplyFomodReconfigure: `lmm mod fomod`, re-ask an installed mod's installer (#615)
     ├── cache_key.go       # modCacheKey/previousCacheKey: an installed mod's cache entry, variant included (#614)
+    ├── shared_handoff.go  # #633: a removal hands a shared path to the next enabled mod in load order (pathHeirsFor, Installer.uninstallHandingOff, replace's end); each removal re-reads its heirs while heirFlow caches their file listings per mutation; the hand-off ledger reports each path's final owner at the flow's drain; the original stays set aside until none is left
     ├── deploy_root.go     # #629: game-root deploys - deployItem (domain.DeployPath + cache member) routing, gameRootPath, rootLinker's contained openat writes/removals
     └── verify_repair.go   # verify --fix repair actions: redownload, checksum backfill
 └── serve/                # `lmm serve` local web UI: an SPA over /api/v1; imports only app/core/domain (boundary_test.go)
