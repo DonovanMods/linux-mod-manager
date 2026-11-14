@@ -59,8 +59,9 @@ type ProfileConfig struct {
 // CollectionBaselineConfig is the profile file's `collection_baseline:`
 // block.
 type CollectionBaselineConfig struct {
-	Plugins   *ProfilePluginsConfig `yaml:"plugins,omitempty"`
-	Overrides map[string]string     `yaml:"overrides,omitempty"`
+	Plugins    *ProfilePluginsConfig `yaml:"plugins,omitempty"`
+	Overrides  map[string]string     `yaml:"overrides,omitempty"`
+	LoadOrders domain.FileLoadOrders `yaml:"load_orders,omitempty"`
 }
 
 // baselineFromConfig is the domain baseline c records; nil records none.
@@ -70,7 +71,7 @@ func baselineFromConfig(c *CollectionBaselineConfig) *domain.CollectionBaseline 
 	if c == nil {
 		return nil
 	}
-	b := &domain.CollectionBaseline{Plugins: pluginsFromConfig(c.Plugins)}
+	b := &domain.CollectionBaseline{Plugins: pluginsFromConfig(c.Plugins), LoadOrders: c.LoadOrders.Clone()}
 	if len(c.Overrides) > 0 {
 		b.Overrides = maps.Clone(c.Overrides)
 	}
@@ -84,6 +85,9 @@ func baselineConfigOf(b *domain.CollectionBaseline) *CollectionBaselineConfig {
 		return nil
 	}
 	out := &CollectionBaselineConfig{Plugins: pluginsConfigOf(b.Plugins)}
+	if !b.LoadOrders.IsZero() {
+		out.LoadOrders = b.LoadOrders.Clone()
+	}
 	if len(b.Overrides) > 0 {
 		out.Overrides = maps.Clone(b.Overrides)
 	}
@@ -96,7 +100,7 @@ func sameBaseline(a, b *domain.CollectionBaseline) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return a.Plugins.Equal(b.Plugins) && maps.Equal(a.Overrides, b.Overrides)
+	return a.Plugins.Equal(b.Plugins) && maps.Equal(a.Overrides, b.Overrides) && a.LoadOrders.Equal(b.LoadOrders)
 }
 
 // ModReferenceConfig is the YAML representation of a mod reference.

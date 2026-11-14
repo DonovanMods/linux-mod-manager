@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/cyberpunk2077"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -373,4 +374,65 @@ func TestCollectionUpdate_CarriesTheMD5Pin(t *testing.T) {
 			assert.Equal(t, 1, f.profile(t).Collection.Version, "nothing written")
 		})
 	}
+}
+
+// #620 x #613: a collection update carries the profile's file load orders
+// the way it carries the plugin list - three ways against the baseline.
+func TestCollectionUpdate_LoadOrdersMergeThreeWays(t *testing.T) {
+	f := newUpdateFixture(t)
+	ctx := context.Background()
+	f.svc.RegisterAdapter(cyberpunk2077.New())
+	f.game.Adapter = cyberpunk2077.ID
+	require.NoError(t, f.svc.SaveGame(ctx, f.game))
+	orderDoc := func(version int, names ...string) []byte {
+		return urlDocument(t, "coll-1", version, func(doc *domain.CollectionDocument) {
+			doc.LoadOrders = domain.FileLoadOrders{archiveOrder: names}
+		})
+	}
+	f.importURL(t, orderDoc(1, "a.archive", "b.archive", "c.archive"))
+	require.Equal(t, []string{"a.archive", "b.archive", "c.archive"}, f.profile(t).CollectionBaseline.LoadOrders[archiveOrder])
+
+	// The user adds their own archive after a; version 2 reorders and adds d.
+	p := f.profile(t)
+	p.LoadOrders[archiveOrder] = []string{"a.archive", "mine.archive", "b.archive", "c.archive"}
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), p))
+	f.serve(orderDoc(2, "c.archive", "a.archive", "b.archive", "d.archive"))
+	plan := f.planUpdate(t)
+	require.Empty(t, plan.Unsupported)
+	require.Len(t, plan.LoadOrders, 1)
+	assert.Equal(t, archiveOrder, plan.LoadOrders[0].ID)
+	assert.Equal(t, []string{"d.archive"}, plan.LoadOrders[0].Added)
+	assert.True(t, plan.LoadOrders[0].Reordered)
+	assert.Empty(t, plan.LoadOrders[0].Moved, "only the collection reordered")
+	_, err := f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"c.archive", "a.archive", "mine.archive", "b.archive", "d.archive"}, f.profile(t).LoadOrders[archiveOrder],
+		"the collection's order, the user's archive kept after a")
+
+	// Version 3: both reorder - a conflict the plan names, the user's
+	// order kept unless overridden.
+	p = f.profile(t)
+	p.LoadOrders[archiveOrder] = []string{"d.archive", "c.archive", "a.archive", "mine.archive", "b.archive"}
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), p))
+	f.serve(orderDoc(3, "b.archive", "c.archive", "a.archive", "d.archive"))
+	plan = f.planUpdate(t)
+	require.Len(t, plan.LoadOrders, 1)
+	assert.NotEmpty(t, plan.LoadOrders[0].Moved)
+	assert.Contains(t, plan.ConflictKeys(), "load_order:"+archiveOrder)
+	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"d.archive", "c.archive", "a.archive", "mine.archive", "b.archive"}, f.profile(t).LoadOrders[archiveOrder],
+		"the user's order wins by default")
+
+	p = f.profile(t)
+	p.LoadOrders[archiveOrder] = []string{"a.archive", "d.archive", "c.archive", "mine.archive", "b.archive"}
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), p))
+	f.serve(orderDoc(4, "c.archive", "b.archive", "a.archive", "d.archive"))
+	plan = f.planUpdate(t)
+	require.Contains(t, plan.ConflictKeys(), "load_order:"+archiveOrder)
+	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{Override: []string{"load_order:" + archiveOrder}}, nil)
+	require.NoError(t, err)
+	got := f.profile(t).LoadOrders[archiveOrder]
+	assert.Equal(t, []string{"c.archive", "mine.archive", "b.archive", "a.archive", "d.archive"}, got,
+		"overridden: the collection's order, the user's archive after c, which it followed")
 }

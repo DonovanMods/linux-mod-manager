@@ -245,6 +245,9 @@ type CollectionUpdatePlan struct {
 	// Plugins is what the update does to the profile's plugin list; absent
 	// when nothing.
 	Plugins *CollectionPluginChange `json:"plugins,omitempty"`
+	// LoadOrders is what it does to each of the profile's file load orders
+	// (#620), in id order; absent when nothing.
+	LoadOrders []CollectionLoadOrderChange `json:"load_orders,omitempty"`
 	// OverridesAdded and OverridesChanged are the config overrides the new
 	// version adds or rewrites, OverridesRemoved the collection's own it no
 	// longer carries (an override the user changed is kept), and
@@ -312,7 +315,8 @@ type CollectionUpdateOptions struct {
 	// and follows the collection again; "plugin:<name>", "plugins:order"
 	// and "plugins:rules" take the collection's side of a plugin-list
 	// conflict (CollectionPluginChange), "override:<path>" its content of a
-	// conflicting override (OverrideConflicts). OverrideConflicts overrides
+	// conflicting override (OverrideConflicts), "load_order:<id>" its order
+	// of a file load order (CollectionLoadOrderChange). OverrideConflicts overrides
 	// them all. The rest keep the user's version.
 	Override          []string
 	OverrideConflicts bool
@@ -548,7 +552,7 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 	plan.Warnings = warnings
 	plan.NoChanges = len(plan.Added) == 0 && len(plan.Changed) == 0 && len(plan.Removed) == 0 && len(plan.Conflicts) == 0 &&
 		plan.Plugins == nil && len(plan.OverridesAdded) == 0 && len(plan.OverridesChanged) == 0 &&
-		len(plan.OverridesRemoved) == 0 && len(plan.OverrideConflicts) == 0 &&
+		len(plan.OverridesRemoved) == 0 && len(plan.OverrideConflicts) == 0 && len(plan.LoadOrders) == 0 &&
 		len(plan.ExternalAdded) == 0 && len(plan.ExternalRemoved) == 0
 
 	live, recordedOnly, err := s.importScope(ctx, game.ID, base.Name)
@@ -713,6 +717,8 @@ func (p *CollectionUpdatePlan) diffRest(s *Service, game *domain.Game) {
 		p.Plugins = change
 	}
 
+	_, p.LoadOrders = mergeLoadOrders(p.base.LoadOrders, b.LoadOrders, p.doc.LoadOrders, hasBase, none)
+
 	om := mergeOverrides(p.base.Overrides, b.Overrides, hasBase, p.doc.Overrides, none, true)
 	p.OverridesAdded, p.OverridesChanged, p.OverridesRemoved, p.OverrideConflicts = om.added, om.changed, om.removed, om.conflicts
 	for _, list := range [][]string{om.added, om.changed, om.conflicts} {
@@ -807,6 +813,11 @@ func (p *CollectionUpdatePlan) conflictKeys() []string {
 			keys = append(keys, collectionPluginRulesKey)
 		}
 	}
+	for _, lo := range p.LoadOrders {
+		if len(lo.Moved) > 0 {
+			keys = append(keys, collectionLoadOrderKey(lo.ID))
+		}
+	}
 	for _, path := range p.OverrideConflicts {
 		keys = append(keys, collectionOverrideKey(path))
 	}
@@ -888,6 +899,8 @@ func updateTarget(plan *CollectionUpdatePlan, base *domain.Profile, c updateChoi
 	target.Mods = mods
 
 	target.Plugins, target.CollectionBaseline = mergeCollectionPlugins(plan, base, c)
+	b, hasBase := baselineOf(base)
+	target.LoadOrders, _ = mergeLoadOrders(base.LoadOrders, b.LoadOrders, plan.doc.LoadOrders, hasBase, c.overrides)
 	var heldBack []RestrictedOverride
 	target.Overrides, heldBack = mergeCollectionOverrides(plan, base, c, target.CollectionBaseline)
 	target.External = slices.Clone(plan.doc.External)
@@ -943,7 +956,8 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	if err != nil {
 		return result, err
 	}
-	ip.collectionState = &collectionState{collection: target.Collection, external: target.External, plugins: target.Plugins, fromCollection: marks, baseline: target.CollectionBaseline}
+	ip.collectionState = &collectionState{collection: target.Collection, external: target.External, plugins: target.Plugins,
+		loadOrders: target.LoadOrders, fromCollection: marks, baseline: target.CollectionBaseline}
 	// #609: the new version's recorded installer choices replay only
 	// against the curator's archive, as at an import.
 	ip.archiveMD5 = collectionArchiveMD5s(plan.doc)

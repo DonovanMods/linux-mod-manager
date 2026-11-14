@@ -24,8 +24,8 @@ profile sync --collection` (in the web UI, **Update collection…** beside
   unless you remove it (`--remove`, `--remove-obsolete`, or a tick box);
   and your own version of a conflicting mod is kept unless you take the
   collection's (`--override`, `--override-conflicts`, or a tick box). Mods
-  you added keep their place. The plugin list and config overrides follow
-  the same rule through a three-way merge against what the collection last
+  you added keep their place. The plugin list, the file load orders (#620)
+  and config overrides follow the same rule through a three-way merge against what the collection last
   applied: your on/off states, moves, added plugins and edited overrides
   stay yours, and where you and the collection both changed one the plan
   names the conflict and keeps yours unless you override it. An obsolete

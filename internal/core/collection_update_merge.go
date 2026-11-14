@@ -396,7 +396,7 @@ func mergeOverrides(p map[string][]byte, b map[string]string, hasBase bool, n ma
 func mergeCollectionPlugins(plan *CollectionUpdatePlan, base *domain.Profile, c updateChoices) (domain.ProfilePlugins, *domain.CollectionBaseline) {
 	b, hasBase := baselineOf(base)
 	m := mergePlugins(base.Plugins, b.Plugins, plan.doc.Plugins, hasBase, c.overrides)
-	return m.result, &domain.CollectionBaseline{Plugins: plan.doc.Plugins.Clone()}
+	return m.result, &domain.CollectionBaseline{Plugins: plan.doc.Plugins.Clone(), LoadOrders: plan.doc.LoadOrders.Clone()}
 }
 
 // mergeCollectionOverrides is updateTarget's overrides and the restricted
@@ -414,4 +414,79 @@ func baselineOf(profile *domain.Profile) (domain.CollectionBaseline, bool) {
 		return domain.CollectionBaseline{}, false
 	}
 	return *profile.CollectionBaseline, true
+}
+
+// collectionLoadOrderKey is the conflict key of one file load order's
+// order (#620).
+func collectionLoadOrderKey(id string) string { return "load_order:" + id }
+
+// CollectionLoadOrderChange is what an update does to one of the profile's
+// file load orders (#620): the files it adds and drops, whether it reorders
+// the files both have, and - when the user and the collection both
+// reordered them since the collection last applied it - the files moved,
+// a conflict the user's order wins unless the apply overrides it
+// ("load_order:<id>").
+type CollectionLoadOrderChange struct {
+	ID        string   `json:"id"`
+	Added     []string `json:"added,omitempty"`
+	Removed   []string `json:"removed,omitempty"`
+	Reordered bool     `json:"reordered,omitzero"`
+	Moved     []string `json:"moved,omitempty"`
+}
+
+// loadOrderEntries is names as plugin entries, so a load order merges the
+// way a plugin list's order does (it has no on/off state).
+func loadOrderEntries(names []string) domain.ProfilePlugins {
+	out := domain.ProfilePlugins{}
+	for _, name := range names {
+		out.Order = append(out.Order, domain.PluginEntry{Name: name, Enabled: true})
+	}
+	return out
+}
+
+// mergeLoadOrders merges the profile's file load orders p with the new
+// version's n against the baseline b, id by id, with the plugin list's
+// order rule (mergePlugins); hasBase false merges against an empty base.
+// An id the new version does not carry stays as the profile has it.
+func mergeLoadOrders(p, b, n domain.FileLoadOrders, hasBase bool, override func(string) bool) (domain.FileLoadOrders, []CollectionLoadOrderChange) {
+	result := p.Clone()
+	var changes []CollectionLoadOrderChange
+	for _, id := range n.IDs() {
+		ov := func(k string) bool { return k == collectionPluginOrderKey && override(collectionLoadOrderKey(id)) }
+		m := mergePlugins(loadOrderEntries(p[id]), loadOrderEntries(b[id]), loadOrderEntries(n[id]), hasBase, ov)
+		names := make([]string, 0, len(m.result.Order))
+		for _, e := range m.result.Order {
+			names = append(names, e.Name)
+		}
+		if result == nil {
+			result = domain.FileLoadOrders{}
+		}
+		result[id] = names
+		if slices.Equal(names, p[id]) && len(m.moved) == 0 {
+			continue
+		}
+		kept := map[string]bool{}
+		for _, name := range names {
+			kept[pluginKey(name)] = true
+		}
+		had := map[string]bool{}
+		var before, after []string
+		for _, name := range p[id] {
+			had[pluginKey(name)] = true
+			if kept[pluginKey(name)] {
+				before = append(before, pluginKey(name))
+			}
+		}
+		for _, name := range names {
+			if had[pluginKey(name)] {
+				after = append(after, pluginKey(name))
+			}
+		}
+		changes = append(changes, CollectionLoadOrderChange{ID: id, Added: m.added, Removed: m.dropped,
+			Reordered: !slices.Equal(before, after), Moved: m.moved})
+	}
+	if result.IsZero() {
+		result = nil
+	}
+	return result, changes
 }

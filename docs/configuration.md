@@ -666,7 +666,7 @@ A [collection update](guide/profiles.md#updating-a-collection-profile) (`lmm pro
 
 #### A collection's baseline (`collection_baseline`)
 
-A profile imported from a collection also records what the collection last applied beyond its mods: its plugin list, and the sha256 of each config override it wrote.
+A profile imported from a collection also records what the collection last applied beyond its mods: its plugin list, its file load orders, and the sha256 of each config override it wrote.
 
 ```yaml
 collection_baseline:

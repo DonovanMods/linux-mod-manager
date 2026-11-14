@@ -423,14 +423,16 @@ A pin whose files change while its version stays the same is recorded on
 the profile, and the plan says it applies when the mod is next
 reinstalled.
 
-The plugin list and config overrides follow the same rule. lmm remembers
+The plugin list, file load orders (Cyberpunk 2077's archive order, see
+[Load order](load-order.md)) and config overrides follow the same rule. lmm remembers
 what the collection last applied, so it can tell your changes from the
 collection's: a plugin you switched off or moved, a plugin you added, or an
 override you edited stays yours, and the new version's changes apply to
 everything you left alone. Where you and the collection both changed the
 same thing, the plan names it as a conflict and keeps yours; take the
 collection's with `--override plugin:<name>`, `--override plugins:order`,
-`--override plugins:rules` or `--override override:<path>` (the plan
+`--override plugins:rules`, `--override load_order:<id>` or
+`--override override:<path>` (the plan
 prints each key), or `--override-conflicts` for all of them. In the
 browser each has its own **Take the collection's** tick box. An override
 the collection no longer carries is removed if you left it as the

@@ -38,9 +38,9 @@ func init() {
 	f.BoolVar(&profileSyncRemoveObsolete, "remove-obsolete", false,
 		"with --collection, remove every mod the new version drops (they are kept by default)")
 	f.StringSliceVar(&profileSyncOverride, "override", nil,
-		"with --collection, take the collection's side of this conflict: a mod you changed (source:mod-id, or the mod id), plugin:NAME, plugins:order, plugins:rules or override:PATH, as the plan names it; repeatable")
+		"with --collection, take the collection's side of this conflict: a mod you changed (source:mod-id, or the mod id), plugin:NAME, plugins:order, plugins:rules, load_order:ID or override:PATH, as the plan names it; repeatable")
 	f.BoolVar(&profileSyncOverrideConflicts, "override-conflicts", false,
-		"with --collection, take the collection's side of every conflict - mods, plugin list and overrides (yours is kept by default)")
+		"with --collection, take the collection's side of every conflict - mods, plugin list, load orders and overrides (yours is kept by default)")
 	f.BoolVar(&profileSyncWithOptional, "with-optional", false,
 		"with --collection, install a NexusMods collection's optional mods too")
 	f.StringSliceVar(&profileSyncOptional, "optional", nil,
@@ -349,6 +349,23 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 		}
 		if p.RulesConflict {
 			fmt.Printf("  ! you and the collection both changed the plugin rules; %s (--override plugins:rules)\n", side("plugins:rules"))
+		}
+	}
+	for _, lo := range plan.LoadOrders {
+		fmt.Printf("\nLoad order %s:\n", lo.ID)
+		if len(lo.Added) > 0 {
+			fmt.Printf("  + added: %s\n", strings.Join(lo.Added, ", "))
+		}
+		if len(lo.Removed) > 0 {
+			fmt.Printf("  - dropped: %s\n", strings.Join(lo.Removed, ", "))
+		}
+		if lo.Reordered {
+			fmt.Println("  ~ reordered")
+		}
+		if len(lo.Moved) > 0 {
+			key := "load_order:" + lo.ID
+			fmt.Printf("  ! you and the collection both reordered %s; %s order is kept (--override %s)\n",
+				strings.Join(lo.Moved, ", "), map[bool]string{true: "the collection's", false: "your"}[overridden(key)], key)
 		}
 	}
 	if len(plan.OverridesAdded)+len(plan.OverridesChanged)+len(plan.OverridesRemoved)+len(plan.OverrideConflicts) > 0 {

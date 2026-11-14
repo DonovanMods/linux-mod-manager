@@ -229,6 +229,49 @@ function PluginChange({ plugins: p, modal, actions }) {
   `;
 }
 
+/** LoadOrderChanges names what the update does to each file load order
+ * (issue 620), and its order conflict with its checkbox. */
+function LoadOrderChanges({ loadOrders, modal, actions }) {
+  if (!loadOrders || loadOrders.length === 0) return null;
+  return html`
+    <section class="plan__section" data-testid="update-load-orders">
+      <h3 class="plan__heading">Load order</h3>
+      ${loadOrders.map((lo) => {
+        const changed = [];
+        if (lo.reordered) changed.push("reordered");
+        return html`<div key=${lo.id}>
+          <p class="plan__note"><span class="mono">${lo.id}</span></p>
+          ${
+            lo.added?.length > 0 &&
+            html`<p class="plan__note">Added: ${lo.added.join(", ")}</p>`
+          }
+          ${
+            lo.removed?.length > 0 &&
+            html`<p class="plan__note">Dropped: ${lo.removed.join(", ")}</p>`
+          }
+          ${
+            changed.length > 0 &&
+            html`<p class="plan__note">The list is ${changed.join(", ")}.</p>`
+          }
+          ${
+            lo.moved?.length > 0 &&
+            html`<p class="plan__note">
+                You and the collection both reordered ${lo.moved.join(", ")};
+                your order is kept unless you take the collection's.
+              </p>
+              <${ConflictBox}
+                conflictKey=${`load_order:${lo.id}`}
+                label="Take the collection's order"
+                modal=${modal}
+                actions=${actions}
+              />`
+          }
+        </div>`;
+      })}
+    </section>
+  `;
+}
+
 /** External names the items to get by hand the new version adds and
  * drops. */
 function External({ plan }) {
@@ -438,6 +481,11 @@ export function CollectionUpdatePlanView({ plan, modal, actions }) {
       />
       <${PluginChange}
         plugins=${plan.plugins}
+        modal=${modal}
+        actions=${actions}
+      />
+      <${LoadOrderChanges}
+        loadOrders=${plan.load_orders}
         modal=${modal}
         actions=${actions}
       />

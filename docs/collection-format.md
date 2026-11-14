@@ -266,7 +266,7 @@ hooks are listed and never applied.
 The plugin list and the overrides follow the entries' rule through a
 three-way merge against a baseline: what the collection last applied,
 which the profile file records in a `collection_baseline:` block (the
-plugin list, and each override's sha256). Like `from_collection`, it is
+plugin list, the file load orders, and each override's sha256). Like `from_collection`, it is
 this machine's record, written at a collection import and an update and
 never exported.
 
@@ -279,6 +279,11 @@ never exported.
   (`plugin:<name>`, `plugins:order`, `plugins:rules`) takes the
   collection's. A plugin the user added stays, after the plugin it
   followed; one the collection dropped goes unless the user changed it.
+- **Load orders.** Each file load order (`load_orders:`, #620) follows the
+  plugin list's order rule, id by id: the user's own files stay after the
+  file they followed, and when both reordered the files they share, the
+  plan names them (`load_orders[].moved`) and the user's order is kept
+  unless overridden (`load_order:<id>`).
 - **Overrides.** Each path follows the same rule by content: rewritten when
   only the collection changed it, kept when only the user did, a conflict
   (`override_conflicts`, overridden by `override:<path>`) when both did. One

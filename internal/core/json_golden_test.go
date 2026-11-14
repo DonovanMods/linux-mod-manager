@@ -2433,6 +2433,7 @@ func TestJSONGoldens(t *testing.T) {
 				},
 				OverridesAdded:      []string{"doorstop_config.ini"},
 				OverridesChanged:    []string{"Config/Game.ini"},
+				LoadOrders:          []core.CollectionLoadOrderChange{{ID: "cyberpunk2077-archive", Added: []string{"d.archive"}, Reordered: true}},
 				OverridesRemoved:    []string{"Config/Old.ini"},
 				OverrideConflicts:   []string{"Config/Mine.ini"},
 				RestrictedOverrides: []core.RestrictedOverride{{Path: "doorstop_config.ini", Reason: "loader configuration"}},
@@ -2454,6 +2455,12 @@ func TestJSONGoldens(t *testing.T) {
 			"collection_update_item_same_version_files",
 			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "10", Version: "1", NewVersion: "1", Changes: []string{"files"},
 				Note: "its files change at the same version: the profile records them, and they apply when the mod is next reinstalled"},
+		},
+		{
+			// #613 x #620: what an update does to one file load order.
+			"collection_load_order_change",
+			core.CollectionLoadOrderChange{ID: "cyberpunk2077-archive", Added: []string{"d.archive"}, Removed: []string{"old.archive"},
+				Reordered: true, Moved: []string{"a.archive"}},
 		},
 		{
 			// #613: what an update does to the plugin list.

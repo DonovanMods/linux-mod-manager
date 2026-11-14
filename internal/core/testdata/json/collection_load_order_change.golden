@@ -1,0 +1,13 @@
+{
+  "id": "cyberpunk2077-archive",
+  "added": [
+    "d.archive"
+  ],
+  "removed": [
+    "old.archive"
+  ],
+  "reordered": true,
+  "moved": [
+    "a.archive"
+  ]
+}

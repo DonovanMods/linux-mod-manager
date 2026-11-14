@@ -67,6 +67,15 @@
       "managed": true
     }
   },
+  "load_orders": [
+    {
+      "id": "cyberpunk2077-archive",
+      "added": [
+        "d.archive"
+      ],
+      "reordered": true
+    }
+  ],
   "overrides_added": [
     "doorstop_config.ini"
   ],

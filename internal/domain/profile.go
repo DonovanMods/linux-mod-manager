@@ -70,11 +70,14 @@ type CollectionBaseline struct {
 	// Overrides maps each override path the collection last wrote to the
 	// sha256 of its content (lower-case hex).
 	Overrides map[string]string
+	// LoadOrders are the collection's file load orders (#620), as it last
+	// applied them.
+	LoadOrders FileLoadOrders
 }
 
 // IsZero reports whether b records nothing.
 func (b *CollectionBaseline) IsZero() bool {
-	return b == nil || (b.Plugins.IsZero() && len(b.Overrides) == 0)
+	return b == nil || (b.Plugins.IsZero() && len(b.Overrides) == 0 && b.LoadOrders.IsZero())
 }
 
 // FindRef returns a pointer into p.Mods for the reference matching

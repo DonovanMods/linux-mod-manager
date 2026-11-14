@@ -339,6 +339,7 @@ func (c *collectionState) finish(profile *domain.Profile) {
 	b := &domain.CollectionBaseline{}
 	if c.baseline != nil {
 		b.Plugins = c.baseline.Plugins.Clone()
+		b.LoadOrders = c.baseline.LoadOrders.Clone()
 	}
 	b.Overrides = overrideHashes(profile.Overrides)
 	// An empty baseline is kept, not dropped: it says the collection
@@ -526,7 +527,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 		marks[domain.ModKey(ref.SourceID, ref.ModID)] = true
 	}
 	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins, fromCollection: marks, loadOrders: profile.LoadOrders.Clone(),
-		baseline: &domain.CollectionBaseline{Plugins: profile.Plugins.Clone()}, hashOverrides: true}
+		baseline: &domain.CollectionBaseline{Plugins: profile.Plugins.Clone(), LoadOrders: profile.LoadOrders.Clone()}, hashOverrides: true}
 	plan.archiveMD5 = collectionArchiveMD5s(doc)
 	// The preview shows the profile the import will save.
 	plan.Profile.Collection, plan.Profile.External = redactedCollection(profile.Collection), profile.External
