@@ -127,13 +127,21 @@ func TestE2E_InstallPicker_TwoFomodFilesAskPerFile(t *testing.T) {
 	)
 	assert.Contains(t, mainFile, "this one is in Main")
 	assert.Contains(t, patchFile, "this one is in Patches")
-	require.Eventually(t, func() bool { return e2eDeployed(t, f.Game, "Mods/bugs_patch.esp") == "VANILLA" }, 30*time.Second, e2ePollInterval)
+	// The tree is deployed before the install records the profile's ref
+	// (the DB row, then the profile - Ruling 16), so wait for both.
+	var ref *domain.ModReference
+	require.Eventually(t, func() bool {
+		if e2eDeployed(t, f.Game, "Mods/bugs_patch.esp") != "VANILLA" {
+			return false
+		}
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
+		if err != nil {
+			return false
+		}
+		ref = p.FindRef("fake", "bugs")
+		return ref != nil
+	}, 30*time.Second, e2ePollInterval)
 	assert.Equal(t, "2K", e2eDeployed(t, f.Game, "Mods/t.dds"))
-
-	p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
-	require.NoError(t, err)
-	ref := p.FindRef("fake", "bugs")
-	require.NotNil(t, ref)
 	assert.ElementsMatch(t, []string{"b1", "b2"}, ref.FileIDs)
 	assert.Len(t, ref.FomodFiles, 2, "each file's answers are recorded under it")
 	assert.Empty(t, f.BrowserErrors())
