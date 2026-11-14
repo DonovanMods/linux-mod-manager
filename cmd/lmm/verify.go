@@ -576,6 +576,12 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		fmt.Printf("%s %s (%s) - NEEDS REINGEST (%s)\n", colorYellow("?"), f.ModName, f.FileID, f.Note)
 
 	case "missing":
+		if f.FileID == "" && f.Note != "" {
+			// #644: a mod imported from an archive its source does not
+			// list records no file; the note says what is gone and why.
+			fmt.Printf("%s %s - MISSING (%s)\n", colorRed("X"), f.ModName, f.Note)
+			break
+		}
 		if f.DisplayVersion != "" {
 			// #458: a Workshop item's version is its revision date.
 			fmt.Printf("%s %s (%s) - MISSING (revision of %s not in cache)\n", colorRed("X"), f.ModName, f.FileID, f.DisplayVersion)

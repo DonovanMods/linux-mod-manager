@@ -132,6 +132,12 @@ type SwitchPlan struct {
 	// enables.
 	targetSnapshot installedSnapshot `json:"-"`
 
+	// archiveGone holds, keyed by domain.ModKey, the ToInstall entries
+	// whose installed row is an imported archive's tree whose cache entry
+	// is gone (#644): no download rebuilds it, so the apply fails each
+	// with ReasonArchiveTree instead of fetching the source's file.
+	archiveGone map[string]bool `json:"-"`
+
 	// overridesDigest is To's overrides as this plan saw them (#631
 	// review): ApplyProfileSwitch refuses the plan once one changed.
 	overridesDigest string `json:"-"`
@@ -246,6 +252,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	var toInstall []domain.ModReference
 	var priorVersions map[string]domain.InstalledMod // #96 - see SwitchPlan.PriorVersions
 	var reinstallReasons map[string]string           // #639 - see SwitchPlan.ReinstallReasons
+	var archiveGone map[string]bool                  // #644 - see SwitchPlan.archiveGone
 	// disableKeys is which mods already have a ToDisable entry, so the
 	// target loop below does not list one a second time under its own
 	// profile (fix-round F5).
@@ -319,8 +326,19 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		// wrong row: the enable then deployed the outgoing version's files
 		// while the write landed on a target row that kept its own.
 		row := im
-		if tr, ok := targetInstalled[key]; ok {
+		tr, hasOwn := targetInstalled[key]
+		if hasOwn {
 			row = tr
+		}
+		if installed && !hasOwn && !im.External && isArchiveVariant(im.Variant) {
+			// #644: the row is another profile's imported archive - its
+			// own custom build, never this profile's. Installed from the
+			// source, over that tree when it is the live one.
+			toInstall = append(toInstall, ref)
+			if live := liveOutgoing(key); live != nil {
+				recordPrior(key, *live)
+			}
+			continue
 		}
 		// #269: an external mod the target profile lists needs no enable
 		// and no install - Steam already has it in place, whatever profile
@@ -387,6 +405,13 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			refWithFileIDs := ref
 			refWithFileIDs.FileIDs = row.FileIDs
 			toInstall = append(toInstall, refWithFileIDs)
+			if isArchiveVariant(row.Variant) {
+				// #644: an imported archive's tree; no download is it.
+				if archiveGone == nil {
+					archiveGone = make(map[string]bool)
+				}
+				archiveGone[key] = true
+			}
 			// #639: another tree of the version on disk (another set of its
 			// files) is in the way too.
 			if live != nil && (live.Version != row.Version || live.Variant != row.Variant || filesDiffer(live.FileIDs, row.FileIDs)) {
@@ -464,6 +489,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		overridesDigest:   overridesDigest(targetProfile),
 		snapshot:          snapshot,
 		targetSnapshot:    targetSnapshot,
+		archiveGone:       archiveGone,
 	}, nil
 }
 
@@ -901,6 +927,10 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				emit(ModEvent{Scope: scope, Phase: SwitchInstallError, Detail: reason})
 			}
 
+			if plan.archiveGone[domain.ModKey(ref.SourceID, ref.ModID)] {
+				fail(ReasonArchiveTree)
+				continue
+			}
 			mod, err := s.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
 			if err != nil {
 				fail(fmt.Sprintf("failed to fetch mod: %v", err))

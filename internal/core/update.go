@@ -1171,6 +1171,11 @@ type updateCommit struct {
 	// the curator's "latest", or the user's own auto setting - keeps it:
 	// following the newest file is what that policy already asked for.
 	byUser bool
+	// commitEntry, when set, puts the new files in the cache (#644: an
+	// update from a file's staged tree). It runs after the before_each
+	// hooks, the last refusal, and right before the Replace that reads
+	// the entry - so a refused update changes no cache entry.
+	commitEntry func() error
 }
 
 // commitUpdate is the update flow from "the new files are cached" to the
@@ -1230,6 +1235,11 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	// commit must restore the old IDs' members and remove the uncommitted
 	// new file's sole members, not leave both deployed. See
 	// Installer.ReplaceForUpdate / resolveSharedDirUpdate.
+	if c.commitEntry != nil {
+		if err := c.commitEntry(); err != nil {
+			return err
+		}
+	}
 	if err := installer.ReplaceForUpdate(ctx, game, &mod.Mod, newMod, profileName, mod.FileIDs, downloadedFileIDs); err != nil {
 		return fmt.Errorf("deploying update: %w", err)
 	}

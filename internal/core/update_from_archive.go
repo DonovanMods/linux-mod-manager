@@ -676,11 +676,27 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 		// #639: the archive is the files the row will record; it fills the
 		// entry that set is, never another set's at the same version.
 		entryFor: s.fileSetEntryFor(ctx, game, plan.FileIDs, nil),
+		// #644: committed by commitUpdate, after its last refusal.
+		stage: true,
+	}
+	if archiveEntryApplies(mod.SourceID, plan.FileIDs) {
+		// #644: an archive no source file is: a tree of its own.
+		entryFor, err := archiveEntryFor(plan.Archive, "")
+		if err != nil {
+			return result, fmt.Errorf("import failed: %w", err)
+		}
+		importOpts.entryFor = entryFor
 	}
 	imported, err := s.newImporter(game).importWithIdentity(ctx, plan.Archive, game, importOpts, ident)
 	if err != nil {
 		return result, fmt.Errorf("import failed: %w", err)
 	}
+	staged := imported.staged
+	defer func() {
+		if err := staged.discard(); err != nil {
+			s.logger().Warn("removing failed update's staged tree", "path", staged.root, "err", err)
+		}
+	}()
 
 	newMod := mod.Mod
 	newMod.Version = plan.ToVersion
@@ -696,11 +712,14 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 		fileIDs = append(fileIDs, imported.RetainedFileID)
 	}
 	if plan.matchedFileID != "" {
-		if err := s.markImportedFileComplete(ctx, game, &newMod, plan.matchedFileID); err != nil {
+		if err := markFileCompleteIn(staged.cache, staged.key, plan.matchedFileID); err != nil {
 			warn("could not mark cache entry complete: %v", err)
 		}
 	}
 	checksums := archiveChecksums(plan.Archive, fileIDs, warn)
+	// created is the commit's answer: whether the entry the tree became did
+	// not exist until it did (#639). Nothing is created before the commit.
+	created := false
 
 	err = s.commitUpdate(ctx, game, profileName, updateCommit{
 		mod:       mod,
@@ -714,9 +733,19 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 		fomod:     cmpFomod(imported.fomod),
 		// A file the user picked is their version of the mod (#613).
 		byUser: true,
+		// #644: the staged tree becomes the new version's entry only once
+		// the before_each hooks have passed.
+		commitEntry: func() error {
+			var err error
+			created, err = staged.commit(ctx, s.GetGameCache(game), modCacheKey(game.ID, newMod))
+			if err != nil {
+				return fmt.Errorf("import failed: %w", err)
+			}
+			return nil
+		},
 	}, UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks}, result, emit)
 	if err != nil {
-		s.discardUpdateArchiveEntry(game, plan, newMod.Variant, imported.created, warn)
+		s.discardUpdateArchiveEntry(game, plan, newMod.Variant, created, warn)
 		return result, err
 	}
 	switch {

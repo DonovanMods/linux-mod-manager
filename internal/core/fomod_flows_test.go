@@ -416,7 +416,9 @@ func TestFomodUpdateFromArchive_ReplaysTheRecordedChoices(t *testing.T) {
 	row, err := f.svc.GetInstalledMod(ctx, "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", row.Version)
-	assert.Equal(t, core.FomodVariantForTest(f.ref(t, "default", "mod1").Fomod), row.Variant)
+	// #644: the archive is no file the source lists, so its tree - the
+	// recorded choices' - is an entry of its own.
+	assert.True(t, core.IsArchiveTreeOfForTest(row.Variant, core.FomodVariantForTest(f.ref(t, "default", "mod1").Fomod)), "variant %q", row.Variant)
 	assert.NotEmpty(t, row.PreviousVariant)
 
 	// A stale recording refuses the from-file update, nothing cached.

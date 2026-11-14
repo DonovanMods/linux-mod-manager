@@ -926,6 +926,52 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   it. A collection update's plan note for a same-version file change now
   says it reinstalls the mod.
 
+- **An archive import or update from a file no longer changes another
+  profile's cache entry (#644).** `lmm import <archive>` with
+  `--source`/`--id`, `lmm install --from-file` and `lmm update --from-file`
+  (and the web UI's archive import, **Install from file…** and **Update
+  from file…**) of an archive that is none of the files the source lists
+  recorded no file set, so the archive was cached as the plain version
+  entry - the one a download of the source's own file builds, which
+  another profile could be deploying from. That profile then deployed the
+  archive's files while its plan reported nothing to do. Such an archive
+  is now cached as an entry of its own, `<version>@archive-...`, named by
+  its sha256: importing the same archive again finds it, and no other
+  archive or download shares it. That includes an import whose source
+  could not be reached (offline, or the mod lookup failed): lmm cannot
+  tell which of the source's files the archive is, so it is kept as its
+  own build, and nothing re-links it to the source's file later on its
+  own; importing the archive again while the source answers does. The
+  build is that profile's own: another
+  profile that lists the same mod at that version installs the source's
+  file (`lmm profile apply`, `lmm profile switch`, `lmm profile import`
+  and the web UI alike) rather than borrowing it, and a profile entry that
+  names one of the source's files is a change from it, which
+  `lmm profile apply` installs. When the entry is gone, nothing downloads
+  a different file into its place: `lmm deploy` skips the mod (the deploy
+  plan's `skipped` reason), `lmm profile switch`, `lmm profile apply` and
+  `lmm profile import` report it as failed, all saying to import the
+  archive again, and `lmm verify` reports it as missing (not something
+  `--fix` can repair).
+  And an import or update from a file now holds the archive's files aside
+  until nothing refuses it: before, they were written into the cache
+  first, so a refusal - a file conflict you did not accept, a failing
+  `install.before_all`/`before_each` hook, a stale plan - left a new entry
+  behind, or had already rewritten an entry another profile used. A
+  refused import or update now leaves the cache as it was, and an import
+  whose deploy fails removes the entry it had just created. The held-aside
+  files live in `lmm-import-entry-*` folders under lmm's `downloads`
+  folder; one a killed lmm left behind is removed the next time lmm starts,
+  once it is a day old. One error
+  changes with it: an import whose entry's place is taken by something
+  that is not a cache entry now fails before deploying, with an
+  `import failed:` error naming that path, where it used to fail at the
+  deploy with `mod not in cache` after a `could not rename cache entry`
+  note.
+  `lmm mod show`, `lmm mod fomod` (**Reconfigure installer…**) and a
+  deploy's or `lmm verify --fix`'s rebuild also no longer mistake a plain
+  mod with a collection's file list or patches (#610) for a FOMOD install.
+
 - **A config override whose content starts with a tab now round-trips
   (#640).** Such content was written as a YAML block the reader then
   rejected ("found a tab character where an indentation space is

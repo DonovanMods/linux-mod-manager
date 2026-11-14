@@ -80,6 +80,12 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 		return st, nil
 	}
 
+	// #644: this profile's own imported archive, its entry gone: no
+	// download rebuilds it.
+	if plan.archiveGone[st.key] {
+		return nil, fail(ReasonArchiveTree, errors.New(ReasonArchiveTree))
+	}
+
 	// #608: a profile fill installs from the user's own archives, matched
 	// by the collection's checksums - so a source that cannot describe the
 	// mod or list its files right now costs the row its metadata, not the

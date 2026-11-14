@@ -192,6 +192,7 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 	// "unlocked" rather than failing the call - same as doModShow, which
 	// ignores this error.
 	userCategory := ""
+	var inputs map[string]domain.TreeInputs // #644: the ref's file lists and patches
 	if prof, perr := config.LoadProfile(s.ConfigDir(), game.ID, profile); perr == nil {
 		if ref := prof.FindRef(sourceID, modID); ref != nil {
 			if ref.Locked {
@@ -199,6 +200,7 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 				info.LockedVersion = ref.Version
 			}
 			userCategory = ref.Category
+			inputs = refTreeInputs(ref)
 			if !ref.Fomod.IsZero() {
 				choices := ref.Fomod
 				info.Fomod = &choices
@@ -210,7 +212,7 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		}
 	}
 	info.FomodNotRun = s.IsLegacyFomodInstall(game, installed)
-	if info.Fomod == nil && (fomodTreeVariant(installed) != "" || info.FomodNotRun) {
+	if info.Fomod == nil && (installerTree(installed, inputs) || info.FomodNotRun) {
 		// A FOMOD install whose profile lost its choices (an older lmm
 		// dropped the key on a rewrite), or one installed before lmm ran
 		// FOMOD installers (its cache entry is the raw installer archive),

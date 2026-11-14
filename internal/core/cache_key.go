@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
@@ -81,8 +82,15 @@ func sameFileIDs(a, b []string) bool {
 // installed from (#639): a converge flow reinstalls it, as it does for a
 // version drift. Either side recording no files - an unpinned reference,
 // a row from before lmm recorded them - is no drift: there is no set to
-// compare.
+// compare. The exception is a row on an imported archive's tree (#644),
+// which records no source file because it is none: a ref pinning one
+// drifts from it.
 func fileSetDrift(ref domain.ModReference, row *domain.InstalledMod) bool {
+	if row != nil && isArchiveVariant(row.Variant) && len(ref.FileIDs) > 0 && !sameFileIDs(ref.FileIDs, row.FileIDs) {
+		// #644: an imported archive's tree records no source file, so a ref
+		// that pins one names another tree - the source's.
+		return true
+	}
 	return row != nil && filesDiffer(ref.FileIDs, row.FileIDs)
 }
 
@@ -256,14 +264,23 @@ func backfillMarkers(c *cache.Cache, k cache.Key, ids []string) {
 // rowFitsRef reports whether row's tree is one ref names: the variant ref's
 // recorded choices name (refVariant), or that variant's file-set variant
 // (#639) of the files ref pins - or, for a ref that pins none, of the
-// files row was installed from.
+// files row was installed from - or its archive variant (#644).
 func rowFitsRef(row *domain.InstalledMod, ref *domain.ModReference) bool {
 	base := refVariant(ref)
 	ids := ref.FileIDs
 	if len(ids) == 0 {
 		ids = row.FileIDs
 	}
-	return row.Variant == base || (len(ids) > 0 && row.Variant == fileSetVariant(base, ids))
+	return row.Variant == base || (len(ids) > 0 && row.Variant == fileSetVariant(base, ids)) || archiveTreeFits(ref, row, base)
+}
+
+// archiveTreeFits reports whether row's archive tree (#644) is one ref
+// names: an archive variant of ref's base, for a ref that pins no source
+// file - or only the files the row itself records (a DeployCompile
+// import's retained archive, #197). A ref naming a source file the row
+// does not record names the source's tree, never an imported archive's.
+func archiveTreeFits(ref *domain.ModReference, row *domain.InstalledMod, base string) bool {
+	return isArchiveTreeOf(row.Variant, base) && (len(ref.FileIDs) == 0 || sameFileIDs(ref.FileIDs, row.FileIDs))
 }
 
 // restampFileSet moves a just-acquired mod's files, whose base variant
@@ -306,15 +323,99 @@ func isTreeOf(want, base string, ids []string) bool {
 	return want == base || (len(ids) > 0 && want == fileSetVariant(base, ids))
 }
 
-// fomodTreeVariant is row's variant when it names an installer's tree: ""
-// for a plain tree, including one moved to its file-set variant (#639), so
-// a plain mod whose files were swapped is never mistaken for a FOMOD
+// installerTree reports whether row's variant names a tree a FOMOD
+// installer built (#644). Every plain tree is told apart from one: the
+// plain entry, a plain mod's file lists and patches (#610, inputs - the
+// ones the row's profile records for its files), and either one moved to
+// its file-set variant (#639) or ingested from an archive no source file
+// is (archiveVariant), so a plain mod is never mistaken for a FOMOD
 // install.
-func fomodTreeVariant(row *domain.InstalledMod) string {
-	if row.Variant != "" && len(row.FileIDs) > 0 && row.Variant == fileSetVariant("", row.FileIDs) {
-		return ""
+func installerTree(row *domain.InstalledMod, inputs map[string]domain.TreeInputs) bool {
+	if row.Variant == "" {
+		return false
 	}
-	return row.Variant
+	for _, base := range []string{"", treeInputsVariant("", inputs)} {
+		if isTreeOf(row.Variant, base, row.FileIDs) || isArchiveTreeOf(row.Variant, base) {
+			return false
+		}
+	}
+	return true
+}
+
+// archiveVariantPrefix starts every archive variant, which no other
+// variant (12 hex digits) can.
+const archiveVariantPrefix = "archive-"
+
+// archiveVariantScheme names the archive variant's base tag (#644).
+const archiveVariantScheme = "lmm-archive-1"
+
+// THE ARCHIVE VARIANT (#644). An archive imported, or updated from, under a
+// source's mod ID that is none of the files the source lists records no
+// file set, so #639's file-set entry cannot keep its tree apart: keyed by
+// the version alone, it was the plain entry a download of the source's
+// own file builds - another profile's, which then deployed the archive's
+// tree. Such an archive's tree is instead an entry of its own: the
+// variant of the base tree the ingest built (the plain one, or an
+// installer's) for the archive's sha256. The same archive names the same
+// entry again; any other archive, or the source's own file, never does.
+//
+// It spells archive-<base tag>-<12 hex digits of the sha256>, so a row on
+// one is recognised as its base's tree (isArchiveTreeOf) without the
+// archive in hand: a converge flow compares the profile's recorded
+// choices with the base, as it does for the base itself.
+
+// archiveVariant is the variant of base's tree built from the archive
+// whose sha256 (hex) is sum.
+func archiveVariant(base, sum string) string {
+	return archiveBaseTag(base) + sum[:min(12, len(sum))]
+}
+
+// archiveBaseTag is the prefix every archive variant of base starts with.
+func archiveBaseTag(base string) string {
+	h := sha256.Sum256([]byte(archiveVariantScheme + "\n" + base))
+	return archiveVariantPrefix + hex.EncodeToString(h[:])[:8] + "-"
+}
+
+// isArchiveTreeOf reports whether variant is an archive variant of base.
+func isArchiveTreeOf(variant, base string) bool {
+	return strings.HasPrefix(variant, archiveBaseTag(base)) && len(variant) > len(archiveBaseTag(base))
+}
+
+// ReasonArchiveTree is why a mod whose cache entry is gone is not
+// downloaded again (#644): its files came from an archive that is none of
+// the files its source lists, so no download rebuilds them.
+const ReasonArchiveTree = "its files came from an imported archive its source does not list; import the archive again"
+
+// isArchiveVariant reports whether variant is an archive variant of any
+// base: a tree no source download can rebuild.
+func isArchiveVariant(variant string) bool {
+	return strings.HasPrefix(variant, archiveVariantPrefix)
+}
+
+// archiveEntryApplies reports whether an archive ingest at sourceID that
+// records the source files ids goes to its archive variant: it records
+// none, and its source is one that downloads build entries for - not a
+// local mod, whose entries only imports fill.
+func archiveEntryApplies(sourceID string, ids []string) bool {
+	return len(ids) == 0 && sourceID != domain.SourceLocal
+}
+
+// archiveEntryFor is an archive ingest's ImportOptions.entryFor for an
+// archive no source file is (#644): the ingest key's archive variant for
+// the archive at path, whose sha256 is sum when a plan already hashed it
+// (archiveSum), else hashed here. An archive that cannot be hashed fails
+// the ingest: the plain entry is never the fallback.
+func archiveEntryFor(path, sum string) (func(cache.Key) cache.Key, error) {
+	if sum == "" {
+		var err error
+		if sum, _, err = hashFile(path); err != nil {
+			return nil, err
+		}
+	}
+	return func(k cache.Key) cache.Key {
+		k.Variant = archiveVariant(k.Variant, sum)
+		return k
+	}, nil
 }
 
 // reinstallReason is a converge plan's reason for reinstalling row at ref:
@@ -331,7 +432,8 @@ func reinstallReason(ref domain.ModReference, row *domain.InstalledMod) string {
 // keeps the ingest key's identity and names its variant by fileSetEntry
 // for the files ids - judged at final's identity when the ingest key is
 // renamed to it afterwards (an import's enrichment). Nil for no ids: an
-// archive matched to no source file records no set to keep apart.
+// archive matched to no source file records no set, and is kept apart by
+// its archive variant instead (archiveEntryFor, #644).
 func (s *Service) fileSetEntryFor(ctx context.Context, game *domain.Game, ids []string, final *domain.Mod) func(cache.Key) cache.Key {
 	if len(ids) == 0 {
 		return nil
@@ -356,7 +458,7 @@ func (s *Service) fileSetEntryFor(ctx context.Context, game *domain.Game, ids []
 // only: answers carry no installer config hash, a recording may meet an
 // archive that is no installer, and the ingest may resolve otherwise. What
 // a refused or failed ingest may discard is never decided by it - only by
-// the ingest's own answer at the key it wrote (ImportResult.created).
+// the commit's own answer at the key it wrote (stagedEntry.commit).
 func (s *Service) ingestEntry(ctx context.Context, game *domain.Game, profileName string, mod domain.Mod, ids []string, treeFile string, answers map[string]domain.FomodChoices) cache.Key {
 	fx := s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID), mod.SourceID, mod.ID, answers)
 	fx.fileIDs = ids
@@ -366,4 +468,24 @@ func (s *Service) ingestEntry(ctx context.Context, game *domain.Game, profileNam
 	k := cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: fx.expectedVariant()}
 	k, _ = s.fileSetEntry(ctx, s.GetGameCache(game), k, ids, false)
 	return k
+}
+
+// archiveIngestEntry is the entry an archive no source file is fills at
+// mod's identity (#644), predicted for a plan's entry-pre-exists preview
+// only, as ingestEntry predicts a file's: the archive variant of the base
+// the profile's recorded (or answers') FOMOD choices name. It also returns
+// the archive's sha256, which the plan carries so its apply need not hash
+// the archive again; an archive that cannot be hashed predicts the plain
+// entry and returns no sum - the ingest itself refuses it.
+func (s *Service) archiveIngestEntry(ctx context.Context, game *domain.Game, profileName string, mod domain.Mod, archivePath string, answers map[string]domain.FomodChoices) (cache.Key, string) {
+	k := cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}
+	sum, _, err := hashFile(archivePath)
+	if err != nil {
+		return k, ""
+	}
+	entryFor, _ := archiveEntryFor(archivePath, sum)
+	fx := s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID), mod.SourceID, mod.ID, answers)
+	fx.fileLists, fx.patches = nil, nil
+	k.Variant = fx.expectedVariant()
+	return entryFor(k), sum
 }

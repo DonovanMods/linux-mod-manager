@@ -62,13 +62,11 @@ type ImportArchiveOptions struct {
 	//
 	// Left false (the default), a non-empty conflict list makes
 	// ApplyImportArchive return *ConflictError carrying it, before the
-	// hooks, the deploy, the DB row and the profile ref - and the cache
-	// entry the call created is removed again (discardImportedCacheEntry),
-	// so a refusal leaves managed state (DB, profile, game tree) untouched.
-	// That removal only undoes what this call created: when an entry already
-	// existed at a reproducible identity (--source/--id, or a NexusMods
-	// filename), the import has already overwritten it before the conflict
-	// gate runs, and a refusal does not restore it (#310).
+	// hooks, the deploy, the DB row and the profile ref. The archive's tree
+	// is staged outside the cache until every refusal has passed (#644), so
+	// a refusal leaves the cache untouched too - an entry the import would
+	// have replaced, another profile's included, stays exactly as it was
+	// (before #644 a re-import wrote over it before the gate, #310).
 	//
 	// Since #314 a frontend answers the question from the PLAN
 	// (ImportArchivePlan.Conflicts, computed with no ingest at all) and
@@ -128,10 +126,12 @@ type ImportArchiveOptions struct {
 //     ApplyImportArchive copies ImportArchivePlan.Warnings in ahead of its
 //     own, so a Result-only consumer still sees every one of them.
 //   - Notes holds the diagnostics it printed only under --verbose, each
-//     already carrying its historical "Warning: " prefix: the cache-rename
-//     failure and the conflict-check failure (no indent), and the
-//     profile-create and profile-upsert failures (2-space indent - the
-//     event phase tells the two apart).
+//     already carrying its historical "Warning: " prefix: the
+//     conflict-check failure (no indent), and the profile-create and
+//     profile-upsert failures (2-space indent - the event phase tells the
+//     two apart). The cache-rename failure note is gone with the rename
+//     (#644): the archive's tree commits straight to its final identity,
+//     and a commit that fails fails the import.
 //   - HookWarnings holds the non-fatal install.after_each/after_all
 //     failures, in call order. They are NOT events: the pre-lift CLI
 //     accumulated them and printed them together at the very end, so the
@@ -156,9 +156,10 @@ type ImportArchiveResult struct {
 	// filename)" line.
 	AutoDetected bool `json:"auto_detected"`
 	// Renamed reports that enrichment moved the cache entry onto a new
-	// ID/version and the rename SUCCEEDED. False when no rename was needed
-	// and false when one was attempted and failed (that failure is in
-	// Notes).
+	// ID/version: the archive's tree was committed under an identity other
+	// than the one its name gave it. False when no move was needed, and on
+	// any failure before the commit (#644: the tree is staged, and a
+	// commit that fails fails the import).
 	Renamed bool `json:"renamed"`
 	// FileID is the source file this archive resolved to (#139), or empty
 	// when nothing resolved - the identity the completion marker was
@@ -234,10 +235,10 @@ type ImportArchivePlan struct {
 	Hooks []string `json:"hooks"`
 
 	// EntryPreExists reports that a cache entry already lived at this
-	// archive's identity before the import, as best the plan can tell (#310).
-	// A preview hint only (#639): what a conflict refusal removes is decided
-	// by the ingest itself - the entries it created, at the keys it wrote
-	// (discardImportedCacheEntry) - never by this.
+	// archive's identity before the import, as best the plan can tell (#310):
+	// the import replaces it. A preview hint only (#639, #644): the apply
+	// commits the archive's tree only once nothing refuses it, so a refused
+	// import never changes it.
 	EntryPreExists bool `json:"entry_pre_exists"`
 
 	// Match is how the archive's name relates to the source's files, set
@@ -282,6 +283,10 @@ type ImportArchivePlan struct {
 	// fingerprint is the archive's own size+mtime at plan time: the apply
 	// refuses a plan whose archive changed underneath it.
 	fingerprint archiveFingerprint `json:"-"`
+	// archiveSum is the archive's sha256 when the plan hashed it - an
+	// archive no source file is, whose entry it names (#644) - so the
+	// apply does not hash it again. Empty otherwise.
+	archiveSum string `json:"-"`
 	// snapshot is the installed-mod staleness precondition every Apply
 	// re-checks (checkPlanFresh).
 	snapshot installedSnapshot `json:"-"`
@@ -413,6 +418,12 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 		at := final
 		at.SourceID, at.ModID, at.Version = ident.sourceID, ident.modID, ident.version
 		plan.EntryPreExists = gameCache.Exists(at) || (final != at && gameCache.Exists(final))
+	} else if !ident.minted && archiveEntryApplies(plan.Mod.SourceID, nil) {
+		// #644: an archive no source file is fills its own entry, keyed by
+		// its sha256, at the identity the import persists.
+		var entry cache.Key
+		entry, plan.archiveSum = s.archiveIngestEntry(ctx, game, profileName, plan.Mod, archivePath, opts.Fomod)
+		plan.EntryPreExists = gameCache.Exists(entry)
 	}
 
 	// Conflicts come from the plan's own path list, not from a cache entry
@@ -726,6 +737,9 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		// #614: a FOMOD installer installs with this call's answers for
 		// the mod, else the choices its profile ref records.
 		fomod: s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, plan.Mod.SourceID, plan.Mod.ID), plan.Mod.SourceID, plan.Mod.ID, opts.Fomod),
+		// #644: the ingest commits nothing; this flow commits its tree once
+		// every refusal below has passed.
+		stage: true,
 	}
 	// #610: the archive is the resolved source file, so that file's list
 	// and patches apply to it, as a download's would.
@@ -734,6 +748,16 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		// #639: the archive is that file; it fills the entry its set is
 		// at the identity the import persists, never another set's.
 		importOpts.entryFor = s.fileSetEntryFor(ctx, game, []string{plan.resolvedFile.ID}, &plan.Mod)
+	} else if archiveEntryApplies(plan.Mod.SourceID, nil) {
+		// #644: an archive no source file is, under a source's mod ID, is
+		// a tree of its own - never the entry the source's file builds.
+		// The plan's sha256 when it hashed the archive: the fingerprint
+		// check above holds it to the same file.
+		entryFor, err := archiveEntryFor(archivePath, plan.archiveSum)
+		if err != nil {
+			return result, fmt.Errorf("import failed: %w", err)
+		}
+		importOpts.entryFor = entryFor
 	}
 	// #607: an archive imported over a typed reference deploys by its type.
 	plan.Mod.ModType = statedType(s.recordedRef(ctx, game.ID, profileName, plan.Mod.SourceID, plan.Mod.ID))
@@ -746,6 +770,23 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	if err != nil {
 		return result, fmt.Errorf("import failed: %w", err)
 	}
+	// #644: the staged tree is this call's until it commits; every return
+	// before the commit discards it, so a refusal changes no cache entry.
+	// The staging directory goes either way (a commit moved the tree out
+	// of it); removing an absent one reports nothing.
+	staged := imported.staged
+	discardStaged := func() []string {
+		if err := staged.discard(); err != nil {
+			s.logger().Warn("removing an import's staged tree", "path", staged.root, "err", err)
+			return []string{fmt.Sprintf("could not remove the import's staged files %s: %v", staged.root, err)}
+		}
+		return nil
+	}
+	defer func() {
+		for _, w := range discardStaged() {
+			warn("%s", w)
+		}
+	}()
 	// The mod as the PLAN resolved it - post-enrichment, and the identity the
 	// readout already printed - rather than the ingest's own pre-enrichment
 	// value, so the ID printed is the ID persisted.
@@ -756,66 +797,24 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	result.AutoDetected = plan.AutoDetected
 	result.Deployed = imported.FilesExtracted
 
-	// The identity the ingest recorded, before the enrichment rename moves it
-	// - the cache entry currently lives under exactly this ID and version.
-	preEnrichID, preEnrichVersion, preEnrichVariant := ident.modID, ident.version, imported.Mod.Variant
-	// #639: what a refusal may discard is what THIS run created - the
-	// ingest's own answer at the key it wrote, and the rename's at its
-	// destination - never a prediction made at plan time, which another
-	// set's (or another profile's) entry could make wrong.
-	created := discardable{ingest: imported.created}
+	// The entry the tree commits to: the ingest's own key, moved onto the
+	// identity the enrichment resolved (#644: the commit IS the rename the
+	// enrichment used to make in the cache, after the ingest wrote there).
+	finalKey := cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version, Variant: result.Mod.Variant}
+	renames := ident.modID != result.Mod.ID || ident.version != result.Mod.Version
 
 	resolvedFile := plan.resolvedFile
 
-	if preEnrichID != result.Mod.ID || preEnrichVersion != result.Mod.Version {
-		oldPath := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: preEnrichID, Version: preEnrichVersion, Variant: preEnrichVariant})
-		newKey := cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version, Variant: result.Mod.Variant}
-		newPath := gameCache.ModPath(newKey)
-		// A failed MkdirAll is silent, exactly as it was pre-lift: the
-		// rename is not even attempted, and the cascade it causes (the mod
-		// is not cached at its new version) surfaces at the deploy. The
-		// renamed entry is re-stamped as its new key's (#614), and a
-		// directory a colliding key owns is never renamed over.
-		if err := os.MkdirAll(filepath.Dir(newPath), 0755); err == nil {
-			renameCreates := entryAbsent(newPath)
-			if err := gameCache.Claim(newKey); err != nil {
-				note(ImportArchiveNote, "Warning: could not rename cache entry: %v", err)
-			} else if err := os.Rename(oldPath, newPath); err != nil {
-				note(ImportArchiveNote, "Warning: could not rename cache entry: %v", err)
-			} else if err := cache.StampKey(newPath, newKey); err != nil && newKey.Variant != "" {
-				// A variant entry needs its marker to be its key's
-				// (cache.CheckKey): undo the rename, the same outcome as a
-				// rename that failed.
-				if undoErr := os.Rename(newPath, oldPath); undoErr != nil {
-					result.Renamed = true
-					created.renamed = renameCreates
-					note(ImportArchiveNote, "Warning: could not stamp the renamed cache entry: %v (and moving it back failed: %v)", err, undoErr)
-				} else {
-					note(ImportArchiveNote, "Warning: could not rename cache entry: %v", err)
-				}
-			} else {
-				result.Renamed = true
-				created.renamed = renameCreates
-				if err != nil {
-					// A plain entry with its old key's marker is stale, and
-					// a stale marker reads as legacy plain (cache.CheckKey):
-					// the entry is still this key's.
-					note(ImportArchiveNote, "Warning: could not stamp the renamed cache entry: %v", err)
-				}
-			}
-		}
-	}
-
-	// #139: stamp the resolved file's completion marker onto the (final,
-	// post-rename) cache entry. Non-fatal, and the FileIDs are recorded on
-	// the row/ref below even if stamping fails - the row's file identity is
-	// resolved either way; a missing marker only costs the one redundant
+	// #139: stamp the resolved file's completion marker onto the staged
+	// tree, so it commits with it. Non-fatal, and the FileIDs are recorded
+	// on the row/ref below even if stamping fails - the row's file identity
+	// is resolved either way; a missing marker only costs the one redundant
 	// redownload every marker-less import always paid.
 	result.FileIDs = []string{}
 	if resolvedFile != nil {
 		result.FileID = resolvedFile.ID
 		result.FileIDs = []string{resolvedFile.ID}
-		if err := s.markImportedFileComplete(ctx, game, result.Mod, resolvedFile.ID); err != nil {
+		if err := markFileCompleteIn(staged.cache, staged.key, resolvedFile.ID); err != nil {
 			warn("could not mark cache entry complete: %v", err)
 		}
 	}
@@ -839,28 +838,15 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	// consistent (and the profile file is only read once).
 	linkMethod, err := s.GetEffectiveLinkMethod(ctx, game, profileName)
 	if err != nil {
-		// #310 item 2: this hard error sits BETWEEN the cache write and the
-		// conflict gate, so returning bare leaked the entry this call
-		// created - the one thing every other return from here undoes.
-		// Through warn (review M3), not a bare append: a bare append reaches
-		// only a caller that reads the Result, and NEITHER frontend does on
-		// an error return (cmd/lmm/import.go returns the error alone;
-		// serve's job registry stores a Result only for a job that
-		// succeeded), so an orphaned copy of the whole archive was announced
-		// to nobody. warn records it on the Result AND emits the
-		// ImportArchiveWarning step both frontends already render.
-		for _, w := range s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, preEnrichVariant, created) {
-			warn("%s", w)
-		}
 		return result, err
 	}
 	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 
 	// Force skips the conflict CHECK entirely, not merely the refusal - the
-	// contract this flow has always had, and the reason a forced import
-	// raises no "could not check conflicts" note when the entry is missing.
+	// contract this flow has always had. The check reads the staged tree,
+	// which is exactly what the commit puts in the cache (#644).
 	if !opts.Force {
-		conflicts, cerr := installer.GetConflicts(ctx, game, result.Mod, profileName)
+		conflicts, cerr := installer.conflictsIn(ctx, staged.cache, staged.key, game, result.Mod, profileName)
 		switch {
 		case cerr != nil:
 			note(ImportArchiveNote, "Warning: could not check conflicts: %v", cerr)
@@ -868,16 +854,11 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 			// What was actually ingested conflicts differently from what the
 			// plan promised, so the decision the caller made (or is about to
 			// make) was made about a different set. Re-plan (#314, R-B3).
-			// A stale plan carries no typed payload, so a failed cleanup
-			// rides the Result's own Warnings and the warning event
-			// (#310, review M3 - see the link-method return above).
-			for _, w := range s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, preEnrichVariant, created) {
-				warn("%s", w)
-			}
 			return result, fmt.Errorf("%w: file conflicts changed since the plan was computed", ErrStalePlan)
 		case len(conflicts) > 0 && !opts.AcceptConflicts:
-			cleanup := s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, preEnrichVariant, created)
-			return result, &ConflictError{Conflicts: conflicts, CleanupWarnings: cleanup}
+			// The refusal's cleanup rides the typed error (#310 item 1); the
+			// deferred discard then finds nothing left.
+			return result, &ConflictError{Conflicts: conflicts, CleanupWarnings: discardStaged()}
 		}
 	}
 
@@ -913,11 +894,23 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		emit(HookEvent{Scope: scope(), Phase: InstallBeforeEachForced, Stage: "install.before_each", Detail: msg})
 	}
 
+	// #644: every refusal has passed, so the staged tree becomes the cache
+	// entry now - replacing the one it names, under the enrichment's
+	// identity.
+	created, err := staged.commit(ctx, gameCache, finalKey)
+	if err != nil {
+		return result, fmt.Errorf("import failed: %w", err)
+	}
+	result.Renamed = renames
+
 	step(ImportArchiveDeploying, "Deploying to game directory...")
 	// #607: the importer builds its own mod; the ref's stated type is the
 	// plan's, and the deploy and the row route by it.
 	result.Mod.ModType = plan.Mod.ModType
 	if err := installer.Install(ctx, game, result.Mod, profileName); err != nil {
+		for _, w := range s.discardFailedImportEntry(ctx, game, profileName, finalKey, created) {
+			warn("%s", w)
+		}
 		return result, fmt.Errorf("deployment failed: %w", err)
 	}
 	// Only the files the deploy wrote are deployed (#466 review D7, #476):
@@ -1051,78 +1044,25 @@ func archiveChecksums(path string, fileIDs []string, warn func(string, ...any)) 
 	return checksums
 }
 
-// discardImportedCacheEntry removes the cache entry THIS ImportArchive call
-// created, leaving one it merely found alone (unit P review, Important 3).
-//
-// It runs on the conflict refusal, whose whole promise is that nothing
-// happened: the decision may never come back, and for an unlinked archive
-// (domain.SourceLocal, a freshly minted uuid per Import call) the accept
-// re-run mints a DIFFERENT identity, so the refused pass's entry would be a
-// full copy of the archive's contents referenced by nothing, forever, once
-// per refusal. Removing it also restores the property the accept re-run
-// wants for its own sake: the enrichment rename can no longer collide with
-// a populated destination (task-8 review Minor 4's `Renamed: false`).
-//
-// The conflict list cannot be computed before the cache write - it comes
-// from the entry's own deployable file listing, which only exists once the
-// archive has been extracted, converted and marker-stamped (see this file's
-// package comment) - so removing after the fact is the way the refusal
-// stays free.
-//
-// preEnrichID/preEnrichVersion name where Import put the content; a
-// successful enrichment rename moved it to result.Mod's identity and left
-// nothing behind, and a FAILED one left it exactly where Import put it with
-// the destination still holding whatever made the rename fail - which this
-// call did not create and must not remove.
-//
-// It RETURNS what it could not remove (#310 item 1). A failed cleanup used
-// to disappear into a Debug log, so the one thing the caller was promised -
-// "a refusal leaves nothing behind" - could quietly not hold, leaving an
-// orphaned copy of the whole archive with no user-visible signal. Each
-// failure is now also logged at Warn, and the caller attaches the returned
-// warnings to whatever it is about to return (the *ConflictError's
-// CleanupWarnings, or the Result's own Warnings).
-//
-// Which surface each of those reaches (review M3): CleanupWarnings rides the
-// typed refusal to `--json`'s details.cleanup_warnings and to serve's job
-// error envelope. The other two callers announce theirs through the flow's
-// own warn closure instead, so they arrive as ImportArchiveWarning STEP
-// EVENTS - which cmd/lmm/import.go prints to stderr unconditionally and
-// serve streams over SSE - as well as landing on the Result. A bare append
-// to Result.Warnings would reach neither frontend on an error return.
-func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArchiveResult, preEnrichID, preEnrichVersion, preEnrichVariant string, created discardable) []string {
-	if result.Mod == nil {
+// discardFailedImportEntry removes the cache entry an import committed
+// when its deploy then failed (#644): only an entry the commit created
+// (never one it replaced, which another profile may deploy), and only
+// while nothing deployed from it is recorded - a deploy that broke off
+// with files still linked keeps the entry they point into. It returns
+// what it could not remove.
+func (s *Service) discardFailedImportEntry(ctx context.Context, game *domain.Game, profileName string, k cache.Key, created bool) []string {
+	if !created {
 		return nil
 	}
-	var warnings []string
-	gameCache := s.GetGameCache(game)
-	// #639: only an entry this call created is its to remove. The ingest
-	// over an entry it found (a re-import) leaves that key alone; a rename
-	// moved the content away from there, and only a destination the rename
-	// itself created is this call's.
-	if created.ingest {
-		if err := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: preEnrichID, Version: preEnrichVersion, Variant: preEnrichVariant}); err != nil {
-			s.logger().Warn("removing refused import's cache entry", "mod", preEnrichID, "version", preEnrichVersion, "err", err)
-			warnings = append(warnings, fmt.Sprintf("could not remove the refused import's cache entry %s@%s: %v", preEnrichID, preEnrichVersion, err))
-		}
+	ctx = context.WithoutCancel(ctx)
+	if records, err := s.db.DeployedFileRecordsForMod(ctx, game.ID, profileName, k.SourceID, k.ModID); err != nil || len(records) > 0 {
+		return nil
 	}
-	if !result.Renamed || !created.renamed {
-		return warnings
+	if err := s.GetGameCache(game).Delete(k); err != nil {
+		s.logger().Warn("removing a failed import's cache entry", "mod", k.ModID, "version", k.Version, "err", err)
+		return []string{fmt.Sprintf("could not remove the failed import's cache entry %s@%s: %v", k.ModID, k.Version, err)}
 	}
-	if err := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version, Variant: result.Mod.Variant}); err != nil {
-		s.logger().Warn("removing refused import's renamed cache entry", "mod", result.Mod.ID, "version", result.Mod.Version, "err", err)
-		warnings = append(warnings, fmt.Sprintf("could not remove the refused import's cache entry %s@%s: %v", result.Mod.ID, result.Mod.Version, err))
-	}
-	return warnings
-}
-
-// discardable is what a refused archive import may remove (#639): the
-// entries THIS call created - the ingest's at the key it wrote, and the
-// enrichment rename's at its destination - as each found them, never as a
-// plan predicted.
-type discardable struct {
-	ingest  bool
-	renamed bool
+	return nil
 }
 
 // enrichImportedMod folds the source's metadata into imported when the

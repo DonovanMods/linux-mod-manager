@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // stagingDirName is the data-dir subdirectory holding in-flight downloads and
@@ -65,4 +67,40 @@ func newStagingDir(root, pattern string) (string, error) {
 // component goes. The directory is created 0700, as is the staging root.
 func (s *Service) NewStagingDir(pattern string) (string, error) {
 	return newStagingDir(s.stagingRoot(), pattern)
+}
+
+// importEntryStagingPrefix starts the directory an archive ingest stages its
+// tree in until the flow commits it (#644, ImportOptions.stage).
+const importEntryStagingPrefix = "lmm-import-entry-"
+
+// staleImportEntryAge is how old a staged import tree must be before a
+// Service opening sweeps it: far longer than any import runs, so another
+// lmm process's import in flight is never touched.
+const staleImportEntryAge = 24 * time.Hour
+
+// sweepStaleImportEntries removes staged import trees a crashed or killed
+// lmm left behind (#644): every flow removes its own, so one older than
+// staleImportEntryAge belongs to no running import. Best-effort.
+func (s *Service) sweepStaleImportEntries() {
+	root := s.stagingRoot()
+	if root == "" {
+		return
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-staleImportEntryAge)
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), importEntryStagingPrefix) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if rerr := os.RemoveAll(filepath.Join(root, e.Name())); rerr != nil {
+			s.logger().Debug("sweeping a stale staged import failed", "name", e.Name(), "err", rerr)
+		}
+	}
 }

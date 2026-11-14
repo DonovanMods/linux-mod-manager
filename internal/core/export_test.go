@@ -521,6 +521,10 @@ func SetLoadOrderEditAfterSaveForTest(f func()) (restore func()) {
 // base's tree built from exactly the files ids.
 func FileSetVariantForTest(base string, ids []string) string { return fileSetVariant(base, ids) }
 
+// IsArchiveTreeOfForTest exposes isArchiveTreeOf (#644): variant is an
+// archive variant of base's tree.
+func IsArchiveTreeOfForTest(variant, base string) bool { return isArchiveTreeOf(variant, base) }
+
 // ProfileDriftForTest exposes profileDriftOf: game's active profile's drift
 // summary (#641), which production reads through GameStatus.
 func (s *Service) ProfileDriftForTest(ctx context.Context, game *domain.Game) (*ProfileDrift, error) {
