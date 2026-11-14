@@ -740,6 +740,15 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **A config override whose content starts with a tab now round-trips
+  (#640).** Such content was written as a YAML block the reader then
+  rejected ("found a tab character where an indentation space is
+  expected"): a `.lmmc` or YAML collection export carrying it could not be
+  imported again, and saving a profile holding it failed. Every writer of
+  override content (the profile file, the collection export and the
+  version-0 profile export) now writes content its usual form would not
+  read back unchanged as a double-quoted string instead; everything else is
+  written exactly as before, and files already on disk read unchanged.
 - The web UI's mod page no longer offers **Re-link…** for a moment on a locked mod opened directly, before its library listing has loaded: a lock-gated action now waits until the lock is known. Found by a timing-dependent E2E failure (CI on e1e3bbba).
 - **Two mods that ship the same file over one of the game's own no longer
   leave the game's file in place (#632).** When a file was already there

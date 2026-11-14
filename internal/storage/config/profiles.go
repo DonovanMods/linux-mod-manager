@@ -355,7 +355,7 @@ type exportedProfileYAML struct {
 	Mods       []domain.ModReference `yaml:"mods"`
 	LinkMethod string                `yaml:"link_method,omitempty"`
 	Hooks      ProfileHooksYAML      `yaml:"hooks,omitempty"`
-	Overrides  map[string]string     `yaml:"overrides,omitempty"`
+	Overrides  overridesYAML         `yaml:"overrides,omitempty"`
 }
 
 // ExportProfileValue builds profile's portable domain.ExportedProfile
