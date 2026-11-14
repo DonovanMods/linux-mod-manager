@@ -1,6 +1,9 @@
 package core_test
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -115,14 +118,22 @@ type recipeFixture struct {
 
 func newRecipeFixture(t *testing.T, archive []byte) *recipeFixture {
 	t.Helper()
-	var downloads atomic.Int32
-	cdn := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		downloads.Add(1)
+	return newRecipeFixtureWith(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("sig") != "secret" {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		_, _ = w.Write(archive)
+	})
+}
+
+// newRecipeFixtureWith is newRecipeFixture with the CDN's handler given.
+func newRecipeFixtureWith(t *testing.T, serve http.HandlerFunc) *recipeFixture {
+	t.Helper()
+	var downloads atomic.Int32
+	cdn := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		downloads.Add(1)
+		serve(w, r)
 	}))
 	t.Cleanup(cdn.Close)
 	cacheDir := t.TempDir()
@@ -314,4 +325,63 @@ func TestConvertSourceCollection_CacheOnAnotherFilesystem(t *testing.T) {
 	matches, err := filepath.Glob(filepath.Join(f.game.CachePath, "collections", ".recipe-*"))
 	require.NoError(t, err)
 	assert.Empty(t, matches, "the copy's temporary directory is gone")
+}
+
+// #607 re-review 1: a redirect's target is a signed link the caller never
+// saw; a transport error after it must not carry it into the plan.
+func TestConvertSourceCollection_NeverShowsARedirectsSignedLink(t *testing.T) {
+	if _, err := exec.LookPath("7z"); err != nil {
+		t.Skip("7z not installed")
+	}
+	f := newRecipeFixtureWith(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/recipe.7z" {
+			http.Redirect(w, r, "/f.7z?md5=SECRET2&user_id=99&expires=1", http.StatusFound)
+			return
+		}
+		hj, ok := w.(http.Hijacker)
+		require.True(t, ok)
+		conn, _, err := hj.Hijack()
+		require.NoError(t, err)
+		_ = conn.Close() // the connection drops mid-request
+	})
+	c, err := f.svc.ConvertSourceCollection(context.Background(), f.game, "nexusmods", "abcdef", core.CollectionConvertOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, c.ManifestError)
+	assert.NotContains(t, c.ManifestError, "SECRET2")
+	assert.NotContains(t, c.ManifestError, "user_id")
+}
+
+// #607 re-review 2, 3: a recipe that is not a 7z - a zip whose comment
+// carries a terminal escape, a tar whose collection.json is a hard link -
+// is refused from its listing, and nothing of it reaches the message.
+func TestConvertSourceCollection_RefusesARecipeThatIsNot7z(t *testing.T) {
+	if _, err := exec.LookPath("7z"); err != nil {
+		t.Skip("7z not installed")
+	}
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	w, err := zw.Create("collection.json")
+	require.NoError(t, err)
+	_, _ = w.Write([]byte(tinyRecipe))
+	require.NoError(t, zw.SetComment("\x1b]8;;https://evil.example\x07click\x1b]8;;\x07"))
+	require.NoError(t, zw.Close())
+
+	var tarBuf bytes.Buffer
+	tw := tar.NewWriter(&tarBuf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "a.json", Mode: 0o644, Size: int64(len(tinyRecipe)), Typeflag: tar.TypeReg}))
+	_, _ = tw.Write([]byte(tinyRecipe))
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "collection.json", Linkname: "a.json", Typeflag: tar.TypeLink}))
+	require.NoError(t, tw.Close())
+
+	for name, archive := range map[string][]byte{"zip": zipBuf.Bytes(), "tar with a hard link": tarBuf.Bytes()} {
+		t.Run(name, func(t *testing.T) {
+			f := newRecipeFixture(t, archive)
+			c, err := f.svc.ConvertSourceCollection(context.Background(), f.game, "nexusmods", "abcdef", core.CollectionConvertOptions{})
+			require.NoError(t, err)
+			assert.Contains(t, c.ManifestError, "not a 7z archive")
+			assert.NotContains(t, c.ManifestError, "\x1b")
+			assert.NotContains(t, c.ManifestError, "evil.example")
+			assert.NotEqual(t, "Recipe Name", c.Name)
+		})
+	}
 }

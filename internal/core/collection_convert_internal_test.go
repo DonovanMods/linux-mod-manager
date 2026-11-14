@@ -1,9 +1,13 @@
 package core
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,9 +23,16 @@ import (
 // Pure: these tests build manifests by hand, one behaviour each; the real
 // recorded recipes run through it end to end in internal/app.
 
-func nexusMod(name, modID, fileID, md5 string) source.ManifestMod {
+// h is a test label as the md5 hex digits a recipe records (the
+// converter drops an md5 that is not one).
+func h(label string) string {
+	sum := md5.Sum([]byte(label))
+	return hex.EncodeToString(sum[:])
+}
+
+func nexusMod(name, modID, fileID, md5label string) source.ManifestMod {
 	return source.ManifestMod{Name: name, Version: "1.0", SourceType: "nexus", ModID: modID, FileID: fileID,
-		MD5: md5, SizeBytes: 100, LogicalFilename: name, UpdatePolicy: "exact"}
+		MD5: h(md5label), SizeBytes: 100, LogicalFilename: name, UpdatePolicy: "exact"}
 }
 
 func convertInputFor(m *source.CollectionManifest) convertInput {
@@ -91,7 +102,7 @@ func TestConvert_IdentityOriginAndPins(t *testing.T) {
 	require.Len(t, doc.Items, 3)
 	assert.Equal(t, domain.ModReference{SourceID: "nexusmods", ModID: "1", Version: "1.0", FileIDs: []string{"11"}, Locked: true}, doc.Items[0].Ref,
 		"exact: pinned and locked")
-	assert.Equal(t, []domain.CollectionFileRef{{ID: "11", MD5: "aa", Size: 100}}, doc.Items[0].Files)
+	assert.Equal(t, []domain.CollectionFileRef{{ID: "11", MD5: h("aa"), Size: 100}}, doc.Items[0].Files)
 	assert.Equal(t, "Exact", doc.Items[0].Name)
 	assert.Equal(t, domain.ModReference{SourceID: "nexusmods", ModID: "2", Version: "1.0", FileIDs: []string{"22"}}, doc.Items[1].Ref,
 		"prefer: pinned, not locked")
@@ -122,7 +133,7 @@ func TestConvert_LatestInstallsTheTestedFileThenAutoUpdates(t *testing.T) {
 	require.Len(t, c.Document.Items, 3)
 	assert.Equal(t, domain.ModReference{SourceID: "nexusmods", ModID: "3", Version: "1.0", FileIDs: []string{"33"}}, c.Document.Items[0].Ref,
 		"the curator's exact file id, unlocked")
-	assert.Equal(t, []domain.CollectionFileRef{{ID: "33", MD5: "cc", Size: 100}}, c.Document.Items[0].Files)
+	assert.Equal(t, []domain.CollectionFileRef{{ID: "33", MD5: h("cc"), Size: 100}}, c.Document.Items[0].Files)
 	assert.Equal(t, []string{"nexusmods:3"}, c.AutoUpdate, "only an entry whose every file is latest auto-updates")
 	assert.True(t, c.Document.Items[1].Ref.Locked, "a mod with an exact file stays locked")
 
@@ -280,12 +291,12 @@ func TestConvert_PhaseAndRulesOrderTheProfile(t *testing.T) {
 	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{cc, a, b, d},
 		ModRules: []source.ManifestModRule{
 			// "A after B": B loads first, A overwrites it.
-			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{FileMD5: "md5b"}},
+			{Type: "after", Source: source.ManifestModRef{FileMD5: h("md5a")}, Reference: source.ManifestModRef{FileMD5: h("md5b")}},
 			// by logical name when the md5 does not match (an older file)
-			{Type: "before", Source: source.ManifestModRef{FileMD5: "nope", LogicalFileName: "D", VersionMatch: "*"}, Reference: source.ManifestModRef{FileMD5: "md5b"}},
+			{Type: "before", Source: source.ManifestModRef{FileMD5: h("nope"), LogicalFileName: "D", VersionMatch: "*"}, Reference: source.ManifestModRef{FileMD5: h("md5b")}},
 			// a rule against a mod outside the collection orders nothing
-			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{FileMD5: "outsider", LogicalFileName: "Elsewhere"}},
-			{Type: "conflicts", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{LogicalFileName: "X"}},
+			{Type: "after", Source: source.ManifestModRef{FileMD5: h("md5a")}, Reference: source.ManifestModRef{FileMD5: h("outsider"), LogicalFileName: "Elsewhere"}},
+			{Type: "conflicts", Source: source.ManifestModRef{FileMD5: h("md5a")}, Reference: source.ManifestModRef{LogicalFileName: "X"}},
 		}}
 	c := mustConvert(t, convertInputFor(m))
 	// Phase first (C is phase 1, so last), then the rules: D before B, B before A.
@@ -302,8 +313,8 @@ func TestConvert_RuleCycleKeepsTheBaseOrderWithANote(t *testing.T) {
 	b := nexusMod("B", "2", "21", "md5b")
 	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b},
 		ModRules: []source.ManifestModRule{
-			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{FileMD5: "md5b"}},
-			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5b"}, Reference: source.ManifestModRef{FileMD5: "md5a"}},
+			{Type: "after", Source: source.ManifestModRef{FileMD5: h("md5a")}, Reference: source.ManifestModRef{FileMD5: h("md5b")}},
+			{Type: "after", Source: source.ManifestModRef{FileMD5: h("md5b")}, Reference: source.ManifestModRef{FileMD5: h("md5a")}},
 		}}
 	c := mustConvert(t, convertInputFor(m))
 	assert.Equal(t, []string{"1", "2"}, refOrder(c.Document))
@@ -319,7 +330,7 @@ func TestConvert_RuleCycleIsBrokenInsideTheCycle(t *testing.T) {
 	a := nexusMod("A", "1", "11", "md5a")
 	b := nexusMod("B", "2", "21", "md5b")
 	c := nexusMod("C", "3", "31", "md5c")
-	ref := func(md5 string) source.ManifestModRef { return source.ManifestModRef{FileMD5: md5} }
+	ref := func(md5 string) source.ManifestModRef { return source.ManifestModRef{FileMD5: h(md5)} }
 	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b, c},
 		ModRules: []source.ManifestModRule{
 			{Type: "before", Source: ref("md5c"), Reference: ref("md5a")},
@@ -338,13 +349,30 @@ func TestConvert_RuleCycleIsBrokenInsideTheCycle(t *testing.T) {
 	assert.NotContains(t, note, "A,", "and only the cycle")
 }
 
-func TestStableTopoSort_CyclesAreReportedOnce(t *testing.T) {
+func TestStableTopoSort_EveryBreakIsReported(t *testing.T) {
 	// 0 -> 1 -> 2 -> 0, plus a chord 2 -> 1, and 3 downstream of 2.
+	// Releasing 0 leaves the smaller cycle 1 <-> 2, broken in turn.
 	edges := [][]int{{1}, {2}, {0, 1, 3}, {}}
 	indegree := []int{1, 2, 1, 1}
 	order, cycles := stableTopoSort(4, edges, indegree)
 	assert.Equal(t, []int{0, 1, 2, 3}, order)
-	assert.Equal(t, [][]int{{0, 1, 2}}, cycles)
+	assert.Equal(t, [][]int{{0, 1, 2}, {1, 2}}, cycles)
+}
+
+func TestSafeFeatureSuffix_LongNamesStayDistinct(t *testing.T) {
+	a := safeFeatureSuffix(strings.Repeat("\u202e", 200) + "a")
+	b := safeFeatureSuffix(strings.Repeat("\u202e", 200) + "b")
+	assert.NotEqual(t, a, b, "a hash of the whole name follows the cut")
+	assert.False(t, hasUnsafeRunes(a))
+	assert.Equal(t, "mergedData", safeFeatureSuffix("mergedData"))
+}
+
+func TestConvert_AnMD5ThatIsNotOneIsDropped(t *testing.T) {
+	mod := nexusMod("A", "1", "11", "aa")
+	mod.MD5 = "not-an-md5\x1b"
+	c := mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{mod}}))
+	assert.Empty(t, c.Document.Items[0].Files[0].MD5)
+	assert.Empty(t, c.Items[0].MD5)
 }
 
 func TestConvert_CollectionLevelFeatures(t *testing.T) {
@@ -565,16 +593,16 @@ func TestConvert_RuleResolutionIsLabelledAccurately(t *testing.T) {
 	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b, twinOne, twinTwo},
 		ModRules: []source.ManifestModRule{
 			// another version of a member: not guessed
-			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{LogicalFileName: "B", VersionMatch: "1.0"}},
+			{Type: "after", Source: source.ManifestModRef{FileMD5: h("md5a")}, Reference: source.ManifestModRef{LogicalFileName: "B", VersionMatch: "1.0"}},
 			// a range: not evaluated
-			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{LogicalFileName: "B", VersionMatch: ">=1.0"}},
+			{Type: "after", Source: source.ManifestModRef{FileMD5: h("md5a")}, Reference: source.ManifestModRef{LogicalFileName: "B", VersionMatch: ">=1.0"}},
 			// a name two items share
-			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{LogicalFileName: "Twin"}},
+			{Type: "after", Source: source.ManifestModRef{FileMD5: h("md5a")}, Reference: source.ManifestModRef{LogicalFileName: "Twin"}},
 			// the exact version resolves
-			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{LogicalFileName: "B", VersionMatch: "2.0"},
+			{Type: "after", Source: source.ManifestModRef{FileMD5: h("md5a")}, Reference: source.ManifestModRef{LogicalFileName: "B", VersionMatch: "2.0"},
 				Unknown: []string{"reference.oddKey"}},
 			// a dropped rule's unknown key changes nothing
-			{Type: "after", Source: source.ManifestModRef{FileMD5: "md5a"}, Reference: source.ManifestModRef{FileMD5: "outsider"}, Unknown: []string{"weird"}},
+			{Type: "after", Source: source.ManifestModRef{FileMD5: h("md5a")}, Reference: source.ManifestModRef{FileMD5: h("outsider")}, Unknown: []string{"weird"}},
 		}}
 	c := mustConvert(t, convertInputFor(m))
 	assert.Equal(t, []string{"2", "1", "3", "4"}, refOrder(c.Document), "only the exact-version rule applied: B before A")
@@ -586,7 +614,7 @@ func TestConvert_RuleResolutionIsLabelledAccurately(t *testing.T) {
 
 func TestConvert_ModRulesFeatureOnlyForOrderingRules(t *testing.T) {
 	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{nexusMod("A", "1", "11", "aa")},
-		ModRules: []source.ManifestModRule{{Type: "conflicts", Source: source.ManifestModRef{FileMD5: "aa"}, Reference: source.ManifestModRef{LogicalFileName: "X"}}}}
+		ModRules: []source.ManifestModRule{{Type: "conflicts", Source: source.ManifestModRef{FileMD5: h("aa")}, Reference: source.ManifestModRef{LogicalFileName: "X"}}}}
 	c := mustConvert(t, convertInputFor(m))
 	assert.NotContains(t, c.Features, CollectionFeatureModRules)
 }
@@ -596,8 +624,30 @@ func TestConvert_NotesARuleThatCrossesPhases(t *testing.T) {
 	late := nexusMod("Late", "2", "21", "md5l")
 	late.Phase = 2
 	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{early, late},
-		ModRules: []source.ManifestModRule{{Type: "before", Source: source.ManifestModRef{FileMD5: "md5l"}, Reference: source.ManifestModRef{FileMD5: "md5e"}}}}
+		ModRules: []source.ManifestModRule{{Type: "before", Source: source.ManifestModRef{FileMD5: h("md5l")}, Reference: source.ManifestModRef{FileMD5: h("md5e")}}}}
 	c := mustConvert(t, convertInputFor(m))
 	assert.Equal(t, []string{"2", "1"}, refOrder(c.Document))
 	assert.True(t, containsSubstring(c.Notes, "put Late before a mod of an earlier install phase"), "%v", c.Notes)
+}
+
+// #607 re-review 3: the listing refuses a collection.json that is a link of
+// either kind (tar's fields; 7z lists them for archives that carry them),
+// and the extracted file must have a link count of one.
+func TestCheckRecipeListingText_RefusesLinks(t *testing.T) {
+	head := "Path = r.7z\nType = 7z\n\n----------\n"
+	ok := head + "Path = collection.json\nSize = 3\nAttributes = A -rw-r--r--\n\n"
+	require.NoError(t, checkRecipeListingText(ok))
+	for _, field := range []string{"Hard Link = a.json", "Symbolic Link = /etc/passwd"} {
+		err := checkRecipeListingText(head + "Path = collection.json\nSize = 3\n" + field + "\nAttributes = A -rw-r--r--\n\n")
+		assert.ErrorIs(t, err, source.ErrInvalidManifest, field)
+	}
+	assert.ErrorIs(t, checkRecipeListingText(strings.Replace(ok, "Type = 7z", "Type = zip", 1)), source.ErrInvalidManifest)
+}
+
+func TestCheckRecipeTree_RefusesAHardLinkedManifest(t *testing.T) {
+	dir := t.TempDir()
+	other := filepath.Join(t.TempDir(), "elsewhere.json")
+	require.NoError(t, os.WriteFile(other, []byte("{}"), 0o600))
+	require.NoError(t, os.Link(other, filepath.Join(dir, "collection.json")))
+	assert.ErrorIs(t, checkRecipeTree(dir), source.ErrInvalidManifest)
 }

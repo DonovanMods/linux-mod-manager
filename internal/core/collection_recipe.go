@@ -14,6 +14,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,6 +118,7 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 			return nil, ctxErr
 		}
 		in.manifestErr = recipeErrorText(err)
+		s.logger().Debug("a collection recipe could not be read", "source", sourceID, "collection", list.ID, "err", err)
 	}
 	return convertCollection(in)
 }
@@ -129,8 +131,20 @@ func modTypeRouted(a adapter.GameAdapter, game *domain.Game, modType string) boo
 	return ok && (root != adapter.RootInstallPath || game.InstallPath != "")
 }
 
-// recipeErrorText words why a recipe could not be read, for a plan.
+// recipeErrorText words why a recipe could not be read, for a plan: a
+// plain sentence, its text cleaned (domain.SanitizeText) and capped, since
+// a parser's error can quote the recipe's own strings.
 func recipeErrorText(err error) string {
+	msg := recipeErrorSentence(err)
+	msg = domain.SanitizeText(msg)
+	if len(msg) > maxCollectionLine {
+		msg = strings.ToValidUTF8(msg[:maxCollectionLine], "") + "…"
+	}
+	return msg
+}
+
+// recipeErrorSentence is recipeErrorText before it is cleaned.
+func recipeErrorSentence(err error) string {
 	switch {
 	case errors.Is(err, ErrSevenZipMissing):
 		return "a collection's recipe is a .7z archive, and lmm reads those with the system 7z command, which is not installed: install 7zip (or p7zip) and plan again"
@@ -206,14 +220,14 @@ func (s *Service) fetchCollectionRecipe(ctx context.Context, game *domain.Game, 
 	if err := s.downloadRecipe(ctx, link, archive); err != nil {
 		return "", redactLink(fmt.Errorf("downloading the recipe: %w", err), link)
 	}
-	if err := checkRecipeListing(ctx, archive); err != nil {
+	if err := s.checkRecipeListing(ctx, archive); err != nil {
 		return "", err
 	}
 	tree := filepath.Join(staging, "tree")
 	if err := os.Mkdir(tree, 0o700); err != nil {
 		return "", err
 	}
-	if err := extractRecipeManifest(ctx, archive, tree); err != nil {
+	if err := s.extractRecipeManifest(ctx, archive, tree); err != nil {
 		return "", err
 	}
 	if err := checkRecipeTree(tree); err != nil {
@@ -267,6 +281,18 @@ func (s *Service) downloadRecipe(ctx context.Context, link, dest string) (err er
 	}
 	resp, err := s.downloader.redirectSafeClient(nil).Do(req)
 	if err != nil {
+		// *url.Error's text carries the URL that failed - after a redirect,
+		// a signed link the caller never saw, so redactLink cannot cut it.
+		// Report it without its query, as downloadOnce does.
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			reportURL := "the recipe's link"
+			if parsed, perr := url.Parse(uerr.URL); perr == nil {
+				parsed.RawQuery, parsed.Fragment, parsed.User = "", "", nil
+				reportURL = parsed.String()
+			}
+			return fmt.Errorf("requesting %s: %w", reportURL, uerr.Err)
+		}
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -299,14 +325,33 @@ func (s *Service) downloadRecipe(ctx context.Context, link, dest string) (err er
 // holds exactly one top-level collection.json that is a regular file within
 // maxCollectionManifestBytes - checked BEFORE anything is extracted, so a
 // highly compressed member is never inflated.
-func checkRecipeListing(ctx context.Context, archive string) error {
+func (s *Service) checkRecipeListing(ctx context.Context, archive string) error {
 	out, err := exec.CommandContext(ctx, "7z", "l", "-slt", "--", archive).Output()
 	if err != nil {
-		return fmt.Errorf("%w: listing the recipe archive: %v", source.ErrInvalidManifest, err)
+		s.logger().Debug("listing a collection recipe failed", "err", err, "output", string(out))
+		return fmt.Errorf("%w: the recipe archive could not be listed (7z could not read it)", source.ErrInvalidManifest)
 	}
-	_, body, ok := strings.Cut(string(out), "\n----------\n")
+	return checkRecipeListingText(string(out))
+}
+
+// checkRecipeListingText is checkRecipeListing over `7z l -slt`'s output.
+// The archive must be a 7z (every surveyed recipe is: VERIFIED), so a zip,
+// a tar or anything else 7z happens to read is refused before any of its
+// fields - a zip comment, a tar link - can matter; and the one
+// collection.json must be a regular file with no link of either kind.
+func checkRecipeListingText(out string) error {
+	header, body, ok := strings.Cut(out, "\n----------\n")
 	if !ok {
 		return fmt.Errorf("%w: the recipe archive's listing is not 7z's", source.ErrInvalidManifest)
+	}
+	var is7z bool
+	for line := range strings.Lines(header) {
+		if strings.TrimRight(line, "\r\n") == "Type = 7z" {
+			is7z = true
+		}
+	}
+	if !is7z {
+		return fmt.Errorf("%w: the recipe archive is not a 7z archive", source.ErrInvalidManifest)
 	}
 	var found int
 	for block := range strings.SplitSeq(body, "\n\n") {
@@ -324,7 +369,8 @@ func checkRecipeListing(ctx context.Context, archive string) error {
 		if attrs := strings.Fields(fields["Attributes"]); len(attrs) > 1 {
 			mode = attrs[1]
 		}
-		if fields["Folder"] == "+" || strings.HasPrefix(mode, "d") || strings.HasPrefix(mode, "l") || strings.Contains(fields["Attributes"], "D") {
+		if fields["Folder"] == "+" || strings.HasPrefix(mode, "d") || strings.HasPrefix(mode, "l") || strings.Contains(fields["Attributes"], "D") ||
+			fields["Symbolic Link"] != "" || fields["Hard Link"] != "" {
 			return fmt.Errorf("%w: the recipe's %s is not a regular file", source.ErrInvalidManifest, collectionRecipeManifest)
 		}
 		size, err := strconv.ParseInt(fields["Size"], 10, 64)
@@ -345,13 +391,15 @@ func checkRecipeListing(ctx context.Context, archive string) error {
 }
 
 // extractRecipeManifest extracts archive's top-level collection.json, and
-// nothing else, into dest.
-func extractRecipeManifest(ctx context.Context, archive, dest string) error {
+// nothing else, into dest. 7z's own output names local paths and can carry
+// the archive's text, so it goes to the debug log, never into the message.
+func (s *Service) extractRecipeManifest(ctx context.Context, archive, dest string) error {
 	ctx, cancel := context.WithTimeout(ctx, extract7zTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "7z", "x", "-y", "-r-", "-o"+dest, "--", archive, collectionRecipeManifest).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%w: extracting the recipe: %v: %s", source.ErrInvalidManifest, err, strings.TrimSpace(string(out)))
+		s.logger().Debug("extracting a collection recipe failed", "err", err, "output", string(out))
+		return fmt.Errorf("%w: 7z could not extract the recipe's %s", source.ErrInvalidManifest, collectionRecipeManifest)
 	}
 	return nil
 }
@@ -370,6 +418,9 @@ func checkRecipeTree(dir string) error {
 	}
 	if info.Size() > maxCollectionManifestBytes {
 		return fmt.Errorf("%w: the recipe's %s is over the %d-byte limit", source.ErrInvalidManifest, collectionRecipeManifest, maxCollectionManifestBytes)
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink != 1 {
+		return fmt.Errorf("%w: the recipe's %s is a hard link", source.ErrInvalidManifest, collectionRecipeManifest)
 	}
 	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

@@ -8,6 +8,8 @@ package core
 // it.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"slices"
 	"strconv"
@@ -37,10 +39,31 @@ func safeFeatureSuffix(s string) string {
 		return s
 	}
 	q := strconv.QuoteToASCII(s)
-	if len(q) > maxCollectionLine {
-		q = q[:maxCollectionLine-4] + `..."`
+	if len(q) > maxSuffixBytes {
+		// Cut, and keep two different long names different: a short hash of
+		// the whole name follows the cut.
+		sum := sha256.Sum256([]byte(s))
+		q = q[:maxSuffixBytes] + `..."#` + hex.EncodeToString(sum[:4])
 	}
 	return q
+}
+
+// maxSuffixBytes caps an escaped feature-name suffix before its hash.
+const maxSuffixBytes = 256
+
+// md5Hex is s when it is an md5 as hex digits, else "": a file's md5 is
+// matched and recorded, never shown as text, so one that is not an md5 is
+// dropped rather than cleaned (a cleaned value would match nothing).
+func md5Hex(s string) string {
+	if len(s) != 32 {
+		return ""
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return ""
+		}
+	}
+	return s
 }
 
 // sanitizeConvertInput is in with every string a conversion can show
@@ -110,7 +133,7 @@ func sanitizeConvertInput(in convertInput) (convertInput, error) {
 			line("a mod's name", &mod.Name)
 			line("a mod's version", &mod.Version)
 			line("a mod's author", &mod.Author)
-			line("a mod's md5", &mod.MD5)
+			mod.MD5 = md5Hex(mod.MD5)
 			text("a mod's instructions", &mod.Instructions)
 			link(&mod.URL)
 			if mod.ModType != "" {
@@ -130,7 +153,10 @@ func sanitizeConvertInput(in convertInput) (convertInput, error) {
 			m.FileLoadOrders[i].ID = safeFeatureSuffix(m.FileLoadOrders[i].ID)
 		}
 		for i := range m.ModRules {
-			m.ModRules[i].Unknown = slices.Clone(m.ModRules[i].Unknown)
+			r := &m.ModRules[i]
+			r.Unknown = slices.Clone(r.Unknown)
+			r.Source.FileMD5 = md5Hex(r.Source.FileMD5)
+			r.Reference.FileMD5 = md5Hex(r.Reference.FileMD5)
 		}
 		in.manifest = &m
 	}

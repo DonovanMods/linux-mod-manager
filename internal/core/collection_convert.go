@@ -968,12 +968,12 @@ func (h *intHeap) Pop() any {
 // component points into is a cycle nothing else is holding up, and of those
 // the one holding the lowest-numbered node is broken there - that node is
 // released anyway. A node merely DOWNSTREAM of a cycle is never the one
-// released, so its own rules still hold. cycles lists each cycle broken, its
-// nodes in order, once.
+// released, so its own rules still hold. cycles lists every break, as the
+// cycle's remaining nodes in order: releasing one node of a cycle with a
+// chord can leave a smaller cycle, which is broken (and listed) in turn.
 func stableTopoSort(n int, edges [][]int, indegree []int) (order []int, cycles [][]int) {
 	indegree = slices.Clone(indegree)
 	done := make([]bool, n)
-	reported := make([]bool, n)
 	h := &intHeap{}
 	for i := 0; i < n; i++ {
 		if indegree[i] == 0 {
@@ -1001,16 +1001,15 @@ func stableTopoSort(n int, edges [][]int, indegree []int) (order []int, cycles [
 					break
 				}
 			}
-			if !reported[release] {
-				var members []int
-				for u := 0; u < n; u++ {
-					if !done[u] && comp[u] == comp[release] {
-						members = append(members, u)
-						reported[u] = true
-					}
+			// Every break is reported, a second one inside what is left of
+			// the same cycle included: each is a rule lmm did not follow.
+			var members []int
+			for u := 0; u < n; u++ {
+				if !done[u] && comp[u] == comp[release] {
+					members = append(members, u)
 				}
-				cycles = append(cycles, members)
 			}
+			cycles = append(cycles, members)
 			indegree[release] = 0
 			heap.Push(h, release)
 		}
