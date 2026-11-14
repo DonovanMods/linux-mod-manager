@@ -771,13 +771,14 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		return result, err
 	}
 	// #633: a path a disabled mod gives up passes to the next mod in load
-	// order this apply leaves deployed - not to one it turns off, deploys
-	// again or replaces itself.
-	excluded := excludeKeys(plan.ToDisable, plan.ToEnable)
-	for _, entry := range plan.ToInstall {
-		excluded[domain.ModKey(entry.Ref.SourceID, entry.Ref.ModID)] = true
-	}
-	installer.heirs = s.pathHeirsFor("", nil, excluded)
+	// order this apply leaves deployed - not to one it turns off or
+	// deploys again itself. A mod it reinstalls at another version does
+	// take one: its row is the version on disk, which keeps the path if
+	// the reinstall fails, and the reinstall's own replace hands the path
+	// on again if the new version no longer ships it. (A switch differs:
+	// its heirs are the target profile's rows, whose version need not be
+	// the one on disk.)
+	installer.heirs = s.pathHeirsFor("", nil, excludeKeys(plan.ToDisable, plan.ToEnable))
 	pm := s.NewProfileManager()
 
 	totalDisable := len(plan.ToDisable)

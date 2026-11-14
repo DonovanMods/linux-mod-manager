@@ -1538,22 +1538,7 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 // the mod deployed right after in mod's place; the paths it ships are left
 // for that deploy.
 func (i *Installer) uninstallHandingOff(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, incoming *domain.Mod) error {
-	return i.uninstallHandingOffExcept(ctx, game, mod, profileName, incoming, nil)
-}
-
-// uninstallHandingOffExcept is uninstallHandingOff that never hands a path
-// to a mod exclude names (the keys of the mods a web batch uninstall
-// removes with this one): the path goes to the next mod that stays, which
-// is the owner the batch leaves it with.
-func (i *Installer) uninstallHandingOffExcept(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, incoming *domain.Mod, exclude map[string]bool) error {
-	ho := i.newHandOff(mod, incoming, game)
-	if ho != nil {
-		ho.exclude = exclude
-	}
-	err := i.uninstallReporting(ctx, game, mod, profileName, ho)
-	// The mod is going: no later removal of the flow hands it a path.
-	i.heirLeft(game, profileName, mod)
-	return err
+	return i.uninstallReporting(ctx, game, mod, profileName, i.newHandOff(mod, incoming, game))
 }
 
 // uninstallReporting is Uninstall's body, handing paths on through ho

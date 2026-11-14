@@ -513,9 +513,8 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   install, an update, a rollback, a copy, an installer reconfigure, a
   profile import, an apply or a switch now shows a job's warnings where the
   job finished (only a switch's did before), an update batch's toast
-  carries its items' warnings, the library's batch uninstall hands each
-  path straight to a mod the batch keeps, and `lmm conflicts` and the web
-  UI's conflicts view name the new owner.
+  carries its items' warnings, and `lmm conflicts` and the web UI's
+  conflicts view name the new owner.
 - **The `--fomod-choices` error for several questions names the per-file key
   (#634).** An unkeyed choices file that meets more than one installer now
   says "answers one installer, but N ask; key its answers by mod

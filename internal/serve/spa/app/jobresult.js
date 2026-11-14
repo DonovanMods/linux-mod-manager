@@ -231,10 +231,13 @@ export function readoutHasNextStep(summary, read) {
 /**
  * resultMayHoldNextStep says whether readoutHasNextStep could need the job's
  * RESULT to answer for summary - a purge's or a repair's own outcome, a
- * switch's recovery notice, an update batch's failed items - rather than
- * the summary alone. A batch's failures are on its tally already, so this
- * only ever saves a read; it never changes the answer (issue 583: the
- * toast for every other kind no longer waits on a second round trip).
+ * switch's recovery notice, the warnings of a kind in RESULT_WARNING_KINDS
+ * - rather than the summary alone. A kind it answers false for is never
+ * read, so its toast goes up without a second round trip (issue 583). For
+ * most batches that loses nothing: their failures are on the tally. An
+ * update or import batch is still read (issue 633), because a tally does
+ * not carry its items' warnings - the read can hold a toast the tally
+ * alone would let go.
  */
 export function resultMayHoldNextStep(summary) {
   // A tally answers for its batch's failures, which are counted on it -

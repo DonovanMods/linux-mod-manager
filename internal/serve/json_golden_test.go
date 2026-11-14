@@ -381,12 +381,6 @@ func TestServeJSONGoldens(t *testing.T) {
 			uninstallApplyRequest{KeepCache: true, Force: true, SkipHooks: true},
 		},
 		{
-			// #633: the library's batch uninstall names the batch's other
-			// mods, so a shared path goes straight to a mod that stays.
-			"uninstall_apply_request_batch",
-			uninstallApplyRequest{AlsoRemoving: []domain.ModReference{{SourceID: "fake", ModID: "m2"}}},
-		},
-		{
 			// #74's batch, both halves of its options. The batch's own two
 			// documents are NOT here: since #324 they are core's
 			// UpdateBatchPlan/UpdateBatchResult, goldened in

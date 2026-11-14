@@ -1802,22 +1802,7 @@ async function startUninstallBatch(mods) {
         { mod_id: mod.id, source_id: mod.source_id },
         context,
       );
-      // Issue 633: the mods still to come in this batch never take a
-      // shared path this uninstall gives up - it goes straight to a mod
-      // the batch leaves installed, so each path is reported once, with
-      // the owner the batch ends with.
-      const rest = mods.slice(mods.indexOf(mod) + 1);
-      const { id: jobID } = await startJob(
-        response.plan_id,
-        rest.length > 0
-          ? {
-              also_removing: rest.map((m) => ({
-                source_id: m.source_id,
-                mod_id: m.id,
-              })),
-            }
-          : {},
-      );
+      const { id: jobID } = await startJob(response.plan_id, {});
       return jobID;
     },
     originOf: (mod) => `mod:${mod.source_id}/${mod.id}:uninstall`,

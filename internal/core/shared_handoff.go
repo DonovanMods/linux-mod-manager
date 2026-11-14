@@ -20,10 +20,11 @@ package core
 // other-game guard and #466's user-file guard are asked as a deploy asks
 // them; a path either keeps is left as the removal leaves it today.
 //
-// What the removals of one flow learn about the heirs - the profile's
-// candidates in load order, and each candidate's deployable files - is
-// that flow's (heirFlow), so a flow that removes many mods lists each
-// candidate's cache entry once, not once per removal. What they hand on is
+// Each removal reads its heirs afresh - one query and the profile document
+// - so it sees every mod the flow has turned off, deployed or replaced so
+// far. What is expensive, each candidate's deployable files, is listed once
+// per flow (heirFlow), so a flow that removes many mods lists each cache
+// entry once, not once per removal. What they hand on is
 // reported once, at the flow's drain, naming each path's final owner
 // (originalsStore.noteHandOff, Service.takeCaptureWarnings).
 
@@ -80,16 +81,13 @@ type pathHeirs struct {
 	candidates []domain.InstalledMod
 }
 
-// heirFlow is one flow's knowledge of the heirs of one game (#633): each
-// heir profile's candidates, read once and kept as mods leave, and each
-// cache entry's deployable files, listed once. It lives for one mutation
-// (Service.beginOp ends it), so nothing a later flow changes is read stale.
+// heirFlow is one flow's listings of the cache entries of one game's heirs
+// (#633): each entry's deployable files, listed once. It lives for one
+// mutation (Service.beginOp ends it), so nothing a later flow changes is
+// read stale.
 type heirFlow struct {
-	mu sync.Mutex
-	// candidates is each heir profile's candidates, winner first; a
-	// profile with no entry is read on its next use.
-	candidates map[string][]domain.InstalledMod
-	listings   map[heirListingKey]map[domain.DeployPath]deployItem
+	mu       sync.Mutex
+	listings map[heirListingKey]map[domain.DeployPath]deployItem
 }
 
 // heirListingHook, when set, runs once per cache entry a flow lists for
@@ -127,16 +125,11 @@ func (s *Service) forgetHeirFlows() {
 	s.heirFlowsMu.Unlock()
 }
 
-// candidatesFor is profile's candidates, read the first time a removal of
-// the flow asks. The profile document gives the load order and its off
-// markers, as a deploy reads them; a document that cannot be read is an
-// error, so nothing is handed on rather than handed to the wrong mod.
-func (f *heirFlow) candidatesFor(ctx context.Context, s *Service, gameID, profile string) ([]domain.InstalledMod, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if mods, ok := f.candidates[profile]; ok {
-		return mods, nil
-	}
+// heirCandidates is profile's candidates, winner first, read for each
+// removal. The profile document gives the load order and its off markers,
+// as a deploy reads them; a document that cannot be read is an error, so
+// nothing is handed on rather than handed to the wrong mod.
+func (s *Service) heirCandidates(ctx context.Context, gameID, profile string) ([]domain.InstalledMod, error) {
 	doc, err := config.LoadProfile(s.configDir, gameID, profile)
 	if err != nil {
 		return nil, fmt.Errorf("loading profile %s: %w", profile, err)
@@ -163,38 +156,15 @@ func (f *heirFlow) candidatesFor(ctx context.Context, s *Service, gameID, profil
 	for j := len(ordered) - 1; j >= 0; j-- {
 		mods = append(mods, ordered[j])
 	}
-	if f.candidates == nil {
-		f.candidates = make(map[string][]domain.InstalledMod)
-	}
-	f.candidates[profile] = mods
 	return mods, nil
 }
 
-// left drops key from profile's candidates: the flow took that mod away.
-func (f *heirFlow) left(profile, key string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	mods, ok := f.candidates[profile]
-	if !ok {
-		return
-	}
-	kept := make([]domain.InstalledMod, 0, len(mods))
-	for _, m := range mods {
-		if domain.ModKey(m.SourceID, m.ID) != key {
-			kept = append(kept, m)
-		}
-	}
-	f.candidates[profile] = kept
-}
-
-// changed forgets every profile's candidates, and the listings of the
-// cache entries of mods: the flow deployed those mods, or another version
-// of one, so the next removal reads them again - a reinstall can rewrite a
-// cache entry under the same key. Every other listing stays.
+// changed forgets the listings of the cache entries of mods: the flow
+// deployed those mods, or another version of one, and a reinstall can
+// rewrite a cache entry under the same key. Every other listing stays.
 func (f *heirFlow) changed(game *domain.Game, mods ...*domain.Mod) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.candidates = nil
 	for _, m := range mods {
 		k := modCacheKey(game.ID, *m)
 		for lk := range f.listings {
@@ -235,7 +205,7 @@ func (f *heirFlow) listing(placer *Installer, game *domain.Game, mod *domain.Ins
 func (h *heirSource) resolve(ctx context.Context, game *domain.Game, removalProfile string, removing *domain.Mod) (*pathHeirs, error) {
 	profile := h.profileFor(removalProfile)
 	flow := h.svc.heirFlowFor(game.ID)
-	mods, err := flow.candidatesFor(ctx, h.svc, game.ID, profile)
+	mods, err := h.svc.heirCandidates(ctx, game.ID, profile)
 	if err != nil {
 		return nil, err
 	}
@@ -258,14 +228,6 @@ func (i *Installer) heirFlowChanged(game *domain.Game, mods ...*domain.Mod) {
 	}
 }
 
-// heirLeft tells the running flow's heirs that a removal through i, under
-// profileName, took mod away.
-func (i *Installer) heirLeft(game *domain.Game, profileName string, mod *domain.Mod) {
-	if i.heirs != nil {
-		i.heirs.svc.heirFlowFor(game.ID).left(i.heirs.profileFor(profileName), domain.ModKey(mod.SourceID, mod.ID))
-	}
-}
-
 // handOff is one removal's hand-off state: the mod going, the paths a mod
 // deployed right after it will hold anyway, and the heirs once asked for.
 type handOff struct {
@@ -274,9 +236,6 @@ type handOff struct {
 	// place ships (deployCopiedMod's uninstall-then-install): that deploy
 	// takes them, so nothing is handed on there.
 	keep map[domain.DeployPath]bool
-	// exclude is the keys of mods the same caller removes next (a web
-	// batch uninstall's others): a path is never handed to one of them.
-	exclude map[string]bool
 
 	resolved bool
 	heirs    *pathHeirs
@@ -314,15 +273,6 @@ func (ho *handOff) resolve(ctx context.Context, i *Installer, game *domain.Game,
 	if err != nil {
 		i.log.Warn("could not list the mods that may take a shared path; the removal leaves it as before", "err", err)
 		return nil
-	}
-	if len(ho.exclude) > 0 {
-		kept := heirs.candidates[:0:0]
-		for _, m := range heirs.candidates {
-			if !ho.exclude[domain.ModKey(m.SourceID, m.ID)] {
-				kept = append(kept, m)
-			}
-		}
-		heirs.candidates = kept
 	}
 	if len(heirs.candidates) == 0 {
 		return nil
@@ -512,18 +462,6 @@ func (s *Service) handOffWarnings(gameID string, handed []handedPath) []string {
 		kept = append(kept, h)
 	}
 	return handOffNotes(kept)
-}
-
-// refKeys is the keys of refs, or nil for none.
-func refKeys(refs []domain.ModReference) map[string]bool {
-	if len(refs) == 0 {
-		return nil
-	}
-	out := make(map[string]bool, len(refs))
-	for _, r := range refs {
-		out[domain.ModKey(r.SourceID, r.ModID)] = true
-	}
-	return out
 }
 
 // excludeKeys is the keys of mods, for pathHeirsFor's exclude.

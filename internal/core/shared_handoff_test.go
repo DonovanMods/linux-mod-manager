@@ -380,28 +380,6 @@ func TestSharedPathHandOff_AFlowListsEachHeirOnce(t *testing.T) {
 	assert.Contains(t, notes[0], handOffName(last)+"'s file")
 }
 
-// #633 review: the web UI's batch uninstall names the batch's other mods,
-// so the path goes straight to a mod the batch leaves installed, and is
-// reported once.
-func TestSharedPathHandOff_ABatchUninstallReportsTheFinalOwner(t *testing.T) {
-	forEachHandOffCase(t, func(t *testing.T, c sharedOriginalCase, method domain.LinkMethod, withOriginal bool) {
-		ctx := context.Background()
-		f := newHandOffFixture(t, c, method, withOriginal, "first", "second", "third")
-
-		res, err := f.svc.UninstallMod(ctx, f.game, "default", "src", "third", core.UninstallOptions{
-			AlsoRemoving: []domain.ModReference{{SourceID: "src", ModID: "second"}},
-		})
-		require.NoError(t, err)
-		assert.True(t, anyContains(res.Warnings, handOffName("first")+"'s file"), "the path goes to the mod the batch keeps: %q", res.Warnings)
-		f.assertHeld(t, "first", withOriginal, "the batch's first uninstall")
-
-		res, err = f.svc.UninstallMod(ctx, f.game, "default", "src", "second", core.UninstallOptions{})
-		require.NoError(t, err)
-		assert.False(t, anyContains(res.Warnings, "deployed there now"), "nothing is handed on twice: %q", res.Warnings)
-		f.assertHeld(t, "first", withOriginal, "the batch's second uninstall")
-	})
-}
-
 // #633 review: a mod the profile document marks off is not deployed by a
 // deploy, so it does not take a path either, whatever its row says.
 func TestSharedPathHandOff_AModTheDocumentMarksOffDoesNotTakeThePath(t *testing.T) {
@@ -414,4 +392,87 @@ func TestSharedPathHandOff_AModTheDocumentMarksOffDoesNotTakeThePath(t *testing.
 		require.NoError(t, err)
 		f.assertReleased(t, withOriginal, "the only other provider is marked off")
 	})
+}
+
+// toInstallFixture deploys h, w and d in load order under "default"; d (the
+// winner) and h ship c.member, and so does w only when wShips. It returns
+// the fixture.
+func toInstallFixture(t *testing.T, c sharedOriginalCase, method domain.LinkMethod, wShips bool) *handOffFixture {
+	t.Helper()
+	svc, dataDir := newOriginalsService(t)
+	game := newRootGame(t, svc, method)
+	for _, id := range []string{"h", "w", "d"} {
+		files := map[string][]byte{"own/" + id + ".txt": []byte(id)}
+		if id != "w" || wShips {
+			files[c.member] = []byte("the " + id + " mod's file")
+		}
+		seedNamedInstalledMod(t, svc, game, "src", id, handOffName(id), "1.0", true, files)
+		seedProfileWithMod(t, svc, game.ID, "default", "src", id, "1.0")
+	}
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	f := &handOffFixture{svc: svc, dataDir: dataDir, game: game, c: c, dst: c.dst(game)}
+	require.Equal(t, "the d mod's file", readFileString(t, f.dst))
+	return f
+}
+
+// #633 review: a switch's own installs never take a path. The target
+// profile's row for w names a version (2.0) other than the one on disk
+// (1.0, which does not ship the path), and the switch installs w at 3.0. A
+// path handed to w's row would put 2.0's file beside 1.0's - and leave it
+// there when w's install fails. The path goes to h, which the switch keeps.
+func TestSharedPathHandOff_ASwitchNeverHandsAPathToAModItInstalls(t *testing.T) {
+	for _, c := range sharedOriginalCases {
+		for _, method := range rootMethods {
+			t.Run(c.name+"/"+method.String(), func(t *testing.T) {
+				ctx := context.Background()
+				f := toInstallFixture(t, c, method, false)
+				require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: f.game.ID, SourceID: "src", ModID: "w", Version: "2.0"},
+					c.member, []byte("w 2.0's file")))
+				for _, row := range []struct{ id, version string }{{"h", "1.0"}, {"w", "2.0"}} {
+					cur, err := f.svc.GetInstalledMod(ctx, "src", row.id, f.game.ID, "default")
+					require.NoError(t, err)
+					other := *cur
+					other.ProfileName, other.Version = "other", row.version
+					require.NoError(t, f.svc.SaveInstalledMod(ctx, &other))
+				}
+				seedProfileWithMod(t, f.svc, f.game.ID, "other", "src", "h", "1.0")
+				seedProfileWithMod(t, f.svc, f.game.ID, "other", "src", "w", "3.0")
+
+				plan, err := f.svc.PlanProfileSwitch(ctx, f.game, "other")
+				require.NoError(t, err)
+				require.Len(t, plan.ToDisable, 1, "d goes")
+				require.Len(t, plan.ToInstall, 1, "w is installed at 3.0")
+				_, _ = f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil) // w 3.0 cannot be fetched
+
+				assert.Equal(t, "the h mod's file", readFileString(t, f.dst), "the mod the switch keeps has the path, not the row of one it installs")
+			})
+		}
+	}
+}
+
+// #633 review: an apply's own reinstalls DO take a path. Their row is the
+// version on disk, so a path handed to it is right - and stays right when
+// the reinstall fails, where leaving it out would give the path to a mod
+// lower in load order while w, above it, still ships it.
+func TestSharedPathHandOff_AnApplyHandsAPathToTheLiveVersionOfAModItReinstalls(t *testing.T) {
+	for _, c := range sharedOriginalCases {
+		for _, method := range rootMethods {
+			t.Run(c.name+"/"+method.String(), func(t *testing.T) {
+				ctx := context.Background()
+				f := toInstallFixture(t, c, method, true)
+				pm := f.svc.NewProfileManager()
+				require.NoError(t, pm.SetModDisabled(ctx, f.game.ID, "default", "src", "d", true))
+				require.NoError(t, pm.UpsertMod(ctx, f.game.ID, "default", domain.ModReference{SourceID: "src", ModID: "w", Version: "3.0"}))
+
+				plan, err := f.svc.PlanProfileApply(ctx, f.game, "default")
+				require.NoError(t, err)
+				require.Len(t, plan.ToDisable, 1, "d goes")
+				require.Len(t, plan.ToInstall, 1, "w is reinstalled at 3.0")
+				_, _ = f.svc.ApplyProfileApply(ctx, f.game, plan, core.ProfileApplyOptions{}, nil) // w 3.0 cannot be fetched
+
+				assert.Equal(t, "the w mod's file", readFileString(t, f.dst), "w, still live at 1.0 and above h, has the path")
+			})
+		}
+	}
 }
