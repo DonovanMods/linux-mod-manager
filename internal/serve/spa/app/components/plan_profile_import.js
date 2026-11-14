@@ -476,6 +476,13 @@ function LMMCollectionSection({ collection: c, plugins }) {
   `;
 }
 
+/** patchLine words one core.CollectionItemPatch as one string, so no
+ * formatter can split it where htm would drop the space. */
+function patchLine(p) {
+  const why = p.restricted ? ` - ${p.restricted}` : "";
+  return `patches ${p.path} (baseline CRC32 ${p.crc32})${why}`;
+}
+
 /** TreeInputsSection lists the items that install with an exact file list
  * or binary patches (issue 610, core.CollectionImportItem.file_list and
  * .patches): how many files each installs, and each patch with the CRC32
@@ -525,8 +532,7 @@ function TreeInputsSection({ collection: c }) {
                       key=${`${p.file_id}/${p.path}`}
                       class=${`mono${p.restricted ? " plan__note--warn" : ""}`}
                     >
-                      patches ${p.path} (baseline CRC32
-                      ${p.crc32})${p.restricted ? ` - ${p.restricted}` : ""}
+                      ${patchLine(p)}
                     </li>`,
                 )}
               </ul>`
