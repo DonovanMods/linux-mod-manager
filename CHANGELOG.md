@@ -413,6 +413,23 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- The web UI's mod page no longer offers **Re-link…** for a moment on a locked mod opened directly, before its library listing has loaded: a lock-gated action now waits until the lock is known. Found by a timing-dependent E2E failure (CI on e1e3bbba).
+- **Two mods that ship the same file over one of the game's own no longer
+  leave the game's file in place (#632).** When a file was already there
+  (a stock `d3d11.dll`, say, or one you put there yourself) and two mods
+  in the profile both ship it, as an ENB and ReShade both ship
+  `d3d11.dll` and `dxgi.dll`, a deploy put the game's file back while
+  deploying the second mod, left it there, and warned that you had
+  replaced lmm's link with your own file, which you had not. The first mod
+  to deploy the path now sets the game's file aside, as a single mod
+  does, and the later mod in load order wins the path as an ordinary file
+  conflict (`lmm conflicts` and the web UI's conflicts view list it);
+  `lmm purge` puts the game's file back. Removing or updating the mod
+  that lost such a path no longer takes the winning mod's file with it:
+  `lmm uninstall`, `lmm mod disable` and `lmm update` leave the other
+  mod's file where it is, and an uninstall's preview no longer lists that
+  path. A file you really did put over one lmm deployed is still kept and
+  reported as yours.
 - **A crash while unpacking a download no longer leaves temporary folders
   behind (#628).** If an install, import or repair crashed while it was
   unpacking or laying out a mod (the web UI survives such a crash and

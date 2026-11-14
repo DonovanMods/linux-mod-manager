@@ -1036,6 +1036,11 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 		if i.notLinkerOwned(game, item.member) {
 			continue
 		}
+		// #632: nor a path another mod of the profile now holds - its
+		// file is there, over whatever original this mod displaced.
+		if i.anotherModHolds(ctx, game, oldMod, profileName, file) {
+			continue
+		}
 		// #350 / review finding 4: this loop iterates the OLD entry's RAW
 		// ListFiles union, not its deployable set, so a member lmm never
 		// deployed is visited here - the #210 narrowing case, and the
@@ -1651,10 +1656,12 @@ func replacedLink(path string) bool {
 // takes ownership"), so the fallback never names a path another mod has
 // since claimed.
 //
-// Two narrowings follow. A member the adapter routes away from the linker
-// is left out (notLinkerOwned). And when the game's adapter is refused
-// (recordedOnly), only a path this profile's deployed_files rows name for
-// the mod is kept: without the adapter, a listing is not proof.
+// Three narrowings follow. A member the adapter routes away from the
+// linker is left out (notLinkerOwned), and so is a path another installed
+// mod of the profile now holds (anotherModHolds, #632): the file there is
+// that mod's. And when the game's adapter is refused (recordedOnly), only a
+// path this profile's deployed_files rows name for the mod is kept: without
+// the adapter, a listing is not proof.
 func (i *Installer) removalPaths(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) ([]deployItem, error) {
 	listing, err := i.cache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
 	var files []deployItem
@@ -1684,11 +1691,46 @@ func (i *Installer) removalPaths(ctx context.Context, game *domain.Game, mod *do
 	for _, file := range files {
 		// #413: a member the adapter routed away from the linker was never
 		// deployed as mod content, so an uninstall does not remove it.
-		if !i.notLinkerOwned(game, file.member) {
-			kept = append(kept, file)
+		if i.notLinkerOwned(game, file.member) {
+			continue
 		}
+		// #632: nor is a path another mod of the profile now holds.
+		if i.anotherModHolds(ctx, game, mod, profileName, file.path) {
+			continue
+		}
+		kept = append(kept, file)
 	}
 	return kept, nil
+}
+
+// anotherModHolds reports whether profileName's record of file, under the
+// game's current mod_path, names an installed mod other than mod (#632):
+// two mods ship the path, the other one's deploy took it over (the record
+// upserts on overwrite), and the file there is that mod's. Removing mod
+// must leave it, and must not hand back an original the other mod's file
+// still stands over - a deploy undeploys each mod before it installs it, so
+// the second of two mods sharing a path over a stock file used to remove
+// the first one's file, put the stock file back, and then refuse to replace
+// it as the user's.
+//
+// Only a record whose mod is still installed in the profile counts: a
+// record left under a mod that is gone (one a removal could not judge,
+// #466 review D3) holds the path for no one. A record that cannot be read
+// answers false, the removal's behaviour before #632.
+func (i *Installer) anotherModHolds(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, file domain.DeployPath) bool {
+	if i.db == nil {
+		return false
+	}
+	states, err := currentStates(ctx, i.db, game, file)
+	if err != nil {
+		return false
+	}
+	for _, st := range statesOf(states, profileName) {
+		if st.LinkMethod != nil && (st.SourceID != mod.SourceID || st.ModID != mod.ID) {
+			return true
+		}
+	}
+	return false
 }
 
 // withRecordedRoots is listed - a listing's members as the deployed files
