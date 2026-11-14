@@ -20,7 +20,10 @@ func TestRegisterKnownGames_SuggestsTheCatalogAdapter(t *testing.T) {
 	game := &domain.Game{ID: "skyrim", InstallPath: t.TempDir(), Launch: &domain.GameLaunch{SteamAppID: "489830"}}
 	assert.Equal(t, "bethesda", svc.SuggestedAdapter(game))
 
-	other := &domain.Game{ID: "witcher", InstallPath: t.TempDir(), Launch: &domain.GameLaunch{SteamAppID: "292030"}}
+	witcher := &domain.Game{ID: "witcher", InstallPath: t.TempDir(), Launch: &domain.GameLaunch{SteamAppID: "292030"}}
+	assert.Equal(t, "witcher3", svc.SuggestedAdapter(witcher), "#635's mod-type adapters are suggested as bethesda is")
+
+	other := &domain.Game{ID: "xcom2", InstallPath: t.TempDir(), Launch: &domain.GameLaunch{SteamAppID: "261550"}}
 	assert.Empty(t, svc.SuggestedAdapter(other), "a catalog entry with no adapter suggests nothing")
 }
 

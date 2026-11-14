@@ -34,6 +34,7 @@ under `internal/adapter/` and one registration line — and *nothing* in
 | `bepinex` | `adapter: bepinex`, or derived from a game whose `mod_path` is its install path and that declares `loader: kind: bepinex` **or** has BepInEx installed in its directory | Plugin archive layout, `BepInEx/config/**` seeding, the "this game has no BepInEx" refusal, and verify's loader-installation tier. |
 | `d2r` | `adapter: d2r` only, which Battle.net detection's Diablo II: Resurrected entry sets (#546) | Lays every archive out as `<name>/<name>.mpq/` under the game's `mods` folder, and names the `-mod <name> -txt` the deployed profile needs (`LaunchAdvisor`). |
 | `bethesda` | `adapter: bethesda` only, which Steam detection sets for Skyrim Special Edition/Anniversary Edition, Skyrim VR, Fallout 4, Fallout 4 VR, Starfield and Skyrim (#606) | Lays a game-root-relative archive (a `Data/` folder, SKSE's version-named wrapper) out relative to `Data/`, and carries each game's plugin rules (`PluginOrderer`, which core sorts and writes `Plugins.txt` by: #616) and game-root file table (`RootRouter`, which core deploys by: #629). |
+| `witcher3`, `baldurs-gate-3` | `adapter: witcher3` / `adapter: baldurs-gate-3` only, which Steam detection sets for The Witcher 3 and Baldur's Gate 3 (#635) | A table of the Vortex mod types a NexusMods collection states for the game and the root each deploys to (`RootRouter`); otherwise the identity. One package, `internal/adapter/modtypes`. |
 
 `lmm game list` always names what *this* build actually ships, and
 `lmm game add --adapter` / `lmm game edit --adapter` validate against the
@@ -162,7 +163,8 @@ adapter.
 | `Preconditioner` | `CheckPreconditions(g, mods) error` | *(none yet)* | refuses a flow before it starts |
 | `LaunchAdvisor` | `LaunchAdvice(g, mods, previous) Advice` | `d2r` | shows the advice as a warning after a deploy (a switch's and an apply's too) and on a launch |
 | `PluginOrderer` | `PluginRules(g) PluginSpec` | `bethesda` | the plugin-list sync after every deploying flow (`syncMergedPak`), verify's plugin tier, and purge's restore (#616) |
-| `RootRouter` | `RouteRoots(g, files) []DeployRoot`, `RootForModType(g, type) (DeployRoot, bool)` | `bethesda` | deploys a root-routed file under `install_path`, and every removal, verify, purge and conflict report finds it there (#629) |
+| `RootRouter` | `RouteRoots(g, files) []DeployRoot`, `RootForModType(g, type) (DeployRoot, bool)` | `bethesda`, `witcher3`, `baldurs-gate-3` | deploys a root-routed file under `install_path`, and every removal, verify, purge and conflict report finds it there (#629) |
+| `LayoutNeutral` | `LayoutNeutral()` (a marker) | `generic-files`, `witcher3`, `baldurs-gate-3` | treats a switch between two layout-neutral adapters as moving nothing: no reinstall warning on `lmm game edit --adapter`, the game page or verify's `adapter_suggested` note (#635) |
 | `PrefixConsumer` | `UsesPrefix(g) bool` | `bethesda` | reports a prefix it cannot resolve as a `prefix_unresolved` finding (`lmm verify`, `lmm game show`) |
 
 ### FileRouter
@@ -406,7 +408,11 @@ per file (`RootModPath`, the zero value, or `RootInstallPath`).
 - `RootForModType(g, type)` answers for a mod whose kind was stated rather
   than detected: a Vortex mod type, as a NexusMods collection records it.
   `bethesda` maps `""` (Vortex's default) to `mod_path`, and `dinput` (the
-  type Vortex's script-extender installer sets) and `enb` to `install_path`.
+  type Vortex's script-extender installer sets) and `enb` to `install_path`,
+  for every game it recognises; a type one game's own Vortex extension
+  registers is known for that game alone, from its row in the games table
+  (Starfield's `starfield-data-folder`, #635). The `modtypes` adapters
+  answer from one table per game (see below).
 
 **Core honours it (#629).** A file routed to `RootInstallPath` deploys
 under the game's `install_path`, relative to it. Core names every deployed
@@ -434,8 +440,14 @@ the next deploy moves an installed mod's game-root files there.
 `RootForModType` is honoured by `deployItemsForType` for a caller that
 states a mod type: the whole mod goes to the root the adapter names, and a
 type it does not know is a `*core.ModTypeUnsupportedError`, never
-`mod_path`. Nothing persists a mod type yet; the collections converter
-(#607) is the first caller that will have one.
+`mod_path`. The type is the profile reference's `mod_type`, copied onto the
+installed row (#607), and the collections converter's gate asks the same
+question before an import: a `mod_type:<type>` feature is supported for a
+game exactly when its adapter knows the type.
+
+A type is only ever routed to one of the two roots. A type that deploys
+somewhere else (Witcher 3's `witcher3dlc`, under the game's `DLC/`) is left
+out of every table, so it stays refused, rather than approximated.
 
 ### The `bethesda` adapter's facts, and where each comes from
 
@@ -462,6 +474,7 @@ no code was copied. A value no readable source confirmed is left out.
 | Script extender files at the game root | top-level `.dll`/`.exe` named `skse64_*`, `skse_*`, `sksevr_*`, `f4se_*`, `f4sevr_*`, `sfse_*` | each extender's readme (skse.silverlock.org; github.com/ianpatt/f4se, /sfse; github.com/Neanka/f4sevr); SKSEVR's build targets (github.com/Odie/sksevr-mirror) |
 | ENB and dinput8 at the game root | a top-level `enbseries.ini` or `dinput8.dll` takes the whole mod; `d3d11.dll` and `enbseries/` on their own | Vortex `extensions/modtype-enb`, `extensions/modtype-dinput`; the collections design §4 |
 | Vortex mod types | `""` deploys to `Data`, `dinput` and `enb` to the game directory | Vortex `extensions/games/game-skyrimse` (`queryModPath`), `modtype-dinput`, `modtype-enb`, `script-extender-installer` |
+| Starfield's own mod type | `starfield-data-folder` ("Data Folder") deploys to the game directory's `Data/`, Starfield's `mod_path`; registered for Starfield alone. (Vortex's default type for Starfield is the game directory, `queryModPath: "."`; lmm's `""` routes file by file, as for every Bethesda game.) | github.com/Nexus-Mods/game-starfield at 3d3332d: `src/index.ts:159` (`queryModPath`), `:277-284` (`registerModType`), `src/modTypes/dataPath.ts:6-13` (`getDataPath`), `src/common.ts:25` |
 | Steam app ids | 489830, 611670, 377160, 611660, 1716740, 72850 | store.steampowered.com `appdetails` |
 | NexusMods domains | the VR editions have none of their own (`skyrimspecialedition`, `fallout4`) | the NexusMods `v1/games.json` list |
 
@@ -470,6 +483,58 @@ the INI `sTestFile` overrides, and `d3dcompiler_46e.dll` / `enblocal.ini` as
 ENB files on their own (enbdev.com, the only source, refuses scripted
 readers; an ENB preset's `enbseries.ini` still carries them to the game
 root).
+
+### The `witcher3` and `baldurs-gate-3` adapters' facts (#635)
+
+Vortex's game extensions are GPL; they were read for which directory each
+type deploys to, and no code was copied. Sources: `[VXG]`
+github.com/Nexus-Mods/vortex-games at 18bbee9; `[VX]`
+github.com/Nexus-Mods/Vortex at 88dd2f6.
+
+| Game | Type | Root | Source |
+| --- | --- | --- | --- |
+| The Witcher 3 | `witcher3tl` | `install_path` | `[VXG]` `game-witcher3/index.ts:168` (`registerModType('witcher3tl', …, getTLPath)`), `util.ts:66-72` (`getTLPath`: the discovery path) |
+| The Witcher 3 | `dinput` | `install_path` | `[VX]` `extensions/modtype-dinput/src/index.ts:55-63, 91` (every game but Factorio and Microsoft Flight Simulator) |
+| Baldur's Gate 3 | `bg3-loose` | `mod_path` (the game's `Data/`) | `[VXG]` `game-baldursgate3/index.tsx:289-292` (`registerModType(MOD_TYPE_LOOSE, …, getGameDataPath)`), `util.ts:17-25`, `common.ts:85` |
+
+Neither table lists the default type (`""`): core never asks for it, since
+an untyped mod routes file by file, and these adapters send every untyped
+file to the `mod_path`. For The Witcher 3 that matches Vortex, whose default
+type deploys to the game's `Mods/` (`[VXG]` `game-witcher3/index.ts:141`),
+the catalog's `mod_path`.
+
+A `witcher3tl` mod is laid out from the game directory: its `mods/` folder
+is the `mod_path` (matched case-insensitively, as `Data/` is), its `bin/`
+folder deploys beside it. The recipes' file lists (`hashes`) confirm it
+(`mods\modSharedImports\content\...`, `bin\config\r4game\...`).
+
+Left out, so a collection that needs them is still refused:
+
+| Type | Why | Source |
+| --- | --- | --- |
+| `witcher3dlc` | deploys under the game's `DLC/` folder, which is neither of lmm's two roots (the recipes' `hashes` are relative to it: `dlcTrueFires\content\...`) | `[VXG]` `game-witcher3/index.ts:169`, `util.ts:58-64` (`getDLCPath`) |
+| `witcher3menumodroot` | Vortex merges the menu XML files a mod ships that are named like the game's own (`audio`, `gameplay`, `input`, …) into the game's file; lmm would replace the game's file instead | `[VXG]` `game-witcher3/index.ts:167, 174`, `mergers.ts:29-106`, `common.ts:136-138` |
+| `SMAPI` (Stardew Valley) | not a route at all: SMAPI's Vortex installer unpacks the platform's `install.dat` from inside the download and generates `StardewModdingAPI.deps.json`, which no deploy of the downloaded archive can do. The collections converter lists it as a prerequisite step instead (its page and SMAPI's own installer, `internal/core/collection_prerequisites.go`) | `[VXG]` `game-stardewvalley/index.ts:445-450, 462-538, 754`; SMAPI's `src/SMAPI.Installer/assets/README.txt` (github.com/Pathoschild/SMAPI at e5b8bf3) |
+
+**Baldur's Gate 3's default type.** Vortex deploys a BG3 mod of the default
+type (`.pak` files) to `%LOCALAPPDATA%/Larian Studios/Baldur's Gate 3/Mods`
+(`[VXG]` `game-baldursgate3/index.tsx:236`, `util.ts:27-33`: its
+`documentsPath()` is Vortex's `localAppData` path, despite the name), but
+lmm's catalog `mod_path` for the game is `Data`. This story leaves the
+catalog as it is; a collection's untyped `.pak` mods still deploy under
+`Data/`, where the game does not read them (tracked as a separate issue).
+
+**Wrapper folders.** These adapters lay archives out as packaged. Vortex's
+installers strip a folder that wraps the content: `witcher3tl`'s
+(`installTL`) drops whatever comes before the archive's first `mods/`
+folder (`[VXG]` `game-witcher3/installers.ts:195-215`), and the installer
+behind most `bg3-loose` mods (`installReplacer`) lays files out relative to
+the folder holding `Public/` or `Generated/`, or to a `Data/` folder
+(`[VXG]` `game-baldursgate3/installers.ts:221-257`). An archive packed
+inside such a wrapper (`MyMod-1.2/mods/modMyMod/...`,
+`MyMod/Data/Public/...`) deploys with the wrapper in its path, where the
+game does not find it. Known limitation; most archives are packed without
+one.
 
 ## Composition with the rest of `games.yaml`
 

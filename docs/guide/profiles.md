@@ -322,8 +322,17 @@ The plan lists every item and what the import does with it:
   collection is skipped, and the plan says so.
 - **Installer choices** the curator made for a FOMOD installer are
   replayed, as they are for any [FOMOD](fomod.md) mod.
-- A mod the curator marked for the **game folder** (a script extender, for
-  example) is deployed there, on a game whose adapter knows where that is.
+- A mod the curator gave a **type** goes where that type belongs, on a
+  game whose adapter knows it: a script extender to the game folder, a
+  Starfield "Data folder" mod into `Data/`, a Witcher 3 top-level mod to
+  the game folder (its `mods/` into the game's mods folder), a Baldur's
+  Gate 3 loose-file mod into `Data/`. A type the game's adapter doesn't
+  know refuses the collection, as below; Witcher 3's DLC and menu mod
+  types are not supported yet.
+- **SMAPI**, which Stardew Valley mods load through, is installed with its
+  own installer, not by lmm. The plan lists it as a step for you, with its
+  page and how to run the installer, and imports the rest of the
+  collection.
 - The curator's **plugin load order** (a Bethesda game's `.esm`, `.esp`
   and `.esl` files: which load, in what order, and which are left off)
   becomes the profile's plugin list, with the curator's plugin rules and

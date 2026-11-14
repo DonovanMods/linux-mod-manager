@@ -74,18 +74,25 @@ const nexusFixtureRecipe = `{"Name": "Three Mods", "Mods": [
 // collection's recipe in its cache entry.
 func seedNexusCollection(t *testing.T, svc *core.Service, game *domain.Game, tier source.Tier) *nexusFixtureSource {
 	t.Helper()
-	return seedNexusCollectionRecipe(t, svc, game, tier, nexusFixtureRecipe)
+	return seedNexusCollectionFor(t, svc, game, tier, "skyrimspecialedition", nexusFixtureRecipe)
 }
 
 // seedNexusCollectionRecipe is seedNexusCollection with recipe cached.
 func seedNexusCollectionRecipe(t *testing.T, svc *core.Service, game *domain.Game, tier source.Tier, recipe string) *nexusFixtureSource {
+	t.Helper()
+	return seedNexusCollectionFor(t, svc, game, tier, "skyrimspecialedition", recipe)
+}
+
+// seedNexusCollectionFor is seedNexusCollection for a game on the NexusMods
+// domain gameSourceID, with recipe as the collection's recipe.
+func seedNexusCollectionFor(t *testing.T, svc *core.Service, game *domain.Game, tier source.Tier, gameSourceID, recipe string) *nexusFixtureSource {
 	t.Helper()
 	src := &nexusFixtureSource{tier: tier}
 	svc.RegisterSource(src)
 	if game.SourceIDs == nil {
 		game.SourceIDs = map[string]string{}
 	}
-	game.SourceIDs["nexusmods"] = "skyrimspecialedition"
+	game.SourceIDs["nexusmods"] = gameSourceID
 	require.NoError(t, svc.SaveGame(t.Context(), game))
 	root := filepath.Join(svc.GlobalCacheDir(), game.ID)
 	if game.CachePath != "" {
@@ -248,4 +255,36 @@ func TestAPIFlow_ProfileImportNexus_WarnsOfAPluginRuleCycle(t *testing.T) {
 	require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
 	_, err := svc.NewProfileManager().Get(t.Context(), game.ID, "Three Mods")
 	require.NoError(t, err)
+}
+
+// #635, owner ruling: on Stardew Valley the collection's SMAPI item (the
+// "SMAPI" mod type) is a prerequisite step - an external item with its page
+// and install instructions - and the rest of the collection imports.
+func TestAPIFlow_ProfileImportNexus_SMAPIIsAPrerequisiteStep(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	seedNexusCollectionFor(t, svc, game, source.TierPremium, "stardewvalley", `{"Name": "Three Mods", "Mods": [
+	{"Name": "SMAPI - Stardew Modding API", "Version": "4.0", "SourceType": "nexus", "ModID": "2400", "FileID": "240", "UpdatePolicy": "exact", "ModType": "SMAPI"},
+	{"Name": "Ten", "Version": "1.0", "SourceType": "nexus", "ModID": "10", "FileID": "100", "UpdatePolicy": "exact"}]}`)
+
+	planID, raw := planFlow(t, s, game, "profile_import", `{"nexus_collection":"abcdef"}`)
+	c := nexusPlanSource(t, raw)
+	assert.Empty(t, c.Unsupported, "SMAPI does not block the import")
+	assert.Equal(t, map[core.CollectionItemState]int{core.CollectionItemExternal: 1, core.CollectionItemWillInstall: 1}, c.Counts)
+	var smapi core.ConvertedCollectionItem
+	for _, it := range c.Items {
+		if it.ModID == "2400" {
+			smapi = it
+		}
+	}
+	assert.Equal(t, core.CollectionItemExternal, smapi.State)
+	assert.Equal(t, "https://www.nexusmods.com/stardewvalley/mods/2400", smapi.URL)
+	assert.Contains(t, smapi.Instructions, "install on Linux.sh")
+	assert.Contains(t, smapi.Note, "own installer")
+
+	j := startFlowJob(t, s, planID, `{}`)
+	require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
+	profile, err := svc.NewProfileManager().Get(t.Context(), game.ID, "Three Mods")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1, "SMAPI is never a profile entry")
+	assert.Equal(t, "10", profile.Mods[0].ModID)
 }
