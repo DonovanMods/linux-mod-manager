@@ -323,22 +323,76 @@ func TestPluginsReview_PurgeAfterThePrefixMoved(t *testing.T) {
 	assert.Empty(t, readPrefixOriginals(t, f.dataDir, f.game.ID))
 }
 
-// Review 10: the prefix is gone and the game has none now: the stale copy
-// is dropped with a warning, so the next purge does not fail on it again.
-func TestPluginsReview_PurgeDropsACopyForAPrefixThatIsGone(t *testing.T) {
+// Re-review 1: the prefix is away for now - a Steam library on a drive that
+// is unplugged - and the game resolves to no other prefix. The kept copy
+// stays, with a finding, and a purge once the drive is back puts it back;
+// before the fix it was dropped, and the pre-lmm list lost for good.
+func TestPluginsReview_PurgeKeepsACopyWhosePrefixIsAwayForNow(t *testing.T) {
 	f := newPluginFixture(t)
 	f.mod(t, "a", map[string][]byte{"A.esp": pluginBytes(0)})
 	f.writeList(t, "# mine\n")
 	f.deploy(t)
+
+	away := f.prefix + ".unplugged"
+	require.NoError(t, os.Rename(f.prefix, away))
+	res := f.purge(t)
+	require.NotNil(t, res.Plugins)
+	assert.Equal(t, core.PluginListSkipped, res.Plugins.Status)
+	require.NotEmpty(t, res.Plugins.Findings)
+	assert.Contains(t, res.Plugins.Findings[0].Message, "cannot be found now")
+	assert.Len(t, readPrefixOriginals(t, f.dataDir, f.game.ID), 1, "the kept copy stays")
+
+	require.NoError(t, os.Rename(away, f.prefix)) // the drive is back
+	again := f.purge(t)
+	require.NotNil(t, again.Plugins)
+	assert.Equal(t, core.PluginListRestored, again.Plugins.Status)
+	assert.Equal(t, "# mine\n", f.list(t))
+	assert.Empty(t, readPrefixOriginals(t, f.dataDir, f.game.ID))
+}
+
+// Re-review 1, the nit: re-targeted into a prefix the game moved to, an
+// entry only the kept file has goes back switched off when its plugin is
+// not installed.
+func TestPluginsReview_PurgeIntoAMovedPrefixDoesNotSwitchOnMissingPlugins(t *testing.T) {
+	f := newPluginFixture(t)
+	f.mod(t, "a", map[string][]byte{"A.esp": pluginBytes(0)})
+	f.external(t, "Mine.esp")
+	f.writeList(t, "*Mine.esp\n*Absent.esp\n")
+	f.deploy(t)
+
 	require.NoError(t, os.RemoveAll(f.prefix))
-	f.game.Prefix = ""
+	fresh := prefixTree(t, t.TempDir(), "steamuser")
+	f.game.Prefix = fresh
 	require.NoError(t, f.svc.SaveGame(context.Background(), f.game))
+	f.listDir = filepath.Join(fresh, "drive_c", "users", "steamuser", "AppData", "Local", "Skyrim Special Edition")
 
 	res := f.purge(t)
 	require.NotNil(t, res.Plugins)
-	require.NotEmpty(t, res.Plugins.Findings)
-	assert.Contains(t, res.Plugins.Findings[0].Message, "is gone")
-	assert.Empty(t, readPrefixOriginals(t, f.dataDir, f.game.ID))
-	again := f.purge(t)
-	assert.Nil(t, again.Plugins, "nothing is left to fail on")
+	assert.Equal(t, core.PluginListRestored, res.Plugins.Status)
+	assert.Equal(t, "*Mine.esp\nAbsent.esp\n", f.list(t))
+}
+
+// Re-review 2: `deploy --purge` whose purge removes the only mod and leaves
+// nothing to deploy still writes the list (it returned before the sync).
+func TestPluginsReview_DeployPurgeWithNothingLeftSyncsTheList(t *testing.T) {
+	f := newPluginFixture(t)
+	f.mod(t, "a", map[string][]byte{"A.esp": pluginBytes(0)})
+	f.deploy(t)
+	require.Equal(t, "*A.esp\n", f.list(t))
+
+	profile, err := config.LoadProfile(f.svc.ConfigDir(), f.game.ID, "default")
+	require.NoError(t, err)
+	profile.Mods[0].Disabled = true
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), profile))
+	require.NoError(t, f.svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "a", SourceID: "src", Name: "a", Version: "1.0", GameID: f.game.ID},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: false, Deployed: true,
+	}))
+
+	res, err := f.svc.DeployProfile(context.Background(), f.game, "default", core.DeployOptions{Purge: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Deployed)
+	assertAbsent(t, filepath.Join(f.game.ModPath, "A.esp"), "the purge pass removed it")
+	require.NotNil(t, res.Plugins, "the deploy reports the list it synced")
+	assert.Equal(t, "", f.list(t))
 }

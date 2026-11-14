@@ -746,7 +746,11 @@ plugins:
   (a plugin added, turned on or off, or moved) stays as it is. When nothing
   outside lmm changed, the kept file comes back byte for byte; a file lmm
   created and nothing else uses is removed. If the game has moved to
-  another prefix, the kept list goes back into the one it uses now.
+  another prefix, the kept list goes back into the one it uses now (an
+  entry whose plugin is not installed there goes back switched off). If
+  lmm cannot find the prefix at all - a Steam library on a drive that is
+  not plugged in - it keeps the copy, says so, and the next purge puts it
+  back.
 - **`lmm verify`** reports the same findings, and `plugin_drift` when one of
   lmm's own plugins has been moved, deactivated or dropped in `Plugins.txt`
   since lmm wrote it. Changes to plugins lmm did not deploy are never drift.

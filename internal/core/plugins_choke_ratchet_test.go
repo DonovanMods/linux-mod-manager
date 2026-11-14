@@ -21,6 +21,7 @@ var pluginSyncCalls = map[string]bool{
 	"syncMergedPak":             true,
 	"syncPluginListBeforeHooks": true,
 	"restorePluginList":         true,
+	"resyncAfterDeploy":         true,
 }
 
 // guardedPluginSyncs are the plugin-list calls allowed inside a block of
@@ -31,6 +32,7 @@ var pluginSyncCalls = map[string]bool{
 var guardedPluginSyncs = map[string]string{
 	"Service.applyImportArchive -> syncMergedPak": "if game.DeployMode == DeployCompile: the merged artifact's resync; the plugin step runs unconditionally just above it (syncPluginListBeforeHooks)",
 	"Service.purgeProfile -> restorePluginList":   "the restorePlugins closure, run once (if !restored) before uninstall.after_all or after an empty loop",
+	"Service.deployProfile -> resyncAfterDeploy":  "if purgedAny on the nothing-to-deploy early return; the main path calls it unconditionally",
 }
 
 // TestPluginListSyncCallsAreUnconditional: the ratchet above sees a call

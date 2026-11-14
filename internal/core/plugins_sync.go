@@ -1061,16 +1061,30 @@ func (s *Service) restorePluginList(game *domain.Game) *PluginListResult {
 	res := &PluginListResult{Status: PluginListRestored}
 	removedAll, restoredAny := true, false
 	for _, row := range rows {
-		row, gone, err := rekeyPrefixOriginal(store, rows, row, st)
+		row, moved, note, skip, err := rekeyPrefixOriginal(store, rows, row, st)
 		if err != nil {
 			res.Findings = append(res.Findings, unrestorable(err))
 			continue
 		}
-		if gone != "" {
-			res.Findings = append(res.Findings, PluginFinding{Code: PluginFindingUnwritable, Severity: PluginSeverityWarning, Message: gone})
+		if note != "" {
+			res.Findings = append(res.Findings, PluginFinding{Code: PluginFindingUnwritable, Severity: PluginSeverityWarning, Message: note})
+		}
+		if skip {
 			continue
 		}
-		status, file, err := s.restorePrefixFile(store, row, restoreKindOf(row, spec, managed))
+		// Into a prefix the game moved to, an entry only the kept file has
+		// is put back switched off unless its plugin is installed: the
+		// new prefix's game may not have it at all.
+		var present func(string) bool
+		if moved {
+			present = func(string) bool { return false }
+			if managed {
+				if dirs, err := scanPluginDirs(game, spec, st, appDataFolder(game, spec)); err == nil {
+					present = dirs.has
+				}
+			}
+		}
+		status, file, err := s.restorePrefixFile(store, row, restoreKindOf(row, spec, managed), present)
 		if err != nil {
 			res.Findings = append(res.Findings, unrestorable(err))
 			continue
@@ -1092,28 +1106,36 @@ func (s *Service) restorePluginList(game *domain.Game) *PluginListResult {
 	return res
 }
 
-// rekeyPrefixOriginal answers for a kept file whose prefix no longer exists
-// (#616 review 10): the game moved to another prefix. The store is the
-// game's own, so the copy is this game's list: it is restored into the
-// prefix the game resolves to now - unless that prefix has a kept file of
-// its own at the same path, which is then the one to restore, and this
-// stale copy is dropped. Without a prefix to restore into, the stale row
-// is dropped with a message (gone) rather than failing every purge.
-func rekeyPrefixOriginal(store *prefixOriginals, rows []prefixOriginal, row prefixOriginal, st *PrefixStatus) (prefixOriginal, string, error) {
+// rekeyPrefixOriginal answers for a kept file whose prefix does not exist
+// now (#616 review 10). moved reports a row re-targeted into another
+// prefix; note, when set, is the finding to report, and skip says the row
+// is not restored by this purge.
+//
+//   - The game resolves to a DIFFERENT prefix that exists: the game moved
+//     there. The store is the game's own, so the copy is this game's list,
+//     and it is restored into that prefix - unless that prefix has a kept
+//     file of its own at the same path, which is then the one to restore,
+//     and this stale copy is dropped.
+//   - Otherwise - the prefix cannot be resolved, or resolves to the same
+//     missing path - the prefix may only be away for now (a Steam library
+//     on a drive that is unplugged), so the row is KEPT, with a finding,
+//     and the next purge tries again. Dropping it would lose the
+//     pre-lmm list for good (#616 re-review 1).
+func rekeyPrefixOriginal(store *prefixOriginals, rows []prefixOriginal, row prefixOriginal, st *PrefixStatus) (out prefixOriginal, moved bool, note string, skip bool, err error) {
 	if _, err := os.Stat(row.Prefix); !errors.Is(err, os.ErrNotExist) {
-		return row, "", nil
+		return row, false, "", false, nil
 	}
-	moved := row
-	if st != nil && st.Resolved {
-		moved.Prefix, moved.User = st.Path, st.User
-		for _, other := range rows {
-			if other.key() == moved.key() {
-				return row, fmt.Sprintf("the prefix %s is gone; lmm keeps the list from the prefix the game uses now, %s, and dropped the older copy", row.Prefix, st.Path), store.forget(row)
-			}
+	if st == nil || !st.Resolved || filepath.Clean(st.Path) == filepath.Clean(row.Prefix) {
+		return row, false, fmt.Sprintf("the prefix %s, where lmm keeps the game's original %s, cannot be found now (is its drive mounted?); lmm keeps the copy, and the next purge puts it back", row.Prefix, path.Base(row.Path)), true, nil
+	}
+	target := row
+	target.Prefix, target.User = st.Path, st.User
+	for _, other := range rows {
+		if other.key() == target.key() {
+			return row, false, fmt.Sprintf("the prefix %s is gone; lmm keeps the list from the prefix the game uses now, %s, and dropped the older copy", row.Prefix, st.Path), true, store.forget(row)
 		}
-		return moved, "", store.rekey(row, moved)
 	}
-	return row, fmt.Sprintf("the prefix %s, where lmm kept the game's original %s, is gone, and lmm cannot find the one the game uses now; the kept copy was dropped", row.Prefix, path.Base(row.Path)), store.forget(row)
+	return target, true, "", false, store.rekey(row, target)
 }
 
 // unrestorable is the finding for an original lmm could not put back.
@@ -1124,7 +1146,7 @@ func unrestorable(err error) PluginFinding {
 
 // restorePrefixFile puts row's file back (restorePluginList) and forgets
 // it. It answers PluginListRestored or PluginListRemoved, and the path.
-func (s *Service) restorePrefixFile(store *prefixOriginals, row prefixOriginal, kind restoreKind) (string, string, error) {
+func (s *Service) restorePrefixFile(store *prefixOriginals, row prefixOriginal, kind restoreKind, present func(string) bool) (string, string, error) {
 	dirRel, name := path.Split(row.Path)
 	p := prefixPath{prefix: row.Prefix, user: row.User, comps: strings.FieldsFunc(dirRel, func(r rune) bool { return r == '/' })}
 	original, err := store.stored(row)
@@ -1145,8 +1167,8 @@ func (s *Service) restorePrefixFile(store *prefixOriginals, row prefixOriginal, 
 		return "", "", err
 	}
 	content := original
-	if kind != restoreBytes && exists {
-		content = mergeRestored(original, current, row.Existed, row.Owned, kind)
+	if kind != restoreBytes && (exists || present != nil) {
+		content = mergeRestored(original, current, row.Existed, row.Owned, kind, present)
 	}
 	status := PluginListRestored
 	switch {
@@ -1175,7 +1197,7 @@ func (s *Service) restorePrefixFile(store *prefixOriginals, row prefixOriginal, 
 // followed there. The original's own bytes when that is exactly the
 // original's list (nothing outside lmm changed); nil when the original did
 // not exist and nothing is left to list.
-func mergeRestored(original, current []byte, existed bool, owned []string, kind restoreKind) []byte {
+func mergeRestored(original, current []byte, existed bool, owned []string, kind restoreKind, present func(string) bool) []byte {
 	decode, asterisk := decodePluginsTxt, kind == restoreAsterisk
 	if kind == restorePlainUTF8 {
 		decode = decodeLoadOrderTxt
@@ -1200,7 +1222,9 @@ func mergeRestored(original, current []byte, existed bool, owned []string, kind 
 	var only []pluginNode
 	for _, e := range base.entries {
 		if !stillThere[pluginKey(e.name)] {
-			only = append(only, pluginNode{name: e.name, active: e.active})
+			// present, when set, is a moved prefix's plugin folder: an
+			// entry whose plugin is not there goes back switched off.
+			only = append(only, pluginNode{name: e.name, active: e.active && (present == nil || present(e.name))})
 		}
 	}
 	ranks := mergedRanks(keep, only, base.entries)
@@ -1216,7 +1240,11 @@ func mergeRestored(original, current []byte, existed bool, owned []string, kind 
 	if !existed && len(entries) == 0 {
 		return nil
 	}
-	return renderLines(now, entries, asterisk, kind == restorePlainUTF8)
+	format := now
+	if len(current) == 0 && existed {
+		format = base // no file there now: the kept one's comments and endings
+	}
+	return renderLines(format, entries, asterisk, kind == restorePlainUTF8)
 }
 
 // wrotePluginList reports whether lmm has written game's plugin list - the

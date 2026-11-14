@@ -746,6 +746,9 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 	}
 
 	var enabledBeforePurge map[string]bool
+	// purgedAny: the purge pass removed at least one mod, so the deploy
+	// resyncs even when it then has nothing to deploy.
+	purgedAny := false
 	if opts.Purge {
 		mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
 		if err != nil {
@@ -771,6 +774,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		if err := s.purgeForDeploy(ctx, game, profileName, mods, opts, hooks, runner, result, emit); err != nil {
 			return result, fmt.Errorf("purging mods: %w", err)
 		}
+		purgedAny = len(mods) > 0
 	}
 
 	var linkMethod domain.LinkMethod
@@ -873,6 +877,12 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 	}
 
 	if len(modsToDeploy) == 0 {
+		// A purge pass that removed mods changed what is deployed even
+		// with nothing to deploy after it: the merged artifact and the
+		// plugin list follow it (#616 re-review 2).
+		if purgedAny {
+			s.resyncAfterDeploy(ctx, game, profileName, result, emit)
+		}
 		// #546: a deploy of nothing still says what the launch needs - the
 		// -mod the last deploy advised, now to be removed.
 		s.adviseLaunch(ctx, game, profileName, result, emit)
@@ -1006,22 +1016,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
 	}
 
-	plugins := &pluginListRecorder{}
-	if syncWarnings, syncErr := s.syncMergedPak(withPluginListRecorder(ctx, plugins), game, profileName); syncErr != nil {
-		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
-		result.Warnings = append(result.Warnings, msg)
-		emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
-	} else {
-		result.Plugins = plugins.result
-		for _, w := range syncWarnings {
-			result.Warnings = append(result.Warnings, w)
-			emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: w})
-		}
-		// #255: the sync succeeded, so the just-written fingerprint is the
-		// authoritative record of what the merged artifact carries - report
-		// it (result fields + one DeployMergeSynced event).
-		s.recordMergeOutcome(ctx, game, profileName, OpDeploy, result, emit)
-	}
+	s.resyncAfterDeploy(ctx, game, profileName, result, emit)
 
 	// #546: what the user must still do for the deployed mods to load -
 	// Diablo II: Resurrected's -mod argument - at default verbosity, as a
@@ -1250,4 +1245,30 @@ func orderByProfile(profile *domain.Profile, mods []domain.InstalledMod) []domai
 	}
 
 	return ordered
+}
+
+// resyncAfterDeploy is a deploy's closing resync: the merged artifact and
+// the game's plugin list (syncMergedPak, the choke point), its warnings,
+// and the merged-artifact readout. It ends every deploy that changed what
+// is deployed - including a `deploy --purge` whose purge removed mods and
+// left nothing to deploy (#616 re-review 2), which used to return before
+// it and leave a removed plugin in Plugins.txt.
+func (s *Service) resyncAfterDeploy(ctx context.Context, game *domain.Game, profileName string, result *DeployResult, emit func(Event)) {
+	plugins := &pluginListRecorder{}
+	syncWarnings, syncErr := s.syncMergedPak(withPluginListRecorder(ctx, plugins), game, profileName)
+	if syncErr != nil {
+		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
+		result.Warnings = append(result.Warnings, msg)
+		emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
+		return
+	}
+	result.Plugins = plugins.result
+	for _, w := range syncWarnings {
+		result.Warnings = append(result.Warnings, w)
+		emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: w})
+	}
+	// #255: the sync succeeded, so the just-written fingerprint is the
+	// authoritative record of what the merged artifact carries - report it
+	// (result fields + one DeployMergeSynced event).
+	s.recordMergeOutcome(ctx, game, profileName, OpDeploy, result, emit)
 }
