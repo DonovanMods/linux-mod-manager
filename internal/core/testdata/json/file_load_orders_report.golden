@@ -1,0 +1,53 @@
+{
+  "game_id": "cyberpunk2077",
+  "profile": "default",
+  "orders": [
+    {
+      "game_id": "cyberpunk2077",
+      "profile": "default",
+      "id": "cyberpunk2077-archive",
+      "label": "Archives",
+      "list_file": "/games/cyberpunk2077/archive/pc/mod/modlist.txt",
+      "first_wins": true,
+      "active": true,
+      "recorded": true,
+      "files": [
+        {
+          "position": 1,
+          "name": "b.archive",
+          "managed": true,
+          "source_id": "nexusmods",
+          "mod_id": "29152",
+          "mod_name": "Story Quest Fixes",
+          "placement": "order"
+        },
+        {
+          "position": 2,
+          "name": "mine.archive",
+          "managed": false,
+          "placement": "external"
+        },
+        {
+          "position": 3,
+          "name": "a.archive",
+          "managed": true,
+          "source_id": "nexusmods",
+          "mod_id": "33808",
+          "mod_name": "Shadows Fix",
+          "placement": "default"
+        }
+      ],
+      "not_deployed": [
+        "gone.archive"
+      ],
+      "findings": [
+        {
+          "code": "load_order_name_unencodable",
+          "severity": "warning",
+          "file": "bad\u0001.archive",
+          "message": "\"bad\\x01.archive\" cannot be written to modlist.txt (its name has a control character), so it is left out and loads after the listed files - rename it"
+        }
+      ]
+    }
+  ]
+}

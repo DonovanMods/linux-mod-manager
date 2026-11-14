@@ -137,6 +137,10 @@ type CollectionImport struct {
 	// Plugins summarises the plugin list the import saves on the profile
 	// (#611): absent when the document carries none.
 	Plugins *CollectionPluginSummary `json:"plugins,omitempty"`
+	// LoadOrders are the file load orders the collection carries (#620):
+	// each order's files, as the profile records them, and whether lmm
+	// will write it for this game.
+	LoadOrders []CollectionLoadOrderSummary `json:"load_orders,omitempty"`
 	// Source is the source collection this document was converted from
 	// (#607): every item with what the import does with it, the features
 	// the collection raised, the curator's tools and the conversion's
@@ -162,6 +166,47 @@ type CollectionPluginSummary struct {
 	// manages one), so the order applies at every deploy. When false the
 	// list is only recorded on the profile.
 	Managed bool `json:"managed"`
+}
+
+// CollectionLoadOrderSummary is one file load order a collection import
+// carries (#620): its files, first loaded first, and whether lmm writes it.
+type CollectionLoadOrderSummary struct {
+	// ID is the order's id; Label its display name, when the game's
+	// adapter has the order.
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+	// Managed is whether the game's adapter writes this order, so it
+	// applies at every deploy; FirstWins whether a file earlier in it wins
+	// a conflict with a later one.
+	Managed   bool `json:"managed"`
+	FirstWins bool `json:"first_wins,omitzero"`
+	// Files are the order's files, first loaded first.
+	Files []CollectionLoadOrderFile `json:"files"`
+}
+
+// CollectionLoadOrderFile is one file of a collection's load order.
+type CollectionLoadOrderFile struct {
+	Name string `json:"name"`
+	// Mod is the collection mod the source ties the file to, when it does
+	// (a converted Nexus collection's hint): display only.
+	Mod string `json:"mod,omitempty"`
+}
+
+// summariseLoadOrders is orders as the plan shows them, in id order; nil
+// when the collection carries none.
+func (s *Service) summariseLoadOrders(game *domain.Game, orders domain.FileLoadOrders) []CollectionLoadOrderSummary {
+	var out []CollectionLoadOrderSummary
+	for _, id := range orders.IDs() {
+		sum := CollectionLoadOrderSummary{ID: id, Files: []CollectionLoadOrderFile{}}
+		if spec, ok := s.loadOrderSpec(game, id); ok {
+			sum.Label, sum.Managed, sum.FirstWins = spec.Label, true, spec.FirstWins
+		}
+		for _, name := range orders[id] {
+			sum.Files = append(sum.Files, CollectionLoadOrderFile{Name: name})
+		}
+		out = append(out, sum)
+	}
+	return out
 }
 
 // summarisePlugins is p's CollectionPluginSummary, nil when p records
@@ -255,6 +300,8 @@ type collectionState struct {
 	external   []domain.CollectionExternalItem
 	// plugins is the document's plugin list (#616).
 	plugins domain.ProfilePlugins
+	// loadOrders are the document's file load orders (#620).
+	loadOrders domain.FileLoadOrders
 }
 
 // applyTo sets c's state on profile; a nil c sets nothing.
@@ -264,6 +311,7 @@ func (c *collectionState) applyTo(profile *domain.Profile) {
 	}
 	profile.Collection, profile.External = c.collection, c.external
 	profile.Plugins = c.plugins.Clone()
+	profile.LoadOrders = c.loadOrders.Clone()
 }
 
 // CollectionImportItem is one mod of a collection import plan.
@@ -398,7 +446,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 		return nil, err
 	}
 
-	profile := &domain.Profile{Name: name, GameID: game.ID, External: doc.External, Plugins: doc.Plugins}
+	profile := &domain.Profile{Name: name, GameID: game.ID, External: doc.External, Plugins: doc.Plugins, LoadOrders: doc.LoadOrders.Clone()}
 	for _, item := range doc.Items {
 		profile.Mods = append(profile.Mods, item.Ref)
 	}
@@ -440,11 +488,12 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	}
 	// The plan lists every hook the DOCUMENT carries, a URL's included.
 	plan.Hooks = hooks
-	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins}
+	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins, loadOrders: profile.LoadOrders.Clone()}
 	plan.archiveMD5 = collectionArchiveMD5s(doc)
 	// The preview shows the profile the import will save.
 	plan.Profile.Collection, plan.Profile.External = redactedCollection(profile.Collection), profile.External
 	plan.Profile.Plugins = profile.Plugins.Clone()
+	plan.Profile.LoadOrders = profile.LoadOrders.Clone()
 
 	requires := doc.Requires
 	derived := deriveCollectionRequires(doc)
@@ -464,7 +513,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 		GameID:              game.ID,
 		MatchedBy:           matchedBy,
 		Requires:            unionFeatures(requires, derived),
-		Unsupported:         unsupportedFeatures(requires, derived, s.modTypeRoutes(game)),
+		Unsupported:         unsupportedFeatures(requires, derived, s.modTypeRoutes(game), s.loadOrderSupport(game)),
 		External:            doc.External,
 		Hooks:               hooks,
 		HooksImportable:     req.Input == CollectionFromFile,
@@ -473,6 +522,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	}
 	_, managed := s.pluginRules(game)
 	c.Plugins = summarisePlugins(profile.Plugins, managed)
+	c.LoadOrders = s.summariseLoadOrders(game, profile.LoadOrders)
 	if w := pluginRuleCycle(profile.Plugins); w != "" {
 		c.Warnings = append(c.Warnings, w)
 	}
@@ -872,6 +922,9 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 	if err := checkCollectionPlugins(doc.Plugins); err != nil {
 		return nil, fmt.Errorf("%w: its plugins: %v", ErrInvalidCollection, err)
 	}
+	if err := checkCollectionLoadOrders(doc.LoadOrders); err != nil {
+		return nil, fmt.Errorf("%w: its load orders: %v", ErrInvalidCollection, err)
+	}
 	if doc.Signer != "" {
 		warnings = append(warnings, fmt.Sprintf("the document names a signer (%s), which this version of lmm does not verify", doc.Signer))
 	}
@@ -1133,6 +1186,62 @@ func installerChoiceLines(c domain.FomodChoices) []string {
 		}
 	}
 	return out
+}
+
+// Caps on a stranger's file load orders (#620): how many orders, and how
+// many files each. The largest surveyed order holds 275 archives.
+const (
+	maxCollectionLoadOrders     = 16
+	maxCollectionLoadOrderFiles = 10000
+	// maxLoadOrderName is a file name's limit: no filesystem lmm runs on
+	// takes a longer one.
+	maxLoadOrderName = 255
+)
+
+// checkCollectionLoadOrders refuses a stranger's file load orders that lmm
+// would not keep as written (#620). An id is a plain token (lower-case
+// letters, digits and .-_), as the game's adapter names its orders. Every
+// name is a file's name in the order's folder, matched against the
+// deployed files and never rewritten: one that is empty, starts or ends
+// with whitespace (the game trims each line), is . or .., holds
+// a path separator, a control, escape or bidi/format character, or runs
+// over a file name's length refuses the document.
+func checkCollectionLoadOrders(orders domain.FileLoadOrders) error {
+	if len(orders) > maxCollectionLoadOrders {
+		return fmt.Errorf("it has more than %d load orders", maxCollectionLoadOrders)
+	}
+	for id, names := range orders {
+		if !validLoadOrderID(id) {
+			return fmt.Errorf("a load order's id (%q) is not a plain lower-case token", id)
+		}
+		if len(names) > maxCollectionLoadOrderFiles {
+			return fmt.Errorf("the %s load order lists more than %d files", id, maxCollectionLoadOrderFiles)
+		}
+		for _, n := range names {
+			if strings.TrimSpace(n) == "" || n != strings.TrimSpace(n) || n == "." || n == ".." || strings.ContainsAny(n, `/\`) || hasUnsafeRunes(n) || len(n) > maxLoadOrderName {
+				return fmt.Errorf("a file name in the %s load order (%q) is empty, starts or ends with a space, is . or .., contains a path separator or control or formatting characters, or is over the %d-byte limit", id, n, maxLoadOrderName)
+			}
+		}
+	}
+	return nil
+}
+
+// validLoadOrderID reports whether id is a load-order id's spelling: 1 to
+// 64 lower-case ASCII letters, digits and .-_, starting with a letter or
+// digit.
+func validLoadOrderID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for i, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case (r == '.' || r == '-' || r == '_') && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // maxCollectionPlugins bounds a stranger's plugin list: every count in it -

@@ -56,7 +56,12 @@ type prefixOriginal struct {
 	// Owned names the plugins lmm deployed that its last write listed in
 	// the file: what a purge takes out again, keeping everything else the
 	// file holds by then (#616 review B2).
-	Owned      []string  `json:"owned,omitempty"`
+	Owned []string `json:"owned,omitempty"`
+	// Added names, for a load-order list (#620), the files lmm did not
+	// deploy that lmm itself put in the list: a purge takes them out too,
+	// back to where the game loads them unlisted. Never set on a plugin
+	// list's row.
+	Added      []string  `json:"added,omitempty"`
 	CapturedAt time.Time `json:"captured_at"`
 }
 
@@ -74,8 +79,14 @@ type prefixOriginalsManifest struct {
 // caller runs inside a mutation (beginOp), which serializes them, and a new
 // value is made per call, so a lock here would guard nothing (#616 review
 // 11).
+//
+// The same store, under a manifest and a copy directory of its own, keeps
+// the file load-order lists (#620): loadOrderOriginalsFor.
 type prefixOriginals struct {
 	dir string // <DataDir>/snapshots/<game>/_originals
+	// file is the manifest's name in dir; sub the directory under dir the
+	// copies are kept in.
+	file, sub string
 }
 
 // prefixOriginalsFor is gameID's store, or nil without a data directory.
@@ -83,10 +94,10 @@ func (s *Service) prefixOriginalsFor(gameID string) *prefixOriginals {
 	if s == nil || s.dataDir == "" {
 		return nil
 	}
-	return &prefixOriginals{dir: filepath.Join(snapshotsDirFor(s.dataDir, gameID), originalsStoreDirName)}
+	return &prefixOriginals{dir: filepath.Join(snapshotsDirFor(s.dataDir, gameID), originalsStoreDirName), file: prefixOriginalsFile, sub: "prefix"}
 }
 
-func (p *prefixOriginals) manifestPath() string { return filepath.Join(p.dir, prefixOriginalsFile) }
+func (p *prefixOriginals) manifestPath() string { return filepath.Join(p.dir, p.file) }
 
 func (p *prefixOriginals) read() (prefixOriginalsManifest, error) {
 	var m prefixOriginalsManifest
@@ -117,7 +128,7 @@ func (p *prefixOriginals) write(m prefixOriginalsManifest) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(p.dir, "originals-prefix-*.json")
+	tmp, err := os.CreateTemp(p.dir, strings.TrimSuffix(p.file, ".json")+"-*.json")
 	if err != nil {
 		return err
 	}
@@ -163,7 +174,7 @@ func (p *prefixOriginals) capture(row prefixOriginal, data []byte) error {
 		row.SHA256 = hex.EncodeToString(sum[:])
 		row.Size = int64(len(data))
 		row.Stored = fmt.Sprintf("%s-%d", row.SHA256[:16], row.CapturedAt.UnixNano())
-		store := filepath.Join(p.dir, "prefix")
+		store := filepath.Join(p.dir, p.sub)
 		if err := os.MkdirAll(store, 0o700); err != nil {
 			return err
 		}
@@ -184,7 +195,7 @@ func (p *prefixOriginals) stored(row prefixOriginal) ([]byte, error) {
 	if row.Stored == "" || strings.ContainsAny(row.Stored, `/\`) || strings.HasPrefix(row.Stored, ".") {
 		return nil, fmt.Errorf("the prefix originals manifest names no usable copy of %s", row.Path)
 	}
-	data, err := os.ReadFile(filepath.Join(p.dir, "prefix", row.Stored))
+	data, err := os.ReadFile(filepath.Join(p.dir, p.sub, row.Stored))
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +223,7 @@ func (p *prefixOriginals) forget(row prefixOriginal) error {
 		return err
 	}
 	if row.Stored != "" && !strings.ContainsAny(row.Stored, `/\`) {
-		if err := os.Remove(filepath.Join(p.dir, "prefix", row.Stored)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := os.Remove(filepath.Join(p.dir, p.sub, row.Stored)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
@@ -239,6 +250,42 @@ func (p *prefixOriginals) setOwned(prefix, user, path string, owned []string) er
 		return p.write(m)
 	}
 	return nil
+}
+
+// setOwnedAdded is setOwned for a load-order list (#620), recording the
+// external files lmm added to it beside the files it deployed.
+func (p *prefixOriginals) setOwnedAdded(prefix, user, path string, owned, added []string) error {
+	m, err := p.read()
+	if err != nil {
+		return err
+	}
+	key := prefixOriginal{Prefix: prefix, User: user, Path: path}.key()
+	for i := range m.Files {
+		if m.Files[i].key() != key {
+			continue
+		}
+		if slices.Equal(m.Files[i].Owned, owned) && slices.Equal(m.Files[i].Added, added) {
+			return nil
+		}
+		m.Files[i].Owned, m.Files[i].Added = slices.Clone(owned), slices.Clone(added)
+		return p.write(m)
+	}
+	return nil
+}
+
+// row is the kept row for prefix/user/path, if there is one.
+func (p *prefixOriginals) row(prefix, user, path string) (prefixOriginal, bool, error) {
+	m, err := p.read()
+	if err != nil {
+		return prefixOriginal{}, false, err
+	}
+	key := prefixOriginal{Prefix: prefix, User: user, Path: path}.key()
+	for _, r := range m.Files {
+		if r.key() == key {
+			return r, true, nil
+		}
+	}
+	return prefixOriginal{}, false, nil
 }
 
 // rekey moves row to the prefix and user of moved (rekeyPrefixOriginal).

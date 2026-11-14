@@ -73,6 +73,11 @@ func (s *Server) routes() {
 	// game's effective plugin order, and `lmm plugins`'s edits to it.
 	s.mux.Handle("GET /api/v1/profiles/{name}/plugins", s.wrap(s.handleAPIProfilePlugins))
 	s.mux.Handle("POST /api/v1/profiles/{name}/plugins", s.wrap(s.handleAPIProfilePluginEdit))
+	// The reorder modal's load-order tabs (api_loadorders.go, #620): a
+	// game's file load orders (Cyberpunk 2077's archives), and `lmm
+	// load-order`'s edits to them.
+	s.mux.Handle("GET /api/v1/profiles/{name}/load-orders", s.wrap(s.handleAPIProfileLoadOrders))
+	s.mux.Handle("POST /api/v1/profiles/{name}/load-orders", s.wrap(s.handleAPIProfileLoadOrderEdit))
 	// The Setup surface's game half (api_games.go): the chooser's listing,
 	// the add form's catalog search and its write, and the Steam detect
 	// scan in its two halves. None is game-scoped - they are how a game

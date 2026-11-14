@@ -404,6 +404,13 @@ whether the game's mods have to be compiled into one artifact, and what
   script extender's loader and DLLs and an ENB are recognised as game-folder
   files, but lmm still deploys them into `Data/` like every other file;
   deploying them to the game folder is a later release (#629).
+- **`cyberpunk2077`**: Cyberpunk 2077 (#620). `lmm game detect` sets it for
+  the game from Steam; a game already in games.yaml gets the same
+  `adapter_suggested` suggestion. It lays out and deploys every mod exactly
+  as the identity does - switching moves nothing and needs no reinstall -
+  and carries the game's archive load order, which lmm writes to
+  `archive/pc/mod/modlist.txt` from the profile's
+  [`load_orders:`](#file-load-orders-load_orders).
 
 The adapters that follow are added in the same tree, so `lmm game list`
 always names what this build actually has:
@@ -773,6 +780,40 @@ plugins:
   `lmm verify --fix` (or the next deploy) writes the list again.
 
 An older lmm that rewrites the profile drops the `plugins:` block.
+
+### File load orders (`load_orders`)
+
+For a game whose adapter has a file-based load order - Cyberpunk 2077 on
+`adapter: cyberpunk2077`, whose archives load in the order
+`archive/pc/mod/modlist.txt` gives (#620) - the profile can record that
+order, per load-order id, first loaded first:
+
+```yaml
+load_orders:
+  cyberpunk2077-archive:
+    - '! my fix.archive'
+    - basegame_b.archive
+    - basegame_a.archive
+```
+
+The key is optional, and it is opt-in: without it lmm leaves the game's
+list alone. With it, every deploy writes the list from it: the archives lmm
+deploys, in this order (a name compared case-insensitively; an archive lmm
+deploys that the order does not name goes in straight after the archive it
+sorts next after); and every archive lmm did not deploy, at its place in
+the order the game loads them in now - never reordered among themselves -
+and recorded, when lmm added it, so a purge takes it back out. The
+effective order is never written back here; `lmm load-order move` and the
+reorder window's archive tab record it. An entry whose archive is not
+deployed is kept, so switching its mod off and on again keeps its place.
+
+The file lmm first replaced is kept, and `lmm purge` - or removing the
+order (`lmm load-order reset`) - puts it back, keeping what changed in it
+since, or removes the list lmm created. A mod that ships its own
+`modlist.txt` is never written over. See the guide's [Archive load
+order](guide/load-order.md).
+
+An older lmm that rewrites the profile drops the `load_orders:` block.
 
 #### Upgrading: mods disabled before the marker existed
 

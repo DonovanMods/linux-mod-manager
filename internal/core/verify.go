@@ -917,6 +917,8 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 		r.adapterPass(installedMods)
 		// #616: deployed plugins need no recorded checksums to be listed.
 		r.pluginListPass()
+		// #620: nor does a load-order list.
+		r.loadOrderPass()
 		r.loaderPass(installedMods)
 		if err := r.deployedContentPass(installedMods); err != nil {
 			return result, err
@@ -981,6 +983,8 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	// #616: the plugin list's findings and drift, before --fix's resync
 	// (which rewrites the list too, finding nothing left to drift).
 	r.pluginListPass()
+	// #620: the file load-order lists' findings and drift, likewise.
+	r.loadOrderPass()
 
 	if r.opts.Fix {
 		r.syncMergedPakPass()

@@ -484,6 +484,13 @@ func SetRenameRecipeForTest(f func(oldpath, newpath string) error) (restore func
 	return func() { renameRecipe = old }
 }
 
+// SyncLoadOrdersForTest runs the file load-order sync (#620) on its own,
+// as the choke point would, for a state no flow reaches (a folder removed
+// after a deploy).
+func (s *Service) SyncLoadOrdersForTest(ctx context.Context, game *domain.Game, profileName string) []FileLoadOrderResult {
+	return s.syncLoadOrders(ctx, game, profileName)
+}
+
 // CountHeirListingsForTest counts the cache entries every flow lists for
 // the heirs of a shared path (#633) until the returned func restores the
 // previous hook.
@@ -499,4 +506,13 @@ func CountHeirListingsForTest(count func()) (restore func()) {
 // state a crash between the record and the write leaves (#631 review).
 func (s *Service) RecordOverrideWriteForTest(gameID, rel string, content, prev []byte) error {
 	return s.originalsStoreFor(gameID).recordOverrideWrite(rel, content, sha256Hex(prev), false, nil)
+}
+
+// SetLoadOrderEditAfterSaveForTest sets the hook ApplyFileLoadOrderEdit
+// calls between its profile write and its list write (#620), until the
+// returned func restores the previous one.
+func SetLoadOrderEditAfterSaveForTest(f func()) (restore func()) {
+	prev := loadOrderEditAfterSave
+	loadOrderEditAfterSave = f
+	return func() { loadOrderEditAfterSave = prev }
 }

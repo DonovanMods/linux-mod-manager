@@ -569,8 +569,9 @@ func (s *Service) profileDiffersFromSnapshot(gameID string, doc *Snapshot) bool 
 	if aErr != nil || bErr != nil {
 		return true
 	}
-	// The plugin list (#616) is not part of the version-0 document.
-	return string(a) != string(b) || !current.Plugins.Equal(recorded.Plugins)
+	// The plugin list (#616) and the file load orders (#620) are not part
+	// of the version-0 document.
+	return string(a) != string(b) || !current.Plugins.Equal(recorded.Plugins) || !current.LoadOrders.Equal(recorded.LoadOrders)
 }
 
 // ApplySnapshotRestore carries out plan under the mutation slot: safety

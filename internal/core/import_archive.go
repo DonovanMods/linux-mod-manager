@@ -975,8 +975,14 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 				warn("%s", w)
 			}
 		}
-	} else if res, _ := pluginListSyncedOn(ctx, game.ID, profileName); res != nil {
-		for _, w := range res.warnings() {
+	} else {
+		if res, _ := pluginListSyncedOn(ctx, game.ID, profileName); res != nil {
+			for _, w := range res.warnings() {
+				warn("%s", w)
+			}
+		}
+		orders, _ := loadOrdersSyncedOn(ctx, game.ID, profileName)
+		for _, w := range loadOrderWarnings(orders) {
 			warn("%s", w)
 		}
 	}

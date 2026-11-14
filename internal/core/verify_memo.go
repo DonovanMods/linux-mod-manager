@@ -206,10 +206,18 @@ func (s *Service) verifyFingerprint(ctx context.Context, game *domain.Game, prof
 		if !prof.Plugins.IsZero() {
 			_, _ = fmt.Fprintf(h, "plugins\x1f%q\n", fmt.Sprint(prof.Plugins))
 		}
+		// #620: the load orders the drift check compares against.
+		for _, id := range prof.LoadOrders.IDs() {
+			_, _ = fmt.Fprintf(h, "loadorder\x1f%s\x1f%q\n", id, prof.LoadOrders[id])
+		}
 	}
 	// #616: the game's own list files, which the game and other tools edit
 	// out of process.
 	_, _ = fmt.Fprintf(h, "pluginlist\x1f%s\n", s.pluginListToken(game))
+	// #620: likewise the game's load-order lists (modlist.txt).
+	if tok := s.loadOrderToken(game); tok != "" {
+		_, _ = fmt.Fprintf(h, "loadorderlist\x1f%s\n", tok)
+	}
 
 	// The deployed_files checksum rows - verify's own FIRST read
 	// (GetFilesWithChecksums, verify.go) and the one input that can move

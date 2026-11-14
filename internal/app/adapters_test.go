@@ -24,7 +24,7 @@ func TestRegisterAdapters_RegistersEveryConcreteAdapterBesideTheIdentity(t *test
 	svc := newTestService(t)
 	RegisterAdapters(svc)
 
-	assert.ElementsMatch(t, []string{adapter.GenericID, "icarus", "bepinex", "d2r", "bethesda", "witcher3", "baldurs-gate-3"}, svc.ListAdapters(),
+	assert.ElementsMatch(t, []string{adapter.GenericID, "icarus", "bepinex", "d2r", "bethesda", "cyberpunk2077", "witcher3", "baldurs-gate-3"}, svc.ListAdapters(),
 		"internal/app registers every concrete adapter; the identity is the registry's own built-in")
 }
 
@@ -154,5 +154,5 @@ func TestRegisterAdapters_LayoutNeutralAdapters(t *testing.T) {
 			neutral = append(neutral, name)
 		}
 	}
-	assert.ElementsMatch(t, []string{adapter.GenericID, "witcher3", "baldurs-gate-3"}, neutral)
+	assert.ElementsMatch(t, []string{adapter.GenericID, "cyberpunk2077", "witcher3", "baldurs-gate-3"}, neutral)
 }

@@ -271,10 +271,26 @@ type ManifestTool struct {
 	Exe  string
 }
 
-// ManifestFileLoadOrder is one file-based load order and its size.
+// ManifestFileLoadOrder is one file-based load order: its id, how many
+// entries it holds, and the entries (#620).
 type ManifestFileLoadOrder struct {
 	ID      string
 	Entries int
+	Files   []ManifestFileLoadOrderEntry
+	// Invalid says why the entries could not be read, when they could not
+	// (Files is then empty): the order is still reported by its id, and
+	// the importer decides whether that matters.
+	Invalid string
+}
+
+// ManifestFileLoadOrderEntry is one entry of a file-based load order, as
+// the curator recorded it: the file's name, whether it was enabled, and
+// the source's own hint to which mod ships it (Vortex's internal mod id,
+// "<name> <mod id> <version> ..."), which is display data only.
+type ManifestFileLoadOrderEntry struct {
+	Name    string
+	Enabled bool
+	ModHint string
 }
 
 // ManifestUnknownKey is one key the parser did not recognise: Key is its

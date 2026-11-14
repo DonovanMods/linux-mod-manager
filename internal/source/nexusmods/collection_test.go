@@ -267,6 +267,13 @@ func TestParseManifest_Cyberpunk(t *testing.T) {
 	require.Len(t, m.FileLoadOrders, 1, "an fbLoadOrders entry with no entries is absent")
 	assert.Equal(t, "cyberpunk2077-archive", m.FileLoadOrders[0].ID)
 	assert.Positive(t, m.FileLoadOrders[0].Entries)
+	// #620: each entry's file name, its enabled flag and the curator's
+	// Vortex mod id, a hint to which mod ships it.
+	require.Len(t, m.FileLoadOrders[0].Files, m.FileLoadOrders[0].Entries)
+	assert.Equal(t, source.ManifestFileLoadOrderEntry{
+		Name: "! anygoodname_cp77_story_quest_fixes.archive", Enabled: true,
+		ModHint: "Cyberpunk Story Quest Fixes 29152 1.21.1 2026-10-31T14-47Z LACBAIvts",
+	}, m.FileLoadOrders[0].Files[0])
 
 	r := m.ModRules[0]
 	assert.Contains(t, []string{"before", "after"}, r.Type)
@@ -488,4 +495,25 @@ func TestParseManifest_PluginRuleSpellings(t *testing.T) {
 	_, err = New(nil, "").ParseManifest(fstest.MapFS{"collection.json": {Data: []byte(
 		`{"info": {"name": "C"}, "pluginRules": {"plugins": [{"name": "B.esp", "after": [3]}]}}`)}})
 	assert.ErrorIs(t, err, source.ErrInvalidManifest, "a reference that is neither a name nor an object")
+}
+
+// #620 review: an fbLoadOrders entry that cannot be read does not make the
+// whole recipe unreadable - the order is reported by its id, with why its
+// entries could not be read, and the importer decides (a supported order's
+// unreadable entries refuse the recipe; any other order is refused by its
+// feature anyway).
+func TestParseManifest_UnreadableFileLoadOrderEntries(t *testing.T) {
+	doc := `{"info": {"name": "C", "domainName": "cyberpunk2077"}, "mods": [],
+		"fbLoadOrders": [
+			{"id": "cyberpunk2077-redmod", "entries": [{"id": 5, "enabled": "yes"}]},
+			{"id": "cyberpunk2077-archive", "entries": [{"id": "a.archive", "name": "a.archive", "enabled": true, "modId": "A 1"}]}]}`
+	m, err := New(nil, "").ParseManifest(fstest.MapFS{"collection.json": {Data: []byte(doc)}})
+	require.NoError(t, err)
+	require.Len(t, m.FileLoadOrders, 2)
+	assert.Equal(t, "cyberpunk2077-redmod", m.FileLoadOrders[0].ID)
+	assert.Equal(t, 1, m.FileLoadOrders[0].Entries)
+	assert.NotEmpty(t, m.FileLoadOrders[0].Invalid)
+	assert.Nil(t, m.FileLoadOrders[0].Files)
+	assert.Empty(t, m.FileLoadOrders[1].Invalid)
+	assert.Len(t, m.FileLoadOrders[1].Files, 1)
 }

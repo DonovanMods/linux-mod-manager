@@ -1,0 +1,15 @@
+{
+  "id": "cyberpunk2077-archive",
+  "label": "Archives",
+  "managed": true,
+  "first_wins": true,
+  "files": [
+    {
+      "name": "! fixes.archive",
+      "mod": "Story Quest Fixes"
+    },
+    {
+      "name": "basegame_x.archive"
+    }
+  ]
+}
