@@ -668,6 +668,18 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	if err != nil {
 		return result, err
 	}
+	// #633: a path a disabled mod gives up passes to the next mod in the
+	// TARGET profile's load order that stays deployed through the switch,
+	// placed by the target's Installer and recorded under the target - not
+	// to one the switch turns off or deploys itself.
+	// The switch's own installs are left out too: each one's live row is
+	// another version, which its own deploy replaces.
+	excluded := excludeKeys(plan.ToDisable, plan.ToEnable)
+	for _, ref := range plan.ToInstall {
+		excluded[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
+	fromInstaller.heirs = s.pathHeirsFor(plan.To, toInstaller, excluded)
+	toInstaller.heirs = s.pathHeirsFor(plan.To, nil, excluded)
 	pm := s.NewProfileManager()
 
 	totalDisable := len(plan.ToDisable)
@@ -690,7 +702,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			disableProfile, disableInstaller = plan.To, toInstaller
 		}
 
-		if err := disableInstaller.Uninstall(ctx, game, &im.Mod, disableProfile); err != nil {
+		if err := disableInstaller.uninstallHandingOff(ctx, game, &im.Mod, disableProfile, nil); err != nil {
 			msg := fmt.Sprintf("Warning: failed to undeploy %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: SwitchDisableNote, Detail: msg})

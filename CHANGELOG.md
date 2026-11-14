@@ -518,6 +518,27 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Changed
 
+- **Removing the mod that wins a shared file hands it to the next mod in
+  load order (#633).** When two enabled mods ship the same file and the one
+  later in the load order goes - `lmm uninstall`, `lmm mod disable`, an
+  `lmm update` (or rollback, or update from a file) to a version without
+  the file, `lmm mod copy --replace` with a version without it, or a
+  `lmm profile switch` / `lmm profile apply` that turns it off - the next
+  enabled mod in load order that ships the file now has its copy deployed
+  there in the same command, instead of the game's original coming back
+  (or the path staying empty) until the next `lmm deploy`. The original
+  lmm set aside stays set aside, and goes back only when no enabled mod is
+  left to ship the file. This works under both deploy roots (the mod
+  folder and the game folder) and all three link methods; a file the
+  profile overrides stays overridden, and a file that is yours is still
+  left alone. Each command says which mod's file now holds the path, as a
+  warning naming the path's final owner once, however many of its steps
+  passed it on; the web UI's readout for an uninstall, a disable, an
+  install, an update, a rollback, a copy, an installer reconfigure, a
+  profile import, an apply or a switch now shows a job's warnings where the
+  job finished (only a switch's did before), an update batch's toast
+  carries its items' warnings, and `lmm conflicts` and the web UI's
+  conflicts view name the new owner.
 - **The `--fomod-choices` error for several questions names the per-file key
   (#634).** An unkeyed choices file that meets more than one installer now
   says "answers one installer, but N ask; key its answers by mod

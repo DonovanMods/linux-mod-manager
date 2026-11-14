@@ -2513,6 +2513,15 @@ async function releaseSucceededOrigin(origin, summary) {
   }, succeededOriginReleaseMillis);
 }
 
+/** toastDetail is a held job's toast text: its batch tally, then its
+ * result's warnings (issue 633), or undefined for neither. */
+function toastDetail(tally, read) {
+  const parts = [];
+  if (tally) parts.push(resultTallyLabel(tally));
+  if (read?.warnings?.length > 0) parts.push(read.warnings.join(" "));
+  return parts.join(" · ") || undefined;
+}
+
 let toastSeq = 0;
 
 /** Pushes a toast. Successes clear themselves after a while; failures do
@@ -2657,7 +2666,10 @@ async function onJobDone(summary) {
         : "success",
     sticky: held,
     title: `${summary.kind} finished`,
-    detail: held && tally ? resultTallyLabel(tally) : undefined,
+    // Issue 633: a job held by its warnings (a shared path handed to the
+    // next mod in load order) says them here, where the page moved on - a
+    // batch's after its tally.
+    detail: held ? toastDetail(tally, read) : undefined,
     jobID: summary.id,
     ...toastAffordance(summary),
   });
