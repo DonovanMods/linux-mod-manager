@@ -1192,9 +1192,14 @@ function activeDrift(state) {
   return drift && drift.profile === state?.route?.profile ? drift : null;
 }
 
+/** DRIFT_HEADER leads the card's drift row, as it leads `lmm status
+ * --game`'s drift line (cmd/lmm/status.go, driftHeader). */
+export const DRIFT_HEADER = "Differs from what is installed: ";
+
 /** DRIFT_REASONS names each core.ProfileDrift count, in the struct's own
  * order, worded as `lmm status --game` words it (cmd/lmm/status.go,
- * driftSummary): [field, one, many]. */
+ * driftSummary): [field, one, many]. Both are held to
+ * internal/core/testdata/drift_summary.json. */
 const DRIFT_REASONS = [
   ["not_installed", "mod not installed", "mods not installed"],
   ["version", "mod at another version", "mods at another version"],
@@ -1205,11 +1210,16 @@ const DRIFT_REASONS = [
     "mod with other installer choices",
     "mods with other installer choices",
   ],
-  ["disabled", "mod disabled", "mods disabled"],
+  ["not_enabled", "mod not enabled", "mods not enabled"],
   [
-    "extra",
-    "mod enabled that the profile leaves out",
-    "mods enabled that the profile leaves out",
+    "unlisted",
+    "mod enabled but not in the profile",
+    "mods enabled but not in the profile",
+  ],
+  [
+    "switched_off",
+    "mod enabled that the profile switches off",
+    "mods enabled that the profile switches off",
   ],
   ["overrides", "override changed", "overrides changed"],
 ];
@@ -1290,10 +1300,10 @@ function ProfileCard({
   const offSentence = `${listedOff.length} mod${listedOff.length === 1 ? "" : "s"} in this profile ${listedOff.length === 1 ? "is" : "are"} switched off and not downloaded`;
   // Issue 641: the rest of what an apply would change, named by reason. A
   // reason the sentence above already says is left out of it: the
-  // not-installed count always, and the enabled-but-unlisted one when the
-  // sentence is the not-listed one.
+  // not-installed count always, and the unlisted one when the sentence is
+  // the not-listed one. Mods the profile switches off are named either way.
   const driftSkip = ["not_installed"];
-  if (notInstalled === 0 && notListed > 0) driftSkip.push("extra");
+  if (notInstalled === 0 && notListed > 0) driftSkip.push("unlisted");
   const driftLine = drift ? driftSummary(drift, driftSkip) : "";
   // Apply is offered on what the apply plan would do: for the active
   // profile, its drift; for another, the listed mods it lacks (whose plan
@@ -1337,9 +1347,7 @@ function ProfileCard({
         ${
           driftLine &&
           html`<li class="card__row" data-testid="profile-drift">
-            <span class="card__row-name"
-              >${`Differs from what is installed: ${driftLine}`}</span
-            >
+            <span class="card__row-name">${DRIFT_HEADER + driftLine}</span>
           </li>`
         }
         ${

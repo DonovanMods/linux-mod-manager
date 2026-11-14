@@ -180,6 +180,33 @@ func (d *DB) DeployedFileStates(ctx context.Context, gameID string, path domain.
 	return states, rows.Err()
 }
 
+// HasFingerprintedLinkedFiles reports whether profileName of gameID records
+// a deployed file with a fingerprint (a checksum) whose mod deploys by
+// symlink or hardlink - what an overridden copy left by a profile override
+// looks like (#630), where a plain link records none (#641). A record whose
+// installed row is gone is judged by defaultMethod. One query, which stops
+// at the first match.
+func (d *DB) HasFingerprintedLinkedFiles(ctx context.Context, gameID, profileName string, defaultMethod domain.LinkMethod) (bool, error) {
+	var found bool
+	err := d.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM deployed_files AS df
+			LEFT JOIN installed_mods AS im
+			  ON im.game_id = df.game_id
+			 AND im.profile_name = df.profile_name
+			 AND im.source_id = df.source_id
+			 AND im.mod_id = df.mod_id
+			WHERE df.game_id = ? AND df.profile_name = ?
+			  AND df.checksum IS NOT NULL AND df.checksum != ''
+			  AND COALESCE(im.link_method, ?) != ?
+		)
+	`, gameID, profileName, int(defaultMethod), int(domain.LinkCopy)).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("querying fingerprinted deployed files: %w", err)
+	}
+	return found, nil
+}
+
 // DeployedRoot is how many deployed_files rows one profile of a game has
 // under one recorded mod_path ("" for rows that recorded none).
 type DeployedRoot struct {

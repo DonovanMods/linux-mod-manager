@@ -520,3 +520,9 @@ func SetLoadOrderEditAfterSaveForTest(f func()) (restore func()) {
 // FileSetVariantForTest exposes fileSetVariant (#639): the cache variant of
 // base's tree built from exactly the files ids.
 func FileSetVariantForTest(base string, ids []string) string { return fileSetVariant(base, ids) }
+
+// ProfileDriftForTest exposes profileDriftOf: game's active profile's drift
+// summary (#641), which production reads through GameStatus.
+func (s *Service) ProfileDriftForTest(ctx context.Context, game *domain.Game) (*ProfileDrift, error) {
+	return s.profileDriftOf(ctx, game)
+}

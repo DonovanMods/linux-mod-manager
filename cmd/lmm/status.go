@@ -280,7 +280,7 @@ func showGameStatus(ctx context.Context, service *core.Service, gameID string) e
 		// #641: what `lmm profile apply` would converge - the line the web
 		// UI's Profile card shows beside its Apply.
 		if st.ProfileDrift != nil {
-			fmt.Printf("  Differs from profile: %s\n", colorYellow(driftSummary(*st.ProfileDrift)))
+			fmt.Printf("  %s%s\n", driftHeader, colorYellow(driftSummary(*st.ProfileDrift)))
 			fmt.Printf("    Run 'lmm profile apply --game %s' to make the installation match it.\n", st.ID)
 		}
 	}
@@ -288,9 +288,14 @@ func showGameStatus(ctx context.Context, service *core.Service, gameID string) e
 	return nil
 }
 
+// driftHeader leads the drift line; the web UI's Profile card leads its
+// own the same (cards.js, DRIFT_HEADER).
+const driftHeader = "Differs from what is installed: "
+
 // driftSummary names a drift's reasons, in ProfileDrift's field order, with
 // their counts: "2 mods at another version, 1 override changed" (#641). The
-// web UI's Profile card words them the same (cards.js, driftSummary).
+// web UI's Profile card words them the same (cards.js, driftSummary); both
+// are held to internal/core/testdata/drift_summary.json.
 func driftSummary(d core.ProfileDrift) string {
 	var parts []string
 	add := func(n int, one, many string) {
@@ -306,8 +311,9 @@ func driftSummary(d core.ProfileDrift) string {
 	add(d.ModType, "mod of another mod type", "mods of another mod type")
 	add(d.Files, "mod with other files", "mods with other files")
 	add(d.Fomod, "mod with other installer choices", "mods with other installer choices")
-	add(d.Disabled, "mod disabled", "mods disabled")
-	add(d.Extra, "mod enabled that the profile leaves out", "mods enabled that the profile leaves out")
+	add(d.NotEnabled, "mod not enabled", "mods not enabled")
+	add(d.Unlisted, "mod enabled but not in the profile", "mods enabled but not in the profile")
+	add(d.SwitchedOff, "mod enabled that the profile switches off", "mods enabled that the profile switches off")
 	add(d.Overrides, "override changed", "overrides changed")
 	return strings.Join(parts, ", ")
 }

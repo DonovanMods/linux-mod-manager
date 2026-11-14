@@ -610,12 +610,12 @@ For the active profile, the card offers **Apply profile…** whenever an
 apply would change something, and says what: for example "Differs from
 what is installed: 2 mods at another version, 1 override changed". The
 reasons it names are mods not installed, at another version, of another
-mod type, with other files, with other installer choices, disabled, or
-enabled when the profile leaves them out, and override files that
-differ. `lmm status --game <game>` shows the same line under the active
-profile, as "Differs from profile: ...", and `lmm status --game <game>
---json` carries the counts as `profile_drift` (absent when nothing
-differs). Working these out reads only the profile and lmm's own records,
+mod type, with other files, with other installer choices, or not
+enabled; mods enabled but not in the profile, or enabled when the profile
+switches them off; and override files that differ. `lmm status --game
+<game>` shows the same line under the active profile, and `lmm status
+--game <game> --json` carries the counts as `profile_drift` (absent when
+nothing differs). Working these out reads only the profile and lmm's own records,
 never a download. An override is the one reason that looks at the game
 directory, and lmm remembers that answer until the next change it makes
 or the next edit of a profile file. So if you edit an override's file in

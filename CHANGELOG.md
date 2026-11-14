@@ -13,19 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Profile card used to offer **Apply profile…** only when a listed mod was
   not installed at all, so a hand-edited version, other files (#639),
   other FOMOD choices or tree inputs (#614, #610), another mod type
-  (#607), a disabled mod or a changed override (#631) needed `lmm profile
-apply` in a terminal. Core now works out the active profile's drift by
-  the apply plan's own comparison, without a download or a source call,
-  and the card offers Apply whenever there is any, naming the reasons
-  ("Differs from what is installed: 2 mods at another version, 1 override
-  changed"). `lmm status --game <game>` prints the same line, and its
-  `--json` (and `GET /api/v1/status?game=`) carries the counts as a new
-  `profile_drift` member (`not_installed`, `version`, `mod_type`, `files`,
-  `fomod`, `disabled`, `extra`, `overrides`), absent when nothing differs.
-  The override count is the one part that looks at the game directory; it
-  is skipped when no profile sets an override and lmm has recorded none,
-  and otherwise remembered until the next change lmm makes or the next
-  edit of a profile file.
+  (#607), a mod left disabled or a changed override (#631) needed a
+  terminal and `lmm profile apply`. Core now works out the active
+  profile's drift by the apply plan's own comparison, without a download
+  or a source call, and the card offers Apply whenever there is any,
+  naming the reasons ("Differs from what is installed: 2 mods at another
+  version, 1 override changed"). `lmm status --game <game>` prints the
+  same line, and its `--json` (and `GET /api/v1/status?game=`) carries the
+  counts as a new `profile_drift` member (`not_installed`, `version`,
+  `mod_type`, `files`, `fomod`, `not_enabled`, `unlisted`,
+  `switched_off`, `overrides`), absent when nothing differs. The override
+  count is the one part that looks at the game directory; it is skipped
+  when nothing about the game is override-related, and otherwise
+  remembered until the next change lmm makes or the next edit of a
+  profile file.
 
 - **A collection's exact file lists, binary patches and bundled files
   (#610).** A NexusMods collection's replicate-mode items (`hashes`) now

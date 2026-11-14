@@ -1729,7 +1729,7 @@ func TestJSONGoldens(t *testing.T) {
 			"profile_drift",
 			core.ProfileDrift{
 				Profile: "default", NotInstalled: 1, Version: 2, ModType: 1, Files: 1,
-				Fomod: 1, Disabled: 1, Extra: 3, Overrides: 1,
+				Fomod: 1, NotEnabled: 1, Unlisted: 3, SwitchedOff: 2, Overrides: 1,
 			},
 		},
 		{

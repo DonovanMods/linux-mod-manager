@@ -50,7 +50,7 @@ func TestProfileDrift_Timing300Mods(t *testing.T) {
 			f.deploy(t, "default", core.DeployOptions{})
 
 			ctx := context.Background()
-			drift, err := f.svc.ProfileDrift(ctx, f.game)
+			drift, err := f.svc.ProfileDriftForTest(ctx, f.game)
 			require.NoError(t, err)
 			require.Nil(t, drift, "deployed: no drift")
 
@@ -65,7 +65,7 @@ func TestProfileDrift_Timing300Mods(t *testing.T) {
 				t.Logf("%s: median %v, max %v (30 runs)", name, runs[len(runs)/2], runs[len(runs)-1])
 			}
 			measure("ProfileDrift", func() {
-				_, err := f.svc.ProfileDrift(ctx, f.game)
+				_, err := f.svc.ProfileDriftForTest(ctx, f.game)
 				require.NoError(t, err)
 			})
 			measure("GameStatus", func() {

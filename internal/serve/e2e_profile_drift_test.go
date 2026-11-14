@@ -7,6 +7,7 @@ package serve_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -70,31 +71,90 @@ func TestE2E_ProfileCard_OffersApplyForAHandEditedVersion(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_DriftSummary_WordsEveryReasonAsTheCLIDoes pins cards.js's
-// driftSummary to cmd/lmm's (TestDriftSummary_NamesEveryReason): the two
-// frontends name a drift the same way.
-func TestE2E_DriftSummary_WordsEveryReasonAsTheCLIDoes(t *testing.T) {
+// TestE2E_DriftSummary_WordsAsTheSharedFixture holds cards.js's drift
+// wording to internal/core/testdata/drift_summary.json, the fixture
+// cmd/lmm's driftSummary is held to as well
+// (TestDriftSummary_WordsAsTheSharedFixture): the two frontends name a
+// drift the same way.
+func TestE2E_DriftSummary_WordsAsTheSharedFixture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "core", "testdata", "drift_summary.json"))
+	require.NoError(t, err)
+	var fixture struct {
+		Header string `json:"header"`
+		Cases  []struct {
+			Text string `json:"text"`
+		} `json:"cases"`
+	}
+	require.NoError(t, json.Unmarshal(data, &fixture))
+
 	f := newE2EFixture(t)
-	var lines []string
+	var got struct {
+		Header string   `json:"header"`
+		Lines  []string `json:"lines"`
+	}
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`(async () => {
-			const { driftSummary } = await import("/static/app/components/cards.js");
-			const all = { profile: "default", not_installed: 1, version: 2, mod_type: 1, files: 1,
-				fomod: 1, disabled: 1, extra: 3, overrides: 1 };
-			return [
-				driftSummary(all),
-				driftSummary(all, ["not_installed", "extra"]),
-				driftSummary({ overrides: 2 }),
-			];
-		})()`, &lines, awaitPromise),
+			const { driftSummary, DRIFT_HEADER } = await import("/static/app/components/cards.js");
+			const fixture = `+string(data)+`;
+			return {
+				header: DRIFT_HEADER,
+				lines: fixture.cases.map((c) => driftSummary(c.drift, c.skip ?? [])),
+			};
+		})()`, &got, awaitPromise),
 	)
-	require.Len(t, lines, 3)
-	assert.Equal(t, "1 mod not installed, 2 mods at another version, 1 mod of another mod type, 1 mod with other files, "+
-		"1 mod with other installer choices, 1 mod disabled, 3 mods enabled that the profile leaves out, 1 override changed", lines[0])
-	assert.Equal(t, "2 mods at another version, 1 mod of another mod type, 1 mod with other files, "+
-		"1 mod with other installer choices, 1 mod disabled, 1 override changed", lines[1])
-	assert.Equal(t, "2 overrides changed", lines[2])
+	assert.Equal(t, fixture.Header, got.Header)
+	require.Len(t, got.Lines, len(fixture.Cases))
+	for i, c := range fixture.Cases {
+		assert.Equal(t, c.Text, got.Lines[i])
+	}
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfileCard_NamesSwitchedOffBesideTheNotListedSentence (#641
+// review): when the card's sentence is the not-listed one, only the
+// unlisted mods it already counts are left out of the drift row - the mods
+// the profile switches off but that are still enabled are named.
+func TestE2E_ProfileCard_NamesSwitchedOffBesideTheNotListedSentence(t *testing.T) {
+	f := newE2EFixture(t)
+	var got struct {
+		Card  string `json:"card"`
+		Drift string `json:"drift"`
+		Apply bool   `json:"apply"`
+	}
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { AttentionCards } = await import("/static/app/components/cards.js");
+			const { initialState } = await import("/static/app/store.js");
+			const { h, render } = await import("/static/app/render.js");
+			const mount = document.createElement("div");
+			document.body.append(mount);
+			const state = initialState();
+			state.route = { game: "g1", profile: "default" };
+			state.status = {
+				active_profile: "default",
+				profiles: [{ name: "default", mod_count: 1 }],
+				profile_drift: { profile: "default", unlisted: 1, switched_off: 1 },
+			};
+			const mods = { mods: [
+				{ key: "fake:a", enabled: true },
+				{ key: "fake:b", enabled: true },
+			] };
+			render(h(AttentionCards, { state, actions: { openPlan() {} }, mods }), mount);
+			const out = {
+				card: mount.querySelector(".card--profile")?.textContent ?? "",
+				drift: mount.querySelector('[data-testid="profile-drift"]')?.textContent ?? "",
+				apply: mount.querySelector('[data-action="apply-profile"]') !== null,
+			};
+			mount.remove();
+			return out;
+		})()`, &got, awaitPromise),
+	)
+	assert.Contains(t, got.Card, "1 installed mod is not in this profile's load order")
+	assert.Equal(t, "Differs from what is installed: 1 mod enabled that the profile switches off", got.Drift)
+	assert.True(t, got.Apply, "the active profile's drift offers Apply")
 	assert.Empty(t, f.BrowserErrors())
 }

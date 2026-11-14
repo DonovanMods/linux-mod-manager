@@ -333,7 +333,7 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 	// planProfileApply: snapshot restore's converge step applies the mods
 	// alone, and restores the originals itself.
 	if profile, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
-		plan.Overrides = s.planApplyOverrides(ctx, game, profile, plan, nil)
+		plan.Overrides = s.planOverrideChanges(ctx, game, profile, applySkipKeys(plan))
 		plan.NoChanges = plan.NoChanges && !overrideChanged(plan.Overrides)
 		plan.overridesDigest = overridesDigest(profile)
 	}
@@ -425,7 +425,7 @@ func (s *Service) diffProfileApply(ctx context.Context, pm *ProfileManager, game
 			// Installed but no longer listed - disable it.
 			if im.Enabled {
 				plan.ToDisable = append(plan.ToDisable, *im)
-				drift.Extra++
+				drift.Unlisted++
 			}
 			continue
 		}
@@ -441,7 +441,7 @@ func (s *Service) diffProfileApply(ctx context.Context, pm *ProfileManager, game
 			// download for a mod the user switched off.
 			if im.Enabled || im.Deployed {
 				plan.ToDisable = append(plan.ToDisable, *im)
-				drift.Extra++
+				drift.SwitchedOff++
 			}
 			continue
 		}
@@ -473,7 +473,7 @@ func (s *Service) diffProfileApply(ctx context.Context, pm *ProfileManager, game
 		}
 
 		if !im.Enabled {
-			drift.Disabled++
+			drift.NotEnabled++
 			if gameCache.Exists(cache.Key{GameID: game.ID, SourceID: im.SourceID, ModID: im.ID, Version: im.Version, Variant: im.Variant}) {
 				plan.ToEnable = append(plan.ToEnable, *im)
 				continue

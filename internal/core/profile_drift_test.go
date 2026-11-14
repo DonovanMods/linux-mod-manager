@@ -7,6 +7,8 @@ package core_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -78,11 +80,11 @@ func TestGameStatus_DriftCountsEveryReason(t *testing.T) {
 	saveRow(t, svc, game, domain.InstalledMod{Mod: domain.Mod{ID: "fomod", SourceID: "src", Version: "1.0"}, Enabled: true, Deployed: true})
 	// mod_type: the profile states another type (#607).
 	saveRow(t, svc, game, domain.InstalledMod{Mod: domain.Mod{ID: "type", SourceID: "src", Version: "1.0"}, Enabled: true, Deployed: true})
-	// disabled: listed and on, installed but disabled here.
+	// not_enabled: listed and on, installed but disabled here.
 	seedInstalledMod(t, svc, game, "src", "off", "1.0", false, map[string][]byte{"off.esp": []byte("x")})
-	// extra: enabled here, and the profile no longer lists it.
+	// unlisted: enabled here, and the profile no longer lists it.
 	seedInstalledMod(t, svc, game, "src", "gone", "1.0", true, map[string][]byte{"gone.esp": []byte("x")})
-	// extra too: enabled here, and the profile switches it off (#431).
+	// switched_off: enabled here, and the profile switches it off (#431).
 	seedInstalledMod(t, svc, game, "src", "marked", "1.0", true, map[string][]byte{"marked.esp": []byte("x")})
 	// unchanged.
 	seedInstalledMod(t, svc, game, "src", "same", "1.0", true, map[string][]byte{"same.esp": []byte("x")})
@@ -107,8 +109,9 @@ func TestGameStatus_DriftCountsEveryReason(t *testing.T) {
 	assert.Equal(t, core.ProfileDrift{
 		Profile:      "default",
 		NotInstalled: 1,
-		Disabled:     1,
-		Extra:        2,
+		NotEnabled:   1,
+		Unlisted:     1,
+		SwitchedOff:  1,
 		Version:      1,
 		Files:        1,
 		Fomod:        1,
@@ -133,7 +136,7 @@ func TestProfileDrift_AgreesWithThePlan(t *testing.T) {
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("x")})
 	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
-	drift, err := svc.ProfileDrift(ctx, game)
+	drift, err := svc.ProfileDriftForTest(ctx, game)
 	require.NoError(t, err)
 	assert.Nil(t, drift)
 	plan, err := svc.PlanProfileApply(ctx, game, "default")
@@ -142,7 +145,7 @@ func TestProfileDrift_AgreesWithThePlan(t *testing.T) {
 
 	// A hand edit of the version.
 	require.NoError(t, pm.UpsertMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "0.9"}))
-	drift, err = svc.ProfileDrift(ctx, game)
+	drift, err = svc.ProfileDriftForTest(ctx, game)
 	require.NoError(t, err)
 	require.NotNil(t, drift)
 	assert.Equal(t, 1, drift.Version)
@@ -161,26 +164,26 @@ func TestProfileDrift_CountsAnOverrideChange(t *testing.T) {
 	f.deploy(t, "default", core.DeployOptions{})
 	ctx := context.Background()
 
-	drift, err := f.svc.ProfileDrift(ctx, f.game)
+	drift, err := f.svc.ProfileDriftForTest(ctx, f.game)
 	require.NoError(t, err)
 	assert.Nil(t, drift, "deployed, with no override: nothing to apply")
 
 	f.overriddenProfile(t, "default", true, map[string]string{"Engine.ini": "tweaked\n"}, "k")
-	drift, err = f.svc.ProfileDrift(ctx, f.game)
+	drift, err = f.svc.ProfileDriftForTest(ctx, f.game)
 	require.NoError(t, err)
 	require.NotNil(t, drift)
 	assert.Equal(t, core.ProfileDrift{Profile: "default", Overrides: 1}, *drift)
 	assert.Len(t, f.applyPlan(t, "default").Overrides, drift.Overrides)
 
 	f.applyProfile(t, "default")
-	drift, err = f.svc.ProfileDrift(ctx, f.game)
+	drift, err = f.svc.ProfileDriftForTest(ctx, f.game)
 	require.NoError(t, err)
 	assert.Nil(t, drift, "applied: the game matches the profile")
 
 	// The override's content edited by hand, to the same length: the
 	// count memoised for the profile as it was must not answer for it.
 	f.overriddenProfile(t, "default", true, map[string]string{"Engine.ini": "tweakeD\n"}, "k")
-	drift, err = f.svc.ProfileDrift(ctx, f.game)
+	drift, err = f.svc.ProfileDriftForTest(ctx, f.game)
 	require.NoError(t, err)
 	require.NotNil(t, drift, "a profile edit is seen through the memo")
 	assert.Equal(t, 1, drift.Overrides)
@@ -192,7 +195,50 @@ func TestProfileDrift_CountsAnOverrideChange(t *testing.T) {
 func TestProfileDrift_NoActiveProfile(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
-	drift, err := svc.ProfileDrift(context.Background(), game)
+	drift, err := svc.ProfileDriftForTest(context.Background(), game)
 	require.NoError(t, err)
 	assert.Nil(t, drift)
+}
+
+// TestProfileDrift_LeftoverCopyWithNoManifestRecord is the #641 review's
+// blocker: an overridden copy whose manifest note is gone (the manifest
+// deleted, a note that failed to write, a copy from a build before #631
+// recorded them) is still found by its deployed record's fingerprint. The
+// apply plan restores it, and the drift summary counts it - the two agree.
+func TestProfileDrift_LeftoverCopyWithNoManifestRecord(t *testing.T) {
+	for _, method := range linkMethods() {
+		t.Run(method.String(), func(t *testing.T) {
+			f := overriddenFixture(t, method)
+			f.deploy(t, "default", core.DeployOptions{})
+			assertOverriddenCopy(t, f, "tweaked\n")
+			manifest := filepath.Join(f.svc.DataDirForTest(), "snapshots", f.game.ID, "_originals", "manifest.json")
+			require.FileExists(t, manifest)
+			require.NoError(t, os.Remove(manifest))
+			// The override deleted from the profile by hand.
+			f.overriddenProfile(t, "default", true, nil, "k")
+
+			plan := f.applyPlan(t, "default")
+			changes := 0
+			for _, c := range plan.Overrides {
+				if c.Action != core.OverrideKeep {
+					changes++
+				}
+			}
+			drift, err := f.svc.ProfileDriftForTest(context.Background(), f.game)
+			require.NoError(t, err)
+			if method != domain.LinkCopy {
+				// Linked: the copy is found by its fingerprint alone.
+				require.NotZero(t, changes, "the plan restores the left-over copy")
+			}
+			if changes == 0 {
+				assert.True(t, plan.NoChanges)
+				assert.Nil(t, drift, "the plan has nothing to do, so there is no drift")
+				return
+			}
+			assert.Equal(t, []core.OverrideChange{{Path: "Data/k.ini", Action: core.OverrideRestore, SourceID: "local", ModID: "k"}}, plan.Overrides)
+			assert.False(t, plan.NoChanges)
+			require.NotNil(t, drift, "the plan restores the copy, so the summary counts it")
+			assert.Equal(t, core.ProfileDrift{Profile: "default", Overrides: changes}, *drift)
+		})
+	}
 }

@@ -2,7 +2,7 @@ package core
 
 // profile_drift.go is the active profile's drift summary (#641): what `lmm
 // profile apply` would converge, counted by reason. It is the apply plan's
-// own comparison (diffProfileApply, planApplyOverrides), stopped before the
+// own comparison (diffProfileApply, planOverrideChanges), stopped before the
 // plan resolves anything against a source - so GameStatus, which the web UI
 // polls, can carry it, and the Profile card can offer Apply exactly when
 // the plan would have something to do.
@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -44,12 +45,14 @@ type ProfileDrift struct {
 	// FOMOD choices or tree inputs (a file list, patches) build (#614,
 	// #610).
 	Fomod int `json:"fomod,omitzero"`
-	// Disabled counts mods the profile lists and switches on that are
+	// NotEnabled counts mods the profile lists and switches on that are
 	// installed but disabled.
-	Disabled int `json:"disabled,omitzero"`
-	// Extra counts mods enabled under the profile that it no longer lists,
-	// or that it switches off (#431).
-	Extra int `json:"extra,omitzero"`
+	NotEnabled int `json:"not_enabled,omitzero"`
+	// Unlisted counts mods enabled under the profile that it does not list.
+	Unlisted int `json:"unlisted,omitzero"`
+	// SwitchedOff counts mods the profile lists with `disabled: true`
+	// (#431) that are still enabled or deployed.
+	SwitchedOff int `json:"switched_off,omitzero"`
 	// Overrides counts the files the profile's overrides would change
 	// (#631): ProfileApplyPlan.Overrides, less the ones kept as they are.
 	Overrides int `json:"overrides,omitzero"`
@@ -57,7 +60,7 @@ type ProfileDrift struct {
 
 // Total is every change the drift counts: mods and override files.
 func (d ProfileDrift) Total() int {
-	return d.NotInstalled + d.Version + d.ModType + d.Files + d.Fomod + d.Disabled + d.Extra + d.Overrides
+	return d.NotInstalled + d.Version + d.ModType + d.Files + d.Fomod + d.NotEnabled + d.Unlisted + d.SwitchedOff + d.Overrides
 }
 
 // countReinstall counts a mod the apply reinstalls under its first reason:
@@ -75,12 +78,13 @@ func (d *ProfileDrift) countReinstall(ref domain.ModReference, im *domain.Instal
 	}
 }
 
-// ProfileDrift is game's active profile's drift summary (#641), or nil
+// profileDriftOf is game's active profile's drift summary (#641), or nil
 // when an apply would change nothing - or could not run: no profile is
 // active, or the game's mod_path moved (both refuse the apply plan). It
 // reads the profile, the installed rows and the originals manifest, and
-// asks no source; see diffProfileApply.
-func (s *Service) ProfileDrift(ctx context.Context, game *domain.Game) (*ProfileDrift, error) {
+// asks no source; see diffProfileApply. GameStatus computes the same from
+// what it has read already (profileDrift).
+func (s *Service) profileDriftOf(ctx context.Context, game *domain.Game) (*ProfileDrift, error) {
 	pm := s.NewProfileManager()
 	profiles, err := pm.List(ctx, game.ID)
 	if err != nil {
@@ -111,7 +115,7 @@ func activeOf(profiles []*domain.Profile) *domain.Profile {
 	return nil
 }
 
-// profileDrift is ProfileDrift over what the caller has read already:
+// profileDrift is profileDriftOf over what the caller has read already:
 // every profile of game, the active one among them, and its installed rows.
 // modPathFine says the caller found no ModPathProblem, which asks the
 // moved-mod_path question first - GameStatus has, so the query is not
@@ -138,33 +142,21 @@ func (s *Service) profileDrift(ctx context.Context, game *domain.Game, pm *Profi
 	return &drift, nil
 }
 
-// planApplyOverrides is the override half of an apply plan (#631): every
-// change converging profile's overrides makes, beside the mods plan
-// deploys or removes. PlanProfileApply and the drift summary both call it.
-//
-// It is skipped outright - no file is looked at - when nothing about the
-// game is override-related (overridesInPlay): then planOverrideChanges
-// would find nothing either, but under symlink and hardlink only after one
-// lstat per deployed file. profiles is every profile of the game when the
-// caller has read them, else nil.
-func (s *Service) planApplyOverrides(ctx context.Context, game *domain.Game, profile *domain.Profile, plan *ProfileApplyPlan, profiles []*domain.Profile) []OverrideChange {
-	if !s.overridesInPlay(game, profile, profiles) {
-		return nil
-	}
-	return s.planOverrideChanges(ctx, game, profile, applySkipKeys(plan))
-}
-
-// overridesInPlay reports whether an override can change anything in game:
-// some profile of it sets an override, or the originals store records
-// something an override did - a game file it replaced or wrote, or an
-// overridden copy of a mod's file. Every override change starts from one
-// of those: planGameOverrides from the profile's own overrides,
-// restoreGameOverrides from the store's records, and overriddenSteps from
-// the profile's overrides, another profile's, or a recorded copy (every
-// copy lmm writes is recorded, Installer and recordOverriddenCopy alike).
-// A manifest that cannot be read counts as in play: the full comparison
+// overridesInPlay reports whether an override can change anything in game
+// for profile, the drift summary's gate (#641): when it is false the
+// summary counts no override change without looking at a file, where
+// planOverrideChanges - which the apply plan always runs - would walk the
+// deployed tree under symlink and hardlink to find nothing. Every override
+// change starts from one of these: planGameOverrides from the profile's own
+// overrides, restoreGameOverrides from the originals store's records, and
+// overriddenSteps from the profile's overrides, another profile's, a copy
+// the store recorded, or - under symlink and hardlink - a deployed record
+// carrying a fingerprint, which a plain link never has: an overridden copy
+// whose note in the store is missing (the manifest deleted, a note that
+// failed to write, a copy from before #631 recorded them) is still found by
+// it. Anything that cannot be read counts as in play: the full comparison
 // then decides.
-func (s *Service) overridesInPlay(game *domain.Game, profile *domain.Profile, profiles []*domain.Profile) bool {
+func (s *Service) overridesInPlay(ctx context.Context, game *domain.Game, profile *domain.Profile, profiles []*domain.Profile) bool {
 	if len(profile.Overrides) > 0 {
 		return true
 	}
@@ -186,7 +178,22 @@ func (s *Service) overridesInPlay(game *domain.Game, profile *domain.Profile, pr
 			return true
 		}
 	}
-	return s.originalsStoreFor(game.ID).holdsOverrideRecords()
+	if s.originalsStoreFor(game.ID).holdsOverrideRecords() {
+		return true
+	}
+	if s.db == nil {
+		return false
+	}
+	// overriddenSteps' linked walk: the profile's own method decides it.
+	method, err := s.GetEffectiveLinkMethod(ctx, game, profile.Name)
+	if err != nil {
+		return true
+	}
+	if method == domain.LinkCopy {
+		return false
+	}
+	found, err := s.db.HasFingerprintedLinkedFiles(ctx, game.ID, profile.Name, method)
+	return err != nil || found
 }
 
 // holdsOverrideRecords reports whether the manifest records anything an
@@ -214,14 +221,15 @@ func (s *originalsStore) holdsOverrideRecords() bool {
 	return false
 }
 
-// overrideDrift is ProfileDrift.Overrides: the changes planApplyOverrides
-// finds, less the files kept as they are. With overrides in play that
+// overrideDrift is ProfileDrift.Overrides: the changes planOverrideChanges
+// finds - the apply plan's own override comparison - less the files kept as
+// they are, or none when overridesInPlay says none can exist. With overrides in play that
 // comparison looks at the game directory - one lstat per deployed file
 // under symlink and hardlink - so its answer is memoised on
 // overrideFingerprint, and a status poll that changed nothing is answered
 // without the walk.
 func (s *Service) overrideDrift(ctx context.Context, game *domain.Game, profile *domain.Profile, plan *ProfileApplyPlan, profiles []*domain.Profile) int {
-	if !s.overridesInPlay(game, profile, profiles) {
+	if !s.overridesInPlay(ctx, game, profile, profiles) {
 		return 0
 	}
 	skip := applySkipKeys(plan)
@@ -289,11 +297,12 @@ func (s *Service) currentOpGen() uint64 {
 // overrideFingerprint is a cheap summary of what the override comparison
 // depends on, from stats only - no file is read: this process's mutation
 // generation (beginOp bumps it), the game's paths and link method, the
-// size and modification time of every profile file of the game (their
-// overrides), of the originals manifest (what overrides wrote and
-// replaced) and of the database and its WAL (deployed files, written by
-// this process or another lmm beside it), and the mods the plan deploys or
-// removes (skip). It returns "" - memoise nothing - while a mutation of
+// size, modification time, inode and change time of every profile file of
+// the game (their overrides), of the originals manifest (what overrides
+// wrote and replaced), of the database and its WAL (deployed files,
+// written by this process or another lmm beside it) and of the operation
+// lock (another lmm's mutation), and the mods the plan deploys or removes
+// (skip). It returns "" - memoise nothing - while a mutation of
 // this process runs.
 //
 // KNOWN LIMIT: a file of the game directory changed by hand (an override's
@@ -308,11 +317,18 @@ func (s *Service) overrideFingerprint(game *domain.Game, skip map[string]bool) (
 	var b strings.Builder
 	fmt.Fprintf(&b, "gen=%d\x00mod=%s\x00install=%s\x00link=%s\x00", gen, game.ModPath, game.InstallPath, game.LinkMethod)
 	stat := func(label, path string) {
-		if info, err := os.Stat(path); err == nil {
-			fmt.Fprintf(&b, "%s=%d:%d\x00", label, info.Size(), info.ModTime().UnixNano())
-		} else {
+		info, err := os.Stat(path)
+		if err != nil {
 			fmt.Fprintf(&b, "%s=-\x00", label)
+			return
 		}
+		fmt.Fprintf(&b, "%s=%d:%d", label, info.Size(), info.ModTime().UnixNano())
+		if st, ok := info.Sys().(*syscall.Stat_t); ok {
+			// A file replaced by a rename, or restored with its old
+			// mtime, still moves its inode or its ctime.
+			fmt.Fprintf(&b, ":%d:%d:%d", st.Ino, st.Ctim.Sec, st.Ctim.Nsec)
+		}
+		b.WriteString("\x00")
 	}
 	profilesDir := filepath.Join(s.configDir, "games", game.ID, "profiles")
 	if entries, err := os.ReadDir(profilesDir); err == nil {
@@ -326,6 +342,11 @@ func (s *Service) overrideFingerprint(game *domain.Game, skip map[string]bool) (
 	if s.dataDir != "" {
 		stat("db", filepath.Join(s.dataDir, "lmm.db"))
 		stat("wal", filepath.Join(s.dataDir, "lmm.db-wal"))
+	}
+	if s.opLockPath != "" {
+		// Another lmm's mutation stamps the lock file as it takes it
+		// (probeOpLock reads the same stamp); stat only, never a flock.
+		stat("oplock", s.opLockPath)
 	}
 	for _, k := range slices.Sorted(maps.Keys(skip)) {
 		fmt.Fprintf(&b, "skip=%s\x00", k)

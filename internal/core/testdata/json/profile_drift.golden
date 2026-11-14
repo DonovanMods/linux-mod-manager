@@ -5,7 +5,8 @@
   "mod_type": 1,
   "files": 1,
   "fomod": 1,
-  "disabled": 1,
-  "extra": 3,
+  "not_enabled": 1,
+  "unlisted": 3,
+  "switched_off": 2,
   "overrides": 1
 }
