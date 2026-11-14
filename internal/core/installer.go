@@ -320,6 +320,26 @@ func (i *Installer) noteHeld(msg string) {
 	}
 }
 
+// refusePrefixRecorded refuses a removal of mod's files when profileName
+// records some of them in game's prefix and the prefix does not resolve
+// (#636): lmm cannot tell what is there, so it neither removes those files
+// nor forgets them.
+func (i *Installer) refusePrefixRecorded(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) error {
+	if game.PrefixRoot != nil || i.db == nil || mod == nil {
+		return nil
+	}
+	recorded, err := i.db.GetDeployedFilesForMod(ctx, game.ID, profileName, mod.SourceID, mod.ID)
+	if err != nil {
+		return fmt.Errorf("listing tracked deployed files: %w", err)
+	}
+	for _, p := range recorded {
+		if p.IsPrefix() {
+			return &PrefixUnresolvedError{GameID: game.ID, Problem: "the files lmm deployed there cannot be found until it is"}
+		}
+	}
+	return nil
+}
+
 // refuseStranded refuses a deploy while game has files recorded under a
 // mod_path other than its current one (#451): deploying here would upsert
 // their records onto this mod_path and orphan the files where they are.
@@ -775,6 +795,10 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 	if err != nil {
 		return fmt.Errorf("resolving deployable files: %w", err)
 	}
+	// #636: a file the adapter places in the prefix needs the prefix.
+	if err := refusePrefixItems(game, files); err != nil {
+		return err
+	}
 
 	// #353/#413: the adapter's copy-once members are seeded BEFORE anything
 	// is linked, and they are not in `files` at all - deployableFiles
@@ -958,6 +982,13 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 	newFiles, err := deployableFiles(newCache, i.adapter, game, modCacheKey(game.ID, *newMod), newMod.ModType)
 	if err != nil {
 		return fmt.Errorf("resolving deployable new-side files: %w", err)
+	}
+	// #636: neither side's prefix files are touched without the prefix.
+	if err := refusePrefixItems(game, newFiles); err != nil {
+		return err
+	}
+	if err := i.refusePrefixRecorded(ctx, game, oldMod, profileName); err != nil {
+		return err
 	}
 
 	// #144 item 4: in the degenerate same-version shape (old and new resolve
@@ -1275,6 +1306,13 @@ func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, ne
 // reinstall has committed its deployed and installed rows. An unresolved
 // path keeps its ledger row so a later purge can judge it again.
 func (i *Installer) ReconcileMissingCacheDepartures(ctx context.Context, game *domain.Game, profileName string, oldOnlyRecords []db.DeployedFileRecord) error {
+	if game.PrefixRoot == nil {
+		for _, rec := range oldOnlyRecords {
+			if rec.Path.IsPrefix() {
+				return &PrefixUnresolvedError{GameID: game.ID, Problem: "the files lmm deployed there cannot be found until it is"}
+			}
+		}
+	}
 	others, err := i.otherGamesFor(ctx, game)
 	if err != nil {
 		return err
@@ -1575,6 +1613,11 @@ func (i *Installer) uninstallReporting(ctx context.Context, game *domain.Game, m
 // single trailing CleanupEmptyDirs has always been - and reports the held
 // paths as its own. ho, when set, hands each removed path on (#633).
 func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, ho *handOff) ([]domain.DeployPath, []heldPath, error) {
+	// #636: a mod with files recorded in an unresolved prefix is neither
+	// removed there nor forgotten.
+	if err := i.refusePrefixRecorded(ctx, game, mod, profileName); err != nil {
+		return nil, nil, err
+	}
 	files, err := i.removalPaths(ctx, game, mod, profileName)
 	if err != nil {
 		return nil, nil, err

@@ -3,7 +3,7 @@
 // component says what it actually left in place or removed after rechecking
 // the live tree.
 
-import { deployedPath, isGameRoot } from "../deploypath.js";
+import { deployedPath, isGameRoot, isPrefixRoot } from "../deploypath.js";
 import { html } from "../render.js";
 
 /**
@@ -73,8 +73,10 @@ function keptReason(k) {
 
 function keptPath(k) {
   const path = typeof k?.path === "string" ? k.path.replace(/^\/+/, "") : "";
-  // issue 629: a game-root file is under no mod_path, whatever its record.
-  if (isGameRoot(k?.root)) return deployedPath(path, k.root);
+  // issue 629: a game-root file is under no mod_path, whatever its record;
+  // nor is a prefix file (issue 636).
+  if (isGameRoot(k?.root) || isPrefixRoot(k?.root))
+    return deployedPath(path, k.root);
   if (typeof k?.mod_path !== "string" || k.mod_path === "") return path;
   return `${k.mod_path.replace(/\/+$/, "")}/${path}`;
 }

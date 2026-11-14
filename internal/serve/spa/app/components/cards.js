@@ -11,6 +11,7 @@ import {
   findingLabel,
   findingSubject,
   isGameRootFinding,
+  isPrefixFinding,
   isInformational,
   successorList,
 } from "../verify.js";
@@ -999,6 +1000,16 @@ function HealthCard({
                             data-testid="finding-game-root"
                             title="In the game folder, beside the game's executable - not in the mod folder"
                             >Game root</span
+                          >`
+                        }${
+                          // issue 636: a file in the game's Wine/Proton
+                          // prefix (Baldur's Gate 3's Mods folder).
+                          isPrefixFinding(f) &&
+                          html` <span
+                            class="badge"
+                            data-testid="finding-prefix"
+                            title="In the game's Wine/Proton prefix (its AppData folder) - not in the mod folder"
+                            >Prefix</span
                           >`
                         }</span
                       >

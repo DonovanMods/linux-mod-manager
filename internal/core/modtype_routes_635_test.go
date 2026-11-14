@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bethesda"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/modtypes"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -82,7 +83,7 @@ func TestDeployModType_StarfieldDataFolderDeploysUnderData(t *testing.T) {
 
 // typedGameUnder is a game under one of the modtypes adapters, its mod_path
 // modDir inside its install_path.
-func typedGameUnder(t *testing.T, svc *core.Service, a *modtypes.Adapter, modDir, nexusDomain string) *domain.Game {
+func typedGameUnder(t *testing.T, svc *core.Service, a adapter.GameAdapter, modDir, nexusDomain string) *domain.Game {
 	t.Helper()
 	svc.RegisterAdapter(a)
 	install := t.TempDir()

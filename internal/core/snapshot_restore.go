@@ -940,6 +940,9 @@ func originalDestination(game *domain.Game, row OriginalFile) (string, error) {
 		root = game.ModPath
 	case OriginalRootInstallPath:
 		root = game.InstallPath
+	case OriginalRootPrefix:
+		// #636: the prefix user directory, when it resolves.
+		root = game.PrefixRoot.UserDir()
 	default:
 		return "", fmt.Errorf("unknown root %q", row.Root)
 	}
@@ -949,6 +952,9 @@ func originalDestination(game *domain.Game, row OriginalFile) (string, error) {
 	rel, err := cleanOriginalRelPath(row.RelativePath)
 	if err != nil {
 		return "", err
+	}
+	if row.Root == OriginalRootPrefix {
+		return prefixTarget(root, rel), nil
 	}
 	return filepath.Join(root, filepath.FromSlash(rel)), nil
 }

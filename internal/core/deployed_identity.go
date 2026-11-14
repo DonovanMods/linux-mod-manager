@@ -146,10 +146,14 @@ func recordRoot(game *domain.Game) string {
 }
 
 // deployedUnder is the directory a judge's reason names for rel: the
-// game's install_path for a game-root path (#629), else recordRoot's.
+// game's install_path for a game-root path (#629), its prefix user
+// directory for a prefix path (#636), else recordRoot's.
 func deployedUnder(game *domain.Game, rel domain.DeployPath) string {
-	if rel.IsGameRoot() {
+	switch rel.Root {
+	case domain.RootInstallPath:
 		return filepath.Clean(game.InstallPath)
+	case domain.RootPrefix:
+		return game.PrefixRoot.UserDir()
 	}
 	return recordRoot(game)
 }

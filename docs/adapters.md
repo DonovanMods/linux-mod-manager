@@ -35,7 +35,7 @@ under `internal/adapter/` and one registration line — and *nothing* in
 | `d2r` | `adapter: d2r` only, which Battle.net detection's Diablo II: Resurrected entry sets (#546) | Lays every archive out as `<name>/<name>.mpq/` under the game's `mods` folder, and names the `-mod <name> -txt` the deployed profile needs (`LaunchAdvisor`). |
 | `bethesda` | `adapter: bethesda` only, which Steam detection sets for Skyrim Special Edition/Anniversary Edition, Skyrim VR, Fallout 4, Fallout 4 VR, Starfield and Skyrim (#606) | Lays a game-root-relative archive (a `Data/` folder, SKSE's version-named wrapper) out relative to `Data/`, and carries each game's plugin rules (`PluginOrderer`, which core sorts and writes `Plugins.txt` by: #616) and game-root file table (`RootRouter`, which core deploys by: #629). |
 | `cyberpunk2077` | `adapter: cyberpunk2077` only, which Steam detection sets for Cyberpunk 2077 (#620) | Carries the game's archive load order (`FileLoadOrderer`: `cyberpunk2077-archive`, written to `archive/pc/mod/modlist.txt`), which core writes from the profile's `load_orders:`; otherwise the identity. |
-| `witcher3`, `baldurs-gate-3` | `adapter: witcher3` / `adapter: baldurs-gate-3` only, which Steam detection sets for The Witcher 3 and Baldur's Gate 3 (#635) | A table of the Vortex mod types a NexusMods collection states for the game and the root each deploys to (`RootRouter`); otherwise the identity. One package, `internal/adapter/modtypes`. |
+| `witcher3`, `baldurs-gate-3` | `adapter: witcher3` / `adapter: baldurs-gate-3` only, which Steam detection sets for The Witcher 3 and Baldur's Gate 3 (#635) | A table of the Vortex mod types a NexusMods collection states for the game and the root each deploys to (`RootRouter`). `witcher3` is otherwise the identity. `baldurs-gate-3` also deploys every `.pak` mod into the game's `Mods` folder inside its Wine/Proton prefix (`RootRouter` + `PrefixPlacer`, #636), skips Vortex's `info.json`, and says after a deploy that lmm does not write `modsettings.lsx` yet (`LaunchAdvisor`). One package, `internal/adapter/modtypes`. |
 
 `lmm game list` always names what *this* build actually ships, and
 `lmm game add --adapter` / `lmm game edit --adapter` validate against the
@@ -157,17 +157,18 @@ adapter.
 
 | Interface | Method | Implemented by | What core does with it |
 | --- | --- | --- | --- |
-| `FileRouter` | `RouteFile(g, rel) FileRoute` | `bepinex` | decides link / copy-once / skip, per deployable file |
+| `FileRouter` | `RouteFile(g, rel) FileRoute` | `bepinex`, `baldurs-gate-3` | decides link / copy-once / skip, per deployable file |
 | `ArchiveClaimer` | `ClaimArchive(members) (Claim, error)` | `bepinex` | refuses an archive that is unmistakably ANOTHER kind of game's |
 | `Verifier` | `Verify(ctx, req) ([]Finding, error)` | `bepinex`, `bethesda` | appends adapter findings to `lmm verify`'s result |
 | `MergeCompiler` | 11 methods | `icarus` | the whole merged-artifact compile path |
 | `Preconditioner` | `CheckPreconditions(g, mods) error` | *(none yet)* | refuses a flow before it starts |
-| `LaunchAdvisor` | `LaunchAdvice(g, mods, previous) Advice` | `d2r` | shows the advice as a warning after a deploy (a switch's and an apply's too) and on a launch |
+| `LaunchAdvisor` | `LaunchAdvice(g, mods, previous) Advice` | `d2r`, `baldurs-gate-3` | shows the advice as a warning after a deploy (a switch's and an apply's too) and on a launch |
 | `PluginOrderer` | `PluginRules(g) PluginSpec` | `bethesda` | the plugin-list sync after every deploying flow (`syncMergedPak`), verify's plugin tier, and purge's restore (#616) |
-| `RootRouter` | `RouteRoots(g, files) []DeployRoot`, `RootForModType(g, type) (DeployRoot, bool)` | `bethesda`, `witcher3`, `baldurs-gate-3` | deploys a root-routed file under `install_path`, and every removal, verify, purge and conflict report finds it there (#629) |
+| `RootRouter` | `RouteRoots(g, files) []DeployRoot`, `RootForModType(g, type) (DeployRoot, bool)` | `bethesda`, `witcher3`, `baldurs-gate-3` | deploys a root-routed file under `install_path` (#629) or, for `RootPrefix`, under the game's prefix user directory (#636), and every removal, verify, purge and conflict report finds it there |
+| `PrefixPlacer` | `PrefixPath(g, member) string` | `baldurs-gate-3` | places a file `RouteRoots` sends to `RootPrefix`: the path under the prefix's Windows user directory it deploys to (#636). A `RootPrefix` answer from an adapter that is no `PrefixPlacer` is treated as no answer |
 | `FileLoadOrderer` | `FileLoadOrders(g) []FileLoadOrderSpec` | `cyberpunk2077` | the load-order sync beside the plugin list (`syncMergedPak`), purge's restore, `lmm load-order` and the reorder modal's load-order tab, and the collection gate's `file_load_order:<id>` (#620) |
-| `LayoutNeutral` | `LayoutNeutral()` (a marker) | `generic-files`, `cyberpunk2077`, `witcher3`, `baldurs-gate-3` | treats a switch between two layout-neutral adapters as moving nothing: no reinstall warning on `lmm game edit --adapter`, the game page or verify's `adapter_suggested` note (#635) |
-| `PrefixConsumer` | `UsesPrefix(g) bool` | `bethesda` | reports a prefix it cannot resolve as a `prefix_unresolved` finding (`lmm verify`, `lmm game show`) |
+| `LayoutNeutral` | `LayoutNeutral()` (a marker) | `generic-files`, `cyberpunk2077`, `witcher3` | treats a switch between two layout-neutral adapters as moving nothing: no reinstall warning on `lmm game edit --adapter`, the game page or verify's `adapter_suggested` note (#635) |
+| `PrefixConsumer` | `UsesPrefix(g) bool` | `bethesda`, `baldurs-gate-3` | reports a prefix it cannot resolve as a `prefix_unresolved` finding (`lmm verify`, `lmm game show`) |
 
 ### FileRouter
 
@@ -453,7 +454,8 @@ needs it stays refused.
 A Bethesda game's `mod_path` is `Data/`, but some mods belong beside the
 game's executable: a script extender's loader and DLLs, an ENB. `FileRoute`
 is unchanged; the answer comes from a separate capability, a `DeployRoot`
-per file (`RootModPath`, the zero value, or `RootInstallPath`).
+per file (`RootModPath`, the zero value, `RootInstallPath`, or - #636 -
+`RootPrefix`, the game's Wine/Proton prefix user directory).
 
 - `RouteRoots(g, files)` answers for every file of ONE mod's cache entry at
   once, because some rules are about the whole mod: an ENB preset is
@@ -499,9 +501,34 @@ installed row (#607), and the collections converter's gate asks the same
 question before an import: a `mod_type:<type>` feature is supported for a
 game exactly when its adapter knows the type.
 
-A type is only ever routed to one of the two roots. A type that deploys
+A type is only ever routed to one of lmm's roots. A type that deploys
 somewhere else (Witcher 3's `witcher3dlc`, under the game's `DLC/`) is left
 out of every table, so it stays refused, rather than approximated.
+
+**The prefix root (#636).** Some games load mods from their AppData rather
+than their install directory: Baldur's Gate 3 reads `.pak` mods only from
+`AppData/Local/Larian Studios/Baldur's Gate 3/Mods`. An adapter routes such
+a file to `RootPrefix` and, as a `PrefixPlacer`, says where under the
+prefix's Windows user directory (`drive_c/users/<user>`) it goes; the
+deployed path is a `domain.PrefixFile` relative to that directory, so a
+record means the same whichever adapter reads it later, and the answer may
+differ from the cache member (a `.pak`'s wrapper folder is dropped). Core
+resolves the prefix as #605 does (`prefix:`/`prefix_user:`, else Steam's
+compatdata) onto the copy of the game `GetGame`/`ListGames` hand out
+(`domain.Game.PrefixRoot`, runtime only), for a game whose adapter places
+files there or that has files recorded there. Every write, removal and
+restore of an original there re-checks the user directory
+(`wineprefix.CheckUserDir`), then walks beneath it one folder at a time with
+no link followed, matching folder names case-insensitively as Wine does
+(#616's `prefixPath`); a user's own file of the same name is captured under
+the originals store's `prefix` root and put back when lmm's file goes; lmm
+never removes a folder there. A prefix that does not resolve is never
+replaced by another directory: a deploy into it, and any flow over files
+recorded there (uninstall, purge, update, converge), is refused with
+`*core.PrefixUnresolvedError`, whose message says what to set (409 in the
+web API). `deployed_files.root`'s CHECK gains `prefix` (schema v28); wire
+documents carry `"root": "prefix"`, and frontends show the file as
+`<prefix>/AppData/...`.
 
 ### The `bethesda` adapter's facts, and where each comes from
 
@@ -550,12 +577,14 @@ github.com/Nexus-Mods/Vortex at 88dd2f6.
 | The Witcher 3 | `witcher3tl` | `install_path` | `[VXG]` `game-witcher3/index.ts:168` (`registerModType('witcher3tl', …, getTLPath)`), `util.ts:66-72` (`getTLPath`: the discovery path) |
 | The Witcher 3 | `dinput` | `install_path` | `[VX]` `extensions/modtype-dinput/src/index.ts:55-63, 91` (every game but Factorio and Microsoft Flight Simulator) |
 | Baldur's Gate 3 | `bg3-loose` | `mod_path` (the game's `Data/`) | `[VXG]` `game-baldursgate3/index.tsx:289-292` (`registerModType(MOD_TYPE_LOOSE, …, getGameDataPath)`), `util.ts:17-25`, `common.ts:85` |
+| Baldur's Gate 3 | `bg3-replacer` | `mod_path` (the game's `Data/`) | `[VXG]` `game-baldursgate3/index.tsx:294-297` (`registerModType(MOD_TYPE_REPLACER, …, getGameDataPath)`), `common.ts:84` (#636) |
 
 Neither table lists the default type (`""`): core never asks for it, since
-an untyped mod routes file by file, and these adapters send every untyped
-file to the `mod_path`. For The Witcher 3 that matches Vortex, whose default
-type deploys to the game's `Mods/` (`[VXG]` `game-witcher3/index.ts:141`),
-the catalog's `mod_path`.
+an untyped mod routes file by file. The Witcher 3's adapter sends every
+untyped file to the `mod_path`, which matches Vortex, whose default type
+deploys to the game's `Mods/` (`[VXG]` `game-witcher3/index.ts:141`), the
+catalog's `mod_path`. Baldur's Gate 3's sends its `.pak` files into the
+prefix (below).
 
 A `witcher3tl` mod is laid out from the game directory: its `mods/` folder
 is the `mod_path` (matched case-insensitively, as `Data/` is), its `bin/`
@@ -570,13 +599,27 @@ Left out, so a collection that needs them is still refused:
 | `witcher3menumodroot` | Vortex merges the menu XML files a mod ships that are named like the game's own (`audio`, `gameplay`, `input`, …) into the game's file; lmm would replace the game's file instead | `[VXG]` `game-witcher3/index.ts:167, 174`, `mergers.ts:29-106`, `common.ts:136-138` |
 | `SMAPI` (Stardew Valley) | not a route at all: SMAPI's Vortex installer unpacks the platform's `install.dat` from inside the download and generates `StardewModdingAPI.deps.json`, which no deploy of the downloaded archive can do. The collections converter lists it as a prerequisite step instead (its page and SMAPI's own installer, `internal/core/collection_prerequisites.go`) | `[VXG]` `game-stardewvalley/index.ts:445-450, 462-538, 754`; SMAPI's `src/SMAPI.Installer/assets/README.txt` (github.com/Pathoschild/SMAPI at e5b8bf3) |
 
-**Baldur's Gate 3's default type.** Vortex deploys a BG3 mod of the default
-type (`.pak` files) to `%LOCALAPPDATA%/Larian Studios/Baldur's Gate 3/Mods`
-(`[VXG]` `game-baldursgate3/index.tsx:236`, `util.ts:27-33`: its
-`documentsPath()` is Vortex's `localAppData` path, despite the name), but
-lmm's catalog `mod_path` for the game is `Data`. This story leaves the
-catalog as it is; a collection's untyped `.pak` mods still deploy under
-`Data/`, where the game does not read them (tracked as a separate issue).
+**Baldur's Gate 3's .pak mods (#636).** The catalog's `mod_path` for the
+game stays `Data` (loose files and replacers go there), and the adapter
+sends each `.pak` into the prefix instead:
+
+| Fact | Value | Source |
+| --- | --- | --- |
+| Where the default type (`.pak` mods) deploys | `%LOCALAPPDATA%/Larian Studios/Baldur's Gate 3/Mods`: inside a Proton prefix, `drive_c/users/steamuser/AppData/Local/Larian Studios/Baldur's Gate 3/Mods`, relative to the prefix user directory lmm resolves (#605) | `[VXG]` `game-baldursgate3/index.tsx:236` (`queryModPath: modsPath`), `util.ts:27-33` (`documentsPath()` is Vortex's `localAppData` path, despite the name); nexus-mods.github.io/NexusMods.App/developers/games/0003-BaldursGate3; bg3.wiki/wiki/Modding:Installing_mods |
+| A pak is rooted at itself, so the `Mods` folder stays flat | a wrapper folder in the archive is dropped (`PrefixPath` takes the file name) | `[VXG]` `index.tsx:55, 248` (`STOP_PATTERNS ['[^/]*\.pak$']`); a subfolder in `Mods` makes the game reset its mod list (BG3 Mod Manager's changelog, github.com/LaughingLeader/BG3ModManager/wiki/Changelog, Patch 8 Hotfix 1) |
+| A pak named like one of the game's own is a replacer | it stays in `Data/`, and the stated type `bg3-replacer` deploys there too | `[VXG]` `common.ts:87` (`ORIGINAL_FILES`), `modTypes.ts` (`isReplacer`), `index.tsx:294-297` (`registerModType(MOD_TYPE_REPLACER, …, getGameDataPath)`) |
+| `info.json` is never deployed | `RouteFile` skips it | `[VXG]` `common.ts:79` (`IGNORE_PATTERNS`), `index.tsx:250` (`ignoreDeploy`) |
+| A pak loads only once `modsettings.lsx` enables it | `PlayerProfiles/Public/modsettings.lsx` beside `Mods`, entries built from each pak's own `meta.lsx`; a pak with none (an override) applies regardless. lmm does not write it yet (#646): the adapter's `LaunchAdvice` says so after a deploy that placed a pak | `[VXG]` `util.ts:35-37, 66-69` (`profilesPath`, `'Public'`), `loadOrder.ts` (`readPAKs`, `writeModSettings`); NexusMods App's BG3 notes ("Pak archives that are present in the Mods folder, but not listed in the modsettings.lsx file are considered disabled by the game") |
+
+Left out of the table, so a collection that states them is still refused:
+`bg3-bg3se` deploys to the game's `bin/` folder (`[VXG]` `index.tsx:284-287`),
+which is neither the `mod_path` nor the game directory a whole-mod route
+uses, and `bg3-lslib-divine-tool` is Vortex's own tool with no deploy path
+(`index.tsx:279-282`).
+
+The adapter is not `LayoutNeutral` (its `.pak` files do not deploy under the
+`mod_path`), so switching a game onto it warns that the paks move; the next
+deploy moves them out of `Data/` into the prefix, with no reinstall.
 
 **Wrapper folders.** These adapters lay archives out as packaged. Vortex's
 installers strip a folder that wraps the content: `witcher3tl`'s

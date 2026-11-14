@@ -50,3 +50,35 @@ func TestParseDisplayDeployPath_ReadsStringBack(t *testing.T) {
 		assert.Equal(t, p, domain.ParseDisplayDeployPath(p.String()))
 	}
 }
+
+// #636: a third root, the game's Wine/Proton prefix user directory.
+func TestDeployPath_PrefixRoot(t *testing.T) {
+	p := domain.PrefixFile("AppData/Local/Larian Studios/Baldur's Gate 3/Mods/a.pak")
+	assert.True(t, p.IsPrefix())
+	assert.False(t, p.IsGameRoot())
+	assert.NotEqual(t, domain.ModPathFile(p.Rel), p)
+	assert.NotEqual(t, domain.GameRootFile(p.Rel), p)
+	assert.Equal(t, "<prefix>/AppData/Local/Larian Studios/Baldur's Gate 3/Mods/a.pak", p.String())
+	assert.Equal(t, p, domain.ParseDisplayDeployPath(p.String()))
+
+	b, err := json.Marshal(struct {
+		R domain.DeployRoot `json:"root"`
+	}{domain.RootPrefix})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"root":"prefix"}`, string(b))
+	var r domain.DeployRoot
+	require.NoError(t, r.UnmarshalText([]byte("prefix")))
+	assert.Equal(t, domain.RootPrefix, r)
+	assert.Equal(t, []domain.DeployRoot{domain.RootModPath, domain.RootInstallPath, domain.RootPrefix}, domain.DeployRoots())
+
+	ps := []domain.DeployPath{domain.PrefixFile("a"), domain.GameRootFile("z"), domain.ModPathFile("z")}
+	slices.SortFunc(ps, domain.CompareDeployPaths)
+	assert.Equal(t, []domain.DeployPath{domain.ModPathFile("z"), domain.GameRootFile("z"), domain.PrefixFile("a")}, ps)
+}
+
+func TestResolvedPrefix_UserDir(t *testing.T) {
+	r := &domain.ResolvedPrefix{Path: "/pfx", User: "steamuser"}
+	assert.Equal(t, "/pfx/drive_c/users/steamuser", r.UserDir())
+	var none *domain.ResolvedPrefix
+	assert.Equal(t, "", none.UserDir())
+}

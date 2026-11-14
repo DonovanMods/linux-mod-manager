@@ -1171,6 +1171,11 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 		if !underCurrentRoot(r.game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(row.Path.Rel)) {
 			continue
 		}
+		// #636: a file in a prefix lmm cannot resolve cannot be looked
+		// at; the prefix_unresolved row says why.
+		if row.Path.IsPrefix() && r.game.PrefixRoot == nil {
+			continue
+		}
 		dst := deployTarget(r.game, row.Path)
 		shown := row.Path.String()
 		if content, ok := overridden.content(row.Path); ok && holdsOverriddenCopy(dst, content) {

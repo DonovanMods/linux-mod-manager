@@ -1,6 +1,11 @@
 package adapter
 
-import "github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+import (
+	"path"
+	"strings"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+)
 
 // DeployRoot names which of a game's two directories a deployed file is
 // relative to. It is the "Root" the game-adapter design left room for
@@ -18,6 +23,12 @@ const (
 	// relative to it: a script extender's loader and DLLs, an ENB's
 	// d3d11.dll, which the game only loads from beside its executable.
 	RootInstallPath = domain.RootInstallPath
+	// RootPrefix is a file that belongs inside the game's Wine/Proton
+	// prefix, under its Windows user directory (#636): Baldur's Gate 3
+	// loads .pak mods only from AppData/Local/Larian Studios/Baldur's
+	// Gate 3/Mods. An adapter that answers it must be a PrefixPlacer too,
+	// which says where under the user directory each such file goes.
+	RootPrefix = domain.RootPrefix
 )
 
 // RootRouter is the optional capability of an adapter whose game loads
@@ -54,8 +65,10 @@ type RootRouter interface {
 
 // RouteRoots returns the deploy root of each of one mod's files: the
 // adapter's answer, or RootModPath for every file when it has no
-// RootRouter. An answer of the wrong length is an adapter bug, and is
-// treated as no answer rather than handed on for a caller to index past.
+// RootRouter. An answer of the wrong length, a root this build does not
+// know, or RootPrefix from an adapter that is no PrefixPlacer (it cannot
+// say where in the prefix the file goes) is an adapter bug, and is treated
+// as no answer rather than handed on for a caller to index past.
 func RouteRoots(a GameAdapter, g *domain.Game, files []string) []DeployRoot {
 	out := make([]DeployRoot, len(files))
 	rr, ok := a.(RootRouter)
@@ -66,19 +79,83 @@ func RouteRoots(a GameAdapter, g *domain.Game, files []string) []DeployRoot {
 	if len(got) != len(files) {
 		return out
 	}
+	for _, r := range got {
+		if !usableRoot(a, r) {
+			return out
+		}
+	}
 	copy(out, got)
 	return out
 }
 
+// usableRoot reports whether a may answer r: a root this build knows, and
+// RootPrefix only from a PrefixPlacer.
+func usableRoot(a GameAdapter, r DeployRoot) bool {
+	switch r {
+	case RootModPath, RootInstallPath:
+		return true
+	case RootPrefix:
+		return PlacesInPrefix(a)
+	}
+	return false
+}
+
 // RootForModType returns the deploy root the adapter gives a stated mod
 // type, and whether it knows the type. An adapter without a RootRouter
-// knows none.
+// knows none, and a root RouteRoots would refuse (usableRoot) makes the
+// type unknown.
 func RootForModType(a GameAdapter, g *domain.Game, modType string) (DeployRoot, bool) {
 	rr, ok := a.(RootRouter)
 	if !ok {
 		return RootModPath, false
 	}
-	return rr.RootForModType(g, modType)
+	root, ok := rr.RootForModType(g, modType)
+	if ok && !usableRoot(a, root) {
+		return RootModPath, false
+	}
+	return root, ok
+}
+
+// PrefixPlacer is the optional capability of an adapter whose RootRouter
+// sends files to RootPrefix (#636): it says where under the prefix's
+// Windows user directory each such file goes. The deployed path is not the
+// cache member's own: Baldur's Gate 3 loads a .pak only from directly
+// inside its Mods folder, so "MyMod-1.2/MyMod.pak" deploys as
+// "AppData/Local/Larian Studios/Baldur's Gate 3/Mods/MyMod.pak".
+//
+// Core resolves the prefix itself (domain.Game.PrefixRoot) and owns every
+// write there; the adapter only names the path, pure and with no disk
+// access. An adapter that is a PrefixPlacer should also be a
+// PrefixConsumer, so an unresolved prefix is reported.
+type PrefixPlacer interface {
+	// PrefixPath is where member (cache-entry-relative, SLASH-separated,
+	// as RouteRoots' files) deploys: a SLASH-separated path relative to
+	// the prefix user directory.
+	PrefixPath(g *domain.Game, member string) string
+}
+
+// PlacesInPrefix reports whether a is a PrefixPlacer.
+func PlacesInPrefix(a GameAdapter) bool {
+	_, ok := a.(PrefixPlacer)
+	return ok
+}
+
+// PrefixPath returns where member deploys under the prefix user directory,
+// canonicalised (path.Clean), and whether there is a usable answer: false
+// for an adapter that is no PrefixPlacer, and for an answer that is empty,
+// absolute, leaves the user directory, or holds a backslash (a Windows
+// separator, which Linux would read as part of a name) - which core
+// refuses rather than writing the file anywhere else.
+func PrefixPath(a GameAdapter, g *domain.Game, member string) (string, bool) {
+	pp, ok := a.(PrefixPlacer)
+	if !ok {
+		return "", false
+	}
+	p := path.Clean(pp.PrefixPath(g, member))
+	if p == "." || path.IsAbs(p) || p == ".." || strings.HasPrefix(p, "../") || strings.Contains(p, "\\") {
+		return "", false
+	}
+	return p, true
 }
 
 // LayoutNeutral is the optional capability of an adapter that does nothing

@@ -353,18 +353,55 @@ before it switches, and `lmm game edit` prints the same warning.
 
 The Witcher 3 uses the `witcher3` adapter, and Baldur's Gate 3 the
 `baldurs-gate-3` adapter; `lmm game detect` sets them when it adds the
-game from Steam. They change nothing about how a mod you install is laid
-out. They tell lmm where the mod types a NexusMods collection gives its
-mods are deployed (see
+game from Steam. Both tell lmm where the mod types a NexusMods collection
+gives its mods are deployed (see
 [Importing a NexusMods collection](profiles.md#importing-a-nexusmods-collection)),
 so such a collection can be imported. A game you added before keeps its
-adapter; Mission Control and `lmm verify` suggest the new one. Switching
-needs no reinstall: mods you already installed stay exactly where they are.
-In the terminal:
+adapter; Mission Control and `lmm verify` suggest the new one. In the
+terminal:
 
 ```bash
 lmm game edit witcher3 --adapter witcher3
+lmm game edit baldurs-gate-3 --adapter baldurs-gate-3
 ```
+
+The `witcher3` adapter changes nothing about how a mod you install is laid
+out: switching to it needs no reinstall, and mods you already installed stay
+exactly where they are.
+
+### Baldur's Gate 3's .pak mods
+
+Baldur's Gate 3 loads `.pak` mods only from the `Mods` folder in its
+Wine/Proton prefix,
+`drive_c/users/steamuser/AppData/Local/Larian Studios/Baldur's Gate 3/Mods`,
+not from the game's `Data/` folder. With the `baldurs-gate-3` adapter lmm
+deploys every `.pak` a mod ships there, directly inside `Mods` (a folder the
+archive wraps it in is dropped, because the game ignores a pak in a
+subfolder). Everything else a mod ships, loose files and a pak named like
+one of the game's own (a replacer), still goes into `Data/`. A mod's
+`info.json` is not deployed.
+
+lmm finds the prefix as described in
+[Tell lmm where the game's prefix is](#tell-lmm-where-the-games-prefix-is).
+If it can't, the deploy is refused and says what to set; lmm never puts
+the pak anywhere else instead. Wherever lmm lists a deployed file, one in
+the prefix is shown with the prefix named in front:
+`<prefix>/AppData/Local/Larian Studios/Baldur's Gate 3/Mods/MyMod.pak`, and
+the web UI's health view marks it with a **Prefix** badge. A pak of your
+own with the same name is kept first and put back when the mod goes, and
+lmm only writes inside the prefix's user folder: a folder on the way that
+is a link to somewhere else is refused.
+
+The game also has to be told to load a pak: its mod list,
+`PlayerProfiles/Public/modsettings.lsx` beside the `Mods` folder, must
+enable it. lmm doesn't write that file yet, and says so after a deploy
+that placed a pak. Enable the mods with a tool that writes it, such as BG3
+Mod Manager. A pak that only replaces game files and has no `meta.lsx`
+needs no entry.
+
+Switching a game you added before to `baldurs-gate-3` moves its paks: the
+next deploy takes them out of `Data/` and puts them in the `Mods` folder,
+with no reinstall. The switch warns you that it will.
 
 ## Telling lmm which game a copy is
 

@@ -359,6 +359,11 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
 		return nil, err
 	}
+	// #636: a deploy converges what is recorded in the prefix; it cannot
+	// while the prefix does not resolve.
+	if err := s.refusePrefixRecords(ctx, game); err != nil {
+		return nil, err
+	}
 	snapshot, err := s.snapshotOf(game.ID, installedMods)
 	if err != nil {
 		return nil, err
@@ -525,6 +530,11 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 				"game_id", game.ID, "profile", profileName, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
 			plan.Mods = append(plan.Mods, entry)
 			continue
+		}
+		// #636: the plan refuses what its Apply would - a file the adapter
+		// places in a prefix that does not resolve.
+		if err := refusePrefixItems(game, link); err != nil {
+			return nil, s.prefixUnresolved(game)
 		}
 		linked := make(map[domain.DeployPath]bool, len(link))
 		entry.Link = make([]string, 0, len(link))

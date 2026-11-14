@@ -7,7 +7,7 @@
 // still printing the raw status slug beside a card rendering the same
 // finding as prose.
 
-import { isGameRoot } from "./deploypath.js";
+import { isGameRoot, isPrefixRoot } from "./deploypath.js";
 import { displayVersion } from "./version.js";
 
 /** findingSubject names what a finding is about: its mod, or - for a
@@ -71,6 +71,12 @@ export function findingLabel(f) {
  * the path - so a row can say so beside its path. */
 export function isGameRootFinding(f) {
   return isGameRoot(f?.root);
+}
+
+/** isPrefixFinding reports whether a finding is about a file deployed
+ * under the game's Wine/Proton prefix (issue 636) - core's root field. */
+export function isPrefixFinding(f) {
+  return isPrefixRoot(f?.root);
 }
 
 /** isInformational reports whether a finding is a fact about the install

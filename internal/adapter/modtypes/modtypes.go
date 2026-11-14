@@ -9,9 +9,10 @@
 //	witcher3        The Witcher 3: Wild Hunt
 //	baldurs-gate-3  Baldur's Gate 3
 //
-// Each adapter is otherwise the identity: archives are left as packaged,
-// and an untyped mod deploys under the mod_path, as the generic adapter
-// deploys it. A game gets one from the Steam catalog's `adapter:` when
+// The Witcher 3's adapter is otherwise the identity: archives are left as
+// packaged, and an untyped mod deploys under the mod_path, as the generic
+// adapter deploys it. Baldur's Gate 3's also sends a .pak mod into the
+// game's Mods folder inside its Wine/Proton prefix (#636, bg3.go). A game gets one from the Steam catalog's `adapter:` when
 // detection adds it, or from the user (`lmm game edit --adapter`).
 //
 // Facts, not code: Vortex's game extensions are GPL, and lmm is MIT. They
@@ -27,14 +28,14 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// Sources (read for facts only):
+// Sources (read for facts only), for this file and bg3.go:
 //
 //	[VXG]  github.com/Nexus-Mods/vortex-games at 18bbee9.
 //	[VX]   github.com/Nexus-Mods/Vortex at 88dd2f6.
 //
-// Neither table lists the default type (""): core never asks for it, since
-// an untyped mod routes file by file (RouteRoots, which sends every file to
-// the mod_path here). What Vortex does with "" is recorded below only to
+// No table lists the default type (""): core never asks for it, since an
+// untyped mod routes file by file (RouteRoots, which for The Witcher 3
+// sends every file to the mod_path). What Vortex does with "" is recorded below only to
 // say whether the catalog's mod_path matches it.
 //
 // The Witcher 3 ([VXG] game-witcher3):
@@ -47,21 +48,12 @@ import (
 //	            the game directory, for every game but two others.
 //
 // Left out: witcher3dlc deploys under the game's DLC/ folder (getDLCPath,
-// util.ts:58-64), which neither of lmm's two deploy roots is;
+// util.ts:58-64), which none of lmm's deploy roots is;
 // witcher3menumodroot relies on Vortex merging the menu XML files named
 // like the game's own (mergers.ts:29-106, common.ts:136-138), where lmm
 // would replace the game's file. Both stay refused.
 //
-// Baldur's Gate 3 ([VXG] game-baldursgate3):
-//
-//	bg3-loose  registered with getGameDataPath (index.tsx:289-292), the
-//	           game directory's Data/ (util.ts:17-25), which is the
-//	           catalog's mod_path.
-//
-// Vortex deploys Baldur's Gate 3's default type ("") to %LOCALAPPDATA%/Larian
-// Studios/Baldur's Gate 3/Mods (queryModPath modsPath, index.tsx:236;
-// util.ts:27-33, whose documentsPath is Vortex's localAppData path), which is
-// not the catalog's mod_path: a known mismatch, tracked separately.
+// Baldur's Gate 3's table, and its .pak rule (#636), are in bg3.go.
 
 // ID values are the games.yaml spellings and registry keys.
 const (
@@ -71,7 +63,9 @@ const (
 	BaldursGate3ID = "baldurs-gate-3"
 )
 
-// Adapter is one game's mod-type table. It holds no other state.
+// Adapter is one game's mod-type table, with no other rules. It holds no
+// other state. The Witcher 3's adapter is one; Baldur's Gate 3's has rules
+// of its own (BG3).
 type Adapter struct {
 	id    string
 	label string
@@ -93,16 +87,9 @@ func Witcher3() *Adapter {
 	}}
 }
 
-// BaldursGate3 returns Baldur's Gate 3's adapter.
-func BaldursGate3() *Adapter {
-	return &Adapter{id: BaldursGate3ID, label: "Baldur's Gate 3 (Vortex mod types)", types: map[string]adapter.DeployRoot{
-		"bg3-loose": adapter.RootModPath,
-	}}
-}
-
 // All returns every adapter this package provides, for the composition
 // root to register.
-func All() []*Adapter { return []*Adapter{Witcher3(), BaldursGate3()} }
+func All() []adapter.GameAdapter { return []adapter.GameAdapter{Witcher3(), BaldursGate3()} }
 
 // ID returns the adapter's games.yaml value.
 func (a *Adapter) ID() string { return a.id }

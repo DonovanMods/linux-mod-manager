@@ -86,11 +86,12 @@ func (s *Service) AdapterSwitchWarning(ctx context.Context, game *domain.Game, t
 	if err != nil || n == 0 {
 		return "", err
 	}
-	routesRoots := false
+	routesRoots, inPrefix := false, false
 	if a, err := s.AdapterFor(&after); err == nil {
 		_, routesRoots = a.(adapter.RootRouter)
+		inPrefix = adapter.PlacesInPrefix(a)
 	}
-	return adapterSwitchNote(n, s.AdapterName(&after), routesRoots), nil
+	return adapterSwitchNote(n, s.AdapterName(&after), routesRoots, inPrefix), nil
 }
 
 // layoutNeutral reports whether game's adapter resolves and is
@@ -104,12 +105,16 @@ func (s *Service) layoutNeutral(game *domain.Game) bool {
 // An adapter that routes some files to the game folder (adapter.RootRouter,
 // #629) does that at deploy time, not at install: the next deploy moves an
 // installed mod's game-folder files there, so only the cache layout needs a
-// reinstall.
-func adapterSwitchNote(n int, to string, routesRoots bool) string {
+// reinstall. One that places files in the game's prefix (#636,
+// adapter.PrefixPlacer) moves them there at the next deploy the same way.
+func adapterSwitchNote(n int, to string, routesRoots, inPrefix bool) string {
 	note := fmt.Sprintf("%d mod(s) already installed for this game keep the layout they were installed with; "+
 		"only mods installed or updated after the switch get the %s adapter's layout. "+
 		"To lay an installed mod out again, uninstall it (from every profile that has it) and install it again", n, to)
-	if routesRoots {
+	if inPrefix {
+		note += fmt.Sprintf(". Files the %s adapter places in the game's Wine/Proton prefix rather than the mod folder "+
+			"(Baldur's Gate 3's .pak mods, in its Mods folder there) move there at the next deploy, with no reinstall", to)
+	} else if routesRoots {
 		note += fmt.Sprintf(". Files the %s adapter places in the game folder itself rather than the mod folder "+
 			"(a script extender's loader, an ENB) move there at the next deploy, with no reinstall", to)
 	}

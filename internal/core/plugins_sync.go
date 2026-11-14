@@ -511,7 +511,7 @@ func (s *Service) computePluginListWith(ctx context.Context, game *domain.Game, 
 	deployedPlugins := 0
 	for _, row := range rows {
 		rel := filepath.ToSlash(row.Path.Rel)
-		if row.Path.IsGameRoot() || strings.Contains(rel, "/") || !hasPluginExt(rel, spec) {
+		if row.Path.Root != domain.RootModPath || strings.Contains(rel, "/") || !hasPluginExt(rel, spec) {
 			continue
 		}
 		if row.ModPath != "" && filepath.Clean(row.ModPath) != filepath.Clean(game.ModPath) {

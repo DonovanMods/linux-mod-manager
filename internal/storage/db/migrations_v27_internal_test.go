@@ -32,7 +32,7 @@ func TestMigrateV27_MigratesAV26Database(t *testing.T) {
 	require.NoError(t, d.migrate(ctx))
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	assert.Equal(t, 27, version)
+	assert.Equal(t, 28, version)
 	row, err := d.GetInstalledMod(ctx, "s", "m", "g", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", row.Version)

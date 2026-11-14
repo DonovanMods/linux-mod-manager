@@ -464,6 +464,25 @@ func TestJSONGoldens(t *testing.T) {
 			"snapshot_file_game_root",
 			core.SnapshotFile{RelativePath: "d3d11.dll", Root: core.OriginalRootInstallPath, SourceID: "nexusmods", ModID: "42", SHA256: "ab", Size: 2},
 		},
+		// #636: a file deployed into the game's Wine/Proton prefix carries
+		// root "prefix", its path relative to the prefix's user directory.
+		{
+			"verify_finding_prefix",
+			core.VerifyFinding{ModID: "42", ModName: "Camera Mod", FileID: "AppData/Local/Larian Studios/Baldur's Gate 3/Mods/Camera.pak", Root: domain.RootPrefix,
+				Status: core.VerifyStatusDeployedModified, Note: "<prefix>/AppData/Local/Larian Studios/Baldur's Gate 3/Mods/Camera.pak: its content changed after lmm deployed it, so lmm leaves it as yours"},
+		},
+		{
+			"mod_file_entry_prefix",
+			core.ModFileEntry{Path: "AppData/Local/Larian Studios/Baldur's Gate 3/Mods/Camera.pak", Root: domain.RootPrefix, Size: 4096, Deployed: true},
+		},
+		{
+			"purge_kept_path_prefix",
+			core.PurgeKeptPath{Path: "AppData/Local/Larian Studios/Baldur's Gate 3/Mods/Camera.pak", Root: domain.RootPrefix, Reason: core.PurgeKeptUserFile, Note: "its content changed after lmm deployed it"},
+		},
+		{
+			"snapshot_file_prefix",
+			core.SnapshotFile{RelativePath: "AppData/Local/Larian Studios/Baldur's Gate 3/Mods/Camera.pak", Root: core.OriginalRootPrefix, SourceID: "nexusmods", ModID: "42", SHA256: "ab", Size: 2},
+		},
 		{
 			// #445 review F1, F3, F7: the other reasons a path is kept.
 			"purge_kept_paths_by_reason",

@@ -69,9 +69,10 @@ type deployItem struct {
 
 // recordedItem is the item a deployed path known only from its record
 // stands for: its member is taken to be its relative path, which is what
-// every record but a Data/-folder game-root route's names.
+// every record but a Data/-folder game-root route's names - or, for a
+// prefix file (#636), its file name (cachedMembersOf).
 func recordedItem(p domain.DeployPath) deployItem {
-	return deployItem{path: p, member: filepath.FromSlash(p.Rel)}
+	return deployItem{path: p, member: cachedMembersOf(nil, p)[0]}
 }
 
 // pathsOf is the deployed paths of items, in order.
@@ -202,8 +203,21 @@ func deployItemsForType(a adapter.GameAdapter, game *domain.Game, modType string
 	out := make([]deployItem, len(files))
 	for i, f := range files {
 		out[i] = deployItem{path: domain.ModPathFile(f), member: f}
-		if toRoot && roots[i] == adapter.RootInstallPath {
-			out[i].path = gameRootPath(game, f)
+		switch roots[i] {
+		case adapter.RootInstallPath:
+			if toRoot {
+				out[i].path = gameRootPath(game, f)
+			}
+		case adapter.RootPrefix:
+			// #636: where the adapter places it under the prefix's user
+			// directory, whether or not the prefix resolves now - the
+			// path is the file's identity; a deploy into an unresolved
+			// prefix is refused where it would write (deployableFiles).
+			p, err := prefixItem(a, game, f)
+			if err != nil {
+				return nil, err
+			}
+			out[i].path = p
 		}
 	}
 	return out, nil
@@ -251,21 +265,31 @@ func modPathUnderInstall(game *domain.Game) ([]string, bool) {
 }
 
 // deployRootDir is the directory p is relative to in game: its install_path
-// for a game-root path, its mod_path otherwise.
+// for a game-root path, its resolved prefix user directory for a prefix
+// path (#636; "" when the prefix is not resolved), its mod_path otherwise.
 func deployRootDir(game *domain.Game, p domain.DeployPath) string {
-	if p.IsGameRoot() {
+	switch p.Root {
+	case domain.RootInstallPath:
 		return game.InstallPath
+	case domain.RootPrefix:
+		return game.PrefixRoot.UserDir()
 	}
 	return game.ModPath
 }
 
 // deployTarget is where p lives in game: its root directory joined with its
 // relative path. A game-root path of a game with no install_path has no
-// place, and is "" - never a path relative to the working directory.
+// place, and neither has a prefix path of a game whose prefix is not
+// resolved: either is "" - never a path relative to the working directory.
+// A prefix path's directories are spelled as they exist on disk
+// (prefixTarget).
 func deployTarget(game *domain.Game, p domain.DeployPath) string {
 	dir := deployRootDir(game, p)
-	if dir == "" && p.IsGameRoot() {
+	if dir == "" && p.Root != domain.RootModPath {
 		return ""
+	}
+	if p.IsPrefix() {
+		return prefixTarget(dir, p.Rel)
 	}
 	return filepath.Join(dir, filepath.FromSlash(p.Rel))
 }
@@ -281,33 +305,43 @@ func relOf(p domain.DeployPath) string { return filepath.ToSlash(p.Rel) }
 // originalRootOf is the originals-store root and relative path p is
 // captured and released under: install_path for a game-root file - the
 // root a profile override's originals already use, so a stock file both
-// replace is one original - and mod_path otherwise.
+// replace is one original - prefix for a prefix file (#636), and mod_path
+// otherwise.
 func originalRootOf(p domain.DeployPath) (OriginalRoot, string) {
-	if p.IsGameRoot() {
+	switch p.Root {
+	case domain.RootInstallPath:
 		return OriginalRootInstallPath, filepath.ToSlash(p.Rel)
+	case domain.RootPrefix:
+		return OriginalRootPrefix, filepath.ToSlash(p.Rel)
 	}
 	return OriginalRootModPath, filepath.ToSlash(p.Rel)
 }
 
-// linkerFor is lnk for a mod_path file, and lnk held to the install_path
-// (rootLinker) for a game-root one.
+// linkerFor is lnk for a mod_path file, lnk held to the install_path
+// (rootLinker) for a game-root one, and lnk held to the prefix's user
+// directory for a prefix one (#636).
 func linkerFor(lnk linker.Linker, game *domain.Game, p domain.DeployPath) linker.Linker {
-	if p.IsGameRoot() {
+	switch p.Root {
+	case domain.RootInstallPath:
 		return rootLinker{inner: lnk, root: game.InstallPath}
+	case domain.RootPrefix:
+		return rootLinker{inner: lnk, root: game.PrefixRoot.UserDir(), prefix: game.PrefixRoot}
 	}
 	return lnk
 }
 
 // cleanupRemoved prunes the directories that became empty because lmm
 // removed the deployed paths in removed (linker.CleanupEmptyDirs), each
-// under its own root: game-root paths under the install_path, the rest
-// under the mod_path.
+// under its own root: game-root paths under the install_path, mod_path
+// ones under the mod_path. A prefix path's directories (#636) are the
+// game's own folders in the user's tree, and are never pruned.
 func cleanupRemoved(game *domain.Game, removed []domain.DeployPath) {
 	var mod, root []string
 	for _, p := range removed {
-		if p.IsGameRoot() {
+		switch p.Root {
+		case domain.RootInstallPath:
 			root = append(root, filepath.FromSlash(p.Rel))
-		} else {
+		case domain.RootModPath:
 			mod = append(mod, filepath.FromSlash(p.Rel))
 		}
 	}
@@ -341,6 +375,10 @@ type rootLinker struct {
 	// back wherever the override wrote; a game-root MOD file (#629) is
 	// held to the strict rule.
 	followInRoot bool
+	// prefix, when set, holds the linker to a prefix's user directory
+	// (#636, root is its UserDir): every open re-checks the user directory
+	// and walks beneath it case-insensitively (openInPrefix).
+	prefix *domain.ResolvedPrefix
 }
 
 var _ linker.Linker = rootLinker{}
@@ -348,6 +386,9 @@ var _ linker.Linker = rootLinker{}
 // open resolves dst to its directory, opened beneath the install_path, and
 // its name there. create makes missing directories.
 func (r rootLinker) open(dst string, create bool) (*os.File, string, error) {
+	if r.prefix != nil {
+		return r.openInPrefix(dst, create)
+	}
 	if r.root == "" {
 		return nil, "", fmt.Errorf("%s: the game has no install_path", dst)
 	}
@@ -573,11 +614,18 @@ func copyAt(dir *os.File, name, src string, perm fs.FileMode) (err error) {
 }
 
 // cachedMembersOf is the cache members a deployed path known only from its
-// record may have come from, most likely first: its relative path, and -
+// record may have come from, most likely first: a prefix file's name
+// (#636); else its relative path, and -
 // for a mod_path file of a game whose mod_path lies inside its install_path
 // - that path under the mod_path's own folders, where a whole-mod game-root
 // route's Data/ member came from (gameRootPath).
 func cachedMembersOf(game *domain.Game, p domain.DeployPath) []string {
+	if p.IsPrefix() {
+		// #636: a prefix path is where the adapter placed the member,
+		// which keeps its file name and may have dropped a wrapper folder:
+		// the name at the entry's top is the likeliest.
+		return []string{filepath.Base(filepath.FromSlash(p.Rel))}
+	}
 	out := []string{filepath.FromSlash(p.Rel)}
 	if p.IsGameRoot() || game == nil || !routesToGameRoot(game) {
 		return out

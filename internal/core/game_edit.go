@@ -448,10 +448,17 @@ func (s *Service) refuseInstallPathMove(ctx context.Context, game, updated *doma
 		counts := map[string]int{}
 		for rel, recs := range records {
 			for _, r := range recs {
-				counts[r.Profile]++
 				if !slices.Contains(from, r.ModPath) {
 					from = append(from, r.ModPath)
 				}
+			}
+			// #636: a file in the prefix is not in the game folder, and
+			// stays where it is whatever moves.
+			if rel.IsPrefix() {
+				continue
+			}
+			for _, r := range recs {
+				counts[r.Profile]++
 			}
 			inUse.DeployedFiles += len(recs)
 			if _, err := os.Lstat(deployTarget(updated, rel)); err != nil {

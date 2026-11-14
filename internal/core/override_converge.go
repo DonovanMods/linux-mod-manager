@@ -428,6 +428,9 @@ func (s *originalsStore) overrideCopies() map[domain.DeployPath]bool {
 	for _, p := range m.OverrideCopiesGameRoot {
 		out[domain.GameRootFile(p)] = true
 	}
+	for _, p := range m.OverrideCopiesPrefix {
+		out[domain.PrefixFile(p)] = true
+	}
 	return out
 }
 

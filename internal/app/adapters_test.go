@@ -143,6 +143,8 @@ func TestOpen_WarnsAboutALoaderBlockTheAdapterIgnores(t *testing.T) {
 // the identity does claim adapter.LayoutNeutral, which is what lets core
 // switch a game onto one without a reinstall warning. Each claim is proven
 // by its own package's tests (identity_test.go; modtypes TestNoPerFileRules).
+// baldurs-gate-3 makes no claim since #636: its .pak mods deploy into the
+// game's prefix, so switching a game onto it moves files.
 func TestRegisterAdapters_LayoutNeutralAdapters(t *testing.T) {
 	svc := newTestService(t)
 	RegisterAdapters(svc)
@@ -154,5 +156,5 @@ func TestRegisterAdapters_LayoutNeutralAdapters(t *testing.T) {
 			neutral = append(neutral, name)
 		}
 	}
-	assert.ElementsMatch(t, []string{adapter.GenericID, "cyberpunk2077", "witcher3", "baldurs-gate-3"}, neutral)
+	assert.ElementsMatch(t, []string{adapter.GenericID, "cyberpunk2077", "witcher3"}, neutral)
 }

@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Baldur's Gate 3's .pak mods deploy where the game loads them (#636).**
+  On a game with the `baldurs-gate-3` adapter, every `.pak` a mod ships now
+  deploys into the `Mods` folder in the game's Wine/Proton prefix
+  (`drive_c/users/steamuser/AppData/Local/Larian Studios/Baldur's Gate 3/Mods`),
+  directly inside it (a folder the archive wraps the pak in is dropped,
+  since the game ignores a pak in a subfolder), instead of into `Data/`,
+  where the game never reads it. Loose files, and a pak named like one of
+  the game's own (a replacer), still go into `Data/`; a mod's `info.json`
+  is no longer deployed. lmm finds the prefix as it does for a Bethesda
+  game's `Plugins.txt` (`prefix:`/`prefix_user:`, else Steam's compatdata);
+  when it can't, the deploy is refused with a message naming what to set,
+  and so is any uninstall, purge or update of files already deployed
+  there - lmm never puts the pak anywhere else, and never forgets one it
+  cannot find. Every flow handles the new place: `lmm deploy`, `lmm
+install`, `lmm update` and rollbacks, `lmm uninstall`, `lmm mod
+disable`/`enable`, `lmm purge`, `lmm profile switch`/`apply`, `lmm
+verify` (and `--fix`), `lmm conflicts`, `lmm mod files` and snapshots,
+  in the terminal and the web UI alike. A pak of your own with the same
+  name is kept first and put back when the mod's goes; lmm writes only
+  inside the prefix's user folder, refuses a folder on the way that is a
+  link elsewhere, matches folder names case-insensitively as Wine does,
+  and never removes a folder there. Wherever lmm lists a deployed file, one
+  in the prefix is shown as `<prefix>/AppData/...`, and the web UI's Health
+  card marks such a row with a **Prefix** badge; in `--json` and the web
+  API, a document that reports a deployed file as an object gains the root
+  value `"prefix"` (a mod_path file still has no `root` field, so every
+  existing document is unchanged), and a refused plan answers 409. The
+  game also loads a pak only once its `modsettings.lsx` enables it, which
+  lmm doesn't write yet: after a deploy that placed one, both frontends say
+  so. The adapter also knows the `bg3-replacer` mod type a NexusMods
+  collection can state (deployed into `Data/`). Switching a game to
+  `baldurs-gate-3` now warns that its paks move, and the next deploy moves
+  them out of `Data/` with no reinstall. The database moves to schema
+  version 28 (`deployed_files` accepts the new root), so an older lmm
+  refuses to open it, as for every schema change.
+
 - **The web UI offers Apply whenever a profile has drifted (#641).** The
   Profile card used to offer **Apply profile…** only when a listed mod was
   not installed at all, so a hand-edited version, other files (#639),

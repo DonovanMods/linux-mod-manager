@@ -25,7 +25,7 @@ func TestMigrateV24_AddsVariantColumnsAndIsIdempotent(t *testing.T) {
 
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	assert.Equal(t, 27, version)
+	assert.Equal(t, 28, version)
 
 	_, err = d.Exec(`INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, summary, source_url, link_method)
 		VALUES ('s', 'm', 'g', 'default', 'n', '1', '', '', '', 0)`)
@@ -65,7 +65,7 @@ func TestMigrateV24_MigratesAV23Database(t *testing.T) {
 
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	assert.Equal(t, 27, version, "V24 to V27 all ran")
+	assert.Equal(t, 28, version, "V24 to V28 all ran")
 	row, err := d.GetInstalledMod(ctx, "s", "m", "g", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", row.Version)

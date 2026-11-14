@@ -128,7 +128,7 @@ func (s *Service) fileStatesForWith(ctx context.Context, game *domain.Game, prof
 						continue
 					}
 					for _, r := range rows {
-						if !r.Path.IsGameRoot() { // FOMOD paths are mod-root-relative
+						if r.Path.Root == domain.RootModPath { // FOMOD paths are mod-root-relative
 							managed[normalizeStatePath(r.Path.Rel)] = true
 						}
 					}

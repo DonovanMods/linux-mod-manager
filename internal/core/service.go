@@ -1977,18 +1977,23 @@ func isConvertEligibleArtifact(game *domain.Game, mc adapter.MergeCompiler, file
 		mc.IsConvertibleArtifact(fileName)
 }
 
-// GetGame retrieves a game by ID
+// GetGame retrieves a game by ID: a copy the caller owns, carrying its
+// resolved prefix when its files may live there (#636, PrefixRoot).
 func (s *Service) GetGame(gameID string) (*domain.Game, error) {
 	game, ok := s.game(gameID)
 	if !ok {
 		return nil, domain.ErrGameNotFound
 	}
-	return copyGame(game), nil
+	return s.withPrefixRoot(copyGame(game)), nil
 }
 
-// ListGames returns all configured games
+// ListGames returns all configured games, each as GetGame returns it.
 func (s *Service) ListGames() []*domain.Game {
-	return s.gamesSnapshot()
+	games := s.gamesSnapshot()
+	for _, g := range games {
+		s.withPrefixRoot(g)
+	}
+	return games
 }
 
 // LoadGamesFromDisk re-reads games.yaml directly from disk, unlike ListGames
@@ -2145,6 +2150,8 @@ func (s *Service) saveGame(ctx context.Context, game *domain.Game) error {
 	// The caller may reuse or edit game after this call. Never publish its
 	// pointer (or its nested mutable fields) into the Service's snapshot.
 	owned := copyGame(game)
+	// #636: the resolved prefix is runtime state of a copy, never stored.
+	owned.PrefixRoot = nil
 	s.gamesMu.Lock()
 	defer s.gamesMu.Unlock()
 	if err := config.SaveGame(s.configDir, owned); err != nil {
@@ -2179,6 +2186,10 @@ func copyGame(game *domain.Game) *domain.Game {
 		launch := *game.Launch
 		launch.Command = append([]string(nil), game.Launch.Command...)
 		copy.Launch = &launch
+	}
+	if game.PrefixRoot != nil {
+		prefix := *game.PrefixRoot
+		copy.PrefixRoot = &prefix
 	}
 	return &copy
 }
