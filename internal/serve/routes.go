@@ -69,6 +69,10 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/profiles/{name}/duplicate", s.wrap(s.handleAPIProfileDuplicate))
 	s.mux.Handle("POST /api/v1/profiles/{name}/set-default", s.wrap(s.handleAPIProfileSetDefault))
 	s.mux.Handle("POST /api/v1/profiles/{name}/reorder", s.wrap(s.handleAPIProfileReorder))
+	// The reorder modal's Plugins tab (api_plugins.go, #617): a Bethesda
+	// game's effective plugin order, and `lmm plugins`'s edits to it.
+	s.mux.Handle("GET /api/v1/profiles/{name}/plugins", s.wrap(s.handleAPIProfilePlugins))
+	s.mux.Handle("POST /api/v1/profiles/{name}/plugins", s.wrap(s.handleAPIProfilePluginEdit))
 	// The Setup surface's game half (api_games.go): the chooser's listing,
 	// the add form's catalog search and its write, and the Steam detect
 	// scan in its two halves. None is game-scoped - they are how a game
