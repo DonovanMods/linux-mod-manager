@@ -23,6 +23,12 @@ const (
 	// choices (`lmm mod fomod`, the web UI's "Reconfigure installer…",
 	// #615). The recorded choices still fit; they are the preselection.
 	FomodReasonReconfigure = "reconfigure"
+	// FomodReasonArchiveMismatch: the choices are a collection's recording
+	// (#609), made against the archive whose md5 the collection records,
+	// and the archive downloaded is a different one - so they are not
+	// replayed. They are the preselection; ArchiveMismatch says what
+	// differed.
+	FomodReasonArchiveMismatch = "archive_mismatch"
 )
 
 // RefusalFomodChoicesRequired is the refusal code (ItemFailure.Refusal,
@@ -54,7 +60,7 @@ type FomodChoicesRequiredError struct {
 // Error names the mods and what the user does next.
 func (e *FomodChoicesRequiredError) Error() string {
 	names := make([]string, 0, len(e.Mods))
-	stale := false
+	stale, otherArchive := false, false
 	for _, q := range e.Mods {
 		name := q.Name
 		if name == "" {
@@ -67,6 +73,7 @@ func (e *FomodChoicesRequiredError) Error() string {
 		}
 		names = append(names, name)
 		stale = stale || q.Reason == FomodReasonStale
+		otherArchive = otherArchive || q.Reason == FomodReasonArchiveMismatch
 	}
 	verb, what := "has", "an installer (FOMOD) whose choices need answering"
 	if len(names) > 1 {
@@ -75,6 +82,9 @@ func (e *FomodChoicesRequiredError) Error() string {
 	msg := fmt.Sprintf("%s %s %s", joinNames(names), verb, what)
 	if stale {
 		msg += " (the recorded choices no longer fit the installer)"
+	}
+	if otherArchive {
+		msg += " (the downloaded archive is not the archive the collection's choices were recorded against)"
 	}
 	return msg + "; answer them and run the same command again"
 }
@@ -109,9 +119,13 @@ type FomodQuestion struct {
 	// archive root, or one wrapper directory with a trailing '/'): option
 	// images are relative to it.
 	InstallerRoot string `json:"installer_root"`
-	// Reason is FomodReasonUnanswered, FomodReasonStale or
-	// FomodReasonReconfigure.
+	// Reason is FomodReasonUnanswered, FomodReasonStale,
+	// FomodReasonReconfigure or FomodReasonArchiveMismatch.
 	Reason string `json:"reason"`
+	// ArchiveMismatch is the md5 the collection recorded for the archive
+	// its choices were made against, and the downloaded archive's, when
+	// Reason is FomodReasonArchiveMismatch (#609); absent otherwise.
+	ArchiveMismatch *FomodArchiveMismatch `json:"archive_mismatch,omitempty"`
 	// Steps are the visible steps, in walk order.
 	Steps []FomodQuestionStep `json:"steps"`
 	// Choices is the current selection in canonical form - the defaults,
@@ -138,6 +152,17 @@ func (q FomodQuestion) Key() string {
 		return domain.FomodFileKey(q.SourceID, q.ModID, q.FileID)
 	}
 	return domain.ModKey(q.SourceID, q.ModID)
+}
+
+// FomodArchiveMismatch is why a collection's recorded choices were not
+// replayed (#609): the archive is not the one they were recorded against.
+type FomodArchiveMismatch struct {
+	// ExpectedMD5 is the md5 the collection records for the file (its
+	// recipe's source.md5, or an lmm collection's files[].md5), lower-case
+	// hex.
+	ExpectedMD5 string `json:"expected_md5"`
+	// ActualMD5 is the md5 of the archive lmm downloaded.
+	ActualMD5 string `json:"actual_md5"`
 }
 
 // FomodQuestionStep is one visible installer step.

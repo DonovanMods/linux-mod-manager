@@ -944,6 +944,9 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		return result, err
 	}
 	ip.collectionState = &collectionState{collection: target.Collection, external: target.External, plugins: target.Plugins, fromCollection: marks, baseline: target.CollectionBaseline}
+	// #609: the new version's recorded installer choices replay only
+	// against the curator's archive, as at an import.
+	ip.archiveMD5 = collectionArchiveMD5s(plan.doc)
 	// Only what the new version adds or rewrites goes through the
 	// override gate, and updateTarget applied it: the profile's own
 	// overrides stay as they are.

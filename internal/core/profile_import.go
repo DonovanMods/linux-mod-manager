@@ -1,9 +1,11 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
@@ -139,6 +141,17 @@ type ImportPlan struct {
 	// the import's mutation, so no other job and no cancellation can leave
 	// one on notify.
 	autoUpdate map[string]bool
+
+	// archiveMD5 is the md5 a collection records for each item's file
+	// (#609), by domain.ModKey then file id: the archive the item's
+	// recorded FOMOD choices were made against, which a replay checks
+	// first (fomodInput.fileMD5). Nil for any other import.
+	archiveMD5 map[string]map[string]string
+	// phases is a source collection's install phase per item (#609), by
+	// domain.ModKey: acquire runs in phase order, and an item's FOMOD
+	// file conditions see only earlier phases' mods (importFileStates).
+	// Nil for any other import, which has no phases.
+	phases map[string]int
 
 	// storedFileIDs maps domain.ModKey keys (for NeedsRedownload's cache-miss
 	// entries only) to that mod's DB-recorded FileIDs - preserving
@@ -815,6 +828,14 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		return result, fmt.Errorf("importing profile: %w", err)
 	}
 
+	if len(plan.phases) > 0 {
+		// #609: a source collection installs phase by phase, as Vortex
+		// does, so an item's installer can see the earlier phases' files.
+		slices.SortStableFunc(toInstall, func(a, b domain.ModReference) int {
+			return cmp.Compare(plan.phases[domain.ModKey(a.SourceID, a.ModID)], plan.phases[domain.ModKey(b.SourceID, b.ModID)])
+		})
+	}
+
 	total := len(toInstall)
 	emit(StepEvent{Scope: Scope{Op: OpImport, Total: total}, Phase: ImportInstalling})
 
@@ -823,13 +844,24 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	names := make(map[string]string, total)
 	failed := make(map[string]string)
 	var installer *Installer
+	// staged are the items acquired so far, for a later phase's file
+	// states (importFileStates).
+	var staged []*importStaged
+	inRun := make(map[string]bool, len(toInstall))
+	for _, ref := range toInstall {
+		inRun[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
 	run := acquireRun[*importStaged]{
 		policy: acquirePolicy{mode: acquirePhased, blockAll: opts.AllOrNothing},
 		n:      total,
 		key:    func(i int) string { return domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID) },
 		acquire: func(ctx context.Context, i int) (*importStaged, *acquireFailure) {
-			st, failure := s.acquireImportItem(ctx, game, plan, toInstall[i], Scope{Op: OpImport, Index: i + 1, Total: total}, opts.Fomod, result, emit, failed)
 			key := domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID)
+			states := s.importFileStates(game, plan, key, staged, inRun)
+			st, failure := s.acquireImportItem(ctx, game, plan, toInstall[i], Scope{Op: OpImport, Index: i + 1, Total: total}, opts.Fomod, states, result, emit, failed)
+			if st != nil {
+				staged = append(staged, st)
+			}
 			switch {
 			case st != nil:
 				names[key] = st.scope.ModName

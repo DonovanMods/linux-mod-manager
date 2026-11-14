@@ -180,6 +180,11 @@ type ConvertedCollection struct {
 	// pendingCollection holds the collection-level features the recipe
 	// raised while its items were read, gated when the document is built.
 	pendingCollection []string
+	// phases is each document entry's install phase (#609), by
+	// domain.ModKey: the lowest phase of its files, which the document
+	// itself does not carry (it is in phase order). The import's apply
+	// reads it, so an installer sees only earlier phases' files.
+	phases map[string]int
 }
 
 // ConvertedCollectionItem is one item of a converted collection.
@@ -961,8 +966,10 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 		out.Notes = append(out.Notes, fmt.Sprintf("The collection's ordering rules put %s before a mod of an earlier install phase; the rules are followed.",
 			strings.Join(early, ", ")))
 	}
+	out.phases = make(map[string]int, len(order))
 	for _, i := range order {
 		doc.Items = append(doc.Items, entries[i].item)
+		out.phases[domain.ModKey(in.sourceID, entries[i].item.Ref.ModID)] = entries[i].phase
 	}
 
 	// Collection-level features the recipe raised, gated here.
