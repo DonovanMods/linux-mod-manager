@@ -282,6 +282,8 @@ var (
 	profileImportNoInstall    bool
 	profileImportYes          bool
 	profileImportCollection   string
+	profileImportNexus        string
+	profileImportWithOptional bool
 	profileImportAs           string
 	profileImportWithHooks    bool
 	profileImportAnyOverrides bool
@@ -318,8 +320,12 @@ func init() {
 	// Import flags
 	profileImportCmd.Flags().StringVar(&profileImportCollection, "workshop-collection", "",
 		"import a Steam Workshop collection (its id, or the URL of its page) instead of a file")
+	profileImportCmd.Flags().StringVar(&profileImportNexus, "nexus-collection", "",
+		"import a NexusMods collection (its slug, slug@revision, or the URL of its page) instead of a file")
+	profileImportCmd.Flags().BoolVar(&profileImportWithOptional, "with-optional", false,
+		"with --nexus-collection, install the collection's optional mods too (they are left out by default)")
 	profileImportCmd.Flags().StringVar(&profileImportAs, "as", "",
-		"name the imported profile (a collection or --workshop-collection; an older profile export names its own)")
+		"name the imported profile (a collection, --workshop-collection or --nexus-collection; an older profile export names its own)")
 	profileImportCmd.Flags().BoolVar(&profileImportWithHooks, "with-hooks", false,
 		"import the hooks the file carries (they are scripts lmm runs; listed in the plan)")
 	profileImportCmd.Flags().BoolVar(&profileImportAnyOverrides, "allow-any-overrides", false,
@@ -852,6 +858,19 @@ func planRefLine(ref domain.ModReference) string {
 }
 
 func runProfileImport(cmd *cobra.Command, args []string) error {
+	// #607: --nexus-collection is a third input, exclusive of the other
+	// two; --with-optional means something only for it.
+	if profileImportNexus != "" {
+		if len(args) > 0 || profileImportCollection != "" {
+			return fmt.Errorf("--nexus-collection imports a NexusMods collection; it cannot also take a file path or --workshop-collection")
+		}
+		return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+			return doNexusCollectionImport(ctx, service, game)
+		})
+	}
+	if profileImportWithOptional {
+		return fmt.Errorf("--with-optional opts a NexusMods collection's optional mods in; use it with --nexus-collection")
+	}
 	// #269 W2: --workshop-collection is a second INPUT to the same flow,
 	// mutually exclusive with a file - a collection is not a document on
 	// disk, and taking both would leave lmm guessing which one the user
@@ -865,7 +884,7 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 		})
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("a profile file is required (or use --workshop-collection <id|url>)")
+		return fmt.Errorf("a profile file is required (or use --workshop-collection <id|url>, or --nexus-collection <ref>)")
 	}
 	filePath := args[0]
 	data, err := os.ReadFile(filePath)
@@ -971,6 +990,21 @@ func doProfileImportCollection(ctx context.Context, service *core.Service, game 
 	return nil
 }
 
+// doNexusCollectionImport is `lmm profile import --nexus-collection <ref>`
+// (#607): core converts the collection into an lmm collection document and
+// plans it (PlanSourceCollectionImport); the preview, prompt and apply are
+// every collection import's (runImportPlan), whose collection preview adds
+// the source collection's own part.
+func doNexusCollectionImport(ctx context.Context, service *core.Service, game *domain.Game) error {
+	plan, err := service.PlanSourceCollectionImport(ctx, game, core.SourceCollectionImportRequest{
+		SourceID: "nexusmods", Ref: profileImportNexus, ProfileName: profileImportAs, WithOptional: profileImportWithOptional,
+	})
+	if err != nil {
+		return err
+	}
+	return runImportPlan(ctx, service, game, plan)
+}
+
 // doProfileImport owns preview-printing, the "Download and install mods?"
 // confirmation prompt, and event-driven console output; the categorization,
 // save, and download/install loop all live in core.PlanImport/
@@ -1030,6 +1064,10 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		return err
 	}
 
+	// #607: an account the source serves no downloads to records every
+	// item, downloads nothing, and has nothing to be asked.
+	noInstall := profileImportNoInstall || (collection != nil && collection.Source != nil && collection.Source.ManualDownload)
+
 	// Show summary - printed purely from the plan, matching the
 	// pre-extraction CLI's preview exactly. Not under --json: the document
 	// is the run's whole output (Ruling 15).
@@ -1040,34 +1078,38 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		if len(plan.Installed) > 0 {
 			fmt.Printf("  ✓ %d already installed\n", len(plan.Installed))
 		}
-		if profileImportNoInstall {
+		if noInstall {
 			// #472: under --no-install every pending mod gets the same one
 			// accurate line - the document names it, nothing installs or
 			// deploys it - instead of a bucket that promised an install.
-			printNoInstallRefs(plan)
+			why := "--no-install"
+			if !profileImportNoInstall {
+				why = "manual downloads"
+			}
+			printNoInstallRefs(plan, why)
 		}
 		// #371: these are installed under ANOTHER profile - the bytes are
 		// here, but this profile still needs its own rows, so they are
 		// pending work, not "already installed".
-		if len(plan.AlreadyCached) > 0 && !profileImportNoInstall {
+		if len(plan.AlreadyCached) > 0 && !noInstall {
 			fmt.Printf("  + %d already downloaded, will be added to this profile:\n", len(plan.AlreadyCached))
 			for _, ref := range plan.AlreadyCached {
 				fmt.Printf("    - %s\n", planRefLine(ref))
 			}
 		}
-		if len(plan.NeedsRedownload) > 0 && !profileImportNoInstall {
+		if len(plan.NeedsRedownload) > 0 && !noInstall {
 			fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(plan.NeedsRedownload))
 			for _, ref := range plan.NeedsRedownload {
 				fmt.Printf("    - %s\n", planRefLine(ref))
 			}
 		}
-		if len(plan.Missing) > 0 && !profileImportNoInstall {
+		if len(plan.Missing) > 0 && !noInstall {
 			fmt.Printf("  ↓ %d need to be downloaded:\n", len(plan.Missing))
 			for _, ref := range plan.Missing {
 				fmt.Printf("    - %s\n", planRefLine(ref))
 			}
 		}
-		if plan.RecordedOnly && !profileImportNoInstall && len(plan.AlreadyCached)+len(plan.NeedsRedownload)+len(plan.Missing) > 0 {
+		if plan.RecordedOnly && !noInstall && len(plan.AlreadyCached)+len(plan.NeedsRedownload)+len(plan.Missing) > 0 {
 			// #462: the game directory holds the active profile's mods.
 			fmt.Printf("\n%s is not the active profile of %s (%s is), so the import records these mods in it - downloading what the cache lacks - and deploys nothing; `lmm profile switch %s` deploys them.\n",
 				plan.Profile.Name, game.Name, plan.ActiveProfile, plan.Profile.Name)
@@ -1085,7 +1127,7 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		Force: profileImportForce, NoInstall: profileImportNoInstall,
 		WithHooks: profileImportWithHooks, AllowAnyOverrides: profileImportAnyOverrides,
 	}
-	if pendingCount > 0 && !profileImportNoInstall {
+	if pendingCount > 0 && !noInstall {
 		if profileImportYes {
 			opts.Install = true
 		} else {
@@ -1233,7 +1275,7 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 	}
 
 	switch {
-	case profileImportNoInstall:
+	case noInstall:
 		if result.Skipped > 0 {
 			fmt.Printf("\nNothing was installed or deployed. %s\n", installLaterHint(result.ProfileName))
 		}
@@ -1832,7 +1874,7 @@ func borrowedFrom(im domain.InstalledMod, profile string) string {
 // --no-install import leaves pending (#472): one line per mod, saying what
 // happens to it - the saved document lists it, and nothing is installed or
 // deployed.
-func printNoInstallRefs(plan *core.ImportPlan) {
+func printNoInstallRefs(plan *core.ImportPlan, why string) {
 	var pending []domain.ModReference
 	pending = append(pending, plan.AlreadyCached...)
 	pending = append(pending, plan.NeedsRedownload...)
@@ -1840,7 +1882,7 @@ func printNoInstallRefs(plan *core.ImportPlan) {
 	if len(pending) == 0 {
 		return
 	}
-	fmt.Printf("  - %d recorded in the profile only (--no-install: not installed or deployed):\n", len(pending))
+	fmt.Printf("  - %d recorded in the profile only (%s: not installed or deployed):\n", len(pending), why)
 	for _, ref := range pending {
 		fmt.Printf("    - %s\n", planRefLine(ref))
 	}

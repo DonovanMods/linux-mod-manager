@@ -1,0 +1,96 @@
+{
+  "collection": {
+    "format_version": 1,
+    "input": "source",
+    "id": "nexusmods:abcdef",
+    "version": 3,
+    "name": "Three Mods",
+    "profile_name": "Three Mods",
+    "author": "curator",
+    "origin": {
+      "source_id": "nexusmods",
+      "slug": "abcdef",
+      "revision": 3,
+      "url": "https://www.nexusmods.com/games/skyrimspecialedition/collections/abcdef",
+      "author": "curator"
+    },
+    "game": {
+      "name": "Skyrim Special Edition",
+      "sources": {
+        "nexusmods": "skyrimspecialedition"
+      }
+    },
+    "game_id": "skyrimse",
+    "matched_by": "game",
+    "items": [
+      {
+        "source_id": "nexusmods",
+        "mod_id": "10",
+        "name": "Ten",
+        "version": "1.0"
+      }
+    ],
+    "hooks_importable": false,
+    "source": {
+      "source_id": "nexusmods",
+      "slug": "abcdef",
+      "revision": 3,
+      "name": "Three Mods",
+      "url": "https://www.nexusmods.com/games/skyrimspecialedition/collections/abcdef",
+      "author": "curator",
+      "items": [
+        {
+          "id": "10:100",
+          "name": "Ten",
+          "version": "1.0",
+          "mod_id": "10",
+          "file_id": "100",
+          "file_category": "MAIN",
+          "url": "https://www.nexusmods.com/skyrimspecialedition/mods/10?tab=files&file_id=100",
+          "state": "manual_download",
+          "update_policy": "exact"
+        },
+        {
+          "id": "12:120",
+          "name": "Twelve",
+          "version": "2.0",
+          "mod_id": "12",
+          "file_id": "120",
+          "file_category": "OLD_VERSION",
+          "state": "optional_skipped",
+          "optional": true,
+          "update_policy": "latest"
+        }
+      ],
+      "counts": {
+        "manual_download": 1,
+        "optional_skipped": 1
+      },
+      "features": [
+        "list",
+        "optional"
+      ],
+      "tools": [
+        {
+          "name": "SSEEdit",
+          "exe": "Data\\SSEEdit.exe"
+        }
+      ],
+      "notes": [
+        "The collection lists 1 tool shortcut(s) (SSEEdit); lmm neither creates nor runs a collection's tools.",
+        "This NexusMods account is not served downloads through the API, so 1 item(s) are manual downloads: the import saves the profile with them pending, and each item links its file's page."
+      ],
+      "account_tier": "free",
+      "manual_download": true
+    }
+  },
+  "result": {
+    "profile_name": "Three Mods",
+    "installed": 0,
+    "failed": 0,
+    "skipped": 1,
+    "notes": [
+      "The profile records 1 item(s) still to download: install each from its page (\"update from file\")."
+    ]
+  }
+}
