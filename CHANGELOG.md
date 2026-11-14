@@ -30,8 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   patch to code (a DLL, an executable, a system script or a loader
   configuration) needs `--allow-any-overrides` (the web UI's **Apply these
   patches**), and without it the import is refused rather than installed
-  unpatched; a kept patch applies only to the files an import admitted it
-  for, so any profile document - an older export included, whose plan now
+  unpatched; a kept patch applies only to the mods' files an import
+  admitted it for, so any profile document - an older export included, whose plan now
   lists its file lists and patches too - naming one for another file is
   gated the same way, and a patch whose result is native code applies only
   where that was allowed; a bundle holding code is held back as a `.lmmc`'s is. The

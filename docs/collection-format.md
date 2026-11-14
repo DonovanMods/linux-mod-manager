@@ -564,13 +564,17 @@ keeps for the profile's mods in its `.lmmc`, and says when one is missing.
 
 **Admitted per file.** A kept patch applies only to the files an import
 admitted it for. A BSDIFF40 patch can make any content at all, so the
-store records, beside each patch (`<sha256>.json`), the files - by path,
-in the matching form above - that the import bringing it named, and
-whether that import allowed code (`--allow-any-overrides`). A document
-naming a kept patch for any other file - an older profile export, a
-hand-edited profile, a plain YAML collection - lists it in the plan as
-restricted, and its import is refused unless `--allow-any-overrides`,
-which admits it for that file. The install applies a patch only to a file
+store records, beside each patch (`<sha256>.json`), each mod's file - the
+mod and the path, in the matching form above - that the document bringing
+it named, and whether that import allowed code (`--allow-any-overrides`).
+A document naming a kept patch for any other file, or for the same path
+in another mod - an older profile export, a hand-edited profile, a plain
+YAML collection - lists it in the plan as restricted, and its import is
+refused unless `--allow-any-overrides`, which admits it for that file. An
+import records its admissions only once nothing else can refuse it: a
+refused import admits nothing. A collection update lists, and gates, the
+patches of the whole profile it saves, the user's own mods included, and
+admits only the patches its plan listed. The install applies a patch only to a file
 it is admitted for, and refuses one whose result is native code or a
 script (a Windows, ELF or Mach-O executable or library, or a `#!` script,
 by its content, whatever its name) unless its admission allowed code.

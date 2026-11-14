@@ -165,13 +165,13 @@ func TestApplyTreeInputs_PatchesOntoTheBaselineThenChecksTheList(t *testing.T) {
 	// written (#610 review B1).
 	err = svc.applyTreeInputs(game, treeMod, "100", tree, in)
 	require.ErrorIs(t, err, ErrTreeInput)
-	assert.Contains(t, err.Error(), "no import admitted this patch for this file")
+	assert.Contains(t, err.Error(), "no import admitted this patch for this mod's file")
 	tree = writeTree(t, map[string]string{"Mod/manifest.json": manifestV40, "Mod/other.json": "{}"})
 	// Admitted for another file: still refused here.
-	require.NoError(t, svc.admitPatches(game, []patchUse{{patch: domain.FilePatch{Path: "Mod/other.json", SHA256: sha}}}, false))
+	admit(t, svc, game, domain.FilePatch{Path: "Mod/other.json", SHA256: sha}, false)
 	require.ErrorIs(t, svc.applyTreeInputs(game, treeMod, "100", tree, in), ErrTreeInput)
 	tree = writeTree(t, map[string]string{"Mod/manifest.json": manifestV40, "Mod/other.json": "{}"})
-	require.NoError(t, svc.admitPatches(game, []patchUse{{patch: in.Patches[0]}}, false))
+	admit(t, svc, game, in.Patches[0], false)
 	require.NoError(t, svc.applyTreeInputs(game, treeMod, "100", tree, in))
 	assert.Equal(t, map[string]string{"Mod/manifest.json": manifestV41}, treeContents(t, tree))
 	info, err := os.Stat(filepath.Join(tree, "Mod", "manifest.json"))
@@ -316,14 +316,14 @@ func TestApplyTreeInputs_CodeOutputNeedsAnAdmissionThatAllowsCode(t *testing.T) 
 	p := domain.FilePatch{Path: `Mod\data.bin`, CRC32: crcHex(elfFixtureOld), SHA256: sha}
 	in := domain.TreeInputs{Patches: []domain.FilePatch{p}}
 
-	require.NoError(t, svc.admitPatches(game, []patchUse{{patch: p}}, false))
+	admit(t, svc, game, p, false)
 	tree := writeTree(t, map[string]string{"Mod/data.bin": elfFixtureOld})
 	err = svc.applyTreeInputs(game, treeMod, "100", tree, in)
 	require.ErrorIs(t, err, ErrTreeInput)
 	assert.Contains(t, err.Error(), "native code")
 	assert.Equal(t, elfFixtureOld, treeContents(t, tree)["Mod/data.bin"], "nothing written")
 
-	require.NoError(t, svc.admitPatches(game, []patchUse{{patch: p}}, true))
+	admit(t, svc, game, p, true)
 	tree = writeTree(t, map[string]string{"Mod/data.bin": elfFixtureOld})
 	require.NoError(t, svc.applyTreeInputs(game, treeMod, "100", tree, in))
 	assert.Equal(t, elfFixtureNew, treeContents(t, tree)["Mod/data.bin"])
@@ -352,4 +352,63 @@ func TestKeepRecipeBundle_AdmissionHoldsOnlyForTheSameContent(t *testing.T) {
 	assert.True(t, keep("one", false).Admitted, "the same content stays admitted")
 	assert.False(t, keep("two", false).Admitted, "other content is this import's to admit")
 	assert.True(t, keep("two", true).Admitted)
+}
+
+// admit admits p for treeMod's file, code allowed when code is.
+func admit(t *testing.T, svc *Service, game *domain.Game, p domain.FilePatch, code bool) {
+	t.Helper()
+	_, err := svc.admitPatches(game, []patchUse{{sourceID: treeMod.SourceID, modID: treeMod.ID, patch: p}}, code)
+	require.NoError(t, err)
+}
+
+// TestPatchAdmission_IsPerModAndUndoable (#610 re-review): an admission
+// for one mod's file is not one for the same path in another mod, and its
+// undo puts the record back as it was.
+func TestPatchAdmission_IsPerModAndUndoable(t *testing.T) {
+	svc, game := newTreeInputService(t)
+	sha := strings.Repeat("ab", 32)
+	p := domain.FilePatch{Path: `Mod\manifest.json`, CRC32: "CABDDFC4", SHA256: sha}
+	mine := patchUse{sourceID: "nexusmods", modID: "21", patch: p}
+	theirs := patchUse{sourceID: "nexusmods", modID: "99", patch: p}
+	_, err := svc.admitPatches(game, []patchUse{mine}, false)
+	require.NoError(t, err)
+	rec := svc.readPatchAdmission(game, sha)
+	assert.Contains(t, rec, mine.key())
+	assert.NotContains(t, rec, theirs.key(), "the same path in another mod is not admitted")
+
+	undo, err := svc.admitPatches(game, []patchUse{theirs}, true)
+	require.NoError(t, err)
+	assert.Contains(t, svc.readPatchAdmission(game, sha), theirs.key())
+	undo()
+	assert.Equal(t, map[string]bool{mine.key(): false}, svc.readPatchAdmission(game, sha), "undo restores the record")
+
+	other := strings.Repeat("cd", 32)
+	undo, err = svc.admitPatches(game, []patchUse{{sourceID: "s", modID: "m", patch: domain.FilePatch{Path: "a", SHA256: other}}}, false)
+	require.NoError(t, err)
+	undo()
+	assert.Nil(t, svc.readPatchAdmission(game, other), "undo removes a record it created")
+}
+
+// TestAdmitImportPatches_OnlyWhatWasBroughtOrListed (#610 re-review): an
+// import admits the uses it brings, and with --allow-any-overrides only
+// the uses its plan listed - never another patch of the profile.
+func TestAdmitImportPatches_OnlyWhatWasBroughtOrListed(t *testing.T) {
+	svc, game := newTreeInputService(t)
+	sha := strings.Repeat("ab", 32)
+	ref := func(mod string) domain.ModReference {
+		return domain.ModReference{SourceID: "s", ModID: mod, FileIDs: []string{"1"},
+			Patches: domain.FilePatches{"1": {{Path: "a.json", CRC32: "CABDDFC4", SHA256: sha}}}}
+	}
+	refs := []domain.ModReference{ref("brought"), ref("listed"), ref("other")}
+	brought := broughtUses(refs[:1], map[string]bool{sha: true})
+	listed := listedPatches(refs[1:2])
+	_, err := svc.admitImportPatches(game, refs, brought, listed, true)
+	require.NoError(t, err)
+	rec := svc.readPatchAdmission(game, sha)
+	assert.Contains(t, rec, admissionKey("s", "brought", "a.json"))
+	assert.Contains(t, rec, admissionKey("s", "listed", "a.json"))
+	assert.NotContains(t, rec, admissionKey("s", "other", "a.json"), "a use the plan did not list")
+
+	assert.Len(t, broughtUses(refs, map[string]bool{sha: true}), 3, "brought is per use")
+	assert.Empty(t, broughtUses(refs, nil))
 }

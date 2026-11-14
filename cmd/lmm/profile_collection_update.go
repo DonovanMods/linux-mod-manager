@@ -396,10 +396,18 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 	}
 	// #610: a patch to code is refused, not dropped.
 	if plan.RestrictedPatches > 0 {
+		fmt.Printf("\nPatches that change code, or apply to a file no import admitted them for:\n")
+		for _, it := range plan.TreeInputs {
+			for _, p := range it.Patches {
+				if p.Restricted != "" {
+					fmt.Printf("  - %s:%s: %s - %s\n", it.SourceID, it.ModID, p.Path, p.Restricted)
+				}
+			}
+		}
 		if opts.AllowAnyOverrides {
-			fmt.Printf("\n%d of the new version's patches change code, and will be applied (--allow-any-overrides).\n", plan.RestrictedPatches)
+			fmt.Printf("  %d patch(es) will be applied (--allow-any-overrides).\n", plan.RestrictedPatches)
 		} else {
-			fmt.Printf("\n%d of the new version's patches change code: the update is refused unless you re-run with --allow-any-overrides.\n", plan.RestrictedPatches)
+			fmt.Printf("  %d patch(es): the update is refused unless you re-run with --allow-any-overrides.\n", plan.RestrictedPatches)
 		}
 	}
 	if len(plan.Hooks) > 0 {

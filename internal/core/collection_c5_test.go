@@ -559,3 +559,117 @@ func TestSourceCollection_VerifyFixRebuildsThePatchedTree(t *testing.T) {
 	require.NoError(t, err, "verify --fix restored the entry")
 	assert.Equal(t, c5ManifestV41, string(data), "patched")
 }
+
+// c5Admission reads the admission record of the C5 fixture's patch.
+func c5Admission(t *testing.T, f *c5Fixture) string {
+	t.Helper()
+	sum := sha256.Sum256(c5Patch(t))
+	data, err := os.ReadFile(filepath.Join(f.cacheDir, "skyrim", "collections", "patches", hex.EncodeToString(sum[:])+".json"))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// c5ImportedFixture is a C5 fixture whose collection is imported: the
+// patch is admitted for mod 21's Mod/manifest.json.
+func c5ImportedFixture(t *testing.T) *c5Fixture {
+	t.Helper()
+	f := newC5Fixture(t, c5Recipe(`Mod\manifest.json`, c5CRC(c5ManifestV40)), c5Trees(t, c5Patch(t)))
+	plan := f.plan(t, core.SourceCollectionImportRequest{})
+	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	return f
+}
+
+// c5PatchDoc is a version-0 profile naming the fixture's patch on modID's
+// target.
+func c5PatchDoc(t *testing.T, name, modID, fileID, target string) []byte {
+	sum := sha256.Sum256(c5Patch(t))
+	return []byte(fmt.Sprintf("name: %s\ngame_id: skyrim\nmods:\n  - source_id: nexusmods\n    mod_id: %q\n    version: \"1\"\n    file_ids: [%q]\n"+
+		"    patches:\n      %q: [{path: %s, crc32: %s, sha256: %s}]\n", name, modID, fileID, fileID, target, c5CRC(c5ManifestV40), hex.EncodeToString(sum[:])))
+}
+
+// TestProfileImport_AdmissionIsPerMod (#610 re-review): the patch admitted
+// for mod 21's Mod/manifest.json is not admitted for mod 99's file of the
+// same path: a document naming it there is restricted and refused without
+// --allow-any-overrides.
+func TestProfileImport_AdmissionIsPerMod(t *testing.T) {
+	f := c5ImportedFixture(t)
+	f.src.AddMod("skyrimspecialedition", &domain.Mod{ID: "99", SourceID: "nexusmods", Name: "Mod 99", Version: "1", GameID: "skyrimspecialedition"})
+	f.src.filesByMod["99"] = []string{"990"}
+	f.src.AddDownload("990", createTestZipBytes(t, map[string]string{"Mod/manifest.json": c5ManifestV40}))
+
+	p, err := f.svc.PlanImport(context.Background(), f.game, c5PatchDoc(t, "Other", "99", "990", "Mod/manifest.json"))
+	require.NoError(t, err)
+	require.Len(t, p.TreeInputs, 1)
+	assert.Contains(t, p.TreeInputs[0].Patches[0].Restricted, "another file", "another mod's file of the same path")
+	_, err = f.svc.ApplyImport(context.Background(), f.game, p, core.ProfileImportOptions{Install: true}, nil)
+	require.ErrorIs(t, err, core.ErrCodePatch)
+	assert.NotContains(t, c5Admission(t, f), "nexusmods:99")
+
+	// The mod it was admitted for imports again with no prompt.
+	p, err = f.svc.PlanImport(context.Background(), f.game, c5PatchDoc(t, "Same", "21", "210", "Mod/manifest.json"))
+	require.NoError(t, err)
+	assert.Empty(t, p.TreeInputs[0].Patches[0].Restricted)
+}
+
+// TestProfileImport_ARefusedImportAdmitsNothing (#610 re-review): an import
+// refused after the gate - here, the profile exists and it does not
+// overwrite it - leaves the admission records as they were.
+func TestProfileImport_ARefusedImportAdmitsNothing(t *testing.T) {
+	f := c5ImportedFixture(t)
+	before := c5Admission(t, f)
+	require.NotEmpty(t, before)
+	doc := c5PatchDoc(t, "Replicated", "21", "210", "Mod/other.json") // the collection's own profile name
+	p, err := f.svc.PlanImport(context.Background(), f.game, doc)
+	require.NoError(t, err)
+	_, err = f.svc.ApplyImport(context.Background(), f.game, p, core.ProfileImportOptions{Install: true, AllowAnyOverrides: true}, nil)
+	require.Error(t, err, "the profile exists, and the import does not overwrite it")
+	assert.Equal(t, before, c5Admission(t, f), "nothing was admitted")
+
+	// Without installing (the profile save is the refusal) likewise.
+	_, err = f.svc.ApplyImport(context.Background(), f.game, p, core.ProfileImportOptions{AllowAnyOverrides: true}, nil)
+	require.Error(t, err)
+	assert.Equal(t, before, c5Admission(t, f))
+}
+
+// TestCollectionUpdate_ListsAndAdmitsTheWholeProfilesPatches (#610
+// re-review): an update's plan counts and lists the restricted patches of
+// the whole profile it saves - a mod the user added, patched with a kept
+// patch for another file, included - and apply admits exactly those.
+func TestCollectionUpdate_ListsAndAdmitsTheWholeProfilesPatches(t *testing.T) {
+	f := c5ImportedFixture(t)
+	f.src.AddMod("skyrimspecialedition", &domain.Mod{ID: "99", SourceID: "nexusmods", Name: "Mod 99", Version: "1", GameID: "skyrimspecialedition"})
+	f.src.filesByMod["99"] = []string{"990"}
+	f.src.AddDownload("990", createTestZipBytes(t, map[string]string{"Mod/manifest.json": c5ManifestV40}))
+	profile, err := config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Replicated")
+	require.NoError(t, err)
+	sum := sha256.Sum256(c5Patch(t))
+	profile.Mods = append(profile.Mods, domain.ModReference{SourceID: "nexusmods", ModID: "99", Version: "1", FileIDs: []string{"990"},
+		Patches: domain.FilePatches{"990": {{Path: "Mod/manifest.json", CRC32: c5CRC(c5ManifestV40), SHA256: hex.EncodeToString(sum[:])}}}})
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), profile))
+
+	f.src.recipe.collection.Revision = 4
+	update, err := f.svc.PlanCollectionUpdate(context.Background(), f.game, core.CollectionUpdateRequest{Profile: "Replicated"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, update.RestrictedPatches, "the user's mod's patch is counted")
+	var listed bool
+	for _, it := range update.TreeInputs {
+		for _, p := range it.Patches {
+			if it.ModID == "99" && p.Restricted != "" {
+				listed = true
+			}
+		}
+	}
+	assert.True(t, listed, "and listed: %+v", update.TreeInputs)
+
+	_, err = f.svc.ApplyCollectionUpdate(context.Background(), f.game, update, core.CollectionUpdateOptions{}, nil)
+	require.ErrorIs(t, err, core.ErrCodePatch, "apply refuses what the plan counted")
+
+	update, err = f.svc.PlanCollectionUpdate(context.Background(), f.game, core.CollectionUpdateRequest{Profile: "Replicated"})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyCollectionUpdate(context.Background(), f.game, update, core.CollectionUpdateOptions{AllowAnyOverrides: true}, nil)
+	require.NoError(t, err)
+	assert.Contains(t, c5Admission(t, f), "nexusmods:99|mod/manifest.json", "the listed patch is admitted")
+}

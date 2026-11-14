@@ -529,7 +529,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	}
 	// #610: every patch the document names, from the container, the
 	// recipe or this machine's patch store.
-	patchSources, err := s.collectionPatchSources(game, doc, bundle, recipe)
+	broughtShas, err := s.collectionPatchSources(game, doc, bundle, recipe)
 	if err != nil {
 		return nil, err
 	}
@@ -598,6 +598,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins, fromCollection: marks, loadOrders: profile.LoadOrders.Clone(),
 		baseline: &domain.CollectionBaseline{Plugins: profile.Plugins.Clone(), LoadOrders: profile.LoadOrders.Clone()}, hashOverrides: true}
 	plan.bundle = pending
+	patchSources := broughtUses(plan.Profile.Mods, broughtShas)
 	plan.patchSources = patchSources
 	plan.TreeInputs = s.importTreeInputs(game, plan.Profile.Mods, patchSources)
 	plan.archiveMD5 = collectionArchiveMD5s(doc)
@@ -660,7 +661,8 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 			ci.FileList += len(in.FileList)
 			for _, p := range in.Patches {
 				cp := CollectionItemPatch{FileID: id, Path: p.Path, CRC32: strings.ToUpper(p.CRC32),
-					Restricted: s.patchRestriction(game, patchUse{patch: p}, patchSources[p.SHA256])}
+					Restricted: s.patchRestriction(game, patchUse{sourceID: item.Ref.SourceID, modID: item.Ref.ModID, patch: p},
+						patchSources[patchUse{sourceID: item.Ref.SourceID, modID: item.Ref.ModID, patch: p}.use()])}
 				ci.Patches = append(ci.Patches, cp)
 				if cp.Restricted != "" {
 					c.RestrictedPatches++

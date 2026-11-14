@@ -261,9 +261,14 @@ type CollectionUpdatePlan struct {
 	OverridesRemoved    []string             `json:"overrides_removed,omitempty"`
 	OverrideConflicts   []string             `json:"override_conflicts,omitempty"`
 	RestrictedOverrides []RestrictedOverride `json:"restricted_overrides,omitempty"`
-	// RestrictedPatches counts the new version's patches to code (#610):
+	// RestrictedPatches counts the patches the updated profile would
+	// install with that need --allow-any-overrides (#610: to code, or kept
+	// for another file), across the whole profile, as Apply gates them:
 	// with any, Apply refuses unless the update allows any override.
-	RestrictedPatches int `json:"restricted_patches,omitzero"`
+	// TreeInputs lists every patch and file list it counts them in; Apply
+	// admits only the patches it lists.
+	RestrictedPatches int                `json:"restricted_patches,omitzero"`
+	TreeInputs        []ImportTreeInputs `json:"tree_inputs,omitempty"`
 	// ExternalAdded and ExternalRemoved are the items to get by hand the
 	// new version adds and drops.
 	ExternalAdded   []domain.CollectionExternalItem `json:"external_added,omitempty"`
@@ -306,8 +311,11 @@ type CollectionUpdatePlan struct {
 	// at Apply for the lmm-collection source, as an import keeps them.
 	bundle *pendingBundle
 	// patchSources names the patches the new version brings (#610), kept
-	// in the store at plan and admitted at Apply.
+	// in the store at plan and admitted at Apply; patchListed every patch
+	// use the plan lists (TreeInputs), which alone --allow-any-overrides
+	// admits.
 	patchSources map[string]bool
+	patchListed  map[string]bool
 	snapshot     installedSnapshot
 }
 
@@ -504,14 +512,33 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 		plan.bundle = pending
 	}
 	// #610: every patch the new version names, and the ones to code.
-	if plan.patchSources, err = s.collectionPatchSources(game, doc, bundle, recipe); err != nil {
+	broughtShas, err := s.collectionPatchSources(game, doc, bundle, recipe)
+	if err != nil {
 		return nil, err
 	}
+	// Counted over the whole profile the update saves - the new version's
+	// entries and the profile's others - as its apply gates every one of
+	// them (#610 re-review), so the count is what apply refuses.
 	newRefs := make([]domain.ModReference, len(doc.Items))
 	for i, item := range doc.Items {
 		newRefs[i] = item.Ref
 	}
-	plan.RestrictedPatches, _ = restrictedTreePatches(s.importTreeInputs(game, newRefs, plan.patchSources))
+	whole := slices.Clone(newRefs)
+	newUses := listedPatches(newRefs)
+	for _, ref := range base.Mods {
+		// The profile's own entries whose patches the new version does not
+		// name as they are - the user's, kept or in conflict.
+		for use := range listedPatches([]domain.ModReference{ref}) {
+			if !newUses[use] {
+				whole = append(whole, ref)
+				break
+			}
+		}
+	}
+	plan.patchSources = broughtUses(newRefs, broughtShas)
+	plan.TreeInputs = s.importTreeInputs(game, whole, plan.patchSources)
+	plan.RestrictedPatches, _ = restrictedTreePatches(plan.TreeInputs)
+	plan.patchListed = listedPatches(whole)
 
 	// Identity: the same collection, and not an older version of it.
 	fetchedID, fetchedVersion := doc.Info.ID, doc.Info.Version
@@ -1057,6 +1084,9 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	ip.archiveMD5 = collectionArchiveMD5s(plan.doc)
 	// #610: the patches the new version brings are admitted by this update.
 	ip.patchSources = plan.patchSources
+	// --allow-any-overrides admits only what the plan listed
+	// (TreeInputs), never a patch it did not show.
+	ip.patchListed = plan.patchListed
 	// Only what the new version adds or rewrites goes through the
 	// override gate, and updateTarget applied it: the profile's own
 	// overrides stay as they are.

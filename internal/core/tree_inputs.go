@@ -407,7 +407,7 @@ func (s *Service) applyTreeInputs(game *domain.Game, mod *domain.Mod, fileID, tr
 		}
 		// #610 review B1: only where an import admitted it, and code only
 		// where that import allowed code (patch_admission.go).
-		if err := s.checkPatchAdmitted(game, p, out); err != nil {
+		if err := s.checkPatchAdmitted(game, mod, p, out); err != nil {
 			return refuse(p.Path, err.Error(), err)
 		}
 		if err := replaceFile(target, out); err != nil {
