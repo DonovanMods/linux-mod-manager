@@ -480,7 +480,7 @@ const sourceStateLabel = {
  * opted in or out (`--with-optional` per item), because the preview must
  * describe exactly what Confirm submits. Every string was sanitised by core,
  * and links pass safeWebUrl again before they become an href. */
-function SourceCollectionSection({ source: c, actions }) {
+export function SourceCollectionSection({ source: c, actions }) {
   const items = c.items ?? [];
   const optional = new Set(c.optional ?? []);
   const optionalItems = items.filter((it) => it.optional);

@@ -49,6 +49,35 @@ type Profile struct {
 	// id, the files of a game whose adapter orders them (Cyberpunk 2077's
 	// archives). Absent from every document of a profile without one.
 	LoadOrders FileLoadOrders `json:"load_orders,omitempty"`
+
+	// CollectionBaseline is what the profile's collection last applied
+	// beyond its mod entries (#613): the base a collection update merges
+	// the profile's plugin list and overrides against, so it can tell the
+	// user's edit from the collection's own change. This machine's record,
+	// like ModReference.FromCollection: the profile file keeps it, no
+	// export, document or JSON carries it. nil for every other profile.
+	CollectionBaseline *CollectionBaseline `json:"-"`
+}
+
+// CollectionBaseline is a collection's last applied plugin list and
+// overrides (Profile.CollectionBaseline, #613). An empty one is a record
+// too - the collection applied nothing beyond its entries - and differs
+// from none (a nil *CollectionBaseline), which a collection update merges
+// against as if empty but reads every shared difference as a conflict.
+type CollectionBaseline struct {
+	// Plugins is the collection's plugin list, as it last applied it.
+	Plugins ProfilePlugins
+	// Overrides maps each override path the collection last wrote to the
+	// sha256 of its content (lower-case hex).
+	Overrides map[string]string
+	// LoadOrders are the collection's file load orders (#620), as it last
+	// applied them.
+	LoadOrders FileLoadOrders
+}
+
+// IsZero reports whether b records nothing.
+func (b *CollectionBaseline) IsZero() bool {
+	return b == nil || (b.Plugins.IsZero() && len(b.Overrides) == 0 && b.LoadOrders.IsZero())
 }
 
 // FindRef returns a pointer into p.Mods for the reference matching

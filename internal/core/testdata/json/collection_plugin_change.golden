@@ -1,0 +1,27 @@
+{
+  "added": [
+    "New.esp"
+  ],
+  "removed": [
+    "Old.esp"
+  ],
+  "reordered": true,
+  "rules_changed": true,
+  "summary": {
+    "plugins": 3,
+    "active": 2,
+    "inactive": [
+      "Off.esp"
+    ],
+    "rules": 0,
+    "managed": true
+  },
+  "conflicts": [
+    "Mine.esp"
+  ],
+  "moved": [
+    "A.esp",
+    "B.esp"
+  ],
+  "rules_conflict": true
+}

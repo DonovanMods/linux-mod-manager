@@ -1,0 +1,37 @@
+{
+  "game_id": "cyber",
+  "profile": "shared",
+  "origin": "url",
+  "url": "https://<server>/shared.yaml",
+  "id": "coll-1",
+  "name": "shared",
+  "version": 1,
+  "new_version": 2,
+  "up_to_date": false,
+  "no_changes": false,
+  "added": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "3",
+      "new_version": "1.0"
+    }
+  ],
+  "changed": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "1",
+      "version": "1.0",
+      "new_version": "1.1",
+      "changes": [
+        "version"
+      ]
+    }
+  ],
+  "removed": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "2",
+      "version": "1.0"
+    }
+  ]
+}

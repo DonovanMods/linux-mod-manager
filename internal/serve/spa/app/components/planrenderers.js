@@ -41,6 +41,7 @@ import { RelinkPlanView } from "./plan_mod_relink.js";
 import { CopyModPlanView } from "./plan_mod_copy.js";
 import { FomodReconfigurePlanView } from "./plan_mod_fomod.js";
 import { SnapshotRestorePlanView } from "./plan_snapshot_restore.js";
+import { CollectionUpdatePlanView } from "./plan_collection_update.js";
 import { ProfileFillPlanView } from "./plan_profile_fill.js";
 
 // issue 332 (issue 330 carry-2's own promise kept): "updates", "verify_fix" and
@@ -79,6 +80,8 @@ const renderers = {
   // issue 615: "Reconfigure installer…" - its questions follow in the
   // installer wizard.
   mod_fomod: FomodReconfigurePlanView,
+  // issue 613: "Update collection…" in the profiles modal.
+  collection_update: CollectionUpdatePlanView,
   // issue 608: filling a collection profile's pending mods from the
   // archives the user dropped.
   profile_fill: ProfileFillPlanView,

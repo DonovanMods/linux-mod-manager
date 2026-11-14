@@ -96,6 +96,9 @@ var markerFuzzSeeds = []string{
 	"name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: a\n    fomod:\n",
 	// #634: the per-file block, keyed by file id, mid-reference and last.
 	"name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: a\n    fomod_files:\n      \"1\":   # main\n        config_sha256: ab\n        steps: []\n      \"2\":\n        steps:\n          - name: P\n            groups: []\n    file_ids: [\"1\", \"2\"]\n  - source_id: s\n    mod_id: b\n    fomod_files: {\"3\": {steps: []}}\n",
+	// #613: the collection marker, block and flow, before and after the
+	// disabled marker.
+	"name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: a\n    from_collection: true\n  - {source_id: s, mod_id: b, from_collection: true}\n  - source_id: s\n    mod_id: c\n    disabled: true\n    from_collection: true\n",
 }
 
 // FuzzMarkModsDisabled is F1's property test over the in-place editor. For

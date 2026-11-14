@@ -199,7 +199,7 @@ func (s *Service) ListProfiles(ctx context.Context, gameID string) (*ProfileList
 	}
 	listing := &ProfileListing{GameID: gameID}
 	for _, p := range profiles {
-		summary := ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault}
+		summary := profileSummaryOf(p)
 		if c := p.Collection; c != nil && c.Origin != nil && c.Origin.SourceID != "" && c.Origin.Slug != "" && c.Origin.Revision > 0 {
 			origin := *c.Origin
 			summary.Collection = &origin
@@ -341,6 +341,20 @@ type ProfileSummary struct {
 	// (#608), when it was: a profile with one can be filled from downloaded
 	// archives (PlanProfileFill). Absent for every other profile.
 	Collection *domain.CollectionOrigin `json:"collection,omitempty"`
+	// CollectionOrigin is where the profile's collection updates from
+	// (#613): "url" (the address it was imported from) or "source" (a
+	// source's collection, NexusMods'), so a frontend offers "Update
+	// collection" for it. Absent for a profile that has none.
+	CollectionOrigin CollectionInput `json:"collection_origin,omitempty"`
+}
+
+// profileSummaryOf is p's ProfileSummary row.
+func profileSummaryOf(p *domain.Profile) ProfileSummary {
+	row := ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault}
+	if origin, err := updateOrigin(p); err == nil {
+		row.CollectionOrigin = origin.input
+	}
+	return row
 }
 
 // GameStatus is everything `lmm status --game <id>` renders for one game.
@@ -524,7 +538,7 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		status.ConvertPaks = &v
 	}
 	for i, p := range profiles {
-		status.Profiles[i] = ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault}
+		status.Profiles[i] = profileSummaryOf(p)
 	}
 
 	active, err := pm.GetDefault(ctx, game.ID)

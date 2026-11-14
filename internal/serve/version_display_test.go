@@ -88,6 +88,10 @@ var allowedRawVersionReads = map[string]map[string]versionAllowance{
 		"version":     {3, "Two are a dependency's domain.ModReference (no External field, and a dependency is never an adopted Workshop item); one compares against the SOURCE's own version list to mark the installed row, and renders nothing."},
 		"new_version": {1, "The versions table's update target. That table renders only when the source answers GetModFiles, which the Workshop source does not (source.ErrNotSupported), so it never has an external mod in it."},
 	},
+	"components/plan_collection_update.js": {
+		"version":     {2, "core.CollectionUpdatePlan.Version (#613): the collection's own publish number (an int the author bumps, or a NexusMods revision), never a mod's version. An entry's own version goes through displayVersion."},
+		"new_version": {2, "One is core.CollectionUpdatePlan.NewVersion, the collection's publish number. One hands an entry's new_version to displayVersion WITH core's new_display_version stamp (set for a Workshop item), so no content id is shown."},
+	},
 	"components/plan_profile_import.js": {
 		"version": {2, "core.CollectionImport.Version (#621): the collection's own publish number (an int the author bumps), never a mod's version, so no external content id can reach it."},
 	},

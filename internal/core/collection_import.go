@@ -303,6 +303,17 @@ type collectionState struct {
 	external   []domain.CollectionExternalItem
 	// plugins is the document's plugin list (#616).
 	plugins domain.ProfilePlugins
+	// fromCollection names the entries (domain.ModKey) the collection
+	// brought in (#613): the saved profile marks them from_collection, which
+	// no document carries, so a collection update can tell them from the
+	// user's own.
+	fromCollection map[string]bool
+	// baseline is what the collection applies beyond its entries (#613),
+	// recorded on the saved profile. With hashOverrides, its Overrides are
+	// the saved profile's own (an import's are all the collection's), taken
+	// after the import gates held any back.
+	baseline      *domain.CollectionBaseline
+	hashOverrides bool
 	// loadOrders are the document's file load orders (#620).
 	loadOrders domain.FileLoadOrders
 	// dropMods are mod keys the apply holds back (#623: bundled items
@@ -318,12 +329,35 @@ func (c *collectionState) applyTo(profile *domain.Profile) {
 	profile.Collection, profile.External = c.collection, c.external
 	profile.Plugins = c.plugins.Clone()
 	profile.LoadOrders = c.loadOrders.Clone()
+	for i := range profile.Mods {
+		ref := &profile.Mods[i]
+		ref.FromCollection = c.fromCollection[domain.ModKey(ref.SourceID, ref.ModID)]
+	}
 	if len(c.dropMods) > 0 {
 		profile.Mods = slices.DeleteFunc(profile.Mods, func(r domain.ModReference) bool {
 			_, drop := c.dropMods[domain.ModKey(r.SourceID, r.ModID)]
 			return drop
 		})
 	}
+	profile.CollectionBaseline = c.baseline
+}
+
+// finish completes what applyTo set once the import gates have run: the
+// baseline's override hashes, for an import.
+func (c *collectionState) finish(profile *domain.Profile) {
+	if c == nil || !c.hashOverrides {
+		return
+	}
+	b := &domain.CollectionBaseline{}
+	if c.baseline != nil {
+		b.Plugins = c.baseline.Plugins.Clone()
+		b.LoadOrders = c.baseline.LoadOrders.Clone()
+	}
+	b.Overrides = overrideHashes(profile.Overrides)
+	// An empty baseline is kept, not dropped: it says the collection
+	// applied nothing beyond its entries, so a plugin or override the user
+	// adds later is known to be theirs (#613 re-review).
+	profile.CollectionBaseline = b
 }
 
 // CollectionImportItem is one mod of a collection import plan.
@@ -515,7 +549,12 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	}
 	// The plan lists every hook the DOCUMENT carries, a URL's included.
 	plan.Hooks = hooks
-	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins, loadOrders: profile.LoadOrders.Clone()}
+	marks := make(map[string]bool, len(profile.Mods))
+	for _, ref := range profile.Mods {
+		marks[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
+	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins, fromCollection: marks, loadOrders: profile.LoadOrders.Clone(),
+		baseline: &domain.CollectionBaseline{Plugins: profile.Plugins.Clone(), LoadOrders: profile.LoadOrders.Clone()}, hashOverrides: true}
 	plan.bundle = pending
 	plan.archiveMD5 = collectionArchiveMD5s(doc)
 	// The preview shows the profile the import will save.

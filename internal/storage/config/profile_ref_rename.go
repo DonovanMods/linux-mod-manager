@@ -28,7 +28,9 @@ type ModRefRename struct {
 // r.FromSourceID/r.FromModID in place (#593, the profile half of a re-link):
 // it keeps its index in the load order, takes r.To*'s identity and
 // r.Version, and carries every other field it has - FileIDs, Locked,
-// Disabled, Category and any a ModReference gains later - unchanged. Only
+// Disabled, Category and any a ModReference gains later - unchanged, but
+// for FromCollection (#613), which it clears: a reference re-linked to
+// another mod by hand is no longer the collection's entry. Only
 // the keys that change are edited in the file, so the reference keeps its
 // comments and layout, as every in-place save does (SaveProfile). A mod
 // listed more than once (a hand edit) has every copy renamed, so the copies
@@ -62,6 +64,7 @@ func RenameProfileModRef(configDir, gameID, profileName string, r ModRefRename) 
 		ref := &profile.Mods[i]
 		if domain.ModKey(ref.SourceID, ref.ModID) == from {
 			ref.SourceID, ref.ModID, ref.Version = r.ToSourceID, r.ToModID, r.Version
+			ref.FromCollection = false
 		}
 	}
 

@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Update a collection profile from where it came from (#613).** `lmm
+profile sync --collection` (in the web UI, **Update collection…** beside
+  the profile in the Profiles window) fetches a profile's collection again
+  (the address it was imported from, compared by the document's `id` and
+  `version`, or its NexusMods collection's newest revision) and plans the
+  update: the mods the new version adds, the ones whose pin it moves, the
+  ones it no longer lists, and conflicts with mods you changed yourself
+  (locked, unlocked, updated, rolled back, updated from a file, re-answered
+  the installer of, reinstalled at another version or with other answers,
+  set to update automatically, or re-linked; an update the auto policy
+  makes on its own does not count). A mod the collection brought in follows its new pin even when
+  locked (the lock was the collection's); a mod it drops is kept, as yours,
+  unless you remove it (`--remove`, `--remove-obsolete`, or a tick box);
+  and your own version of a conflicting mod is kept unless you take the
+  collection's (`--override`, `--override-conflicts`, or a tick box). Mods
+  you added keep their place. The plugin list, the file load orders (#620)
+  and config overrides follow the same rule through a three-way merge against what the collection last
+  applied: your on/off states, moves, added plugins and edited overrides
+  stay yours, and where you and the collection both changed one the plan
+  names the conflict and keeps yours unless you override it. An obsolete
+  mod that fails to uninstall stays in the profile, installed, and the
+  result says so. The new version passes every import check
+  (the feature gate, held-back overrides, hooks listed and never applied),
+  installs through the same all-acquired-first engine, and a NexusMods
+  update drops the old revision's recipe from the cache once nothing uses
+  it. `--dry-run --json` prints the plan. A plain `lmm profile sync` is
+  unchanged. Profiles now mark each entry a collection brought in
+  (`from_collection: true`) and record what the collection last applied
+  to the plugin list and overrides (`collection_baseline:`); both are this
+  machine's record, and no export carries them;
+  and `lmm profile list --json`/`lmm status --json` profile rows carry
+  `collection_origin` (`url` or `source`) for a profile that can update.
+
 - **Cyberpunk 2077's archive load order (#620).** A Cyberpunk 2077 game on
   the new `cyberpunk2077` adapter (Steam detection sets it; `lmm verify`
   suggests it for a game added before) can keep the order its `.archive`
@@ -126,6 +159,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drop the files: only files of a pending size and at most 2 GiB are
   uploaded, up to four at a time. `lmm profile list --json` (and the web UI's profile list) name a
   profile's source collection under the new `collection` key.
+
 - **Import a collection from a link (#622).** `lmm profile import
 https://…` (in the web UI, the Profiles window's **From a URL** field)
   downloads an lmm collection - a `.lmmc`, its YAML, or an older profile

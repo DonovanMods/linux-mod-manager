@@ -92,6 +92,13 @@ export function ConfirmPlanModal({ modal, state, actions }) {
   // skipped) has nothing for Confirm to start.
   const emptyCopyPlan =
     kind === "mod_copy" && status === "ready" && Boolean(plan?.no_changes);
+  // Issue 613: a collection update that is up to date has nothing to
+  // start, and one whose new version needs features lmm lacks is refused
+  // by Apply - the plan says which.
+  const collectionUpdateBlocked =
+    kind === "collection_update" &&
+    status === "ready" &&
+    (Boolean(plan?.up_to_date) || (plan?.unsupported?.length ?? 0) > 0);
   // Issue 608: a fill none of whose files matched has nothing to install.
   const emptyFillPlan =
     kind === "profile_fill" &&
@@ -163,7 +170,7 @@ export function ConfirmPlanModal({ modal, state, actions }) {
             type="button"
             class="button button--primary"
             data-action="confirm"
-            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || fromFileRefused || emptyCopyPlan || emptyFillPlan || !nameTyped}
+            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || fromFileRefused || emptyCopyPlan || collectionUpdateBlocked || emptyFillPlan || !nameTyped}
             onClick=${actions.confirmPlan}
           >
             ${busy ? "Starting…" : (effectiveConfirmLabel ?? "Confirm")}

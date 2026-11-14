@@ -197,4 +197,5 @@ func (a importAdjust) applyTo(profile *domain.Profile) {
 	if len(profile.Overrides) == 0 {
 		profile.Overrides = nil
 	}
+	a.collection.finish(profile)
 }
