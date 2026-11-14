@@ -53,7 +53,7 @@ func TestDiscardImportedCacheEntry_ReportsFailedDeletes(t *testing.T) {
 	}
 
 	result := &ImportArchiveResult{Mod: mod, Renamed: true}
-	warnings := svc.discardImportedCacheEntry(game, result, "B1", "unknown", "", false)
+	warnings := svc.discardImportedCacheEntry(game, result, "B1", "unknown", "", discardable{ingest: true, renamed: true})
 
 	if len(warnings) != 2 {
 		t.Fatalf("want a warning per failed delete, got %d: %v", len(warnings), warnings)
@@ -82,7 +82,7 @@ func TestDiscardImportedCacheEntry_QuietOnSuccessAndPreExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := svc.discardImportedCacheEntry(game, &ImportArchiveResult{Mod: mod}, "B1", "unknown", "", false); got != nil {
+	if got := svc.discardImportedCacheEntry(game, &ImportArchiveResult{Mod: mod}, "B1", "unknown", "", discardable{ingest: true}); got != nil {
 		t.Errorf("a successful cleanup must report nothing, got %v", got)
 	}
 	if gameCache.Exists(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "B1", Version: "unknown"}) {
@@ -92,7 +92,7 @@ func TestDiscardImportedCacheEntry_QuietOnSuccessAndPreExisting(t *testing.T) {
 	if err := gameCache.Store(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "B1", Version: "unknown"}, "a.esp", []byte("a")); err != nil {
 		t.Fatal(err)
 	}
-	if got := svc.discardImportedCacheEntry(game, &ImportArchiveResult{Mod: mod}, "B1", "unknown", "", true); got != nil {
+	if got := svc.discardImportedCacheEntry(game, &ImportArchiveResult{Mod: mod}, "B1", "unknown", "", discardable{}); got != nil {
 		t.Errorf("a pre-existing entry is not this call's to remove, got %v", got)
 	}
 	if !gameCache.Exists(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "B1", Version: "unknown"}) {

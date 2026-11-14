@@ -352,9 +352,11 @@ func (s *Service) fileSetEntryFor(ctx context.Context, game *domain.Game, ids []
 // over the base the ingest itself builds - the variant the profile's
 // recorded (or answers') FOMOD choices name and, only when the ingest
 // applies them (treeFile, ImportOptions.treeFileID), that file's list and
-// patches (#610). A plan asks it so that its entry-pre-exists answer, which
-// spares or discards the entry a refused ingest leaves, is about the entry
-// the ingest writes - never another set's, or another profile's.
+// patches (#610). It is a PREDICTION, for a plan's entry-pre-exists preview
+// only: answers carry no installer config hash, a recording may meet an
+// archive that is no installer, and the ingest may resolve otherwise. What
+// a refused or failed ingest may discard is never decided by it - only by
+// the ingest's own answer at the key it wrote (ImportResult.created).
 func (s *Service) ingestEntry(ctx context.Context, game *domain.Game, profileName string, mod domain.Mod, ids []string, treeFile string, answers map[string]domain.FomodChoices) cache.Key {
 	fx := s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID), mod.SourceID, mod.ID, answers)
 	fx.fileIDs = ids

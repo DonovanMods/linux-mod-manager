@@ -234,9 +234,10 @@ type ImportArchivePlan struct {
 	Hooks []string `json:"hooks"`
 
 	// EntryPreExists reports that a cache entry already lived at this
-	// archive's identity before the import - so a conflict refusal will
-	// leave it alone rather than removing it (#310, and see
-	// discardImportedCacheEntry).
+	// archive's identity before the import, as best the plan can tell (#310).
+	// A preview hint only (#639): what a conflict refusal removes is decided
+	// by the ingest itself - the entries it created, at the keys it wrote
+	// (discardImportedCacheEntry) - never by this.
 	EntryPreExists bool `json:"entry_pre_exists"`
 
 	// Match is how the archive's name relates to the source's files, set
@@ -404,10 +405,9 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	} else if plan.resolvedFile != nil && !ident.minted {
 		// #639: an archive resolved to a source file is ingested into that
 		// file's own entry (ImportOptions.entryFor, judged at the identity
-		// the import persists), so whether a refused import may discard
-		// what it wrote is asked of that entry - at the ingest's identity
-		// and, when enrichment renames it, at the final one - never of the
-		// plain key, which another set (and another profile) may own.
+		// the import persists), so the preview hint asks about that entry -
+		// at the ingest's identity and, when enrichment renames it, at the
+		// final one. A hint only: the discard is the ingest's own answer.
 		ids := []string{plan.resolvedFile.ID}
 		final := s.ingestEntry(ctx, game, profileName, plan.Mod, ids, plan.resolvedFile.ID, opts.Fomod)
 		at := final
@@ -742,11 +742,6 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	// The identity the plan resolved - one uuid per user-level import, so an
 	// accepted conflict no longer mints a second one (Ruling 18).
 	ident := plan.ident
-	// Whether the entry the ingest is about to (re)create was already in the
-	// cache is the PLAN's answer, taken before anything was written (unit P
-	// review, Important 3).
-	entryPreExisted := plan.EntryPreExists
-
 	imported, err := s.newImporter(game).importWithIdentity(ctx, archivePath, game, importOpts, ident)
 	if err != nil {
 		return result, fmt.Errorf("import failed: %w", err)
@@ -764,6 +759,11 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	// The identity the ingest recorded, before the enrichment rename moves it
 	// - the cache entry currently lives under exactly this ID and version.
 	preEnrichID, preEnrichVersion, preEnrichVariant := ident.modID, ident.version, imported.Mod.Variant
+	// #639: what a refusal may discard is what THIS run created - the
+	// ingest's own answer at the key it wrote, and the rename's at its
+	// destination - never a prediction made at plan time, which another
+	// set's (or another profile's) entry could make wrong.
+	created := discardable{ingest: imported.created}
 
 	resolvedFile := plan.resolvedFile
 
@@ -777,6 +777,7 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		// renamed entry is re-stamped as its new key's (#614), and a
 		// directory a colliding key owns is never renamed over.
 		if err := os.MkdirAll(filepath.Dir(newPath), 0755); err == nil {
+			renameCreates := entryAbsent(newPath)
 			if err := gameCache.Claim(newKey); err != nil {
 				note(ImportArchiveNote, "Warning: could not rename cache entry: %v", err)
 			} else if err := os.Rename(oldPath, newPath); err != nil {
@@ -787,12 +788,14 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 				// rename that failed.
 				if undoErr := os.Rename(newPath, oldPath); undoErr != nil {
 					result.Renamed = true
+					created.renamed = renameCreates
 					note(ImportArchiveNote, "Warning: could not stamp the renamed cache entry: %v (and moving it back failed: %v)", err, undoErr)
 				} else {
 					note(ImportArchiveNote, "Warning: could not rename cache entry: %v", err)
 				}
 			} else {
 				result.Renamed = true
+				created.renamed = renameCreates
 				if err != nil {
 					// A plain entry with its old key's marker is stale, and
 					// a stale marker reads as legacy plain (cache.CheckKey):
@@ -846,7 +849,7 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		// succeeded), so an orphaned copy of the whole archive was announced
 		// to nobody. warn records it on the Result AND emits the
 		// ImportArchiveWarning step both frontends already render.
-		for _, w := range s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, preEnrichVariant, entryPreExisted) {
+		for _, w := range s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, preEnrichVariant, created) {
 			warn("%s", w)
 		}
 		return result, err
@@ -868,12 +871,12 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 			// A stale plan carries no typed payload, so a failed cleanup
 			// rides the Result's own Warnings and the warning event
 			// (#310, review M3 - see the link-method return above).
-			for _, w := range s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, preEnrichVariant, entryPreExisted) {
+			for _, w := range s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, preEnrichVariant, created) {
 				warn("%s", w)
 			}
 			return result, fmt.Errorf("%w: file conflicts changed since the plan was computed", ErrStalePlan)
 		case len(conflicts) > 0 && !opts.AcceptConflicts:
-			cleanup := s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, preEnrichVariant, entryPreExisted)
+			cleanup := s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, preEnrichVariant, created)
 			return result, &ConflictError{Conflicts: conflicts, CleanupWarnings: cleanup}
 		}
 	}
@@ -1087,17 +1090,23 @@ func archiveChecksums(path string, fileIDs []string, warn func(string, ...any)) 
 // EVENTS - which cmd/lmm/import.go prints to stderr unconditionally and
 // serve streams over SSE - as well as landing on the Result. A bare append
 // to Result.Warnings would reach neither frontend on an error return.
-func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArchiveResult, preEnrichID, preEnrichVersion, preEnrichVariant string, entryPreExisted bool) []string {
-	if entryPreExisted || result.Mod == nil {
+func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArchiveResult, preEnrichID, preEnrichVersion, preEnrichVariant string, created discardable) []string {
+	if result.Mod == nil {
 		return nil
 	}
 	var warnings []string
 	gameCache := s.GetGameCache(game)
-	if err := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: preEnrichID, Version: preEnrichVersion, Variant: preEnrichVariant}); err != nil {
-		s.logger().Warn("removing refused import's cache entry", "mod", preEnrichID, "version", preEnrichVersion, "err", err)
-		warnings = append(warnings, fmt.Sprintf("could not remove the refused import's cache entry %s@%s: %v", preEnrichID, preEnrichVersion, err))
+	// #639: only an entry this call created is its to remove. The ingest
+	// over an entry it found (a re-import) leaves that key alone; a rename
+	// moved the content away from there, and only a destination the rename
+	// itself created is this call's.
+	if created.ingest {
+		if err := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: preEnrichID, Version: preEnrichVersion, Variant: preEnrichVariant}); err != nil {
+			s.logger().Warn("removing refused import's cache entry", "mod", preEnrichID, "version", preEnrichVersion, "err", err)
+			warnings = append(warnings, fmt.Sprintf("could not remove the refused import's cache entry %s@%s: %v", preEnrichID, preEnrichVersion, err))
+		}
 	}
-	if !result.Renamed {
+	if !result.Renamed || !created.renamed {
 		return warnings
 	}
 	if err := gameCache.Delete(cache.Key{GameID: game.ID, SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version, Variant: result.Mod.Variant}); err != nil {
@@ -1105,6 +1114,15 @@ func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArc
 		warnings = append(warnings, fmt.Sprintf("could not remove the refused import's cache entry %s@%s: %v", result.Mod.ID, result.Mod.Version, err))
 	}
 	return warnings
+}
+
+// discardable is what a refused archive import may remove (#639): the
+// entries THIS call created - the ingest's at the key it wrote, and the
+// enrichment rename's at its destination - as each found them, never as a
+// plan predicted.
+type discardable struct {
+	ingest  bool
+	renamed bool
 }
 
 // enrichImportedMod folds the source's metadata into imported when the

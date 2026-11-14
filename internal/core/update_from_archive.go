@@ -154,12 +154,9 @@ type UpdateFromArchivePlan struct {
 	sourceManualOnly bool `json:"-"`
 	// sourceDistributable: the source said explicitly that it serves the
 	// mod (#627), so Apply clears any manual-only record of it.
-	sourceDistributable bool `json:"-"`
-	// entryPreExists: a cache entry already lived at ToVersion, so a failed
-	// apply leaves it alone (discardImportedCacheEntry's rule).
-	entryPreExists bool               `json:"-"`
-	fingerprint    archiveFingerprint `json:"-"`
-	snapshot       installedSnapshot  `json:"-"`
+	sourceDistributable bool               `json:"-"`
+	fingerprint         archiveFingerprint `json:"-"`
+	snapshot            installedSnapshot  `json:"-"`
 }
 
 // ArchiveMismatchError is the refusal of an archive that is not the file
@@ -322,11 +319,6 @@ func (s *Service) PlanUpdateFromArchive(ctx context.Context, game *domain.Game, 
 	}
 
 	plan.Hooks = updateHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks)
-	// #639: the entry the ingest fills - its expected FOMOD base, then the
-	// archive's file set's entry - never another set's.
-	target := mod.Mod
-	target.Version = plan.ToVersion
-	plan.entryPreExists = s.GetGameCache(game).Exists(s.ingestEntry(ctx, game, profileName, target, plan.FileIDs, "", opts.Fomod))
 	if plan.snapshot, err = s.currentInstalledSnapshot(ctx, game.ID, profileName); err != nil {
 		return nil, err
 	}
@@ -724,7 +716,7 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 		byUser: true,
 	}, UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks}, result, emit)
 	if err != nil {
-		s.discardUpdateArchiveEntry(game, plan, newMod.Variant, warn)
+		s.discardUpdateArchiveEntry(game, plan, newMod.Variant, imported.created, warn)
 		return result, err
 	}
 	switch {
@@ -738,11 +730,13 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 
 // discardUpdateArchiveEntry removes the cache entry a failed
 // ApplyUpdateFromArchive created, so a refusal or failure leaves the cache as
-// it found it. It leaves an entry that pre-existed the plan, and one the row
+// it found it. It leaves an entry the ingest did not create (created is the
+// ingest's own answer at the key it wrote, #639 - never a plan's
+// prediction, which another set's entry could make wrong), and one the row
 // records after all (a compensation that itself failed): deleting that would
 // strand the deployment it backs.
-func (s *Service) discardUpdateArchiveEntry(game *domain.Game, plan *UpdateFromArchivePlan, variant string, warn func(string, ...any)) {
-	if plan.entryPreExists {
+func (s *Service) discardUpdateArchiveEntry(game *domain.Game, plan *UpdateFromArchivePlan, variant string, created bool, warn func(string, ...any)) {
+	if !created {
 		return
 	}
 	ctx := context.Background()

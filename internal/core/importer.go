@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -68,6 +69,19 @@ type ImportResult struct {
 	// fomod is the FOMOD resolve outcome when the archive was an installer
 	// (#614): Mod.Variant is its variant, and the flow records its choices.
 	fomod *fomodResolved
+	// created reports that the entry the ingest committed to (Mod's key,
+	// variant included) did not exist until this run wrote it (#639). It is
+	// the ingest's own answer, taken at the exact key it wrote, immediately
+	// before it wrote it - under the Service's mutation slot - so it is what
+	// a refused or failed flow may discard: never an entry it found.
+	created bool
+}
+
+// entryAbsent reports that nothing lives at path: the ingest that writes
+// there creates its entry (ImportResult.created).
+func entryAbsent(path string) bool {
+	_, err := os.Lstat(path)
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // Importer handles importing mods from local archive files
@@ -234,8 +248,10 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	var fileCount int
 	var retainedFileID string
 	var resolved *fomodResolved
-	// committed is the entry the ingest wrote (#639: ImportOptions.entry).
+	// committed is the entry the ingest wrote (#639: ImportOptions.entry),
+	// and created whether this run brought it into being (ImportResult).
 	var committed cache.Key
+	var created bool
 
 	// #256: whether filename is the game's NATIVE merge format
 	// (mc.IsNativeMergeSource - the seam-routed successor to core's static
@@ -320,6 +336,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			}
 			fileCount = 1
 		}
+		created = entryAbsent(cachePath)
 		if err := commitStagedCache(committed, cachePath, stagePath); err != nil {
 			return nil, err
 		}
@@ -339,6 +356,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		if err := i.cache.Claim(entryKey); err != nil {
 			return nil, err
 		}
+		created = entryAbsent(cachePath)
 		if err := os.RemoveAll(cachePath); err != nil {
 			return nil, fmt.Errorf("removing existing cache directory: %w", err)
 		}
@@ -460,6 +478,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		if err := i.cache.Claim(entryKey); err != nil {
 			return nil, err
 		}
+		created = entryAbsent(cachePath)
 		if err := os.RemoveAll(cachePath); err != nil {
 			return nil, fmt.Errorf("removing existing cache for re-import: %w", err)
 		}
@@ -497,6 +516,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		AutoDetected:   autoDetected,
 		RetainedFileID: retainedFileID,
 		fomod:          resolved,
+		created:        created,
 	}, nil
 }
 
