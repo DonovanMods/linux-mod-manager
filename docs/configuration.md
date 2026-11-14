@@ -642,6 +642,21 @@ mods:
 
 The game's adapter decides where a type deploys: on the `bethesda` adapter, `dinput` (script extenders) and `enb` mean the game's install folder. A type the adapter does not know is refused at deploy, with the reason, rather than deployed where the game never reads it. Absent means the game's default. An older lmm that rewrites the profile drops the key.
 
+#### A collection's entry (`from_collection`)
+
+An entry a collection import brought in is marked as the collection's:
+
+```yaml
+mods:
+  - source_id: nexusmods
+    mod_id: "3863"
+    version: 5.2.0
+    locked: true
+    from_collection: true
+```
+
+A [collection update](guide/profiles.md#updating-a-collection-profile) (`lmm profile sync --collection`) moves a marked entry to the new version's pin, even when it is locked, because that lock is the collection's. Locking or unlocking the entry by hand (`lmm mod lock`, `lmm mod unlock`) clears the marker, and the entry is yours: an update that changes it lists it as a conflict and keeps your version unless you choose the collection's. The marker is this machine's record: no export or collection document carries it. An older lmm that rewrites the profile drops the key, and the next update then lists those entries as conflicts.
+
 #### Recorded FOMOD choices (`fomod`)
 
 Many mods ship as a FOMOD installer (`fomod/ModuleConfig.xml` in the archive): a set of steps that ask which options to install. lmm runs the installer itself, for every game, and never executes a scripted installer (`fomod/script.cs`) or an OMOD, which it refuses.

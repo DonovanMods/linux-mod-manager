@@ -183,8 +183,8 @@ collection from an address instead of a file:
   It is the address as given, without its `user:password@` part (used for
   that one download and never stored) or its `#fragment`. It keeps the
   query string, which some hosts need to serve the file. A collection
-  update (#613) fetches it again and compares the document's `id` and
-  `version`. `import_url` is this machine's record: lmm sets it only at a
+  update fetches it again and compares the document's `id` and `version`
+  (see [Updating from the origin](#updating-from-the-origin)). `import_url` is this machine's record: lmm sets it only at a
   URL import, ignores it in a document, and leaves it out of every export
   (`lmm profile export`, `-o`, `--json`, and the web UI's) and of a
   duplicated profile.
@@ -196,6 +196,67 @@ collection from an address instead of a file:
   logs - it shows it without credentials, and with any query string
   replaced by `?…`. A redirect never carries the address on as a
   `Referer`, and an error never quotes the server's own status text.
+
+## Updating from the origin
+
+`lmm profile sync --collection` (the web UI's **Update collection…**,
+#613) updates a profile from where its collection came from:
+
+- **From a URL** (`origin.import_url`): the address is fetched again under
+  the same rules as the import (https only, the same caps, redirects and
+  deadline), and the document is read as an import reads it. Its `id` must
+  be the profile's (`collection.id`): another collection is refused
+  (`different_collection`). Its `version` decides: newer is an update, the
+  same is nothing to do (`up_to_date: true`), older is refused
+  (`older_version`). A document with no `version` (a version-0 export) is
+  always compared entry by entry.
+- **From a source's collection** (`origin.source_id` and `origin.slug`, a
+  converted NexusMods collection): the collection's newest revision is
+  converted as an import converts it, through the same recipe cache. Its
+  `id` is `nexusmods:<slug>` and its `version` the revision number. Once
+  no profile names the old revision, its recipe's cache entry is removed.
+
+An address wins when a profile records both (a re-exported NexusMods
+collection imported from a link).
+
+Each mod entry an import brings in is marked in the profile file as the
+collection's:
+
+```yaml
+mods:
+  - source_id: nexusmods
+    mod_id: "3863"
+    version: 5.2.0
+    locked: true
+    from_collection: true    # this machine's record; never in a document
+```
+
+`from_collection` is profile state like `import_url`: lmm writes it at a
+collection import and an update, no document carries it (an export leaves
+it out, and an import ignores it), and locking or unlocking an entry by
+hand clears it. An update then decides each entry:
+
+| The profile's entry | In the new version | The update |
+|---|---|---|
+| marked | changed | follows the new pin (version, files, lock, `fomod`, `mod_type`), locked or not |
+| not marked | changed | a **conflict**: the user's entry is kept, unless overridden (`--override`) |
+| marked | absent | **obsolete**: kept and unmarked, unless removed (`--remove`), which uninstalls it |
+| absent | present | added and installed |
+| not marked | absent | the user's own: untouched |
+
+Entries the update keeps that the new version doesn't list stay after the
+collection entry they followed. The new version's `plugins` replace the
+profile's when it carries some; its `external` items replace the
+profile's; its overrides are added or rewritten (an override it no longer
+carries is kept, since it may be the user's), and the new or changed ones
+go through the import's override gate. Its hooks are listed and never
+applied. Every feature gate applies to the new document: a `requires`
+outside the supported set refuses the update with nothing written.
+
+The update converges through the import's two-phase apply: every download
+is acquired first, so a refusal (an installer's questions, or a NexusMods
+collection's failed download) writes nothing. An update planned before the
+profile or its installed mods changed is refused as stale.
 
 ## `requires` and the feature gate
 

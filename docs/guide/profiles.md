@@ -365,6 +365,54 @@ incompatible) shows its
 plan, with what is missing and which mods need it, and is refused, with
 nothing written. Optional mods that need such a thing are skipped instead.
 
+### Updating a collection profile
+
+A profile imported from a link or from a NexusMods collection remembers
+where it came from, and updates from there when the collection changes:
+
+```bash
+lmm profile sync coop --collection --dry-run
+lmm profile sync coop --collection
+lmm profile sync coop --collection --remove-obsolete --override 3863
+```
+
+In the browser, **Update collection…** appears beside such a profile in
+the Profiles window. A profile imported from a link fetches the address
+again: if it now serves the same collection (its `id`) at a newer
+`version`, that is the update; the same version means there is nothing to
+do, and another collection, or an older version, is refused. A NexusMods
+collection updates to its newest revision. A profile imported from a file
+has nowhere to update from: import the new file with `--force`.
+
+The plan lists:
+
+- **mods the new version adds**, which the update installs;
+- **mods whose pin it moves** (version, files, lock, installer choices or
+  type). A mod the collection brought in follows the collection, even when
+  it is locked: that lock is the collection's;
+- **mods it no longer lists**. They are kept, as your own mods, unless you
+  choose to remove them: name one with `--remove <mod-id>`, or all with
+  `--remove-obsolete`. In the browser each has a **Remove and uninstall**
+  tick box. lmm never removes one silently;
+- **conflicts**: mods you locked or unlocked by hand (which makes them
+  yours) that the new version changes. Your version is kept unless you
+  choose the collection's: `--override <mod-id>`, or
+  `--override-conflicts` for all; in the browser, **Take the collection's
+  version**. To keep your own version of a collection's mod through
+  updates, [lock it](updates.md#locking-a-mod-to-one-version).
+
+Mods you added yourself are left alone and keep their place in the load
+order. The new version passes the same checks as an import: a feature this
+lmm lacks refuses the update with nothing changed, hooks are listed and
+never applied (the profile keeps its own), and overrides that aren't text
+config files are held back unless you pass `--allow-any-overrides` (in the
+browser, **Import these overrides too**). For a NexusMods collection,
+`--with-optional` and `--optional <id>` include optional mods, and an
+optional mod you already have stays in. Like an import, a NexusMods update
+installs all or nothing, and an installer that needs answers asks (see
+[FOMOD](fomod.md)). Once no profile uses the old revision, lmm drops its
+recipe from the cache.
+
 ## An override of a mod's own file
 
 An override can change a file that a mod ships, such as a mod's `.ini`.

@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Update a collection profile from where it came from (#613).** `lmm
+profile sync --collection` (in the web UI, **Update collection…** beside
+  the profile in the Profiles window) fetches a profile's collection again
+  - the address it was imported from, compared by the document's `id` and
+    `version`, or its NexusMods collection's newest revision - and plans the
+    update: the mods the new version adds, the ones whose pin it moves, the
+    ones it no longer lists, and conflicts with mods you locked or unlocked
+    yourself. A mod the collection brought in follows its new pin even when
+    locked (the lock was the collection's); a mod it drops is kept, as yours,
+    unless you remove it (`--remove`, `--remove-obsolete`, or a tick box);
+    and your own version of a conflicting mod is kept unless you take the
+    collection's (`--override`, `--override-conflicts`, or a tick box). Mods
+    you added keep their place. The new version passes every import check
+    (the feature gate, held-back overrides, hooks listed and never applied),
+    installs through the same all-acquired-first engine, and a NexusMods
+    update drops the old revision's recipe from the cache once nothing uses
+    it. `--dry-run --json` prints the plan. A plain `lmm profile sync` is
+    unchanged. Profiles now mark each entry a collection brought in
+    (`from_collection: true`, this machine's record: no export carries it),
+    and `lmm profile list --json`/`lmm status --json` profile rows carry
+    `collection_origin` (`url` or `source`) for a profile that can update.
+
 - **Import a collection from a link (#622).** `lmm profile import
 https://…` (in the web UI, the Profiles window's **From a URL** field)
   downloads an lmm collection - a `.lmmc`, its YAML, or an older profile
