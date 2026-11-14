@@ -11,10 +11,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bethesda"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -108,4 +110,34 @@ func TestCollectionImport_RefusesPluginNamesItCannotKeepAsWritten(t *testing.T) 
 	_, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
 		Data: []byte(collectionPluginsDoc("{order: [{name: \"Café – Ultra.esp\", enabled: false}], rules: {groups: [{name: Late, after: [default]}]}}")), GameID: "cyber"})
 	require.NoError(t, err, "unusual but plain names import")
+}
+
+// TestCollectionImport_PlanSummarisesThePluginList (#611): the plan says
+// what plugin list the import saves, and whether lmm will write it - for a
+// game whose plugin list it manages, at every deploy; for any other, the
+// list is only recorded on the profile.
+func TestCollectionImport_PlanSummarisesThePluginList(t *testing.T) {
+	svc, _ := recipient(t)
+	svc.RegisterAdapter(bethesda.New())
+	plan, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
+		Data: []byte(collectionPluginsDoc("{order: [{name: A.esp}, {name: B.esp, enabled: false}, {name: C.esm}], " +
+			"rules: {groups: [{name: Late, after: [default]}, {name: Early}], plugins: [{name: A.esp, group: Late}]}}")), GameID: "cyber"})
+	require.NoError(t, err)
+	require.NotNil(t, plan.Collection.Plugins)
+	assert.Equal(t, core.CollectionPluginSummary{Plugins: 3, Active: 2, Inactive: []string{"B.esp"}, Rules: 1, Groups: []string{"Late", "Early"}, Managed: false},
+		*plan.Collection.Plugins, "Cyberpunk has no plugin list for lmm to write")
+
+	sky := &domain.Game{ID: "sky", Name: "Skyrim SE", ModPath: t.TempDir(), Adapter: "bethesda", Catalog: "skyrim-se",
+		SourceIDs: map[string]string{"steamworkshop": "1091500"}}
+	require.NoError(t, svc.SaveGame(context.Background(), sky))
+	plan, err = svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
+		Data: []byte(collectionPluginsDoc("{order: [{name: A.esp}]}")), GameID: "sky"})
+	require.NoError(t, err)
+	require.NotNil(t, plan.Collection.Plugins)
+	assert.True(t, plan.Collection.Plugins.Managed, "the bethesda adapter manages Skyrim SE's Plugins.txt")
+
+	plan, err = svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{
+		Data: []byte(strings.Replace(collectionPluginsDoc("{}"), "plugins: {}\n", "", 1)), GameID: "cyber"})
+	require.NoError(t, err)
+	assert.Nil(t, plan.Collection.Plugins, "no plugin list, no summary")
 }

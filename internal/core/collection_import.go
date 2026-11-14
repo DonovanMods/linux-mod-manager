@@ -35,6 +35,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -132,11 +133,56 @@ type CollectionImport struct {
 	Overrides []string `json:"overrides,omitempty"`
 	// Warnings are what the reader skipped or could not check.
 	Warnings []string `json:"warnings,omitempty"`
+	// Plugins summarises the plugin list the import saves on the profile
+	// (#611): absent when the document carries none.
+	Plugins *CollectionPluginSummary `json:"plugins,omitempty"`
 	// Source is the source collection this document was converted from
 	// (#607): every item with what the import does with it, the features
 	// the collection raised, the curator's tools and the conversion's
 	// notes. Absent for a document read from a file or a URL.
 	Source *ConvertedCollection `json:"source,omitempty"`
+}
+
+// CollectionPluginSummary is what a collection import does with the
+// plugin list it carries (#611): the counts a plan shows, and whether lmm
+// will apply it. The list itself is the plan's profile's (ImportPlan.
+// Profile.Plugins).
+type CollectionPluginSummary struct {
+	// Plugins counts the load order's plugins, and Active the ones it
+	// enables; Inactive names the others, in load order.
+	Plugins  int      `json:"plugins"`
+	Active   int      `json:"active"`
+	Inactive []string `json:"inactive,omitempty"`
+	// Rules counts the per-plugin rules, and Groups names the rule groups,
+	// in the document's order.
+	Rules  int      `json:"rules"`
+	Groups []string `json:"groups,omitempty"`
+	// Managed is whether lmm writes the game's plugin list (its adapter
+	// manages one), so the order applies at every deploy. When false the
+	// list is only recorded on the profile.
+	Managed bool `json:"managed"`
+}
+
+// summarisePlugins is p's CollectionPluginSummary, nil when p records
+// nothing.
+func summarisePlugins(p domain.ProfilePlugins, managed bool) *CollectionPluginSummary {
+	if p.IsZero() {
+		return nil
+	}
+	s := &CollectionPluginSummary{Plugins: len(p.Order), Rules: len(p.Rules.Plugins), Managed: managed}
+	for _, e := range p.Order {
+		if e.Enabled {
+			s.Active++
+		} else {
+			s.Inactive = append(s.Inactive, e.Name)
+		}
+	}
+	for _, g := range p.Rules.Groups {
+		if !slices.Contains(s.Groups, g.Name) {
+			s.Groups = append(s.Groups, g.Name)
+		}
+	}
+	return s
 }
 
 // CollectionImportResult is the ONE document `lmm profile import --json`
@@ -377,6 +423,9 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 		Warnings:            warnings,
 		Items:               make([]CollectionImportItem, 0, len(doc.Items)),
 	}
+	_, managed := s.pluginRules(game)
+	c.Plugins = summarisePlugins(profile.Plugins, managed)
+
 	for path := range doc.Overrides {
 		c.Overrides = append(c.Overrides, path)
 	}
