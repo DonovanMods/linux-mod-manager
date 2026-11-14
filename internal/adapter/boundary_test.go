@@ -23,6 +23,7 @@ var adapterPackages = []string{
 	"internal/adapter/bethesda",
 	"internal/adapter/icarus",
 	"internal/adapter/d2r",
+	"internal/adapter/modtypes",
 }
 
 // allowedImports are the intra-module packages an adapter package may

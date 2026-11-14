@@ -5,6 +5,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bethesda"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/d2r"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/icarus"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/modtypes"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
 
@@ -40,10 +41,14 @@ import (
 // either: the Steam catalog prefills it for the Tier 1 Bethesda games a
 // detection adds, and a game already in games.yaml gets it only from the
 // user (`lmm game edit --adapter bethesda`), which verify and the game page
-// suggest.
+// suggest. The modtypes adapters (#635: witcher3, baldurs-gate-3) are the
+// same: the catalog prefills them, and nothing derives them.
 func RegisterAdapters(svc *core.Service) {
 	svc.RegisterAdapter(icarus.New())
 	svc.RegisterAdapter(bepinex.New())
 	svc.RegisterAdapter(d2r.New())
 	svc.RegisterAdapter(bethesda.New())
+	for _, a := range modtypes.All() {
+		svc.RegisterAdapter(a)
+	}
 }

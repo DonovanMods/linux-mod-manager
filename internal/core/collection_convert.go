@@ -537,6 +537,11 @@ func convertManifestItems(in convertInput, out *ConvertedCollection) []*convItem
 			if mod.DomainName != "" && mod.DomainName != gameSourceID && gameSourceID != "" {
 				it.Features = append(it.Features, CollectionFeatureManifestKeyPrefix+"mods.domainName")
 			}
+			// A loader its own installer sets up is a step for the user, by
+			// the type the source states for it on its game (#635).
+			if p, ok := prerequisiteFor(in.sourceID, cmp.Or(mod.DomainName, m.GameSourceID, gameSourceID), mod.ModType); ok {
+				it.asPrerequisite(p)
+			}
 		case "bundle":
 			it.kind = source.CollectionItemBundled
 			it.Features = append(it.Features, CollectionFeatureBundled)
@@ -568,8 +573,8 @@ func convertManifestItems(in convertInput, out *ConvertedCollection) []*convItem
 		if len(mod.FileOverrides) > 0 {
 			it.Features = append(it.Features, CollectionFeatureFileOverrides)
 		}
-		if mod.ModType != "" && (in.modTypeSupported == nil || !in.modTypeSupported(mod.ModType)) {
-			it.Features = append(it.Features, CollectionFeatureModTypePrefix+mod.ModType)
+		if it.ModType != "" && (in.modTypeSupported == nil || !in.modTypeSupported(it.ModType)) {
+			it.Features = append(it.Features, CollectionFeatureModTypePrefix+it.ModType)
 		}
 		items = append(items, it)
 	}
