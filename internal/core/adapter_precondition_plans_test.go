@@ -182,6 +182,17 @@ var gatedPlans = []gatedPlan{
 		_, err := svc.PlanWorkshopCollectionImport(context.Background(), g, "default", fx.collection)
 		return err
 	}},
+	{"PlanSourceCollectionImport", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		// A source collection whose recipe cannot be fetched still plans
+		// its list, so it reaches the gate without 7z or a network.
+		src := &recipeSource{mockSource: newMockSource("revisioned"), urlErr: domain.ErrAuthRequired,
+			collection: source.Collection{ID: "abcdef", Name: "Listed", Revision: 1,
+				Items: []source.CollectionItem{{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", UpdatePolicy: "exact"}}}}
+		svc.RegisterSource(src)
+		g.SourceIDs["revisioned"] = "g1"
+		_, err := svc.PlanSourceCollectionImport(context.Background(), g, core.SourceCollectionImportRequest{SourceID: "revisioned", Ref: "abcdef"})
+		return err
+	}},
 }
 
 // adapterExemptPlans are the Plans that deliberately do NOT refuse for the

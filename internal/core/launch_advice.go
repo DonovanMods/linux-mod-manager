@@ -41,7 +41,7 @@ func (s *Service) launchAdvice(ctx context.Context, game *domain.Game, profile s
 		if m.External || !m.Enabled || !m.Deployed {
 			continue
 		}
-		files, err := deployableFiles(gameCache, a, game, modCacheKey(game.ID, m.Mod))
+		files, err := deployableFiles(gameCache, a, game, modCacheKey(game.ID, m.Mod), m.ModType)
 		if err != nil {
 			continue
 		}

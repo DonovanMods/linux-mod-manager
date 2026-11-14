@@ -45,7 +45,7 @@ func TestMigrateV26_MigratesAV25Database(t *testing.T) {
 
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	assert.Equal(t, 26, version)
+	assert.Equal(t, 27, version)
 	var root string
 	require.NoError(t, d.QueryRow("SELECT root FROM deployed_files WHERE relative_path = 'textures/a.dds'").Scan(&root))
 	assert.Equal(t, "mod_path", root, "an existing row is under the mod_path")

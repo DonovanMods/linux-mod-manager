@@ -2044,7 +2044,9 @@ func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *
 	gameCache := s.GetGameCache(game)
 	// #614: a FOMOD installer installs with this run's answers, else the
 	// profile's recorded choices (a reinstall).
-	fx := s.fomodInputFor(ctx, game, plan.Profile, s.recordedRef(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod)
+	recorded := s.recordedRef(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID)
+	fx := s.fomodInputFor(ctx, game, plan.Profile, recorded, mod.SourceID, mod.ID, opts.Fomod)
+	mod.ModType = statedType(recorded) // #607
 	// The mod's files are not in the run's item set until this returns, so
 	// a panic in a later file's acquire releases the earlier ones here
 	// (#628).
@@ -2458,7 +2460,10 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	// entry a warm cache already holds (fomodVariant). Answers that are not
 	// canonical - no config hash, say - name no entry, so they always
 	// download, which is slower but never wrong.
-	fx := s.fomodInputFor(ctx, game, plan.Profile, s.recordedRef(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod)
+	recorded := s.recordedRef(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID)
+	fx := s.fomodInputFor(ctx, game, plan.Profile, recorded, mod.SourceID, mod.ID, opts.Fomod)
+	mod.ModType = statedType(recorded) // #607
+	st.mod.ModType = mod.ModType       // st holds its own copy, made above
 	// #615: a reconfigure asks about choices that fit, so the installer
 	// must be read again - never skipped for a warm entry.
 	fx.ask = opts.fomodReconfigure != "" && opts.fomodReconfigure == domain.ModKey(mod.SourceID, mod.ID) && !fx.answered
@@ -2734,7 +2739,7 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 	downloadedFileIDs := st.downloadedFileIDs
 	var oldOnlyRecords []db.DeployedFileRecord
 	if st.reinstallTxn != nil && !st.reinstallTxn.hasOriginal && plan.Replaces != nil {
-		newFiles, err := deployableFiles(st.reinstallTxn.staged, installer.adapter, game, modCacheKey(game.ID, mod))
+		newFiles, err := deployableFiles(st.reinstallTxn.staged, installer.adapter, game, modCacheKey(game.ID, mod), mod.ModType)
 		if err != nil {
 			return nil, fmt.Errorf("resolving repaired files: %w", err)
 		}

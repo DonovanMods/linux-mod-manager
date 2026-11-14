@@ -31,7 +31,7 @@ const profileBackupSuffix = ".bak"
 // order, so a file lmm wrote stays exactly as a whole write would have it.
 var (
 	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins"}
-	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "fomod"}
+	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod"}
 )
 
 // profileFileHookYAML is ProfileHookConfigYAML as a profile file is written:
@@ -104,6 +104,7 @@ func refConfigsOf(mods []domain.ModReference) []ModReferenceConfig {
 			Locked:   m.Locked,
 			Disabled: m.Disabled,
 			Category: m.Category,
+			ModType:  m.ModType,
 			Fomod:    m.Fomod,
 		}
 	}
@@ -607,7 +608,7 @@ func sameRefs(have []ModReferenceConfig, want []domain.ModReference) bool {
 func sameRef(a, b ModReferenceConfig) bool {
 	return a.SourceID == b.SourceID && a.ModID == b.ModID && a.Version == b.Version &&
 		slices.Equal(a.FileIDs, b.FileIDs) && a.Locked == b.Locked && a.Disabled == b.Disabled &&
-		a.Category == b.Category && a.Fomod.Equal(b.Fomod)
+		a.Category == b.Category && a.ModType == b.ModType && a.Fomod.Equal(b.Fomod)
 }
 
 // docEditor collects the text edits that turn a profile document into the
@@ -1017,7 +1018,7 @@ func refOf(c ModReferenceConfig) domain.ModReference {
 	return domain.ModReference{
 		SourceID: c.SourceID, ModID: c.ModID, Version: c.Version,
 		FileIDs: c.FileIDs, Locked: c.Locked, Disabled: c.Disabled, Category: c.Category,
-		Fomod: c.Fomod,
+		ModType: c.ModType, Fomod: c.Fomod,
 	}
 }
 
@@ -1149,6 +1150,12 @@ func (e *docEditor) editItem(item modItem, have, want ModReferenceConfig) (strin
 			}
 			zero = want.Category == ""
 			wantText, err = scalarText(want.Category)
+		case "mod_type":
+			if have.ModType == want.ModType {
+				continue
+			}
+			zero = want.ModType == ""
+			wantText, err = scalarText(want.ModType)
 		case "fomod":
 			if have.Fomod.Equal(want.Fomod) {
 				continue
@@ -1250,7 +1257,7 @@ func (e *docEditor) setItemKey(item modItem, rank int, key, wantText string, zer
 		if flow || i == 0 {
 			// A key a line cannot be taken from: its value becomes the one
 			// that reads as absent.
-			zeroText := map[string]string{"version": `""`, "file_ids": "file_ids: []", "locked": "false", "disabled": "false", "category": `""`, "fomod": "fomod: {}"}[key]
+			zeroText := map[string]string{"version": `""`, "file_ids": "file_ids: []", "locked": "false", "disabled": "false", "category": `""`, "mod_type": `""`, "fomod": "fomod: {}"}[key]
 			if key == "file_ids" || key == "fomod" {
 				return e.replaceEntry(k, v, zeroText)
 			}

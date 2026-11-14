@@ -53,12 +53,33 @@ type Client struct {
 	now            func() time.Time
 
 	// tier caches AccountTier's answer for tierKey, the key it was asked
-	// with (#601): the tier is the account's, so it is asked once per key
-	// for the client's lifetime, and a changed key asks again. A failed
-	// check is never cached.
+	// with (#601), until tierAt+tierTTL (#607: a plan gates on it now, and
+	// an account can be upgraded or lapse under a long-running `lmm
+	// serve`). A changed key asks again, and so does a download the API
+	// refuses as Premium-only (forgetTier). A failed check is never cached.
 	tierMu  sync.Mutex
 	tierKey string
 	tier    source.Tier
+	tierAt  time.Time
+}
+
+// tierTTL is how long an account tier is trusted before it is asked again.
+const tierTTL = 15 * time.Minute
+
+// clock is the client's time source (now, for tests), else time.Now.
+func (c *Client) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// forgetTier drops the cached account tier: the API just refused a download
+// as Premium-only, which a cached Premium answer contradicts.
+func (c *Client) forgetTier() {
+	c.tierMu.Lock()
+	defer c.tierMu.Unlock()
+	c.tier, c.tierKey, c.tierAt = "", "", time.Time{}
 }
 
 // categoryRetryAfter is how long a game domain whose category list could not
@@ -196,8 +217,9 @@ func (c *Client) validate(ctx context.Context, key string) (v validateResponse, 
 }
 
 // AccountTier reports the configured key's account tier from the validate
-// endpoint's is_premium, cached per key (see Client.tier). No key, or a key
-// the endpoint rejects, is domain.ErrAuthRequired.
+// endpoint's is_premium, cached per key for tierTTL (see Client.tier), and
+// forgotten on a Premium-only download refusal (forgetTier). No key, or a
+// key the endpoint rejects, is domain.ErrAuthRequired.
 func (c *Client) AccountTier(ctx context.Context) (source.Tier, error) {
 	key := c.key()
 	if key == "" {
@@ -205,7 +227,7 @@ func (c *Client) AccountTier(ctx context.Context) (source.Tier, error) {
 	}
 	c.tierMu.Lock()
 	defer c.tierMu.Unlock()
-	if c.tier != "" && c.tierKey == key {
+	if c.tier != "" && c.tierKey == key && c.clock().Sub(c.tierAt) < tierTTL {
 		return c.tier, nil
 	}
 	v, err := c.validate(ctx, key)
@@ -219,7 +241,7 @@ func (c *Client) AccountTier(ctx context.Context) (source.Tier, error) {
 	if v.IsPremium {
 		tier = source.TierPremium
 	}
-	c.tierKey, c.tier = key, tier
+	c.tierKey, c.tier, c.tierAt = key, tier, c.clock()
 	return tier, nil
 }
 
@@ -671,6 +693,7 @@ func (c *Client) GetDownloadLinks(ctx context.Context, gameDomain string, modID,
 	var links []DownloadLink
 	if err := c.doRequest(ctx, http.MethodGet, path, &links); err != nil {
 		if isPremiumOnly(err) {
+			c.forgetTier()
 			return nil, &source.AccountRestrictedError{Reason: premiumOnlyReason}
 		}
 		return nil, fmt.Errorf("getting download links: %w", err)

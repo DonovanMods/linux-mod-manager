@@ -246,3 +246,38 @@ func TestNexusCollection_SurveyShapes(t *testing.T) {
 	require.Len(t, c.Document.External, 1)
 	assert.Equal(t, "https://f4se.silverlock.org", c.Document.External[0].URL)
 }
+
+// The Skyrim sample planned and applied (#607, P3 review): it is refused,
+// for its plugin list (which the Nexus converter carries only from C6, though
+// the lmm document format supports plugin_order since #616) and for
+// Scrambled Bugs' two installers - and the refusal's supported list never
+// names plugin_order while refusing it.
+func TestNexusCollection_SkyrimApplyRefusesAndNamesWhatIsMissing(t *testing.T) {
+	game := &domain.Game{ID: "skyrimse", Name: "Skyrim Special Edition", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		Adapter: "bethesda", SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"}}
+	sandboxHome(t)
+	srv, client := nexusCollectionServer(t, "xk05aw", 325, "revision-skyrimspecialedition-xk05aw-325.json", "skyrimspecialedition-xk05aw-325.json")
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(), DownloadClient: srv.Client(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(nexusmods.New(client, "testapikey"))
+	RegisterAdapters(svc)
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	plan, err := svc.PlanSourceCollectionImport(context.Background(), game, core.SourceCollectionImportRequest{SourceID: "nexusmods", Ref: "xk05aw"})
+	require.NoError(t, err)
+	_, err = svc.ApplyCollectionImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	var refused *core.CollectionUnsupportedError
+	require.ErrorAs(t, err, &refused)
+	var names []string
+	for _, f := range refused.Unsupported {
+		names = append(names, f.Feature)
+	}
+	assert.Equal(t, []string{core.CollectionFeatureFomodMultiFile, core.CollectionFeaturePluginOrder}, names)
+	assert.NotContains(t, refused.Supported, core.CollectionFeaturePluginOrder, "never supported and refused at once")
+	assert.Contains(t, refused.Supported, core.CollectionFeatureFomod)
+	_, err = svc.NewProfileManager().Get(context.Background(), game.ID, plan.Profile.Name)
+	assert.ErrorIs(t, err, domain.ErrProfileNotFound, "nothing was written")
+}

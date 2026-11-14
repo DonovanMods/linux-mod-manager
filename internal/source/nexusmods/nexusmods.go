@@ -58,9 +58,17 @@ func (n *NexusMods) ValidateAPIKey(ctx context.Context, key string) error {
 
 // AccountTier implements source.AccountTierReporter (#601): the configured
 // key's account is Premium or free, from the validate endpoint's is_premium,
-// asked once per key for the source's lifetime. A free account gets no API
-// download links; its refusal is a *source.AccountRestrictedError.
+// cached for the key for up to 15 minutes, and forgotten at once when
+// NexusMods refuses a download as Premium-only (#607). A free account gets
+// no API download links; its refusal is a *source.AccountRestrictedError.
 func (n *NexusMods) AccountTier(ctx context.Context) (source.Tier, error) {
+	return n.client.AccountTier(ctx)
+}
+
+// RefreshAccountTier implements source.AccountTierRefresher: the cached tier
+// is forgotten and the validate endpoint asked again (#607).
+func (n *NexusMods) RefreshAccountTier(ctx context.Context) (source.Tier, error) {
+	n.client.forgetTier()
 	return n.client.AccountTier(ctx)
 }
 

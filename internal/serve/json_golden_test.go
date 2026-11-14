@@ -579,6 +579,11 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileImportPlanRequest{UploadID: "a1b2c3", ProfileName: "coop"},
 		},
 		{
+			// #607: a NexusMods collection, with one optional item opted in.
+			"profile_import_plan_request_nexus_collection",
+			profileImportPlanRequest{NexusCollection: "xk05aw@325", Optional: []string{"3863:1"}, ProfileName: "essentials"},
+		},
+		{
 			"profile_import_apply_request_with_hooks",
 			profileImportApplyRequest{Install: true, WithHooks: true},
 		},

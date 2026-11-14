@@ -39,7 +39,9 @@ import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 function refLabel(ref) {
   const shown = displayVersion(ref);
   const at = shown ? ` @ ${shown}` : "";
-  return `${ref.source_id}:${ref.mod_id}${at}`;
+  // Issue 607: a stated mod type changes where the mod deploys.
+  const type = ref.mod_type ? ` (type ${ref.mod_type})` : "";
+  return `${ref.source_id}:${ref.mod_id}${at}${type}`;
 }
 
 function RefList({ heading, refs }) {
@@ -186,8 +188,15 @@ function LMMCollectionSection({ collection: c }) {
       html`<section class="plan__section" data-testid="collection-unsupported">
         <p class="plan__note plan__note--warn">
           This collection needs features this version of lmm cannot import:
-          ${" "}${c.unsupported.map((f) => f.feature).join(", ")}. Importing it
-          is refused, with nothing written; update lmm and try again.
+          ${" "}${c.unsupported
+            .map((f) =>
+              (f.items ?? []).length > 0
+                ? `${f.feature} (${f.items.join(", ")})`
+                : f.feature,
+            )
+            .join("; ")}.
+          Importing it is refused, with nothing written; update lmm and try
+          again.
         </p>
       </section>`
     }
@@ -297,6 +306,158 @@ function LMMCollectionSection({ collection: c }) {
   `;
 }
 
+/** sourceStateLabel words a converted item's state (core.CollectionItemState). */
+const sourceStateLabel = {
+  installed: "already installed",
+  will_install: "will be installed",
+  manual_download: "download by hand",
+  external: "get by hand",
+  optional_skipped: "optional - not included",
+  unsupported: "cannot be imported",
+};
+
+/** SourceCollectionSection renders core.ConvertedCollection (issue 607): a
+ * source's collection - a NexusMods one - converted into the lmm
+ * collection this plan imports. Every item is listed with what the import
+ * does with it; an optional item carries a checkbox that re-plans with it
+ * opted in or out (`--with-optional` per item), because the preview must
+ * describe exactly what Confirm submits. Every string was sanitised by core,
+ * and links pass safeWebUrl again before they become an href. */
+function SourceCollectionSection({ source: c, actions }) {
+  const items = c.items ?? [];
+  const optional = new Set(c.optional ?? []);
+  const optionalItems = items.filter((it) => it.optional);
+  function included(it) {
+    return c.with_optional || optional.has(it.id);
+  }
+  function toggle(it, on) {
+    const next = new Set(
+      c.with_optional ? optionalItems.map((o) => o.id) : optional,
+    );
+    if (on) next.add(it.id);
+    else next.delete(it.id);
+    actions.replanWith({ with_optional: false, optional: [...next].sort() });
+  }
+  function toggleAll(e) {
+    actions.replanWith({
+      with_optional: e.currentTarget.checked,
+      optional: [],
+    });
+  }
+  const counts = Object.entries(c.counts ?? {})
+    .filter(([, n]) => n > 0)
+    .map(([state, n]) => `${n} ${sourceStateLabel[state] ?? state}`)
+    .join(", ");
+  return html`
+    <section class="plan__section" data-testid="source-collection">
+      <h3 class="plan__heading">
+        ${`${items.length} item${items.length === 1 ? "" : "s"} at revision ${c.revision}`}
+      </h3>
+      ${counts && html`<p class="plan__note">${counts}</p>`}
+      ${
+        c.manifest_error &&
+        html`<p
+          class="plan__note plan__note--warn"
+          data-testid="source-manifest-error"
+        >
+          The collection's recipe could not be read, so lmm cannot tell how to
+          install it: ${c.manifest_error}
+        </p>`
+      }
+      ${
+        optionalItems.length > 0 &&
+        html`<label class="plan__control">
+          <input
+            type="checkbox"
+            data-testid="source-with-optional"
+            checked=${!!c.with_optional}
+            onChange=${toggleAll}
+          />
+          Include every optional item (${optionalItems.length})
+        </label>`
+      }
+      <ul class="plan__mods" data-testid="source-items">
+        ${items.map((it) => {
+          const url = safeWebUrl(it.url);
+          const warn = ["manual_download", "external", "unsupported"].includes(
+            it.state,
+          );
+          const tags = [];
+          if (it.file_category && it.file_category !== "MAIN")
+            tags.push(
+              `${it.file_category.toLowerCase().replaceAll("_", " ")} file`,
+            );
+          if (it.mod_type) tags.push(`type ${it.mod_type}`);
+          if (it.installer) tags.push("installer choices");
+          // A NexusMods version is readable as is; displayVersion is the
+          // one sanctioned reader of a version (issue 458).
+          const shown = displayVersion(it);
+          return html`<li
+            key=${it.id}
+            class=${`plan__mod${warn ? " plan__mod--warn" : ""}`}
+            data-state=${it.state}
+            data-item=${it.id}
+          >
+            ${
+              it.optional &&
+              html`<input
+                  type="checkbox"
+                  aria-label=${`Include ${it.name}`}
+                  data-testid="source-optional-toggle"
+                  checked=${it.state !== "optional_skipped" && it.state !== "unsupported" && included(it)}
+                  disabled=${it.state === "unsupported"}
+                  onChange=${(e) => toggle(it, e.currentTarget.checked)}
+                />${" "}`
+            }<span class="plan__mod-name">${it.name}</span>${
+              shown
+                ? html`${" "}<span class="plan__mod-detail mono"
+                      >${shown}</span
+                    >`
+                : null
+            }${" "}<span
+              class=${`plan__mod-detail${warn ? " plan__mod-detail--warn" : ""}`}
+              >${sourceStateLabel[it.state] ?? it.state}</span
+            >
+            ${tags.length > 0 && html`${" "}<span class="plan__mod-detail">(${tags.join("; ")})</span>`}
+            ${
+              url &&
+              html`${" "}<a
+                  class="plan__mod-detail"
+                  href=${url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >${it.state === "external" ? "where to get it" : "file page"}</a
+                >`
+            }
+            ${it.note && html`<p class="plan__note">${it.note}</p>`}
+            ${
+              (it.features ?? []).length > 0 &&
+              html`<p class="plan__note plan__note--warn">
+                Needs ${it.features.join(", ")}
+              </p>`
+            }
+            ${it.instructions && html`<p class="plan__note">${it.instructions}</p>`}
+          </li>`;
+        })}
+      </ul>
+      ${
+        (c.tools ?? []).length > 0 &&
+        html`<h4 class="plan__heading">
+            The curator's tool shortcuts - listed only; lmm never creates or
+            runs them
+          </h4>
+          <ul class="plan__paths" data-testid="source-tools">
+            ${c.tools.map(
+              (t, i) =>
+                html`<li key=${i} class="mono">${t.name}: ${t.exe}</li>`,
+            )}
+          </ul>`
+      }
+      ${(c.notes ?? []).map((n, i) => html`<p key=${i} class="plan__note">${n}</p>`)}
+    </section>
+  `;
+}
+
 /** ImportGates renders what every document import holds back until the
  * user says otherwise (issue 621): the hooks the document carries (scripts
  * lmm would run - core.ImportPlan.hooks, applied only with with_hooks) and
@@ -387,6 +548,11 @@ function ImportGates({ plan, actions }) {
 
 export function ProfileImportPlanView({ plan, modal, actions }) {
   const lmmCollection = plan.collection ?? null;
+  // Issue 607: a source collection (NexusMods) converted into the lmm
+  // collection above. An account the source serves no downloads to saves
+  // the profile with every item that would need one pending.
+  const sourceCollection = lmmCollection?.source ?? null;
+  const manualOnly = !!sourceCollection?.manual_download;
   const collection = plan.workshop_collection ?? null;
   const installed = plan.installed ?? [];
   // Issue 371: installed under ANOTHER profile. The bytes are cached, so
@@ -397,9 +563,13 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
   const missing = plan.missing ?? [];
   // A collection import installs nothing whatever this preview offers, so
   // it has no pending count to offer it for.
+  // A free account installs only what needs no download: a mod another
+  // profile already has. Everything else is recorded, to fetch by hand.
   const pending = collection
     ? 0
-    : alreadyCached.length + needsRedownload.length + missing.length;
+    : manualOnly
+      ? alreadyCached.length
+      : alreadyCached.length + needsRedownload.length + missing.length;
   // A Workshop item is tracked game-wide, so for a collection BOTH buckets
   // count as already present; an ordinary import counts only the rows this
   // profile itself already has.
@@ -463,6 +633,13 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
       ${
         lmmCollection &&
         html`<${LMMCollectionSection} collection=${lmmCollection} />`
+      }
+      ${
+        sourceCollection &&
+        html`<${SourceCollectionSection}
+          source=${sourceCollection}
+          actions=${actions}
+        />`
       }
       ${!collection && html`<${ImportGates} plan=${plan} actions=${actions} />`}
       ${collection && html`<${CollectionHeader} collection=${collection} />`}

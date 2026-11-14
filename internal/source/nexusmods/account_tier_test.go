@@ -26,6 +26,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -201,4 +202,64 @@ func TestNexusMods_AccountTier_ConcurrentReKeyIsRaceFree(t *testing.T) {
 	tier, err := nm.AccountTier(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, source.TierFree, tier)
+}
+
+// #607: a plan now gates on the tier, so a cached answer must not outlive
+// the account it describes. It expires (tierTTL), and a download the API
+// refuses as Premium-only forgets it at once - an account that was Premium
+// and lapsed is asked again on the next plan.
+func TestNexusMods_AccountTier_ExpiresAfterTheTTL(t *testing.T) {
+	nm, hits := tierServer(t, validatePath, http.StatusOK, tierFixture(t, "validate-free.json"))
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	nm.client.now = func() time.Time { return now }
+
+	_, err := nm.AccountTier(context.Background())
+	require.NoError(t, err)
+	now = now.Add(tierTTL - time.Second)
+	_, err = nm.AccountTier(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), hits.Load(), "within the TTL, the cached answer")
+
+	now = now.Add(2 * time.Second)
+	_, err = nm.AccountTier(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), hits.Load(), "past it, asked again")
+}
+
+func TestNexusMods_AccountTier_ForgottenOnAPremiumRefusal(t *testing.T) {
+	var validates atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case validatePath:
+			validates.Add(1)
+			_, _ = w.Write(tierFixture(t, "validate-premium.json"))
+		case linkPath:
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write(tierFixture(t, "download-link-free-403.json"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	nm := New(srv.Client(), "testapikey")
+	nm.client.SetBaseURL(srv.URL)
+
+	tier, err := nm.AccountTier(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, source.TierPremium, tier)
+	_, err = nm.GetDownloadURL(context.Background(), &domain.Mod{ID: "107", GameID: "cyberpunk2077"}, "168615")
+	require.ErrorIs(t, err, source.ErrAccountRestricted)
+	_, err = nm.AccountTier(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), validates.Load(), "the refusal contradicts the cached tier, so it is asked again")
+}
+
+func TestNexusMods_RefreshAccountTier_AsksAgain(t *testing.T) {
+	var _ source.AccountTierRefresher = New(nil, "")
+	nm, hits := tierServer(t, validatePath, http.StatusOK, tierFixture(t, "validate-free.json"))
+	_, err := nm.AccountTier(context.Background())
+	require.NoError(t, err)
+	tier, err := nm.RefreshAccountTier(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, source.TierFree, tier)
+	assert.Equal(t, int32(2), hits.Load(), "a refresh never answers from the cache")
 }

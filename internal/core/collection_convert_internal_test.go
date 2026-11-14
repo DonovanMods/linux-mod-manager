@@ -245,6 +245,7 @@ func TestConvert_ModTypes(t *testing.T) {
 	assert.Empty(t, c.Unsupported, "dinput routes; the optional SMAPI item is skipped")
 	assert.Equal(t, "dinput", itemByName(t, c, "SKSE64").ModType)
 	assert.Equal(t, []string{"mod_type:dinput"}, c.Document.Requires, "a v1 document that relies on a mod type says so")
+	assert.Equal(t, "dinput", c.Document.Items[0].Ref.ModType, "the profile entry carries the stated type")
 	assert.Equal(t, CollectionItemUnsupported, itemByName(t, c, "SMAPI thing").State)
 
 	in.modTypeSupported = nil
@@ -663,4 +664,15 @@ func TestConvert_PluginOrderStaysBlockedUntilC6(t *testing.T) {
 		Plugins: []source.ManifestPlugin{{Name: "A.esp"}}}
 	assert.Equal(t, []string{CollectionFeaturePluginOrder}, featureNames(mustConvert(t, convertInputFor(m)).Unsupported),
 		"the converter refuses it until C6 maps it")
+}
+
+// A refusal never names a feature as supported while refusing it (#607,
+// P3 review): the document format supports plugin_order (#616), but the
+// Nexus converter still refuses it until C6, so the error's supported list
+// must leave it out.
+func TestSupportedExcept_LeavesOutWhatTheRefusalNames(t *testing.T) {
+	require.Contains(t, SupportedCollectionFeatures(), CollectionFeaturePluginOrder)
+	got := supportedExcept([]UnsupportedCollectionFeature{{Feature: CollectionFeaturePluginOrder}})
+	assert.NotContains(t, got, CollectionFeaturePluginOrder)
+	assert.Contains(t, got, CollectionFeatureFomod)
 }

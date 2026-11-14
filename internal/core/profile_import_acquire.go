@@ -105,6 +105,9 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	}
 
 	mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
+	// #607: the imported reference's stated type is the row's, and every
+	// deploy of it routes by it.
+	mod.ModType = ref.ModType
 	st.mod = mod
 	for _, f := range filesToDownload {
 		st.fileIDs = append(st.fileIDs, f.ID)
@@ -187,7 +190,11 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 	}
 
 	if st.cachedRow != nil {
-		modRef, msgs, err := s.importCachedMod(ctx, game, profileName, installer, *st.cachedRow, plan.priorVersions[st.key], deploy)
+		// #607: the row is another profile's; where the mod deploys is
+		// this profile's reference's to say (its stated type, or none).
+		row := *st.cachedRow
+		row.ModType = st.ref.ModType
+		modRef, msgs, err := s.importCachedMod(ctx, game, profileName, installer, row, plan.priorVersions[st.key], deploy, plan.updatePolicyFor(st.key))
 		if err != nil {
 			fail(err.Error())
 			return nil
@@ -196,6 +203,7 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 			result.Warnings = append(result.Warnings, msg)
 			emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
 		}
+		s.writeImportPolicy(ctx, game, plan, profileName, st.key, row.SourceID, row.ID, scope, result, emit)
 		if cerr := s.recordImportedRef(ctx, pm, game.ID, profileName, modRef, fomodRecord{op: fomodKeep}, scope, result, emit); cerr != nil {
 			return cerr
 		}
@@ -227,7 +235,7 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 	installedMod := &domain.InstalledMod{
 		Mod:          *mod,
 		ProfileName:  profileName,
-		UpdatePolicy: domain.UpdateNotify,
+		UpdatePolicy: plan.updatePolicyFor(st.key),
 		Enabled:      true,
 		FileIDs:      st.fileIDs,
 		Deployed:     deploy, // installer.Install above just succeeded
@@ -237,6 +245,7 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 		fail(fmt.Sprintf("save failed: %v", err))
 		return nil
 	}
+	s.writeImportPolicy(ctx, game, plan, profileName, st.key, mod.SourceID, mod.ID, scope, result, emit)
 
 	// #372: the row exists now, so what was downloaded above finally has
 	// somewhere to record its checksum.
@@ -298,4 +307,30 @@ func refusedImport(plan *ImportPlan, toInstall []domain.ModReference, refused *A
 		result.FomodChoicesRequired = fomodErr
 	}
 	return &ProfileImportIncompleteError{Profile: plan.Profile.Name, Result: result, refusal: refused}
+}
+
+// updatePolicyFor is the update policy an import writes key's row with:
+// auto when the plan names it (ImportPlan.autoUpdate), else notify.
+func (p *ImportPlan) updatePolicyFor(key string) domain.UpdatePolicy {
+	if p.autoUpdate[key] {
+		return domain.UpdateAuto
+	}
+	return domain.UpdateNotify
+}
+
+// writeImportPolicy sets key's row to the auto update policy when the plan
+// names it (ImportPlan.autoUpdate), inside the import's commit. The row
+// write above already carries it for a new row; an EXISTING row (a
+// re-import over a profile, --force) keeps its policy through the upsert,
+// which never moves one, so this says it explicitly. A failure is a
+// warning: the mod is installed either way.
+func (s *Service) writeImportPolicy(ctx context.Context, game *domain.Game, plan *ImportPlan, profileName, key, sourceID, modID string, scope Scope, result *ProfileImportResult, emit func(Event)) {
+	if !plan.autoUpdate[key] {
+		return
+	}
+	if err := s.setModUpdatePolicy(ctx, sourceID, modID, game.ID, profileName, domain.UpdateAuto); err != nil {
+		msg := fmt.Sprintf("could not set %s to update automatically: %v", key, err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
+	}
 }

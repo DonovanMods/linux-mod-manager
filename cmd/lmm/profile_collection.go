@@ -47,9 +47,16 @@ func printCollectionPlan(c *core.CollectionImport, game *domain.Game) {
 		fmt.Printf("  requires: %s\n", strings.Join(c.Requires, ", "))
 	}
 	printCollectionInstallerChoices(c)
+	if c.Source != nil {
+		printSourceCollection(c.Source)
+	}
 	if len(c.Unsupported) > 0 {
 		fmt.Printf("\n✗ This collection needs features this version of lmm cannot import:\n")
 		for _, f := range c.Unsupported {
+			if len(f.Items) > 0 {
+				fmt.Printf("    - %s (%s)\n", f.Feature, strings.Join(f.Items, ", "))
+				continue
+			}
 			fmt.Printf("    - %s\n", f.Feature)
 		}
 	}
@@ -206,5 +213,84 @@ func printCollectionInstallerChoices(c *core.CollectionImport) {
 		for _, line := range item.InstallerChoices {
 			fmt.Printf("        %s\n", line)
 		}
+	}
+}
+
+// sourceItemMarks is the line mark of each source-collection item state.
+var sourceItemMarks = map[core.CollectionItemState]string{
+	core.CollectionItemInstalled:       "✓",
+	core.CollectionItemWillInstall:     "↓",
+	core.CollectionItemManualDownload:  "⇣",
+	core.CollectionItemExternal:        "↗",
+	core.CollectionItemOptionalSkipped: "○",
+	core.CollectionItemUnsupported:     "✗",
+}
+
+// sourceItemStates is the order the states are summarised in.
+var sourceItemStates = []core.CollectionItemState{
+	core.CollectionItemInstalled, core.CollectionItemWillInstall, core.CollectionItemManualDownload,
+	core.CollectionItemExternal, core.CollectionItemOptionalSkipped, core.CollectionItemUnsupported,
+}
+
+// printSourceCollection prints a converted source collection (#607): the
+// recipe's state, each item with what the import does with it, the
+// curator's tools and the conversion's notes.
+func printSourceCollection(c *core.ConvertedCollection) {
+	if c.ManifestError != "" {
+		fmt.Printf("\n✗ The collection's recipe could not be read, so lmm cannot tell how to install it:\n  %s\n", c.ManifestError)
+	}
+	var counts []string
+	for _, st := range sourceItemStates {
+		if n := c.Counts[st]; n > 0 {
+			counts = append(counts, fmt.Sprintf("%d %s", n, strings.ReplaceAll(string(st), "_", " ")))
+		}
+	}
+	fmt.Printf("\n%d item(s) at revision %d: %s\n", len(c.Items), c.Revision, strings.Join(counts, ", "))
+	for _, it := range c.Items {
+		line := fmt.Sprintf("  %s %s", sourceItemMarks[it.State], it.Name)
+		if it.Version != "" {
+			line += " " + it.Version
+		}
+		var tags []string
+		if it.Optional {
+			tags = append(tags, "optional")
+		}
+		if it.FileCategory != "" && it.FileCategory != "MAIN" {
+			tags = append(tags, strings.ToLower(strings.ReplaceAll(it.FileCategory, "_", " "))+" file")
+		}
+		if it.ModType != "" {
+			tags = append(tags, "type "+it.ModType)
+		}
+		if it.Installer {
+			tags = append(tags, "installer choices")
+		}
+		if len(it.Features) > 0 {
+			tags = append(tags, "needs "+strings.Join(it.Features, ", "))
+		}
+		if len(tags) > 0 {
+			line += " (" + strings.Join(tags, "; ") + ")"
+		}
+		fmt.Println(line)
+		if it.Note != "" {
+			fmt.Printf("      %s\n", it.Note)
+		}
+		if (it.State == core.CollectionItemManualDownload || it.State == core.CollectionItemExternal) && it.URL != "" {
+			fmt.Printf("      %s\n", it.URL)
+		}
+		if it.Instructions != "" {
+			fmt.Println(indentLines(it.Instructions, "      "))
+		}
+	}
+	if c.Counts[core.CollectionItemOptionalSkipped] > 0 && !c.WithOptional {
+		fmt.Printf("  Optional items are left out; --with-optional installs them.\n")
+	}
+	if len(c.Tools) > 0 {
+		fmt.Printf("\nThe curator's tool shortcuts (listed only; lmm never creates or runs them):\n")
+		for _, t := range c.Tools {
+			fmt.Printf("    - %s: %s\n", t.Name, t.Exe)
+		}
+	}
+	for _, note := range c.Notes {
+		fmt.Printf("  · %s\n", note)
 	}
 }

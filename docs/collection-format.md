@@ -67,6 +67,7 @@ mods:                        # load order, first = lowest priority
     locked: true
     disabled: true           # listed, but switched off
     category: UI             # the author's own category
+    mod_type: dinput         # where the whole mod deploys (requires: mod_type:dinput)
     fomod:                   # recorded FOMOD installer choices (requires: fomod)
       config_sha256: 3f1c…   # the ModuleConfig.xml they answer
       steps:
@@ -158,6 +159,7 @@ is what lets the format grow without breaking older importers.
 | `external` | any `external` item               | format v1 (lmm with #621) |
 | `fomod`    | any mod with a `fomod` block (its recorded FOMOD installer choices) | format v1 (lmm with #614) |
 | `plugin_order` | a `plugins` block (the profile's plugin load order and rules) | format v1 (lmm with #616) |
+| `mod_type:<type>` | any mod with that `mod_type` (a stated mod type, as a NexusMods collection records it: `dinput` is a script extender, deployed to the game folder) | lmm with #607, for a game whose adapter routes the type (the `bethesda` adapter: `dinput`, `enb`). Elsewhere it is refused, because the mod would deploy where the game never reads it |
 
 ## Importing safely
 

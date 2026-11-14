@@ -56,6 +56,9 @@ type CopyModEntry struct {
 	// carried like the category: they are what the copied files were built
 	// from. omitzero.
 	Fomod domain.FomodChoices `json:"fomod,omitzero"`
+	// ModType is the source ref's stated mod type (#607), carried like the
+	// choices: it is where the copied files deploy. omitempty.
+	ModType string `json:"mod_type,omitempty"`
 	// AlreadyListed reports that the destination lists this mod already,
 	// at ExistingVersion. ApplyCopyMod refuses it with ModAlreadyListedError
 	// unless CopyModOptions.Replace is set - or, in an All copy, skips it.
@@ -226,6 +229,7 @@ func (s *Service) copyEntry(game *domain.Game, row domain.InstalledMod, ref *dom
 		entry.Disabled = ref.Disabled
 		entry.Category = ref.Category
 		entry.Fomod = ref.Fomod
+		entry.ModType = ref.ModType
 	}
 	if v, ok := listed[domain.ModKey(row.SourceID, row.ID)]; ok {
 		entry.AlreadyListed = true
@@ -430,7 +434,7 @@ func (s *Service) applyCopyMod(ctx context.Context, game *domain.Game, plan *Cop
 		}
 
 		ref := domain.ModReference{SourceID: e.SourceID, ModID: e.ModID, Version: e.Version,
-			FileIDs: e.FileIDs, Locked: e.Locked, Disabled: e.Disabled, Category: e.Category, Fomod: e.Fomod}
+			FileIDs: e.FileIDs, Locked: e.Locked, Disabled: e.Disabled, Category: e.Category, ModType: e.ModType, Fomod: e.Fomod}
 		msgs, err := s.copyRowToProfile(ctx, game, *row, plan.To, rowCopy{enabled: !e.Disabled, method: method})
 		if err != nil {
 			return result, fmt.Errorf("recording %s under %s: %w", e.Name, plan.To, err)

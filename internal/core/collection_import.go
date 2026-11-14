@@ -57,6 +57,9 @@ const (
 	// CollectionFromURL is a document fetched from the network (L2, #622).
 	// Its hooks are never applied.
 	CollectionFromURL CollectionInput = "url"
+	// CollectionFromSource is a document converted from a source's own
+	// collection (#607: a NexusMods collection). It carries no hooks.
+	CollectionFromSource CollectionInput = "source"
 )
 
 // CollectionImportRequest is what PlanCollectionImport plans.
@@ -129,6 +132,11 @@ type CollectionImport struct {
 	Overrides []string `json:"overrides,omitempty"`
 	// Warnings are what the reader skipped or could not check.
 	Warnings []string `json:"warnings,omitempty"`
+	// Source is the source collection this document was converted from
+	// (#607): every item with what the import does with it, the features
+	// the collection raised, the curator's tools and the conversion's
+	// notes. Absent for a document read from a file or a URL.
+	Source *ConvertedCollection `json:"source,omitempty"`
 }
 
 // CollectionImportResult is the ONE document `lmm profile import --json`
@@ -362,7 +370,7 @@ func (s *Service) PlanCollectionImport(ctx context.Context, req CollectionImport
 		GameID:              game.ID,
 		MatchedBy:           matchedBy,
 		Requires:            unionFeatures(requires, derived),
-		Unsupported:         unsupportedFeatures(requires, derived),
+		Unsupported:         unsupportedFeatures(requires, derived, s.modTypeRoutes(game)),
 		External:            doc.External,
 		Hooks:               hooks,
 		HooksImportable:     req.Input == CollectionFromFile,
@@ -400,15 +408,43 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 	if c == nil {
 		return &ProfileImportResult{}, errors.New("not a collection import plan")
 	}
+	original := plan
 	if len(c.Unsupported) > 0 {
-		return &ProfileImportResult{}, &CollectionUnsupportedError{Unsupported: c.Unsupported, Supported: SupportedCollectionFeatures()}
+		return &ProfileImportResult{}, &CollectionUnsupportedError{Unsupported: c.Unsupported, Supported: supportedExcept(c.Unsupported)}
 	}
 	if opts.WithHooks && len(c.Hooks) > 0 && !c.HooksImportable {
 		return &ProfileImportResult{}, ErrCollectionHooksFromURL
 	}
+	if c.Source != nil {
+		// A converted source collection is all or nothing at acquire (owner
+		// ruling, #602): a half-installed collection is the outcome that
+		// looks like it worked. An account the source serves no downloads
+		// to installs only what needs none - a mod another profile already
+		// has - and saves the profile with every other item pending.
+		opts.AllOrNothing = true
+		if c.Source.ManualDownload {
+			trimmed := *plan
+			trimmed.NeedsRedownload, trimmed.Missing = nil, nil
+			plan = &trimmed
+		}
+	}
 	result, err := s.ApplyImport(ctx, game, plan, opts, sink)
+	if c.Source != nil {
+		if lapsed := s.lapsedAccount(c.Source.SourceID, err); lapsed != nil {
+			return result, lapsed
+		}
+	}
 	if result == nil || result.ProfileName == "" {
 		return result, err
+	}
+	if c.Source != nil && err == nil {
+		if plan != original {
+			// The items a free account cannot download were held back
+			// from the apply; they are pending, as a --no-install import
+			// counts its pending mods.
+			result.Skipped += len(original.NeedsRedownload) + len(original.Missing)
+		}
+		finishSourceCollection(original, c.Source, result, opts)
 	}
 	if n := len(c.External); n > 0 {
 		result.Notes = append(result.Notes, fmt.Sprintf("%d item(s) of this collection are not fetched by lmm: get them by hand (the profile records them, with the curator's instructions).", n))

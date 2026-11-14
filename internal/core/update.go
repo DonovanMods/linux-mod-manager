@@ -993,6 +993,9 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	if err != nil {
 		return result, fmt.Errorf("fetching new version: %w", err)
 	}
+	// #607: the new version deploys where the old one did - the row's
+	// stated type is the mod's, not the version's.
+	newMod.ModType = mod.ModType
 
 	files, err := s.GetModFiles(ctx, game, mod.SourceID, newMod)
 	if err != nil {

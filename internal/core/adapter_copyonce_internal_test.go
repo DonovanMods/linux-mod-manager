@@ -166,7 +166,7 @@ func TestInstallerFailsTheWholeInstallWhenASeedCannotBeWritten(t *testing.T) {
 // sweep. That standing is what makes "it is the user's file now" true.
 func TestCopyOnceFilesAreNeverDeployables(t *testing.T) {
 	f := newCopyOnceFixture(t, map[string]string{"1.0": "volume=5\n"})
-	files, err := membersErr(deployableFiles(f.cache, copyOnceRouter{}, f.game, cache.Key{GameID: f.game.ID, SourceID: "src", ModID: "m", Version: "1.0"}))
+	files, err := membersErr(deployableFiles(f.cache, copyOnceRouter{}, f.game, cache.Key{GameID: f.game.ID, SourceID: "src", ModID: "m", Version: "1.0"}, ""))
 	require.NoError(t, err)
 	assert.Equal(t, []string{filepath.Join("bin", "plugin.dll")}, files)
 	assert.Equal(t, []string{filepath.Join("cfg", "plugin.cfg")},

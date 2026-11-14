@@ -64,7 +64,7 @@ func TestRootInstallPathDeploysUnderInstallPath(t *testing.T) {
 	require.NoError(t, c.Store(key, "Scripts/SKSE.pex", []byte("script")))
 	game := rootGame(t, domain.LinkSymlink)
 
-	files, err := deployableFiles(c, rootRouter{}, game, key)
+	files, err := deployableFiles(c, rootRouter{}, game, key, "")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []domain.DeployPath{domain.GameRootFile("skse64_loader.exe"), domain.ModPathFile(filepath.Join("Scripts", "SKSE.pex"))}, pathsOf(files))
 
@@ -108,7 +108,7 @@ func TestRootInstallPathIsModPathWhenTheyAreOneDirectory(t *testing.T) {
 	install := t.TempDir()
 	game := &domain.Game{ID: "g", InstallPath: install, ModPath: install, LinkMethod: domain.LinkSymlink}
 
-	files, err := deployableFiles(c, rootRouter{}, game, key)
+	files, err := deployableFiles(c, rootRouter{}, game, key, "")
 	require.NoError(t, err)
 	assert.Equal(t, []domain.DeployPath{domain.ModPathFile("skse64_loader.exe")}, pathsOf(files))
 }

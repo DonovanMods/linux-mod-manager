@@ -132,7 +132,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		files, err := deployableFiles(gameCache, gameAdapter, game, modCacheKey(game.ID, m.Mod))
+		files, err := deployableFiles(gameCache, gameAdapter, game, modCacheKey(game.ID, m.Mod), m.ModType)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				unknownProvenance[domain.ModKey(m.SourceID, m.ID)] = true

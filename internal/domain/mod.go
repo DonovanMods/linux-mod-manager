@@ -174,6 +174,19 @@ type ModReference struct {
 	// byte-identical. An older lmm drops the key when it rewrites the file.
 	Fomod FomodChoices `yaml:"fomod,omitempty" json:"fomod,omitzero"`
 
+	// ModType is the mod's STATED type (#607): where the game deploys the
+	// whole mod, as a NexusMods collection records it (Vortex's
+	// details.type - "dinput" for a script extender, deployed to the game's
+	// install folder rather than its mod_path). The game's adapter maps it
+	// to a deploy root (adapter.RootForModType); a type the adapter does not
+	// know refuses the deploy rather than putting the files where they do
+	// nothing. Profile state, like Fomod: it travels with export/import/
+	// duplicate/copy, and the installed row keeps a copy (Mod.ModType) for
+	// the deploy to read. Empty - the game's default, per-file routing - for
+	// every mod but a collection's typed ones, and both encodings omit it,
+	// so every document written before the field existed is byte-identical.
+	ModType string `yaml:"mod_type,omitempty" json:"mod_type,omitempty"`
+
 	// External and UpdatedAt are DISPLAY facts a plan document carries so a
 	// renderer never has to print Version raw (#365, part of #269).
 	//
@@ -273,6 +286,10 @@ type Mod struct {
 	// files are just the source's. Not on the wire: it is a cache detail,
 	// not something a frontend shows or sends.
 	Variant string `json:"-"`
+	// ModType is the installed row's copy of its reference's stated mod type
+	// (ModReference.ModType, #607): the installed_mods.mod_type column, which
+	// every deploy of the row routes by. Not on the wire.
+	ModType string `json:"-"`
 }
 
 // InstalledMod tracks a mod installed in a profile

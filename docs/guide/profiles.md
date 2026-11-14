@@ -239,6 +239,70 @@ A Steam Workshop **collection** can be imported as a profile too, by pasting
 its link into the Profiles window, or with
 `lmm profile import --workshop-collection <link>`.
 
+### Importing a NexusMods collection
+
+A NexusMods **collection** imports as a new profile: lmm reads the
+collection's list and its install recipe, turns them into an lmm
+collection, and imports that.
+
+```bash
+lmm profile import --nexus-collection iszwwe --game cyberpunk2077
+lmm profile import --nexus-collection iszwwe@484 --game cyberpunk2077
+lmm profile import --nexus-collection https://www.nexusmods.com/games/skyrimspecialedition/collections/xk05aw --as essentials
+lmm profile import --nexus-collection xk05aw --with-optional
+```
+
+Give the collection's slug (the code at the end of its page's address),
+`slug@revision` for one revision, or the page's address. Without a
+revision you get the latest one, and the plan says which. A link to
+another game's collection is refused. In the browser, type the same thing
+into **NexusMods collection** in the Profiles window.
+
+You need a NexusMods API key (see [Your first mods](first-mods.md)), and
+lmm needs the `7z` command, because the recipe is a `.7z` file (see
+[Installing lmm](install.md#optional-7-zip)); the plan says so if `7z` is
+missing. A **free** account can read any
+collection, but NexusMods only serves downloads to Premium accounts, so on
+a free account the plan marks every mod as a manual download and links its
+file's page. The import then installs only what needs no download (a mod
+another of your profiles already has) and saves the profile with the rest
+still to download: get each file from its page and install it from the
+file (`lmm install --id <mod-id> --from-file <archive>`, or **Install from
+file…** in the browser; see [Mods you downloaded
+yourself](manual-mods.md)). lmm asks NexusMods for your account's tier
+each time it plans a collection, so after upgrading to Premium, plan again.
+
+The plan lists every item and what the import does with it:
+
+- Each mod is pinned to the **exact file** the curator chose, even an old
+  or archived one. A mod the curator pinned exactly is
+  [locked](updates.md#locking-a-mod-to-one-version).
+- When the curator asks for a mod's **latest** file, lmm installs the file
+  the collection was tested with now, and sets the mod to update
+  automatically, so the next update check moves it to the newest file.
+- **Optional** mods are left out unless you ask: `--with-optional`
+  includes all of them. In the browser each optional mod also has its own
+  tick box in the plan; the terminal has no per-mod choice.
+- Mods are put in the collection's install order, and the curator's
+  "load after" rules are followed. A rule that names a mod outside the
+  collection is skipped, and the plan says so.
+- **Installer choices** the curator made for a FOMOD installer are
+  replayed, as they are for any [FOMOD](fomod.md) mod.
+- A mod the curator marked for the **game folder** (a script extender, for
+  example) is deployed there, on a game whose adapter knows where that is.
+- Items NexusMods doesn't host are listed with where to get them and the
+  curator's instructions. The curator's tool shortcuts are listed too; lmm
+  never creates or runs them.
+
+A NexusMods collection installs **all or nothing** while its files are
+fetched: if one mod can't be downloaded, nothing is imported, not even the
+profile. If something goes wrong after that, while the downloaded mods are
+being installed, the import says which mods failed, as any import does. And a collection
+that uses something this version of lmm can't do yet (a plugin load order,
+an exact file list, files bundled in the collection, patches) shows its
+plan, with what is missing and which mods need it, and is refused, with
+nothing written. Optional mods that need such a thing are skipped instead.
+
 ## An override of a mod's own file
 
 An override can change a file that a mod ships, such as a mod's `.ini`.

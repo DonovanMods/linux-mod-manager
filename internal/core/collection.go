@@ -48,6 +48,17 @@ func SupportedCollectionFeatures() []string {
 	return out
 }
 
+// supportedExcept is SupportedCollectionFeatures without any feature the
+// refusal names: a converted source collection can be refused for a feature
+// the document format supports but its converter does not carry yet (#607:
+// plugin_order until C6), and a refusal must never also call it supported.
+func supportedExcept(refused []UnsupportedCollectionFeature) []string {
+	out := SupportedCollectionFeatures()
+	return slices.DeleteFunc(out, func(name string) bool {
+		return slices.ContainsFunc(refused, func(f UnsupportedCollectionFeature) bool { return f.Feature == name })
+	})
+}
+
 // deriveCollectionRequires is the features doc's own content needs. The
 // exporter writes exactly this (`requires:` is never hand-written), and the
 // importer gates on its union with what the document declares, so a
@@ -61,6 +72,13 @@ func deriveCollectionRequires(doc *domain.CollectionDocument) []string {
 		if !item.Ref.Fomod.IsZero() {
 			features = append(features, CollectionFeatureFomod)
 			break
+		}
+	}
+	// #607: a stated mod type deploys only where the game's adapter routes
+	// it, so a document relying on one says which.
+	for _, item := range doc.Items {
+		if t := item.Ref.ModType; t != "" && !slices.Contains(features, CollectionFeatureModTypePrefix+t) {
+			features = append(features, CollectionFeatureModTypePrefix+t)
 		}
 	}
 	if !doc.Plugins.IsZero() {
@@ -134,12 +152,17 @@ func IsCollectionUnsupported(err error) bool {
 }
 
 // unsupportedFeatures is the gate: every feature in declared or derived
-// that the supported set lacks, in name order.
-func unsupportedFeatures(declared, derived []string) []UnsupportedCollectionFeature {
+// that the supported set lacks, in name order. routes says whether the
+// importing game routes a stated mod type (mod_type:<type>, #607); nil
+// routes none.
+func unsupportedFeatures(declared, derived []string, routes func(modType string) bool) []UnsupportedCollectionFeature {
 	var names []string
 	for _, name := range slices.Concat(declared, derived) {
 		name = strings.TrimSpace(name)
 		if name == "" || supportedCollectionFeatures[name] || slices.Contains(names, name) {
+			continue
+		}
+		if t, ok := strings.CutPrefix(name, CollectionFeatureModTypePrefix); ok && t != "" && routes != nil && routes(t) {
 			continue
 		}
 		names = append(names, name)

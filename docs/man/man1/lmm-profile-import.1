@@ -74,7 +74,7 @@ Examples:
 
 .PP
 \fB--as\fP=""
-	name the imported profile (a collection or --workshop-collection; an older profile export names its own)
+	name the imported profile (a collection, --workshop-collection or --nexus-collection; an older profile export names its own)
 
 .PP
 \fB--fomod-choices\fP=""
@@ -93,12 +93,20 @@ Examples:
 	help for import
 
 .PP
+\fB--nexus-collection\fP=""
+	import a NexusMods collection (its slug, slug@revision, or the URL of its page) instead of a file
+
+.PP
 \fB--no-install\fP[=false]
 	skip installing missing mods
 
 .PP
 \fB--with-hooks\fP[=false]
 	import the hooks the file carries (they are scripts lmm runs; listed in the plan)
+
+.PP
+\fB--with-optional\fP[=false]
+	with --nexus-collection, install the collection's optional mods too (they are left out by default)
 
 .PP
 \fB--workshop-collection\fP=""

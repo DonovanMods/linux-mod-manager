@@ -403,7 +403,10 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	// game's default installer answers it without reading the profile.
 	// #629: as the deployed paths the files take, game-root ones included.
 	installer := s.getInstaller(game)
-	conflicts, err := installer.conflictsForPaths(ctx, game, &plan.Mod, profileName, pathsOf(deployItems(installer.adapter, game, files)))
+	// #607: an archive imported over a typed reference deploys by its type,
+	// so the preview checks the root the files will take.
+	plan.Mod.ModType = statedType(s.recordedRef(ctx, game.ID, profileName, plan.Mod.SourceID, plan.Mod.ID))
+	conflicts, err := installer.conflictsForPaths(ctx, game, &plan.Mod, profileName, pathsOf(deployItems(installer.adapter, game, plan.Mod.ModType, files)))
 	if err != nil {
 		return nil, err
 	}
@@ -706,6 +709,8 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		// the mod, else the choices its profile ref records.
 		fomod: s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, plan.Mod.SourceID, plan.Mod.ID), plan.Mod.SourceID, plan.Mod.ID, opts.Fomod),
 	}
+	// #607: an archive imported over a typed reference deploys by its type.
+	plan.Mod.ModType = statedType(s.recordedRef(ctx, game.ID, profileName, plan.Mod.SourceID, plan.Mod.ID))
 
 	gameCache := s.GetGameCache(game)
 	// The identity the plan resolved - one uuid per user-level import, so an
@@ -880,6 +885,9 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	}
 
 	step(ImportArchiveDeploying, "Deploying to game directory...")
+	// #607: the importer builds its own mod; the ref's stated type is the
+	// plan's, and the deploy and the row route by it.
+	result.Mod.ModType = plan.Mod.ModType
 	if err := installer.Install(ctx, game, result.Mod, profileName); err != nil {
 		return result, fmt.Errorf("deployment failed: %w", err)
 	}

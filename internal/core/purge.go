@@ -1020,7 +1020,7 @@ func (s *Service) listedVersionShips(ctx context.Context, game *domain.Game, liv
 		if !seen {
 			if version != "" {
 				k := cache.Key{GameID: game.ID, SourceID: ref.SourceID, ModID: ref.ModID, Version: version, Variant: variant}
-				if listing, err := deployableFiles(gameCache, gameAdapter, game, k); err == nil {
+				if listing, err := deployableFiles(gameCache, gameAdapter, game, k, ref.ModType); err == nil {
 					files = make(map[domain.DeployPath]bool, len(listing))
 					for _, f := range listing {
 						files[f.path] = true
