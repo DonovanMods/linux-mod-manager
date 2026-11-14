@@ -128,6 +128,9 @@ type VerifyFinding struct {
 	//	stale_compile         always, on a plain run: --fix's merged-pak
 	//	                      resync (syncMergedPakPass) regenerates it
 	//	missing               a non-local source: redownloadModFile
+	//	cache_incomplete      a non-local source with a recorded file:
+	//	                      redownloadModFile refills the row's own entry
+	//	                      (#642); a mod with no recorded file is not
 	//	no_checksum           a non-local source: redownload-to-populate,
 	//	                      or, for a file the source won't serve, a fill
 	//	                      from the mod's own complete cache entry (#514)
@@ -470,6 +473,53 @@ type verifyRun struct {
 	// held, while set, collects the repair sub-lines downloadWarningSink
 	// would emit, for an arm whose row is not out yet (holdDetails).
 	held *[]VerifyEvent
+
+	// lost memoises lostFiles per mod (#642), and stranded the profile's
+	// rows recorded under another mod_path, read at most once per run.
+	lost     map[string]map[string]string
+	stranded map[domain.DeployPath]bool
+}
+
+// lostFiles is the files of mod whose cache entry no longer holds them
+// (rowLostFiles, #642), keyed by file id, asked once per mod per run. A
+// check that fails reads as nothing lost, and is surfaced as a verbose
+// diagnostic, as the pak-reingest check's own failure is: the unreadable
+// entry is reported by the checks that list it (fileCountPrePass,
+// convergence), so a row of its own here would count it twice.
+func (r *verifyRun) lostFiles(mod *domain.InstalledMod) map[string]string {
+	key := domain.ModKey(mod.SourceID, mod.ID)
+	if lost, ok := r.lost[key]; ok {
+		return lost
+	}
+	if r.lost == nil {
+		r.lost = make(map[string]map[string]string)
+	}
+	lost, err := r.checkLostFiles(mod)
+	if err != nil {
+		r.emitEv(VerifyEvent{Kind: VerifyEvVerbose, Detail: fmt.Sprintf("could not check the cache entry of %s for lost files: %v", mod.Name, err)})
+		lost = nil
+	}
+	r.lost[key] = lost
+	return lost
+}
+
+func (r *verifyRun) checkLostFiles(mod *domain.InstalledMod) (map[string]string, error) {
+	a, err := r.svc.AdapterFor(r.game)
+	if err != nil {
+		return nil, err
+	}
+	if r.stranded == nil {
+		if r.stranded, err = r.svc.strandedRowPaths(r.ctx, r.game, r.profile); err != nil {
+			return nil, err
+		}
+	}
+	return r.svc.rowLostFiles(r.ctx, r.game, a, r.profile, mod, r.stranded)
+}
+
+// lostNote is the note of fileID's cache_incomplete row, or "" when its
+// content is all there.
+func lostNote(lost map[string]string, fileID string) string {
+	return lost[fileID]
 }
 
 // holdDetails makes the repair sub-lines downloadWarningSink emits wait
@@ -607,8 +657,9 @@ func (r *verifyRun) resolveLast(status, note string) {
 	// (VerifyFinding.Fixable).
 	last.Fixable = false
 	last.FixableReason = ""
+	unresolved := status == "missing" || status == "version_mismatch" || status == VerifyStatusCacheIncomplete
 	switch {
-	case status != "missing" && status != "version_mismatch":
+	case !unresolved:
 		// Resolved (or demoted): no reason to give.
 	case refused && refusalReason != "":
 		last.FixableReason = refusalReason
@@ -617,7 +668,7 @@ func (r *verifyRun) resolveLast(status, note string) {
 		// rather than leaving a not-fixable row with no reason at all.
 		last.FixableReason = "this --fix run already attempted a repair for it"
 	}
-	if status != "missing" && status != "version_mismatch" {
+	if !unresolved {
 		last.Recorded, last.Effective, last.Version = "", "", ""
 	}
 }
@@ -1694,40 +1745,18 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 				Fixable:        redownloadRepairs(mod), FixableReason: redownloadRefusal(mod)}, VerifyEvent{Version: mod.Version})
 			// #224 Task 4: ported verbatim from doVerify (originally lines
 			// 765-799).
-			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
-				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID, ref)
-				switch {
-				case errors.Is(err, ErrModLocked):
-					// #325: refused, not failed - the slot is untouched and
-					// the row keeps reporting MISSING. Note is the short,
-					// machine-checkable reason versionPass's own lock
-					// refusal already uses; the sentence is the text
-					// surface (VerifyEvRepairDetail).
-					r.resolveLast("missing", "locked")
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(err)})
-				case err != nil:
-					r.resolveLast("missing", err.Error())
-					page := downloadPage(err)
-					r.setDownloadPage(mod, page)
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download failed: %v", err)})
-					r.emitDownloadPage(page)
-				case persisted:
-					r.resolveLast("ok", "")
-					r.result.Findings[len(r.result.Findings)-1].Repair = "Re-downloaded OK"
-					r.result.Issues--
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded OK", Fixed: true})
-				default:
-					// The re-download restored the cache - the MISSING
-					// issue is genuinely repaired - but no checksum was
-					// available to store, so the row remains a NO CHECKSUM
-					// warning (#164: don't report "ok" for a write that
-					// never happened).
-					r.resolveLast("no_checksum", "re-downloaded, but no checksum was available to store")
-					r.result.Issues--
-					r.result.Warnings++
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store - NO CHECKSUM remains"})
-				}
-			}
+			r.redownloadRow(mod, f.FileID, ref, "missing")
+			continue
+		}
+
+		// #642: the entry is there, but no longer holds this file's
+		// content - a member deleted outside lmm, with or without its
+		// marker. The same re-download repairs it.
+		if note := lostNote(r.lostFiles(mod), f.FileID); note != "" {
+			r.result.Issues++
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: VerifyStatusCacheIncomplete, Note: note,
+				Fixable: redownloadRepairs(mod), FixableReason: redownloadRefusal(mod)}, VerifyEvent{})
+			r.redownloadRow(mod, f.FileID, ref, VerifyStatusCacheIncomplete)
 			continue
 		}
 
@@ -1801,6 +1830,47 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 		r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"}, VerifyEvent{})
 	}
 	return nil
+}
+
+// redownloadRow is --fix's re-download repair of the row perFileWalk just
+// reported with status - "missing" (#224 Task 4), or cache_incomplete
+// (#642): it resolves the row to "ok" (or no_checksum, when the download
+// gave no checksum to store), or leaves it at status with the refusal or
+// the failure. A plain run, or a local mod, does nothing.
+func (r *verifyRun) redownloadRow(mod *domain.InstalledMod, fileID string, ref *domain.ModReference, status string) {
+	if !r.opts.Fix || mod.SourceID == domain.SourceLocal {
+		return
+	}
+	persisted, err := r.redownloadModFile(r.ctx, mod, fileID, ref)
+	switch {
+	case errors.Is(err, ErrModLocked):
+		// #325: refused, not failed - the slot is untouched and the row
+		// keeps reporting its status. Note is the short, machine-checkable
+		// reason versionPass's own lock refusal already uses; the sentence
+		// is the text surface (VerifyEvRepairDetail).
+		r.resolveLast(status, "locked")
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(err)})
+	case err != nil:
+		r.resolveLast(status, err.Error())
+		page := downloadPage(err)
+		r.setDownloadPage(mod, page)
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download failed: %v", err)})
+		r.emitDownloadPage(page)
+	case persisted:
+		r.resolveLast("ok", "")
+		r.result.Findings[len(r.result.Findings)-1].Repair = "Re-downloaded OK"
+		r.result.Issues--
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded OK", Fixed: true})
+	default:
+		// The re-download restored the cache - the row's issue is
+		// genuinely repaired - but no checksum was available to store, so
+		// the row remains a NO CHECKSUM warning (#164: don't report "ok"
+		// for a write that never happened).
+		r.resolveLast("no_checksum", "re-downloaded, but no checksum was available to store")
+		r.result.Issues--
+		r.result.Warnings++
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store - NO CHECKSUM remains"})
+	}
 }
 
 // mergedPakStalenessPass ports cmd/lmm/verify.go's merged-pak staleness

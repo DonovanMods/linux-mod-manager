@@ -3164,6 +3164,7 @@ protecting is worse than no backup.
 
 - **+ ModName (fileID) - OK** - Cache exists and checksum stored.
 - **X ModName (fileID) - MISSING (version X not in cache)** - Cached files for that mod version are missing; use `--fix` to re-download.
+- **X ModName (fileID) - CACHE INCOMPLETE (what is gone)** - The mod's cache entry is there but lost this file's content (deleted outside lmm, with or without its completion marker); use `--fix` to re-download it. Until it is whole again, `--fix` never removes the mod's deployed copy as stale (a locally imported mod has no source to re-download from and must be re-imported instead).
 - **? ModName (fileID) - NO CHECKSUM** - File was installed without a stored checksum (e.g. before checksum support or with `--skip-verify`).
 - **! ModName - FILE COUNT MISMATCH** - The cache directory exists but is empty, when downloads were expected (per-mod, not per-file); not repaired by `--fix`.
 - **? Unknown mod ID - SKIPPED** - A stored checksum row references a mod that's no longer installed; not repaired by `--fix`.

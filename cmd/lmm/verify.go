@@ -184,14 +184,17 @@ Steam Workshop items among them - each checked for presence and named by
 a row: "ok" with external true while Steam still has it, "external_missing"
 once it does not - and unverified the others lmm has no recorded files for
 (a mod imported from disk), which it cannot compare against anything.
-status is one of "ok", "missing", "no_checksum",
-"file_count_mismatch", "skipped", "version_mismatch",
-"version_unverifiable", "stale_compile", "stale_deployment",
-"fixed_stale_deployment", "conversion_failed", "needs_reingest",
-"fixed_needs_reingest", "external_missing", "external_stale" (Steam has
-updated a tracked Workshop item since lmm recorded its revision - recorded
-and effective carry the two content ids, and --fix records Steam's) and
-"fixed_external_stale", "plugin_order_cycle", "plugin_missing_master",
+status is one of "ok", "missing", "cache_incomplete" (the mod's cache
+entry is there but lost a file's content - note names what is gone - and
+--fix re-downloads it; until it is whole, verify never removes the
+deployed copy as stale), "no_checksum", "file_count_mismatch", "skipped",
+"version_mismatch", "version_unverifiable", "stale_compile",
+"stale_deployment", "fixed_stale_deployment", "conversion_failed",
+"needs_reingest", "fixed_needs_reingest", "external_missing",
+"external_stale" (Steam has updated a tracked Workshop item since lmm
+recorded its revision - recorded and effective carry the two content ids,
+and --fix records Steam's) and "fixed_external_stale",
+"plugin_order_cycle", "plugin_missing_master",
 "plugin_limit_exceeded" and "plugin_list_unwritable" (issues: the game's
 plugin list cannot be sorted, needs a master that is not active, holds
 more active plugins than the game loads, or could not be written),
@@ -236,8 +239,8 @@ stale-deployment row's reason (populated on both "stale_deployment" and
 "fixed_stale_deployment"), a pak's conversion-failure reason
 ("conversion_failed"), or why/whether a pak needed re-ingesting
 (populated on both "needs_reingest" and "fixed_needs_reingest") - and is
-omitted otherwise. result.issues counts MISSING files and VERSION
-MISMATCH rows (a successful --fix repair of either decrements it back
+omitted otherwise. result.issues counts MISSING and CACHE INCOMPLETE
+files and VERSION MISMATCH rows (a successful --fix repair of either decrements it back
 out; a locked VERSION MISMATCH stays counted since --fix refuses it);
 result.warnings counts everything else that isn't OK, including
 "stale_deployment", "conversion_failed", and "needs_reingest" rows (never
@@ -582,6 +585,20 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 
 	case "no_checksum":
 		fmt.Printf("%s %s (%s) - NO CHECKSUM\n", colorYellow("?"), f.ModName, f.FileID)
+
+	case core.VerifyStatusCacheIncomplete:
+		// #642: the cache entry is there but lost this file's content; the
+		// note names what is gone. --fix re-downloads it when it can (its
+		// repair sub-line follows), and the reason says why not when it
+		// cannot.
+		subject := cmp.Or(f.ModName, f.ModID)
+		if f.FileID != "" {
+			subject = fmt.Sprintf("%s (%s)", subject, f.FileID)
+		}
+		fmt.Printf("%s %s - CACHE INCOMPLETE (%s)\n", colorRed("X"), subject, f.Note)
+		if !f.Fixable && f.FixableReason != "" {
+			fmt.Printf("  %s\n", f.FixableReason)
+		}
 
 	case "ok":
 		switch {
