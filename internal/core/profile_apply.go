@@ -74,10 +74,18 @@ type ProfileApplyPlan struct {
 	// the result - see NoteExternalProfileScope. omitzero.
 	ExternalUnchanged int `json:"external_unchanged,omitzero"`
 
-	// NoChanges is true when all three buckets are empty - the system
-	// already matches the profile and ApplyProfileApply has nothing to do
-	// (the CLI prints "System already matches profile <name>." and stops
-	// without even syncing the merged pak, exactly as before).
+	// Overrides is every file the apply changes because the profile's
+	// overrides differ from what the game directory holds (#631): its
+	// overrides on game files placed or updated, a game file an override it
+	// no longer sets put back, and #630's overridden copies of the mods the
+	// apply leaves in place. Additive; absent when there are none.
+	Overrides []OverrideChange `json:"overrides,omitempty"`
+
+	// NoChanges is true when all three buckets are empty and no override
+	// changes (#631) - the system already matches the profile and
+	// ApplyProfileApply has nothing to do (the CLI prints "System already
+	// matches profile <name>." and stops without even syncing the merged
+	// pak, exactly as before).
 	NoChanges bool `json:"no_changes"`
 
 	// snapshot is ruling 5's staleness precondition: the installed-mod set
@@ -308,7 +316,22 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 		return nil, err
 	}
 	s.settleOwedProfileBackfill(ctx)
-	return s.planProfileApply(ctx, game, profileName)
+	plan, err := s.planProfileApply(ctx, game, profileName)
+	if err != nil {
+		return nil, err
+	}
+	// #631: the override changes the apply makes. Here, not in
+	// planProfileApply: snapshot restore's converge step applies the mods
+	// alone, and restores the originals itself.
+	if profile, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
+		skip := planSkipKeys(plan.ToDisable, plan.ToEnable)
+		for _, entry := range plan.ToInstall {
+			skip[domain.ModKey(entry.Ref.SourceID, entry.Ref.ModID)] = true
+		}
+		plan.Overrides = s.planOverrideChanges(ctx, game, profile, skip)
+		plan.NoChanges = plan.NoChanges && len(plan.Overrides) == 0
+	}
+	return plan, nil
 }
 
 // planProfileApply is PlanProfileApply without the backfill settlement, for
@@ -709,7 +732,8 @@ func (s *Service) ApplyProfileApply(ctx context.Context, game *domain.Game, plan
 	if err == nil {
 		// #630: the mods the apply left in place still take the profile's
 		// overrides, and lose another profile's.
-		result.Warnings = append(result.Warnings, s.convergeOverriddenFiles(ctx, game, plan.Profile)...)
+		// #631: and its overrides on game files.
+		result.Warnings = append(result.Warnings, s.convergeProfileOverrides(ctx, game, plan.Profile)...)
 	}
 	if err == nil && len(result.Failed) > 0 {
 		err = &ProfileApplyIncompleteError{Profile: plan.Profile, Result: result}
@@ -753,6 +777,13 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		msg := fmt.Sprintf(NoteExternalProfileScope, plan.ExternalUnchanged)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: Scope{Op: OpProfileApply}, Phase: DeployExternalSkipped, Detail: msg})
+	}
+	// #631: a plan whose only changes are overrides has no mods to act on;
+	// ApplyProfileApply converges the overrides, and nothing here syncs
+	// what no mod change touched - as before #631, when such a plan said
+	// it had no changes.
+	if len(plan.ToDisable) == 0 && len(plan.ToEnable) == 0 && len(plan.ToInstall) == 0 {
+		return result, nil
 	}
 	note := func(scope Scope, phase DeployPhase, msg string) {
 		result.Notes = append(result.Notes, msg)

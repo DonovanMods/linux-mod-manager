@@ -1,0 +1,15 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "hardcore",
+  "to_disable": [],
+  "to_enable": [],
+  "to_install": [],
+  "overrides": [
+    {
+      "path": "Skyrim.ini",
+      "root": "install_path",
+      "action": "update"
+    }
+  ],
+  "no_changes": false
+}

@@ -81,7 +81,14 @@ type SwitchPlan struct {
 	// advisory note saying so - see NoteExternalProfileScope. omitzero.
 	ExternalUnchanged int `json:"external_unchanged,omitzero"`
 
-	NoChanges     bool `json:"no_changes"`     // To's mod set matches From's content-wise; only SetDefault is needed
+	// Overrides is every file the switch changes because To's profile
+	// overrides differ from what the game directory holds (#631): its
+	// overrides on game files placed or updated, a game file an override
+	// To does not set put back, and #630's overridden copies of the mods
+	// the switch leaves in place. Additive; absent when there are none.
+	Overrides []OverrideChange `json:"overrides,omitempty"`
+
+	NoChanges     bool `json:"no_changes"`     // To's mod set matches From's content-wise and no override changes (#631); only SetDefault is needed
 	AlreadyActive bool `json:"already_active"` // To is already the active default profile; nothing to plan
 
 	// FlagOnly is set when no single profile of the game is marked active
@@ -417,12 +424,20 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	// #458: the preview names each install by a version a person reads.
 	s.stampRefDisplay(toInstall, nil)
 
+	// #631: and the override changes the switch makes once To is live.
+	skip := planSkipKeys(toDisable, toEnable)
+	for _, ref := range toInstall {
+		skip[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
+	overrides := s.planOverrideChanges(ctx, game, targetProfile, skip)
+
 	return &SwitchPlan{
 		GameID: game.ID, From: currentName, To: target,
 		ToDisable: toDisable, ToEnable: toEnable, ToInstall: toInstall,
 		PriorVersions:     priorVersions,
 		ExternalUnchanged: externalUnchanged,
-		NoChanges:         len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0,
+		Overrides:         overrides,
+		NoChanges:         len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0 && len(overrides) == 0,
 		snapshot:          snapshot,
 		targetSnapshot:    targetSnapshot,
 	}, nil
@@ -508,7 +523,8 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		// #630: the profile now live may override mod files the one it
 		// replaced did not, and the other way round - even when the two
 		// list the same mods and nothing above redeployed.
-		result.Warnings = append(result.Warnings, s.convergeOverriddenFiles(ctx, game, plan.To)...)
+		// #631: and its overrides on game files.
+		result.Warnings = append(result.Warnings, s.convergeProfileOverrides(ctx, game, plan.To)...)
 	}
 	if err == nil && len(result.Failed) > 0 {
 		err = &ProfileSwitchIncompleteError{Profile: plan.To, Result: result}
