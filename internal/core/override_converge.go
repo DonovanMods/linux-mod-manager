@@ -657,7 +657,7 @@ func (s *Service) restoreGameOverrides(ctx context.Context, game *domain.Game, p
 		case !g.own:
 			keep(rel, "no profile override sets it any more, but it changed after lmm wrote the override, so lmm left your file (the game's original is still kept)")
 			continue
-		case !g.hasRow && !(g.hasRec && g.rec.Created):
+		case !g.hasRow && (!g.hasRec || !g.rec.Created):
 			if g.hasRec {
 				warn(rel, "no profile override sets it any more, but lmm kept no original of it to put back, so it left the file")
 				forget()
@@ -942,7 +942,7 @@ func overridesDigest(profile *domain.Profile) string {
 	h := sha256.New()
 	h.Write([]byte("overrides\x00")) // never "", which means unrecorded
 	for _, k := range keys {
-		fmt.Fprintf(h, "%d:%s%d:", len(k), k, len(profile.Overrides[k]))
+		_, _ = fmt.Fprintf(h, "%d:%s%d:", len(k), k, len(profile.Overrides[k]))
 		h.Write(profile.Overrides[k])
 	}
 	return hex.EncodeToString(h.Sum(nil))
