@@ -144,7 +144,9 @@ import <archive>'), then name that mod with --bundle (as source:id, its
 id, or its name; repeatable). A mod from NexusMods, CurseForge or any
 other source is refused. A mod a collection already bundled is carried
 again whether or not you name it. Bundled files need the .lmmc container,
-so --bundle needs -o and refuses --plain.
+so --bundle needs -o and refuses --plain. So do binary patches a
+collection installed the profile's mods with: the .lmmc carries them, a
+plain YAML document only names them.
 
 --json prints the profile document of #309 instead, unchanged.
 
@@ -205,6 +207,17 @@ with its file count and size. One that holds code (a DLL or other
 executable, a system script, or a loader configuration) is skipped
 unless you pass --allow-any-overrides. A plain YAML document cannot
 carry files, so a bundled item in one is refused.
+
+A collection may also record, per mod file, an exact file list (only the
+listed files are installed, each checked against its md5) and binary
+patches (BSDIFF40, carried in a .lmmc's patches/ or in a NexusMods
+collection's own archive, with its bundled files). A patch is applied
+only to the file it was made against, by its CRC32: any other file
+refuses the import, with nothing written, where Vortex would install the
+file unpatched. A collection that patches code (a DLL or other
+executable, a system script, or a loader configuration) is refused
+unless you pass --allow-any-overrides. The plan lists every file list and
+patch.
 
 --workshop-collection takes a Steam Workshop collection id or the URL of
 its page, and imports the collection AS a profile: a collection is a mod
@@ -382,7 +395,7 @@ func init() {
 	profileImportCmd.Flags().BoolVar(&profileImportWithHooks, "with-hooks", false,
 		"import the hooks the file carries (they are scripts lmm runs; listed in the plan)")
 	profileImportCmd.Flags().BoolVar(&profileImportAnyOverrides, "allow-any-overrides", false,
-		"import overrides that are not text config files, and bundled files that hold code, too (listed in the plan; skipped without this)")
+		"import overrides that are not text config files, bundled files that hold code, and patches to code, too (listed in the plan; without it the first two are skipped and a collection patching code is refused)")
 
 	// Export flags
 	profileExportCmd.Flags().StringVarP(&profileExportOutput, "output", "o", "", "write the collection to this file (a compressed .lmmc unless --plain)")
@@ -1201,7 +1214,16 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 			// deploys it - instead of a bucket that promised an install.
 			printNoInstallRefs(slices.Concat(plan.AlreadyCached, plan.NeedsRedownload, plan.Missing), "--no-install")
 		} else if manual {
-			printNoInstallRefs(slices.Concat(plan.NeedsRedownload, plan.Missing), "manual downloads")
+			toFetch, bundled := splitBundledRefs(slices.Concat(plan.NeedsRedownload, plan.Missing))
+			printNoInstallRefs(toFetch, "manual downloads")
+			// #610: the collection carries its bundled items, so they need
+			// no download on any account.
+			if len(bundled) > 0 {
+				fmt.Printf("  ↓ %d bundled in the collection, will be installed:\n", len(bundled))
+				for _, ref := range bundled {
+					fmt.Printf("    - %s\n", planRefLine(ref))
+				}
+			}
 		}
 		// #371: these are installed under ANOTHER profile - the bytes are
 		// here, but this profile still needs its own rows, so they are
@@ -1236,7 +1258,8 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 	// downloaded, and declining leaves the profile without those rows.
 	pendingCount := len(plan.AlreadyCached) + len(plan.NeedsRedownload) + len(plan.Missing)
 	if manual {
-		pendingCount = len(plan.AlreadyCached)
+		_, bundled := splitBundledRefs(slices.Concat(plan.NeedsRedownload, plan.Missing))
+		pendingCount = len(plan.AlreadyCached) + len(bundled)
 	}
 
 	declined := false
@@ -2037,6 +2060,19 @@ func profileApplyTarget(ctx context.Context, service *core.Service, game *domain
 		return "default"
 	}
 	return defaultProfile.Name
+}
+
+// splitBundledRefs splits refs into the ones to download and a
+// collection's bundled items (#610), which the collection carries.
+func splitBundledRefs(refs []domain.ModReference) (toFetch, bundled []domain.ModReference) {
+	for _, r := range refs {
+		if r.SourceID == domain.SourceCollection {
+			bundled = append(bundled, r)
+		} else {
+			toFetch = append(toFetch, r)
+		}
+	}
+	return toFetch, bundled
 }
 
 // printOverrideChanges prints a switch or apply plan's override changes

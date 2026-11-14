@@ -261,6 +261,14 @@ type CollectionUpdatePlan struct {
 	OverridesRemoved    []string             `json:"overrides_removed,omitempty"`
 	OverrideConflicts   []string             `json:"override_conflicts,omitempty"`
 	RestrictedOverrides []RestrictedOverride `json:"restricted_overrides,omitempty"`
+	// RestrictedPatches counts the patches the updated profile would
+	// install with that need --allow-any-overrides (#610: to code, or kept
+	// for another file), across the whole profile, as Apply gates them:
+	// with any, Apply refuses unless the update allows any override.
+	// TreeInputs lists every patch and file list it counts them in; Apply
+	// admits only the patches it lists.
+	RestrictedPatches int                `json:"restricted_patches,omitzero"`
+	TreeInputs        []ImportTreeInputs `json:"tree_inputs,omitempty"`
 	// ExternalAdded and ExternalRemoved are the items to get by hand the
 	// new version adds and drops.
 	ExternalAdded   []domain.CollectionExternalItem `json:"external_added,omitempty"`
@@ -301,8 +309,14 @@ type CollectionUpdatePlan struct {
 	manualDownload bool
 	// bundle is the new version's container's bundled files (#623): kept
 	// at Apply for the lmm-collection source, as an import keeps them.
-	bundle   *pendingBundle
-	snapshot installedSnapshot
+	bundle *pendingBundle
+	// patchSources names the patches the new version brings (#610), kept
+	// in the store at plan and admitted at Apply; patchListed every patch
+	// use the plan lists (TreeInputs), which alone --allow-any-overrides
+	// admits.
+	patchSources map[string]bool
+	patchListed  map[string]bool
+	snapshot     installedSnapshot
 }
 
 // CollectionUpdateOptions is the user's say over an update, taken at Apply
@@ -475,16 +489,56 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 	}
 	warnings = append(warnings, more...)
 	// #623: the container's bundled items, checked and given the ids and
-	// versions the profile records, as an import does.
-	_, pending, more, err := resolveBundledItems(doc, bundle, container)
+	// versions the profile records, as an import does. #610: a converted
+	// source collection's come from its recipe, kept under the recipe's id.
+	var recipe *recipeFiles
+	if conv != nil {
+		recipe = conv.recipe
+	}
+	carriesFiles, bundleID := container, bundleCollectionIDFor(doc.Info.ID)
+	if recipe != nil {
+		bundle, carriesFiles, bundleID = recipe.bundle(), true, recipe.collectionID()
+	}
+	_, pending, more, err := resolveBundledItems(doc, bundle, carriesFiles, bundleID)
 	if err != nil {
 		return nil, err
 	}
 	warnings = append(warnings, more...)
 	if pending != nil {
 		pending.data = raw
+		if recipe != nil {
+			pending.data, pending.recipeDir = nil, recipe.dir
+		}
 		plan.bundle = pending
 	}
+	// #610: every patch the new version names, and the ones to code.
+	broughtShas, err := s.collectionPatchSources(game, doc, bundle, recipe)
+	if err != nil {
+		return nil, err
+	}
+	// Counted over the whole profile the update saves - the new version's
+	// entries and the profile's others - as its apply gates every one of
+	// them (#610 re-review), so the count is what apply refuses.
+	newRefs := make([]domain.ModReference, len(doc.Items))
+	for i, item := range doc.Items {
+		newRefs[i] = item.Ref
+	}
+	whole := slices.Clone(newRefs)
+	newUses := listedPatches(newRefs)
+	for _, ref := range base.Mods {
+		// The profile's own entries whose patches the new version does not
+		// name as they are - the user's, kept or in conflict.
+		for use := range listedPatches([]domain.ModReference{ref}) {
+			if !newUses[use] {
+				whole = append(whole, ref)
+				break
+			}
+		}
+	}
+	plan.patchSources = broughtUses(newRefs, broughtShas)
+	plan.TreeInputs = s.importTreeInputs(game, whole, plan.patchSources)
+	plan.RestrictedPatches, _ = restrictedTreePatches(plan.TreeInputs)
+	plan.patchListed = listedPatches(whole)
 
 	// Identity: the same collection, and not an older version of it.
 	fetchedID, fetchedVersion := doc.Info.ID, doc.Info.Version
@@ -958,6 +1012,10 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	if err != nil {
 		return result, err
 	}
+	// #610: a patch to code is refused, not dropped, as at an import.
+	if plan.RestrictedPatches > 0 && !opts.AllowAnyOverrides {
+		return result, fmt.Errorf("%w: %d of the new version's patches change code or apply to a file no import admitted them for; update with --allow-any-overrides to apply them", ErrCodePatch, plan.RestrictedPatches)
+	}
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return result, err
@@ -1024,6 +1082,11 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	// #609: the new version's recorded installer choices replay only
 	// against the curator's archive, as at an import.
 	ip.archiveMD5 = collectionArchiveMD5s(plan.doc)
+	// #610: the patches the new version brings are admitted by this update.
+	ip.patchSources = plan.patchSources
+	// --allow-any-overrides admits only what the plan listed
+	// (TreeInputs), never a patch it did not show.
+	ip.patchListed = plan.patchListed
 	// Only what the new version adds or rewrites goes through the
 	// override gate, and updateTarget applied it: the profile's own
 	// overrides stay as they are.
@@ -1050,11 +1113,13 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	if plan.manualDownload {
 		// As a source collection's import on a free account: only what
 		// needs no download is installed, and the rest is recorded pending.
-		pending = len(ip.NeedsRedownload) + len(ip.Missing)
-		ip.NeedsRedownload, ip.Missing = nil, nil
+		// #610: a bundled item needs no download.
+		keep := slices.Concat(bundledOnly(ip.NeedsRedownload), bundledOnly(ip.Missing))
+		pending = len(ip.NeedsRedownload) + len(ip.Missing) - len(keep)
+		ip.NeedsRedownload, ip.Missing = bundledOnly(ip.NeedsRedownload), bundledOnly(ip.Missing)
 	}
 	if b := plan.bundle; b != nil {
-		if err := s.keepCollectionContainer(game, b.collectionID, b.data, b.bundle, b.names, b.admitted(opts.AllowAnyOverrides)); err != nil {
+		if err := s.keepPendingBundle(game, b, opts.AllowAnyOverrides); err != nil {
 			return result, err
 		}
 	}

@@ -31,6 +31,9 @@ const (
 	collectionDocMember = "collection.yaml"
 	collectionSigMember = "collection.yaml.sig"
 	collectionFilesDir  = "files/"
+	// collectionPatchesDir holds a collection's binary patches (#610), one
+	// member per patch, named by its sha256: patches/<sha256>.diff.
+	collectionPatchesDir = "patches/"
 
 	// maxCollectionDocument caps the version-1 document, inflated or
 	// plain: a mod list of thousands of entries with long instructions is
@@ -182,6 +185,22 @@ func parseCollectionContainer(data []byte, readItems bool) (doc []byte, bundle *
 			// A files/ member spelled another way (./files/…, files\…):
 			// refused rather than read under a name it does not have.
 			return nil, nil, nil, fmt.Errorf("%w: %v: the member %q", errBadContainer, ErrInvalidBundle, f.Name)
+		case strings.HasPrefix(f.Name, collectionPatchesDir):
+			// #610: a patch, named by its own sha256, read whole - each and
+			// all of them together capped - and checked against its name.
+			// A kept container is read for one bundled item, never for its
+			// patches (the store keeps those).
+			if !readItems {
+				continue
+			}
+			if bundle == nil {
+				bundle = &collectionBundle{items: map[string]*bundledItem{}}
+			}
+			if err := bundle.addPatchMember(f); err != nil {
+				return nil, nil, nil, fmt.Errorf("%w: %v", errBadContainer, err)
+			}
+		case strings.HasPrefix(name+"/", collectionPatchesDir):
+			return nil, nil, nil, fmt.Errorf("%w: the member %q is a patch spelled another way than patches/<sha256>.diff", errBadContainer, f.Name)
 		default:
 			ignored = append(ignored, f.Name)
 		}

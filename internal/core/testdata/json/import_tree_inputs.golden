@@ -1,0 +1,13 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "21",
+  "file_list": 2,
+  "patches": [
+    {
+      "file_id": "210",
+      "path": "Mod\\Helper.dll",
+      "crc32": "CABDDFC4",
+      "restricted": "code the system runs (.dll)"
+    }
+  ]
+}

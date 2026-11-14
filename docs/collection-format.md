@@ -29,6 +29,7 @@ A collection is either a YAML document or a `.lmmc` container.
   | `collection.yaml`     | The YAML document. Required, exactly once.                            |
   | `collection.yaml.sig` | Reserved for a detached signature (#624). Ignored, with a warning.    |
   | `files/<item>/…`      | An author's own files, one directory per bundled item (#623; see [Bundled files](#bundled-files)). |
+  | `patches/<sha256>.diff` | A binary patch the document's mods install with, named by its sha256 (#610; see [Exact file lists and patches](#exact-file-lists-and-patches)). |
 
   Any other member is ignored, with a warning naming it.
 
@@ -88,6 +89,16 @@ mods:                        # load order, first = lowest priority
       "100": { config_sha256: 9e0a…, steps: [ … ] }
       "101": { config_sha256: 51c7…, steps: [ … ] }
     fomod_order: ["101", "100"]  # optional: the order those files layer in (else by file id)
+  - source_id: nexusmods     # a mod installed by an exact file list, with a patch
+    mod_id: "5662"
+    file_ids: ["120872"]
+    file_list:               # per file id: only these paths install (requires: file_list)
+      "120872":
+        - { path: '[CP] Mod\content.json', md5: 7c4f… }
+        - { path: '[CP] Mod\manifest.json', md5: 0b1e… }
+    patches:                 # per file id: BSDIFF40 patches (requires: patches)
+      "120872":
+        - { path: '[CP] Mod\content.json', crc32: CABDDFC4, sha256: 9e31… }
   - source_id: lmm-collection # a bundled item: its files are the container's files/my-patch/
     mod_id: my-patch
     version: 66a0a9f0ac25f0849c1e7b3d2f5a8e60 # the digest of those files (requires: bundled)
@@ -137,7 +148,7 @@ duplicate keeps `title`, `author`, `description`, `install_instructions` and
 | `requires`             | The features the content needs. Derived by the exporter, never written by hand. |
 | `origin`               | Where the collection came from, when someone else curated it. Carried through every re-export, so the curator stays credited. A profile imported from a URL also records `origin.import_url` (below), which no document carries. |
 | `signer`               | Reserved (#624). Ignored, with a warning. |
-| `mods`                 | The mods, in load order. Each entry is a profile mod reference (`source_id`, `mod_id`, `version`, `file_ids`, `locked`, `disabled`, `category`, and every key a profile reference gains later), plus `name` and `files`. |
+| `mods`                 | The mods, in load order. Each entry is a profile mod reference (`source_id`, `mod_id`, `version`, `file_ids`, `locked`, `disabled`, `category`, `mod_type`, `fomod`, `fomod_files`, `fomod_order`, `file_list`, `patches`, and every key a profile reference gains later), plus `name` and `files` (the per-archive facts: id, md5, sha256, size - not to be confused with `file_list`). |
 | `external`             | Items lmm cannot fetch, with a URL and the curator's instructions. They are recorded on the imported profile, so a re-export keeps them. |
 | `hooks`                | The profile's hooks, in the profile file's encoding: a hook that is absent inherits the game's, and one set to `""` disables it. |
 | `overrides`            | Config files (path relative to the game directory → content). Deploy keeps them inside the game directory, as it does every override. |
@@ -159,7 +170,9 @@ no source. (The design's §12 sketch put them in `mods` with
 `kind: external`; the format moved them out for this reason.) A `.lmmc`
 container needs version 1 to read. An lmm that reads version 1 but
 predates bundled files ignores a container's `files/` with a warning, and
-refuses a document whose `requires` names `bundled`.
+refuses a document whose `requires` names `bundled`. One that predates
+file lists and patches ignores a container's `patches/` with a warning,
+and refuses a document whose `requires` names `file_list` or `patches`.
 
 ## Importing from a URL
 
@@ -322,6 +335,15 @@ different one). The updated profile may name only the new container's own
 items and the bundled items the profile already records: any other bundled
 reference is refused.
 
+A NexusMods origin's bundled items come from the new revision's recipe
+(`bundled/<fileExpression>/`), kept beside it as at an import, and its
+patches are kept in the patch store before anything installs. A new
+version that patches code (see [Exact file lists and
+patches](#exact-file-lists-and-patches)) refuses the update unless it
+allows any override (`--allow-any-overrides`, the web UI's **Apply these
+patches**): the plan counts them (`restricted_patches`), and a mod is
+never updated unpatched.
+
 The update converges through the import's two-phase apply: every download
 is acquired first, so a refusal (an installer's questions, or a NexusMods
 collection's failed download) writes nothing. An update planned before the
@@ -349,6 +371,8 @@ is what lets the format grow without breaking older importers.
 | `file_load_order:<id>` | a `load_orders` entry for that id (a file-based load order, as a NexusMods collection's `fbLoadOrders` records it: `cyberpunk2077-archive` is Cyberpunk 2077's archive order) | lmm with #620, for a game whose adapter writes that order (the `cyberpunk2077` adapter: `cyberpunk2077-archive`). Elsewhere it is refused, because the order would be saved and never applied |
 | `mod_type:<type>` | any mod with that `mod_type` (a stated mod type, as a NexusMods collection records it: `dinput` is a script extender, deployed to the game folder) | lmm with #607, for a game whose adapter routes the type (the `bethesda` adapter: `dinput`, `enb`). Elsewhere it is refused, because the mod would deploy where the game never reads it |
 | `bundled` | any mod whose `source_id` is `lmm-collection`: a bundled item, whose files the `.lmmc` carries under `files/<item>/` | format v1 (lmm with #623). An older lmm ignores `files/` with a warning and refuses the feature |
+| `file_list` | any mod with a `file_list` entry for a file it pins (an exact file list, as a NexusMods collection's replicate-mode `hashes` records one) | format v1 (lmm with #610) |
+| `patches` | any mod with a `patches` entry for a file it pins (BSDIFF40 patches, carried in the `.lmmc`'s `patches/`) | format v1 (lmm with #610) |
 
 ## Bundled files
 
@@ -415,6 +439,23 @@ hand-edited profile naming an item that was held back fails for that mod
 at deploy. `lmm-collection`, `lmm-merged` and `local` are lmm's own source
 ids: no game maps them, and no custom source may take them.
 
+**From a NexusMods collection** (#610). A collection's `bundle` items are
+bundled items too: the recipe archive carries each one's files under
+`bundled/<fileExpression>/`, read with the same member rules, caps, digest
+and code check as a container's `files/<item>/` (and an item holding code
+is held back the same way, unless `--allow-any-overrides`). Each is named
+by a slug of its directory (a leading `Bundled - ` dropped), and kept under
+the recipe's own id, `nexusmods-<slug>`: on the profile, source
+`lmm-collection`, id `nexusmods-<slug>.<item>`. The recipe's cache entry is
+what is kept, with an index beside it (`<cache>/collections/
+nexusmods-<slug>/<revision>.json`) admitting the items the import let in;
+the lmm-collection source reads an item from there as it reads one from a
+kept container. A bundled item needs no download, so even a free
+account's import installs it. A re-export of such a profile carries the
+items in its `.lmmc`, and the converted collection's id
+(`nexusmods:<slug>`) gives them the same `nexusmods-<slug>.<item>` ids on
+the recipient's profile.
+
 **Naming the files to bundle.** An author's files reach a profile as a
 mod imported from a file (`lmm import <archive>`, source `local`). An
 export carries the files of each such mod it is told to:
@@ -473,6 +514,103 @@ makes a container an import would refuse.
 - nothing in a bundled tree is read as lmm configuration: no hooks, no
   sources. Bundled files are installed without execute permission.
 
+## Exact file lists and patches
+
+A collection can say exactly which of an archive's files a mod installs,
+and patch some of them: what a NexusMods collection records as an item's
+`hashes` (Vortex's "replicate" install mode) and `patches`. Both are kept
+per file of the mod, under the file id they describe, so a mod whose
+pinned files install differently says so for each; an entry for a file
+the mod does not pin is inert (a re-import drops it), and an update that
+moves the mod to another file installs that file whole.
+
+**`file_list`** lists `{path, md5}` for each file the archive installs.
+Installing the file extracts the archive (and runs its FOMOD installer,
+if it has one) as usual, then keeps only the listed files: each must be
+there, and every other file is dropped. After any patch, each listed
+file's md5 must be the one recorded - the curator's file, as installed -
+or the install is refused. Requires `file_list`.
+
+**`patches`** lists `{path, crc32, sha256}` for each file a BSDIFF40 patch
+changes: `crc32` is the CRC32 of the file the patch was made against
+(8 hex digits, as Vortex writes it), and `sha256` names the patch, which
+a `.lmmc` carries as `patches/<sha256>.diff`. A patch is applied only to a
+file whose CRC32 is the baseline. **Any other file refuses the install,
+with nothing written: this is a deliberate divergence from Vortex, which
+warns and installs the file unpatched.** A collection whose patch did not
+apply looks installed and plays wrong, which is what the gate exists to
+prevent. Only BSDIFF40 is applied; a NexusMods collection's patch in any
+other format raises `patch_format`, which no lmm supports. Requires
+`patches`.
+
+**Where, and in what order.** Both apply to the tree the archive
+installs, after its FOMOD installer and before the game's adapter lays it
+out: the paths are relative to the archive's own layout, as the curator's
+tool saw it. The list filters first, then the patches apply, then the
+md5s are checked. A path matches a file case-insensitively, with `\` or
+`/` between its segments (the curator's tool runs on Windows), and must
+match exactly one file. The result is a cache variant of the mod's
+version: two different lists or patch sets never share a cache entry,
+and a mod with neither keeps the entry it always had.
+
+**Kept on this machine.** An import keeps every patch it brings in, in a
+store beside the game's collections, `<cache>/collections/patches/
+<sha256>.diff`, so a later rebuild - a profile switch or apply, a deploy
+that finds the mod's cache entry gone, `lmm verify --fix` - patches the
+file again. A plain YAML document cannot carry patches: it imports only
+on a machine that already keeps each one; elsewhere it is refused, naming
+the container to import instead. An export carries every patch the store
+keeps for the profile's mods in its `.lmmc`, and says when one is missing.
+
+**Admitted per file.** A kept patch applies only to the files an import
+admitted it for. A BSDIFF40 patch can make any content at all, so the
+store records, beside each patch (`<sha256>.json`), each mod's file - the
+mod and the path, in the matching form above - that the document bringing
+it named, and whether that import allowed code (`--allow-any-overrides`).
+A document naming a kept patch for any other file, or for the same path
+in another mod - an older profile export, a hand-edited profile, a plain
+YAML collection - lists it in the plan as restricted, and its import is
+refused unless `--allow-any-overrides`, which admits it for that file. An
+import records its admissions only once nothing else can refuse it: a
+refused import admits nothing. A collection update lists, and gates, the
+patches of the whole profile it saves, the user's own mods included, and
+admits only the patches its plan listed. The install applies a patch only to a file
+it is admitted for, and refuses one whose result is native code or a
+script (a Windows, ELF or Mach-O executable or library, or a `#!` script,
+by its content, whatever its name) unless its admission allowed code.
+Nothing removes kept patches: delete the game's
+`<cache>/collections/patches/` to reclaim the space, and import the
+collections again.
+
+**What an import checks.** Every path is a stranger's: one that is empty,
+absolute (a leading separator or a drive letter), has an empty, `.` or
+`..` segment, holds a control or formatting character, or is over 1 KiB
+is refused, never rewritten, and so is a path listed twice for one file
+(in either case or separator). An `md5` must be 32 hex digits, a `crc32` 8,
+and a `sha256` 64 lower-case ones. A mod's lists hold at most 50,000 files
+and its patches number at most 4,096. A patch is at most 64 MiB, and the
+file it patches - and the file it makes - at most 256 MiB; the patch
+itself is read as hostile (its lengths, every control triple and its
+output size are checked before anything is allocated). A container's
+`patches/<sha256>.diff` must hash to its name and be BSDIFF40, and a
+container's patches are at most 64 MiB together. These rules hold for every
+profile document an import reads, an older export included.
+
+**A patch to code** - to a file whose name is that of a library, an
+executable, a script the system runs, or a loader configuration, as for
+[bundled files](#bundled-files) - is listed as such in the plan, and the
+import is refused unless `--allow-any-overrides` (the web UI's **Apply
+these patches** box, which sets the same option as the bundled items' and
+the overrides' boxes). So is a patch admitted for another file (above). It
+is not held back on its own, as an override is: the mod would install
+unpatched. Every import is gated this way - a collection, a collection
+update, and an older profile export alike (the plan's `tree_inputs`).
+
+**From a NexusMods collection.** The recipe's `hashes` become the mod's
+`file_list`, its `patches` (from the recipe's `patches/<mod name>/<path>.diff`)
+the mod's `patches`, and a `bundle` item - its files the recipe's
+`bundled/<fileExpression>/` - a bundled item (below).
+
 ## Importing safely
 
 A collection from someone else is untrusted input.
@@ -500,6 +638,14 @@ A collection from someone else is untrusted input.
   override of a deployed mod's own file (a symlink into lmm's mod cache, or
   a hardlink) is skipped with a warning for now (#630); each override is
   written or skipped on its own.
+- **Patches to code** - a patch to a library, an executable, a script the
+  system runs or a loader configuration - are listed in the plan
+  (`items[].patches[].restricted`, counted in `restricted_patches`), and
+  the import is refused unless `--allow-any-overrides` (the web UI's
+  **Apply these patches**, beside the overrides' and the bundled items'
+  boxes, which set the same option). Unlike an override or a bundled item,
+  a patch is not skipped on its own: the mod would install unpatched. See
+  [Exact file lists and patches](#exact-file-lists-and-patches).
 - **Version 0 too.** The hooks and overrides rules apply to every profile
   import from a file or upload, a version-0 document included, so the
   older format is no way around them. They do not apply to profiles you

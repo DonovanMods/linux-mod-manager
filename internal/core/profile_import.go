@@ -103,6 +103,12 @@ type ImportPlan struct {
 	// plans exactly as before.
 	Hooks               []ImportHook         `json:"hooks,omitempty"`
 	RestrictedOverrides []RestrictedOverride `json:"restricted_overrides,omitempty"`
+	// TreeInputs lists the mods that install with an exact file list or
+	// binary patches (#610), every patch with why it needs
+	// --allow-any-overrides when it does: without it, Apply refuses an
+	// import with one (ErrCodePatch). For every document import, version 0
+	// included; absent when no mod has either.
+	TreeInputs []ImportTreeInputs `json:"tree_inputs,omitempty"`
 	// Overrides lists every override path the document carries, held back
 	// or not, in path order (#621 review N1): a file the import writes into
 	// the game directory is never one the user did not see. Absent when
@@ -138,6 +144,17 @@ type ImportPlan struct {
 	// bundle is a collection container's bundled files (#623): what the
 	// apply keeps for the lmm-collection source, and what it holds back.
 	bundle *pendingBundle
+	// patchSources names the patch uses a collection import brings itself
+	// (#610), by "<sha256>|<admission key>" (broughtUses): their patches
+	// kept in the store at plan, admitted for those targets at apply. Nil
+	// for an import that brings none, whose patches must be ones the store
+	// keeps and admits.
+	patchSources map[string]bool
+	// patchListed limits what --allow-any-overrides admits to the patches
+	// a plan listed, by "<sha256>|<admission key>" (#610 re-review: a
+	// collection update lists only the new version's); nil admits every
+	// patch the document names.
+	patchListed map[string]bool
 	// autoUpdate names the mods (domain.ModKey) whose installed rows the
 	// import writes with the auto update policy (#607: a source
 	// collection's "latest" items) - in the same write as the row, inside
@@ -467,6 +484,7 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 	return &ImportPlan{
 		Hooks:               listHooks(profile.Hooks, profile.HooksExplicit),
 		RestrictedOverrides: restrictedOverrides(profile),
+		TreeInputs:          s.importTreeInputs(game, profile.Mods, nil),
 		Overrides:           overridePaths(profile),
 		Profile:             profile,
 		Installed:           installed,
@@ -806,6 +824,26 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	result.RecordedOnly, result.ActiveProfile = recordedOnly, live
 	deploy := !recordedOnly
 
+	// #610 review B1: every import's patches are gated before anything is
+	// written - recomputed here, never trusted from the plan - and
+	// admitted for their targets only once nothing else can refuse the
+	// import (admit, below); a refusal after that takes them back, so a
+	// refused import changes nothing.
+	if err := s.checkPatchGate(game, plan.Profile.Mods, plan.patchSources, opts.AllowAnyOverrides); err != nil {
+		return result, err
+	}
+	undoAdmit, profileSaved := func() {}, false
+	defer func() {
+		if !profileSaved {
+			undoAdmit()
+		}
+	}()
+	admit := func() error {
+		undo, err := s.admitImportPatches(game, plan.Profile.Mods, plan.patchSources, plan.patchListed, opts.AllowAnyOverrides)
+		undoAdmit = undo
+		return err
+	}
+
 	pm := s.NewProfileManager()
 
 	// #371: AlreadyCached leads, since those install straight from the cache
@@ -831,12 +869,16 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		}
 		result.OverridesSkipped = adj.dropOverrides
 		profile = saved
+		profileSaved = true
 		result.ProfileName = profile.Name
 		emit(StepEvent{Scope: Scope{Op: OpImport, ModName: profile.Name}, Phase: ImportSaved})
 		return nil
 	}
 
 	if len(toInstall) == 0 || opts.NoInstall || !opts.Install {
+		if err := admit(); err != nil {
+			return result, err
+		}
 		if err := saveProfile(ctx); err != nil {
 			return result, err
 		}
@@ -851,6 +893,11 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	// --force) must fail now, before anything is downloaded - not after.
 	if err := pm.checkImportable(plan.data, opts.Force); err != nil {
 		return result, fmt.Errorf("importing profile: %w", err)
+	}
+	// The acquire reads the admissions; the loader and installer refusals
+	// it collects come after, and take them back (the deferred undo).
+	if err := admit(); err != nil {
+		return result, err
 	}
 
 	if len(plan.phases) > 0 {

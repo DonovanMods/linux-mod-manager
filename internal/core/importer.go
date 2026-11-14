@@ -27,6 +27,10 @@ type ImportOptions struct {
 	// (#614); the zero value records no choices. Set by the service flows
 	// that know the target profile and the caller's answers.
 	fomod fomodInput
+	// treeFileID is the source file the archive is (#610): its file list
+	// and patches (fomod's, picked by forFile) apply to the archive's tree
+	// after the resolve, and name its variant. Empty applies none.
+	treeFileID string
 }
 
 // ImportResult contains the outcome of importing a local mod
@@ -100,6 +104,9 @@ type Importer struct {
 	// which has no service to run it with: such an archive is cached as
 	// extracted, as before.
 	resolveFomod func(mod *domain.Mod, archiveName, tree string, in fomodInput) (*fomodResolved, error)
+	// applyTree is the tree-inputs step (#610, Service.applyTreeInputs):
+	// a file list and patches, after the resolve.
+	applyTree func(mod *domain.Mod, fileID, tree string, in domain.TreeInputs) error
 }
 
 // NewImporter creates a new Importer that stages extraction in the OS temp
@@ -125,6 +132,9 @@ func (s *Service) newImporter(game *domain.Game) *Importer {
 	imp.resolveMergeCompiler = s.adapterCompiler
 	imp.claimArchive = s.requireAdapterClaim
 	imp.resolveFomod = s.resolveFomod
+	imp.applyTree = func(mod *domain.Mod, fileID, tree string, in domain.TreeInputs) error {
+		return s.applyTreeInputs(game, mod, fileID, tree, in)
+	}
 	imp.log = s.logger()
 	// #353: a resolution failure here (a games.yaml naming an adapter this
 	// build does not ship) is reported by the flow's own AdapterFor call,
@@ -386,6 +396,22 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			if resolved, err = i.resolveFomod(&domain.Mod{ID: modID, SourceID: sourceID, Name: modName, Version: version, GameID: game.ID}, filename, extractedPath, fx); err != nil {
 				return nil, err
 			}
+		}
+		// #610: the file's list and patches, as an acquire applies them.
+		if tree := opts.fomod.forFile(opts.treeFileID).tree; opts.treeFileID != "" && !tree.IsZero() && i.applyTree != nil {
+			if err := i.applyTree(&domain.Mod{ID: modID, SourceID: sourceID, Name: modName, Version: version, GameID: game.ID}, opts.treeFileID, extractedPath, tree); err != nil {
+				return nil, err
+			}
+			fomodPart := ""
+			if resolved != nil {
+				fomodPart = resolved.variant
+			}
+			withTree := fomodResolved{}
+			if resolved != nil {
+				withTree = *resolved
+			}
+			withTree.variant = treeInputsVariant(fomodPart, map[string]domain.TreeInputs{opts.treeFileID: tree})
+			resolved = &withTree
 		}
 
 		layout, err := i.layoutExtracted(game, modName, extractedPath)

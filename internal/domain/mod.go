@@ -215,6 +215,21 @@ type ModReference struct {
 	// Omitted when empty, and never written without FomodFiles.
 	FomodOrder []string `yaml:"fomod_order,omitempty" json:"fomod_order,omitempty"`
 
+	// FileList is the mod's exact file lists (#610, a NexusMods
+	// collection's replicate-mode `hashes`), keyed by file id: installing a
+	// file with one extracts only the listed paths and checks each one's
+	// md5. Patches is the mod's binary patches (#610), keyed by file id:
+	// each is applied to its file when the file's CRC32 is the recorded
+	// baseline, and refuses the install when it is not. Both change the
+	// tree a file installs to, so both are inputs of its cache variant.
+	// Profile state like Fomod: they travel with export/import/duplicate/
+	// copy, and both encodings omit them when empty, so every document
+	// without them is byte-identical. An older lmm ignores the keys; a
+	// collection document that carries them requires file_list or patches,
+	// which an older lmm refuses.
+	FileList FileLists   `yaml:"file_list,omitempty" json:"file_list,omitempty"`
+	Patches  FilePatches `yaml:"patches,omitempty" json:"patches,omitempty"`
+
 	// ModType is the mod's STATED type (#607): where the game deploys the
 	// whole mod, as a NexusMods collection records it (Vortex's
 	// details.type - "dinput" for a script extender, deployed to the game's

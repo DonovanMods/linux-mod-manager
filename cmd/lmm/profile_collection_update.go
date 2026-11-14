@@ -46,7 +46,7 @@ func init() {
 	f.StringSliceVar(&profileSyncOptional, "optional", nil,
 		"with --collection, install this optional item of a NexusMods collection (its id as the plan lists it, mod-id:file-id; repeatable)")
 	f.BoolVar(&profileSyncAnyOverrides, "allow-any-overrides", false,
-		"with --collection, import the new version's overrides that are not text config files too")
+		"with --collection, import the new version's overrides that are not text config files, its bundled files that hold code, and its patches to code too")
 	addFomodFlags(profileSyncCmd)
 }
 
@@ -392,6 +392,22 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 			fmt.Println("  They will be imported (--allow-any-overrides).")
 		} else {
 			fmt.Println("  They will be skipped; re-run with --allow-any-overrides to import them.")
+		}
+	}
+	// #610: a patch to code is refused, not dropped.
+	if plan.RestrictedPatches > 0 {
+		fmt.Printf("\nPatches that change code, or apply to a file no import admitted them for:\n")
+		for _, it := range plan.TreeInputs {
+			for _, p := range it.Patches {
+				if p.Restricted != "" {
+					fmt.Printf("  - %s:%s: %s - %s\n", it.SourceID, it.ModID, p.Path, p.Restricted)
+				}
+			}
+		}
+		if opts.AllowAnyOverrides {
+			fmt.Printf("  %d patch(es) will be applied (--allow-any-overrides).\n", plan.RestrictedPatches)
+		} else {
+			fmt.Printf("  %d patch(es): the update is refused unless you re-run with --allow-any-overrides.\n", plan.RestrictedPatches)
 		}
 	}
 	if len(plan.Hooks) > 0 {

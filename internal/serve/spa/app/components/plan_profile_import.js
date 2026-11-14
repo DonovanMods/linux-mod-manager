@@ -26,6 +26,13 @@
 // a system script, a loader configuration) is held back unless the user
 // ticks the same box that lets every override through (allow_any_overrides).
 
+// Issue 610: an item may install with an exact file list (only the listed
+// files, each md5-checked) and binary patches, each applied only onto the
+// file it was made against (its CRC32 baseline; any other refuses the
+// import). A NexusMods collection's own bundled items are listed like a
+// .lmmc's. A patch to code is the same box again - and without it the
+// import is refused rather than installed unpatched.
+
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
 import { safeWebUrl } from "../weburl.js";
@@ -419,6 +426,7 @@ function LMMCollectionSection({ collection: c, plugins }) {
         </ul>
       </section>`
     }
+    <${TreeInputsSection} collection=${c} />
     ${
       (c.bundled ?? []).length > 0 &&
       html`<section class="plan__section" data-testid="collection-bundled">
@@ -438,9 +446,14 @@ function LMMCollectionSection({ collection: c, plugins }) {
                 data-item=${b.item}
               >
                 <span class="plan__mod-name">${b.name || b.item}</span>${" "}
-                <span class="plan__mod-detail mono">files/${b.item}/</span
-                >${" "}
-                <span class="plan__mod-detail"
+                ${
+                  // A NexusMods collection's items are in its own archive,
+                  // not a .lmmc's files/ (issue 610).
+                  c.container &&
+                  html`<span class="plan__mod-detail mono"
+                      >files/${b.item}/</span
+                    >${" "}`
+                }<span class="plan__mod-detail"
                   >${b.files} file${b.files === 1 ? "" : "s"},
                   ${formatBytes(b.bytes)}</span
                 >
@@ -463,12 +476,80 @@ function LMMCollectionSection({ collection: c, plugins }) {
   `;
 }
 
+/** patchLine words one core.CollectionItemPatch as one string, so no
+ * formatter can split it where htm would drop the space. */
+function patchLine(p) {
+  const why = p.restricted ? ` - ${p.restricted}` : "";
+  return `patches ${p.path} (baseline CRC32 ${p.crc32})${why}`;
+}
+
+/** TreeInputsSection lists the items that install with an exact file list
+ * or binary patches (issue 610, core.CollectionImportItem.file_list and
+ * .patches): how many files each installs, and each patch with the CRC32
+ * of the file it was made against. A patch to code says so. */
+function TreeInputsSection({ collection: c }) {
+  const items = (c.items ?? []).filter(
+    (item) => item.file_list > 0 || (item.patches ?? []).length > 0,
+  );
+  if (items.length === 0) return null;
+  return html`<section
+    class="plan__section"
+    data-testid="collection-tree-inputs"
+  >
+    <h3 class="plan__heading">
+      Exact file lists and patches (${items.length})
+    </h3>
+    <p class="plan__note">
+      Only the listed files are installed, each checked against its md5. A patch
+      is applied only to the file it was made against (its CRC32); any other
+      file refuses the import, with nothing written - lmm never installs a
+      collection's mod unpatched.
+    </p>
+    <ul class="plan__mods">
+      ${items.map(
+        (item) =>
+          html`<li
+            key=${`${item.source_id}:${item.mod_id}`}
+            class="plan__mod"
+            data-item=${`${item.source_id}:${item.mod_id}`}
+          >
+            <span class="plan__mod-name"
+              >${item.name || `${item.source_id}:${item.mod_id}`}</span
+            >
+            ${
+              item.file_list > 0 &&
+              html`${" "}<span class="plan__mod-detail"
+                  >installs exactly ${item.file_list} listed
+                  file${item.file_list === 1 ? "" : "s"}</span
+                >`
+            }
+            ${
+              (item.patches ?? []).length > 0 &&
+              html`<ul class="plan__paths">
+                ${item.patches.map(
+                  (p) =>
+                    html`<li
+                      key=${`${p.file_id}/${p.path}`}
+                      class=${`mono${p.restricted ? " plan__note--warn" : ""}`}
+                    >
+                      ${patchLine(p)}
+                    </li>`,
+                )}
+              </ul>`
+            }
+          </li>`,
+      )}
+    </ul>
+  </section>`;
+}
+
 /** sourceStateLabel words a converted item's state (core.CollectionItemState). */
 const sourceStateLabel = {
   installed: "already installed",
   will_install: "will be installed",
   manual_download: "download by hand",
   external: "get by hand",
+  bundled: "bundled in the collection",
   optional_skipped: "optional - not included",
   unsupported: "cannot be imported",
 };
@@ -546,6 +627,10 @@ export function SourceCollectionSection({ source: c, actions }) {
             );
           if (it.mod_type) tags.push(`type ${it.mod_type}`);
           if (it.installer) tags.push("installer choices");
+          // Issue 610: replicate mode and patches.
+          if (it.file_list > 0) tags.push(`exact file list of ${it.file_list}`);
+          if (it.patches > 0)
+            tags.push(`${it.patches} patch${it.patches === 1 ? "" : "es"}`);
           // A NexusMods version is readable as is; displayVersion is the
           // one sanctioned reader of a version (issue 458).
           const shown = displayVersion(it);
@@ -629,6 +714,18 @@ function ImportGates({ plan, modal, actions }) {
   const heldBundles = (plan.collection?.bundled ?? []).filter(
     (b) => (b.restricted ?? []).length > 0,
   );
+  // Issue 610: patches that need the same option - to code, or a patch
+  // this machine keeps for another file - without which the import is
+  // refused. tree_inputs carries them for every import, an older export
+  // included (the review's B1).
+  const codePatches = (plan.tree_inputs ?? []).flatMap((item) =>
+    (item.patches ?? [])
+      .filter((p) => p.restricted)
+      .map((p) => ({ item, patch: p })),
+  );
+  // An older export's file lists and patches (a collection lists them in
+  // its own section).
+  const treeInputs = plan.collection ? [] : (plan.tree_inputs ?? []);
   // Both boxes below set the one option, so both show its state.
   const anyOverrides = Boolean(modal?.applyOptions?.allow_any_overrides);
   // Every override the document writes, held back or not (issue 621
@@ -743,6 +840,50 @@ function ImportGates({ plan, modal, actions }) {
         </p>
       </section>`
     }
+    ${
+      treeInputs.length > 0 &&
+      html`<${TreeInputsSection}
+        collection=${{
+          items: treeInputs.map((it) => ({ ...it, name: "" })),
+        }}
+      />`
+    }
+    ${
+      codePatches.length > 0 &&
+      html`<section
+        class="plan__section"
+        data-testid="import-restricted-patches"
+      >
+        <h3 class="plan__heading">
+          Patches that change code, or apply to another file
+        </h3>
+        <ul class="plan__paths">
+          ${codePatches.map(
+            ({ item, patch }) =>
+              html`<li
+                key=${`${item.source_id}:${item.mod_id}/${patch.file_id}/${patch.path}`}
+                class="mono"
+              >
+                ${item.name || `${item.source_id}:${item.mod_id}`}:
+                ${patch.path} - ${patch.restricted}
+              </li>`,
+          )}
+        </ul>
+        <label class="plan__control">
+          <input
+            type="checkbox"
+            data-testid="import-patch-code"
+            checked=${anyOverrides}
+            onChange=${setAnyOverrides}
+          />
+          Apply these patches
+        </label>
+        <p class="plan__note plan__note--warn">
+          Left unchecked, the import is refused: the collection's mods need
+          these patches, and lmm never installs one unpatched.
+        </p>
+      </section>`
+    }
   `;
 }
 
@@ -765,10 +906,14 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
   // it has no pending count to offer it for.
   // A free account installs only what needs no download: a mod another
   // profile already has. Everything else is recorded, to fetch by hand.
+  // Issue 610: a collection's bundled items need no download either.
+  const bundled = [...needsRedownload, ...missing].filter(
+    (ref) => ref.source_id === "lmm-collection",
+  );
   const pending = collection
     ? 0
     : manualOnly
-      ? alreadyCached.length
+      ? alreadyCached.length + bundled.length
       : alreadyCached.length + needsRedownload.length + missing.length;
   // A Workshop item is tracked game-wide, so for a collection BOTH buckets
   // count as already present; an ordinary import counts only the rows this

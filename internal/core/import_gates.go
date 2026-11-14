@@ -89,6 +89,13 @@ func checkImportedProfile(profile *domain.Profile) error {
 			return fmt.Errorf("%w: the %s hook's command contains control or formatting characters, so the plan could not show it as it would run", ErrUnsafeImport, h.Hook)
 		}
 	}
+	// #610 review B1: a reference's file lists and patches, held to the
+	// collection reader's rules whatever the document's format.
+	for _, ref := range profile.Mods {
+		if err := checkTreeInputs(ref.FileList, ref.Patches); err != nil {
+			return fmt.Errorf("%w: %s:%s's %v", ErrUnsafeImport, ref.SourceID, ref.ModID, err)
+		}
+	}
 	for path := range profile.Overrides {
 		if hasUnsafeRunes(path) {
 			return fmt.Errorf("%w: an override path (%q) contains control or formatting characters", ErrUnsafeImport, path)

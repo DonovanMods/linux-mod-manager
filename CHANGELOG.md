@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A collection's exact file lists, binary patches and bundled files
+  (#610).** A NexusMods collection's replicate-mode items (`hashes`) now
+  install only the files the curator listed, each checked against its
+  md5; its BSDIFF40 patches are applied as the mod installs - only to the
+  file each was made against, by its CRC32: any other file refuses the
+  import with nothing written, a deliberate divergence from Vortex, which
+  installs the file unpatched; and its `bundle` items install from the
+  collection's own archive, like a `.lmmc`'s bundled files (#623), even on
+  a free account. A patch in any other format raises `patch_format`, which
+  stays unsupported. Both are recorded on the profile as each mod's new
+  `file_list:` and `patches:` (keyed by file id), so a rebuild - a switch,
+  an apply, a deploy that finds the cache gone, `lmm verify --fix` -
+  installs the same tree, which is a cache variant of its own. An lmm
+  collection carries them and requires `file_list` / `patches` (both join
+  the supported features, and `bundled` is no longer refused for a
+  NexusMods collection); a `.lmmc` carries the patches as
+  `patches/<sha256>.diff`, and lmm keeps every imported patch under the
+  game's `collections/patches/`. Paths are checked and never rewritten. A
+  patch to code (a DLL, an executable, a system script or a loader
+  configuration) needs `--allow-any-overrides` (the web UI's **Apply these
+  patches**), and without it the import is refused rather than installed
+  unpatched; a kept patch applies only to the mods' files an import
+  admitted it for, so any profile document - an older export included, whose plan now
+  lists its file lists and patches too - naming one for another file is
+  gated the same way, and a patch whose result is native code applies only
+  where that was allowed; a bundle holding code is held back as a `.lmmc`'s is. The
+  plan, in the terminal and the web UI, lists each item's file list and
+  patches and the bundled items. Of the 72 surveyed NexusMods collections,
+  51 now import (40 before). See the guide's
+  [Importing a NexusMods collection](docs/guide/profiles.md#importing-a-nexusmods-collection)
+  and [the collection format](docs/collection-format.md#exact-file-lists-and-patches).
 - **Update a collection profile from where it came from (#613).** `lmm
 profile sync --collection` (in the web UI, **Update collection…** beside
   the profile in the Profiles window) fetches a profile's collection again

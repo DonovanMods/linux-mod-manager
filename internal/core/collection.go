@@ -39,6 +39,10 @@ var supportedCollectionFeatures = map[string]bool{
 	CollectionFeatureFomodMultiFile: true,
 	// #623: an author's own files, carried in the container.
 	CollectionFeatureBundled: true,
+	// #610: exact file lists, and BSDIFF40 patches carried in the
+	// container's patches/.
+	CollectionFeatureFileList: true,
+	CollectionFeaturePatches:  true,
 }
 
 // SupportedCollectionFeatures lists the features this lmm can import, in
@@ -101,6 +105,21 @@ func deriveCollectionRequires(doc *domain.CollectionDocument) []string {
 	// an older lmm, or a game without it, refuses rather than drop it.
 	for _, id := range doc.LoadOrders.IDs() {
 		features = append(features, CollectionFeatureFileLoadOrderPrefix+id)
+	}
+	// #610: a file list or a patch changes what a file installs; an older
+	// lmm, which ignores both keys, refuses the features instead.
+	var lists, patches bool
+	for _, item := range doc.Items {
+		for _, in := range refTreeInputs(&item.Ref) {
+			lists = lists || len(in.FileList) > 0
+			patches = patches || len(in.Patches) > 0
+		}
+	}
+	if lists {
+		features = append(features, CollectionFeatureFileList)
+	}
+	if patches {
+		features = append(features, CollectionFeaturePatches)
 	}
 	// #623: bundled items need an importer that installs files from the
 	// container; an older lmm, which ignores files/, refuses the feature.

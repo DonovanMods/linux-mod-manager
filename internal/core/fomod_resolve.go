@@ -178,12 +178,13 @@ func recordVariant(r domain.FomodRecord, ids []string) string {
 	return fomodVariant(r.Choices)
 }
 
-// refVariant is the variant a profile reference's recorded choices name.
+// refVariant is the variant a profile reference's recorded choices name,
+// with its file lists and patches (#610, treeInputsVariant).
 func refVariant(ref *domain.ModReference) string {
 	if ref == nil {
 		return ""
 	}
-	return recordVariant(ref.FomodRecord(), ref.FileIDs)
+	return treeInputsVariant(recordVariant(ref.FomodRecord(), ref.FileIDs), refTreeInputs(ref))
 }
 
 // fomodInput is what the resolve step installs a FOMOD with.
@@ -255,6 +256,18 @@ type fomodInput struct {
 	// installer.
 	recipeMD5 func(fileID string) (string, error)
 	lazyMD5   func() (string, error)
+
+	// The tree inputs (#610): the reference's exact file lists and binary
+	// patches, keyed by file id (the mod's input), and forFile's pick of
+	// one file's (tree), which the extract step applies after the resolve
+	// (applyTreeInputs). Not FOMOD inputs, but they ride with them: every
+	// flow that builds a mod's tree from its reference reaches the archive
+	// through this input.
+	fileLists domain.FileLists
+	patches   domain.FilePatches
+	tree      domain.TreeInputs
+	// fileID is the file forFile picked: what a refusal names.
+	fileID string
 }
 
 // archiveSum is fomodInput.archiveMD5 for the archive at path: known when
@@ -275,6 +288,13 @@ func archiveSum(known, path string) func() (string, error) {
 func (in fomodInput) forFile(fileID string) fomodInput {
 	out := in
 	out.fileChoices, out.fileAnswers, out.askFile, out.orderHint, out.fileIDs = nil, nil, "", nil, nil
+	out.fileLists, out.patches = nil, nil
+	// #610: only a file the mod pins installs by its list and patches - as
+	// its variant counts them (treeInputsFor).
+	if slices.Contains(in.fileIDs, fileID) {
+		out.tree = domain.TreeInputs{FileList: in.fileLists[fileID], Patches: in.patches[fileID]}
+	}
+	out.fileID = fileID
 	out.fileMD5, out.expectMD5, out.recipeMD5, out.lazyMD5 = nil, in.fileMD5[fileID], nil, nil
 	if in.recipeMD5 != nil {
 		out.lazyMD5 = func() (string, error) { return in.recipeMD5(fileID) }
@@ -308,7 +328,7 @@ func (in fomodInput) forFile(fileID string) fomodInput {
 // tree they are, and they are canonical only once resolved, so a warm hit
 // on answers is an optimisation, never a requirement.
 func (in fomodInput) expectedVariant() string {
-	return recordVariant(in.expectedRecord(), in.fileIDs)
+	return treeInputsVariant(recordVariant(in.expectedRecord(), in.fileIDs), treeInputsFor(in.fileLists, in.patches, in.fileIDs))
 }
 
 // expectedRecord is the record the input would install with, before any

@@ -140,7 +140,9 @@ lmm profile import coop.lmmc
 Without `-o`, the export is printed as text (YAML), which you can save,
 compare or keep in git. `-o` saves a compressed `.lmmc` file instead, or a
 text file if you add `--plain`. Both import the same way, and so does a
-file exported by an older version of lmm.
+file exported by an older version of lmm. One exception: a profile
+imported from a NexusMods collection whose mods are patched carries those
+patches only in a `.lmmc` file, so share that one (the export says so).
 
 In the browser, **Export** and **Import** are in the Profiles window.
 **Export** downloads a `.lmmc` file. **Import** takes the same files the
@@ -260,6 +262,16 @@ import from a link never imports hooks at all; see
   skipped unless you add `--allow-any-overrides` (in the browser, tick
   **Import these bundled items too**). The plan names the files that hold
   it back.
+- **Patches to programs.** A collection can patch its mods' files (see
+  [Importing a NexusMods collection](#importing-a-nexusmods-collection)).
+  A patch to a program (a `.dll`, an `.exe`, a system script or a loader
+  configuration) is listed in the plan, and the import is refused unless
+  you add `--allow-any-overrides` (in the browser, tick **Apply these
+  patches**): leaving out the patch would install a mod that isn't the one
+  the collection was made with. The same goes for a patch lmm keeps from
+  one collection that a profile file names for a different file, since a
+  patch can turn a file into anything: an older export or a hand-edited
+  profile is held to this as a collection is.
 
 When something was held back, the import says so at the end and names the
 option that would include it.
@@ -416,6 +428,20 @@ The plan lists every item and what the import does with it:
   under `profile.load_orders`). lmm writes it at every deploy, on a game set
   up with `adapter: cyberpunk2077`; on any other game such a collection is
   refused. See [Archive load order](load-order.md).
+- A mod the curator installed with an **exact file list** (Vortex's
+  "replicate" mode) installs only the files on that list, each checked
+  against the checksum the collection records; the plan says how many.
+- The curator's **patches** to a mod's files are applied as the mod
+  installs. A patch only applies to the file it was made against: if your
+  copy is different, the import is refused, with nothing written, rather
+  than installing the mod unpatched (Vortex would warn and carry on). The
+  plan lists every patch; a patch to a program needs
+  `--allow-any-overrides` (see [What an import holds back](#what-an-import-holds-back)).
+- Files the curator **bundled** in the collection itself install like any
+  mod, even on a free account, since there is nothing to download; lmm
+  keeps them with the collection's recipe so it can rebuild them later.
+  One that holds a program is skipped unless you add
+  `--allow-any-overrides`, as a shared collection's bundled files are.
 - Items NexusMods doesn't host are listed with where to get them and the
   curator's instructions. The curator's tool shortcuts are listed too; lmm
   never creates or runs them.
@@ -424,10 +450,9 @@ A NexusMods collection installs **all or nothing** while its files are
 fetched: if one mod can't be downloaded, nothing is imported, not even the
 profile. If something goes wrong after that, while the downloaded mods are
 being installed, the import says which mods failed, as any import does. And a collection
-that uses something this version of lmm can't do yet (an exact file list,
-files bundled in the collection, patches, a plugin rule marking two plugins
-incompatible) shows its
-plan, with what is missing and which mods need it, and is refused, with
+that uses something this version of lmm can't do yet (a patch in a format
+other than bsdiff's, a plugin rule marking two plugins incompatible) shows
+its plan, with what is missing and which mods need it, and is refused, with
 nothing written. Optional mods that need such a thing are skipped instead.
 
 ### Updating a collection profile
@@ -501,7 +526,10 @@ order. The new version passes the same checks as an import: a feature this
 lmm lacks refuses the update with nothing changed, hooks are listed and
 never applied (the profile keeps its own), and overrides that aren't text
 config files are held back unless you pass `--allow-any-overrides` (in the
-browser, **Import these overrides too**). For a NexusMods collection,
+browser, **Import these overrides too**). The same option lets through
+bundled files that are programs and patches to programs: a new version
+that patches a program is refused without it (in the browser, **Apply
+these patches**), since lmm never updates a mod unpatched. For a NexusMods collection,
 `--with-optional` and `--optional <id>` include optional mods, and an
 optional mod you already have stays in; in the browser, unticking one in
 the plan leaves it out of the new version, where it is listed with the

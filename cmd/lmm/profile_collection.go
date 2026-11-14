@@ -54,6 +54,7 @@ func printCollectionPlan(c *core.CollectionImport, game *domain.Game) {
 		fmt.Printf("  requires: %s\n", strings.Join(c.Requires, ", "))
 	}
 	printCollectionInstallerChoices(c)
+	printCollectionTreeInputs(c)
 	printCollectionPlugins(c.Plugins, game)
 	printCollectionLoadOrders(c.LoadOrders, game)
 	if c.Source != nil {
@@ -165,6 +166,11 @@ func printImportGates(plan *core.ImportPlan) {
 			fmt.Printf("    - %s\n", path)
 		}
 	}
+	// #610 review B1: an older export's file lists and patches, gated as a
+	// collection's are (a collection plan lists them in its own section).
+	if plan.Collection == nil {
+		printImportTreeInputs(plan.TreeInputs)
+	}
 	if len(plan.RestrictedOverrides) > 0 {
 		fmt.Printf("\nOverrides held back (not text config files, or loader configuration):\n")
 		for _, o := range plan.RestrictedOverrides {
@@ -174,6 +180,38 @@ func printImportGates(plan *core.ImportPlan) {
 			fmt.Println("  They will be imported (--allow-any-overrides).")
 		} else {
 			fmt.Println("  They will be skipped; re-run with --allow-any-overrides to import them.")
+		}
+	}
+}
+
+// printImportTreeInputs lists a version-0 import's mods that install with
+// an exact file list or patches (#610), and the patches that need
+// --allow-any-overrides.
+func printImportTreeInputs(inputs []core.ImportTreeInputs) {
+	if len(inputs) == 0 {
+		return
+	}
+	fmt.Printf("\nExact file lists and patches - only the listed files are installed; a patch applies only to the file it was made against:\n")
+	restricted := 0
+	for _, it := range inputs {
+		fmt.Printf("    - %s:%s\n", it.SourceID, it.ModID)
+		if it.FileList > 0 {
+			fmt.Printf("        installs exactly %d listed file(s)\n", it.FileList)
+		}
+		for _, p := range it.Patches {
+			line := fmt.Sprintf("        patches %s (baseline CRC32 %s)", p.Path, p.CRC32)
+			if p.Restricted != "" {
+				restricted++
+				line += " - " + p.Restricted
+			}
+			fmt.Println(line)
+		}
+	}
+	if restricted > 0 {
+		if profileImportAnyOverrides {
+			fmt.Printf("  %d patch(es) will be applied (--allow-any-overrides).\n", restricted)
+		} else {
+			fmt.Printf("  %d patch(es) need --allow-any-overrides: the import is refused without it.\n", restricted)
 		}
 	}
 }
@@ -240,6 +278,43 @@ func indentLines(text, prefix string) string {
 	return strings.Join(lines, "\n")
 }
 
+// printCollectionTreeInputs lists the items that install with an exact
+// file list or binary patches (#610): what each extracts and patches, the
+// patch's baseline, and the patches to code that need
+// --allow-any-overrides.
+func printCollectionTreeInputs(c *core.CollectionImport) {
+	var items []core.CollectionImportItem
+	for _, item := range c.Items {
+		if item.FileList > 0 || len(item.Patches) > 0 {
+			items = append(items, item)
+		}
+	}
+	if len(items) == 0 {
+		return
+	}
+	fmt.Printf("\nExact file lists and patches - only the listed files are installed, each checked against its md5; a patch applies only to the file it was made against (its CRC32), and any other refuses the install:\n")
+	for _, item := range items {
+		fmt.Printf("    - %s\n", collectionItemLabel(item))
+		if item.FileList > 0 {
+			fmt.Printf("        installs exactly %d listed file(s)\n", item.FileList)
+		}
+		for _, p := range item.Patches {
+			line := fmt.Sprintf("        patches %s (baseline CRC32 %s)", p.Path, p.CRC32)
+			if p.Restricted != "" {
+				line += " - " + p.Restricted
+			}
+			fmt.Println(line)
+		}
+	}
+	if c.RestrictedPatches > 0 {
+		if profileImportAnyOverrides {
+			fmt.Printf("  %d patch(es) change code and will be applied (--allow-any-overrides).\n", c.RestrictedPatches)
+		} else {
+			fmt.Printf("  %d patch(es) change code: the import is refused unless you re-run with --allow-any-overrides.\n", c.RestrictedPatches)
+		}
+	}
+}
+
 // printCollectionInstallerChoices lists the FOMOD installer choices a
 // collection records (#615): they are replayed as written, and an installer
 // that no longer accepts them - or an archive other than the one the
@@ -270,6 +345,7 @@ var sourceItemMarks = map[core.CollectionItemState]string{
 	core.CollectionItemWillInstall:     "↓",
 	core.CollectionItemManualDownload:  "⇣",
 	core.CollectionItemExternal:        "↗",
+	core.CollectionItemBundled:         "▣",
 	core.CollectionItemOptionalSkipped: "○",
 	core.CollectionItemUnsupported:     "✗",
 }
@@ -277,7 +353,7 @@ var sourceItemMarks = map[core.CollectionItemState]string{
 // sourceItemStates is the order the states are summarised in.
 var sourceItemStates = []core.CollectionItemState{
 	core.CollectionItemInstalled, core.CollectionItemWillInstall, core.CollectionItemManualDownload,
-	core.CollectionItemExternal, core.CollectionItemOptionalSkipped, core.CollectionItemUnsupported,
+	core.CollectionItemExternal, core.CollectionItemBundled, core.CollectionItemOptionalSkipped, core.CollectionItemUnsupported,
 }
 
 // printSourceCollection prints a converted source collection (#607): the
@@ -311,6 +387,16 @@ func printSourceCollection(c *core.ConvertedCollection) {
 		}
 		if it.Installer {
 			tags = append(tags, "installer choices")
+		}
+		// #610: replicate mode, patches and the recipe's own files.
+		if it.FileList > 0 {
+			tags = append(tags, fmt.Sprintf("exact file list of %d", it.FileList))
+		}
+		if it.Patches > 0 {
+			tags = append(tags, fmt.Sprintf("%d patch(es)", it.Patches))
+		}
+		if it.State == core.CollectionItemBundled {
+			tags = append(tags, "bundled in the collection")
 		}
 		if len(it.Features) > 0 {
 			tags = append(tags, "needs "+strings.Join(it.Features, ", "))

@@ -104,7 +104,7 @@ func (s *Service) PlanCollectionImportURL(ctx context.Context, req CollectionURL
 	recorded.User = nil
 	return s.planCollectionImport(ctx, CollectionImportRequest{
 		Data: data, Input: CollectionFromURL, GameID: req.GameID, ProfileName: req.ProfileName,
-	}, recorded.String(), warnings)
+	}, recorded.String(), warnings, nil)
 }
 
 // parseCollectionURL checks raw is an absolute https address with a host,
