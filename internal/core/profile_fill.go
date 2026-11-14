@@ -489,7 +489,7 @@ func (s *Service) PlanProfileFill(ctx context.Context, game *domain.Game, req Pr
 			}
 			plan.Matched = append(plan.Matched, FillMatch{
 				SourceID: p.ref.SourceID, ModID: p.ref.ModID, Name: p.name, Version: p.ref.Version,
-				ModType: p.ref.ModType, Files: files, Installer: !p.ref.Fomod.IsZero(), AutoUpdate: auto,
+				ModType: p.ref.ModType, Files: files, Installer: !p.ref.FomodRecord().IsZero(), AutoUpdate: auto,
 			})
 			item := fillItem{ref: p.ref, name: p.name, supplied: map[string]suppliedArchive{}}
 			for _, w := range p.wants {
@@ -852,7 +852,9 @@ func copySupplied(sup suppliedArchive, dest string) (*DownloadResult, error) {
 // exactly as a download would be (acquireArchive). The copy is not a
 // download, so a refused Apply does not retain it: the re-run copies again.
 func (s *Service) acquireSupplied(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sup suppliedArchive, fx fomodInput, sink EventSink) (*acquiredFile, error) {
-	a, err := s.acquireSuppliedRaw(ctx, gameCache, sourceID, game, mod, file, sup, fx, sink)
+	// fx is the MOD's input; the file's own choices are taken here, as
+	// acquireFile takes them (fomodInput.forFile, #634).
+	a, err := s.acquireSuppliedRaw(ctx, gameCache, sourceID, game, mod, file, sup, fx.forFile(file.ID), sink)
 	if err != nil {
 		return nil, asDownloadError(err, sourceID, mod, file)
 	}

@@ -70,3 +70,64 @@ func TestFomodChoices_Equal(t *testing.T) {
 	assert.True(t, domain.FomodChoices{ConfigSHA256: "ab"}.Equal(domain.FomodChoices{ConfigSHA256: "ab", Steps: []fomod.StepChoice{}}),
 		"nil and empty are one record")
 }
+
+// #634: a mod whose files each carry an installer records its choices per
+// file, under fomod_files; a mod with one installer keeps fomod, and a ref
+// with neither writes neither key.
+func TestFomodFiles_PerFileRecordRoundTripsAndStaysApart(t *testing.T) {
+	var steps []fomod.StepChoice
+	require.NoError(t, json.Unmarshal([]byte(vortexChoices), &steps))
+	ref := domain.ModReference{SourceID: "nexusmods", ModID: "1", FileIDs: []string{"10", "11"}, FomodFiles: domain.FomodFiles{
+		"10": {ConfigSHA256: "ab", Steps: steps},
+		"11": {ConfigSHA256: "cd", Steps: []fomod.StepChoice{{Name: "Patch", Groups: []fomod.GroupChoice{{Name: "Which", Choices: []fomod.OptionChoice{{Name: "USSEP"}}}}}}},
+	}}
+	text, err := yaml.Marshal(ref)
+	require.NoError(t, err)
+	assert.Contains(t, string(text), "fomod_files:\n    \"10\":\n")
+	assert.NotContains(t, string(text), "fomod:", "the single form is not written beside it")
+	var back domain.ModReference
+	require.NoError(t, yaml.Unmarshal(text, &back))
+	assert.True(t, ref.FomodFiles.Equal(back.FomodFiles), "%s", text)
+
+	b, err := json.Marshal(ref)
+	require.NoError(t, err)
+	var jback domain.ModReference
+	require.NoError(t, json.Unmarshal(b, &jback))
+	assert.True(t, ref.FomodFiles.Equal(jback.FomodFiles), "%s", b)
+
+	plain := domain.ModReference{SourceID: "s", ModID: "m", Fomod: domain.FomodChoices{ConfigSHA256: "ab"}}
+	text, err = yaml.Marshal(plain)
+	require.NoError(t, err)
+	assert.NotContains(t, string(text), "fomod_files")
+	b, err = json.Marshal(plain)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "fomod_files")
+}
+
+func TestFomodRecord_SetKeepsOneForm(t *testing.T) {
+	single := domain.FomodChoices{ConfigSHA256: "ab"}
+	files := domain.FomodFiles{"1": {ConfigSHA256: "cd"}, "2": {ConfigSHA256: "ef"}}
+	var ref domain.ModReference
+	ref.SetFomodRecord(domain.FomodRecord{Files: files})
+	assert.True(t, ref.Fomod.IsZero())
+	assert.True(t, files.Equal(ref.FomodFiles))
+	files["1"] = domain.FomodChoices{ConfigSHA256: "zz"}
+	assert.Equal(t, "cd", ref.FomodFiles["1"].ConfigSHA256, "the record is a copy")
+
+	ref.SetFomodRecord(domain.FomodRecord{Choices: single})
+	assert.Nil(t, ref.FomodFiles)
+	assert.True(t, single.Equal(ref.Fomod))
+	assert.True(t, ref.FomodRecord().Equal(domain.FomodRecord{Choices: single}))
+
+	ref.SetFomodRecord(domain.FomodRecord{})
+	assert.True(t, ref.FomodRecord().IsZero())
+}
+
+func TestFomodFiles_EqualAndZero(t *testing.T) {
+	assert.True(t, domain.FomodFiles(nil).IsZero())
+	assert.True(t, domain.FomodFiles{"1": {}}.IsZero(), "a file with no choices records nothing")
+	assert.True(t, domain.FomodFiles{"1": {ConfigSHA256: "ab"}, "2": {}}.Equal(domain.FomodFiles{"1": {ConfigSHA256: "ab"}}))
+	assert.False(t, domain.FomodFiles{"1": {ConfigSHA256: "ab"}}.Equal(domain.FomodFiles{"2": {ConfigSHA256: "ab"}}))
+	assert.False(t, domain.FomodRecord{Files: domain.FomodFiles{"1": {ConfigSHA256: "ab"}}}.Equal(domain.FomodRecord{Choices: domain.FomodChoices{ConfigSHA256: "ab"}}))
+	assert.Equal(t, "nexusmods:12604#37471", domain.FomodFileKey("nexusmods", "12604", "37471"))
+}

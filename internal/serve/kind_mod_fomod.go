@@ -48,13 +48,18 @@ func (r *modFomodPlanRequest) validate() error {
 // for a mod_fomod plan: the answers, and install's conflict and hook
 // switches.
 type modFomodApplyRequest struct {
-	// Fomod answers the question, keyed by "<source-id>:<mod-id>". Without
-	// an answer for the mod the job fails with the question.
-	Fomod           map[string]domain.FomodChoices `json:"fomod,omitzero"`
-	AcceptConflicts bool                           `json:"accept_conflicts,omitzero"`
-	Force           bool                           `json:"force,omitzero"`
-	SkipHooks       bool                           `json:"skip_hooks,omitzero"`
-	SkipVerify      bool                           `json:"skip_verify,omitzero"`
+	// Fomod answers the question, keyed by "<source-id>:<mod-id>" - or, for
+	// a mod whose files each carry an installer, "<source-id>:<mod-id>#
+	// <file-id>" (#634). Without an answer for the mod the job fails with
+	// the question.
+	Fomod map[string]domain.FomodChoices `json:"fomod,omitzero"`
+	// FileID picks which installer of a mod with several is asked again
+	// (#634): one of the plan's installers. Empty asks every one.
+	FileID          string `json:"file_id,omitzero"`
+	AcceptConflicts bool   `json:"accept_conflicts,omitzero"`
+	Force           bool   `json:"force,omitzero"`
+	SkipHooks       bool   `json:"skip_hooks,omitzero"`
+	SkipVerify      bool   `json:"skip_verify,omitzero"`
 }
 
 // pendingModFomod is what the plan store holds between Plan and Apply.
@@ -88,6 +93,7 @@ func applyModFomodKind(ctx context.Context, s *Server, pending, opts any, sink c
 	}
 	return s.svc.ApplyFomodReconfigure(ctx, p.Game, p.Plan, core.FomodReconfigureOptions{
 		Fomod:           req.Fomod,
+		FileID:          req.FileID,
 		AcceptConflicts: req.AcceptConflicts,
 		Force:           req.Force,
 		SkipHooks:       req.SkipHooks,

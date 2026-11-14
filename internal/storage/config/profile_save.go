@@ -31,7 +31,7 @@ const profileBackupSuffix = ".bak"
 // order, so a file lmm wrote stays exactly as a whole write would have it.
 var (
 	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins"}
-	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod"}
+	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod", "fomod_files", "fomod_order"}
 )
 
 // profileFileHookYAML is ProfileHookConfigYAML as a profile file is written:
@@ -106,6 +106,9 @@ func refConfigsOf(mods []domain.ModReference) []ModReferenceConfig {
 			Category: m.Category,
 			ModType:  m.ModType,
 			Fomod:    m.Fomod,
+			// #634: nil when empty, so the key is not written.
+			FomodFiles: m.FomodFiles.Clone(),
+			FomodOrder: slices.Clone(m.FomodOrder),
 		}
 	}
 	return refs
@@ -608,7 +611,8 @@ func sameRefs(have []ModReferenceConfig, want []domain.ModReference) bool {
 func sameRef(a, b ModReferenceConfig) bool {
 	return a.SourceID == b.SourceID && a.ModID == b.ModID && a.Version == b.Version &&
 		slices.Equal(a.FileIDs, b.FileIDs) && a.Locked == b.Locked && a.Disabled == b.Disabled &&
-		a.Category == b.Category && a.ModType == b.ModType && a.Fomod.Equal(b.Fomod)
+		a.Category == b.Category && a.ModType == b.ModType && a.Fomod.Equal(b.Fomod) &&
+		a.FomodFiles.Equal(b.FomodFiles) && slices.Equal(a.FomodOrder, b.FomodOrder)
 }
 
 // docEditor collects the text edits that turn a profile document into the
@@ -624,6 +628,11 @@ type docEditor struct {
 	// inserts are pending insertions by offset, each ranked, so that keys
 	// added at one place come out in their canonical order.
 	inserts map[int][]rankedText
+	// removed are the reference keys this edit takes out line by line: a
+	// key inserted in the same edit is never placed after one of them
+	// (#634: a mod moving from `fomod:` to `fomod_files:` swaps the one
+	// block for the other).
+	removed map[string]bool
 }
 
 type rankedText struct {
@@ -1018,7 +1027,7 @@ func refOf(c ModReferenceConfig) domain.ModReference {
 	return domain.ModReference{
 		SourceID: c.SourceID, ModID: c.ModID, Version: c.Version,
 		FileIDs: c.FileIDs, Locked: c.Locked, Disabled: c.Disabled, Category: c.Category,
-		ModType: c.ModType, Fomod: c.Fomod,
+		ModType: c.ModType, Fomod: c.Fomod, FomodFiles: c.FomodFiles.Clone(), FomodOrder: slices.Clone(c.FomodOrder),
 	}
 }
 
@@ -1131,7 +1140,7 @@ func (e *docEditor) editItem(item modItem, have, want ModReferenceConfig) (strin
 				continue
 			}
 			zero = len(want.FileIDs) == 0
-			wantText, err = e.fileIDsText(want.FileIDs, !flow, item.keyCol)
+			wantText, err = e.listText("file_ids", want.FileIDs, !flow, item.keyCol)
 		case "locked":
 			if have.Locked == want.Locked {
 				continue
@@ -1167,7 +1176,24 @@ func (e *docEditor) editItem(item modItem, have, want ModReferenceConfig) (strin
 			}
 			zero = want.Fomod.IsZero()
 			if !zero {
-				wantText, err = e.fomodText(want.Fomod, item.keyCol)
+				wantText, err = e.blockText(ModReferenceConfig{Fomod: want.Fomod}, "fomod", item.keyCol)
+			}
+		case "fomod_order":
+			if slices.Equal(have.FomodOrder, want.FomodOrder) {
+				continue
+			}
+			zero = len(want.FomodOrder) == 0
+			wantText, err = e.listText("fomod_order", want.FomodOrder, !flow, item.keyCol)
+		case "fomod_files":
+			if have.FomodFiles.Equal(want.FomodFiles) {
+				continue
+			}
+			if flow {
+				return "", errors.New("fomod_files: a flow reference cannot hold the choices block")
+			}
+			zero = want.FomodFiles.IsZero()
+			if !zero {
+				wantText, err = e.blockText(ModReferenceConfig{FomodFiles: want.FomodFiles}, "fomod_files", item.keyCol)
 			}
 		}
 		if err != nil {
@@ -1183,7 +1209,7 @@ func (e *docEditor) editItem(item modItem, have, want ModReferenceConfig) (strin
 // fileIDsText is file_ids' whole entry, `file_ids: [...]`, or - in a block
 // reference - the key followed by one `- id` line each, as a whole write
 // writes it.
-func (e *docEditor) fileIDsText(ids []string, block bool, keyCol int) (string, error) {
+func (e *docEditor) listText(key string, ids []string, block bool, keyCol int) (string, error) {
 	texts := make([]string, len(ids))
 	for i, id := range ids {
 		text, err := scalarText(id)
@@ -1193,28 +1219,29 @@ func (e *docEditor) fileIDsText(ids []string, block bool, keyCol int) (string, e
 		texts[i] = text
 	}
 	if !block || len(ids) == 0 {
-		return "file_ids: [" + strings.Join(texts, ", ") + "]", nil
+		return key + ": [" + strings.Join(texts, ", ") + "]", nil
 	}
 	var b strings.Builder
-	b.WriteString("file_ids:")
+	b.WriteString(key + ":")
 	for _, text := range texts {
 		b.WriteString(e.br + strings.Repeat(" ", keyCol+2) + "- " + text)
 	}
 	return b.String(), nil
 }
 
-// fomodText is the fomod entry as a whole write writes it - `fomod:` and
-// its nested block, indented exactly as yaml.Marshal indents it inside a
-// reference of the mods list - with every line after the first moved to sit
-// under a reference whose keys start at keyCol, the lines joined by the
-// document's own break (#614).
-func (e *docEditor) fomodText(c domain.FomodChoices, keyCol int) (string, error) {
-	out, err := yaml.Marshal([]ModReferenceConfig{{Fomod: c}})
+// blockText is a nested-block entry (fomod, #614; fomod_files, #634) as a
+// whole write writes it - `<key>:` and its nested block, indented exactly
+// as yaml.Marshal indents it inside a reference of the mods list - with
+// every line after the first moved to sit under a reference whose keys
+// start at keyCol, the lines joined by the document's own break. ref holds
+// only the entry's value.
+func (e *docEditor) blockText(ref ModReferenceConfig, key string, keyCol int) (string, error) {
+	out, err := yaml.Marshal([]ModReferenceConfig{ref})
 	if err != nil {
 		return "", err
 	}
 	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
-	start := slices.Index(lines, "  fomod:")
+	start := slices.Index(lines, "  "+key+":")
 	if start < 0 {
 		return "", errors.New("the choices block could not be formatted")
 	}
@@ -1238,7 +1265,7 @@ func (e *docEditor) setItemKey(item modItem, rank int, key, wantText string, zer
 	m := item.node
 	k, v, i := mappingEntry(m, key)
 	entryText := key + ": " + wantText
-	if key == "file_ids" || key == "fomod" {
+	if key == "file_ids" || key == "fomod_order" || key == "fomod" || key == "fomod_files" {
 		entryText = wantText
 	}
 	if i < 0 {
@@ -1257,8 +1284,8 @@ func (e *docEditor) setItemKey(item modItem, rank int, key, wantText string, zer
 		if flow || i == 0 {
 			// A key a line cannot be taken from: its value becomes the one
 			// that reads as absent.
-			zeroText := map[string]string{"version": `""`, "file_ids": "file_ids: []", "locked": "false", "disabled": "false", "category": `""`, "mod_type": `""`, "fomod": "fomod: {}"}[key]
-			if key == "file_ids" || key == "fomod" {
+			zeroText := map[string]string{"version": `""`, "file_ids": "file_ids: []", "locked": "false", "disabled": "false", "category": `""`, "mod_type": `""`, "fomod": "fomod: {}", "fomod_files": "fomod_files: {}", "fomod_order": "fomod_order: []"}[key]
+			if key == "file_ids" || key == "fomod_order" || key == "fomod" || key == "fomod_files" {
 				return e.replaceEntry(k, v, zeroText)
 			}
 			if isEmptyScalar(v) || v.Kind != yaml.ScalarNode {
@@ -1284,13 +1311,17 @@ func (e *docEditor) setItemKey(item modItem, rank int, key, wantText string, zer
 			start -= breakLenBefore(e.data, start)
 		}
 		e.edits = append(e.edits, textEdit{offset: start, length: end - start})
+		if e.removed == nil {
+			e.removed = map[string]bool{}
+		}
+		e.removed[key] = true
 		return nil
 	}
 
-	if key != "file_ids" && key != "fomod" && v.Kind == yaml.ScalarNode && !isEmptyScalar(v) {
+	if key != "file_ids" && key != "fomod_order" && key != "fomod" && key != "fomod_files" && v.Kind == yaml.ScalarNode && !isEmptyScalar(v) {
 		return e.replaceScalar(v, wantText)
 	}
-	if key == "file_ids" && flow {
+	if (key == "file_ids" || key == "fomod_order") && flow {
 		entryText = strings.ReplaceAll(entryText, e.br, " ")
 	}
 	return e.replaceEntry(k, v, entryText)
@@ -1426,6 +1457,9 @@ func (e *docEditor) insertItemKey(item modItem, rank int, entryText string, flow
 	}
 	anchorLine := -1
 	for r := rank - 1; r >= 0 && anchorLine < 0; r-- {
+		if e.removed[refKeys[r]] {
+			continue
+		}
 		if k, v, i := mappingEntry(m, refKeys[r]); i >= 0 {
 			last, err := e.lastLineOf(k, v)
 			if err != nil {

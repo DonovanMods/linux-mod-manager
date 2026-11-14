@@ -615,3 +615,38 @@ func TestDownloadsDir(t *testing.T) {
 	t.Setenv("XDG_DOWNLOAD_DIR", "/srv/dl")
 	assert.Equal(t, "/srv/dl", core.DownloadsDir())
 }
+
+// #634 x #608: a mod whose files each carry a FOMOD installer, recorded per
+// file, fills from its two downloads with each file's own choices, asking
+// nothing.
+func TestApplyProfileFill_ReplaysPerFileChoices(t *testing.T) {
+	f := newFillFixture(t, fillSetup{refs: []domain.ModReference{{
+		SourceID: "nexusmods", ModID: "40", Version: "1", FileIDs: []string{"400", "401"},
+		FomodFiles: domain.FomodFiles{"400": answer("4K"), "401": patchAnswer("Vanilla")},
+	}}})
+	main, patch := fomodZip(t, "4K", "v1"), patchZip(t, "USSEP", "v1")
+	f.recipe = []fillRecipeMod{
+		{Name: "Bugs", ModID: "40", FileID: "400", MD5: md5Hex(main), Size: int64(len(main)), Policy: "exact"},
+		{Name: "Bugs", ModID: "40", FileID: "401", MD5: md5Hex(patch), Size: int64(len(patch)), Policy: "exact"},
+	}
+	f.writeRecipe(t)
+	require.NoError(t, os.WriteFile(filepath.Join(f.downloads, "bugs-main.zip"), main, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(f.downloads, "bugs-patch.zip"), patch, 0o644))
+
+	plan := f.plan(t)
+	require.Len(t, plan.Matched, 1)
+	assert.True(t, plan.Matched[0].Installer, "per-file choices are recorded installer choices")
+	assert.Len(t, plan.Matched[0].Files, 2)
+	_, err := f.svc.ApplyProfileFill(context.Background(), f.game, plan, core.ProfileFillOptions{}, nil)
+	require.NoError(t, err)
+	data, err := os.ReadFile(filepath.Join(f.game.ModPath, "textures", "t.dds"))
+	require.NoError(t, err)
+	assert.Equal(t, "4K-v1", string(data))
+	data, err = os.ReadFile(filepath.Join(f.game.ModPath, "bugs_patch.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, "VANILLA-v1", string(data))
+	saved, err := config.LoadProfile(f.svc.ConfigDir(), f.game.ID, "Coll")
+	require.NoError(t, err)
+	ref := saved.FindRef("nexusmods", "40")
+	assert.Equal(t, "Vanilla", picked(ref.FomodFiles["401"]))
+}

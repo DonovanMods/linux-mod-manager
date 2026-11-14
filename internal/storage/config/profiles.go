@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -71,6 +72,12 @@ type ModReferenceConfig struct {
 	// when none are recorded (domain.FomodChoices.IsZero), so a file with
 	// none is unchanged.
 	Fomod domain.FomodChoices `yaml:"fomod,omitempty"`
+	// FomodFiles is #634's per-file recorded choices, keyed by file id;
+	// omitted when none are recorded, so a file without them is unchanged.
+	FomodFiles domain.FomodFiles `yaml:"fomod_files,omitempty"`
+	// FomodOrder is #634's layer-order hint for FomodFiles; omitted when
+	// empty.
+	FomodOrder []string `yaml:"fomod_order,omitempty"`
 }
 
 // parseProfileHooks converts YAML hooks to domain types, tracking which were explicitly set
@@ -259,6 +266,9 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 			Category: m.Category,
 			ModType:  m.ModType,
 			Fomod:    m.Fomod,
+			// #634: copied, so the profile's map is its own.
+			FomodFiles: m.FomodFiles.Clone(),
+			FomodOrder: slices.Clone(m.FomodOrder),
 		}
 	}
 

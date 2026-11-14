@@ -5,9 +5,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -267,20 +269,54 @@ func TestConvert_FilesOfOneModMerge(t *testing.T) {
 	assert.Len(t, first.Files, 2)
 	assert.Empty(t, c.Unsupported)
 
-	// Two installers in one mod, or two mod types, cannot share one entry.
+	// Two installers in one mod record their choices per file (#634);
+	// two mod types still cannot share one entry.
 	a := nexusMod("Two A", "5", "51", "x1")
 	a.InstallerType = "fomod"
 	a.Choices = []domain.FomodStepChoice{{Name: "s"}}
 	b := nexusMod("Two B", "5", "52", "x2")
 	b.InstallerType = "fomod"
-	b.Choices = []domain.FomodStepChoice{{Name: "s"}}
+	b.Choices = []domain.FomodStepChoice{{Name: "t"}}
 	d := nexusMod("Root", "6", "61", "y1")
 	d.ModType = "dinput"
 	e := nexusMod("Data", "6", "62", "y2")
 	in := convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b, d, e}})
 	in.modTypeSupported = func(string) bool { return true }
 	c = mustConvert(t, in)
-	assert.Equal(t, []string{CollectionFeatureFomodMultiFile, CollectionFeatureModTypeMixed}, featureNames(c.Unsupported))
+	assert.Equal(t, []string{CollectionFeatureModTypeMixed}, featureNames(c.Unsupported))
+	assert.Contains(t, c.Features, CollectionFeatureFomodMultiFile)
+	require.NotEmpty(t, c.Document.Items)
+	two := c.Document.Items[0]
+	assert.Equal(t, "5", two.Ref.ModID)
+	assert.True(t, two.Ref.Fomod.IsZero(), "not the single form")
+	assert.True(t, domain.FomodFiles{"51": {Steps: a.Choices}, "52": {Steps: b.Choices}}.Equal(two.Ref.FomodFiles), "%+v", two.Ref.FomodFiles)
+	assert.Contains(t, c.Document.Requires, CollectionFeatureFomodMultiFile, "an older lmm refuses what it cannot replay")
+}
+
+// TestConvert_PerFileChoicesCountEveryInstaller (#634): of a mod's two
+// installer files, one without recorded answers asks for its own at
+// install - the other's are recorded under its own file, never as the
+// mod's single form, which would replay them against both installers.
+func TestConvert_PerFileChoicesCountEveryInstaller(t *testing.T) {
+	a := nexusMod("Two A", "5", "51", "x1")
+	a.InstallerType = "fomod"
+	a.Choices = []domain.FomodStepChoice{{Name: "s"}}
+	b := nexusMod("Two B", "5", "52", "x2")
+	b.InstallerType = "fomod"
+	c := mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b}}))
+	assert.Empty(t, c.Unsupported)
+	ref := c.Document.Items[0].Ref
+	assert.True(t, ref.Fomod.IsZero())
+	assert.Equal(t, []string{"51"}, slices.Sorted(maps.Keys(ref.FomodFiles)))
+
+	// One installer among a mod's files keeps the single form, as before.
+	plain := nexusMod("Plain", "5", "53", "x3")
+	c = mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, plain}}))
+	ref = c.Document.Items[0].Ref
+	assert.Nil(t, ref.FomodFiles)
+	assert.Equal(t, a.Choices, ref.Fomod.Steps)
+	assert.NotContains(t, c.Features, CollectionFeatureFomodMultiFile)
+	assert.NotContains(t, c.Document.Requires, CollectionFeatureFomodMultiFile)
 }
 
 func TestConvert_PhaseAndRulesOrderTheProfile(t *testing.T) {
@@ -662,4 +698,43 @@ func TestSupportedExcept_LeavesOutWhatTheRefusalNames(t *testing.T) {
 	got := supportedExcept([]UnsupportedCollectionFeature{{Feature: CollectionFeaturePluginOrder}})
 	assert.NotContains(t, got, CollectionFeaturePluginOrder)
 	assert.Contains(t, got, CollectionFeatureFomod)
+}
+
+// TestConvert_RulesBetweenAModsOwnFilesSetItsLayerOrder (#634): a
+// before/after rule between two files of one mod with an installer in
+// each is the entry's fomod_order - the order every flow layers the files
+// in, so the later file wins a path both write, as Vortex installing each
+// file as its own mod would. file_ids keep the collection's order; without
+// such a rule there is no hint, and the files layer by id.
+func TestConvert_RulesBetweenAModsOwnFilesSetItsLayerOrder(t *testing.T) {
+	a := nexusMod("Bugs - Main", "5", "51", "main")
+	a.InstallerType = "fomod"
+	a.Choices = []domain.FomodStepChoice{{Name: "s"}}
+	b := nexusMod("Bugs - Patch", "5", "52", "patch")
+	b.InstallerType = "fomod"
+	b.Choices = []domain.FomodStepChoice{{Name: "t"}}
+	other := nexusMod("Other", "6", "61", "other")
+
+	c := mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b, other}}))
+	assert.Equal(t, []string{"51", "52"}, c.Document.Items[0].Ref.FileIDs, "the collection's order")
+	assert.Nil(t, c.Document.Items[0].Ref.FomodOrder, "no rule, no hint")
+
+	// "Main after Patch": the main file layers last.
+	rules := []source.ManifestModRule{{Type: "after", Source: source.ManifestModRef{FileMD5: h("main")}, Reference: source.ManifestModRef{FileMD5: h("patch")}}}
+	c = mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b, other}, ModRules: rules}))
+	item := c.Document.Items[0]
+	assert.Equal(t, []string{"52", "51"}, item.Ref.FomodOrder)
+	assert.Equal(t, []string{"51", "52"}, item.Ref.FileIDs, "file_ids keep the collection's order")
+	assert.Equal(t, "6", c.Document.Items[1].Ref.ModID, "the mods' own order is untouched")
+
+	// A mod with one installer records no hint: it layers as it always has.
+	plain := nexusMod("Bugs - Plain", "5", "52", "patch")
+	c = mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, plain}, ModRules: rules}))
+	assert.Nil(t, c.Document.Items[0].Ref.FomodOrder)
+
+	// Contradicting rules: a cycle keeps the collection's order, noted.
+	rules = append(rules, source.ManifestModRule{Type: "before", Source: source.ManifestModRef{FileMD5: h("main")}, Reference: source.ManifestModRef{FileMD5: h("patch")}})
+	c = mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b}, ModRules: rules}))
+	assert.Len(t, c.Document.Items[0].Ref.FomodOrder, 2)
+	assert.True(t, slices.ContainsFunc(c.Notes, func(n string) bool { return strings.Contains(n, "own files form a cycle") }), "%v", c.Notes)
 }

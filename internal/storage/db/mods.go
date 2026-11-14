@@ -120,7 +120,7 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 	if err != nil {
 		return err
 	}
-	prevFomod, err := encodeFomod(mod.PreviousFomod)
+	prevFomod, err := encodeFomod(mod.PreviousFomodRecord())
 	if err != nil {
 		return err
 	}
@@ -220,7 +220,7 @@ func (d *DB) RelinkInstalledMod(ctx context.Context, oldSourceID, oldModID strin
 	if err != nil {
 		return err
 	}
-	relinkPrevFomod, err := encodeFomod(mod.PreviousFomod)
+	relinkPrevFomod, err := encodeFomod(mod.PreviousFomodRecord())
 	if err != nil {
 		return err
 	}
@@ -319,7 +319,7 @@ func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (
 		}
 		mod.PreviousFileIDs, err = decodeFileIDs(prevFileIDs)
 		if err == nil {
-			mod.PreviousFomod, err = decodeFomod(prevFomodRaw)
+			err = setPreviousFomod(&mod, prevFomodRaw)
 		}
 		if err != nil {
 			_ = rows.Close()
@@ -672,7 +672,7 @@ func (d *DB) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profi
 	if err != nil {
 		return nil, err
 	}
-	if mod.PreviousFomod, err = decodeFomod(prevFomodRaw); err != nil {
+	if err = setPreviousFomod(&mod, prevFomodRaw); err != nil {
 		return nil, err
 	}
 	mod.SanitizeSourceText() // #594: a row stored before ingestion cleaned it
@@ -876,10 +876,10 @@ func (d *DB) SetModFileIDs(ctx context.Context, sourceID, modID, gameID, profile
 // the version.
 //
 // previousFomod is the FOMOD choices the replaced version was installed
-// with (#614): recorded as previous_fomod in the same transaction as
+// with (#614), in either form (#634): recorded as previous_fomod in the same transaction as
 // previous_version and previous_variant, so a rollback never restores
 // choices that disagree with the version it restores.
-func (d *DB) ApplyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion, newVariant string, previousFomod domain.FomodChoices, newFileIDs []string) error {
+func (d *DB) ApplyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion, newVariant string, previousFomod domain.FomodRecord, newFileIDs []string) error {
 	prevFomod, err := encodeFomod(previousFomod)
 	if err != nil {
 		return err
@@ -935,10 +935,10 @@ func (d *DB) ApplyModUpdate(ctx context.Context, sourceID, modID, gameID, profil
 // The read/write and file ID restoration are performed atomically within a transaction.
 //
 // currentFomod is the FOMOD choices the version being rolled away from
-// was installed with (#614): it becomes previous_fomod in the same
+// was installed with (#614), in either form (#634): it becomes previous_fomod in the same
 // transaction, and the choices previous_fomod held - the ones the restored
 // version was installed with - are returned for the caller to record.
-func (d *DB) SwapModVersions(ctx context.Context, sourceID, modID, gameID, profileName string, currentFomod domain.FomodChoices) (restored domain.FomodChoices, err error) {
+func (d *DB) SwapModVersions(ctx context.Context, sourceID, modID, gameID, profileName string, currentFomod domain.FomodRecord) (restored domain.FomodRecord, err error) {
 	curFomod, err := encodeFomod(currentFomod)
 	if err != nil {
 		return restored, err
@@ -996,10 +996,10 @@ func (d *DB) SwapModVersions(ctx context.Context, sourceID, modID, gameID, profi
 	}
 
 	if restored, err = decodeFomod(prevFomodRaw); err != nil {
-		return domain.FomodChoices{}, err
+		return domain.FomodRecord{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return domain.FomodChoices{}, err
+		return domain.FomodRecord{}, err
 	}
 	return restored, nil
 }
@@ -1133,25 +1133,63 @@ func replaceModFileIDsTx(ctx context.Context, e execer, sourceID, modID, gameID,
 }
 
 // encodeFomod is previous_fomod's encoding: ” for no choices, else JSON.
-func encodeFomod(c domain.FomodChoices) (string, error) {
-	if c.IsZero() {
+// The single form is FomodChoices' own object, exactly as #614 wrote it.
+// The per-file form (#634) is the same object with no config and no steps,
+// plus a "files" member keyed by file id: an older lmm, which knows only
+// the single form, reads it as no recorded choices rather than failing,
+// so the column changes shape without a schema migration.
+func encodeFomod(r domain.FomodRecord) (string, error) {
+	if r.IsZero() {
 		return "", nil
 	}
-	b, err := json.Marshal(c)
+	var b []byte
+	var err error
+	if r.PerFile() {
+		b, err = json.Marshal(previousFomodFiles{Steps: []domain.FomodStepChoice{}, Files: r.Files.Clone(), Order: r.Order})
+	} else {
+		b, err = json.Marshal(r.Choices)
+	}
 	if err != nil {
 		return "", fmt.Errorf("encoding previous FOMOD choices: %w", err)
 	}
 	return string(b), nil
 }
 
+// previousFomodFiles is encodeFomod's per-file form (#634).
+type previousFomodFiles struct {
+	ConfigSHA256 string                   `json:"config_sha256"`
+	Steps        []domain.FomodStepChoice `json:"steps"`
+	Files        domain.FomodFiles        `json:"files,omitempty"`
+	Order        []string                 `json:"order,omitempty"`
+}
+
 // decodeFomod reads encodeFomod's encoding.
-func decodeFomod(raw string) (domain.FomodChoices, error) {
-	var c domain.FomodChoices
+func decodeFomod(raw string) (domain.FomodRecord, error) {
+	var r domain.FomodRecord
 	if raw == "" {
-		return c, nil
+		return r, nil
 	}
-	if err := json.Unmarshal([]byte(raw), &c); err != nil {
-		return c, fmt.Errorf("decoding previous FOMOD choices: %w", err)
+	var files previousFomodFiles
+	if err := json.Unmarshal([]byte(raw), &files); err != nil {
+		return r, fmt.Errorf("decoding previous FOMOD choices: %w", err)
 	}
-	return c, nil
+	if !files.Files.IsZero() {
+		r.Files, r.Order = files.Files, files.Order
+		return r, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &r.Choices); err != nil {
+		return r, fmt.Errorf("decoding previous FOMOD choices: %w", err)
+	}
+	return r, nil
+}
+
+// setPreviousFomod decodes raw onto mod's previous choices, in whichever
+// form they were recorded.
+func setPreviousFomod(mod *domain.InstalledMod, raw string) error {
+	r, err := decodeFomod(raw)
+	if err != nil {
+		return err
+	}
+	mod.PreviousFomod, mod.PreviousFomodFiles, mod.PreviousFomodOrder = r.Choices, r.Files, r.Order
+	return nil
 }

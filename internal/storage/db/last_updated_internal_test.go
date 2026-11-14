@@ -158,14 +158,14 @@ func TestLastUpdatedAt_UpdateAndRollbackMoveIt(t *testing.T) {
 
 	t1 := t0.Add(time.Hour)
 	*now = t1
-	require.NoError(t, d.ApplyModUpdate(ctx, "s", "m", "g", "default", "2.0", "", domain.FomodChoices{}, []string{"f2"}))
+	require.NoError(t, d.ApplyModUpdate(ctx, "s", "m", "g", "default", "2.0", "", domain.FomodRecord{}, []string{"f2"}))
 	installed, updated := getLastUpdated(t, d)
 	assert.True(t, installed.Equal(t0), "installed_at never moves")
 	assert.True(t, updated.Equal(t1), "ApplyModUpdate moves Updated")
 
 	t2 := t0.Add(2 * time.Hour)
 	*now = t2
-	require.NoError(t, swapErrOnly(d.SwapModVersions(ctx, "s", "m", "g", "default", domain.FomodChoices{})))
+	require.NoError(t, swapErrOnly(d.SwapModVersions(ctx, "s", "m", "g", "default", domain.FomodRecord{})))
 	_, updated = getLastUpdated(t, d)
 	assert.True(t, updated.Equal(t2), "a rollback moves Updated")
 
@@ -176,10 +176,10 @@ func TestLastUpdatedAt_UpdateAndRollbackMoveIt(t *testing.T) {
 	assert.True(t, updated.Equal(t3), "UpdateModVersion moves Updated")
 
 	*now = t0.Add(4 * time.Hour)
-	require.NoError(t, d.ApplyModUpdate(ctx, "s", "m", "g", "default", "3.0", "", domain.FomodChoices{}, []string{"f3"}))
+	require.NoError(t, d.ApplyModUpdate(ctx, "s", "m", "g", "default", "3.0", "", domain.FomodRecord{}, []string{"f3"}))
 	_, updated = getLastUpdated(t, d)
 	assert.True(t, updated.Equal(t3), "re-applying the installed version keeps Updated")
 }
 
 // swapErrOnly drops SwapModVersions' restored choices.
-func swapErrOnly(_ domain.FomodChoices, err error) error { return err }
+func swapErrOnly(_ domain.FomodRecord, err error) error { return err }

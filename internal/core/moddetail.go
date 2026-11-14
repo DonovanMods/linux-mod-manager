@@ -97,6 +97,10 @@ type InstalledDetail struct {
 	// choices its profile reference records, so the full mod page can offer
 	// "Reconfigure installer…" (`lmm mod fomod`). Nil for any other mod.
 	Fomod *domain.FomodChoices `json:"fomod,omitempty"`
+	// FomodFiles are the per-file choices of a mod whose files each carry
+	// an installer (#634), by file id; Fomod is then present and empty.
+	// Absent for every other mod.
+	FomodFiles domain.FomodFiles `json:"fomod_files,omitempty"`
 	// FomodNotRun reports a FOMOD mod installed before lmm ran FOMOD
 	// installers (#614, Service.IsLegacyFomodInstall): the archive's raw
 	// contents, every option at once, are what is deployed. It keeps
@@ -198,6 +202,10 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 			if !ref.Fomod.IsZero() {
 				choices := ref.Fomod
 				info.Fomod = &choices
+			}
+			info.FomodFiles = ref.FomodFiles.Clone()
+			if info.Fomod == nil && info.FomodFiles != nil {
+				info.Fomod = &domain.FomodChoices{Steps: []domain.FomodStepChoice{}}
 			}
 		}
 	}

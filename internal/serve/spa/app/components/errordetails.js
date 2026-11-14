@@ -32,7 +32,7 @@ import {
   installFromFileOrigin,
 } from "./installfromfile.js";
 import { DocumentView } from "./documentview.js";
-import { fomodQuestionFor, modKey } from "../fomod.js";
+import { answerKey, fomodQuestionFor, questionTitle } from "../fomod.js";
 
 /** loaderLabel spells a loader kind the way its own project does. An
  * unrecognised kind is shown as sent - kind is an open string. */
@@ -304,8 +304,8 @@ export function FomodQuestionSummary({ question }) {
       <ul class="plan__mods">
         ${question.mods.map(
           (m) =>
-            html`<li key=${modKey(m)}>
-              ${m.name || modKey(m)}${m.module_name ? ` (${m.module_name})` : ""}:
+            html`<li key=${answerKey(m)}>
+              ${questionTitle(m)}${m.module_name ? ` (${m.module_name})` : ""}:
               ${" "}${m.steps.length} step${m.steps.length === 1 ? "" : "s"}
             </li>`,
         )}

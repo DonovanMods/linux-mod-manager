@@ -2120,16 +2120,19 @@ function answerFomod(job) {
  * a question it raises again (a step the answers made visible) opens the
  * wizard once more, where this round stopped.
  */
-async function submitFomod(origin, answers, walked) {
+async function submitFomod(origin, answers, walked, mods = []) {
   const req = fomodRequests.get(origin);
   closeModal();
   if (!req) return;
   const fomod = { ...(req.applyOptions?.fomod ?? {}), ...answers };
   const applyOptions = { ...(req.applyOptions ?? {}), fomod };
   // An update batch re-posts only the mods that asked; the rest are done.
+  // The answers' keys are not always mods (issue 634: one file's installer
+  // is answered under its file), so the mods are counted apart.
+  const fomodMods = [...new Set([...(req.fomodMods ?? []), ...mods])];
   const basePlanOptions =
     req.kind === "updates"
-      ? { ...(req.planOptions ?? {}), mods: Object.keys(fomod) }
+      ? { ...(req.planOptions ?? {}), mods: fomodMods }
       : req.planOptions;
   const context = req.context ?? routeContext();
   await startBinding(origin, async () => {
@@ -2143,7 +2146,12 @@ async function submitFomod(origin, answers, walked) {
           : basePlanOptions;
       const response = await planMutation(req.kind, planOptions, context);
       const { id: jobID } = await startJob(response.plan_id, applyOptions);
-      fomodRequests.set(origin, { ...req, planOptions, applyOptions });
+      fomodRequests.set(origin, {
+        ...req,
+        planOptions,
+        applyOptions,
+        fomodMods,
+      });
       fomodWalks.set(origin, { ...(fomodWalks.get(origin) ?? {}), ...walked });
       if (overwriteRetryKinds.has(req.kind))
         rememberInstallRequest(origin, req.kind, planOptions, applyOptions);

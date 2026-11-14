@@ -146,11 +146,11 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	fx := s.fomodInputFor(ctx, game, plan.Profile.Name, &ref, ref.SourceID, ref.ModID, answers)
 	gameCache := s.GetGameCache(game)
 	warmKey := modCacheKey(game.ID, *mod)
-	warmKey.Variant = fomodVariant(fx.choices)
+	warmKey.Variant = fx.expectedVariant()
 	if gameCache.HasFileIDs(warmKey, st.fileIDs) {
 		if warmKey.Variant != "" {
 			mod.Variant = warmKey.Variant
-			st.fomod = &fomodResolved{variant: warmKey.Variant, choices: fx.choices}
+			st.fomod = fx.warmResolved(warmKey.Variant)
 		}
 		return st, nil
 	}
@@ -158,6 +158,7 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	// a panic in a later file's acquire releases the earlier ones here
 	// (#628).
 	defer releaseOnPanic(func() { s.releaseAcquired(st.files, false) })
+	var asks modFomodAsks // #634: every file's installer asks in one round
 	for _, file := range filesToDownload {
 		if err := ctx.Err(); err != nil {
 			s.releaseAcquired(st.files, false)
@@ -181,6 +182,9 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 		} else {
 			a, err = s.acquireFile(ctx, gameCache, ref.SourceID, game, mod, file, fx, progressFn)
 		}
+		if err != nil && asks.take(err, file) {
+			continue
+		}
 		if err != nil {
 			f := fail(fmt.Sprintf(reason, err), err)
 			// The mod's earlier files go with the failure, so a refusal
@@ -193,12 +197,19 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 		st.files = append(st.files, a)
 	}
 	emit(StepEvent{Scope: st.scope, Phase: ImportDownloadDone})
-	resolved, err := unifyFomod(mod, st.files)
+	if err := asks.finish(mod, fx, st.files); err != nil {
+		f := fail(fmt.Sprintf("download failed: %v", err), err)
+		f.release = s.releaseFilesFunc(st.files)
+		return nil, f
+	}
+	// #634: a mod with several installers comes back in its layer order.
+	ordered, resolved, err := unifyFomod(mod, st.files, fx.orderHint)
 	if err != nil {
 		f := fail(err.Error(), err)
 		f.release = s.releaseFilesFunc(st.files)
 		return nil, f
 	}
+	st.files = ordered
 	st.fomod = resolved
 	return st, nil
 }

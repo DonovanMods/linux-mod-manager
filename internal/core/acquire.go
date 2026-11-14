@@ -127,9 +127,10 @@ func acquireTreePath(cachePath, fileID string) string {
 // answers without re-fetching has kept its archive (retained_download.go).
 //
 // fx is what a FOMOD installer in the file is installed with (#614,
-// fomod_resolve.go); the zero value records no choices.
+// fomod_resolve.go) - the MOD's input, of which the file's own is taken
+// here (fomodInput.forFile, #634); the zero value records no choices.
 func (s *Service) acquireFile(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, sink EventSink) (*acquiredFile, error) {
-	a, err := s.acquireFileRaw(ctx, gameCache, sourceID, game, mod, file, fx, sink)
+	a, err := s.acquireFileRaw(ctx, gameCache, sourceID, game, mod, file, fx.forFile(file.ID), sink)
 	if err != nil {
 		if game != nil {
 			s.noteDownloadOutcome(ctx, game.ID, sourceID, mod, err) // #543

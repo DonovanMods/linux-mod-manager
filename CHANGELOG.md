@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   you downloaded by hand: each file is recognised by the size and md5 the
   collection's recipe records for it (re-fetched when its cache entry is
   gone), and installed as if downloaded, with the recorded installer
-  choices and mod type, locked as the curator pinned it, and set to update
+  choices (per file, for a mod with several installers, #634) and mod type, locked as the curator pinned it, and set to update
   automatically when the curator asked for the newest file. The plan lists
   what installs, what is still pending and why, and every file not used;
   `--dry-run` and `--json` show it without installing. Only a folder's top
@@ -29,6 +29,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drop the files: only files of a pending size and at most 2 GiB are
   uploaded, up to four at a time. `lmm profile list --json` (and the web UI's profile list) name a
   profile's source collection under the new `collection` key.
+- **FOMOD choices per file (#634).** A mod whose files each carry their
+  own FOMOD installer - a NexusMods collection that pins a mod's main file
+  and a patch file, each a FOMOD, such as Scrambled Bugs - now installs:
+  each file's installer asks in the same round, headed with its file, and
+  its answers are recorded per file (the profile's new `fomod_files:` block,
+  keyed by file id; a mod with one installer keeps `fomod:`, written exactly
+  as before). Answer a file's installer under `source:id#file-id` in a
+  `--fomod-choices` file. An update hands each file's answers to the file
+  replacing it and asks only about one whose installer changed; a rollback
+  restores them; `lmm mod fomod <mod-id> --file <file-id>` (in the web UI,
+  **Reconfigure installer…**'s installer list) changes one file's answers.
+  The NexusMods collection import no longer refuses such a mod
+  (`fomod_multi_file`); with #611's plugin order, the Skyrim sample
+  collection `xk05aw` now converts with nothing refused. An lmm collection document (`.lmmc`, or
+  a version-1 YAML export) that records choices per file requires the
+  `fomod_multi_file` feature, so an older lmm refuses to import it rather
+  than install it wrong. A plain profile file or version-0 export carries no
+  such gate: an older lmm reads it as recording no choices for that mod, so
+  its installers ask again, and it drops the block if it rewrites the file,
+  as with `fomod:`. The rollback record keeps the per-file form in the
+  existing database column, so no database migration. A mod's files share
+  one install, so when two of its installers write the same file one of
+  them has to win: the files layer in one order whichever command installs
+  them - by file id, unless the profile's new `fomod_order:` list says
+  otherwise - and a NexusMods collection's before/after rules between the
+  mod's own files set that list, as Vortex would by installing each file as
+  its own mod. An update pairs each file with the file replacing it by the
+  source's own replacement, else by name or category, and asks again about
+  a file it cannot pair rather than replay another file's answers.
 - **More NexusMods collections import: Starfield, The Witcher 3, Baldur's
   Gate 3 and Stardew Valley mod types (#635).** A collection's mods carry
   Vortex's mod type, and a type the game's adapter does not know refuses
@@ -67,7 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   import says once to plan again. A collection that needs something lmm
   cannot replay yet (an exact file list, bundled files,
   patches, a file-based load order, a mod type the game's adapter does not
-  route, two installers in one mod) shows its plan, naming what is missing
+  route) shows its plan, naming what is missing
   and which mods need it, and is refused with nothing written. The recipe is
   a `.7z`, so the import needs the `7z` command and says so when it is
   missing.
@@ -468,6 +497,11 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Changed
 
+- **The `--fomod-choices` error for several questions names the per-file key
+  (#634).** An unkeyed choices file that meets more than one installer now
+  says "answers one installer, but N ask; key its answers by mod
+  (source:id), or by file (source:id#file-id) for a mod with several
+  installers". The exit status is unchanged.
 - **Profile overrides are written more carefully (#630).** Each override
   now replaces its file atomically (a temporary file renamed into place),
   and its directory is opened one step at a time from the game folder
