@@ -385,3 +385,22 @@ func TestConvertSourceCollection_RefusesARecipeThatIsNot7z(t *testing.T) {
 		})
 	}
 }
+
+// #607 C2a review: a redirect off https would carry the next signed link
+// in the clear; it is refused, and nothing is requested over http.
+func TestConvertSourceCollection_RefusesARedirectOffHTTPS(t *testing.T) {
+	if _, err := exec.LookPath("7z"); err != nil {
+		t.Skip("7z not installed")
+	}
+	var plainHits atomic.Int32
+	plain := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { plainHits.Add(1) }))
+	t.Cleanup(plain.Close)
+	f := newRecipeFixtureWith(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+"/f.7z?md5=SECRET3&expires=1", http.StatusFound)
+	})
+	c, err := f.svc.ConvertSourceCollection(context.Background(), f.game, "nexusmods", "abcdef", core.CollectionConvertOptions{})
+	require.NoError(t, err)
+	assert.Contains(t, c.ManifestError, "plain-http")
+	assert.NotContains(t, c.ManifestError, "SECRET3")
+	assert.Zero(t, plainHits.Load(), "the http address is never requested")
+}

@@ -274,6 +274,9 @@ func (s *Service) fetchCollectionRecipe(ctx context.Context, game *domain.Game, 
 	return dir, nil
 }
 
+// errRecipeRedirectNotHTTPS refuses a recipe link that redirects off https.
+var errRecipeRedirectNotHTTPS = errors.New("the recipe's link redirected to a plain-http address, which lmm does not follow")
+
 // renameRecipe moves an extracted recipe into the cache; a seam for the
 // cross-device test.
 var renameRecipe = os.Rename
@@ -289,7 +292,24 @@ func (s *Service) downloadRecipe(ctx context.Context, link, dest string) (err er
 	if err != nil {
 		return err
 	}
-	resp, err := s.downloader.redirectSafeClient(nil).Do(req)
+	// The recipe's link is signed, and so is any link it redirects to:
+	// never follow one onto plain http, where it would cross the network
+	// in the clear.
+	client := *s.downloader.redirectSafeClient(nil)
+	base := client.CheckRedirect
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if next.URL.Scheme != "https" {
+			return errRecipeRedirectNotHTTPS
+		}
+		if base != nil {
+			return base(next, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		// *url.Error's text carries the URL that failed - after a redirect,
 		// a signed link the caller never saw, so redactLink cannot cut it.
