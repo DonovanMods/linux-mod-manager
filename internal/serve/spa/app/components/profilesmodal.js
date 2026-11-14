@@ -620,7 +620,7 @@ export function ImportURLForm({ actions, close, name }) {
   }
 
   return html`
-    <form class="profiles-import__collection" onSubmit=${submit}>
+    <form class="profiles-import__url" onSubmit=${submit}>
       <h4 class="plan__heading">From a URL</h4>
       <input
         type="url"

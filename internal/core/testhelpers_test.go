@@ -3,6 +3,7 @@ package core_test
 import (
 	"archive/zip"
 	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -114,10 +115,18 @@ func createTestScript(t *testing.T, dir, name, content string) string {
 // loader or has BepInEx in its install directory.
 func newFlowsTestService(t *testing.T) *core.Service {
 	t.Helper()
+	return newFlowsTestServiceWith(t, nil)
+}
+
+// newFlowsTestServiceWith is newFlowsTestService with the download client
+// given: a test TLS server's, for a fetch over https (#622).
+func newFlowsTestServiceWith(t *testing.T, downloads *http.Client) *core.Service {
+	t.Helper()
 	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
+		ConfigDir:      t.TempDir(),
+		DataDir:        t.TempDir(),
+		CacheDir:       t.TempDir(),
+		DownloadClient: downloads,
 	}
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)

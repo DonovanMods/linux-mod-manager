@@ -19,6 +19,8 @@ package core_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -121,6 +123,10 @@ var gatedPlans = []gatedPlan{
 	}},
 	{"PlanCollectionImport", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
 		_, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: fx.collectionDoc, GameID: g.ID})
+		return err
+	}},
+	{"PlanCollectionImportURL", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanCollectionImportURL(context.Background(), core.CollectionURLImportRequest{URL: fx.collectionURL, GameID: g.ID})
 		return err
 	}},
 	{"PlanUpdate", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
@@ -255,8 +261,10 @@ type planFixture struct {
 	archive      string
 	snapshotName string
 	profileDoc   []byte
-	// collectionDoc is profileDoc as an lmm collection (#621).
+	// collectionDoc is profileDoc as an lmm collection (#621), and
+	// collectionURL an https address serving it (#622).
 	collectionDoc []byte
+	collectionURL string
 	collection    string
 	update        domain.Update
 }
@@ -282,7 +290,10 @@ func (*loaderMissing) Error() string { return "install the loader first" }
 // and an archive on disk.
 func newPlanFixtureWithAdapter(t *testing.T, _ adapter.GameAdapter) (*core.Service, *domain.Game, planFixture) {
 	t.Helper()
-	svc := newFlowsTestService(t)
+	collectionDoc := []byte("lmm_collection: 1\nname: default\nmods:\n  - {source_id: acme, mod_id: m1, version: \"1.0\"}\n")
+	docServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(collectionDoc) }))
+	t.Cleanup(docServer.Close)
+	svc := newFlowsTestServiceWith(t, docServer.Client())
 	game := &domain.Game{
 		ID: "g1", Name: "Game",
 		InstallPath: t.TempDir(),
@@ -336,7 +347,8 @@ func newPlanFixtureWithAdapter(t *testing.T, _ adapter.GameAdapter) (*core.Servi
 		archive:       archive,
 		snapshotName:  snap.Name,
 		profileDoc:    doc,
-		collectionDoc: []byte("lmm_collection: 1\nname: default\nmods:\n  - {source_id: acme, mod_id: m1, version: \"1.0\"}\n"),
+		collectionDoc: collectionDoc,
+		collectionURL: docServer.URL + "/default.yaml",
 		collection:    "1234",
 		update: domain.Update{
 			InstalledMod: domain.InstalledMod{
