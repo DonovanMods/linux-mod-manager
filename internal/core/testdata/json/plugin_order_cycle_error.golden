@@ -1,0 +1,14 @@
+{
+  "cycle": [
+    {
+      "from": "B.esp",
+      "to": "A.esp",
+      "reason": "master"
+    },
+    {
+      "from": "A.esp",
+      "to": "B.esp",
+      "reason": "rule_after"
+    }
+  ]
+}

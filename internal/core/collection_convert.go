@@ -61,7 +61,10 @@ const (
 	CollectionFeaturePatches = "patches"
 	// CollectionFeatureFileOverrides is paths an item must win.
 	CollectionFeatureFileOverrides = "file_overrides"
-	// CollectionFeaturePluginOrder is a plugin list or plugin rules (C6).
+	// CollectionFeaturePluginOrder is a plugin list or plugin rules: in an
+	// lmm collection document, the profile's `plugins:` block (#616), which
+	// this lmm imports; in a Nexus recipe, `plugins`/`pluginRules`, which a
+	// conversion cannot carry until C6 maps them (convertPending).
 	CollectionFeaturePluginOrder = "plugin_order"
 	// CollectionFeatureManifestUnavailable is a collection whose recipe
 	// could not be read, so nothing about how to install it is known.
@@ -85,6 +88,16 @@ var convertSupported = map[string]bool{
 	CollectionFeatureModRules: true,
 	CollectionFeatureOptional: true,
 	CollectionFeaturePhase:    true,
+}
+
+// convertPending are the features an lmm collection document supports but
+// a conversion cannot yet carry into one: the converter refuses them even
+// though the document's supported set has them, so a recipe needing one is
+// never converted with that part dropped. plugin_order is the profile's
+// plugins: block (#616); mapping a Nexus recipe's plugins and pluginRules
+// into it is C6, which removes the entry.
+var convertPending = map[string]bool{
+	CollectionFeaturePluginOrder: true,
 }
 
 // CollectionItemState is what an import does with one converted item.
@@ -348,6 +361,9 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 	// The verdict: a collection-level feature blocks; an item's blocks when
 	// the item is required, and skips it when it is optional.
 	supported := func(name string) bool {
+		if convertPending[name] {
+			return false
+		}
 		if convertSupported[name] || supportedCollectionFeatures[name] {
 			return true
 		}

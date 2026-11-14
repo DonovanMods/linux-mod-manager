@@ -595,6 +595,33 @@ func TestJSONGoldens(t *testing.T) {
 			domain.CollectionExternalItem{Name: "Tool", URL: "https://example.invalid/tool", Instructions: "Install it by hand."},
 		},
 		{
+			// #616: a profile's plugins: block - its order and its rules.
+			"profile_plugins",
+			domain.ProfilePlugins{
+				Order: []domain.PluginEntry{{Name: "SkyUI_SE.esp", Enabled: true}, {Name: "Optional Thing.esp", Enabled: false}},
+				Rules: domain.PluginRules{
+					Groups:  []domain.PluginGroup{{Name: "Late Loaders", After: []string{"default"}}},
+					Plugins: []domain.PluginRule{{Name: "Patch.esp", Group: "Late Loaders", After: []string{"SkyUI_SE.esp"}}},
+				},
+			},
+		},
+		{
+			"plugin_entry",
+			domain.PluginEntry{Name: "Optional Thing.esp", Enabled: false},
+		},
+		{
+			"plugin_rules",
+			domain.PluginRules{Plugins: []domain.PluginRule{{Name: "Patch.esp", Req: []string{"Base.esm"}}}},
+		},
+		{
+			"plugin_group",
+			domain.PluginGroup{Name: "Late Loaders", After: []string{"default"}},
+		},
+		{
+			"plugin_rule",
+			domain.PluginRule{Name: "Patch.esp", Group: "Late Loaders", After: []string{"SkyUI_SE.esp"}, Req: []string{"Base.esm"}},
+		},
+		{
 			"collection_file_ref",
 			domain.CollectionFileRef{ID: "123", MD5: "25aa0000000000000000000000000000", Size: 1234567},
 		},

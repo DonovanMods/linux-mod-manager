@@ -1,0 +1,10 @@
+{
+  "name": "Patch.esp",
+  "group": "Late Loaders",
+  "after": [
+    "SkyUI_SE.esp"
+  ],
+  "req": [
+    "Base.esm"
+  ]
+}

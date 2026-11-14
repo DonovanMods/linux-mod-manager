@@ -307,7 +307,31 @@ Skyrim Special Edition (and Anniversary Edition), Skyrim VR, Fallout 4,
 Fallout 4 VR, Starfield and Skyrim (2011) use the `bethesda` adapter. When
 `lmm game detect` adds one from Steam it sets that for you. It lays out
 archives packed relative to the game folder, such as SKSE's, into `Data/`,
-and it knows each game's plugin rules for the plugin list to come.
+and it knows each game's plugin rules.
+
+### The plugin list
+
+For a game with the `bethesda` adapter, every deploy writes the game's
+`Plugins.txt` (and `loadorder.txt`, for Skyrim 2011) in the game's Wine
+prefix, so the plugins your mods ship are active and in a working order:
+masters first, each plugin after its masters, and then the order of your
+mods. `lmm deploy` prints what it wrote, and the web UI says it when the
+deploy finishes. A plugin you installed by hand, or one bought through the
+game's Creations menu, stays where it was and keeps its state. The first
+time lmm writes the list it keeps the one you had, and `lmm purge` puts it
+back, keeping whatever you or the game changed in it since. A plugin new to
+the profile loads last, so a mod you just added wins its conflicts. The list
+is written before an `install.after_all` or `uninstall.after_all` hook
+runs, so a hook of yours can read or adjust it.
+
+The deploy reports a plugin that needs a master you do not have active, or
+more active plugins than the game loads, as an error: the game would not
+start. When lmm cannot find the game's prefix, it deploys the mods, does
+not write the list, and says what to set (see the section above).
+`lmm verify` reports the same, and notices when one of lmm's plugins has
+been moved or deactivated since; `lmm verify --fix` writes the list again.
+A profile can set its own plugin order and rules: see
+[The plugin list](../configuration.md#the-plugin-list-plugins).
 
 A game you added before lmm knew this keeps the adapter it has: lmm never
 changes it by itself. Mission Control shows a note offering the `bethesda`

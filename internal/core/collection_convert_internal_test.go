@@ -651,3 +651,16 @@ func TestCheckRecipeTree_RefusesAHardLinkedManifest(t *testing.T) {
 	require.NoError(t, os.Link(other, filepath.Join(dir, "collection.json")))
 	assert.ErrorIs(t, checkRecipeTree(dir), source.ErrInvalidManifest)
 }
+
+// TestConvert_PluginOrderStaysBlockedUntilC6: an lmm collection document
+// supports plugin_order since #616 (the profile's plugins: block), but a
+// conversion cannot carry a Nexus recipe's plugins or pluginRules into it
+// yet (C6), so the converter still refuses a recipe that has them, rather
+// than convert it with the load order dropped.
+func TestConvert_PluginOrderStaysBlockedUntilC6(t *testing.T) {
+	require.Contains(t, SupportedCollectionFeatures(), CollectionFeaturePluginOrder, "the document format supports it")
+	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{nexusMod("A", "1", "11", "aa")},
+		Plugins: []source.ManifestPlugin{{Name: "A.esp"}}}
+	assert.Equal(t, []string{CollectionFeaturePluginOrder}, featureNames(mustConvert(t, convertInputFor(m)).Unsupported),
+		"the converter refuses it until C6 maps it")
+}

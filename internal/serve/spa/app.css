@@ -4390,3 +4390,15 @@ a.row-menu__item.mod-page-link {
   color: var(--text-secondary);
   font-size: 0.9em;
 }
+
+/* issue 616: a deploy's or a purge's plugin list - the file's path in the
+ * readout's secondary text, and a finding the game will not survive in
+ * --danger, where a warning keeps the quiet secondary colour. */
+.plugin-list__path {
+  margin: 0;
+  font-size: 0.85em;
+}
+
+.plugin-list__finding--error {
+  color: var(--danger);
+}

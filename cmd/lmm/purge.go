@@ -210,6 +210,8 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 	// #445 gate 2, G2-1: the files another game records, left in place -
 	// and (#466) the files the user changed.
 	printKeptPaths(result.Kept)
+	// #616: the game's plugin list, put back as it was before lmm.
+	renderPluginList(result.Plugins)
 
 	if !purgeUninstall {
 		fmt.Println("\nMod records preserved. Use 'lmm deploy' to restore mods.")

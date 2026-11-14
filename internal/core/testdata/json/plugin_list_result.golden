@@ -1,0 +1,23 @@
+{
+  "status": "written",
+  "list_file": "/home/user/.steam/steam/steamapps/compatdata/489830/pfx/drive_c/users/steamuser/AppData/Local/Skyrim Special Edition/Plugins.txt",
+  "plugins": 12,
+  "active": 11,
+  "external": 1,
+  "findings": [
+    {
+      "code": "plugin_limit_exceeded",
+      "severity": "error",
+      "class": "full",
+      "count": 256,
+      "limit": 254,
+      "message": "256 full plugins are active, but the game loads at most 254 - deactivate 2 of them"
+    },
+    {
+      "code": "plugin_name_unencodable",
+      "severity": "warning",
+      "plugin": "日本.esp",
+      "message": "\"日本.esp\" cannot be written to Plugins.txt (its name has a character with no Windows-1252 spelling, or a control character), so it is left out - rename the plugin"
+    }
+  ]
+}

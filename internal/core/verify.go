@@ -915,6 +915,8 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 		// is exactly when it helps most. Same order as the file-bearing
 		// path below.
 		r.adapterPass(installedMods)
+		// #616: deployed plugins need no recorded checksums to be listed.
+		r.pluginListPass()
 		r.loaderPass(installedMods)
 		if err := r.deployedContentPass(installedMods); err != nil {
 			return result, err
@@ -976,6 +978,9 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	// 2.0. An adapter with no Verifier - every adapter U1 ships - appends
 	// nothing.
 	r.adapterPass(installedMods)
+	// #616: the plugin list's findings and drift, before --fix's resync
+	// (which rewrites the list too, finding nothing left to drift).
+	r.pluginListPass()
 
 	if r.opts.Fix {
 		r.syncMergedPakPass()

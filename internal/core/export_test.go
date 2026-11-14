@@ -467,6 +467,14 @@ func (s *Service) RecordManualOnlyForTest(ctx context.Context, gameID, sourceID,
 	s.recordManualOnly(ctx, gameID, sourceID, modID)
 }
 
+// SetPluginListBeforeWriteForTest installs fn as the pluginListBeforeWrite
+// seam (#616 review 3: a list saved between the read and the write) and
+// returns a func that removes it.
+func SetPluginListBeforeWriteForTest(fn func()) func() {
+	pluginListBeforeWrite = fn
+	return func() { pluginListBeforeWrite = nil }
+}
+
 // SetRenameRecipeForTest replaces the rename that moves an extracted
 // collection recipe into the cache (#607), so a test can force the
 // cross-device (EXDEV) path; the returned func restores it.

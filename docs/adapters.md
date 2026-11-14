@@ -33,7 +33,7 @@ under `internal/adapter/` and one registration line — and *nothing* in
 | `icarus` | `adapter: icarus`, or derived from `deploy_mode: compile` | Icarus's compile path: every enabled mod's `.EXMODZ` table diffs (and, with `convert_paks`, its prebuilt `.pak` artifacts) merge against the installed game's own `data.pak` into one artifact. |
 | `bepinex` | `adapter: bepinex`, or derived from a game whose `mod_path` is its install path and that declares `loader: kind: bepinex` **or** has BepInEx installed in its directory | Plugin archive layout, `BepInEx/config/**` seeding, the "this game has no BepInEx" refusal, and verify's loader-installation tier. |
 | `d2r` | `adapter: d2r` only, which Battle.net detection's Diablo II: Resurrected entry sets (#546) | Lays every archive out as `<name>/<name>.mpq/` under the game's `mods` folder, and names the `-mod <name> -txt` the deployed profile needs (`LaunchAdvisor`). |
-| `bethesda` | `adapter: bethesda` only, which Steam detection sets for Skyrim Special Edition/Anniversary Edition, Skyrim VR, Fallout 4, Fallout 4 VR, Starfield and Skyrim (#606) | Lays a game-root-relative archive (a `Data/` folder, SKSE's version-named wrapper) out relative to `Data/`, and carries each game's plugin rules (`PluginOrderer`) and game-root file table (`RootRouter`, which core deploys by: #629) for the plugin-order and game-root stories that use them. |
+| `bethesda` | `adapter: bethesda` only, which Steam detection sets for Skyrim Special Edition/Anniversary Edition, Skyrim VR, Fallout 4, Fallout 4 VR, Starfield and Skyrim (#606) | Lays a game-root-relative archive (a `Data/` folder, SKSE's version-named wrapper) out relative to `Data/`, and carries each game's plugin rules (`PluginOrderer`, which core sorts and writes `Plugins.txt` by: #616) and game-root file table (`RootRouter`, which core deploys by: #629). |
 
 `lmm game list` always names what *this* build actually ships, and
 `lmm game add --adapter` / `lmm game edit --adapter` validate against the
@@ -161,7 +161,7 @@ adapter.
 | `MergeCompiler` | 11 methods | `icarus` | the whole merged-artifact compile path |
 | `Preconditioner` | `CheckPreconditions(g, mods) error` | *(none yet)* | refuses a flow before it starts |
 | `LaunchAdvisor` | `LaunchAdvice(g, mods, previous) Advice` | `d2r` | shows the advice as a warning after a deploy (a switch's and an apply's too) and on a launch |
-| `PluginOrderer` | `PluginRules(g) PluginSpec` | `bethesda` | *nothing yet*: the plugin list, sort and `Plugins.txt` write are #616 |
+| `PluginOrderer` | `PluginRules(g) PluginSpec` | `bethesda` | the plugin-list sync after every deploying flow (`syncMergedPak`), verify's plugin tier, and purge's restore (#616) |
 | `RootRouter` | `RouteRoots(g, files) []DeployRoot`, `RootForModType(g, type) (DeployRoot, bool)` | `bethesda` | deploys a root-routed file under `install_path`, and every removal, verify, purge and conflict report finds it there (#629) |
 | `PrefixConsumer` | `UsesPrefix(g) bool` | `bethesda` | reports a prefix it cannot resolve as a `prefix_unresolved` finding (`lmm verify`, `lmm game show`) |
 
@@ -387,8 +387,10 @@ A game it cannot identify gets a `bethesda_game_unknown` verify note.
 
 Core reads the plugin headers itself (`core.ReadPluginHeader`, a
 standard-library TES4 reader) and applies the spec to one with
-`core.ClassifyPlugin`. Nothing else in core consumes `PluginOrderer` yet;
-#616 adds the profile's plugin list, the sort and the write.
+`core.ClassifyPlugin`. With them, core sorts the deployed plugins with the
+profile's plugin list and rules (`internal/core/plugins_sort.go`) and writes
+the list into the prefix after every deploying flow
+(`internal/core/plugins_sync.go`, #616).
 
 ### RootRouter
 

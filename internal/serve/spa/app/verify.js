@@ -12,11 +12,24 @@ import { displayVersion } from "./version.js";
 
 /** findingSubject names what a finding is about: its mod, or - for a
  * game-level row with no mod (issue 460: `mod_path_missing`) - the game's
- * mod path, or (issue 605: `prefix_unresolved`) its Wine/Proton prefix. */
+ * mod path, (issue 605: `prefix_unresolved`) its Wine/Proton prefix, or
+ * (issue 616) its plugin list. */
 export function findingSubject(f) {
   if (f.status === "mod_path_missing") return "Mod path";
   if (f.status === "prefix_unresolved") return "Wine/Proton prefix";
+  // issue 616: the plugin list's rows are the game's Plugins.txt, never one
+  // mod's; the note names the plugin.
+  if (isPluginListFinding(f)) return "Plugin list";
   return f.mod_name || f.mod_id || f.status.replaceAll("_", " ");
+}
+
+/** isPluginListFinding reports whether a finding is one of the plugin
+ * list's own rows (issue 616): a sort finding, drift, or its repair. */
+export function isPluginListFinding(f) {
+  return (
+    typeof f?.status === "string" &&
+    (f.status.startsWith("plugin_") || f.status === "fixed_plugin_drift")
+  );
 }
 
 /** findingLabel prefers a finding's own note (already human-worded, e.g. a

@@ -81,6 +81,7 @@ func (s *Service) DuplicateProfile(ctx context.Context, gameID, source, newName 
 	dup.IsDefault = false
 	dup.Mods = append([]domain.ModReference(nil), profile.Mods...)
 	dup.Collection = duplicateCollection(profile.Collection)
+	dup.Plugins = profile.Plugins.Clone()
 
 	err = completeProfileWrite(ctx, func(ctx context.Context) error {
 		if err := pm.save(&dup); err != nil {

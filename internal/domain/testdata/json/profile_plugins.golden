@@ -1,0 +1,31 @@
+{
+  "order": [
+    {
+      "name": "SkyUI_SE.esp",
+      "enabled": true
+    },
+    {
+      "name": "Optional Thing.esp",
+      "enabled": false
+    }
+  ],
+  "rules": {
+    "groups": [
+      {
+        "name": "Late Loaders",
+        "after": [
+          "default"
+        ]
+      }
+    ],
+    "plugins": [
+      {
+        "name": "Patch.esp",
+        "group": "Late Loaders",
+        "after": [
+          "SkyUI_SE.esp"
+        ]
+      }
+    ]
+  }
+}
