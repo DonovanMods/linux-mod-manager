@@ -113,11 +113,11 @@ func TestRowFitsRef_AcceptsTheFileSetVariant(t *testing.T) {
 	assert.False(t, fomodDrift(unpinned, row))
 }
 
-func TestFomodTreeVariant_IgnoresAPlainFileSetVariant(t *testing.T) {
+func TestInstallerTree_IgnoresAPlainFileSetVariant(t *testing.T) {
 	plain := &domain.InstalledMod{Mod: domain.Mod{Variant: fileSetVariant("", []string{"21"})}, FileIDs: []string{"21"}}
-	assert.Empty(t, fomodTreeVariant(plain))
+	assert.False(t, installerTree(plain, nil))
 	fomodRow := &domain.InstalledMod{Mod: domain.Mod{Variant: "abcdef123456"}, FileIDs: []string{"21"}}
-	assert.Equal(t, "abcdef123456", fomodTreeVariant(fomodRow))
+	assert.True(t, installerTree(fomodRow, nil))
 }
 
 // #639 rulings 3 and 4: an entry the installed rows on it name for another

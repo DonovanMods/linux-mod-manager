@@ -881,6 +881,35 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   it. A collection update's plan note for a same-version file change now
   says it reinstalls the mod.
 
+- **An archive import or update from a file no longer changes another
+  profile's cache entry (#644).** `lmm import <archive>` with
+  `--source`/`--id`, `lmm install --from-file` and `lmm update --from-file`
+  (and the web UI's archive import, **Install from file…** and **Update
+  from file…**) of an archive that is none of the files the source lists
+  recorded no file set, so the archive was cached as the plain version
+  entry - the one a download of the source's own file builds, which
+  another profile could be deploying from. That profile then deployed the
+  archive's files while its plan reported nothing to do. Such an archive
+  is now cached as an entry of its own, `<version>@archive-...`, named by
+  its sha256: importing the same archive again finds it, and no other
+  archive or download shares it. A deploy that finds that entry gone skips
+  the mod and says to import the archive again (the deploy plan's
+  `skipped` reason) rather than download a different file into its place.
+  And an import or update from a file now holds the archive's files aside
+  until nothing refuses it: before, they were written into the cache
+  first, so a refusal - a file conflict you did not accept, a failing
+  `install.before_all`/`before_each` hook, a stale plan - left a new entry
+  behind, or had already rewritten an entry another profile used. A
+  refused import or update now leaves the cache as it was. One error
+  changes with it: an import whose entry's place is taken by something
+  that is not a cache entry now fails before deploying, with an
+  `import failed:` error naming that path, where it used to fail at the
+  deploy with `mod not in cache` after a `could not rename cache entry`
+  note.
+  `lmm mod show`, `lmm mod fomod` (**Reconfigure installer…**) and a
+  deploy's or `lmm verify --fix`'s rebuild also no longer mistake a plain
+  mod with a collection's file list or patches (#610) for a FOMOD install.
+
 - **A config override whose content starts with a tab now round-trips
   (#640).** Such content was written as a YAML block the reader then
   rejected ("found a tab character where an indentation space is

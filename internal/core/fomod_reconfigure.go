@@ -100,11 +100,12 @@ func (s *Service) PlanFomodReconfigure(ctx context.Context, game *domain.Game, p
 	}
 	ref := s.recordedRef(ctx, game.ID, profileName, sourceID, modID)
 	var rec domain.FomodRecord
+	var inputs map[string]domain.TreeInputs
 	if ref != nil {
-		rec = ref.FomodRecord()
+		rec, inputs = ref.FomodRecord(), refTreeInputs(ref)
 	}
 	choices := rec.Choices
-	if fomodTreeVariant(row) == "" && rec.IsZero() && !s.IsLegacyFomodInstall(game, row) {
+	if !installerTree(row, inputs) && rec.IsZero() && !s.IsLegacyFomodInstall(game, row) {
 		return nil, fmt.Errorf("%s: %w", row.Name, ErrNotFomodInstalled)
 	}
 	if row.SourceID == domain.SourceLocal {

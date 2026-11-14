@@ -19,7 +19,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -581,34 +580,23 @@ func TestDoImport_BeforeAllHookFails_AbortsWithoutForce(t *testing.T) {
 	assert.Empty(t, errOut, "a fatal (non-forced) before_all failure returns its own error - nothing is printed to stderr for it")
 }
 
-// TestDoImport_VerboseCacheRenameFailure_CascadesToDeploymentFailure pins
-// the -v output of a cascade this characterization surfaced: when the
-// enrichment version-change rename fails (here, because something already
-// occupies the destination path as a non-directory), the only symptom
-// under a NON-verbose run would be a completely unexplained "deployment
-// failed: mod not in cache" - -v is what surfaces the real cause via two
-// separate warnings. Core's
-// TestImportArchive_CacheRenameFailure_NotesAndCascadesToDeploymentFailure
-// pins the untouched cache and nothing installed.
-// The os.Rename error text itself is OS-dependent, so only its fixed
-// "Warning: could not rename cache entry: " prefix is pinned exactly; the
-// deterministic "mod not in cache" text (both the conflict-check warning and
-// the final error) is pinned exactly.
-//
-// #314 review I1 (recorded plain-text delta, Ruling 18): since the readout
-// now renders from the PLAN before ApplyImportArchive runs at all, this
-// warning - raised inside Apply's rename step - moved from BEFORE the
-// readout to AFTER it: old order Fetching metadata.../Warning: could not
-// rename.../Mod: .../Warning: could not check conflicts..., new order
-// Fetching metadata.../Mod: .../Warning: could not rename.../Warning: could
-// not check conflicts.... The order-blind assert.Contains this test used to
-// carry could not have caught that reordering, so it is pinned here with
-// index comparisons instead.
-func TestDoImport_VerboseCacheRenameFailure_CascadesToDeploymentFailure(t *testing.T) {
+// TestDoImport_BlockedCacheEntry_FailsBeforeDeploying pins what `lmm
+// import` says when the entry the enrichment resolves (2.0, the source's
+// file 55) is occupied by something that is not a cache entry. Before #644
+// the ingest wrote the archive at its own identity and the rename onto 2.0
+// failed, which only -v explained (two warnings, then an unexplained
+// "deployment failed: mod not in cache"), and the ingest's entry was left
+// behind. The archive's tree is now staged and committed onto 2.0 after
+// the gates: the commit's failure IS the error, nothing is deployed, and
+// nothing is left in the cache. Core's
+// TestImportArchive_BlockedCacheEntry_FailsWithNothingWritten pins the
+// cache.
+func TestDoImport_BlockedCacheEntry_FailsBeforeDeploying(t *testing.T) {
 	svc, game := setupDoImportTest(t)
 	verbose = true
 	src := newFakeMatchSource("acme-source")
 	src.mods["999"] = &domain.Mod{ID: "999", SourceID: "acme-source", Name: "Acme Mod", Version: "2.0", GameID: "g1"}
+	src.files = []domain.DownloadableFile{{ID: "55", FileName: "mymod.zip", Version: "2.0", IsPrimary: true}}
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
 
@@ -619,29 +607,24 @@ func TestDoImport_VerboseCacheRenameFailure_CascadesToDeploymentFailure(t *testi
 
 	newPath := svc.GetGameCache(game).ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "2.0"})
 	require.NoError(t, os.MkdirAll(filepath.Dir(newPath), 0755))
-	require.NoError(t, os.WriteFile(newPath, []byte("blocker"), 0644)) // a FILE, not a dir: os.Rename(dir, this) fails
+	require.NoError(t, os.WriteFile(newPath, []byte("blocker"), 0644)) // a FILE where the entry goes
 
 	out, _, err := captureStdoutAndStderr(t, func() error {
 		return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
 	})
 
 	require.Error(t, err)
-	assert.Equal(t, "deployment failed: mod not in cache: acme-source/999@2.0", err.Error())
+	assert.Contains(t, err.Error(), "import failed: ")
+	assert.Contains(t, err.Error(), "is not a cache entry")
+	assert.Contains(t, out, "Mod: Acme Mod", "the readout prints from the plan")
+	assert.NotContains(t, out, "Deploying to game directory...", "nothing deploys")
+	assert.NotContains(t, out, "could not rename cache entry")
 
-	modIdx := strings.Index(out, "Mod: Acme Mod")
-	renameIdx := strings.Index(out, "Warning: could not rename cache entry: ")
-	conflictIdx := strings.Index(out, "Warning: could not check conflicts: mod not in cache: acme-source/999@2.0\n")
-	deployIdx := strings.Index(out, "\nDeploying to game directory...\n")
-	require.NotEqual(t, -1, modIdx, "the readout must print")
-	require.NotEqual(t, -1, renameIdx, "the -v rename-failure warning must print")
-	require.NotEqual(t, -1, conflictIdx,
-		"the -v conflict-check-failure warning must also print, since the rename failure leaves the enriched version uncached")
-	require.NotEqual(t, -1, deployIdx, "the deploy announcement must print before Install's own failure")
-
-	assert.True(t, modIdx < renameIdx,
-		"#314 review I1 (Ruling 18): the readout, rendered from the plan before Apply runs, must print before Apply's own rename-failure warning")
-	assert.True(t, renameIdx < conflictIdx, "the rename-failure warning must print before the conflict-check warning")
-	assert.True(t, conflictIdx < deployIdx, "the conflict-check warning must print before the deploy announcement")
+	_, statErr := os.Stat(svc.GetGameCache(game).ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "unknown"}))
+	assert.True(t, os.IsNotExist(statErr), "nothing is left at the ingest's own identity")
+	blocker, rErr := os.ReadFile(newPath)
+	require.NoError(t, rErr)
+	assert.Equal(t, "blocker", string(blocker))
 }
 
 // TestDoImport_DeployCompile_ConvertiblePak_PrintsFilesDeployedLine pins the

@@ -1908,17 +1908,23 @@ func (i *Installer) GetConflicts(ctx context.Context, game *domain.Game, mod *do
 		return nil, nil
 	}
 
-	// Check if mod is cached
-	if !i.cache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}) {
+	return i.conflictsIn(ctx, i.cache, modCacheKey(game.ID, *mod), game, mod, profileName)
+}
+
+// conflictsIn is GetConflicts over the files of the entry k in c rather
+// than mod's own entry in the installer's cache: an archive import asks it
+// of the tree it has staged and not yet committed (#644).
+func (i *Installer) conflictsIn(ctx context.Context, c *cache.Cache, k cache.Key, game *domain.Game, mod *domain.Mod, profileName string) ([]Conflict, error) {
+	if i.db == nil {
+		return nil, nil
+	}
+	if !c.Exists(k) {
 		return nil, fmt.Errorf("mod not in cache: %s/%s@%s", mod.SourceID, mod.ID, mod.Version)
 	}
-
-	// Get list of files in the cached mod
-	files, err := deployableFiles(i.cache, i.adapter, game, modCacheKey(game.ID, *mod), mod.ModType)
+	files, err := deployableFiles(c, i.adapter, game, k, mod.ModType)
 	if err != nil {
 		return nil, fmt.Errorf("resolving deployable files: %w", err)
 	}
-
 	return i.conflictsForPaths(ctx, game, mod, profileName, pathsOf(files))
 }
 

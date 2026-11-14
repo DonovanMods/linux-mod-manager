@@ -184,20 +184,26 @@ func TestImportArchive_EnrichmentVersionChange_RenamesCacheEntryOnDisk(t *testin
 	_, statErr := os.Stat(gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "unknown"}))
 	assert.True(t, os.IsNotExist(statErr), "the pre-enrichment cache directory must be gone after the rename")
 
-	data, rErr := os.ReadFile(filepath.Join(gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "2.0"}), "mymod.esp"))
+	// #644: the archive is no file the source lists, so it is its own
+	// variant of 2.0's tree.
+	assert.True(t, core.IsArchiveTreeOfForTest(result.Mod.Variant, ""), "variant %q", result.Mod.Variant)
+	data, rErr := os.ReadFile(filepath.Join(gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "2.0", Variant: result.Mod.Variant}), "mymod.esp"))
 	require.NoError(t, rErr)
 	assert.Equal(t, "data", string(data))
 }
 
-// TestImportArchive_CacheRenameFailure_NotesAndCascadesToDeploymentFailure
-// pins the cascade cmd's -v characterization surfaced: a blocked rename
-// leaves the enriched version uncached, so the conflict check and then
-// Install both fail on "mod not in cache". Both diagnostics are notes (the
-// CLI gates them on --verbose); only the deploy failure is fatal.
-func TestImportArchive_CacheRenameFailure_NotesAndCascadesToDeploymentFailure(t *testing.T) {
+// TestImportArchive_BlockedCacheEntry_FailsWithNothingWritten: the entry
+// the enrichment resolves (2.0, the source's file 55) is blocked by a file.
+// Before #644 the ingest wrote the archive at its own identity (unknown),
+// the rename onto 2.0 failed with a note, and the deploy then failed on
+// "mod not in cache" - leaving the ingest's entry behind. The tree is now
+// staged and committed onto 2.0 directly, after the gates: the commit
+// fails the import, and nothing is left in the cache.
+func TestImportArchive_BlockedCacheEntry_FailsWithNothingWritten(t *testing.T) {
 	svc, game := newImportArchiveTestService(t)
 	src := newAdoptTestSource("acme-source")
 	src.mods["999"] = &domain.Mod{ID: "999", SourceID: "acme-source", Name: "Acme Mod", Version: "2.0", GameID: "g1"}
+	src.files = []domain.DownloadableFile{{ID: "55", FileName: "mymod.zip", Version: "2.0", IsPrimary: true}}
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
 
@@ -207,28 +213,25 @@ func TestImportArchive_CacheRenameFailure_NotesAndCascadesToDeploymentFailure(t 
 	gameCache := svc.GetGameCache(game)
 	newPath := gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "2.0"})
 	require.NoError(t, os.MkdirAll(filepath.Dir(newPath), 0755))
-	require.NoError(t, os.WriteFile(newPath, []byte("blocker"), 0644)) // a FILE: os.Rename(dir, this) fails
+	require.NoError(t, os.WriteFile(newPath, []byte("blocker"), 0644)) // a FILE where the entry goes
 
 	result, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
 		core.ImportArchiveOptions{SourceID: "acme-source", ModID: "999", AcceptConflicts: true}, nil)
 	require.Error(t, err)
-	assert.Equal(t, "deployment failed: mod not in cache: acme-source/999@2.0", err.Error())
+	assert.Contains(t, err.Error(), "import failed: ")
+	assert.Contains(t, err.Error(), "is not a cache entry")
 	assert.False(t, result.Renamed)
-	require.GreaterOrEqual(t, len(result.Notes), 2)
-	assert.Contains(t, result.Notes[0], "Warning: could not rename cache entry: ")
-	assert.Equal(t, "Warning: could not check conflicts: mod not in cache: acme-source/999@2.0", result.Notes[1])
 
-	data, rErr := os.ReadFile(filepath.Join(gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "unknown"}), "mymod.esp"))
-	require.NoError(t, rErr, "a failed rename must leave the original cache directory untouched")
-	assert.Equal(t, "data", string(data))
+	_, statErr := os.Stat(gameCache.ModPath(cache.Key{GameID: "g1", SourceID: "acme-source", ModID: "999", Version: "unknown"}))
+	assert.True(t, os.IsNotExist(statErr), "nothing is written at the ingest's own identity")
 
 	blocker, rErr := os.ReadFile(newPath)
-	require.NoError(t, rErr, "a failed rename must leave the blocking path untouched too")
+	require.NoError(t, rErr, "a failed commit must leave the blocking path untouched")
 	assert.Equal(t, "blocker", string(blocker))
 
 	mods, mErr := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, mErr)
-	assert.Empty(t, mods, "Install failing must leave nothing installed")
+	assert.Empty(t, mods, "a failed commit must leave nothing installed")
 }
 
 // TestImportArchive_FileListingFails_DegradesToMarkerless pins guardrail 1:
@@ -517,9 +520,10 @@ func TestImportArchive_BeforeAllFails_Forced_WarnsAndContinues(t *testing.T) {
 	require.Len(t, mods, 1)
 }
 
-// TestImportArchive_BeforeAllFails_AbortsWithoutForce pins the fatal twin,
-// including the asymmetry the characterization surfaced: Import's cache
-// write happens before hooks run, so it survives the abort.
+// TestImportArchive_BeforeAllFails_AbortsWithoutForce pins the fatal twin.
+// The characterization once surfaced an asymmetry here - Import's cache
+// write happened before the hooks ran, so it survived the abort - which
+// #644 removes: the tree commits only once every refusal has passed.
 func TestImportArchive_BeforeAllFails_AbortsWithoutForce(t *testing.T) {
 	svc, game, archivePath := importArchiveHookGame(t)
 	fail := createTestScript(t, t.TempDir(), "hook.sh", "#!/bin/bash\nexit 1\n")
@@ -536,8 +540,8 @@ func TestImportArchive_BeforeAllFails_AbortsWithoutForce(t *testing.T) {
 	assert.Empty(t, mods, "a fatal before_all hook must leave nothing installed")
 
 	require.NotNil(t, result.Mod)
-	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version}),
-		"Import's cache write happens before hooks run, so it survives a later fatal hook abort")
+	assert.False(t, svc.GetGameCache(game).Exists(cache.Key{GameID: "g1", SourceID: result.Mod.SourceID, ModID: result.Mod.ID, Version: result.Mod.Version, Variant: result.Mod.Variant}),
+		"a fatal hook abort leaves no cache entry behind (#644)")
 }
 
 // TestImportArchive_BeforeEachFails_AbortsWithoutForce pins the second

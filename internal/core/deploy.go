@@ -302,7 +302,8 @@ type DeployPlanMod struct {
 	Redownload bool `json:"redownload,omitzero"`
 
 	// Skipped, when set, is why this mod would not deploy its files: "mod
-	// not found", or a disabled single-mod selection. A selection problem
+	// not found", a disabled single-mod selection, or ReasonArchiveTree
+	// (#644: its cache entry is gone, and no download rebuilds it). A selection problem
 	// the pre-lift flow reported only AFTER its --purge pass is plan DATA
 	// here, never a PlanDeploy error - see PlanDeploy's doc comment.
 	Skipped string `json:"skipped,omitempty"`
@@ -490,6 +491,12 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 			continue
 		}
 		if !gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}) {
+			if isArchiveVariant(mod.Variant) {
+				// #644: no download rebuilds an imported archive's tree.
+				entry.Skipped = ReasonArchiveTree
+				plan.Mods = append(plan.Mods, entry)
+				continue
+			}
 			// The deploy loop heals this by re-downloading from source and
 			// then deploying it - this mod WOULD deploy, so it is not a
 			// Skipped entry (Important #2). What it would then link is not
@@ -1074,6 +1081,12 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		emit(ModEvent{Scope: scope, Phase: DeploySkipped, Detail: reason})
 		result.Skipped = append(result.Skipped, skippedRef(mod, reason))
 		return true
+	}
+
+	// #644: the row's tree is an archive no source file is; a download
+	// would build another tree, never this one.
+	if isArchiveVariant(mod.Variant) {
+		return skip(ReasonArchiveTree)
 	}
 
 	emit(StepEvent{Scope: scope, Phase: DeployRedownloading})

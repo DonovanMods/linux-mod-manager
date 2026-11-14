@@ -107,7 +107,7 @@ func (s *Service) rebuildInput(ctx context.Context, game *domain.Game, row *doma
 // states first (rebuildInput) - each file's own, for a mod recorded per
 // file (#634; applied by forFile).
 func asRebuild(in fomodInput, row *domain.InstalledMod) fomodInput {
-	if fomodTreeVariant(row) == "" && in.choices.IsZero() && in.fileChoices.IsZero() {
+	if !installerTree(row, treeInputsFor(in.fileLists, in.patches, row.FileIDs)) && in.choices.IsZero() && in.fileChoices.IsZero() {
 		in.raw = true
 		return in
 	}

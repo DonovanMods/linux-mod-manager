@@ -119,6 +119,9 @@ func (s *Service) identifyInstallArchive(ctx context.Context, game *domain.Game,
 	entry := cache.Key{GameID: game.ID, SourceID: plan.ident.sourceID, ModID: plan.ident.modID, Version: version}
 	if fileID != "" {
 		entry = s.ingestEntry(ctx, game, profileName, domain.Mod{SourceID: plan.ident.sourceID, ID: plan.ident.modID, Version: version}, []string{fileID}, fileID, opts.Fomod)
+	} else if archiveEntryApplies(plan.ident.sourceID, nil) {
+		// #644: an archive no source file is fills its own entry.
+		entry = s.archiveIngestEntry(ctx, game, profileName, domain.Mod{SourceID: plan.ident.sourceID, ID: plan.ident.modID, Version: version}, plan.Archive, opts.Fomod)
 	}
 	plan.EntryPreExists = s.GetGameCache(game).Exists(entry)
 

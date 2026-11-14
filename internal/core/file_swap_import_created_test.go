@@ -65,8 +65,10 @@ func TestFileSwap_RefusedImportWithAnswersKeepsAnotherProfilesVariant(t *testing
 	seedInstalledMod(t, f.svc, f.game, "local", "x", "1.0", true, map[string][]byte{"textures/t.dds": []byte("x")})
 	require.NoError(t, f.svc.GetInstallerForTest(f.game).Install(ctx, f.game, &domain.Mod{ID: "x", SourceID: "local", Version: "1.0", GameID: "g1"}, "default"))
 
-	// Named with its version, so the ingest writes at 1.0 - no rename.
-	archive := filepath.Join(t.TempDir(), "mod1-1.0.zip")
+	// Named as the source's file, so it is that file (#644: an archive no
+	// source file is would be a tree of its own, never other's entry).
+	f.game.SourceIDs = map[string]string{"src": "g1"}
+	archive := filepath.Join(t.TempDir(), "mod1.zip")
 	require.NoError(t, os.WriteFile(archive, fomodZip(t, "4K", "v1"), 0o644))
 	opts := core.ImportArchiveOptions{SourceID: "src", ModID: "mod1", Fomod: map[string]domain.FomodChoices{"src:mod1": answer("4K")}}
 	res := importRefused(t, f.svc, f.game, "default", archive, opts)
@@ -75,9 +77,8 @@ func TestFileSwap_RefusedImportWithAnswersKeepsAnotherProfilesVariant(t *testing
 	require.Equal(t, "1.0", res.Mod.Version)
 
 	assert.True(t, f.svc.GetGameCache(f.game).Exists(k), "other's installer entry survives default's refused import")
-	// The ingest wrote over it before the conflict gate (#310: a re-import
-	// is not restored) - the same tree, the same answers' variant - so its
-	// files are still there for other to deploy.
+	// #644: the ingest staged its tree and the refusal committed none of
+	// it, so other's files are exactly as other installed them.
 	files, err := f.svc.GetGameCache(f.game).ListFiles(k)
 	require.NoError(t, err)
 	assert.Contains(t, files, "textures/t.dds")
@@ -117,9 +118,10 @@ func TestFileSwap_RefusedImportOfAPlainArchiveKeepsAnotherProfilesEntry(t *testi
 	assert.True(t, gc.HasFileIDs(plain, []string{"200"}))
 }
 
-// An archive ingested at version "unknown" and renamed to the version the
-// source names: a refusal removes what the ingest and the rename created,
-// and nothing the rename found at its destination.
+// An archive ingested at version "unknown" and moved to the version the
+// source names: a refusal leaves nothing at either identity, and the
+// entry another profile has at the destination as it was (#644: the tree
+// is staged, and a refusal commits none of it).
 func TestFileSwap_RefusedImportRemovesOnlyWhatItsRenameCreated(t *testing.T) {
 	for _, occupied := range []bool{false, true} {
 		t.Run(map[bool]string{false: "destination free", true: "destination another profile's"}[occupied], func(t *testing.T) {
@@ -142,8 +144,10 @@ func TestFileSwap_RefusedImportRemovesOnlyWhatItsRenameCreated(t *testing.T) {
 				assert.True(t, gc.HasFileIDs(dest, []string{"201"}), "and the entry it found survives")
 				return
 			}
-			require.True(t, res.Renamed)
-			assert.False(t, gc.Exists(dest), "the destination the rename created goes too")
+			// #644: a refusal commits nothing - neither the ingest's
+			// identity nor the destination is ever written.
+			assert.False(t, res.Renamed)
+			assert.False(t, gc.Exists(dest), "and the destination is never written")
 		})
 	}
 }

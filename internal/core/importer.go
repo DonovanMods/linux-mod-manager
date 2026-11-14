@@ -37,6 +37,12 @@ type ImportOptions struct {
 	// set of source files is, never another set's of the same version.
 	// Nil keeps that key.
 	entryFor func(cache.Key) cache.Key
+	// stage holds the ingested tree outside the cache (#644): the ingest
+	// commits nothing, and ImportResult.staged is the tree, for the flow to
+	// commit (stagedEntry.commit) once every refusal has passed - so a
+	// refused import or update never changes an entry it would have
+	// written over, another profile's included.
+	stage bool
 }
 
 // entry is k, or the entry entryFor names for it.
@@ -69,16 +75,74 @@ type ImportResult struct {
 	// fomod is the FOMOD resolve outcome when the archive was an installer
 	// (#614): Mod.Variant is its variant, and the flow records its choices.
 	fomod *fomodResolved
-	// created reports that the entry the ingest committed to (Mod's key,
-	// variant included) did not exist until this run wrote it (#639). It is
-	// the ingest's own answer, taken at the exact key it wrote, immediately
-	// before it wrote it - under the Service's mutation slot - so it is what
-	// a refused or failed flow may discard: never an entry it found.
-	created bool
+	// staged is the ingested tree when ImportOptions.stage held it outside
+	// the cache, at Mod's key; nil otherwise.
+	staged *stagedEntry
 }
 
-// entryAbsent reports that nothing lives at path: the ingest that writes
-// there creates its entry (ImportResult.created).
+// stagedEntry is an ingest's tree held outside the cache until its flow
+// commits it (#644: ImportOptions.stage). It is laid out as a cache entry
+// of a private cache rooted in the staging directory, so a flow reads it -
+// lists its files, asks its conflicts, stamps its markers - as it reads
+// the entry it becomes.
+type stagedEntry struct {
+	// root is the staging directory; removing it discards the tree.
+	root string
+	// cache is the private cache rooted at root.
+	cache *cache.Cache
+	// key is the key the tree is staged at.
+	key cache.Key
+}
+
+// path is the staged tree's directory.
+func (st *stagedEntry) path() string { return st.cache.ModPath(st.key) }
+
+// commit moves the staged tree into c as k's entry - replacing the entry
+// k names, never another key's (cache.Claim), and never anything at k's
+// path that is not a directory - and reports whether that entry did not
+// exist until now - what a failed flow may discard, never an entry it
+// found (#639). discard still owns the staging directory either way.
+func (st *stagedEntry) commit(ctx context.Context, c *cache.Cache, k cache.Key) (created bool, err error) {
+	dst := c.ModPath(k)
+	if info, err := os.Lstat(dst); err == nil && !info.IsDir() {
+		return false, fmt.Errorf("%s is not a cache entry", dst)
+	}
+	if err := c.Claim(k); err != nil {
+		return false, err
+	}
+	created = entryAbsent(dst)
+	staging := dst + ".staging"
+	if err := os.RemoveAll(staging); err != nil {
+		return false, fmt.Errorf("clearing staging cache: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return false, fmt.Errorf("creating cache directory: %w", err)
+	}
+	if err := os.Rename(st.path(), staging); err != nil {
+		// A staging root on another filesystem than the cache.
+		if err := copyDir(ctx, st.path(), staging); err != nil {
+			_ = os.RemoveAll(staging)
+			return false, fmt.Errorf("moving to cache: %w", err)
+		}
+	}
+	if err := commitStagedCache(k, dst, staging); err != nil {
+		_ = os.RemoveAll(staging)
+		return false, err
+	}
+	return created, nil
+}
+
+// discard removes the staging directory and whatever tree is left in it.
+// Safe on a nil entry and after a commit.
+func (st *stagedEntry) discard() error {
+	if st == nil {
+		return nil
+	}
+	return os.RemoveAll(st.root)
+}
+
+// entryAbsent reports that nothing lives at path: a commit there creates
+// its entry (stagedEntry.commit).
 func entryAbsent(path string) bool {
 	_, err := os.Lstat(path)
 	return errors.Is(err, fs.ErrNotExist)
@@ -244,14 +308,30 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 
 	sourceID, modID, version, autoDetected := ident.sourceID, ident.modID, ident.version, ident.autoDetected
 
+	// c is the cache the ingest writes: the real one, or - staged (#644) -
+	// a private one in the staging root, handed to the flow to commit.
+	c := i.cache
+	var staged *stagedEntry
+	if opts.stage {
+		root, err := newStagingDir(i.stagingRoot, "lmm-import-entry-*")
+		if err != nil {
+			return nil, err
+		}
+		staged = &stagedEntry{root: root, cache: cache.New(root)}
+		c = staged.cache
+		defer func() {
+			if err != nil {
+				_ = staged.discard()
+			}
+		}()
+	}
+
 	var modName string
 	var fileCount int
 	var retainedFileID string
 	var resolved *fomodResolved
-	// committed is the entry the ingest wrote (#639: ImportOptions.entry),
-	// and created whether this run brought it into being (ImportResult).
+	// committed is the entry the ingest wrote (#639: ImportOptions.entry).
 	var committed cache.Key
-	var created bool
 
 	// #256: whether filename is the game's NATIVE merge format
 	// (mc.IsNativeMergeSource - the seam-routed successor to core's static
@@ -311,7 +391,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 
 		committed = opts.entry(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 		cacheMod := &domain.Mod{ID: modID, SourceID: sourceID, Version: version, GameID: game.ID, Variant: committed.Variant}
-		cachePath, stagePath, err := prepareUnseededStaging(i.cache, game, cacheMod)
+		cachePath, stagePath, err := prepareUnseededStaging(c, game, cacheMod)
 		if err != nil {
 			return nil, err
 		}
@@ -336,7 +416,6 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			}
 			fileCount = 1
 		}
-		created = entryAbsent(cachePath)
 		if err := commitStagedCache(committed, cachePath, stagePath); err != nil {
 			return nil, err
 		}
@@ -347,16 +426,15 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 
 		entryKey := opts.entry(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
 		committed = entryKey
-		cachePath := i.cache.ModPath(entryKey)
+		cachePath := c.ModPath(entryKey)
 
 		// Remove existing cache if present (re-import case) - only this
 		// key's own entry, never a colliding key's (#614). A failed removal
 		// can leave stale content that an otherwise successful copy would not
 		// expose, so surface it instead of relying on a later write to fail.
-		if err := i.cache.Claim(entryKey); err != nil {
+		if err := c.Claim(entryKey); err != nil {
 			return nil, err
 		}
-		created = entryAbsent(cachePath)
 		if err := os.RemoveAll(cachePath); err != nil {
 			return nil, fmt.Errorf("removing existing cache directory: %w", err)
 		}
@@ -465,7 +543,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		}
 		entryKey = opts.entry(entryKey)
 		committed = entryKey
-		cachePath := i.cache.ModPath(entryKey)
+		cachePath := c.ModPath(entryKey)
 		if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
 			return nil, fmt.Errorf("creating cache directory: %w", err)
 		}
@@ -475,10 +553,9 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 
 		// Remove existing cache if present (re-import case) - only this
 		// key's own entry, never a colliding key's (#614).
-		if err := i.cache.Claim(entryKey); err != nil {
+		if err := c.Claim(entryKey); err != nil {
 			return nil, err
 		}
-		created = entryAbsent(cachePath)
 		if err := os.RemoveAll(cachePath); err != nil {
 			return nil, fmt.Errorf("removing existing cache for re-import: %w", err)
 		}
@@ -491,7 +568,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		}
 
 		// Count extracted files
-		files, err := i.cache.ListFiles(entryKey)
+		files, err := c.ListFiles(entryKey)
 		if err != nil {
 			return nil, fmt.Errorf("listing cached files: %w", err)
 		}
@@ -509,6 +586,9 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	// file-set entry entryFor named (#639).
 	mod.Variant = committed.Variant
 
+	if staged != nil {
+		staged.key = committed
+	}
 	return &ImportResult{
 		Mod:            mod,
 		FilesExtracted: fileCount,
@@ -516,7 +596,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		AutoDetected:   autoDetected,
 		RetainedFileID: retainedFileID,
 		fomod:          resolved,
-		created:        created,
+		staged:         staged,
 	}, nil
 }
 
@@ -589,13 +669,18 @@ func (s *Service) resolveImportedFile(ctx context.Context, game *domain.Game, so
 // lift (#291): ApplyAdopt and ImportArchive call it from inside their own
 // beginOp, and core's tests reach it through MarkImportedFileCompleteForTest.
 func (s *Service) markImportedFileComplete(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
-	gameCache := s.GetGameCache(game)
-	members, err := gameCache.ListFiles(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
+	return markFileCompleteIn(s.GetGameCache(game), modCacheKey(game.ID, *mod), fileID)
+}
+
+// markFileCompleteIn stamps fileID's completion marker, every member of the
+// entry k in c attributed to it, into that entry - the real cache's, or a
+// staged tree's (#644).
+func markFileCompleteIn(c *cache.Cache, k cache.Key, fileID string) error {
+	members, err := c.ListFiles(k)
 	if err != nil {
 		return fmt.Errorf("listing cache members: %w", err)
 	}
-	versionDir := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant})
-	return cache.MarkFileCompleteWithMembers(versionDir, fileID, members)
+	return cache.MarkFileCompleteWithMembers(c.ModPath(k), fileID, members)
 }
 
 // copyDir recursively copies a directory using streaming I/O to avoid loading
