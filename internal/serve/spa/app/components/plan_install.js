@@ -15,8 +15,8 @@
 // default file starts checked; unchecking every file holds Confirm
 // (confirmplan.js) rather than falling back to the default. The picker
 // offers the chosen version's files only, as `--version` with `--file`
-// does; a pick core refuses (#211's alternate forms of one mod) fails the
-// job with core's own message, the one the CLI prints. A selection is
+// does; a pick core refuses (issue 211's alternate forms of one mod) fails
+// the job with core's own message, the one the CLI prints. A selection is
 // written into the
 // confirm-plan framework's modal.applyOptions via actions.setPlanOptions
 // (main.js) DIRECTLY FROM the select's onChange - never from a useEffect:
@@ -74,12 +74,17 @@ function fileHint(f) {
   return html`${" "}<span class="mono plan__option-hint">${f.file_name}</span>`;
 }
 
+/** filesAt is the pool's files at version v. */
+function filesAt(pool, v) {
+  return pool.filter((f) => f.version === v);
+}
+
 /** defaultFileIDs is what an install of version v picks with no file named:
  * the plan's own Files at the plan's version (PlanInstall's pick, which
  * ApplyInstall installs verbatim), else that version's primary file, else
  * its first - core's primaryFile rule. */
 function defaultFileIDs(plan, pool, v, planVersion) {
-  const atVersion = pool.filter((f) => f.version === v);
+  const atVersion = filesAt(pool, v);
   if (v === planVersion) {
     const planned = (plan.files ?? [])
       .map((f) => f.id)
@@ -131,7 +136,7 @@ export function InstallPlanView({ plan, modal, actions }) {
   const [version, setVersion] = useState(
     modal?.applyOptions?.version ?? defaultVersion,
   );
-  const filesForVersion = pool.filter((f) => f.version === version);
+  const filesForVersion = filesAt(pool, version);
   const showFilePicker = filesForVersion.length > 1;
   const showPicker = showVersionPicker || showFilePicker;
   // The checked files (issue 637). Seeded from applyOptions for the same
