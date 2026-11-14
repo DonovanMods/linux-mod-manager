@@ -333,7 +333,7 @@ func doPluginEdit(ctx context.Context, svc *core.Service, game *domain.Game, edi
 	for _, c := range res.Changes {
 		fmt.Printf("  ✓ %s\n", c)
 	}
-	for _, n := range plan.Notes {
+	for _, n := range res.Notes {
 		fmt.Printf("Note: %s\n", n)
 	}
 	if !res.Changed {

@@ -99,7 +99,10 @@ export function PluginsTab({ profileName, context, initialReport }) {
     try {
       const res = await editProfilePlugins(profileName, edit, false, context);
       setReport(res.order);
-      setNotes(res.changes?.length ? [] : ["Nothing changed."]);
+      setNotes([
+        ...(res.notes ?? []),
+        ...(res.changes?.length ? [] : ["Nothing changed."]),
+      ]);
       setSortPlan(null);
     } catch (err) {
       setError(err?.message ?? String(err));
@@ -371,6 +374,29 @@ export function PluginsTab({ profileName, context, initialReport }) {
   `;
 }
 
+/** rulePartsOf is a plugin rule's parts - its group, each plugin it loads
+ * after, each it requires - each with the rule_remove that takes it out,
+ * as `lmm plugins rules remove --clear-group/--after/--req` does. */
+function rulePartsOf(r) {
+  const parts = [];
+  if (r.group)
+    parts.push({
+      key: `group:${r.group}`,
+      label: `in group ${r.group}`,
+      rule: {},
+      clearGroup: true,
+    });
+  for (const a of r.after ?? [])
+    parts.push({
+      key: `after:${a}`,
+      label: `after ${a}`,
+      rule: { after: [a] },
+    });
+  for (const q of r.req ?? [])
+    parts.push({ key: `req:${q}`, label: `requires ${q}`, rule: { req: [q] } });
+  return parts;
+}
+
 /** PluginRules is the tab's rules section: the profile's groups and
  * per-plugin rules, each removable, and the forms that add them. */
 function PluginRules({ report, busy, names, run }) {
@@ -431,22 +457,42 @@ function PluginRules({ report, busy, names, run }) {
               ${plugins.map(
                 (r) =>
                   html`<li key=${`p:${r.name}`} data-rule=${r.name}>
-                    <span
-                      ><span class="mono">${r.name}</span>${[
-                        r.group ? ` in group ${r.group}` : "",
-                        r.after?.length ? ` after ${r.after.join(", ")}` : "",
-                        r.req?.length ? ` requires ${r.req.join(", ")}` : "",
-                      ]
-                        .filter(Boolean)
-                        .join(";")}</span
-                    >
+                    <span class="plugins-rules__parts">
+                      <span class="mono">${r.name}</span>
+                      ${rulePartsOf(r).map(
+                        (part) =>
+                          html`<span
+                            class="plugins-rules__part"
+                            data-part=${part.key}
+                          >
+                            ${part.label}
+                            <button
+                              type="button"
+                              class="button button--small"
+                              aria-label=${`Remove "${part.label}" from the rule for ${r.name}`}
+                              disabled=${busy}
+                              onClick=${() =>
+                                run({
+                                  op: "rule_remove",
+                                  rule: { name: r.name, ...part.rule },
+                                  ...(part.clearGroup
+                                    ? { clear_group: true }
+                                    : {}),
+                                })}
+                            >
+                              ×
+                            </button>
+                          </span>`,
+                      )}
+                    </span>
                     <button
                       type="button"
                       class="button button--small"
                       data-action="rule-remove"
                       aria-label=${`Remove the rule for ${r.name}`}
                       disabled=${busy}
-                      onClick=${() => run({ op: "rule_remove", rule: { name: r.name } })}
+                      onClick=${() =>
+                        run({ op: "rule_remove", rule: { name: r.name } })}
                     >
                       Remove
                     </button>

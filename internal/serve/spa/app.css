@@ -3416,6 +3416,20 @@ a.row-menu__item.mod-page-link {
   padding: var(--space-1) 0;
 }
 
+.plugins-rules__parts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.plugins-rules__part {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+}
+
 .plugins-rules__form {
   display: flex;
   flex-wrap: wrap;

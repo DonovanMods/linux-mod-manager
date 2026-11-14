@@ -3739,6 +3739,7 @@ func TestJSONGoldens(t *testing.T) {
 			core.PluginEditResult{
 				GameID: "skyrim-se", Profile: "default", Changed: true,
 				Changes: []string{"Patch.esp: moved after SkyUI_SE.esp"},
+				Notes:   []string{"Later.esp is not deployed: the rule applies once it is"},
 				List: &core.PluginListResult{Status: core.PluginListWritten,
 					ListFile: "/pfx/drive_c/users/steamuser/AppData/Local/Skyrim Special Edition/Plugins.txt", Plugins: 3, Active: 2, External: 1},
 				Order: &goldenPluginOrderReport,

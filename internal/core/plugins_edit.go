@@ -134,6 +134,9 @@ type PluginEditResult struct {
 	Changed bool `json:"changed"`
 	// Changes are the plan's.
 	Changes []string `json:"changes"`
+	// Notes are the plan's: a move a rule or a master overrides, a rule
+	// naming a plugin that is not deployed.
+	Notes []string `json:"notes,omitempty"`
 	// List is what writing the game's plugin list did; nil for a profile
 	// that is not the active one.
 	List *PluginListResult `json:"list,omitempty"`
@@ -295,7 +298,7 @@ func (s *Service) ApplyPluginEdit(ctx context.Context, game *domain.Game, plan *
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	res := &PluginEditResult{GameID: game.ID, Profile: plan.Profile, Changes: slices.Clone(plan.Changes)}
+	res := &PluginEditResult{GameID: game.ID, Profile: plan.Profile, Changes: slices.Clone(plan.Changes), Notes: slices.Clone(plan.Notes)}
 	if !plan.NoChanges {
 		profile.Plugins = plan.plugins.Clone()
 		if err := pm.save(profile); err != nil {
@@ -503,10 +506,10 @@ func (e *pluginEditor) move(edit PluginEdit) error {
 	rest := slices.Delete(slices.Clone(order), from, from+1)
 	var at int
 	var change string
-	switch {
-	case edit.To == PluginMoveFirst:
+	switch edit.To {
+	case PluginMoveFirst:
 		at, change = 0, fmt.Sprintf("%s: moved to the top of the order", name)
-	case edit.To == PluginMoveLast:
+	case PluginMoveLast:
 		at, change = len(rest), fmt.Sprintf("%s: moved to the end of the order", name)
 	default:
 		anchor := firstNonEmpty(edit.Before, edit.After)

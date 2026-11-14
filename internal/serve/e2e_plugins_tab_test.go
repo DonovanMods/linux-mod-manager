@@ -167,10 +167,24 @@ func TestE2E_PluginsTab_MovesEnablesAndAddsARule(t *testing.T) {
 	)
 	assert.Equal(t, []string{"Skyrim.esm", "A.esp", "B.esp", "C.esp"}, rows)
 	assert.Equal(t, "rule: after A.esp", constraint)
-	assert.Contains(t, rule, "B.esp after A.esp")
+	assert.Contains(t, rule, "B.esp")
+	assert.Contains(t, rule, "after A.esp")
 	assert.Equal(t, "*A.esp\n*B.esp\nC.esp\n", readPluginsTxt(t, list))
 
-	// Removing it puts the recorded order back.
+	// A second part (the form keeps the plugin), then one part removed:
+	// the rule keeps the other.
+	var parts []string
+	f.runInBrowser(t,
+		chromedp.SendKeys(`[data-testid="plugins-rule-form"] input[name="rule-target"]`, "C.esp", chromedp.ByQuery),
+		chromedp.Click(`[data-action="rule-add"]`, chromedp.ByQuery),
+		pollUntil(`document.querySelector('[data-rule="B.esp"] [data-part="after:C.esp"]') !== null`),
+		chromedp.Click(`[data-rule="B.esp"] [data-part="after:A.esp"] button`, chromedp.ByQuery),
+		pollUntil(`document.querySelector('[data-rule="B.esp"] [data-part="after:A.esp"]') === null`),
+		chromedp.Evaluate(`[...document.querySelectorAll('[data-rule="B.esp"] [data-part]')].map((p) => p.dataset.part)`, &parts),
+	)
+	assert.Equal(t, []string{"after:C.esp"}, parts)
+
+	// Removing the rule puts the recorded order back.
 	f.runInBrowser(t,
 		chromedp.Click(`[data-rule="B.esp"] [data-action="rule-remove"]`, chromedp.ByQuery),
 		pollUntil(`document.querySelector('[data-rule="B.esp"]') === null`),

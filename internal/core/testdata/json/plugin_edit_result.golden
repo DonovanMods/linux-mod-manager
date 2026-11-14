@@ -5,6 +5,9 @@
   "changes": [
     "Patch.esp: moved after SkyUI_SE.esp"
   ],
+  "notes": [
+    "Later.esp is not deployed: the rule applies once it is"
+  ],
   "list": {
     "status": "written",
     "list_file": "/pfx/drive_c/users/steamuser/AppData/Local/Skyrim Special Edition/Plugins.txt",
