@@ -487,7 +487,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 			Version:     item.Ref.Version,
 			Unavailable: s.unavailableReason(game, item.Ref.SourceID),
 			// #615: what the collection's installer answers will install.
-			InstallerChoices: installerChoiceLines(item.Ref.Fomod),
+			InstallerChoices: installerRecordLines(item),
 		})
 	}
 	plan.Collection = c
@@ -830,6 +830,12 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 		if err := checkCollectionFomod(r.Fomod); err != nil {
 			return nil, fmt.Errorf("%w: %s:%s's fomod choices %v", ErrInvalidCollection, r.SourceID, r.ModID, err)
 		}
+		if err := checkCollectionFomodFiles(*r); err != nil {
+			return nil, fmt.Errorf("%w: %s:%s's fomod_files %v", ErrInvalidCollection, r.SourceID, r.ModID, err)
+		}
+		if err := checkCollectionFomodOrder(*r); err != nil {
+			return nil, fmt.Errorf("%w: %s:%s's fomod_order %v", ErrInvalidCollection, r.SourceID, r.ModID, err)
+		}
 		items = append(items, item)
 	}
 	doc.Items = items
@@ -840,6 +846,59 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 		warnings = append(warnings, fmt.Sprintf("the document names a signer (%s), which this version of lmm does not verify", doc.Signer))
 	}
 	return warnings, tooLong
+}
+
+// checkCollectionFomodOrder refuses a stranger's per-file layer-order hint
+// (#634) lmm could not keep as written: one with no fomod_files to order,
+// longer than fomod.MaxChoices, or naming a file that is empty, repeated,
+// holds a control, escape or bidi/format character, runs over the line
+// limit, or is not one the entry pins (when it pins any).
+func checkCollectionFomodOrder(r domain.ModReference) error {
+	if len(r.FomodOrder) == 0 {
+		return nil
+	}
+	if r.FomodFiles.IsZero() {
+		return errors.New("has no fomod_files to order")
+	}
+	if len(r.FomodOrder) > fomod.MaxChoices {
+		return fmt.Errorf("lists %d files, over the %d limit", len(r.FomodOrder), fomod.MaxChoices)
+	}
+	for i, id := range r.FomodOrder {
+		if id == "" || hasUnsafeRunes(id) || len(id) > maxCollectionLine || slices.Contains(r.FomodOrder[:i], id) {
+			return fmt.Errorf("names a file (%q) that is empty, repeated, contains control or formatting characters, or is over the %d-byte limit", id, maxCollectionLine)
+		}
+		if len(r.FileIDs) > 0 && !slices.Contains(r.FileIDs, id) {
+			return fmt.Errorf("names file %q, which the entry does not pin", id)
+		}
+	}
+	return nil
+}
+
+// checkCollectionFomodFiles refuses a stranger's per-file FOMOD choices
+// (#634) lmm could not replay as written: a file id that is not one the
+// entry pins (when it pins any), or that holds a control, escape or
+// bidi/format character or runs over the line limit - it is an answer key
+// and a profile key, never rewritten - more files than fomod.MaxChoices,
+// and any one file's choices that checkCollectionFomod refuses.
+func checkCollectionFomodFiles(r domain.ModReference) error {
+	if r.FomodFiles.IsZero() {
+		return nil
+	}
+	if len(r.FomodFiles) > fomod.MaxChoices {
+		return fmt.Errorf("record %d files, over the %d limit", len(r.FomodFiles), fomod.MaxChoices)
+	}
+	for id, c := range r.FomodFiles {
+		if id == "" || hasUnsafeRunes(id) || len(id) > maxCollectionLine {
+			return fmt.Errorf("name a file id (%q) that is empty, contains control or formatting characters, or is over the %d-byte limit", id, maxCollectionLine)
+		}
+		if len(r.FileIDs) > 0 && !slices.Contains(r.FileIDs, id) {
+			return fmt.Errorf("record choices for file %q, which the entry does not pin", id)
+		}
+		if err := checkCollectionFomod(c); err != nil {
+			return fmt.Errorf("for file %q %v", id, err)
+		}
+	}
+	return nil
 }
 
 // checkCollectionFomod refuses a stranger's recorded FOMOD choices that
@@ -993,6 +1052,36 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// installerRecordLines is installerChoiceLines for an item in either form:
+// a mod recorded per file (#634) prefixes each line with the file it
+// answers, as "file <id>", in the order the entry pins its files (any file
+// it records but does not pin after them, by id).
+func installerRecordLines(item domain.CollectionItem) []string {
+	files := item.Ref.FomodFiles
+	if files.IsZero() {
+		return installerChoiceLines(item.Ref.Fomod)
+	}
+	ids := slices.Clone(item.Ref.FileIDs)
+	for id := range files {
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	slices.SortStableFunc(ids[len(item.Ref.FileIDs):], strings.Compare)
+	var out []string
+	for _, id := range ids {
+		c, ok := files[id]
+		if !ok || c.IsZero() {
+			continue
+		}
+		label := "file " + domain.SanitizeLine(id)
+		for _, line := range installerChoiceLines(c) {
+			out = append(out, label+": "+line)
+		}
+	}
+	return out
 }
 
 // installerChoiceLines words recorded FOMOD choices for a plan (#615): one

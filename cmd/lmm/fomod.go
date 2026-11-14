@@ -12,7 +12,8 @@ package main
 //
 //   - --fomod-choices <file.json>: answers from a file, in the profile's
 //     `fomod:` shape or Vortex's bare `choices` array, keyed by mod
-//     (source:id) when several mods ask.
+//     (source:id) when several mods ask - or, for a mod whose files each
+//     carry their own installer, by file (source:id#file-id, #634).
 //   - --fomod-defaults: the installer's own preselection (required and
 //     recommended options, the first of an exactly-one group).
 //   - neither, at a terminal: an interactive walk, one step at a time.
@@ -55,7 +56,7 @@ var (
 
 // addFomodFlags registers --fomod-choices and --fomod-defaults on cmd.
 func addFomodFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&fomodChoicesPath, "fomod-choices", "", "answer FOMOD installer questions from a JSON file (the profile's fomod: shape or Vortex's choices array; key it by source:id when several mods ask)")
+	cmd.Flags().StringVar(&fomodChoicesPath, "fomod-choices", "", "answer FOMOD installer questions from a JSON file (the profile's fomod: shape or Vortex's choices array; key it by source:id when several mods ask, or by source:id#file-id for one file's installer)")
 	cmd.Flags().BoolVar(&fomodDefaults, "fomod-defaults", false, "answer FOMOD installer questions with the installer's own preselection")
 }
 
@@ -140,10 +141,12 @@ func (f *fomodAnswerer) answer(q *core.FomodChoicesRequiredError) (map[string]do
 		f.sent = map[string]string{}
 	}
 	if f.single != nil && len(q.Mods) > 1 {
-		return nil, fmt.Errorf("--fomod-choices answers one mod, but %d mods ask; key its answers by mod (source:id): %w", len(q.Mods), q)
+		return nil, fmt.Errorf("--fomod-choices answers one installer, but %d ask; key its answers by mod (source:id), or by file (source:id#file-id) for a mod with several installers: %w", len(q.Mods), q)
 	}
 	for _, m := range q.Mods {
-		key := domain.ModKey(m.SourceID, m.ModID)
+		// #634: one file's installer of a mod with several is answered
+		// under its own file key.
+		key := m.Key()
 		if a, ok := f.fileAnswer(key); ok && f.sendOnce(key, a) {
 			a.ConfigSHA256 = m.ConfigSHA256
 			f.answers[key] = a
@@ -245,7 +248,7 @@ func parseFomodChoicesFile(data []byte) (map[string]domain.FomodChoices, *domain
 // walk asks one mod's question at the terminal (see the file comment) and
 // returns the answers to send: every step settled so far.
 func (f *fomodAnswerer) walk(m core.FomodQuestion) (domain.FomodChoices, error) {
-	key := domain.ModKey(m.SourceID, m.ModID)
+	key := m.Key()
 	start := f.walked[key]
 	if start >= len(m.Steps) {
 		// The whole walk was sent and core still asks: walk it again.
@@ -340,6 +343,7 @@ func (f *fomodAnswerer) printQuestionHeader(m core.FomodQuestion, start int) {
 	if name == "" {
 		name = shown(domain.ModKey(m.SourceID, m.ModID))
 	}
+	name += fileSuffix(m)
 	title := shown(m.ModuleName)
 	if title == "" {
 		title = "FOMOD installer"
@@ -361,6 +365,19 @@ func (f *fomodAnswerer) printQuestionHeader(m core.FomodQuestion, start int) {
 	for _, v := range m.Violations {
 		_, _ = fmt.Fprintf(f.out, "  - %s breaks its rule (%s, %d selected)\n", fomodPath(v.Step, v.Group, ""), groupRule(v.Type), v.Selected)
 	}
+}
+
+// fileSuffix names the file whose installer m is, for a mod whose files
+// each carry one (#634): " - <file name>", or "" for a mod's only
+// installer.
+func fileSuffix(m core.FomodQuestion) string {
+	switch {
+	case m.FileName != "":
+		return " - " + shown(m.FileName)
+	case m.FileID != "":
+		return " - file " + shown(m.FileID)
+	}
+	return ""
 }
 
 func fomodPath(parts ...string) string {
@@ -595,7 +612,7 @@ func reportFomodQuestion(err error) {
 // printFomodQuestionSummary lists each mod's steps, groups and options.
 func printFomodQuestionSummary(w io.Writer, q *core.FomodChoicesRequiredError) {
 	for _, m := range q.Mods {
-		_, _ = fmt.Fprintf(w, "\n%s (%s): %s\n", displayName(m.Name), domain.ModKey(m.SourceID, m.ModID), displayName(m.ModuleName))
+		_, _ = fmt.Fprintf(w, "\n%s%s (%s): %s\n", displayName(m.Name), fileSuffix(m), shown(m.Key()), displayName(m.ModuleName))
 		for _, st := range m.Steps {
 			_, _ = fmt.Fprintf(w, "  Step %q\n", shown(st.Name))
 			for _, g := range st.Groups {

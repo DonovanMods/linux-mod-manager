@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -37,16 +39,40 @@ type FomodReconfigurePlan struct {
 	// Choices are the choices the profile records for it: the question's
 	// preselection.
 	Choices domain.FomodChoices `json:"choices"`
+	// Installers are the mod's files that each carry their own installer
+	// (#634), in the order it pins them, with the choices each records: a
+	// frontend offers them so the user picks WHICH installer to change
+	// (FomodReconfigureOptions.FileID). Absent for a mod with one installer,
+	// whose Choices are the record.
+	Installers []FomodInstallerFile `json:"installers,omitempty"`
 
 	install *InstallPlan
+}
+
+// FomodInstallerFile is one file of a mod whose files each carry their
+// own FOMOD installer (#634).
+type FomodInstallerFile struct {
+	// FileID is the source's file id: FomodReconfigureOptions.FileID, and
+	// the per-file answer key's last part (domain.FomodFileKey).
+	FileID string `json:"file_id"`
+	// Name is the file's display name, when the source gives one.
+	Name string `json:"name,omitempty"`
+	// Choices are the choices the profile records for this file.
+	Choices domain.FomodChoices `json:"choices"`
 }
 
 // FomodReconfigureOptions configures ApplyFomodReconfigure.
 type FomodReconfigureOptions struct {
 	// Fomod answers the question, keyed by domain.ModKey, as
-	// InstallOptions.Fomod does. Without an answer for the mod the Apply
-	// refuses with *FomodChoicesRequiredError, nothing written.
+	// InstallOptions.Fomod does - or, for a mod whose files each carry an
+	// installer, by domain.FomodFileKey (#634). Without an answer for the
+	// installer asked the Apply refuses with *FomodChoicesRequiredError,
+	// nothing written.
 	Fomod map[string]domain.FomodChoices
+	// FileID picks which installer of a mod with several is asked again
+	// (#634): one of the plan's Installers. Empty asks every one; the
+	// installers not asked install with their recorded choices.
+	FileID string
 	// AcceptConflicts, Force, SkipHooks and SkipVerify are InstallOptions'.
 	AcceptConflicts bool
 	Force           bool
@@ -73,11 +99,12 @@ func (s *Service) PlanFomodReconfigure(ctx context.Context, game *domain.Game, p
 		return nil, err
 	}
 	ref := s.recordedRef(ctx, game.ID, profileName, sourceID, modID)
-	var choices domain.FomodChoices
+	var rec domain.FomodRecord
 	if ref != nil {
-		choices = ref.Fomod
+		rec = ref.FomodRecord()
 	}
-	if row.Variant == "" && choices.IsZero() && !s.IsLegacyFomodInstall(game, row) {
+	choices := rec.Choices
+	if row.Variant == "" && rec.IsZero() && !s.IsLegacyFomodInstall(game, row) {
 		return nil, fmt.Errorf("%s: %w", row.Name, ErrNotFomodInstalled)
 	}
 	if row.SourceID == domain.SourceLocal {
@@ -118,7 +145,36 @@ func (s *Service) PlanFomodReconfigure(ctx context.Context, game *domain.Game, p
 		install.Files = files
 	}
 	install.Mod.Version = row.Version
-	return &FomodReconfigurePlan{GameID: game.ID, Profile: profileName, Mod: *row, Choices: choices, install: install}, nil
+	plan := &FomodReconfigurePlan{GameID: game.ID, Profile: profileName, Mod: *row, Choices: choices, install: install}
+	if rec.PerFile() {
+		plan.Choices = domain.FomodChoices{Steps: []domain.FomodStepChoice{}}
+		plan.Installers = installerFiles(rec.Files, install.Files)
+	}
+	return plan, nil
+}
+
+// installerFiles lists a per-file record's files in the order the install
+// pins them (any it does not pin after, by id), named from them.
+func installerFiles(files domain.FomodFiles, pinned []domain.DownloadableFile) []FomodInstallerFile {
+	var out []FomodInstallerFile
+	seen := map[string]bool{}
+	for i := range pinned {
+		if c, ok := files[pinned[i].ID]; ok && !c.IsZero() {
+			out = append(out, FomodInstallerFile{FileID: pinned[i].ID, Name: fileLabel(&pinned[i]), Choices: c})
+			seen[pinned[i].ID] = true
+		}
+	}
+	rest := make([]string, 0, len(files))
+	for id, c := range files {
+		if !seen[id] && !c.IsZero() {
+			rest = append(rest, id)
+		}
+	}
+	slices.Sort(rest)
+	for _, id := range rest {
+		out = append(out, FomodInstallerFile{FileID: id, Choices: files[id]})
+	}
+	return out
 }
 
 // ApplyFomodReconfigure runs a reconfigure (see this file's doc comment):
@@ -134,14 +190,25 @@ func (s *Service) ApplyFomodReconfigure(ctx context.Context, game *domain.Game, 
 	if len(plan.Mod.FileIDs) > 0 {
 		fileIDs = plan.Mod.FileIDs
 	}
+	if opts.FileID != "" && !slices.ContainsFunc(plan.Installers, func(f FomodInstallerFile) bool { return f.FileID == opts.FileID }) {
+		if len(plan.Installers) == 0 {
+			return &InstallResult{}, fmt.Errorf("%s has one installer, so there is no file to choose; reconfigure it without one", plan.Mod.Name)
+		}
+		ids := make([]string, len(plan.Installers))
+		for i, f := range plan.Installers {
+			ids[i] = f.FileID
+		}
+		return &InstallResult{}, fmt.Errorf("%s: file %q is not one of its installers (%s)", plan.Mod.Name, opts.FileID, strings.Join(ids, ", "))
+	}
 	return s.ApplyInstall(ctx, game, plan.install, InstallOptions{
-		TargetFileIDs:    fileIDs,
-		Fomod:            opts.Fomod,
-		AcceptConflicts:  opts.AcceptConflicts,
-		Force:            opts.Force,
-		SkipHooks:        opts.SkipHooks,
-		SkipVerify:       opts.SkipVerify,
-		fomodReconfigure: domain.ModKey(plan.Mod.SourceID, plan.Mod.ID),
+		TargetFileIDs:        fileIDs,
+		Fomod:                opts.Fomod,
+		AcceptConflicts:      opts.AcceptConflicts,
+		Force:                opts.Force,
+		SkipHooks:            opts.SkipHooks,
+		SkipVerify:           opts.SkipVerify,
+		fomodReconfigure:     domain.ModKey(plan.Mod.SourceID, plan.Mod.ID),
+		fomodReconfigureFile: opts.FileID,
 	}, sink)
 }
 

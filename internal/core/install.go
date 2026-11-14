@@ -795,6 +795,9 @@ type InstallOptions struct {
 	// mod (domain.ModKey) whose FOMOD installer asks even when its recorded
 	// choices fit, unless Fomod answers it.
 	fomodReconfigure string
+	// fomodReconfigureFile narrows it to one file's installer of a mod
+	// whose files each carry one (#634); "" asks every installer.
+	fomodReconfigureFile string
 }
 
 // InstalledRef identifies one mod on an InstallResult.Installed/Skipped/
@@ -2051,6 +2054,7 @@ func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *
 	// a panic in a later file's acquire releases the earlier ones here
 	// (#628).
 	defer releaseOnPanic(func() { s.releaseAcquired(st.files, false) })
+	var asks modFomodAsks // #634: every file's installer asks in one round
 	for _, file := range selected {
 		if err := ctx.Err(); err != nil {
 			s.releaseAcquired(st.files, false)
@@ -2078,6 +2082,9 @@ func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *
 		emit(StepEvent{Scope: scope, Phase: InstallDepDownloadDone})
 
 		if err != nil {
+			if asks.take(err, file) {
+				continue
+			}
 			f := skip("Error", fmt.Sprintf("download failed: %v", err), err)
 			// The mod's earlier files go with the failure, so a refusal
 			// that blocks retains them too.
@@ -2091,12 +2098,19 @@ func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *
 			st.checksums = append(st.checksums, fileChecksum{fileID: file.ID, checksum: a.checksum})
 		}
 	}
-	resolved, err := unifyFomod(mod, st.files)
+	if err := asks.finish(mod, fx, st.files); err != nil {
+		f := skip("Error", fmt.Sprintf("download failed: %v", err), err)
+		f.release = s.releaseFilesFunc(st.files)
+		return nil, f
+	}
+	// #634: a mod with several installers comes back in its layer order.
+	ordered, resolved, err := unifyFomod(mod, st.files, fx.orderHint)
 	if err != nil {
 		f := skip("Error", err.Error(), err)
 		f.release = s.releaseFilesFunc(st.files)
 		return nil, f
 	}
+	st.files = ordered
 	st.fomod = resolved
 	return st, nil
 }
@@ -2467,7 +2481,13 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	// #615: a reconfigure asks about choices that fit, so the installer
 	// must be read again - never skipped for a warm entry.
 	fx.ask = opts.fomodReconfigure != "" && opts.fomodReconfigure == domain.ModKey(mod.SourceID, mod.ID) && !fx.answered
-	expectedVariant := fomodVariant(fx.choices)
+	if fx.ask {
+		// #634: one file's installer of a mod with several, or every one.
+		fx.askFile = opts.fomodReconfigureFile
+	}
+	// #634: the warm entry is the one these files' canonical order names.
+	fx.fileIDs = plannedFileIDsOf(plan.Files)
+	expectedVariant := fx.expectedVariant()
 
 	// A same-version reinstall stages its download apart from the live
 	// entry whatever tree it will resolve to: which variant it is is known
@@ -2533,7 +2553,7 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	if cacheWarm && expectedVariant != "" {
 		// The entry these choices build is cached: nothing to resolve.
 		mod.Variant = expectedVariant
-		st.fomod = &fomodResolved{variant: expectedVariant, choices: fx.choices}
+		st.fomod = fx.warmResolved(expectedVariant)
 	}
 
 	// compiledFiles accumulates every file this loop actually compiled (game
@@ -2836,6 +2856,8 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		installedMod.PreviousFileIDs = plan.Replaces.PreviousFileIDs
 		installedMod.PreviousVariant = plan.Replaces.PreviousVariant
 		installedMod.PreviousFomod = plan.Replaces.PreviousFomod
+		installedMod.PreviousFomodFiles = plan.Replaces.PreviousFomodFiles
+		installedMod.PreviousFomodOrder = plan.Replaces.PreviousFomodOrder
 	}
 
 	if s.beforeSaveInstalled != nil {
@@ -2949,4 +2971,13 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		return &WarningEvent{Scope: modScope, Phase: InstallWarning, Message: msg}, nil
 	}
 	return nil, nil
+}
+
+// plannedFileIDsOf is files' ids.
+func plannedFileIDsOf(files []domain.DownloadableFile) []string {
+	ids := make([]string, len(files))
+	for i := range files {
+		ids[i] = files[i].ID
+	}
+	return ids
 }

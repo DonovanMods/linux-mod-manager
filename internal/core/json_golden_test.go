@@ -2785,6 +2785,47 @@ func TestJSONGoldens(t *testing.T) {
 		},
 		{"fomod_question", sampleFomodQuestion()},
 		{
+			// #634: one file's installer of a mod whose files each carry
+			// one - labelled with its file, answered under its file key.
+			"fomod_question_per_file",
+			func() core.FomodQuestion {
+				q := sampleFomodQuestion()
+				q.FileID, q.FileName = "37471", "Sample Mod - Patches"
+				return q
+			}(),
+		},
+		{
+			"fomod_installer_file",
+			core.FomodInstallerFile{FileID: "37471", Name: "Sample Mod - Patches", Choices: domain.FomodChoices{ConfigSHA256: "ab12",
+				Steps: []fomod.StepChoice{{Name: "Patches", Groups: []fomod.GroupChoice{{Name: "Which", Choices: []fomod.OptionChoice{{Name: "USSEP", Idx: 0}}}}}}}},
+		},
+		{
+			// #634: a reconfigure plan of a mod with two installers lists
+			// them to pick from.
+			"fomod_reconfigure_plan_per_file",
+			core.FomodReconfigurePlan{GameID: "skyrimse", Profile: "default",
+				Mod: domain.InstalledMod{Mod: domain.Mod{ID: "43532", SourceID: "nexusmods", Name: "Scrambled Bugs", Version: "1.0", GameID: "skyrimse"},
+					ProfileName: "default", UpdatePolicy: domain.UpdateNotify, InstalledAt: time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC),
+					Enabled: true, Deployed: true, LinkMethod: domain.LinkSymlink, FileIDs: []string{"100", "101"}},
+				Choices: domain.FomodChoices{Steps: []fomod.StepChoice{}},
+				Installers: []core.FomodInstallerFile{
+					{FileID: "100", Name: "Scrambled Bugs", Choices: domain.FomodChoices{ConfigSHA256: "ab12", Steps: []fomod.StepChoice{{Name: "Main",
+						Groups: []fomod.GroupChoice{{Name: "Fixes", Choices: []fomod.OptionChoice{{Name: "All", Idx: 0}}}}}}}},
+					{FileID: "101", Name: "Scrambled Bugs - Patches", Choices: domain.FomodChoices{ConfigSHA256: "cd34", Steps: []fomod.StepChoice{}}},
+				}},
+		},
+		{
+			"copy_mod_entry_fomod_files",
+			core.CopyModEntry{SourceID: "nexusmods", ModID: "43532", Name: "Scrambled Bugs", Version: "1.0", FileIDs: []string{"100", "101"},
+				FomodFiles: domain.FomodFiles{"100": {ConfigSHA256: "ab12", Steps: []fomod.StepChoice{}}, "101": {ConfigSHA256: "cd34", Steps: []fomod.StepChoice{}}}},
+		},
+		{
+			"installed_detail_fomod_files",
+			core.InstalledDetail{Version: "1.0", Profile: "default", UpdatePolicy: domain.UpdateNotify,
+				Fomod:      &domain.FomodChoices{Steps: []domain.FomodStepChoice{}},
+				FomodFiles: domain.FomodFiles{"100": {ConfigSHA256: "ab12", Steps: []fomod.StepChoice{}}, "101": {ConfigSHA256: "cd34", Steps: []fomod.StepChoice{}}}},
+		},
+		{
 			// #615: a question whose preselection is not the installer's
 			// own carries the defaults too (--fomod-defaults).
 			"fomod_question_defaults",

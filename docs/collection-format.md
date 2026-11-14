@@ -79,6 +79,13 @@ mods:                        # load order, first = lowest priority
     name: Much Better Ammo   # display: readable without the source
     files:                   # per-file facts, where the source provides them
       - { id: "1234", md5: 25aa…, sha256: …, size: 1234567 }
+  - source_id: nexusmods     # a mod whose files each carry an installer
+    mod_id: "43532"
+    file_ids: ["100", "101"]
+    fomod_files:             # its choices per file, by file id (requires: fomod_multi_file)
+      "100": { config_sha256: 9e0a…, steps: [ … ] }
+      "101": { config_sha256: 51c7…, steps: [ … ] }
+    fomod_order: ["101", "100"]  # optional: the order those files layer in (else by file id)
 external:                    # items lmm cannot fetch: listed, never downloaded
   - name: Cyber Engine Tweaks
     url: https://…
@@ -207,6 +214,7 @@ is what lets the format grow without breaking older importers.
 | ---------- | --------------------------------- | -------------- |
 | `external` | any `external` item               | format v1 (lmm with #621) |
 | `fomod`    | any mod with a `fomod` block (its recorded FOMOD installer choices) | format v1 (lmm with #614) |
+| `fomod_multi_file` | any mod with a `fomod_files` block: its FOMOD choices recorded per file, for a mod two or more of whose files each carry an installer (also raises `fomod`) | format v1 (lmm with #634). An older lmm, which installs one installer per mod, refuses it |
 | `plugin_order` | a `plugins` block (the profile's plugin load order and rules) | format v1 (lmm with #616) |
 | `mod_type:<type>` | any mod with that `mod_type` (a stated mod type, as a NexusMods collection records it: `dinput` is a script extender, deployed to the game folder) | lmm with #607, for a game whose adapter routes the type (the `bethesda` adapter: `dinput`, `enb`). Elsewhere it is refused, because the mod would deploy where the game never reads it |
 
@@ -257,7 +265,11 @@ A collection from someone else is untrusted input.
   whose `config_sha256` is not 64 lower-case hex digits, whose file state
   is not `Missing`, `Inactive` or `Active`, or that holds more than 10,000
   recorded entries (steps, groups and picks together) or file states is
-  refused too.
+  refused too. A `fomod_files` block is held to the same rules for each
+  file, and its keys must be file ids the mod pins (`file_ids`), free of
+  control and formatting characters; so must a `fomod_order` list's
+  entries, which may not repeat, and which need a `fomod_files` block to
+  order.
 - **A version-0 document** never carries a `collection` or `external`
   block, so the version-0 import ignores both: only a checked version-1
   document sets them.
