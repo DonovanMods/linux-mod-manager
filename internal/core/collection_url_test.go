@@ -365,7 +365,7 @@ func TestCollectionURLImport_AStatusLineCannotWriteToTheTerminal(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_, _ = buf.WriteString("HTTP/1.1 404 \x1b[31mRED\x1b[0m\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 		_ = buf.Flush()
 	}))

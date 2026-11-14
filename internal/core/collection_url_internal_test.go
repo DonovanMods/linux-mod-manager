@@ -19,10 +19,10 @@ func TestSafeCause(t *testing.T) {
 	plain := errors.New("connection refused")
 	require.Same(t, plain, safeCause(plain), "a clean error is returned as is")
 
-	dirty := errors.New("bad response \x1b[31mRED\x1b[0m‮")
+	dirty := errors.New("bad response \x1b[31mRED\x1b[0m\u202e")
 	got := safeCause(dirty)
 	require.NotContains(t, got.Error(), "\x1b")
-	require.NotContains(t, got.Error(), "‮")
+	require.NotContains(t, got.Error(), "\u202e")
 	require.Contains(t, got.Error(), "bad response")
 	require.ErrorIs(t, got, dirty)
 }
