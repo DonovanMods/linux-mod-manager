@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -62,14 +63,20 @@ func (r *verifyRun) recordsPass(installedMods []domain.InstalledMod, files []Dep
 		if err := r.ctx.Err(); err != nil {
 			return err
 		}
-		if mod.External || adoptedInPlace(r.game, mod) || withFiles[domain.ModKey(mod.SourceID, mod.ID)] ||
-			(r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter) ||
-			gameCache.Exists(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}) {
+		if mod.External || withFiles[domain.ModKey(mod.SourceID, mod.ID)] ||
+			(r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter) {
+			continue
+		}
+		reason := fmt.Sprintf("reinstall it (`lmm install --id %s --source %s --game %s --profile %s`) or uninstall it: lmm has no recorded file to download again",
+			mod.ID, mod.SourceID, r.game.ID, r.profile)
+		if gameCache.Exists(cache.Key{GameID: r.game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}) {
+			r.lostWithoutRecordFinding(&mod, reason)
+			continue
+		}
+		if adoptedInPlace(r.game, mod) {
 			continue
 		}
 		r.result.Issues++
-		reason := fmt.Sprintf("reinstall it (`lmm install --id %s --source %s --game %s --profile %s`) or uninstall it: lmm has no recorded file to download again",
-			mod.ID, mod.SourceID, r.game.ID, r.profile)
 		note := fmt.Sprintf("version %s is not in the cache any more", mod.Version)
 		if mod.DisplayVersion != "" {
 			note = fmt.Sprintf("its revision of %s is not in the cache any more", mod.DisplayVersion)
@@ -80,6 +87,25 @@ func (r *verifyRun) recordsPass(installedMods []domain.InstalledMod, files []Dep
 		}, VerifyEvent{Version: mod.Version})
 	}
 	return nil
+}
+
+// lostWithoutRecordFinding reports a cache_incomplete row for mod, an
+// installed mod with no file record whose entry lost files (#642) - the
+// per-file walk never sees it. It is an issue with no automatic repair:
+// there is no recorded file to download again (reinstall is the remedy),
+// or, for a locally imported mod, no source to fetch from.
+func (r *verifyRun) lostWithoutRecordFinding(mod *domain.InstalledMod, reinstall string) {
+	lost := r.lostFiles(mod)
+	if len(lost) == 0 {
+		return
+	}
+	note := lost[slices.Min(slices.Collect(maps.Keys(lost)))]
+	reason := reinstall
+	if !redownloadRepairs(mod) {
+		reason = redownloadRefusal(mod)
+	}
+	r.result.Issues++
+	r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: VerifyStatusCacheIncomplete, Note: note, FixableReason: reason}, VerifyEvent{})
 }
 
 // adoptedInPlace reports whether mod may never have had a cache entry, so
