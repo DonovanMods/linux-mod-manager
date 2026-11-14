@@ -10,8 +10,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -52,7 +52,11 @@ type prefixOriginal struct {
 	Size   int64  `json:"size,omitzero"`
 	Mode   uint32 `json:"mode,omitzero"`
 	// Stored is the stored copy's file name under _originals/prefix/.
-	Stored     string    `json:"stored,omitempty"`
+	Stored string `json:"stored,omitempty"`
+	// Owned names the plugins lmm deployed that its last write listed in
+	// the file: what a purge takes out again, keeping everything else the
+	// file holds by then (#616 review B2).
+	Owned      []string  `json:"owned,omitempty"`
 	CapturedAt time.Time `json:"captured_at"`
 }
 
@@ -66,9 +70,11 @@ type prefixOriginalsManifest struct {
 	Files []prefixOriginal `json:"files"`
 }
 
-// prefixOriginals is one game's prefix originals.
+// prefixOriginals is one game's prefix originals. It holds no lock: every
+// caller runs inside a mutation (beginOp), which serializes them, and a new
+// value is made per call, so a lock here would guard nothing (#616 review
+// 11).
 type prefixOriginals struct {
-	mu  sync.Mutex
 	dir string // <DataDir>/snapshots/<game>/_originals
 }
 
@@ -121,6 +127,12 @@ func (p *prefixOriginals) write(m prefixOriginalsManifest) error {
 		_ = tmp.Close()
 		return err
 	}
+	// Flushed before the rename, so a crash leaves the old manifest or the
+	// new one, never an empty one (#616 review 7).
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
@@ -129,8 +141,6 @@ func (p *prefixOriginals) write(m prefixOriginalsManifest) error {
 
 // list is every row, oldest first.
 func (p *prefixOriginals) list() ([]prefixOriginal, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	m, err := p.read()
 	return m.Files, err
 }
@@ -138,8 +148,6 @@ func (p *prefixOriginals) list() ([]prefixOriginal, error) {
 // capture records row - the file before lmm's write - unless one is
 // recorded already. data is its content when row.Existed.
 func (p *prefixOriginals) capture(row prefixOriginal, data []byte) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	m, err := p.read()
 	if err != nil {
 		return err
@@ -189,8 +197,6 @@ func (p *prefixOriginals) stored(row prefixOriginal) ([]byte, error) {
 
 // forget drops row and its stored copy.
 func (p *prefixOriginals) forget(row prefixOriginal) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	m, err := p.read()
 	if err != nil {
 		return err
@@ -208,6 +214,43 @@ func (p *prefixOriginals) forget(row prefixOriginal) error {
 	if row.Stored != "" && !strings.ContainsAny(row.Stored, `/\`) {
 		if err := os.Remove(filepath.Join(p.dir, "prefix", row.Stored)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
+		}
+	}
+	return nil
+}
+
+// setOwned records owned on the row for prefix/user/path, if lmm keeps one
+// (it has replaced or created that file), writing the manifest only when
+// the set changed.
+func (p *prefixOriginals) setOwned(prefix, user, path string, owned []string) error {
+	m, err := p.read()
+	if err != nil {
+		return err
+	}
+	key := prefixOriginal{Prefix: prefix, User: user, Path: path}.key()
+	for i := range m.Files {
+		if m.Files[i].key() != key {
+			continue
+		}
+		if slices.Equal(m.Files[i].Owned, owned) {
+			return nil
+		}
+		m.Files[i].Owned = slices.Clone(owned)
+		return p.write(m)
+	}
+	return nil
+}
+
+// rekey moves row to the prefix and user of moved (rekeyPrefixOriginal).
+func (p *prefixOriginals) rekey(row, moved prefixOriginal) error {
+	m, err := p.read()
+	if err != nil {
+		return err
+	}
+	for i := range m.Files {
+		if m.Files[i].key() == row.key() {
+			m.Files[i].Prefix, m.Files[i].User = moved.Prefix, moved.User
+			return p.write(m)
 		}
 	}
 	return nil

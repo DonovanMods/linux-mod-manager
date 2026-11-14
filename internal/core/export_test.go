@@ -466,3 +466,11 @@ func (pm *ProfileManager) ImportForTest(ctx context.Context, data []byte, force 
 func (s *Service) RecordManualOnlyForTest(ctx context.Context, gameID, sourceID, modID string) {
 	s.recordManualOnly(ctx, gameID, sourceID, modID)
 }
+
+// SetPluginListBeforeWriteForTest installs fn as the pluginListBeforeWrite
+// seam (#616 review 3: a list saved between the read and the write) and
+// returns a func that removes it.
+func SetPluginListBeforeWriteForTest(fn func()) func() {
+	pluginListBeforeWrite = fn
+	return func() { pluginListBeforeWrite = nil }
+}

@@ -53,6 +53,11 @@ type purgeSpec struct {
 	// kept receives the paths the loop left for another game (purge
 	// command only; nil in deploy mode, which reports them as warnings).
 	kept *[]PurgeKeptPath
+	// beforeAfterAll, when set, runs once every mod is removed and just
+	// before the uninstall.after_all hook: the purge command puts the
+	// game's plugin list back there, so the hook sees the final file
+	// (#616).
+	beforeAfterAll func()
 }
 
 // purgeMods is THE purge loop (#61): the one shared implementation of
@@ -220,6 +225,9 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		}
 	}
 
+	if spec.beforeAfterAll != nil {
+		spec.beforeAfterAll()
+	}
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
 	if err := runHook(ctx, spec.skip, spec.runner, &hookCtx, "uninstall.after_all", spec.hooks.GetUninstallAfterAll()); err != nil {
 		msg := fmt.Sprintf("uninstall.after_all hook failed: %v", err)
@@ -1785,14 +1793,27 @@ func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileNa
 		return result, err
 	}
 
+	// #616: the plugin list the user had before lmm's first write comes
+	// back once every mod is gone, before uninstall.after_all runs (or
+	// after the loop, when it had no mod to run hooks for). A warning, not
+	// a failure: the mods are purged either way.
+	var plugins *PluginListResult
+	restored := false
+	restorePlugins := func() {
+		if !restored {
+			restored = true
+			plugins = s.restorePluginList(game)
+		}
+	}
 	err = s.purgeMods(ctx, game, profileName, mods, purgeSpec{
-		op:        OpPurge,
-		uninstall: opts.Uninstall,
-		hooks:     hooks,
-		runner:    runner,
-		hookCtx:   hookContextFor(game),
-		force:     opts.Force,
-		skip:      opts.SkipHooks,
+		beforeAfterAll: restorePlugins,
+		op:             OpPurge,
+		uninstall:      opts.Uninstall,
+		hooks:          hooks,
+		runner:         runner,
+		hookCtx:        hookContextFor(game),
+		force:          opts.Force,
+		skip:           opts.SkipHooks,
 		emit: func(e Event) {
 			if sink != nil {
 				sink(e)
@@ -1822,10 +1843,8 @@ func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileNa
 		}
 	}
 
-	// #616: the plugin list the user had before lmm's first write comes
-	// back once every mod is gone. A warning, not a failure: the mods are
-	// purged either way.
-	if res := s.restorePluginList(game); res != nil {
+	restorePlugins()
+	if res := plugins; res != nil {
 		result.Plugins = res
 		for _, w := range res.warnings() {
 			result.Warnings = append(result.Warnings, w)

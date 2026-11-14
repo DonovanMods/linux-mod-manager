@@ -207,24 +207,60 @@ type renderedList struct {
 // renderPluginList renders entries - the full load order, implicit plugins
 // excluded - for spec's list kind. implicit are the implicit plugins
 // present, first in the textfile format's loadorder.txt. file is the list
-// file being replaced: its comment lines are kept where they were, and its
-// line ending used.
-func renderPluginList(spec adapter.PluginSpec, entries []listEntry, implicit []string, file pluginListFile, orderEOL string) renderedList {
+// file being replaced and orderFile the order file (Skyrim LE): their
+// comment lines are kept where they were, and their line endings used.
+func renderPluginList(spec adapter.PluginSpec, entries []listEntry, implicit []string, file, orderFile pluginListFile, orderEOL string) renderedList {
+	if spec.ListKind != adapter.ListTextfile {
+		return renderedList{list: renderLines(file, entries, true, false)}
+	}
+	var active []listEntry
+	for _, e := range entries {
+		if e.active {
+			active = append(active, e)
+		}
+	}
+	order := make([]listEntry, 0, len(implicit)+len(entries))
+	for _, name := range implicit {
+		order = append(order, listEntry{name: name, active: true})
+	}
+	order = append(order, entries...)
+	if orderEOL != "" {
+		orderFile.eol = orderEOL
+	} else if orderFile.eol == "" {
+		orderFile.eol = file.eol
+	}
+	return renderedList{list: renderLines(file, active, false, false), order: renderLines(orderFile, order, false, true)}
+}
+
+// renderLines writes entries, one per line, in file's line ending, with
+// file's comment lines where they were (placeComments): with star, an
+// active entry's line starts with '*'. utf8 writes UTF-8 (loadorder.txt),
+// else Windows-1252 - and an entry with no Windows-1252 spelling is left
+// out of that file alone, so one name can never cost the whole list (#616
+// review 8: a non-1252 external stays in loadorder.txt).
+func renderLines(file pluginListFile, entries []listEntry, star, utf8 bool) []byte {
 	eol := file.eol
 	if eol == "" {
 		eol = eolNew
 	}
+	encode := func(text string) ([]byte, bool) {
+		if utf8 {
+			return []byte(text), true
+		}
+		return encodeWindows1252(text)
+	}
 	written := map[string]bool{}
 	for _, e := range entries {
-		if e.active || spec.ListKind != adapter.ListTextfile {
+		if _, ok := encode(e.name); ok {
 			written[pluginKey(e.name)] = true
 		}
 	}
 	top, after := file.placeComments(written)
-	var b strings.Builder
-	line := func(s string) {
-		b.WriteString(s)
-		b.WriteString(eol)
+	var b []byte
+	line := func(text string) {
+		if enc, ok := encode(text); ok {
+			b = append(append(b, enc...), eol...)
+		}
 	}
 	for _, c := range top {
 		line(c)
@@ -234,29 +270,14 @@ func renderPluginList(spec adapter.PluginSpec, entries []listEntry, implicit []s
 		if !written[key] {
 			continue
 		}
-		if e.active && spec.ListKind != adapter.ListTextfile {
-			b.WriteByte('*')
+		text := e.name
+		if star && e.active {
+			text = "*" + text
 		}
-		line(e.name)
+		line(text)
 		for _, c := range after[key] {
 			line(c)
 		}
 	}
-	list, _ := encodeWindows1252(b.String())
-	if spec.ListKind != adapter.ListTextfile {
-		return renderedList{list: list}
-	}
-	if orderEOL == "" {
-		orderEOL = eol
-	}
-	var o strings.Builder
-	for _, name := range implicit {
-		o.WriteString(name)
-		o.WriteString(orderEOL)
-	}
-	for _, e := range entries {
-		o.WriteString(e.name)
-		o.WriteString(orderEOL)
-	}
-	return renderedList{list: list, order: []byte(o.String())}
+	return b
 }

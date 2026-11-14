@@ -25,8 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deactivates one. An existing file keeps its name's spelling, its line
   endings and its comment lines where they were (the game's header at the
   top); a new one is `Plugins.txt` with LF endings, as the game writes its
-  own. The list is written before `install.after_all` hooks run, so a hook
-  sees the final file and can adjust it.
+  own. The list is written before `install.after_all` and
+  `uninstall.after_all` hooks run, so a hook sees the final file and can
+  adjust it. A list the game saves while lmm works out the order is read
+  again rather than written over, and when lmm cannot read the game's
+  plugin folder (a drive that is not mounted) it leaves the list alone and
+  says so.
   lmm re-checks the prefix's user folder just before writing and never
   writes through a link. The deploy's result (`--json` and the web UI) gains
   a `plugins` object - status, the file, counts, and findings: a cycle among
@@ -36,8 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prefix (the mods are still deployed). The findings are also the result's
   warnings. The file lmm first replaced is kept in its own
   `originals-prefix.json`, which older lmm never reads, and `lmm purge`
-  puts it back (its result gains `plugins` too), keeping any plugin the
-  game added since. `lmm verify` reports the same findings and a new
+  puts it back (its result gains `plugins` too): lmm's own plugins come
+  out, and every change made outside lmm since - a plugin added, turned on
+  or off, or moved - stays. `lmm verify` reports the same findings and a new
   `plugin_drift` warning for one of lmm's own plugins that was moved,
   deactivated or dropped since; `--fix` writes the list again
   (`fixed_plugin_drift`). The web UI's deploy and purge readouts show the

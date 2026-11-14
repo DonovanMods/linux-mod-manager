@@ -319,9 +319,10 @@ mods. `lmm deploy` prints what it wrote, and the web UI says it when the
 deploy finishes. A plugin you installed by hand, or one bought through the
 game's Creations menu, stays where it was and keeps its state. The first
 time lmm writes the list it keeps the one you had, and `lmm purge` puts it
-back. A plugin new to the profile loads last, so a mod you just added wins
-its conflicts. The list is written before an `install.after_all` hook runs,
-so a hook of yours can read or adjust it.
+back, keeping whatever you or the game changed in it since. A plugin new to
+the profile loads last, so a mod you just added wins its conflicts. The list
+is written before an `install.after_all` or `uninstall.after_all` hook
+runs, so a hook of yours can read or adjust it.
 
 The deploy reports a plugin that needs a master you do not have active, or
 more active plugins than the game loads, as an error: the game would not

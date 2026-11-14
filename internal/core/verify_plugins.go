@@ -40,7 +40,11 @@ func (r *verifyRun) pluginListPass() {
 	}
 	c, err := r.svc.computePluginList(r.ctx, r.game, r.profile, spec)
 	if err != nil {
-		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("plugin list: %v", err)}, VerifyEvent{})
+		// An issue, as the deploy reports it (plugin_list_unwritable): a
+		// list lmm cannot read - a link where the file was, a permission
+		// error - is one lmm cannot keep in step either (#616 review 9).
+		r.result.Issues++
+		r.finding(VerifyFinding{Status: PluginFindingUnwritable, Note: fmt.Sprintf("the plugin list cannot be read: %v", err)}, VerifyEvent{})
 		return
 	}
 	if c.nothing {

@@ -716,8 +716,16 @@ plugins:
   one uses LF line endings, as the game writes its own, and has no header.
   Names are written in Windows-1252, as the game reads them.
 - **Hooks see the final list.** A deploy or install writes the list before
-  its `install.after_all` hook runs, so the hook can read it, or change it,
-  and lmm does not write over the change.
+  its `install.after_all` hook runs, and an uninstall or purge before its
+  `uninstall.after_all`, so the hook can read it, or change it, and lmm does
+  not write over the change.
+- **Nothing is written over.** lmm reads the list again just before writing
+  it; if the game (its Creations menu, say) saved it in between, lmm works
+  the order out again from what is there now, and leaves the list alone if
+  it keeps changing. If lmm cannot read the folder the game loads plugins
+  from - a drive that is not mounted - or that folder holds none of the
+  game's own plugins, lmm does not write the list (`plugin_list_unwritable`),
+  rather than drop every plugin from it.
 - **lmm writes only inside the prefix.** It checks the prefix's user folder
   again just before writing, and it never writes through a link: a folder
   or a `Plugins.txt` that is a link to somewhere else is refused, and the
@@ -733,8 +741,12 @@ plugins:
   and the deploy says why (`prefix_unresolved`).
 - **Backup and purge.** Before lmm first replaces a `Plugins.txt`, the file
   you had is kept (lmm notes that there was none, if so). `lmm purge` puts
-  it back, keeping any plugin the game added since; a file lmm created is
-  removed.
+  it back: lmm takes its own plugins out of the current file and puts back
+  the entries only the kept file has, so whatever changed outside lmm since
+  (a plugin added, turned on or off, or moved) stays as it is. When nothing
+  outside lmm changed, the kept file comes back byte for byte; a file lmm
+  created and nothing else uses is removed. If the game has moved to
+  another prefix, the kept list goes back into the one it uses now.
 - **`lmm verify`** reports the same findings, and `plugin_drift` when one of
   lmm's own plugins has been moved, deactivated or dropped in `Plugins.txt`
   since lmm wrote it. Changes to plugins lmm did not deploy are never drift.

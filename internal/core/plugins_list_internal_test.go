@@ -58,14 +58,14 @@ func TestDecodeLoadOrderTxt(t *testing.T) {
 func TestRenderPluginList(t *testing.T) {
 	entries := []listEntry{{"A.esp", true}, {"Café.esp", false}}
 	asterisk := adapter.PluginSpec{ListKind: adapter.ListAsterisk}
-	got := renderPluginList(asterisk, entries, []string{"Skyrim.esm"}, parsePluginList("# head\r\n", true), "")
+	got := renderPluginList(asterisk, entries, []string{"Skyrim.esm"}, parsePluginList("# head\r\n", true), pluginListFile{}, "")
 	assert.Equal(t, "# head\r\n*A.esp\r\nCaf\xe9.esp\r\n", string(got.list))
 	assert.Nil(t, got.order)
 
-	got = renderPluginList(asterisk, entries, nil, pluginListFile{}, "")
+	got = renderPluginList(asterisk, entries, nil, pluginListFile{}, pluginListFile{}, "")
 	assert.Equal(t, "*A.esp\nCaf\xe9.esp\n", string(got.list), "a new file: LF, and no header")
 
-	got = renderPluginList(adapter.PluginSpec{ListKind: adapter.ListTextfile}, entries, []string{"Skyrim.esm"}, parsePluginList("x\n", false), "")
+	got = renderPluginList(adapter.PluginSpec{ListKind: adapter.ListTextfile}, entries, []string{"Skyrim.esm"}, parsePluginList("x\n", false), pluginListFile{}, "")
 	assert.Equal(t, "A.esp\n", string(got.list))
 	assert.Equal(t, "Skyrim.esm\nA.esp\nCafé.esp\n", string(got.order), "loadorder.txt is UTF-8, lists every plugin, and follows the list's endings when new")
 }
@@ -76,7 +76,7 @@ func TestRenderPluginList(t *testing.T) {
 func TestRenderPluginList_KeepsTheGamesHeaderAndLF(t *testing.T) {
 	current := parsePluginList(skyrimSEHeader+"*A.esp\n*B.esp\n", true)
 	got := renderPluginList(adapter.PluginSpec{ListKind: adapter.ListAsterisk},
-		[]listEntry{{"B.esp", true}, {"A.esp", true}, {"C.esp", false}}, nil, current, "")
+		[]listEntry{{"B.esp", true}, {"A.esp", true}, {"C.esp", false}}, nil, current, pluginListFile{}, "")
 	assert.Equal(t, skyrimSEHeader+"*B.esp\n*A.esp\nC.esp\n", string(got.list))
 }
 
@@ -86,10 +86,10 @@ func TestRenderPluginList_KeepsTheGamesHeaderAndLF(t *testing.T) {
 func TestRenderPluginList_KeepsCommentsWhereTheyWere(t *testing.T) {
 	current := parsePluginList("# top\n*A.esp\n# about A\n*Gone.esp\n# after gone\n*B.esp\n# end\n", true)
 	got := renderPluginList(adapter.PluginSpec{ListKind: adapter.ListAsterisk},
-		[]listEntry{{"B.esp", true}, {"A.esp", true}}, nil, current, "")
+		[]listEntry{{"B.esp", true}, {"A.esp", true}}, nil, current, pluginListFile{}, "")
 	assert.Equal(t, "# top\n*B.esp\n# end\n*A.esp\n# about A\n# after gone\n", string(got.list))
 
 	got = renderPluginList(adapter.PluginSpec{ListKind: adapter.ListAsterisk},
-		[]listEntry{{"B.esp", true}}, nil, current, "")
+		[]listEntry{{"B.esp", true}}, nil, current, pluginListFile{}, "")
 	assert.Equal(t, "# top\n# about A\n# after gone\n*B.esp\n# end\n", string(got.list), "A gone: its comments go to the top")
 }

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -185,8 +186,10 @@ type pluginComputation struct {
 	// existed.
 	listData, orderData     []byte
 	listExists, orderExists bool
-	// current is the list file as read.
-	current pluginListFile
+	// current is the list file as read; currentOrder the order file, for
+	// its comment lines and line ending.
+	current      pluginListFile
+	currentOrder pluginListFile
 	// entries is the effective order; implicit the implicit plugins
 	// present.
 	entries  []listEntry
@@ -224,19 +227,30 @@ func (s *Service) syncPluginList(ctx context.Context, game *domain.Game, profile
 	if _, recordedOnly, err := s.profileScope(ctx, game.ID, profileName); err != nil || recordedOnly {
 		return nil
 	}
-	c, err := s.computePluginList(ctx, game, profileName, spec)
-	if err != nil {
-		return &PluginListResult{Status: PluginListSkipped, Findings: []PluginFinding{unwritable(err)}}
+	// A list the game saved while lmm worked out the order is read again,
+	// once; a second change in that time leaves the list to the game.
+	var c *pluginComputation
+	var res *PluginListResult
+	var written bool
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		c, err = s.computePluginList(ctx, game, profileName, spec)
+		if err != nil {
+			return &PluginListResult{Status: PluginListSkipped, Findings: []PluginFinding{unwritable(err)}}
+		}
+		if c.nothing {
+			return nil
+		}
+		res = c.result()
+		if c.skipped {
+			res.Status = PluginListSkipped
+			return res
+		}
+		written, err = s.writePluginList(game, c)
+		if !errors.Is(err, errPluginListChanged) {
+			break
+		}
 	}
-	if c.nothing {
-		return nil
-	}
-	res := c.result()
-	if c.skipped {
-		res.Status = PluginListSkipped
-		return res
-	}
-	written, err := s.writePluginList(game, c)
 	if err != nil {
 		res.Status = PluginListSkipped
 		res.Findings = append([]PluginFinding{unwritable(err)}, res.Findings...)
@@ -301,13 +315,17 @@ type pluginFile struct {
 func (d pluginDirs) has(name string) bool { _, ok := d.files[pluginKey(name)]; return ok }
 
 // scanPluginDirs lists the plugin files in game's mod_path and in spec's
-// extra directories that resolve.
-func scanPluginDirs(game *domain.Game, spec adapter.PluginSpec, st *PrefixStatus, folder string) pluginDirs {
+// extra directories that resolve. A directory that cannot be read - a
+// mod_path on a drive that is not mounted, say - is an error, never an
+// empty directory: every plugin would look uninstalled, and the write
+// would drop them all from the list (#616 review B1). An extra directory
+// that does not exist is no error: Starfield's My Games/Data is optional.
+func scanPluginDirs(game *domain.Game, spec adapter.PluginSpec, st *PrefixStatus, folder string) (pluginDirs, error) {
 	out := pluginDirs{files: map[string]pluginFile{}}
-	add := func(dir string) {
+	add := func(dir string) error {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			return
+			return fmt.Errorf("reading the plugin folder %s: %w", dir, err)
 		}
 		for _, e := range entries {
 			if !hasPluginExt(e.Name(), spec) {
@@ -317,14 +335,19 @@ func scanPluginDirs(game *domain.Game, spec adapter.PluginSpec, st *PrefixStatus
 				out.files[pluginKey(e.Name())] = pluginFile{name: e.Name(), dir: dir}
 			}
 		}
+		return nil
 	}
-	add(game.ModPath)
+	if err := add(game.ModPath); err != nil {
+		return out, err
+	}
 	for _, extra := range spec.ExtraPluginDirs {
 		if dir := rootedDir(game, extra, st, folder); dir != "" {
-			add(dir)
+			if err := add(dir); err != nil {
+				return out, err
+			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // hasPluginExt reports whether name has one of spec's plugin extensions.
@@ -421,7 +444,7 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 		modIndex[domain.ModKey(m.SourceID, m.ModID)] = i
 	}
 
-	dirs := scanPluginDirs(game, spec, st, folder)
+	dirs, scanErr := scanPluginDirs(game, spec, st, folder)
 	implicitKeys, implicit := implicitPlugins(game, spec, st, folder, dirs)
 	c.implicit = implicit
 	implicitlyActive := map[string]bool{}
@@ -436,6 +459,7 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 		return nil, fmt.Errorf("reading the profile's deployed files: %w", err)
 	}
 	modOf := map[string]int{}
+	deployedPlugins := 0
 	for _, row := range rows {
 		rel := filepath.ToSlash(row.Path.Rel)
 		if row.Path.IsGameRoot() || strings.Contains(rel, "/") || !hasPluginExt(rel, spec) {
@@ -445,7 +469,11 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 			continue
 		}
 		key := pluginKey(rel)
-		if implicitKeys[key] || !dirs.has(rel) {
+		if implicitKeys[key] {
+			continue
+		}
+		deployedPlugins++
+		if !dirs.has(rel) {
 			continue
 		}
 		if _, seen := modOf[key]; seen {
@@ -456,6 +484,22 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 			idx = -1
 		}
 		modOf[key] = idx
+	}
+	if scanErr != nil {
+		c.skipped = true
+		c.findings = append(c.findings, PluginFinding{Code: PluginFindingUnwritable, Severity: PluginSeverityError,
+			Message: fmt.Sprintf("the plugin list was not written, because lmm could not read the folder the game loads plugins from (%v) - is its drive mounted?", scanErr)})
+		return c, nil
+	}
+	if deployedPlugins > 0 && len(modOf) == 0 {
+		// The database says this profile deploys plugins, and not one of
+		// them is in the plugin folder: that is not a profile without
+		// plugins but a folder that is not the game's (an empty mount
+		// point), and writing would drop every plugin from the list.
+		c.skipped = true
+		c.findings = append(c.findings, PluginFinding{Code: PluginFindingUnwritable, Severity: PluginSeverityError,
+			Message: fmt.Sprintf("the plugin list was not written, because none of the %d plugin(s) this profile deploys is in %s - is its drive mounted? (lmm deploy puts them back)", deployedPlugins, game.ModPath)})
+		return c, nil
 	}
 	if !st.Resolved {
 		// Nothing to write without the prefix. Worth saying only when the
@@ -474,6 +518,15 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 	if err := c.readCurrent(); err != nil {
 		return nil, err
 	}
+	if len(spec.Implicit) > 0 && len(implicit) == 0 && len(c.current.entries) > 0 {
+		// The game's own masters (Skyrim.esm, ...) are always in its plugin
+		// folder; a folder without one is not the game's - an empty mount
+		// point - and every plugin the list names would look uninstalled.
+		c.skipped = true
+		c.findings = append(c.findings, PluginFinding{Code: PluginFindingUnwritable, Severity: PluginSeverityError,
+			Message: fmt.Sprintf("the plugin list was not written, because %s holds none of the game's own plugins (%s) - is its drive mounted?", game.ModPath, spec.Implicit[0])})
+		return c, nil
+	}
 
 	enabled := make(map[string]bool, len(profile.Plugins.Order))
 	for _, e := range profile.Plugins.Order {
@@ -483,9 +536,16 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 	}
 	var nodes []pluginNode
 	var externals []pluginNode
+	// addNode adds the plugin spelled name: a managed one as its file is
+	// named, an external one as the list spells it, byte for byte (#616
+	// review 8).
 	addNode := func(name string, managed bool, mod int, active bool) {
 		f := dirs.files[pluginKey(name)]
-		node := pluginNode{name: f.name, managed: managed, modIndex: mod, active: active}
+		spelled := f.name
+		if !managed {
+			spelled = name
+		}
+		node := pluginNode{name: spelled, managed: managed, modIndex: mod, active: active}
 		h, herr := readHeaderAt(filepath.Join(f.dir, f.name), spec)
 		if herr != nil {
 			c.findings = append(c.findings, PluginFinding{Code: PluginFindingUnreadableHeader, Severity: PluginSeverityWarning, Plugin: f.name,
@@ -496,7 +556,7 @@ func (s *Service) computePluginList(ctx context.Context, game *domain.Game, prof
 		if node.class.Blueprint || unlisted(f.name, spec) {
 			return // the game lists and orders these itself
 		}
-		if !listableName(f.name) {
+		if managed && !listableName(f.name) || !managed && hasControl(name) {
 			c.findings = append(c.findings, PluginFinding{Code: PluginFindingUnencodable, Severity: PluginSeverityWarning, Plugin: f.name,
 				Message: fmt.Sprintf("%q cannot be written to Plugins.txt (its name has a character with no Windows-1252 spelling, or a control character), so it is left out - rename the plugin", f.name)})
 			return
@@ -666,6 +726,7 @@ func (c *pluginComputation) readCurrent() error {
 			active[pluginKey(e.name)] = true
 		}
 		order := parsePluginList(decodeLoadOrderTxt(c.orderData), false)
+		c.currentOrder = order
 		entries := make([]listEntry, 0, len(order.entries))
 		for _, e := range order.entries {
 			entries = append(entries, listEntry{name: e.name, active: active[pluginKey(e.name)]})
@@ -832,12 +893,27 @@ func checkPluginList(sorted []pluginNode, implicit []string, implicitlyActive ma
 	return out
 }
 
+// errPluginListChanged is writePluginList's refusal when the list file is
+// no longer what the computation read: the game, or another tool, saved it
+// in between (#616 review 3).
+var errPluginListChanged = errors.New("the plugin list changed while lmm was working out its order")
+
+// pluginListBeforeWrite is a test seam: called just before writePluginList
+// re-reads the files it is about to replace. nil in production.
+var pluginListBeforeWrite func()
+
 // writePluginList writes c's list (and order) file, capturing each one's
-// original first. It reports whether any file changed.
+// original first. It reports whether any file changed. It re-reads each
+// file immediately before replacing it, and refuses with
+// errPluginListChanged when that is not what c was computed from - so a
+// save the game's Creations menu made in between is never written over.
 func (s *Service) writePluginList(game *domain.Game, c *pluginComputation) (bool, error) {
-	rendered := renderPluginList(c.spec, c.entries, c.implicit, c.current, orderEOL(c))
+	rendered := renderPluginList(c.spec, c.entries, c.implicit, c.current, c.currentOrder, orderEOL(c))
 	if !c.listExists && len(c.entries) == 0 {
 		return false, nil // nothing to list, and no file to keep in step
+	}
+	if pluginListBeforeWrite != nil {
+		pluginListBeforeWrite()
 	}
 	dir, err := c.listDir.open(true)
 	if err != nil {
@@ -845,39 +921,61 @@ func (s *Service) writePluginList(game *domain.Game, c *pluginComputation) (bool
 	}
 	defer func() { _ = dir.Close() }()
 	store := s.prefixOriginalsFor(game.ID)
+	owned := c.ownedNames()
 	changed := false
-	write := func(name string, content []byte) error {
-		if sameContentAt(dir, name, content) {
-			return nil
-		}
+	write := func(name string, content, readBefore []byte, existedBefore bool) error {
 		data, perm, exists, err := readAt(dir, name)
 		if err != nil {
 			return err
 		}
+		if exists != existedBefore || !bytes.Equal(data, readBefore) {
+			return errPluginListChanged
+		}
+		rel := userRelative(c.prefix, dir.Name(), name)
+		if !bytes.Equal(data, content) || !exists {
+			if store != nil {
+				row := prefixOriginal{Prefix: c.prefix.Path, User: c.prefix.User, Path: rel, Existed: exists, Mode: uint32(perm)}
+				if err := store.capture(row, data); err != nil {
+					return fmt.Errorf("keeping a copy of %s before replacing it: %w", name, err)
+				}
+			}
+			if perm == 0 {
+				perm = 0o644
+			}
+			if err := replaceAt(dir, name, content, perm); err != nil {
+				return err
+			}
+			changed = true
+		}
 		if store != nil {
-			row := prefixOriginal{Prefix: c.prefix.Path, User: c.prefix.User, Path: userRelative(c.prefix, dir.Name(), name), Existed: exists, Mode: uint32(perm)}
-			if err := store.capture(row, data); err != nil {
-				return fmt.Errorf("keeping a copy of %s before replacing it: %w", name, err)
+			if err := store.setOwned(c.prefix.Path, c.prefix.User, rel, owned); err != nil {
+				return fmt.Errorf("recording which plugins in %s are lmm's: %w", name, err)
 			}
 		}
-		if perm == 0 {
-			perm = 0o644
-		}
-		if err := replaceAt(dir, name, content, perm); err != nil {
-			return err
-		}
-		changed = true
 		return nil
 	}
-	if err := write(c.listName, rendered.list); err != nil {
+	if err := write(c.listName, rendered.list, c.listData, c.listExists); err != nil {
 		return changed, err
 	}
 	if c.orderName != "" {
-		if err := write(c.orderName, rendered.order); err != nil {
+		if err := write(c.orderName, rendered.order, c.orderData, c.orderExists); err != nil {
 			return changed, err
 		}
 	}
 	return changed, nil
+}
+
+// ownedNames is the plugins c lists that lmm deploys, sorted: what a purge
+// takes out of the list again.
+func (c *pluginComputation) ownedNames() []string {
+	var out []string
+	for _, e := range c.entries {
+		if c.managed[pluginKey(e.name)] {
+			out = append(out, e.name)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // orderEOL is the order file's line ending: its own, else the list file's.
@@ -902,13 +1000,49 @@ func userRelative(st *PrefixStatus, dir, name string) string {
 	return filepath.ToSlash(rel)
 }
 
+// restoreKind is how a purge reads and writes one kept list file.
+type restoreKind int
+
+const (
+	// restoreBytes puts the kept bytes back as they are: a file lmm cannot
+	// read as a list (the game's adapter is no longer one that has one).
+	restoreBytes restoreKind = iota
+	// restoreAsterisk is an asterisk-format Plugins.txt.
+	restoreAsterisk
+	// restorePlain1252 is a textfile-format Plugins.txt: every line an
+	// active plugin, Windows-1252.
+	restorePlain1252
+	// restorePlainUTF8 is a textfile-format loadorder.txt, UTF-8.
+	restorePlainUTF8
+)
+
+// restoreKindOf is how to restore row's file for a game with spec.
+func restoreKindOf(row prefixOriginal, spec adapter.PluginSpec, managed bool) restoreKind {
+	if !managed {
+		return restoreBytes
+	}
+	name := path.Base(row.Path)
+	switch {
+	case spec.OrderFile != "" && strings.EqualFold(name, spec.OrderFile):
+		return restorePlainUTF8
+	case strings.EqualFold(name, spec.ListFile) && spec.ListKind == adapter.ListTextfile:
+		return restorePlain1252
+	case strings.EqualFold(name, spec.ListFile):
+		return restoreAsterisk
+	}
+	return restoreBytes
+}
+
 // restorePluginList puts back the list files game had before lmm first
-// wrote them - `lmm purge`'s last step (#616). A file lmm created is
-// removed. One plugin the current list names that lmm did not deploy and
-// that the original does not name - a Creation bought in-game since - is
-// kept, active as it is, after the plugin it followed: lmm never
-// deactivates a plugin it did not deploy, purge included. nil when lmm
-// never wrote the game's list.
+// wrote them - `lmm purge`'s step (#616). The list it writes is the CURRENT
+// file without the plugins lmm deployed there, plus the entries only the
+// kept file has, each after the plugin it followed: so a plugin the user
+// (or the game's Creations menu) added, turned on, turned off or moved
+// since lmm's first write stays as they left it - lmm never deactivates a
+// plugin it did not deploy, purge included (#616 review B2). When nothing
+// outside lmm changed, the kept file comes back byte for byte; a file lmm
+// created and nothing else uses is removed. nil when lmm never wrote the
+// game's list.
 func (s *Service) restorePluginList(game *domain.Game) *PluginListResult {
 	store := s.prefixOriginalsFor(game.ID)
 	if store == nil {
@@ -922,21 +1056,25 @@ func (s *Service) restorePluginList(game *domain.Game) *PluginListResult {
 		return nil
 	}
 	spec, managed := s.pluginRules(game)
-	var dirs pluginDirs
-	if managed {
-		st := s.ResolvePrefix(game)
-		dirs = scanPluginDirs(game, spec, st, appDataFolder(game, spec))
-	}
+	st := s.ResolvePrefix(game)
 	res := &PluginListResult{Status: PluginListRestored}
-	removedAll := true
+	removedAll, restoredAny := true, false
 	for _, row := range rows {
-		listFile := managed && spec.ListKind == adapter.ListAsterisk && strings.EqualFold(path.Base(row.Path), spec.ListFile)
-		status, file, err := s.restorePrefixFile(store, row, listFile, dirs)
+		row, gone, err := rekeyPrefixOriginal(store, rows, row, st)
 		if err != nil {
-			res.Status = PluginListSkipped
 			res.Findings = append(res.Findings, unrestorable(err))
 			continue
 		}
+		if gone != "" {
+			res.Findings = append(res.Findings, PluginFinding{Code: PluginFindingUnwritable, Severity: PluginSeverityWarning, Message: gone})
+			continue
+		}
+		status, file, err := s.restorePrefixFile(store, row, restoreKindOf(row, spec, managed))
+		if err != nil {
+			res.Findings = append(res.Findings, unrestorable(err))
+			continue
+		}
+		restoredAny = true
 		if status != PluginListRemoved {
 			removedAll = false
 		}
@@ -944,10 +1082,37 @@ func (s *Service) restorePluginList(game *domain.Game) *PluginListResult {
 			res.ListFile = file
 		}
 	}
-	if res.Status == PluginListRestored && removedAll {
+	switch {
+	case !restoredAny:
+		res.Status = PluginListSkipped
+	case removedAll:
 		res.Status = PluginListRemoved
 	}
 	return res
+}
+
+// rekeyPrefixOriginal answers for a kept file whose prefix no longer exists
+// (#616 review 10): the game moved to another prefix. The store is the
+// game's own, so the copy is this game's list: it is restored into the
+// prefix the game resolves to now - unless that prefix has a kept file of
+// its own at the same path, which is then the one to restore, and this
+// stale copy is dropped. Without a prefix to restore into, the stale row
+// is dropped with a message (gone) rather than failing every purge.
+func rekeyPrefixOriginal(store *prefixOriginals, rows []prefixOriginal, row prefixOriginal, st *PrefixStatus) (prefixOriginal, string, error) {
+	if _, err := os.Stat(row.Prefix); !errors.Is(err, os.ErrNotExist) {
+		return row, "", nil
+	}
+	moved := row
+	if st != nil && st.Resolved {
+		moved.Prefix, moved.User = st.Path, st.User
+		for _, other := range rows {
+			if other.key() == moved.key() {
+				return row, fmt.Sprintf("the prefix %s is gone; lmm keeps the list from the prefix the game uses now, %s, and dropped the older copy", row.Prefix, st.Path), store.forget(row)
+			}
+		}
+		return moved, "", store.rekey(row, moved)
+	}
+	return row, fmt.Sprintf("the prefix %s, where lmm kept the game's original %s, is gone, and lmm cannot find the one the game uses now; the kept copy was dropped", row.Prefix, path.Base(row.Path)), store.forget(row)
 }
 
 // unrestorable is the finding for an original lmm could not put back.
@@ -956,10 +1121,9 @@ func unrestorable(err error) PluginFinding {
 		Message: fmt.Sprintf("the plugin list lmm replaced was not put back: %v", err)}
 }
 
-// restorePrefixFile puts row's file back and forgets it. listFile says the
-// file is an asterisk-format list, whose external plugins (in dirs) are
-// kept. It answers PluginListRestored or PluginListRemoved, and the path.
-func (s *Service) restorePrefixFile(store *prefixOriginals, row prefixOriginal, listFile bool, dirs pluginDirs) (string, string, error) {
+// restorePrefixFile puts row's file back (restorePluginList) and forgets
+// it. It answers PluginListRestored or PluginListRemoved, and the path.
+func (s *Service) restorePrefixFile(store *prefixOriginals, row prefixOriginal, kind restoreKind) (string, string, error) {
 	dirRel, name := path.Split(row.Path)
 	p := prefixPath{prefix: row.Prefix, user: row.User, comps: strings.FieldsFunc(dirRel, func(r rune) bool { return r == '/' })}
 	original, err := store.stored(row)
@@ -980,8 +1144,8 @@ func (s *Service) restorePrefixFile(store *prefixOriginals, row prefixOriginal, 
 		return "", "", err
 	}
 	content := original
-	if listFile && exists {
-		content = keepExternals(original, current, row.Existed, dirs)
+	if kind != restoreBytes && exists {
+		content = mergeRestored(original, current, row.Existed, row.Owned, kind)
 	}
 	status := PluginListRestored
 	switch {
@@ -1004,48 +1168,54 @@ func (s *Service) restorePrefixFile(store *prefixOriginals, row prefixOriginal, 
 	return status, file, store.forget(row)
 }
 
-// keepExternals is the original list with every plugin current activates
-// or names that the original does not, and that is installed (dirs), put
-// after the plugin it follows in current - nil when there are none and the
-// original did not exist (the file is removed then).
-func keepExternals(original, current []byte, existed bool, dirs pluginDirs) []byte {
-	base := parsePluginList(decodePluginsTxt(original), true)
-	if !existed {
-		base = pluginListFile{eol: lineEndingOf(current)}
+// mergeRestored is the list a purge writes: current without owned (the
+// plugins lmm deployed in it), plus every entry of the kept original that
+// current - lmm's plugins aside - no longer has, after the plugin it
+// followed there. The original's own bytes when that is exactly the
+// original's list (nothing outside lmm changed); nil when the original did
+// not exist and nothing is left to list.
+func mergeRestored(original, current []byte, existed bool, owned []string, kind restoreKind) []byte {
+	decode, asterisk := decodePluginsTxt, kind == restoreAsterisk
+	if kind == restorePlainUTF8 {
+		decode = decodeLoadOrderTxt
 	}
-	now := parsePluginList(decodePluginsTxt(current), true)
-	inBase := map[string]bool{}
-	for _, e := range base.entries {
-		inBase[pluginKey(e.name)] = true
+	now := parsePluginList(decode(current), asterisk)
+	base := pluginListFile{eol: now.eol}
+	if existed {
+		base = parsePluginList(decode(original), asterisk)
 	}
-	var extra []pluginNode
+	isOwned := map[string]bool{}
+	for _, n := range owned {
+		isOwned[pluginKey(n)] = true
+	}
+	var keep []pluginNode
+	stillThere := map[string]bool{}
 	for _, e := range now.entries {
-		if !inBase[pluginKey(e.name)] && dirs.has(e.name) {
-			extra = append(extra, pluginNode{name: e.name, active: e.active})
+		if !isOwned[pluginKey(e.name)] {
+			keep = append(keep, pluginNode{name: e.name, active: e.active})
+			stillThere[pluginKey(e.name)] = true
 		}
 	}
-	if len(extra) == 0 {
-		if !existed {
-			return nil
+	var only []pluginNode
+	for _, e := range base.entries {
+		if !stillThere[pluginKey(e.name)] {
+			only = append(only, pluginNode{name: e.name, active: e.active})
 		}
-		return original
 	}
-	nodes := make([]pluginNode, len(base.entries))
-	for i, e := range base.entries {
-		nodes[i] = pluginNode{name: e.name, active: e.active}
-	}
-	ranks := mergedRanks(nodes, extra, now.entries)
-	all := append(nodes, extra...)
+	ranks := mergedRanks(keep, only, base.entries)
+	all := append(slices.Clone(keep), only...)
 	slices.SortStableFunc(all, func(a, b pluginNode) int { return ranks[pluginKey(a.name)] - ranks[pluginKey(b.name)] })
 	entries := make([]listEntry, len(all))
 	for i, n := range all {
 		entries[i] = listEntry{name: n.name, active: n.active}
 	}
-	file := base
-	if !existed {
-		file = now
+	if existed && slices.Equal(entries, base.entries) {
+		return original
 	}
-	return renderPluginList(adapter.PluginSpec{ListKind: adapter.ListAsterisk}, entries, nil, file, "").list
+	if !existed && len(entries) == 0 {
+		return nil
+	}
+	return renderLines(now, entries, asterisk, kind == restorePlainUTF8)
 }
 
 // wrotePluginList reports whether lmm has written game's plugin list - the
@@ -1088,4 +1258,12 @@ func pluginListSyncedOn(ctx context.Context, gameID, profileName string) (*Plugi
 		return nil, false
 	}
 	return done.result, true
+}
+
+// hasControl reports whether name holds a C0 control character or DEL -
+// one that would break a list line. An external plugin's name came from the
+// list itself, so it is kept even when it holds a byte Windows-1252 leaves
+// undefined (it is written back exactly as read).
+func hasControl(name string) bool {
+	return strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7F })
 }
