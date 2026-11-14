@@ -565,3 +565,102 @@ func TestFomodPerFile_ModAnswerForSeveralInstallersIsRefused(t *testing.T) {
 	assert.Contains(t, refusal.Reason, "src:bugs#main-1")
 	assert.Empty(t, f.deployed(t, "textures/t.dds"), "nothing was installed")
 }
+
+// TestFomodPerFile_RollbackAfterAReconfigureKeepsTheLayerHint (#634
+// re-review): install with a collection's layer-order hint, update,
+// reconfigure one file, roll back. The reconfigure carries the update's
+// previous choices forward - their hint included - so the rollback puts
+// the hint back with the old tree, and the reference names the row's own
+// variant again: nothing for a converge flow to undo.
+func TestFomodPerFile_RollbackAfterAReconfigureKeepsTheLayerHint(t *testing.T) {
+	f := newPerFileFixture(t)
+	f.serve(t, "1.0", "1", "4K", "USSEP")
+	f.mock.AddDownload("patch-1", overlapPatchZip(t))
+	ctx := context.Background()
+	data, err := config.ExportProfile(&domain.Profile{Name: "default", GameID: "g1", Mods: []domain.ModReference{{
+		SourceID: "src", ModID: "bugs", Version: "1.0", FileIDs: []string{"main-1", "patch-1"},
+		FomodFiles: domain.FomodFiles{"main-1": answer("4K"), "patch-1": patchAnswer("USSEP")},
+		FomodOrder: []string{"patch-1", "main-1"},
+	}}})
+	require.NoError(t, err)
+	plan, err := f.svc.PlanImport(ctx, f.game, data)
+	require.NoError(t, err)
+	_, err = f.svc.ApplyImport(ctx, f.game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
+	require.NoError(t, err)
+	require.Equal(t, "4K-v1", f.deployed(t, "textures/t.dds"), "the hint puts the main file last")
+	installed, err := f.svc.GetInstalledMod(ctx, "src", "bugs", "g1", "default")
+	require.NoError(t, err)
+
+	f.serve(t, "1.1", "2", "4K", "USSEP")
+	f.mock.AddDownload("patch-2", overlapPatchZip(t))
+	up, err := f.svc.PlanUpdateFrom(ctx, f.game, "default", domain.Update{InstalledMod: *installed, NewVersion: "1.1",
+		FileIDReplacements: map[string]string{"main-1": "main-2", "patch-1": "patch-2"}})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyUpdate(ctx, f.game, up, core.UpdateOptions{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"patch-2", "main-2"}, f.ref(t, "default").FomodOrder, "the update carried the hint")
+
+	rc, err := f.svc.PlanFomodReconfigure(ctx, f.game, "default", "src", "bugs")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyFomodReconfigure(ctx, f.game, rc, core.FomodReconfigureOptions{FileID: "patch-2",
+		Fomod: map[string]domain.FomodChoices{domain.FomodFileKey("src", "bugs", "patch-2"): patchAnswer("Vanilla")}}, nil)
+	require.NoError(t, err)
+	row, err := f.svc.GetInstalledMod(ctx, "src", "bugs", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"patch-1", "main-1"}, row.PreviousFomodOrder, "the reconfigure kept the update's rollback record whole")
+
+	rb, err := f.svc.PlanRollback(ctx, f.game, "default", "src", "bugs")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyRollback(ctx, f.game, rb, core.RollbackOptions{}, nil)
+	require.NoError(t, err)
+	restored, err := f.svc.GetInstalledMod(ctx, "src", "bugs", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, installed.Variant, restored.Variant)
+	ref := f.ref(t, "default")
+	assert.Equal(t, []string{"patch-1", "main-1"}, ref.FomodOrder, "the hint is back with the old tree")
+	assert.Equal(t, "4K-v1", f.deployed(t, "textures/t.dds"))
+
+	// A converge run finds the reference and the row in agreement. (The
+	// source still lists the old files.)
+	f.mock.files = append(f.mock.files,
+		domain.DownloadableFile{ID: "main-1", Name: "Scrambled Bugs", FileName: "main-1.zip", Version: "1.0", Category: "MAIN"},
+		domain.DownloadableFile{ID: "patch-1", Name: "Scrambled Bugs - Patches", FileName: "patch-1.zip", Version: "1.0", Category: "OPTIONAL"})
+	apply, err := f.svc.PlanProfileApply(ctx, f.game, "default")
+	require.NoError(t, err)
+	for _, e := range apply.ToInstall {
+		assert.NotEqual(t, "bugs", e.Ref.ModID, "nothing to reinstall: %+v", e)
+	}
+}
+
+// TestFomodPerFile_TwoQuestionsAreOneDownloadFailure (#634): a mod whose
+// two installers both ask reports one download failure - the mod's
+// question - not one per asking file; a lone installer's question still
+// reports its one.
+func TestFomodPerFile_TwoQuestionsAreOneDownloadFailure(t *testing.T) {
+	failures := func(t *testing.T, f *perFileFixture) int {
+		t.Helper()
+		plan, err := f.svc.PlanInstall(context.Background(), f.game, "default", "src", "bugs", false)
+		require.NoError(t, err)
+		plan.Files = slices.Clone(f.mock.files)
+		n := 0
+		_, err = f.svc.ApplyInstall(context.Background(), f.game, plan, core.InstallOptions{TargetFileIDs: []string{"main-1", "patch-1"}}, func(e core.Event) {
+			if m, ok := e.(core.ModEvent); ok && m.Phase == core.InstallDownloadFailed {
+				n++
+			}
+		})
+		var q *core.FomodChoicesRequiredError
+		require.True(t, errors.As(err, &q), "got %v", err)
+		return n
+	}
+	f := newPerFileFixture(t)
+	f.serve(t, "1.0", "1", "4K", "USSEP")
+	assert.Equal(t, 1, failures(t, f), "two installers ask: one failure")
+
+	plain := newPerFileFixture(t)
+	plain.serve(t, "1.0", "1", "4K", "USSEP")
+	zipPath := createTestZip(t, t.TempDir(), map[string]string{"readme.txt": "plain"})
+	b, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	plain.mock.AddDownload("patch-1", b)
+	assert.Equal(t, 1, failures(t, plain), "one installer asks: one failure, as before")
+}

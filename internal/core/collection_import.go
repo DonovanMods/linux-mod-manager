@@ -728,6 +728,9 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 		if err := checkCollectionFomodFiles(*r); err != nil {
 			return nil, fmt.Errorf("%w: %s:%s's fomod_files %v", ErrInvalidCollection, r.SourceID, r.ModID, err)
 		}
+		if err := checkCollectionFomodOrder(*r); err != nil {
+			return nil, fmt.Errorf("%w: %s:%s's fomod_order %v", ErrInvalidCollection, r.SourceID, r.ModID, err)
+		}
 		items = append(items, item)
 	}
 	doc.Items = items
@@ -740,6 +743,32 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 	return warnings, tooLong
 }
 
+// checkCollectionFomodOrder refuses a stranger's per-file layer-order hint
+// (#634) lmm could not keep as written: one with no fomod_files to order,
+// longer than fomod.MaxChoices, or naming a file that is empty, repeated,
+// holds a control, escape or bidi/format character, runs over the line
+// limit, or is not one the entry pins (when it pins any).
+func checkCollectionFomodOrder(r domain.ModReference) error {
+	if len(r.FomodOrder) == 0 {
+		return nil
+	}
+	if r.FomodFiles.IsZero() {
+		return errors.New("has no fomod_files to order")
+	}
+	if len(r.FomodOrder) > fomod.MaxChoices {
+		return fmt.Errorf("lists %d files, over the %d limit", len(r.FomodOrder), fomod.MaxChoices)
+	}
+	for i, id := range r.FomodOrder {
+		if id == "" || hasUnsafeRunes(id) || len(id) > maxCollectionLine || slices.Contains(r.FomodOrder[:i], id) {
+			return fmt.Errorf("names a file (%q) that is empty, repeated, contains control or formatting characters, or is over the %d-byte limit", id, maxCollectionLine)
+		}
+		if len(r.FileIDs) > 0 && !slices.Contains(r.FileIDs, id) {
+			return fmt.Errorf("names file %q, which the entry does not pin", id)
+		}
+	}
+	return nil
+}
+
 // checkCollectionFomodFiles refuses a stranger's per-file FOMOD choices
 // (#634) lmm could not replay as written: a file id that is not one the
 // entry pins (when it pins any), or that holds a control, escape or
@@ -748,21 +777,7 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 // and any one file's choices that checkCollectionFomod refuses.
 func checkCollectionFomodFiles(r domain.ModReference) error {
 	if r.FomodFiles.IsZero() {
-		if len(r.FomodOrder) > 0 {
-			return errors.New("give a fomod_order with no fomod_files to order")
-		}
 		return nil
-	}
-	if len(r.FomodOrder) > fomod.MaxChoices {
-		return fmt.Errorf("give a fomod_order of %d files, over the %d limit", len(r.FomodOrder), fomod.MaxChoices)
-	}
-	for i, id := range r.FomodOrder {
-		if id == "" || hasUnsafeRunes(id) || len(id) > maxCollectionLine || slices.Contains(r.FomodOrder[:i], id) {
-			return fmt.Errorf("give a fomod_order entry (%q) that is empty, repeated, contains control or formatting characters, or is over the %d-byte limit", id, maxCollectionLine)
-		}
-		if len(r.FileIDs) > 0 && !slices.Contains(r.FileIDs, id) {
-			return fmt.Errorf("order file %q in fomod_order, which the entry does not pin", id)
-		}
 	}
 	if len(r.FomodFiles) > fomod.MaxChoices {
 		return fmt.Errorf("record %d files, over the %d limit", len(r.FomodFiles), fomod.MaxChoices)

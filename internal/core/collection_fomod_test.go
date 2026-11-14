@@ -151,3 +151,35 @@ func TestCollectionImport_PlanShowsTheRecordedInstallerChoices(t *testing.T) {
 	require.Len(t, plan.Collection.Items, 1)
 	require.Equal(t, []string{"Main > Textures: 4K", "Main > Extras: none"}, plan.Collection.Items[0].InstallerChoices)
 }
+
+// TestCollectionImport_RefusesAFomodOrderItCannotKeep (#634): a
+// stranger's per-file layer-order hint is checked like the choices it
+// orders - an unpinned or repeated file, an order with nothing to order,
+// or one over the limit refuses the document, naming fomod_order.
+func TestCollectionImport_RefusesAFomodOrderItCannotKeep(t *testing.T) {
+	svc, _ := recipient(t)
+	doc := func(entry string) string {
+		return "lmm_collection: 1\nname: p\ngame:\n  steam_app_id: \"1091500\"\nrequires: [fomod, fomod_multi_file]\n" +
+			"mods:\n  - {source_id: s, mod_id: m, " + entry + "}\n"
+	}
+	const files = `file_ids: ["1", "2"], fomod_files: {"1": {steps: [{name: S, groups: []}]}, "2": {steps: [{name: S, groups: []}]}}`
+	long := make([]string, fomod.MaxChoices+1)
+	for i := range long {
+		long[i] = fmt.Sprintf("%q", fmt.Sprint(i))
+	}
+	for name, entry := range map[string]string{
+		"an unpinned file":  files + `, fomod_order: ["3", "1"]`,
+		"a repeated file":   files + `, fomod_order: ["2", "2"]`,
+		"a control char":    files + `, fomod_order: ["1‮"]`,
+		"no files to order": `file_ids: ["1", "2"], fomod_order: ["2", "1"]`,
+		"over the limit":    `fomod_files: {"1": {steps: [{name: S, groups: []}]}, "2": {steps: [{name: S, groups: []}]}}, fomod_order: [` + strings.Join(long, ", ") + `]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: []byte(doc(entry)), GameID: "cyber"})
+			require.ErrorIs(t, err, core.ErrInvalidCollection)
+			require.Contains(t, err.Error(), "s:m's fomod_order")
+		})
+	}
+	_, err := svc.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: []byte(doc(files + `, fomod_order: ["2", "1"]`)), GameID: "cyber"})
+	require.NoError(t, err, "a pinned, distinct order imports")
+}

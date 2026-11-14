@@ -1394,13 +1394,20 @@ func remapFomodFiles(rec domain.FomodFiles, pairs map[string]string) domain.Fomo
 }
 
 // remapFileOrder carries a per-file record's layer-order hint (#634)
-// across an update, each old file's place going to its pair.
+// across an update, each old file's place going to its pair. A hint left
+// naming fewer than two paired files orders nothing among them, and what
+// is left of it would only move its one file ahead of the rest - turning
+// "patch before main" into "main before everything" - so it is dropped,
+// and the files layer by id.
 func remapFileOrder(order []string, pairs map[string]string) []string {
 	var out []string
 	for _, old := range order {
 		if to, ok := pairs[old]; ok && !slices.Contains(out, to) {
 			out = append(out, to)
 		}
+	}
+	if len(out) < 2 {
+		return nil
 	}
 	return out
 }

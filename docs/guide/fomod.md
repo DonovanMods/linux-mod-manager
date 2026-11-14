@@ -120,8 +120,9 @@ answers per file (under `fomod_files:` in the profile, by file id).
   files keep their answers.
 - An update asks only about a file whose installer changed.
 - When two of the installers install the same file, one of them wins, the
-  same one every time: the files are laid out by file id, the later id
-  winning, unless the profile's `fomod_order:` list names an order. A
+  same one every time: the files are laid out in file id order, the ids
+  compared as text (so `10` comes before `9`), and the last one laid out
+  wins, unless the profile's `fomod_order:` list names an order. A
   NexusMods collection sets that list from its rules between the mod's
   files.
 - An update gives each file's answers to the file that replaces it,

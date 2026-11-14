@@ -128,6 +128,9 @@ func TestRemapFomodFiles(t *testing.T) {
 // TestRemapFileOrder (#634): the layer-order hint follows the pairs.
 func TestRemapFileOrder(t *testing.T) {
 	assert.Equal(t, []string{"p2", "m2"}, remapFileOrder([]string{"p1", "m1"}, map[string]string{"m1": "m2", "p1": "p2"}))
-	assert.Equal(t, []string{"m2"}, remapFileOrder([]string{"p1", "m1"}, map[string]string{"m1": "m2"}))
+	assert.Nil(t, remapFileOrder([]string{"p1", "m1"}, map[string]string{"m1": "m2"}),
+		"one paired file is no order: kept, it would put main-2 first, reversing the hint")
+	assert.Equal(t, []string{"p2", "m2"}, remapFileOrder([]string{"x1", "p1", "m1"}, map[string]string{"m1": "m2", "p1": "p2"}),
+		"two still paired keep their order")
 	assert.Nil(t, remapFileOrder(nil, nil))
 }

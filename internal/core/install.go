@@ -2857,6 +2857,7 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		installedMod.PreviousVariant = plan.Replaces.PreviousVariant
 		installedMod.PreviousFomod = plan.Replaces.PreviousFomod
 		installedMod.PreviousFomodFiles = plan.Replaces.PreviousFomodFiles
+		installedMod.PreviousFomodOrder = plan.Replaces.PreviousFomodOrder
 	}
 
 	if s.beforeSaveInstalled != nil {
