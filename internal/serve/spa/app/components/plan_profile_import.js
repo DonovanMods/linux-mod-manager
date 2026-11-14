@@ -330,7 +330,10 @@ function SourceCollectionSection({ source: c, actions }) {
     actions.replanWith({ with_optional: false, optional: [...next].sort() });
   }
   function toggleAll(e) {
-    actions.replanWith({ with_optional: e.currentTarget.checked, optional: [] });
+    actions.replanWith({
+      with_optional: e.currentTarget.checked,
+      optional: [],
+    });
   }
   const counts = Object.entries(c.counts ?? {})
     .filter(([, n]) => n > 0)
@@ -344,7 +347,10 @@ function SourceCollectionSection({ source: c, actions }) {
       ${counts && html`<p class="plan__note">${counts}</p>`}
       ${
         c.manifest_error &&
-        html`<p class="plan__note plan__note--warn" data-testid="source-manifest-error">
+        html`<p
+          class="plan__note plan__note--warn"
+          data-testid="source-manifest-error"
+        >
           The collection's recipe could not be read, so lmm cannot tell how to
           install it: ${c.manifest_error}
         </p>`
@@ -364,10 +370,14 @@ function SourceCollectionSection({ source: c, actions }) {
       <ul class="plan__mods" data-testid="source-items">
         ${items.map((it) => {
           const url = safeWebUrl(it.url);
-          const warn = ["manual_download", "external", "unsupported"].includes(it.state);
+          const warn = ["manual_download", "external", "unsupported"].includes(
+            it.state,
+          );
           const tags = [];
           if (it.file_category && it.file_category !== "MAIN")
-            tags.push(`${it.file_category.toLowerCase().replaceAll("_", " ")} file`);
+            tags.push(
+              `${it.file_category.toLowerCase().replaceAll("_", " ")} file`,
+            );
           if (it.mod_type) tags.push(`type ${it.mod_type}`);
           if (it.installer) tags.push("installer choices");
           return html`<li
@@ -389,7 +399,8 @@ function SourceCollectionSection({ source: c, actions }) {
             }
             <span class="plan__mod-name">${it.name}</span>
             ${it.version && html`${" "}<span class="plan__mod-detail mono">${it.version}</span>`}
-            ${" "}<span class=${`plan__mod-detail${warn ? " plan__mod-detail--warn" : ""}`}
+            ${" "}<span
+              class=${`plan__mod-detail${warn ? " plan__mod-detail--warn" : ""}`}
               >${sourceStateLabel[it.state] ?? it.state}</span
             >
             ${tags.length > 0 && html`${" "}<span class="plan__mod-detail">(${tags.join("; ")})</span>`}
@@ -417,8 +428,8 @@ function SourceCollectionSection({ source: c, actions }) {
       ${
         (c.tools ?? []).length > 0 &&
         html`<h4 class="plan__heading">
-            The curator's tool shortcuts - listed only; lmm never creates or runs
-            them
+            The curator's tool shortcuts - listed only; lmm never creates or
+            runs them
           </h4>
           <ul class="plan__paths" data-testid="source-tools">
             ${c.tools.map(

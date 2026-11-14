@@ -715,8 +715,8 @@ export function ImportNexusCollectionForm({ actions, close }) {
       </button>
       <p class="empty-state__hint">
         Needs a NexusMods API key; a free account can read any collection.
-        NexusMods serves downloads to Premium accounts only, so on a free account
-        every mod is listed with its page, for you to download by hand.
+        NexusMods serves downloads to Premium accounts only, so on a free
+        account every mod is listed with its page, for you to download by hand.
       </p>
     </form>
   `;

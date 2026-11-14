@@ -1179,7 +1179,7 @@ func (r *verifyRun) blockedPathsPass(installedMods []domain.InstalledMod, rows [
 		if r.opts.ModFilter != "" && m.ID != r.opts.ModFilter {
 			continue
 		}
-		files, err := deployableFiles(gameCache, a, r.game, modCacheKey(r.game.ID, m.Mod), m.Mod.ModType)
+		files, err := deployableFiles(gameCache, a, r.game, modCacheKey(r.game.ID, m.Mod), m.ModType)
 		if err != nil {
 			continue
 		}

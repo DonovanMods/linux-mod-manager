@@ -126,16 +126,6 @@ func deployItems(a adapter.GameAdapter, game *domain.Game, modType string, files
 // itemIndex maps a cache listing's members to the items they become.
 type itemIndex map[string]deployItem
 
-// deployItemIndex is deployItems as a member -> item index.
-func deployItemIndex(a adapter.GameAdapter, game *domain.Game, modType string, files []string) itemIndex {
-	items := deployItems(a, game, modType, files)
-	idx := make(itemIndex, len(files))
-	for _, it := range items {
-		idx[it.member] = it
-	}
-	return idx
-}
-
 // of is members' items, in order; a member the index does not hold is a
 // mod_path file of its own name.
 func (idx itemIndex) of(members []string) []deployItem {

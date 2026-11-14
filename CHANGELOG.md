@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Import a NexusMods collection (#607, #609).** `lmm profile import
-  --nexus-collection <slug|slug@revision|URL>` (in the web UI, the
+--nexus-collection <slug|slug@revision|URL>` (in the web UI, the
   Profiles window's **NexusMods collection** field) reads a collection's
   list and its install recipe, converts them into an lmm collection and
   imports it as a new profile, all or nothing. Each mod is pinned to the
