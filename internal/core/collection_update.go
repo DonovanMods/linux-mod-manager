@@ -642,17 +642,6 @@ func pinChanges(have, want domain.ModReference, withLock bool) []string {
 	return out
 }
 
-// sameFileIDs reports whether a and b name the same files, in any order.
-func sameFileIDs(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	x, y := slices.Clone(a), slices.Clone(b)
-	sort.Strings(x)
-	sort.Strings(y)
-	return slices.Equal(x, y)
-}
-
 // diffEntries fills the four entry buckets from p.base and p.doc.
 func (p *CollectionUpdatePlan) diffEntries() {
 	have := firstRefs(p.base.Mods)

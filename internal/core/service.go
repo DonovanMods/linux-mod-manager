@@ -1652,15 +1652,16 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 // when it resolves to that variant - a FOMOD file whose recorded choices
 // now build another tree is refused with ReasonFomodReanswer before
 // anything is committed - and it commits seeded, beside the row's other
-// files.
-func (s *Service) rebuildModFile(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, variant string, sink EventSink) (*DownloadModResult, error) {
+// files. A row in a file-set entry (#639) - variant the file-set variant
+// of the resolved tree and rowFileIDs - is that tree too.
+func (s *Service) rebuildModFile(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, variant string, rowFileIDs []string, sink EventSink) (*DownloadModResult, error) {
 	mod.Variant = variant
 	a, err := s.acquireFile(ctx, s.GetGameCache(game), sourceID, game, mod, file, fx, sink)
 	if err != nil {
 		return nil, err
 	}
 	defer a.release()
-	if a.fomod != nil && a.mod.Variant != variant {
+	if a.fomod != nil && !isTreeOf(variant, a.mod.Variant, rowFileIDs) {
 		return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: ReasonFomodReanswer}
 	}
 	a.mod.Variant = variant

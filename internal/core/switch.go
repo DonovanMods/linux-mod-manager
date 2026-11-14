@@ -950,8 +950,9 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			mod.Variant = refVariant(&ref)
 			// #639: another set of the version's files than its entry
 			// holds has an entry of its own.
-			mod.Variant = fileSetKey(s.GetGameCache(game), modCacheKey(game.ID, *mod), downloadedFileIDs).Variant
-			if s.GetGameCache(game).HasFileIDs(modCacheKey(game.ID, *mod), downloadedFileIDs) {
+			treeKey, warm := s.fileSetEntry(ctx, s.GetGameCache(game), modCacheKey(game.ID, *mod), downloadedFileIDs, true)
+			mod.Variant = treeKey.Variant
+			if warm {
 				if mod.Variant != "" {
 					resolved = resolvedFromRef(&ref, mod.Variant)
 				}

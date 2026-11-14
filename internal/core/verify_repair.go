@@ -72,7 +72,7 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 		// it is the row's own tree again.
 		result, err = r.rebuildPerFileEntry(ctx, mod, mapped, files, fileID, fx)
 	} else {
-		result, err = r.svc.rebuildModFile(ctx, mod.SourceID, r.game, mapped, downloadFile, fx, mod.Variant, r.downloadWarningSink())
+		result, err = r.svc.rebuildModFile(ctx, mod.SourceID, r.game, mapped, downloadFile, fx, mod.Variant, mod.FileIDs, r.downloadWarningSink())
 	}
 	if err != nil {
 		return false, err

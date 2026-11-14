@@ -1,6 +1,7 @@
 package core
 
 import (
+	"os"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -30,17 +31,69 @@ func TestFileSetDrift_NeedsBothSidesToRecordFiles(t *testing.T) {
 	assert.False(t, fileSetDrift(domain.ModReference{FileIDs: []string{"21"}}, nil))
 }
 
-func TestFileSetKey_MovesOnlyAnotherSet(t *testing.T) {
+func TestFileSetEntry_ReusesTheBaseEntryOnlyForExactlyItsSet(t *testing.T) {
+	svc := newBareService(t)
+	ctx := t.Context()
 	c := cache.New(t.TempDir())
 	k := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}
-	assert.Equal(t, k, fileSetKey(c, k, []string{"20"}), "no entry: the plain key")
+	variantOf := func(ids ...string) cache.Key {
+		v := k
+		v.Variant = fileSetVariant("", ids)
+		return v
+	}
+	got, warm := svc.fileSetEntry(ctx, c, k, []string{"20"}, false)
+	assert.Equal(t, k, got, "no entry: the base key")
+	assert.False(t, warm)
+
 	require.NoError(t, c.Store(k, "a.esp", []byte("a")))
-	assert.Equal(t, k, fileSetKey(c, k, []string{"20"}), "a markerless (legacy) entry holds no other set")
 	require.NoError(t, cache.MarkFileComplete(c.ModPath(k), "20"))
-	assert.Equal(t, k, fileSetKey(c, k, []string{"20"}), "the set the entry holds keeps its key")
-	assert.Equal(t, k, fileSetKey(c, k, []string{"20", "21"}), "a superset grows the entry")
-	moved := fileSetKey(c, k, []string{"21"})
-	assert.Equal(t, fileSetVariant("", []string{"21"}), moved.Variant, "another set moves")
+	got, warm = svc.fileSetEntry(ctx, c, k, []string{"20"}, false)
+	assert.Equal(t, k, got, "the set the entry holds keeps its key")
+	assert.True(t, warm)
+	got, _ = svc.fileSetEntry(ctx, c, k, []string{"20", "21"}, false)
+	assert.Equal(t, variantOf("20", "21"), got, "a superset never grows another set's entry")
+	got, _ = svc.fileSetEntry(ctx, c, k, []string{"21"}, false)
+	assert.Equal(t, variantOf("21"), got, "another set moves")
+	got, _ = svc.fileSetEntry(ctx, c, k, nil, false)
+	assert.Equal(t, k, got, "no files named: the base key")
+}
+
+// An entry from before markers names no set: it is reused only for the set
+// an installed row on it pins exactly, and a committing flow backfills its
+// markers.
+func TestFileSetEntry_UnmarkedEntryIsReusedOnlyForAPinningRow(t *testing.T) {
+	svc := newBareService(t)
+	ctx := t.Context()
+	c := cache.New(t.TempDir())
+	k := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}
+	require.NoError(t, os.MkdirAll(c.ModPath(k), 0o755))
+	got, _ := svc.fileSetEntry(ctx, c, k, []string{"20"}, true)
+	assert.Equal(t, k, got, "an empty, unmarked directory is no tree: the base key")
+	require.NoError(t, c.Store(k, "a.esp", []byte("a")))
+
+	got, warm := svc.fileSetEntry(ctx, c, k, []string{"20"}, true)
+	assert.Equal(t, fileSetVariant("", []string{"20"}), got.Variant, "no row pins it: a variant")
+	assert.False(t, warm)
+
+	require.NoError(t, svc.db.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod: domain.Mod{ID: "m", SourceID: "s", Name: "M", Version: "1.0", GameID: "g"}, ProfileName: "p",
+		UpdatePolicy: domain.UpdateNotify, FileIDs: []string{"20"},
+	}))
+	got, _ = svc.fileSetEntry(ctx, c, k, []string{"21"}, true)
+	assert.Equal(t, fileSetVariant("", []string{"21"}), got.Variant, "the row pins another set")
+	manifests, err := c.FileManifests(k)
+	require.NoError(t, err)
+	assert.Empty(t, manifests, "nothing backfilled for another set")
+
+	got, warm = svc.fileSetEntry(ctx, c, k, []string{"20"}, false)
+	assert.Equal(t, k, got, "the row's own set reuses the entry")
+	assert.True(t, warm)
+	manifests, err = c.FileManifests(k)
+	require.NoError(t, err)
+	assert.Empty(t, manifests, "a plan never writes")
+
+	_, _ = svc.fileSetEntry(ctx, c, k, []string{"20"}, true)
+	assert.True(t, c.HasFileIDs(k, []string{"20"}), "a committing flow backfills the markers")
 }
 
 func TestRowFitsRef_AcceptsTheFileSetVariant(t *testing.T) {

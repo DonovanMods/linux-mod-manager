@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,4 +94,51 @@ func TestFlowProfileApply_SameVersionFileSwapIsAReinstall(t *testing.T) {
 	_, raw = planFlow(t, s, game, "profile_apply", `{"profile":"`+activeProfile+`"}`)
 	require.NoError(t, json.Unmarshal(raw, &resp))
 	assert.True(t, resp.Plan.NoChanges, "converged")
+}
+
+// #639 review B2 over /api/v1: the web install's file_ids pick another
+// file of a version another profile's cache entry already holds. The
+// install gets an entry of its own, so the other profile's tree is never
+// changed under it.
+func TestFlowInstall_AnotherFileOfACachedVersionGetsItsOwnEntry(t *testing.T) {
+	s, svc, game, src := newInstallFixtureServer(t)
+	ctx := t.Context()
+	src.mods["pair"] = &installSourceMod{
+		mod: domain.Mod{ID: "pair", SourceID: fixtureSourceID, Name: "Pair", Version: "1.0", GameID: "g1"},
+		files: []domain.DownloadableFile{
+			{ID: "pa", Name: "A", FileName: "a.zip", Version: "1.0", Category: "MAIN", IsPrimary: true, Size: 8},
+			{ID: "pb", Name: "B", FileName: "b.zip", Version: "1.0", Category: "MAIN", Size: 8},
+		},
+		members: map[string]string{"pa": "Mods/pair-a.pak", "pb": "Mods/pair-b.pak"},
+	}
+	j := runFlow(t, s, game, "install", installPlanBody("pair"), `{"file_ids":["pa"]}`)
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "alt")
+	require.NoError(t, err)
+	plan, err := svc.PlanProfileSwitch(ctx, game, "alt")
+	require.NoError(t, err)
+	_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.NoError(t, err)
+
+	rec := doAPI(s, http.MethodPost, scopedTo("/api/v1/plans/install", game, "alt"), installPlanBody("pair"))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var issued struct {
+		PlanID planID `json:"plan_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &issued))
+	j = startFlowJob(t, s, issued.PlanID, `{"file_ids":["pb"]}`)
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	alt, err := svc.GetInstalledMod(ctx, fixtureSourceID, "pair", game.ID, "alt")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pb"}, alt.FileIDs)
+	assert.NotEmpty(t, alt.Variant, "another file of the version has its own entry")
+	def, err := svc.GetInstalledMod(ctx, fixtureSourceID, "pair", game.ID, "default")
+	require.NoError(t, err)
+	files, err := svc.GetGameCache(game).ListFiles(cache.Key{GameID: game.ID, SourceID: fixtureSourceID, ModID: "pair", Version: "1.0", Variant: def.Variant})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Mods/pair-a.pak"}, files, "default's tree is untouched")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "Mods", "pair-a.pak"))
+	assert.True(t, os.IsNotExist(err), "alt deploys only its own file")
 }

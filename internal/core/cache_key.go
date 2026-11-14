@@ -1,9 +1,11 @@
 package core
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 
@@ -37,16 +39,23 @@ const fileSetVariantScheme = "lmm-files-1"
 // THE FILE-SET VARIANT (#639). A cache entry is keyed by the version and
 // the variant, never by the source files it was built from: two sets of
 // files at one version - a collection revision that swaps a file, a hand
-// edit - would share one directory, and the second set's download would
-// layer onto the first's tree (prepareStaging seeds from it), so the old
-// file's members stayed deployed. The entry's own completion markers say
-// which files built it, though, so the key stays as it always was - the
-// plain entry, or the FOMOD variant - for the set the entry holds, and only
-// ANOTHER set at the same version is moved to a variant of its own:
-// fileSetVariant of the base variant and the sorted ids. No existing entry
-// changes key: an entry's markers are the set that built it, so every row
-// installed before #639 still names (and finds) its entry, and a set that
-// matches what an entry holds keeps using it.
+// edit, `lmm install --file` - would share one directory, and the second
+// set's download would layer onto the first's tree (prepareStaging seeds
+// from it), so the old file's members stayed deployed - in every profile
+// that used the entry. The entry's own completion markers say which files
+// built it, so a set reuses its version's base entry (the plain entry, or
+// the FOMOD variant) ONLY when the entry is absent or its markers name
+// exactly that set; any other set - a subset or a superset too - gets a
+// variant of its own, fileSetVariant of the base variant and the sorted
+// ids. A superset re-downloads files another entry already holds: the cost
+// of never growing a tree another row still deploys.
+//
+// An entry from before markers existed names no set. It is reused only
+// when an installed row on that entry pins exactly the requested set, and
+// a flow that reuses it then stamps that set's markers (backfill).
+// Installed rows keep the key they recorded either way: the converge
+// flows compare file sets, not keys, so a row whose files did not change
+// is never reinstalled, and nothing is re-downloaded after an upgrade.
 
 // fileSetVariant is the variant of base's tree built from exactly the files
 // ids: the first 12 hex digits of a sha256 over the scheme, base and the
@@ -62,8 +71,9 @@ func fileSetVariant(base string, ids []string) string {
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
-// sameFileSet reports whether a and b name the same files, as sets.
-func sameFileSet(a, b []string) bool {
+// sameFileIDs reports whether a and b name the same files, as sets: order
+// and repeats never matter.
+func sameFileIDs(a, b []string) bool {
 	return slices.Equal(slices.Compact(slices.Sorted(slices.Values(a))), slices.Compact(slices.Sorted(slices.Values(b))))
 }
 
@@ -79,37 +89,74 @@ func fileSetDrift(ref domain.ModReference, row *domain.InstalledMod) bool {
 // filesDiffer is fileSetDrift over two bare lists: both record files, and
 // not the same ones.
 func filesDiffer(a, b []string) bool {
-	return len(a) > 0 && len(b) > 0 && !sameFileSet(a, b)
+	return len(a) > 0 && len(b) > 0 && !sameFileIDs(a, b)
 }
 
-// holdsOtherFiles reports whether k's entry was built from a file outside
-// ids: a completion marker names one. Such an entry is another file set's
-// tree, which the set ids must neither reuse nor layer onto. An absent
-// entry, or one with no markers (a legacy entry), holds none.
-func holdsOtherFiles(c *cache.Cache, k cache.Key, ids []string) bool {
-	if len(ids) == 0 {
-		return false
+// fileSetEntry is the entry the files ids of k's mod and version live in
+// (#639), and whether it already holds every one of them: k itself when
+// k's entry is absent (or an empty, unmarked directory), names exactly ids
+// in its markers, or - an entry with no markers - is used by an installed
+// row that pins exactly ids;
+// any other set gets k with the file-set variant of k's own. backfill,
+// for a flow that commits (never a plan), stamps the markers of an
+// unmarked entry it reuses, so the next read finds them.
+func (s *Service) fileSetEntry(ctx context.Context, c *cache.Cache, k cache.Key, ids []string, backfill bool) (cache.Key, bool) {
+	if len(ids) == 0 || !c.Exists(k) {
+		return k, c.HasFileIDs(k, ids)
 	}
 	manifests, err := c.FileManifests(k)
+	if err == nil {
+		marked := slices.Collect(maps.Keys(manifests))
+		if len(marked) > 0 && sameFileIDs(marked, ids) {
+			return k, c.HasFileIDs(k, ids)
+		}
+		if len(marked) == 0 {
+			// An unmarked entry with no members (a download that broke off
+			// before its first commit) is no tree: as good as absent.
+			if files, err := c.ListFiles(k); err == nil && len(files) == 0 {
+				return k, false
+			}
+		}
+		if len(marked) == 0 && s.rowPinsEntry(ctx, k, ids) {
+			if backfill {
+				backfillMarkers(c, k, ids)
+			}
+			return k, true
+		}
+	}
+	k.Variant = fileSetVariant(k.Variant, ids)
+	return k, c.HasFileIDs(k, ids)
+}
+
+// rowPinsEntry reports whether an installed row of k's game uses k's entry
+// (its version and variant) and records exactly the files ids.
+func (s *Service) rowPinsEntry(ctx context.Context, k cache.Key, ids []string) bool {
+	rows, err := s.db.ModVersionRows(ctx, k.SourceID, k.ModID)
 	if err != nil {
 		return false
 	}
-	for id := range manifests {
-		if !slices.Contains(ids, id) {
+	for _, row := range rows {
+		if row.GameID != k.GameID || row.Version != k.Version || row.Variant != k.Variant {
+			continue
+		}
+		if fileIDs, err := s.db.GetModFileIDs(ctx, k.SourceID, k.ModID, row.GameID, row.Profile); err == nil && sameFileIDs(fileIDs, ids) {
 			return true
 		}
 	}
 	return false
 }
 
-// fileSetKey is the entry the files ids of k's mod and version live in: k
-// itself, unless k's entry holds another file set (holdsOtherFiles), then
-// k with the file-set variant of k's own.
-func fileSetKey(c *cache.Cache, k cache.Key, ids []string) cache.Key {
-	if holdsOtherFiles(c, k, ids) {
-		k.Variant = fileSetVariant(k.Variant, ids)
+// backfillMarkers stamps the bare completion markers of ids into k's
+// unmarked entry (#639), which an installed row pinning exactly ids says
+// it holds. Best-effort: an entry it cannot stamp stays unmarked, and the
+// next flow decides the same way again.
+func backfillMarkers(c *cache.Cache, k cache.Key, ids []string) {
+	if manifests, err := c.FileManifests(k); err != nil || len(manifests) > 0 {
+		return
 	}
-	return k
+	for _, id := range ids {
+		_ = cache.MarkFileComplete(c.ModPath(k), id)
+	}
 }
 
 // rowFitsRef reports whether row's tree is one ref names: the variant ref's
@@ -126,37 +173,43 @@ func rowFitsRef(row *domain.InstalledMod, ref *domain.ModReference) bool {
 }
 
 // restampFileSet moves a just-acquired mod's files, whose base variant
-// unifyFomod has stamped, to their file-set variant when the base entry
-// holds another file set (#639) - or, given want, to want when want is
-// that file-set variant (a repair of a row installed into one). The first
-// file then commits unseeded: a fresh tree, never layered onto another's.
-func restampFileSet(gameCache *cache.Cache, gameID string, mod *domain.Mod, files []*acquiredFile, want *string) {
+// unifyFomod has stamped, to the entry fileSetEntry names for them (#639):
+// their file-set variant unless the base entry is theirs. The first file
+// then commits unseeded: a fresh tree, never layered onto another's.
+func (s *Service) restampFileSet(ctx context.Context, gameCache *cache.Cache, gameID string, mod *domain.Mod, files []*acquiredFile) {
 	if len(files) == 0 {
 		return
 	}
-	ids := make([]string, len(files))
-	for i, a := range files {
-		ids[i] = a.file.ID
-	}
-	variant := mod.Variant
-	switch {
-	case want != nil:
-		if *want == variant || *want != fileSetVariant(variant, ids) {
-			return
-		}
-		variant = *want
-	default:
-		k := fileSetKey(gameCache, modCacheKey(gameID, *mod), ids)
-		if k.Variant == mod.Variant {
-			return
-		}
-		variant = k.Variant
+	k, _ := s.fileSetEntry(ctx, gameCache, modCacheKey(gameID, *mod), acquiredIDs(files), false)
+	moveToVariant(mod, files, k.Variant)
+}
+
+// moveToVariant stamps variant on mod and its acquired files, the first of
+// them committing unseeded, unless it is already theirs.
+func moveToVariant(mod *domain.Mod, files []*acquiredFile, variant string) {
+	if len(files) == 0 || variant == mod.Variant {
+		return
 	}
 	for _, a := range files {
 		a.mod.Variant = variant
 	}
 	files[0].unseeded = true
 	mod.Variant = variant
+}
+
+// acquiredIDs is the file ids of files, in order.
+func acquiredIDs(files []*acquiredFile) []string {
+	ids := make([]string, len(files))
+	for i, a := range files {
+		ids[i] = a.file.ID
+	}
+	return ids
+}
+
+// isTreeOf reports whether want is the tree base resolved to: base itself,
+// or base's file-set variant of the files ids (#639).
+func isTreeOf(want, base string, ids []string) bool {
+	return want == base || (len(ids) > 0 && want == fileSetVariant(base, ids))
 }
 
 // fomodTreeVariant is row's variant when it names an installer's tree: ""

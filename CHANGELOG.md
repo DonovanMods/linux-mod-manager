@@ -818,21 +818,28 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 - **A profile that swaps a mod's file at the same version now reinstalls
   it (#639).** When a profile entry's `file_ids` changed but its `version`
   did not (a collection update that swaps a file, a profile edited by
-  hand, an import of an edited profile), `lmm profile apply`, `lmm profile
-switch`, `lmm profile import` and a collection update all reported
-  nothing to do, and the old file stayed installed. A different set of
-  files is now drift, as a different version is: each of them reinstalls
-  the mod with the new files, and its plan says so (`reinstall: files
-changed` in the terminal and the web UI; `"reason": "files_changed"` on
-  an apply plan's entry and a `reinstall_reasons` map on a switch or
-  import plan in `--json`, both new and omitted otherwise). File sets
-  compare as sets, so the same files in another order are no change. The
-  new files get a cache entry of their own, so the old file's tree is
-  never reused or layered onto: the entry a version's files already fill
-  keeps its key, and only another set of files at that version moves to a
-  new one (`<version>@<variant>`), so no existing cache entry is
-  invalidated. A collection update's plan note for such an entry now says
-  it reinstalls the mod.
+  hand, an import of an edited profile), `lmm profile apply`,
+  `lmm profile switch`, `lmm profile import` and a collection update all
+  reported nothing to do, and the old file stayed installed. A different
+  set of files is now drift, as a different version is: each of them
+  reinstalls the mod with the new files, and its plan says so
+  (`reinstall: files changed` in the terminal and the web UI;
+  `"reason": "files_changed"` on an apply plan's entry and a
+  `reinstall_reasons` map on a switch or import plan in `--json`, both
+  new and omitted otherwise). File sets compare as sets, so the same files
+  in another order are no change. Each set of files at a version now has
+  a cache entry of its own (`<version>@<variant>` beside the version's
+  own), so one set's tree is never reused for, or layered onto by,
+  another: before, `lmm install --file` of another file at the same
+  version wrote into the entry another profile was deploying from. An
+  entry keeps its key for
+  exactly the files it was built from, so installed mods keep theirs and
+  nothing is re-downloaded after the upgrade; an entry from before lmm
+  recorded its files is reused for the files an installed mod there
+  records. A deploy that heals a mod to another file (#139) now moves the
+  profile's entry to that file too, so the next apply does not reinstall
+  it. A collection update's plan note for a same-version file change now
+  says it reinstalls the mod.
 
 - **A config override whose content starts with a tab now round-trips
   (#640).** Such content was written as a YAML block the reader then
@@ -843,7 +850,6 @@ changed` in the terminal and the web UI; `"reason": "files_changed"` on
   version-0 profile export) now writes content its usual form would not
   read back unchanged as a double-quoted string instead; everything else is
   written exactly as before, and files already on disk read unchanged.
-
 - **An override no longer overwrites your edit of a game file for good
   (#631).** When you changed a file after lmm wrote a profile override
   there (or the game rewrote its INI), `lmm deploy` wrote the profile's

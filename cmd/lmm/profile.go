@@ -923,16 +923,6 @@ func exportMetaSet(meta core.CollectionExportOptions) bool {
 // content id, and since #365 core stamps the ref's own external /
 // updated_at so this line can say the revision date instead. A ref with
 // neither prints no version at all rather than a bare "v".
-// reinstallNote is a plan line's suffix for a converge plan's reinstall
-// reason (#639): a mod reinstalled at the version it has, because the
-// profile pins another set of its files. Empty for no reason.
-func reinstallNote(reason string) string {
-	if reason == core.ReinstallFilesChanged {
-		return " (reinstall: files changed)"
-	}
-	return ""
-}
-
 func planRefLine(ref domain.ModReference) string {
 	// #607: a stated mod type changes where the mod deploys, so a plan
 	// says so.
@@ -953,6 +943,16 @@ func planRefLine(ref domain.ModReference) string {
 		return fmt.Sprintf("%s:%s (%s)", ref.SourceID, ref.ModID, shown)
 	}
 	return fmt.Sprintf("%s:%s v%s", ref.SourceID, ref.ModID, shown)
+}
+
+// reinstallNote is a plan line's suffix for a converge plan's reinstall
+// reason (#639): a mod reinstalled at the version it has, because the
+// profile pins another set of its files. Empty for no reason.
+func reinstallNote(reason string) string {
+	if reason == core.ReinstallFilesChanged {
+		return " (reinstall: files changed)"
+	}
+	return ""
 }
 
 func runProfileImport(cmd *cobra.Command, args []string) error {

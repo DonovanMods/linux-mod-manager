@@ -581,7 +581,7 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 	// set of the version's files.
 	mod.Variant = refVariant(&entry.Ref)
 	ids := profileApplyFileIDs(selected)
-	key := fileSetKey(s.GetGameCache(game), modCacheKey(game.ID, *mod), ids)
+	key, cached := s.fileSetEntry(ctx, s.GetGameCache(game), modCacheKey(game.ID, *mod), ids, false)
 	mod.Variant = key.Variant
 
 	entry.Mod = mod
@@ -592,7 +592,7 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 	// (a partially-populated version directory would be skipped forever) or
 	// by file name (an extracted archive's members match no
 	// DownloadableFile, so every archive-based mod would redownload).
-	entry.Cached = s.GetGameCache(game).HasFileIDs(key, ids)
+	entry.Cached = cached
 }
 
 // rowsElsewhere collects the installed rows of every saved profile of
@@ -987,6 +987,11 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			// #614: a cached FOMOD entry is the recorded choices' tree; a
 			// download replays them and records what it resolved.
 			var resolved *fomodResolved
+			if entry.Cached {
+				// #639: an unmarked entry the plan reused for this set
+				// carries its markers from now on.
+				backfillMarkers(s.GetGameCache(game), modCacheKey(game.ID, *mod), fileIDs)
+			}
 			if entry.Cached && mod.Variant != "" {
 				resolved = resolvedFromRef(&entry.Ref, mod.Variant)
 			}
