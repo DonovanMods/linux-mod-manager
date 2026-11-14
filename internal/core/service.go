@@ -188,6 +188,12 @@ type Service struct {
 	// originalsStoreFor's own comment for why sharing matters.
 	originalsMu     sync.Mutex
 	originalsStores map[string]*originalsStore
+
+	// heirFlows is the running mutation's heirFlow per game (#633): what
+	// its removals know about the mods that may take a shared path. Ended
+	// with the mutation (beginOp).
+	heirFlowsMu sync.Mutex
+	heirFlows   map[string]*heirFlow
 	// opLockPath is ServiceConfig.OpLockPath: the advisory lock file
 	// beginOp takes around every mutation, or "" for no cross-process lock.
 	opLockPath string
@@ -2310,6 +2316,9 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	// #630: and every one places a file the profile overrides as the
 	// overridden copy.
 	installer.overridden = s.overriddenModFiles
+	// #633: and every removal that takes a mod away for good hands a
+	// shared path to the next mod in the profile's load order.
+	installer.heirs = s.pathHeirsFor("", nil, nil)
 	installer.afterLink = s.afterDeployLink
 	// #353: and every Installer routes its deployable files through the
 	// game's adapter. A resolution failure is reported by the flow's own

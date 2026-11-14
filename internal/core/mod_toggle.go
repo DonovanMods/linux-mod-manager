@@ -311,7 +311,8 @@ func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName
 	if err != nil {
 		return nil, err
 	}
-	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
+	// #633: a shared path passes to the next mod in load order.
+	if err := installer.uninstallHandingOff(ctx, game, &mod.Mod, profileName, nil); err != nil {
 		// Non-fatal — see doc comment. Historical "Warning: " prefix baked
 		// into the text itself, matching UninstallResult's own convention.
 		result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to undeploy some files: %v", err))

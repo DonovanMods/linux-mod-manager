@@ -72,6 +72,11 @@ load order so the right mod wins: the mod lower in the list wins. In the
 terminal, `lmm conflicts` lists them and `lmm profile reorder` changes the
 order.
 
+Removing the winning mod (uninstalling it, switching it off, or updating it
+to a version without the file) puts the next mod's copy in its place
+straight away, and lmm says which mod has the file now. The game's own file
+comes back only once no switched-on mod includes it.
+
 ## Save a restore point: snapshots
 
 A **snapshot** records your whole setup for a game: which mods, which

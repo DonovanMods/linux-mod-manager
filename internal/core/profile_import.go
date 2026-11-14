@@ -190,6 +190,14 @@ type ImportPlan struct {
 	// world it never saw. Unexported and outside the wire contract on
 	// purpose - see InstallPlan.snapshot's doc comment.
 	snapshot installedSnapshot `json:"-"`
+
+	// supplied and fillNames are a profile fill's (#608, profile_fill.go):
+	// per mod key, the user's own archive for each pinned file id, which
+	// acquire copies instead of downloading, and the collection's name for
+	// the mod, which stands in when the source cannot describe it. Nil for
+	// every import.
+	supplied  map[string]map[string]suppliedArchive
+	fillNames map[string]string
 }
 
 // PlanImport parses data (an exported profile) and categorizes its mods

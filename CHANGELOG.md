@@ -36,6 +36,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An older lmm still ignores a container's `files/` with its warning, and
   refuses a document requiring `bundled`.
 
+- **Install a collection's pending mods from your downloads (#608).** The
+  new `lmm profile fill <profile> [folder-or-archive...]` (your downloads
+  folder when none is named) installs the mods
+  a free NexusMods account's collection import left pending, from the files
+  you downloaded by hand: each file is recognised by the size and md5 the
+  collection's recipe records for it (re-fetched when its cache entry is
+  gone), and installed as if downloaded, with the recorded installer
+  choices (per file, for a mod with several installers, #634) and mod type, locked as the curator pinned it, and set to update
+  automatically when the curator asked for the newest file. The plan lists
+  what installs, what is still pending and why, and names each file of a
+  pending file's size it did not use; the rest of a folder is only counted,
+  by reason, so a folder chosen by mistake is never listed back;
+  `--dry-run` and `--json` show it without installing. Only a folder's top
+  level is read, links are never followed, a file is read only when its
+  size is a pending file's, and your files are copied, never moved or
+  deleted. In the web UI, on the collection import's entry in the activity
+  tray or **Fill from downloads…** for the profile in Manage profiles,
+  either choose the folder (the folder chooser opens at your downloads
+  folder, from the new `GET /api/v1/fs/downloads`; a link to a folder is
+  accepted as the folder itself; the server reads it as the command does,
+  nothing is uploaded) or
+  drop the files: only files of a pending size and at most 2 GiB are
+  uploaded, up to four at a time. `lmm profile list --json` (and the web UI's profile list) name a
+  profile's source collection under the new `collection` key.
 - **Import a collection from a link (#622).** `lmm profile import
 https://…` (in the web UI, the Profiles window's **From a URL** field)
   downloads an lmm collection - a `.lmmc`, its YAML, or an older profile
@@ -521,6 +545,27 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Changed
 
+- **Removing the mod that wins a shared file hands it to the next mod in
+  load order (#633).** When two enabled mods ship the same file and the one
+  later in the load order goes - `lmm uninstall`, `lmm mod disable`, an
+  `lmm update` (or rollback, or update from a file) to a version without
+  the file, `lmm mod copy --replace` with a version without it, or a
+  `lmm profile switch` / `lmm profile apply` that turns it off - the next
+  enabled mod in load order that ships the file now has its copy deployed
+  there in the same command, instead of the game's original coming back
+  (or the path staying empty) until the next `lmm deploy`. The original
+  lmm set aside stays set aside, and goes back only when no enabled mod is
+  left to ship the file. This works under both deploy roots (the mod
+  folder and the game folder) and all three link methods; a file the
+  profile overrides stays overridden, and a file that is yours is still
+  left alone. Each command says which mod's file now holds the path, as a
+  warning naming the path's final owner once, however many of its steps
+  passed it on; the web UI's readout for an uninstall, a disable, an
+  install, an update, a rollback, a copy, an installer reconfigure, a
+  profile import, an apply or a switch now shows a job's warnings where the
+  job finished (only a switch's did before), an update batch's toast
+  carries its items' warnings, and `lmm conflicts` and the web UI's
+  conflicts view name the new owner.
 - **The `--fomod-choices` error for several questions names the per-file key
   (#634).** An unkeyed choices file that meets more than one installer now
   says "answers one installer, but N ask; key its answers by mod

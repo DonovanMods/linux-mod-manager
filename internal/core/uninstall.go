@@ -483,7 +483,8 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 		if err != nil {
 			return result, err
 		}
-		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
+		// #633: a shared path passes to the next mod in load order.
+		if err := installer.uninstallHandingOff(ctx, game, &mod.Mod, profileName, nil); err != nil {
 			// Non-fatal - files may have been manually removed. Always
 			// recorded; the historical "Warning: " prefix is baked into the
 			// text itself (see UninstallResult's doc comment).

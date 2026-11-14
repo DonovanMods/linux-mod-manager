@@ -351,10 +351,13 @@ collection, but NexusMods only serves downloads to Premium accounts, so on
 a free account the plan marks every mod as a manual download and links its
 file's page. The import then installs only what needs no download (a mod
 another of your profiles already has) and saves the profile with the rest
-still to download: get each file from its page and install it from the
-file (`lmm install --id <mod-id> --from-file <archive>`, or **Install from
-file…** in the browser; see [Mods you downloaded
-yourself](manual-mods.md)). lmm asks NexusMods for your account's tier
+still to download: get each file from its page, then install them all at
+once with `lmm profile fill <profile> ~/Downloads` (in the browser, drop the
+files on the import's entry in the activity tray, or use **Fill from
+downloads…** on the profile in **Manage profiles**). lmm recognises each
+file by the checksum the collection records; see [A NexusMods collection on
+a free account](manual-mods.md#a-nexusmods-collection-on-a-free-account).
+lmm asks NexusMods for your account's tier
 each time it plans a collection, so after upgrading to Premium, plan again.
 
 The plan lists every item and what the import does with it:

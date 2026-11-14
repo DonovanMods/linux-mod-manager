@@ -167,3 +167,15 @@ func TestAPIFsDirs_GivesACrossOriginRequestNothingExtra(t *testing.T) {
 	s.Handler().ServeHTTP(brec, bad)
 	assert.Equal(t, http.StatusForbidden, brec.Code)
 }
+
+// #608: GET /api/v1/fs/downloads names the downloads folder, as
+// core.DownloadsDir resolves it.
+func TestAPIFsDownloads_NamesTheDownloadsFolder(t *testing.T) {
+	s, _ := newDeployFixtureServer(t)
+	t.Setenv("XDG_DOWNLOAD_DIR", "/srv/dl")
+	rec := doAPI(s, http.MethodGet, "/api/v1/fs/downloads", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var doc downloadsFolder
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &doc))
+	assert.Equal(t, "/srv/dl", doc.Path)
+}
