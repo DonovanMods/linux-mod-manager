@@ -130,10 +130,10 @@ func restrictedPatchNames(c *CollectionImport) []string {
 	return out
 }
 
-// pinnedOnly is m without the entries for files ids does not name - inert
-// in a document, which pins its files - or m itself when ids is empty.
+// pinnedOnly is m without the entries for files ids does not name, which
+// are inert: a file list or a patch applies only to a file the mod pins.
 func pinnedOnly[M ~map[string][]T, T any](m M, ids []string) M {
-	if len(m) == 0 || len(ids) == 0 {
+	if len(m) == 0 {
 		return m
 	}
 	var out M

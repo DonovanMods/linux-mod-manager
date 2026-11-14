@@ -412,3 +412,39 @@ func TestSourceCollection_FreeAccountInstallsBundledItems(t *testing.T) {
 	assert.False(t, ok, "a manual download is pending")
 	assert.Equal(t, 2, result.Skipped, "the two items to download by hand")
 }
+
+// TestSourceCollection_InstallFromFileAppliesTheFileListAndPatch: a free
+// account's pending item installed from the file the user fetched (`lmm
+// install --id … --from-file`, the archive import) installs by the file's
+// list and patch, as a download would, into the variant the profile names.
+func TestSourceCollection_InstallFromFileAppliesTheFileListAndPatch(t *testing.T) {
+	f := newC5Fixture(t, c5Recipe(`Mod\manifest.json`, c5CRC(c5ManifestV40)), c5Trees(t, c5Patch(t)))
+	f.src.tier = source.TierFree
+	plan := f.plan(t, core.SourceCollectionImportRequest{})
+	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+
+	for id, files := range map[string]map[string]string{
+		"20": {"r6/scripts/A.reds": "a", "r6/scripts/b.reds": "b", "r6/extra/unlisted.txt": "x"},
+		"21": {"Mod/manifest.json": c5ManifestV40, "Mod/other.json": "{}"},
+	} {
+		fileID := map[string]string{"20": "200", "21": "210"}[id]
+		// Named as the source names the file, so it matches it.
+		archive := filepath.Join(t.TempDir(), id+"-"+fileID+".zip")
+		require.NoError(t, os.WriteFile(archive, createTestZipBytes(t, files), 0o644))
+		opts := core.ImportArchiveOptions{SourceID: "nexusmods", ModID: id, InstallFromFile: true, ExpectedFileID: fileID}
+		iplan, err := f.svc.PlanImportArchive(context.Background(), f.game, "Replicated", archive, opts)
+		require.NoError(t, err)
+		_, err = f.svc.ApplyImportArchive(context.Background(), f.game, "Replicated", iplan, opts, nil)
+		require.NoError(t, err)
+	}
+	got, _ := f.deployed(t, "Mod/manifest.json")
+	assert.Equal(t, c5ManifestV41, got, "patched")
+	_, ok := f.deployed(t, "r6/extra/unlisted.txt")
+	assert.False(t, ok, "filtered")
+
+	// The rows name the trees the profile records: nothing to converge.
+	applyPlan, err := f.svc.PlanProfileApply(context.Background(), f.game, "Replicated")
+	require.NoError(t, err)
+	assert.True(t, applyPlan.NoChanges, "%+v", applyPlan)
+}

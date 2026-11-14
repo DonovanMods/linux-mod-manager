@@ -278,7 +278,7 @@ func TestUniqueBundleName(t *testing.T) {
 func TestPinnedOnly(t *testing.T) {
 	lists := domain.FileLists{"1": {{Path: "a"}}, "2": {{Path: "b"}}}
 	assert.Equal(t, domain.FileLists{"1": {{Path: "a"}}}, pinnedOnly(lists, []string{"1", "3"}))
-	assert.Equal(t, lists, pinnedOnly(lists, nil), "a ref that pins nothing keeps every list")
+	assert.Nil(t, pinnedOnly(lists, nil), "a ref that pins nothing installs by no list")
 	assert.Nil(t, pinnedOnly(lists, []string{"9"}))
 }
 

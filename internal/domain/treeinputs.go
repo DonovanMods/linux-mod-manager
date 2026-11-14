@@ -20,7 +20,8 @@ type FileListEntry struct {
 // extracts only the listed paths, and each must have its md5. A list keyed
 // by a file the reference does not pin is inert - it describes a file the
 // mod is not installed from (an update moved it), and comes back into
-// force if a rollback pins that file again.
+// force if a rollback pins that file again. A reference that pins no file
+// installs by none.
 type FileLists map[string][]FileListEntry
 
 // IsZero reports that no file has a list.
@@ -125,12 +126,9 @@ func (r ModReference) TreeInputsFor(fileID string) TreeInputs {
 	return TreeInputs{FileList: r.FileList[fileID], Patches: r.Patches[fileID]}
 }
 
-// HasTreeInputs reports whether any file the reference pins - or, when it
-// pins none, any file at all - has a file list or patches.
+// HasTreeInputs reports whether any file the reference pins has a file
+// list or patches: one for a file it does not pin applies to nothing.
 func (r ModReference) HasTreeInputs() bool {
-	if len(r.FileIDs) == 0 {
-		return !r.FileList.IsZero() || !r.Patches.IsZero()
-	}
 	return slices.ContainsFunc(r.FileIDs, func(id string) bool { return !r.TreeInputsFor(id).IsZero() })
 }
 

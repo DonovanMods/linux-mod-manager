@@ -44,7 +44,7 @@ func TestModReference_TreeInputs(t *testing.T) {
 	ref.Patches = nil
 	assert.False(t, ref.HasTreeInputs(), "a list for a file the ref does not pin is inert")
 	ref.FileIDs = nil
-	assert.True(t, ref.HasTreeInputs(), "a ref that pins no file is installed from whichever file, so every list counts")
+	assert.False(t, ref.HasTreeInputs(), "a ref that pins no file installs by no list")
 }
 
 func TestSplitTreePath(t *testing.T) {

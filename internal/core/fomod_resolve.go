@@ -289,7 +289,11 @@ func (in fomodInput) forFile(fileID string) fomodInput {
 	out := in
 	out.fileChoices, out.fileAnswers, out.askFile, out.orderHint, out.fileIDs = nil, nil, "", nil, nil
 	out.fileLists, out.patches = nil, nil
-	out.tree = domain.TreeInputs{FileList: in.fileLists[fileID], Patches: in.patches[fileID]}
+	// #610: only a file the mod pins installs by its list and patches - as
+	// its variant counts them (treeInputsFor).
+	if slices.Contains(in.fileIDs, fileID) {
+		out.tree = domain.TreeInputs{FileList: in.fileLists[fileID], Patches: in.patches[fileID]}
+	}
 	out.fileID = fileID
 	out.fileMD5, out.expectMD5, out.recipeMD5, out.lazyMD5 = nil, in.fileMD5[fileID], nil, nil
 	if in.recipeMD5 != nil {

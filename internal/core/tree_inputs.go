@@ -146,35 +146,23 @@ func treeInputsVariant(fomodPart string, inputs map[string]domain.TreeInputs) st
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
-// refTreeInputs is ref's tree inputs for the files it pins - or, when it
-// pins none, for every file it records them for.
+// refTreeInputs is ref's tree inputs for the files it pins: none when it
+// pins none.
 func refTreeInputs(ref *domain.ModReference) map[string]domain.TreeInputs {
 	return treeInputsFor(ref.FileList, ref.Patches, ref.FileIDs)
 }
 
-// treeInputsFor is lists' and patches' inputs for the files ids - or, for
-// no ids, for every file either records.
+// treeInputsFor is lists' and patches' inputs for the files ids: a list
+// or a patch applies only to a file the mod pins, so for no ids, none.
 func treeInputsFor(lists domain.FileLists, patches domain.FilePatches, ids []string) map[string]domain.TreeInputs {
 	if lists.IsZero() && patches.IsZero() {
 		return nil
 	}
 	out := map[string]domain.TreeInputs{}
-	add := func(id string) {
+	for _, id := range ids {
 		if in := (domain.TreeInputs{FileList: lists[id], Patches: patches[id]}); !in.IsZero() {
 			out[id] = in
 		}
-	}
-	if len(ids) == 0 {
-		for id := range lists {
-			add(id)
-		}
-		for id := range patches {
-			add(id)
-		}
-		return out
-	}
-	for _, id := range ids {
-		add(id)
 	}
 	return out
 }
