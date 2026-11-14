@@ -79,3 +79,86 @@ func optionChoiceEqual(a, b fomod.OptionChoice) bool {
 func intPtrEqual(a, b *int) bool {
 	return (a == nil) == (b == nil) && (a == nil || *a == *b)
 }
+
+// FomodFiles is a mod's FOMOD installer choices recorded PER FILE (#634),
+// keyed by the source's file id: the form a mod takes when two or more of
+// its pinned files each carry their own installer (a collection that pins
+// a mod's main file and a patch file, each a FOMOD). Each value is one
+// installer's choices, exactly as FomodChoices records them for a mod with
+// one installer.
+type FomodFiles map[string]FomodChoices
+
+// IsZero reports that no file's choices are recorded; both encodings omit
+// it then.
+func (f FomodFiles) IsZero() bool {
+	for _, c := range f {
+		if !c.IsZero() {
+			return false
+		}
+	}
+	return true
+}
+
+// Equal reports whether f and o record the same choices for the same
+// files. A file recorded with zero choices is the same as one not recorded.
+func (f FomodFiles) Equal(o FomodFiles) bool {
+	for id, c := range f {
+		if !c.Equal(o[id]) {
+			return false
+		}
+	}
+	for id, c := range o {
+		if _, ok := f[id]; !ok && !c.IsZero() {
+			return false
+		}
+	}
+	return true
+}
+
+// Clone is a copy of f whose map can be changed without changing f's; nil
+// for a zero f.
+func (f FomodFiles) Clone() FomodFiles {
+	if f.IsZero() {
+		return nil
+	}
+	out := make(FomodFiles, len(f))
+	for id, c := range f {
+		if !c.IsZero() {
+			out[id] = c
+		}
+	}
+	return out
+}
+
+// FomodRecord is everything a mod's reference records about its FOMOD
+// installers (#634): one installer's choices (Choices, the profile's
+// `fomod:` block), or one per file (Files, its `fomod_files:` block) for a
+// mod with several. A flow that carries "the recorded choices" - a
+// rollback's previous ones, a profile write's - carries this, so both forms
+// travel together. Files, when set, is the record: an install never writes
+// both.
+type FomodRecord struct {
+	// Choices is the single installer's choices.
+	Choices FomodChoices
+	// Files is the per-file form.
+	Files FomodFiles
+}
+
+// IsZero reports that nothing is recorded in either form.
+func (r FomodRecord) IsZero() bool { return r.Choices.IsZero() && r.Files.IsZero() }
+
+// PerFile reports that the record is the per-file form.
+func (r FomodRecord) PerFile() bool { return !r.Files.IsZero() }
+
+// Equal reports whether r and o record the same choices.
+func (r FomodRecord) Equal(o FomodRecord) bool {
+	return r.Choices.Equal(o.Choices) && r.Files.Equal(o.Files)
+}
+
+// FomodFileKey is the answer key for ONE file's installer of a mod with
+// several (#634): domain.ModKey, then '#', then the file id - for example
+// "nexusmods:12604#37471". An Apply's Options.Fomod takes it beside the
+// plain mod key, which still answers a mod whose installer is one file.
+func FomodFileKey(sourceID, modID, fileID string) string {
+	return ModKey(sourceID, modID) + "#" + fileID
+}

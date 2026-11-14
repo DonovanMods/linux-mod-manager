@@ -1,0 +1,23 @@
+{
+  "file_id": "37471",
+  "name": "Sample Mod - Patches",
+  "choices": {
+    "config_sha256": "ab12",
+    "steps": [
+      {
+        "name": "Patches",
+        "groups": [
+          {
+            "name": "Which",
+            "choices": [
+              {
+                "name": "USSEP",
+                "idx": 0
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

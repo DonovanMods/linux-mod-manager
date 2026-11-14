@@ -185,26 +185,40 @@ func TestNexusCollection_Cyberpunk(t *testing.T) {
 }
 
 // The Skyrim sample: FOMOD items replayed, SKSE64 routed to the game root
-// by the bethesda adapter; refused for the plugin list (C6) and for Scrambled
-// Bugs, whose two patch files each carry their own FOMOD choices - one
-// profile entry per mod holds one installer's.
+// by the bethesda adapter, and Scrambled Bugs - whose two patch files each
+// carry their own FOMOD choices - recorded per file (#634); refused only
+// for the plugin list (C6).
 func TestNexusCollection_Skyrim(t *testing.T) {
 	game := &domain.Game{ID: "skyrimse", Name: "Skyrim Special Edition", InstallPath: t.TempDir(), ModPath: t.TempDir(),
 		Adapter: "bethesda", SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"}}
 	c := convertNexusFixture(t, game, "xk05aw", "xk05aw", 325,
 		"revision-skyrimspecialedition-xk05aw-325.json", "skyrimspecialedition-xk05aw-325.json", core.CollectionConvertOptions{})
 
-	assert.Equal(t, []string{core.CollectionFeatureFomodMultiFile, core.CollectionFeaturePluginOrder}, unsupportedNames(c))
-	assert.Equal(t, []string{"nexusmods:43532"}, c.Unsupported[0].Items)
-	assert.Equal(t, []string{core.CollectionFeatureFomod, "mod_type:dinput"}, c.Document.Requires)
+	assert.Equal(t, []string{core.CollectionFeaturePluginOrder}, unsupportedNames(c), "fomod_multi_file is no longer refused")
+	assert.Equal(t, []string{core.CollectionFeatureFomod, core.CollectionFeatureFomodMultiFile, "mod_type:dinput"}, c.Document.Requires)
 	assert.Contains(t, c.Features, "mod_type:dinput")
-	var fomods int
+	assert.Contains(t, c.Features, core.CollectionFeatureFomodMultiFile)
+	var fomods, perFile int
 	for _, it := range c.Document.Items {
 		if !it.Ref.Fomod.IsZero() {
 			fomods++
 		}
+		if !it.Ref.FomodFiles.IsZero() {
+			perFile++
+			assert.Equal(t, "43532", it.Ref.ModID, "Scrambled Bugs")
+			assert.Len(t, it.Ref.FomodFiles, 2, "one choice set per patch file")
+			for id := range it.Ref.FomodFiles {
+				assert.Contains(t, it.Ref.FileIDs, id, "keyed by the files the entry pins")
+			}
+		}
 	}
-	assert.Equal(t, 18-2, fomods, "18 items record choices; Scrambled Bugs' two cannot share one entry")
+	assert.Equal(t, 18-2, fomods, "18 items record choices: 16 mods with one installer each")
+	assert.Equal(t, 1, perFile, "and Scrambled Bugs' two, per file")
+	for _, it := range c.Items {
+		if it.ModID == "43532" {
+			assert.Equal(t, core.CollectionItemWillInstall, it.State)
+		}
+	}
 	assert.Len(t, c.Tools, 2, "the SSEEdit shortcuts are listed, never run")
 	assert.True(t, notesContain(c, "SSEEdit"), "%v", c.Notes)
 	assert.True(t, notesContain(c, "conflicts"), "the conflicts rule is informational: %v", c.Notes)
@@ -221,7 +235,7 @@ func TestNexusCollection_Skyrim(t *testing.T) {
 	plain.Adapter = ""
 	c = convertNexusFixture(t, &plain, "xk05aw", "xk05aw", 325,
 		"revision-skyrimspecialedition-xk05aw-325.json", "skyrimspecialedition-xk05aw-325.json", core.CollectionConvertOptions{})
-	assert.Equal(t, []string{core.CollectionFeatureFomodMultiFile, "mod_type:dinput", core.CollectionFeaturePluginOrder}, unsupportedNames(c))
+	assert.Equal(t, []string{"mod_type:dinput", core.CollectionFeaturePluginOrder}, unsupportedNames(c))
 }
 
 // The survey's other three shapes: plugin rules (Fallout 4), bundled files
@@ -247,11 +261,11 @@ func TestNexusCollection_SurveyShapes(t *testing.T) {
 	assert.Equal(t, "https://f4se.silverlock.org", c.Document.External[0].URL)
 }
 
-// The Skyrim sample planned and applied (#607, P3 review): it is refused,
+// The Skyrim sample planned and applied (#607, P3 review): it is refused
 // for its plugin list (which the Nexus converter carries only from C6, though
-// the lmm document format supports plugin_order since #616) and for
-// Scrambled Bugs' two installers - and the refusal's supported list never
-// names plugin_order while refusing it.
+// the lmm document format supports plugin_order since #616) - no longer for
+// Scrambled Bugs' two installers (#634) - and the refusal's supported list
+// never names plugin_order while refusing it.
 func TestNexusCollection_SkyrimApplyRefusesAndNamesWhatIsMissing(t *testing.T) {
 	game := &domain.Game{ID: "skyrimse", Name: "Skyrim Special Edition", InstallPath: t.TempDir(), ModPath: t.TempDir(),
 		Adapter: "bethesda", SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"}}
@@ -275,9 +289,10 @@ func TestNexusCollection_SkyrimApplyRefusesAndNamesWhatIsMissing(t *testing.T) {
 	for _, f := range refused.Unsupported {
 		names = append(names, f.Feature)
 	}
-	assert.Equal(t, []string{core.CollectionFeatureFomodMultiFile, core.CollectionFeaturePluginOrder}, names)
+	assert.Equal(t, []string{core.CollectionFeaturePluginOrder}, names)
 	assert.NotContains(t, refused.Supported, core.CollectionFeaturePluginOrder, "never supported and refused at once")
 	assert.Contains(t, refused.Supported, core.CollectionFeatureFomod)
+	assert.Contains(t, refused.Supported, core.CollectionFeatureFomodMultiFile)
 	_, err = svc.NewProfileManager().Get(context.Background(), game.ID, plan.Profile.Name)
 	assert.ErrorIs(t, err, domain.ErrProfileNotFound, "nothing was written")
 }

@@ -35,6 +35,8 @@ var supportedCollectionFeatures = map[string]bool{
 	CollectionFeatureExternal:    true,
 	CollectionFeatureFomod:       true,
 	CollectionFeaturePluginOrder: true,
+	// #634: a mod's choices recorded per file (an entry's fomod_files).
+	CollectionFeatureFomodMultiFile: true,
 }
 
 // SupportedCollectionFeatures lists the features this lmm can import, in
@@ -69,8 +71,17 @@ func deriveCollectionRequires(doc *domain.CollectionDocument) []string {
 		features = append(features, CollectionFeatureExternal)
 	}
 	for _, item := range doc.Items {
-		if !item.Ref.Fomod.IsZero() {
+		if !item.Ref.FomodRecord().IsZero() {
 			features = append(features, CollectionFeatureFomod)
+			break
+		}
+	}
+	// #634: choices recorded per file need an importer that replays them
+	// per file; an older lmm, which would read the entry as recording
+	// nothing, refuses the feature instead.
+	for _, item := range doc.Items {
+		if item.Ref.FomodRecord().PerFile() {
+			features = append(features, CollectionFeatureFomodMultiFile)
 			break
 		}
 	}

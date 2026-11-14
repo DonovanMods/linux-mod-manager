@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/fomod"
@@ -13,8 +14,25 @@ import (
 // the mod (answers, keyed by domain.ModKey - an Apply's Options.Fomod),
 // else the choices recorded on its reference (a replay), else none. The
 // file states are the profile's (fileStatesFor).
+//
+// A mod whose files each carry an installer (#634) is answered per file,
+// under domain.FomodFileKey, and records its choices per file
+// (ModReference.FomodFiles): both ride on the input, and acquireFile picks
+// out each file's (fomodInput.forFile).
 func (s *Service) fomodInputFor(ctx context.Context, game *domain.Game, profileName string, ref *domain.ModReference, sourceID, modID string, answers map[string]domain.FomodChoices) fomodInput {
 	in := fomodInput{files: s.fileStatesFor(ctx, game, profileName, domain.ModKey(sourceID, modID))}
+	if ref != nil {
+		in.fileChoices = ref.FomodFiles.Clone()
+	}
+	prefix := domain.FomodFileKey(sourceID, modID, "")
+	for key, a := range answers {
+		if fileID, ok := strings.CutPrefix(key, prefix); ok && fileID != "" && !a.IsZero() {
+			if in.fileAnswers == nil {
+				in.fileAnswers = domain.FomodFiles{}
+			}
+			in.fileAnswers[fileID] = a
+		}
+	}
 	if a, ok := answers[domain.ModKey(sourceID, modID)]; ok && !a.IsZero() {
 		in.choices, in.answered = a, true
 		if ref != nil {
@@ -73,15 +91,14 @@ func (s *Service) rebuildInput(ctx context.Context, game *domain.Game, row *doma
 
 // asRebuild turns a replay input into a rebuild of row's own tree: raw for
 // a row installed before FOMOD support, else answered by the recorded file
-// states first (rebuildInput).
+// states first (rebuildInput) - each file's own, for a mod recorded per
+// file (#634; applied by forFile).
 func asRebuild(in fomodInput, row *domain.InstalledMod) fomodInput {
-	if row.Variant == "" && in.choices.IsZero() {
+	if row.Variant == "" && in.choices.IsZero() && in.fileChoices.IsZero() {
 		in.raw = true
 		return in
 	}
-	if len(in.choices.FileStates) > 0 {
-		in.files = recordedFileStates{recorded: in.choices.FileStates, inner: in.files}
-	}
+	in.rebuild = true
 	return in
 }
 
@@ -108,13 +125,17 @@ func (r recordedFileStates) State(path string) fomod.FileState {
 }
 
 // unifyFomod gives one mod's acquired files the single cache entry its
-// FOMOD installer resolved to (#614): every file of a mod is one entry, so
-// a variant the installer's choices produced is the variant of all of
+// FOMOD installers resolved to (#614): every file of a mod is one entry, so
+// a variant the installers' choices produced is the variant of all of
 // them, and the first file commits UNSEEDED - the resolved tree replaces
 // the entry rather than layering onto whatever an earlier resolve left
-// there. mod.Variant becomes the variant. More than one installer among
-// one mod's files is refused: which one's choices name the entry is not
-// knowable.
+// there. mod.Variant becomes the variant.
+//
+// One installer among the files names the entry by its choices. Several
+// (#634: a collection pinning a mod's main file and a patch, each a FOMOD)
+// name it by their choices together, per file (fomodFilesVariant), and
+// each file's resolved tree is layered over the earlier files' in file
+// order.
 //
 // The outcome is for the flow to record on the ref: nil when nothing was
 // acquired (the ref's choices are kept), plainTree when the files were
@@ -124,19 +145,24 @@ func unifyFomod(mod *domain.Mod, files []*acquiredFile) (*fomodResolved, error) 
 	if len(files) == 0 {
 		return nil, nil
 	}
-	var found *fomodResolved
+	var installers []*acquiredFile
 	for _, a := range files {
-		if a.fomod == nil {
-			continue
+		if a.fomod != nil {
+			installers = append(installers, a)
 		}
-		if found != nil {
-			return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name,
-				Reason: "more than one of its files is a FOMOD installer, which lmm installs only one at a time"}
-		}
-		found = a.fomod
 	}
-	if found == nil {
+	var found *fomodResolved
+	switch len(installers) {
+	case 0:
 		found = plainTree()
+	case 1:
+		found = installers[0].fomod
+	default:
+		perFile := domain.FomodFiles{}
+		for _, a := range installers {
+			perFile[a.file.ID] = a.fomod.choices
+		}
+		found = &fomodResolved{variant: fomodFilesVariant(perFile), files: perFile}
 	}
 	for _, a := range files {
 		a.mod.Variant = found.variant
@@ -166,22 +192,99 @@ const (
 
 // fomodRecord is a profile write's say over a ref's recorded choices.
 type fomodRecord struct {
-	op      fomodOp
-	choices domain.FomodChoices
+	op fomodOp
+	// rec is what fomodSet records: one installer's choices, or one per
+	// file (#634).
+	rec domain.FomodRecord
 }
 
 // fomodRecordOf is the profile write a resolve outcome calls for: keep for
 // none (nothing acquired), clear for a plain tree, set for an installer's
-// choices.
+// choices (or several installers', per file).
 func fomodRecordOf(r *fomodResolved) fomodRecord {
 	switch {
 	case r == nil:
 		return fomodRecord{op: fomodKeep}
-	case r.choices.IsZero():
+	case r.record().IsZero():
 		return fomodRecord{op: fomodClear}
 	default:
-		return fomodRecord{op: fomodSet, choices: r.choices}
+		return fomodRecord{op: fomodSet, rec: r.record()}
 	}
+}
+
+// resolvedFromRef is the outcome a cached entry of ref's recorded choices
+// stands for: their tree, already built (#614, per file #634).
+func resolvedFromRef(ref *domain.ModReference, variant string) *fomodResolved {
+	rec := ref.FomodRecord()
+	if rec.PerFile() {
+		return &fomodResolved{variant: variant, files: rec.Files.Clone()}
+	}
+	return &fomodResolved{variant: variant, choices: rec.Choices}
+}
+
+// modFomodAsks collects the FOMOD questions one mod's files raise while
+// they are acquired (#634), so a mod whose files each carry an installer
+// asks every one in ONE round, each labelled with its file - and a mod
+// with one installer asks exactly as before, keyed by the mod.
+type modFomodAsks struct {
+	asks []fileAsk
+}
+
+// fileAsk is one file's question.
+type fileAsk struct {
+	file *domain.DownloadableFile
+	q    *FomodChoicesRequiredError
+}
+
+// take keeps err when it is a FOMOD question, and reports whether it was:
+// the flow then goes on to the mod's next file rather than stop.
+func (m *modFomodAsks) take(err error, file *domain.DownloadableFile) bool {
+	var q *FomodChoicesRequiredError
+	if !asFomodQuestion(err, &q) {
+		return false
+	}
+	m.asks = append(m.asks, fileAsk{file: file, q: q})
+	return true
+}
+
+// finish is the mod's refusal once every file is acquired: one
+// *FomodChoicesRequiredError over every question, labelled per file when
+// the mod has more than one installer (the asked files and the acquired
+// files that resolved one); ErrNotFomodInstalled for a reconfigure (fx.ask)
+// none of whose files is an installer; else nil.
+func (m *modFomodAsks) finish(mod *domain.Mod, fx fomodInput, acquired []*acquiredFile) error {
+	installers := len(m.asks)
+	for _, a := range acquired {
+		if a.fomod != nil {
+			installers++
+		}
+	}
+	if len(m.asks) == 0 {
+		if fx.ask && fx.softAsk && installers == 0 {
+			return &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name,
+				Reason: "its archive is not a FOMOD installer, so there are no installer choices to change", err: ErrNotFomodInstalled}
+		}
+		return nil
+	}
+	merged := &FomodChoicesRequiredError{}
+	for _, a := range m.asks {
+		for _, q := range a.q.Mods {
+			if installers > 1 {
+				q.FileID, q.FileName = a.file.ID, fileLabel(a.file)
+			}
+			merged.Mods = append(merged.Mods, q)
+		}
+	}
+	return merged
+}
+
+// fileLabel is a file's display name for a question: its name, else its
+// file name.
+func fileLabel(f *domain.DownloadableFile) string {
+	if f.Name != "" {
+		return f.Name
+	}
+	return f.FileName
 }
 
 // modFileHooks are a per-file flow's own events around downloadModFiles'
@@ -217,6 +320,8 @@ func (s *Service) downloadModFiles(ctx context.Context, gameCache *cache.Cache, 
 			a.release()
 		}
 	}()
+	var asks modFomodAsks
+	fx.softAsk = fx.ask
 	for i, f := range files {
 		if hooks.checkCtx {
 			if err := ctx.Err(); err != nil {
@@ -239,9 +344,16 @@ func (s *Service) downloadModFiles(ctx context.Context, gameCache *cache.Cache, 
 			hooks.after(i, f, checksum, err)
 		}
 		if err != nil {
+			if asks.take(err, f) {
+				// #634: the mod's other files may ask too; ask them all.
+				continue
+			}
 			return nil, nil, err
 		}
 		acquired = append(acquired, a)
+	}
+	if err := asks.finish(mod, fx, acquired); err != nil {
+		return nil, nil, err
 	}
 	resolved, err := unifyFomod(mod, acquired)
 	if err != nil {
@@ -269,7 +381,7 @@ func (s *Service) downloadModFiles(ctx context.Context, gameCache *cache.Cache, 
 // the key on a rewrite) keeps its tree rather than ask a question no
 // converge flow can.
 func fomodDrift(ref domain.ModReference, row *domain.InstalledMod) bool {
-	return row != nil && !ref.Fomod.IsZero() && row.Variant != fomodVariant(ref.Fomod)
+	return row != nil && !ref.FomodRecord().IsZero() && row.Variant != refVariant(&ref)
 }
 
 // cmpFomod is an ingest's outcome for the profile write: the installer's

@@ -74,6 +74,11 @@ func fomodVariant(c domain.FomodChoices) string {
 	if c.IsZero() {
 		return ""
 	}
+	return fomodTreeHash(c)[:12]
+}
+
+// fomodTreeHash is fomodVariant's whole hash, in hex.
+func fomodTreeHash(c domain.FomodChoices) string {
 	steps := c.Steps
 	if steps == nil {
 		steps = []fomod.StepChoice{}
@@ -97,7 +102,46 @@ func fomodVariant(c domain.FomodChoices) string {
 			_, _ = io.WriteString(h, "\n"+strconv.Quote(p)+" "+c.FileStates[p])
 		}
 	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// fomodFilesVariantScheme names the per-file variant's inputs (#634).
+const fomodFilesVariantScheme = "lmm-tree-files-1"
+
+// fomodFilesVariant is the cache variant of a mod whose files each carry
+// an installer (#634): ONE entry holds every file's resolved tree, so its
+// variant is a hash over each file's id and its own tree hash, in file-id
+// order. A record of one file is that file's tree, so it is fomodVariant's
+// - the variant a mod with one installer has always had; none is "".
+func fomodFilesVariant(files domain.FomodFiles) string {
+	ids := make([]string, 0, len(files))
+	for id, c := range files {
+		if !c.IsZero() {
+			ids = append(ids, id)
+		}
+	}
+	switch len(ids) {
+	case 0:
+		return ""
+	case 1:
+		return fomodVariant(files[ids[0]])
+	}
+	slices.Sort(ids)
+	h := sha256.New()
+	_, _ = io.WriteString(h, fomodFilesVariantScheme)
+	for _, id := range ids {
+		_, _ = io.WriteString(h, "\n"+strconv.Quote(id)+" "+fomodTreeHash(files[id]))
+	}
 	return hex.EncodeToString(h.Sum(nil))[:12]
+}
+
+// recordVariant is the variant a recorded FomodRecord names: the per-file
+// form's when it has one, else the single form's.
+func recordVariant(r domain.FomodRecord) string {
+	if r.PerFile() {
+		return fomodFilesVariant(r.Files)
+	}
+	return fomodVariant(r.Choices)
 }
 
 // refVariant is the variant a profile reference's recorded choices name.
@@ -105,7 +149,7 @@ func refVariant(ref *domain.ModReference) string {
 	if ref == nil {
 		return ""
 	}
-	return fomodVariant(ref.Fomod)
+	return recordVariant(ref.FomodRecord())
 }
 
 // fomodInput is what the resolve step installs a FOMOD with.
@@ -131,15 +175,127 @@ type fomodInput struct {
 	// raw installs the archive as it is, never running an installer in it:
 	// the rebuild of a row installed before FOMOD support (rebuildInput).
 	raw bool
+
+	// The per-file inputs (#634) of a mod whose files each carry an
+	// installer. acquireFile turns the mod's input into one file's
+	// (forFile), so the resolve step only ever sees the fields above.
+	//
+	// fileChoices are the recorded per-file choices (the ref's
+	// fomod_files); fileAnswers this run's answers keyed by file id
+	// (Options.Fomod under domain.FomodFileKey).
+	fileChoices domain.FomodFiles
+	fileAnswers domain.FomodFiles
+	// askFile narrows ask to one file's installer (a reconfigure of one
+	// file, `lmm mod fomod --file`); "" asks every installer.
+	askFile string
+	// rebuild answers each file's conditions by that file's recorded file
+	// states first (rebuildInput), as asRebuild does for the single form.
+	rebuild bool
+	// softAsk: ask only an archive that IS an installer, and say nothing
+	// of one that is not (a mod's plain file beside its installer); the
+	// flow refuses a reconfigure none of whose files is one
+	// (modFomodAsks.finish).
+	softAsk bool
 }
 
-// fomodResolved is one archive's resolve outcome.
+// forFile is in for ONE file of the mod (#634): this run's answer for the
+// file, else the mod's answer, else the file's recorded choices - or, when
+// the mod records its choices per file and not this file's, none - else the
+// mod's recorded choices. A reconfigure of another file replays this one.
+func (in fomodInput) forFile(fileID string) fomodInput {
+	out := in
+	out.fileChoices, out.fileAnswers, out.askFile = nil, nil, ""
+	switch a, ok := in.fileAnswers[fileID]; {
+	case ok && !a.IsZero():
+		out.choices, out.answered = a, true
+		out.recorded = in.choices
+		if rec, ok := in.fileChoices[fileID]; ok {
+			out.recorded = rec
+		}
+	case in.answered:
+		// The mod's own answers: as before #634.
+	case !in.fileChoices.IsZero():
+		out.choices = in.fileChoices[fileID]
+	}
+	if in.ask && in.askFile != "" && in.askFile != fileID {
+		out.ask = false
+	}
+	if out.answered {
+		out.ask = false
+	}
+	if in.rebuild && len(out.choices.FileStates) > 0 {
+		out.files = recordedFileStates{recorded: out.choices.FileStates, inner: in.files}
+	}
+	return out
+}
+
+// expectedVariant is the variant the mod's input names before anything is
+// acquired: the entry a warm cache holds for it (#614). Answers name the
+// tree they are, and they are canonical only once resolved, so a warm hit
+// on answers is an optimisation, never a requirement.
+func (in fomodInput) expectedVariant() string {
+	return recordVariant(in.expectedRecord())
+}
+
+// expectedRecord is the record the input would install with, before any
+// archive is read: the per-file answers laid over the per-file recording
+// when either is per file, else the mod's own choices.
+func (in fomodInput) expectedRecord() domain.FomodRecord {
+	if in.fileAnswers.IsZero() && (in.answered || in.fileChoices.IsZero()) {
+		return domain.FomodRecord{Choices: in.choices}
+	}
+	files := domain.FomodFiles{}
+	for id, c := range in.fileChoices {
+		files[id] = c
+	}
+	for id, c := range in.fileAnswers {
+		if !c.IsZero() {
+			files[id] = c
+		}
+	}
+	if len(files) == 1 {
+		for _, c := range files {
+			return domain.FomodRecord{Choices: c}
+		}
+	}
+	return domain.FomodRecord{Files: files}
+}
+
+// variantWith is the variant the mod's entry has once ONE of its files
+// resolved to r (a repair of that file): r's own for a mod recorded with
+// one installer, else the per-file record with that file's choices
+// replaced (#634).
+func (in fomodInput) variantWith(fileID string, r *fomodResolved) string {
+	if in.fileChoices.IsZero() {
+		return r.variant
+	}
+	files := domain.FomodFiles{}
+	for id, c := range in.fileChoices {
+		files[id] = c
+	}
+	files[fileID] = r.choices
+	return fomodFilesVariant(files)
+}
+
+// warmResolved is the outcome a warm cache entry for the input stands for:
+// the expected record's tree, already built.
+func (in fomodInput) warmResolved(variant string) *fomodResolved {
+	rec := in.expectedRecord()
+	return &fomodResolved{variant: variant, choices: rec.Choices, files: rec.Files.Clone()}
+}
+
+// fomodResolved is one archive's resolve outcome - or, unified over a
+// mod's files (unifyFomod), the mod's.
 type fomodResolved struct {
-	// variant is the tree's cache variant (fomodVariant of choices).
+	// variant is the tree's cache variant (fomodVariant of choices, or
+	// fomodFilesVariant of files).
 	variant string
 	// choices are the canonical choices made, with the installer's config
 	// hash: what the profile records.
 	choices domain.FomodChoices
+	// files are the per-file choices of a mod whose files each carry an
+	// installer (#634); choices is then zero.
+	files domain.FomodFiles
 	// warnings are what the install assumed or dropped, for the flow's
 	// event sink.
 	warnings []string
@@ -170,7 +326,7 @@ func (s *Service) resolveFomod(mod *domain.Mod, archiveName, tree string, in fom
 		return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: fomodLocateReason(err), err: err}
 	}
 	if inst == nil {
-		if in.ask {
+		if in.ask && !in.softAsk {
 			// A reconfigure asked for an installer this archive does not
 			// have (#615): installing it plain would not be what was asked.
 			return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name,
@@ -615,3 +771,11 @@ func questionGroupIsFree(g FomodQuestionGroup) bool {
 }
 
 func intPtrEq(a, b *int) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
+
+// record is what the outcome records on the profile.
+func (r *fomodResolved) record() domain.FomodRecord {
+	if r == nil {
+		return domain.FomodRecord{}
+	}
+	return domain.FomodRecord{Choices: r.choices, Files: r.files}
+}

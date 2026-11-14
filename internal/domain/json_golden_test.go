@@ -118,6 +118,13 @@ func TestJSONGoldens(t *testing.T) {
 			sampleFomodChoices(),
 		},
 		{
+			// #634: choices recorded per file, keyed by file id, for a mod
+			// whose files each carry an installer.
+			"mod_reference_fomod_files",
+			domain.ModReference{SourceID: "nexusmods", ModID: "43532", Version: "1.0", FileIDs: []string{"100", "101"},
+				FomodFiles: domain.FomodFiles{"100": sampleFomodChoices(), "101": {ConfigSHA256: "cd34", Steps: []fomod.StepChoice{}}}},
+		},
+		{
 			// #592: the source's category id (category) beside its name.
 			"mod_category_name",
 			domain.Mod{ID: "12345", SourceID: "nexusmods", Name: "Sample Mod", Version: "2.0.0", GameID: "skyrimspecialedition",

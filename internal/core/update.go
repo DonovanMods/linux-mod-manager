@@ -1053,6 +1053,9 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// variant, and its choices (with the new installer's config hash) are
 	// recorded.
 	fx := s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod)
+	// #634: a mod recorded per file replays each old file's choices on the
+	// new file that replaces it.
+	fx.fileChoices = remapFomodFiles(fx.fileChoices, mod.FileIDs, filesToDownload, upd.FileIDReplacements)
 	progressFn := func(e Event) {
 		if forwardFetchStep(e, scope, emit) {
 			return
@@ -1195,9 +1198,9 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	// #614: the choices the replaced version was installed with become
 	// previous_fomod, in the same transaction as previous_version, so a
 	// rollback restores them with it.
-	var replacedFomod domain.FomodChoices
+	var replacedFomod domain.FomodRecord
 	if prev := s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID); prev != nil {
-		replacedFomod = prev.Fomod
+		replacedFomod = prev.FomodRecord()
 	}
 	if err := s.applyModUpdate(ctx, mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, newMod.Variant, replacedFomod, downloadedFileIDs); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
@@ -1242,9 +1245,9 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 		installedFomod := replacedFomod
 		switch fomodRec.op {
 		case fomodSet:
-			installedFomod = fomodRec.choices
+			installedFomod = fomodRec.rec
 		case fomodClear:
-			installedFomod = domain.FomodChoices{}
+			installedFomod = domain.FomodRecord{}
 		}
 		if _, rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName, installedFomod); rerr != nil {
 			s.logger().Warn("rollback after failed install also failed", "step", "rollback_mod_version", "err", rerr)
@@ -1284,4 +1287,45 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	}
 
 	return nil
+}
+
+// remapFomodFiles carries a per-file FOMOD record (#634) from the files an
+// update replaces to the files replacing them: a file kept as it was keeps
+// its choices, a replaced one (the update's FileIDReplacements) hands them
+// to its replacement, and otherwise - the source names no replacements -
+// the old files hand them to the new ones in the order both are pinned,
+// when there are as many of each. A recording that maps to no new file is
+// dropped: that file's installer asks. The choices are replayed, so a new
+// installer they no longer fit asks too (FomodReasonStale).
+func remapFomodFiles(rec domain.FomodFiles, oldIDs []string, newFiles []*domain.DownloadableFile, replacements map[string]string) domain.FomodFiles {
+	if rec.IsZero() {
+		return rec
+	}
+	isNew := make(map[string]bool, len(newFiles))
+	for _, f := range newFiles {
+		isNew[f.ID] = true
+	}
+	out := domain.FomodFiles{}
+	for i, old := range oldIDs {
+		c, ok := rec[old]
+		if !ok || c.IsZero() {
+			continue
+		}
+		switch to, replaced := replacements[old]; {
+		case isNew[old]:
+			out[old] = c
+		case replaced && isNew[to]:
+			out[to] = c
+		case len(replacements) == 0 && len(oldIDs) == len(newFiles):
+			out[newFiles[i].ID] = c
+		}
+	}
+	// A recording for a file the row does not list (a hand-edited
+	// profile) still answers that file if the update installs it.
+	for id, c := range rec {
+		if !slices.Contains(oldIDs, id) && isNew[id] {
+			out[id] = c
+		}
+	}
+	return out
 }

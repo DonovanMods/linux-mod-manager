@@ -45,8 +45,10 @@ const (
 	// installer other than FOMOD.
 	CollectionFeatureFomodUnknownInstaller = "fomod_unknown_installer"
 	// CollectionFeatureFomodMultiFile is one mod whose files carry more
-	// than one set of recorded installer choices: lmm installs one
-	// installer per mod.
+	// than one installer: its choices are recorded per file (an entry's
+	// fomod_files, #634), which an lmm collection document requires by
+	// this name so that an older lmm - which installs one installer per
+	// mod - refuses it.
 	CollectionFeatureFomodMultiFile = "fomod_multi_file"
 	// CollectionFeatureModTypeMixed is one mod whose files state different
 	// mod types: lmm routes a mod's files by one type.
@@ -356,10 +358,12 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 			}
 			types[it.ModType] = true
 		}
-		var extra []string
 		if installers > 1 {
-			extra = append(extra, CollectionFeatureFomodMultiFile)
+			// #634: replayed per file, so it no longer blocks; the feature
+			// is named, as fomod is, for the document's requires.
+			raise(CollectionFeatureFomodMultiFile, "")
 		}
+		var extra []string
 		if len(types) > 1 {
 			extra = append(extra, CollectionFeatureModTypeMixed)
 		}
@@ -748,14 +752,36 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 			if r := policyRank(it.UpdatePolicy); r > rank {
 				rank = r
 			}
-			if it.Installer && len(it.choices) > 0 {
-				e.item.Ref.Fomod = domain.FomodChoices{Steps: slices.Clone(it.choices)}
-			} else if it.Installer {
+			if it.Installer && len(it.choices) == 0 {
 				it.Note = "the collection records an installer for this item but no answers, so its installer will ask at install"
 			}
 		}
 		if e == nil {
 			continue
+		}
+		// The recorded answers: one installer's as the entry's fomod, as
+		// before; several files' per file (#634), keyed by file id - every
+		// installer file counted, so one without answers asks for its own
+		// rather than replay another file's.
+		var installers []*convItem
+		for _, it := range e.members {
+			if it.Installer {
+				installers = append(installers, it)
+			}
+		}
+		switch {
+		case len(installers) == 1 && len(installers[0].choices) > 0:
+			e.item.Ref.Fomod = domain.FomodChoices{Steps: slices.Clone(installers[0].choices)}
+		case len(installers) > 1:
+			for _, it := range installers {
+				if len(it.choices) == 0 {
+					continue
+				}
+				if e.item.Ref.FomodFiles == nil {
+					e.item.Ref.FomodFiles = domain.FomodFiles{}
+				}
+				e.item.Ref.FomodFiles[it.FileID] = domain.FomodChoices{Steps: slices.Clone(it.choices)}
+			}
 		}
 		// exact locks the entry; prefer leaves it unlocked; latest leaves
 		// it unlocked AND auto-updating - but only when every file of the
