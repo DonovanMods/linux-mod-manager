@@ -56,7 +56,7 @@ type profileFileStates struct {
 }
 
 // fileStatesOpts adjusts what fileStatesForWith answers from. The zero
-// value is fileStatesFor's: the profile as saved.
+// value answers from the profile as saved.
 type fileStatesOpts struct {
 	// plugins stands in for the profile's plugins: block - an import's
 	// document, which is saved only once every mod is acquired.
@@ -71,14 +71,9 @@ type fileStatesOpts struct {
 	earlier func() []string
 }
 
-// fileStatesFor builds the FileStates for an install of self (a
-// domain.ModKey) into profileName of game. A read that fails degrades to
-// what could be read.
-func (s *Service) fileStatesFor(ctx context.Context, game *domain.Game, profileName, self string) fomod.FileStates {
-	return s.fileStatesForWith(ctx, game, profileName, self, fileStatesOpts{})
-}
-
-// fileStatesForWith is fileStatesFor under opts.
+// fileStatesForWith builds the FileStates for an install of self (a
+// domain.ModKey) into profileName of game, under opts (the zero value:
+// the profile as saved). A read that fails degrades to what could be read.
 func (s *Service) fileStatesForWith(ctx context.Context, game *domain.Game, profileName, self string, opts fileStatesOpts) fomod.FileStates {
 	f := &profileFileStates{seen: map[string]fomod.FileState{}, dirs: map[string][]os.DirEntry{}}
 	if game == nil {

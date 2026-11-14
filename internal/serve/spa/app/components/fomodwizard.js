@@ -52,7 +52,7 @@ function reasonNote(mod) {
   if (mod.reason === "reconfigure")
     return "Your current choices are selected. Change what you want installed.";
   if (mod.reason === "archive_mismatch") {
-    // #609: a collection's choices replay only against the archive they
+    // Issue 609: a collection's choices replay only against the archive they
     // were recorded against.
     const sums = mod.archive_mismatch
       ? ` (The collection records md5 ${mod.archive_mismatch.expected_md5}; this archive's is ${mod.archive_mismatch.actual_md5}.)`

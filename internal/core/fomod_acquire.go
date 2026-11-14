@@ -15,7 +15,7 @@ import (
 // with in profileName of game (#614): the answers this run was given for
 // the mod (answers, keyed by domain.ModKey - an Apply's Options.Fomod),
 // else the choices recorded on its reference (a replay), else none. The
-// file states are the profile's (fileStatesFor).
+// file states are the profile's (fileStatesForWith).
 //
 // A mod whose files each carry an installer (#634) is answered per file,
 // under domain.FomodFileKey, and records its choices per file
