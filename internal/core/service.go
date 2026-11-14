@@ -206,6 +206,13 @@ type Service struct {
 	// forgets them.
 	recipePinsMu sync.Mutex
 	recipePins   map[string]*recipePin
+	// prefixRoots remembers, per game, the prefix withPrefixRoot last
+	// resolved (#636), so GetGame and ListGames do not scan every Steam
+	// library on every call. An entry is used only while it is fresh, the
+	// game's prefix settings are the ones it was resolved for, and its
+	// user directory still checks out (prefixRootMemo).
+	prefixRootsMu sync.Mutex
+	prefixRoots   map[string]prefixRootMemo
 	// opLockPath is ServiceConfig.OpLockPath: the advisory lock file
 	// beginOp takes around every mutation, or "" for no cross-process lock.
 	opLockPath string
@@ -1984,14 +1991,14 @@ func (s *Service) GetGame(gameID string) (*domain.Game, error) {
 	if !ok {
 		return nil, domain.ErrGameNotFound
 	}
-	return s.withPrefixRoot(copyGame(game)), nil
+	return s.withPrefixRoot(context.Background(), copyGame(game)), nil
 }
 
 // ListGames returns all configured games, each as GetGame returns it.
 func (s *Service) ListGames() []*domain.Game {
 	games := s.gamesSnapshot()
 	for _, g := range games {
-		s.withPrefixRoot(g)
+		s.withPrefixRoot(context.Background(), g)
 	}
 	return games
 }

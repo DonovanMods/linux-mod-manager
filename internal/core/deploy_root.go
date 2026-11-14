@@ -220,6 +220,9 @@ func deployItemsForType(a adapter.GameAdapter, game *domain.Game, modType string
 			out[i].path = p
 		}
 	}
+	if err := refusePrefixCollisions(game, out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 

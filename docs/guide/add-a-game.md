@@ -383,12 +383,15 @@ one of the game's own (a replacer), still goes into `Data/`. A mod's
 
 lmm finds the prefix as described in
 [Tell lmm where the game's prefix is](#tell-lmm-where-the-games-prefix-is).
-If it can't, the deploy is refused and says what to set; lmm never puts
-the pak anywhere else instead. Wherever lmm lists a deployed file, one in
+If it can't, lmm refuses to deploy anything for the game (and to remove
+paks it already put there) and says what to set; it never puts a pak
+anywhere else instead. Two paks of one mod that would land on the same
+name in `Mods` are refused, naming both. Wherever lmm lists a deployed file, one in
 the prefix is shown with the prefix named in front:
 `<prefix>/AppData/Local/Larian Studios/Baldur's Gate 3/Mods/MyMod.pak`, and
 the web UI's health view marks it with a **Prefix** badge. A pak of your
-own with the same name is kept first and put back when the mod goes, and
+own with the same name (in any letter case) is kept first and put back
+when the mod goes, and
 lmm only writes inside the prefix's user folder: a folder on the way that
 is a link to somewhere else is refused.
 

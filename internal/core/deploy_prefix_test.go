@@ -2,7 +2,6 @@ package core_test
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,23 +161,11 @@ func TestPrefixDeploy_UnresolvedPrefixIsRefused(t *testing.T) {
 	seedNamedInstalledMod(t, svc, game, "src", "pak", "MyMod", "1.0", true, bg3PakMod)
 	seedProfileWithMod(t, svc, "bg3", "default", "src", "pak", "1.0")
 
-	res, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
 	var refused *core.PrefixUnresolvedError
-	var said []string
-	if err != nil {
-		said = append(said, err.Error())
-		if errors.As(err, &refused) {
-			said = append(said, "typed")
-		}
-	}
-	if res != nil {
-		for _, sk := range res.Skipped {
-			said = append(said, sk.Reason)
-		}
-	}
-	joined := strings.Join(said, "\n")
-	assert.Contains(t, joined, "prefix", "the refusal names the prefix")
-	assert.Contains(t, joined, "lmm game edit bg3 --prefix", "and how to set it")
+	require.ErrorAs(t, err, &refused, "the refusal is typed")
+	assert.Equal(t, "bg3", refused.GameID)
+	assert.Contains(t, err.Error(), "lmm game edit bg3 --prefix", "and says how to set it")
 	assertAbsent(t, filepath.Join(game.ModPath, "MyMod-1.2"), "nothing falls back to Data")
 }
 
@@ -260,7 +247,9 @@ func TestPrefixDeploy_RefusesAFolderThatLeavesThroughALink(t *testing.T) {
 
 // A BG3 game deployed under the generic adapter has its paks in Data/; the
 // switch to baldurs-gate-3 warns that they move, and the next deploy moves
-// them into the prefix with no reinstall.
+// them into the prefix with no reinstall - and back again after a switch
+// away. The pak is wrapped in a folder, as most archives ship it, so its
+// deployed path in the prefix is not its cache member's.
 func TestPrefixDeploy_SwitchingToTheAdapterMovesPaksOutOfData(t *testing.T) {
 	svc, _ := newOriginalsService(t)
 	prefix := newPrefixDir(t)
@@ -270,37 +259,260 @@ func TestPrefixDeploy_SwitchingToTheAdapterMovesPaksOutOfData(t *testing.T) {
 		LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true, Prefix: prefix, PrefixUser: "steamuser"}
 	require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
 	require.NoError(t, svc.SaveGame(context.Background(), game))
-	seedNamedInstalledMod(t, svc, game, "src", "pak", "MyMod", "1.0", true, map[string][]byte{"MyMod.pak": []byte("pak")})
+	seedNamedInstalledMod(t, svc, game, "src", "pak", "MyMod", "1.0", true, bg3PakMod)
 	seedProfileWithMod(t, svc, "bg3", "default", "src", "pak", "1.0")
 	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
-	require.FileExists(t, filepath.Join(game.ModPath, "MyMod.pak"))
+	inData := filepath.Join(game.ModPath, "MyMod-1.2", "MyMod.pak")
+	require.FileExists(t, inData)
 
 	warning, err := svc.AdapterSwitchWarning(context.Background(), game, modtypes.BaldursGate3ID)
 	require.NoError(t, err)
 	assert.Contains(t, warning, "prefix", "the switch says the paks move")
 
-	game.Adapter = modtypes.BaldursGate3ID
-	require.NoError(t, svc.SaveGame(context.Background(), game))
-	switched, err := svc.GetGame("bg3")
-	require.NoError(t, err)
+	switched := switchBG3Adapter(t, svc, game, modtypes.BaldursGate3ID)
 	_, err = svc.DeployProfile(context.Background(), switched, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
-	assertAbsent(t, filepath.Join(game.ModPath, "MyMod.pak"), "the pak leaves Data")
-	assert.Equal(t, "pak", readFileString(t, filepath.Join(modsDir(prefix), "MyMod.pak")))
+	assertAbsent(t, inData, "the pak leaves Data")
+	inPrefix := filepath.Join(modsDir(prefix), "MyMod.pak")
+	assert.Equal(t, "the mod's pak", readFileString(t, inPrefix))
 
 	// And back: a game switched away still has its prefix resolved while
 	// files are recorded there, so the next deploy takes them out of it.
-	game.Adapter = ""
-	require.NoError(t, svc.SaveGame(context.Background(), game))
-	back, err := svc.GetGame("bg3")
-	require.NoError(t, err)
+	back := switchBG3Adapter(t, svc, game, "")
 	require.NotNil(t, back.PrefixRoot, "the recorded prefix files keep the prefix resolved")
 	_, err = svc.DeployProfile(context.Background(), back, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
-	assertAbsent(t, filepath.Join(modsDir(prefix), "MyMod.pak"), "the pak leaves the prefix")
-	assert.Equal(t, "pak", readFileString(t, filepath.Join(game.ModPath, "MyMod.pak")))
+	assertAbsent(t, inPrefix, "the pak leaves the prefix")
+	assert.Equal(t, "the mod's pak", readFileString(t, inData))
 	gone, err := svc.GetGame("bg3")
 	require.NoError(t, err)
 	assert.Nil(t, gone.PrefixRoot, "with nothing left there, a generic game resolves no prefix")
+}
+
+// switchBG3Adapter saves game with adapter to and returns it as GetGame
+// hands it out.
+func switchBG3Adapter(t *testing.T, svc *core.Service, game *domain.Game, to string) *domain.Game {
+	t.Helper()
+	game.Adapter = to
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	got, err := svc.GetGame(game.ID)
+	require.NoError(t, err)
+	return got
+}
+
+// deployWrappedPakInPrefix deploys bg3PakMod on the baldurs-gate-3 adapter,
+// over a pak of the user's own of the same name, and returns the game and
+// the pak's path in the prefix.
+func deployWrappedPakInPrefix(t *testing.T, svc *core.Service, prefix string) (*domain.Game, string) {
+	t.Helper()
+	game := newBG3Game(t, svc, domain.LinkSymlink, prefix)
+	require.NoError(t, os.MkdirAll(modsDir(prefix), 0o755))
+	pak := filepath.Join(modsDir(prefix), "MyMod.pak")
+	require.NoError(t, os.WriteFile(pak, []byte("the user's own pak"), 0o644))
+	seedNamedInstalledMod(t, svc, game, "src", "pak", "MyMod", "1.0", true, bg3PakMod)
+	seedProfileWithMod(t, svc, "bg3", "default", "src", "pak", "1.0")
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, "the mod's pak", readFileString(t, pak))
+	return game, pak
+}
+
+// Review blocker: after a switch away from baldurs-gate-3 the wrapped pak's
+// recorded prefix path names no cache member by its own path. An uninstall
+// still removes it - the record is lmm's own - and puts the user's pak back.
+func TestPrefixDeploy_UninstallAfterASwitchAwayRemovesTheWrappedPak(t *testing.T) {
+	svc, _ := newOriginalsService(t)
+	prefix := newPrefixDir(t)
+	game, pak := deployWrappedPakInPrefix(t, svc, prefix)
+	away := switchBG3Adapter(t, svc, game, "")
+
+	_, err := svc.UninstallMod(context.Background(), away, "default", "src", "pak", core.UninstallOptions{KeepCache: true})
+	require.NoError(t, err)
+	assert.Equal(t, "the user's own pak", readFileString(t, pak), "lmm's pak is removed and the user's put back")
+}
+
+// The same after a switch away, by a purge.
+func TestPrefixDeploy_PurgeAfterASwitchAwayRemovesTheWrappedPak(t *testing.T) {
+	svc, _ := newOriginalsService(t)
+	prefix := newPrefixDir(t)
+	game, pak := deployWrappedPakInPrefix(t, svc, prefix)
+	away := switchBG3Adapter(t, svc, game, "")
+
+	plan, err := svc.PlanPurge(context.Background(), away, "default", core.PurgeOptions{})
+	require.NoError(t, err)
+	_, err = svc.ApplyPurge(context.Background(), away, plan, core.PurgeOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "the user's own pak", readFileString(t, pak), "lmm's pak is removed and the user's put back")
+}
+
+// A mod whose type is later stated as bg3-loose deploys whole into Data/:
+// the next deploy takes its wrapped pak out of the prefix.
+func TestPrefixDeploy_ATypeChangeMovesTheWrappedPakOut(t *testing.T) {
+	svc, _ := newOriginalsService(t)
+	prefix := newPrefixDir(t)
+	game, pak := deployWrappedPakInPrefix(t, svc, prefix)
+	row, err := svc.GetInstalledMod(context.Background(), "src", "pak", game.ID, "default")
+	require.NoError(t, err)
+	row.ModType = "bg3-loose"
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), row))
+
+	_, err = svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "the user's own pak", readFileString(t, pak), "lmm's pak leaves the prefix and the user's is back")
+	assert.Equal(t, "the mod's pak", readFileString(t, filepath.Join(game.ModPath, "MyMod-1.2", "MyMod.pak")))
+}
+
+// Review should-fix 2: disabling a mod whose pak is recorded in a prefix
+// that no longer resolves is refused - not reported as done with the pak
+// left behind - and nothing about the mod changes.
+func TestPrefixDeploy_DisableIsRefusedWhileThePrefixIsGone(t *testing.T) {
+	svc, _ := newOriginalsService(t)
+	prefix := newPrefixDir(t)
+	game := newBG3Game(t, svc, domain.LinkSymlink, prefix)
+	seedNamedInstalledMod(t, svc, game, "src", "pak", "MyMod", "1.0", true, bg3PakMod)
+	seedProfileWithMod(t, svc, "bg3", "default", "src", "pak", "1.0")
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, os.Rename(prefix, prefix+".away"))
+	gone, err := svc.GetGame("bg3")
+	require.NoError(t, err)
+	_, err = svc.DisableMod(context.Background(), gone, "default", "src", "pak")
+	var refused *core.PrefixUnresolvedError
+	require.ErrorAs(t, err, &refused)
+	row, err := svc.GetInstalledMod(context.Background(), "src", "pak", "bg3", "default")
+	require.NoError(t, err)
+	assert.True(t, row.Enabled, "the mod stays enabled")
+	assert.True(t, row.Deployed, "and deployed")
+}
+
+// Review should-fix 3: a snapshot restore planned while the prefix resolved
+// is refused at Apply once it no longer does - its purge pass must not mark
+// the mod undeployed with its pak still in the prefix - and nothing changes.
+func TestPrefixDeploy_SnapshotRestoreIsRefusedWhileThePrefixIsGone(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newOriginalsService(t)
+	prefix := newPrefixDir(t)
+	game, pak := deployWrappedPakInPrefix(t, svc, prefix)
+	_, err := svc.CreateSnapshot(ctx, game, "default", "before")
+	require.NoError(t, err)
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "before")
+	require.NoError(t, err)
+
+	require.NoError(t, os.Rename(prefix, prefix+".away"))
+	gone, err := svc.GetGame("bg3")
+	require.NoError(t, err)
+	_, err = svc.PlanSnapshotRestore(ctx, gone, "before")
+	var refused *core.PrefixUnresolvedError
+	require.ErrorAs(t, err, &refused, "the plan refuses")
+	_, err = svc.ApplySnapshotRestore(ctx, gone, plan, core.SnapshotRestoreOptions{}, nil)
+	require.ErrorAs(t, err, &refused, "and so does an Apply planned before")
+
+	require.NoError(t, os.Rename(prefix+".away", prefix))
+	row, err := svc.GetInstalledMod(ctx, "src", "pak", "bg3", "default")
+	require.NoError(t, err)
+	assert.True(t, row.Deployed, "the mod is still deployed")
+	assert.Equal(t, "the mod's pak", readFileString(t, pak), "and its pak is where it was")
+}
+
+// The same for a profile switch and an install: refused at plan time.
+func TestPrefixDeploy_SwitchAndInstallPlansAreRefusedWhileThePrefixIsGone(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newOriginalsService(t)
+	prefix := newPrefixDir(t)
+	game, _ := deployWrappedPakInPrefix(t, svc, prefix)
+	_, err := svc.NewProfileManager().Create(ctx, game.ID, "other")
+	require.NoError(t, err)
+	require.NoError(t, os.Rename(prefix, prefix+".away"))
+	gone, err := svc.GetGame("bg3")
+	require.NoError(t, err)
+
+	var refused *core.PrefixUnresolvedError
+	_, err = svc.PlanProfileSwitch(ctx, gone, "other")
+	require.ErrorAs(t, err, &refused, "switch")
+	_, err = svc.PlanInstallMany(ctx, gone, "default", []*domain.Mod{{ID: "other", SourceID: "src", Name: "Other", GameID: "bg3"}}, false)
+	require.ErrorAs(t, err, &refused, "install")
+}
+
+// Review should-fix 4: two paks of one mod that would land at one path in
+// the flat Mods folder (one folder name apart, or only the letter case)
+// refuse the deploy, naming both members, and nothing is placed.
+func TestPrefixDeploy_TwoPaksForOnePathAreRefused(t *testing.T) {
+	svc, _ := newOriginalsService(t)
+	prefix := newPrefixDir(t)
+	game := newBG3Game(t, svc, domain.LinkSymlink, prefix)
+	seedNamedInstalledMod(t, svc, game, "src", "pak", "MyMod", "1.0", true, map[string][]byte{
+		"Option A/MyMod.pak": []byte("a"),
+		"Option B/mymod.pak": []byte("b"),
+	})
+	seedProfileWithMod(t, svc, "bg3", "default", "src", "pak", "1.0")
+
+	res, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	var said []string
+	if err != nil {
+		said = append(said, err.Error())
+	}
+	if res != nil {
+		for _, sk := range res.Skipped {
+			said = append(said, sk.Reason)
+		}
+	}
+	joined := strings.Join(said, "\n")
+	assert.Contains(t, joined, "Option A/MyMod.pak")
+	assert.Contains(t, joined, "Option B/mymod.pak")
+	entries, _ := os.ReadDir(modsDir(prefix))
+	assert.Empty(t, entries, "neither pak is placed")
+}
+
+// Wine matches the FILE name case-insensitively too: a user's mymod.pak is
+// the game's MyMod.pak, so the mod's pak replaces it (kept first) rather
+// than landing beside it, and a purge puts the user's back.
+func TestPrefixDeploy_AUsersPakDifferingOnlyInCaseIsTheSameFile(t *testing.T) {
+	svc, dataDir := newOriginalsService(t)
+	prefix := newPrefixDir(t)
+	game := newBG3Game(t, svc, domain.LinkSymlink, prefix)
+	require.NoError(t, os.MkdirAll(modsDir(prefix), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(modsDir(prefix), "mymod.pak"), []byte("the user's own pak"), 0o644))
+	seedNamedInstalledMod(t, svc, game, "src", "pak", "MyMod", "1.0", true, bg3PakMod)
+	seedProfileWithMod(t, svc, "bg3", "default", "src", "pak", "1.0")
+
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	entries, err := os.ReadDir(modsDir(prefix))
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "one pak, not two names for one file")
+	assert.Equal(t, "the mod's pak", readFileString(t, filepath.Join(modsDir(prefix), entries[0].Name())))
+	require.Len(t, readOriginalsManifest(t, dataDir, "bg3"), 1, "the user's pak was kept first")
+
+	plan, err := svc.PlanPurge(context.Background(), game, "default", core.PurgeOptions{})
+	require.NoError(t, err)
+	_, err = svc.ApplyPurge(context.Background(), game, plan, core.PurgeOptions{}, nil)
+	require.NoError(t, err)
+	entries, err = os.ReadDir(modsDir(prefix))
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "the user's own pak", readFileString(t, filepath.Join(modsDir(prefix), entries[0].Name())))
+}
+
+// Review nit: a game switched away from baldurs-gate-3 whose paks are still
+// recorded in a prefix that no longer resolves gets verify's
+// prefix_unresolved warning, which says why those rows are not checked.
+func TestPrefixDeploy_VerifySaysThePrefixIsUnresolvedWhileRowsAreRecorded(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newOriginalsService(t)
+	prefix := newPrefixDir(t)
+	game, _ := deployWrappedPakInPrefix(t, svc, prefix)
+	switchBG3Adapter(t, svc, game, "")
+	require.NoError(t, os.Rename(prefix, prefix+".away"))
+	gone, err := svc.GetGame("bg3")
+	require.NoError(t, err)
+
+	vr, err := svc.VerifyReport(ctx, gone, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	var statuses []string
+	for _, f := range vr.Result.Findings {
+		statuses = append(statuses, f.Status)
+	}
+	assert.Contains(t, statuses, core.VerifyStatusPrefixUnresolved)
 }

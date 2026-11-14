@@ -34,10 +34,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/wineprefix"
 )
 
 // PrefixUnresolvedError refuses a flow that has to touch files in a game's
@@ -68,31 +70,71 @@ func (e *PrefixUnresolvedError) Error() string {
 // withPrefixRoot sets g.PrefixRoot - g a copy the caller owns - for a game
 // whose adapter places files in the prefix or that has files recorded
 // there, when the prefix resolves; it is nil otherwise.
-func (s *Service) withPrefixRoot(g *domain.Game) *domain.Game {
+func (s *Service) withPrefixRoot(ctx context.Context, g *domain.Game) *domain.Game {
 	if g == nil {
 		return g
 	}
 	g.PrefixRoot = nil
-	if !s.usesPrefixRoot(g) {
+	if !s.usesPrefixRoot(ctx, g) {
 		return g
 	}
-	if st := s.ResolvePrefix(g); st.Resolved {
-		g.PrefixRoot = &domain.ResolvedPrefix{Path: st.Path, User: st.User}
-	}
+	g.PrefixRoot = s.resolvedPrefixRoot(g)
 	return g
+}
+
+// prefixRootMemoTTL bounds how long a remembered prefix stands in for a
+// fresh ResolvePrefix: a Steam compatdata prefix is the most recently used
+// of several, which can change without any setting changing.
+const prefixRootMemoTTL = time.Minute
+
+// prefixRootMemo is one game's remembered prefix: what it was resolved for
+// (the game's prefix: and prefix_user: settings), and when.
+type prefixRootMemo struct {
+	prefix, user string
+	resolved     domain.ResolvedPrefix
+	at           time.Time
+}
+
+// resolvedPrefixRoot is g's resolved prefix, or nil: a remembered one while
+// it is fresh, was resolved for g's current settings, and its user
+// directory still passes wineprefix.CheckUserDir (a few stats, where a
+// fresh ResolvePrefix probes every Steam library); otherwise ResolvePrefix,
+// remembered when it resolves.
+func (s *Service) resolvedPrefixRoot(g *domain.Game) *domain.ResolvedPrefix {
+	s.prefixRootsMu.Lock()
+	memo, ok := s.prefixRoots[g.ID]
+	s.prefixRootsMu.Unlock()
+	if ok && memo.prefix == g.Prefix && memo.user == g.PrefixUser && time.Since(memo.at) < prefixRootMemoTTL &&
+		wineprefix.IsPrefix(memo.resolved.Path) && wineprefix.CheckUserDir(memo.resolved.Path, memo.resolved.User) == nil {
+		resolved := memo.resolved
+		return &resolved
+	}
+	st := s.ResolvePrefix(g)
+	s.prefixRootsMu.Lock()
+	defer s.prefixRootsMu.Unlock()
+	if !st.Resolved {
+		delete(s.prefixRoots, g.ID)
+		return nil
+	}
+	if s.prefixRoots == nil {
+		s.prefixRoots = map[string]prefixRootMemo{}
+	}
+	resolved := domain.ResolvedPrefix{Path: st.Path, User: st.User}
+	s.prefixRoots[g.ID] = prefixRootMemo{prefix: g.Prefix, user: g.PrefixUser, resolved: resolved, at: time.Now()}
+	return &resolved
 }
 
 // usesPrefixRoot reports whether g's files may live under the prefix: its
 // adapter places files there, or a deploy recorded some (a game switched
 // away from such an adapter still has them to remove).
-func (s *Service) usesPrefixRoot(g *domain.Game) bool {
+func (s *Service) usesPrefixRoot(ctx context.Context, g *domain.Game) bool {
 	if a, err := s.AdapterFor(g); err == nil && adapter.PlacesInPrefix(a) {
 		return true
 	}
 	if s.db == nil {
 		return false
 	}
-	has, err := s.db.HasDeployedFilesUnder(context.Background(), g.ID, domain.RootPrefix)
+	has, err := s.db.HasDeployedFilesUnder(ctx, g.ID, domain.RootPrefix)
 	return err == nil && has
 }
 
@@ -136,6 +178,41 @@ func (s *Service) refusePrefixRecords(ctx context.Context, game *domain.Game) er
 	return nil
 }
 
+// refuseUndeployable is refuseModPathMoved plus the prefix half of the
+// adapter gate (refuseUnresolvedPrefix), for the plans that ask the
+// mod_path question directly (#451 F3): so a plan refuses what its Apply
+// would, before it reads anything else.
+func (s *Service) refuseUndeployable(ctx context.Context, gameID string) error {
+	if err := s.refuseModPathMoved(ctx, gameID); err != nil {
+		return err
+	}
+	stored, ok := s.game(gameID)
+	if !ok {
+		return nil
+	}
+	return s.refuseUnresolvedPrefix(ctx, stored)
+}
+
+// refuseUnresolvedPrefix is the refusal every deploying flow makes, at plan
+// time and in its Apply again (checkAdapterPreconditions, which every
+// deploying plan's snapshot and every single-step deploy reaches): a game
+// whose adapter places files in its prefix, or that has files recorded
+// there, needs the prefix resolved. What a flow will place there is not
+// always known at plan time (an install's archive is not downloaded yet),
+// and an Apply that found out half-way would leave the profile
+// half-deployed. The prefix is resolved afresh, never taken from the
+// caller's copy of the game.
+func (s *Service) refuseUnresolvedPrefix(ctx context.Context, stored *domain.Game) error {
+	game := s.withPrefixRoot(ctx, copyGame(stored))
+	if game.PrefixRoot != nil {
+		return nil
+	}
+	if a, err := s.AdapterFor(game); err == nil && adapter.PlacesInPrefix(a) {
+		return s.prefixUnresolved(game)
+	}
+	return s.refusePrefixRecords(ctx, game)
+}
+
 // refuseModPrefixRecords is Installer.refusePrefixRecorded for a Service
 // flow over one mod, with ResolvePrefix's own Problem in the refusal.
 func (s *Service) refuseModPrefixRecords(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) error {
@@ -163,6 +240,46 @@ func refusePrefixItems(game *domain.Game, items []deployItem) error {
 	return nil
 }
 
+// PrefixPathCollisionError refuses a mod two of whose files the game's
+// adapter places at one path in the prefix (#636): Baldur's Gate 3 keeps
+// .pak mods flat in its Mods folder, so "A/Mod.pak" and "B/mod.pak" are one
+// file there (Wine matches names case-insensitively). Deploying both would
+// silently keep one; lmm refuses instead, naming both members.
+type PrefixPathCollisionError struct {
+	GameID  string
+	Path    string
+	Members []string
+}
+
+// Error names the shared path and the members that would both land there.
+func (e *PrefixPathCollisionError) Error() string {
+	return fmt.Sprintf("the mod's files %s would all be deployed to %s in game %s's prefix, where only one of them can be; "+
+		"remove all but one from the archive (or pick the one you want with a different file) and install it again",
+		strings.Join(e.Members, " and "), domain.DisplayDeployPath(domain.RootPrefix, e.Path), e.GameID)
+}
+
+// refusePrefixCollisions refuses items in which two members are placed at
+// one prefix path, compared case-insensitively.
+func refusePrefixCollisions(game *domain.Game, items []deployItem) error {
+	seen := map[string]int{}
+	for i, it := range items {
+		if !it.path.IsPrefix() {
+			continue
+		}
+		key := strings.ToLower(filepath.ToSlash(it.path.Rel))
+		if j, dup := seen[key]; dup {
+			id := ""
+			if game != nil {
+				id = game.ID
+			}
+			return &PrefixPathCollisionError{GameID: id, Path: filepath.ToSlash(items[j].path.Rel),
+				Members: []string{filepath.ToSlash(items[j].member), filepath.ToSlash(it.member)}}
+		}
+		seen[key] = i
+	}
+	return nil
+}
+
 // prefixItem is the deployed path of member, which a's RootRouter sends to
 // the prefix: where its PrefixPlacer places it, under the user directory.
 // An adapter that cannot say (adapter.PrefixPath) is refused: the file is
@@ -180,19 +297,17 @@ func prefixItem(a adapter.GameAdapter, game *domain.Game, member string) (domain
 }
 
 // prefixTarget is where rel, a path relative to the prefix user directory
-// dir, is on disk: each directory on the way spelled as it already exists
-// there, matched case-insensitively as Wine matches it (an exact match
-// first, else the first in byte order that folds to it) - so the path every
-// stat and hash reads is the one prefixPath writes through. A directory not
-// there yet keeps rel's spelling, as does the file's own name.
+// dir, is on disk: each component on the way - the file's own name too -
+// spelled as it already exists there, matched case-insensitively as Wine
+// matches it (an exact match first, else the first in byte order that
+// folds to it). So the path every stat, hash, capture and removal reads is
+// the one prefixPath writes through, and a user's mymod.pak is the game's
+// MyMod.pak: kept before the mod's replaces it, never a second file beside
+// it. A component not there yet keeps rel's spelling.
 func prefixTarget(dir, rel string) string {
 	comps := strings.Split(filepath.ToSlash(rel), "/")
 	at := dir
 	for i, comp := range comps {
-		if i == len(comps)-1 {
-			at = filepath.Join(at, comp)
-			break
-		}
 		if _, err := os.Lstat(filepath.Join(at, comp)); err == nil {
 			at = filepath.Join(at, comp)
 			continue

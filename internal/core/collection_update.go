@@ -406,7 +406,7 @@ func updateOrigin(profile *domain.Profile) (collectionOrigin, error) {
 // *CollectionUpdateMismatchError; one serving the profile's own version
 // plans UpToDate.
 func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, req CollectionUpdateRequest) (*CollectionUpdatePlan, error) {
-	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+	if err := s.refuseUndeployable(ctx, game.ID); err != nil {
 		return nil, err
 	}
 	pm := s.NewProfileManager()
@@ -425,7 +425,7 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
-	snapshot, err := s.snapshotOf(game.ID, installed)
+	snapshot, err := s.snapshotOf(ctx, game.ID, installed)
 	if err != nil {
 		return nil, err
 	}

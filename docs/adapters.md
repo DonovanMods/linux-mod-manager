@@ -519,14 +519,22 @@ compatdata) onto the copy of the game `GetGame`/`ListGames` hand out
 files there or that has files recorded there. Every write, removal and
 restore of an original there re-checks the user directory
 (`wineprefix.CheckUserDir`), then walks beneath it one folder at a time with
-no link followed, matching folder names case-insensitively as Wine does
-(#616's `prefixPath`); a user's own file of the same name is captured under
-the originals store's `prefix` root and put back when lmm's file goes; lmm
-never removes a folder there. A prefix that does not resolve is never
-replaced by another directory: a deploy into it, and any flow over files
-recorded there (uninstall, purge, update, converge), is refused with
-`*core.PrefixUnresolvedError`, whose message says what to set (409 in the
-web API). `deployed_files.root`'s CHECK gains `prefix` (schema v28); wire
+no link followed, matching names case-insensitively as Wine does (#616's
+`prefixPath`; the file's own name too, so a user's `mymod.pak` is the game's
+`MyMod.pak`); a user's own file of the same name is captured under the
+originals store's `prefix` root and put back when lmm's file goes; lmm
+never removes a folder there. Two members of one mod placed at one path
+(compared case-insensitively) refuse the mod with
+`*core.PrefixPathCollisionError`, naming both. A prefix that does not
+resolve is never replaced by another directory: for a game whose adapter
+places files there, or that has files recorded there, every deploying
+flow is refused at plan time and in its Apply - the check rides on the
+adapter gate (`checkAdapterPreconditions`), so the two removals stay
+exempt - and an uninstall, disable or purge of files recorded there is
+refused too, with `*core.PrefixUnresolvedError`, whose message says what
+to set (409 in the web API). A record of a prefix file is lmm's own and is
+always kept in a removal's set, even when its path names no cache member
+any more (after a switch away from the adapter, or a stated type change). `deployed_files.root`'s CHECK gains `prefix` (schema v28); wire
 documents carry `"root": "prefix"`, and frontends show the file as
 `<prefix>/AppData/...`.
 

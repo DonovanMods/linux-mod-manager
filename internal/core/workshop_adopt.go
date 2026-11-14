@@ -258,7 +258,7 @@ func (s *Service) PlanWorkshopAdopt(ctx context.Context, game *domain.Game, prof
 		}
 	}
 
-	snapshot, err := s.snapshotOf(game.ID, installed)
+	snapshot, err := s.snapshotOf(ctx, game.ID, installed)
 	if err != nil {
 		return nil, err
 	}

@@ -17,33 +17,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   since the game ignores a pak in a subfolder), instead of into `Data/`,
   where the game never reads it. Loose files, and a pak named like one of
   the game's own (a replacer), still go into `Data/`; a mod's `info.json`
-  is no longer deployed. lmm finds the prefix as it does for a Bethesda
-  game's `Plugins.txt` (`prefix:`/`prefix_user:`, else Steam's compatdata);
-  when it can't, the deploy is refused with a message naming what to set,
-  and so is any uninstall, purge or update of files already deployed
+  is no longer deployed, and a mod with two paks that would land on one
+  name in `Mods` is refused, naming both. lmm finds the prefix as it does
+  for a Bethesda game's `Plugins.txt` (`prefix:`/`prefix_user:`, else
+  Steam's compatdata); when it can't, every flow that would deploy for the
+  game is refused at plan time with a message naming what to set, and so
+  is any uninstall, disable, purge or update of files already deployed
   there - lmm never puts the pak anywhere else, and never forgets one it
-  cannot find. Every flow handles the new place: `lmm deploy`, `lmm
-install`, `lmm update` and rollbacks, `lmm uninstall`, `lmm mod
-disable`/`enable`, `lmm purge`, `lmm profile switch`/`apply`, `lmm
-verify` (and `--fix`), `lmm conflicts`, `lmm mod files` and snapshots,
-  in the terminal and the web UI alike. A pak of your own with the same
-  name is kept first and put back when the mod's goes; lmm writes only
-  inside the prefix's user folder, refuses a folder on the way that is a
-  link elsewhere, matches folder names case-insensitively as Wine does,
-  and never removes a folder there. Wherever lmm lists a deployed file, one
-  in the prefix is shown as `<prefix>/AppData/...`, and the web UI's Health
-  card marks such a row with a **Prefix** badge; in `--json` and the web
-  API, a document that reports a deployed file as an object gains the root
-  value `"prefix"` (a mod_path file still has no `root` field, so every
-  existing document is unchanged), and a refused plan answers 409. The
-  game also loads a pak only once its `modsettings.lsx` enables it, which
-  lmm doesn't write yet: after a deploy that placed one, both frontends say
+  cannot find. Every flow handles the new place: deploy, install, update
+  and rollback, uninstall, disable and enable, purge, profile switch and
+  apply, verify (and `--fix`), conflicts, mod files and snapshots, in the
+  terminal and the web UI alike. A pak of your own with the same name
+  (whatever its letter case, as Wine matches names) is kept first and put
+  back when the mod's goes; lmm writes only inside the prefix's user
+  folder, refuses a folder on the way that is a link elsewhere, and never
+  removes a folder there. Wherever lmm lists a deployed file, one in the
+  prefix is shown as `<prefix>/AppData/...`, and the web UI's Health card
+  marks such a row with a **Prefix** badge; in `--json` and the web API, a
+  document that reports a deployed file as an object gains the root value
+  `"prefix"` (a mod_path file still has no `root` field, so every existing
+  document is unchanged), and a refused plan answers 409. The game also
+  loads a pak only once its `modsettings.lsx` enables it, which lmm
+  doesn't write yet: after a deploy that placed one, both frontends say
   so. The adapter also knows the `bg3-replacer` mod type a NexusMods
   collection can state (deployed into `Data/`). Switching a game to
   `baldurs-gate-3` now warns that its paks move, and the next deploy moves
-  them out of `Data/` with no reinstall. The database moves to schema
-  version 28 (`deployed_files` accepts the new root), so an older lmm
-  refuses to open it, as for every schema change.
+  them out of `Data/` with no reinstall; switching away moves them back.
+  The database moves to schema version 28 (`deployed_files` accepts the
+  new root), so an older lmm refuses to open it, as for every schema
+  change.
 
 - **The web UI installs several files of a mod at once (#637).** The
   install preview's file picker is now a checkbox per file instead of a

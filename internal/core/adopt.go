@@ -327,7 +327,7 @@ func (s *Service) PlanAdopt(ctx context.Context, game *domain.Game, profileName 
 			plan.Duplicates = append(plan.Duplicates, r.FileName)
 		}
 	}
-	if plan.snapshot, err = s.snapshotOf(game.ID, installedMods); err != nil {
+	if plan.snapshot, err = s.snapshotOf(ctx, game.ID, installedMods); err != nil {
 		return nil, err
 	}
 

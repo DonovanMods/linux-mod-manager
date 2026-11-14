@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// prefixTarget spells each existing folder as it is on disk (an exact
-// match first), and keeps rel's spelling from the first folder that is not
-// there, and for the file's own name.
+// prefixTarget spells each existing component - the file's own name too -
+// as it is on disk (an exact match first), and keeps rel's spelling from
+// the first component that is not there.
 func TestPrefixTarget_FoldsExistingFolders(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "AppData", "local", "Game"), 0o755))
@@ -22,6 +22,8 @@ func TestPrefixTarget_FoldsExistingFolders(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "AppData", "Local"), 0o755))
 	assert.Equal(t, filepath.Join(dir, "AppData", "Local", "x"), prefixTarget(dir, "AppData/Local/x"), "an exact match wins")
 	assert.Equal(t, filepath.Join(dir, "a.pak"), prefixTarget(dir, "a.pak"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "AppData", "Local", "mymod.pak"), nil, 0o644))
+	assert.Equal(t, filepath.Join(dir, "AppData", "Local", "mymod.pak"), prefixTarget(dir, "AppData/Local/MyMod.pak"))
 }
 
 func TestPrefixOfUserDir_InvertsUserDir(t *testing.T) {

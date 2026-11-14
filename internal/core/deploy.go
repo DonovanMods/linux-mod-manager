@@ -356,15 +356,12 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
-	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+	// #451 F3 and #636: a moved mod_path, or a prefix the game deploys
+	// into that does not resolve.
+	if err := s.refuseUndeployable(ctx, game.ID); err != nil {
 		return nil, err
 	}
-	// #636: a deploy converges what is recorded in the prefix; it cannot
-	// while the prefix does not resolve.
-	if err := s.refusePrefixRecords(ctx, game); err != nil {
-		return nil, err
-	}
-	snapshot, err := s.snapshotOf(game.ID, installedMods)
+	snapshot, err := s.snapshotOf(ctx, game.ID, installedMods)
 	if err != nil {
 		return nil, err
 	}

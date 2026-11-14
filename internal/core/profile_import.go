@@ -262,7 +262,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 // collection update - and nil allows none. Any other is refused.
 func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte, allowBundled func(domain.ModReference) bool) (*ImportPlan, error) {
 	// #451 F3: a dry run must not promise what its own Apply refuses.
-	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+	if err := s.refuseUndeployable(ctx, game.ID); err != nil {
 		return nil, err
 	}
 	pm := s.NewProfileManager()
@@ -298,7 +298,7 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 	// against, so ApplyImport can refuse it once profile.Name's has moved on
 	// - snapshotOf reuses installedMods rather than re-querying (see its own
 	// doc comment).
-	snapshot, err := s.snapshotOf(game.ID, installedMods)
+	snapshot, err := s.snapshotOf(ctx, game.ID, installedMods)
 	if err != nil {
 		return nil, err
 	}

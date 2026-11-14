@@ -370,7 +370,7 @@ type fillCandidate struct {
 // a profile with no source collection behind it is ErrProfileNotFillable.
 // Nothing is written but a re-fetched recipe's cache entry.
 func (s *Service) PlanProfileFill(ctx context.Context, game *domain.Game, req ProfileFillRequest) (*ProfileFillPlan, error) {
-	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+	if err := s.refuseUndeployable(ctx, game.ID); err != nil {
 		return nil, err
 	}
 	if req.Folder != "" {
@@ -407,7 +407,7 @@ func (s *Service) PlanProfileFill(ctx context.Context, game *domain.Game, req Pr
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := s.snapshotOf(game.ID, rows)
+	snapshot, err := s.snapshotOf(ctx, game.ID, rows)
 	if err != nil {
 		return nil, err
 	}

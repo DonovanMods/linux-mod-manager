@@ -329,7 +329,7 @@ type snapshotRestorePartialDetails struct {
 // BEFORE the purge rather than a surprise afterwards.
 func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, name string) (*SnapshotRestorePlan, error) {
 	// #451 F3: a dry run must not promise what its own Apply refuses.
-	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+	if err := s.refuseUndeployable(ctx, game.ID); err != nil {
 		return nil, err
 	}
 	doc, err := s.LoadSnapshot(ctx, game.ID, name)
@@ -353,7 +353,7 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 	// external row appearing or vanishing absolutely is a move.
 	toPurge, external := partitionExternal(installed)
 
-	snapshot, err := s.snapshotOf(game.ID, installed)
+	snapshot, err := s.snapshotOf(ctx, game.ID, installed)
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +389,7 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 		// The freshness precondition for the active profile too, over the
 		// FULL set for the same reason the snapshot profile's is (an
 		// external row appearing or vanishing is a move).
-		if plan.activeSnapshot, err = s.snapshotOf(game.ID, activeMods); err != nil {
+		if plan.activeSnapshot, err = s.snapshotOf(ctx, game.ID, activeMods); err != nil {
 			return nil, err
 		}
 	}

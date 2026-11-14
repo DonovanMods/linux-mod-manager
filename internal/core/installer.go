@@ -1838,7 +1838,13 @@ func (i *Installer) anotherModHolds(ctx context.Context, game *domain.Game, mod 
 // deployed_files rows record for mod of a listed member under ANOTHER path
 // (#629): the file a deploy made before the game's adapter routed it
 // differently is where that deploy put it, and a removal must find it
-// there. A record of a member the listing does not name adds nothing.
+// there. A record of a member the listing does not name adds nothing -
+// except a prefix record (#636), which is always kept: its path is where
+// the adapter placed a member (a wrapped pak's folder dropped), so it need
+// not name one, and it is lmm's own record of a file it put in the user's
+// prefix. Dropping it would forget the file for good. It is paired with
+// the listed member of the same file name (case-insensitively), else
+// stands for itself (recordedItem).
 func (i *Installer) withRecordedRoots(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, listed []deployItem) []deployItem {
 	if i.db == nil {
 		return listed
@@ -1849,13 +1855,27 @@ func (i *Installer) withRecordedRoots(ctx context.Context, game *domain.Game, mo
 	}
 	have := make(map[domain.DeployPath]bool, len(listed))
 	named := make(map[string]bool, len(listed))
+	byBase := make(map[string]string, len(listed))
 	for _, it := range listed {
 		have[it.path] = true
 		named[filepath.ToSlash(it.member)] = true
+		base := strings.ToLower(filepath.Base(it.member))
+		if _, dup := byBase[base]; !dup {
+			byBase[base] = it.member
+		}
 	}
 	out := listed
 	for _, r := range rows {
 		if have[r] {
+			continue
+		}
+		if r.IsPrefix() {
+			item := recordedItem(r)
+			if member, ok := byBase[strings.ToLower(filepath.Base(r.Rel))]; ok {
+				item.member = member
+			}
+			out = append(out, item)
+			have[r] = true
 			continue
 		}
 		for _, member := range cachedMembersOf(game, r) {

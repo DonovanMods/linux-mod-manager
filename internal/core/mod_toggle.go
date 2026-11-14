@@ -275,6 +275,13 @@ func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName
 		return nil, err
 	}
 
+	// #636: refused up front, before anything is marked - an undeploy
+	// failure below is only a note, and the mod's files recorded in an
+	// unresolved prefix would stay there under a "disabled" flag.
+	if err := s.refuseModPrefixRecords(ctx, game, &mod.Mod, profileName); err != nil {
+		return nil, err
+	}
+
 	live, recordedOnly, err := s.profileScope(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, err
