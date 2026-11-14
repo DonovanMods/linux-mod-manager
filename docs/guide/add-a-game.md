@@ -358,8 +358,9 @@ out. They tell lmm where the mod types a NexusMods collection gives its
 mods are deployed (see
 [Importing a NexusMods collection](profiles.md#importing-a-nexusmods-collection)),
 so such a collection can be imported. A game you added before keeps its
-adapter; Mission Control and `lmm verify` suggest the new one, and in the
-terminal:
+adapter; Mission Control and `lmm verify` suggest the new one. Switching
+needs no reinstall: mods you already installed stay exactly where they are.
+In the terminal:
 
 ```bash
 lmm game edit witcher3 --adapter witcher3

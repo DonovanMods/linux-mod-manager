@@ -138,3 +138,21 @@ func TestOpen_WarnsAboutALoaderBlockTheAdapterIgnores(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, warn.String())
 }
+
+// #635 review: exactly the adapters that lay out and route an untyped mod as
+// the identity does claim adapter.LayoutNeutral, which is what lets core
+// switch a game onto one without a reinstall warning. Each claim is proven
+// by its own package's tests (identity_test.go; modtypes TestNoPerFileRules).
+func TestRegisterAdapters_LayoutNeutralAdapters(t *testing.T) {
+	svc := newTestService(t)
+	RegisterAdapters(svc)
+	var neutral []string
+	for _, name := range svc.ListAdapters() {
+		a, err := svc.AdapterFor(&domain.Game{ID: "g", InstallPath: "/g", ModPath: "/g", Adapter: name})
+		require.NoError(t, err, name)
+		if adapter.IsLayoutNeutral(a) {
+			neutral = append(neutral, name)
+		}
+	}
+	assert.ElementsMatch(t, []string{adapter.GenericID, "witcher3", "baldurs-gate-3"}, neutral)
+}

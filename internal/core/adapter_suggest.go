@@ -76,6 +76,12 @@ func (s *Service) AdapterSwitchWarning(ctx context.Context, game *domain.Game, t
 	if s.AdapterName(&after) == s.AdapterName(game) {
 		return "", nil
 	}
+	// Between two layout-neutral adapters (#635: the identity and the
+	// mod-type adapters) no installed mod is laid out or deployed any
+	// differently: there is nothing to reinstall and nothing that moves.
+	if s.layoutNeutral(game) && s.layoutNeutral(&after) {
+		return "", nil
+	}
 	n, err := s.db.CountGameMods(ctx, game.ID)
 	if err != nil || n == 0 {
 		return "", err
@@ -85,6 +91,13 @@ func (s *Service) AdapterSwitchWarning(ctx context.Context, game *domain.Game, t
 		_, routesRoots = a.(adapter.RootRouter)
 	}
 	return adapterSwitchNote(n, s.AdapterName(&after), routesRoots), nil
+}
+
+// layoutNeutral reports whether game's adapter resolves and is
+// adapter.LayoutNeutral.
+func (s *Service) layoutNeutral(game *domain.Game) bool {
+	a, err := s.AdapterFor(game)
+	return err == nil && adapter.IsLayoutNeutral(a)
 }
 
 // adapterSwitchNote is AdapterSwitchWarning's sentence for n installed mods.
@@ -111,6 +124,15 @@ func (r *verifyRun) adapterSuggestionPass() {
 	}
 	note := fmt.Sprintf("lmm's game catalog sets this game up with `adapter: %s`, and it uses %s; "+
 		"the %s adapter knows how this game lays out and loads its mods", name, adapter.GenericID, name)
+	suggested := *r.game
+	suggested.Adapter = name
+	if r.svc.layoutNeutral(&suggested) {
+		// #635: an adapter that changes nothing for an untyped mod says what
+		// it is for instead.
+		note = fmt.Sprintf("lmm's game catalog sets this game up with `adapter: %s`, and it uses %s; "+
+			"the %s adapter knows where this game's mods of a stated type (as a NexusMods collection records them) deploy, "+
+			"and lays out and deploys every other mod as it is now", name, adapter.GenericID, name)
+	}
 	if warning, err := r.svc.AdapterSwitchWarning(r.ctx, r.game, name); err == nil && warning != "" {
 		note += ". " + warning
 	}

@@ -9,7 +9,8 @@ import (
 )
 
 // Each adapter knows exactly the types its table lists (#635), and reports
-// every other one as unknown - which core refuses rather than deploying it
+// every other one as unknown - the default type "" included, which no table
+// lists: core routes an untyped mod by RouteRoots, never by RootForModType - - which core refuses rather than deploying it
 // under the mod_path.
 func TestRootForModType(t *testing.T) {
 	cases := []struct {
@@ -18,10 +19,9 @@ func TestRootForModType(t *testing.T) {
 		not  []string
 	}{
 		{Witcher3(), map[string]adapter.DeployRoot{
-			"":           adapter.RootModPath,
 			"witcher3tl": adapter.RootInstallPath,
 			"dinput":     adapter.RootInstallPath,
-		}, []string{"witcher3dlc", "witcher3menumodroot", "witcher3menumoddocuments", "w3modlimitpatcher", "bg3-loose", "starfield-data-folder"}},
+		}, []string{"", "witcher3dlc", "witcher3menumodroot", "witcher3menumoddocuments", "w3modlimitpatcher", "bg3-loose", "starfield-data-folder"}},
 		{BaldursGate3(), map[string]adapter.DeployRoot{
 			"bg3-loose": adapter.RootModPath,
 		}, []string{"", "dinput", "bg3-replacer", "bg3-bg3se", "witcher3tl"}},

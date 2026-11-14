@@ -32,10 +32,15 @@ import (
 //	[VXG]  github.com/Nexus-Mods/vortex-games at 18bbee9.
 //	[VX]   github.com/Nexus-Mods/Vortex at 88dd2f6.
 //
+// Neither table lists the default type (""): core never asks for it, since
+// an untyped mod routes file by file (RouteRoots, which sends every file to
+// the mod_path here). What Vortex does with "" is recorded below only to
+// say whether the catalog's mod_path matches it.
+//
 // The Witcher 3 ([VXG] game-witcher3):
 //
 //	""          queryModPath 'Mods' (index.ts:141): the game's Mods/
-//	            folder, which is the catalog's mod_path.
+//	            folder, which is the catalog's mod_path. Not listed.
 //	witcher3tl  registered with getTLPath (index.ts:168), the game's
 //	            discovery path (util.ts:66-72): the game directory.
 //	dinput      [VX] extensions/modtype-dinput/src/index.ts:55-63, 91:
@@ -53,11 +58,10 @@ import (
 //	           game directory's Data/ (util.ts:17-25), which is the
 //	           catalog's mod_path.
 //
-// The default type ("") is NOT listed for Baldur's Gate 3: Vortex deploys it
-// to Documents/Larian Studios/Baldur's Gate 3/Mods (queryModPath modsPath,
-// index.tsx:236, util.ts:31-33), which is not the catalog's mod_path, so the
-// adapter does not claim to know it. Core never asks for "" (an untyped mod
-// routes file by file), so nothing is refused for it.
+// Vortex deploys Baldur's Gate 3's default type ("") to %LOCALAPPDATA%/Larian
+// Studios/Baldur's Gate 3/Mods (queryModPath modsPath, index.tsx:236;
+// util.ts:27-33, whose documentsPath is Vortex's localAppData path), which is
+// not the catalog's mod_path: a known mismatch, tracked separately.
 
 // ID values are the games.yaml spellings and registry keys.
 const (
@@ -76,14 +80,14 @@ type Adapter struct {
 
 // Compile-time proof of the capabilities the package documents.
 var (
-	_ adapter.GameAdapter = (*Adapter)(nil)
-	_ adapter.RootRouter  = (*Adapter)(nil)
+	_ adapter.GameAdapter   = (*Adapter)(nil)
+	_ adapter.RootRouter    = (*Adapter)(nil)
+	_ adapter.LayoutNeutral = (*Adapter)(nil)
 )
 
 // Witcher3 returns The Witcher 3's adapter.
 func Witcher3() *Adapter {
 	return &Adapter{id: Witcher3ID, label: "The Witcher 3 (Vortex mod types)", types: map[string]adapter.DeployRoot{
-		"":           adapter.RootModPath,
 		"witcher3tl": adapter.RootInstallPath,
 		"dinput":     adapter.RootInstallPath,
 	}}
@@ -110,6 +114,11 @@ func (a *Adapter) Label() string { return a.label }
 func (*Adapter) NormalizeArchive(adapter.NormalizeRequest) (adapter.Layout, error) {
 	return adapter.Layout{}, nil
 }
+
+// LayoutNeutral marks the adapter as adapter.LayoutNeutral: an untyped mod
+// is laid out and deployed exactly as the identity does it (NormalizeArchive
+// and RouteRoots below; TestNoPerFileRules).
+func (*Adapter) LayoutNeutral() {}
 
 // RouteRoots has no per-file rules: every file of an untyped mod deploys
 // under the mod_path.

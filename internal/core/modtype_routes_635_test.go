@@ -172,3 +172,34 @@ func TestDeployModType_BG3Loose(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, plan.Collection.Unsupported)
 }
+
+// #635 review: a Witcher 3 dinput mod's bin/x64/dinput8.dll lands over the
+// game's own file at the game root; the stock file is kept first, and purge
+// puts it back.
+func TestDeployModType_Witcher3DinputOverAStockFileIsRestoredByPurge(t *testing.T) {
+	svc, _ := newOriginalsService(t)
+	game := typedGameUnder(t, svc, modtypes.Witcher3(), "mods", "witcher3")
+	stock := filepath.Join(game.InstallPath, "bin", "x64", "dinput8.dll")
+	require.NoError(t, os.MkdirAll(filepath.Dir(stock), 0o755))
+	require.NoError(t, os.WriteFile(stock, []byte("the game's own dinput8"), 0o644))
+	seedTypedMod(t, svc, game, "online", "dinput", map[string][]byte{
+		"bin/x64/dinput8.dll":                 []byte("the mod's dinput8"),
+		"mods/modOnline/content/blob0.bundle": []byte("bundle"),
+	})
+
+	res, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, res.Skipped)
+	assert.Equal(t, "the mod's dinput8", readFileString(t, stock), "the mod's dinput8.dll is at the game root")
+	assert.Equal(t, "bundle", readFileString(t, filepath.Join(game.ModPath, "modOnline", "content", "blob0.bundle")))
+
+	plan, err := svc.PlanPurge(context.Background(), game, "default", core.PurgeOptions{})
+	require.NoError(t, err)
+	_, err = svc.ApplyPurge(context.Background(), game, plan, core.PurgeOptions{}, nil)
+	require.NoError(t, err)
+	info, err := os.Lstat(stock)
+	require.NoError(t, err, "purge puts the game's own dinput8.dll back")
+	assert.True(t, info.Mode().IsRegular())
+	assert.Equal(t, "the game's own dinput8", readFileString(t, stock))
+	assertAbsent(t, filepath.Join(game.ModPath, "modOnline"), "the mod_path content goes too")
+}

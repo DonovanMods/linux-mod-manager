@@ -164,6 +164,7 @@ adapter.
 | `LaunchAdvisor` | `LaunchAdvice(g, mods, previous) Advice` | `d2r` | shows the advice as a warning after a deploy (a switch's and an apply's too) and on a launch |
 | `PluginOrderer` | `PluginRules(g) PluginSpec` | `bethesda` | the plugin-list sync after every deploying flow (`syncMergedPak`), verify's plugin tier, and purge's restore (#616) |
 | `RootRouter` | `RouteRoots(g, files) []DeployRoot`, `RootForModType(g, type) (DeployRoot, bool)` | `bethesda`, `witcher3`, `baldurs-gate-3` | deploys a root-routed file under `install_path`, and every removal, verify, purge and conflict report finds it there (#629) |
+| `LayoutNeutral` | `LayoutNeutral()` (a marker) | `generic-files`, `witcher3`, `baldurs-gate-3` | treats a switch between two layout-neutral adapters as moving nothing: no reinstall warning on `lmm game edit --adapter`, the game page or verify's `adapter_suggested` note (#635) |
 | `PrefixConsumer` | `UsesPrefix(g) bool` | `bethesda` | reports a prefix it cannot resolve as a `prefix_unresolved` finding (`lmm verify`, `lmm game show`) |
 
 ### FileRouter
@@ -492,10 +493,15 @@ github.com/Nexus-Mods/Vortex at 88dd2f6.
 
 | Game | Type | Root | Source |
 | --- | --- | --- | --- |
-| The Witcher 3 | `""` | `mod_path` (the game's `Mods/`) | `[VXG]` `game-witcher3/index.ts:141` (`queryModPath: () => 'Mods'`) |
 | The Witcher 3 | `witcher3tl` | `install_path` | `[VXG]` `game-witcher3/index.ts:168` (`registerModType('witcher3tl', …, getTLPath)`), `util.ts:66-72` (`getTLPath`: the discovery path) |
 | The Witcher 3 | `dinput` | `install_path` | `[VX]` `extensions/modtype-dinput/src/index.ts:55-63, 91` (every game but Factorio and Microsoft Flight Simulator) |
 | Baldur's Gate 3 | `bg3-loose` | `mod_path` (the game's `Data/`) | `[VXG]` `game-baldursgate3/index.tsx:289-292` (`registerModType(MOD_TYPE_LOOSE, …, getGameDataPath)`), `util.ts:17-25`, `common.ts:85` |
+
+Neither table lists the default type (`""`): core never asks for it, since
+an untyped mod routes file by file, and these adapters send every untyped
+file to the `mod_path`. For The Witcher 3 that matches Vortex, whose default
+type deploys to the game's `Mods/` (`[VXG]` `game-witcher3/index.ts:141`),
+the catalog's `mod_path`.
 
 A `witcher3tl` mod is laid out from the game directory: its `mods/` folder
 is the `mod_path` (matched case-insensitively, as `Data/` is), its `bin/`
@@ -511,12 +517,24 @@ Left out, so a collection that needs them is still refused:
 | `SMAPI` (Stardew Valley) | not a route at all: SMAPI's Vortex installer unpacks the platform's `install.dat` from inside the download and generates `StardewModdingAPI.deps.json`, which no deploy of the downloaded archive can do. The collections converter lists it as a prerequisite step instead (its page and SMAPI's own installer, `internal/core/collection_prerequisites.go`) | `[VXG]` `game-stardewvalley/index.ts:445-450, 462-538, 754`; SMAPI's `src/SMAPI.Installer/assets/README.txt` (github.com/Pathoschild/SMAPI at e5b8bf3) |
 
 **Baldur's Gate 3's default type.** Vortex deploys a BG3 mod of the default
-type (`.pak` files) to `Documents/Larian Studios/Baldur's Gate 3/Mods`
-(`[VXG]` `game-baldursgate3/index.tsx:236`, `util.ts:31-33`), but lmm's
-catalog `mod_path` for the game is `Data`. The adapter therefore does not
-claim `""`, and this story leaves the catalog as it is; a collection's
-untyped `.pak` mods still deploy under `Data/`, where the game does not
-read them (tracked as a separate issue).
+type (`.pak` files) to `%LOCALAPPDATA%/Larian Studios/Baldur's Gate 3/Mods`
+(`[VXG]` `game-baldursgate3/index.tsx:236`, `util.ts:27-33`: its
+`documentsPath()` is Vortex's `localAppData` path, despite the name), but
+lmm's catalog `mod_path` for the game is `Data`. This story leaves the
+catalog as it is; a collection's untyped `.pak` mods still deploy under
+`Data/`, where the game does not read them (tracked as a separate issue).
+
+**Wrapper folders.** These adapters lay archives out as packaged. Vortex's
+installers strip a folder that wraps the content: `witcher3tl`'s
+(`installTL`) drops whatever comes before the archive's first `mods/`
+folder (`[VXG]` `game-witcher3/installers.ts:195-215`), and the installer
+behind most `bg3-loose` mods (`installReplacer`) lays files out relative to
+the folder holding `Public/` or `Generated/`, or to a `Data/` folder
+(`[VXG]` `game-baldursgate3/installers.ts:221-257`). An archive packed
+inside such a wrapper (`MyMod-1.2/mods/modMyMod/...`,
+`MyMod/Data/Public/...`) deploys with the wrapper in its path, where the
+game does not find it. Known limitation; most archives are packed without
+one.
 
 ## Composition with the rest of `games.yaml`
 
