@@ -28,7 +28,8 @@
 import { deployedKey, deployedPath } from "../deploypath.js";
 import { html, useEffect, useMemo, useRef, useState } from "../render.js";
 import { Modal } from "./modal.js";
-import { conflictsForOrder, reorderProfile } from "../api.js";
+import { conflictsForOrder, profilePlugins, reorderProfile } from "../api.js";
+import { PluginsTab } from "./pluginstab.js";
 import { modKey } from "../modrows.js";
 import { staleWinnerNote } from "../conflicts.js";
 
@@ -166,6 +167,82 @@ function ReorderModalBody({ modal, state, actions }) {
     actions.closeModal();
   }
 
+  // The Plugins tab (issue 617): plugin order, the second axis beside mod
+  // order, for a game whose adapter manages a plugin list. The modal owns
+  // the report: it reads it to know whether there is one - no report (the
+  // route's 204) is a game with no plugin list, and no tab - and keeps
+  // each edit's answer (PluginsTab's onReport), so switching to Mods and
+  // back shows the order as edited. A read that FAILS is not "no plugin
+  // list": the tab is still offered, with the error and a retry.
+  const [tab, setTab] = useState("mods");
+  const [plugins, setPlugins] = useState({
+    status: "loading",
+    report: null,
+    error: null,
+  });
+  const pluginsSeq = useRef(0);
+  function loadPlugins() {
+    pluginsSeq.current += 1;
+    const seq = pluginsSeq.current;
+    setPlugins((p) => ({
+      ...p,
+      status: p.status === "error" ? "retrying" : p.status,
+    }));
+    profilePlugins(modal.profileName, {
+      game: state.route.game,
+      profile: modal.profileName,
+    }).then(
+      (report) => {
+        if (pluginsSeq.current !== seq) return;
+        setPlugins(
+          report
+            ? { status: "ready", report, error: null }
+            : { status: "none", report: null, error: null },
+        );
+      },
+      (err) => {
+        if (pluginsSeq.current !== seq) return;
+        setPlugins({
+          status: "error",
+          report: null,
+          error: err?.message ?? String(err),
+        });
+      },
+    );
+  }
+  useEffect(() => {
+    loadPlugins();
+    return () => {
+      pluginsSeq.current += 1;
+    };
+  }, [modal.profileName]);
+  const pluginsOffered =
+    plugins.status === "ready" ||
+    plugins.status === "error" ||
+    plugins.status === "retrying";
+
+  // The tab strip is the WAI-ARIA tabs pattern, as Setup's (setup.js
+  // onTabKeyDown): ArrowLeft/ArrowRight move to and activate the other
+  // tab (wrapping), Home/End the first/last, and a roving tabindex makes
+  // only the active tab a Tab stop.
+  const TABS = [
+    ["mods", "Mods"],
+    ["plugins", "Plugins"],
+  ];
+  const tabRefs = useRef([]);
+  function onTabKeyDown(e, index) {
+    let target = -1;
+    if (e.key === "ArrowRight") target = (index + 1) % TABS.length;
+    else if (e.key === "ArrowLeft")
+      target = (index - 1 + TABS.length) % TABS.length;
+    else if (e.key === "Home") target = 0;
+    else if (e.key === "End") target = TABS.length - 1;
+    else return;
+    e.preventDefault();
+    setTab(TABS[target][0]);
+    tabRefs.current[target]?.focus();
+  }
+
   function move(key, delta) {
     setOrder((prev) => {
       const i = prev.indexOf(key);
@@ -268,173 +345,249 @@ function ReorderModalBody({ modal, state, actions }) {
       kind="reorder"
       title="Reorder load order"
       onClose=${saving ? () => {} : close}
-      footer=${html`
-        <button
-          type="button"
-          class="button"
-          disabled=${saving}
-          onClick=${close}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="button button--primary"
-          data-action="save-order"
-          disabled=${saving}
-          onClick=${save}
-        >
-          ${saving ? "Saving…" : "Save order"}
-        </button>
-      `}
-    >
-      <p class="plan__note">
-        Order below is lowest priority first: a mod further down this list
-        wins a file conflict against one above it.
-      </p>
-      ${saveError && html`<p class="modal__error">${saveError}</p>`}
-
-      <ul class="reorder-list" data-testid="reorder-list">
-        ${order.map((key, i) => {
-          const mod = modsByKey.get(key);
-          if (!mod) return null;
-          return html`
-            <li
-              key=${key}
-              class="reorder-row ${dragKey === key ? "reorder-row--dragging" : ""}"
-              data-mod=${key}
-              tabindex="-1"
-              onMouseEnter=${() => onRowMouseEnter(key)}
-            >
-              <span
-                class="reorder-row__handle"
-                aria-label=${`Drag to reorder ${mod.name}`}
-                onMouseDown=${(e) => onRowMouseDown(key, e)}
+      footer=${
+        tab === "plugins"
+          ? html`<button type="button" class="button" onClick=${close}>
+              Close
+            </button>`
+          : html`
+              <button
+                type="button"
+                class="button"
+                disabled=${saving}
+                onClick=${close}
               >
-                ⠿
-              </span>
-              <span class="reorder-row__position mono">${i + 1}</span>
-              <span class="reorder-row__name">${mod.name}</span>
-              <span class="reorder-row__controls">
-                <button
-                  type="button"
-                  class="button button--small"
-                  aria-label=${`Move ${mod.name} up`}
-                  disabled=${saving || i === 0}
-                  onClick=${() => move(key, -1)}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  class="button button--small"
-                  aria-label=${`Move ${mod.name} down`}
-                  disabled=${saving || i === order.length - 1}
-                  onClick=${() => move(key, 1)}
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  class="button button--small"
-                  aria-label=${`Move ${mod.name} to lowest priority`}
-                  disabled=${saving || i === 0}
-                  onClick=${() => moveToEdge(key, "first")}
-                >
-                  First
-                </button>
-                <button
-                  type="button"
-                  class="button button--small"
-                  aria-label=${`Move ${mod.name} to highest priority`}
-                  disabled=${saving || i === order.length - 1}
-                  onClick=${() => moveToEdge(key, "last")}
-                >
-                  Last
-                </button>
-              </span>
-            </li>
-          `;
-        })}
-      </ul>
-
-      ${
-        dragKey &&
-        ghostAt &&
-        html`
-          <div
-            class="reorder-ghost"
-            data-testid="reorder-ghost"
-            aria-hidden="true"
-            style=${`left: ${ghostAt.x}px; top: ${ghostAt.y}px;`}
-          >
-            <span class="reorder-row__handle">⠿</span
-            >${" "}${modsByKey.get(dragKey)?.name}
-          </div>
-        `
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="button button--primary"
+                data-action="save-order"
+                disabled=${saving}
+                onClick=${save}
+              >
+                ${saving ? "Saving…" : "Save order"}
+              </button>
+            `
       }
+    >
+      ${
+        pluginsOffered &&
+        html`<div class="reorder-tabs" role="tablist" aria-label="Load order">
+          ${TABS.map(
+            ([key, label], i) =>
+              html`<button
+                type="button"
+                role="tab"
+                id=${`reorder-tab-${key}`}
+                ref=${(el) => {
+                  tabRefs.current[i] = el;
+                }}
+                aria-selected=${tab === key ? "true" : "false"}
+                tabindex=${tab === key ? "0" : "-1"}
+                onKeyDown=${(e) => onTabKeyDown(e, i)}
+                aria-controls="reorder-panel"
+                data-tab=${key}
+                data-label=${label}
+                class="button button--tab"
+                disabled=${saving}
+                onClick=${() => setTab(key)}
+              >
+                ${label}
+              </button>`,
+          )}
+        </div>`
+      }
+      ${
+        tab === "plugins" && pluginsOffered
+          ? html`<div
+              id="reorder-panel"
+              role="tabpanel"
+              aria-labelledby="reorder-tab-plugins"
+            >
+              ${
+                plugins.report
+                  ? html`<${PluginsTab}
+                      profileName=${modal.profileName}
+                      context=${{
+                        game: state.route.game,
+                        profile: modal.profileName,
+                      }}
+                      report=${plugins.report}
+                      onReport=${(report) =>
+                        setPlugins({ status: "ready", report, error: null })}
+                    />`
+                  : html`<div data-testid="plugins-load-error">
+                      <p class="modal__error">
+                        Couldn't read the plugin order: ${plugins.error}
+                      </p>
+                      <button
+                        type="button"
+                        class="button"
+                        data-action="plugins-retry"
+                        disabled=${plugins.status === "retrying"}
+                        onClick=${loadPlugins}
+                      >
+                        ${plugins.status === "retrying" ? "Retrying…" : "Retry"}
+                      </button>
+                    </div>`
+              }
+            </div>`
+          : html`<div
+              id="reorder-panel"
+              data-plugins=${plugins.status}
+              role=${pluginsOffered ? "tabpanel" : null}
+              aria-labelledby=${pluginsOffered ? "reorder-tab-mods" : null}
+            >
+              <p class="plan__note">
+                Order below is lowest priority first: a mod further down this
+                list wins a file conflict against one above it.
+              </p>
+              ${saveError && html`<p class="modal__error">${saveError}</p>`}
 
-      <section class="plan__section">
-        <h3 class="plan__heading">
-          Conflict preview
-          ${preview.status === "loading" ? " — computing…" : ""}
-        </h3>
-        ${
-          preview.status === "error"
-            ? html`<p class="modal__error">
-                Couldn't preview this order: ${preview.error}
-              </p>`
-            : paths.length === 0
-              ? html`<p class="plan__note">
-                  No file conflicts in this profile.
-                </p>`
-              : html`
-                  <table class="reorder-preview">
-                    <thead>
-                      <tr>
-                        <th>Path</th>
-                        <th>Current winner</th>
-                        <th>Proposed winner</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${paths.map((key) => {
-                        const current = currentByPath.get(key);
-                        const proposed = proposedByPath.get(key);
-                        const row = current ?? proposed;
-                        const path = deployedPath(row?.path, row?.root);
-                        const changed =
-                          current &&
-                          proposed &&
-                          current.load_order_winner.key !==
-                            proposed.load_order_winner.key;
-                        return html`
-                          <tr key=${key}>
-                            <td class="mono">${path}</td>
-                            <td>
-                              ${current?.load_order_winner.name ?? "—"}
-                              ${
-                                current?.stale &&
-                                html`<span
-                                  class="badge badge--warn"
-                                  title=${`A redeploy would change which file wins (${staleWinnerNote})`}
-                                  >redeploy needed</span
-                                >`
-                              }
-                            </td>
-                            <td
-                              class=${changed ? "reorder-preview__changed" : ""}
-                            >
-                              ${proposed?.load_order_winner.name ?? "—"}
-                            </td>
-                          </tr>
-                        `;
-                      })}
-                    </tbody>
-                  </table>
+              <ul class="reorder-list" data-testid="reorder-list">
+                ${order.map((key, i) => {
+                  const mod = modsByKey.get(key);
+                  if (!mod) return null;
+                  return html`
+                    <li
+                      key=${key}
+                      class="reorder-row ${dragKey === key ? "reorder-row--dragging" : ""}"
+                      data-mod=${key}
+                      tabindex="-1"
+                      onMouseEnter=${() => onRowMouseEnter(key)}
+                    >
+                      <span
+                        class="reorder-row__handle"
+                        aria-label=${`Drag to reorder ${mod.name}`}
+                        onMouseDown=${(e) => onRowMouseDown(key, e)}
+                      >
+                        ⠿
+                      </span>
+                      <span class="reorder-row__position mono">${i + 1}</span>
+                      <span class="reorder-row__name">${mod.name}</span>
+                      <span class="reorder-row__controls">
+                        <button
+                          type="button"
+                          class="button button--small"
+                          aria-label=${`Move ${mod.name} up`}
+                          disabled=${saving || i === 0}
+                          onClick=${() => move(key, -1)}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          class="button button--small"
+                          aria-label=${`Move ${mod.name} down`}
+                          disabled=${saving || i === order.length - 1}
+                          onClick=${() => move(key, 1)}
+                        >
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          class="button button--small"
+                          aria-label=${`Move ${mod.name} to lowest priority`}
+                          disabled=${saving || i === 0}
+                          onClick=${() => moveToEdge(key, "first")}
+                        >
+                          First
+                        </button>
+                        <button
+                          type="button"
+                          class="button button--small"
+                          aria-label=${`Move ${mod.name} to highest priority`}
+                          disabled=${saving || i === order.length - 1}
+                          onClick=${() => moveToEdge(key, "last")}
+                        >
+                          Last
+                        </button>
+                      </span>
+                    </li>
+                  `;
+                })}
+              </ul>
+
+              ${
+                dragKey &&
+                ghostAt &&
+                html`
+                  <div
+                    class="reorder-ghost"
+                    data-testid="reorder-ghost"
+                    aria-hidden="true"
+                    style=${`left: ${ghostAt.x}px; top: ${ghostAt.y}px;`}
+                  >
+                    <span class="reorder-row__handle">⠿</span
+                    >${" "}${modsByKey.get(dragKey)?.name}
+                  </div>
                 `
-        }
-      </section>
+              }
+
+              <section class="plan__section">
+                <h3 class="plan__heading">
+                  Conflict preview
+                  ${preview.status === "loading" ? " — computing…" : ""}
+                </h3>
+                ${
+                  preview.status === "error"
+                    ? html`<p class="modal__error">
+                        Couldn't preview this order: ${preview.error}
+                      </p>`
+                    : paths.length === 0
+                      ? html`<p class="plan__note">
+                          No file conflicts in this profile.
+                        </p>`
+                      : html`
+                          <table class="reorder-preview">
+                            <thead>
+                              <tr>
+                                <th>Path</th>
+                                <th>Current winner</th>
+                                <th>Proposed winner</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              ${paths.map((key) => {
+                                const current = currentByPath.get(key);
+                                const proposed = proposedByPath.get(key);
+                                const row = current ?? proposed;
+                                const path = deployedPath(row?.path, row?.root);
+                                const changed =
+                                  current &&
+                                  proposed &&
+                                  current.load_order_winner.key !==
+                                    proposed.load_order_winner.key;
+                                return html`
+                                  <tr key=${key}>
+                                    <td class="mono">${path}</td>
+                                    <td>
+                                      ${current?.load_order_winner.name ?? "—"}
+                                      ${
+                                        current?.stale &&
+                                        html`<span
+                                          class="badge badge--warn"
+                                          title=${`A redeploy would change which file wins (${staleWinnerNote})`}
+                                          >redeploy needed</span
+                                        >`
+                                      }
+                                    </td>
+                                    <td
+                                      class=${changed ? "reorder-preview__changed" : ""}
+                                    >
+                                      ${proposed?.load_order_winner.name ?? "—"}
+                                    </td>
+                                  </tr>
+                                `;
+                              })}
+                            </tbody>
+                          </table>
+                        `
+                }
+              </section>
+            </div>`
+      }
     </${Modal}>
   `;
 }

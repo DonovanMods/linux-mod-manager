@@ -1,0 +1,23 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "rules": {
+    "groups": [
+      {
+        "name": "Late Loaders",
+        "after": [
+          "default"
+        ]
+      }
+    ],
+    "plugins": [
+      {
+        "name": "Patch.esp",
+        "group": "Late Loaders",
+        "after": [
+          "SkyUI_SE.esp"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "active": true,
+  "list_file": "<PREFIX>/drive_c/users/steamuser/AppData/Local/Skyrim Special Edition/Plugins.txt",
+  "sorted": true,
+  "plugins": [
+    {
+      "position": 1,
+      "name": "Skyrim.esm",
+      "active": true,
+      "master": true,
+      "light": false,
+      "medium": false,
+      "managed": false,
+      "placement": "implicit"
+    },
+    {
+      "position": 2,
+      "name": "B.esm",
+      "active": true,
+      "master": true,
+      "light": false,
+      "medium": false,
+      "managed": true,
+      "source_id": "src",
+      "mod_id": "b",
+      "mod_name": "b",
+      "placement": "new"
+    },
+    {
+      "position": 3,
+      "name": "A.esp",
+      "active": true,
+      "master": false,
+      "light": false,
+      "medium": false,
+      "masters": [
+        "B.esm"
+      ],
+      "managed": true,
+      "source_id": "src",
+      "mod_id": "a",
+      "mod_name": "a",
+      "placement": "master",
+      "constraints": [
+        {
+          "from": "B.esm",
+          "to": "A.esp",
+          "reason": "master"
+        }
+      ]
+    }
+  ],
+  "rules": {}
+}

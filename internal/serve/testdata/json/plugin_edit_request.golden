@@ -1,0 +1,8 @@
+{
+  "edit": {
+    "op": "move",
+    "plugin": "Patch.esp",
+    "before": "SkyUI_SE.esp"
+  },
+  "dry_run": false
+}
