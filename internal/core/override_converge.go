@@ -501,7 +501,7 @@ func (s *Service) restoreGameOverrides(ctx context.Context, game *domain.Game, p
 				warn(rel, "no profile override sets it any more, but it changed after lmm wrote the override, so lmm left your file (the game's original is still kept)")
 				continue
 			}
-			if !hasRow && !(hasWrite && w.Created) {
+			if !hasRow && (!hasWrite || !w.Created) {
 				if hasWrite {
 					warn(rel, "no profile override sets it any more, but lmm kept no original of it to put back, so it left the file")
 					forget()
