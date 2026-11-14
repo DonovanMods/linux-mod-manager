@@ -135,8 +135,8 @@ func TestPlugins_DeployWritesPluginsTxt(t *testing.T) {
 
 	// Masters (Base.esm, and the light master Small.esl) first in mod
 	// order, then Patch.esp; Skyrim.esm is implicit and never listed. A new
-	// file is CRLF.
-	assert.Equal(t, "*Base.esm\r\n*Small.esl\r\n*Patch.esp\r\n", f.list(t))
+	// file is LF, as the game writes its own, and has no header.
+	assert.Equal(t, "*Base.esm\n*Small.esl\n*Patch.esp\n", f.list(t))
 
 	rows := readPrefixOriginals(t, f.dataDir, f.game.ID)
 	require.Len(t, rows, 1)
@@ -186,7 +186,7 @@ func TestPlugins_ProfileOrderAndDisabledEntries(t *testing.T) {
 		{Name: "C.esp", Enabled: true}, {Name: "A.esp", Enabled: false}, {Name: "B.esp", Enabled: true}, {Name: "Absent.esp", Enabled: true},
 	}})
 	res := f.deploy(t)
-	assert.Equal(t, "*C.esp\r\nA.esp\r\n*B.esp\r\n", f.list(t))
+	assert.Equal(t, "*C.esp\nA.esp\n*B.esp\n", f.list(t))
 	assert.Equal(t, 2, res.Plugins.Active)
 
 	profile, err := config.LoadProfile(f.svc.ConfigDir(), f.game.ID, "default")
@@ -246,15 +246,15 @@ func TestPlugins_UninstallAndDisableResync(t *testing.T) {
 	f.mod(t, "a", map[string][]byte{"A.esp": pluginBytes(0)})
 	f.mod(t, "b", map[string][]byte{"B.esp": pluginBytes(0)})
 	f.deploy(t)
-	require.Equal(t, "*A.esp\r\n*B.esp\r\n", f.list(t))
+	require.Equal(t, "*A.esp\n*B.esp\n", f.list(t))
 
 	_, err := f.svc.DisableMod(context.Background(), f.game, "default", "src", "a")
 	require.NoError(t, err)
-	assert.Equal(t, "*B.esp\r\n", f.list(t), "a disabled mod's plugin leaves the list")
+	assert.Equal(t, "*B.esp\n", f.list(t), "a disabled mod's plugin leaves the list")
 
 	_, err = f.svc.EnableMod(context.Background(), f.game, "default", "src", "a")
 	require.NoError(t, err)
-	assert.Equal(t, "*A.esp\r\n*B.esp\r\n", f.list(t))
+	assert.Equal(t, "*A.esp\n*B.esp\n", f.list(t))
 }
 
 func TestPlugins_PurgeRestoresTheOriginalList(t *testing.T) {
@@ -365,9 +365,9 @@ func TestPlugins_SkyrimLEWritesLoadorderTxt(t *testing.T) {
 	require.NotNil(t, res.Plugins)
 	assert.Equal(t, core.PluginListWritten, res.Plugins.Status)
 	assert.Equal(t, filepath.Join(f.listDir, "loadorder.txt"), res.Plugins.OrderFile)
-	assert.Equal(t, "A.esp\r\n", f.list(t), "Plugins.txt lists the active plugins")
-	assert.Equal(t, "Skyrim.esm\r\nA.esp\r\nB.esp\r\n", readFileString(t, filepath.Join(f.listDir, "loadorder.txt")),
-		"loadorder.txt lists every plugin, the implicit ones first")
+	assert.Equal(t, "A.esp\n", f.list(t), "Plugins.txt lists the active plugins")
+	assert.Equal(t, "Skyrim.esm\nB.esp\nA.esp\n", readFileString(t, filepath.Join(f.listDir, "loadorder.txt")),
+		"loadorder.txt lists every plugin, the implicit ones first; A.esp, which the order does not list yet, last")
 	assert.Len(t, readPrefixOriginals(t, f.dataDir, f.game.ID), 2)
 }
 
@@ -460,7 +460,7 @@ func TestPlugins_UninstallingTheLastPluginStillUpdatesTheList(t *testing.T) {
 	f := newPluginFixture(t)
 	f.mod(t, "a", map[string][]byte{"A.esp": pluginBytes(0)})
 	f.deploy(t)
-	require.Equal(t, "*A.esp\r\n", f.list(t))
+	require.Equal(t, "*A.esp\n", f.list(t))
 	_, err := f.svc.DisableMod(context.Background(), f.game, "default", "src", "a")
 	require.NoError(t, err)
 	assert.Equal(t, "", f.list(t), "lmm wrote this list, so it keeps it in step")
@@ -472,7 +472,7 @@ func TestPlugins_ProfileSwitchWritesTheTargetsList(t *testing.T) {
 	_, err := f.svc.NewProfileManager().Create(context.Background(), f.game.ID, "plain")
 	require.NoError(t, err)
 	f.deploy(t)
-	require.Equal(t, "*A.esp\r\n", f.list(t))
+	require.Equal(t, "*A.esp\n", f.list(t))
 
 	plan, err := f.svc.PlanProfileSwitch(context.Background(), f.game, "plain")
 	require.NoError(t, err)
@@ -484,5 +484,65 @@ func TestPlugins_ProfileSwitchWritesTheTargetsList(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.svc.ApplyProfileSwitch(context.Background(), f.game, plan, nil)
 	require.NoError(t, err)
-	assert.Equal(t, "*A.esp\r\n", f.list(t), "switching back lists its plugin again")
+	assert.Equal(t, "*A.esp\n", f.list(t), "switching back lists its plugin again")
+}
+
+// The game's own Plugins.txt, as Skyrim SE under Proton writes it (observed
+// on a real install: this header, LF endings): a deploy keeps the header
+// at the top, verbatim, and the LF endings.
+func TestPlugins_KeepsTheGamesOwnHeaderAndLF(t *testing.T) {
+	f := newPluginFixture(t)
+	f.mod(t, "a", map[string][]byte{"A.esp": pluginBytes(0)})
+	require.NoError(t, os.WriteFile(filepath.Join(f.game.ModPath, "Mine.esp"), pluginBytes(0), 0o644))
+	header := "# This file is used by Skyrim to keep track of your downloaded content.\n# Please do not modify this file.\n"
+	require.NoError(t, os.MkdirAll(f.listDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.listDir, "Plugins.txt"), []byte(header+"*Mine.esp\n"), 0o644))
+
+	f.deploy(t)
+	assert.Equal(t, header+"*Mine.esp\n*A.esp\n", f.list(t))
+}
+
+// Owner ruling (#616): a plugin the profile's order does not mention yet
+// loads last, after the ones it does - a freshly added mod wins its
+// conflicts - and still after its own masters.
+func TestPlugins_ANewPluginLoadsLast(t *testing.T) {
+	f := newPluginFixture(t)
+	f.mod(t, "new", map[string][]byte{"New.esp": pluginBytes(0, "A.esp")})
+	f.mod(t, "a", map[string][]byte{"A.esp": pluginBytes(0)})
+	f.mod(t, "b", map[string][]byte{"B.esp": pluginBytes(0)})
+	f.setPlugins(t, domain.ProfilePlugins{Order: []domain.PluginEntry{{Name: "B.esp", Enabled: true}, {Name: "A.esp", Enabled: true}}})
+	f.deploy(t)
+	assert.Equal(t, "*B.esp\n*A.esp\n*New.esp\n", f.list(t))
+}
+
+// Coordinator decision (#616): the plugin list is written BEFORE the
+// install.after_all hook, so the hook sees the final Plugins.txt and can
+// adjust it, and nothing lmm does afterwards writes over its change.
+func TestPlugins_WrittenBeforeTheAfterAllHook(t *testing.T) {
+	f := newPluginFixture(t)
+	f.mod(t, "a", map[string][]byte{"A.esp": pluginBytes(0)})
+	list := filepath.Join(f.listDir, "Plugins.txt")
+	seen := filepath.Join(t.TempDir(), "seen.txt")
+	script := filepath.Join(t.TempDir(), "after_all.sh")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\ncat '"+list+"' > '"+seen+"'\nprintf '# added by the hook\\n' >> '"+list+"'\n"), 0o755))
+	seedHooks(t, f.svc, f.game, "default", domain.GameHooks{Install: domain.HookConfig{AfterAll: script}})
+
+	res := f.deploy(t)
+	assert.Empty(t, res.Warnings)
+	require.NotNil(t, res.Plugins, "the deploy still reports the list it wrote")
+	assert.Equal(t, core.PluginListWritten, res.Plugins.Status)
+	assert.Equal(t, "*A.esp\n", readFileString(t, seen), "the hook saw lmm's list")
+	assert.Equal(t, "*A.esp\n# added by the hook\n", f.list(t), "and its change stands")
+}
+
+// An archive import writes the list too - the merged-artifact resync it
+// ends with runs only for a compile game, so the plugin step has its own
+// call there.
+func TestPlugins_ArchiveImportWritesTheList(t *testing.T) {
+	f := newPluginFixture(t)
+	archive := filepath.Join(t.TempDir(), "Imported-1.0.zip")
+	createImportTestZip(t, archive, map[string]string{"Imported.esp": string(pluginBytes(0))})
+	_, err := f.svc.ImportArchive(context.Background(), f.game, "default", archive, core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "*Imported.esp\n", f.list(t))
 }

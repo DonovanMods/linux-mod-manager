@@ -625,7 +625,7 @@ func (c *pluginComputation) readCurrent() error {
 	c.orderName = c.spec.OrderFile
 	dir, err := c.listDir.open(false)
 	if errors.Is(err, os.ErrNotExist) {
-		c.current = pluginListFile{eol: eolCRLF}
+		c.current = pluginListFile{eol: eolNew}
 		return nil
 	}
 	if err != nil {
@@ -649,7 +649,7 @@ func (c *pluginComputation) readCurrent() error {
 	asterisk := c.spec.ListKind != adapter.ListTextfile
 	c.current = parsePluginList(decodePluginsTxt(c.listData), asterisk)
 	if !c.listExists {
-		c.current.eol = eolCRLF
+		c.current.eol = eolNew
 	}
 	if c.spec.OrderFile == "" {
 		c.orderName = ""
@@ -835,7 +835,7 @@ func checkPluginList(sorted []pluginNode, implicit []string, implicitlyActive ma
 // writePluginList writes c's list (and order) file, capturing each one's
 // original first. It reports whether any file changed.
 func (s *Service) writePluginList(game *domain.Game, c *pluginComputation) (bool, error) {
-	rendered := renderPluginList(c.spec, c.entries, c.implicit, c.current.header, c.current.eol, orderEOL(c))
+	rendered := renderPluginList(c.spec, c.entries, c.implicit, c.current, orderEOL(c))
 	if !c.listExists && len(c.entries) == 0 {
 		return false, nil // nothing to list, and no file to keep in step
 	}
@@ -1041,11 +1041,11 @@ func keepExternals(original, current []byte, existed bool, dirs pluginDirs) []by
 	for i, n := range all {
 		entries[i] = listEntry{name: n.name, active: n.active}
 	}
-	header := base.header
+	file := base
 	if !existed {
-		header = now.header
+		file = now
 	}
-	return renderPluginList(adapter.PluginSpec{ListKind: adapter.ListAsterisk}, entries, nil, header, base.eol, "").list
+	return renderPluginList(adapter.PluginSpec{ListKind: adapter.ListAsterisk}, entries, nil, file, "").list
 }
 
 // wrotePluginList reports whether lmm has written game's plugin list - the
@@ -1059,4 +1059,33 @@ func (s *Service) wrotePluginList(game *domain.Game) bool {
 	}
 	rows, err := store.list()
 	return err != nil || len(rows) > 0
+}
+
+// pluginListSynced is the outcome of a plugin step a flow ran before its
+// install.after_all hook, carried on ctx to that flow's syncMergedPak.
+type pluginListSynced struct {
+	gameID, profile string
+	result          *PluginListResult
+}
+
+type pluginListSyncedKey struct{}
+
+// syncPluginListBeforeHooks runs the plugin step now - before the flow's
+// install.after_all hook, so the hook sees the final Plugins.txt and can
+// adjust it, rather than have lmm write over its changes afterwards (#616)
+// - and returns ctx carrying the outcome, which the flow's choke-point
+// syncMergedPak reports instead of writing the list a second time.
+func (s *Service) syncPluginListBeforeHooks(ctx context.Context, game *domain.Game, profileName string) context.Context {
+	res := s.syncPluginList(ctx, game, profileName)
+	return context.WithValue(ctx, pluginListSyncedKey{}, &pluginListSynced{gameID: game.ID, profile: profileName, result: res})
+}
+
+// pluginListSyncedOn is the outcome syncPluginListBeforeHooks put on ctx
+// for this game and profile, if it ran.
+func pluginListSyncedOn(ctx context.Context, gameID, profileName string) (*PluginListResult, bool) {
+	done, ok := ctx.Value(pluginListSyncedKey{}).(*pluginListSynced)
+	if !ok || done == nil || done.gameID != gameID || done.profile != profileName {
+		return nil, false
+	}
+	return done.result, true
 }

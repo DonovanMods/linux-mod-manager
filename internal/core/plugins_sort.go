@@ -23,11 +23,12 @@ import (
 // after every plugin of each group it loads after), a group edge that
 // would close a cycle being skipped, as LOOT skips one.
 //
-// Ties go, in order, to: a plugin the profile's order does not list yet
-// (it goes at the earliest position its edges allow, the design's rule for
-// a newly installed plugin), the profile's order, the order of the mods
-// that ship the plugins, and the case-insensitive name. A plugin the user
-// placed therefore stays where they put it unless an edge forbids it.
+// Ties go, in order, to: the profile's order (a plugin it lists before
+// one it does not list yet - a newly installed plugin loads last, after
+// its own masters, as in LOOT, MO2 and Vortex: owner ruling, #616), then
+// the order of the mods that ship the plugins, then the case-insensitive
+// name. A plugin the user placed therefore stays where they put it unless
+// an edge forbids it.
 
 // pluginNode is one plugin the sort places.
 type pluginNode struct {
@@ -249,10 +250,12 @@ func tiebreak(req sortRequest) func(i, j int) int {
 		a, b := req.nodes[i], req.nodes[j]
 		pa, ina := pos[pluginKey(a.name)]
 		pb, inb := pos[pluginKey(b.name)]
-		// A plugin the order does not list yet goes first among those
-		// allowed: the earliest position its edges allow.
+		// A plugin the order does not list yet goes after every listed
+		// plugin its edges allow it to follow - it loads last, as a newly
+		// added plugin does in LOOT, MO2 and Vortex, so it wins conflicts
+		// (owner ruling, #616). Its masters still load before it.
 		if ina != inb {
-			if !ina {
+			if ina {
 				return -1
 			}
 			return 1

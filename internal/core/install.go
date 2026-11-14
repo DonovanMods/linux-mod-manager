@@ -1635,6 +1635,10 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		}
 	}
 
+	// #616: the game's plugin list is written before install.after_all, so
+	// the hook sees the final Plugins.txt; the sync below reports it.
+	ctx = s.syncPluginListBeforeHooks(ctx, game, plan.Profile)
+
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
 	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_all", hooks.GetInstallAfterAll()); err != nil {
 		msg := fmt.Sprintf("install.after_all hook failed: %v", err)
@@ -1751,6 +1755,10 @@ func (s *Service) applyInstallBatch(ctx context.Context, game *domain.Game, plan
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
+
+	// #616: the game's plugin list is written before install.after_all, so
+	// the hook sees the final Plugins.txt; the sync below reports it.
+	ctx = s.syncPluginListBeforeHooks(ctx, game, plan.Profile)
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
 	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_all", hooks.GetInstallAfterAll()); err != nil {

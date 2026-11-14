@@ -18,11 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deterministic order: masters first, each plugin after its own masters, the
   game's own plugins never listed, then the profile's new `plugins:` block
   (an `order` of `{name, enabled}` and LOOT-userlist-shaped `rules`), then
-  mod order, then name. The order lmm computes is never written back to the
-  profile. Plugins lmm did not deploy (installed by hand, or by the game's
+  mod order, then name; a plugin the profile's order does not list yet loads
+  last, after its own masters, as in LOOT, MO2 and Vortex. The order lmm
+  computes is never written back to the profile. Plugins lmm did not deploy (installed by hand, or by the game's
   Creations menu) keep their place and their active state; lmm never
   deactivates one. An existing file keeps its name's spelling, its line
-  endings and its opening comment; a new one is `Plugins.txt` with CRLF.
+  endings and its comment lines where they were (the game's header at the
+  top); a new one is `Plugins.txt` with LF endings, as the game writes its
+  own. The list is written before `install.after_all` hooks run, so a hook
+  sees the final file and can adjust it.
   lmm re-checks the prefix's user folder just before writing and never
   writes through a link. The deploy's result (`--json` and the web UI) gains
   a `plugins` object - status, the file, counts, and findings: a cycle among

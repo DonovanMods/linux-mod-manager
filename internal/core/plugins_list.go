@@ -24,29 +24,44 @@ type listEntry struct {
 	active bool
 }
 
-// pluginListFile is a list file as read: its plugins, the comment lines
-// that open it (kept on a rewrite), and its line ending.
+// pluginListFile is a list file as read: its plugins, its comment lines
+// (kept on a rewrite, where they were), and its line ending.
 type pluginListFile struct {
 	entries []listEntry
-	header  []string
-	eol     string
+	// comments are the file's '#' lines, verbatim, in file order, each
+	// block under the plugin line it followed ("" for the lines before the
+	// first plugin - the game's own header).
+	comments []commentBlock
+	// prev maps a plugin's key to the key of the plugin line before it
+	// ("" for the first), so a comment whose plugin is gone stays after
+	// the nearest plugin that is not.
+	prev map[string]string
+	eol  string
 }
 
-// eolCRLF is the line ending lmm writes in a new list file: the games' own
-// launchers write CRLF (design §5, "Line endings"). An existing file keeps
-// its own.
-const eolCRLF = "\r\n"
+// commentBlock is a run of comment lines and the plugin they follow.
+type commentBlock struct {
+	after string
+	lines []string
+}
+
+// eolNew is the line ending lmm writes in a new list file: LF, which is
+// what Skyrim SE under Proton writes in its own Plugins.txt (observed on a
+// real install, compatdata 489830, 2026-11-13: zero CRs, while the same
+// game's Skyrim.ini is CRLF; design §5, "Line endings"). An existing file
+// keeps its own.
+const eolNew = "\n"
 
 // lineEndingOf is the line ending data uses: CRLF when its first line ends
-// in one, LF when it ends in a bare LF, and CRLF for data with no line
+// in one, LF when it ends in a bare LF, and eolNew for data with no line
 // break at all.
 func lineEndingOf(data []byte) string {
 	i := bytes.IndexByte(data, '\n')
 	switch {
 	case i < 0:
-		return eolCRLF
+		return eolNew
 	case i > 0 && data[i-1] == '\r':
-		return eolCRLF
+		return "\r\n"
 	default:
 		return "\n"
 	}
@@ -57,8 +72,9 @@ func lineEndingOf(data []byte) string {
 // active (the textfile format's Plugins.txt, where a stray '*' is
 // tolerated). A plugin listed twice keeps its first line.
 func parsePluginList(text string, asterisk bool) pluginListFile {
-	out := pluginListFile{eol: lineEndingOf([]byte(text))}
+	out := pluginListFile{eol: lineEndingOf([]byte(text)), prev: map[string]string{}}
 	seen := map[string]bool{}
+	last := ""
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		trimmed := strings.TrimSpace(line)
@@ -66,8 +82,10 @@ func parsePluginList(text string, asterisk bool) pluginListFile {
 			continue
 		}
 		if strings.HasPrefix(trimmed, "#") {
-			if len(out.entries) == 0 {
-				out.header = append(out.header, line)
+			if n := len(out.comments); n > 0 && out.comments[n-1].after == last {
+				out.comments[n-1].lines = append(out.comments[n-1].lines, line)
+			} else {
+				out.comments = append(out.comments, commentBlock{after: last, lines: []string{line}})
 			}
 			continue
 		}
@@ -76,13 +94,47 @@ func parsePluginList(text string, asterisk bool) pluginListFile {
 			active = true
 			trimmed = strings.TrimSpace(trimmed[1:])
 		}
-		if trimmed == "" || seen[pluginKey(trimmed)] {
+		if trimmed == "" {
 			continue
 		}
-		seen[pluginKey(trimmed)] = true
-		out.entries = append(out.entries, listEntry{name: trimmed, active: active})
+		key := pluginKey(trimmed)
+		if !seen[key] {
+			seen[key] = true
+			out.prev[key] = last
+			out.entries = append(out.entries, listEntry{name: trimmed, active: active})
+		}
+		last = key
 	}
 	return out
+}
+
+// header is the comment lines before the file's first plugin.
+func (f pluginListFile) header() []string {
+	if len(f.comments) > 0 && f.comments[0].after == "" {
+		return f.comments[0].lines
+	}
+	return nil
+}
+
+// placeComments puts f's comment blocks against the plugins written: each
+// after the plugin it followed, or - when that plugin is not written - the
+// nearest earlier one that is, else at the top. written holds the keys of
+// the plugin lines being written.
+func (f pluginListFile) placeComments(written map[string]bool) (top []string, after map[string][]string) {
+	after = map[string][]string{}
+	for _, c := range f.comments {
+		k := c.after
+		for seen := map[string]bool{}; k != "" && !written[k] && !seen[k]; {
+			seen[k] = true
+			k = f.prev[k]
+		}
+		if k == "" || !written[k] {
+			top = append(top, c.lines...)
+			continue
+		}
+		after[k] = append(after[k], c.lines...)
+	}
+	return top, after
 }
 
 // decodePluginsTxt decodes Plugins.txt's Windows-1252 bytes.
@@ -154,42 +206,57 @@ type renderedList struct {
 
 // renderPluginList renders entries - the full load order, implicit plugins
 // excluded - for spec's list kind. implicit are the implicit plugins
-// present, first in the textfile format's loadorder.txt. header and eol
-// come from the file being replaced.
-func renderPluginList(spec adapter.PluginSpec, entries []listEntry, implicit []string, header []string, eol, orderEOL string) renderedList {
+// present, first in the textfile format's loadorder.txt. file is the list
+// file being replaced: its comment lines are kept where they were, and its
+// line ending used.
+func renderPluginList(spec adapter.PluginSpec, entries []listEntry, implicit []string, file pluginListFile, orderEOL string) renderedList {
+	eol := file.eol
+	if eol == "" {
+		eol = eolNew
+	}
+	written := map[string]bool{}
+	for _, e := range entries {
+		if e.active || spec.ListKind != adapter.ListTextfile {
+			written[pluginKey(e.name)] = true
+		}
+	}
+	top, after := file.placeComments(written)
 	var b strings.Builder
-	for _, h := range header {
-		b.WriteString(h)
+	line := func(s string) {
+		b.WriteString(s)
 		b.WriteString(eol)
 	}
-	switch spec.ListKind {
-	case adapter.ListTextfile:
-		for _, e := range entries {
-			if e.active {
-				b.WriteString(e.name)
-				b.WriteString(eol)
-			}
+	for _, c := range top {
+		line(c)
+	}
+	for _, e := range entries {
+		key := pluginKey(e.name)
+		if !written[key] {
+			continue
 		}
-		var o strings.Builder
-		for _, name := range implicit {
-			o.WriteString(name)
-			o.WriteString(orderEOL)
+		if e.active && spec.ListKind != adapter.ListTextfile {
+			b.WriteByte('*')
 		}
-		for _, e := range entries {
-			o.WriteString(e.name)
-			o.WriteString(orderEOL)
+		line(e.name)
+		for _, c := range after[key] {
+			line(c)
 		}
-		list, _ := encodeWindows1252(b.String())
-		return renderedList{list: list, order: []byte(o.String())}
-	default:
-		for _, e := range entries {
-			if e.active {
-				b.WriteByte('*')
-			}
-			b.WriteString(e.name)
-			b.WriteString(eol)
-		}
-		list, _ := encodeWindows1252(b.String())
+	}
+	list, _ := encodeWindows1252(b.String())
+	if spec.ListKind != adapter.ListTextfile {
 		return renderedList{list: list}
 	}
+	if orderEOL == "" {
+		orderEOL = eol
+	}
+	var o strings.Builder
+	for _, name := range implicit {
+		o.WriteString(name)
+		o.WriteString(orderEOL)
+	}
+	for _, e := range entries {
+		o.WriteString(e.name)
+		o.WriteString(orderEOL)
+	}
+	return renderedList{list: list, order: []byte(o.String())}
 }

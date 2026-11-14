@@ -63,13 +63,27 @@ func TestSortPlugins_ProfileOrderWinsUnlessAnEdgeForbids(t *testing.T) {
 		"c needs its master b first; a keeps its place after them")
 }
 
-func TestSortPlugins_NewPluginGoesAtTheEarliestPositionItsEdgesAllow(t *testing.T) {
+// A plugin the profile's order does not list yet loads last (owner ruling,
+// #616: as in LOOT, MO2 and Vortex), so a freshly added mod wins its
+// conflicts; new ones among themselves go by mod order.
+func TestSortPlugins_NewPluginLoadsLast(t *testing.T) {
 	got, err := sortPlugins(sortRequest{
 		nodes: []pluginNode{esp("a.esp", 0), esp("b.esp", 1), esp("new.esp", 2, "a.esp"), esp("fresh.esp", 3)},
 		order: entries("a.esp", "b.esp"),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"fresh.esp", "a.esp", "new.esp", "b.esp"}, names(got))
+	assert.Equal(t, []string{"a.esp", "b.esp", "new.esp", "fresh.esp"}, names(got))
+}
+
+// Its edges still hold: a new master loads with the masters, and a new
+// plugin a listed one needs as a master loads before it.
+func TestSortPlugins_NewPluginStillObeysItsEdges(t *testing.T) {
+	got, err := sortPlugins(sortRequest{
+		nodes: []pluginNode{esp("a.esp", 0), esp("b.esp", 1, "needed.esp"), esp("needed.esp", 2), esm("new.esm", 3)},
+		order: entries("a.esp", "b.esp"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"new.esm", "a.esp", "needed.esp", "b.esp"}, names(got))
 }
 
 func TestSortPlugins_OrderMatchIsCaseInsensitive(t *testing.T) {

@@ -702,7 +702,8 @@ plugins:
   `default`; a group rule that would contradict a master is set aside).
   Anything left is decided by `order`, then by the order of the mods that
   ship the plugins, then by name. A newly installed plugin `order` does not
-  list goes in active, at the earliest place its masters and rules allow.
+  list yet goes in active, at the end (after its own masters), as LOOT, MO2
+  and Vortex place one, so a freshly added mod wins its conflicts.
 - **Plugins lmm did not deploy are kept.** A plugin you installed by hand,
   or one the game's own Creations menu added, keeps its place next to the
   plugins it was beside and its active state; lmm never deactivates a
@@ -710,9 +711,13 @@ plugins:
   dropped.
 - **The file is matched as Wine matches it.** An existing `plugins.txt` is
   written to under its own spelling (and the AppData folder too); a new one
-  is `Plugins.txt`. An existing file keeps its line endings and its opening
-  comment; a new one uses CRLF, as the games' launchers write. Names are
-  written in Windows-1252, as the game reads them.
+  is `Plugins.txt`. An existing file keeps its line endings and its comment
+  lines, each where it was (the game's own header stays at the top); a new
+  one uses LF line endings, as the game writes its own, and has no header.
+  Names are written in Windows-1252, as the game reads them.
+- **Hooks see the final list.** A deploy or install writes the list before
+  its `install.after_all` hook runs, so the hook can read it, or change it,
+  and lmm does not write over the change.
 - **lmm writes only inside the prefix.** It checks the prefix's user folder
   again just before writing, and it never writes through a link: a folder
   or a `Plugins.txt` that is a link to somewhere else is refused, and the
