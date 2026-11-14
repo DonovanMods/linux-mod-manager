@@ -15,7 +15,9 @@
 //  1. the file list: every file the list does not name is dropped, and
 //     every file it names must be there;
 //  2. the patches: each target must be there, and its CRC32 must be the
-//     baseline the patch was made against. A mismatch REFUSES the install
+//     baseline the patch was made against; an import must have admitted the
+//     patch for that target, and allowed code there when the patched file
+//     is code by its name or its content (patch_admission.go). A mismatch REFUSES the install
 //     (FilePatchError) - a deliberate divergence from Vortex, which warns
 //     and installs the unpatched file: a collection whose patch did not
 //     apply is the "looks right, plays wrong" outcome the gate exists to
@@ -402,6 +404,11 @@ func (s *Service) applyTreeInputs(game *domain.Game, mod *domain.Mod, fileID, tr
 		out, err := applyBSDIFF40(old, patch, maxPatchedFileBytes)
 		if err != nil {
 			return refuse(p.Path, "its patch could not be applied: "+err.Error(), err)
+		}
+		// #610 review B1: only where an import admitted it, and code only
+		// where that import allowed code (patch_admission.go).
+		if err := s.checkPatchAdmitted(game, p, out); err != nil {
+			return refuse(p.Path, err.Error(), err)
 		}
 		if err := replaceFile(target, out); err != nil {
 			return fmt.Errorf("writing the patched %s: %w", rel, err)

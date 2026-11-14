@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,6 +161,17 @@ func TestApplyTreeInputs_PatchesOntoTheBaselineThenChecksTheList(t *testing.T) {
 		FileList: []domain.FileListEntry{{Path: `Mod\manifest.json`, MD5: md5Of(manifestV41)}},
 		Patches:  []domain.FilePatch{{Path: `Mod\manifest.json`, CRC32: strings.ToLower(crcHex(manifestV40)), SHA256: sha}},
 	}
+	// Kept, but no import admitted it for this file: refused, nothing
+	// written (#610 review B1).
+	err = svc.applyTreeInputs(game, treeMod, "100", tree, in)
+	require.ErrorIs(t, err, ErrTreeInput)
+	assert.Contains(t, err.Error(), "no import admitted this patch for this file")
+	tree = writeTree(t, map[string]string{"Mod/manifest.json": manifestV40, "Mod/other.json": "{}"})
+	// Admitted for another file: still refused here.
+	require.NoError(t, svc.admitPatches(game, []patchUse{{patch: domain.FilePatch{Path: "Mod/other.json", SHA256: sha}}}, false))
+	require.ErrorIs(t, svc.applyTreeInputs(game, treeMod, "100", tree, in), ErrTreeInput)
+	tree = writeTree(t, map[string]string{"Mod/manifest.json": manifestV40, "Mod/other.json": "{}"})
+	require.NoError(t, svc.admitPatches(game, []patchUse{{patch: in.Patches[0]}}, false))
 	require.NoError(t, svc.applyTreeInputs(game, treeMod, "100", tree, in))
 	assert.Equal(t, map[string]string{"Mod/manifest.json": manifestV41}, treeContents(t, tree))
 	info, err := os.Stat(filepath.Join(tree, "Mod", "manifest.json"))
@@ -286,4 +298,58 @@ func TestPatchCodeReason(t *testing.T) {
 	assert.NotEmpty(t, patchCodeReason(`Ridgeside Village\RidgesideVillage\RidgesideVillage.dll`))
 	assert.NotEmpty(t, patchCodeReason(`BepInEx\doorstop_config.ini`))
 	assert.Empty(t, patchCodeReason(`Ridgeside Village\RidgesideVillage\config.json`))
+}
+
+// TestApplyTreeInputs_CodeOutputNeedsAnAdmissionThatAllowsCode: a patch
+// whose OUTPUT is native code - whatever the file's name - applies only
+// where its admission allowed code (--allow-any-overrides at the import
+// that admitted it), and to a file named as code likewise (#610 review).
+func TestApplyTreeInputs_CodeOutputNeedsAnAdmissionThatAllowsCode(t *testing.T) {
+	if _, err := os.Stat(filepath.Join("testdata", "bsdiff", "make-elf.patch")); err != nil {
+		t.Skip("run TestBSDIFFFixtures with -update-bsdiff-fixtures")
+	}
+	svc, game := newTreeInputService(t)
+	patch, err := os.ReadFile(filepath.Join("testdata", "bsdiff", "make-elf.patch"))
+	require.NoError(t, err)
+	sha, err := svc.keepPatch(game, patch)
+	require.NoError(t, err)
+	p := domain.FilePatch{Path: `Mod\data.bin`, CRC32: crcHex(elfFixtureOld), SHA256: sha}
+	in := domain.TreeInputs{Patches: []domain.FilePatch{p}}
+
+	require.NoError(t, svc.admitPatches(game, []patchUse{{patch: p}}, false))
+	tree := writeTree(t, map[string]string{"Mod/data.bin": elfFixtureOld})
+	err = svc.applyTreeInputs(game, treeMod, "100", tree, in)
+	require.ErrorIs(t, err, ErrTreeInput)
+	assert.Contains(t, err.Error(), "native code")
+	assert.Equal(t, elfFixtureOld, treeContents(t, tree)["Mod/data.bin"], "nothing written")
+
+	require.NoError(t, svc.admitPatches(game, []patchUse{{patch: p}}, true))
+	tree = writeTree(t, map[string]string{"Mod/data.bin": elfFixtureOld})
+	require.NoError(t, svc.applyTreeInputs(game, treeMod, "100", tree, in))
+	assert.Equal(t, elfFixtureNew, treeContents(t, tree)["Mod/data.bin"])
+}
+
+// TestKeepRecipeBundle_AdmissionHoldsOnlyForTheSameContent (#610 review): an
+// item an earlier import admitted is not admitted again when the recipe's
+// files under that name change, unless this import admits it.
+func TestKeepRecipeBundle_AdmissionHoldsOnlyForTheSameContent(t *testing.T) {
+	svc, game := newTreeInputService(t)
+	recipeDir := filepath.Join(svc.collectionsRoot(game), "nexusmods-abcdef", "3")
+	keep := func(content string, admit bool) keptItem {
+		t.Helper()
+		item := &bundledItem{name: "marker", display: "Bundled - Marker", members: []bundleMember{{rel: "a.txt", size: int64(len(content)),
+			open: func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(content)), nil }}}}
+		require.NoError(t, item.read())
+		b := &pendingBundle{collectionID: "nexusmods-abcdef", recipeDir: recipeDir, names: map[string]string{"marker": "Marker"},
+			bundle: &collectionBundle{items: map[string]*bundledItem{"marker": item}}}
+		require.NoError(t, os.MkdirAll(recipeDir, 0o755))
+		require.NoError(t, svc.keepRecipeBundle(game, b, map[string]bool{"marker": admit}))
+		index, err := readKeptIndex(recipeDir + keptIndexSuffix)
+		require.NoError(t, err)
+		return index.Items["marker"]
+	}
+	assert.True(t, keep("one", true).Admitted)
+	assert.True(t, keep("one", false).Admitted, "the same content stays admitted")
+	assert.False(t, keep("two", false).Admitted, "other content is this import's to admit")
+	assert.True(t, keep("two", true).Admitted)
 }

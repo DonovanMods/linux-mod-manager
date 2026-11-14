@@ -599,6 +599,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 		baseline: &domain.CollectionBaseline{Plugins: profile.Plugins.Clone(), LoadOrders: profile.LoadOrders.Clone()}, hashOverrides: true}
 	plan.bundle = pending
 	plan.patchSources = patchSources
+	plan.TreeInputs = s.importTreeInputs(game, plan.Profile.Mods, patchSources)
 	plan.archiveMD5 = collectionArchiveMD5s(doc)
 	// The preview shows the profile the import will save.
 	plan.Profile.Collection, plan.Profile.External = redactedCollection(profile.Collection), profile.External
@@ -658,7 +659,8 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 		for id, in := range refTreeInputs(&item.Ref) {
 			ci.FileList += len(in.FileList)
 			for _, p := range in.Patches {
-				cp := CollectionItemPatch{FileID: id, Path: p.Path, CRC32: strings.ToUpper(p.CRC32), Restricted: patchCodeReason(p.Path)}
+				cp := CollectionItemPatch{FileID: id, Path: p.Path, CRC32: strings.ToUpper(p.CRC32),
+					Restricted: s.patchRestriction(game, patchUse{patch: p}, patchSources[p.SHA256])}
 				ci.Patches = append(ci.Patches, cp)
 				if cp.Restricted != "" {
 					c.RestrictedPatches++
@@ -704,9 +706,6 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 	if c.RestrictedPatches > 0 && !opts.AllowAnyOverrides {
 		return &ProfileImportResult{}, fmt.Errorf("%w: %d of its patches change code (%s); import it with --allow-any-overrides to apply them",
 			ErrCodePatch, c.RestrictedPatches, strings.Join(restrictedPatchNames(c), ", "))
-	}
-	if err := s.keepPatches(game, original.patchSources); err != nil {
-		return &ProfileImportResult{}, err
 	}
 	var bundledSkipped []string
 	if b := original.bundle; b != nil {

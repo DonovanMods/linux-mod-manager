@@ -562,6 +562,22 @@ on a machine that already keeps each one; elsewhere it is refused, naming
 the container to import instead. An export carries every patch the store
 keeps for the profile's mods in its `.lmmc`, and says when one is missing.
 
+**Admitted per file.** A kept patch applies only to the files an import
+admitted it for. A BSDIFF40 patch can make any content at all, so the
+store records, beside each patch (`<sha256>.json`), the files - by path,
+in the matching form above - that the import bringing it named, and
+whether that import allowed code (`--allow-any-overrides`). A document
+naming a kept patch for any other file - an older profile export, a
+hand-edited profile, a plain YAML collection - lists it in the plan as
+restricted, and its import is refused unless `--allow-any-overrides`,
+which admits it for that file. The install applies a patch only to a file
+it is admitted for, and refuses one whose result is native code or a
+script (a Windows, ELF or Mach-O executable or library, or a `#!` script,
+by its content, whatever its name) unless its admission allowed code.
+Nothing removes kept patches: delete the game's
+`<cache>/collections/patches/` to reclaim the space, and import the
+collections again.
+
 **What an import checks.** Every path is a stranger's: one that is empty,
 absolute (a leading separator or a drive letter), has an empty, `.` or
 `..` segment, holds a control or formatting character, or is over 1 KiB
@@ -572,14 +588,19 @@ and its patches number at most 4,096. A patch is at most 64 MiB, and the
 file it patches - and the file it makes - at most 256 MiB; the patch
 itself is read as hostile (its lengths, every control triple and its
 output size are checked before anything is allocated). A container's
-`patches/<sha256>.diff` must hash to its name and be BSDIFF40.
+`patches/<sha256>.diff` must hash to its name and be BSDIFF40, and a
+container's patches are at most 64 MiB together. These rules hold for every
+profile document an import reads, an older export included.
 
 **A patch to code** - to a file whose name is that of a library, an
 executable, a script the system runs, or a loader configuration, as for
 [bundled files](#bundled-files) - is listed as such in the plan, and the
 import is refused unless `--allow-any-overrides` (the web UI's **Apply
-these patches** box). It is not held back on its own, as an override is:
-the mod would install unpatched.
+these patches** box, which sets the same option as the bundled items' and
+the overrides' boxes). So is a patch admitted for another file (above). It
+is not held back on its own, as an override is: the mod would install
+unpatched. Every import is gated this way - a collection, a collection
+update, and an older profile export alike (the plan's `tree_inputs`).
 
 **From a NexusMods collection.** The recipe's `hashes` become the mod's
 `file_list`, its `patches` (from the recipe's `patches/<mod name>/<path>.diff`)

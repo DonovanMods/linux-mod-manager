@@ -207,9 +207,13 @@ func (s *Service) keepRecipeBundle(game *domain.Game, b *pendingBundle, admitted
 	for _, name := range b.bundle.names() {
 		it := b.bundle.items[name]
 		prev := index.Items[name]
+		// An earlier admission holds only for the same content (#610
+		// review): a recipe entry re-fetched with other files under the
+		// same name is admitted by this import's own decision alone.
+		was := prev.Admitted && prev.Digest == it.sum
 		index.Items[name] = keptItem{
 			Name: firstNonEmpty(b.names[name], prev.Name), Version: it.digest, Digest: it.sum,
-			Bytes: it.bytes, Files: len(it.members), Admitted: prev.Admitted || admitted[name], Dir: it.display,
+			Bytes: it.bytes, Files: len(it.members), Admitted: was || admitted[name], Dir: it.display,
 		}
 	}
 	encoded, err := json.Marshal(index)

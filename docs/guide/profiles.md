@@ -268,7 +268,10 @@ import from a link never imports hooks at all; see
   configuration) is listed in the plan, and the import is refused unless
   you add `--allow-any-overrides` (in the browser, tick **Apply these
   patches**): leaving out the patch would install a mod that isn't the one
-  the collection was made with.
+  the collection was made with. The same goes for a patch lmm keeps from
+  one collection that a profile file names for a different file, since a
+  patch can turn a file into anything: an older export or a hand-edited
+  profile is held to this as a collection is.
 
 When something was held back, the import says so at the end and names the
 option that would include it.

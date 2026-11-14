@@ -186,8 +186,13 @@ func parseCollectionContainer(data []byte, readItems bool) (doc []byte, bundle *
 			// refused rather than read under a name it does not have.
 			return nil, nil, nil, fmt.Errorf("%w: %v: the member %q", errBadContainer, ErrInvalidBundle, f.Name)
 		case strings.HasPrefix(f.Name, collectionPatchesDir):
-			// #610: a patch, named by its own sha256, read whole (it is
-			// small: capped) and checked against its name.
+			// #610: a patch, named by its own sha256, read whole - each and
+			// all of them together capped - and checked against its name.
+			// A kept container is read for one bundled item, never for its
+			// patches (the store keeps those).
+			if !readItems {
+				continue
+			}
 			if bundle == nil {
 				bundle = &collectionBundle{items: map[string]*bundledItem{}}
 			}

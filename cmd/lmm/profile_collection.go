@@ -166,6 +166,11 @@ func printImportGates(plan *core.ImportPlan) {
 			fmt.Printf("    - %s\n", path)
 		}
 	}
+	// #610 review B1: an older export's file lists and patches, gated as a
+	// collection's are (a collection plan lists them in its own section).
+	if plan.Collection == nil {
+		printImportTreeInputs(plan.TreeInputs)
+	}
 	if len(plan.RestrictedOverrides) > 0 {
 		fmt.Printf("\nOverrides held back (not text config files, or loader configuration):\n")
 		for _, o := range plan.RestrictedOverrides {
@@ -175,6 +180,38 @@ func printImportGates(plan *core.ImportPlan) {
 			fmt.Println("  They will be imported (--allow-any-overrides).")
 		} else {
 			fmt.Println("  They will be skipped; re-run with --allow-any-overrides to import them.")
+		}
+	}
+}
+
+// printImportTreeInputs lists a version-0 import's mods that install with
+// an exact file list or patches (#610), and the patches that need
+// --allow-any-overrides.
+func printImportTreeInputs(inputs []core.ImportTreeInputs) {
+	if len(inputs) == 0 {
+		return
+	}
+	fmt.Printf("\nExact file lists and patches - only the listed files are installed; a patch applies only to the file it was made against:\n")
+	restricted := 0
+	for _, it := range inputs {
+		fmt.Printf("    - %s:%s\n", it.SourceID, it.ModID)
+		if it.FileList > 0 {
+			fmt.Printf("        installs exactly %d listed file(s)\n", it.FileList)
+		}
+		for _, p := range it.Patches {
+			line := fmt.Sprintf("        patches %s (baseline CRC32 %s)", p.Path, p.CRC32)
+			if p.Restricted != "" {
+				restricted++
+				line += " - " + p.Restricted
+			}
+			fmt.Println(line)
+		}
+	}
+	if restricted > 0 {
+		if profileImportAnyOverrides {
+			fmt.Printf("  %d patch(es) will be applied (--allow-any-overrides).\n", restricted)
+		} else {
+			fmt.Printf("  %d patch(es) need --allow-any-overrides: the import is refused without it.\n", restricted)
 		}
 	}
 }

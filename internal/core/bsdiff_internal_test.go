@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,6 +39,13 @@ const (
 	manifestV41 = `{"Name": "Additional Farm Cave", "Version": "4.1"}`
 )
 
+// elfFixtureOld and elfFixtureNew are a data file a patch turns into an
+// ELF executable: what a re-aimed patch's extra block can carry.
+const (
+	elfFixtureOld = "plain data, not code"
+	elfFixtureNew = "\x7fELF\x02\x01\x01 smuggled"
+)
+
 // bsdiffFixtures are the committed patches: real-shaped ones that apply,
 // and hostile ones whose header is valid but whose control block lies.
 var bsdiffFixtures = []bsdiffFixture{
@@ -50,12 +58,24 @@ var bsdiffFixtures = []bsdiffFixture{
 	{name: "grow-past-old", old: []byte("ab"),
 		new: []byte("abcdef"), ctrls: [][3]int64{{6, 0, 0}}, newSize: -1},
 	{name: "empty-new", old: []byte("anything"), new: []byte{}, newSize: -1},
+	{name: "make-elf", old: []byte(elfFixtureOld), new: []byte(elfFixtureNew), ctrls: [][3]int64{{0, int64(len(elfFixtureNew)), 0}}, newSize: -1},
 	{name: "bad-negative-add", old: []byte("abc"), new: []byte("abc"), ctrls: [][3]int64{{-1, 0, 0}}, newSize: 3, bad: true},
 	{name: "bad-add-past-end", old: []byte("abc"), new: []byte("abcdef"), ctrls: [][3]int64{{6, 0, 0}}, newSize: 3, bad: true},
 	{name: "bad-insert-past-end", old: []byte("abc"), new: []byte("abcdef"), ctrls: [][3]int64{{2, 4, 0}}, newSize: 3, bad: true},
 	{name: "bad-huge-seek", old: []byte("abc"), new: []byte("abc"), ctrls: [][3]int64{{1, 0, 1 << 62}, {2, 0, 0}}, newSize: 3, bad: true},
 	{name: "bad-short-ctrl", old: []byte("abc"), new: []byte("abc"), ctrls: [][3]int64{{2, 0, 0}}, newSize: 3, bad: true},
 	{name: "bad-idle-spin", old: []byte("abc"), new: []byte("abc"), ctrls: idleTriples(maxBSDIFFIdleTriples + 1), newSize: 3, bad: true},
+	{name: "bad-many-triples", old: nil, new: bytes.Repeat([]byte("x"), 4096), ctrls: oneByteTriples(4096), newSize: -1, bad: true},
+}
+
+// oneByteTriples is n triples each copying one byte: valid, and past the
+// triple cap for an output of n bytes once n > 4/3 of the idle budget.
+func oneByteTriples(n int) [][3]int64 {
+	out := make([][3]int64, n)
+	for i := range out {
+		out[i] = [3]int64{1, 0, 0}
+	}
+	return out
 }
 
 // idleTriples is n triples that move nothing.
@@ -234,8 +254,14 @@ func FuzzApplyBSDIFF40(f *testing.F) {
 		}
 	}
 	f.Add([]byte("abc"), []byte("BSDIFF40"))
-	const maxOut = 1 << 16
 	f.Fuzz(func(t *testing.T, old, patch []byte) {
+		// A small cap and a large one: the large one lets a header claim
+		// sizes past what any input here holds, which the applier must
+		// refuse without allocating them.
+		maxOut := int64(1 << 16)
+		if len(old)%2 == 1 {
+			maxOut = 1 << 30
+		}
 		got, err := applyBSDIFF40(old, patch, maxOut)
 		if err != nil {
 			if got != nil {
@@ -250,4 +276,35 @@ func FuzzApplyBSDIFF40(f *testing.F) {
 			t.Fatalf("output of %d bytes, header says %d", len(got), want)
 		}
 	})
+}
+
+// TestApplyBSDIFF40_TooManyTriples: a control block of one-byte triples
+// past a quarter of the output's size is refused, not run.
+func TestApplyBSDIFF40_TooManyTriples(t *testing.T) {
+	assert.Equal(t, int64(maxBSDIFFIdleTriples+25), bsdiffTripleCap(100))
+	for _, f := range bsdiffFixtures {
+		if f.name == "bad-many-triples" {
+			_, err := applyBSDIFF40(f.old, readBSDIFFFixture(t, f), 1<<20)
+			require.ErrorIs(t, err, ErrBadPatch)
+			assert.Contains(t, err.Error(), "more triples")
+		}
+	}
+	f := bsdiffFixtures[0]
+	_, err := applyBSDIFF40(f.old, readBSDIFFFixture(t, f), 1<<20)
+	require.NoError(t, err, "a real patch's one triple is far under the cap")
+}
+
+// TestApplyBSDIFF40_ClaimedSizeIsNotAllocated: a header claiming an
+// output near the cap, over blocks that end at once, is refused without
+// the claimed output ever being allocated.
+func TestApplyBSDIFF40_ClaimedSizeIsNotAllocated(t *testing.T) {
+	good := readBSDIFFFixture(t, bsdiffFixtures[0])
+	p := bytes.Clone(good)
+	copy(p[24:32], bsdiffOfftout(1<<30))
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err := applyBSDIFF40(bsdiffFixtures[0].old, p, 1<<30)
+	runtime.ReadMemStats(&after)
+	require.ErrorIs(t, err, ErrBadPatch)
+	assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(64<<20), "nothing near 1 GiB was allocated")
 }

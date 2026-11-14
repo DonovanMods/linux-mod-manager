@@ -2346,6 +2346,13 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #610 review B1: a version-0 import plan's mods that install
+			// with a file list or patches, one patch re-aimed at a DLL.
+			"import_tree_inputs",
+			core.ImportTreeInputs{SourceID: "nexusmods", ModID: "21", FileList: 2,
+				Patches: []core.CollectionItemPatch{{FileID: "210", Path: `Mod\Helper.dll`, CRC32: "CABDDFC4", Restricted: "code the system runs (.dll)"}}},
+		},
+		{
 			"collection_item_patch",
 			core.CollectionItemPatch{FileID: "120872", Path: `[CP] Animated Furniture and Stuff\content.json`, CRC32: "CABDDFC4"},
 		},

@@ -162,6 +162,9 @@ type bundledItem struct {
 type collectionBundle struct {
 	items   map[string]*bundledItem
 	patches map[string][]byte
+	// patchBytes is the patches' size together, held to
+	// maxRecipePatchBytes (#610 review B2).
+	patchBytes int64
 }
 
 // addPatchMember reads one patches/ member into b: named
@@ -181,16 +184,25 @@ func (b *collectionBundle) addPatchMember(f *zip.File) error {
 		return fmt.Errorf("the patch %q's compression ratio is over %d:1", f.Name, maxCollectionRatio)
 	case b.patches[sha] != nil:
 		return fmt.Errorf("the container holds %q more than once", f.Name)
+	case b.patchBytes+int64(f.UncompressedSize64) > maxRecipePatchBytes:
+		return fmt.Errorf("the container's patches are over the %d-byte limit together", maxRecipePatchBytes)
 	}
 	rc, err := f.Open()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rc.Close() }()
-	data, err := io.ReadAll(io.LimitReader(rc, maxPatchBytes+1))
+	// The header's size is a claim: what is read is held to what is left
+	// of both caps.
+	room := min(int64(maxPatchBytes), maxRecipePatchBytes-b.patchBytes)
+	data, err := io.ReadAll(io.LimitReader(rc, room+1))
 	if err != nil {
 		return fmt.Errorf("reading %q: %w", f.Name, err)
 	}
+	if int64(len(data)) > room || uint64(len(data)) != f.UncompressedSize64 {
+		return fmt.Errorf("the patch %q is not the size its header claims, or is over the limit", f.Name)
+	}
+	b.patchBytes += int64(len(data))
 	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != sha || !isBSDIFF40(data) {
 		return fmt.Errorf("the patch %q is not the BSDIFF40 patch its name says", f.Name)
 	}

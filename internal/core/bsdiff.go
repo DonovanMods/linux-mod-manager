@@ -15,11 +15,15 @@
 //     length, no copy or insert past the declared output size, and every
 //     value within maxBSDIFFMagnitude, so the old-file cursor can never
 //     overflow;
-//   - a triple that makes no progress counts against a small budget, so a
-//     control block that bzip2 inflates to millions of empty triples ends
-//     in an error, not a spin;
+//   - a triple that makes no progress counts against a small budget, and
+//     the triples together against a quarter of the output's size (bsdiff
+//     writes one per match, and a match is longer than that), so a control
+//     block bzip2 inflates to millions of triples ends in an error, not a
+//     spin;
 //   - a block is read only as far as the output needs, so a compressed
-//     block that would inflate past it is never inflated past it;
+//     block that would inflate past it is never inflated past it, and the
+//     output grows as bytes arrive rather than being allocated at the size
+//     the header claims;
 //   - the result must be exactly the declared size: a short block, or a
 //     control block that stops early, is an error.
 //
@@ -35,6 +39,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 )
 
 // bsdiffMagic opens every BSDIFF40 patch.
@@ -52,8 +57,31 @@ const maxBSDIFFMagnitude = 1 << 48
 
 // maxBSDIFFIdleTriples is how many control triples that neither copy nor
 // insert a byte a patch may hold. bsdiff writes none in practice; the
-// budget only stops a hostile control block that would spin forever.
+// budget only stops a hostile control block that would spin forever. It is
+// also the floor of the cap on all triples (bsdiffTripleCap).
 const maxBSDIFFIdleTriples = 1024
+
+// bsdiffChunk is how much of a block is read at a time.
+const bsdiffChunk = 64 << 10
+
+// bsdiffTripleCap is how many control triples a patch making newSize bytes
+// may hold: a quarter of its size, plus the idle budget.
+func bsdiffTripleCap(newSize int64) int64 { return newSize/4 + maxBSDIFFIdleTriples }
+
+// bsdiffAppend appends n bytes read from r to dst, growing it a chunk at a
+// time, so a block that ends early never cost the memory it claimed.
+func bsdiffAppend(dst []byte, r io.Reader, n int64) ([]byte, error) {
+	for n > 0 {
+		k := int(min(n, bsdiffChunk))
+		at := len(dst)
+		dst = slices.Grow(dst, k)[:at+k]
+		if _, err := io.ReadFull(r, dst[at:]); err != nil {
+			return dst[:at], err
+		}
+		n -= int64(k)
+	}
+	return dst, nil
+}
 
 // ErrBadPatch is a patch lmm refuses to apply: not BSDIFF40, malformed,
 // or describing an output over the cap.
@@ -98,12 +126,16 @@ func applyBSDIFF40(old, patch []byte, maxOut int64) ([]byte, error) {
 	diff := bzip2.NewReader(bytes.NewReader(body[ctrlLen : ctrlLen+diffLen]))
 	extra := bzip2.NewReader(bytes.NewReader(body[ctrlLen+diffLen:]))
 
-	out := make([]byte, newSize)
+	out := make([]byte, 0, min(newSize, bsdiffChunk))
 	oldSize := int64(len(old))
 	var newPos, oldPos int64
 	var triple [24]byte
 	idle := 0
-	for newPos < newSize {
+	tripleCap := bsdiffTripleCap(newSize)
+	for triples := int64(1); newPos < newSize; triples++ {
+		if triples > tripleCap {
+			return nil, fmt.Errorf("%w: its control block holds more triples than a file of its size needs", ErrBadPatch)
+		}
 		if _, err := io.ReadFull(ctrl, triple[:]); err != nil {
 			return nil, fmt.Errorf("%w: its control block ends before the file does: %v", ErrBadPatch, err)
 		}
@@ -125,10 +157,11 @@ func applyBSDIFF40(old, patch []byte, maxOut int64) ([]byte, error) {
 		}
 
 		// The diff block: bytes added to the old file's, where it has them.
-		chunk := out[newPos : newPos+add]
-		if _, err := io.ReadFull(diff, chunk); err != nil {
+		var err error
+		if out, err = bsdiffAppend(out, diff, add); err != nil {
 			return nil, fmt.Errorf("%w: its diff block ends early: %v", ErrBadPatch, err)
 		}
+		chunk := out[newPos : newPos+add]
 		for i := range chunk {
 			if at := oldPos + int64(i); at >= 0 && at < oldSize {
 				chunk[i] += old[at]
@@ -138,7 +171,7 @@ func applyBSDIFF40(old, patch []byte, maxOut int64) ([]byte, error) {
 		oldPos += add
 
 		// The extra block: bytes inserted as they are.
-		if _, err := io.ReadFull(extra, out[newPos:newPos+insert]); err != nil {
+		if out, err = bsdiffAppend(out, extra, insert); err != nil {
 			return nil, fmt.Errorf("%w: its extra block ends early: %v", ErrBadPatch, err)
 		}
 		newPos += insert
@@ -146,6 +179,9 @@ func applyBSDIFF40(old, patch []byte, maxOut int64) ([]byte, error) {
 		if oldPos > maxBSDIFFMagnitude || oldPos < -maxBSDIFFMagnitude {
 			return nil, fmt.Errorf("%w: its control block seeks out of range", ErrBadPatch)
 		}
+	}
+	if out == nil {
+		out = []byte{}
 	}
 	return out, nil
 }

@@ -476,3 +476,86 @@ func TestCollectionUpdate_CarriesFileListsPatchesAndBundles(t *testing.T) {
 	got, _ := f.deployed(t, "Mod/manifest.json")
 	assert.Equal(t, c5ManifestV41, got)
 }
+
+// TestProfileImport_ReaimedPatchIsGated (#610 review B1): a version-0
+// profile document naming a patch the store keeps - admitted by a
+// collection for Mod/manifest.json - against another file is held to the
+// same gate as a collection: the plan lists it as restricted, Apply refuses
+// without --allow-any-overrides with nothing written, and with it the patch
+// is admitted for that file and applied.
+func TestProfileImport_ReaimedPatchIsGated(t *testing.T) {
+	f := newC5Fixture(t, c5Recipe(`Mod\manifest.json`, c5CRC(c5ManifestV40)), c5Trees(t, c5Patch(t)))
+	plan := f.plan(t, core.SourceCollectionImportRequest{})
+	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	sum := sha256.Sum256(c5Patch(t))
+	sha := hex.EncodeToString(sum[:])
+
+	f.src.AddDownload("210", createTestZipBytes(t, map[string]string{"Mod/Helper.dll": c5ManifestV40, "Mod/other.json": c5ManifestV40}))
+	doc := func(target string) []byte {
+		return []byte(fmt.Sprintf("name: Reaimed\ngame_id: skyrim\nmods:\n  - source_id: nexusmods\n    mod_id: \"21\"\n    version: \"1\"\n    file_ids: [\"210\"]\n"+
+			"    patches:\n      \"210\": [{path: %s, crc32: %s, sha256: %s}]\n", target, c5CRC(c5ManifestV40), sha))
+	}
+	for target, reason := range map[string]string{
+		"Mod/Helper.dll": "code the system runs (.dll)",
+		"Mod/other.json": "a patch lmm keeps for another file",
+	} {
+		t.Run(target, func(t *testing.T) {
+			p, err := f.svc.PlanImport(context.Background(), f.game, doc(target))
+			require.NoError(t, err)
+			require.Len(t, p.TreeInputs, 1)
+			require.Len(t, p.TreeInputs[0].Patches, 1)
+			assert.Contains(t, p.TreeInputs[0].Patches[0].Restricted, reason, "the plan names it")
+			_, err = f.svc.ApplyImport(context.Background(), f.game, p, core.ProfileImportOptions{Install: true}, nil)
+			require.ErrorIs(t, err, core.ErrCodePatch)
+			_, err = config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Reaimed")
+			require.Error(t, err, "nothing written")
+		})
+	}
+
+	p, err := f.svc.PlanImport(context.Background(), f.game, doc("Mod/Helper.dll"))
+	require.NoError(t, err)
+	_, err = f.svc.ApplyImport(context.Background(), f.game, p, core.ProfileImportOptions{Install: true, AllowAnyOverrides: true}, nil)
+	require.NoError(t, err)
+	// Admitted for that file now: a re-plan names no restriction but the
+	// file's code name, which every import asks about.
+	p, err = f.svc.PlanImport(context.Background(), f.game, doc("Mod/Helper.dll"))
+	require.NoError(t, err)
+	assert.Equal(t, "code the system runs (.dll)", p.TreeInputs[0].Patches[0].Restricted)
+}
+
+// TestProfileImport_RefusesTreeInputsItCannotUseAsWritten (#610 review B1):
+// a version-0 document's file lists and patches are held to the
+// collection reader's rules.
+func TestProfileImport_RefusesTreeInputsItCannotUseAsWritten(t *testing.T) {
+	f := newC5Fixture(t, c5Recipe(`Mod\manifest.json`, c5CRC(c5ManifestV40)), c5Trees(t, c5Patch(t)))
+	doc := "name: Bad\ngame_id: skyrim\nmods:\n  - source_id: nexusmods\n    mod_id: \"20\"\n    file_ids: [\"200\"]\n" +
+		"    file_list:\n      \"200\": [{path: '..\\..\\evil.dll', md5: " + c5MD5("a") + "}]\n"
+	_, err := f.svc.PlanImport(context.Background(), f.game, []byte(doc))
+	require.ErrorIs(t, err, core.ErrUnsafeImport)
+}
+
+// TestSourceCollection_VerifyFixRebuildsThePatchedTree (from the #610
+// review): verify --fix rebuilds a patched, filtered cache entry from the
+// profile's recorded inputs.
+func TestSourceCollection_VerifyFixRebuildsThePatchedTree(t *testing.T) {
+	f := newC5Fixture(t, c5Recipe(`Mod\manifest.json`, c5CRC(c5ManifestV40)), c5Trees(t, c5Patch(t)))
+	plan := f.plan(t, core.SourceCollectionImportRequest{})
+	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	var found []string
+	_ = filepath.WalkDir(filepath.Join(f.cacheDir, "skyrim"), func(p string, d os.DirEntry, err error) error {
+		if d != nil && !d.IsDir() && filepath.Base(p) == "manifest.json" && filepath.Base(filepath.Dir(p)) == "Mod" {
+			found = append(found, p)
+		}
+		return nil
+	})
+	require.Len(t, found, 1, "%v", found)
+	entry := filepath.Dir(filepath.Dir(found[0]))
+	require.NoError(t, os.RemoveAll(entry))
+	_, err = f.svc.VerifyForTest(context.Background(), f.game, "Replicated", core.VerifyOptions{Fix: true}, nil)
+	require.NoError(t, err)
+	data, err := os.ReadFile(found[0])
+	require.NoError(t, err, "verify --fix restored the entry")
+	assert.Equal(t, c5ManifestV41, string(data), "patched")
+}

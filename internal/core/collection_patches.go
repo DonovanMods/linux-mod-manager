@@ -26,33 +26,33 @@ import (
 // caller's to answer (`--allow-any-overrides`).
 var ErrCodePatch = errors.New("the collection patches code")
 
-// patchSource is where one patch a plan names comes from: its bytes (a
-// container's), or a file (a recipe's), or neither when the store already
-// keeps it.
-type patchSource struct {
-	data []byte
-	file string
-}
-
 // collectionPatchSources finds every patch doc's pinned files name, by
-// sha256: in the container's patches/ (bundle), the recipe (recipe), or
-// game's patch store. A patch none of them has refuses the document: an
-// import that cannot apply a patch must not install the mod unpatched.
-func (s *Service) collectionPatchSources(game *domain.Game, doc *domain.CollectionDocument, bundle *collectionBundle, recipe *recipeFiles) (map[string]patchSource, error) {
+// sha256, and returns the ones this import brings: a container's
+// patches/ (bundle) or a converted collection's recipe (recipe), each
+// written into game's patch store now - content-addressed, checked
+// against its sha256 and its format - so the plan holds no patch's bytes
+// (#610 review B2). A patch kept there is inert until an import admits it
+// for a file (patch_admission.go). A patch neither brings must already be
+// in the store, else the document is refused: an import that cannot apply
+// a patch must not install the mod unpatched.
+func (s *Service) collectionPatchSources(game *domain.Game, doc *domain.CollectionDocument, bundle *collectionBundle, recipe *recipeFiles) (map[string]bool, error) {
 	files := recipe.patchFiles()
-	var out map[string]patchSource
+	var out map[string]bool
 	for _, item := range doc.Items {
 		for _, in := range refTreeInputs(&item.Ref) {
 			for _, p := range in.Patches {
 				if _, done := out[p.SHA256]; done {
 					continue
 				}
-				var src patchSource
+				var data []byte
 				switch {
 				case bundle != nil && bundle.patches[p.SHA256] != nil:
-					src.data = bundle.patches[p.SHA256]
+					data = bundle.patches[p.SHA256]
 				case files[p.SHA256] != "":
-					src.file = files[p.SHA256]
+					var err error
+					if data, err = readCapped(files[p.SHA256], maxPatchBytes); err != nil {
+						return nil, fmt.Errorf("reading the collection's patch for %q: %w", p.Path, err)
+					}
 				default:
 					if _, err := s.readPatch(game, p.SHA256); err != nil {
 						return nil, fmt.Errorf("%w: %s:%s patches %q, and the document carries no patch %s (import the .lmmc container it came from): %v",
@@ -60,44 +60,25 @@ func (s *Service) collectionPatchSources(game *domain.Game, doc *domain.Collecti
 					}
 				}
 				if out == nil {
-					out = map[string]patchSource{}
+					out = map[string]bool{}
 				}
-				out[p.SHA256] = src
+				out[p.SHA256] = data != nil
+				if data == nil {
+					continue
+				}
+				if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != p.SHA256 || !isBSDIFF40(data) {
+					return nil, fmt.Errorf("%w: the collection's patch for %q is not the BSDIFF40 patch %s it names", ErrInvalidCollection, p.Path, p.SHA256)
+				}
+				if _, err := s.keepPatch(game, data); err != nil {
+					return nil, err
+				}
 			}
 		}
+	}
+	if bundle != nil {
+		bundle.patches = nil // kept: the plan does not hold them
 	}
 	return out, nil
-}
-
-// keepPatches keeps every patch sources names in game's patch store: a
-// container's bytes, or a recipe's file - read again, within the cap, and
-// held to the sha256 it was planned with.
-func (s *Service) keepPatches(game *domain.Game, sources map[string]patchSource) error {
-	shas := make([]string, 0, len(sources))
-	for sha := range sources {
-		shas = append(shas, sha)
-	}
-	sort.Strings(shas)
-	for _, sha := range shas {
-		src := sources[sha]
-		data := src.data
-		switch {
-		case data == nil && src.file == "":
-			continue // the store keeps it already
-		case data == nil:
-			var err error
-			if data, err = readCapped(src.file, maxPatchBytes); err != nil {
-				return fmt.Errorf("keeping a patch: %w", err)
-			}
-		}
-		if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != sha {
-			return fmt.Errorf("%w: the patch %s changed after the import was planned; plan it again", ErrPatchNotKept, sha)
-		}
-		if _, err := s.keepPatch(game, data); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // patchCodeReason is why a patch to the file at p (a recorded path) is
@@ -109,7 +90,7 @@ func patchCodeReason(p string) string {
 	return bundledCodeReason(path.Base(segs[len(segs)-1]), nil)
 }
 
-// restrictedPatchNames names a plan's patches to code, "<mod>: <path>",
+// restrictedPatchNames names a collection plan's restricted patches, "<mod>: <path>",
 // at most maxIgnoredWarnings of them, then a count.
 func restrictedPatchNames(c *CollectionImport) []string {
 	var out []string

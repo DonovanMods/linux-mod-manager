@@ -203,3 +203,34 @@ func TestCollectionContainer_PatchMembers(t *testing.T) {
 		})
 	}
 }
+
+// TestCollectionContainer_PatchesAreCappedTogether (#610 review B2): a
+// container's patches are capped together, not only each, so a container
+// of many highly compressed patches is refused before it fills memory; a
+// kept container read for one bundled item reads no patch at all.
+func TestCollectionContainer_PatchesAreCappedTogether(t *testing.T) {
+	members := map[string][]byte{}
+	per := maxRecipePatchBytes/4 + 1
+	for i := range 4 {
+		// Mostly zeros with a sparse noise, so each compresses well -
+		// but under the ratio cap that refuses a single bomb.
+		data := append([]byte("BSDIFF40"), make([]byte, per-8)...)
+		rng := uint32(i + 1)
+		for j := 8; j < len(data); j += 16 {
+			rng = rng*1664525 + 1013904223
+			data[j] = byte(rng >> 24)
+		}
+		sum := sha256.Sum256(data)
+		members["patches/"+hex.EncodeToString(sum[:])+".diff"] = data
+	}
+	container := zipWith(t, members)
+	_, _, _, err := readCollectionContainer(container)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "together")
+
+	_, bundle, _, err := parseCollectionContainer(container, false)
+	require.NoError(t, err, "a kept container's patches are not read")
+	if bundle != nil {
+		assert.Empty(t, bundle.patches)
+	}
+}

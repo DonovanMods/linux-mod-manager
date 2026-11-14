@@ -305,8 +305,9 @@ type CollectionUpdatePlan struct {
 	// bundle is the new version's container's bundled files (#623): kept
 	// at Apply for the lmm-collection source, as an import keeps them.
 	bundle *pendingBundle
-	// patchSources are the new version's patches (#610), kept at Apply.
-	patchSources map[string]patchSource
+	// patchSources names the patches the new version brings (#610), kept
+	// in the store at plan and admitted at Apply.
+	patchSources map[string]bool
 	snapshot     installedSnapshot
 }
 
@@ -506,15 +507,11 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 	if plan.patchSources, err = s.collectionPatchSources(game, doc, bundle, recipe); err != nil {
 		return nil, err
 	}
-	for _, item := range doc.Items {
-		for _, in := range refTreeInputs(&item.Ref) {
-			for _, p := range in.Patches {
-				if patchCodeReason(p.Path) != "" {
-					plan.RestrictedPatches++
-				}
-			}
-		}
+	newRefs := make([]domain.ModReference, len(doc.Items))
+	for i, item := range doc.Items {
+		newRefs[i] = item.Ref
 	}
+	plan.RestrictedPatches, _ = restrictedTreePatches(s.importTreeInputs(game, newRefs, plan.patchSources))
 
 	// Identity: the same collection, and not an older version of it.
 	fetchedID, fetchedVersion := doc.Info.ID, doc.Info.Version
@@ -990,7 +987,7 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	}
 	// #610: a patch to code is refused, not dropped, as at an import.
 	if plan.RestrictedPatches > 0 && !opts.AllowAnyOverrides {
-		return result, fmt.Errorf("%w: %d of the new version's patches change code; update with --allow-any-overrides to apply them", ErrCodePatch, plan.RestrictedPatches)
+		return result, fmt.Errorf("%w: %d of the new version's patches change code or apply to a file no import admitted them for; update with --allow-any-overrides to apply them", ErrCodePatch, plan.RestrictedPatches)
 	}
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -1058,6 +1055,8 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	// #609: the new version's recorded installer choices replay only
 	// against the curator's archive, as at an import.
 	ip.archiveMD5 = collectionArchiveMD5s(plan.doc)
+	// #610: the patches the new version brings are admitted by this update.
+	ip.patchSources = plan.patchSources
 	// Only what the new version adds or rewrites goes through the
 	// override gate, and updateTarget applied it: the profile's own
 	// overrides stay as they are.
@@ -1088,9 +1087,6 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		keep := slices.Concat(bundledOnly(ip.NeedsRedownload), bundledOnly(ip.Missing))
 		pending = len(ip.NeedsRedownload) + len(ip.Missing) - len(keep)
 		ip.NeedsRedownload, ip.Missing = bundledOnly(ip.NeedsRedownload), bundledOnly(ip.Missing)
-	}
-	if err := s.keepPatches(game, plan.patchSources); err != nil {
-		return result, err
 	}
 	if b := plan.bundle; b != nil {
 		if err := s.keepPendingBundle(game, b, opts.AllowAnyOverrides); err != nil {

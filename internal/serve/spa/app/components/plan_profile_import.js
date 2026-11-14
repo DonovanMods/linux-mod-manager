@@ -714,13 +714,18 @@ function ImportGates({ plan, modal, actions }) {
   const heldBundles = (plan.collection?.bundled ?? []).filter(
     (b) => (b.restricted ?? []).length > 0,
   );
-  // Issue 610: patches to code, which the same option lets through - and
-  // without which the import is refused.
-  const codePatches = (plan.collection?.items ?? []).flatMap((item) =>
+  // Issue 610: patches that need the same option - to code, or a patch
+  // this machine keeps for another file - without which the import is
+  // refused. tree_inputs carries them for every import, an older export
+  // included (the review's B1).
+  const codePatches = (plan.tree_inputs ?? []).flatMap((item) =>
     (item.patches ?? [])
       .filter((p) => p.restricted)
       .map((p) => ({ item, patch: p })),
   );
+  // An older export's file lists and patches (a collection lists them in
+  // its own section).
+  const treeInputs = plan.collection ? [] : (plan.tree_inputs ?? []);
   // Both boxes below set the one option, so both show its state.
   const anyOverrides = Boolean(modal?.applyOptions?.allow_any_overrides);
   // Every override the document writes, held back or not (issue 621
@@ -836,12 +841,22 @@ function ImportGates({ plan, modal, actions }) {
       </section>`
     }
     ${
+      treeInputs.length > 0 &&
+      html`<${TreeInputsSection}
+        collection=${{
+          items: treeInputs.map((it) => ({ ...it, name: "" })),
+        }}
+      />`
+    }
+    ${
       codePatches.length > 0 &&
       html`<section
         class="plan__section"
         data-testid="import-restricted-patches"
       >
-        <h3 class="plan__heading">Patches that change code</h3>
+        <h3 class="plan__heading">
+          Patches that change code, or apply to another file
+        </h3>
         <ul class="plan__paths">
           ${codePatches.map(
             ({ item, patch }) =>

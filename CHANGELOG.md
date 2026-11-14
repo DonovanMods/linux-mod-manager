@@ -30,7 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   patch to code (a DLL, an executable, a system script or a loader
   configuration) needs `--allow-any-overrides` (the web UI's **Apply these
   patches**), and without it the import is refused rather than installed
-  unpatched; a bundle holding code is held back as a `.lmmc`'s is. The
+  unpatched; a kept patch applies only to the files an import admitted it
+  for, so any profile document - an older export included, whose plan now
+  lists its file lists and patches too - naming one for another file is
+  gated the same way, and a patch whose result is native code applies only
+  where that was allowed; a bundle holding code is held back as a `.lmmc`'s is. The
   plan, in the terminal and the web UI, lists each item's file list and
   patches and the bundled items. Of the 72 surveyed NexusMods collections,
   51 now import (40 before). See the guide's

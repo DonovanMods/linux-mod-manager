@@ -103,6 +103,12 @@ type ImportPlan struct {
 	// plans exactly as before.
 	Hooks               []ImportHook         `json:"hooks,omitempty"`
 	RestrictedOverrides []RestrictedOverride `json:"restricted_overrides,omitempty"`
+	// TreeInputs lists the mods that install with an exact file list or
+	// binary patches (#610), every patch with why it needs
+	// --allow-any-overrides when it does: without it, Apply refuses an
+	// import with one (ErrCodePatch). For every document import, version 0
+	// included; absent when no mod has either.
+	TreeInputs []ImportTreeInputs `json:"tree_inputs,omitempty"`
 	// Overrides lists every override path the document carries, held back
 	// or not, in path order (#621 review N1): a file the import writes into
 	// the game directory is never one the user did not see. Absent when
@@ -138,10 +144,11 @@ type ImportPlan struct {
 	// bundle is a collection container's bundled files (#623): what the
 	// apply keeps for the lmm-collection source, and what it holds back.
 	bundle *pendingBundle
-	// patchSources are the patches a collection's document names (#610),
-	// by sha256: what the apply keeps in the patch store before anything
-	// is acquired.
-	patchSources map[string]patchSource
+	// patchSources names, by sha256, the patches a collection import
+	// brings itself (#610): kept in the patch store at plan, admitted for
+	// their targets at apply (gatePatches). Nil for an import that brings
+	// none, whose patches must be ones the store keeps and admits.
+	patchSources map[string]bool
 	// autoUpdate names the mods (domain.ModKey) whose installed rows the
 	// import writes with the auto update policy (#607: a source
 	// collection's "latest" items) - in the same write as the row, inside
@@ -471,6 +478,7 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 	return &ImportPlan{
 		Hooks:               listHooks(profile.Hooks, profile.HooksExplicit),
 		RestrictedOverrides: restrictedOverrides(profile),
+		TreeInputs:          s.importTreeInputs(game, profile.Mods, nil),
 		Overrides:           overridePaths(profile),
 		Profile:             profile,
 		Installed:           installed,
@@ -809,6 +817,13 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	}
 	result.RecordedOnly, result.ActiveProfile = recordedOnly, live
 	deploy := !recordedOnly
+
+	// #610 review B1: every import's patches, gated and admitted for their
+	// targets before anything is written - recomputed here, never trusted
+	// from the plan.
+	if err := s.gatePatches(game, plan.Profile.Mods, plan.patchSources, opts.AllowAnyOverrides); err != nil {
+		return result, err
+	}
 
 	pm := s.NewProfileManager()
 
