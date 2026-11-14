@@ -133,6 +133,12 @@ type ImportPlan struct {
 	// collectionState is what a collection import adds to the saved profile
 	// beyond its version-0 document (#621): nil for every other plan.
 	collectionState *collectionState
+	// autoUpdate names the mods (domain.ModKey) whose installed rows the
+	// import writes with the auto update policy (#607: a source
+	// collection's "latest" items) - in the same write as the row, inside
+	// the import's mutation, so no other job and no cancellation can leave
+	// one on notify.
+	autoUpdate map[string]bool
 
 	// storedFileIDs maps domain.ModKey keys (for NeedsRedownload's cache-miss
 	// entries only) to that mod's DB-recorded FileIDs - preserving
@@ -934,7 +940,10 @@ func (s *Service) deployImportedMod(ctx context.Context, game *domain.Game, inst
 //
 // deploy is false for a recorded-only import (#462): the row is written
 // not deployed, and nothing reaches the game directory.
-func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profileName string, installer *Installer, row, prior domain.InstalledMod, deploy bool) (domain.ModReference, []string, error) {
+//
+// policy is the new row's update policy: notify, unless the import names the
+// mod for auto (ImportPlan.autoUpdate).
+func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profileName string, installer *Installer, row, prior domain.InstalledMod, deploy bool, policy domain.UpdatePolicy) (domain.ModReference, []string, error) {
 	mod := row.Mod
 	// Normalize GameID to the lmm game (see ApplyProfileSwitch's own
 	// identical save site for why).
@@ -953,7 +962,7 @@ func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profil
 	// The shared per-profile mint (#437/#438): a fresh row - this profile's
 	// own update policy and history, not row's - deployed when
 	// installer.Install just succeeded, or when Steam has it.
-	msgs, err := s.copyRowToProfile(ctx, game, row, profileName, rowCopy{enabled: true, deployed: deploy || row.External})
+	msgs, err := s.copyRowToProfile(ctx, game, row, profileName, rowCopy{enabled: true, deployed: deploy || row.External, policy: policy})
 	if err != nil {
 		return domain.ModReference{}, nil, fmt.Errorf("save failed: %v", err)
 	}

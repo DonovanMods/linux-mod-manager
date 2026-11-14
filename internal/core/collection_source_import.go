@@ -64,11 +64,23 @@ func (s *Service) PlanSourceCollectionImport(ctx context.Context, game *domain.G
 	}
 	c := plan.Collection
 	c.Source = conv
+	if len(conv.AutoUpdate) > 0 {
+		plan.autoUpdate = make(map[string]bool, len(conv.AutoUpdate))
+		for _, key := range conv.AutoUpdate {
+			plan.autoUpdate[key] = true
+		}
+	}
 	c.Unsupported = mergeUnsupported(c.Unsupported, conv.Unsupported)
 
 	installed := map[string]bool{}
 	for _, ref := range plan.Installed {
 		installed[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
+	// A mod another profile already has needs no download, so a free
+	// account installs it like any other.
+	cached := map[string]bool{}
+	for _, ref := range plan.AlreadyCached {
+		cached[domain.ModKey(ref.SourceID, ref.ModID)] = true
 	}
 	if tier, ok := s.accountTier(ctx, req.SourceID); ok {
 		conv.AccountTier = string(tier)
@@ -83,7 +95,7 @@ func (s *Service) PlanSourceCollectionImport(ctx context.Context, game *domain.G
 		switch {
 		case installed[domain.ModKey(req.SourceID, it.ModID)]:
 			it.State = CollectionItemInstalled
-		case conv.ManualDownload:
+		case conv.ManualDownload && !cached[domain.ModKey(req.SourceID, it.ModID)]:
 			it.State = CollectionItemManualDownload
 			pending++
 		}
@@ -133,33 +145,47 @@ func mergeUnsupported(a, b []UnsupportedCollectionFeature) []UnsupportedCollecti
 	return out
 }
 
-// finishSourceCollection completes a source collection's import once its
-// profile is saved: the items the curator wants on their newest file follow
-// it (update policy auto, owner ruling 2026-11-13), and the result says
-// what is left for the user.
-func (s *Service) finishSourceCollection(ctx context.Context, game *domain.Game, c *ConvertedCollection, result *ProfileImportResult, opts ProfileImportOptions) {
-	if opts.NoInstall || !opts.Install {
-		if n := c.Counts[CollectionItemManualDownload] + c.Counts[CollectionItemWillInstall]; n > 0 {
-			result.Notes = append(result.Notes, fmt.Sprintf("The profile records %d item(s) still to download: get each file from its page and install it from the file (lmm install --id <mod-id> --from-file <archive>).", n))
+// finishSourceCollection says what a source collection's import left for
+// the user once its profile is saved: the items still to download by hand,
+// and - by name, since nothing but the collection's recipe records it - the
+// ones the curator wants on their newest file, which the import could not
+// set to update automatically because they are not installed yet. The
+// policy of every item it DID install was written with its row
+// (ImportPlan.autoUpdate).
+func finishSourceCollection(plan *ImportPlan, c *ConvertedCollection, result *ProfileImportResult, opts ProfileImportOptions) {
+	installed := opts.Install && !opts.NoInstall
+	pending := map[string]bool{}
+	if !installed {
+		for _, ref := range slices.Concat(plan.AlreadyCached, plan.NeedsRedownload, plan.Missing) {
+			pending[domain.ModKey(ref.SourceID, ref.ModID)] = true
 		}
-		if len(c.AutoUpdate) > 0 {
-			result.Notes = append(result.Notes, fmt.Sprintf("%d item(s) the curator wants on their newest file are not installed yet; set them to update automatically once they are.", len(c.AutoUpdate)))
+	} else {
+		for _, ref := range slices.Concat(plan.NeedsRedownload, plan.Missing) {
+			if c.ManualDownload {
+				pending[domain.ModKey(ref.SourceID, ref.ModID)] = true
+			}
 		}
-		return
 	}
-	var auto int
-	for _, key := range c.AutoUpdate {
-		sourceID, modID, ok := strings.Cut(key, ":")
-		if !ok {
+	if len(pending) > 0 {
+		result.Notes = append(result.Notes, fmt.Sprintf("The profile records %d item(s) still to download: get each file from its page and install it from the file (lmm install --id <mod-id> --from-file <archive>).", len(pending)))
+	}
+	var autoInstalled int
+	var autoPending []string
+	for _, it := range c.Items {
+		if !it.AutoUpdate {
 			continue
 		}
-		if err := s.setModUpdatePolicy(ctx, sourceID, modID, game.ID, result.ProfileName, domain.UpdateAuto); err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: could not set it to update automatically: %v", key, err))
-			continue
+		if pending[domain.ModKey(c.SourceID, it.ModID)] {
+			autoPending = append(autoPending, it.Name)
+		} else if installed {
+			autoInstalled++
 		}
-		auto++
 	}
-	if auto > 0 {
-		result.Notes = append(result.Notes, fmt.Sprintf("%d item(s) the curator wants on their newest file were installed at the tested file and set to update automatically.", auto))
+	if autoInstalled > 0 {
+		result.Notes = append(result.Notes, fmt.Sprintf("%d item(s) the curator wants on their newest file were installed at the tested file and set to update automatically.", autoInstalled))
+	}
+	if len(autoPending) > 0 {
+		result.Notes = append(result.Notes, fmt.Sprintf("The curator wants these on their newest file: %s. Once each is installed, set it to update automatically (lmm mod set-update <mod-id> --auto).",
+			strings.Join(autoPending, ", ")))
 	}
 }

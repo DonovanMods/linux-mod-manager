@@ -541,7 +541,7 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
   const lmmCollection = plan.collection ?? null;
   // Issue 607: a source collection (NexusMods) converted into the lmm
   // collection above. An account the source serves no downloads to saves
-  // the profile with every item pending, so it has nothing to install.
+  // the profile with every item that would need one pending.
   const sourceCollection = lmmCollection?.source ?? null;
   const manualOnly = !!sourceCollection?.manual_download;
   const collection = plan.workshop_collection ?? null;
@@ -554,9 +554,12 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
   const missing = plan.missing ?? [];
   // A collection import installs nothing whatever this preview offers, so
   // it has no pending count to offer it for.
-  const pending =
-    collection || manualOnly
-      ? 0
+  // A free account installs only what needs no download: a mod another
+  // profile already has. Everything else is recorded, to fetch by hand.
+  const pending = collection
+    ? 0
+    : manualOnly
+      ? alreadyCached.length
       : alreadyCached.length + needsRedownload.length + missing.length;
   // A Workshop item is tracked game-wide, so for a collection BOTH buckets
   // count as already present; an ordinary import counts only the rows this

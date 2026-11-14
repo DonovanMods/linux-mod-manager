@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -236,4 +237,63 @@ func TestSourceCollectionImport_AlreadyInstalledItems(t *testing.T) {
 
 	again := f.plan(t, core.SourceCollectionImportRequest{})
 	assert.Equal(t, core.CollectionItemInstalled, states(again.Collection.Source)["Ten"])
+}
+
+// #607 C2b review, should-fix 3: the auto policy is written with the row,
+// inside the import - for a mod borrowed from another profile too.
+func TestApplySourceCollectionImport_AutoPolicyOnABorrowedRow(t *testing.T) {
+	f := newSourceImportFixture(t, source.TierPremium)
+	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, f.plan(t, core.SourceCollectionImportRequest{}), core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+
+	again := f.plan(t, core.SourceCollectionImportRequest{ProfileName: "again"})
+	require.Len(t, again.AlreadyCached, 2, "both mods are borrowed from the first profile")
+	_, err = f.svc.ApplyCollectionImport(context.Background(), f.game, again, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	row, err := f.svc.GetInstalledMod(context.Background(), "nexusmods", "11", "skyrim", "again")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdateAuto, row.UpdatePolicy)
+	row, err = f.svc.GetInstalledMod(context.Background(), "nexusmods", "10", "skyrim", "again")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdateNotify, row.UpdatePolicy)
+}
+
+// #607 C2b review, nit 6: a free account installs what needs no download
+// - a mod another profile already has - and records the rest pending.
+func TestSourceCollectionImport_FreeAccountInstallsWhatIsAlreadyCached(t *testing.T) {
+	f := newSourceImportFixture(t, source.TierPremium)
+	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game,
+		f.plan(t, core.SourceCollectionImportRequest{Optional: nil}), core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	downloads := f.src.DownloadCount()
+
+	f.src.tier = source.TierFree
+	plan := f.plan(t, core.SourceCollectionImportRequest{ProfileName: "free", WithOptional: true})
+	got := states(plan.Collection.Source)
+	assert.Equal(t, core.CollectionItemWillInstall, got["Ten"], "cached elsewhere: no download needed")
+	assert.Equal(t, core.CollectionItemManualDownload, got["Twelve"], "never downloaded: by hand")
+
+	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Installed+result.Recorded, "both cached mods get this profile's rows (recorded: it is not the active profile)")
+	assert.Equal(t, downloads, f.src.DownloadCount(), "nothing downloaded")
+	saved, err := config.LoadProfile(f.svc.ConfigDir(), "skyrim", "free")
+	require.NoError(t, err)
+	assert.Len(t, saved.Mods, 3, "the manual item is recorded, pending")
+}
+
+// #607 C2b review, should-fix 4: a free account's "latest" items cannot be
+// set to auto before they are installed, so the note names them.
+func TestSourceCollectionImport_FreeAccountNamesItsPendingLatestItems(t *testing.T) {
+	f := newSourceImportFixture(t, source.TierFree)
+	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game,
+		f.plan(t, core.SourceCollectionImportRequest{}), core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	var named bool
+	for _, n := range result.Notes {
+		if strings.Contains(n, "newest file: Eleven") && strings.Contains(n, "--auto") {
+			named = true
+		}
+	}
+	assert.True(t, named, "%v", result.Notes)
 }

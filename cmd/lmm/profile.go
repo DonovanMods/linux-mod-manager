@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -1064,9 +1065,11 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		return err
 	}
 
-	// #607: an account the source serves no downloads to records every
-	// item, downloads nothing, and has nothing to be asked.
-	noInstall := profileImportNoInstall || (collection != nil && collection.Source != nil && collection.Source.ManualDownload)
+	noInstall := profileImportNoInstall
+	// #607: an account the source serves no downloads to records every item
+	// that would need one; only a mod another profile already has (no
+	// download) is installed, and asked about.
+	manual := collection != nil && collection.Source != nil && collection.Source.ManualDownload
 
 	// Show summary - printed purely from the plan, matching the
 	// pre-extraction CLI's preview exactly. Not under --json: the document
@@ -1082,11 +1085,9 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 			// #472: under --no-install every pending mod gets the same one
 			// accurate line - the document names it, nothing installs or
 			// deploys it - instead of a bucket that promised an install.
-			why := "--no-install"
-			if !profileImportNoInstall {
-				why = "manual downloads"
-			}
-			printNoInstallRefs(plan, why)
+			printNoInstallRefs(slices.Concat(plan.AlreadyCached, plan.NeedsRedownload, plan.Missing), "--no-install")
+		} else if manual {
+			printNoInstallRefs(slices.Concat(plan.NeedsRedownload, plan.Missing), "manual downloads")
 		}
 		// #371: these are installed under ANOTHER profile - the bytes are
 		// here, but this profile still needs its own rows, so they are
@@ -1097,13 +1098,13 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 				fmt.Printf("    - %s\n", planRefLine(ref))
 			}
 		}
-		if len(plan.NeedsRedownload) > 0 && !noInstall {
+		if len(plan.NeedsRedownload) > 0 && !noInstall && !manual {
 			fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(plan.NeedsRedownload))
 			for _, ref := range plan.NeedsRedownload {
 				fmt.Printf("    - %s\n", planRefLine(ref))
 			}
 		}
-		if len(plan.Missing) > 0 && !noInstall {
+		if len(plan.Missing) > 0 && !noInstall && !manual {
 			fmt.Printf("  ↓ %d need to be downloaded:\n", len(plan.Missing))
 			for _, ref := range plan.Missing {
 				fmt.Printf("    - %s\n", planRefLine(ref))
@@ -1120,6 +1121,9 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 	// #371: AlreadyCached counts as pending too - it is installed, just not
 	// downloaded, and declining leaves the profile without those rows.
 	pendingCount := len(plan.AlreadyCached) + len(plan.NeedsRedownload) + len(plan.Missing)
+	if manual {
+		pendingCount = len(plan.AlreadyCached)
+	}
 
 	declined := false
 
@@ -1874,11 +1878,7 @@ func borrowedFrom(im domain.InstalledMod, profile string) string {
 // --no-install import leaves pending (#472): one line per mod, saying what
 // happens to it - the saved document lists it, and nothing is installed or
 // deployed.
-func printNoInstallRefs(plan *core.ImportPlan, why string) {
-	var pending []domain.ModReference
-	pending = append(pending, plan.AlreadyCached...)
-	pending = append(pending, plan.NeedsRedownload...)
-	pending = append(pending, plan.Missing...)
+func printNoInstallRefs(pending []domain.ModReference, why string) {
 	if len(pending) == 0 {
 		return
 	}

@@ -738,6 +738,11 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 		im := plan.ToEnable[idx]
 		scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalEnable, ModName: im.Name, Mod: &domain.ModReference{SourceID: im.SourceID, ModID: im.ID}}
+		if im.ProfileName != plan.To {
+			// #607: another profile's row; the target profile's reference
+			// says where the mod deploys.
+			im.ModType = statedType(s.recordedRef(ctx, game.ID, plan.To, im.SourceID, im.ID))
+		}
 
 		// R7: another version of this mod is live, so the enable replaces
 		// it rather than installing beside it.

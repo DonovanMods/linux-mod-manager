@@ -15,6 +15,9 @@ type rowCopy struct {
 	// profile import has always recorded. carrySettings ignores it and keeps
 	// the source row's own.
 	method domain.LinkMethod
+	// policy is a fresh copy's update policy; its zero value is notify, what
+	// every fresh copy has always been. carrySettings ignores it.
+	policy domain.UpdatePolicy
 	// carrySettings keeps everything the source row says - update policy,
 	// update history, convert-paks, skipped version, link method - and only
 	// re-homes it.
@@ -57,7 +60,7 @@ func (s *Service) copyRowToProfile(ctx context.Context, game *domain.Game, row d
 	} else {
 		copied = domain.InstalledMod{
 			Mod:            mod,
-			UpdatePolicy:   domain.UpdateNotify,
+			UpdatePolicy:   c.policy,
 			LinkMethod:     c.method,
 			FileIDs:        row.FileIDs,
 			AdoptedInPlace: row.AdoptedInPlace,

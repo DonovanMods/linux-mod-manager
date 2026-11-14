@@ -821,6 +821,11 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		im := plan.ToEnable[idx]
 		scope := Scope{Op: OpProfileApply, Index: idx + 1, Total: totalEnable, ModName: im.Name,
 			Mod: &domain.ModReference{SourceID: im.SourceID, ModID: im.ID}}
+		if im.ProfileName != plan.Profile {
+			// #607: another profile's row; this profile's reference says
+			// where the mod deploys.
+			im.ModType = statedType(s.recordedRef(ctx, game.ID, plan.Profile, im.SourceID, im.ID))
+		}
 
 		if err := installer.Install(ctx, game, &im.Mod, plan.Profile); err != nil {
 			// Unlike the disable loop's, a failed deploy is fatal FOR THIS
@@ -915,6 +920,9 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			}
 
 			fileIDs := profileApplyFileIDs(entry.Files)
+			// #607: the ref's stated type is the row's whether the files come
+			// from the cache or a download - a cached mod deploys by it too.
+			mod.ModType = entry.Ref.ModType
 
 			var checksums []fileChecksum // #372 - saved after the DB row below
 			// #614: a cached FOMOD entry is the recorded choices' tree; a
@@ -926,7 +934,6 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			if !entry.Cached {
 				mod.Variant = ""
 				fx := s.fomodInputFor(ctx, game, plan.Profile, &entry.Ref, entry.Ref.SourceID, entry.Ref.ModID, nil)
-				mod.ModType = entry.Ref.ModType // #607
 				progressFn := func(e Event) {
 					if forwardFetchStep(e, scope, emit) {
 						return

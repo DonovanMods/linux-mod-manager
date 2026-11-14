@@ -190,7 +190,11 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 	}
 
 	if st.cachedRow != nil {
-		modRef, msgs, err := s.importCachedMod(ctx, game, profileName, installer, *st.cachedRow, plan.priorVersions[st.key], deploy)
+		// #607: the row is another profile's; where the mod deploys is
+		// this profile's reference's to say (its stated type, or none).
+		row := *st.cachedRow
+		row.ModType = st.ref.ModType
+		modRef, msgs, err := s.importCachedMod(ctx, game, profileName, installer, row, plan.priorVersions[st.key], deploy, plan.updatePolicyFor(st.key))
 		if err != nil {
 			fail(err.Error())
 			return nil
@@ -230,7 +234,7 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 	installedMod := &domain.InstalledMod{
 		Mod:          *mod,
 		ProfileName:  profileName,
-		UpdatePolicy: domain.UpdateNotify,
+		UpdatePolicy: plan.updatePolicyFor(st.key),
 		Enabled:      true,
 		FileIDs:      st.fileIDs,
 		Deployed:     deploy, // installer.Install above just succeeded
@@ -301,4 +305,13 @@ func refusedImport(plan *ImportPlan, toInstall []domain.ModReference, refused *A
 		result.FomodChoicesRequired = fomodErr
 	}
 	return &ProfileImportIncompleteError{Profile: plan.Profile.Name, Result: result, refusal: refused}
+}
+
+// updatePolicyFor is the update policy an import writes key's row with:
+// auto when the plan names it (ImportPlan.autoUpdate), else notify.
+func (p *ImportPlan) updatePolicyFor(key string) domain.UpdatePolicy {
+	if p.autoUpdate[key] {
+		return domain.UpdateAuto
+	}
+	return domain.UpdateNotify
 }

@@ -408,6 +408,7 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 	if c == nil {
 		return &ProfileImportResult{}, errors.New("not a collection import plan")
 	}
+	original := plan
 	if len(c.Unsupported) > 0 {
 		return &ProfileImportResult{}, &CollectionUnsupportedError{Unsupported: c.Unsupported, Supported: supportedExcept(c.Unsupported)}
 	}
@@ -415,13 +416,16 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 		return &ProfileImportResult{}, ErrCollectionHooksFromURL
 	}
 	if c.Source != nil {
-		// A converted source collection is all or nothing (owner ruling,
-		// #602): a half-installed collection is the outcome that looks like
-		// it worked. An account the source serves no downloads to saves the
-		// profile with every item pending.
+		// A converted source collection is all or nothing at acquire (owner
+		// ruling, #602): a half-installed collection is the outcome that
+		// looks like it worked. An account the source serves no downloads
+		// to installs only what needs none - a mod another profile already
+		// has - and saves the profile with every other item pending.
 		opts.AllOrNothing = true
 		if c.Source.ManualDownload {
-			opts.NoInstall = true
+			trimmed := *plan
+			trimmed.NeedsRedownload, trimmed.Missing = nil, nil
+			plan = &trimmed
 		}
 	}
 	result, err := s.ApplyImport(ctx, game, plan, opts, sink)
@@ -429,7 +433,7 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 		return result, err
 	}
 	if c.Source != nil && err == nil {
-		s.finishSourceCollection(ctx, game, c.Source, result, opts)
+		finishSourceCollection(original, c.Source, result, opts)
 	}
 	if n := len(c.External); n > 0 {
 		result.Notes = append(result.Notes, fmt.Sprintf("%d item(s) of this collection are not fetched by lmm: get them by hand (the profile records them, with the curator's instructions).", n))
