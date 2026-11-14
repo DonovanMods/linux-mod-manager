@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **FOMOD choices per file (#634).** A mod whose files each carry their
+  own FOMOD installer - a NexusMods collection that pins a mod's main file
+  and a patch file, each a FOMOD, such as Scrambled Bugs - now installs:
+  each file's installer asks in the same round, headed with its file, and
+  its answers are recorded per file (the profile's new `fomod_files:` block,
+  keyed by file id; a mod with one installer keeps `fomod:`, written exactly
+  as before). Answer a file's installer under `source:id#file-id` in a
+  `--fomod-choices` file. An update hands each file's answers to the file
+  replacing it and asks only about one whose installer changed; a rollback
+  restores them; `lmm mod fomod <mod-id> --file <file-id>` (in the web UI,
+  **Reconfigure installer…**'s installer list) changes one file's answers.
+  The NexusMods collection import no longer refuses such a mod
+  (`fomod_multi_file`); the Skyrim sample collection `xk05aw` now waits
+  only on its plugin order (#611). A collection document or shared profile
+  that records choices per file requires the `fomod_multi_file` feature, so
+  an older lmm refuses to import it rather than install it wrong; an older
+  lmm reading a profile file with the block sees no recorded choices for
+  that mod and drops the block if it rewrites the file, as with `fomod:`.
+  The rollback record keeps the per-file form in the existing database
+  column, so no database migration.
 - **Import a NexusMods collection (#607).** The new
   `lmm profile import --nexus-collection <slug|slug@revision|URL>` (in the
   web UI, the Profiles window's **NexusMods collection** field) reads a
@@ -34,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   import says once to plan again. A collection that needs something lmm
   cannot replay yet (a plugin load order, an exact file list, bundled files,
   patches, a file-based load order, a mod type the game's adapter does not
-  route, two installers in one mod) shows its plan, naming what is missing
+  route) shows its plan, naming what is missing
   and which mods need it, and is refused with nothing written. The recipe is
   a `.7z`, so the import needs the `7z` command and says so when it is
   missing.
