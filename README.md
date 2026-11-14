@@ -640,8 +640,8 @@ Steam Workshop collection imports as a list of Workshop items instead (see
   files download.
 - **On a free NexusMods account**, which NexusMods serves no downloads to,
   the plan marks every mod as a manual download with a link to its file's
-  page. Download them by hand, then `lmm profile fill <profile>
-[folder-or-archive...]` installs them, recognising each file by the
+  page. Download them by hand, then run `lmm profile fill <profile>
+[folder-or-archive...]`. It installs them and matches each file by the
   checksum the collection records
   ([#608](https://github.com/DonovanMods/linux-mod-manager/issues/608)).
 - **Updates.** `lmm profile sync <name> --collection` updates a profile
@@ -3376,9 +3376,9 @@ release is cut.
 - [x] Automatic dependency installation (opt out with `--no-deps`)
 - [x] Snapshots — `lmm snapshot create|list|restore|delete`, over an originals store ([#350](https://github.com/DonovanMods/linux-mod-manager/issues/350))
 - [x] FOMOD installers, run by lmm on every game, with the answers recorded on the profile ([#354](https://github.com/DonovanMods/linux-mod-manager/issues/354))
-- [x] Plugin order for Bethesda games: `Plugins.txt` written on every deploy, `lmm plugins` and the web UI's Plugins tab ([#355](https://github.com/DonovanMods/linux-mod-manager/issues/355))
+- [x] Plugin order for Bethesda games: `Plugins.txt` written on every deploy, `lmm plugins` and the web UI's Plugins tab ([#616](https://github.com/DonovanMods/linux-mod-manager/issues/616), [#617](https://github.com/DonovanMods/linux-mod-manager/issues/617))
 - [x] Cyberpunk 2077's archive load order: `lmm load-order` and the web UI's Archives tab ([#620](https://github.com/DonovanMods/linux-mod-manager/issues/620))
-- [x] Collections: lmm's `.lmmc` format, import from a file or link, NexusMods collection import and collection updates ([#597](https://github.com/DonovanMods/linux-mod-manager/issues/597))
+- [x] Collections: lmm's `.lmmc` format, import from a file or link, NexusMods collection import and collection updates ([#597](https://github.com/DonovanMods/linux-mod-manager/issues/597), [#621](https://github.com/DonovanMods/linux-mod-manager/issues/621), [#607](https://github.com/DonovanMods/linux-mod-manager/issues/607), [#608](https://github.com/DonovanMods/linux-mod-manager/issues/608), [#613](https://github.com/DonovanMods/linux-mod-manager/issues/613), [#622](https://github.com/DonovanMods/linux-mod-manager/issues/622), [#623](https://github.com/DonovanMods/linux-mod-manager/issues/623), [#610](https://github.com/DonovanMods/linux-mod-manager/issues/610))
 
 ### Sources
 
