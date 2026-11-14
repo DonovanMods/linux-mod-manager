@@ -1,0 +1,177 @@
+{
+  "profile": {
+    "name": "Essential Mods",
+    "game_id": "skyrimse",
+    "mods": [
+      {
+        "source_id": "nexusmods",
+        "mod_id": "30379",
+        "version": "2.2.6",
+        "file_ids": [
+          "400000"
+        ],
+        "locked": false,
+        "mod_type": "dinput"
+      }
+    ],
+    "link_method": "symlink",
+    "link_method_explicit": false,
+    "is_default": false,
+    "hooks": {
+      "install": {},
+      "uninstall": {}
+    },
+    "hooks_explicit": {
+      "install": {
+        "before_all": false,
+        "before_each": false,
+        "after_each": false,
+        "after_all": false
+      },
+      "uninstall": {
+        "before_all": false,
+        "before_each": false,
+        "after_each": false,
+        "after_all": false
+      }
+    },
+    "collection": {
+      "id": "nexusmods:xk05aw",
+      "version": 325,
+      "title": "Essential Mods",
+      "origin": {
+        "source_id": "nexusmods",
+        "slug": "xk05aw",
+        "revision": 325,
+        "url": "https://www.nexusmods.com/games/skyrimspecialedition/collections/xk05aw",
+        "author": "curator"
+      }
+    }
+  },
+  "installed": [],
+  "already_cached": [],
+  "needs_redownload": [],
+  "missing": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "30379",
+      "version": "2.2.6",
+      "file_ids": [
+        "400000"
+      ],
+      "locked": false,
+      "mod_type": "dinput"
+    }
+  ],
+  "collection": {
+    "format_version": 1,
+    "input": "source",
+    "id": "nexusmods:xk05aw",
+    "version": 325,
+    "name": "Essential Mods",
+    "profile_name": "Essential Mods",
+    "author": "curator",
+    "origin": {
+      "source_id": "nexusmods",
+      "slug": "xk05aw",
+      "revision": 325,
+      "url": "https://www.nexusmods.com/games/skyrimspecialedition/collections/xk05aw",
+      "author": "curator"
+    },
+    "game": {
+      "name": "Skyrim Special Edition",
+      "sources": {
+        "nexusmods": "skyrimspecialedition"
+      }
+    },
+    "game_id": "skyrimse",
+    "matched_by": "game",
+    "requires": [
+      "mod_type:dinput"
+    ],
+    "unsupported": [
+      {
+        "feature": "plugin_order"
+      }
+    ],
+    "items": [
+      {
+        "source_id": "nexusmods",
+        "mod_id": "30379",
+        "name": "SKSE64",
+        "version": "2.2.6"
+      }
+    ],
+    "hooks_importable": false,
+    "source": {
+      "source_id": "nexusmods",
+      "slug": "xk05aw",
+      "revision": 325,
+      "name": "Essential Mods",
+      "url": "https://www.nexusmods.com/games/skyrimspecialedition/collections/xk05aw",
+      "author": "curator",
+      "items": [
+        {
+          "id": "30379:400000",
+          "name": "SKSE64",
+          "version": "2.2.6",
+          "mod_id": "30379",
+          "file_id": "400000",
+          "url": "https://www.nexusmods.com/skyrimspecialedition/mods/30379?tab=files&file_id=400000",
+          "state": "manual_download",
+          "update_policy": "exact",
+          "mod_type": "dinput"
+        },
+        {
+          "id": "3863:1",
+          "name": "SkyUI",
+          "version": "5.2",
+          "mod_id": "3863",
+          "file_id": "1",
+          "state": "manual_download",
+          "optional": true,
+          "update_policy": "exact",
+          "installer": true
+        },
+        {
+          "id": "item:2",
+          "name": "ENB Series",
+          "url": "https://enbdev.example",
+          "state": "external"
+        }
+      ],
+      "counts": {
+        "external": 1,
+        "manual_download": 2
+      },
+      "features": [
+        "external",
+        "fomod",
+        "list",
+        "mod_type:dinput",
+        "optional",
+        "plugin_order"
+      ],
+      "unsupported": [
+        {
+          "feature": "plugin_order"
+        }
+      ],
+      "tools": [
+        {
+          "name": "SSEEdit",
+          "exe": "Data\\SSEEdit 4.1.5f\\SSEEdit.exe"
+        }
+      ],
+      "notes": [
+        "The collection lists 1 tool shortcut(s) (SSEEdit); lmm neither creates nor runs a collection's tools."
+      ],
+      "optional": [
+        "3863:1"
+      ],
+      "account_tier": "free",
+      "manual_download": true
+    }
+  },
+  "exists": false
+}

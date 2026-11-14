@@ -1,0 +1,23 @@
+{
+  "id": "30379:400000",
+  "name": "SKSE64",
+  "version": "2.2.6",
+  "mod_id": "30379",
+  "file_id": "400000",
+  "file_category": "OLD_VERSION",
+  "url": "https://www.nexusmods.com/skyrimspecialedition/mods/30379?tab=files&file_id=400000",
+  "state": "will_install",
+  "optional": true,
+  "phase": 1,
+  "update_policy": "latest",
+  "mod_type": "dinput",
+  "installer": true,
+  "instructions": "Launch the game through skse64_loader.exe.",
+  "auto_update": true,
+  "note": "curator asks for the latest file; installs the tested file now, then auto-updates",
+  "features": [
+    "file_list"
+  ],
+  "md5": "0123456789abcdef0123456789abcdef",
+  "size_bytes": 650275
+}

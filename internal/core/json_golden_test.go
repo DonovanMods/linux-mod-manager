@@ -2248,6 +2248,67 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #607: one item of a converted source collection - every field
+			// set, as a NexusMods "latest" item installing its tested file.
+			"converted_collection_item",
+			core.ConvertedCollectionItem{
+				ID: "30379:400000", Name: "SKSE64", Version: "2.2.6", ModID: "30379", FileID: "400000",
+				FileCategory: "OLD_VERSION", URL: "https://www.nexusmods.com/skyrimspecialedition/mods/30379?tab=files&file_id=400000",
+				State: core.CollectionItemWillInstall, Optional: true, Phase: 1, UpdatePolicy: "latest", ModType: "dinput",
+				Installer: true, Instructions: "Launch the game through skse64_loader.exe.", AutoUpdate: true,
+				Note:     "curator asks for the latest file; installs the tested file now, then auto-updates",
+				Features: []string{"file_list"}, MD5: "0123456789abcdef0123456789abcdef", SizeBytes: 650275,
+			},
+		},
+		{
+			"collection_tool",
+			core.CollectionTool{Name: "SSEEdit", Exe: `Data\SSEEdit 4.1.5f\SSEEdit.exe`},
+		},
+		{
+			// #607: the conversion a source collection's import plan carries
+			// (CollectionImport.Source): a free account's manual downloads,
+			// an optional item opted in, the curator's tool listed.
+			"converted_collection",
+			convertedCollectionFixture(),
+		},
+		{
+			// #607: the JSON plan of `lmm profile import --nexus-collection`
+			// - the converted document's import plan with the source
+			// collection beside it (CollectionImport.Source).
+			"import_plan_source_collection",
+			core.ImportPlan{
+				Profile: &domain.Profile{
+					Name: "Essential Mods", GameID: "skyrimse",
+					Mods: []domain.ModReference{{SourceID: "nexusmods", ModID: "30379", Version: "2.2.6", FileIDs: []string{"400000"}, ModType: "dinput"}},
+					Collection: &domain.CollectionInfo{
+						ID: "nexusmods:xk05aw", Version: 325, Title: "Essential Mods",
+						Origin: &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "xk05aw", Revision: 325,
+							URL: "https://www.nexusmods.com/games/skyrimspecialedition/collections/xk05aw", Author: "curator"},
+					},
+				},
+				Installed:       []domain.ModReference{},
+				AlreadyCached:   []domain.ModReference{},
+				NeedsRedownload: []domain.ModReference{},
+				Missing:         []domain.ModReference{{SourceID: "nexusmods", ModID: "30379", Version: "2.2.6", FileIDs: []string{"400000"}, ModType: "dinput"}},
+				Collection: &core.CollectionImport{
+					FormatVersion: 1, Input: core.CollectionFromSource,
+					ID: "nexusmods:xk05aw", Version: 325, Name: "Essential Mods", ProfileName: "Essential Mods",
+					Author: "curator",
+					Origin: &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "xk05aw", Revision: 325,
+						URL: "https://www.nexusmods.com/games/skyrimspecialedition/collections/xk05aw", Author: "curator"},
+					Game:      domain.CollectionGame{Name: "Skyrim Special Edition", Sources: map[string]string{"nexusmods": "skyrimspecialedition"}},
+					GameID:    "skyrimse",
+					MatchedBy: "game",
+					Requires:  []string{"mod_type:dinput"},
+					Unsupported: []core.UnsupportedCollectionFeature{
+						{Feature: "plugin_order"},
+					},
+					Items:  []core.CollectionImportItem{{SourceID: "nexusmods", ModID: "30379", Name: "SKSE64", Version: "2.2.6"}},
+					Source: convertedCollectionFixture(),
+				},
+			},
+		},
+		{
 			// A collection import's result: its hooks withheld, and the
 			// notes saying so and naming the external items.
 			"collection_import_result",
@@ -3878,5 +3939,30 @@ func collectionImportFixture() *core.CollectionImport {
 		HooksImportable: true,
 		Overrides:       []string{"engine/config/user.ini"},
 		Warnings:        []string{"the container's signature (collection.yaml.sig) was not checked: this version of lmm does not verify collection signatures"},
+	}
+}
+
+// convertedCollectionFixture is a converted NexusMods collection (#607) as
+// its import plan carries it.
+func convertedCollectionFixture() *core.ConvertedCollection {
+	return &core.ConvertedCollection{
+		SourceID: "nexusmods", Slug: "xk05aw", Revision: 325, Name: "Essential Mods",
+		URL: "https://www.nexusmods.com/games/skyrimspecialedition/collections/xk05aw", Author: "curator",
+		Items: []core.ConvertedCollectionItem{
+			{ID: "30379:400000", Name: "SKSE64", Version: "2.2.6", ModID: "30379", FileID: "400000",
+				URL:   "https://www.nexusmods.com/skyrimspecialedition/mods/30379?tab=files&file_id=400000",
+				State: core.CollectionItemManualDownload, UpdatePolicy: "exact", ModType: "dinput"},
+			{ID: "3863:1", Name: "SkyUI", Version: "5.2", ModID: "3863", FileID: "1",
+				State: core.CollectionItemManualDownload, Optional: true, UpdatePolicy: "exact", Installer: true},
+			{ID: "item:2", Name: "ENB Series", URL: "https://enbdev.example", State: core.CollectionItemExternal},
+		},
+		Counts:      map[core.CollectionItemState]int{core.CollectionItemManualDownload: 2, core.CollectionItemExternal: 1},
+		Features:    []string{"external", "fomod", "list", "mod_type:dinput", "optional", "plugin_order"},
+		Unsupported: []core.UnsupportedCollectionFeature{{Feature: "plugin_order"}},
+		Tools:       []core.CollectionTool{{Name: "SSEEdit", Exe: `Data\SSEEdit 4.1.5f\SSEEdit.exe`}},
+		Notes: []string{
+			"The collection lists 1 tool shortcut(s) (SSEEdit); lmm neither creates nor runs a collection's tools.",
+		},
+		Optional: []string{"3863:1"}, AccountTier: "free", ManualDownload: true,
 	}
 }

@@ -1,0 +1,69 @@
+{
+  "source_id": "nexusmods",
+  "slug": "xk05aw",
+  "revision": 325,
+  "name": "Essential Mods",
+  "url": "https://www.nexusmods.com/games/skyrimspecialedition/collections/xk05aw",
+  "author": "curator",
+  "items": [
+    {
+      "id": "30379:400000",
+      "name": "SKSE64",
+      "version": "2.2.6",
+      "mod_id": "30379",
+      "file_id": "400000",
+      "url": "https://www.nexusmods.com/skyrimspecialedition/mods/30379?tab=files&file_id=400000",
+      "state": "manual_download",
+      "update_policy": "exact",
+      "mod_type": "dinput"
+    },
+    {
+      "id": "3863:1",
+      "name": "SkyUI",
+      "version": "5.2",
+      "mod_id": "3863",
+      "file_id": "1",
+      "state": "manual_download",
+      "optional": true,
+      "update_policy": "exact",
+      "installer": true
+    },
+    {
+      "id": "item:2",
+      "name": "ENB Series",
+      "url": "https://enbdev.example",
+      "state": "external"
+    }
+  ],
+  "counts": {
+    "external": 1,
+    "manual_download": 2
+  },
+  "features": [
+    "external",
+    "fomod",
+    "list",
+    "mod_type:dinput",
+    "optional",
+    "plugin_order"
+  ],
+  "unsupported": [
+    {
+      "feature": "plugin_order"
+    }
+  ],
+  "tools": [
+    {
+      "name": "SSEEdit",
+      "exe": "Data\\SSEEdit 4.1.5f\\SSEEdit.exe"
+    }
+  ],
+  "notes": [
+    "The collection lists 1 tool shortcut(s) (SSEEdit); lmm neither creates nor runs a collection's tools."
+  ],
+  "optional": [
+    "3863:1"
+  ],
+  "account_tier": "free",
+  "manual_download": true
+}
