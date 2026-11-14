@@ -85,6 +85,7 @@ mods:                        # load order, first = lowest priority
     fomod_files:             # its choices per file, by file id (requires: fomod_multi_file)
       "100": { config_sha256: 9e0a…, steps: [ … ] }
       "101": { config_sha256: 51c7…, steps: [ … ] }
+    fomod_order: ["101", "100"]  # optional: the order those files layer in (else by file id)
 external:                    # items lmm cannot fetch: listed, never downloaded
   - name: Cyber Engine Tweaks
     url: https://…
@@ -216,7 +217,9 @@ A collection from someone else is untrusted input.
   recorded entries (steps, groups and picks together) or file states is
   refused too. A `fomod_files` block is held to the same rules for each
   file, and its keys must be file ids the mod pins (`file_ids`), free of
-  control and formatting characters.
+  control and formatting characters; so must a `fomod_order` list's
+  entries, which may not repeat, and which need a `fomod_files` block to
+  order.
 - **A version-0 document** never carries a `collection` or `external`
   block, so the version-0 import ignores both: only a checked version-1
   document sets them.

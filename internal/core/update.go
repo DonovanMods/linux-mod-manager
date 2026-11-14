@@ -1055,9 +1055,14 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	fx := s.fomodInputFor(ctx, game, profileName, s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID), mod.SourceID, mod.ID, opts.Fomod)
 	// #634: a mod recorded per file replays each old file's choices on the
 	// new file that replaces it.
-	fx.fileChoices = remapFomodFiles(fx.fileChoices, mod.FileIDs, filesToDownload, upd.FileIDReplacements)
-	// The new files layer in the order the files they replace did.
-	fx.fileOrder = remapFileOrder(fx.fileOrder, filesToDownload, upd.FileIDReplacements)
+	pairs := pairUpdateFiles(mod.FileIDs, files, filesToDownload, upd.FileIDReplacements)
+	fx.fileChoices = remapFomodFiles(fx.fileChoices, pairs)
+	// The new files layer in the order the hint gave the files they replace.
+	fx.orderHint = remapFileOrder(fx.orderHint, pairs)
+	fx.fileIDs = make([]string, len(filesToDownload))
+	for i, f := range filesToDownload {
+		fx.fileIDs[i] = f.ID
+	}
 	progressFn := func(e Event) {
 		if forwardFetchStep(e, scope, emit) {
 			return
@@ -1291,67 +1296,110 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	return nil
 }
 
-// remapFomodFiles carries a per-file FOMOD record (#634) from the files an
-// update replaces to the files replacing them: a file kept as it was keeps
-// its choices, a replaced one (the update's FileIDReplacements) hands them
-// to its replacement, and otherwise - the source names no replacements -
-// the old files hand them to the new ones in the order both are pinned,
-// when there are as many of each. A recording that maps to no new file is
-// dropped: that file's installer asks. The choices are replayed, so a new
-// installer they no longer fit asks too (FomodReasonStale).
-func remapFomodFiles(rec domain.FomodFiles, oldIDs []string, newFiles []*domain.DownloadableFile, replacements map[string]string) domain.FomodFiles {
+// pairUpdateFiles pairs each file an update replaces (oldIDs, the row's
+// file ids) with the new file replacing it (#634), for a mod recorded per
+// file: a file kept as it was is its own pair; else the source's own
+// replacement; else, when one file is replaced by one file, that file;
+// else the one new file with the old file's name (pool is the source's
+// whole listing, old files included where it still lists them), or else
+// with its category. Each new file pairs at most once, and an old file
+// with no confident pair has none - its installer then asks, rather than
+// replay one file's choices on another file's installer.
+func pairUpdateFiles(oldIDs []string, pool []domain.DownloadableFile, newFiles []*domain.DownloadableFile, replacements map[string]string) map[string]string {
+	pairs := map[string]string{}
+	taken := map[string]bool{}
+	isNew := make(map[string]*domain.DownloadableFile, len(newFiles))
+	for _, f := range newFiles {
+		isNew[f.ID] = f
+	}
+	pair := func(old, to string) {
+		pairs[old], taken[to] = to, true
+	}
+	for _, old := range oldIDs {
+		if isNew[old] != nil {
+			pair(old, old)
+		}
+	}
+	for _, old := range oldIDs {
+		if to, ok := replacements[old]; ok && pairs[old] == "" && isNew[to] != nil && !taken[to] {
+			pair(old, to)
+		}
+	}
+	if len(oldIDs) == 1 && len(newFiles) == 1 && pairs[oldIDs[0]] == "" && !taken[newFiles[0].ID] {
+		pair(oldIDs[0], newFiles[0].ID)
+	}
+	known := make(map[string]*domain.DownloadableFile, len(pool))
+	for i := range pool {
+		known[pool[i].ID] = &pool[i]
+	}
+	// unique is the one untaken new file whose key matches want, if exactly
+	// one does, and exactly one unpaired old file has that key.
+	unique := func(key func(*domain.DownloadableFile) string, want string) string {
+		if want == "" {
+			return ""
+		}
+		olds := 0
+		for _, old := range oldIDs {
+			if f := known[old]; f != nil && pairs[old] == "" && key(f) == want {
+				olds++
+			}
+		}
+		var found string
+		for _, f := range newFiles {
+			if taken[f.ID] || key(f) != want {
+				continue
+			}
+			if found != "" {
+				return ""
+			}
+			found = f.ID
+		}
+		if olds != 1 {
+			return ""
+		}
+		return found
+	}
+	name := func(f *domain.DownloadableFile) string { return strings.ToLower(strings.TrimSpace(f.Name)) }
+	category := func(f *domain.DownloadableFile) string { return strings.ToUpper(strings.TrimSpace(f.Category)) }
+	for _, key := range []func(*domain.DownloadableFile) string{name, category} {
+		for _, old := range oldIDs {
+			f := known[old]
+			if pairs[old] != "" || f == nil {
+				continue
+			}
+			if to := unique(key, key(f)); to != "" {
+				pair(old, to)
+			}
+		}
+	}
+	return pairs
+}
+
+// remapFomodFiles carries a per-file FOMOD record (#634) across an update:
+// each old file's choices go to the new file pairs names for it. A
+// recording with no pair is dropped, so that file's installer asks. The
+// choices are replayed, so a new installer they no longer fit asks too
+// (FomodReasonStale).
+func remapFomodFiles(rec domain.FomodFiles, pairs map[string]string) domain.FomodFiles {
 	if rec.IsZero() {
 		return rec
 	}
-	isNew := make(map[string]bool, len(newFiles))
-	for _, f := range newFiles {
-		isNew[f.ID] = true
-	}
 	out := domain.FomodFiles{}
-	for i, old := range oldIDs {
-		c, ok := rec[old]
-		if !ok || c.IsZero() {
-			continue
-		}
-		switch to, replaced := replacements[old]; {
-		case isNew[old]:
-			out[old] = c
-		case replaced && isNew[to]:
+	for old, c := range rec {
+		if to, ok := pairs[old]; ok && !c.IsZero() {
 			out[to] = c
-		case len(replacements) == 0 && len(oldIDs) == len(newFiles):
-			out[newFiles[i].ID] = c
-		}
-	}
-	// A recording for a file the row does not list (a hand-edited
-	// profile) still answers that file if the update installs it.
-	for id, c := range rec {
-		if !slices.Contains(oldIDs, id) && isNew[id] {
-			out[id] = c
 		}
 	}
 	return out
 }
 
-// remapFileOrder carries a mod's file layer order (#634, the reference's
-// file_ids) across an update: each old file's place goes to the file the
-// source names as its replacement, or stays with a file kept as it was. A
-// new file with no place keeps the update's own order after them.
-func remapFileOrder(order []string, newFiles []*domain.DownloadableFile, replacements map[string]string) []string {
-	if len(order) == 0 {
-		return nil
-	}
-	isNew := make(map[string]bool, len(newFiles))
-	for _, f := range newFiles {
-		isNew[f.ID] = true
-	}
+// remapFileOrder carries a per-file record's layer-order hint (#634)
+// across an update, each old file's place going to its pair.
+func remapFileOrder(order []string, pairs map[string]string) []string {
 	var out []string
 	for _, old := range order {
-		id := old
-		if to, ok := replacements[old]; ok {
-			id = to
-		}
-		if isNew[id] && !slices.Contains(out, id) {
-			out = append(out, id)
+		if to, ok := pairs[old]; ok && !slices.Contains(out, to) {
+			out = append(out, to)
 		}
 	}
 	return out

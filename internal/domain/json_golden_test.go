@@ -125,6 +125,13 @@ func TestJSONGoldens(t *testing.T) {
 				FomodFiles: domain.FomodFiles{"100": sampleFomodChoices(), "101": {ConfigSHA256: "cd34", Steps: []fomod.StepChoice{}}}},
 		},
 		{
+			// #634: with the layer-order hint a collection's rules set.
+			"mod_reference_fomod_order",
+			domain.ModReference{SourceID: "nexusmods", ModID: "43532", Version: "1.0", FileIDs: []string{"100", "101"},
+				FomodFiles: domain.FomodFiles{"100": {ConfigSHA256: "ab12", Steps: []fomod.StepChoice{}}, "101": {ConfigSHA256: "cd34", Steps: []fomod.StepChoice{}}},
+				FomodOrder: []string{"101", "100"}},
+		},
+		{
 			// #592: the source's category id (category) beside its name.
 			"mod_category_name",
 			domain.Mod{ID: "12345", SourceID: "nexusmods", Name: "Sample Mod", Version: "2.0.0", GameID: "skyrimspecialedition",

@@ -142,6 +142,10 @@ type FomodRecord struct {
 	Choices FomodChoices
 	// Files is the per-file form.
 	Files FomodFiles
+	// Order is the per-file form's layer-order hint (ModReference.
+	// FomodOrder): the file ids whose trees layer in this order before the
+	// rest. Meaningless without Files.
+	Order []string
 }
 
 // IsZero reports that nothing is recorded in either form.
@@ -152,7 +156,7 @@ func (r FomodRecord) PerFile() bool { return !r.Files.IsZero() }
 
 // Equal reports whether r and o record the same choices.
 func (r FomodRecord) Equal(o FomodRecord) bool {
-	return r.Choices.Equal(o.Choices) && r.Files.Equal(o.Files)
+	return r.Choices.Equal(o.Choices) && r.Files.Equal(o.Files) && slices.Equal(r.Order, o.Order)
 }
 
 // FomodFileKey is the answer key for ONE file's installer of a mod with

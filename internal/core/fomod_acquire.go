@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -24,7 +25,7 @@ func (s *Service) fomodInputFor(ctx context.Context, game *domain.Game, profileN
 	in := fomodInput{files: s.fileStatesFor(ctx, game, profileName, domain.ModKey(sourceID, modID))}
 	if ref != nil {
 		in.fileChoices = ref.FomodFiles.Clone()
-		in.fileOrder = slices.Clone(ref.FileIDs)
+		in.orderHint, in.fileIDs = slices.Clone(ref.FomodOrder), slices.Clone(ref.FileIDs)
 	}
 	prefix := domain.FomodFileKey(sourceID, modID, "")
 	for key, a := range answers {
@@ -133,19 +134,20 @@ func (r recordedFileStates) State(path string) fomod.FileState {
 // the entry rather than layering onto whatever an earlier resolve left
 // there. mod.Variant becomes the variant.
 //
-// One installer among the files names the entry by its choices. Several
-// (#634: a collection pinning a mod's main file and a patch, each a FOMOD)
-// name it by their choices together, per file (fomodFilesVariant), and
-// each file's resolved tree is layered over the earlier files' in file
-// order.
+// One installer among the files names the entry by its choices, and the
+// files commit in the order the flow acquired them, as before #634.
+// Several (#634: a collection pinning a mod's main file and a patch, each a
+// FOMOD) name it by their choices together and by the ONE order every flow
+// layers them in (canonicalLayerOrder over hint, the ref's fomod_order):
+// the files come back in that order, and the caller commits them so.
 //
 // The outcome is for the flow to record on the ref: nil when nothing was
 // acquired (the ref's choices are kept), plainTree when the files were
 // acquired and none was an installer (the ref's choices are cleared - they
 // would name a tree the row does not have), else the resolved choices.
-func unifyFomod(mod *domain.Mod, files []*acquiredFile) (*fomodResolved, error) {
+func unifyFomod(mod *domain.Mod, files []*acquiredFile, hint []string) ([]*acquiredFile, *fomodResolved, error) {
 	if len(files) == 0 {
-		return nil, nil
+		return files, nil, nil
 	}
 	var installers []*acquiredFile
 	for _, a := range files {
@@ -160,11 +162,26 @@ func unifyFomod(mod *domain.Mod, files []*acquiredFile) (*fomodResolved, error) 
 	case 1:
 		found = installers[0].fomod
 	default:
+		ids := make([]string, len(files))
+		for i, a := range files {
+			ids[i] = a.file.ID
+		}
+		order := canonicalLayerOrder(ids, hint)
+		files = slices.Clone(files)
+		slices.SortStableFunc(files, func(a, b *acquiredFile) int {
+			return slices.Index(order, a.file.ID) - slices.Index(order, b.file.ID)
+		})
 		perFile := domain.FomodFiles{}
 		for _, a := range installers {
 			perFile[a.file.ID] = a.fomod.choices
 		}
-		found = &fomodResolved{variant: fomodFilesVariant(perFile), files: perFile}
+		var kept []string
+		for _, id := range hint {
+			if slices.Contains(ids, id) && !slices.Contains(kept, id) {
+				kept = append(kept, id)
+			}
+		}
+		found = &fomodResolved{variant: fomodFilesVariant(perFile, order), files: perFile, order: kept}
 	}
 	for _, a := range files {
 		a.mod.Variant = found.variant
@@ -173,26 +190,7 @@ func unifyFomod(mod *domain.Mod, files []*acquiredFile) (*fomodResolved, error) 
 		files[0].unseeded = true
 	}
 	mod.Variant = found.variant
-	return found, nil
-}
-
-// layerOrder is the order a mod's acquired files commit - and so layer -
-// in its one cache entry (#634): by their position in pins (the
-// reference's file_ids), any file pins does not name after them, each
-// group in the order acquired. With no pins it is files as they are.
-func layerOrder(files []*acquiredFile, pins []string) []*acquiredFile {
-	if len(pins) == 0 || len(files) < 2 {
-		return files
-	}
-	rank := func(a *acquiredFile) int {
-		if i := slices.Index(pins, a.file.ID); i >= 0 {
-			return i
-		}
-		return len(pins)
-	}
-	out := slices.Clone(files)
-	slices.SortStableFunc(out, func(a, b *acquiredFile) int { return rank(a) - rank(b) })
-	return out
+	return files, found, nil
 }
 
 // plainTree is the outcome of a mod whose files were acquired and none was
@@ -238,7 +236,7 @@ func fomodRecordOf(r *fomodResolved) fomodRecord {
 func resolvedFromRef(ref *domain.ModReference, variant string) *fomodResolved {
 	rec := ref.FomodRecord()
 	if rec.PerFile() {
-		return &fomodResolved{variant: variant, files: rec.Files.Clone()}
+		return &fomodResolved{variant: variant, files: rec.Files.Clone(), order: slices.Clone(rec.Order)}
 	}
 	return &fomodResolved{variant: variant, choices: rec.Choices}
 }
@@ -255,6 +253,12 @@ type modFomodAsks struct {
 type fileAsk struct {
 	file *domain.DownloadableFile
 	q    *FomodChoicesRequiredError
+}
+
+// isFomodQuestion reports whether err is a FOMOD question.
+func isFomodQuestion(err error) bool {
+	var q *FomodChoicesRequiredError
+	return err != nil && asFomodQuestion(err, &q)
 }
 
 // take keeps err when it is a FOMOD question, and reports whether it was:
@@ -278,6 +282,30 @@ func (m *modFomodAsks) finish(mod *domain.Mod, fx fomodInput, acquired []*acquir
 	for _, a := range acquired {
 		if a.fomod != nil {
 			installers++
+		}
+	}
+	if installers > 1 && fx.answered {
+		// #634: one answer for the mod cannot be meant for every one of its
+		// installers; each is answered under its own file key.
+		var unanswered []string
+		for _, a := range m.asks {
+			if fx.fileAnswers[a.file.ID].IsZero() {
+				unanswered = append(unanswered, a.file.ID)
+			}
+		}
+		for _, a := range acquired {
+			if a.fomod != nil && fx.fileAnswers[a.file.ID].IsZero() {
+				unanswered = append(unanswered, a.file.ID)
+			}
+		}
+		if len(unanswered) > 0 {
+			keys := make([]string, len(unanswered))
+			for i, id := range unanswered {
+				keys[i] = domain.FomodFileKey(mod.SourceID, mod.ID, id)
+			}
+			return &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name,
+				Reason: fmt.Sprintf("it has an installer in each of %d files, so one answer for the mod (%s) cannot answer them; answer each file's installer under its own key (%s)",
+					installers, domain.ModKey(mod.SourceID, mod.ID), strings.Join(keys, ", "))}
 		}
 	}
 	if len(m.asks) == 0 {
@@ -362,7 +390,14 @@ func (s *Service) downloadModFiles(ctx context.Context, gameCache *cache.Cache, 
 			if a != nil {
 				checksum = a.checksum
 			}
-			hooks.after(i, f, checksum, err)
+			// #634: the mod's question is one failure, whichever of its
+			// files ask: the first reports it, as a lone installer always
+			// has, and a later file's question is no failure of its own.
+			afterErr := err
+			if isFomodQuestion(err) && len(asks.asks) > 0 {
+				afterErr = nil
+			}
+			hooks.after(i, f, checksum, afterErr)
 		}
 		if err != nil {
 			if asks.take(err, f) {
@@ -382,8 +417,7 @@ func (s *Service) downloadModFiles(ctx context.Context, gameCache *cache.Cache, 
 	for i, a := range acquired {
 		position[a] = i
 	}
-	committed := layerOrder(acquired, fx.fileOrder)
-	resolved, err := unifyFomod(mod, committed)
+	committed, resolved, err := unifyFomod(mod, acquired, fx.orderHint)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -395,44 +396,172 @@ func overlapPatchZip(t *testing.T) []byte {
 	return b
 }
 
-// TestFomodPerFile_FilesLayerInTheReferencesOrder (#634): two installers of
-// one mod that write the same path layer in the reference's file_ids
-// order - which a converted collection orders by its rules between the
-// mod's files - so the later file's tree wins, whatever order the source
-// lists them in.
-func TestFomodPerFile_FilesLayerInTheReferencesOrder(t *testing.T) {
-	for _, tc := range []struct {
-		order []string
-		want  string
-	}{
-		{[]string{"main-1", "patch-1"}, "PATCH-TEX"},
-		{[]string{"patch-1", "main-1"}, "4K-v1"},
-	} {
-		t.Run(strings.Join(tc.order, ","), func(t *testing.T) {
-			f := newPerFileFixture(t)
-			f.serve(t, "1.0", "1", "4K", "USSEP")
-			f.mock.AddDownload("patch-1", overlapPatchZip(t))
-			ctx := context.Background()
-
-			// A document (a converted collection) names the order.
-			data, err := config.ExportProfile(&domain.Profile{Name: "target", GameID: "g1", Mods: []domain.ModReference{{
-				SourceID: "src", ModID: "bugs", Version: "1.0", FileIDs: tc.order,
-				FomodFiles: domain.FomodFiles{"main-1": answer("4K"), "patch-1": patchAnswer("USSEP")},
-			}}})
-			require.NoError(t, err)
-			plan, err := f.svc.PlanImport(ctx, f.game, data)
-			require.NoError(t, err)
-			_, err = f.svc.ApplyImport(ctx, f.game, plan, core.ProfileImportOptions{Install: true}, nil)
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, f.deployed(t, "textures/t.dds"))
-
-			// A reinstall of the same reference layers the same way.
-			iplan, err := f.svc.PlanInstall(ctx, f.game, "target", "src", "bugs", false)
-			require.NoError(t, err)
-			iplan.Files = slices.Clone(f.mock.files) // the source's own order: main, patch
-			_, err = f.svc.ApplyInstall(ctx, f.game, iplan, core.InstallOptions{TargetFileIDs: tc.order}, nil)
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, f.deployed(t, "textures/t.dds"))
-		})
+// TestFomodPerFile_OneCanonicalLayerOrder (#634): two installers of one
+// mod that write the same path layer in ONE order whichever flow installs
+// them and in whatever order the files are named - by file id, unless the
+// reference's fomod_order (a collection's rules between the mod's files)
+// says otherwise - and that order is part of the variant, so the same
+// choices in two orders are the same tree under the same key, and a
+// different order is a different key.
+func TestFomodPerFile_OneCanonicalLayerOrder(t *testing.T) {
+	answers := domain.FomodFiles{"main-1": answer("4K"), "patch-1": patchAnswer("USSEP")}
+	keyed := map[string]domain.FomodChoices{
+		domain.FomodFileKey("src", "bugs", "main-1"):  answer("4K"),
+		domain.FomodFileKey("src", "bugs", "patch-1"): patchAnswer("USSEP"),
 	}
+	install := func(t *testing.T, f *perFileFixture, profile string, order []string) {
+		t.Helper()
+		plan, err := f.svc.PlanInstall(context.Background(), f.game, profile, "src", "bugs", false)
+		require.NoError(t, err)
+		plan.Files = nil
+		for _, id := range order {
+			for _, file := range f.mock.files {
+				if file.ID == id {
+					plan.Files = append(plan.Files, file)
+				}
+			}
+		}
+		_, err = f.svc.ApplyInstall(context.Background(), f.game, plan, core.InstallOptions{TargetFileIDs: order, Fomod: keyed}, nil)
+		require.NoError(t, err)
+	}
+	newOverlap := func(t *testing.T) *perFileFixture {
+		f := newPerFileFixture(t)
+		f.serve(t, "1.0", "1", "4K", "USSEP")
+		f.mock.AddDownload("patch-1", overlapPatchZip(t))
+		return f
+	}
+	ctx := context.Background()
+
+	// install --file main,patch and --file patch,main: one tree, one key.
+	f := newOverlap(t)
+	install(t, f, "default", []string{"main-1", "patch-1"})
+	first, err := f.svc.GetInstalledMod(ctx, "src", "bugs", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "PATCH-TEX", f.deployed(t, "textures/t.dds"), "by file id: patch-1 layers after main-1")
+	install(t, f, "default", []string{"patch-1", "main-1"})
+	second, err := f.svc.GetInstalledMod(ctx, "src", "bugs", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "PATCH-TEX", f.deployed(t, "textures/t.dds"), "the order the files are named in does not matter")
+	assert.Equal(t, first.Variant, second.Variant)
+
+	// An import (source order) reaches the same tree and key.
+	f2 := newOverlap(t)
+	data, err := config.ExportProfile(&domain.Profile{Name: "target", GameID: "g1", Mods: []domain.ModReference{{
+		SourceID: "src", ModID: "bugs", Version: "1.0", FileIDs: []string{"patch-1", "main-1"}, FomodFiles: answers,
+	}}})
+	require.NoError(t, err)
+	plan, err := f2.svc.PlanImport(ctx, f2.game, data)
+	require.NoError(t, err)
+	_, err = f2.svc.ApplyImport(ctx, f2.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "PATCH-TEX", f2.deployed(t, "textures/t.dds"))
+	imported, err := f2.svc.GetInstalledMod(ctx, "src", "bugs", "g1", "target")
+	require.NoError(t, err)
+	assert.Equal(t, first.Variant, imported.Variant, "the same choices in the same order are the same key")
+
+	// A collection's rule puts the patch first: the main file wins, under
+	// another key, and the hint is kept on the reference.
+	f3 := newOverlap(t)
+	data, err = config.ExportProfile(&domain.Profile{Name: "target", GameID: "g1", Mods: []domain.ModReference{{
+		SourceID: "src", ModID: "bugs", Version: "1.0", FileIDs: []string{"main-1", "patch-1"}, FomodFiles: answers,
+		FomodOrder: []string{"patch-1", "main-1"},
+	}}})
+	require.NoError(t, err)
+	plan, err = f3.svc.PlanImport(ctx, f3.game, data)
+	require.NoError(t, err)
+	_, err = f3.svc.ApplyImport(ctx, f3.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "4K-v1", f3.deployed(t, "textures/t.dds"))
+	hinted, err := f3.svc.GetInstalledMod(ctx, "src", "bugs", "g1", "target")
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Variant, hinted.Variant, "another layer order is another tree")
+	ref := f3.ref(t, "target")
+	assert.Equal(t, []string{"patch-1", "main-1"}, ref.FomodOrder)
+	// A reinstall, files named the other way, keeps the hinted order.
+	install(t, f3, "target", []string{"main-1", "patch-1"})
+	assert.Equal(t, "4K-v1", f3.deployed(t, "textures/t.dds"))
+}
+
+// TestFomodPerFile_VerifyFixRebuildKeepsTheTree (#634): verify --fix's
+// one-file repair rebuilds the whole entry in its layer order, so the
+// overlapped path keeps its winner and the row keeps its variant.
+func TestFomodPerFile_VerifyFixRebuildKeepsTheTree(t *testing.T) {
+	f := newPerFileFixture(t)
+	f.serve(t, "1.0", "1", "4K", "USSEP")
+	f.mock.AddDownload("patch-1", overlapPatchZip(t))
+	ctx := context.Background()
+	plan, err := f.svc.PlanInstall(ctx, f.game, "default", "src", "bugs", false)
+	require.NoError(t, err)
+	// Named patch first, so the row lists it first: a repair file by file,
+	// in the row's order, would leave the main file's texture on top.
+	plan.Files = []domain.DownloadableFile{f.mock.files[1], f.mock.files[0]}
+	_, err = f.svc.ApplyInstall(ctx, f.game, plan, core.InstallOptions{SkipVerify: true, TargetFileIDs: []string{"patch-1", "main-1"},
+		Fomod: perFileAnswers("4K", "USSEP", "1")}, nil)
+	require.NoError(t, err)
+	before, err := f.svc.GetInstalledMod(ctx, "src", "bugs", "g1", "default")
+	require.NoError(t, err)
+	require.Equal(t, "PATCH-TEX", f.deployed(t, "textures/t.dds"))
+
+	// No checksums were recorded, so --fix re-downloads each file.
+	_, err = f.svc.VerifyForTest(ctx, f.game, "default", core.VerifyOptions{Fix: true}, nil)
+	require.NoError(t, err)
+	after, err := f.svc.GetInstalledMod(ctx, "src", "bugs", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, before.Variant, after.Variant)
+	files, err := f.svc.GetGameCache(f.game).ListFiles(cacheKeyOf(after))
+	require.NoError(t, err)
+	assert.Contains(t, files, filepath.Join("textures", "t.dds"))
+	b, err := os.ReadFile(filepath.Join(f.svc.GetGameCache(f.game).ModPath(cacheKeyOf(after)), "textures", "t.dds"))
+	require.NoError(t, err)
+	assert.Equal(t, "PATCH-TEX", string(b), "the overlapped path keeps the winner its layer order gives")
+	for _, id := range []string{"main-1", "patch-1"} {
+		assert.NotEmpty(t, storedChecksum(t, f.svc, "g1", "src", "bugs", id), "file %s's checksum was filled", id)
+	}
+}
+
+// TestFomodPerFile_UpdatePairsFilesByNameNotPosition (#634): with no
+// replacement from the source for one of the files, and the new files
+// listed in another order than the row's, that file's choices go to the
+// new file of the same name - never to the other file's installer by
+// position.
+func TestFomodPerFile_UpdatePairsFilesByNameNotPosition(t *testing.T) {
+	f := newPerFileFixture(t)
+	f.serve(t, "1.0", "1", "4K", "USSEP")
+	ctx := context.Background()
+	_, err := f.install(t, perFileAnswers("2K", "Vanilla", "1"))
+	require.NoError(t, err)
+	row, err := f.svc.GetInstalledMod(ctx, "src", "bugs", "g1", "default")
+	require.NoError(t, err)
+	require.Equal(t, []string{"main-1", "patch-1"}, row.FileIDs)
+
+	f.serve(t, "1.1", "2", "4K", "USSEP")
+	// The source still lists the old files, and the new ones patch first.
+	old := []domain.DownloadableFile{
+		{ID: "main-1", Name: "Scrambled Bugs", FileName: "main-1.zip", Version: "1.0", Category: "MAIN"},
+		{ID: "patch-1", Name: "Scrambled Bugs - Patches", FileName: "patch-1.zip", Version: "1.0", Category: "OPTIONAL"},
+	}
+	f.mock.files = append([]domain.DownloadableFile{f.mock.files[1], f.mock.files[0]}, old...)
+	up, err := f.svc.PlanUpdateFrom(ctx, f.game, "default", domain.Update{InstalledMod: *row, NewVersion: "1.1",
+		FileIDReplacements: map[string]string{"main-1": "main-2"}})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyUpdate(ctx, f.game, up, core.UpdateOptions{}, nil)
+	require.NoError(t, err, "each file replays its own choices, so nothing asks")
+	assert.Equal(t, "2K-v2", f.deployed(t, "textures/t.dds"))
+	assert.Equal(t, "VANILLA-v2", f.deployed(t, "bugs_patch.esp"))
+	ref := f.ref(t, "default")
+	assert.Equal(t, "Vanilla", picked(ref.FomodFiles["patch-2"]))
+	assert.Equal(t, "2K", picked(ref.FomodFiles["main-2"]))
+}
+
+// TestFomodPerFile_ModAnswerForSeveralInstallersIsRefused (#634): one
+// answer under the mod's key cannot answer an installer in each of its
+// files; the refusal says to key each file's.
+func TestFomodPerFile_ModAnswerForSeveralInstallersIsRefused(t *testing.T) {
+	f := newPerFileFixture(t)
+	f.serve(t, "1.0", "1", "4K", "USSEP")
+	_, err := f.install(t, map[string]domain.FomodChoices{"src:bugs": answer("4K")})
+	var refusal *core.FomodInstallError
+	require.True(t, errors.As(err, &refusal), "got %v", err)
+	assert.Contains(t, refusal.Reason, "src:bugs#main-1")
+	assert.Empty(t, f.deployed(t, "textures/t.dds"), "nothing was installed")
 }

@@ -317,3 +317,29 @@ func TestExportProfile_CarriesFomodFiles(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, samplePerFile().Equal(back.Mods[0].FomodFiles))
 }
+
+// TestSaveProfile_FomodOrderIsEditedInPlace (#634): the per-file record's
+// layer-order hint is a list beside the block, written and cleared in
+// place, as file_ids is.
+func TestSaveProfile_FomodOrderIsEditedInPlace(t *testing.T) {
+	dir := t.TempDir()
+	path := writeProfileFile(t, dir, "tg", "default", withFomodFiles)
+	set := func(order []string) *domain.Profile {
+		t.Helper()
+		profile, err := config.LoadProfile(dir, "tg", "default")
+		require.NoError(t, err)
+		profile.Mods[0].FomodOrder = order
+		require.NoError(t, config.SaveProfile(dir, profile))
+		reloaded, err := config.LoadProfile(dir, "tg", "default")
+		require.NoError(t, err)
+		return reloaded
+	}
+	reloaded := set([]string{"11", "10"})
+	assert.Equal(t, []string{"11", "10"}, reloaded.Mods[0].FomodOrder)
+	text := readFile(t, path)
+	assert.Contains(t, text, "      \"10\":   # the main file\n", "the rest is as written")
+	assert.Contains(t, text, "    fomod_order:\n      - \"11\"\n      - \"10\"\n")
+	reloaded = set(nil)
+	assert.Nil(t, reloaded.Mods[0].FomodOrder)
+	assert.Equal(t, withFomodFiles, readFile(t, path), "clearing it removes exactly the list")
+}

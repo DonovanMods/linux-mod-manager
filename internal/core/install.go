@@ -2103,13 +2103,14 @@ func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *
 		f.release = s.releaseFilesFunc(st.files)
 		return nil, f
 	}
-	st.files = layerOrder(st.files, fx.fileOrder) // #634: the order the files layer in
-	resolved, err := unifyFomod(mod, st.files)
+	// #634: a mod with several installers comes back in its layer order.
+	ordered, resolved, err := unifyFomod(mod, st.files, fx.orderHint)
 	if err != nil {
 		f := skip("Error", err.Error(), err)
 		f.release = s.releaseFilesFunc(st.files)
 		return nil, f
 	}
+	st.files = ordered
 	st.fomod = resolved
 	return st, nil
 }
@@ -2484,10 +2485,8 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 		// #634: one file's installer of a mod with several, or every one.
 		fx.askFile = opts.fomodReconfigureFile
 	}
-	if len(opts.TargetFileIDs) > 0 {
-		// #634: files named for this install layer in the order named.
-		fx.fileOrder = opts.TargetFileIDs
-	}
+	// #634: the warm entry is the one these files' canonical order names.
+	fx.fileIDs = plannedFileIDsOf(plan.Files)
 	expectedVariant := fx.expectedVariant()
 
 	// A same-version reinstall stages its download apart from the live
@@ -2971,4 +2970,13 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		return &WarningEvent{Scope: modScope, Phase: InstallWarning, Message: msg}, nil
 	}
 	return nil, nil
+}
+
+// plannedFileIDsOf is files' ids.
+func plannedFileIDsOf(files []domain.DownloadableFile) []string {
+	ids := make([]string, len(files))
+	for i := range files {
+		ids[i] = files[i].ID
+	}
+	return ids
 }

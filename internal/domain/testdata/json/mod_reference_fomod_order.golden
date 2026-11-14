@@ -1,0 +1,24 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "43532",
+  "version": "1.0",
+  "file_ids": [
+    "100",
+    "101"
+  ],
+  "locked": false,
+  "fomod_files": {
+    "100": {
+      "config_sha256": "ab12",
+      "steps": []
+    },
+    "101": {
+      "config_sha256": "cd34",
+      "steps": []
+    }
+  },
+  "fomod_order": [
+    "101",
+    "100"
+  ]
+}

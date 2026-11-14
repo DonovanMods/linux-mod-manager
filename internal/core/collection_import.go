@@ -748,7 +748,21 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 // and any one file's choices that checkCollectionFomod refuses.
 func checkCollectionFomodFiles(r domain.ModReference) error {
 	if r.FomodFiles.IsZero() {
+		if len(r.FomodOrder) > 0 {
+			return errors.New("give a fomod_order with no fomod_files to order")
+		}
 		return nil
+	}
+	if len(r.FomodOrder) > fomod.MaxChoices {
+		return fmt.Errorf("give a fomod_order of %d files, over the %d limit", len(r.FomodOrder), fomod.MaxChoices)
+	}
+	for i, id := range r.FomodOrder {
+		if id == "" || hasUnsafeRunes(id) || len(id) > maxCollectionLine || slices.Contains(r.FomodOrder[:i], id) {
+			return fmt.Errorf("give a fomod_order entry (%q) that is empty, repeated, contains control or formatting characters, or is over the %d-byte limit", id, maxCollectionLine)
+		}
+		if len(r.FileIDs) > 0 && !slices.Contains(r.FileIDs, id) {
+			return fmt.Errorf("order file %q in fomod_order, which the entry does not pin", id)
+		}
 	}
 	if len(r.FomodFiles) > fomod.MaxChoices {
 		return fmt.Errorf("record %d files, over the %d limit", len(r.FomodFiles), fomod.MaxChoices)
@@ -920,13 +934,10 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// installerChoiceLines words recorded FOMOD choices for a plan (#615): one
-// "Step > Group: A, B" line per answered group ("none" for a group answered
-// with no pick), sanitised for display. Nil for no choices.
 // installerRecordLines is installerChoiceLines for an item in either form:
 // a mod recorded per file (#634) prefixes each line with the file it
-// answers - its name from the document's files, else its id - in the order
-// the entry pins them.
+// answers, as "file <id>", in the order the entry pins its files (any file
+// it records but does not pin after them, by id).
 func installerRecordLines(item domain.CollectionItem) []string {
 	files := item.Ref.FomodFiles
 	if files.IsZero() {
@@ -953,6 +964,9 @@ func installerRecordLines(item domain.CollectionItem) []string {
 	return out
 }
 
+// installerChoiceLines words recorded FOMOD choices for a plan (#615): one
+// "Step > Group: A, B" line per answered group ("none" for a group answered
+// with no pick), sanitised for display. Nil for no choices.
 func installerChoiceLines(c domain.FomodChoices) []string {
 	var out []string
 	for _, step := range c.Steps {

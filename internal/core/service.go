@@ -1643,7 +1643,7 @@ func (s *Service) rebuildModFile(ctx context.Context, sourceID string, game *dom
 		return nil, err
 	}
 	defer a.release()
-	if a.fomod != nil && fx.variantWith(file.ID, a.fomod) != variant {
+	if a.fomod != nil && a.mod.Variant != variant {
 		return nil, &FomodInstallError{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Reason: ReasonFomodReanswer}
 	}
 	a.mod.Variant = variant

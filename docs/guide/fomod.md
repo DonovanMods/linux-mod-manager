@@ -118,11 +118,15 @@ answers per file (under `fomod_files:` in the profile, by file id).
   `lmm mod fomod <mod-id> --file <file-id>`, or leave `--file` out to pick
   from a list (with no terminal, every installer is asked). The other
   files keep their answers.
-- An update hands each file's answers to the file that replaces it, and
-  asks only about a file whose installer changed.
-- When two of the installers install the same file, the one listed later
-  in the mod's `file_ids` wins. A NexusMods collection sets that order from
-  its rules between the mod's files.
+- An update asks only about a file whose installer changed.
+- When two of the installers install the same file, one of them wins, the
+  same one every time: the files are laid out by file id, the later id
+  winning, unless the profile's `fomod_order:` list names an order. A
+  NexusMods collection sets that list from its rules between the mod's
+  files.
+- An update gives each file's answers to the file that replaces it,
+  matched by NexusMods' own replacement, else by the file's name or
+  category. A file it cannot match is asked about again.
 
 A collection or a shared profile that records answers per file needs an
 lmm that understands them; an older lmm refuses to import it rather than

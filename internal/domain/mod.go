@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -184,6 +185,15 @@ type ModReference struct {
 	// fomod_multi_file feature, which an older lmm refuses.
 	FomodFiles FomodFiles `yaml:"fomod_files,omitempty" json:"fomod_files,omitempty"`
 
+	// FomodOrder is the order a FomodFiles mod's files layer in its one
+	// cache entry, as file ids (#634): a later file's tree wins a path an
+	// earlier one also writes. Only an order something chose is recorded -
+	// a NexusMods collection's before/after rules between the mod's own
+	// files - and the files it does not name follow it by file id; absent,
+	// every file layers by file id. Part of the tree, so of its variant.
+	// Omitted when empty, and never written without FomodFiles.
+	FomodOrder []string `yaml:"fomod_order,omitempty" json:"fomod_order,omitempty"`
+
 	// ModType is the mod's STATED type (#607): where the game deploys the
 	// whole mod, as a NexusMods collection records it (Vortex's
 	// details.type - "dinput" for a script extender, deployed to the game's
@@ -331,6 +341,9 @@ type InstalledMod struct {
 	// mod whose previous version was installed with several installers.
 	// Not on the wire.
 	PreviousFomodFiles FomodFiles `json:"-"`
+	// PreviousFomodOrder is PreviousFomodFiles' layer-order hint (#634).
+	// Not on the wire.
+	PreviousFomodOrder []string   `json:"-"`
 	LinkMethod         LinkMethod `json:"link_method"`        // How the mod was deployed (symlink, hardlink, copy)
 	FileIDs            []string   `json:"file_ids,omitempty"` // Source-specific file IDs that were downloaded
 	// AdoptedInPlace marks a mod `lmm import` scan mode adopted where it
@@ -411,23 +424,26 @@ type Update struct {
 // FomodRecord is the reference's recorded FOMOD choices in either form
 // (#634).
 func (r ModReference) FomodRecord() FomodRecord {
-	return FomodRecord{Choices: r.Fomod, Files: r.FomodFiles}
+	return FomodRecord{Choices: r.Fomod, Files: r.FomodFiles, Order: r.FomodOrder}
 }
 
 // SetFomodRecord records rec on the reference: the per-file form clears the
 // single one and the other way round, so the reference never carries both.
 func (r *ModReference) SetFomodRecord(rec FomodRecord) {
 	if rec.PerFile() {
-		r.Fomod, r.FomodFiles = FomodChoices{}, rec.Files.Clone()
+		r.Fomod, r.FomodFiles, r.FomodOrder = FomodChoices{}, rec.Files.Clone(), slices.Clone(rec.Order)
+		if len(r.FomodOrder) == 0 {
+			r.FomodOrder = nil
+		}
 		return
 	}
-	r.Fomod, r.FomodFiles = rec.Choices, nil
+	r.Fomod, r.FomodFiles, r.FomodOrder = rec.Choices, nil, nil
 }
 
 // PreviousFomodRecord is the row's previous FOMOD choices in either form
 // (#634).
 func (m InstalledMod) PreviousFomodRecord() FomodRecord {
-	return FomodRecord{Choices: m.PreviousFomod, Files: m.PreviousFomodFiles}
+	return FomodRecord{Choices: m.PreviousFomod, Files: m.PreviousFomodFiles, Order: m.PreviousFomodOrder}
 }
 
 // ModKey returns a unique lookup key for a mod: "sourceID:modID".

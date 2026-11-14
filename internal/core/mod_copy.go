@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
@@ -59,6 +60,9 @@ type CopyModEntry struct {
 	// FomodFiles is the ref's per-file choices (#634), copied with it;
 	// absent for a mod with one installer or none.
 	FomodFiles domain.FomodFiles `json:"fomod_files,omitempty"`
+	// FomodOrder is the ref's per-file layer-order hint (#634), copied
+	// with FomodFiles; absent when it has none.
+	FomodOrder []string `json:"fomod_order,omitempty"`
 	// ModType is the source ref's stated mod type (#607), carried like the
 	// choices: it is where the copied files deploy. omitempty.
 	ModType string `json:"mod_type,omitempty"`
@@ -233,6 +237,7 @@ func (s *Service) copyEntry(game *domain.Game, row domain.InstalledMod, ref *dom
 		entry.Category = ref.Category
 		entry.Fomod = ref.Fomod
 		entry.FomodFiles = ref.FomodFiles.Clone()
+		entry.FomodOrder = slices.Clone(ref.FomodOrder)
 		entry.ModType = ref.ModType
 	}
 	if v, ok := listed[domain.ModKey(row.SourceID, row.ID)]; ok {
@@ -438,7 +443,7 @@ func (s *Service) applyCopyMod(ctx context.Context, game *domain.Game, plan *Cop
 		}
 
 		ref := domain.ModReference{SourceID: e.SourceID, ModID: e.ModID, Version: e.Version,
-			FileIDs: e.FileIDs, Locked: e.Locked, Disabled: e.Disabled, Category: e.Category, ModType: e.ModType, Fomod: e.Fomod, FomodFiles: e.FomodFiles.Clone()}
+			FileIDs: e.FileIDs, Locked: e.Locked, Disabled: e.Disabled, Category: e.Category, ModType: e.ModType, Fomod: e.Fomod, FomodFiles: e.FomodFiles.Clone(), FomodOrder: slices.Clone(e.FomodOrder)}
 		msgs, err := s.copyRowToProfile(ctx, game, *row, plan.To, rowCopy{enabled: !e.Disabled, method: method})
 		if err != nil {
 			return result, fmt.Errorf("recording %s under %s: %w", e.Name, plan.To, err)

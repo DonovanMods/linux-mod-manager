@@ -22,18 +22,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Reconfigure installer…**'s installer list) changes one file's answers.
   The NexusMods collection import no longer refuses such a mod
   (`fomod_multi_file`); the Skyrim sample collection `xk05aw` now waits
-  only on its plugin order (#611). A collection document or shared profile
-  that records choices per file requires the `fomod_multi_file` feature, so
-  an older lmm refuses to import it rather than install it wrong; an older
-  lmm reading a profile file with the block sees no recorded choices for
-  that mod and drops the block if it rewrites the file, as with `fomod:`.
-  The rollback record keeps the per-file form in the existing database
-  column, so no database migration. A mod's files share one install, laid
-  out in the order of its `file_ids`, so when two of its installers write
-  the same file the later one wins; a converted collection orders those
-  ids by its before/after rules between the mod's own files, as Vortex
-  would by installing each file as its own mod, and otherwise keeps the
-  collection's order.
+  only on its plugin order (#611). An lmm collection document (`.lmmc`, or
+  a version-1 YAML export) that records choices per file requires the
+  `fomod_multi_file` feature, so an older lmm refuses to import it rather
+  than install it wrong. A plain profile file or version-0 export carries no
+  such gate: an older lmm reads it as recording no choices for that mod, so
+  its installers ask again, and it drops the block if it rewrites the file,
+  as with `fomod:`. The rollback record keeps the per-file form in the
+  existing database column, so no database migration. A mod's files share
+  one install, so when two of its installers write the same file one of
+  them has to win: the files layer in one order whichever command installs
+  them - by file id, unless the profile's new `fomod_order:` list says
+  otherwise - and a NexusMods collection's before/after rules between the
+  mod's own files set that list, as Vortex would by installing each file as
+  its own mod. An update pairs each file with the file replacing it by the
+  source's own replacement, else by name or category, and asks again about
+  a file it cannot pair rather than replay another file's answers.
 - **Import a NexusMods collection (#607).** The new
   `lmm profile import --nexus-collection <slug|slug@revision|URL>` (in the
   web UI, the Profiles window's **NexusMods collection** field) reads a

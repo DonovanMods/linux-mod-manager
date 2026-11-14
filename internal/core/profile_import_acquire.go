@@ -176,13 +176,14 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 		f.release = s.releaseFilesFunc(st.files)
 		return nil, f
 	}
-	st.files = layerOrder(st.files, fx.fileOrder) // #634: the order the files layer in
-	resolved, err := unifyFomod(mod, st.files)
+	// #634: a mod with several installers comes back in its layer order.
+	ordered, resolved, err := unifyFomod(mod, st.files, fx.orderHint)
 	if err != nil {
 		f := fail(err.Error(), err)
 		f.release = s.releaseFilesFunc(st.files)
 		return nil, f
 	}
+	st.files = ordered
 	st.fomod = resolved
 	return st, nil
 }

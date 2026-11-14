@@ -218,10 +218,12 @@ func TestPreviousFomod_PerFileRoundTrips(t *testing.T) {
 	}
 	row := variantRow("aaaaaaaaaaaa")
 	row.PreviousFomodFiles = files
+	row.PreviousFomodOrder = []string{"f2", "f1"}
 	require.NoError(t, database.SaveInstalledMod(ctx, row))
 	got, err := database.GetInstalledMod(ctx, "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.True(t, files.Equal(got.PreviousFomodFiles))
+	assert.Equal(t, []string{"f2", "f1"}, got.PreviousFomodOrder, "the layer order travels with it")
 	assert.True(t, got.PreviousFomod.IsZero())
 
 	single := domain.FomodChoices{ConfigSHA256: "bb"}

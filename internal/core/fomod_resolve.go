@@ -108,38 +108,71 @@ func fomodTreeHash(c domain.FomodChoices) string {
 // fomodFilesVariantScheme names the per-file variant's inputs (#634).
 const fomodFilesVariantScheme = "lmm-tree-files-1"
 
-// fomodFilesVariant is the cache variant of a mod whose files each carry
-// an installer (#634): ONE entry holds every file's resolved tree, so its
-// variant is a hash over each file's id and its own tree hash, in file-id
-// order. A record of one file is that file's tree, so it is fomodVariant's
-// - the variant a mod with one installer has always had; none is "".
-func fomodFilesVariant(files domain.FomodFiles) string {
-	ids := make([]string, 0, len(files))
-	for id, c := range files {
-		if !c.IsZero() {
-			ids = append(ids, id)
+// canonicalLayerOrder is the ONE order a FomodFiles mod's files layer in
+// its cache entry (#634), whichever flow installs it and however the
+// source lists them: first the files hint names (the reference's
+// fomod_order, which a collection's rules between the mod's own files
+// set), in its order, then every other file by file id. A later file's
+// tree wins a path an earlier one also writes.
+func canonicalLayerOrder(ids, hint []string) []string {
+	present := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		present[id] = true
+	}
+	out := make([]string, 0, len(present))
+	for _, id := range hint {
+		if present[id] && !slices.Contains(out, id) {
+			out = append(out, id)
 		}
 	}
-	switch len(ids) {
+	rest := make([]string, 0, len(present))
+	for id := range present {
+		if !slices.Contains(out, id) {
+			rest = append(rest, id)
+		}
+	}
+	slices.Sort(rest)
+	return append(out, rest...)
+}
+
+// fomodFilesVariant is the cache variant of a mod whose files each carry
+// an installer (#634): ONE entry holds every file's resolved tree, layered
+// in order (canonicalLayerOrder, over ALL the mod's files: a plain file's
+// members overlap too), so its variant is a hash over that order and each
+// installer file's own tree hash. A record of one file is that file's
+// tree, so it is fomodVariant's - the variant a mod with one installer has
+// always had; none is "".
+func fomodFilesVariant(files domain.FomodFiles, order []string) string {
+	var installers []string
+	for id, c := range files {
+		if !c.IsZero() {
+			installers = append(installers, id)
+		}
+	}
+	switch len(installers) {
 	case 0:
 		return ""
 	case 1:
-		return fomodVariant(files[ids[0]])
+		return fomodVariant(files[installers[0]])
 	}
-	slices.Sort(ids)
 	h := sha256.New()
 	_, _ = io.WriteString(h, fomodFilesVariantScheme)
-	for _, id := range ids {
-		_, _ = io.WriteString(h, "\n"+strconv.Quote(id)+" "+fomodTreeHash(files[id]))
+	for _, id := range canonicalLayerOrder(append(slices.Clone(order), installers...), order) {
+		tree := "-"
+		if c, ok := files[id]; ok && !c.IsZero() {
+			tree = fomodTreeHash(c)
+		}
+		_, _ = io.WriteString(h, "\n"+strconv.Quote(id)+" "+tree)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
-// recordVariant is the variant a recorded FomodRecord names: the per-file
-// form's when it has one, else the single form's.
-func recordVariant(r domain.FomodRecord) string {
+// recordVariant is the variant a recorded FomodRecord names for a mod
+// installed from the files ids: the per-file form's, laid out in their
+// canonical order, when it has one, else the single form's.
+func recordVariant(r domain.FomodRecord, ids []string) string {
 	if r.PerFile() {
-		return fomodFilesVariant(r.Files)
+		return fomodFilesVariant(r.Files, canonicalLayerOrder(append(slices.Clone(ids), slices.Collect(maps.Keys(r.Files))...), r.Order))
 	}
 	return fomodVariant(r.Choices)
 }
@@ -149,7 +182,7 @@ func refVariant(ref *domain.ModReference) string {
 	if ref == nil {
 		return ""
 	}
-	return recordVariant(ref.FomodRecord())
+	return recordVariant(ref.FomodRecord(), ref.FileIDs)
 }
 
 // fomodInput is what the resolve step installs a FOMOD with.
@@ -191,11 +224,12 @@ type fomodInput struct {
 	// rebuild answers each file's conditions by that file's recorded file
 	// states first (rebuildInput), as asRebuild does for the single form.
 	rebuild bool
-	// fileOrder is the order the mod's files layer in its one cache entry
-	// (#634): the reference's file_ids, which a collection orders by its
-	// rules between the mod's own files. A later file's tree wins a path
-	// an earlier one also writes. Empty keeps the flow's own file order.
-	fileOrder []string
+	// orderHint is the recorded layer-order hint (the ref's fomod_order)
+	// and fileIDs the files the mod is installed from (#634): together
+	// they name the canonical order its files layer in
+	// (canonicalLayerOrder) when it has several installers.
+	orderHint []string
+	fileIDs   []string
 	// softAsk: ask only an archive that IS an installer, and say nothing
 	// of one that is not (a mod's plain file beside its installer); the
 	// flow refuses a reconfigure none of whose files is one
@@ -209,7 +243,7 @@ type fomodInput struct {
 // mod's recorded choices. A reconfigure of another file replays this one.
 func (in fomodInput) forFile(fileID string) fomodInput {
 	out := in
-	out.fileChoices, out.fileAnswers, out.askFile, out.fileOrder = nil, nil, "", nil
+	out.fileChoices, out.fileAnswers, out.askFile, out.orderHint, out.fileIDs = nil, nil, "", nil, nil
 	switch a, ok := in.fileAnswers[fileID]; {
 	case ok && !a.IsZero():
 		out.choices, out.answered = a, true
@@ -239,7 +273,7 @@ func (in fomodInput) forFile(fileID string) fomodInput {
 // tree they are, and they are canonical only once resolved, so a warm hit
 // on answers is an optimisation, never a requirement.
 func (in fomodInput) expectedVariant() string {
-	return recordVariant(in.expectedRecord())
+	return recordVariant(in.expectedRecord(), in.fileIDs)
 }
 
 // expectedRecord is the record the input would install with, before any
@@ -263,30 +297,14 @@ func (in fomodInput) expectedRecord() domain.FomodRecord {
 			return domain.FomodRecord{Choices: c}
 		}
 	}
-	return domain.FomodRecord{Files: files}
-}
-
-// variantWith is the variant the mod's entry has once ONE of its files
-// resolved to r (a repair of that file): r's own for a mod recorded with
-// one installer, else the per-file record with that file's choices
-// replaced (#634).
-func (in fomodInput) variantWith(fileID string, r *fomodResolved) string {
-	if in.fileChoices.IsZero() {
-		return r.variant
-	}
-	files := domain.FomodFiles{}
-	for id, c := range in.fileChoices {
-		files[id] = c
-	}
-	files[fileID] = r.choices
-	return fomodFilesVariant(files)
+	return domain.FomodRecord{Files: files, Order: in.orderHint}
 }
 
 // warmResolved is the outcome a warm cache entry for the input stands for:
 // the expected record's tree, already built.
 func (in fomodInput) warmResolved(variant string) *fomodResolved {
 	rec := in.expectedRecord()
-	return &fomodResolved{variant: variant, choices: rec.Choices, files: rec.Files.Clone()}
+	return &fomodResolved{variant: variant, choices: rec.Choices, files: rec.Files.Clone(), order: slices.Clone(rec.Order)}
 }
 
 // fomodResolved is one archive's resolve outcome - or, unified over a
@@ -301,6 +319,8 @@ type fomodResolved struct {
 	// files are the per-file choices of a mod whose files each carry an
 	// installer (#634); choices is then zero.
 	files domain.FomodFiles
+	// order is the per-file form's layer-order hint, recorded with it.
+	order []string
 	// warnings are what the install assumed or dropped, for the flow's
 	// event sink.
 	warnings []string
@@ -782,5 +802,5 @@ func (r *fomodResolved) record() domain.FomodRecord {
 	if r == nil {
 		return domain.FomodRecord{}
 	}
-	return domain.FomodRecord{Choices: r.choices, Files: r.files}
+	return domain.FomodRecord{Choices: r.choices, Files: r.files, Order: r.order}
 }

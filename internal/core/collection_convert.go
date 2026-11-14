@@ -961,14 +961,20 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 	return doc
 }
 
-// orderEntryFiles reorders one entry's file_ids (and its files) by the
+// orderEntryFiles records the order one entry's files layer in, from the
 // before/after rules between its own files (#634), stable on the
-// collection's order: a mod's files share one cache entry, laid out in
-// file_ids order, so a later file's tree wins a path an earlier one also
-// writes - as a later-installed mod would in Vortex, which installs each
-// file as its own mod. A cycle among them keeps the collection's order for
-// the files in it, with a note.
+// collection's order: a mod whose files each carry an installer has them
+// share one cache entry, and a later file's tree wins a path an earlier
+// one also writes - as a later-installed mod would in Vortex, which
+// installs each file as its own mod. It is the entry's fomod_order, the
+// hint every flow layers by (canonicalLayerOrder); file_ids keep the
+// collection's order. A cycle among them keeps the collection's order for
+// the files in it, with a note. Only a per-file entry records it: it has
+// no say over any other mod's install.
 func orderEntryFiles(item *domain.CollectionItem, members []*convItem, rules [][2]*convItem, out *ConvertedCollection) {
+	if item.Ref.FomodFiles.IsZero() {
+		return
+	}
 	index := make(map[*convItem]int, len(members))
 	for i, m := range members {
 		index[m] = i
@@ -988,15 +994,9 @@ func orderEntryFiles(item *domain.CollectionItem, members []*convItem, rules [][
 	if len(cycles) > 0 {
 		out.Notes = append(out.Notes, fmt.Sprintf("The collection's ordering rules between %s's own files form a cycle; lmm breaks it, and every other rule holds.", item.Name))
 	}
-	byID := make(map[string]domain.CollectionFileRef, len(item.Files))
-	for _, f := range item.Files {
-		byID[f.ID] = f
-	}
-	item.Ref.FileIDs, item.Files = item.Ref.FileIDs[:0], item.Files[:0]
+	item.Ref.FomodOrder = make([]string, 0, len(order))
 	for _, i := range order {
-		id := members[i].FileID
-		item.Ref.FileIDs = append(item.Ref.FileIDs, id)
-		item.Files = append(item.Files, byID[id])
+		item.Ref.FomodOrder = append(item.Ref.FomodOrder, members[i].FileID)
 	}
 }
 

@@ -1145,7 +1145,7 @@ func encodeFomod(r domain.FomodRecord) (string, error) {
 	var b []byte
 	var err error
 	if r.PerFile() {
-		b, err = json.Marshal(previousFomodFiles{Steps: []domain.FomodStepChoice{}, Files: r.Files.Clone()})
+		b, err = json.Marshal(previousFomodFiles{Steps: []domain.FomodStepChoice{}, Files: r.Files.Clone(), Order: r.Order})
 	} else {
 		b, err = json.Marshal(r.Choices)
 	}
@@ -1160,6 +1160,7 @@ type previousFomodFiles struct {
 	ConfigSHA256 string                   `json:"config_sha256"`
 	Steps        []domain.FomodStepChoice `json:"steps"`
 	Files        domain.FomodFiles        `json:"files,omitempty"`
+	Order        []string                 `json:"order,omitempty"`
 }
 
 // decodeFomod reads encodeFomod's encoding.
@@ -1173,7 +1174,7 @@ func decodeFomod(raw string) (domain.FomodRecord, error) {
 		return r, fmt.Errorf("decoding previous FOMOD choices: %w", err)
 	}
 	if !files.Files.IsZero() {
-		r.Files = files.Files
+		r.Files, r.Order = files.Files, files.Order
 		return r, nil
 	}
 	if err := json.Unmarshal([]byte(raw), &r.Choices); err != nil {
@@ -1189,6 +1190,6 @@ func setPreviousFomod(mod *domain.InstalledMod, raw string) error {
 	if err != nil {
 		return err
 	}
-	mod.PreviousFomod, mod.PreviousFomodFiles = r.Choices, r.Files
+	mod.PreviousFomod, mod.PreviousFomodFiles, mod.PreviousFomodOrder = r.Choices, r.Files, r.Order
 	return nil
 }
