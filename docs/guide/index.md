@@ -33,20 +33,22 @@ You can use lmm two ways, and they share everything:
 
 Then read whichever of these you need:
 
-| I want to…                                   | Read                                                    |
-| -------------------------------------------- | ------------------------------------------------------- |
-| Mod a game lmm didn't find by itself         | [Adding a game by hand](add-a-game.md)                  |
-| Keep several mod setups for one game         | [Profiles](profiles.md)                                 |
-| Update mods, or go back to an older version  | [Updating, rolling back and locking](updates.md)        |
-| Use a mod I downloaded myself                | [Mods you downloaded yourself](manual-mods.md)          |
-| Install a mod that asks which options I want | [Mods with installer options (FOMOD)](fomod.md)         |
-| Change the plugin order of a Bethesda game   | [Plugin order (Skyrim, Fallout, Starfield)](plugins.md) |
-| Change which Cyberpunk 2077 archive wins     | [Archive load order (Cyberpunk 2077)](load-order.md)    |
-| Mod a Unity game such as Valheim             | [Unity games and BepInEx](bepinex.md)                   |
-| Start the game from lmm                      | [Launching your game](launch.md)                        |
-| Keep the web interface running all the time  | [Run the web UI in the background](background.md)       |
-| Fix something, or get my game back to normal | [When something goes wrong](troubleshooting.md)         |
-| Look up a word or a quick answer             | [FAQ and glossary](faq.md)                              |
+| I want to…                                          | Read                                                                                      |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Mod a game lmm didn't find by itself                | [Adding a game by hand](add-a-game.md)                                                    |
+| Keep several mod setups for one game                | [Profiles](profiles.md)                                                                   |
+| Import a NexusMods collection, or share my own      | [Sharing and importing collections](profiles.md#sharing-a-profile)                        |
+| Get a collection's mods on a free NexusMods account | [A collection on a free account](manual-mods.md#a-nexusmods-collection-on-a-free-account) |
+| Update mods, or go back to an older version         | [Updating, rolling back and locking](updates.md)                                          |
+| Use a mod I downloaded myself                       | [Mods you downloaded yourself](manual-mods.md)                                            |
+| Install a mod that asks which options I want        | [Mods with installer options (FOMOD)](fomod.md)                                           |
+| Change the plugin order of a Bethesda game          | [Plugin order (Skyrim, Fallout, Starfield)](plugins.md)                                   |
+| Change which Cyberpunk 2077 archive wins            | [Archive load order (Cyberpunk 2077)](load-order.md)                                      |
+| Mod a Unity game such as Valheim                    | [Unity games and BepInEx](bepinex.md)                                                     |
+| Start the game from lmm                             | [Launching your game](launch.md)                                                          |
+| Keep the web interface running all the time         | [Run the web UI in the background](background.md)                                         |
+| Fix something, or get my game back to normal        | [When something goes wrong](troubleshooting.md)                                           |
+| Look up a word or a quick answer                    | [FAQ and glossary](faq.md)                                                                |
 
 ## Where to find more
 
