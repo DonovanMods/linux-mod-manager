@@ -122,8 +122,11 @@ func TestE2E_CollectionUpdate_PlanChoicesAndApply(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		p, err := config.LoadProfile(svc.ConfigDir(), game.ID, "shared")
-		return err == nil && p.Collection.Version == 2
-	}, 15*time.Second, 50*time.Millisecond, "the update records the new version")
+		// The new version is saved before the obsolete member's uninstall
+		// removes its ref (#613 review: a failed removal must never strand
+		// a mod), so wait for both, not only the version.
+		return err == nil && p.Collection.Version == 2 && p.FindRef("fake", "two") == nil
+	}, 15*time.Second, 50*time.Millisecond, "the update records the new version and removes the checked member")
 	saved, err := config.LoadProfile(svc.ConfigDir(), game.ID, "shared")
 	require.NoError(t, err)
 	assert.Nil(t, saved.FindRef("fake", "two"), "removed, as checked")
