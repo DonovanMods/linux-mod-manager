@@ -10,39 +10,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Import a NexusMods collection (#607).** `lmm profile import
---nexus-collection <slug|slug@revision|URL>` (in the web UI, the
-  Profiles window's **NexusMods collection** field) reads a collection's
-  list and its install recipe, converts them into an lmm collection and
-  imports it as a new profile, all or nothing. Each mod is pinned to the
-  exact file the curator chose, old and archived files included; an
-  `exact` pin is locked, and a `latest` one installs the tested file and is
-  set to update automatically. The curator's install phases and
-  before/after rules order the profile (a rule naming a mod outside the
-  collection is skipped, with a note), recorded FOMOD installer choices are
-  replayed (part of #609, which stays open for checking each archive's md5
-  before replaying and for install-phase-aware installer conditions), items NexusMods does not host are listed with where to get
-  them, and the curator's tool shortcuts are listed but never run.
+--nexus-collection <slug|slug@revision|URL>` (in the web UI, the Profiles
+  window's **NexusMods collection** field) reads a collection's list and its
+  install recipe, converts them into an lmm collection and imports it as a
+  new profile. The import is all or nothing while files are fetched: if any
+  item cannot be downloaded, nothing is written, the profile included; a
+  failure after that, while the fetched mods are installed, is reported as
+  an incomplete import. Each mod is pinned to the exact file the curator
+  chose, old and archived files included; an `exact` pin is locked, and a
+  `latest` one installs the tested file and is set to update automatically.
+  The curator's install phases and before/after rules order the profile (a
+  rule naming a mod outside the collection is skipped, with a note), and
+  recorded FOMOD installer choices are replayed (#609 stays open for
+  checking each archive's md5 before replaying, and for install-phase-aware
+  installer conditions). Items NexusMods does not host are listed with where
+  to get them, and the curator's tool shortcuts are listed but never run.
   Optional mods are left out unless you add `--with-optional` (in the web
   UI, a tick box on each). On a free NexusMods account, which NexusMods
   serves no downloads to, the plan marks every mod a manual download with
-  its file's page, and the import saves the profile with them pending. A
-  collection that needs something lmm cannot replay yet (a plugin load
-  order, an exact file list, bundled files, patches, a file-based load
-  order, a mod type the game's adapter does not route, two installers in
-  one mod) shows its plan, naming what is missing and which mods need it,
-  and is refused with nothing written. The recipe is a `.7z`, so the
-  import needs the `7z` command and says so when it is missing.
+  its file's page, and the import installs only what needs no download (a
+  mod another profile already has) and saves the profile with the rest
+  pending; if a Premium account lapses between the plan and the import, the
+  import says once to plan again. A collection that needs something lmm
+  cannot replay yet (a plugin load order, an exact file list, bundled files,
+  patches, a file-based load order, a mod type the game's adapter does not
+  route, two installers in one mod) shows its plan, naming what is missing
+  and which mods need it, and is refused with nothing written. The recipe is
+  a `.7z`, so the import needs the `7z` command and says so when it is
+  missing.
 - **A mod can state where it deploys (`mod_type`, #607).** A profile entry
   may carry `mod_type:` (a NexusMods collection's mod type: `dinput` for a
   script extender); every deploy routes the whole mod by it through the
   game's adapter, and a type the adapter does not know is refused with the
-  reason. An lmm collection relying on one requires `mod_type:<type>`,
-  which a game whose adapter routes the type supports. The installed row
-  keeps a copy (database schema version 27).
-- The NexusMods account tier is checked again after 15 minutes, and at
-  once after NexusMods refuses a download as Premium-only, so an upgrade or
-  a lapse under a long-running `lmm serve` is noticed (#607).
-
+  reason. Import plans show it beside the mod. An lmm collection relying on
+  one requires `mod_type:<type>`, which a game whose adapter routes the type
+  supports. The installed row keeps a copy (database schema version 27).
+- The NexusMods account tier is asked for afresh by every collection plan,
+  checked again after 15 minutes otherwise, and at once after NexusMods
+  refuses a download as Premium-only, so an upgrade or a lapse under a
+  long-running `lmm serve` is noticed (#607).
 - **lmm writes a Bethesda game's plugin list (#616).** On a game with the
   `bethesda` adapter, every flow that changes which plugins are deployed
   (`lmm deploy`, `install`, `update` and rollbacks, `mod enable`/`disable`,

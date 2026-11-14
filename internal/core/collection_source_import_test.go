@@ -31,6 +31,8 @@ type collectionSource struct {
 	tier       source.Tier
 	tierErr    error
 	filesByMod map[string][]string // mod id -> file ids it serves
+	urlErr     error
+	refreshes  int
 }
 
 func (s *collectionSource) ResolveGameCollection(ctx context.Context, gameSourceID, ref string) (source.Collection, error) {
@@ -56,6 +58,19 @@ func (s *collectionSource) ParseManifest(root fs.FS) (source.CollectionManifest,
 
 func (s *collectionSource) AccountTier(context.Context) (source.Tier, error) {
 	return s.tier, s.tierErr
+}
+
+// RefreshAccountTier counts the plan's fresh asks (source.AccountTierRefresher).
+func (s *collectionSource) RefreshAccountTier(ctx context.Context) (source.Tier, error) {
+	s.refreshes++
+	return s.AccountTier(ctx)
+}
+
+func (s *collectionSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	if s.urlErr != nil {
+		return "", s.urlErr
+	}
+	return s.mockSourceWithDownloads.GetDownloadURL(ctx, mod, fileID)
 }
 
 func (s *collectionSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
@@ -296,4 +311,26 @@ func TestSourceCollectionImport_FreeAccountNamesItsPendingLatestItems(t *testing
 		}
 	}
 	assert.True(t, named, "%v", result.Notes)
+}
+
+// #607 C2b review, nit 7: a plan asks the source for the tier afresh, so
+// an account upgraded minutes ago is planned as it is now.
+func TestPlanSourceCollectionImport_AsksForAFreshTier(t *testing.T) {
+	f := newSourceImportFixture(t, source.TierPremium)
+	f.plan(t, core.SourceCollectionImportRequest{})
+	f.plan(t, core.SourceCollectionImportRequest{})
+	assert.Equal(t, 2, f.src.refreshes)
+}
+
+// #607 C2b review, nit 8: an account planned as Premium that lapses before
+// Apply gets ONE refusal saying to plan again, not one per mod.
+func TestApplySourceCollectionImport_ALapsedAccountIsOneRefusal(t *testing.T) {
+	f := newSourceImportFixture(t, source.TierPremium)
+	plan := f.plan(t, core.SourceCollectionImportRequest{})
+	f.src.urlErr = &source.AccountRestrictedError{Reason: "Premium only"}
+	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.ErrorIs(t, err, source.ErrAccountRestricted)
+	assert.Contains(t, err.Error(), "plan the import again")
+	_, err = config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Three Mods")
+	assert.Error(t, err, "nothing was written")
 }

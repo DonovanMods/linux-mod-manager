@@ -844,6 +844,13 @@ func doProfileExport(ctx context.Context, service *core.Service, game *domain.Ga
 // updated_at so this line can say the revision date instead. A ref with
 // neither prints no version at all rather than a bare "v".
 func planRefLine(ref domain.ModReference) string {
+	// #607: a stated mod type changes where the mod deploys, so a plan
+	// says so.
+	if ref.ModType != "" {
+		t := ref.ModType
+		ref.ModType = ""
+		return planRefLine(ref) + " (type " + t + ")"
+	}
 	workshop := ref.DisplayVersion != "" || ref.External
 	shown := displayModVersion(workshop, ref.Version, ref.UpdatedAt)
 	if ref.DisplayVersion != "" {

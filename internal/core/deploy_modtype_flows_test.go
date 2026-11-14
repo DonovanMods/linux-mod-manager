@@ -168,3 +168,14 @@ func TestImportAndSwitch_CopiedRowTakesTheRefsType(t *testing.T) {
 		})
 	}
 }
+
+// #607 C2b review, nit 5: an archive imported over a typed reference is
+// planned - its conflicts checked - at the root its type deploys to.
+func TestPlanImportArchive_UsesTheRefsStatedType(t *testing.T) {
+	f := newTypedFlowFixture(t, "dinput")
+	archive := filepath.Join(t.TempDir(), "extender.zip")
+	require.NoError(t, os.WriteFile(archive, createTestZipBytes(t, map[string]string{"extender_readme.txt": "readme"}), 0o644))
+	plan, err := f.svc.PlanImportArchive(context.Background(), f.game, "default", archive, core.ImportArchiveOptions{SourceID: "src", ModID: "ext"})
+	require.NoError(t, err)
+	assert.Equal(t, "dinput", plan.Mod.ModType, "set at plan time, not only at Apply")
+}

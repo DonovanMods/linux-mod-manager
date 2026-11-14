@@ -391,6 +391,14 @@ type AccountTierReporter interface {
 	AccountTier(ctx context.Context) (Tier, error)
 }
 
+// AccountTierRefresher is an AccountTierReporter that can be asked to
+// forget its cached tier and ask the source again (#607): a plan that gates
+// on the tier is the user asking now, so an account upgraded (or lapsed)
+// minutes ago is seen as it is. Optional, like every capability here.
+type AccountTierRefresher interface {
+	RefreshAccountTier(ctx context.Context) (Tier, error)
+}
+
 // Capabilities reports which optional operations a source supports.
 type Capabilities struct {
 	Search       bool

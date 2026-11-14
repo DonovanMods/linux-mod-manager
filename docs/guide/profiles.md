@@ -264,11 +264,13 @@ lmm needs the `7z` command, because the recipe is a `.7z` file (see
 missing. A **free** account can read any
 collection, but NexusMods only serves downloads to Premium accounts, so on
 a free account the plan marks every mod as a manual download and links its
-file's page. The import then saves the profile with every mod still to
-download: get each file from its page and install it from the file
-(`lmm install --id <mod-id> --from-file <archive>`, or **Install from
+file's page. The import then installs only what needs no download (a mod
+another of your profiles already has) and saves the profile with the rest
+still to download: get each file from its page and install it from the
+file (`lmm install --id <mod-id> --from-file <archive>`, or **Install from
 file…** in the browser; see [Mods you downloaded
-yourself](manual-mods.md)).
+yourself](manual-mods.md)). lmm asks NexusMods for your account's tier
+each time it plans a collection, so after upgrading to Premium, plan again.
 
 The plan lists every item and what the import does with it:
 
@@ -279,8 +281,8 @@ The plan lists every item and what the import does with it:
   the collection was tested with now, and sets the mod to update
   automatically, so the next update check moves it to the newest file.
 - **Optional** mods are left out unless you ask: `--with-optional`
-  includes all of them, and in the browser each optional mod has a tick box
-  in the plan.
+  includes all of them. In the browser each optional mod also has its own
+  tick box in the plan; the terminal has no per-mod choice.
 - Mods are put in the collection's install order, and the curator's
   "load after" rules are followed. A rule that names a mod outside the
   collection is skipped, and the plan says so.
@@ -292,8 +294,10 @@ The plan lists every item and what the import does with it:
   curator's instructions. The curator's tool shortcuts are listed too; lmm
   never creates or runs them.
 
-A NexusMods collection installs **all or nothing**: if one mod can't be
-downloaded, nothing is imported, not even the profile. And a collection
+A NexusMods collection installs **all or nothing** while its files are
+fetched: if one mod can't be downloaded, nothing is imported, not even the
+profile. If something goes wrong after that, while the downloaded mods are
+being installed, the import says which mods failed, as any import does. And a collection
 that uses something this version of lmm can't do yet (a plugin load order,
 an exact file list, files bundled in the collection, patches) shows its
 plan, with what is missing and which mods need it, and is refused, with

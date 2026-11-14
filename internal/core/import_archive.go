@@ -403,6 +403,9 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	// game's default installer answers it without reading the profile.
 	// #629: as the deployed paths the files take, game-root ones included.
 	installer := s.getInstaller(game)
+	// #607: an archive imported over a typed reference deploys by its type,
+	// so the preview checks the root the files will take.
+	plan.Mod.ModType = statedType(s.recordedRef(ctx, game.ID, profileName, plan.Mod.SourceID, plan.Mod.ID))
 	conflicts, err := installer.conflictsForPaths(ctx, game, &plan.Mod, profileName, pathsOf(deployItems(installer.adapter, game, plan.Mod.ModType, files)))
 	if err != nil {
 		return nil, err

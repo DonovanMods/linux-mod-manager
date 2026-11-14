@@ -66,6 +66,13 @@ func (n *NexusMods) AccountTier(ctx context.Context) (source.Tier, error) {
 
 // EnvKey implements source.EnvKeyProvider: the legacy environment variable
 // name, preserved exactly.
+// RefreshAccountTier implements source.AccountTierRefresher: the cached tier
+// is forgotten and the validate endpoint asked again (#607).
+func (n *NexusMods) RefreshAccountTier(ctx context.Context) (source.Tier, error) {
+	n.client.forgetTier()
+	return n.client.AccountTier(ctx)
+}
+
 func (n *NexusMods) EnvKey() string {
 	return "NEXUSMODS_API_KEY"
 }

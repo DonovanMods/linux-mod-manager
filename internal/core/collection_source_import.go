@@ -10,6 +10,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -116,11 +117,15 @@ func (s *Service) accountTier(ctx context.Context, sourceID string) (source.Tier
 	if err != nil {
 		return "", false
 	}
-	reporter, ok := src.(source.AccountTierReporter)
-	if !ok {
+	var tier source.Tier
+	if refresher, ok := src.(source.AccountTierRefresher); ok {
+		// A plan is the user asking now: an upgrade made minutes ago counts.
+		tier, err = refresher.RefreshAccountTier(ctx)
+	} else if reporter, ok := src.(source.AccountTierReporter); ok {
+		tier, err = reporter.AccountTier(ctx)
+	} else {
 		return "", false
 	}
-	tier, err := reporter.AccountTier(ctx)
 	if err != nil || tier == "" {
 		return "", false
 	}
@@ -188,4 +193,24 @@ func finishSourceCollection(plan *ImportPlan, c *ConvertedCollection, result *Pr
 		result.Notes = append(result.Notes, fmt.Sprintf("The curator wants these on their newest file: %s. Once each is installed, set it to update automatically (lmm mod set-update <mod-id> --auto).",
 			strings.Join(autoPending, ", ")))
 	}
+}
+
+// lapsedAccount is err as ONE refusal when every item the apply refused
+// was refused for the account (source.ErrAccountRestricted): the account
+// was planned as one the source serves downloads to, and is not one any
+// more (#607). The user's next step is to plan again - which marks every
+// item a manual download - not to read one refusal per mod. nil otherwise.
+func (s *Service) lapsedAccount(sourceID string, err error) error {
+	var refused *AcquireRefusedError
+	if !errors.As(err, &refused) || len(refused.Refusals) == 0 {
+		return nil
+	}
+	for _, r := range refused.Refusals {
+		if !errors.Is(r.Err, source.ErrAccountRestricted) {
+			return nil
+		}
+	}
+	return &source.AccountRestrictedError{Reason: fmt.Sprintf(
+		"this %s account is no longer served downloads through the API (it is not Premium), so nothing was imported: plan the import again, and every item is listed as a manual download",
+		s.sourceDisplayName(sourceID))}
 }

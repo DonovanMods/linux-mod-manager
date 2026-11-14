@@ -165,3 +165,12 @@ func TestRunProfileImport_NexusCollectionFlags(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "use it with --nexus-collection")
 }
+
+// #607 C2b review, nit 9: a plan line says a ref's stated mod type, since
+// it changes where the mod deploys.
+func TestPlanRefLine_NamesAStatedModType(t *testing.T) {
+	assert.Equal(t, "nexusmods:30379 v2.2.6 (type dinput)",
+		planRefLine(domain.ModReference{SourceID: "nexusmods", ModID: "30379", Version: "2.2.6", ModType: "dinput"}))
+	assert.Equal(t, "nexusmods:30379 v2.2.6",
+		planRefLine(domain.ModReference{SourceID: "nexusmods", ModID: "30379", Version: "2.2.6"}))
+}

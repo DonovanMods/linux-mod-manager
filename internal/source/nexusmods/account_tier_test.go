@@ -252,3 +252,14 @@ func TestNexusMods_AccountTier_ForgottenOnAPremiumRefusal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), validates.Load(), "the refusal contradicts the cached tier, so it is asked again")
 }
+
+func TestNexusMods_RefreshAccountTier_AsksAgain(t *testing.T) {
+	var _ source.AccountTierRefresher = New(nil, "")
+	nm, hits := tierServer(t, validatePath, http.StatusOK, tierFixture(t, "validate-free.json"))
+	_, err := nm.AccountTier(context.Background())
+	require.NoError(t, err)
+	tier, err := nm.RefreshAccountTier(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, source.TierFree, tier)
+	assert.Equal(t, int32(2), hits.Load(), "a refresh never answers from the cache")
+}

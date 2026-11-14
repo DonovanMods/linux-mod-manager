@@ -429,6 +429,11 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 		}
 	}
 	result, err := s.ApplyImport(ctx, game, plan, opts, sink)
+	if c.Source != nil {
+		if lapsed := s.lapsedAccount(c.Source.SourceID, err); lapsed != nil {
+			return result, lapsed
+		}
+	}
 	if result == nil || result.ProfileName == "" {
 		return result, err
 	}

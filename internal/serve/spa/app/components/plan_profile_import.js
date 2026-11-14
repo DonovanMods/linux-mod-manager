@@ -39,7 +39,9 @@ import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 function refLabel(ref) {
   const shown = displayVersion(ref);
   const at = shown ? ` @ ${shown}` : "";
-  return `${ref.source_id}:${ref.mod_id}${at}`;
+  // Issue 607: a stated mod type changes where the mod deploys.
+  const type = ref.mod_type ? ` (type ${ref.mod_type})` : "";
+  return `${ref.source_id}:${ref.mod_id}${at}${type}`;
 }
 
 function RefList({ heading, refs }) {
@@ -186,8 +188,15 @@ function LMMCollectionSection({ collection: c }) {
       html`<section class="plan__section" data-testid="collection-unsupported">
         <p class="plan__note plan__note--warn">
           This collection needs features this version of lmm cannot import:
-          ${" "}${c.unsupported.map((f) => f.feature).join(", ")}. Importing it
-          is refused, with nothing written; update lmm and try again.
+          ${" "}${c.unsupported
+            .map((f) =>
+              (f.items ?? []).length > 0
+                ? `${f.feature} (${f.items.join(", ")})`
+                : f.feature,
+            )
+            .join("; ")}.
+          Importing it is refused, with nothing written; update lmm and try
+          again.
         </p>
       </section>`
     }
