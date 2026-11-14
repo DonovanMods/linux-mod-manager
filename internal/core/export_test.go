@@ -483,3 +483,10 @@ func SetRenameRecipeForTest(f func(oldpath, newpath string) error) (restore func
 	renameRecipe = f
 	return func() { renameRecipe = old }
 }
+
+// SyncLoadOrdersForTest runs the file load-order sync (#620) on its own,
+// as the choke point would, for a state no flow reaches (a folder removed
+// after a deploy).
+func (s *Service) SyncLoadOrdersForTest(ctx context.Context, game *domain.Game, profileName string) []FileLoadOrderResult {
+	return s.syncLoadOrders(ctx, game, profileName)
+}

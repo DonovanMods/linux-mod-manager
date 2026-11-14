@@ -190,6 +190,29 @@ func TestNexusCollection_Cyberpunk(t *testing.T) {
 	assert.True(t, archived, "an ARCHIVED file installs by its exact id")
 }
 
+// #620: the same sample for a game on the cyberpunk2077 adapter - as the
+// Steam catalog sets Cyberpunk 2077 up - imports its archive load order
+// into the profile's load_orders: list, and is refused only for the exact
+// file lists (C5).
+func TestNexusCollection_CyberpunkArchiveOrder(t *testing.T) {
+	game := &domain.Game{ID: "cp2077", Name: "Cyberpunk 2077", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		SourceIDs: map[string]string{"nexusmods": "cyberpunk2077"}, Adapter: "cyberpunk2077"}
+	c := convertNexusFixture(t, game, "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe@484", "iszwwe", 484,
+		"revision-cyberpunk2077-iszwwe-484.json", "cyberpunk2077-iszwwe-484.json", core.CollectionConvertOptions{})
+
+	assert.Equal(t, []string{core.CollectionFeatureFileList}, unsupportedNames(c))
+	assert.Contains(t, c.Features, "file_load_order:cyberpunk2077-archive")
+	assert.Equal(t, []string{
+		"! anygoodname_cp77_story_quest_fixes.archive",
+		"! basilisk_shadows_fix_game_2.x.archive",
+		"! holding_on_kerry_mansion_scene_fixes.archive",
+	}, c.Document.LoadOrders["cyberpunk2077-archive"], "the recorded entries, in order (the fixture keeps three)")
+	assert.Contains(t, c.Document.Requires, "file_load_order:cyberpunk2077-archive")
+	require.Len(t, c.LoadOrders, 1)
+	assert.Equal(t, 3, c.LoadOrders[0].Files)
+	assert.Positive(t, c.LoadOrders[0].Matched, "an entry whose hint names a member mod is tied to it")
+}
+
 // The Skyrim sample: FOMOD items replayed, SKSE64 routed to the game root
 // by the bethesda adapter, the plugin list replayed as the profile's (#611),
 // and Scrambled Bugs - whose two patch files each carry their own FOMOD

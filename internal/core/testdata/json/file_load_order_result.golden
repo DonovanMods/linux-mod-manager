@@ -1,0 +1,17 @@
+{
+  "id": "cyberpunk2077-archive",
+  "status": "written",
+  "list_file": "/games/cyberpunk2077/archive/pc/mod/modlist.txt",
+  "files": 3,
+  "external": 1,
+  "findings": [
+    {
+      "code": "load_order_unlisted",
+      "severity": "warning",
+      "files": [
+        "loose.archive"
+      ],
+      "message": "1 file(s) in archive/pc/mod were not deployed by lmm and are not in modlist.txt, so the game loads them after every listed file (loose.archive) - add them to the list by hand to place them"
+    }
+  ]
+}

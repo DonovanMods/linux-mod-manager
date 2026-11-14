@@ -193,4 +193,7 @@ type CollectionDocument struct {
 	// Plugins is the profile's plugin list (#616), which a document needs
 	// the plugin_order feature to carry.
 	Plugins ProfilePlugins
+	// LoadOrders are the profile's file load orders (#620); each id needs
+	// the file_load_order:<id> feature.
+	LoadOrders FileLoadOrders
 }

@@ -150,7 +150,15 @@ func sanitizeConvertInput(in convertInput) (convertInput, error) {
 			u.Key = safeFeatureSuffix(u.Key)
 		}
 		for i := range m.FileLoadOrders {
-			m.FileLoadOrders[i].ID = safeFeatureSuffix(m.FileLoadOrders[i].ID)
+			lo := &m.FileLoadOrders[i]
+			lo.ID = safeFeatureSuffix(lo.ID)
+			// The names are matched against deployed files and checked by
+			// L1 (checkCollectionLoadOrders), never rewritten; a hint is
+			// display data.
+			lo.Files = slices.Clone(lo.Files)
+			for j := range lo.Files {
+				line("a load order's mod hint", &lo.Files[j].ModHint)
+			}
 		}
 		for i := range m.ModRules {
 			r := &m.ModRules[i]

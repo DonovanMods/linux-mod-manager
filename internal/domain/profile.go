@@ -44,6 +44,11 @@ type Profile struct {
 	// for the .esm/.esp/.esl files of a game whose adapter manages its
 	// plugins. Absent from every document of a profile without one.
 	Plugins ProfilePlugins `json:"plugins,omitzero"`
+
+	// LoadOrders are the profile's file load orders (#620): per load-order
+	// id, the files of a game whose adapter orders them (Cyberpunk 2077's
+	// archives). Absent from every document of a profile without one.
+	LoadOrders FileLoadOrders `json:"load_orders,omitempty"`
 }
 
 // FindRef returns a pointer into p.Mods for the reference matching
@@ -108,4 +113,8 @@ type ExportedProfile struct {
 	// Plugins is the profile's plugin list (#616), carried so a snapshot
 	// restores it; absent for a profile without one.
 	Plugins ProfilePlugins `json:"plugins,omitzero"`
+
+	// LoadOrders are the profile's file load orders (#620), carried so a
+	// snapshot restores them; absent for a profile without one.
+	LoadOrders FileLoadOrders `json:"load_orders,omitempty"`
 }

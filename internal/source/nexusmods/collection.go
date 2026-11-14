@@ -434,10 +434,12 @@ var (
 	pluginRefKeys     = keySet("name", "display")
 	pluginGroupKeys   = keySet("name", "after")
 	fileLoadOrderKeys = keySet("id", "entries")
-	hashKeys          = keySet("path", "md5", "xxh64")
-	choiceStepKeys    = keySet("name", "groups")
-	choiceGroupKeys   = keySet("name", "choices")
-	choiceOptionKeys  = keySet("name", "idx")
+	// fileLoadOrderEntryKeys are an fbLoadOrders entry's keys (#620).
+	fileLoadOrderEntryKeys = keySet("id", "name", "enabled", "modId")
+	hashKeys               = keySet("path", "md5", "xxh64")
+	choiceStepKeys         = keySet("name", "groups")
+	choiceGroupKeys        = keySet("name", "choices")
+	choiceOptionKeys       = keySet("name", "idx")
 )
 
 func keySet(keys ...string) map[string]bool {
@@ -1099,6 +1101,39 @@ func tools(raw json.RawMessage) ([]source.ManifestTool, error) {
 	return out, nil
 }
 
+// fileLoadOrderEntry reads one fbLoadOrders entry, {id, name, enabled,
+// modId} (VERIFIED in the survey: every entry has the four keys, and id and
+// name are the same file name). The file is the entry's id - what Vortex's
+// Cyberpunk extension writes to the game's list (load_order.archive.ts
+// modListFor) - else its name; enabled is true unless it says false.
+func (p *manifestParser) fileLoadOrderEntry(raw json.RawMessage, where string) (source.ManifestFileLoadOrderEntry, error) {
+	obj, err := object(raw, where)
+	if err != nil {
+		return source.ManifestFileLoadOrderEntry{}, err
+	}
+	p.note(obj, fileLoadOrderEntryKeys, "fbLoadOrders.entries.", "")
+	var e source.ManifestFileLoadOrderEntry
+	id, err := str(obj, "id")
+	if err != nil {
+		return e, fmt.Errorf("%s.%v", where, err)
+	}
+	name, err := str(obj, "name")
+	if err != nil {
+		return e, fmt.Errorf("%s.%v", where, err)
+	}
+	e.Name = id
+	if e.Name == "" {
+		e.Name = name
+	}
+	if e.ModHint, err = str(obj, "modId"); err != nil {
+		return e, fmt.Errorf("%s.%v", where, err)
+	}
+	if e.Enabled, err = boolean(obj, "enabled", true); err != nil {
+		return e, fmt.Errorf("%s.%v", where, err)
+	}
+	return e, nil
+}
+
 // fileLoadOrders reads fbLoadOrders, a list of {id, entries} (VERIFIED in
 // the survey's seven manifests that carry it): per load-order id, how many
 // entries it orders. A load order with no entries is absent.
@@ -1125,7 +1160,15 @@ func (p *manifestParser) fileLoadOrders(raw json.RawMessage) ([]source.ManifestF
 		if len(entries) == 0 {
 			continue
 		}
-		out = append(out, source.ManifestFileLoadOrder{ID: id, Entries: len(entries)})
+		lo := source.ManifestFileLoadOrder{ID: id, Entries: len(entries)}
+		for j, raw := range entries {
+			e, err := p.fileLoadOrderEntry(raw, fmt.Sprintf("fbLoadOrders.%s.entries[%d]", id, j))
+			if err != nil {
+				return nil, err
+			}
+			lo.Files = append(lo.Files, e)
+		}
+		out = append(out, lo)
 	}
 	return out, nil
 }

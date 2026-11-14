@@ -1,0 +1,6 @@
+{
+  "id": "cyberpunk2077-archive",
+  "op": "move",
+  "file": "b.archive",
+  "before": "a.archive"
+}

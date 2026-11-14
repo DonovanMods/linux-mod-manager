@@ -267,6 +267,13 @@ func TestParseManifest_Cyberpunk(t *testing.T) {
 	require.Len(t, m.FileLoadOrders, 1, "an fbLoadOrders entry with no entries is absent")
 	assert.Equal(t, "cyberpunk2077-archive", m.FileLoadOrders[0].ID)
 	assert.Positive(t, m.FileLoadOrders[0].Entries)
+	// #620: each entry's file name, its enabled flag and the curator's
+	// Vortex mod id, a hint to which mod ships it.
+	require.Len(t, m.FileLoadOrders[0].Files, m.FileLoadOrders[0].Entries)
+	assert.Equal(t, source.ManifestFileLoadOrderEntry{
+		Name: "! anygoodname_cp77_story_quest_fixes.archive", Enabled: true,
+		ModHint: "Cyberpunk Story Quest Fixes 29152 1.21.1 2026-10-31T14-47Z LACBAIvts",
+	}, m.FileLoadOrders[0].Files[0])
 
 	r := m.ModRules[0]
 	assert.Contains(t, []string{"before", "after"}, r.Type)

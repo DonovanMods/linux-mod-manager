@@ -157,7 +157,12 @@ func (r *PluginListResult) warnings() []string {
 
 // pluginListRecorder lets a flow with a result of its own (deploy, purge)
 // read the structured outcome of the sync its choke point ran.
-type pluginListRecorder struct{ result *PluginListResult }
+type pluginListRecorder struct {
+	result *PluginListResult
+	// loadOrders is the file load orders' outcome (#620), synced beside
+	// the plugin list.
+	loadOrders []FileLoadOrderResult
+}
 
 type pluginListRecorderKey struct{}
 
@@ -169,6 +174,13 @@ func withPluginListRecorder(ctx context.Context, rec *pluginListRecorder) contex
 func recordPluginList(ctx context.Context, res *PluginListResult) {
 	if rec, ok := ctx.Value(pluginListRecorderKey{}).(*pluginListRecorder); ok && rec != nil && res != nil {
 		rec.result = res
+	}
+}
+
+// recordLoadOrders is recordPluginList for the file load orders (#620).
+func recordLoadOrders(ctx context.Context, res []FileLoadOrderResult) {
+	if rec, ok := ctx.Value(pluginListRecorderKey{}).(*pluginListRecorder); ok && rec != nil && res != nil {
+		rec.loadOrders = res
 	}
 }
 
@@ -1319,6 +1331,9 @@ func (s *Service) wrotePluginList(game *domain.Game) bool {
 type pluginListSynced struct {
 	gameID, profile string
 	result          *PluginListResult
+	// loadOrders is the file load orders' outcome (#620), written in the
+	// same step.
+	loadOrders []FileLoadOrderResult
 }
 
 type pluginListSyncedKey struct{}
@@ -1328,9 +1343,13 @@ type pluginListSyncedKey struct{}
 // adjust it, rather than have lmm write over its changes afterwards (#616)
 // - and returns ctx carrying the outcome, which the flow's choke-point
 // syncMergedPak reports instead of writing the list a second time.
+//
+// The game's file load orders (#620) are written in the same step, for the
+// same reason.
 func (s *Service) syncPluginListBeforeHooks(ctx context.Context, game *domain.Game, profileName string) context.Context {
 	res := s.syncPluginList(ctx, game, profileName)
-	return context.WithValue(ctx, pluginListSyncedKey{}, &pluginListSynced{gameID: game.ID, profile: profileName, result: res})
+	orders := s.syncLoadOrders(ctx, game, profileName)
+	return context.WithValue(ctx, pluginListSyncedKey{}, &pluginListSynced{gameID: game.ID, profile: profileName, result: res, loadOrders: orders})
 }
 
 // pluginListSyncedOn is the outcome syncPluginListBeforeHooks put on ctx
@@ -1341,6 +1360,17 @@ func pluginListSyncedOn(ctx context.Context, gameID, profileName string) (*Plugi
 		return nil, false
 	}
 	return done.result, true
+}
+
+// loadOrdersSyncedOn is the file load orders' outcome
+// syncPluginListBeforeHooks put on ctx for this game and profile, if it
+// ran.
+func loadOrdersSyncedOn(ctx context.Context, gameID, profileName string) ([]FileLoadOrderResult, bool) {
+	done, ok := ctx.Value(pluginListSyncedKey{}).(*pluginListSynced)
+	if !ok || done == nil || done.gameID != gameID || done.profile != profileName {
+		return nil, false
+	}
+	return done.loadOrders, true
 }
 
 // hasControl reports whether name holds a C0 control character or DEL -

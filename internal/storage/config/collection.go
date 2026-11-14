@@ -39,6 +39,9 @@ type collectionDocYAML struct {
 	// Plugins is the profile's plugin list (#616), whose presence requires
 	// the plugin_order feature.
 	Plugins *ProfilePluginsConfig `yaml:"plugins,omitempty"`
+	// LoadOrders are the profile's file load orders (#620); each id
+	// requires its file_load_order:<id> feature.
+	LoadOrders domain.FileLoadOrders `yaml:"load_orders,omitempty"`
 }
 
 // collectionModYAML is one mods: entry: the profile's own ModReference
@@ -71,6 +74,7 @@ func MarshalCollection(doc *domain.CollectionDocument) ([]byte, error) {
 		Hooks:               profileFileHooksYAML{Install: fileHook(hooks.Install), Uninstall: fileHook(hooks.Uninstall)},
 		Overrides:           doc.Overrides,
 		Plugins:             pluginsConfigOf(doc.Plugins),
+		LoadOrders:          doc.LoadOrders.Clone(),
 		Mods:                make([]collectionModYAML, len(doc.Items)),
 	}
 	if doc.Info.Origin != nil && !doc.Info.Origin.IsZero() {
@@ -106,12 +110,13 @@ func ParseCollection(data []byte) (*domain.CollectionDocument, error) {
 			Description:         wire.Description,
 			InstallInstructions: wire.InstallInstructions,
 		},
-		Game:      wire.Game,
-		Requires:  wire.Requires,
-		Signer:    wire.Signer,
-		External:  wire.External,
-		Overrides: wire.Overrides,
-		Plugins:   pluginsFromConfig(wire.Plugins),
+		Game:       wire.Game,
+		Requires:   wire.Requires,
+		Signer:     wire.Signer,
+		External:   wire.External,
+		Overrides:  wire.Overrides,
+		Plugins:    pluginsFromConfig(wire.Plugins),
+		LoadOrders: wire.LoadOrders.Clone(),
 	}
 	if wire.Origin != nil && !wire.Origin.IsZero() {
 		doc.Info.Origin = wire.Origin

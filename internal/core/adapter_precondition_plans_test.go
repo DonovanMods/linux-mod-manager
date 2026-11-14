@@ -211,6 +211,19 @@ var adapterExemptPlans = map[string]string{
 	// block and the plugin list - and only a PluginOrderer adapter has a
 	// plugin list at all, so another adapter's refusal never reaches it.
 	"PlanPluginEdit": "TestPluginEditIsNoDeployUnderARefusingAdapter",
+	// #620: a load-order edit deploys no mod either - it writes the
+	// profile's load_orders: list and the game's list file - and only a
+	// FileLoadOrderer adapter has one.
+	"PlanFileLoadOrderEdit": "TestFileLoadOrderEditIsNoDeployUnderARefusingAdapter",
+}
+
+// TestFileLoadOrderEditIsNoDeployUnderARefusingAdapter pins
+// PlanFileLoadOrderEdit's exemption, as the plugin edit's is pinned.
+func TestFileLoadOrderEditIsNoDeployUnderARefusingAdapter(t *testing.T) {
+	svc, game, _ := newPreconditionFixture(t)
+	_, err := svc.PlanFileLoadOrderEdit(context.Background(), game, "default", core.FileLoadOrderEdit{Op: core.LoadOrderOpReset})
+	require.ErrorIs(t, err, core.ErrNoFileLoadOrder)
+	assert.NotErrorIs(t, err, adapter.ErrPreconditionUnmet)
 }
 
 // TestPluginEditIsNoDeployUnderARefusingAdapter pins PlanPluginEdit's
