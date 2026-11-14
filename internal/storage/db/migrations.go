@@ -740,7 +740,7 @@ func migrateV26(ctx context.Context, q migrationExec) error {
 // migrateV27 adds installed_mods.mod_type (#607): the row's copy of its
 // profile reference's STATED mod type (a NexusMods collection's Vortex
 // details.type, "dinput" for a script extender), which every deploy of the
-// row routes by (adapter.RootForModType). '' is the game's default, per-file
+// row routes by (adapter.RootForModType). ” is the game's default, per-file
 // routing, which every existing row is, so the column defaults to it.
 // Guarded like migrateV24.
 func migrateV27(ctx context.Context, q migrationExec) error {

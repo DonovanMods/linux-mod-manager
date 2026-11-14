@@ -53,7 +53,9 @@ func (s *collectionSource) ParseManifest(root fs.FS) (source.CollectionManifest,
 	return m, err
 }
 
-func (s *collectionSource) AccountTier(context.Context) (source.Tier, error) { return s.tier, s.tierErr }
+func (s *collectionSource) AccountTier(context.Context) (source.Tier, error) {
+	return s.tier, s.tierErr
+}
 
 func (s *collectionSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
 	var out []domain.DownloadableFile
