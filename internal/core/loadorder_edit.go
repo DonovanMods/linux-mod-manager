@@ -207,10 +207,10 @@ func moveInOrder(report *FileLoadOrderReport, base []string, edit FileLoadOrderE
 	}
 	var at int
 	var change string
-	switch {
-	case edit.To == LoadOrderMoveFirst:
+	switch edit.To {
+	case LoadOrderMoveFirst:
 		at, change = 0, fmt.Sprintf("move %s to the top", moving.Name)
-	case edit.To == LoadOrderMoveLast:
+	case LoadOrderMoveLast:
 		at, change = len(managed), fmt.Sprintf("move %s to the end", moving.Name)
 	default:
 		other := edit.Before

@@ -105,7 +105,7 @@ func TestCollectionImport_LoadOrderNeedsAGameThatWritesIt(t *testing.T) {
 func TestCollectionImport_RefusesLoadOrderNamesItCannotKeepAsWritten(t *testing.T) {
 	svc := cyberRecipient(t)
 	for name, block := range map[string]string{
-		"bidi in a name":     "{cyberpunk2077-archive: [\"a‮.archive\"]}",
+		"bidi in a name":     "{cyberpunk2077-archive: [\"a\u202e.archive\"]}",
 		"newline in a name":  "{cyberpunk2077-archive: [\"a\\nb.archive\"]}",
 		"path in a name":     "{cyberpunk2077-archive: [../a.archive]}",
 		"backslash":          "{cyberpunk2077-archive: [\"x\\\\a.archive\"]}",
