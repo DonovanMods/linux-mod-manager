@@ -1,0 +1,9 @@
+{
+  "edit": {
+    "id": "cyberpunk2077-archive",
+    "op": "move",
+    "file": "b.archive",
+    "to": "first"
+  },
+  "dry_run": false
+}

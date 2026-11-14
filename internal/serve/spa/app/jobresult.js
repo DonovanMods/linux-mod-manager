@@ -79,6 +79,13 @@ export function useJobResultPlugins(jobID, jobState) {
   return useJobResultRead(jobID, jobState)?.plugins ?? null;
 }
 
+// useJobResultLoadOrders returns what a finished job did to the game's file
+// load-order lists (issue 620: core.FileLoadOrderResult each, a deploy's
+// or a purge's `load_orders`), or an empty list. Same shared read.
+export function useJobResultLoadOrders(jobID, jobState) {
+  return useJobResultRead(jobID, jobState)?.loadOrders ?? NO_LOAD_ORDERS;
+}
+
 // useJobResultLoader returns the loader refusal a finished job's result
 // carries when the job refused before writing anything (issue 602), or
 // null. Same shared read.
@@ -90,6 +97,7 @@ const NO_WARNINGS = [];
 // PLUGIN_LIST_KINDS are the job kinds whose result has a `plugins` field.
 const PLUGIN_LIST_KINDS = new Set(["deploy", "purge"]);
 const NO_FAILURES = [];
+const NO_LOAD_ORDERS = [];
 
 /** readResult is what the cache holds for one finished job's status/result. */
 function readResult(status) {
@@ -130,7 +138,12 @@ function readResult(status) {
     typeof result.plugins.status === "string"
       ? result.plugins
       : null;
-  return { warnings, purge, verify, failures, loader, plugins };
+  // Issue 620: the file load-order lists, on the same kinds.
+  const loadOrders =
+    PLUGIN_LIST_KINDS.has(status?.kind) && Array.isArray(result?.load_orders)
+      ? result.load_orders.filter((r) => typeof r?.status === "string")
+      : NO_LOAD_ORDERS;
+  return { warnings, purge, verify, failures, loader, plugins, loadOrders };
 }
 
 /**
@@ -185,6 +198,16 @@ export function readoutHasNextStep(summary, read) {
     ((read.plugins.findings?.length ?? 0) > 0 ||
       read.plugins.status === "restored" ||
       read.plugins.status === "removed")
+  )
+    return true;
+  // Issue 620: the same for a load-order list.
+  if (
+    (read.loadOrders ?? []).some(
+      (r) =>
+        (r.findings?.length ?? 0) > 0 ||
+        r.status === "restored" ||
+        r.status === "removed",
+    )
   )
     return true;
   return summary?.kind === "switch" && read.warnings.length > 0;

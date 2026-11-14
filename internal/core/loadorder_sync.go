@@ -186,8 +186,10 @@ type loadOrderComputation struct {
 const (
 	// LoadOrderPlacedOrder: the profile's load order puts it there.
 	LoadOrderPlacedOrder = "order"
-	// LoadOrderPlacedDefault: the profile does not order it yet; it is at
-	// its place in the game's own (alphabetical) order.
+	// LoadOrderPlacedDefault: the profile does not order it; it is where
+	// the game puts it - its alphabetical place beside the file it sorts
+	// after, or, for a profile that orders nothing, where the game loads
+	// it now.
 	LoadOrderPlacedDefault = "default"
 	// LoadOrderPlacedExternal: lmm did not deploy it; it keeps the place
 	// the list gave it.
@@ -360,7 +362,15 @@ func (c *loadOrderComputation) ownsRow(game *domain.Game, r prefixOriginal) bool
 // lmm deploys, the external files the current list names after the file
 // they followed there, and every file lmm deploys that the order does not
 // name at its place in the game's default order.
+//
+// A profile that orders nothing is never written (computeLoadOrder stops
+// first); its report shows the order the game uses now instead
+// (gameOrder), so the first move a user makes starts from what they see.
 func (c *loadOrderComputation) place() {
+	if len(c.order) == 0 {
+		c.gameOrder()
+		return
+	}
 	var listed []string
 	seen := map[string]bool{}
 	for _, name := range c.order {
@@ -438,6 +448,52 @@ func (c *loadOrderComputation) place() {
 			Message: fmt.Sprintf("%d file(s) in %s were not deployed by lmm and are not in %s, so the game loads them after every listed file (%s) - add them to the list by hand to place them",
 				len(c.unlisted), c.spec.Dir.Path, c.spec.ListFile, previewNames(c.unlisted, 5))})
 	}
+}
+
+// gameOrder is the order the game loads the files in with the list as it
+// is: every file the list names that is in the folder, in the list's
+// order, then the files lmm deploys that it does not name, in byte-wise
+// order (the game loads every unlisted file after the listed ones). Files
+// lmm did not deploy that the list does not name are Unlisted, as in a
+// written order.
+func (c *loadOrderComputation) gameOrder() {
+	seen := map[string]bool{}
+	for _, name := range c.current {
+		key := loadOrderKey(name)
+		if seen[key] || hasControl(name) {
+			continue
+		}
+		if _, there := c.onDisk[key]; !there {
+			continue
+		}
+		seen[key] = true
+		if _, isManaged := c.managed[key]; isManaged {
+			c.entries = append(c.entries, c.onDisk[key])
+			c.placement[key] = LoadOrderPlacedDefault
+			continue
+		}
+		c.entries = append(c.entries, name)
+		c.placement[key] = LoadOrderPlacedExternal
+		c.external++
+	}
+	var rest []string
+	for key := range c.managed {
+		if !seen[key] {
+			seen[key] = true
+			rest = append(rest, c.onDisk[key])
+		}
+	}
+	slices.Sort(rest)
+	for _, name := range rest {
+		c.placement[loadOrderKey(name)] = LoadOrderPlacedDefault
+		c.entries = append(c.entries, name)
+	}
+	for key, name := range c.onDisk {
+		if !seen[key] {
+			c.unlisted = append(c.unlisted, name)
+		}
+	}
+	slices.Sort(c.unlisted)
 }
 
 // defaultSlot is where name goes in order when nothing orders it: just

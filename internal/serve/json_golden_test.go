@@ -625,6 +625,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			pluginEditRequest{Edit: core.PluginEdit{Op: core.PluginOpSort}, DryRun: true},
 		},
 		{
+			// #620's load-order edit request: the load-order tab's move, as
+			// the core.FileLoadOrderEdit `lmm load-order move` builds.
+			"load_order_edit_request",
+			loadOrderEditRequest{Edit: core.FileLoadOrderEdit{ID: "cyberpunk2077-archive", Op: core.LoadOrderOpMove, File: "b.archive", To: core.LoadOrderMoveFirst}},
+		},
+		{
 			// #332's per-finding Repair: `lmm verify --mod <id>`'s own
 			// filter, set on both halves of the flow from this one request
 			// (kind_verify_fix.go).

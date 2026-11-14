@@ -43,16 +43,21 @@ func TestFileLoadOrders_ReportsTheEffectiveOrder(t *testing.T) {
 	assert.True(t, o.Active)
 	assert.True(t, o.FirstWins)
 	assert.False(t, o.Recorded, "the profile orders nothing yet")
-	// The archives lmm deploys and the profile does not order take their
-	// alphabetical places around the external one the list names.
-	assert.Equal(t, []string{"a.archive", "b.archive", "mine.archive"}, orderFileNames(&o))
-	assert.Equal(t, core.LoadOrderPlacedExternal, o.Files[2].Placement)
-	assert.False(t, o.Files[2].Managed)
-	assert.Equal(t, core.LoadOrderPlacedDefault, o.Files[0].Placement)
-	assert.True(t, o.Files[0].Managed)
-	assert.Equal(t, "a", o.Files[0].ModID)
-	assert.Equal(t, "a", o.Files[0].ModName)
+	// The profile orders nothing, so this is the order the game uses now:
+	// what modlist.txt names first, then the rest alphabetically.
+	assert.Equal(t, []string{"mine.archive", "a.archive", "b.archive"}, orderFileNames(&o))
+	assert.Equal(t, core.LoadOrderPlacedExternal, o.Files[0].Placement)
+	assert.False(t, o.Files[0].Managed)
+	assert.Equal(t, core.LoadOrderPlacedDefault, o.Files[1].Placement)
+	assert.True(t, o.Files[1].Managed)
+	assert.Equal(t, "a", o.Files[1].ModID)
+	assert.Equal(t, "a", o.Files[1].ModName)
 	assert.Equal(t, "mine.archive\r\n", f.modlist(t), "a report writes nothing")
+
+	// The first move starts from that view: mine.archive stays first.
+	plan, err := f.svc.PlanFileLoadOrderEdit(context.Background(), f.game, "default", core.FileLoadOrderEdit{Op: core.LoadOrderOpMove, File: "b.archive", Before: "a.archive"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"mine.archive", "b.archive", "a.archive"}, orderFileNames(plan.Order))
 }
 
 func TestFileLoadOrders_RefusesAGameWithoutOne(t *testing.T) {

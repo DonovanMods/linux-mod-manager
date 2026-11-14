@@ -199,6 +199,54 @@ function PluginOrderSection({ summary: p, plugins }) {
   `;
 }
 
+/** LoadOrderSection renders one core.CollectionLoadOrderSummary (issue
+ * 620): a file load order the import saves on the profile - Cyberpunk
+ * 2077's archives - its files (each with the collection mod the source ties
+ * it to), and whether lmm writes it for this game. */
+function LoadOrderSection({ order: o }) {
+  const files = o.files ?? [];
+  const label = o.label || o.id;
+  return html`
+    <section
+      class="plan__section"
+      data-testid="collection-load-order"
+      data-order=${o.id}
+    >
+      <h3 class="plan__heading">${label} load order (${files.length})</h3>
+      <p
+        class=${`plan__note${o.managed ? "" : " plan__note--warn"}`}
+        data-testid="collection-load-order-applied"
+      >
+        ${
+          o.managed
+            ? `Saved on the profile and written to the game's list at every deploy${
+                o.first_wins
+                  ? "; a file higher in the order wins a conflict"
+                  : ""
+              }.`
+            : `This game's adapter does not write the ${o.id} load order, so the import is refused for it.`
+        }
+      </p>
+      ${
+        files.length > 0 &&
+        html`<details class="plan__disclosure">
+          <summary class="plan__disclosure-summary">
+            Show the load order
+          </summary>
+          <ol class="plan__paths" data-testid="collection-load-order-files">
+            ${files.map(
+              (f, i) =>
+                html`<li key=${`${i}:${f.name.toLowerCase()}`} class="mono">
+                  ${i + 1}. ${f.name}${f.mod ? ` (${f.mod})` : ""}
+                </li>`,
+            )}
+          </ol>
+        </details>`
+      }
+    </section>
+  `;
+}
+
 /** LMMCollectionSection renders core.CollectionImport. Every string in it
  * was sanitised by core (issue 594), and the preact templates escape it.
  * `plugins` is the plan's profile's plugin list (issue 611). */
@@ -303,6 +351,9 @@ function LMMCollectionSection({ collection: c, plugins }) {
       </section>`
     }
     <${PluginOrderSection} summary=${c.plugins} plugins=${plugins} />
+    ${(c.load_orders ?? []).map(
+      (o) => html`<${LoadOrderSection} key=${o.id} order=${o} />`,
+    )}
     ${
       unavailable.length > 0 &&
       html`<section class="plan__section">
