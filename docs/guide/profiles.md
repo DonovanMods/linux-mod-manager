@@ -388,10 +388,31 @@ before writing the override, and says so. Removing the mod, or
 `lmm purge`, puts your file back.
 
 To go back to the mod's own file, take the override out of the profile and
-deploy again. Switching to a profile without the override does the same.
-Until you do, `lmm verify` reports the leftover copy as `override_stale`,
+deploy or apply it again. Switching to a profile without the override does
+the same. Until you do, `lmm verify` reports the leftover copy as `override_stale`,
 and `lmm verify --fix` (or **Repair** on the Health card) puts the mod's
 own file back.
+
+## Overrides when you switch or apply a profile
+
+A profile's overrides are part of what it describes, so `lmm profile
+switch` and `lmm profile apply` (in the browser, **Switch and deploy…** and
+**Apply profile…**) put them in place as `lmm deploy` does:
+
+- The profile's overrides are written. An override over a file the game
+  shipped, such as an INI, keeps the game's own file aside first.
+- An override the profile doesn't have any more is taken away: the game's
+  own file comes back, or a file the override created is removed. A mod's
+  own file goes back to the mod's.
+- If you changed a file after lmm wrote the override, lmm leaves your file
+  as it is and says so. The game's original stays kept.
+
+The plan lists each file under "Will change N file(s) for the profile's
+overrides" in the terminal, and under **Profile overrides** in the
+browser, before you confirm. In `--dry-run --json`, the plan's `overrides`
+list has one entry per file, with its `path`, its `root` (`install_path`
+for a game file) and its `action`: `place`, `update` or `restore`. A
+switch or apply that only changes overrides still has changes to confirm.
 
 ## "Your profile and the game don't match"
 
