@@ -10,13 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Update a collection profile from where it came from (#613).** `lmm
-  profile sync --collection` (in the web UI, **Update collection…** beside
+profile sync --collection` (in the web UI, **Update collection…** beside
   the profile in the Profiles window) fetches a profile's collection again
   (the address it was imported from, compared by the document's `id` and
   `version`, or its NexusMods collection's newest revision) and plans the
   update: the mods the new version adds, the ones whose pin it moves, the
-  ones it no longer lists, and conflicts with mods you locked or unlocked
-  yourself. A mod the collection brought in follows its new pin even when
+  ones it no longer lists, and conflicts with mods you changed yourself
+  (locked, unlocked, updated, rolled back, updated from a file, re-answered
+  the installer of, or re-linked; an update the auto policy makes on its
+  own does not count). A mod the collection brought in follows its new pin even when
   locked (the lock was the collection's); a mod it drops is kept, as yours,
   unless you remove it (`--remove`, `--remove-obsolete`, or a tick box);
   and your own version of a conflicting mod is kept unless you take the

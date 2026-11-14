@@ -655,7 +655,7 @@ mods:
     from_collection: true
 ```
 
-A [collection update](guide/profiles.md#updating-a-collection-profile) (`lmm profile sync --collection`) moves a marked entry to the new version's pin, even when it is locked, because that lock is the collection's. Locking or unlocking the entry by hand (`lmm mod lock`, `lmm mod unlock`) clears the marker, and the entry is yours: an update that changes it lists it as a conflict and keeps your version unless you choose the collection's. The marker is this machine's record: no export or collection document carries it. An older lmm that rewrites the profile drops the key, and the next update then lists those entries as conflicts.
+A [collection update](guide/profiles.md#updating-a-collection-profile) (`lmm profile sync --collection`) moves a marked entry to the new version's pin, even when it is locked, because that lock is the collection's. Any deliberate change you make to the entry clears the marker - locking or unlocking it (`lmm mod lock`, `lmm mod unlock`), updating it, rolling it back, updating it from a file, re-answering its installer (`lmm mod fomod`) or re-linking it (`lmm mod edit`) - and the entry is yours (an update its auto policy makes on its own does not count): an update that changes it lists it as a conflict and keeps your version unless you choose the collection's. The marker is this machine's record: no export or collection document carries it. An older lmm that rewrites the profile drops the key, and the next update then lists those entries as conflicts.
 
 #### Recorded FOMOD choices (`fomod`)
 

@@ -233,12 +233,15 @@ mods:
 
 `from_collection` is profile state like `import_url`: lmm writes it at a
 collection import and an update, no document carries it (an export leaves
-it out, and an import ignores it), and locking or unlocking an entry by
-hand clears it. An update then decides each entry:
+it out, and an import ignores it), and any deliberate change the user
+makes to the entry clears it: a lock or unlock, a manual update, a
+rollback, an update from a file, a FOMOD reconfigure, a re-link to another
+mod. An update the auto policy makes on its own (a NexusMods `latest` item)
+keeps it. An update then decides each entry:
 
 | The profile's entry | In the new version | The update |
 |---|---|---|
-| marked | changed | follows the new pin (version, files, lock, `fomod`, `mod_type`), locked or not |
+| marked | changed | follows the new pin (version, files, lock, `fomod`, `mod_type`), locked or not; files that change at the same version apply when the mod is next reinstalled |
 | not marked | changed | a **conflict**: the user's entry is kept, unless overridden (`--override`) |
 | marked | absent | **obsolete**: kept and unmarked, unless removed (`--remove`), which uninstalls it |
 | absent | present | added and installed |

@@ -397,12 +397,21 @@ The plan lists:
   choose to remove them: name one with `--remove <mod-id>`, or all with
   `--remove-obsolete`. In the browser each has a **Remove and uninstall**
   tick box. lmm never removes one silently;
-- **conflicts**: mods you locked or unlocked by hand (which makes them
-  yours) that the new version changes. Your version is kept unless you
-  choose the collection's: `--override <mod-id>`, or
-  `--override-conflicts` for all; in the browser, **Take the collection's
-  version**. To keep your own version of a collection's mod through
-  updates, [lock it](updates.md#locking-a-mod-to-one-version).
+- **conflicts**: mods you changed yourself that the new version changes
+  too. Any deliberate change makes a collection's mod yours: locking or
+  unlocking it, updating it (`lmm update`, or **Update** in the browser),
+  rolling it back, updating it from a file, re-answering its installer
+  ([Reconfigure installer…](fomod.md)) or re-linking it to another mod.
+  Your version is kept unless you choose the collection's:
+  `--override <mod-id>`, or `--override-conflicts` for all; in the
+  browser, **Take the collection's version**. An update that the mod's
+  automatic update policy makes on its own (a collection asking for a
+  mod's latest file sets it) is not a change of yours, and the mod stays
+  the collection's.
+
+A pin whose files change while its version stays the same is recorded on
+the profile, and the plan says it applies when the mod is next
+reinstalled.
 
 Mods you added yourself are left alone and keep their place in the load
 order. The new version passes the same checks as an import: a feature this
