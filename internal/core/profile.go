@@ -671,6 +671,9 @@ func (pm *ProfileManager) SetModLock(ctx context.Context, gameID, profileName, s
 	for i := range profile.Mods {
 		if profile.Mods[i].SourceID == sourceID && profile.Mods[i].ModID == modID {
 			profile.Mods[i].Locked = true
+			// #613: a lock the user sets makes the entry theirs; a
+			// collection update no longer moves it.
+			profile.Mods[i].FromCollection = false
 			if version != "" {
 				profile.Mods[i].Version = version
 			}
@@ -698,6 +701,8 @@ func (pm *ProfileManager) ClearModLock(ctx context.Context, gameID, profileName,
 	for i := range profile.Mods {
 		if profile.Mods[i].SourceID == sourceID && profile.Mods[i].ModID == modID {
 			profile.Mods[i].Locked = false
+			// #613: so does unlocking it (design §1).
+			profile.Mods[i].FromCollection = false
 			return pm.save(profile)
 		}
 	}

@@ -31,7 +31,7 @@ const profileBackupSuffix = ".bak"
 // order, so a file lmm wrote stays exactly as a whole write would have it.
 var (
 	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins"}
-	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod", "fomod_files", "fomod_order"}
+	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod", "fomod_files", "fomod_order", "from_collection"}
 )
 
 // profileFileHookYAML is ProfileHookConfigYAML as a profile file is written:
@@ -107,8 +107,9 @@ func refConfigsOf(mods []domain.ModReference) []ModReferenceConfig {
 			ModType:  m.ModType,
 			Fomod:    m.Fomod,
 			// #634: nil when empty, so the key is not written.
-			FomodFiles: m.FomodFiles.Clone(),
-			FomodOrder: slices.Clone(m.FomodOrder),
+			FomodFiles:     m.FomodFiles.Clone(),
+			FomodOrder:     slices.Clone(m.FomodOrder),
+			FromCollection: m.FromCollection,
 		}
 	}
 	return refs
@@ -612,7 +613,8 @@ func sameRef(a, b ModReferenceConfig) bool {
 	return a.SourceID == b.SourceID && a.ModID == b.ModID && a.Version == b.Version &&
 		slices.Equal(a.FileIDs, b.FileIDs) && a.Locked == b.Locked && a.Disabled == b.Disabled &&
 		a.Category == b.Category && a.ModType == b.ModType && a.Fomod.Equal(b.Fomod) &&
-		a.FomodFiles.Equal(b.FomodFiles) && slices.Equal(a.FomodOrder, b.FomodOrder)
+		a.FomodFiles.Equal(b.FomodFiles) && slices.Equal(a.FomodOrder, b.FomodOrder) &&
+		a.FromCollection == b.FromCollection
 }
 
 // docEditor collects the text edits that turn a profile document into the
@@ -1028,6 +1030,7 @@ func refOf(c ModReferenceConfig) domain.ModReference {
 		SourceID: c.SourceID, ModID: c.ModID, Version: c.Version,
 		FileIDs: c.FileIDs, Locked: c.Locked, Disabled: c.Disabled, Category: c.Category,
 		ModType: c.ModType, Fomod: c.Fomod, FomodFiles: c.FomodFiles.Clone(), FomodOrder: slices.Clone(c.FomodOrder),
+		FromCollection: c.FromCollection,
 	}
 }
 
@@ -1152,6 +1155,12 @@ func (e *docEditor) editItem(item modItem, have, want ModReferenceConfig) (strin
 				continue
 			}
 			zero = !want.Disabled
+			wantText = "true"
+		case "from_collection":
+			if have.FromCollection == want.FromCollection {
+				continue
+			}
+			zero = !want.FromCollection
 			wantText = "true"
 		case "category":
 			if have.Category == want.Category {

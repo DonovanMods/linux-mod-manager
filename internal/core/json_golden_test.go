@@ -2342,6 +2342,49 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #613: a collection update's plan - every bucket, the plugin
+			// list's change, the overrides and the new document's gate.
+			"collection_update_plan",
+			core.CollectionUpdatePlan{
+				GameID: "skyrim", Profile: "coll", Origin: core.CollectionFromURL,
+				URL: "https://example.com/c.lmmc?…", ID: "coll-1", Name: "Shared", Version: 1, NewVersion: 2,
+				Added:     []core.CollectionUpdateItem{{SourceID: "nexusmods", ModID: "13", Name: "Thirteen", NewVersion: "1"}},
+				Changed:   []core.CollectionUpdateItem{{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1", NewVersion: "2", Changes: []string{"version", "files"}, Locked: true}},
+				Removed:   []core.CollectionUpdateItem{{SourceID: "nexusmods", ModID: "11", Version: "1"}},
+				Conflicts: []core.CollectionUpdateItem{{SourceID: "nexusmods", ModID: "14", Name: "Fourteen", Version: "3", NewVersion: "4", Changes: []string{"version"}, Locked: true}},
+				Plugins: &core.CollectionPluginChange{
+					Added: []string{"Thirteen.esp"}, Removed: []string{"Eleven.esp"}, Reordered: true, Rules: true,
+					Summary: &core.CollectionPluginSummary{Plugins: 2, Active: 2, Managed: true},
+				},
+				OverridesAdded:      []string{"doorstop_config.ini"},
+				OverridesChanged:    []string{"Config/Game.ini"},
+				RestrictedOverrides: []core.RestrictedOverride{{Path: "doorstop_config.ini", Reason: "loader configuration"}},
+				ExternalAdded:       []domain.CollectionExternalItem{{Name: "ENB", URL: "https://enbdev.com"}},
+				Hooks:               []core.ImportHook{{Hook: "install.after_all", Command: "/usr/bin/false"}},
+				Requires:            []string{"external", "patches"},
+				Unsupported:         []core.UnsupportedCollectionFeature{{Feature: "patches"}},
+				Warnings:            []string{"the new version carries hooks; an update never applies a collection's hooks, and the profile keeps its own"},
+			},
+		},
+		{
+			// #613: an origin serving the profile's own version.
+			"collection_update_plan_up_to_date",
+			core.CollectionUpdatePlan{
+				GameID: "skyrim", Profile: "coll", Origin: core.CollectionFromSource, SourceID: "nexusmods", Slug: "abcdef",
+				ID: "nexusmods:abcdef", Name: "Three Mods", Version: 4, NewVersion: 4, UpToDate: true, NoChanges: true,
+			},
+		},
+		{
+			// #613: what an update did, with the converge's own result.
+			"collection_update_result",
+			core.CollectionUpdateResult{
+				Profile: "coll", Version: 3, NewVersion: 4, Added: 1, Changed: 1, Overridden: 1, Kept: 1, Conflicts: 1,
+				Removed:  []string{"nexusmods:11"},
+				Import:   &core.ProfileImportResult{ProfileName: "coll", Installed: 2},
+				Warnings: []string{"could not remove revision 3's recipe from the cache: permission denied"},
+			},
+		},
+		{
 			// The result half: a collection import installs NOTHING (Tier 3
 			// owns the download path), so every un-subscribed item is
 			// Skipped and the note says what to do about them.

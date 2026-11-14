@@ -1,0 +1,106 @@
+{
+  "game_id": "skyrim",
+  "profile": "coll",
+  "origin": "url",
+  "url": "https://example.com/c.lmmc?…",
+  "id": "coll-1",
+  "name": "Shared",
+  "version": 1,
+  "new_version": 2,
+  "up_to_date": false,
+  "no_changes": false,
+  "added": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "13",
+      "name": "Thirteen",
+      "new_version": "1"
+    }
+  ],
+  "changed": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "10",
+      "name": "Ten",
+      "version": "1",
+      "new_version": "2",
+      "changes": [
+        "version",
+        "files"
+      ],
+      "locked": true
+    }
+  ],
+  "removed": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "11",
+      "version": "1"
+    }
+  ],
+  "conflicts": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "14",
+      "name": "Fourteen",
+      "version": "3",
+      "new_version": "4",
+      "changes": [
+        "version"
+      ],
+      "locked": true
+    }
+  ],
+  "plugins": {
+    "added": [
+      "Thirteen.esp"
+    ],
+    "removed": [
+      "Eleven.esp"
+    ],
+    "reordered": true,
+    "rules_changed": true,
+    "summary": {
+      "plugins": 2,
+      "active": 2,
+      "rules": 0,
+      "managed": true
+    }
+  },
+  "overrides_added": [
+    "doorstop_config.ini"
+  ],
+  "overrides_changed": [
+    "Config/Game.ini"
+  ],
+  "restricted_overrides": [
+    {
+      "path": "doorstop_config.ini",
+      "reason": "loader configuration"
+    }
+  ],
+  "external_added": [
+    {
+      "name": "ENB",
+      "url": "https://enbdev.com"
+    }
+  ],
+  "hooks": [
+    {
+      "hook": "install.after_all",
+      "command": "/usr/bin/false"
+    }
+  ],
+  "requires": [
+    "external",
+    "patches"
+  ],
+  "unsupported": [
+    {
+      "feature": "patches"
+    }
+  ],
+  "warnings": [
+    "the new version carries hooks; an update never applies a collection's hooks, and the profile keeps its own"
+  ]
+}

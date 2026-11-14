@@ -254,6 +254,11 @@ type collectionState struct {
 	external   []domain.CollectionExternalItem
 	// plugins is the document's plugin list (#616).
 	plugins domain.ProfilePlugins
+	// fromCollection names the entries (domain.ModKey) the collection
+	// brought in (#613): the saved profile marks them from_collection, which
+	// no document carries, so a collection update can tell them from the
+	// user's own.
+	fromCollection map[string]bool
 }
 
 // applyTo sets c's state on profile; a nil c sets nothing.
@@ -263,6 +268,10 @@ func (c *collectionState) applyTo(profile *domain.Profile) {
 	}
 	profile.Collection, profile.External = c.collection, c.external
 	profile.Plugins = c.plugins.Clone()
+	for i := range profile.Mods {
+		ref := &profile.Mods[i]
+		ref.FromCollection = c.fromCollection[domain.ModKey(ref.SourceID, ref.ModID)]
+	}
 }
 
 // CollectionImportItem is one mod of a collection import plan.
@@ -439,7 +448,11 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	}
 	// The plan lists every hook the DOCUMENT carries, a URL's included.
 	plan.Hooks = hooks
-	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins}
+	marks := make(map[string]bool, len(profile.Mods))
+	for _, ref := range profile.Mods {
+		marks[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
+	plan.collectionState = &collectionState{collection: profile.Collection, external: profile.External, plugins: profile.Plugins, fromCollection: marks}
 	// The preview shows the profile the import will save.
 	plan.Profile.Collection, plan.Profile.External = redactedCollection(profile.Collection), profile.External
 	plan.Profile.Plugins = profile.Plugins.Clone()

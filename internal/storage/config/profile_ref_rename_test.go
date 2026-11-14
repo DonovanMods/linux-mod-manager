@@ -102,3 +102,21 @@ func TestRenameProfileModRef_Refusals(t *testing.T) {
 
 	require.Equal(t, handEdited, readFile(t, path), "a refused rename writes nothing")
 }
+
+// #613: a reference re-linked to another mod by hand is no longer the
+// collection's entry, so the rename clears its from_collection marker.
+func TestRenameProfileModRef_ClearsFromCollection(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, config.SaveProfile(dir, &domain.Profile{Name: "p", GameID: "tg", Mods: []domain.ModReference{
+		{SourceID: "nexusmods", ModID: "1", Version: "1", FromCollection: true},
+		{SourceID: "nexusmods", ModID: "2", Version: "1", FromCollection: true},
+	}}))
+	_, err := config.RenameProfileModRef(dir, "tg", "p", config.ModRefRename{
+		FromSourceID: "nexusmods", FromModID: "1", ToSourceID: "local", ToModID: "one", Version: "1",
+	})
+	require.NoError(t, err)
+	profile, err := config.LoadProfile(dir, "tg", "p")
+	require.NoError(t, err)
+	require.False(t, profile.Mods[0].FromCollection)
+	require.True(t, profile.Mods[1].FromCollection, "the others keep theirs")
+}
