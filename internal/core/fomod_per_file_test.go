@@ -347,3 +347,34 @@ func TestFomodPerFile_ImportReplaysRecordedPerFileChoices(t *testing.T) {
 	ref := f.ref(t, "target")
 	assert.Len(t, ref.FomodFiles["patch-1"].ConfigSHA256, 64, "recorded canonically once installed")
 }
+
+// TestFomodPerFile_ReconfigureOneInstallerBesideAPlainFile: a reconfigure
+// asks the mod's installer and installs its plain file as it is - the
+// plain file is not "an archive that is not a FOMOD installer".
+func TestFomodPerFile_ReconfigureOneInstallerBesideAPlainFile(t *testing.T) {
+	f := newPerFileFixture(t)
+	f.serve(t, "1.0", "1", "4K", "USSEP")
+	plainZip := createTestZip(t, t.TempDir(), map[string]string{"readme.txt": "plain"})
+	b, err := os.ReadFile(plainZip)
+	require.NoError(t, err)
+	f.mock.AddDownload("patch-1", b)
+	ctx := context.Background()
+	_, err = f.install(t, map[string]domain.FomodChoices{"src:bugs": answer("2K")})
+	require.NoError(t, err)
+
+	plan, err := f.svc.PlanFomodReconfigure(ctx, f.game, "default", "src", "bugs")
+	require.NoError(t, err)
+	assert.Empty(t, plan.Installers, "one installer: nothing to pick")
+	_, err = f.svc.ApplyFomodReconfigure(ctx, f.game, plan, core.FomodReconfigureOptions{FileID: "main-1"}, nil)
+	require.Error(t, err, "--file is for a mod with several installers")
+
+	_, err = f.svc.ApplyFomodReconfigure(ctx, f.game, plan, core.FomodReconfigureOptions{}, nil)
+	var q *core.FomodChoicesRequiredError
+	require.True(t, errors.As(err, &q), "got %v", err)
+	require.Len(t, q.Mods, 1)
+	assert.Empty(t, q.Mods[0].FileID)
+	_, err = f.svc.ApplyFomodReconfigure(ctx, f.game, plan, core.FomodReconfigureOptions{Fomod: map[string]domain.FomodChoices{"src:bugs": answer("4K")}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "4K-v1", f.deployed(t, "textures/t.dds"))
+	assert.Equal(t, "plain", f.deployed(t, "readme.txt"))
+}
