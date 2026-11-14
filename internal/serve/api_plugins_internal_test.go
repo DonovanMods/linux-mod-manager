@@ -121,9 +121,15 @@ func TestAPIPlugins_Refusals(t *testing.T) {
 	}
 }
 
-func TestAPIPlugins_AGameWithNoPluginListIsNotFound(t *testing.T) {
+// A game with no plugin list reads as nothing to show (the modal offers
+// no tab), and an edit to one is refused as not found.
+func TestAPIPlugins_AGameWithNoPluginList(t *testing.T) {
 	s, _, game := newFlowFixtureServer(t)
 	rec := doAPI(s, http.MethodGet, pluginsTarget(game), "")
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	assert.Empty(t, rec.Body.String())
+
+	rec = doAPI(s, http.MethodPost, pluginsTarget(game), `{"edit":{"op":"sort"}}`)
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "this game has no plugin list")
 }

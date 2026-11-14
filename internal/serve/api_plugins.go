@@ -32,13 +32,21 @@ type pluginEditRequest struct {
 }
 
 // handleAPIProfilePlugins answers GET /api/v1/profiles/{name}/plugins with
-// the core.PluginOrderReport `lmm plugins list --json` emits.
+// the core.PluginOrderReport `lmm plugins list --json` emits - or, for a
+// game whose adapter manages no plugin list, 204 No Content: the reorder
+// modal reads this on every open to know whether to offer the tab, and
+// most games have no plugin list, which is no error (a 404 would be one in
+// every browser console).
 func (s *Server) handleAPIProfilePlugins(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveGameAPISelection(w, r)
 	if !ok {
 		return
 	}
 	report, err := s.svc.PluginOrder(r.Context(), sel.Game, r.PathValue("name"))
+	if errors.Is(err, core.ErrNoPluginList) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if err != nil {
 		s.writeAPIError(w, pluginErrorStatus(err), err)
 		return
