@@ -7787,6 +7787,47 @@ func TestE2E_ALockedModStillRefusesRelinkWhenItsDetailIsOffline(t *testing.T) {
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
+// TestE2E_RelinkWaitsWhileTheLockIsUnknown: on a direct load, the lock comes
+// from the background library read; until it lands (and the live detail is
+// offline), Re-link must not offer itself on what may be a locked mod.
+func TestE2E_RelinkWaitsWhileTheLockIsUnknown(t *testing.T) {
+	f := newE2EFixtureWithALockedModAndAnOfflineDetail(t)
+	f.BaseURL = startE2EDelayingProxy(t, f.BaseURL, 3*time.Second, func(r *http.Request) bool {
+		return r.Method == http.MethodGet && r.URL.Path == "/api/v1/mods"
+	})
+
+	var whileLoading, hint bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`[data-action="relink"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').disabled && document.querySelector('[data-testid="mod-page-locked-actions"]') === null`, &whileLoading),
+		chromedp.WaitVisible(`[data-testid="mod-page-locked-actions"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').disabled`, &hint),
+	)
+	assert.True(t, whileLoading, "Re-link waits, disabled, while the library read that carries the lock is in flight")
+	assert.True(t, hint, "and stays disabled once the listing says the mod is locked")
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_RelinkFallsBackToEnabledWhenTheLockCannotBeRead: once the library
+// read has FAILED as well as the detail, the lock will never be known on this
+// page, so Re-link falls back to enabled (core refuses a locked re-link
+// server-side) rather than staying disabled for good with no stated reason.
+func TestE2E_RelinkFallsBackToEnabledWhenTheLockCannotBeRead(t *testing.T) {
+	f := newE2EFixtureWithALockedModAndAnOfflineDetail(t)
+	f.BaseURL, _ = startE2EFailingPathProxy(t, f.BaseURL, "/api/v1/mods")
+
+	var disabled bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`[data-action="relink"]`, chromedp.ByQuery),
+		pollUntil(`!document.querySelector('[data-action="relink"]').disabled`),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').disabled`, &disabled),
+	)
+	assert.False(t, disabled)
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
 // TestE2E_TheLockedHintOmitsAVersionTheProfileRefDoesNotCarry is P2 review
 // Nit 5, on top of issue 394.
 //
