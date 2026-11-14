@@ -204,7 +204,7 @@ func TestGenericSeamsTakeTheIdentityBranch(t *testing.T) {
 	})
 
 	t.Run("no precondition and no verify finding", func(t *testing.T) {
-		require.NoError(t, svc.checkAdapterPreconditions("skyrim-se", nil))
+		require.NoError(t, svc.checkAdapterPreconditions(context.Background(), "skyrim-se", nil))
 		a, err := svc.AdapterFor(game)
 		require.NoError(t, err)
 		findings, err := adapter.Verify(context.Background(), a, adapter.VerifyRequest{Game: game})
@@ -236,7 +236,7 @@ func TestAdapterPreconditionErrorShape(t *testing.T) {
 	})
 	svc.games["lc"] = &domain.Game{ID: "lc", Adapter: "refuser", DeployMode: domain.DeployCompile}
 
-	err := svc.checkAdapterPreconditions("lc", nil)
+	err := svc.checkAdapterPreconditions(context.Background(), "lc", nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrPreconditionUnmet)
 

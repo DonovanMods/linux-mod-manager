@@ -152,7 +152,7 @@ type SwitchPlan struct {
 // plan is decided from the target profile's markers.
 func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, target string) (*SwitchPlan, error) {
 	// #451 F3: a dry run must not promise what its own Apply refuses.
-	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+	if err := s.refuseUndeployable(ctx, game.ID); err != nil {
 		return nil, err
 	}
 	s.settleOwedProfileBackfill(ctx)
@@ -209,7 +209,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	// against, so ApplyProfileSwitch can refuse it once From has moved on -
 	// snapshotOf reuses currentMods rather than re-querying (see its own doc
 	// comment).
-	snapshot, err := s.snapshotOf(game.ID, currentMods)
+	snapshot, err := s.snapshotOf(ctx, game.ID, currentMods)
 	if err != nil {
 		return nil, err
 	}
@@ -463,7 +463,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	// the Apply - a kept backfill retried in its own slot, or another lmm -
 	// makes this plan stale. The From snapshot needs none: the outgoing
 	// loop reads only the TARGET's markers.
-	targetSnapshot, err := s.markedSnapshotOf(game.ID, allMods, disabledKeysOf(targetProfile))
+	targetSnapshot, err := s.markedSnapshotOf(ctx, game.ID, allMods, disabledKeysOf(targetProfile))
 	if err != nil {
 		return nil, err
 	}

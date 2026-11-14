@@ -1171,6 +1171,11 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 		if !underCurrentRoot(r.game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(row.Path.Rel)) {
 			continue
 		}
+		// #636: a file in a prefix lmm cannot resolve cannot be looked
+		// at; the prefix_unresolved row says why.
+		if row.Path.IsPrefix() && r.game.PrefixRoot == nil {
+			continue
+		}
 		dst := deployTarget(r.game, row.Path)
 		shown := row.Path.String()
 		if content, ok := overridden.content(row.Path); ok && holdsOverriddenCopy(dst, content) {
@@ -1332,10 +1337,18 @@ func (r *verifyRun) adapterPass(installedMods []domain.InstalledMod) {
 	// #605: a game whose adapter writes into its prefix is told here when
 	// lmm cannot find it - before a deploy has anything to skip. A warning:
 	// nothing is broken yet, and every other game says nothing at all.
-	if !adapter.UsesPrefix(a, r.game) {
+	// #636: so is a game with files recorded in its prefix whatever its
+	// adapter now (one switched away from baldurs-gate-3): its rows there
+	// are skipped while the prefix does not resolve, and this says why.
+	needed := adapter.UsesPrefix(a, r.game)
+	if !needed && r.svc.db != nil {
+		has, err := r.svc.db.HasDeployedFilesUnder(r.ctx, r.game.ID, domain.RootPrefix)
+		needed = err == nil && has
+	}
+	if !needed {
 		return
 	}
-	if st := r.svc.ResolvePrefix(r.game); st.Finding == FindingPrefixUnresolved {
+	if st := r.svc.ResolvePrefix(r.game); !st.Resolved {
 		r.result.Warnings++
 		r.finding(VerifyFinding{
 			Status:        VerifyStatusPrefixUnresolved,

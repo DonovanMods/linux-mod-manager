@@ -70,8 +70,8 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// OriginalRoot names which of a game's two directories an original's
-// relative path is relative to. It is a wire value (the manifest, and every
+// OriginalRoot names which of a game's directories an original's relative
+// path is relative to. It is a wire value (the manifest, and every
 // snapshot document that carries the originals in force), so it is typed
 // rather than a bare string: a stray "modpath" cannot compile into a switch.
 type OriginalRoot string
@@ -83,6 +83,10 @@ const (
 	// OriginalRootInstallPath means the path is relative to
 	// game.InstallPath - the root a profile override writes under.
 	OriginalRootInstallPath OriginalRoot = "install_path"
+	// OriginalRootPrefix means the path is relative to the game's prefix
+	// user directory (#636, domain.ResolvedPrefix.UserDir) - the root a
+	// .pak mod Baldur's Gate 3 loads from its prefix deploys under.
+	OriginalRootPrefix OriginalRoot = "prefix"
 )
 
 // String returns the root's wire name.
@@ -95,7 +99,7 @@ func (r OriginalRoot) MarshalText() ([]byte, error) { return []byte(r), nil }
 // build does not know rather than carrying it forward as a directory name.
 func (r *OriginalRoot) UnmarshalText(b []byte) error {
 	switch OriginalRoot(b) {
-	case OriginalRootModPath, OriginalRootInstallPath:
+	case OriginalRootModPath, OriginalRootInstallPath, OriginalRootPrefix:
 		*r = OriginalRoot(b)
 		return nil
 	default:
@@ -160,6 +164,9 @@ type originalsManifest struct {
 	// KeptUserGameRoot is KeptUser for files under the game's
 	// install_path (#629), relative to it, in slash form.
 	KeptUserGameRoot []string `json:"kept_user_game_root,omitempty"`
+	// KeptUserPrefix is KeptUser for files under the game's prefix user
+	// directory (#636), relative to it, in slash form.
+	KeptUserPrefix []string `json:"kept_user_prefix,omitempty"`
 	// OverrideWrites is what a profile override last wrote at each file
 	// under the game's install_path that is no mod's own (#631), so a
 	// switch or an apply that takes the override away can tell the file
@@ -175,6 +182,10 @@ type originalsManifest struct {
 	// OverrideCopiesGameRoot is OverrideCopies for files under the game's
 	// install_path (#629), relative to it, in slash form.
 	OverrideCopiesGameRoot []string `json:"override_copies_game_root,omitempty"`
+	// OverrideCopiesPrefix is OverrideCopies for files under the game's
+	// prefix user directory (#636). No override writes there today; the
+	// list keeps the manifest total over every root.
+	OverrideCopiesPrefix []string `json:"override_copies_prefix,omitempty"`
 	// SetAside is the files lmm set aside before an override replaced
 	// them where the game's original was kept already (#631): the user's
 	// changed file, kept under set-aside/.
@@ -184,16 +195,22 @@ type originalsManifest struct {
 // overrideCopyList is the manifest's OverrideCopies list rel's root is kept
 // in.
 func (m *originalsManifest) overrideCopyList(rel domain.DeployPath) *[]string {
-	if rel.IsGameRoot() {
+	switch rel.Root {
+	case domain.RootInstallPath:
 		return &m.OverrideCopiesGameRoot
+	case domain.RootPrefix:
+		return &m.OverrideCopiesPrefix
 	}
 	return &m.OverrideCopies
 }
 
 // keptUserList is the manifest's KeptUser list rel's root is kept in.
 func (m *originalsManifest) keptUserList(rel domain.DeployPath) *[]string {
-	if rel.IsGameRoot() {
+	switch rel.Root {
+	case domain.RootInstallPath:
 		return &m.KeptUserGameRoot
+	case domain.RootPrefix:
+		return &m.KeptUserPrefix
 	}
 	return &m.KeptUser
 }
@@ -747,6 +764,13 @@ func (s *originalsStore) restore(row OriginalFile, absPath string) error {
 			return restoreContained(row, stored, base, absPath)
 		}
 	}
+	// #636: one under the prefix's user directory - a user's own .pak a
+	// mod's replaced - goes back the way lmm's prefix files are written:
+	// the user directory re-checked, then the case-insensitive no-follow
+	// walk beneath it. It never goes back any other way.
+	if row.Root == OriginalRootPrefix {
+		return restorePrefixContained(row, stored, absPath)
+	}
 	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
 		return fmt.Errorf("creating the directory for %s: %w", row.RelativePath, err)
 	}
@@ -811,6 +835,61 @@ func restoreContained(row OriginalFile, stored, base, absPath string) error {
 		return fmt.Errorf("restoring the original of %s: %w", row.RelativePath, err)
 	}
 	return nil
+}
+
+// restorePrefixContained writes the stored original of a prefix file back
+// at absPath through a rootLinker held to the prefix user directory absPath
+// is under (#636). The prefix is read back from that directory's own path
+// (prefixOfUserDir), so the restore re-checks the very user directory it
+// writes beneath. absPath is deployTarget's answer, whose directories carry
+// their on-disk spelling, so the original lands beside the name it was
+// captured from.
+func restorePrefixContained(row OriginalFile, stored, absPath string) error {
+	base, ok := prefixBaseOf(absPath, row.RelativePath)
+	if !ok {
+		return fmt.Errorf("restoring the original of %s: %s is not where a prefix file goes", row.RelativePath, absPath)
+	}
+	prefix, ok := prefixOfUserDir(base)
+	if !ok {
+		return fmt.Errorf("restoring the original of %s: %s is not a prefix user directory", row.RelativePath, base)
+	}
+	rl := rootLinker{root: base, prefix: prefix}
+	dir, name, err := rl.open(absPath, true)
+	if err != nil {
+		return fmt.Errorf("restoring the original of %s: %w", row.RelativePath, err)
+	}
+	defer func() { _ = dir.Close() }()
+	st, exists, err := lstatAt(dir, name)
+	if err != nil {
+		return err
+	}
+	if exists && !isRegularOrLink(st) {
+		return fmt.Errorf("restoring the original of %s: %w", row.RelativePath, errNotRegularTarget)
+	}
+	mode := fs.FileMode(0644)
+	if row.Mode != 0 {
+		mode = fs.FileMode(row.Mode).Perm()
+	}
+	if err := copyAt(dir, name, stored, mode); err != nil {
+		return fmt.Errorf("restoring the original of %s: %w", row.RelativePath, err)
+	}
+	return nil
+}
+
+// prefixBaseOf is baseOf for a prefix path, whose directories absPath may
+// spell in another case than rel does (prefixTarget): absPath with as many
+// components taken off its end as rel has.
+func prefixBaseOf(absPath, rel string) (string, bool) {
+	clean := filepath.Clean(absPath)
+	n := len(strings.Split(filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel))), "/"))
+	for range n {
+		parent := filepath.Dir(clean)
+		if parent == clean {
+			return "", false
+		}
+		clean = parent
+	}
+	return clean, true
 }
 
 // applyOriginalMode puts row's recorded permission bits back on absPath,

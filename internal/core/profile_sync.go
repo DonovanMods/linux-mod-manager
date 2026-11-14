@@ -263,7 +263,7 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 
 	// The rows and the document this plan was decided from (see
 	// markedSnapshotOf).
-	snapshot, err := s.markedSnapshotOf(game.ID, installedMods, disabledKeysOf(profile))
+	snapshot, err := s.markedSnapshotOf(ctx, game.ID, installedMods, disabledKeysOf(profile))
 	if err != nil {
 		return nil, err
 	}

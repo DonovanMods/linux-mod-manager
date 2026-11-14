@@ -36,14 +36,14 @@ const snapshotMarkersKey = "#431 disabled markers"
 // can detect any version, enabled-state, addition, or removal since a Plan
 // was computed.
 func (s *Service) currentInstalledSnapshot(ctx context.Context, gameID, profileName string) (installedSnapshot, error) {
-	if err := s.refuseModPathMoved(ctx, gameID); err != nil {
+	if err := s.refuseUndeployable(ctx, gameID); err != nil {
 		return nil, err
 	}
 	mods, err := s.GetInstalledMods(ctx, gameID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading installed mods: %w", err)
 	}
-	return s.snapshotOf(gameID, mods)
+	return s.snapshotOf(ctx, gameID, mods)
 }
 
 // currentMarkedSnapshot is currentInstalledSnapshot for a plan the profile
@@ -54,7 +54,7 @@ func (s *Service) currentMarkedSnapshot(ctx context.Context, gameID, profileName
 	if err != nil {
 		return nil, fmt.Errorf("loading installed mods: %w", err)
 	}
-	return s.markedSnapshotOf(gameID, mods, s.documentDisabledKeys(gameID, profileName))
+	return s.markedSnapshotOf(ctx, gameID, mods, s.documentDisabledKeys(gameID, profileName))
 }
 
 // AdapterPreconditionError is the typed error a frontend branches on when a
@@ -97,7 +97,7 @@ func (e *AdapterPreconditionError) Details() any {
 
 // checkAdapterPreconditions asks gameID's adapter whether the flow about to
 // run on mods may proceed, wrapping a refusal into AdapterPreconditionError.
-func (s *Service) checkAdapterPreconditions(gameID string, mods []domain.InstalledMod) error {
+func (s *Service) checkAdapterPreconditions(ctx context.Context, gameID string, mods []domain.InstalledMod) error {
 	game, ok := s.game(gameID)
 	if !ok {
 		// Not this check's problem: every flow resolves its game, and the
@@ -111,7 +111,11 @@ func (s *Service) checkAdapterPreconditions(gameID string, mods []domain.Install
 	if err := adapter.CheckPreconditions(a, game, mods); err != nil {
 		return &AdapterPreconditionError{GameID: gameID, Adapter: a.ID(), Reason: err.Error()}
 	}
-	return nil
+	// #636: a game whose adapter deploys into its prefix, or that has
+	// files recorded there, needs the prefix for any deploying flow - the
+	// same class of refusal as the adapter's own, with the same exemption
+	// for the two removals (removalSnapshotOf).
+	return s.refuseUnresolvedPrefix(ctx, game)
 }
 
 // deployRefusal is the adapter check a deploy-direction step with no plan
@@ -129,14 +133,14 @@ func (s *Service) checkAdapterPreconditions(gameID string, mods []domain.Install
 // (adapter_precondition_ratchet_test.go) fails the build for a deploy path
 // that reaches the Installer without this check or a Plan's.
 func (s *Service) deployRefusal(ctx context.Context, game *domain.Game, profileName string) error {
-	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+	if err := s.refuseUndeployable(ctx, game.ID); err != nil {
 		return err
 	}
 	mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("loading installed mods: %w", err)
 	}
-	return s.checkAdapterPreconditions(game.ID, mods)
+	return s.checkAdapterPreconditions(ctx, game.ID, mods)
 }
 
 // refuseModPathMoved refuses a deploy-direction flow on gameID while files
@@ -176,8 +180,8 @@ func (s *Service) refuseModPathMoved(ctx context.Context, gameID string) error {
 //
 // An adapter with no Preconditioner - every adapter U1 ships - makes the
 // check a nil return.
-func (s *Service) snapshotOf(gameID string, mods []domain.InstalledMod) (installedSnapshot, error) {
-	if err := s.checkAdapterPreconditions(gameID, mods); err != nil {
+func (s *Service) snapshotOf(ctx context.Context, gameID string, mods []domain.InstalledMod) (installedSnapshot, error) {
+	if err := s.checkAdapterPreconditions(ctx, gameID, mods); err != nil {
 		return nil, err
 	}
 	return removalSnapshotOf(mods), nil
@@ -229,8 +233,8 @@ func removalSnapshotOf(mods []domain.InstalledMod) installedSnapshot {
 // A plan passes the rows and the markers it decided from - never a second
 // read, which another process's marker could slip in front of, leaving a
 // snapshot that already agrees with an Apply the marker has overruled.
-func (s *Service) markedSnapshotOf(gameID string, mods []domain.InstalledMod, disabled map[string]bool) (installedSnapshot, error) {
-	snap, err := s.snapshotOf(gameID, mods)
+func (s *Service) markedSnapshotOf(ctx context.Context, gameID string, mods []domain.InstalledMod, disabled map[string]bool) (installedSnapshot, error) {
+	snap, err := s.snapshotOf(ctx, gameID, mods)
 	if err != nil {
 		return nil, err
 	}

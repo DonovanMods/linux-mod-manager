@@ -490,12 +490,17 @@ var ErrPreconditionUnmet = errors.New("the game's adapter refused this operation
 // name and its deployed files under the game's mod_path, mod-path-relative
 // and SLASH-separated, for NormalizeRequest.Members' reason. A file the
 // mod deploys under the game root (RootInstallPath, #629) is not among
-// them: it is not mod-path-relative.
+// them: it is not mod-path-relative. One it deploys into the prefix
+// (RootPrefix, #636) is in PrefixFiles instead.
 type DeployedMod struct {
 	// Name is the mod's display name.
 	Name string
-	// Files are the mod's deployable files.
+	// Files are the mod's deployable files under the mod_path.
 	Files []string
+	// PrefixFiles are the mod's deployable files under the prefix user
+	// directory (#636), relative to it and SLASH-separated, as
+	// PrefixPlacer.PrefixPath placed them.
+	PrefixFiles []string
 }
 
 // Advice is a LaunchAdvisor's answer: what the user must do, in words, and

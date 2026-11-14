@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -57,6 +58,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV25,
 		migrateV26,
 		migrateV27,
+		migrateV28,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -753,4 +755,48 @@ func migrateV27(ctx context.Context, q migrationExec) error {
 	}
 	_, err := q.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN mod_type TEXT NOT NULL DEFAULT ''`)
 	return err
+}
+
+// migrateV28 widens deployed_files.root's CHECK to the third root, 'prefix'
+// (#636): a file deployed into the game's Wine/Proton prefix user
+// directory (Baldur's Gate 3's .pak mods, under AppData/Local), relative to
+// it. SQLite cannot alter a CHECK in place, so the table is rebuilt as
+// migrateV26 built it, every row and column copied as it is. Guarded: a
+// table whose CHECK already names 'prefix' is left alone.
+func migrateV28(ctx context.Context, q migrationExec) error {
+	var ddl string
+	if err := q.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'deployed_files'`).Scan(&ddl); err != nil {
+		return fmt.Errorf("inspecting deployed_files: %w", err)
+	}
+	if strings.Contains(ddl, "'prefix'") {
+		return nil
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE deployed_files_v28 (
+			game_id TEXT NOT NULL,
+			profile_name TEXT NOT NULL,
+			root TEXT NOT NULL DEFAULT 'mod_path' CHECK (root IN ('mod_path', 'install_path', 'prefix')),
+			relative_path TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			mod_id TEXT NOT NULL,
+			deployed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			checksum TEXT,
+			size INTEGER,
+			mtime INTEGER,
+			ctime INTEGER,
+			mod_path TEXT,
+			PRIMARY KEY (game_id, profile_name, root, relative_path)
+		)`,
+		`INSERT INTO deployed_files_v28
+			(game_id, profile_name, root, relative_path, source_id, mod_id, deployed_at, checksum, size, mtime, ctime, mod_path)
+		SELECT game_id, profile_name, root, relative_path, source_id, mod_id, deployed_at, checksum, size, mtime, ctime, mod_path
+		FROM deployed_files`,
+		`DROP TABLE deployed_files`,
+		`ALTER TABLE deployed_files_v28 RENAME TO deployed_files`,
+	} {
+		if _, err := q.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("widening deployed_files.root: %w", err)
+		}
+	}
+	return nil
 }

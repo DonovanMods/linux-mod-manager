@@ -1,0 +1,8 @@
+{
+  "mod_id": "42",
+  "mod_name": "Camera Mod",
+  "file_id": "AppData/Local/Larian Studios/Baldur's Gate 3/Mods/Camera.pak",
+  "root": "prefix",
+  "status": "deployed_modified",
+  "note": "<prefix>/AppData/Local/Larian Studios/Baldur's Gate 3/Mods/Camera.pak: its content changed after lmm deployed it, so lmm leaves it as yours"
+}

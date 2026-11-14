@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bethesda"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/modtypes"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -82,7 +83,7 @@ func TestDeployModType_StarfieldDataFolderDeploysUnderData(t *testing.T) {
 
 // typedGameUnder is a game under one of the modtypes adapters, its mod_path
 // modDir inside its install_path.
-func typedGameUnder(t *testing.T, svc *core.Service, a *modtypes.Adapter, modDir, nexusDomain string) *domain.Game {
+func typedGameUnder(t *testing.T, svc *core.Service, a adapter.GameAdapter, modDir, nexusDomain string) *domain.Game {
 	t.Helper()
 	svc.RegisterAdapter(a)
 	install := t.TempDir()
@@ -156,9 +157,13 @@ func TestDeployModType_Witcher3TopLevel(t *testing.T) {
 }
 
 // A bg3-loose mod's files are relative to Data/, Baldur's Gate 3's mod_path.
+// The game has a prefix: since #636 its adapter deploys .pak mods into it,
+// and every deploying flow needs it resolved.
 func TestDeployModType_BG3Loose(t *testing.T) {
 	svc, _ := newOriginalsService(t)
 	game := typedGameUnder(t, svc, modtypes.BaldursGate3(), "Data", "baldursgate3")
+	game.Prefix, game.PrefixUser = newPrefixDir(t), "steamuser"
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedTypedMod(t, svc, game, "loose", "bg3-loose", map[string][]byte{"Public/Mod/Stats/x.txt": []byte("stats")})
 
 	res, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
@@ -167,7 +172,9 @@ func TestDeployModType_BG3Loose(t *testing.T) {
 	assert.Equal(t, "stats", readFileString(t, filepath.Join(game.ModPath, "Public", "Mod", "Stats", "x.txt")))
 
 	svc2 := newFlowsTestService(t)
-	typedGameUnder(t, svc2, modtypes.BaldursGate3(), "Data", "baldursgate3")
+	game2 := typedGameUnder(t, svc2, modtypes.BaldursGate3(), "Data", "baldursgate3")
+	game2.Prefix, game2.PrefixUser = newPrefixDir(t), "steamuser"
+	require.NoError(t, svc2.SaveGame(context.Background(), game2))
 	plan, err := svc2.PlanCollectionImport(context.Background(), core.CollectionImportRequest{Data: typedDoc("baldursgate3", "bg3-loose")})
 	require.NoError(t, err)
 	assert.Empty(t, plan.Collection.Unsupported)

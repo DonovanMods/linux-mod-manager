@@ -541,6 +541,12 @@ func (s *Service) PlanPurge(ctx context.Context, game *domain.Game, profileName 
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
+	// #636: files recorded in a prefix that does not resolve cannot be
+	// found, and are neither removed nor forgotten. (A recorded-only
+	// purge, above, is refused by recordedPaths for its own rows.)
+	if err := s.refusePrefixRecords(ctx, game); err != nil {
+		return nil, err
+	}
 	// #269: external mods are excluded from the purge set and named
 	// separately. The snapshot still covers the FULL installed set - the
 	// staleness precondition is about the profile changing underneath the
@@ -784,6 +790,11 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 				}
 				othersUnder[rowGame.ModPath] = rowOthers
 			}
+		}
+		// #636: a file recorded in a prefix that does not resolve cannot
+		// be found, and is neither removed nor forgotten.
+		if row.Path.IsPrefix() && rowGame.PrefixRoot == nil {
+			return nil, nil, s.prefixUnresolved(game)
 		}
 		dst := deployTarget(rowGame, row.Path)
 		if _, err := os.Lstat(dst); errors.Is(err, fs.ErrNotExist) {
@@ -1108,7 +1119,10 @@ type otherGameRecords struct {
 	// installRoot is its install directory, links resolved: what a
 	// game-root path (#629) is under. "" when it has none apart from root.
 	installRoot string
-	games       []*otherGame
+	// prefixRoot is its prefix user directory, links resolved: what a
+	// prefix path (#636) is under. "" when it has none resolved.
+	prefixRoot string
+	games      []*otherGame
 	// claimsOf reads a game's active profile and the mods its document
 	// lists, for heldForActive (Service.gameClaims).
 	claimsOf func(gameID string) gameClaims
@@ -1124,7 +1138,10 @@ type otherGame struct {
 	// installRoot is its install directory, links resolved, when its
 	// game-root paths (#629) are somewhere other than root.
 	installRoot string
-	paths       map[domain.DeployPath][]db.PathRecord // its recorded paths (DeployedPathRecords)
+	// prefixRoot is its prefix user directory, links resolved, when it
+	// has one resolved (#636).
+	prefixRoot string
+	paths      map[domain.DeployPath][]db.PathRecord // its recorded paths (DeployedPathRecords)
 	// claims is claimsOf's answer for the game, read on first use.
 	claims *gameClaims
 }
@@ -1161,6 +1178,9 @@ func (s *Service) otherGamesRecording(ctx context.Context, game *domain.Game) (*
 	if routesToGameRoot(game) {
 		records.installRoot = resolvedDir(game.InstallPath)
 	}
+	if dir := game.PrefixRoot.UserDir(); dir != "" {
+		records.prefixRoot = resolvedDir(dir)
+	}
 	overlaps := func(a, b string) bool { return a != "" && b != "" && (pathWithin(a, b) || pathWithin(b, a)) }
 	for _, other := range s.ListGames() {
 		if other.ID == game.ID || other.ModPath == "" {
@@ -1171,17 +1191,29 @@ func (s *Service) otherGamesRecording(ctx context.Context, game *domain.Game) (*
 		if routesToGameRoot(other) {
 			installRoot = resolvedDir(other.InstallPath)
 		}
+		prefixRoot := ""
+		if dir := other.PrefixRoot.UserDir(); dir != "" {
+			prefixRoot = resolvedDir(dir)
+		}
 		// The mod directories overlap, as they always had to; or a game
-		// root of either one (#629) overlaps a directory of the other.
-		if !overlaps(records.root, root) && !overlaps(records.installRoot, root) &&
-			!overlaps(records.root, installRoot) && !overlaps(records.installRoot, installRoot) {
+		// root (#629) or a prefix user directory (#636) of either one
+		// overlaps a directory of the other.
+		mine := []string{records.root, records.installRoot, records.prefixRoot}
+		theirs := []string{root, installRoot, prefixRoot}
+		overlap := false
+		for _, a := range mine {
+			for _, b := range theirs {
+				overlap = overlap || overlaps(a, b)
+			}
+		}
+		if !overlap {
 			continue
 		}
 		paths, err := s.db.DeployedPathRecords(ctx, other.ID)
 		if err != nil {
 			return nil, fmt.Errorf("listing %s's deployed files: %w", other.ID, err)
 		}
-		records.games = append(records.games, &otherGame{id: other.ID, modPath: other.ModPath, root: root, installRoot: installRoot, paths: paths})
+		records.games = append(records.games, &otherGame{id: other.ID, modPath: other.ModPath, root: root, installRoot: installRoot, prefixRoot: prefixRoot, paths: paths})
 	}
 	return records, nil
 }
@@ -1192,12 +1224,29 @@ func (r *otherGameRecords) abs(rel domain.DeployPath) string {
 	if rel.IsGameRoot() && r.installRoot != "" {
 		return filepath.Join(r.installRoot, filepath.FromSlash(rel.Rel))
 	}
+	if rel.IsPrefix() {
+		if r.prefixRoot == "" {
+			return "" // nowhere: no other game's path can be there
+		}
+		return filepath.Join(r.prefixRoot, filepath.FromSlash(rel.Rel))
+	}
 	return filepath.Join(r.root, filepath.FromSlash(rel.Rel))
 }
 
 // pathAt is g's deployed path for abs, an absolute path, when g records
-// one there: under its mod directory, or under its game root.
+// one there: under its mod directory, its game root, or its prefix user
+// directory (#636).
 func (g *otherGame) pathAt(abs string) (domain.DeployPath, bool) {
+	if abs == "" {
+		return domain.DeployPath{}, false
+	}
+	if g.prefixRoot != "" {
+		if theirs, ok := relWithin(g.prefixRoot, abs); ok {
+			if key := domain.PrefixFile(filepath.ToSlash(theirs)); len(g.paths[key]) > 0 {
+				return key, true
+			}
+		}
+	}
 	if theirs, ok := relWithin(g.root, abs); ok {
 		if key := domain.ModPathFile(filepath.ToSlash(theirs)); len(g.paths[key]) > 0 {
 			return key, true
@@ -1578,6 +1627,9 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 			installers[method] = installer
 		}
 		rowGame := gameUnderRoot(game, row.ModPath)
+		if row.Path.IsPrefix() && rowGame.PrefixRoot == nil {
+			return nil, s.prefixUnresolved(game)
+		}
 		dst := deployTarget(rowGame, row.Path)
 		_, err := os.Lstat(dst)
 		switch {

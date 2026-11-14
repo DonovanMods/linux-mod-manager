@@ -476,8 +476,10 @@ A Windows game on Linux runs inside a Wine or Proton **prefix**: a
 directory holding a `drive_c`, where the game keeps settings and saves
 outside its install directory. Some games keep files there that lmm will
 write — a Bethesda game's `Plugins.txt`, under
-`drive_c/users/<user>/AppData/Local/<game>` — so lmm needs to know where
-the prefix is. Most games never need one, and lmm does nothing with a
+`drive_c/users/<user>/AppData/Local/<game>`, and Baldur's Gate 3's `.pak`
+mods, which lmm deploys into
+`drive_c/users/<user>/AppData/Local/Larian Studios/Baldur's Gate 3/Mods` —
+so lmm needs to know where the prefix is. Most games never need one, and lmm does nothing with a
 prefix unless the game's adapter needs it.
 
 - **`prefix`** names the prefix: the directory holding `drive_c` (and

@@ -158,7 +158,7 @@ func (s *Service) PlanAutoRelink(ctx context.Context, game *domain.Game, profile
 	if s.GameRunning(ctx, game).Running {
 		return nil, nil
 	}
-	snapshot, err := s.snapshotOf(game.ID, installed)
+	snapshot, err := s.snapshotOf(ctx, game.ID, installed)
 	if err != nil {
 		return nil, err
 	}

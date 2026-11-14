@@ -137,6 +137,10 @@ type lastCopy struct {
 // wrapper that used to take it for them had no frontend callers left and was
 // ratcheted away in #293.
 func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, profileName string, dryRun bool) (*ConvergeResult, error) {
+	// #636: records in an unresolved prefix cannot be judged.
+	if err := refusePrefixRecords(ctx, s.db, game); err != nil {
+		return nil, err
+	}
 	mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)

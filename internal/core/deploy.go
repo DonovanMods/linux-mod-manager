@@ -356,10 +356,12 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
-	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+	// #451 F3 and #636: a moved mod_path, or a prefix the game deploys
+	// into that does not resolve.
+	if err := s.refuseUndeployable(ctx, game.ID); err != nil {
 		return nil, err
 	}
-	snapshot, err := s.snapshotOf(game.ID, installedMods)
+	snapshot, err := s.snapshotOf(ctx, game.ID, installedMods)
 	if err != nil {
 		return nil, err
 	}
@@ -525,6 +527,11 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 				"game_id", game.ID, "profile", profileName, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
 			plan.Mods = append(plan.Mods, entry)
 			continue
+		}
+		// #636: the plan refuses what its Apply would - a file the adapter
+		// places in a prefix that does not resolve.
+		if err := refusePrefixItems(game, link); err != nil {
+			return nil, s.prefixUnresolved(game)
 		}
 		linked := make(map[domain.DeployPath]bool, len(link))
 		entry.Link = make([]string, 0, len(link))

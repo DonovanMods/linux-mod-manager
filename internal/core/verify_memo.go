@@ -281,7 +281,7 @@ func (s *Service) verifyFingerprint(ctx context.Context, game *domain.Game, prof
 		return "", fmt.Errorf("fingerprinting deployed files: %w", err)
 	}
 	for _, row := range deployed {
-		if !row.Path.IsGameRoot() {
+		if row.Path.Root == domain.RootModPath {
 			continue
 		}
 		token := "absent"
@@ -290,7 +290,13 @@ func (s *Service) verifyFingerprint(ctx context.Context, game *domain.Game, prof
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			token = "error"
 		}
-		_, _ = fmt.Fprintf(h, "rootfile\x1f%s\x1f%s\x1f%s\x1f%s\n", row.Path.Rel, row.SourceID, row.ModID, token)
+		// #636: a prefix file is stat'ed the same way, under its own
+		// tag, so it is never one game-root file of the same name.
+		tag := "rootfile"
+		if row.Path.IsPrefix() {
+			tag = "prefixfile"
+		}
+		_, _ = fmt.Fprintf(h, "%s\x1f%s\x1f%s\x1f%s\x1f%s\n", tag, row.Path.Rel, row.SourceID, row.ModID, token)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

@@ -154,6 +154,10 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 
+	// #636: the plan refuses what its Apply would (Installer.uninstall).
+	if err := s.refuseModPrefixRecords(ctx, game, &mod.Mod, profileName); err != nil {
+		return nil, err
+	}
 	live, recordedOnly, err := s.profileScope(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, err
@@ -391,6 +395,9 @@ func (s *Service) uninstallRecorded(ctx context.Context, game *domain.Game, prof
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
 	}
+	if err := s.refuseModPrefixRecords(ctx, game, &mod.Mod, profileName); err != nil {
+		return nil, err
+	}
 	result := &UninstallResult{RecordedOnly: true, ActiveProfile: live}
 	if mod.External {
 		result.Notes = append(result.Notes, "Note: "+UninstallExternalNote)
@@ -441,6 +448,11 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
+	}
+	// #636: before any hook runs or any record goes - an undeploy failure
+	// below is only a note, and the mod's prefix files would be forgotten.
+	if err := s.refuseModPrefixRecords(ctx, game, &mod.Mod, profileName); err != nil {
+		return nil, err
 	}
 
 	result := &UninstallResult{}

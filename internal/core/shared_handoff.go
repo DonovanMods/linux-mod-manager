@@ -347,6 +347,10 @@ func (i *Installer) noteHandOff(h handedPath) {
 // whether the file was placed.
 func (i *Installer) placeHeir(ctx context.Context, game *domain.Game, profileName string, others *otherGameRecords, mod *domain.Mod, item deployItem, dstPath string) bool {
 	file := item.path
+	// #636: a prefix file has nowhere to go without the prefix.
+	if file.IsPrefix() && game.PrefixRoot == nil {
+		return false
+	}
 	if _, ok := heldElsewhere(others, file, dstPath); ok {
 		return false
 	}

@@ -148,6 +148,13 @@ type Game struct {
 	// It is loaded as written; an unknown slug is a verify note, never a
 	// load error. omitempty, so a game that sets none is byte-identical.
 	Catalog string `json:"catalog,omitempty"`
+	// PrefixRoot is the prefix core resolved for this copy of the game
+	// (#636), set only for a game whose adapter deploys files into the
+	// prefix (adapter.PrefixPlacer) and only when the prefix resolved. It
+	// is runtime state, never configuration and never on the wire: nil
+	// means a RootPrefix file has nowhere to go, and a deploy of one is
+	// refused.
+	PrefixRoot *ResolvedPrefix `json:"-"`
 }
 
 // DeployMode determines how downloaded mod archives are handled

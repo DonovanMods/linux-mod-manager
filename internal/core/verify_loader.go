@@ -307,7 +307,7 @@ func (r *verifyRun) unlinkedLoaderFiles(mod *domain.InstalledMod) []string {
 	var missing []string
 	for _, f := range files {
 		slash := filepath.ToSlash(f.path.Rel)
-		if f.path.IsGameRoot() || !strings.HasPrefix(slash, loaderContentRoot+"/") {
+		if f.path.Root != domain.RootModPath || !strings.HasPrefix(slash, loaderContentRoot+"/") {
 			continue
 		}
 		if _, err := os.Lstat(deployTarget(r.game, f.path)); err != nil {

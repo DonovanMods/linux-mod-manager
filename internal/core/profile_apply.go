@@ -314,7 +314,7 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 	// #451 F3: a converge plan must not promise what its Apply refuses -
 	// currentMarkedSnapshot (the freshness precondition this plan's Apply
 	// checks) deliberately does NOT ask this, so it is asked here instead.
-	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+	if err := s.refuseUndeployable(ctx, game.ID); err != nil {
 		return nil, err
 	}
 	if err := s.refuseInactive(ctx, game.ID, profileName, "apply"); err != nil {
@@ -363,7 +363,7 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 	// The snapshot below asks the adapter about this profile's rows; the
 	// rows it borrows from another profile's cache are deployed as its own,
 	// so the adapter has its say on them too (#445 final gate F-D).
-	if err := s.checkBorrowedPreconditions(game.ID, profileName, installedMods, plan.ToEnable); err != nil {
+	if err := s.checkBorrowedPreconditions(ctx, game.ID, profileName, installedMods, plan.ToEnable); err != nil {
 		return nil, err
 	}
 
@@ -373,7 +373,7 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 
 	// The rows and the document this plan was decided from (see
 	// markedSnapshotOf).
-	snapshot, err := s.markedSnapshotOf(game.ID, installedMods, disabledKeysOf(profile))
+	snapshot, err := s.markedSnapshotOf(ctx, game.ID, installedMods, disabledKeysOf(profile))
 	if err != nil {
 		return nil, err
 	}
@@ -672,7 +672,7 @@ func cachedRowElsewhere(gameCache *cache.Cache, gameID string, ref domain.ModRef
 // installed rows together with the rows toEnable borrows from another
 // profile's cache (cachedRowElsewhere) - nothing when it borrows none,
 // since the plan's snapshot already asks about installed alone.
-func (s *Service) checkBorrowedPreconditions(gameID, profileName string, installed, toEnable []domain.InstalledMod) error {
+func (s *Service) checkBorrowedPreconditions(ctx context.Context, gameID, profileName string, installed, toEnable []domain.InstalledMod) error {
 	mods := slices.Clone(installed)
 	for _, im := range toEnable {
 		if im.ProfileName != profileName {
@@ -682,7 +682,7 @@ func (s *Service) checkBorrowedPreconditions(gameID, profileName string, install
 	if len(mods) == len(installed) {
 		return nil
 	}
-	return s.checkAdapterPreconditions(gameID, mods)
+	return s.checkAdapterPreconditions(ctx, gameID, mods)
 }
 
 // externalRowsElsewhere collects the EXTERNAL installed rows (#269) of every
@@ -758,7 +758,7 @@ func (s *Service) ApplyProfileApply(ctx context.Context, game *domain.Game, plan
 	// sync`, which is DB-only, is unaffected), which used to let this flow's
 	// disable loop run and only fail later, in the enable/install loop's
 	// Installer call - disabling a mod without ever redeploying it.
-	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+	if err := s.refuseUndeployable(ctx, game.ID); err != nil {
 		return &ProfileApplyResult{}, err
 	}
 	// #462: re-checked here, since the active profile can change between a
@@ -796,7 +796,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		if err != nil {
 			return result, fmt.Errorf("loading installed mods: %w", err)
 		}
-		if err := s.checkBorrowedPreconditions(plan.GameID, plan.Profile, installed, plan.ToEnable); err != nil {
+		if err := s.checkBorrowedPreconditions(ctx, plan.GameID, plan.Profile, installed, plan.ToEnable); err != nil {
 			return result, err
 		}
 	}

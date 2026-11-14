@@ -166,6 +166,7 @@ func planErrorStatus(err error) int {
 		precondition *core.AdapterPreconditionError
 		moved        *core.ModPathMissingError
 		needVersion  *core.ArchiveVersionRequiredError
+		noPrefix     *core.PrefixUnresolvedError
 	)
 
 	switch {
@@ -179,6 +180,11 @@ func planErrorStatus(err error) int {
 	// game edit --mod-path` back, or a purge) - so it gets the same 409
 	// rather than the default 500.
 	case errors.As(err, &moved):
+		return http.StatusConflict
+	// #636: a game whose .pak mods deploy into a prefix lmm cannot
+	// resolve - the request is fine, the game's configuration refuses it
+	// until the user sets prefix:.
+	case errors.As(err, &noPrefix):
 		return http.StatusConflict
 	case core.IsGameIdentifierInvalid(err):
 		return http.StatusBadRequest

@@ -25,7 +25,8 @@ type FileConflict struct {
 }
 
 // A deployed_files row names its file by two columns, root and
-// relative_path (#629, migrateV26): root is 'mod_path' or 'install_path'.
+// relative_path (#629, migrateV26): root is 'mod_path', 'install_path' or
+// (#636, migrateV28) 'prefix'.
 // Callers name it by one value, a domain.DeployPath, which every function
 // here takes and returns.
 
@@ -41,8 +42,9 @@ func scanRoot(name string) (domain.DeployRoot, error) {
 
 // orderByPath is the order every path listing returns rows in: the
 // mod_path rows first, in relative_path order exactly as before #629, then
-// the install_path ones - domain.CompareDeployPaths' order.
-const orderByPath = "(root <> 'mod_path'), relative_path"
+// the install_path ones, then (#636) the prefix ones -
+// domain.CompareDeployPaths' order.
+const orderByPath = "(CASE root WHEN 'mod_path' THEN 0 WHEN 'install_path' THEN 1 ELSE 2 END), relative_path"
 
 // SaveDeployedFile records that a file under the game's mod_path is deployed
 // by a specific mod, with no fingerprint and no recorded mod_path
@@ -475,7 +477,7 @@ func (d *DB) DeleteDeployedFilesExcept(ctx context.Context, gameID, profileName,
 	for _, p := range keepPaths {
 		byRoot[p.Root] = append(byRoot[p.Root], p.Rel)
 	}
-	for _, root := range []domain.DeployRoot{domain.RootModPath, domain.RootInstallPath} {
+	for _, root := range domain.DeployRoots() {
 		rels := byRoot[root]
 		if len(rels) == 0 {
 			continue
@@ -490,6 +492,21 @@ func (d *DB) DeleteDeployedFilesExcept(ctx context.Context, gameID, profileName,
 		return fmt.Errorf("deleting deployed files: %w", err)
 	}
 	return nil
+}
+
+// HasDeployedFilesUnder reports whether any profile of the game records a
+// deployed file under root (#636: whether a game has files in its prefix
+// to account for).
+func (d *DB) HasDeployedFilesUnder(ctx context.Context, gameID string, root domain.DeployRoot) (bool, error) {
+	var one int
+	err := d.QueryRowContext(ctx, `SELECT 1 FROM deployed_files WHERE game_id = ? AND root = ? LIMIT 1`, gameID, root.String()).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking deployed files: %w", err)
+	}
+	return true, nil
 }
 
 // DeployedFileRecordsForMod returns every deployed_files row of one mod in
@@ -588,7 +605,7 @@ func (d *DB) CheckFileConflicts(ctx context.Context, gameID, profileName string,
 	}
 	args := []any{gameID, profileName}
 	var clauses []string
-	for _, root := range []domain.DeployRoot{domain.RootModPath, domain.RootInstallPath} {
+	for _, root := range domain.DeployRoots() {
 		rels := byRoot[root]
 		if len(rels) == 0 {
 			continue
