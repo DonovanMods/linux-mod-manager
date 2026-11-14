@@ -1099,6 +1099,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 		runner:    runner,
 		hookCtx:   hookCtx,
 		fomod:     resolved,
+		byUser:    mod.UpdatePolicy != domain.UpdateAuto,
 	}, opts, result, emit)
 	return result, err
 }
@@ -1126,6 +1127,12 @@ type updateCommit struct {
 	// fomod is the new version's FOMOD resolve outcome (#614), recorded on
 	// the profile ref; nil when it is not an installer.
 	fomod *fomodResolved
+	// byUser is a version the user chose for this mod (#613): an update
+	// from a file, or an update of a mod not on the auto policy. It clears
+	// the ref's from_collection marker. An update the auto policy drives -
+	// the curator's "latest", or the user's own auto setting - keeps it:
+	// following the newest file is what that policy already asked for.
+	byUser bool
 }
 
 // commitUpdate is the update flow from "the new files are cached" to the
@@ -1242,7 +1249,11 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	pm := s.NewProfileManager()
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: effectiveVersion, FileIDs: downloadedFileIDs}
 	fomodRec := fomodRecordOf(c.fomod)
-	if err := pm.upsertMod(ctx, game.ID, profileName, modRef, fomodRec); err != nil {
+	upsert := pm.upsertMod
+	if c.byUser {
+		upsert = pm.upsertModByUser
+	}
+	if err := upsert(ctx, game.ID, profileName, modRef, fomodRec); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
 		// The swap makes the version this update installed the rollback

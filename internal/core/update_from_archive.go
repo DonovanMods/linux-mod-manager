@@ -713,6 +713,8 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 		runner:    runner,
 		hookCtx:   hookContextFor(game),
 		fomod:     cmpFomod(imported.fomod),
+		// A file the user picked is their version of the mod (#613).
+		byUser: true,
 	}, UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks}, result, emit)
 	if err != nil {
 		s.discardUpdateArchiveEntry(game, plan, newMod.Variant, warn)

@@ -150,6 +150,21 @@ type CollectionUpdateItem struct {
 	// entry only.
 	DisplayVersion    string `json:"display_version,omitempty"`
 	NewDisplayVersion string `json:"new_display_version,omitempty"`
+	// Note is what a person should know about the change: today, that an
+	// entry's files change at the same version, which is recorded on the
+	// profile and applies when the mod is next reinstalled (#639).
+	Note string `json:"note,omitempty"`
+}
+
+// sameVersionFilesNote is CollectionUpdateItem.Note for a pin whose files
+// change and whose version does not.
+const sameVersionFilesNote = "its files change at the same version: the profile records them, and they apply when the mod is next reinstalled"
+
+// noteChanges sets the entry's Note from its Changes.
+func (it *CollectionUpdateItem) noteChanges() {
+	if slices.Contains(it.Changes, "files") && !slices.Contains(it.Changes, "version") {
+		it.Note = sameVersionFilesNote
+	}
 }
 
 // Key is the entry's domain.ModKey, which CollectionUpdateOptions names.
@@ -587,11 +602,13 @@ func (p *CollectionUpdatePlan) diffEntries() {
 		entry.Version, entry.Locked = ref.Version, ref.Locked
 		if ref.FromCollection {
 			if entry.Changes = pinChanges(ref, want, true); len(entry.Changes) > 0 {
+				entry.noteChanges()
 				p.Changed = append(p.Changed, entry)
 			}
 			continue
 		}
 		if entry.Changes = pinChanges(ref, want, false); len(entry.Changes) > 0 {
+			entry.noteChanges()
 			p.Conflicts = append(p.Conflicts, entry)
 		}
 	}

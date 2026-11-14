@@ -540,6 +540,21 @@ func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName str
 // upsertMod is UpsertMod with an explicit say over the ref's recorded FOMOD
 // choices (#614): keep them, set them, or clear them.
 func (pm *ProfileManager) upsertMod(ctx context.Context, gameID, profileName string, mod domain.ModReference, rec fomodRecord) error {
+	return pm.upsertModRef(ctx, gameID, profileName, mod, rec, false)
+}
+
+// upsertModByUser is upsertMod for a write the user deliberately asked for
+// (#613): a manual update, a rollback, an update from a file, a FOMOD
+// reconfigure. It also clears the ref's from_collection marker, so the
+// entry is the user's from then on and a collection update does not move it
+// back without asking.
+func (pm *ProfileManager) upsertModByUser(ctx context.Context, gameID, profileName string, mod domain.ModReference, rec fomodRecord) error {
+	return pm.upsertModRef(ctx, gameID, profileName, mod, rec, true)
+}
+
+// upsertModRef is upsertMod's body; disown clears from_collection on the
+// ref it updates in place.
+func (pm *ProfileManager) upsertModRef(ctx context.Context, gameID, profileName string, mod domain.ModReference, rec fomodRecord, disown bool) error {
 	mod.SetFomodRecord(domain.FomodRecord{})
 	if rec.op == fomodSet {
 		mod.SetFomodRecord(rec.rec)
@@ -581,6 +596,9 @@ func (pm *ProfileManager) upsertMod(ctx context.Context, gameID, profileName str
 			}
 			profile.Mods[i].Version = mod.Version
 			profile.Mods[i].FileIDs = mod.FileIDs
+			if disown {
+				profile.Mods[i].FromCollection = false
+			}
 			// #614: an install of a FOMOD records the choices it was
 			// installed with, an install of a tree that is not one clears
 			// them (they would name a tree the row does not have), and

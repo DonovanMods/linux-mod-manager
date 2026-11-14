@@ -532,3 +532,18 @@ func TestCollectionUpdate_DuplicateOfASourceCollection(t *testing.T) {
 	assert.Equal(t, 4, plan.NewVersion)
 	assert.Equal(t, []string{"nexusmods:10"}, keys(plan.Changed), "the duplicate keeps the collection's markers")
 }
+
+// A pin whose files change at the same version is recorded, and the plan
+// says it applies when the mod is next reinstalled (#639 tracks
+// reinstalling it at once).
+func TestCollectionUpdate_SameVersionFilesCarryANote(t *testing.T) {
+	f := newUpdateFixture(t)
+	f.importURL(t, urlDocument(t, "coll-1", 1, nil))
+	f.serve(urlDocument(t, "coll-1", 2, func(doc *domain.CollectionDocument) {
+		doc.Items[0].Ref.FileIDs = []string{"100", "101"}
+	}))
+	plan := f.planUpdate(t)
+	require.Len(t, plan.Changed, 1)
+	assert.Equal(t, []string{"files"}, plan.Changed[0].Changes)
+	assert.Contains(t, plan.Changed[0].Note, "next reinstalled")
+}

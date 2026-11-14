@@ -65,6 +65,7 @@ function EntryList({ heading, items, testID }) {
                 it.changes?.length > 0 &&
                 html` <span class="plan__mod-detail">(${changes(it)})</span>`
               }
+              ${it.note && html`<p class="plan__note">${it.note}</p>`}
             </li>
           `,
         )}
@@ -121,6 +122,7 @@ function ChoiceList({
                 />
                 ${checkLabel}
               </label>
+              ${it.note && html`<p class="plan__note">${it.note}</p>`}
             </li>
           `;
         })}

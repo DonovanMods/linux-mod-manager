@@ -2249,7 +2249,7 @@ func (s *Service) commitBatchMod(ctx context.Context, game *domain.Game, plan *I
 	// (review finding I2), which turns the cancellation into ApplyInstall's
 	// own fatal return.
 	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.upsertMod(ctx, game.ID, plan.Profile, modRef, fomodRec)
+		return pm.upsertModRef(ctx, game.ID, plan.Profile, modRef, fomodRec, reconfigures(opts, modRef))
 	}); err != nil {
 		if ctx.Err() != nil {
 			return nil
@@ -2932,7 +2932,7 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 	// the profile ref that completes them is written even under a cancelled
 	// ctx; the cancellation is then fatal to ApplyInstall as a whole.
 	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.upsertMod(ctx, game.ID, plan.Profile, modRef, fomodRec)
+		return pm.upsertModRef(ctx, game.ID, plan.Profile, modRef, fomodRec, reconfigures(opts, modRef))
 	}); err != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, cerr
@@ -2980,4 +2980,11 @@ func plannedFileIDsOf(files []domain.DownloadableFile) []string {
 		ids[i] = files[i].ID
 	}
 	return ids
+}
+
+// reconfigures reports whether opts is a FOMOD reconfigure of ref's mod
+// (#615): the user re-answering its installer, which makes the entry
+// theirs (#613: its from_collection marker is cleared in the same write).
+func reconfigures(opts InstallOptions, ref domain.ModReference) bool {
+	return opts.fomodReconfigure != "" && opts.fomodReconfigure == domain.ModKey(ref.SourceID, ref.ModID)
 }

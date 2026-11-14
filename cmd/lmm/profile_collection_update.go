@@ -267,6 +267,9 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 		fmt.Printf("\nWill update to the collection's new pin (%d):\n", len(plan.Changed))
 		for _, it := range plan.Changed {
 			fmt.Printf("  ~ %s %s (%s)\n", updateItemLabel(it), versionMove(it), strings.Join(it.Changes, ", "))
+			if it.Note != "" {
+				fmt.Printf("      %s\n", it.Note)
+			}
 		}
 	}
 	if len(plan.Removed) > 0 {
@@ -302,6 +305,9 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 				lock = ", locked"
 			}
 			fmt.Printf("  ! %s %s (%s%s): %s\n", updateItemLabel(it), versionMove(it), strings.Join(it.Changes, ", "), lock, what)
+			if it.Note != "" {
+				fmt.Printf("      %s\n", it.Note)
+			}
 		}
 		if !opts.OverrideConflicts && len(opts.Override) < len(plan.Conflicts) {
 			fmt.Println("  Take the collection's with --override <mod>, or all with --override-conflicts.")

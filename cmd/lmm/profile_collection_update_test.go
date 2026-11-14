@@ -218,3 +218,24 @@ func TestDoCollectionUpdate_RefusesAnotherCollection(t *testing.T) {
 	err := doCollectionUpdate(context.Background(), svc, game, []string{"shared"})
 	require.True(t, core.IsCollectionUpdateMismatch(err), "%v", err)
 }
+
+func TestDoCollectionUpdate_SameVersionFilesNote(t *testing.T) {
+	svc, game, serve := collectionUpdateService(t)
+	serve(`lmm_collection: 1
+id: coll-1
+version: 2
+name: shared
+game:
+  steam_app_id: "1091500"
+mods:
+  - {source_id: nexusmods, mod_id: "1", version: "1.0", file_ids: ["9"], disabled: true}
+  - {source_id: nexusmods, mod_id: "2", version: "1.0", disabled: true}
+`)
+	setCollectionSyncFlags(t, func() { profileSyncDryRun = true })
+	stdout, _, err := captureStdoutStderrErr(t, func() error {
+		return doCollectionUpdate(context.Background(), svc, game, []string{"shared"})
+	})
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "~ nexusmods:1 1.0 (files)")
+	assert.Contains(t, stdout, "they apply when the mod is next reinstalled")
+}

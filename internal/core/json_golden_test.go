@@ -2447,6 +2447,13 @@ func TestJSONGoldens(t *testing.T) {
 			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1", NewVersion: "2", Changes: []string{"version", "files", "lock"}, Locked: true},
 		},
 		{
+			// #613: an entry whose files change at the same version carries
+			// the note that they apply at its next reinstall (#639).
+			"collection_update_item_same_version_files",
+			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "10", Version: "1", NewVersion: "1", Changes: []string{"files"},
+				Note: "its files change at the same version: the profile records them, and they apply when the mod is next reinstalled"},
+		},
+		{
 			// #613: what an update does to the plugin list.
 			"collection_plugin_change",
 			core.CollectionPluginChange{Added: []string{"New.esp"}, Removed: []string{"Old.esp"}, Reordered: true, Rules: true,

@@ -1,0 +1,10 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "10",
+  "version": "1",
+  "new_version": "1",
+  "changes": [
+    "files"
+  ],
+  "note": "its files change at the same version: the profile records them, and they apply when the mod is next reinstalled"
+}
