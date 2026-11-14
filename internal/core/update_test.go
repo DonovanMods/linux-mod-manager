@@ -1838,7 +1838,15 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_ChainedUpdatesStayUndeployed(t *t
 // {B} -> {A,B}, where NO old ID departs - an asymmetric gate falls back to
 // union there and deploys a stale generation's member that was never
 // deployed before the update. After a compensated failure the game dir must
-// hold exactly the pre-update deployment: a.esp and b.esp, never s.esp.
+// hold the pre-update deployment: a.esp and b.esp.
+//
+// #639 changed the premise: the new set {B} is not the set the old entry
+// holds ({A,B} plus the stale S), so it commits to an entry of its own and
+// the two never share a directory. The compensation then reinstalls the old
+// row's own entry whole, exactly as `lmm deploy` deploys that row - so the
+// stale generation's s.esp, which only the shared-directory narrowing kept
+// out, is no longer this test's to forbid. What stays pinned: the restored
+// parts, the restored record, and an old entry the update never touched.
 func TestApplyUpdate_SameVersionFileOnlyUpdate_PureRemovalCompensationStaysNarrow(t *testing.T) {
 	configDir := t.TempDir()
 	svc, err := core.NewService(core.ServiceConfig{ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir()})
@@ -1891,21 +1899,27 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_PureRemovalCompensationStaysNarro
 	assert.NoError(t, statErr, "the removed part must be restored by the compensation")
 	_, statErr = os.Stat(filepath.Join(gameDir, "mod1-fileB.esp"))
 	assert.NoError(t, statErr, "the retained part must stay deployed")
-	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileS.esp"))
-	assert.True(t, os.IsNotExist(statErr),
-		"the reversed compensation must narrow too - a stale generation's member never deployed pre-update must not appear")
+	assert.True(t, gameCache.HasFileIDs(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"}, []string{"fileA", "fileB", "fileS"}),
+		"#639: the update's new set had an entry of its own; the old one is untouched")
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"fileA", "fileB"}, updated.FileIDs, "RollbackModVersion must have restored the record")
+	assert.Empty(t, updated.Variant, "and the old row's own entry")
 }
 
 // TestApplyUpdate_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion is
 // the hard backward-compat rule for pre-manifest cache entries: the old
 // file's provenance is unrecorded (seedUpdatableMod writes no markers - the
 // exact on-disk shape of every cache entry made before manifests existed),
-// so nothing may be undeployed, nothing may error, and nothing may warn -
-// the historical union behavior, silently.
+// so nothing may error and nothing may warn.
+//
+// #639 changed what happens to the old file: the legacy entry names no set,
+// and its row records another one ({A}), so the update's {B} commits to an
+// entry of its own instead of layering onto the legacy tree. The old tree is
+// then retired whole, as a version change retires it, so a.esp is
+// undeployed - the union the shared directory forced is gone, which is the
+// fix, not a regression. The legacy entry itself is left as it was.
 func TestApplyUpdate_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -1938,14 +1952,18 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion(t *te
 	require.NoError(t, err, "a legacy cache entry must never make the update fail")
 	assert.Empty(t, result.Warnings, "the fallback must be silent - no warning storm for every old cache")
 
-	_, statErr := os.Stat(filepath.Join(gameDir, "mod1-fileA.esp"))
-	assert.NoError(t, statErr, "without provenance nothing may be undeployed - union behavior preserved")
+	_, statErr := os.Lstat(filepath.Join(gameDir, "mod1-fileA.esp"))
+	assert.True(t, os.IsNotExist(statErr), "#639: the old tree is retired whole, from its own entry")
 	_, statErr = os.Stat(filepath.Join(gameDir, "mod1-fileB.esp"))
 	assert.NoError(t, statErr)
+	files, err := svc.GetGameCache(game).ListFiles(cache.Key{GameID: "g1", SourceID: "src", ModID: "mod1", Version: "1.0"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"mod1-fileA.esp"}, files, "the legacy entry is left as it was")
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"fileB"}, updated.FileIDs, "the record still advances")
+	assert.NotEmpty(t, updated.Variant, "into the new set's own entry")
 }
 
 // TestApplyUpdate_SameVersionFileOnlyUpdate_CompensatedFailureRestoresSuperseded

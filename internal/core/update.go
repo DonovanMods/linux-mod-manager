@@ -1076,11 +1076,10 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	}
 	newMod.Variant = ""
 	results, resolved, err := s.downloadModFiles(ctx, s.GetGameCache(game), mod.SourceID, game, newMod, filesToDownload, fx,
-		// #639: a mod a converge moved to a file-set entry keeps out of the
-		// entry another set of the version's files fills; one in its
-		// version's own entry updates in it, as #144's same-version update
-		// always has.
-		modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, checkCtx: true, fileSet: inFileSetEntry(&mod, recorded)})
+		// #639: the new files commit to the entry that is exactly their
+		// tree - never layered onto the old set's at the same version,
+		// which the old row (and any other profile's) still names.
+		modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, checkCtx: true, fileSet: true})
 	if err != nil {
 		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
 			return result, err

@@ -116,8 +116,36 @@ func TestRowFitsRef_AcceptsTheFileSetVariant(t *testing.T) {
 func TestFomodTreeVariant_IgnoresAPlainFileSetVariant(t *testing.T) {
 	plain := &domain.InstalledMod{Mod: domain.Mod{Variant: fileSetVariant("", []string{"21"})}, FileIDs: []string{"21"}}
 	assert.Empty(t, fomodTreeVariant(plain))
-	assert.True(t, inFileSetEntry(plain, nil))
 	fomodRow := &domain.InstalledMod{Mod: domain.Mod{Variant: "abcdef123456"}, FileIDs: []string{"21"}}
 	assert.Equal(t, "abcdef123456", fomodTreeVariant(fomodRow))
-	assert.False(t, inFileSetEntry(fomodRow, nil))
+}
+
+// #639 rulings 3 and 4: an entry the installed rows on it name for another
+// set is never this set's to fill or reuse - absent, or unmarked.
+func TestFileSetEntry_RowsOnTheEntryDecide(t *testing.T) {
+	svc := newBareService(t)
+	ctx := t.Context()
+	c := cache.New(t.TempDir())
+	k := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1.0"}
+	save := func(profile string, ids ...string) {
+		require.NoError(t, svc.db.SaveInstalledMod(ctx, &domain.InstalledMod{
+			Mod: domain.Mod{ID: "m", SourceID: "s", Name: "M", Version: "1.0", GameID: "g"}, ProfileName: profile,
+			UpdatePolicy: domain.UpdateNotify, FileIDs: ids,
+		}))
+	}
+
+	save("p", "20")
+	got, _ := svc.fileSetEntry(ctx, c, k, []string{"21"}, true)
+	assert.Equal(t, fileSetVariant("", []string{"21"}), got.Variant, "an absent entry a row names for 20 is not 21's to refill")
+	got, _ = svc.fileSetEntry(ctx, c, k, []string{"20"}, true)
+	assert.Equal(t, k, got, "it is 20's")
+
+	require.NoError(t, c.Store(k, "a.esp", []byte("a")))
+	save("q", "21")
+	got, warm := svc.fileSetEntry(ctx, c, k, []string{"20"}, true)
+	assert.Equal(t, fileSetVariant("", []string{"20"}), got.Variant, "an unmarked entry two sets claim is neither's")
+	assert.False(t, warm)
+	manifests, err := c.FileManifests(k)
+	require.NoError(t, err)
+	assert.Empty(t, manifests, "and is never backfilled")
 }

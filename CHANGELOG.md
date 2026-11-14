@@ -831,7 +831,12 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   a cache entry of its own (`<version>@<variant>` beside the version's
   own), so one set's tree is never reused for, or layered onto by,
   another: before, `lmm install --file` of another file at the same
-  version wrote into the entry another profile was deploying from. An
+  version, a multi-select or dependency install, or a same-version
+  `lmm update` wrote into the entry another profile (or the update's own
+  previous files) was deploying from, so a later `lmm deploy` could bring
+  a superseded file back. A same-version update now retires the old
+  files whole, as a version change does, even from an entry made before
+  lmm recorded which file put which member there. An
   entry keeps its key for
   exactly the files it was built from, so installed mods keep theirs and
   nothing is re-downloaded after the upgrade; an entry from before lmm

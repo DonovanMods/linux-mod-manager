@@ -93,57 +93,102 @@ func filesDiffer(a, b []string) bool {
 }
 
 // fileSetEntry is the entry the files ids of k's mod and version live in
-// (#639), and whether it already holds every one of them: k itself when
-// k's entry is absent (or an empty, unmarked directory), names exactly ids
-// in its markers, or - an entry with no markers - is used by an installed
-// row that pins exactly ids;
-// any other set gets k with the file-set variant of k's own. backfill,
+// (#639), and whether it already holds every one of them. k itself when:
+//
+//   - k's entry names exactly ids in its markers;
+//   - k's entry is absent (or an empty, unmarked directory) and no
+//     installed row on k records another set: an entry a row still names
+//     for its own files is that row's to refill, never another set's;
+//   - k's entry has no markers (an entry from before them) and the
+//     installed rows on k all record exactly ids, at least one of them.
+//
+// Any other set gets k with the file-set variant of k's own. backfill,
 // for a flow that commits (never a plan), stamps the markers of an
 // unmarked entry it reuses, so the next read finds them.
 func (s *Service) fileSetEntry(ctx context.Context, c *cache.Cache, k cache.Key, ids []string, backfill bool) (cache.Key, bool) {
-	if len(ids) == 0 || !c.Exists(k) {
+	if len(ids) == 0 {
 		return k, c.HasFileIDs(k, ids)
 	}
+	variant := func() (cache.Key, bool) {
+		v := k
+		v.Variant = fileSetVariant(k.Variant, ids)
+		return v, c.HasFileIDs(v, ids)
+	}
+	if !c.Exists(k) {
+		if s.entryRowsRecord(ctx, k, ids) == entryOtherSet {
+			return variant()
+		}
+		return k, false
+	}
 	manifests, err := c.FileManifests(k)
-	if err == nil {
-		marked := slices.Collect(maps.Keys(manifests))
-		if len(marked) > 0 && sameFileIDs(marked, ids) {
+	if err != nil {
+		return variant()
+	}
+	if len(manifests) > 0 {
+		if sameFileIDs(slices.Collect(maps.Keys(manifests)), ids) {
 			return k, c.HasFileIDs(k, ids)
 		}
-		if len(marked) == 0 {
-			// An unmarked entry with no members (a download that broke off
-			// before its first commit) is no tree: as good as absent.
-			if files, err := c.ListFiles(k); err == nil && len(files) == 0 {
-				return k, false
-			}
-		}
-		if len(marked) == 0 && s.rowPinsEntry(ctx, k, ids) {
-			if backfill {
-				backfillMarkers(c, k, ids)
-			}
-			return k, true
-		}
+		return variant()
 	}
-	k.Variant = fileSetVariant(k.Variant, ids)
-	return k, c.HasFileIDs(k, ids)
+	rows := s.entryRowsRecord(ctx, k, ids)
+	if files, err := c.ListFiles(k); err == nil && len(files) == 0 {
+		// An unmarked entry with no members (a download that broke off
+		// before its first commit) is no tree: as good as absent.
+		if rows == entryOtherSet {
+			return variant()
+		}
+		return k, false
+	}
+	if rows == entryThisSet {
+		if backfill {
+			backfillMarkers(c, k, ids)
+		}
+		return k, true
+	}
+	return variant()
 }
 
-// rowPinsEntry reports whether an installed row of k's game uses k's entry
-// (its version and variant) and records exactly the files ids.
-func (s *Service) rowPinsEntry(ctx context.Context, k cache.Key, ids []string) bool {
+// entryRows is what the installed rows on one cache entry record about a
+// file set (entryRowsRecord).
+type entryRows int
+
+const (
+	// entryNoSet: no row on the entry records any files.
+	entryNoSet entryRows = iota
+	// entryThisSet: every row on the entry that records files records
+	// exactly the set asked about, and at least one does.
+	entryThisSet
+	// entryOtherSet: some row on the entry records another set.
+	entryOtherSet
+)
+
+// entryRowsRecord reports what the installed rows of k's game that use k's
+// entry (its version and variant) record against the files ids. A row
+// recording no files says nothing either way. A failed read answers
+// entryOtherSet: never reuse an entry lmm cannot vouch for.
+func (s *Service) entryRowsRecord(ctx context.Context, k cache.Key, ids []string) entryRows {
 	rows, err := s.db.ModVersionRows(ctx, k.SourceID, k.ModID)
 	if err != nil {
-		return false
+		return entryOtherSet
 	}
+	out := entryNoSet
 	for _, row := range rows {
 		if row.GameID != k.GameID || row.Version != k.Version || row.Variant != k.Variant {
 			continue
 		}
-		if fileIDs, err := s.db.GetModFileIDs(ctx, k.SourceID, k.ModID, row.GameID, row.Profile); err == nil && sameFileIDs(fileIDs, ids) {
-			return true
+		fileIDs, err := s.db.GetModFileIDs(ctx, k.SourceID, k.ModID, row.GameID, row.Profile)
+		if err != nil {
+			return entryOtherSet
+		}
+		switch {
+		case len(fileIDs) == 0:
+		case sameFileIDs(fileIDs, ids):
+			out = entryThisSet
+		default:
+			return entryOtherSet
 		}
 	}
-	return false
+	return out
 }
 
 // backfillMarkers stamps the bare completion markers of ids into k's
@@ -231,17 +276,4 @@ func reinstallReason(ref domain.ModReference, row *domain.InstalledMod) string {
 		return ReinstallFilesChanged
 	}
 	return ""
-}
-
-// inFileSetEntry reports whether row lives in a file-set variant (#639) of
-// its files - of the plain tree, or of the tree ref's recorded choices
-// name - rather than in its version's own entry.
-func inFileSetEntry(row *domain.InstalledMod, ref *domain.ModReference) bool {
-	if row == nil || row.Variant == "" || len(row.FileIDs) == 0 {
-		return false
-	}
-	if row.Variant == fileSetVariant("", row.FileIDs) {
-		return true
-	}
-	return ref != nil && row.Variant == fileSetVariant(refVariant(ref), row.FileIDs)
 }

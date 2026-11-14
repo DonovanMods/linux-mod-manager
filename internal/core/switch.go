@@ -387,7 +387,9 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			refWithFileIDs := ref
 			refWithFileIDs.FileIDs = row.FileIDs
 			toInstall = append(toInstall, refWithFileIDs)
-			if live != nil && live.Version != row.Version {
+			// #639: another tree of the version on disk (another set of its
+			// files) is in the way too.
+			if live != nil && (live.Version != row.Version || live.Variant != row.Variant || filesDiffer(live.FileIDs, row.FileIDs)) {
 				recordPrior(key, *live)
 			}
 		default:

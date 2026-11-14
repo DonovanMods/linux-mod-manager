@@ -451,8 +451,22 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 	// the existing "never fails the plan" policy still applies - the
 	// installer's resolution simply doesn't get to say whether this
 	// specific plan conflicts with anything already on disk.
+	//
+	// #639: read from the entry the install will actually use - the
+	// selected files' own (fileSetEntry), at the version they install as -
+	// so a preview never shows the conflicts of another set's tree that
+	// happens to sit at the same version. Not cached there, it previews
+	// none, as before.
 	if installer, err := s.getInstallerForProfile(ctx, game, profileName); err == nil {
-		if conflicts, err := installer.GetConflicts(ctx, game, mod, profileName); err == nil {
+		target := *mod
+		target.Version = domain.EffectiveInstalledVersion(mod.Version, selected)
+		ids := make([]string, len(selected))
+		for i, f := range selected {
+			ids[i] = f.ID
+		}
+		key, _ := s.fileSetEntry(ctx, s.GetGameCache(game), modCacheKey(game.ID, target), ids, false)
+		target.Variant = key.Variant
+		if conflicts, err := installer.GetConflicts(ctx, game, &target, profileName); err == nil {
 			plan.Conflicts = conflicts
 		}
 	}
@@ -962,6 +976,32 @@ func ensureProfileExists(ctx context.Context, pm *ProfileManager, gameID, profil
 		}
 	}
 	return nil
+}
+
+// reinstallsSameFiles reports whether a same-version reinstall of row
+// installs the very files its entry holds (#639), so the transaction may
+// replace that entry in place: the row records exactly ids, or - a row
+// from before lmm recorded its files - the entry's markers name exactly
+// ids, or it is gone (the wiped-entry recovery the transaction exists
+// for). Any other set is another tree, which must never overwrite the live
+// one (another row may deploy it).
+func (s *Service) reinstallsSameFiles(game *domain.Game, row *domain.InstalledMod, ids []string) bool {
+	if len(row.FileIDs) > 0 {
+		return sameFileIDs(row.FileIDs, ids)
+	}
+	c, k := s.GetGameCache(game), modCacheKey(game.ID, row.Mod)
+	if !c.Exists(k) {
+		return true
+	}
+	manifests, err := c.FileManifests(k)
+	if err != nil || len(manifests) == 0 {
+		return false
+	}
+	marked := make([]string, 0, len(manifests))
+	for id := range manifests {
+		marked = append(marked, id)
+	}
+	return sameFileIDs(marked, ids)
 }
 
 // reinstallCacheTransaction stages a same-version reinstall's freshly
@@ -2115,6 +2155,9 @@ func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *
 		f.release = s.releaseFilesFunc(st.files)
 		return nil, f
 	}
+	// #639: the files commit to the entry that is exactly their tree,
+	// never into another set's of the same version.
+	s.restampFileSet(ctx, gameCache, game.ID, mod, ordered)
 	st.files = ordered
 	st.fomod = resolved
 	return st, nil
@@ -2510,7 +2553,7 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 		plannedFileIDs = append(plannedFileIDs, plan.Files[i].ID)
 	}
 	if plan.Replaces != nil && plan.Replaces.Version == mod.Version &&
-		(len(plan.Replaces.FileIDs) == 0 || sameFileIDs(plan.Replaces.FileIDs, plannedFileIDs)) {
+		s.reinstallsSameFiles(game, plan.Replaces, plannedFileIDs) {
 		txn, txnErr := prepareReinstallCacheTransaction(ctx, s.GetGameCache(game), modCacheKey(game.ID, plan.Replaces.Mod), s.logger())
 		if txnErr != nil {
 			return st, fmt.Errorf("preparing reinstall cache: %w", txnErr)

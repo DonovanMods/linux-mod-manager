@@ -204,6 +204,9 @@ func TestService_PlanInstall_ConflictingFilesListsPathAndOwningMod(t *testing.T)
 	// same version PlanInstall will fetch) with an overlapping file.
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "newmod", Version: "1.0"}, "shared.esp", []byte("n")))
+	// #639: the entry is the tree of the file the install picks ("1"), as
+	// its marker says; an unmarked entry no row pins is no set's.
+	require.NoError(t, cache.MarkFileCompleteWithMembers(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "newmod", Version: "1.0"}), "1", []string{"shared.esp"}))
 
 	mock := newMockSource("src")
 	svc.RegisterSource(mock)
@@ -891,6 +894,9 @@ func TestService_ApplyInstall_ForceReinstall_BrokenCacheEntryStillFails(t *testi
 	entry := gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"})
 	require.NoError(t, gameCache.Delete(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}))
 	require.NoError(t, os.MkdirAll(entry, 0755))
+	// #639: the row records no files, so this marker is what makes the
+	// entry the reinstalled file's tree - the transaction's case.
+	require.NoError(t, cache.MarkFileComplete(entry, "mod1"))
 	socket, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(entry, "unreadable.sock"), Net: "unix"})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, socket.Close(), "closing test socket") }()
@@ -1342,6 +1348,9 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("old-content")})
+		// #639: the row records no files, so this marker is what makes the
+		// entry the reinstalled file's tree - the transaction's case.
+		require.NoError(t, cache.MarkFileComplete(svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}), "mod1"))
 		installer := svc.GetInstallerForTest(game)
 		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
@@ -2892,6 +2901,10 @@ func TestService_ApplyInstall_Conflicts_SameVersionReinstall_LeavesOriginalDeplo
 	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}, "shared.esp", []byte("mod1-shared-content")))
+	// #639: the row records no files, so the entry's marker is what says
+	// it is the tree of the file a reinstall picks ("mod1") - the only
+	// case a reinstall may replace it in place.
+	require.NoError(t, cache.MarkFileCompleteWithMembers(svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}), "mod1", []string{"mod1.esp", "shared.esp"}))
 
 	// "other" is installed+deployed AFTER mod1, independently owning
 	// shared.esp too - the DB conflict GetConflicts will find against
@@ -2951,6 +2964,10 @@ func TestService_ApplyInstall_Conflicts_SameVersionReinstall_AcceptRerun_Redownl
 	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	require.NoError(t, svc.GetGameCache(game).Store(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}, "shared.esp", []byte("mod1-shared-content")))
+	// #639: the row records no files, so the entry's marker is what says
+	// it is the tree of the file a reinstall picks ("mod1") - the only
+	// case a reinstall may replace it in place.
+	require.NoError(t, cache.MarkFileCompleteWithMembers(svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: "src", ModID: "mod1", Version: "1.0"}), "mod1", []string{"mod1.esp", "shared.esp"}))
 
 	seedInstalledMod(t, svc, game, "src", "other", "1.0", true, map[string][]byte{"shared.esp": []byte("other-content")})
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
