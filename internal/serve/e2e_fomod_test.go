@@ -369,7 +369,15 @@ func TestE2E_FomodWizard_InstallFromFile(t *testing.T) {
 		clickWhenSettled(fomodModal+` [data-action="fomod-finish"]`),
 		waitGone(fomodModal),
 	)
-	require.Eventually(t, func() bool { return e2eDeployed(t, f.Game, "Mods/t.dds") == "4K" }, 30*time.Second, e2ePollInterval)
+	// The tree is deployed before the install records its row, so wait for
+	// both: polling the deployed file alone can read the DB in between.
+	require.Eventually(t, func() bool {
+		if e2eDeployed(t, f.Game, "Mods/t.dds") != "4K" {
+			return false
+		}
+		_, err := f.Svc.GetInstalledMod(t.Context(), "fake", "maputils", f.Game.ID, "default")
+		return err == nil
+	}, 30*time.Second, e2ePollInterval)
 	assert.Equal(t, "README", e2eDeployed(t, f.Game, "Mods/readme.txt"))
 	mod, err := f.Svc.GetInstalledMod(t.Context(), "fake", "maputils", f.Game.ID, "default")
 	require.NoError(t, err)
