@@ -1,0 +1,67 @@
+{
+  "info": {
+    "name": "Plugin rules, vortex spelling",
+    "author": "curator",
+    "domainName": "fallout4"
+  },
+  "collectionConfig": {
+    "recommendNewProfile": false,
+    "excludePluginRules": false
+  },
+  "mods": [
+    {
+      "name": "Base Patch",
+      "version": "1.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 100,
+        "fileId": 1000,
+        "md5": "0123456789abcdef0123456789abcdef",
+        "fileSize": 10,
+        "logicalFilename": "Base Patch",
+        "updatePolicy": "exact"
+      }
+    },
+    {
+      "name": "Late Fix",
+      "version": "2.0",
+      "optional": false,
+      "domainName": "fallout4",
+      "source": {
+        "type": "nexus",
+        "modId": 200,
+        "fileId": 2000,
+        "md5": "fedcba9876543210fedcba9876543210",
+        "fileSize": 10,
+        "logicalFilename": "Late Fix",
+        "updatePolicy": "exact"
+      }
+    }
+  ],
+  "plugins": [
+    { "name": "BasePatch.esm", "enabled": true },
+    { "name": "LateFix.esp", "enabled": true },
+    { "name": "LateFix - Optional.esp", "enabled": false }
+  ],
+  "pluginRules": {
+    "plugins": [
+      {
+        "name": "LateFix.esp",
+        "group": "Late Loaders",
+        "after": ["basepatch.esm"],
+        "requires": ["BasePatch.esm"]
+      },
+      {
+        "name": "LateFix - Optional.esp",
+        "group": "Late Loaders",
+        "incompatible": ["SomethingElse.esp"]
+      }
+    ],
+    "groups": [
+      { "name": "Late Loaders", "after": ["default"] },
+      { "name": "default", "after": [] }
+    ]
+  }
+}

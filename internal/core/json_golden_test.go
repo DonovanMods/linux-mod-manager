@@ -2278,6 +2278,12 @@ func TestJSONGoldens(t *testing.T) {
 			core.CollectionTool{Name: "SSEEdit", Exe: `Data\SSEEdit 4.1.5f\SSEEdit.exe`},
 		},
 		{
+			// #611: the plugin list a collection import saves, as its plan
+			// summarises it (CollectionImport.Plugins).
+			"collection_plugin_summary",
+			core.CollectionPluginSummary{Plugins: 113, Active: 111, Inactive: []string{"Optional Patch.esp", "Unused.esp"}, Rules: 35, Groups: []string{"Underrides", "default", "Fixes"}, Managed: true},
+		},
+		{
 			// #607: the conversion a source collection's import plan carries
 			// (CollectionImport.Source): a free account's manual downloads,
 			// an optional item opted in, the curator's tool listed.
