@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -65,6 +66,15 @@ func (s *recipeSource) ParseManifest(root fs.FS) (source.CollectionManifest, err
 			ModID  string `json:"modId"`
 			FileID string `json:"fileId"`
 			Type   string `json:"type"`
+			// #610: a bundle item, an exact file list and patches.
+			SourceType     string            `json:"sourceType"`
+			FileExpression string            `json:"fileExpression"`
+			Optional       bool              `json:"optional"`
+			Patches        map[string]string `json:"patches"`
+			Hashes         []struct {
+				Path string `json:"path"`
+				MD5  string `json:"md5"`
+			} `json:"hashes"`
 		} `json:"mods"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
@@ -72,8 +82,13 @@ func (s *recipeSource) ParseManifest(root fs.FS) (source.CollectionManifest, err
 	}
 	m := source.CollectionManifest{Name: doc.Name}
 	for _, mod := range doc.Mods {
-		m.Mods = append(m.Mods, source.ManifestMod{Name: mod.Name, Version: "1", SourceType: "nexus",
-			ModID: mod.ModID, FileID: mod.FileID, UpdatePolicy: "exact", ModType: mod.Type})
+		mm := source.ManifestMod{Name: mod.Name, Version: "1", SourceType: cmp.Or(mod.SourceType, "nexus"),
+			ModID: mod.ModID, FileID: mod.FileID, UpdatePolicy: "exact", ModType: mod.Type,
+			FileExpression: mod.FileExpression, Optional: mod.Optional, Patches: mod.Patches}
+		for _, h := range mod.Hashes {
+			mm.FileList = append(mm.FileList, source.ManifestFileHash{Path: h.Path, MD5: h.MD5})
+		}
+		m.Mods = append(m.Mods, mm)
 	}
 	return m, nil
 }

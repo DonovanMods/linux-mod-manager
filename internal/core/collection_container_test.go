@@ -3,12 +3,17 @@ package core
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -145,5 +150,56 @@ func TestCollectionContainer_BundledMembersKeepAnOlderReadersWarning(t *testing.
 			require.True(t, strings.HasPrefix(path.Clean(f.Name)+"/", collectionFilesDir), "%s is read as bundled by an older reader", f.Name)
 			require.True(t, f.Mode().IsRegular(), "%s is a plain file", f.Name)
 		}
+	}
+}
+
+// zipWith builds a container of collection.yaml and the given members.
+func zipWith(t *testing.T, members map[string][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	f, err := w.Create(collectionDocMember)
+	require.NoError(t, err)
+	_, err = f.Write([]byte("lmm_collection: 1\nname: p\n"))
+	require.NoError(t, err)
+	for name, data := range members {
+		f, err := w.Create(name)
+		require.NoError(t, err)
+		_, err = f.Write(data)
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+	return buf.Bytes()
+}
+
+// TestCollectionContainer_PatchMembers (#610): a container's patches/ holds
+// each patch as patches/<sha256>.diff, checked against its name and its
+// format; anything else under patches/ refuses the container.
+func TestCollectionContainer_PatchMembers(t *testing.T) {
+	patch, err := os.ReadFile(filepath.Join("testdata", "bsdiff", "same-length-edit.patch"))
+	require.NoError(t, err)
+	sum := sha256.Sum256(patch)
+	sha := hex.EncodeToString(sum[:])
+	_, bundle, _, err := readCollectionContainer(zipWith(t, map[string][]byte{"patches/" + sha + ".diff": patch}))
+	require.NoError(t, err)
+	require.NotNil(t, bundle)
+	assert.Equal(t, patch, bundle.patches[sha])
+	assert.Empty(t, bundle.items)
+
+	other := []byte("HDIFF13&not bsdiff")
+	otherSum := sha256.Sum256(other)
+	for name, members := range map[string]map[string][]byte{
+		"named for another patch": {"patches/" + strings.Repeat("ab", 32) + ".diff": patch},
+		"not a sha256 name":       {"patches/readme.txt": patch},
+		"upper-case name":         {"patches/" + strings.ToUpper(sha) + ".diff": patch},
+		"nested":                  {"patches/x/" + sha + ".diff": patch},
+		"another format":          {"patches/" + hex.EncodeToString(otherSum[:]) + ".diff": other},
+		"spelled another way":     {"./patches/" + sha + ".diff": patch},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, _, err := readCollectionContainer(zipWith(t, members))
+			require.Error(t, err)
+			assert.True(t, IsInvalidCollection(err), "%v", err)
+		})
 	}
 }

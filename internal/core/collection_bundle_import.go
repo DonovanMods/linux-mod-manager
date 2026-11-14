@@ -96,7 +96,7 @@ func resolveBundledItems(doc *domain.CollectionDocument, bundle *collectionBundl
 		case !validBundleItem(item):
 			return nil, nil, nil, fmt.Errorf("%w: %q cannot name a bundled item: 1 to 64 letters, digits, '.', '_' or '-', starting with a letter or digit", ErrInvalidBundle, item)
 		case !validBundleCollectionID(collectionID):
-			return nil, nil, nil, fmt.Errorf("%w: a collection with bundled items needs an id of letters, digits, '-' and '_' (this one's is %q)", ErrInvalidBundle, collectionID)
+			return nil, nil, nil, fmt.Errorf("%w: a collection with bundled items needs an id of letters, digits, '-' and '_' (this one's is %q)", ErrInvalidBundle, doc.Info.ID)
 		case !ref.FomodRecord().IsZero():
 			return nil, nil, nil, fmt.Errorf("%w: the bundled item %q records FOMOD installer choices; a bundled item is installed as its files are", ErrInvalidBundle, item)
 		case !ref.FileList.IsZero() || !ref.Patches.IsZero():

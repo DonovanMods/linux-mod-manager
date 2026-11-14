@@ -6,13 +6,16 @@
 package core
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -154,4 +157,60 @@ func (s *Service) keepPendingBundle(game *domain.Game, b *pendingBundle, anyOver
 		return s.keepCollectionContainer(game, b.collectionID, b.data, b.bundle, b.names, b.admitted(anyOverrides))
 	}
 	return s.keepRecipeBundle(game, b, b.admitted(anyOverrides))
+}
+
+// exportPatches reads every patch doc's pinned files name from game's
+// patch store, by sha256, for an export's container; missing names the
+// ones the store does not keep (the profile's collection was imported on
+// another machine), which a recipient cannot apply.
+func (s *Service) exportPatches(game *domain.Game, doc *domain.CollectionDocument) (patches map[string][]byte, missing []string) {
+	for _, item := range doc.Items {
+		for _, in := range refTreeInputs(&item.Ref) {
+			for _, p := range in.Patches {
+				if _, done := patches[p.SHA256]; done || slices.Contains(missing, p.Path) {
+					continue
+				}
+				data, err := s.readPatch(game, p.SHA256)
+				if err != nil {
+					missing = append(missing, firstNonEmpty(item.Name, item.Ref.ModID)+": "+p.Path)
+					continue
+				}
+				if patches == nil {
+					patches = map[string][]byte{}
+				}
+				patches[p.SHA256] = data
+			}
+		}
+	}
+	return patches, missing
+}
+
+// patchContainerFiles lists patches as container members, in name order.
+func patchContainerFiles(patches map[string][]byte) []containerFile {
+	shas := make([]string, 0, len(patches))
+	for sha := range patches {
+		shas = append(shas, sha)
+	}
+	sort.Strings(shas)
+	out := make([]containerFile, len(shas))
+	for i, sha := range shas {
+		data := patches[sha]
+		out[i] = containerFile{name: collectionPatchesDir + sha + recipePatchExt, open: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(data)), nil
+		}}
+	}
+	return out
+}
+
+// patchNotes is what an export with patches tells its author.
+func patchNotes(kept int, missing []string) []string {
+	var notes []string
+	if kept > 0 {
+		notes = append(notes, fmt.Sprintf("The collection patches its mods' files with %d binary patch(es), which the .lmmc container carries; a plain YAML document cannot, so a recipient needs the container.", kept))
+	}
+	if len(missing) > 0 {
+		notes = append(notes, fmt.Sprintf("%d patch(es) are not kept on this machine (%s), so a recipient cannot install the mods they patch: import the collection they came from here first.",
+			len(missing), strings.Join(missing, ", ")))
+	}
+	return notes
 }

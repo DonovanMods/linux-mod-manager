@@ -163,7 +163,7 @@ func (s *Service) bundleItems(ctx context.Context, game *domain.Game, profileNam
 		if ref.SourceID != domain.SourceCollection && !chosen[key] {
 			continue
 		}
-		if !validBundleCollectionID(collectionID) {
+		if bundleCollectionIDFor(collectionID) == "" {
 			return nil, fmt.Errorf("%w: a collection with bundled items needs an id of letters, digits, '-' and '_' (this one's is %q)", ErrInvalidBundle, collectionID)
 		}
 		row, hasRow := rows[key]

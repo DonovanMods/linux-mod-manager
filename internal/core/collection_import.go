@@ -473,7 +473,7 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 	// #623: the bundled items, checked against the container and given the
 	// ids and versions the profile records. #610: a converted source
 	// collection's come from its recipe, kept under the recipe's own id.
-	carriesFiles, bundleID := container, doc.Info.ID
+	carriesFiles, bundleID := container, bundleCollectionIDFor(doc.Info.ID)
 	if recipe != nil {
 		bundle, carriesFiles, bundleID = recipe.bundle(), true, recipe.collectionID()
 	}

@@ -72,13 +72,17 @@ type CollectionExport struct {
 	Bundled []string
 
 	bundles []exportBundle
+	// patches are the binary patches the document's mods install with
+	// (#610), by sha256, read from this machine's patch store: the
+	// container carries them as patches/<sha256>.diff.
+	patches map[string][]byte
 }
 
 // Container returns the export as a `.lmmc` container - what `-o <file>`
 // writes by default, and the web UI downloads - with its bundled files
 // (#623), read back with the importer's own reader before it is returned.
 func (e *CollectionExport) Container() ([]byte, error) {
-	data, err := writeCollectionContainer(e.Document, containerFiles(e.bundles)...)
+	data, err := writeCollectionContainer(e.Document, append(containerFiles(e.bundles), patchContainerFiles(e.patches)...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -173,6 +177,10 @@ func (s *Service) ExportCollection(ctx context.Context, gameID, profileName stri
 		return nil, err
 	}
 	export := &CollectionExport{Document: data, Notes: append(exportNotes(doc), bundleNotes(bundles)...), bundles: bundles}
+	// #610: the patches its mods install with travel in the container.
+	var missing []string
+	export.patches, missing = s.exportPatches(game, doc)
+	export.Notes = append(export.Notes, patchNotes(len(export.patches), missing)...)
 	for _, b := range bundles {
 		export.Bundled = append(export.Bundled, b.item.name)
 	}

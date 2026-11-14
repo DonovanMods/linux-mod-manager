@@ -88,6 +88,25 @@ func validBundleCollectionID(id string) bool {
 	return bundleCollectionIDPattern.MatchString(id)
 }
 
+// bundleCollectionIDFor is the id a collection's bundled items are kept
+// under, given its document id: the id itself when it can lead a bundled
+// item's mod id, or - for a collection converted from a source, whose id
+// is "<source>:<slug>" (#610) - the recipe's id, "<source>-<slug>", which
+// its bundled items were kept under when it was converted, so a
+// re-export and its import name them as the profile does. "" when
+// neither.
+func bundleCollectionIDFor(id string) string {
+	if validBundleCollectionID(id) {
+		return id
+	}
+	if src, slug, ok := strings.Cut(id, ":"); ok && safeCollectionSegment.MatchString(src) && safeCollectionSegment.MatchString(slug) {
+		if c := src + "-" + slug; validBundleCollectionID(c) {
+			return c
+		}
+	}
+	return ""
+}
+
 // BundledModID is the profile's mod id of collectionID's bundled item:
 // "<collection id>.<item>". The document names the item alone; the
 // collection's own id keeps two collections' items of the same name apart.
