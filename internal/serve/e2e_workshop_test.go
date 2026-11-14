@@ -602,7 +602,7 @@ func TestE2E_Workshop_BatchUpdateExcludesTheExternalRow(t *testing.T) {
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelector('[data-action="batch-update"]').disabled`, &externalOnlyDisabled),
 		chromedp.Evaluate(selectRowJS("Managed Mod"), nil),
-		chromedp.Click(`[data-action="batch-update"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-update"]`),
 		chromedp.WaitVisible(`.modal[data-kind="updates"] .plan`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="updates"] .modal__title`, &title),
 	)

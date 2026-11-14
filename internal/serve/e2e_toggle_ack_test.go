@@ -300,7 +300,7 @@ func TestE2E_LibraryBatch_ToggleAcknowledgesEveryRowAtOnce(t *testing.T) {
 		chromedp.Evaluate(selectRowJS("Alpha Mod"), nil),
 		chromedp.Evaluate(selectRowJS("Beta Mod"), nil),
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="batch-disable"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-disable"]`),
 		// BOTH rows, while the FIRST one's own POST is still held open.
 		pollUntil(`document.querySelectorAll(".mod-row--pending").length === 2`),
 		chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &alpha),
@@ -414,7 +414,7 @@ func TestE2E_LibraryBatch_RetryAfterAFailedBatchIsAcknowledged(t *testing.T) {
 		pollUntil(`document.querySelectorAll(".mod-row").length === 2`),
 		chromedp.Evaluate(batchEnableJS, nil),
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="batch-enable"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-enable"]`),
 		// The end-of-batch toast is the batch's own "all done".
 		pollUntil(`Array.from(document.querySelectorAll(".toast")).some((t) => t.textContent.includes("Enabled 0/2"))`),
 		pollUntil(`document.querySelectorAll(".mod-row--pending").length === 0`),
@@ -423,7 +423,7 @@ func TestE2E_LibraryBatch_RetryAfterAFailedBatchIsAcknowledged(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Evaluate(batchEnableJS, nil),
 		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="batch-enable"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="batch-enable"]`),
 	)
 	awaitToggleRequests(t, toggles, 3)
 
