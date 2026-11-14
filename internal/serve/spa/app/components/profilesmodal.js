@@ -585,6 +585,7 @@ function ImportProfileForm({ actions, close }) {
       </label>
       ${error && html`<p class="modal__error">${error}</p>`}
       <${ImportCollectionForm} actions=${actions} close=${close} />
+      <${ImportNexusCollectionForm} actions=${actions} close=${close} />
     </div>
   `;
 }
@@ -653,6 +654,69 @@ export function ImportCollectionForm({ actions, close }) {
         No API key needed. The profile records the collection's list: items you
         are already subscribed to are marked as such, and the rest are listed
         with what to do about them.
+      </p>
+    </form>
+  `;
+}
+
+/** ImportNexusCollectionForm is the profiles modal's NexusMods collection
+ * input (issue 607): `lmm profile import --nexus-collection <ref>`. The
+ * reference - a slug, slug@revision, or the collection page's URL - is
+ * forwarded verbatim; the source decides what it recognises. The plan it
+ * opens lists every item, with a toggle on each optional one (they are left
+ * out by default, as `--with-optional` leaves them out). */
+export function ImportNexusCollectionForm({ actions, close }) {
+  const [ref, setRef] = useState("");
+  const [name, setName] = useState("");
+
+  async function submit(e) {
+    e.preventDefault();
+    const collection = ref.trim();
+    if (!collection) return;
+    close();
+    await actions.openPlan({
+      kind: "profile_import",
+      origin: "profile-import-nexus-collection",
+      title: "Import NexusMods collection",
+      confirmLabel: "Import",
+      options: {
+        nexus_collection: collection,
+        ...(name.trim() ? { profile_name: name.trim() } : {}),
+      },
+    });
+  }
+
+  return html`
+    <form class="profiles-import__collection" onSubmit=${submit}>
+      <h4 class="plan__heading">NexusMods collection</h4>
+      <input
+        type="text"
+        aria-label="NexusMods collection slug or URL"
+        placeholder="Collection slug, slug@revision, or URL"
+        data-testid="nexus-collection-ref"
+        value=${ref}
+        onInput=${(e) => setRef(e.currentTarget.value)}
+      />
+      <input
+        type="text"
+        aria-label="Name for the imported NexusMods collection's profile"
+        placeholder="Profile name (optional)"
+        data-testid="nexus-collection-profile-name"
+        value=${name}
+        onInput=${(e) => setName(e.currentTarget.value)}
+      />
+      <button
+        type="submit"
+        class="button button--primary"
+        data-testid="nexus-collection-import"
+        disabled=${!ref.trim()}
+      >
+        Import collection
+      </button>
+      <p class="empty-state__hint">
+        Needs a NexusMods API key; a free account can read any collection.
+        NexusMods serves downloads to Premium accounts only, so on a free account
+        every mod is listed with its page, for you to download by hand.
       </p>
     </form>
   `;
