@@ -245,8 +245,8 @@ your version unless you name it with --override (or pass
 --override-conflicts). The plugin list and config overrides follow the
 same rule: what you changed since the collection last applied them stays
 yours, and where you both changed something the plan names the conflict
-and its --override key (plugin:<name>, plugins:order, plugins:rules,
-override:<path>). The new version passes the same checks an import
+and its --override key (plugin:NAME, plugins:order, plugins:rules,
+override:PATH). The new version passes the same checks an import
 does: features this lmm lacks refuse the update, its hooks are listed and
 never applied, and overrides that are not text config files are held back
 without --allow-any-overrides. --dry-run --json prints the plan.

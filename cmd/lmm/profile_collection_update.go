@@ -38,7 +38,7 @@ func init() {
 	f.BoolVar(&profileSyncRemoveObsolete, "remove-obsolete", false,
 		"with --collection, remove every mod the new version drops (they are kept by default)")
 	f.StringSliceVar(&profileSyncOverride, "override", nil,
-		"with --collection, take the collection's side of this conflict: a mod you changed (source:mod-id, or the mod id), plugin:<name>, plugins:order, plugins:rules or override:<path>, as the plan names it; repeatable")
+		"with --collection, take the collection's side of this conflict: a mod you changed (source:mod-id, or the mod id), plugin:NAME, plugins:order, plugins:rules or override:PATH, as the plan names it; repeatable")
 	f.BoolVar(&profileSyncOverrideConflicts, "override-conflicts", false,
 		"with --collection, take the collection's side of every conflict - mods, plugin list and overrides (yours is kept by default)")
 	f.BoolVar(&profileSyncWithOptional, "with-optional", false,
