@@ -420,12 +420,23 @@ func TestUnmatchedArchive_VerifyReportsAGoneEntry(t *testing.T) {
 	for _, fix := range []bool{false, true} {
 		vr, err := f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Force: true, Fix: fix}, nil)
 		require.NoError(t, err)
+		// Exactly one row names the gone entry: archiveEntryPass's, never
+		// a second missing_cache one from the records pass for the same
+		// row. A stale_deployment row (the files still deployed) is
+		// another question (#645).
 		var found *core.VerifyFinding
+		var rows []core.VerifyFinding
 		for i := range vr.Result.Findings {
-			if vr.Result.Findings[i].ModID == "42" && vr.Result.Findings[i].Status == "missing" {
+			f := vr.Result.Findings[i]
+			if f.ModID != "42" || f.Status == "stale_deployment" {
+				continue
+			}
+			rows = append(rows, f)
+			if f.Status == "missing" {
 				found = &vr.Result.Findings[i]
 			}
 		}
+		require.Len(t, rows, 1, "fix=%v findings: %+v", fix, rows)
 		require.NotNil(t, found, "fix=%v findings: %+v", fix, vr.Result.Findings)
 		assert.Contains(t, found.Note, "import the archive again")
 		assert.False(t, found.Fixable)

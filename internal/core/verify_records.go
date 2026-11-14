@@ -76,6 +76,12 @@ func (r *verifyRun) recordsPass(installedMods []domain.InstalledMod, files []Dep
 		if adoptedInPlace(r.game, mod) {
 			continue
 		}
+		if isArchiveVariant(mod.Variant) && len(mod.FileIDs) == 0 {
+			// #644: an imported archive's gone entry is archiveEntryPass's
+			// row (the same rows: no recorded file), which says the remedy
+			// - import the archive again - not a second one here.
+			continue
+		}
 		r.result.Issues++
 		note := fmt.Sprintf("version %s is not in the cache any more", mod.Version)
 		if mod.DisplayVersion != "" {
