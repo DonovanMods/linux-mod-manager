@@ -7758,6 +7758,10 @@ func TestE2E_ALockedModStillRefusesRelinkWhenItsDetailIsOffline(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.ModPagePath("fake", "a")),
 		chromedp.WaitVisible(`[data-action="relink"]`, chromedp.ByQuery),
+		// The lock comes from the library listing, which loads in the
+		// background: wait for its hint, or the reads below can land before
+		// the listing does and see an unlocked page (CI on e1e3bbba).
+		chromedp.WaitVisible(`[data-testid="mod-page-locked-actions"]`, chromedp.ByQuery),
 		settleEffects(),
 		// The premise, read off the page rather than assumed: the meta
 		// line's " - locked" suffix comes from ModDetail alone, so its

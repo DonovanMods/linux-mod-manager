@@ -204,6 +204,11 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   // library-first source as the lock - the listing embeds the installed row.
   const skippedVersion = settingsSource?.skipped_version;
   const lockedActions = Boolean(settingsSource?.locked);
+  // Neither the library listing nor the live ModDetail has answered yet (a
+  // direct load of this page, before the background library read lands):
+  // the lock is unknown, so a lock-gated action waits rather than offering
+  // itself for a moment on a mod that may well be locked.
+  const lockUnknown = settingsSource === undefined;
   const manual = Boolean(
     installedMod.manual_only || modPage.detail?.mod?.manual_only,
   );
@@ -350,7 +355,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             type="button"
             class="button"
             data-action="relink"
-            disabled=${lockedActions}
+            disabled=${lockedActions || lockUnknown}
             title=${lockedActions ? "Unlock this mod to re-link it" : undefined}
             onClick=${() =>
               actions.openPlan({
