@@ -80,3 +80,25 @@ func RootForModType(a GameAdapter, g *domain.Game, modType string) (DeployRoot, 
 	}
 	return rr.RootForModType(g, modType)
 }
+
+// LayoutNeutral is the optional capability of an adapter that does nothing
+// to an UNTYPED mod that the identity would not: its NormalizeArchive is the
+// identity and, if it is a RootRouter, its RouteRoots sends every file to
+// the mod_path. Whatever else it does is for mods whose type is stated
+// (RootForModType) - the mod-type adapters of #635 - or for capabilities
+// that do not touch where files go.
+//
+// Core reads it when a game switches adapters: a switch between two
+// layout-neutral adapters re-lays no installed mod and moves none of its
+// files, so nothing needs reinstalling and there is nothing to warn about.
+// The claim is the adapter's, and its own package tests it.
+type LayoutNeutral interface {
+	// LayoutNeutral marks the capability; it has no behaviour.
+	LayoutNeutral()
+}
+
+// IsLayoutNeutral reports whether a is LayoutNeutral. A nil adapter is not.
+func IsLayoutNeutral(a GameAdapter) bool {
+	_, ok := a.(LayoutNeutral)
+	return ok
+}

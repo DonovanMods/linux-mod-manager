@@ -73,6 +73,7 @@
   name: "The Witcher 3: Wild Hunt"
   nexus_id: witcher3
   mod_path: mods
+  adapter: witcher3
 "261550":
   slug: xcom2
   name: XCOM 2
@@ -93,6 +94,7 @@
   name: Baldur's Gate 3
   nexus_id: baldursgate3
   mod_path: Data
+  adapter: baldurs-gate-3
 "1938090":
   slug: call-of-duty-black-ops-6
   name: "Call of Duty: Black Ops 6"

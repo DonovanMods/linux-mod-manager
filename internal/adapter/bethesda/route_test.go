@@ -93,3 +93,24 @@ func TestRootForModType(t *testing.T) {
 	_, ok := adapter.RootForModType(New(), &domain.Game{}, "collectionbundledmod")
 	assert.False(t, ok)
 }
+
+// #635: a mod type one game's Vortex extension registers is known for that
+// game only. starfield-data-folder is game-starfield's "Data Folder" type
+// (src/modTypes/dataPath.ts, the game directory's Data/), which is
+// Starfield's mod_path; another Tier 1 game, or a game the adapter cannot
+// identify, does not know it.
+func TestRootForModType_StarfieldDataFolder(t *testing.T) {
+	for _, g := range []*domain.Game{
+		{ID: "starfield"},
+		{ID: "my-sf", Catalog: "starfield"},
+		{ID: "sf-steam", Launch: &domain.GameLaunch{SteamAppID: "1716740"}},
+	} {
+		got, ok := adapter.RootForModType(New(), g, "starfield-data-folder")
+		assert.True(t, ok, g.ID)
+		assert.Equal(t, modPath, got, g.ID)
+	}
+	for _, g := range []*domain.Game{{ID: "skyrim-se"}, {ID: "fallout4"}, {ID: "unknown"}, {}} {
+		_, ok := adapter.RootForModType(New(), g, "starfield-data-folder")
+		assert.False(t, ok, "%q is not Starfield", g.ID)
+	}
+}

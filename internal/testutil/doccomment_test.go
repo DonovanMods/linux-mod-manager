@@ -22,6 +22,7 @@ func TestExportedIdentifiersHaveDocComments(t *testing.T) {
 		"internal/adapter/bepinex",
 		"internal/adapter/bethesda",
 		"internal/adapter/d2r",
+		"internal/adapter/modtypes",
 		"internal/adapter/icarus",
 		"internal/fomod",
 		"internal/wineprefix",
