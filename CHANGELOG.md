@@ -904,7 +904,8 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   import or update, so `CollectionGonePinsError` (#657, never released) is
   removed. `profile export --json` no longer carries a mod's
   `substituted_for` (nor its new `todo`): both are this machine's records,
-  which the YAML export already left out. A NexusMods account that stops being served downloads
+  which the YAML export already left out. A snapshot keeps both, and a
+  restore puts them back. A NexusMods account that stops being served downloads
   mid-import now leaves each mod a manual download rather than refusing.
 
 - **Every field and form in the web UI is drawn one way (#653).** The

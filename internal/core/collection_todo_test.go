@@ -7,6 +7,7 @@ package core_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -509,4 +510,45 @@ func TestCollectionTodo_AGonePinsRemedyNeverSuggestsAMissingCurrentFile(t *testi
 	require.Len(t, result.Todos, 1)
 	assert.NotContains(t, result.Todos[0].Remedy, "current file")
 	assert.Contains(t, result.Todos[0].Remedy, "skip it")
+}
+
+// #660 re-review: a snapshot keeps a collection profile's machine records -
+// its to-dos and the pin a substitute stands in for - and a restore puts
+// them back. Only a user-facing export strips them.
+func TestSnapshotRestore_KeepsTodosAndSubstitutedFor(t *testing.T) {
+	f := importWithTodos(t)
+	ctx := context.Background()
+	gone := &domain.CollectionTodo{Reason: domain.TodoGonePin, Name: "Mod 11", FileIDs: []string{"110"},
+		CanSkipFile: true, ArchiveMD5: map[string]string{"110": strings.Repeat("a", 32)}}
+	pin := &domain.CollectionPin{Version: "0.9", FileIDs: []string{"99"}}
+	profile, err := config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Three Mods")
+	require.NoError(t, err)
+	profile.FindRef("nexusmods", "11").Todo = gone.Clone()
+	profile.FindRef("nexusmods", "10").SubstitutedFor = pin.Clone()
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), profile))
+
+	_, err = f.svc.CreateSnapshot(ctx, f.game, "Three Mods", "with-records")
+	require.NoError(t, err)
+
+	// The records change after the snapshot.
+	profile.FindRef("nexusmods", "11").Todo = nil
+	profile.FindRef("nexusmods", "10").SubstitutedFor = nil
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), profile))
+
+	plan, err := f.svc.PlanSnapshotRestore(ctx, f.game, "with-records")
+	require.NoError(t, err)
+	_, err = f.svc.ApplySnapshotRestore(ctx, f.game, plan, core.SnapshotRestoreOptions{NoSafetySnapshot: true}, nil)
+	require.NoError(t, err)
+
+	restored, err := config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Three Mods")
+	require.NoError(t, err)
+	assert.Equal(t, gone, restored.FindRef("nexusmods", "11").Todo, "the to-do, its md5s and files included, comes back")
+	assert.Equal(t, pin, restored.FindRef("nexusmods", "10").SubstitutedFor, "the stand-in credit comes back")
+
+	exported, err := f.svc.ExportProfile(ctx, f.game.ID, "Three Mods")
+	require.NoError(t, err)
+	for _, ref := range exported.Mods {
+		assert.Nil(t, ref.Todo, "an export still strips them")
+		assert.Nil(t, ref.SubstitutedFor)
+	}
 }

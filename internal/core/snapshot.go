@@ -388,7 +388,7 @@ func (s *Service) buildSnapshot(ctx context.Context, game *domain.Game, profileN
 		CreatedAt:       time.Now().UTC().Truncate(time.Second),
 		Auto:            auto,
 		ActiveProfile:   s.flaggedActiveProfile(game.ID),
-		ProfileDocument: config.ExportProfileValue(profile),
+		ProfileDocument: config.SnapshotProfileValue(profile), // #660: the machine records stay
 		Installed:       installed,
 		DeployedFiles:   deployed,
 		Originals:       originals,
