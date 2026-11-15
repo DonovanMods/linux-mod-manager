@@ -988,6 +988,17 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   envelope gain an `items` list (each mod's `source_id`, `mod_id`,
   `name`, `reason` and `refusal`) when a failure names mods; `error` and
   `details` are unchanged.
+- **A `.zip` compressed with BZIP2, LZMA, Deflate64, Zstandard or PPMd
+  installs (#656).** lmm reads `.zip` archives itself, but only those
+  compressed the usual way (Deflate, or stored); some mod authors use
+  another method, and such a mod failed with "zip: unsupported compression
+  algorithm". lmm now unpacks such a zip with the `7z` command, as it does
+  `.7z` and `.rar` archives, with the same checks its own reader makes: a
+  member that would land outside the mod, uses lmm's reserved `.lmm-`
+  names, or is a link is refused and nothing is written. Planning an import
+  of such a zip (`lmm import <archive>`, and the web UI's import) lists it
+  through `7z` too. Without `7z` installed, the error names the member,
+  its compression method, and that installing 7-Zip fixes it.
 - **The web UI's collection import is drawn one way (#652).** In the
   **Import collection…** window and the Profiles window's import section,
   every source (a file, a URL, a Steam Workshop collection, a NexusMods
