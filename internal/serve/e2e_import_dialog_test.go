@@ -255,6 +255,21 @@ func TestE2E_ImportDialog_OffersOnlyTheMappedSources(t *testing.T) {
 		assert.Empty(t, f.BrowserErrors())
 	})
 
+	// #653: a source mapped with an empty identifier maps nothing the
+	// import can use - core reads the mapping only when the identifier is
+	// non-empty, and so does the web UI's one rule (isSourceMapped).
+	t.Run("an empty mapping", func(t *testing.T) {
+		f := newE2EFixture(t)
+		f.Svc.RegisterSource(e2eNexusSource{newFakeSource("nexusmods")})
+		f.Game.SourceIDs["steamworkshop"] = ""
+		f.Game.SourceIDs["nexusmods"] = ""
+		require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+		got := importSources(t, f)
+		assert.Equal(t, []string{"file", "url"}, sectionSources(got))
+		assert.Contains(t, got.MapHint, "Steam Workshop")
+		assert.Empty(t, f.BrowserErrors())
+	})
+
 	t.Run("neither", func(t *testing.T) {
 		f := newE2EFixture(t)
 		got := importSources(t, f)
