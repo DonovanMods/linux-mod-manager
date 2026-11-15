@@ -1,8 +1,9 @@
-// gonepins.js - the "needs your attention" group for a NexusMods
-// collection's pinned files NexusMods no longer offers (issue 657). It is
-// its own component so both plan views (plan_profile_import.js, and
-// plan_collection_update.js) render the same thing, and so a restructured
-// plan view only has to place it. ReofferedSection is the update view's
+// gonepins.js - the "needs your attention" choices for a NexusMods
+// collection's pinned files NexusMods no longer offers (issue 657).
+// SourceCollectionSection (plan_profile_import.js) places GonePinsSection
+// beside issue 654's attention group, so the import plan and the
+// collection update plan both show it, and the summary's gone-pin count
+// goes to it. ReofferedSection is the update view's
 // other attention item: a mod the user skipped that the new version pins
 // at an available file, which comes back unless they keep it skipped.
 //
@@ -48,7 +49,7 @@ export function gonePinsUndecided(source) {
 
 /** GonePinsSection renders a converted collection's gone pins with their
  * choices; nothing when it has none. */
-export function GonePinsSection({ source: c, actions }) {
+export function GonePinsSection({ source: c, actions, sectionRef }) {
   const pins = c?.gone_pins ?? [];
   if (pins.length === 0) return null;
   const undecided = pins.filter((pin) => !pin.choice);
@@ -86,6 +87,8 @@ export function GonePinsSection({ source: c, actions }) {
       class="plan__section plan__attention"
       data-testid="gone-pins"
       aria-labelledby="gone-pins-heading"
+      ref=${sectionRef}
+      tabindex="-1"
     >
       <h3 class="plan__heading" id="gone-pins-heading">
         ${`Needs your attention - ${pins.length === 1 ? "1 mod pins" : `${pins.length} mods pin`} a file NexusMods no longer offers`}

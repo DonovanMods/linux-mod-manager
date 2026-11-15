@@ -63,6 +63,10 @@ func TestPlanSourceCollectionImport_FindsAGonePin(t *testing.T) {
 	assert.Equal(t, &core.CollectionCurrentFile{FileID: "101", Name: "Ten 2", Version: "2"}, pin.Current)
 	assert.Empty(t, pin.Choice, "undecided")
 	assert.Contains(t, itemNamed(c, "Ten").Note, "no longer offers")
+	// #654's summary counts it and lists it under Needs your attention.
+	require.NotNil(t, c.Summary)
+	assert.Equal(t, 1, c.Summary.GonePins)
+	assert.Contains(t, c.Summary.Attention, core.CollectionAttentionItem{ID: "10:100", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionGonePin}})
 	assert.Equal(t, map[string]int{"10": 1}, f.src.listCalls,
 		"only the mod the list does not vouch for is listed, once; the optional item is not planned")
 
@@ -131,6 +135,8 @@ func TestPlanSourceCollectionImport_SkipLeavesTheModOutAndRecordsIt(t *testing.T
 	assert.Equal(t, core.GonePinSkip, c.GonePins[0].Choice, "a named skip wins over use-current-all")
 	assert.Equal(t, core.CollectionItemSkipped, itemNamed(c, "Ten").State)
 	assert.Equal(t, 1, c.Counts[core.CollectionItemSkipped])
+	assert.Equal(t, 1, c.Summary.Skipped)
+	assert.Zero(t, c.Summary.GonePins, "decided")
 	assert.Nil(t, plan.Profile.FindRef("nexusmods", "10"))
 
 	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)

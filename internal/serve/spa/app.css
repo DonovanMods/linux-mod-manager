@@ -2509,6 +2509,35 @@ a.row-menu__item.mod-page-link {
   font-size: 0.9em;
 }
 
+/* Issue 654: a plan's text wraps inside the modal - a long mod name, a
+ * curator's note, a link - rather than running off its right edge. */
+.plan__summary,
+.plan__note,
+.plan__mod,
+.plan__paths {
+  overflow-wrap: anywhere;
+}
+
+/* A plan row that IS a choice (a collection's optional mod, issue 654):
+ * its checkbox leads the row, and what follows lines up with the label's
+ * text, not the box. */
+.plan__mod--choice > .form-check {
+  margin-top: 0;
+}
+
+.plan__choice-detail {
+  margin-left: calc(1rem + var(--space-2));
+}
+
+.plan__choice-detail > .plan__note {
+  margin: var(--space-1) 0 0;
+}
+
+.plan__choice-detail > .plan__choice-link {
+  display: inline-block;
+  margin: var(--space-1) 0 0;
+}
+
 /* The list reset for .plan__paths is above, with the plan's own layout;
  * this is the muted type it renders in. (They were two competing `margin`
  * declarations until issue 334's polish pass - the reset's `margin: 0` and

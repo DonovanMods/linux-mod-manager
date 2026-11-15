@@ -112,7 +112,7 @@ func openNexusImport(ref string) chromedp.Tasks {
 		chromedp.WaitVisible(`.profiles-row`, chromedp.ByQuery),
 		chromedp.SetValue(`[data-testid="nexus-collection-ref"]`, ref, chromedp.ByQuery),
 		clickWhenSettled(`[data-testid="nexus-collection-import"]`),
-		chromedp.WaitVisible(`[data-testid="source-items"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="source-collection"]`, chromedp.ByQuery),
 	}
 }
 

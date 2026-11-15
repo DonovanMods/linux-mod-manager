@@ -145,6 +145,9 @@ func TestCollectionUpdate_ASkippedModComesBackWhenRePinned(t *testing.T) {
 		assert.Equal(t, "3", back.NewVersion)
 		assert.Contains(t, back.Note, "previously skipped because its pinned file was gone; the collection now pins file 102 (version 3), which is available")
 		assert.Equal(t, keep, back.KeepSkipped)
+		require.NotNil(t, plan.Source.Summary)
+		assert.Contains(t, plan.Source.Summary.Attention, core.CollectionAttentionItem{ID: "10:102", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionReoffered}},
+			"#654's attention group says it comes back")
 		assert.NotContains(t, keys(plan.Added), "nexusmods:10", "listed once, for attention")
 		assert.NotContains(t, keys(plan.Conflicts), "nexusmods:10")
 

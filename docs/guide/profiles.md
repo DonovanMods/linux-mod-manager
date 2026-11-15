@@ -372,6 +372,7 @@ lmm profile import --nexus-collection iszwwe --game cyberpunk2077
 lmm profile import --nexus-collection iszwwe@484 --game cyberpunk2077
 lmm profile import --nexus-collection https://www.nexusmods.com/games/skyrimspecialedition/collections/xk05aw --as essentials
 lmm profile import --nexus-collection xk05aw --with-optional
+lmm profile import --nexus-collection xk05aw --optional 3863:1
 lmm profile import --nexus-collection https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/revisions/484
 ```
 
@@ -407,7 +408,21 @@ a free account](manual-mods.md#a-nexusmods-collection-on-a-free-account).
 lmm asks NexusMods for your account's tier
 each time it plans a collection, so after upgrading to Premium, plan again.
 
-The plan lists every item and what the import does with it:
+The plan leads with a summary: how many mods will be installed, how many
+are optional (and how many of those you picked), how many installers will
+ask you questions, how many to download by hand, how many items are
+external or prerequisite steps, and anything lmm cannot import. Then come
+the **optional mods**, each with its version, the curator's words for it,
+its file page and its id; then **Needs your attention**: mods whose
+installer will ask (the collection records no answers for it), mods pinned
+to an old or archived file, items lmm does not fetch, and prerequisite
+steps such as SMAPI, each with why. Last is **every item**, in the
+collection's order, with what the import does with it. In the browser the
+summary's counts go to their section, the optional mods have **Select
+all** and **Select none**, and the full list is folded away until you open
+it. A collection update's plan groups its items the same way.
+
+What the import does with each item:
 
 - Each mod is pinned to the **exact file** the curator chose, even an old
   or archived one (NexusMods still serves an archived file, and the plan
@@ -430,8 +445,11 @@ The plan lists every item and what the import does with it:
   the collection was tested with now, and sets the mod to update
   automatically, so the next update check moves it to the newest file.
 - **Optional** mods are left out unless you ask: `--with-optional`
-  includes all of them. In the browser each optional mod also has its own
-  tick box in the plan; the terminal has no per-mod choice.
+  includes all of them, and `--optional <id>` one of them, by the id the
+  plan lists (repeat it for more). An id that is not one of the
+  collection's optional mods is refused, and the message lists the ones
+  that are. In the browser each optional mod has its own tick box in the
+  plan.
 - Mods are put in the collection's install order, and the curator's
   "load after" rules are followed. A rule that names a mod outside the
   collection is skipped, and the plan says so.

@@ -296,9 +296,6 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 		}
 	}
 	printReoffered(plan)
-	if plan.Source != nil {
-		printGonePins(plan.Source, "lmm profile sync --collection")
-	}
 	if len(plan.Removed) > 0 {
 		remove := map[string]bool{}
 		for _, key := range opts.Remove {
@@ -448,7 +445,7 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 		fmt.Printf("\nNo longer in the collection, to get by hand: %s (remove it yourself if you installed it)\n", e.Name)
 	}
 	if plan.Source != nil {
-		printSourceCollection(plan.Source)
+		printSourceCollection(plan.Source, "lmm profile sync --collection")
 	}
 	if len(plan.Unsupported) > 0 {
 		fmt.Printf("\n✗ The new version needs features this version of lmm cannot import:\n")

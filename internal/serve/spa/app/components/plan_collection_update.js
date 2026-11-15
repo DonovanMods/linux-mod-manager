@@ -15,12 +15,17 @@
 // checkbox never re-fetches the collection: it patches the modal's
 // applyOptions. Checking every row is the CLI's --remove-obsolete /
 // --override-conflicts. Every string was sanitised by core.
+//
+// A NexusMods origin's new revision renders through the import plan's
+// SourceCollectionSection, so it is grouped the same way (issue 654): its
+// summary line, its optional mods, the items that need the user, and every
+// item behind a disclosure.
 
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
 import { PlanWarnings } from "./planwarnings.js";
 import { SourceCollectionSection } from "./plan_profile_import.js";
-import { GonePinsSection, ReofferedSection } from "./gonepins.js";
+import { ReofferedSection } from "./gonepins.js";
 
 /** keyOf is an entry's "source:mod" key, the one the options name. */
 function keyOf(it) {
@@ -491,12 +496,6 @@ export function CollectionUpdatePlanView({ plan, modal, actions }) {
       </p>
       <p class="plan__note">From <span class="mono">${from}</span>.</p>
       <${PlanWarnings} warnings=${plan.warnings} testID="update-warnings" />
-      ${
-        // Issue 657: the new version's pinned files NexusMods no longer
-        // offers, decided before anything else.
-        plan.source &&
-        html`<${GonePinsSection} source=${plan.source} actions=${actions} />`
-      }
       <${ReofferedSection} plan=${plan} actions=${actions} />
       ${
         plan.install_instructions &&

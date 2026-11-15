@@ -351,6 +351,7 @@ var (
 	profileImportNexus        string
 	profileImportWithOptional bool
 	profileImportGonePins     gonePinFlags
+	profileImportOptional     []string
 	profileImportAs           string
 	profileImportWithHooks    bool
 	profileImportAnyOverrides bool
@@ -392,6 +393,8 @@ func init() {
 	profileImportCmd.Flags().BoolVar(&profileImportWithOptional, "with-optional", false,
 		"with --nexus-collection, install the collection's optional mods too (they are left out by default)")
 	profileImportGonePins.register(profileImportCmd, "with --nexus-collection, ")
+	profileImportCmd.Flags().StringSliceVar(&profileImportOptional, "optional", nil,
+		"with --nexus-collection, install this optional item (its id as the plan lists it, mod-id:file-id; repeatable)")
 	profileImportCmd.Flags().StringVar(&profileImportAs, "as", "",
 		"name the imported profile (a collection, --workshop-collection or --nexus-collection; an older profile export names its own)")
 	profileImportCmd.Flags().BoolVar(&profileImportWithHooks, "with-hooks", false,
@@ -987,6 +990,9 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	if used := profileImportGonePins.used(); len(used) > 0 {
 		return fmt.Errorf("%s decide a NexusMods collection's pinned files the source no longer offers; use them with --nexus-collection", strings.Join(used, ", "))
 	}
+	if len(profileImportOptional) > 0 {
+		return fmt.Errorf("--optional opts one of a NexusMods collection's optional mods in; use it with --nexus-collection")
+	}
 	// #269 W2: --workshop-collection is a second INPUT to the same flow,
 	// mutually exclusive with a file - a collection is not a document on
 	// disk, and taking both would leave lmm guessing which one the user
@@ -1124,6 +1130,7 @@ func doNexusCollectionImport(ctx context.Context, service *core.Service, game *d
 	plan, err := service.PlanSourceCollectionImport(ctx, game, core.SourceCollectionImportRequest{
 		SourceID: "nexusmods", Ref: profileImportNexus, ProfileName: profileImportAs, WithOptional: profileImportWithOptional,
 		GonePins: profileImportGonePins.choices("nexusmods"),
+		Optional: profileImportOptional,
 	})
 	if err != nil {
 		return err

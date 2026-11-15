@@ -672,17 +672,22 @@ func (s *Service) resolveUpdatePins(ctx context.Context, game *domain.Game, base
 			markSkipped(key, entry.Note)
 			dropItem(key)
 			delete(plan.reoffered, key)
-		} else {
-			for j := range conv.Items {
-				if it := &conv.Items[j]; domain.ModKey(conv.SourceID, it.ModID) == key && it.State == CollectionItemWillInstall {
+		}
+		for j := range conv.Items {
+			if it := &conv.Items[j]; domain.ModKey(conv.SourceID, it.ModID) == key {
+				if !entry.KeepSkipped && it.State == CollectionItemWillInstall {
 					it.Note = entry.Note
 				}
+				if conv.reoffered == nil {
+					conv.reoffered = map[string]bool{}
+				}
+				conv.reoffered[it.ID] = true
 			}
 		}
 		plan.Reoffered = append(plan.Reoffered, entry)
 	}
+	conv.recount()
 	if len(asked) == 0 {
-		conv.recount()
 		return nil
 	}
 	outcome := decideGonePins(conv, asked, choices, have)
