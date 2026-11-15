@@ -628,10 +628,15 @@ function attentionText(reason, it) {
       return "A prerequisite: install it by hand, with its own installer.";
     case "old_file":
       return "The curator pinned an older file of this mod; lmm installs that exact file.";
-    case "unsupported":
-      return (it.features ?? []).length > 0
-        ? `lmm cannot import it (needs ${it.features.join(", ")}).`
-        : "lmm cannot import it.";
+    case "unsupported": {
+      const needs =
+        (it.features ?? []).length > 0
+          ? ` (needs ${it.features.join(", ")})`
+          : "";
+      return it.optional
+        ? `lmm cannot import it${needs}, so this optional mod is left out.`
+        : `lmm cannot import it${needs}.`;
+    }
     default:
       return reason.replaceAll("_", " ");
   }

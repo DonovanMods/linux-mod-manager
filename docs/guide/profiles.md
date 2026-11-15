@@ -432,8 +432,10 @@ What the import does with each item:
   automatically, so the next update check moves it to the newest file.
 - **Optional** mods are left out unless you ask: `--with-optional`
   includes all of them, and `--optional <id>` one of them, by the id the
-  plan lists (repeat it for more). In the browser each optional mod has
-  its own tick box in the plan.
+  plan lists (repeat it for more). An id that is not one of the
+  collection's optional mods is refused, and the message lists the ones
+  that are. In the browser each optional mod has its own tick box in the
+  plan.
 - Mods are put in the collection's install order, and the curator's
   "load after" rules are followed. A rule that names a mod outside the
   collection is skipped, and the plan says so.

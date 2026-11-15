@@ -29,13 +29,14 @@ func (e2eGroupingSource) AccountTier(context.Context) (source.Tier, error) {
 
 // e2eGroupingRecipe has a normal mod, one whose installer asks, two
 // optional mods (one with a long unbroken name and the curator's words for
-// it) and an item fetched by hand.
+// it), an optional mod lmm cannot import, and an item fetched by hand.
 const e2eGroupingRecipe = `{"Name": "Grouped", "Mods": [
 	{"Name": "Ten", "Version": "1.0", "SourceType": "nexus", "ModID": "10", "FileID": "100", "UpdatePolicy": "exact"},
 	{"Name": "Asks", "Version": "1.0", "SourceType": "nexus", "ModID": "11", "FileID": "110", "UpdatePolicy": "exact", "InstallerType": "fomod"},
 	{"Name": "Optional_Texture_Pack_For_Ultra_High_Resolution_Screens_v2.0.0-final-release-candidate", "Version": "2.0", "SourceType": "nexus", "ModID": "12", "FileID": "120", "UpdatePolicy": "exact", "Optional": true,
 	 "Instructions": "Recommended for 4K screens: see https://example.invalid/a/very/long/path/that/never/breaks/on/its/own/because/it/has/no/spaces/at/all"},
 	{"Name": "Opt B", "Version": "3.0", "SourceType": "nexus", "ModID": "13", "FileID": "130", "UpdatePolicy": "exact", "Optional": true},
+	{"Name": "Opt C", "Version": "1.0", "SourceType": "nexus", "ModID": "14", "FileID": "140", "UpdatePolicy": "exact", "Optional": true, "FileOverrides": ["c.txt"]},
 	{"Name": "Hand", "SourceType": "manual", "URL": "https://example.invalid/hand", "Instructions": "Unzip it into the game folder.", "UpdatePolicy": "exact"}]}`
 
 func newE2EGroupingFixture(t *testing.T) e2eFixture {
@@ -105,7 +106,7 @@ const groupingOptionalCount = `document.querySelector('[data-count="optional"]')
 func TestE2E_CollectionPlan_GroupsSummarisesAndImportsTheSelection(t *testing.T) {
 	f := newE2EGroupingFixture(t)
 
-	var order, summary string
+	var order, summary, attentionC string
 	var before groupingRows
 	var misaligned []string
 	f.runInBrowser(t,
@@ -116,14 +117,17 @@ func TestE2E_CollectionPlan_GroupsSummarisesAndImportsTheSelection(t *testing.T)
 		textContent(`[data-testid="collection-summary"]`, &summary),
 		chromedp.Evaluate(groupingRowsJS, &before),
 		chromedp.Evaluate(groupingCheckAlignJS, &misaligned),
+		textContent(`[data-testid="collection-attention"] [data-item="14:140"]`, &attentionC),
 	)
 	assert.Equal(t, "ok", order)
-	assert.Contains(t, summary, "2 will be installed · 2 optional (0 selected) · 1 will ask installer questions · 1 external or prerequisite")
-	assert.Equal(t, []string{"12:120", "13:130"}, before.Optional, "one row per optional mod, and the counts agree")
-	assert.Equal(t, []string{"11:110=installer_questions", "item:4=external"}, before.Attention)
-	assert.Equal(t, 5, before.Everything, "every item is in the full list")
+	assert.Contains(t, summary, "2 will be installed · 3 optional (0 selected) · 1 will ask installer questions · 1 external or prerequisite · 1 cannot be imported")
+	assert.Equal(t, []string{"12:120", "13:130", "14:140"}, before.Optional, "one row per optional mod, and the counts agree")
+	assert.Equal(t, []string{"11:110=installer_questions", "14:140=unsupported", "item:5=external"}, before.Attention,
+		"the optional mod lmm cannot import is listed where its count points")
+	assert.Equal(t, 6, before.Everything, "every item is in the full list")
 	assert.False(t, before.Open, "the full list is closed by default")
 	assert.Empty(t, misaligned, "each checkbox sits beside its label's first line")
+	assert.Contains(t, attentionC, "so this optional mod is left out")
 
 	// A count goes to its section: the install count opens the full list.
 	var opened bool
@@ -136,7 +140,7 @@ func TestE2E_CollectionPlan_GroupsSummarisesAndImportsTheSelection(t *testing.T)
 	// Toggling one re-plans, and the summary follows: one more to install.
 	f.runInBrowser(t,
 		clickWhenSettled(`[data-testid="collection-optional"] [data-item="12:120"] input[type="checkbox"]`),
-		pollUntil(groupingOptionalCount+` === "2 optional (1 selected)"`),
+		pollUntil(groupingOptionalCount+` === "3 optional (1 selected)"`),
 		textContent(`[data-testid="collection-summary"]`, &summary),
 	)
 	assert.Contains(t, summary, "3 will be installed")
@@ -144,11 +148,11 @@ func TestE2E_CollectionPlan_GroupsSummarisesAndImportsTheSelection(t *testing.T)
 	// Select all, then none, then the one again.
 	f.runInBrowser(t,
 		clickWhenSettled(`[data-action="optional-select-all"]`),
-		pollUntil(groupingOptionalCount+` === "2 optional (2 selected)"`),
+		pollUntil(groupingOptionalCount+` === "3 optional (2 selected)"`),
 		clickWhenSettled(`[data-action="optional-select-none"]`),
-		pollUntil(groupingOptionalCount+` === "2 optional (0 selected)"`),
+		pollUntil(groupingOptionalCount+` === "3 optional (0 selected)"`),
 		clickWhenSettled(`[data-testid="collection-optional"] [data-item="12:120"] input[type="checkbox"]`),
-		pollUntil(groupingOptionalCount+` === "2 optional (1 selected)"`),
+		pollUntil(groupingOptionalCount+` === "3 optional (1 selected)"`),
 	)
 
 	// Narrow: nothing overruns a phone-width modal, the full list open.

@@ -1,6 +1,12 @@
 package core
 
-import "slices"
+import (
+	"errors"
+	"fmt"
+	"slices"
+	"sort"
+	"strings"
+)
 
 // collection_plan_summary.go is a converted collection's plan overview
 // (#654): the counts a large collection's plan leads with, and the items
@@ -27,8 +33,9 @@ const (
 	// CollectionAttentionOldFile is an item whose pinned file the source
 	// files as an old version or archived: lmm installs that exact file.
 	CollectionAttentionOldFile CollectionAttentionReason = "old_file"
-	// CollectionAttentionUnsupported is a required item lmm cannot import:
-	// it refuses the import (CollectionImport.Unsupported names why).
+	// CollectionAttentionUnsupported is an item lmm cannot import: a
+	// required one refuses the import (CollectionImport.Unsupported names
+	// why), an optional one is left out.
 	CollectionAttentionUnsupported CollectionAttentionReason = "unsupported"
 )
 
@@ -109,10 +116,10 @@ func (c *ConvertedCollection) summarise() *CollectionPlanSummary {
 				reasons = append(reasons, CollectionAttentionExternal)
 			}
 		case CollectionItemUnsupported:
+			// An optional one is listed too (#654 review): the count says
+			// it cannot be imported, and the list says which and why.
 			s.Unsupported++
-			if !it.Optional {
-				reasons = append(reasons, CollectionAttentionUnsupported)
-			}
+			reasons = append(reasons, CollectionAttentionUnsupported)
 		}
 		if toInstall {
 			if facts.installerAsks {
@@ -128,4 +135,64 @@ func (c *ConvertedCollection) summarise() *CollectionPlanSummary {
 		}
 	}
 	return s
+}
+
+// ErrUnknownOptionalItem is an optional item named by an id (`--optional`,
+// or the web plan's optional list) that is not an optional item of the
+// collection: a typo, another revision's item, or a required item (#654
+// review). The plan is refused rather than opting nothing in.
+var ErrUnknownOptionalItem = errors.New("not an optional item of this collection")
+
+// UnknownOptionalItemError names the ids ErrUnknownOptionalItem refuses,
+// and the collection's own optional ids, as its plan lists them.
+type UnknownOptionalItemError struct {
+	// IDs are the refused ids, sorted; Optional the collection's optional
+	// item ids, in its order.
+	IDs      []string
+	Optional []string
+}
+
+// Error names the refused ids and points at the ids the plan lists.
+func (e *UnknownOptionalItemError) Error() string {
+	msg := fmt.Sprintf("%s %s: %s", plural(len(e.IDs), "optional item id", "optional item ids"),
+		strings.Join(e.IDs, ", "), ErrUnknownOptionalItem)
+	if len(e.Optional) == 0 {
+		return msg + "; the collection has no optional mods"
+	}
+	return msg + "; its plan lists the optional mods with their ids: " + strings.Join(e.Optional, ", ")
+}
+
+// Is reports ErrUnknownOptionalItem.
+func (e *UnknownOptionalItemError) Is(target error) bool { return target == ErrUnknownOptionalItem }
+
+// plural is one when n is 1, else many.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// checkOptionalIDs refuses an opted-in id that names no optional item of
+// items (*UnknownOptionalItemError).
+func checkOptionalIDs(items []*convItem, optional map[string]bool) error {
+	var ids []string
+	valid := map[string]bool{}
+	for _, it := range items {
+		if it.Optional {
+			ids = append(ids, it.ID)
+			valid[it.ID] = true
+		}
+	}
+	var bad []string
+	for id := range optional {
+		if !valid[id] {
+			bad = append(bad, id)
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	sort.Strings(bad)
+	return &UnknownOptionalItemError{IDs: bad, Optional: ids}
 }

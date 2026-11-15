@@ -312,3 +312,18 @@ func TestAPIFlow_ProfileImportNexus_SummaryFollowsTheSelection(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, profile.FindRef("nexusmods", "12"), "the opted-in item is imported")
 }
+
+// #654 review: the optional list the plan view posts is checked by core -
+// an id that names no optional item of the collection (a required item's
+// here) is the caller's 400, naming it and the ids the plan lists.
+func TestAPIFlow_ProfileImportNexus_UnknownOptionalIDIsRefused(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	seedNexusCollection(t, svc, game, source.TierPremium)
+	for _, id := range []string{"99:1", "10:100"} {
+		rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/profile_import", game),
+			`{"nexus_collection":"abcdef","optional":["`+id+`"]}`)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), id)
+		assert.Contains(t, rec.Body.String(), "12:120", "the collection's optional ids are named")
+	}
+}

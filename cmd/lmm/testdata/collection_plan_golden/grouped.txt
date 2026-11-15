@@ -9,9 +9,10 @@ Optional mods (3) - opt one in with --optional <id>, or every one with --with-op
   [x] Opt In 2.1  id 5:55
   [-] Opt Refused  id 6:66 (cannot be imported)
 
-Needs your attention (4):
+Needs your attention (5):
   - Asks: its installer will ask you at install (the collection records no answers)
   - Old: the curator pinned an older file of this mod; lmm installs that exact file
+  - Opt Refused: lmm cannot import it (needs file_overrides), so this optional mod is left out
   - SMAPI: a prerequisite: install it by hand, with its own installer
       https://www.nexusmods.com/stardewvalley/mods/2400
   - Ext: lmm does not fetch it: get it by hand; gone pin

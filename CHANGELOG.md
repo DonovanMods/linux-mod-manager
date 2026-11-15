@@ -28,7 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`lmm profile import --nexus-collection` takes `--optional <id>`
   (#654)**, repeatable, to include one optional mod by the id the plan
   lists, as `lmm profile sync --collection` already did and as the web
-  UI's per-mod tick box does.
+  UI's per-mod tick box does. On both commands, and in the web UI, an id
+  that is not one of the collection's optional mods is now refused with
+  the ids that are, instead of being accepted and opting nothing in.
 - **Importing a collection is easy to find in the web UI (#650).** The
   profile picker's menu has **Import collection…** under **Manage
   profiles…**, and Mission Control's Profile card has the same button: it

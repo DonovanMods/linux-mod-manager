@@ -385,6 +385,10 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 		raiseCollection(CollectionFeatureManifestUnavailable)
 		items = convertListItems(in)
 	}
+	// #654 review: an opted-in id must name one of the optional items.
+	if err := checkOptionalIDs(items, in.optional); err != nil {
+		return nil, err
+	}
 
 	// Item-level features, and whether each item is included.
 	for _, it := range items {

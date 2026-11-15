@@ -60,6 +60,7 @@ func groupedCollectionFixture() *core.ConvertedCollection {
 			Attention: []core.CollectionAttentionItem{
 				{ID: "2:22", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionInstallerQuestions}},
 				{ID: "3:33", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionOldFile}},
+				{ID: "6:66", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionUnsupported}},
 				{ID: "2400:240", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionPrerequisite}},
 				{ID: "item:7", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionExternal, "gone_pin"}},
 			},
@@ -97,7 +98,8 @@ func TestPrintSourceCollection_SectionOrder(t *testing.T) {
 	sectionsInOrder(t, stdout,
 		"Summary: 4 will be installed, 3 optional (1 selected), 1 will ask installer questions, 2 external or prerequisite, 1 cannot be imported",
 		"Optional mods (3)", "[ ] Opt 2.0  id 4:44", "Recommended for 4K screens.", "[x] Opt In 2.1  id 5:55", "[-] Opt Refused  id 6:66 (cannot be imported)",
-		"Needs your attention (4):", "Asks: its installer will ask you", "Old: the curator pinned an older file",
+		"Needs your attention (5):", "Asks: its installer will ask you", "Old: the curator pinned an older file",
+		"Opt Refused: lmm cannot import it (needs file_overrides), so this optional mod is left out",
 		"SMAPI: a prerequisite", "Ext: lmm does not fetch it: get it by hand; gone pin",
 		"Every item (8), in the collection's order:", "Plain 1.0")
 }
@@ -163,4 +165,42 @@ func TestRunProfileImport_OptionalNeedsANexusCollection(t *testing.T) {
 	err := runProfileImport(profileImportCmd, []string{"some.yaml"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--optional opts one of a NexusMods collection's optional mods in; use it with --nexus-collection")
+}
+
+// #654 review: an --optional id that names no optional item of the
+// collection is refused, naming it and the ids the plan lists, rather than
+// importing nothing extra in silence.
+func TestDoNexusCollectionImport_UnknownOptionalIDIsRefused(t *testing.T) {
+	for _, id := range []string{"12:12", "10:100"} {
+		t.Run(id, func(t *testing.T) {
+			svc, game, _ := nexusCollectionService(t)
+			setNexusFlags(t, "abcdef", false)
+			setNexusOptional(t, id)
+			stdout, _, err := captureStdoutStderrErr(t, func() error {
+				return doNexusCollectionImport(context.Background(), svc, game)
+			})
+			require.ErrorIs(t, err, core.ErrUnknownOptionalItem, stdout)
+			assert.Contains(t, err.Error(), id)
+			assert.Contains(t, err.Error(), "its plan lists the optional mods with their ids: 12:120")
+			_, getErr := svc.NewProfileManager().Get(context.Background(), game.ID, "Three Mods")
+			assert.Error(t, getErr, "nothing is imported")
+		})
+	}
+}
+
+// The same check holds `lmm profile sync --collection --optional`.
+func TestDoCollectionUpdate_UnknownOptionalIDIsRefused(t *testing.T) {
+	svc, game, _ := nexusCollectionService(t)
+	setNexusFlags(t, "abcdef", false)
+	_, _, err := captureStdoutStderrErr(t, func() error {
+		return doNexusCollectionImport(context.Background(), svc, game)
+	})
+	require.NoError(t, err)
+	setCollectionSyncFlags(t, func() { profileSyncOptional = []string{"99:1"} })
+	stdout, _, err := captureStdoutStderrErr(t, func() error {
+		return doCollectionUpdate(context.Background(), svc, game, []string{"Three Mods"})
+	})
+	require.ErrorIs(t, err, core.ErrUnknownOptionalItem, stdout)
+	assert.Contains(t, err.Error(), "99:1")
+	assert.Contains(t, err.Error(), "12:120")
 }

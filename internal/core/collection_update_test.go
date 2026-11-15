@@ -587,3 +587,22 @@ func TestCollectionUpdate_SameVersionFileSwapReinstalls(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, applyPlan.NoChanges, "the profile and the installation agree")
 }
+
+// #654 review: an optional id that names no optional item of the collection
+// refuses the import plan and the update plan alike, naming it.
+func TestCollection_UnknownOptionalIDIsRefused(t *testing.T) {
+	f := newUpdateFixture(t)
+	ctx := context.Background()
+	_, err := f.svc.PlanSourceCollectionImport(ctx, f.game, core.SourceCollectionImportRequest{
+		SourceID: "nexusmods", Ref: "abcdef", ProfileName: "coll", Optional: []string{"12:12"},
+	})
+	require.ErrorIs(t, err, core.ErrUnknownOptionalItem)
+	assert.Contains(t, err.Error(), "12:12")
+	assert.Contains(t, err.Error(), "12:120", "the plan's optional id is named")
+
+	f.importNexus(t)
+	f.bumpNexus(t)
+	_, err = f.svc.PlanCollectionUpdate(ctx, f.game, core.CollectionUpdateRequest{Profile: "coll", Optional: []string{"10:101"}, OptionalChosen: true})
+	require.ErrorIs(t, err, core.ErrUnknownOptionalItem, "a required item is not an optional one")
+	assert.Contains(t, err.Error(), "10:101")
+}

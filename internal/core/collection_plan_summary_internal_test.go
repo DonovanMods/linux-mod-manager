@@ -114,3 +114,14 @@ func TestCollectionPlanSummary_InstalledItemsNeedNoAttention(t *testing.T) {
 		assert.NotContains(t, []string{"2:22", "3:33"}, a.ID)
 	}
 }
+
+// #654 review: an optional item lmm cannot import is counted as one that
+// cannot be imported, so it is listed with why, like a required one.
+func TestCollectionPlanSummary_AnOptionalItemLmmCannotImportIsListed(t *testing.T) {
+	m := summaryManifest()
+	m.Mods[3].FileOverrides = []string{"b.txt"} // Opt, 4:44
+	c := mustConvert(t, summaryInput(m))
+	assert.Equal(t, 2, c.Summary.Unsupported)
+	assert.Contains(t, c.Summary.Attention,
+		CollectionAttentionItem{ID: "4:44", Reasons: []CollectionAttentionReason{CollectionAttentionUnsupported}})
+}

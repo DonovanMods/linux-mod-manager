@@ -510,10 +510,14 @@ func collectionAttentionText(r core.CollectionAttentionReason, it core.Converted
 	case core.CollectionAttentionOldFile:
 		return "the curator pinned an older file of this mod; lmm installs that exact file"
 	case core.CollectionAttentionUnsupported:
+		text := "lmm cannot import it"
 		if len(it.Features) > 0 {
-			return "lmm cannot import it (needs " + strings.Join(it.Features, ", ") + ")"
+			text += " (needs " + strings.Join(it.Features, ", ") + ")"
 		}
-		return "lmm cannot import it"
+		if it.Optional {
+			text += ", so this optional mod is left out"
+		}
+		return text
 	}
 	return strings.ReplaceAll(string(r), "_", " ")
 }
