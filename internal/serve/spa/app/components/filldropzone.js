@@ -68,8 +68,9 @@ export function splitForFill(files, sizes) {
 }
 
 /** FillDropZone is the folder chooser, drop target and file picker for
- * profile's fill. */
-export function FillDropZone({ profile, game, actions, onStarted }) {
+ * profile's fill. returnTo is the modal its plan goes back to once
+ * confirmed or cancelled (issue 660's Finish collection panel), if any. */
+export function FillDropZone({ profile, game, actions, onStarted, returnTo }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
@@ -101,6 +102,8 @@ export function FillDropZone({ profile, game, actions, onStarted }) {
       options,
       context,
       extra,
+      // Issue 660: opened from Finish collection, the plan goes back there.
+      returnTo,
     });
   }
 

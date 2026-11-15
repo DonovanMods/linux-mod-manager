@@ -24,6 +24,7 @@ import { UninstallBatchModal } from "./uninstallbatchmodal.js";
 import { ShortcutsModal } from "./shortcutsmodal.js";
 import { LaunchDriftModal } from "./launchmodal.js";
 import { FomodWizardModal } from "./fomodwizard.js";
+import { FinishCollectionModal } from "./finishcollection.js";
 import { Toasts } from "./toasts.js";
 import { ReleaseBanner } from "./releasebanner.js";
 import { FromFileInput } from "./updatefromfile.js";
@@ -160,6 +161,15 @@ export function App({ state, onThemeChange, actions }) {
       html`<${FomodWizardModal}
         key=${state.modal.seq}
         modal=${state.modal}
+        actions=${actions}
+      />`
+    }
+    ${
+      modalType === "finish-collection" &&
+      html`<${FinishCollectionModal}
+        key=${state.modal.seq}
+        modal=${state.modal}
+        state=${state}
         actions=${actions}
       />`
     }

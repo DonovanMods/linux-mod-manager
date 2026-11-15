@@ -65,6 +65,10 @@ export function initialState() {
     // snapshot belongs to a game, and hiding the ones taken under another
     // profile would hide exactly the one a user switched away from.
     snapshots: null,
+    // todos is the route profile's core.CollectionTodoReport (issue 660):
+    // its collection items left to finish - what the Profile card's
+    // "Finish collection" counts. An empty list for a profile with none.
+    todos: null,
     // omnibarSearch is the omnibar's fan-out (issue 331, design doc §Search:
     // "Enter fans out to the game's sources and appends 'From sources (n)'
     // rows in place"): {status: "loading"|"ready"|"error", query, report,
@@ -171,6 +175,7 @@ export function initialState() {
       health: null,
       conflicts: null,
       snapshots: null,
+      todos: null,
       status: null,
     },
   };

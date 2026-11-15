@@ -71,14 +71,16 @@ export function InlineJob({
   useEffect(() => registerOrigin(origin), [origin]);
 
   const jobID = state.origins?.[origin];
-  if (!jobID) return children;
+  // A readout-only InlineJob (issue 660's Finish collection panel) has no
+  // children: nothing shows until its origin starts a job.
+  if (!jobID) return children ?? null;
 
   const summary = (state.jobsIndex ?? []).find((row) => row.id === jobID);
   // readoutElsewhere (issue 535): the surface renders the FINISHED readout
   // on a line of its own (FinishedJobReadout), so the control comes back
   // here once the job is over. While it runs the control still morphs.
   if (readoutElsewhere && summary && summary.state !== "running") {
-    return children;
+    return children ?? null;
   }
   const frame = state.jobProgress?.[jobID];
 

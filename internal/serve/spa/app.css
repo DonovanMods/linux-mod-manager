@@ -1333,6 +1333,11 @@ summary + .form-section {
   color: var(--warn);
 }
 
+/* issue 660: a collection with items left to finish needs the user. */
+.tray__state--attention {
+  color: var(--warn);
+}
+
 /* ---------------------------------------------------------------------- */
 /* Attention cards.                                                       */
 /* ---------------------------------------------------------------------- */
@@ -3080,6 +3085,11 @@ a.row-menu__item.mod-page-link {
   color: var(--warn);
 }
 
+/* issue 660: a collection's items left to finish need the user. */
+.job-progress--attention .job-progress__text {
+  color: var(--warn);
+}
+
 .job-progress__dismiss {
   color: var(--text-muted);
 }
@@ -3232,6 +3242,11 @@ a.row-menu__item.mod-page-link {
 
 .toast--failure {
   border-left-color: var(--danger);
+}
+
+/* issue 660: a collection import or finish that left items to finish. */
+.toast--attention {
+  border-left-color: var(--warn);
 }
 
 .toast__body {
@@ -4648,4 +4663,53 @@ a.row-menu__item.mod-page-link {
 
 .plugin-list__finding--error {
   color: var(--danger);
+}
+
+/* issue 660: Finish collection - a collection profile's items left to
+ * finish, one row each: its name, reason and remedy, then its actions. */
+.finish-collection__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.finish-collection__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.finish-collection__row:last-child {
+  border-bottom: none;
+}
+
+.finish-collection__text {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.finish-collection__name {
+  margin-right: var(--space-2);
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.finish-collection__detail {
+  overflow-wrap: anywhere;
+}
+
+.finish-collection__actions {
+  flex: 0 0 auto;
+}
+
+.finish-collection__row > .fill-drop {
+  flex: 1 1 100%;
+}
+
+.tray__finish {
+  padding: 0 var(--space-3) var(--space-2);
 }

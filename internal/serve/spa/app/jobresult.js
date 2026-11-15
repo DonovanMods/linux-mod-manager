@@ -86,6 +86,14 @@ export function useJobResultLoadOrders(jobID, jobState) {
   return useJobResultRead(jobID, jobState)?.loadOrders ?? NO_LOAD_ORDERS;
 }
 
+// useJobResultFinish returns the collection profile a finished collection
+// import, update or finish left items to finish in (issue 660): {profile,
+// todos}, or null when it left none. Same shared read.
+export function useJobResultFinish(jobID, jobState) {
+  const collection = useJobResultRead(jobID, jobState)?.collection;
+  return collection?.todos > 0 ? collection : null;
+}
+
 // useJobResultLoader returns the loader refusal a finished job's result
 // carries when the job refused before writing anything (issue 602), or
 // null. Same shared read.
@@ -120,6 +128,8 @@ export const RESULT_WARNING_KINDS = new Set([
   // Issue 613: a collection update - an obsolete member it could not
   // remove, a recipe it could not drop, and its converge's own warnings.
   "collection_update",
+  // Issue 660: finishing a collection - what its installs said.
+  "collection_finish",
 ]);
 // PLUGIN_LIST_KINDS are the job kinds whose result has a `plugins` field.
 const PLUGIN_LIST_KINDS = new Set(["deploy", "purge"]);
@@ -168,7 +178,37 @@ function readResult(status) {
     PLUGIN_LIST_KINDS.has(status?.kind) && Array.isArray(result?.load_orders)
       ? result.load_orders.filter((r) => typeof r?.status === "string")
       : NO_LOAD_ORDERS;
-  return { warnings, purge, verify, failures, loader, plugins, loadOrders };
+  return {
+    warnings,
+    purge,
+    verify,
+    failures,
+    loader,
+    plugins,
+    loadOrders,
+    // A finish in which an item failed again fails as a job, with its
+    // result as the failure's details (core.CollectionFinishIncompleteError).
+    collection: collectionOf(status?.kind, result ?? status?.error?.details),
+  };
+}
+
+/** collectionOf is a collection job's count of its collection (issue 660)
+ * - {profile, todos, total}: the profile, the items it left to finish and
+ * the items the collection lists - or null for a job that is not one: for
+ * a profile import, core.ProfileImportResult (its profile_name); for a
+ * collection update, the result of the import it ran; for a finish, its
+ * own. A recorded-only import carries no tally, so this is what counts it. */
+export function collectionOf(kind, result) {
+  const doc = kind === "collection_update" ? result?.import : result;
+  let profile = "";
+  if (kind === "profile_import") {
+    profile = result?.profile_name ?? "";
+  } else if (kind === "collection_update" || kind === "collection_finish") {
+    profile = result?.profile ?? "";
+  }
+  const total = doc?.total ?? 0;
+  if (!profile || total === 0) return null;
+  return { profile, todos: doc?.todos?.length ?? 0, total };
 }
 
 /** resultWarnings is a result's warnings: its own, and - an update batch's

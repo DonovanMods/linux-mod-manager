@@ -1447,6 +1447,10 @@ type e2eSearchSource struct {
 	// urlGate, when set, holds every GetDownloadURL until it is closed - a
 	// download a scenario keeps in flight while it looks at the page (#587).
 	urlGate <-chan struct{}
+	// recovered, once set, lifts urlErrs: the source serves its files again
+	// (#660's retry of a failed download). Atomic, since a scenario sets it
+	// while the server's jobs may read it.
+	recovered atomic.Bool
 }
 
 func newE2ESearchSource(t *testing.T, id string) *e2eSearchSource {
@@ -1556,7 +1560,7 @@ func (s *e2eSearchSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, f
 			return "", ctx.Err()
 		}
 	}
-	if err := s.urlErrs[mod.ID]; err != nil {
+	if err := s.urlErrs[mod.ID]; err != nil && !s.recovered.Load() {
 		return "", err
 	}
 	return s.server.URL + "/" + mod.ID + "/" + fileID, nil

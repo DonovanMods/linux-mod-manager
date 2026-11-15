@@ -152,6 +152,8 @@ export function AttentionCards({
       : 0;
   const notListed = mods ? notListedCount(state, mods) : 0;
   const driftTotal = drift ? driftCount(drift) : 0;
+  // Issue 660: the profile's collection items left to finish.
+  const finish = finishCounts(state, drift);
 
   if (
     updateRows.length === 0 &&
@@ -168,6 +170,7 @@ export function AttentionCards({
     notListed === 0 &&
     driftTotal === 0 &&
     listedOff.length === 0 &&
+    finish.left === 0 &&
     !hasError
   ) {
     return null;
@@ -214,9 +217,11 @@ export function AttentionCards({
         (notInstalled > 0 ||
           notListed > 0 ||
           driftTotal > 0 ||
-          listedOff.length > 0) &&
+          listedOff.length > 0 ||
+          finish.left > 0) &&
         html`<${ProfileCard}
           state=${state}
+          finish=${finish}
           notInstalled=${notInstalled}
           notListed=${notListed}
           listedOff=${listedOff}
@@ -1188,6 +1193,21 @@ function notInstalledCount(state, mods) {
   );
 }
 
+/** finishCounts is the route profile's collection items left to finish
+ * (issue 660): {left, total} - left from its to-do list (state.todos),
+ * else the active profile's drift summary (core.ProfileDrift.unresolved);
+ * total the items the collection lists, or the profile's mod count. */
+export function finishCounts(state, drift) {
+  const profile = state?.route?.profile;
+  const todos = state?.todos?.profile === profile ? state.todos : null;
+  const summary = (state?.status?.profiles ?? []).find(
+    (p) => p.name === profile,
+  );
+  const left = todos ? (todos.todos?.length ?? 0) : (drift?.unresolved ?? 0);
+  const total = todos?.total || summary?.mod_count || left;
+  return { left, total };
+}
+
 /** isActiveProfile reports whether the profile this route shows is the
  * game's active one - the only profile `lmm profile apply` acts on, and the
  * one GET /api/v1/status reports drift for (issue 641). */
@@ -1292,6 +1312,7 @@ export function notListedCount(state, mods) {
  * FOMOD choices, a mod type or an override, not only a mod not installed. */
 function ProfileCard({
   state,
+  finish,
   notInstalled,
   notListed,
   listedOff,
@@ -1321,9 +1342,16 @@ function ProfileCard({
   // then says the profile must be switched to first).
   const driftTotal = drift ? driftCount(drift) : 0;
   const offerApply = active ? driftTotal > 0 : notInstalled > 0;
+  // Issue 660: the active profile's drift leaves the items left to finish
+  // out of its counts, so they are added; another profile's not-installed
+  // subtraction already counts them.
   const count = active
-    ? Math.max(driftTotal, notListed) + listedOff.length
-    : (notInstalled || notListed) + listedOff.length;
+    ? Math.max(driftTotal, notListed) + listedOff.length + (finish?.left ?? 0)
+    : (notInstalled || notListed) + listedOff.length || (finish?.left ?? 0);
+  // Issue 660: the active profile's drift counts the items left to finish
+  // apart from the rest (core.ProfileDrift.unresolved), as `lmm status`
+  // says them: "Collection incomplete: N item(s) left to finish".
+  const unresolved = drift?.unresolved ?? finish?.left ?? 0;
 
   function apply() {
     actions.openPlan({
@@ -1362,6 +1390,14 @@ function ProfileCard({
           </li>`
         }
         ${
+          unresolved > 0 &&
+          html`<li class="card__row" data-testid="profile-unresolved">
+            <span class="card__row-name"
+              >${`Collection incomplete: ${unresolved} item${unresolved === 1 ? "" : "s"} left to finish`}</span
+            >
+          </li>`
+        }
+        ${
           listedOff.length > 0 &&
           html`<li class="card__row" data-testid="profile-listed-off">
             <span class="card__row-name">${offSentence}</span>
@@ -1370,6 +1406,22 @@ function ProfileCard({
       </ul>
       <${ListedOffList} refs=${listedOff} state=${state} actions=${actions} />
       <div class="card__actions">
+        ${
+          (finish?.left ?? 0) > 0 &&
+          html`<button
+            type="button"
+            class="button button--primary"
+            data-action="finish-collection"
+            onClick=${() =>
+              actions.openFinishCollection({
+                game: state.route.game,
+                profile: state.route.profile,
+                openerSelector: '[data-action="finish-collection"]',
+              })}
+          >
+            ${`Finish collection: ${finish.left} of ${finish.total} need you`}
+          </button>`
+        }
         ${
           offerApply &&
           html`<${InlineJob}

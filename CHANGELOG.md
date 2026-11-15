@@ -30,6 +30,22 @@ finish <profile>`** lists and resolves the list (`--retry <mod>|all`,
   plan kind and `GET /api/v1/profiles/{name}/todos`; a collection import
   job that leaves items to finish succeeds, with them on its tally
   (`todos`, `total`).
+- **Finish collection in the web UI (#660).** A collection import, update
+  or finish that leaves mods to finish now reads "Imported 38 of 40 mods;
+  2 need you" in amber, never as a green success, and its notice and
+  activity entry lead with **Finish collection**; a clean one reads
+  "Imported 40 mods". Finish collection lists each mod left with why and
+  its one action - answer its installer (in the installer wizard), use
+  the current file or skip a gone file, retry, or download it by hand
+  (the fill folder chooser and drop zone) - beside Skip, plus Retry all;
+  each is a plan to confirm, which says how many downloaded files it
+  reuses. It opens from the Profile card ("Finish collection: 2 of 40 need
+  you"), the profile's row in Manage profiles and the import's notice and
+  activity entry. The deploy, switch and apply plans name the mods left to
+  finish, the Profile card counts them, and Play's notice says the
+  collection is incomplete. A gone pin the curator pinned exactly is
+  marked so in the import plan. An activity entry's event log keeps one
+  line per mod, its latest.
 - **A gone pin defaults to the mod's current file (#660).** When a file the
   collection pins is gone and a current file stands in for it, the import
   installs the current file without asking first, and the plan says so -

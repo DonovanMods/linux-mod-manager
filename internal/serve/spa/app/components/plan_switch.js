@@ -17,7 +17,7 @@
 
 import { html } from "../render.js";
 import { codeSpans } from "../errortext.js";
-import { PlanWarnings } from "./planwarnings.js";
+import { PlanWarnings, UnresolvedWarning } from "./planwarnings.js";
 import { PlanOverrides } from "./planoverrides.js";
 import { reinstallReason } from "../version.js";
 
@@ -86,6 +86,7 @@ export function SwitchPlanView({ plan }) {
         <span class="mono">${plan.to}</span>.
       </p>
       <${PlanWarnings} warnings=${plan.warnings} />
+      <${UnresolvedWarning} unresolved=${plan.unresolved} />
 
       ${
         plan.already_active &&

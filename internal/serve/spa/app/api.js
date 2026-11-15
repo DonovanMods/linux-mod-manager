@@ -345,6 +345,12 @@ export const profileExportURL = (name, context, bundle = []) => {
 export const getBundleCandidates = (name, context) =>
   get(scoped(`${profilePath(name)}/bundle-candidates`, context));
 
+/** Reads a collection profile's items left to finish (issue 660):
+ * core.CollectionTodoReport - {profile, collection, total, todos} - an
+ * empty list for a profile with none, or with no collection. */
+export const getProfileTodos = (name, context) =>
+  get(scoped(`${profilePath(name)}/todos`, { game: context?.game }));
+
 /** Records a profile's collection identity (issue 621) - minting its
  * collection id on the first call - so the side-effect-free GET at
  * profileExportURL can serve it. Returns domain.CollectionInfo. The GET

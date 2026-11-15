@@ -20,6 +20,7 @@ import { html, useEffect, useRef, useState } from "../render.js";
 import { useMenuPlacement } from "../menuplacement.js";
 import { followJob } from "../sse.js";
 import {
+  appendCollapsed,
   frameFromEvent,
   jobStateLabel,
   jobTitle,
@@ -30,6 +31,7 @@ import {
   resultTallyTone,
 } from "../progress.js";
 import {
+  useJobResultFinish,
   useJobResultPurge,
   useJobResultVerify,
   useJobResultFailures,
@@ -60,6 +62,9 @@ const maxStreamedEvents = 200;
  * so nothing else would tell the user an update of theirs did not apply. */
 function needsAttention(job) {
   if (job.state === "failed") return true;
+  // Issue 660: a collection import, update or finish that left items to
+  // finish needs the user, whoever started it.
+  if (job.state === "succeeded" && (job.tally?.todos ?? 0) > 0) return true;
   return (
     job.origin === "auto" &&
     job.state === "succeeded" &&
@@ -241,6 +246,8 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
   const purgeResult = useJobResultPurge(job.id, job.state);
   const repairResult = useJobResultVerify(job.id, job.state);
   const batchFailures = useJobResultFailures(job.id, job.state);
+  // Issue 660: the profile a collection job left items to finish in.
+  const finish = useJobResultFinish(job.id, job.state);
   const fillTarget =
     job.kind === "profile_import" &&
     job.state === "succeeded" &&
@@ -297,6 +304,25 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
         `
       }
       ${job.state === "failed" && html`<${FailureNextStep} job=${job} actions=${actions} />`}
+      ${
+        finish &&
+        html`<div class="form-actions tray__finish">
+          <button
+            type="button"
+            class="button button--small"
+            data-action="finish-collection"
+            data-job=${job.id}
+            onClick=${() =>
+              actions.openFinishCollection?.({
+                game: job.game,
+                profile: finish.profile,
+                at: job.profile,
+              })}
+          >
+            ${`Finish collection (${finish.todos})…`}
+          </button>
+        </div>`
+      }
       <${PurgeResultDetails} result=${purgeResult} />
       <${VerifyFixResult} outcome=${repairResult} />
       <${BatchFailures} failures=${batchFailures} actions=${actions} />
@@ -482,8 +508,9 @@ function JobEventStream({ jobID }) {
         // of "ok" lines.
         const frame = frameFromEvent(event);
         if (!frame) return;
+        // Issue 660: one line per item, its latest (appendCollapsed).
         setEvents((previous) =>
-          [...previous, { key: ++seq.current, frame }].slice(
+          appendCollapsed(previous, { key: ++seq.current, frame }).slice(
             -maxStreamedEvents,
           ),
         );

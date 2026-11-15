@@ -180,13 +180,13 @@ func awaitJobsSettled() chromedp.Action {
 // outcomeToastJS reads the outcome toast: its title, its detail and its
 // action buttons, with the gap between the first two.
 const outcomeToastJS = `(() => {
-	const toast = document.querySelector(".toast--failure, .toast--success");
+	const toast = document.querySelector(".toast--attention, .toast--failure, .toast--success");
 	const buttons = [...toast.querySelectorAll(".toast__actions button")];
 	const a = buttons[0]?.getBoundingClientRect();
 	const b = buttons[1]?.getBoundingClientRect();
 	const sameRow = a && b && Math.abs(a.top - b.top) < 2;
 	return {
-		tone: toast.classList.contains("toast--failure") ? "attention" : "success",
+		tone: toast.classList.contains("toast--attention") ? "attention" : toast.classList.contains("toast--failure") ? "failure" : "success",
 		title: toast.querySelector(".toast__title").textContent,
 		detail: toast.querySelector(".toast__detail")?.textContent ?? "",
 		buttons: buttons.map((el) => el.textContent.trim()),
@@ -204,14 +204,14 @@ type e2eOutcomeToast struct {
 
 // assertCollectionTodoToast holds the outcome toast of a collection import
 // that left items to finish (#660): the import is no longer refused - it
-// finishes, and the toast stays, needing attention, counting what failed.
-// (Part 2 of #660 gives it Finish collection.)
-func assertCollectionTodoToast(t *testing.T, got e2eOutcomeToast, failed int) {
+// finishes, and the toast stays, needing attention, counting the items
+// left of the collection's, and leads with Finish collection.
+func assertCollectionTodoToast(t *testing.T, got e2eOutcomeToast, left int) {
 	t.Helper()
 	assert.Equal(t, "Collection import finished", got.Title)
 	assert.Equal(t, "attention", got.Tone, "an import that left items to finish is not a plain success")
-	assert.Contains(t, got.Detail, fmt.Sprintf("%d failed", failed))
-	assert.Equal(t, []string{"Open profiles", "Show in activity"}, got.Buttons)
+	assert.Equal(t, fmt.Sprintf("Imported %d of %d mods; %d need you", e2eLongImportItems-left, e2eLongImportItems, left), got.Detail)
+	assert.Equal(t, []string{"Finish collection", "Show in activity"}, got.Buttons)
 	assert.GreaterOrEqual(t, got.Gap, 4.0, "the two actions are two spaced controls")
 }
 
@@ -233,11 +233,11 @@ func TestE2E_ImportFeedback_ProgressThenAStickyOutcome(t *testing.T) {
 		awaitRunningToast(e2eLongImportItems, &title, &progress),
 		chromedp.ActionFunc(func(context.Context) error { release(); return nil }),
 		awaitJobsSettled(),
-		chromedp.WaitVisible(`.toast--failure`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.toast--attention`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelectorAll(".toast--running").length`, &running),
 		chromedp.Evaluate(outcomeToastJS, &toast),
 		quietWindow(),
-		chromedp.Evaluate(`document.querySelectorAll(".toast--failure").length`, &toastsLeft),
+		chromedp.Evaluate(`document.querySelectorAll(".toast--attention").length`, &toastsLeft),
 		chromedp.Evaluate(`fetch("/api/v1/jobs").then((r) => r.text())`, &jobs, awaitPromise),
 	)
 
@@ -264,8 +264,8 @@ func TestE2E_ImportFeedback_ShowInActivityOpensTheJob(t *testing.T) {
 		chromedp.Navigate(f.HomePath()),
 		startLongImportFromModal(),
 		awaitJobsSettled(),
-		chromedp.WaitVisible(`.toast--failure`, chromedp.ByQuery),
-		clickWhenSettled(`.toast--failure [data-action="toast-activity"]`),
+		chromedp.WaitVisible(`.toast--attention`, chromedp.ByQuery),
+		clickWhenSettled(`.toast--attention [data-action="toast-activity"]`),
 		chromedp.WaitVisible(`.tray__row[data-state="succeeded"] .tray__summary[aria-expanded="true"]`, chromedp.ByQuery),
 		textContent(`.tray__row[data-state="succeeded"] .tray__kind`, &kind),
 		chromedp.Evaluate(`document.querySelector('.tray__row[data-state="succeeded"] .tray__summary').getAttribute("aria-expanded") === "true"`, &expanded),
@@ -372,7 +372,7 @@ func TestE2E_ImportFeedback_EveryDoor(t *testing.T) {
 				awaitRunningToast(e2eLongImportItems, &title, &progress),
 				chromedp.ActionFunc(func(context.Context) error { release(); return nil }),
 				awaitJobsSettled(),
-				chromedp.WaitVisible(`.toast--failure`, chromedp.ByQuery),
+				chromedp.WaitVisible(`.toast--attention`, chromedp.ByQuery),
 				chromedp.Evaluate(outcomeToastJS, &toast),
 			)
 			assert.Equal(t, "Importing collection…", title)
@@ -395,7 +395,7 @@ func TestE2E_ImportFeedback_EveryItemFailing(t *testing.T) {
 		chromedp.Navigate(f.HomePath()),
 		startLongImportFromModal(),
 		awaitJobsSettled(),
-		chromedp.WaitVisible(`.toast--failure`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.toast--attention`, chromedp.ByQuery),
 		chromedp.Evaluate(outcomeToastJS, &toast),
 		chromedp.Evaluate(`fetch("/api/v1/profiles/"+encodeURIComponent("Long Collection")+"/todos?game=`+f.Game.ID+`").then((r) => r.json()).then((d) => d.todos.length)`, &todos, awaitPromise),
 	)
