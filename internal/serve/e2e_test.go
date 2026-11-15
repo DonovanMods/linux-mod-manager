@@ -7546,6 +7546,10 @@ func TestE2E_FullModPageRefusesRelinkOnALockedMod(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.ModPagePath("fake", "a")),
 		chromedp.WaitVisible(`[data-action="relink"]`, chromedp.ByQuery),
+		// The button is also disabled, with no title yet, while the page
+		// cannot tell whether the mod is locked (the library read in
+		// flight); wait for the lock to be KNOWN, which the hint marks.
+		chromedp.WaitVisible(`[data-testid="mod-page-locked-actions"]`, chromedp.ByQuery),
 		settleEffects(),
 		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').disabled`, &relinkDisabled),
 		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').title`, &relinkTitle),
