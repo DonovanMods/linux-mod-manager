@@ -24,11 +24,13 @@
 // failed to parse (task-A review note). Every read of `.mods` below goes
 // through `(x.mods ?? [])` for that reason, not just for the list.
 
-import { html, useEffect, useRef, useState } from "../render.js";
+import { html, useEffect, useState } from "../render.js";
 import { navigate, setupPath } from "../router.js";
+import { isSourceMapped } from "../sourcemapping.js";
 import { Modal } from "./modal.js";
 import { codeSpans } from "../errortext.js";
 import { FillDropZone } from "./filldropzone.js";
+import { FilePicker } from "./filepicker.js";
 import {
   createProfile,
   deleteProfile,
@@ -329,7 +331,10 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
     // profile's. The note says so before the click.
     return html`
       <li class="profiles-row" data-testid="profile-duplicate-row">
-        <form class="profiles-row__rename-form" onSubmit=${submitDuplicate}>
+        <form
+          class="form-row profiles-row__rename-form"
+          onSubmit=${submitDuplicate}
+        >
           <input
             type="text"
             name="duplicate-name"
@@ -355,7 +360,7 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
             Cancel
           </button>
         </form>
-        <p class="profiles-row__note empty-state__hint">
+        <p class="profiles-row__note form-hint">
           A copy of <span class="mono">${profile.name}</span>'s mods, load order
           and settings. Nothing is deployed until you switch to it.
         </p>
@@ -367,7 +372,10 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
   if (mode === "renaming") {
     return html`
       <li class="profiles-row">
-        <form class="profiles-row__rename-form" onSubmit=${submitRename}>
+        <form
+          class="form-row profiles-row__rename-form"
+          onSubmit=${submitRename}
+        >
           <input
             type="text"
             value=${nameInput}
@@ -568,9 +576,9 @@ function CreateProfileForm({ context, afterMutation }) {
   }
 
   return html`
-    <form class="profiles-create" onSubmit=${submit}>
-      <h3 class="plan__heading">Create a profile</h3>
-      <div class="profiles-create__row">
+    <form class="form-section profiles-create" onSubmit=${submit}>
+      <h3 class="form-section__heading">Create a profile</h3>
+      <div class="form-row">
         <input
           type="text"
           placeholder="Profile name"
@@ -644,7 +652,7 @@ function BundleExportRow({ profile, context, close }) {
 
   return html`
     <li class="profiles-row" data-testid="profile-bundle-row">
-      <div class="profiles-row__bundle">
+      <div class="form-section profiles-row__bundle">
         <p class="profiles-row__note">
           Export <span class="mono">${profile.name}</span> as a .lmmc that
           carries the files of the mods you tick as your own. Share only files
@@ -662,7 +670,7 @@ function BundleExportRow({ profile, context, close }) {
         }
         ${own.map((c) => {
           const id = `${c.source_id}:${c.mod_id}`;
-          return html`<label class="plan__control" key=${id}>
+          return html`<label class="form-check" key=${id}>
             <input
               type="checkbox"
               data-testid="bundle-candidate"
@@ -681,7 +689,7 @@ function BundleExportRow({ profile, context, close }) {
             ${" "}${carried.map((c) => c.name || c.mod_id).join(", ")}
           </p>`
         }
-        <span class="profiles-row__actions">
+        <span class="form-actions">
           <a
             class="button button--primary button--small"
             data-action="export-bundle-download"
@@ -727,15 +735,14 @@ export function ImportProfileForm({
   heading = "Import a profile",
 }) {
   const status = state?.status;
-  const mapped = status?.source_ids ?? {};
-  const workshop = Object.hasOwn(mapped, "steamworkshop");
-  const nexus = Object.hasOwn(mapped, "nexusmods");
+  const workshop = isSourceMapped(status?.source_ids, "steamworkshop");
+  const nexus = isSourceMapped(status?.source_ids, "nexusmods");
   const { game, profile } = state?.route ?? {};
   const setupHref = game && profile ? setupPath(game, profile, "games") : "";
 
   return html`
     <div class="profiles-import">
-      ${heading && html`<h3 class="plan__heading">${heading}</h3>`}
+      ${heading && html`<h3 class="form-section__heading">${heading}</h3>`}
       <${ImportFileForm} actions=${actions} close=${close} />
       <${ImportURLForm} actions=${actions} close=${close} />
       ${workshop && html`<${ImportCollectionForm} actions=${actions} close=${close} />`}
@@ -744,7 +751,7 @@ export function ImportProfileForm({
         status &&
         !workshop &&
         !nexus &&
-        html`<p class="empty-state__hint" data-testid="import-map-sources">
+        html`<p class="form-hint" data-testid="import-map-sources">
           To import a Steam Workshop or NexusMods collection, map that source to
           this game in${" "}
           ${
@@ -779,19 +786,14 @@ export function ImportProfileForm({
  * here, as `--game` does; the plan warns when the collection names another
  * game.
  *
- * "Choose file…" is a real button that opens the hidden file input, as
- * "Update from file…" does (updatefromfile.js): a label dressed as a button
- * was drawn and focused unlike every other button here (issue 652). */
+ * "Choose file…" is the shared FilePicker (filepicker.js): a real button
+ * that opens a hidden file input (issues 652, 653). */
 function ImportFileForm({ actions, close }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [name, setName] = useState("");
-  const fileRef = useRef(null);
 
-  async function onPick(e) {
-    const file = e.currentTarget.files?.[0];
-    e.currentTarget.value = "";
-    if (!file) return;
+  async function onPick([file]) {
     setBusy(true);
     setError(null);
     try {
@@ -818,11 +820,11 @@ function ImportFileForm({ actions, close }) {
 
   return html`
     <form
-      class="profiles-import__section profiles-import__file"
+      class="form-section profiles-import__section profiles-import__file"
       data-source="file"
       onSubmit=${(e) => e.preventDefault()}
     >
-      <h4 class="plan__heading">From a file</h4>
+      <h4 class="form-section__heading">From a file</h4>
       <input
         type="text"
         aria-label="Name for the imported collection's profile"
@@ -831,28 +833,17 @@ function ImportFileForm({ actions, close }) {
         value=${name}
         onInput=${(e) => setName(e.currentTarget.value)}
       />
-      <button
-        type="button"
-        class="button button--primary"
-        data-testid="import-file-choose"
-        disabled=${busy}
-        onClick=${() => fileRef.current?.click()}
-      >
-        ${busy ? "Uploading…" : "Choose file…"}
-      </button>
-      <input
-        ref=${fileRef}
-        type="file"
+      <${FilePicker}
+        label=${busy ? "Uploading…" : "Choose file…"}
+        inputLabel="Collection or profile export to import"
         accept=".lmmc,.json,.yaml,.yml,application/json"
-        aria-label="Collection or profile export to import"
-        tabindex="-1"
-        aria-hidden="true"
+        variant="primary"
+        testid="import-file-choose"
         disabled=${busy}
-        onChange=${onPick}
-        hidden
+        onFiles=${onPick}
       />
       ${error && html`<p class="modal__error">${error}</p>`}
-      <p class="empty-state__hint">
+      <p class="form-hint">
         An lmm collection (.lmmc), or a profile export (.yaml or .json), which
         keeps its own name.
       </p>
@@ -891,16 +882,18 @@ export function ImportURLForm({ actions, close }) {
 
   return html`
     <form
-      class="profiles-import__section profiles-import__url"
+      class="form-section profiles-import__section profiles-import__url"
       data-source="url"
       onSubmit=${submit}
     >
-      <h4 class="plan__heading">From a URL</h4>
+      <h4 class="form-section__heading">From a URL</h4>
       <input
         type="url"
         aria-label="Collection URL (https)"
         placeholder="https://… (.lmmc or .yaml)"
         data-testid="import-url"
+        aria-invalid=${plain ? "true" : undefined}
+        aria-describedby=${plain ? "import-url-error" : undefined}
         value=${url}
         onInput=${(e) => setURL(e.currentTarget.value)}
       />
@@ -922,11 +915,15 @@ export function ImportURLForm({ actions, close }) {
       </button>
       ${
         plain &&
-        html`<p class="modal__error" data-testid="import-url-error">
+        html`<p
+          class="form-error"
+          id="import-url-error"
+          data-testid="import-url-error"
+        >
           lmm fetches a collection over https only.
         </p>`
       }
-      <p class="empty-state__hint">
+      <p class="form-hint">
         A link to the file itself: a .lmmc, or its YAML. Hooks are never
         imported from a URL.
       </p>
@@ -970,11 +967,11 @@ export function ImportCollectionForm({ actions, close }) {
 
   return html`
     <form
-      class="profiles-import__section profiles-import__collection"
+      class="form-section profiles-import__section profiles-import__collection"
       data-source="steamworkshop"
       onSubmit=${submit}
     >
-      <h4 class="plan__heading">Steam Workshop collection</h4>
+      <h4 class="form-section__heading">Steam Workshop collection</h4>
       <input
         type="text"
         aria-label="Steam Workshop collection id or URL"
@@ -999,7 +996,7 @@ export function ImportCollectionForm({ actions, close }) {
       >
         Import collection
       </button>
-      <p class="empty-state__hint">
+      <p class="form-hint">
         No API key needed. The profile records the collection's list: items you
         are already subscribed to are marked as such, and the rest are listed
         with what to do about them.
@@ -1037,11 +1034,11 @@ export function ImportNexusCollectionForm({ actions, close }) {
 
   return html`
     <form
-      class="profiles-import__section profiles-import__nexus"
+      class="form-section profiles-import__section profiles-import__nexus"
       data-source="nexusmods"
       onSubmit=${submit}
     >
-      <h4 class="plan__heading">NexusMods collection</h4>
+      <h4 class="form-section__heading">NexusMods collection</h4>
       <input
         type="text"
         aria-label="NexusMods collection slug or URL"
@@ -1066,7 +1063,7 @@ export function ImportNexusCollectionForm({ actions, close }) {
       >
         Import collection
       </button>
-      <p class="empty-state__hint">
+      <p class="form-hint">
         Needs a NexusMods API key; a free account can read any collection.
         NexusMods serves downloads to Premium accounts only, so on a free
         account every mod is listed with its page, for you to download by hand.

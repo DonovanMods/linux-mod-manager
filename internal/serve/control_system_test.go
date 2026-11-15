@@ -323,10 +323,18 @@ func TestNoControlStylingOutsideTheControlBlock(t *testing.T) {
 var buttonElement = regexp.MustCompile(`(^|[\s>+~(,])button($|[^\w-"])`)
 
 // controlStylingViolations is TestNoControlStylingOutsideTheControlBlock's
-// checker over any stylesheet, so its own reach can be tested. Comments and
-// the control block are blanked line-for-line first, so a violation's line
-// number is the stylesheet's own.
+// checker over any stylesheet, so its own reach can be tested.
 func controlStylingViolations(css string, classes map[string]bool) []string {
+	return reshapeViolations(css, func(selector string) bool { return targetsButton(selector, classes) },
+		"a button's shape comes from its .button variant/size or .menu-item; keep only placement (margin, position, flex, colour) here")
+}
+
+// reshapeViolations reports every rule outside the control block whose
+// selector targets says it aims at a control and that sets a
+// control-defining property, with why in each message. Comments and the
+// control block are blanked line-for-line first, so a violation's line
+// number is the stylesheet's own.
+func reshapeViolations(css string, targets func(selector string) bool, why string) []string {
 	blank := func(s string) string { return regexp.MustCompile(`[^\n]`).ReplaceAllString(s, " ") }
 	if begin := strings.Index(css, controlBlockBegin); begin >= 0 {
 		if end := strings.Index(css[begin:], controlBlockEnd); end >= 0 {
@@ -339,7 +347,7 @@ func controlStylingViolations(css string, classes map[string]bool) []string {
 	var out []string
 	for _, m := range cssRule.FindAllStringSubmatchIndex(css, -1) {
 		selector := strings.TrimSpace(cssSpaceRun.ReplaceAllString(css[m[2]:m[3]], " "))
-		if strings.HasPrefix(selector, "@") || !targetsButton(selector, classes) {
+		if strings.HasPrefix(selector, "@") || !targets(selector) {
 			continue
 		}
 		line := strings.Count(css[:m[4]], "\n") + 1
@@ -347,9 +355,8 @@ func controlStylingViolations(css string, classes map[string]bool) []string {
 			property, _, ok := strings.Cut(declaration, ":")
 			property = strings.ToLower(strings.TrimSpace(property))
 			if ok && controlDefiningProperty.MatchString(property) {
-				out = append(out, fmt.Sprintf(
-					"app.css:%d: %q sets %s outside the control block - a button's shape comes from its .button variant/size or .menu-item; keep only placement (margin, position, flex, colour) here",
-					line, selector, property))
+				out = append(out, fmt.Sprintf("app.css:%d: %q sets %s outside the control block - %s",
+					line, selector, property, why))
 			}
 		}
 	}
@@ -393,4 +400,195 @@ func TestControlStylingCheck_CatchesEveryForm(t *testing.T) {
 	assert.Contains(t, got[1], "font-size")
 	assert.Contains(t, got[2], "min-height")
 	assert.Contains(t, got[3], "app.css:10:")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 (#653): fields and forms. The same two halves for every other
+// control - no rule outside the control block reshapes a field - and a
+// third for layout: every form, fieldset and label is laid out by the
+// form-layout classes, not a layout of its own.
+// ---------------------------------------------------------------------------
+
+// fieldTags returns every <input>, <select> and <textarea> opening tag in
+// the SPA's modules.
+func fieldTags(t *testing.T) []buttonTag {
+	t.Helper()
+	var out []buttonTag
+	err := filepath.Walk(filepath.Join("spa", "app"), func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || filepath.Ext(path) != ".js" {
+			return err
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		for _, name := range []string{"input", "select", "textarea"} {
+			out = append(out, openingTagsIn(path, string(data), name)...)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	return out
+}
+
+// fieldTargetClasses is every class name some field in the SPA carries.
+func fieldTargetClasses(t *testing.T) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	for _, f := range fieldTags(t) {
+		if value, isExpr, ok := classValue(f.tag); ok {
+			for _, c := range classNames(value, isExpr) {
+				out[c] = true
+			}
+		}
+	}
+	return out
+}
+
+// fieldElement matches the input, select and textarea type selectors (not
+// a class or a longer name that starts with one of them).
+var fieldElement = regexp.MustCompile(`(^|[\s>+~(,])(input|select|textarea)($|[^\w-"])`)
+
+// targetsField reports whether a selector list names a field element or
+// any class in classes.
+func targetsField(selector string, classes map[string]bool) bool {
+	if fieldElement.MatchString(selector) {
+		return true
+	}
+	for _, m := range regexp.MustCompile(`\.([A-Za-z_][\w-]*)`).FindAllStringSubmatch(selector, -1) {
+		if classes[m[1]] {
+			return true
+		}
+	}
+	return false
+}
+
+// fieldStylingViolations is TestNoFieldStylingOutsideTheControlBlock's
+// checker over any stylesheet.
+func fieldStylingViolations(css string, classes map[string]bool) []string {
+	return reshapeViolations(css, func(selector string) bool { return targetsField(selector, classes) },
+		"a field's shape comes from the control block (a .field--mono or .field--code variant, if it needs one); keep only placement (width, margin, flex) here")
+}
+
+// TestNoFieldStylingOutsideTheControlBlock fails on any app.css rule
+// outside the control block that sets a control-defining property - height,
+// padding, border, radius, type size - on a selector targeting a field: an
+// input, select or textarea element, or a class some field carries.
+func TestNoFieldStylingOutsideTheControlBlock(t *testing.T) {
+	classes := fieldTargetClasses(t)
+	for _, v := range fieldStylingViolations(readAppCSS(t), classes) {
+		t.Error(v)
+	}
+}
+
+// TestFieldStylingCheck_CatchesEveryForm pins the field checker's reach: an
+// element selector, an attribute-qualified one, a class a field carries, a
+// rule in @media - and leaves the block, placement and look-alike names
+// (an .input-group class, a [type="text"] attribute alone) alone.
+func TestFieldStylingCheck_CatchesEveryForm(t *testing.T) {
+	classes := map[string]bool{"omnibar": true}
+	css := controlBlockBegin + "\ninput[type=\"text\"] { height: 2rem; }\n" + controlBlockEnd + "\n" +
+		".editor textarea { padding: 0; }\n" +
+		".bar > input[type=\"search\"] { flex: 1; width: 100%; }\n" +
+		".omnibar { border-radius: 0; }\n" +
+		"@media (min-width: 1px) {\n  select { font-size: 2em; }\n}\n" +
+		".input-group { padding: 1rem; }\n" +
+		"[type=\"text\"] { padding: 0; }\n" +
+		".form :is(input, select) { line-height: 2; }\n"
+	got := fieldStylingViolations(css, classes)
+	require.Len(t, got, 4, strings.Join(got, "\n"))
+	assert.Contains(t, got[0], "app.css:4:")
+	assert.Contains(t, got[0], "padding")
+	assert.Contains(t, got[1], "border-radius")
+	assert.Contains(t, got[2], "font-size")
+	assert.Contains(t, got[3], "line-height")
+}
+
+// formLayoutClasses are the form-layout classes each container element
+// must carry one of: a form is a section (or, inline, a row); a fieldset is
+// a section; a label is a field (its text over its control), a check (a
+// box beside its text), or the label of a .form-field <div> whose control
+// cannot sit inside a <label> (a field with a Browse… button beside it).
+var formLayoutClasses = map[string][]string{
+	"form":     {"form-section", "form-row"},
+	"fieldset": {"form-section"},
+	"label":    {"form-field", "form-check", "form-field__label"},
+}
+
+// formLayoutAllowList is every form, fieldset or label that may stay
+// outside the form layout, keyed "file:line", with the reason. Empty, and
+// meant to stay that way.
+var formLayoutAllowList = map[string]string{}
+
+// formLayoutViolations is TestEveryFormUsesTheFormLayout's checker over one
+// module's source.
+func formLayoutViolations(file, src string) []string {
+	var out []string
+	for _, element := range []string{"form", "fieldset", "label"} {
+		want := formLayoutClasses[element]
+		for _, tag := range openingTagsIn(file, src, element) {
+			key := fmt.Sprintf("%s:%d", filepath.ToSlash(tag.file), tag.line)
+			if _, allowed := formLayoutAllowList[key]; allowed {
+				continue
+			}
+			value, isExpr, ok := classValue(tag.tag)
+			if ok && slices.ContainsFunc(classNames(value, isExpr), func(c string) bool { return slices.Contains(want, c) }) {
+				continue
+			}
+			flat := strings.Join(strings.Fields(tag.tag), " ")
+			out = append(out, fmt.Sprintf("%s: a <%s> outside the form layout - give it one of %s (docs/control-system.md): %s",
+				key, element, strings.Join(want, ", "), flat[:min(160, len(flat))]))
+		}
+	}
+	return out
+}
+
+// TestEveryFormUsesTheFormLayout fails on any <form>, <fieldset> or <label>
+// in the SPA's modules that carries none of the form-layout classes for its
+// element: every form, dialog section and Setup panel is laid out one way
+// (issue 653), so a new one cannot build a layout of its own.
+func TestEveryFormUsesTheFormLayout(t *testing.T) {
+	var found int
+	err := filepath.Walk(filepath.Join("spa", "app"), func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || filepath.Ext(path) != ".js" {
+			return err
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		for _, element := range []string{"form", "label"} {
+			found += len(openingTagsIn(path, string(data), element))
+		}
+		for _, v := range formLayoutViolations(path, string(data)) {
+			t.Error(v)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotZero(t, found, "the scan found no <form> or <label> at all - it is reading the wrong place")
+}
+
+// TestFormLayoutCheck_CatchesEveryForm pins the layout checker's reach: a
+// bare form, a fieldset with a class of its own, a label carrying a
+// layout class only through an expression it cannot read - and passes the
+// layout classes, in a literal or an expression, and <legend>/<labelled>
+// look-alikes.
+func TestFormLayoutCheck_CatchesEveryForm(t *testing.T) {
+	src := "// a <form> in prose\n" +
+		"html`<form onSubmit=${(e) => { e.preventDefault(); }}>\n" +
+		"<fieldset class=\"game-editor__group\">\n" +
+		"<label class=${cls}>x</label>\n" +
+		"<form class=\"form-section profiles-import__url\">\n" +
+		"<label class=${wide ? \"form-field\" : \"form-check\"}>y</label>\n" +
+		"<legend class=\"x\">z</legend><labelled-thing />\n" +
+		"<fieldset class=\"form-section\"><label class=\"form-check\"><input type=\"checkbox\" /></label></fieldset>`"
+	got := formLayoutViolations("x.js", src)
+	require.Len(t, got, 3, strings.Join(got, "\n"))
+	assert.Contains(t, got[0], "x.js:2:")
+	assert.Contains(t, got[0], "<form>")
+	assert.Contains(t, got[1], "x.js:3:")
+	assert.Contains(t, got[1], "<fieldset>")
+	assert.Contains(t, got[2], "x.js:4:")
+	assert.Contains(t, got[2], "<label>")
 }

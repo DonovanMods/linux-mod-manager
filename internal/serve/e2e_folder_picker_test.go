@@ -305,7 +305,7 @@ func TestE2E_FolderPicker_AddGameForm(t *testing.T) {
 		chromedp.EmulateViewport(1280, 900),
 		chromedp.Navigate(f.BaseURL+"/"),
 		pollUntil(`document.querySelector('[data-testid="setup-add-game"]') !== null`),
-		clickWhenSettled(form+`.plan__control:has(input[name="add-install-path"]) [data-action="browse-folder"]`),
+		clickWhenSettled(form+`.form-field:has(input[name="add-install-path"]) [data-action="browse-folder"]`),
 		pickerReady(),
 	)
 	// The empty install path opens at the home folder (the sandbox's): go to
@@ -318,7 +318,7 @@ func TestE2E_FolderPicker_AddGameForm(t *testing.T) {
 		waitGone(pickerSel),
 		fieldValue(form+`input[name="add-install-path"]`, &install),
 		// The mod path starts at the install path.
-		clickWhenSettled(form+`.plan__control:has(input[name="add-mod-path"]) [data-action="browse-folder"]`),
+		clickWhenSettled(form+`.form-field:has(input[name="add-mod-path"]) [data-action="browse-folder"]`),
 		pickerReady(),
 		pickerPathIs(filepath.Join(root, "beta")),
 		chromedp.DoubleClick(pickerSel+` [data-folder="deep"]`, chromedp.ByQuery),

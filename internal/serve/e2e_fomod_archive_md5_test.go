@@ -51,7 +51,7 @@ func TestE2E_FomodWizard_ACollectionForAnotherArchive(t *testing.T) {
 		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="profile_import"] [data-testid="collection-installer-choices"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] label.plan__control'))
+			Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] label.form-check'))
 				.find((l) => l.textContent.includes("Download and install"))?.querySelector("input").click();
 		`, nil),
 		settleEffects(),

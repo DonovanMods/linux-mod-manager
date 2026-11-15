@@ -353,17 +353,21 @@ pre,
 
 /* @control-system begin */
 /* ---------------------------------------------------------------------- */
-/* The control system (issue 518) - every button, select and text input.  */
+/* The control system (issues 518, 653) - every control and every form.   */
+/* docs/control-system.md says which class to use for what.               */
 /* ---------------------------------------------------------------------- */
 
 /*
  * One system draws every control in this application, so that controls
  * sharing a row line up and a control's look says what it does. The rules
- * below are the ONLY place a button's height, padding, border, radius or
- * type size is set (control_system_test.go's TestNoControlStylingOutside
+ * below are the ONLY place a button's or a field's height, padding,
+ * border, radius or type size is set (control_system_test.go's
+ * TestNoControlStylingOutsideTheControlBlock and TestNoFieldStylingOutside
  * TheControlBlock); an element class may still place a control - margin,
- * position, flex, colour - but never reshape it. Every <button> carries
- * "button" or "menu-item" (TestEveryButtonUsesTheControlSystem).
+ * position, flex, width, colour - but never reshape it. Every <button>
+ * carries "button" or "menu-item" (TestEveryButtonUsesTheControlSystem);
+ * every form, fieldset and label carries a form-layout class, defined at
+ * the end of the block (TestEveryFormUsesTheFormLayout).
  *
  * Variants (one per button; default is the secondary action):
  *   .button                  secondary: bordered, on the raised surface
@@ -672,12 +676,14 @@ input[type="password"] {
    text on the sunken surface, a quiet border - rather than faded to half
    strength, so no rule anywhere paints at partial opacity
    (TestPartialOpacityIsAllowListed's allow-list is empty). A native
-   checkbox or radio keeps the browser's own disabled rendering. The
-   borderless variants stay borderless: only their text dims. */
+   checkbox or radio keeps the browser's own disabled rendering (a switch
+   has its own, below). The borderless variants stay borderless: only their
+   text dims. */
 .button:disabled,
 .button[aria-disabled="true"],
-input:disabled,
-select:disabled {
+input:not([type="checkbox"]):not([type="radio"]):disabled,
+select:disabled,
+textarea:disabled {
   border-color: var(--border-subtle);
   background: var(--surface-sunken);
   color: var(--text-muted);
@@ -709,7 +715,16 @@ input:focus-visible {
   outline-offset: -2px;
 }
 
+/*
+ * Fields (issue 653). A text field, a select and a textarea are one look:
+ * the sunken fill, the strong border, the control type size. A one-line
+ * field (a select or a text-entry input) is exactly --control-height, the
+ * height of the .button beside it, so a field and its button line up in a
+ * .form-row. A textarea is the same field, three control heights tall at
+ * least, growing downwards.
+ */
 select,
+textarea,
 input[type="search"],
 input[type="text"],
 input[type="url"],
@@ -717,8 +732,6 @@ input[type="number"],
 input[type="email"],
 input[type="tel"],
 input[type="password"] {
-  height: var(--control-height);
-  padding: 0 var(--space-2);
   /* --border-strong, not --border-subtle (issue 334's a11y pass): a control
    * whose fill barely differs from the page behind it has only its border
    * to identify it as a control, which WCAG 2.1 SC 1.4.11 holds to 3:1.
@@ -729,6 +742,153 @@ input[type="password"] {
   color: var(--text-primary);
 }
 
+select,
+input[type="search"],
+input[type="text"],
+input[type="url"],
+input[type="number"],
+input[type="email"],
+input[type="tel"],
+input[type="password"] {
+  height: var(--control-height);
+  padding: 0 var(--space-2);
+}
+
+textarea {
+  min-height: calc(3 * var(--control-height));
+  padding: var(--space-2);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* A field whose value is a path, an id or source text: the monospace face
+ * at the control's own size (the .mono utility would shrink it). */
+.field--mono {
+  font-family: var(--font-mono);
+}
+
+/* A code editor's textarea (the custom-source YAML editor): flush inside
+ * its own framed editor (.source-editor__frame wears the border and the
+ * focus ring), on the raised surface, at the gutter's type size so the
+ * line numbers beside it stay level with its lines. */
+.field--code {
+  min-height: 16rem;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-raised);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+
+.field--code:focus-visible {
+  outline: none;
+}
+
+/* Read-only: a value shown in a field's frame that cannot be typed into -
+ * the quiet border and the page's own fill, its text still readable. */
+input[readonly],
+textarea[readonly] {
+  border-color: var(--border-subtle);
+  background: var(--surface-base);
+  color: var(--text-secondary);
+}
+
+/* Inline validation: a field the form refuses carries aria-invalid="true"
+ * (which a screen reader announces) and is drawn in the danger colour; the
+ * sentence saying why is a .form-error beside it. */
+[aria-invalid="true"]:is(select, textarea, input) {
+  border-color: var(--danger);
+}
+
+/*
+ * Checkboxes and radios: the browser's own box, one rem square, in the
+ * accent colour when checked. A box never shrinks in a flex row, and it
+ * sits on its label's first line (.form-check).
+ */
+input[type="checkbox"],
+input[type="radio"] {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled {
+  cursor: not-allowed;
+}
+
+/* A switch: a checkbox with role="switch" (an on/off setting that takes
+ * effect at once, like Setup's automatic updates). A track with a knob -
+ * the knob is a background circle, since an <input> has no pseudo-elements
+ * to draw one with - at the start when off, at the end on the accent when
+ * on. */
+input[type="checkbox"][role="switch"] {
+  appearance: none;
+  width: 2rem;
+  height: 1.125rem;
+  border: var(--control-border-width) solid var(--border-strong);
+  border-radius: 1rem;
+  background-color: var(--surface-sunken);
+  background-image: radial-gradient(
+    circle,
+    var(--border-strong) 0 0.3rem,
+    transparent 0.3125rem
+  );
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: 1rem 1rem;
+  transition: background-position var(--motion-fast) var(--motion-ease);
+}
+
+input[type="checkbox"][role="switch"]:checked {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: radial-gradient(
+    circle,
+    var(--accent-contrast) 0 0.3rem,
+    transparent 0.3125rem
+  );
+  background-position: right center;
+}
+
+input[type="checkbox"][role="switch"]:disabled {
+  border-color: var(--border-subtle);
+  background-color: var(--surface-sunken);
+  background-image: radial-gradient(
+    circle,
+    var(--border-subtle) 0 0.3rem,
+    transparent 0.3125rem
+  );
+}
+
+/* The file picker: a native file input is never drawn. A .button opens it
+ * (input.click()), so the picker is focused, sized and labelled like every
+ * other button - a <label> dressed as one was not focusable at all
+ * (issue 652). components/filepicker.js is the one place that pairs them. */
+input[type="file"] {
+  display: none;
+}
+
+/* Fieldset and legend: a group of fields named by its legend, with none of
+ * the browser's own frame. A legend reads like a .form-field's label. */
+fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+legend {
+  margin: 0 0 var(--space-1);
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
 /* A search field carries this application's own clear control
  * (.omnibar__clear), which also resets what the search fanned out; the
  * browser's built-in cancel only empties the field, and drawing both put
@@ -737,6 +897,165 @@ input[type="search"]::-webkit-search-cancel-button,
 input[type="search"]::-webkit-search-decoration {
   display: none;
   appearance: none;
+}
+
+/*
+ * Form layout (issue 653). Every form, dialog section and Setup panel is
+ * built from these, not from a layout of its own:
+ *
+ *   .form-section   one titled unit: its heading (.form-section__heading,
+ *                   or a <legend> when the section is a <fieldset>), its
+ *                   fields, its actions, then its hint - a column whose
+ *                   fields run its width and whose buttons keep theirs. A
+ *                   <form> is one; a section may hold sections.
+ *   .form-field     a label over its control (.form-field--inline: beside
+ *                   it, as in a toolbar): the <label> wrapping the
+ *                   label text and one field, which fills the field's width
+ *                   - or, for a control that cannot sit inside a <label>
+ *                   (a path field with its Browse… button), a <div> holding
+ *                   a <label class="form-field__label" for=…>, the control,
+ *                   and the field's hint and error
+ *   .form-check     a checkbox, radio or switch beside its label text, the
+ *                   box on the text's first line
+ *   .form-row       a field and its button inline, bottoms aligned: the
+ *                   field takes the room, the button keeps its width
+ *                   (.form-row--top: fields of unequal height, tops
+ *                   aligned)
+ *   .form-actions   a form's buttons, in one wrapping row
+ *   .form-hint      the muted sentence under a field or section
+ *   .form-error     the sentence saying why a field or form was refused
+ *
+ * A section's fields run its full width; .form-section--measure holds every
+ * field in it to a reading measure where the section is a whole page
+ * column (Setup).
+ */
+.form-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.form-section + .form-section {
+  margin-top: var(--space-4);
+}
+
+/* A button in a section is its own width, not a bar across the column. */
+.form-section > .button {
+  align-self: flex-start;
+}
+
+.form-section--measure > :is(input, select, textarea, .form-row),
+.form-section--measure .form-field {
+  max-width: 60ch;
+}
+
+.form-section__heading {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
+.form-field > :is(input, select, textarea, .form-row) {
+  width: 100%;
+}
+
+.form-field__label {
+  color: var(--text-secondary);
+}
+
+/* A label beside its control rather than over it: a toolbar's Filter and
+ * Sort, a slide-over's one-line setting. */
+.form-field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.form-field--inline > :is(input, select, textarea) {
+  width: auto;
+}
+
+.form-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+/* The box sits centred on the label's first line however the text wraps. */
+.form-check > :is(input[type="checkbox"], input[type="radio"]) {
+  margin-top: calc((1.5em - 1rem) / 2);
+}
+
+.form-check > input[role="switch"] {
+  margin-top: calc((1.5em - 1.125rem) / 2);
+}
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.form-row > :is(input, select, textarea, .form-field, .form-section) {
+  flex: 1 1 12rem;
+  width: auto;
+  min-width: 0;
+}
+
+/* Fields of different heights side by side (a select beside a checklist):
+ * tops aligned instead. */
+.form-row--top {
+  align-items: flex-start;
+}
+
+/* A section inside a row: its own top margin would push it below its
+ * neighbours. */
+.form-row > .form-section + .form-section {
+  margin-top: 0;
+}
+
+.form-row > .button {
+  flex: none;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.form-hint,
+.form-error {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.form-hint {
+  color: var(--text-muted);
+}
+
+.form-error {
+  color: var(--danger);
 }
 /* @control-system end */
 
@@ -1118,15 +1437,6 @@ input[type="search"]::-webkit-search-decoration {
   margin-bottom: var(--space-2);
 }
 
-.card__select-all {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-secondary);
-  font-size: 0.8em;
-  cursor: pointer;
-}
-
 /* The card's list takes the slack so every card in the row ends its
  * actions at the same height (issue 334's density pass): without it a
  * three-finding Health card and a one-row Updates card put their buttons
@@ -1347,18 +1657,6 @@ input[type="search"]::-webkit-search-decoration {
   white-space: nowrap;
 }
 
-/* A label wrapping its own control (issue 334's spacing pass). Without the
- * flex gap the label text sat flush against the <select> - "FilterAll" and
- * "SortRelevance" - which read as one word at a glance.
- * Shared by the library toolbar and the search page's own sort. */
-.library__control {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-secondary);
-  font-size: 0.85em;
-}
-
 .library__table {
   width: 100%;
   border-collapse: collapse;
@@ -1524,13 +1822,15 @@ input[type="search"]::-webkit-search-decoration {
  * accessible name is set on the input and overrides the word, because
  * "Select" says nothing about what one press is about to take. */
 .library__select-all {
-  display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  color: inherit;
   font: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
-  cursor: pointer;
+}
+
+.library__select-all > input {
+  margin-top: 0;
 }
 
 .mod-row:hover {
@@ -1920,47 +2220,17 @@ a.row-menu__item.mod-page-link {
   max-width: none;
 }
 
-/* issue 530: the version a plan could not work out, asked for in the
- * confirm modal - the field and its button on one row, wrapping when the
- * modal is narrow. */
-.version-prompt__row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-2);
-}
-
 .slide-over__settings {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-4);
   margin: var(--space-3) 0;
   padding: var(--space-3);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
 }
 
-.slide-over__setting {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-secondary);
-  font-size: 0.9em;
-}
-
 /* The category editor (issue 592): field, Save, Clear on one line, and
  * where the category comes from on its own line under them. */
 .slide-over__category {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-3);
   margin: var(--space-3) 0;
-}
-
-.slide-over__category input {
-  width: 12rem;
 }
 
 .slide-over__category-origin {
@@ -2264,22 +2534,7 @@ a.row-menu__item.mod-page-link {
 }
 
 .plan__advanced-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
   margin-top: var(--space-3);
-}
-
-.plan__option {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  color: var(--text-secondary);
-  font-size: 0.9em;
-}
-
-.plan__option--select {
-  flex-wrap: wrap;
 }
 
 .plan__option-hint {
@@ -2305,16 +2560,7 @@ a.row-menu__item.mod-page-link {
   font-size: 1rem;
 }
 
-.fomod__group {
-  min-width: 0;
-  margin: 0 0 var(--space-4);
-  padding: 0;
-  border: 0;
-}
-
 .fomod__legend {
-  padding: 0;
-  margin-bottom: var(--space-2);
   color: var(--text-primary);
   font-weight: 600;
 }
@@ -2327,12 +2573,8 @@ a.row-menu__item.mod-page-link {
 }
 
 .fomod__option {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-2) 0;
+  padding-top: var(--space-2);
   border-top: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
 }
 
 .fomod__option-text {
@@ -2383,12 +2625,7 @@ a.row-menu__item.mod-page-link {
 }
 
 .sources-map__toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
   min-width: 16rem;
-  color: var(--text-secondary);
-  font-size: 0.9em;
 }
 
 .sources-map__identifier {
@@ -2398,9 +2635,6 @@ a.row-menu__item.mod-page-link {
 /* The inline form a plan renderer draws when the mutation needs an answer
    before it has anything to preview (C-3: mod re-link). */
 .plan__form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
   margin-top: var(--space-4);
 }
 
@@ -2414,47 +2648,11 @@ a.row-menu__item.mod-page-link {
 
 /* The type-the-name gate on a destructive plan (C-3: purge). */
 .plan__confirm-name {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
   margin-top: var(--space-4);
-  color: var(--text-secondary);
-  font-size: 0.9em;
 }
 
 .plan__heading--warn {
   color: var(--warn);
-}
-
-/* install's version/file picker (issue 331, plan_install.js) - the one plan
- * renderer with something to CHOOSE rather than only read. */
-.plan__section--picker {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-}
-
-.plan__control {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  color: var(--text-secondary);
-  font-size: 0.85em;
-}
-
-/* issue 637: the install picker's files are checkboxes, several of which
- * may be checked - a fieldset, so its legend names the group to a screen
- * reader, unstyled to sit beside the version select like any control. */
-.plan__files-picker {
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.plan__files-legend {
-  padding: 0;
-  margin-bottom: var(--space-1);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -3471,9 +3669,6 @@ a.row-menu__item.mod-page-link {
 }
 
 .plugins-rules__form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
   margin: 0 0 var(--space-2);
 }
 
@@ -3528,50 +3723,18 @@ a.row-menu__item.mod-page-link {
 }
 
 .profiles-row__rename-form {
-  display: flex;
   flex: 1;
-  align-items: center;
-  gap: var(--space-2);
 }
 
 /* issue 623: the row's "Export with my files" form - its note, the mods to
    bundle and its two controls, stacked. */
 .profiles-row__bundle {
-  display: flex;
   flex: 1;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
 }
 
 .profiles-create,
 .profiles-import {
   margin-top: var(--space-4);
-}
-
-.profiles-create__row {
-  display: flex;
-  gap: var(--space-2);
-}
-
-/* The import section's sources (issue 652): the file, the URL, a Steam
-   Workshop collection (issue 269 W2) and a NexusMods collection (issue
-   607), each laid out the same way - its heading, its own full-width
-   fields, its button, then its one hint underneath. A column at every
-   width: two text fields and a button in a row would each be a few
-   characters wide inside a modal, and the hint is a full sentence. Each
-   form keeps a class of its own as well, so a selector for one never finds
-   another. */
-.profiles-import__section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-items: flex-start;
-  margin-top: var(--space-3);
-}
-
-.profiles-import__section > input {
-  width: 100%;
 }
 
 /* The fill drop zone (issue 608): the archives downloaded by hand for a
@@ -3599,10 +3762,6 @@ a.row-menu__item.mod-page-link {
 .fill-drop__status {
   margin: 0;
   color: var(--text-secondary);
-}
-
-.fill-drop label.button {
-  cursor: pointer;
 }
 
 .fill-drop__status {
@@ -3665,12 +3824,6 @@ a.row-menu__item.mod-page-link {
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.setup-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
 /* Two cards in one Setup panel (issue 368's review, Minor 6): SetupAdopt
    renders its Steam Workshop card as a SIBLING section, and the panel around
    them is a plain block, so the second card's heading sat flush against the
@@ -3679,12 +3832,6 @@ a.row-menu__item.mod-page-link {
    first-run page already puts between its sections. */
 .setup-section + .setup-section {
   margin-top: var(--space-6);
-}
-
-/* Archive import's "Choose archive…" (issue 520): a button its own width,
- * not a bar stretched across the column the section lays out. */
-.setup-import__pick {
-  align-self: flex-start;
 }
 
 /* The keyboard-shortcuts help's own table (issue 334's gate review,
@@ -3732,12 +3879,6 @@ a.row-menu__item.mod-page-link {
   margin-top: var(--space-3);
   color: var(--text-muted);
   font-size: 0.8125rem;
-}
-
-.setup-section__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
 }
 
 .setup-table {
@@ -3851,12 +3992,6 @@ a.row-menu__item.mod-page-link {
   gap: var(--space-2);
 }
 
-.plan__control--inline {
-  flex-direction: row;
-  align-items: center;
-  gap: var(--space-2);
-}
-
 .empty-state__actions {
   display: flex;
   gap: var(--space-3);
@@ -3928,33 +4063,6 @@ a.row-menu__item.mod-page-link {
   font-size: 0.85em;
 }
 
-/* Issue 421: the form is as wide as its panel - the installed-games picker
-   inside it needs the room - and only its input fields keep a reading
-   measure. */
-.setup-add {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-/* "Pick an installed game…" / "Hide installed games" and "Add game" (issue
- * 526): a button its own width, as .setup-import__pick is, not a bar
- * stretched across the column the form lays out. */
-.setup-add__pick,
-.setup-add__submit {
-  align-self: flex-start;
-}
-
-/* The mod-loader editor sits in its own wrapper (gameloader.js), so its
- * fields need the measure the form's direct children get (issue 526) - in
- * the add form and in a configured game's editor (issue 527) alike. */
-.setup-add > .plan__control,
-.setup-add__advanced .plan__control,
-.setup-add .loader-editor .plan__control,
-.game-editor .loader-editor .plan__control {
-  max-width: 60ch;
-}
-
 .setup-add__catalog {
   padding: var(--space-3);
   border: 1px solid var(--border-subtle);
@@ -4004,16 +4112,6 @@ a.row-menu__item.mod-page-link {
   font-weight: 700;
 }
 
-/* The key field and its submit button only. The env-var hint and the
-   source's instructions are siblings of this form in .setup-auth__row, NOT
-   children of it: this container does not wrap, and a `flex-basis: 100%`
-   only forces a line of its own inside one that does (issue 377). Inside here
-   they were simply two more items on an over-full single line. */
-.setup-auth__login {
-  display: flex;
-  gap: var(--space-2);
-}
-
 /* The live re-key missed its window (issue 334): the key IS saved, so this
  * is a caution, not an error - it takes the whole row's width so the
  * sentence reads as one line under the controls it concerns. */
@@ -4032,7 +4130,6 @@ a.row-menu__item.mod-page-link {
 .setup-auth__instructions {
   flex: 1 0 100%;
   margin: var(--space-1) 0 0;
-  font-size: 0.9em;
   /* The source writes its steps as a numbered list on separate lines (the
      same string `lmm auth login` prints). It is plain text, never markup,
      so pre-line is what keeps those lines instead of collapsing them into
@@ -4050,12 +4147,6 @@ a.row-menu__item.mod-page-link {
 /* Custom sources: the YAML editor (setupsources.js). No editor library
  * (task brief's own call) - line numbers are a plain CSS counter column
  * beside a bare <textarea>. */
-.source-editor {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
 .source-editor__frame {
   display: flex;
   border: 1px solid var(--border-subtle);
@@ -4078,24 +4169,11 @@ a.row-menu__item.mod-page-link {
 
 .source-editor__textarea {
   flex: 1;
-  min-height: 16rem;
-  padding: var(--space-2);
-  border: none;
-  background: var(--surface-raised);
-  color: var(--text-primary);
-  font-size: 0.85em;
-  line-height: 1.5;
-  resize: vertical;
 }
 
-/* The textarea sits flush inside an overflow:hidden frame, so its own
- * outline would be clipped - the FRAME wears the focus ring instead
- * (issue 334's a11y pass). Before this the editor was the one focusable
- * control in the application with no focus indicator at all. */
-.source-editor__textarea:focus {
-  outline: none;
-}
-
+/* The textarea sits flush inside an overflow:hidden frame (.field--code), so
+ * its own outline would be clipped - the FRAME wears the focus ring instead
+ * (issue 334's a11y pass). */
 .source-editor__frame:has(.source-editor__textarea:focus-visible) {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
@@ -4109,10 +4187,6 @@ a.row-menu__item.mod-page-link {
   gap: var(--space-2) var(--space-3);
 }
 
-.source-editor__insert > .empty-state__hint {
-  margin: 0;
-}
-
 .source-editor__report {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-subtle);
@@ -4121,24 +4195,14 @@ a.row-menu__item.mod-page-link {
 
 /* Archive import: the upload progress bar reuses .job-progress (jobprogress.js). */
 .setup-import__staged {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
   padding: var(--space-3);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
 }
 
-/* The mod-loader declaration (issue 359, gameloader.js): the four-field
- * editor and the panel that carries the Steam launch option to paste.
- * Tokens only - the two ratchets over this file (no literal colour outside
- * the token blocks, every pair at WCAG AA) make that a rule, not a habit. */
-.loader-editor {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
+/* The mod-loader declaration (issue 359, gameloader.js): the panel that
+ * carries the Steam launch option to paste. (Its four-field editor is a
+ * .form-section.) */
 .loader-panel {
   display: flex;
   flex-direction: column;
@@ -4291,9 +4355,6 @@ a.row-menu__item.mod-page-link {
  * is narrower than two of them); the source map and the loader, which are
  * lists of their own, run the panel's width below them. */
 .game-editor {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
   padding: var(--space-2) 0;
 }
 
@@ -4304,42 +4365,13 @@ a.row-menu__item.mod-page-link {
   align-items: start;
 }
 
-.game-editor__field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.game-editor__field input {
-  width: 100%;
-}
-
 .game-editor__field > p,
 .game-editor__answer > p {
   margin: 0;
 }
 
-.game-editor__group {
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.game-editor__group > legend {
-  padding: 0;
-}
-
 .game-editor__group .sources-map {
   margin-top: var(--space-2);
-}
-
-.game-editor__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
 }
 
 .game-editor__status {
@@ -4404,43 +4436,9 @@ a.row-menu__item.mod-page-link {
   font-size: 0.9em;
 }
 
-/* Folder chooser (issue 529, folderpicker.js): a directory input with its
-   Browse… button, and the modal behind the button. */
-.folder-field {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.folder-field > input[type="text"] {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
-}
-
-.folder-field > .button {
-  flex: none;
-}
-
-.folder-picker {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.folder-picker__bar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.folder-picker__bar > input[type="text"] {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
+/* Folder chooser (issue 529, folderpicker.js): the modal behind a path
+   field's Browse… button. (The field and its button are a .form-row, the
+   modal's body a .form-section.) */
 .folder-picker__crumbs {
   display: flex;
   flex-wrap: wrap;
@@ -4521,18 +4519,6 @@ a.row-menu__item.mod-page-link {
   max-width: 54rem;
   gap: var(--space-2) var(--space-6);
   margin: var(--space-2) 0;
-}
-
-.version-types__option {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  line-height: 1.4;
-}
-
-.version-types__option input {
-  flex: none;
-  margin: 0.2em 0 0;
 }
 
 .version-types__note {

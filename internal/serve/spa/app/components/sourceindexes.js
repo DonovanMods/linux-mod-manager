@@ -65,7 +65,10 @@ export function SourceIndexes({ sources } = {}) {
 
   if (error) {
     return html`
-      <div class="setup-section" data-testid="source-indexes">
+      <div
+        class="form-section form-section--measure setup-section"
+        data-testid="source-indexes"
+      >
         <h2 class="section-header">Local search indexes</h2>
         <p class="modal__error">Couldn't load the indexes: ${error}</p>
       </div>
@@ -80,7 +83,10 @@ export function SourceIndexes({ sources } = {}) {
   const total = indexes.reduce((sum, e) => sum + (e.cached ? e.bytes : 0), 0);
 
   return html`
-    <div class="setup-section" data-testid="source-indexes">
+    <div
+      class="form-section form-section--measure setup-section"
+      data-testid="source-indexes"
+    >
       <h2 class="section-header">Local search indexes</h2>
       <p class="empty-state__hint">
         Thunderstore has no search endpoint, so lmm keeps a copy of each
@@ -352,7 +358,7 @@ function PrunePanel({ onChanged }) {
 
   if (!preview) {
     return html`
-      <div class="setup-section__actions">
+      <div class="form-actions setup-section__actions">
         <button
           type="button"
           class="button"
@@ -378,8 +384,11 @@ function PrunePanel({ onChanged }) {
   const removals = (preview.entries ?? []).filter((e) => e.action === "remove");
   const kept = (preview.entries ?? []).filter((e) => e.action !== "remove");
   return html`
-    <div class="source-indexes__preview" data-testid="prune-preview">
-      <label class="plan__control plan__control--inline">
+    <div
+      class="form-section source-indexes__preview"
+      data-testid="prune-preview"
+    >
+      <label class="form-check">
         <input
           type="checkbox"
           name="prune-all"
@@ -431,7 +440,7 @@ function PrunePanel({ onChanged }) {
       ${(preview.warnings ?? []).map(
         (w) => html`<p key=${w} class="plan__note--warn">${w}</p>`,
       )}
-      <div class="setup-section__actions">
+      <div class="form-actions setup-section__actions">
         <button
           type="button"
           class="button button--danger"

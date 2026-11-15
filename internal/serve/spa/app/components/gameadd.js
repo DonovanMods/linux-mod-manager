@@ -139,8 +139,8 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
   );
 
   return html`
-    <div class="setup-detect" data-testid="setup-detect">
-      <h3 class="plan__heading">Detect games</h3>
+    <div class="form-section setup-detect" data-testid="setup-detect">
+      <h3 class="form-section__heading">Detect games</h3>
       ${
         error &&
         html`
@@ -213,7 +213,7 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
                   ${
                     g.known
                       ? html`
-                          <label class="setup-detect__name">
+                          <label class="form-check setup-detect__name">
                             <input
                               type="checkbox"
                               checked=${selected.has(g.index)}
@@ -790,12 +790,16 @@ export function GameAddForm({
   const modPathHint = `(${detectedRow ? "guessed" : "default"}: install path + "/mods"; a relative path is taken as relative to the install path)`;
 
   return html`
-    <form class="setup-add" data-testid="setup-add-game" onSubmit=${submit}>
-      <h3 class="plan__heading">Add a game manually</h3>
+    <form
+      class="form-section form-section--measure setup-add"
+      data-testid="setup-add-game"
+      onSubmit=${submit}
+    >
+      <h3 class="form-section__heading">Add a game manually</h3>
 
       <button
         type="button"
-        class="button setup-add__pick"
+        class="button"
         data-action="pick-installed"
         onClick=${() => (pickerOpen ? setPickerOpen(false) : openPicker())}
       >
@@ -893,7 +897,7 @@ export function GameAddForm({
         `
       }
 
-      <label class="plan__control">
+      <label class="form-field">
         Source
         <select
           name="add-source"
@@ -916,25 +920,27 @@ export function GameAddForm({
       ${
         spec.sourceID &&
         html`
-          <div class="setup-add__catalog">
-            <label class="plan__control">
-              Search this source's catalog
-              <input
-                type="text"
-                name="add-query"
-                value=${spec.query}
-                onInput=${(e) => patch({ query: e.currentTarget.value })}
-              />
-            </label>
-            <button
-              type="button"
-              class="button"
-              data-action="catalog-search"
-              disabled=${searching || !spec.query.trim()}
-              onClick=${search}
-            >
-              ${searching ? "Searching…" : "Search"}
-            </button>
+          <div class="form-section setup-add__catalog">
+            <div class="form-row">
+              <label class="form-field">
+                Search this source's catalog
+                <input
+                  type="text"
+                  name="add-query"
+                  value=${spec.query}
+                  onInput=${(e) => patch({ query: e.currentTarget.value })}
+                />
+              </label>
+              <button
+                type="button"
+                class="button"
+                data-action="catalog-search"
+                disabled=${searching || !spec.query.trim()}
+                onClick=${search}
+              >
+                ${searching ? "Searching…" : "Search"}
+              </button>
+            </div>
             ${searchError && html`<p class="modal__error">${searchError}</p>`}
             ${
               spec.noCatalog &&
@@ -971,7 +977,7 @@ export function GameAddForm({
         `
       }
 
-      <label class="plan__control">
+      <label class="form-field">
         Identifier with that source
         <input
           type="text"
@@ -983,7 +989,7 @@ export function GameAddForm({
       </label>
       ${
         identifierHints[spec.sourceID] &&
-        html`<p class="empty-state__hint setup-add__identifier-hint">
+        html`<p class="form-hint setup-add__identifier-hint">
           ${identifierHints[spec.sourceID].hint}
         </p>`
       }
@@ -995,7 +1001,7 @@ export function GameAddForm({
         open=${Boolean(errorFor("game_id"))}
       >
         <summary>Advanced</summary>
-        <label class="plan__control">
+        <label class="form-field">
           Game id
           <input
             type="text"
@@ -1006,7 +1012,7 @@ export function GameAddForm({
               patch({ gameID: e.currentTarget.value || undefined })}
           />
         </label>
-        <p class="empty-state__hint">
+        <p class="form-hint">
           The local games.yaml key (--game-id). Set automatically by a catalog
           match above; override it here to choose it by hand.
         </p>
@@ -1018,7 +1024,7 @@ export function GameAddForm({
         html`
           <details class="setup-add__extra-sources">
             <summary>Also map other sources (optional)</summary>
-            <p class="empty-state__hint">
+            <p class="form-hint">
               A game can draw mods from more than one source. The identifier may
               be empty - that is how a directory source is normally configured.
             </p>
@@ -1032,7 +1038,7 @@ export function GameAddForm({
         `
       }
 
-      <label class="plan__control">
+      <label class="form-field">
         Display name
         <input
           type="text"
@@ -1045,7 +1051,7 @@ export function GameAddForm({
       ${
         detectedRow
           ? html`
-              <div class="plan__control">
+              <div class="form-field">
                 <span>Install path</span>
                 <p class="mono" data-testid="add-install-path-readonly">
                   ${detectedRow.install_path}
@@ -1053,8 +1059,10 @@ export function GameAddForm({
               </div>
             `
           : html`
-              <div class="plan__control">
-                <label for="add-install-path">Install path</label>
+              <div class="form-field">
+                <label class="form-field__label" for="add-install-path"
+                  >Install path</label
+                >
                 <${FolderField}
                   value=${spec.installPath}
                   label="install path"
@@ -1073,9 +1081,9 @@ export function GameAddForm({
             `
       }
 
-      <div class="plan__control">
-        <label for="add-mod-path">Mod path</label>
-        <span class="empty-state__hint">${modPathHint}</span>
+      <div class="form-field">
+        <label class="form-field__label" for="add-mod-path">Mod path</label>
+        <span class="form-hint">${modPathHint}</span>
         <${FolderField}
           value=${spec.modPath}
           fallback=${detectedRow ? detectedRow.install_path : spec.installPath}
@@ -1124,7 +1132,7 @@ export function GameAddForm({
 
       <button
         type="submit"
-        class="button button--primary setup-add__submit"
+        class="button button--primary"
         data-action="add-game"
         disabled=${
           busy ||

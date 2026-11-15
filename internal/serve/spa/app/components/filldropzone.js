@@ -28,6 +28,7 @@ import {
   uploadArchive,
 } from "../api.js";
 import { BrowseButton } from "./folderpicker.js";
+import { FilePicker } from "./filepicker.js";
 
 // maxFillUploads mirrors the server's upload store cap (uploads.go's
 // defaultUploadStoreCap, kind_profile_fill.go's maxFillUploads): a plan
@@ -186,21 +187,14 @@ export function FillDropZone({ profile, game, actions, onStarted }) {
         disabled=${busy}
         onChoose=${(path) => open({ folder: path }, {})}
       />
-      <label class="button button--small">
-        ${busy ? "Working…" : "Choose files…"}
-        <input
-          type="file"
-          multiple
-          data-testid="fill-drop-input"
-          disabled=${busy}
-          onChange=${(e) => {
-            const picked = Array.from(e.currentTarget.files ?? []);
-            e.currentTarget.value = "";
-            fill(picked);
-          }}
-          hidden
-        />
-      </label>
+      <${FilePicker}
+        label=${busy ? "Working…" : "Choose files…"}
+        inputLabel="Downloaded files to install from"
+        multiple=${true}
+        disabled=${busy}
+        inputTestid="fill-drop-input"
+        onFiles=${fill}
+      />
       ${status && html`<p class="fill-drop__status" role="status">${status}</p>`}
       ${error && html`<p class="modal__error" data-testid="fill-drop-error">${error}</p>`}
     </div>

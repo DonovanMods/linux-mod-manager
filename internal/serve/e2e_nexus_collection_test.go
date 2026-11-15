@@ -210,7 +210,7 @@ func TestE2E_NexusCollection_PremiumAccountInstalls(t *testing.T) {
 		chromedp.Navigate(f.HomePath()),
 		openNexusImport("abcdef"),
 		textContent(`.modal[data-kind="profile_import"]`, &plan),
-		chromedp.Click(`.modal .plan__control input[type="checkbox"]`, chromedp.ByQuery),
+		chromedp.Click(`.modal .form-check input[type="checkbox"]`, chromedp.ByQuery),
 		clickWhenSettled(`.modal [data-action="confirm"]`),
 	)
 	assert.Contains(t, plan, "will be installed")

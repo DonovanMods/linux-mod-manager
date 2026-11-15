@@ -112,7 +112,7 @@ function ChoiceList({
                   >(${changes(it)}${it.locked ? ", locked" : ""})</span
                 >`
               }
-              <label class="plan__control plan__control--inline">
+              <label class="form-check">
                 <input
                   type="checkbox"
                   data-key=${key}
@@ -142,7 +142,7 @@ function ConflictBox({ conflictKey, label, modal, actions }) {
     actions.setPlanOptions({ override: [...next].sort() });
   }
   return html`
-    <label class="plan__control plan__control--inline">
+    <label class="form-check">
       <input
         type="checkbox"
         data-key=${conflictKey}
@@ -375,7 +375,7 @@ function Gate({ plan, modal, actions }) {
               </li>`,
           )}
         </ul>
-        <label class="plan__control">
+        <label class="form-check">
           <input
             type="checkbox"
             name="allow_any_overrides"
@@ -415,7 +415,7 @@ function Gate({ plan, modal, actions }) {
           Left unchecked, the update is refused: lmm never installs a
           collection's mod unpatched.
         </p>
-        <label class="plan__control">
+        <label class="form-check">
           <input
             type="checkbox"
             name="allow_any_overrides"

@@ -314,7 +314,7 @@ func TestE2E_FomodWizard_ACollectionWithStaleRecordedChoices(t *testing.T) {
 	var stale string
 	f.runInBrowser(t,
 		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] label.plan__control'))
+			Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] label.form-check'))
 				.find((l) => l.textContent.includes("Download and install"))?.querySelector("input").click();
 		`, nil),
 		settleEffects(),

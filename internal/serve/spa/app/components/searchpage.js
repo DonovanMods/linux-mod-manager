@@ -160,7 +160,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
         ${
           (facets?.categories.length ?? 0) > 0 &&
           html`
-            <label class="library__control">
+            <label class="form-field form-field--inline library__control">
               Category
               <select
                 name="category"
@@ -179,7 +179,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
         ${
           (facets?.sourceIDs.length ?? 0) > 1 &&
           html`
-            <label class="library__control">
+            <label class="form-field form-field--inline library__control">
               Source
               <select
                 name="source"
@@ -203,7 +203,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
           // /api/v1/search will fan out across.
           tagsSupported &&
           html`
-            <label class="library__control">
+            <label class="form-field form-field--inline library__control">
               Tags
               <input
                 type="search"
@@ -221,7 +221,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
           // the tag filter above follows.
           sorts.length > 1 &&
           html`
-            <label class="library__control">
+            <label class="form-field form-field--inline library__control">
               Sort
               <select
                 name="sort"

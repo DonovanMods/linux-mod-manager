@@ -149,7 +149,7 @@ export function VersionPrompt({ details, actions }) {
   };
   return html`
     <form
-      class="version-prompt"
+      class="form-section version-prompt"
       data-testid="version-prompt"
       onSubmit=${submit}
     >
@@ -158,8 +158,8 @@ export function VersionPrompt({ details, actions }) {
         <span class="mono">${details.archive_name}</span> is. Enter it to
         continue.
       </p>
-      <div class="version-prompt__row">
-        <label class="plan__control">
+      <div class="form-row">
+        <label class="form-field">
           Version
           <input
             type="text"

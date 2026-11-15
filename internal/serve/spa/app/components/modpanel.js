@@ -787,8 +787,8 @@ export function ModSettingsControls({ row, actions, panelRef }) {
   }
 
   return html`
-    <div class="slide-over__settings">
-      <label class="slide-over__setting">
+    <div class="form-actions slide-over__settings">
+      <label class="form-check">
         <input
           type="checkbox"
           checked=${row.locked}
@@ -797,7 +797,7 @@ export function ModSettingsControls({ row, actions, panelRef }) {
         />
         Locked${row.locked && row.locked_version ? html` at <span class="mono">${row.locked_version}</span>` : ""}
       </label>
-      <label class="slide-over__setting">
+      <label class="form-field form-field--inline">
         Update policy
         <select
           value=${row.update_policy}
@@ -817,7 +817,7 @@ export function ModSettingsControls({ row, actions, panelRef }) {
       </label>
       ${
         convertApplies &&
-        html`<label class="slide-over__setting">
+        html`<label class="form-check">
           <input
             type="checkbox"
             name="convert-paks"
@@ -919,8 +919,8 @@ export function CategoryControl({ row, route, actions }) {
   const unchanged = value.trim() === own;
   const listID = `category-suggestions-${row.key}`;
   return html`
-    <form class="slide-over__category" onSubmit=${submit}>
-      <label class="slide-over__setting">
+    <form class="form-row slide-over__category" onSubmit=${submit}>
+      <label class="form-field form-field--inline">
         Category
         <input
           ref=${inputRef}

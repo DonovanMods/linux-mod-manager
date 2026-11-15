@@ -328,7 +328,7 @@ function FomodGroup({ mod, group, name, sel, onChange }) {
   const free = groupIsFree(group);
   const single = isSingle(group);
   return html`
-    <fieldset class="fomod__group" data-group=${group.name}>
+    <fieldset class="form-section fomod__group" data-group=${group.name}>
       <legend class="fomod__legend">
         ${group.name || "Options"}
         <span class="fomod__rule">${groupRule(group.type)}</span>
@@ -341,7 +341,7 @@ function FomodGroup({ mod, group, name, sel, onChange }) {
         const note = typeNote(o.type);
         return html`
           <label
-            class="fomod__option"
+            class="form-check fomod__option"
             key=${`${i}:${o.name}`}
             data-option=${o.name}
           >
@@ -377,7 +377,7 @@ function FomodGroup({ mod, group, name, sel, onChange }) {
         group.type === "SelectAtMostOne" &&
         free &&
         html`
-          <label class="fomod__option" data-option="">
+          <label class="form-check fomod__option" data-option="">
             <input
               type="radio"
               name=${name}

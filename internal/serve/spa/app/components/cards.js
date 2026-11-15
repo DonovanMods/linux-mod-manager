@@ -642,7 +642,7 @@ function UpdatesCard({
             />`
           : html`
               <div class="card__toolbar">
-                <label class="card__select-all">
+                <label class="form-check card__select-all">
                   <input
                     type="checkbox"
                     data-testid="select-all"

@@ -301,7 +301,7 @@ func TestE2E_GameEditor_HoldsInEveryFace(t *testing.T) {
 					.filter((el) => { const r = el.getBoundingClientRect(); return r.left < box.left - 0.5 || r.right > box.right + 0.5; })
 					.map((el) => el.name || el.className);
 				return {
-					labelLines: [...p.querySelectorAll("label.plan__control, legend.plan__control")].map((l) => textLines(l)),
+					labelLines: [...p.querySelectorAll("label.form-field__label, legend")].map((l) => textLines(l)),
 					overruns,
 					panel: [box.left, box.right],
 					table: [t.left, t.right],

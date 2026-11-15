@@ -19,6 +19,7 @@ import {
   useState,
 } from "../render.js";
 import { codeSpans } from "../errortext.js";
+import { isSourceMapped } from "../sourcemapping.js";
 import { ApiError, getKnownGames, getSourceVersionTypes } from "../api.js";
 import { SourcesMapEditor } from "./sourcesmap.js";
 import {
@@ -190,7 +191,7 @@ export function gameEditErrorField(details) {
  * aria-describedby. */
 function FieldError({ id, error }) {
   if (!error) return null;
-  return html`<p class="modal__error" id=${id} data-testid="game-field-error">
+  return html`<p class="form-error" id=${id} data-testid="game-field-error">
     ${codeSpans(error.message)}
   </p>`;
 }
@@ -212,7 +213,7 @@ function CurseForgeTypesPicker({
   patch,
   fallback,
 }) {
-  const mapped = Object.hasOwn(game.source_ids ?? {}, "curseforge");
+  const mapped = isSourceMapped(game.source_ids, "curseforge");
   // The list belongs to the SAVED CurseForge game: a save that re-points
   // the identifier reads the new game's list, and one that drops the
   // mapping drops the list for the id field.
@@ -272,24 +273,22 @@ function CurseForgeTypesPicker({
   const hintID = `curseforge-types-${game.id}-hint`;
   return html`
     <fieldset
-      class="game-editor__group"
+      class="form-section game-editor__group"
       data-testid="curseforge-types-picker"
       aria-describedby=${error ? errorID : hintID}
     >
-      <legend class="plan__control">CurseForge game version types</legend>
-      <p class="empty-state__hint" id=${hintID}>
+      <legend>CurseForge game version types</legend>
+      <p class="form-hint" id=${hintID}>
         Tick the flavors this game is; lmm then offers only their files. None
         ticked accepts every file.
       </p>
       ${
         rows.length === 0
-          ? html`<p class="empty-state__hint">
-              CurseForge lists none for this game.
-            </p>`
+          ? html`<p class="form-hint">CurseForge lists none for this game.</p>`
           : html`<div class="version-types">
               ${rows.map(
                 (row) => html`
-                  <label class="version-types__option" key=${row.id}>
+                  <label class="form-check" key=${row.id}>
                     <input
                       type="checkbox"
                       name="curseforge-type"
@@ -353,8 +352,8 @@ function CatalogField({ id, value, busy, error, onChange }) {
   }, []);
   const listed = (known ?? []).some((k) => k.slug === value);
   return html`
-    <div class="game-editor__field" data-testid="catalog-editor">
-      <label class="plan__control" for=${id}>Game catalog entry</label>
+    <div class="form-field game-editor__field" data-testid="catalog-editor">
+      <label class="form-field__label" for=${id}>Game catalog entry</label>
       <select
         id=${id}
         name="catalog"
@@ -381,7 +380,7 @@ function CatalogField({ id, value, busy, error, onChange }) {
       <div class="game-editor__answer" role="status">
         <${FieldError} id=${`${id}-error`} error=${error} />
       </div>
-      <p class="empty-state__hint" id=${`${id}-hint`}>
+      <p class="form-hint" id=${`${id}-hint`}>
         ${
           failure
             ? `Couldn't load lmm's game catalog: ${failure}.`
@@ -454,7 +453,7 @@ export function GameEditor({
         id=${ids[field]}
         ref=${ref}
         type="text"
-        class=${field === "name" ? "" : "mono"}
+        class=${field === "name" ? "" : "field--mono"}
         name=${name}
         value=${draft[field]}
         disabled=${busy}
@@ -464,8 +463,8 @@ export function GameEditor({
       />
     `;
     return html`
-      <div class="game-editor__field">
-        <label class="plan__control" for=${ids[field]}>${label}</label>
+      <div class="form-field game-editor__field">
+        <label class="form-field__label" for=${ids[field]}>${label}</label>
         ${
           field === "install_path" || field === "prefix"
             ? html`<${FolderField}
@@ -484,7 +483,7 @@ export function GameEditor({
         <div class="game-editor__answer" role="status">
           <${FieldError} id=${`${ids[field]}-error`} error=${err} />
         </div>
-        <p class="empty-state__hint" id=${`${ids[field]}-hint`}>${hint}</p>
+        <p class="form-hint" id=${`${ids[field]}-hint`}>${hint}</p>
       </div>
     `;
   };
@@ -499,7 +498,7 @@ export function GameEditor({
   const loaderErr = fieldError("loader");
   return html`
     <div
-      class="game-editor"
+      class="form-section form-section--measure game-editor"
       data-testid="game-editor"
       data-game=${game.id}
       role="group"
@@ -514,8 +513,11 @@ export function GameEditor({
           "install-path",
           "The game's own folder. A mod path inside it moves with it; with files deployed, lmm accepts a new one only once the game folder itself has moved there.",
         )}
-        <div class="game-editor__field" data-testid="mod-path-editor">
-          <label class="plan__control" for=${ids.mod_path}>Mod path</label>
+        <div
+          class="form-field game-editor__field"
+          data-testid="mod-path-editor"
+        >
+          <label class="form-field__label" for=${ids.mod_path}>Mod path</label>
           <${FolderField}
             value=${draft.mod_path}
             fallback=${draft.install_path}
@@ -527,7 +529,7 @@ export function GameEditor({
               id=${ids.mod_path}
               ref=${modPathRef}
               type="text"
-              class="mono"
+              class="field--mono"
               name="mod-path"
               value=${draft.mod_path}
               disabled=${busy}
@@ -544,13 +546,13 @@ export function GameEditor({
             ${
               modPathErr &&
               !inUse &&
-              html`<p class="modal__error" data-testid="mod-path-field-error">
+              html`<p class="form-error" data-testid="mod-path-field-error">
                 ${codeSpans(modPathErr.message)}
               </p>`
             }
             ${inUse && html`<${ModPathInUse} details=${inUse} message=${error.message} />`}
           </div>
-          <p class="empty-state__hint" id=${`${ids.mod_path}-hint`}>
+          <p class="form-hint" id=${`${ids.mod_path}-hint`}>
             The directory the game loads mods from; a relative path is relative
             to the install path. lmm refuses a move while files are deployed
             under the old one, and says what to run first.
@@ -599,8 +601,8 @@ export function GameEditor({
         />`
       }
 
-      <fieldset class="game-editor__group">
-        <legend class="plan__control">Sources</legend>
+      <fieldset class="form-section game-editor__group">
+        <legend>Sources</legend>
         <${SourcesMapEditor}
           sources=${sources}
           value=${draft.sources}
@@ -628,7 +630,7 @@ export function GameEditor({
         />
       </div>
 
-      <div class="game-editor__actions">
+      <div class="form-actions game-editor__actions">
         <button
           type="button"
           class="button button--primary"

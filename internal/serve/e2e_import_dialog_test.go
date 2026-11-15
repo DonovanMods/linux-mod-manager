@@ -55,7 +55,7 @@ const importDialogJS = `((root) => {
 			if (/^H[1-6]$/.test(c.tagName)) kind = "heading";
 			else if (c.tagName === "INPUT") kind = "field";
 			else if (c.tagName === "BUTTON") kind = "button";
-			else if (c.classList.contains("empty-state__hint")) kind = "hint";
+			else if (c.classList.contains("form-hint")) kind = "hint";
 			if (order[order.length - 1] !== kind) order.push(kind);
 		}
 		return {

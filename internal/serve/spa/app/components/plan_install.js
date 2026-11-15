@@ -210,11 +210,11 @@ export function InstallPlanView({ plan, modal, actions }) {
       ${
         showPicker &&
         html`
-          <section class="plan__section plan__section--picker">
+          <section class="form-row form-row--top plan__section">
             ${
               showVersionPicker &&
               html`
-                <label class="plan__control">
+                <label class="form-field">
                   Version
                   <select
                     name="install-version"
@@ -239,12 +239,12 @@ export function InstallPlanView({ plan, modal, actions }) {
               showFilePicker &&
               html`
                 <fieldset
-                  class="plan__control plan__files-picker"
+                  class="form-section plan__files-picker"
                   data-testid="install-files-picker"
                 >
-                  <legend class="plan__files-legend">
+                  <legend>
                     Files
-                    <span class="plan__option-hint"
+                    <span class="form-hint plan__option-hint"
                       >Check each file to install, like lmm install --file
                       a,b.</span
                     >
@@ -252,7 +252,7 @@ export function InstallPlanView({ plan, modal, actions }) {
                   ${filesForVersion.map(
                     (f) => html`
                       <label
-                        class="plan__option"
+                        class="form-check"
                         key=${f.id}
                         title=${absoluteTime(f.uploaded_at) || undefined}
                       >

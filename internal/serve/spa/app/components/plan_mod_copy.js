@@ -92,8 +92,8 @@ export function CopyModPlanView({ plan, modal, actions, state }) {
         }
       </p>
 
-      <div class="plan__form">
-        <label class="plan__control">
+      <div class="form-row plan__form">
+        <label class="form-field">
           Copy to
           <select
             name="copy-to"

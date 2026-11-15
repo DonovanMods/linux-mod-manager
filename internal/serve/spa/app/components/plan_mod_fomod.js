@@ -33,14 +33,17 @@ function InstallerPicker({ plan, modal, actions }) {
   const pick = (fileID) => actions.setPlanOptions({ file_id: fileID });
   const disabled = modal?.status !== "ready";
   return html`
-    <fieldset class="fomod__group" data-testid="fomod-installer-picker">
+    <fieldset
+      class="form-section fomod__group"
+      data-testid="fomod-installer-picker"
+    >
       <legend class="fomod__legend">
         Which installer
         <span class="fomod__rule"
           >This mod has an installer in each of its files</span
         >
       </legend>
-      <label class="fomod__option" data-installer="">
+      <label class="form-check fomod__option" data-installer="">
         <input
           type="radio"
           name="fomod-installer"
@@ -55,7 +58,7 @@ function InstallerPicker({ plan, modal, actions }) {
       ${plan.installers.map(
         (inst) => html`
           <label
-            class="fomod__option"
+            class="form-check fomod__option"
             key=${inst.file_id}
             data-installer=${inst.file_id}
           >
