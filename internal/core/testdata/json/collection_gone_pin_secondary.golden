@@ -1,0 +1,19 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "10",
+  "name": "Ten",
+  "version": "1",
+  "file_ids": [
+    "105"
+  ],
+  "files": [
+    {
+      "file_id": "105",
+      "name": "Ten Optional Patch",
+      "role": "secondary"
+    }
+  ],
+  "can_skip_file": true,
+  "conflict": true,
+  "choice": "skip_file"
+}

@@ -64,9 +64,9 @@ func (f *updateFixture) bumpTo(t *testing.T, tenFile string, tenGone bool) {
 		}
 	}()
 	c.Items = []source.CollectionItem{
-		{Kind: source.CollectionItemModFile, ModID: "10", FileID: tenFile, Name: "Ten"},
-		{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Eleven"},
-		{Kind: source.CollectionItemModFile, ModID: "13", FileID: "130", Name: "Thirteen"},
+		{Kind: source.CollectionItemModFile, ModID: "10", FileID: tenFile, Name: "Ten", FileCategory: "MAIN"},
+		{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Eleven", FileCategory: "MAIN"},
+		{Kind: source.CollectionItemModFile, ModID: "13", FileID: "130", Name: "Thirteen", FileCategory: "MAIN"},
 	}
 }
 
@@ -221,4 +221,120 @@ func TestCollectionUpdate_UseCurrentForAnAddedMod(t *testing.T) {
 	require.NotNil(t, thirteen)
 	assert.Equal(t, []string{"131"}, thirteen.FileIDs)
 	assert.Equal(t, &domain.CollectionPin{Version: "1", FileIDs: []string{"130"}}, thirteen.SubstitutedFor)
+}
+
+// publish makes recipe, listed as items, the collection's revision rev.
+func (f *updateFixture) publish(t *testing.T, rev int, recipe string, items []source.CollectionItem) {
+	t.Helper()
+	archive := recipeArchive(t, recipe)
+	f.archive.Store(&archive)
+	c := &f.src.recipe.collection
+	c.Revision, c.Items = rev, items
+	f.src.listCalls = nil
+}
+
+// tenAt is a recipe pinning mod 10 at file, beside 11.
+func tenAt(file string) string {
+	return `{"name": "Three Mods", "mods": [
+	{"name": "Ten", "modId": "10", "fileId": "` + file + `"},
+	{"name": "Eleven", "modId": "11", "fileId": "110"}]}`
+}
+
+func tenItems(file string) []source.CollectionItem {
+	return []source.CollectionItem{
+		{Kind: source.CollectionItemModFile, ModID: "10", FileID: file, Name: "Ten", FileCategory: "MAIN"},
+		{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Eleven", FileCategory: "MAIN"},
+	}
+}
+
+// TestCollectionUpdate_KeepSkippedPersists (review): the pin a user keeps
+// skipped is recorded, so the next update does not offer it again; a newer
+// pin is offered.
+func TestCollectionUpdate_KeepSkippedPersists(t *testing.T) {
+	f := newUpdateFixture(t)
+	f.goneTen(t)
+	f.importChoosing(t, core.GonePinChoices{Skip: []string{"nexusmods:10"}})
+	f.src.listing["10"] = append(f.src.listing["10"],
+		domain.DownloadableFile{ID: "102", FileName: "f102.zip", Version: "3", Category: "MAIN"},
+		domain.DownloadableFile{ID: "103", FileName: "f103.zip", Version: "4", Category: "MAIN"})
+	f.src.versions["103"] = "4"
+	f.downloads.AddDownload("103", createTestZipBytes(t, map[string]string{"file103.txt": "content 103"}))
+	ctx := context.Background()
+
+	f.publish(t, 4, tenAt("102"), tenItems("102"))
+	plan, err := f.svc.PlanCollectionUpdate(ctx, f.game, core.CollectionUpdateRequest{Profile: "coll", KeepSkipped: []string{"nexusmods:10"}})
+	require.NoError(t, err)
+	require.Len(t, plan.Reoffered, 1)
+	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []domain.CollectionSkip{{SourceID: "nexusmods", ModID: "10", Declined: true,
+		Pin: domain.CollectionPin{Version: "3", FileIDs: []string{"102"}}}}, f.profile(t).CollectionBaseline.Skipped)
+
+	// The same pin again: not offered, still skipped.
+	f.publish(t, 5, tenAt("102"), tenItems("102"))
+	plan = f.planUpdate(t)
+	assert.Empty(t, plan.Reoffered, "the declined pin is not offered again")
+	require.Equal(t, []string{"nexusmods:10"}, keys(plan.Skipped))
+	assert.Contains(t, plan.Skipped[0].Note, "you kept it skipped")
+	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, f.profile(t).FindRef("nexusmods", "10"))
+
+	// A newer pin: offered, and added by default.
+	f.publish(t, 6, tenAt("103"), tenItems("103"))
+	plan = f.planUpdate(t)
+	require.Equal(t, []string{"nexusmods:10"}, keys(plan.Reoffered))
+	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
+	require.NoError(t, err)
+	ten := f.profile(t).FindRef("nexusmods", "10")
+	require.NotNil(t, ten)
+	assert.Equal(t, []string{"103"}, ten.FileIDs)
+	assert.Empty(t, f.profile(t).CollectionBaseline.Skipped)
+}
+
+// TestCollectionUpdate_AConflictsGonePinIsDecidedOnlyWhenOverridden
+// (review): an entry the user owns keeps their version unless the apply
+// overrides the conflict, so its new pin being gone needs a decision only
+// then.
+func TestCollectionUpdate_AConflictsGonePinIsDecidedOnlyWhenOverridden(t *testing.T) {
+	f := newUpdateFixture(t)
+	ctx := context.Background()
+	f.importNexus(t)
+	_, err := f.svc.SetModLock(ctx, "nexusmods", "11", "skyrim", "coll", "")
+	require.NoError(t, err)
+	// Revision 4 pins 11 at 111, which NexusMods no longer offers; 112 is
+	// its main file now.
+	f.publish(t, 4, `{"name": "Three Mods", "mods": [
+	{"name": "Ten", "modId": "10", "fileId": "100"},
+	{"name": "Eleven", "modId": "11", "fileId": "111"}]}`, []source.CollectionItem{
+		{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", FileCategory: "MAIN"},
+		{Kind: source.CollectionItemModFile, FileID: "111"},
+	})
+	f.src.listing = map[string][]domain.DownloadableFile{"11": {
+		{ID: "112", FileName: "f112.zip", Name: "Eleven 3", Version: "3", Category: "MAIN", IsPrimary: true}}}
+	f.src.versions["112"] = "3"
+	f.downloads.AddDownload("112", createTestZipBytes(t, map[string]string{"file112.txt": "content 112"}))
+
+	plan := f.planUpdate(t)
+	require.Contains(t, keys(plan.Conflicts), "nexusmods:11")
+	require.Len(t, plan.Source.GonePins, 1)
+	assert.True(t, plan.Source.GonePins[0].Conflict)
+	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{Override: []string{"nexusmods:11"}}, nil)
+	require.True(t, core.IsCollectionGonePins(err), "overriding needs the decision: %v", err)
+	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
+	require.NoError(t, err, "the user's version wins: nothing to decide")
+	assert.Equal(t, []string{"110"}, f.profile(t).FindRef("nexusmods", "11").FileIDs)
+
+	f.publish(t, 5, `{"name": "Three Mods", "mods": [
+	{"name": "Ten", "modId": "10", "fileId": "100"},
+	{"name": "Eleven", "modId": "11", "fileId": "111"}]}`, []source.CollectionItem{
+		{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", FileCategory: "MAIN"},
+		{Kind: source.CollectionItemModFile, FileID: "111"},
+	})
+	plan, err = f.svc.PlanCollectionUpdate(ctx, f.game, core.CollectionUpdateRequest{Profile: "coll",
+		GonePins: core.GonePinChoices{UseCurrent: []string{"nexusmods:11"}}})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{Override: []string{"nexusmods:11"}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"112"}, f.profile(t).FindRef("nexusmods", "11").FileIDs)
 }

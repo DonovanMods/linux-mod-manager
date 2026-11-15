@@ -78,6 +78,9 @@ func (s *Service) PlanSourceCollectionImport(ctx context.Context, game *domain.G
 	if err != nil {
 		return nil, err
 	}
+	if err := req.GonePins.check(pins); err != nil {
+		return nil, err
+	}
 	req.GonePins.echo(conv)
 	conv.Notes = append(conv.Notes, checker.warnings...)
 	if len(pins) > 0 {

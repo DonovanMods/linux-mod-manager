@@ -101,7 +101,7 @@ func TestPlanSourceCollectionImport_UseCurrentInstallsTheCurrentFile(t *testing.
 	require.Len(t, c.GonePins, 1)
 	assert.Equal(t, core.GonePinUseCurrent, c.GonePins[0].Choice)
 	assert.Equal(t, []string{"nexusmods:10"}, c.UseCurrent, "the choice is echoed")
-	assert.Contains(t, itemNamed(c, "Ten").Note, "Ten 2 (version 2) installs instead")
+	assert.Contains(t, itemNamed(c, "Ten").Note, "install its current main file Ten 2 (version 2) instead")
 	ref := plan.Profile.FindRef("nexusmods", "10")
 	require.NotNil(t, ref)
 	assert.Equal(t, []string{"101"}, ref.FileIDs)
@@ -289,4 +289,135 @@ func TestPlanSourceCollectionImport_AnArchivedPinIsKept(t *testing.T) {
 		assert.Contains(t, itemNamed(c, "Ten").Note, "archived on NexusMods")
 		assert.Equal(t, []string{"100"}, plan.Profile.FindRef("nexusmods", "10").FileIDs)
 	})
+}
+
+// twoFileTenRecipe pins mod 10 at two files: its main file 100 and the
+// optional 105 ("Ten Optional Patch"), beside mod 11.
+const twoFileTenRecipe = `{"name": "Three Mods", "mods": [
+	{"name": "Ten", "modId": "10", "fileId": "100", "logicalFilename": "Ten Main"},
+	{"name": "Ten", "modId": "10", "fileId": "105", "logicalFilename": "Ten Optional Patch"},
+	{"name": "Eleven", "modId": "11", "fileId": "110"}]}`
+
+// newTwoFileFixture serves twoFileTenRecipe: the list has 100 as an old
+// version of the main file and no record of 105 (removed); listing is mod
+// 10's listing.
+func newTwoFileFixture(t *testing.T, listing []domain.DownloadableFile) *sourceImportFixture {
+	t.Helper()
+	f := newSourceImportFixtureWith(t, source.TierPremium, twoFileTenRecipe)
+	f.src.recipe.collection.Items = []source.CollectionItem{
+		{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", FileCategory: "OLD_VERSION"},
+		{Kind: source.CollectionItemModFile, FileID: "105"},
+		{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Eleven", FileCategory: "MAIN"},
+	}
+	f.src.listing = map[string][]domain.DownloadableFile{"10": listing}
+	for _, id := range []string{"101", "106"} {
+		f.src.AddDownload(id, createTestZipBytes(t, map[string]string{"mod10-" + id + ".esp": id}))
+	}
+	return f
+}
+
+// tenOldMain is mod 10's listing with 100 kept as an old version, beside
+// the current main 101.
+func tenOldMain(extra ...domain.DownloadableFile) []domain.DownloadableFile {
+	return append([]domain.DownloadableFile{
+		{ID: "100", FileName: "f100.zip", Name: "Ten Main", Version: "1", Category: "OLD_VERSION"},
+		{ID: "101", FileName: "f101.zip", Name: "Ten Main", Version: "2", Category: "MAIN", IsPrimary: true},
+	}, extra...)
+}
+
+// TestGonePin_AGoneOptionalNeverGetsTheCurrentMain is the review's
+// scenario (owner ruling, 2026-11-15): the entry pins 100 (its old main
+// file, still offered as an old version) and 105 (an optional, removed).
+// With no current optional matching 105, "use the current file" is not on
+// offer - the current main is never put beside the pinned main - and the
+// choices are leaving 105 out (the rest installs) or skipping the mod.
+func TestGonePin_AGoneOptionalNeverGetsTheCurrentMain(t *testing.T) {
+	f := newTwoFileFixture(t, tenOldMain(domain.DownloadableFile{ID: "107", FileName: "f107.zip", Name: "Something Else", Version: "2", Category: "OPTIONAL"}))
+	plan := f.plan(t, core.SourceCollectionImportRequest{GonePins: core.GonePinChoices{UseCurrentAll: true}})
+	pins := plan.Collection.Source.GonePins
+	require.Len(t, pins, 1)
+	pin := pins[0]
+	assert.Equal(t, []string{"105"}, pin.FileIDs)
+	require.Len(t, pin.Files, 1)
+	assert.Equal(t, core.GoneFileSecondary, pin.Files[0].Role)
+	assert.Nil(t, pin.Files[0].Replacement, "no current optional matches it")
+	assert.Nil(t, pin.Current)
+	assert.True(t, pin.CanSkipFile)
+	assert.Empty(t, pin.Choice, "--use-current-all has nothing to install for it")
+
+	_, err := f.svc.PlanSourceCollectionImport(context.Background(), f.game, core.SourceCollectionImportRequest{
+		SourceID: "nexusmods", Ref: "abcdef", GonePins: core.GonePinChoices{UseCurrent: []string{"nexusmods:10"}}})
+	assert.True(t, core.IsBadGonePinChoice(err), "naming it to use a current file is refused: %v", err)
+
+	plan = f.plan(t, core.SourceCollectionImportRequest{GonePins: core.GonePinChoices{SkipFile: []string{"nexusmods:10"}}})
+	assert.Equal(t, core.GonePinSkipFile, plan.Collection.Source.GonePins[0].Choice)
+	ref := plan.Profile.FindRef("nexusmods", "10")
+	require.NotNil(t, ref)
+	assert.Equal(t, []string{"100"}, ref.FileIDs, "the gone optional is left out; no current main beside the pinned one")
+	assert.Equal(t, "1", ref.Version, "the version follows the main file")
+	assert.Equal(t, &domain.CollectionPin{Version: "1", FileIDs: []string{"100", "105"}}, ref.SubstitutedFor)
+	_, err = f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+}
+
+// TestGonePin_AGoneOptionalTakesTheMatchingCurrentOptional: a current
+// optional whose name matches the gone one is its stand-in, and the
+// version stays the main file's.
+func TestGonePin_AGoneOptionalTakesTheMatchingCurrentOptional(t *testing.T) {
+	f := newTwoFileFixture(t, tenOldMain(
+		domain.DownloadableFile{ID: "106", FileName: "f106.zip", Name: "Ten Optional Patch v2", Version: "2", Category: "OPTIONAL"},
+		domain.DownloadableFile{ID: "108", FileName: "f108.zip", Name: "Ten Other Patch", Version: "2", Category: "OPTIONAL"},
+	))
+	plan := f.plan(t, core.SourceCollectionImportRequest{GonePins: core.GonePinChoices{UseCurrentAll: true}})
+	pin := plan.Collection.Source.GonePins[0]
+	require.NotNil(t, pin.Files[0].Replacement)
+	assert.Equal(t, "106", pin.Files[0].Replacement.FileID)
+	assert.Equal(t, core.GonePinUseCurrent, pin.Choice)
+	ref := plan.Profile.FindRef("nexusmods", "10")
+	assert.Equal(t, []string{"100", "106"}, ref.FileIDs)
+	assert.Equal(t, "1", ref.Version, "the version follows the main file, not the stand-in")
+	assert.NotContains(t, ref.FileIDs, "101", "never a current main beside the pinned main")
+	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+}
+
+// TestGonePin_TwoMatchingOptionalsAreNoMatch: a name two current files
+// match identifies neither.
+func TestGonePin_TwoMatchingOptionalsAreNoMatch(t *testing.T) {
+	f := newTwoFileFixture(t, tenOldMain(
+		domain.DownloadableFile{ID: "106", Name: "Ten Optional Patch v2", Version: "2", Category: "OPTIONAL"},
+		domain.DownloadableFile{ID: "109", Name: "Ten Optional Patch (SE)", Version: "2", Category: "OPTIONAL"},
+	))
+	f.src.listing["10"][3].Name = "Ten Optional Patch 3"
+	plan := f.plan(t, core.SourceCollectionImportRequest{})
+	assert.Nil(t, plan.Collection.Source.GonePins[0].Current)
+}
+
+// TestGonePin_EveryFileGoneTakesTheCurrentMain: with the main file gone
+// too, the current main file stands in for the mod, its version is the
+// entry's, and the optional it does not replace is said.
+func TestGonePin_EveryFileGoneTakesTheCurrentMain(t *testing.T) {
+	f := newTwoFileFixture(t, tenOldMain()[1:])
+	f.src.recipe.collection.Items[0] = source.CollectionItem{Kind: source.CollectionItemModFile, FileID: "100"}
+	plan := f.plan(t, core.SourceCollectionImportRequest{GonePins: core.GonePinChoices{UseCurrent: []string{"nexusmods:10"}}})
+	pin := plan.Collection.Source.GonePins[0]
+	require.Len(t, pin.Files, 2)
+	assert.Equal(t, core.GoneFileMain, pin.Files[0].Role)
+	assert.Equal(t, "101", pin.Current.FileID)
+	assert.Equal(t, []string{"105"}, pin.NotReplaced)
+	assert.Contains(t, itemNamed(plan.Collection.Source, "Ten").Note, "not replaced: Ten Optional Patch")
+	ref := plan.Profile.FindRef("nexusmods", "10")
+	assert.Equal(t, []string{"101"}, ref.FileIDs)
+	assert.Equal(t, "2", ref.Version)
+}
+
+// TestGonePin_AChoiceNamingNoGonePinIsRefused (review nit): as an unknown
+// --optional id is refused (#654), so is a --skip or --use-current naming
+// a mod whose pin is not gone.
+func TestGonePin_AChoiceNamingNoGonePinIsRefused(t *testing.T) {
+	f := newGonePinFixture(t)
+	_, err := f.svc.PlanSourceCollectionImport(context.Background(), f.game, core.SourceCollectionImportRequest{
+		SourceID: "nexusmods", Ref: "abcdef", GonePins: core.GonePinChoices{Skip: []string{"nexusmods:11"}}})
+	require.True(t, core.IsBadGonePinChoice(err), "got %v", err)
+	assert.Contains(t, err.Error(), "nexusmods:11 names no mod whose pinned file is gone; the plan's are nexusmods:10")
 }

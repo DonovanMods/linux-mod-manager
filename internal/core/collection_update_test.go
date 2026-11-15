@@ -102,9 +102,9 @@ func newUpdateFixture(t *testing.T) *updateFixture {
 				collection: source.Collection{ID: "abcdef", Name: "Three Mods", Revision: 3, Author: "curator",
 					URL: "https://www.nexusmods.com/games/skyrimspecialedition/collections/abcdef", Handle: "/h",
 					Items: []source.CollectionItem{
-						{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten"},
-						{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Eleven"},
-						{Kind: source.CollectionItemModFile, ModID: "12", FileID: "120", Name: "Twelve"},
+						{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", FileCategory: "MAIN"},
+						{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Eleven", FileCategory: "MAIN"},
+						{Kind: source.CollectionItemModFile, ModID: "12", FileID: "120", Name: "Twelve", FileCategory: "MAIN"},
 					}}},
 			tier:       source.TierPremium,
 			filesByMod: map[string][]string{"10": {"100", "101"}, "11": {"110"}, "12": {"120"}, "13": {"130"}},
@@ -149,9 +149,9 @@ func (f *updateFixture) bumpNexus(t *testing.T) {
 	c := &f.src.recipe.collection
 	c.Revision = 4
 	c.Items = []source.CollectionItem{
-		{Kind: source.CollectionItemModFile, ModID: "10", FileID: "101", Name: "Ten"},
-		{Kind: source.CollectionItemModFile, ModID: "12", FileID: "120", Name: "Twelve"},
-		{Kind: source.CollectionItemModFile, ModID: "13", FileID: "130", Name: "Thirteen"},
+		{Kind: source.CollectionItemModFile, ModID: "10", FileID: "101", Name: "Ten", FileCategory: "MAIN"},
+		{Kind: source.CollectionItemModFile, ModID: "12", FileID: "120", Name: "Twelve", FileCategory: "MAIN"},
+		{Kind: source.CollectionItemModFile, ModID: "13", FileID: "130", Name: "Thirteen", FileCategory: "MAIN"},
 	}
 }
 

@@ -66,6 +66,8 @@ func (s *recipeSource) ParseManifest(root fs.FS) (source.CollectionManifest, err
 			ModID  string `json:"modId"`
 			FileID string `json:"fileId"`
 			Type   string `json:"type"`
+			// #657: the file's own name, which a stand-in must match.
+			LogicalFilename string `json:"logicalFilename"`
 			// #610: a bundle item, an exact file list and patches.
 			SourceType     string            `json:"sourceType"`
 			FileExpression string            `json:"fileExpression"`
@@ -84,7 +86,7 @@ func (s *recipeSource) ParseManifest(root fs.FS) (source.CollectionManifest, err
 	for _, mod := range doc.Mods {
 		mm := source.ManifestMod{Name: mod.Name, Version: "1", SourceType: cmp.Or(mod.SourceType, "nexus"),
 			ModID: mod.ModID, FileID: mod.FileID, UpdatePolicy: "exact", ModType: mod.Type,
-			FileExpression: mod.FileExpression, Optional: mod.Optional, Patches: mod.Patches}
+			FileExpression: mod.FileExpression, Optional: mod.Optional, Patches: mod.Patches, LogicalFilename: mod.LogicalFilename}
 		for _, h := range mod.Hashes {
 			mm.FileList = append(mm.FileList, source.ManifestFileHash{Path: h.Path, MD5: h.MD5})
 		}

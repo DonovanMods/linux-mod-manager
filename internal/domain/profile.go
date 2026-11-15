@@ -109,11 +109,16 @@ func (p *CollectionPin) Clone() *CollectionPin {
 }
 
 // CollectionSkip is one mod of a collection the user skipped (#657): the
-// mod, and the pin that was no longer offered.
+// mod, and the pin that was no longer offered (or, Declined, the pin the
+// user chose not to take).
 type CollectionSkip struct {
 	SourceID string        `yaml:"source_id"`
 	ModID    string        `yaml:"mod_id"`
 	Pin      CollectionPin `yaml:"pin,omitempty"`
+	// Declined marks a skip the user kept when a collection update pinned
+	// the mod anew at an available file: Pin is then that declined pin, so
+	// the update does not offer it again until the collection pins another.
+	Declined bool `yaml:"declined,omitempty"`
 }
 
 // IsZero reports whether b records nothing.

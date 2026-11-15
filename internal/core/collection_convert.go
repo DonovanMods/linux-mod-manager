@@ -193,14 +193,15 @@ type ConvertedCollection struct {
 	// ManifestError says why the recipe could not be read; empty when it
 	// was.
 	ManifestError string `json:"manifest_error,omitempty"`
-	// GonePins are the items whose pinned file the source no longer
-	// offers (#657), each with the mod's current main file and the user's
-	// choice; an undecided one makes Apply refuse. UseCurrent,
-	// UseCurrentAll and Skip echo the choices the plan was made with
-	// (GonePinChoices), so a frontend re-plans with the same ones.
+	// GonePins are the mods whose pinned files the source no longer
+	// offers (#657), each gone file with its role and stand-in, and the
+	// user's choice; an undecided one makes Apply refuse. UseCurrent,
+	// UseCurrentAll, SkipFile and Skip echo the choices the plan was made
+	// with (GonePinChoices), so a frontend re-plans with the same ones.
 	GonePins      []CollectionGonePin `json:"gone_pins,omitempty"`
 	UseCurrent    []string            `json:"use_current,omitempty"`
 	UseCurrentAll bool                `json:"use_current_all,omitzero"`
+	SkipFile      []string            `json:"skip_file,omitempty"`
 	Skip          []string            `json:"skip,omitempty"`
 	// LoadOrders are the recipe's file load orders the import carries
 	// (#620), with how many of each order's files the recipe ties to one of
@@ -286,6 +287,10 @@ type ConvertedCollectionItem struct {
 	// the file is still offered. A file the list leaves out, or names
 	// without its details, is checked against the mod's file listing.
 	listed bool
+	// fileName is the file's own name - the recipe's logical file name,
+	// else the list's - which a gone file's same-role replacement must
+	// match (#657).
+	fileName string
 }
 
 // CollectionTool is a curator's tool shortcut, listed for information.
@@ -640,9 +645,11 @@ func convertManifestItems(in convertInput, out *ConvertedCollection) []*convItem
 				it.ID = it.ModID + ":" + it.FileID
 				recipeFiles[it.FileID] = true
 			}
+			it.fileName = mod.LogicalFilename
 			if li, ok := listed[it.FileID]; ok {
 				it.FileCategory, it.URL = li.FileCategory, li.URL
 				it.listed = li.ModID != ""
+				it.fileName = firstNonEmpty(it.fileName, li.FileName)
 				if it.Name == "" {
 					it.Name = li.Name
 				}
@@ -774,6 +781,7 @@ func convertListItems(in convertInput) []*convItem {
 		it.ModID, it.FileID = li.ModID, li.FileID
 		it.FileCategory = li.FileCategory
 		it.listed = li.ModID != ""
+		it.fileName = li.FileName
 		it.URL = li.URL
 		it.Optional = li.Optional
 		it.UpdatePolicy = li.UpdatePolicy

@@ -90,7 +90,7 @@ func cloneSkips(skips []domain.CollectionSkip) []domain.CollectionSkip {
 	}
 	out := make([]domain.CollectionSkip, len(skips))
 	for i, s := range skips {
-		out[i] = domain.CollectionSkip{SourceID: s.SourceID, ModID: s.ModID, Pin: *s.Pin.Clone()}
+		out[i] = domain.CollectionSkip{SourceID: s.SourceID, ModID: s.ModID, Pin: *s.Pin.Clone(), Declined: s.Declined}
 	}
 	return out
 }
@@ -120,7 +120,8 @@ func sameBaseline(a, b *domain.CollectionBaseline) bool {
 	}
 	return a.Plugins.Equal(b.Plugins) && maps.Equal(a.Overrides, b.Overrides) && a.LoadOrders.Equal(b.LoadOrders) &&
 		slices.EqualFunc(a.Skipped, b.Skipped, func(x, y domain.CollectionSkip) bool {
-			return x.SourceID == y.SourceID && x.ModID == y.ModID && x.Pin.Version == y.Pin.Version && slices.Equal(x.Pin.FileIDs, y.Pin.FileIDs)
+			return x.SourceID == y.SourceID && x.ModID == y.ModID && x.Pin.Version == y.Pin.Version && slices.Equal(x.Pin.FileIDs, y.Pin.FileIDs) &&
+				x.Declined == y.Declined
 		})
 }
 

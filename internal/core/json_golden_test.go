@@ -2720,6 +2720,21 @@ func TestJSONGoldens(t *testing.T) {
 				Choice: core.GonePinUseCurrent},
 		},
 		{
+			// #657 review: a gone optional file beside a pinned main, its
+			// same-category stand-in matched by name.
+			"collection_gone_file",
+			core.CollectionGoneFile{FileID: "105", Name: "Ten Optional Patch", Role: core.GoneFileSecondary,
+				Replacement: &core.CollectionCurrentFile{FileID: "106", Name: "Ten Optional Patch v2", Version: "2"}},
+		},
+		{
+			// #657 review: a gone optional no current file matches: it can
+			// be left out, or the mod skipped; a conflict's pin.
+			"collection_gone_pin_secondary",
+			core.CollectionGonePin{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1", FileIDs: []string{"105"},
+				Files:       []core.CollectionGoneFile{{FileID: "105", Name: "Ten Optional Patch", Role: core.GoneFileSecondary}},
+				CanSkipFile: true, Conflict: true, Choice: core.GonePinSkipFile},
+		},
+		{
 			// #657: the --json error envelope's details for undecided gone
 			// pins - one with a current file, one without.
 			"collection_gone_pins_error",

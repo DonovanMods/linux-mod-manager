@@ -704,7 +704,7 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 	}
 	// #657: every pinned file the source no longer offers is the user's to
 	// decide before anything is written.
-	if undecided := undecidedGonePins(c.Source); len(undecided) > 0 {
+	if undecided := undecidedGonePins(c.Source, nil); len(undecided) > 0 {
 		return &ProfileImportResult{}, &CollectionGonePinsError{Pins: undecided}
 	}
 	if !c.HooksImportable {

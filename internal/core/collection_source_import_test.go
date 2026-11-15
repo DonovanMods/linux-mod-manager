@@ -117,7 +117,13 @@ type sourceImportFixture struct {
 
 func newSourceImportFixture(t *testing.T, tier source.Tier) *sourceImportFixture {
 	t.Helper()
-	archive := recipeArchive(t, threeModRecipe)
+	return newSourceImportFixtureWith(t, tier, threeModRecipe)
+}
+
+// newSourceImportFixtureWith is newSourceImportFixture serving recipe.
+func newSourceImportFixtureWith(t *testing.T, tier source.Tier, recipe string) *sourceImportFixture {
+	t.Helper()
+	archive := recipeArchive(t, recipe)
 	cdn := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(archive) }))
 	t.Cleanup(cdn.Close)
 	home := t.TempDir()
@@ -137,9 +143,9 @@ func newSourceImportFixture(t *testing.T, tier source.Tier) *sourceImportFixture
 			collection: source.Collection{ID: "abcdef", Name: "Three Mods", Revision: 3, Author: "curator",
 				URL: "https://www.nexusmods.com/games/skyrimspecialedition/collections/abcdef", Handle: "/h",
 				Items: []source.CollectionItem{
-					{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", URL: "https://www.nexusmods.com/skyrimspecialedition/mods/10?tab=files&file_id=100"},
-					{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Eleven"},
-					{Kind: source.CollectionItemModFile, ModID: "12", FileID: "120", Name: "Twelve"},
+					{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", FileCategory: "MAIN", URL: "https://www.nexusmods.com/skyrimspecialedition/mods/10?tab=files&file_id=100"},
+					{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Eleven", FileCategory: "MAIN"},
+					{Kind: source.CollectionItemModFile, ModID: "12", FileID: "120", Name: "Twelve", FileCategory: "MAIN"},
 				}}},
 		tier:       tier,
 		filesByMod: map[string][]string{"10": {"100"}, "11": {"110"}, "12": {"120"}},

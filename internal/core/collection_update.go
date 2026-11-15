@@ -1060,7 +1060,8 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	}
 	// #657: every new pin the source no longer offers is the user's to
 	// decide first.
-	if undecided := undecidedGonePins(plan.Source); len(undecided) > 0 {
+	overridden := func(key string) bool { return opts.OverrideConflicts || slices.Contains(opts.Override, key) }
+	if undecided := undecidedGonePins(plan.Source, overridden); len(undecided) > 0 {
 		return result, &CollectionGonePinsError{Pins: undecided}
 	}
 	choices, err := resolveUpdateChoices(plan, opts)
