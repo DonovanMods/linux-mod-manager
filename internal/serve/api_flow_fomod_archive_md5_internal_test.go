@@ -35,13 +35,28 @@ func TestFlowFomod_ACollectionForAnotherArchiveAsksWithTheReason(t *testing.T) {
 	sum := md5.Sum(archive)
 	recorded := strings.Repeat("0", 32)
 
+	// #660: the import installs what it can and leaves the installer to
+	// finish; its job succeeds, with the item on its tally.
 	j := runFlow(t, s, game, "profile_import", lmmcPlanBody(t, md5PinnedCollection(recorded), ""), `{"install":true}`)
 	st := j.status()
+	require.Equal(t, jobSucceeded, st.State, "%+v", st.Error)
+	require.NotNil(t, st.Tally)
+	assert.Equal(t, 1, st.Tally.Todos)
+	imported, ok := st.Result.(*core.ProfileImportResult)
+	require.True(t, ok, "%T", st.Result)
+	require.Len(t, imported.Todos, 1)
+	assert.Equal(t, core.FomodReasonArchiveMismatch, imported.Todos[0].FomodReason)
+
+	// Finishing it asks, with the reason and both md5s.
+	key := fixtureSourceID + ":" + fomodModID
+	id := planFlowFor(t, s, game, "Pinned Pack", "collection_finish", `{"retry":["`+key+`"]}`)
+	j = startFlowJob(t, s, id, "")
+	st = j.status()
 	require.Equal(t, jobFailed, st.State)
 	require.NotNil(t, st.Error)
 	raw, err := json.Marshal(st.Error.Details)
 	require.NoError(t, err)
-	var result core.ProfileImportResult
+	var result core.CollectionFinishResult
 	require.NoError(t, json.Unmarshal(raw, &result))
 	require.NotNil(t, result.FomodChoicesRequired, "details: %s", raw)
 	q := result.FomodChoicesRequired
@@ -50,18 +65,20 @@ func TestFlowFomod_ACollectionForAnotherArchiveAsksWithTheReason(t *testing.T) {
 	require.NotNil(t, q.Mods[0].ArchiveMismatch)
 	assert.Equal(t, recorded, q.Mods[0].ArchiveMismatch.ExpectedMD5)
 	assert.Equal(t, hex.EncodeToString(sum[:]), q.Mods[0].ArchiveMismatch.ActualMD5)
-	_, err = config.LoadProfile(svc.ConfigDir(), game.ID, "Pinned Pack")
-	require.Error(t, err, "nothing was written")
 
-	id, _ := planFlow(t, s, game, "profile_import", lmmcPlanBody(t, md5PinnedCollection(recorded), ""))
-	answer := strings.Replace(fomodAnswer(t, sizeStep("2K", 0)), "{", `{"install":true,`, 1)
-	j = startFlowJob(t, s, id, answer)
+	// The wizard's answers finish it.
+	id = planFlowFor(t, s, game, "Pinned Pack", "collection_finish", `{"retry":["`+key+`"]}`)
+	j = startFlowJob(t, s, id, fomodAnswer(t, sizeStep("2K", 0)))
 	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	require.NotNil(t, j.status().Tally)
+	assert.Equal(t, "collection_finish", j.status().Tally.Kind)
+	assert.Zero(t, j.status().Tally.Todos, "nothing is left")
 	saved, err := config.LoadProfile(svc.ConfigDir(), game.ID, "Pinned Pack")
 	require.NoError(t, err)
 	ref := saved.FindRef(fixtureSourceID, fomodModID)
 	require.NotNil(t, ref)
 	assert.Equal(t, "2K", ref.Fomod.Steps[0].Groups[0].Choices[0].Name)
+	assert.Nil(t, ref.Todo)
 }
 
 func TestFlowFomod_ACollectionForThisArchiveReplaysUnasked(t *testing.T) {

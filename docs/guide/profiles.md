@@ -437,13 +437,19 @@ What the import does with each item:
   its optional files that does not replace; a gone optional file beside a
   main file that is still offered takes the current file of the same kind
   whose name matches it, when exactly one does. lmm never puts the current
-  main file beside the curator's. Choose for each: `--use-current
-  <mod-id>` installs the stand-in instead (`--use-current-all` does so for
-  every such mod that has one), `--skip-file <mod-id>` leaves a gone
-  optional file out and installs the rest of the mod, and `--skip
-  <mod-id>` leaves the mod out. In the browser each has the same choices.
-  Naming a mod whose pinned file is not gone, or a choice its pin does not
-  offer, is refused. Nothing is imported until every one is decided. A mod
+  main file beside the curator's. The stand-in is the **default**: the plan
+  says "Ten 1.0 is no longer on NexusMods; installing the current 2.0
+  instead (--skip 10 to leave it out)", and when the curator pinned that
+  version exactly it says so ("the curator pinned 1.0 exactly"), since the
+  curator never tested the newer file. (Vortex would not install it; lmm
+  does unless you skip it.) `--skip <mod-id>` leaves the mod out,
+  `--skip-file <mod-id>` leaves a gone optional file out and installs the
+  rest of the mod, and `--use-current <mod-id>` (or `--use-current-all`)
+  names the default explicitly. In the browser the stand-in is preselected,
+  with Skip beside it. Naming a mod whose pinned file is not gone, or a
+  choice its pin does not offer, is refused. A gone file nothing stands in
+  for does not stop the import: the mod is left to finish (see
+  [Finishing a collection](#finishing-a-collection)). A mod
   installed at its current file is still the collection's,
   and lmm remembers which file it stands in for; a skipped mod is
   remembered too (see [Updating a collection
@@ -502,8 +508,8 @@ What the import does with each item:
   against the checksum the collection records; the plan says how many.
 - The curator's **patches** to a mod's files are applied as the mod
   installs. A patch only applies to the file it was made against: if your
-  copy is different, the import is refused, with nothing written, rather
-  than installing the mod unpatched (Vortex would warn and carry on). The
+  copy is different, that mod is not installed, rather than installed
+  unpatched (Vortex would warn and carry on); it is left to finish. The
   plan lists every patch; a patch to a program needs
   `--allow-any-overrides` (see [What an import holds back](#what-an-import-holds-back)).
 - Files the curator **bundled** in the collection itself install like any
@@ -515,30 +521,80 @@ What the import does with each item:
   curator's instructions. The curator's tool shortcuts are listed too; lmm
   never creates or runs them.
 
-A NexusMods collection installs **all or nothing** while its files are
-fetched: if one mod can't be downloaded, nothing is imported, not even the
-profile. If something goes wrong after that, while the downloaded mods are
-being installed, the import says which mods failed, as any import does. And a collection
-that uses something this version of lmm can't do yet (a patch in a format
-other than bsdiff's, a plugin rule marking two plugins incompatible) shows
-its plan, with what is missing and which mods need it, and is refused, with
-nothing written. Optional mods that need such a thing are skipped instead.
+A collection import is **never all or nothing**. It installs every mod it
+can, and each one it cannot - a download that failed, an installer whose
+recorded answers no longer fit, a pinned file nothing stands in for, a
+file to download by hand - stays in the profile, in its place in the load
+order, as an item left to finish, with why and what resolves it. The
+import never stops part-way to ask. It ends with a summary:
+
+```text
+Imported 998 of 1000 mods; 2 need you:
+  ! FSMP (nexusmods:57339): FSMP's installer changed since the curator recorded their choices; answer it to continue
+      lmm profile finish "Skyrim Plus" --retry 57339
+  ! USSEP (nexusmods:266): the download of USSEP failed; retry it
+      HTTP 503 from the CDN
+      lmm profile finish "Skyrim Plus" --retry 266
+Finish the collection with:
+lmm profile finish "Skyrim Plus"
+```
+
+The last line is always the command to run next, and the exit status is
+non-zero while a mod failed. `--fomod-choices <file>` or
+`--fomod-defaults` on the import answers the installers once everything
+else is installed. A collection that uses something this version of lmm
+can't do yet (a patch in a format other than bsdiff's, a plugin rule
+marking two plugins incompatible) shows its plan, with what is missing and
+which mods need it, and is refused, with nothing written. Optional mods
+that need such a thing are skipped instead.
 
 In the browser, a running import shows its progress in a card at the
 bottom right of the page (**Importing collection…**, with how many of the
 collection's mods it has reached). The card stays on the other pages of
 the web UI, and comes back if you reload the page while the import runs.
-When it ends the card says how it went. A failure stays until you close
-it: it says how many mods failed (for a refused import, which one refused
-and how many were only held back behind it) and lists the first few with
-why. **Show in activity** opens the import's entry in the activity tray,
-with every mod and the full error under **Details** (on the Setup page
-it is not offered, so an unsaved draft there is not lost), and **Back to
-import** reopens the import window with the failure above its inputs and
-the collection you imported filled back in. In the terminal, a refused
-import names the mod that refused and counts the ones held back, and a
-NexusMods collection's `--json` error lists each refused mod under
-`items`.
+When it ends the card says how it went. **Show in activity** opens the
+import's entry in the activity tray (on the Setup page it is not
+offered, so an unsaved draft there is not lost). With `--json`, an
+import's result lists the mods left to finish under `todos`, each with
+its `reason` and `action`.
+
+### Finishing a collection
+
+`lmm profile finish` lists a collection profile's mods left to finish,
+each with why, what resolves it, and the command for it, and resolves
+them:
+
+```bash
+lmm profile finish "Skyrim Plus"
+lmm profile finish "Skyrim Plus" --retry all
+lmm profile finish "Skyrim Plus" --retry 57339 --fomod-defaults
+lmm profile finish "Skyrim Plus" --use-current 266
+lmm profile finish "Skyrim Plus" --skip-file 105
+lmm profile finish "Skyrim Plus" --skip 999
+lmm profile finish "Skyrim Plus" --from ~/Downloads
+```
+
+- `--retry <mod-id>` installs the mod again; `--retry all` retries every
+  mod on the list. An installer that asks is answered at the terminal, or
+  with `--fomod-choices` or `--fomod-defaults`.
+- `--use-current <mod-id>` installs a gone pin's mod at its current main
+  file, and `--skip-file <mod-id>` installs it without its gone optional
+  files.
+- `--skip <mod-id>` leaves the mod out. lmm remembers the skip, so a
+  collection update doesn't add the mod back without asking.
+- `--from <folder>` installs the files you downloaded by hand from that
+  folder, as `lmm profile fill` does.
+
+Each mod resolves on its own, in its place in the load order; one that
+fails again stays on the list with the new reason. A file an earlier
+attempt downloaded is installed without downloading it again ("Reusing
+1 downloaded file(s)"). `--dry-run` shows what it would do, and `--json`
+prints the list (or the plan, or the result).
+
+You can deploy, play, switch to or apply an unfinished collection: each
+warns "collection incomplete: N item(s) unresolved (...); the game may
+not behave as the curator intended", and leaves the mods left to finish
+alone. `lmm status` counts them.
 
 ### Updating a collection profile
 
@@ -595,11 +651,13 @@ lists it under **Needs your attention** and the update adds it back;
 `--keep-skipped <mod-id>` keeps it out (in the browser, its **Keep it
 skipped** tick box), and lmm remembers that pin, so the next update offers
 the mod again only when the curator pins another file. A new pin NexusMods
-no longer offers is decided as at an import, with `--use-current`,
-`--use-current-all`, `--skip-file` or `--skip` (skipping a mod the profile
-already has keeps the version it has). For a mod you changed yourself (a
-conflict), your version is kept, so its gone pin needs deciding only if
-you take the collection's with `--override`.
+no longer offers is handled as at an import: the current file stands in
+by default, `--skip-file` or `--skip` decide otherwise (skipping a mod the
+profile already has keeps the version it has), and one nothing stands in
+for is left to finish. For a mod you changed yourself (a conflict), your
+version is kept; if you take the collection's with `--override` and
+nothing stands in for its gone file, your version is still kept, and the
+update says so.
 
 The plugin list, file load orders (Cyberpunk 2077's archive order, see
 [Load order](load-order.md)) and config overrides follow the same rule. lmm remembers
@@ -632,9 +690,9 @@ these patches**), since lmm never updates a mod unpatched. For a NexusMods colle
 `--with-optional` and `--optional <id>` include optional mods, and an
 optional mod you already have stays in; in the browser, unticking one in
 the plan leaves it out of the new version, where it is listed with the
-mods the collection no longer has. Like an import, a NexusMods update
-installs all or nothing, and an installer that needs answers asks (see
-[FOMOD](fomod.md)). Once no profile uses the old revision (of any game
+mods the collection no longer has. Like an import, an update installs
+what it can and leaves the rest to finish (see [Finishing a
+collection](#finishing-a-collection)). Once no profile uses the old revision (of any game
 that shares its cache folder), lmm drops its recipe from the cache.
 
 ## An override of a mod's own file

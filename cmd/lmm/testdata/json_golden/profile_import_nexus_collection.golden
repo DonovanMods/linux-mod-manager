@@ -102,6 +102,18 @@
     "skipped": 1,
     "notes": [
       "The profile records 1 item(s) still to download: get each file from its page and install it from the file (lmm install --id <mod-id> --from-file <archive>)."
-    ]
+    ],
+    "todos": [
+      {
+        "source_id": "nexusmods",
+        "mod_id": "10",
+        "name": "Ten",
+        "reason": "manual_download",
+        "detail": "NexusMods serves this account no downloads through its API",
+        "action": "download",
+        "remedy": "download Ten by hand from its page, then install it from your downloads folder"
+      }
+    ],
+    "total": 1
   }
 }

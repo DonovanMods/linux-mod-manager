@@ -16,49 +16,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAPIFlow_ProfileImportNexus_FailureListsEveryFailedMod(t *testing.T) {
+// #660 (owner ruling, replacing all-or-nothing): a collection import whose
+// items fail installs what it can and leaves the rest to finish. Its job
+// SUCCEEDS - its tally carries the items left to do, which the web UI
+// shows as needing attention - and the result lists them, each with its
+// action; GET /api/v1/profiles/{name}/todos is the same list.
+func TestAPIFlow_ProfileImportNexus_FailuresAreTodosOnASucceededJob(t *testing.T) {
 	s, svc, game := newFlowFixtureServer(t)
 	// A Premium account installs; the double knows neither required item,
-	// so both refuse and the all-or-nothing import writes nothing.
+	// so both fail.
 	seedNexusCollection(t, svc, game, source.TierPremium)
 
 	planID, _ := planFlow(t, s, game, "profile_import", `{"nexus_collection":"abcdef"}`)
 	j := startFlowJob(t, s, planID, `{"install":true}`)
 	status := j.status()
-	require.Equal(t, jobFailed, status.State)
-	require.NotNil(t, status.Error)
-	assert.Contains(t, status.Error.Error, "nexusmods:10:", "the joined text is kept")
-	require.Len(t, status.Error.Items, 2)
-	assert.Equal(t, "nexusmods", status.Error.Items[0].SourceID)
-	assert.Equal(t, "10", status.Error.Items[0].ModID)
-	assert.Equal(t, "11", status.Error.Items[1].ModID)
-	assert.NotEmpty(t, status.Error.Items[0].Reason)
-	assert.False(t, status.EndedAt.IsZero(), "a failed job says when it ended")
+	require.Equal(t, jobSucceeded, status.State, "%v", status.Error)
+	require.NotNil(t, status.Tally)
+	assert.Equal(t, 2, status.Tally.Todos)
+	assert.Equal(t, 2, status.Tally.Total)
+	assert.Equal(t, 2, status.Tally.Failed)
 	assert.Equal(t, game.ID, status.Game, "the job names the game its plan was made for")
 	assert.NotEmpty(t, status.Profile, "and the profile")
 	assert.Equal(t, "Three Mods", status.Collection, "and the collection it imports")
 
-	// The jobs index carries the same envelope, and ended_at.
-	rec := doAPI(s, http.MethodGet, "/api/v1/jobs", "")
-	require.Equal(t, http.StatusOK, rec.Code)
-	var index struct {
-		Jobs []struct {
-			State      string `json:"state"`
-			EndedAt    string `json:"ended_at"`
-			Game       string `json:"game"`
-			Collection string `json:"collection"`
-			Error      struct {
-				Items []core.ItemFailure `json:"items"`
-			} `json:"error"`
-		} `json:"jobs"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &index))
-	require.Len(t, index.Jobs, 1)
-	assert.Equal(t, "failed", index.Jobs[0].State)
-	assert.NotEmpty(t, index.Jobs[0].EndedAt)
-	assert.Equal(t, game.ID, index.Jobs[0].Game)
-	assert.Equal(t, "Three Mods", index.Jobs[0].Collection)
-	assert.Len(t, index.Jobs[0].Error.Items, 2)
+	doc, ok := status.Result.(*core.ProfileImportResult)
+	require.True(t, ok, "%T", status.Result)
+	require.Len(t, doc.Todos, 2)
+	assert.Equal(t, "10", doc.Todos[0].ModID)
+	assert.Equal(t, "11", doc.Todos[1].ModID)
+	assert.NotEmpty(t, doc.Todos[0].Action)
+
+	rec := doAPI(s, http.MethodGet, "/api/v1/profiles/Three%20Mods/todos?game="+game.ID, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var report core.CollectionTodoReport
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &report))
+	assert.Equal(t, doc.Todos, report.Todos)
+	assert.Equal(t, 2, report.Total)
 }
 
 // TestAPIFlow_AJobNamesItsGameButNoCollection: a job that imports no

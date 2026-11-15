@@ -280,6 +280,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if err != nil {
 		return err
 	}
+	printIncomplete(plan.Unresolved) // #660
 
 	if deployDryRun {
 		// Ruling 15: --dry-run --json emits the Plan itself, not a

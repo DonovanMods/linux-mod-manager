@@ -637,8 +637,10 @@ Steam Workshop collection imports as a list of Workshop items instead (see
   curator's file, and the curator's install order, FOMOD answers, plugin
   order and rules, Cyberpunk 2077 archive order, exact file lists, BSDIFF40
   patches and bundled files come with it. Optional mods are left out
-  unless you add `--with-optional`. The import is all or nothing while
-  files download.
+  unless you add `--with-optional`. The import installs every mod it can
+  and leaves the rest to finish, each with why and what resolves it:
+  `lmm profile finish <profile>` lists and resolves them
+  ([#660](https://github.com/DonovanMods/linux-mod-manager/issues/660)).
 - **On a free NexusMods account**, which NexusMods serves no downloads to,
   the plan marks every mod as a manual download with a link to its file's
   page. Download them by hand, then run `lmm profile fill <profile>

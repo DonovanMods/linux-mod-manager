@@ -311,3 +311,32 @@ func TestCollectionTodos_DeployApplyAndSwitchWarnAndLeaveThemAlone(t *testing.T)
 	assert.Equal(t, 2, status.ProfileDrift.Unresolved, "the drift summary counts them")
 	assert.Zero(t, status.ProfileDrift.NotInstalled)
 }
+
+// #660: a collection update of a profile with items left to finish retries
+// them as the new version pins them, and leaves to finish what fails now.
+func TestCollectionUpdate_WithItemsLeftToFinish(t *testing.T) {
+	f := newUpdateFixture(t)
+	ctx := context.Background()
+	f.src.urlErrs = map[string]error{"10": errors.New("HTTP 503 from the CDN")}
+	plan, err := f.svc.PlanSourceCollectionImport(ctx, f.game, core.SourceCollectionImportRequest{SourceID: "nexusmods", Ref: "abcdef", ProfileName: "coll"})
+	require.NoError(t, err)
+	result, err := f.svc.ApplyCollectionImport(ctx, f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+	assert.Equal(t, map[string]string{"10": domain.TodoDownloadFailed}, todoReasons(result.Todos))
+
+	f.bumpNexus(t)
+	f.src.urlErrs = map[string]error{"13": errors.New("HTTP 502 from the CDN")}
+	update, err := f.svc.ApplyCollectionUpdate(ctx, f.game, f.planUpdate(t), core.CollectionUpdateOptions{}, nil)
+	require.ErrorAs(t, err, &incomplete, "an update that leaves items to finish is not a clean one")
+	assert.Equal(t, 4, f.profile(t).Collection.Version, "the update applied")
+	require.NotNil(t, update.Import)
+	assert.Equal(t, map[string]string{"13": domain.TodoDownloadFailed}, todoReasons(update.Import.Todos),
+		"the item left to finish installed at its new pin; the new one that failed is left to finish")
+	saved := f.profile(t)
+	assert.Nil(t, saved.FindRef("nexusmods", "10").Todo)
+	require.NotNil(t, saved.FindRef("nexusmods", "13").Todo)
+	row, err := f.svc.GetInstalledMod(ctx, "nexusmods", "10", "skyrim", "coll")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"101"}, row.FileIDs)
+}

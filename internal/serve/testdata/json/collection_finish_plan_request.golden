@@ -1,0 +1,14 @@
+{
+  "retry": [
+    "nexusmods:4044"
+  ],
+  "use_current": [
+    "nexusmods:266"
+  ],
+  "skip_file": [
+    "nexusmods:105"
+  ],
+  "skip": [
+    "nexusmods:999"
+  ]
+}

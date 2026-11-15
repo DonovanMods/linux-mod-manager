@@ -279,9 +279,15 @@ func showGameStatus(ctx context.Context, service *core.Service, gameID string) e
 
 		// #641: what `lmm profile apply` would converge - the line the web
 		// UI's Profile card shows beside its Apply.
-		if st.ProfileDrift != nil {
-			fmt.Printf("  %s%s\n", driftHeader, colorYellow(driftSummary(*st.ProfileDrift)))
+		if d := st.ProfileDrift; d != nil && d.Total() > 0 {
+			fmt.Printf("  %s%s\n", driftHeader, colorYellow(driftSummary(*d)))
 			fmt.Printf("    Run 'lmm profile apply --game %s' to make the installation match it.\n", st.ID)
+		}
+		// #660: a collection's items left to do are Finish collection's,
+		// not an apply's.
+		if d := st.ProfileDrift; d != nil && d.Unresolved > 0 {
+			fmt.Printf("  %s\n", colorYellow(fmt.Sprintf("Collection incomplete: %d item(s) left to finish", d.Unresolved)))
+			fmt.Printf("    Run 'lmm profile finish %q --game %s' to see and resolve them.\n", d.Profile, st.ID)
 		}
 	}
 

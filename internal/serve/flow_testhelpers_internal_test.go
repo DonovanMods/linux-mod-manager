@@ -189,3 +189,17 @@ func doAPIWithoutCSRF(s *Server, method, target, body string) *httptest.Response
 	s.Handler().ServeHTTP(rec, req)
 	return rec
 }
+
+// planFlowFor is planFlow for a named profile of the fixture game, as the
+// SPA scopes a plan to the profile it shows (#660's collection_finish).
+func planFlowFor(t *testing.T, s *Server, game *domain.Game, profile, kind, body string) planID {
+	t.Helper()
+	target := "/api/v1/plans/" + kind + "?" + gameParam + "=" + url.QueryEscape(game.ID) + "&" + profileParam + "=" + url.QueryEscape(profile)
+	rec := doAPI(s, http.MethodPost, target, body)
+	require.Equal(t, http.StatusOK, rec.Code, "plan %s: %s", kind, rec.Body.String())
+	var resp struct {
+		PlanID planID `json:"plan_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	return resp.PlanID
+}

@@ -408,7 +408,17 @@ func applyProfileImportKind(ctx context.Context, s *Server, pending, opts any, s
 		return s.svc.ApplyWorkshopCollectionImport(ctx, p.Game, p.Plan, req.importOptions(), sink)
 	}
 	if p.Plan.Collection != nil {
-		return s.svc.ApplyCollectionImport(ctx, p.Game, p.Plan, req.importOptions(), sink)
+		result, err := s.svc.ApplyCollectionImport(ctx, p.Game, p.Plan, req.importOptions(), sink)
+		// #660: a collection import that installed what it could and left
+		// the rest to finish is a job that succeeded - with its items left
+		// to do on its tally (todos), which the web UI shows as needing
+		// attention, leading with Finish collection. The CLI still exits
+		// non-zero for it (core.ProfileImportIncompleteError).
+		var incomplete *core.ProfileImportIncompleteError
+		if errors.As(err, &incomplete) && result != nil && len(result.Todos) > 0 && !result.Refused {
+			return result, nil
+		}
+		return result, err
 	}
 	return s.svc.ApplyImport(ctx, p.Game, p.Plan, req.importOptions(), sink)
 }

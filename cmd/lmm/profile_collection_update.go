@@ -139,8 +139,7 @@ func doCollectionUpdate(ctx context.Context, service *core.Service, game *domain
 		}
 		return nil
 	}
-	overridden := func(key string) bool { return opts.OverrideConflicts || slices.Contains(opts.Override, key) }
-	if len(plan.Unsupported) > 0 || hasUndecidedGonePins(plan.Source, overridden) {
+	if len(plan.Unsupported) > 0 {
 		// The plan always renders; the apply refuses, writing nothing.
 		_, err := service.ApplyCollectionUpdate(ctx, game, plan, opts, nil)
 		return err
@@ -175,6 +174,8 @@ func doCollectionUpdate(ctx context.Context, service *core.Service, game *domain
 			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
 		case core.ImportDownloading:
 			printProgressLine("\r    Downloading: %.1f%%", p.Percent)
+		case core.ImportDownloadReused:
+			fmt.Printf("    %s\n", p.Detail)
 		case core.ImportDownloadDone:
 			fmt.Println()
 		case core.ImportModFailed:
@@ -224,6 +225,14 @@ func doCollectionUpdate(ctx context.Context, service *core.Service, game *domain
 		return fomodUnanswered(result.Import.FomodChoicesRequired)
 	}
 	printCollectionUpdateResult(result)
+	// #660: what the update could not install is left to finish; the last
+	// line is the command to run next.
+	if imp := result.Import; imp != nil && len(imp.Todos) > 0 {
+		printCollectionLeft(imp.ProfileName, imp.Total, imp.Todos)
+		if incompleteErr != nil {
+			return fmt.Errorf("%w", ErrReported)
+		}
+	}
 	return incompleteErr
 }
 

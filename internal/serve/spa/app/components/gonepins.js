@@ -14,11 +14,13 @@
 // out and install the rest (--skip-file), or skip the mod (--skip). A
 // choice is a PLAN-time option - it changes what the plan installs - so
 // picking one re-plans (actions.replanWith), and the preview always
-// describes exactly what Confirm submits. Nothing is preselected: the
-// import is the user's to decide, and Confirm stays disabled
-// (confirmplan.js, gonePinsUndecided) until every pin is - a collection
-// update's pin of a mod the user owns only when they take the collection's
-// side of that conflict. Every string was sanitised by core.
+// describes exactly what Confirm submits. Issue 660 (owner ruling): the
+// current file is the default - core decides it (pin.default) and the
+// radio is preselected, with Skip beside it - and says when the curator
+// pinned the version exactly (pin.curator_exact). A pin nothing stands in
+// for no longer holds Confirm back: the import leaves the mod to finish
+// (Finish collection), unless the user skips it here. Every string was
+// sanitised by core.
 
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
@@ -73,20 +75,22 @@ export function gonePinDecision(pin) {
   }
 }
 
+/** defaultLine is a defaulted pin's line, as the CLI's plan words it: the
+ * pinned version is gone and the current one installs instead - saying
+ * when the curator pinned the version exactly (issue 660). */
+function defaultLine(pin) {
+  const pinned =
+    displayVersion(pin) || `file ${(pin.file_ids ?? []).join(", ")}`;
+  const current =
+    displayVersion(pin.current ?? {}) || describeFile(pin.current);
+  return pin.curator_exact && displayVersion(pin)
+    ? `The curator pinned ${pinned} exactly, and NexusMods no longer offers it; installing the current ${current} instead.`
+    : `${pinned} is no longer on NexusMods; installing the current ${current} instead.`;
+}
+
 /** modsPin is "1 mod pins" or "N mods pin". */
 export function modsPin(n) {
   return n === 1 ? "1 mod pins" : `${n} mods pin`;
-}
-
-/** gonePinsUndecided reports whether a converted collection (core.
- * ConvertedCollection) has a gone pin nobody chose for that its Apply
- * needs decided: a conflict's pin only when overridden(key) - the user
- * takes the collection's side of it. Confirm waits on one. */
-export function gonePinsUndecided(source, overridden) {
-  return (source?.gone_pins ?? []).some(
-    (pin) =>
-      !pin.choice && (!pin.conflict || Boolean(overridden?.(pinKey(pin)))),
-  );
 }
 
 /** GonePinsSection renders a converted collection's gone pins with their
@@ -142,9 +146,9 @@ export function GonePinsSection({ source: c, actions, sectionRef }) {
         ${`Needs your attention - ${modsPin(pins.length)} a file NexusMods no longer offers`}
       </h3>
       <p class="plan__note">
-        Choose for each: the current file of the same role, leaving a gone
-        optional file out, or leaving the mod out. Nothing is imported until
-        each is decided.
+        Each installs the mod's current file instead by default; choose Skip to
+        leave it out. A mod with nothing to stand in for its file is left to
+        finish after the import.
       </p>
       <ul class="plan__mods">
         ${pins.map((pin) => {
@@ -168,6 +172,23 @@ export function GonePinsSection({ source: c, actions, sectionRef }) {
                 )}
               </ul>
               ${
+                pin.default &&
+                html`<p class="plan__note" data-testid="gone-pin-default">
+                  ${defaultLine(pin)}
+                </p>`
+              }
+              ${
+                !pin.choice &&
+                !pin.conflict &&
+                html`<p
+                  class="plan__note"
+                  data-testid="gone-pin-left-to-finish"
+                >
+                  Nothing stands in for it: the import leaves this mod to finish
+                  (Finish collection), unless you skip it now.
+                </p>`
+              }
+              ${
                 pin.conflict &&
                 !pin.choice &&
                 html`<p class="plan__note">
@@ -186,7 +207,7 @@ export function GonePinsSection({ source: c, actions, sectionRef }) {
                 />
                 ${
                   pin.current
-                    ? "Install the current file instead (suggested)"
+                    ? "Install the current file instead (the default)"
                     : "Install the current file instead: no current file stands in for it"
                 }
               </label>

@@ -157,7 +157,7 @@ func todoRemedy(t CollectionTodoItem) (string, string) {
 	case domain.TodoGonePin:
 		text := fmt.Sprintf("the source no longer offers the file the collection pins for %s: use the mod's current file, or skip it", name)
 		if t.CanSkipFile {
-			text = fmt.Sprintf("the source no longer offers a file the collection pins for %s: leave that file out and install the rest, use the mod's current file, or skip it", name)
+			text = fmt.Sprintf("the source no longer offers a file the collection pins for %s: leave that file out and install the rest, or skip it", name)
 		}
 		return TodoActionChooseFile, text
 	case domain.TodoManualDownload:

@@ -167,6 +167,7 @@ func deployBeforeLaunch(ctx context.Context, service *core.Service, game *domain
 	if err != nil {
 		return err
 	}
+	printIncomplete(plan.Unresolved) // #660
 	result, err := service.ApplyDeploy(ctx, game, plan, opts, quietSink(nil))
 	if err != nil {
 		return err
