@@ -86,6 +86,13 @@ func nexusCollectionServiceWith(t *testing.T, recipe string) (*core.Service, *do
 // collection's recipe, for a game on the NexusMods domain gameSourceID.
 func nexusCollectionServiceFor(t *testing.T, recipe, gameSourceID string) (*core.Service, *domain.Game, string) {
 	t.Helper()
+	return nexusCollectionServiceAs(t, recipe, gameSourceID, nil)
+}
+
+// nexusCollectionServiceAs is nexusCollectionServiceFor registering
+// wrap(double) in place of the double, when wrap is not nil.
+func nexusCollectionServiceAs(t *testing.T, recipe, gameSourceID string, wrap func(*nexusCollectionDouble) source.ModSource) (*core.Service, *domain.Game, string) {
+	t.Helper()
 	if _, err := exec.LookPath("7z"); err != nil {
 		t.Skip("7z not installed")
 	}
@@ -105,7 +112,12 @@ func nexusCollectionServiceFor(t *testing.T, recipe, gameSourceID string) (*core
 	svc, err := core.NewService(core.ServiceConfig{ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir(), DownloadClient: cdn.Client()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	svc.RegisterSource(&nexusCollectionDouble{archiveURL: cdn.URL + "/recipe.7z"})
+	double := &nexusCollectionDouble{archiveURL: cdn.URL + "/recipe.7z"}
+	if wrap != nil {
+		svc.RegisterSource(wrap(double))
+	} else {
+		svc.RegisterSource(double)
+	}
 	game := &domain.Game{ID: "skyrimse", Name: "Skyrim Special Edition", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
 		SourceIDs: map[string]string{"nexusmods": gameSourceID}}
 	require.NoError(t, svc.SaveGame(context.Background(), game))

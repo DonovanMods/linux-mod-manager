@@ -27,6 +27,7 @@ var (
 	profileSyncWithOptional      bool
 	profileSyncOptional          []string
 	profileSyncAnyOverrides      bool
+	profileSyncGonePins          gonePinFlags
 )
 
 func init() {
@@ -47,6 +48,7 @@ func init() {
 		"with --collection, install this optional item of a NexusMods collection (its id as the plan lists it, mod-id:file-id; repeatable)")
 	f.BoolVar(&profileSyncAnyOverrides, "allow-any-overrides", false,
 		"with --collection, import the new version's overrides that are not text config files, its bundled files that hold code, and its patches to code too")
+	profileSyncGonePins.register(profileSyncCmd, "with --collection, ")
 	addFomodFlags(profileSyncCmd)
 }
 
@@ -65,7 +67,7 @@ func collectionSyncFlagsUsed() []string {
 			used = append(used, name)
 		}
 	}
-	return used
+	return append(used, profileSyncGonePins.used()...)
 }
 
 // resolveUpdateKeys turns each --remove/--override argument into the key
@@ -103,6 +105,7 @@ func doCollectionUpdate(ctx context.Context, service *core.Service, game *domain
 	profileName := profileSyncTarget(ctx, service, game, args)
 	plan, err := service.PlanCollectionUpdate(ctx, game, core.CollectionUpdateRequest{
 		Profile: profileName, WithOptional: profileSyncWithOptional, Optional: profileSyncOptional,
+		GonePins: profileSyncGonePins.choices("nexusmods"),
 	})
 	if err != nil {
 		return err
@@ -131,7 +134,7 @@ func doCollectionUpdate(ctx context.Context, service *core.Service, game *domain
 		}
 		return nil
 	}
-	if len(plan.Unsupported) > 0 {
+	if len(plan.Unsupported) > 0 || hasUndecidedGonePins(plan.Source) {
 		// The plan always renders; the apply refuses, writing nothing.
 		_, err := service.ApplyCollectionUpdate(ctx, game, plan, opts, nil)
 		return err
@@ -277,6 +280,18 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 				fmt.Printf("      %s\n", it.Note)
 			}
 		}
+	}
+	if len(plan.Skipped) > 0 {
+		fmt.Printf("\nSkipped - mods you skipped because their pinned file was gone (%d):\n", len(plan.Skipped))
+		for _, it := range plan.Skipped {
+			fmt.Printf("  ⊘ %s %s: kept out\n", updateItemLabel(it), it.NewVersion)
+			if it.Note != "" {
+				fmt.Printf("      %s\n", it.Note)
+			}
+		}
+	}
+	if plan.Source != nil {
+		printGonePins(plan.Source, "lmm profile sync --collection")
 	}
 	if len(plan.Removed) > 0 {
 		remove := map[string]bool{}

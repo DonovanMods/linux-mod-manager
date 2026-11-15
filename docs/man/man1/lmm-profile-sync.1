@@ -100,6 +100,18 @@ Examples:
 	with --collection, remove every mod the new version drops (they are kept by default)
 
 .PP
+\fB--skip\fP=[]
+	with --collection, leave out this mod, whose pinned file NexusMods no longer offers (source:mod-id, or the mod id; repeatable)
+
+.PP
+\fB--use-current\fP=[]
+	with --collection, install this mod's current main file in place of a pinned file NexusMods no longer offers (source:mod-id, or the mod id; repeatable)
+
+.PP
+\fB--use-current-all\fP[=false]
+	with --collection, install the current main file in place of every pinned file NexusMods no longer offers
+
+.PP
 \fB--with-optional\fP[=false]
 	with --collection, install a NexusMods collection's optional mods too
 

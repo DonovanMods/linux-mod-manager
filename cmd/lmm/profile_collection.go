@@ -348,12 +348,14 @@ var sourceItemMarks = map[core.CollectionItemState]string{
 	core.CollectionItemBundled:         "▣",
 	core.CollectionItemOptionalSkipped: "○",
 	core.CollectionItemUnsupported:     "✗",
+	core.CollectionItemSkipped:         "⊘",
 }
 
 // sourceItemStates is the order the states are summarised in.
 var sourceItemStates = []core.CollectionItemState{
 	core.CollectionItemInstalled, core.CollectionItemWillInstall, core.CollectionItemManualDownload,
 	core.CollectionItemExternal, core.CollectionItemBundled, core.CollectionItemOptionalSkipped, core.CollectionItemUnsupported,
+	core.CollectionItemSkipped,
 }
 
 // printSourceCollection prints a converted source collection (#607): the
@@ -418,6 +420,7 @@ func printSourceCollection(c *core.ConvertedCollection) {
 	if c.Counts[core.CollectionItemOptionalSkipped] > 0 && !c.WithOptional {
 		fmt.Printf("  Optional items are left out; --with-optional installs them.\n")
 	}
+	printGonePins(c, "lmm profile import --nexus-collection")
 	if len(c.Tools) > 0 {
 		fmt.Printf("\nThe curator's tool shortcuts (listed only; lmm never creates or runs them):\n")
 		for _, t := range c.Tools {
