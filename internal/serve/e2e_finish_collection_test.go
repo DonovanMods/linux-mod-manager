@@ -263,8 +263,9 @@ func TestE2E_FinishCollection_ACleanImportReadsImported(t *testing.T) {
 
 // seedFinishProfile writes "Fin": a collection profile with an item of
 // each kind of action left to finish - a manual download, a failed
-// download, an installer's questions and a gone secondary file - for the
-// dialog scenarios and the narrow-width pass.
+// download, an installer's questions, a gone secondary file - for the
+// dialog scenarios and the narrow-width pass - and a mod gone from its
+// source.
 func seedFinishProfile(t *testing.T, f e2eFixture) {
 	t.Helper()
 	require.NoError(t, config.SaveProfile(f.Svc.ConfigDir(), &domain.Profile{
@@ -278,6 +279,8 @@ func seedFinishProfile(t *testing.T, f e2eFixture) {
 				Todo: &domain.CollectionTodo{Reason: domain.TodoInstallerQuestions, Name: "Twelve", FomodReason: "stale"}},
 			{SourceID: "nexusmods", ModID: "13", Version: "1.3", FileIDs: []string{"130", "131"},
 				Todo: &domain.CollectionTodo{Reason: domain.TodoGonePin, Name: "Thirteen", FileIDs: []string{"131"}, CanSkipFile: true}},
+			{SourceID: "nexusmods", ModID: "14", Version: "1.4", FileIDs: []string{"140"},
+				Todo: &domain.CollectionTodo{Reason: domain.TodoModGone, Name: "Fourteen"}},
 		},
 		Collection: &domain.CollectionInfo{ID: "nexusmods:fin", Origin: &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "fin", Revision: 1}},
 	}))
@@ -307,13 +310,14 @@ func TestE2E_FinishCollection_EachItemHasItsAction(t *testing.T) {
 		chromedp.Evaluate(`Object.fromEntries([...document.querySelectorAll('`+finishPanel+` [data-todo]')]
 			.map((row) => [row.dataset.todo, [...row.querySelectorAll("button")].map((b) => b.dataset.action)]))`, &actions),
 	)
-	assert.Contains(t, label, "Imported 0 of 4 mods; 4 need you.")
+	assert.Contains(t, label, "Imported 0 of 5 mods; 5 need you.")
 	assert.Equal(t, map[string][]string{
 		"nexusmods:10": {"finish-download", "finish-skip"},
 		"nexusmods:11": {"finish-retry", "finish-skip"},
 		"nexusmods:12": {"finish-answer", "finish-skip"},
 		"nexusmods:13": {"finish-skip-file", "finish-skip"},
-	}, actions)
+		"nexusmods:14": {"finish-skip"},
+	}, actions, "a mod gone from its source offers Skip only")
 
 	// Download by hand opens the fill drop zone under its row.
 	var dropZone bool
