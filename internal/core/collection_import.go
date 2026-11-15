@@ -1490,18 +1490,6 @@ func checkCollectionPlugins(p domain.ProfilePlugins) error {
 	return nil
 }
 
-// bundledOnly is refs' collection-bundled items (#610), which need no
-// download whatever the account.
-func bundledOnly(refs []domain.ModReference) []domain.ModReference {
-	var out []domain.ModReference
-	for _, r := range refs {
-		if r.SourceID == domain.SourceCollection {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
 // installingNone is p without downloading the mods held names (by
 // domain.ModKey): they stay in the profile it saves, pending, and are not
 // acquired. It also returns how many it held back.

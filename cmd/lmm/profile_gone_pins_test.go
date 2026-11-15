@@ -305,7 +305,7 @@ const twoFileTenRecipe = `{"Name": "Three Mods", "Mods": [
 // current file matches offers --skip-file (the rest installs) or --skip,
 // never the current main file beside the pinned one.
 func TestDoNexusCollectionImport_SkipFile(t *testing.T) {
-	svc, game, configDir := nexusCollectionServiceAs(t, twoFileTenRecipe, "skyrimspecialedition", func(d *nexusCollectionDouble) source.ModSource {
+	svc, game, _ := nexusCollectionServiceAs(t, twoFileTenRecipe, "skyrimspecialedition", func(d *nexusCollectionDouble) source.ModSource {
 		return twoFileTenDouble{d}
 	})
 	setNexusFlags(t, "abcdef", false)
@@ -316,7 +316,7 @@ func TestDoNexusCollectionImport_SkipFile(t *testing.T) {
 	assert.NotContains(t, stdout, "--use-current 10")
 	assert.Contains(t, stdout, `lmm profile finish "Three Mods" --skip-file 10 (or --skip 10)`, "the to-do names its command")
 
-	svc, game, configDir = nexusCollectionServiceAs(t, twoFileTenRecipe, "skyrimspecialedition", func(d *nexusCollectionDouble) source.ModSource {
+	svc, game, configDir := nexusCollectionServiceAs(t, twoFileTenRecipe, "skyrimspecialedition", func(d *nexusCollectionDouble) source.ModSource {
 		return twoFileTenDouble{d}
 	})
 	setGonePinFlags(t, gonePinFlags{skipFile: []string{"10"}})
