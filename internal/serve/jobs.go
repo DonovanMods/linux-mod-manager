@@ -100,6 +100,17 @@ type jobStatus struct {
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
 
+	// Game and Profile are the game and profile the job's plan was made
+	// for (#655), so a page that did not start the job - or was reloaded
+	// since - can still say where it ran. Empty for a job with no plan
+	// behind it (enable/disable, the automatic passes).
+	Game    string `json:"game,omitempty"`
+	Profile string `json:"profile,omitempty"`
+	// Collection is the name of the collection a profile_import job
+	// imports (#655): what lets a reloaded page call it a collection import
+	// rather than a profile import. Empty for every other job.
+	Collection string `json:"collection,omitempty"`
+
 	// Result is the value the job's run function returned, unwrapped - the
 	// same core document the equivalent CLI command emits under --json.
 	Result any `json:"result,omitempty"`
@@ -138,6 +149,7 @@ type job struct {
 	id      jobID
 	kind    string
 	origin  string
+	about   jobAbout
 	ring    int
 	started time.Time
 	// finished is closed exactly once, by finish. done() hands it out as
@@ -189,6 +201,9 @@ func (j *job) status() jobStatus {
 		ID:            j.id,
 		Kind:          j.kind,
 		Origin:        j.origin,
+		Game:          j.about.Game,
+		Profile:       j.about.Profile,
+		Collection:    j.about.Collection,
 		State:         j.state,
 		StartedAt:     j.started,
 		EndedAt:       j.ended,
@@ -367,7 +382,7 @@ func (j *job) finish(result any, err error, at time.Time) {
 	if err != nil {
 		j.state = jobFailed
 		j.err = err
-		j.envelope = &apiErrorEnvelope{Error: err.Error(), Details: errorDetails(err)}
+		j.envelope = newAPIErrorEnvelope(err)
 	} else {
 		j.state = jobSucceeded
 		j.result = result
@@ -470,7 +485,23 @@ func newJobRegistry(ctx context.Context, log *slog.Logger, ring, retain int) *jo
 // very shutdown call it raced) or loses it (and never touches wg at all) -
 // never both, and never neither (task-6-review.md Important 1).
 func (r *jobRegistry) Start(kind string, run func(context.Context, core.EventSink) (any, error)) (jobID, error) {
-	return r.startWithOrigin(kind, "", run)
+	return r.start(kind, "", jobAbout{}, run)
+}
+
+// jobAbout is what a job's summary says about its subject beyond its kind
+// (#655): the game and profile its plan was made for, and the collection a
+// profile_import imports. Recorded with the plan (planStore.PutAbout) and
+// handed to the job that redeems it.
+type jobAbout struct {
+	Game       string
+	Profile    string
+	Collection string
+}
+
+// StartAbout is Start for a job whose summary names its game, profile and
+// collection (jobStatus.Game, Profile, Collection).
+func (r *jobRegistry) StartAbout(kind string, about jobAbout, run func(context.Context, core.EventSink) (any, error)) (jobID, error) {
+	return r.start(kind, "", about, run)
 }
 
 // jobOriginAuto is jobStatus.Origin for a job no user started: the
@@ -480,10 +511,17 @@ const jobOriginAuto = "auto"
 // startWithOrigin is Start for a job that records who started it
 // (jobStatus.Origin).
 func (r *jobRegistry) startWithOrigin(kind, origin string, run func(context.Context, core.EventSink) (any, error)) (jobID, error) {
+	return r.start(kind, origin, jobAbout{}, run)
+}
+
+// start admits and runs one job: Start, StartAbout and startWithOrigin's
+// shared body.
+func (r *jobRegistry) start(kind, origin string, about jobAbout, run func(context.Context, core.EventSink) (any, error)) (jobID, error) {
 	j := &job{
 		id:       newJobID(),
 		kind:     kind,
 		origin:   origin,
+		about:    about,
 		ring:     r.ring,
 		started:  time.Now(),
 		finished: make(chan struct{}),

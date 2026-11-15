@@ -73,3 +73,10 @@ export const loadingShowDelayMillis = 180;
 /** loadingMinShownMillis is how long a painted loading state stays at least,
  * so one that appears just before its read answers does not flicker. */
 export const loadingMinShownMillis = 300;
+
+/** detachedProgressDelayMillis is how long a running job's control must have
+ * been off screen before its progress shows as a toast instead (issue 655):
+ * long enough for a control that only re-mounts (a list re-render, a modal
+ * handing over to the control it opened from) to come back first. Not
+ * scaled, for the loading timers' reason: it keeps a flash away. */
+export const detachedProgressDelayMillis = 250;

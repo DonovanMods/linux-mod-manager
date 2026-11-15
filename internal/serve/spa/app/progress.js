@@ -105,6 +105,65 @@ export function mutationLabel(kind, origin) {
   return origin === "auto" ? `${label} (automatic)` : label;
 }
 
+// jobKindTitles names each job kind as a noun, for a sentence about the
+// job as a whole - a toast's "Deploy failed", a tray row (issue 655: a toast
+// read "profile_import failed", the raw wire name). profile_import is the
+// one kind with two names: jobTitle says "Collection import" when the job
+// imported a collection.
+const jobKindTitles = {
+  adopt: "Adopt",
+  catalog_relink: "Re-link",
+  collection_update: "Collection update",
+  deploy: "Deploy",
+  disable: "Disable",
+  enable: "Enable",
+  import_archive: "Install from file",
+  install: "Install",
+  mod_copy: "Copy to profile",
+  mod_fomod: "Installer reconfiguration",
+  mod_relink: "Mod re-link",
+  profile_apply: "Profile apply",
+  profile_fill: "Install from downloads",
+  profile_import: "Profile import",
+  profile_sync: "Profile sync",
+  purge: "Purge",
+  rollback: "Rollback",
+  snapshot_restore: "Snapshot restore",
+  switch: "Profile switch",
+  uninstall: "Uninstall",
+  update_from_archive: "Update from file",
+  updates: "Update",
+  verify_fix: "Repair",
+  workshop_adopt: "Workshop adopt",
+};
+
+/** jobTitle names a job's kind as a noun ("Deploy", "Collection import"),
+ * falling back to the wire name opened up for a kind this table has not
+ * seen. `collection` marks a profile_import that imported a collection;
+ * `origin` "auto" says no one clicked for it. */
+export function jobTitle(kind, { collection = false, origin = "" } = {}) {
+  let title =
+    kind === "profile_import" && collection
+      ? "Collection import"
+      : (jobKindTitles[kind] ?? humanizePhase(kind));
+  if (!title) title = "Job";
+  return origin === "auto" ? `${title} (automatic)` : title;
+}
+
+/** jobRunningLabel is mutationLabel for a job this page knows more about:
+ * a profile_import that imports a collection reads "Importing collection"
+ * (issue 655). */
+export function jobRunningLabel(
+  kind,
+  { collection = false, origin = "" } = {},
+) {
+  const automatic = origin === "auto";
+  if (kind === "profile_import" && collection && !automatic) {
+    return "Importing collection";
+  }
+  return mutationLabel(kind, origin);
+}
+
 /** formatBytes renders a byte count at the largest unit that keeps it
  * readable. Used for a download whose total size is unknown, where the byte
  * counter is the only thing that can move (activity.go's frame vocabulary:

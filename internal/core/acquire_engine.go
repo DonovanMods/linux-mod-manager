@@ -150,6 +150,20 @@ func (e *AcquireRefusedError) Error() string { return e.err.Error() }
 // Unwrap exposes the combined refusal (see the type's doc comment).
 func (e *AcquireRefusedError) Unwrap() error { return e.err }
 
+// ItemFailures lists every refused item as an ItemFailure (#655): its
+// identity, the name acquire resolved for it (empty when it refused before
+// the source named it), the refusal's own text as the reason, and the
+// refusal code. A frontend shows one line per item from it; Error stays the
+// combined text.
+func (e *AcquireRefusedError) ItemFailures() []ItemFailure {
+	out := make([]ItemFailure, 0, len(e.Refusals))
+	for _, r := range e.Refusals {
+		out = append(out, ItemFailure{SourceID: r.SourceID, ModID: r.ModID, Name: r.Name,
+			Reason: r.Err.Error(), Refusal: refusalCode(r.Err)})
+	}
+	return out
+}
+
 // newAcquireRefusedError combines refusals into the decide step's error.
 func newAcquireRefusedError(refusals []AcquireRefusal) *AcquireRefusedError {
 	return &AcquireRefusedError{Refusals: refusals, err: combineRefusals(refusals)}

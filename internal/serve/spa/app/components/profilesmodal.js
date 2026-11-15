@@ -733,6 +733,7 @@ export function ImportProfileForm({
   actions,
   close,
   heading = "Import a profile",
+  prefill,
 }) {
   const status = state?.status;
   const workshop = isSourceMapped(status?.source_ids, "steamworkshop");
@@ -743,10 +744,32 @@ export function ImportProfileForm({
   return html`
     <div class="form-section profiles-import">
       ${heading && html`<h3 class="form-section__heading">${heading}</h3>`}
-      <${ImportFileForm} actions=${actions} close=${close} />
-      <${ImportURLForm} actions=${actions} close=${close} />
-      ${workshop && html`<${ImportCollectionForm} actions=${actions} close=${close} />`}
-      ${nexus && html`<${ImportNexusCollectionForm} actions=${actions} close=${close} />`}
+      <${ImportFileForm}
+        actions=${actions}
+        close=${close}
+        prefill=${prefillFor(prefill, "upload_id")}
+      />
+      <${ImportURLForm}
+        actions=${actions}
+        close=${close}
+        prefill=${prefillFor(prefill, "url")}
+      />
+      ${
+        workshop &&
+        html`<${ImportCollectionForm}
+          actions=${actions}
+          close=${close}
+          prefill=${prefillFor(prefill, "workshop_collection")}
+        />`
+      }
+      ${
+        nexus &&
+        html`<${ImportNexusCollectionForm}
+          actions=${actions}
+          close=${close}
+          prefill=${prefillFor(prefill, "nexus_collection")}
+        />`
+      }
       ${
         status &&
         !workshop &&
@@ -773,6 +796,13 @@ export function ImportProfileForm({
   `;
 }
 
+/** prefillFor is prefill (a failed import's plan options, issue 655) when
+ * it was made through the form whose request names key, else nothing - so
+ * only the form the import came from is filled back in. */
+function prefillFor(prefill, key) {
+  return prefill?.[key] ? prefill : undefined;
+}
+
 /** ImportFileForm uploads the picked file - an lmm collection (.lmmc, or
  * its YAML) or an older profile export - through POST /api/v1/uploads and
  * hands the upload to the confirm-plan framework as the profile-import
@@ -788,10 +818,10 @@ export function ImportProfileForm({
  *
  * "Choose file…" is the shared FilePicker (filepicker.js): a real button
  * that opens a hidden file input (issues 652, 653). */
-function ImportFileForm({ actions, close }) {
+function ImportFileForm({ actions, close, prefill }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [name, setName] = useState("");
+  const [name, setName] = useState(prefill?.profile_name ?? "");
 
   async function onPick([file]) {
     setBusy(true);
@@ -843,6 +873,12 @@ function ImportFileForm({ actions, close }) {
         onFiles=${onPick}
       />
       ${error && html`<p class="modal__error">${error}</p>`}
+      ${
+        prefill?.file_name &&
+        html`<p class="form-hint" data-testid="import-file-last">
+          The failed import was ${prefill.file_name}: choose it again to retry.
+        </p>`
+      }
       <p class="form-hint">
         An lmm collection (.lmmc), or a profile export (.yaml or .json), which
         keeps its own name.
@@ -858,9 +894,9 @@ function ImportFileForm({ actions, close }) {
  * imported (the plan says so and offers no checkbox) and the address is
  * recorded as the profile's origin. Its own optional name is `--as`, as it
  * is for a file. */
-export function ImportURLForm({ actions, close }) {
-  const [url, setURL] = useState("");
-  const [name, setName] = useState("");
+export function ImportURLForm({ actions, close, prefill }) {
+  const [url, setURL] = useState(prefill?.url ?? "");
+  const [name, setName] = useState(prefill?.profile_name ?? "");
   const trimmed = url.trim();
   const plain = /^http:\/\//i.test(trimmed);
 
@@ -944,9 +980,9 @@ export function ImportURLForm({ actions, close }) {
  * endpoints, so this works for a user who has never run `lmm auth login
  * steamworkshop` - which the hint says, because the field sitting under a
  * Setup page full of key prompts otherwise implies the opposite. */
-export function ImportCollectionForm({ actions, close }) {
-  const [ref, setRef] = useState("");
-  const [name, setName] = useState("");
+export function ImportCollectionForm({ actions, close, prefill }) {
+  const [ref, setRef] = useState(prefill?.workshop_collection ?? "");
+  const [name, setName] = useState(prefill?.profile_name ?? "");
 
   async function submit(e) {
     e.preventDefault();
@@ -1011,9 +1047,9 @@ export function ImportCollectionForm({ actions, close }) {
  * forwarded verbatim; the source decides what it recognises. The plan it
  * opens lists every item, with a toggle on each optional one (they are left
  * out by default, as `--with-optional` leaves them out). */
-export function ImportNexusCollectionForm({ actions, close }) {
-  const [ref, setRef] = useState("");
-  const [name, setName] = useState("");
+export function ImportNexusCollectionForm({ actions, close, prefill }) {
+  const [ref, setRef] = useState(prefill?.nexus_collection ?? "");
+  const [name, setName] = useState(prefill?.profile_name ?? "");
 
   async function submit(e) {
     e.preventDefault();

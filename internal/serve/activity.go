@@ -53,6 +53,13 @@ type jobSummary struct {
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
 
+	// Game, Profile and Collection are jobStatus's unchanged (#655): where
+	// the job's plan was made, and the collection a profile_import imports.
+	// Each is omitted when empty.
+	Game       string `json:"game,omitempty"`
+	Profile    string `json:"profile,omitempty"`
+	Collection string `json:"collection,omitempty"`
+
 	// Tally is jobStatus's Tally unchanged: a finished batch job's outcome
 	// count (jobtally.go), nil for every other job.
 	Tally *jobTally `json:"tally,omitempty"`
@@ -88,6 +95,9 @@ func summarizeJobStatus(status jobStatus) jobSummary {
 		ID:            status.ID,
 		Kind:          status.Kind,
 		Origin:        status.Origin,
+		Game:          status.Game,
+		Profile:       status.Profile,
+		Collection:    status.Collection,
 		State:         status.State,
 		StartedAt:     status.StartedAt,
 		EndedAt:       status.EndedAt,

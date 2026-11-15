@@ -1,0 +1,18 @@
+{
+  "error": "nexusmods:266: stored file no longer available upstream\nnexusmods:57339: zip: unsupported compression algorithm",
+  "items": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "266",
+      "name": "Skyrim Upscaled",
+      "reason": "stored file no longer available upstream",
+      "refusal": "refused"
+    },
+    {
+      "source_id": "nexusmods",
+      "mod_id": "57339",
+      "reason": "zip: unsupported compression algorithm",
+      "refusal": "refused"
+    }
+  ]
+}

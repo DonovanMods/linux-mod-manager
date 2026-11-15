@@ -54,6 +54,35 @@ const (
 	RefusalOther = "refused"
 )
 
+// ItemFailuresOf is the per-mod failure list err carries (#655): the
+// outermost error in its chain with an ItemFailures method
+// (*AcquireRefusedError), or nil. Both frontends' error envelopes carry it
+// as "items", so a failure that joins several mods' errors into one text
+// can still be shown one line per mod.
+//
+// A *ProfileImportIncompleteError has none: its envelope's details are the
+// whole ProfileImportResult, whose failures already list every item -
+// refused and held back alike - so a second copy as items would only
+// duplicate them.
+func ItemFailuresOf(err error) []ItemFailure {
+	if err == nil {
+		return nil
+	}
+	var incomplete *ProfileImportIncompleteError
+	if errors.As(err, &incomplete) {
+		return nil
+	}
+	var withItems interface{ ItemFailures() []ItemFailure }
+	if !errors.As(err, &withItems) {
+		return nil
+	}
+	items := withItems.ItemFailures()
+	if len(items) == 0 {
+		return nil
+	}
+	return items
+}
+
 // refusalCode is the code an acquire refusal is reported under.
 func refusalCode(err error) string {
 	var loaderErr *LoaderRequiredError

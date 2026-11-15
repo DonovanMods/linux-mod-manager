@@ -31,9 +31,31 @@ const apiContentType = "application/json"
 // option governs map/key ordering, not struct field order) - matching
 // cmd/lmm's jsonErrorEnvelope byte-for-byte. Unit 4's job-failure envelope
 // reuses this same type.
+//
+// Items (#655) is the per-mod failure list a failure that names several
+// mods carries (core.ItemFailuresOf), after details and only when there is
+// one: a collection import that refused joins every mod's error into Error,
+// and Items is the same facts one entry per mod, for a frontend that shows
+// a line each.
 type apiErrorEnvelope struct {
-	Error   string `json:"error"`
-	Details any    `json:"details,omitempty"`
+	Error   string             `json:"error"`
+	Details any                `json:"details,omitempty"`
+	Items   []core.ItemFailure `json:"items,omitempty"`
+}
+
+// newAPIErrorEnvelope is err's envelope: its text, its typed details and
+// its per-mod failures.
+func newAPIErrorEnvelope(err error) *apiErrorEnvelope {
+	return &apiErrorEnvelope{Error: err.Error(), Details: errorDetails(err), Items: itemFailures(err)}
+}
+
+// itemFailures is core.ItemFailuresOf under errorDetails' guard: a stale
+// plan carries nothing of its own.
+func itemFailures(err error) []core.ItemFailure {
+	if errors.Is(err, core.ErrStalePlan) {
+		return nil
+	}
+	return core.ItemFailuresOf(err)
 }
 
 // errorDetails returns the data err carries for the /api/v1 error
@@ -92,7 +114,7 @@ func (s *Server) writeAPIError(w http.ResponseWriter, status int, err error) {
 		status = http.StatusConflict
 	}
 	s.log.Debug("api error", "status", status, "err", err)
-	s.writeJSON(w, status, apiErrorEnvelope{Error: err.Error(), Details: errorDetails(err)})
+	s.writeJSON(w, status, newAPIErrorEnvelope(err))
 }
 
 // selectionErrorDetails is the "details" payload for a game/profile
