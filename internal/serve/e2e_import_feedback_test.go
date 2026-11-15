@@ -5,10 +5,13 @@ package serve_test
 // gave no feedback while it ran, and its failure toast read
 // "profile_import failed", with the engine's joined text for a body and two
 // actions run together ("Open profilesShow in activity"), one of which
-// opened an empty form. The scenarios here start a long import - hundreds
-// of items, over a thousand events, more than the job's 1024-event ring -
-// against a NexusMods double whose downloads are held until the test lets
-// them go, and two of whose items' files are refused.
+// opened an empty form. The scenarios here start an import against a
+// NexusMods double whose downloads are held until the test lets them go,
+// with some of its items' files refused: a long one - hundreds of items,
+// over a thousand events, more than the job's 1024-event ring - where all
+// but two are refused, or a short one with two refused. Since #660 every
+// item that downloads is installed, so a long collection that mostly
+// installs is too slow under -race (see e2eLongImportItems).
 
 import (
 	"context"
@@ -29,25 +32,31 @@ import (
 )
 
 // e2eLongImportItems is how many items the long collection carries for a
-// scenario that fails: each emits at least two events, so a failed import
-// emits more than the job ring's 1024. A refused import writes nothing, so
-// this is fast however long the list.
+// scenario that outruns the job's 1024-event ring: each item emits at least
+// two events. Only a failing download is fast: since #660 an import is
+// never refused at its first failure, so every item that downloads is
+// installed - which under -race runs at a few items a second (598 took
+// about 87 seconds, past the harness's budget). A long scenario therefore
+// fails all but a few items (e2eFailAllButTwo, e2eFailAll).
 const e2eLongImportItems = 600
 
-// e2eShortImportItems is the collection's size for a scenario that
-// SUCCEEDS: every item is downloaded, installed and deployed, which under
-// -race runs at a few items a second - 600 took about 96 seconds, past the
-// harness's budget (the #655 race-suite failure).
+// e2eShortImportItems is the collection's size for a scenario whose items
+// mostly SUCCEED: every item that downloads is installed, at a few items a
+// second under -race - 600 took about 96 seconds, past the harness's budget
+// (the #655 race-suite failure; again under #660 for two failures in 600).
 const e2eShortImportItems = 40
 
 // e2eLongImportURL is the long collection's page address.
 const e2eLongImportURL = "https://www.nexusmods.com/games/skyrimspecialedition/collections/longcoll"
 
-// The two refused items, and why.
-const (
-	e2eLongImportFirstFailed = "1010"
-	e2eLongImportLastFailed  = "1599"
-)
+// e2eLongImportFirstFailed is the first of e2eFailTwo's two refused items;
+// the other is the collection's last (e2eLastItemID).
+const e2eLongImportFirstFailed = "1010"
+
+// e2eLastItemID is the id of the last of a collection of items items.
+func e2eLastItemID(items int) string {
+	return fmt.Sprintf("%d", 1000+items-1)
+}
 
 var (
 	errE2ELongImportGone   = errors.New("stored file no longer available upstream")
@@ -67,14 +76,19 @@ type e2eImportFailure int
 
 const (
 	e2eFailNone e2eImportFailure = iota
+	// e2eFailTwo refuses two downloads, item 1010's and the last item's;
+	// the rest install, so it suits a short collection only.
 	e2eFailTwo
+	// e2eFailAllButTwo refuses every download but the first item's and
+	// the last item's: a long collection that still installs something.
+	e2eFailAllButTwo
 	e2eFailAll
 )
 
 // newE2ELongImportFixture is a Premium NexusMods double over "longcoll", a
 // collection of e2eLongImportItems real downloads, every one held until
-// release is called. fail says which downloads are refused: none, two, or
-// every one.
+// release is called. fail says which downloads are refused (e2eFailNone,
+// e2eFailTwo, e2eFailAllButTwo, e2eFailAll).
 func newE2ELongImportFixture(t *testing.T, fail e2eImportFailure) (f e2eFixture, release func()) {
 	t.Helper()
 	return newE2EImportFixtureOf(t, fail, e2eLongImportItems)
@@ -98,13 +112,13 @@ func newE2EImportFixtureOf(t *testing.T, fail e2eImportFailure, items int) (f e2
 			members: map[string]string{fileID: "item" + id + ".esp"},
 		})
 		mods = append(mods, fmt.Sprintf(`{"Name": "Item %s", "Version": "1.0", "SourceType": "nexus", "ModID": "%s", "FileID": "%s", "UpdatePolicy": "exact"}`, id, id, fileID))
-		if fail == e2eFailAll {
+		if fail == e2eFailAll || (fail == e2eFailAllButTwo && i != 0 && i != items-1) {
 			src.urlErrs[id] = errE2ELongImportGone
 		}
 	}
 	if fail == e2eFailTwo {
 		src.urlErrs[e2eLongImportFirstFailed] = errE2ELongImportBadZip
-		src.urlErrs[e2eLongImportLastFailed] = errE2ELongImportGone
+		src.urlErrs[e2eLastItemID(items)] = errE2ELongImportGone
 	}
 	f = newE2EFixture(t)
 	f.Svc.RegisterSource(e2eLongImportSource{e2ePremiumNexusSource{src}})
@@ -205,13 +219,13 @@ type e2eOutcomeToast struct {
 // assertCollectionTodoToast holds the outcome toast of a collection import
 // that left items to finish (#660): the import is no longer refused - it
 // finishes, and the toast stays, needing attention, counting the items
-// left of the collection's, and leads with Finish collection.
-func assertCollectionTodoToast(t *testing.T, got e2eOutcomeToast, left int) {
+// left of the collection's total, and leads with Finish collection.
+func assertCollectionTodoToast(t *testing.T, got e2eOutcomeToast, total, left int) {
 	t.Helper()
 	assert.Equal(t, "Collection import finished", got.Title)
 	assert.Equal(t, "attention", got.Tone, "an import that left items to finish is not a plain success")
 	// Into a new profile, not the active one: recorded, as the CLI says it.
-	assert.Equal(t, fmt.Sprintf("Recorded %d of %d mods; %d need you", e2eLongImportItems-left, e2eLongImportItems, left), got.Detail)
+	assert.Equal(t, fmt.Sprintf("Recorded %d of %d mods; %d need you", total-left, total, left), got.Detail)
 	assert.Equal(t, []string{"Finish collection", "Show in activity"}, got.Buttons)
 	assert.GreaterOrEqual(t, got.Gap, 4.0, "the two actions are two spaced controls")
 }
@@ -220,9 +234,10 @@ func assertCollectionTodoToast(t *testing.T, got e2eOutcomeToast, left int) {
 // (#655), under #660's ruling: the import shows its progress the moment it
 // is confirmed and while it runs, installs every mod it can, and its
 // outcome - after more events than the job ring holds - stays on screen,
-// needing attention, until dismissed.
+// needing attention, until dismissed. All but two of its downloads are
+// refused, so the run outruns the ring without hundreds of installs.
 func TestE2E_ImportFeedback_ProgressThenAStickyOutcome(t *testing.T) {
-	f, release := newE2ELongImportFixture(t, e2eFailTwo)
+	f, release := newE2ELongImportFixture(t, e2eFailAllButTwo)
 
 	var title, progress string
 	var toast e2eOutcomeToast
@@ -245,10 +260,10 @@ func TestE2E_ImportFeedback_ProgressThenAStickyOutcome(t *testing.T) {
 	assert.Equal(t, "Importing collection…", title)
 	assert.Contains(t, progress, "of 600", "the import counts its items")
 	assert.Zero(t, running, "the outcome replaces the progress")
-	assertCollectionTodoToast(t, toast, 2)
+	assertCollectionTodoToast(t, toast, e2eLongImportItems, e2eLongImportItems-2)
 	assert.Equal(t, 1, toastsLeft, "it stays until dismissed")
 	assert.Contains(t, jobs, `"dropped_events"`, "the job outran its event ring, and its end still arrived")
-	assert.Contains(t, jobs, `"todos": 2`, "the job's tally carries the items left to finish")
+	assert.Contains(t, jobs, fmt.Sprintf(`"todos": %d`, e2eLongImportItems-2), "the job's tally carries the items left to finish")
 	assert.Contains(t, jobs, `"state": "succeeded"`, "#660: the import is not refused")
 	assert.Empty(t, f.BrowserErrors())
 }
@@ -256,7 +271,7 @@ func TestE2E_ImportFeedback_ProgressThenAStickyOutcome(t *testing.T) {
 // TestE2E_ImportFeedback_ShowInActivityOpensTheJob: the toast's "Show in
 // activity" opens the tray on THIS job, named in words.
 func TestE2E_ImportFeedback_ShowInActivityOpensTheJob(t *testing.T) {
-	f, release := newE2ELongImportFixture(t, e2eFailTwo)
+	f, release := newE2EImportFixtureOf(t, e2eFailTwo, e2eShortImportItems)
 	release()
 
 	var kind string
@@ -282,7 +297,7 @@ func TestE2E_ImportFeedback_ShowInActivityOpensTheJob(t *testing.T) {
 // finish, each with its reason and action - what Part 2's Finish
 // collection panel shows.
 func TestE2E_ImportFeedback_ItemsLeftToFinishAreListed(t *testing.T) {
-	f, release := newE2ELongImportFixture(t, e2eFailTwo)
+	f, release := newE2EImportFixtureOf(t, e2eFailTwo, e2eShortImportItems)
 	release()
 
 	var report struct {
@@ -299,10 +314,10 @@ func TestE2E_ImportFeedback_ItemsLeftToFinishAreListed(t *testing.T) {
 		awaitJobsSettled(),
 		chromedp.Evaluate(`fetch("/api/v1/profiles/"+encodeURIComponent("Long Collection")+"/todos?game=`+f.Game.ID+`").then((r) => r.json())`, &report, awaitPromise),
 	)
-	assert.Equal(t, e2eLongImportItems, report.Total)
+	assert.Equal(t, e2eShortImportItems, report.Total)
 	require.Len(t, report.Todos, 2)
 	assert.Equal(t, e2eLongImportFirstFailed, report.Todos[0].ModID)
-	assert.Equal(t, e2eLongImportLastFailed, report.Todos[1].ModID)
+	assert.Equal(t, e2eLastItemID(e2eShortImportItems), report.Todos[1].ModID)
 	for _, todo := range report.Todos {
 		assert.NotEmpty(t, todo.Reason)
 		assert.Equal(t, "retry", todo.Action)
@@ -364,20 +379,20 @@ func TestE2E_ImportFeedback_EveryDoor(t *testing.T) {
 	}
 	for name, door := range doors {
 		t.Run(name, func(t *testing.T) {
-			f, release := newE2ELongImportFixture(t, e2eFailTwo)
+			f, release := newE2EImportFixtureOf(t, e2eFailTwo, e2eShortImportItems)
 			var title, progress string
 			var toast e2eOutcomeToast
 			f.runInBrowser(t,
 				door(f),
 				confirmImportPlan(),
-				awaitRunningToast(e2eLongImportItems, &title, &progress),
+				awaitRunningToast(e2eShortImportItems, &title, &progress),
 				chromedp.ActionFunc(func(context.Context) error { release(); return nil }),
 				awaitJobsSettled(),
 				chromedp.WaitVisible(`.toast--attention`, chromedp.ByQuery),
 				chromedp.Evaluate(outcomeToastJS, &toast),
 			)
 			assert.Equal(t, "Importing collection…", title)
-			assertCollectionTodoToast(t, toast, 2)
+			assertCollectionTodoToast(t, toast, e2eShortImportItems, 2)
 			assert.Empty(t, f.BrowserErrors())
 		})
 	}
@@ -400,7 +415,7 @@ func TestE2E_ImportFeedback_EveryItemFailing(t *testing.T) {
 		chromedp.Evaluate(outcomeToastJS, &toast),
 		chromedp.Evaluate(`fetch("/api/v1/profiles/"+encodeURIComponent("Long Collection")+"/todos?game=`+f.Game.ID+`").then((r) => r.json()).then((d) => d.todos.length)`, &todos, awaitPromise),
 	)
-	assertCollectionTodoToast(t, toast, e2eLongImportItems)
+	assertCollectionTodoToast(t, toast, e2eLongImportItems, e2eLongImportItems)
 	assert.Equal(t, e2eLongImportItems, todos)
 	assert.Empty(t, f.BrowserErrors())
 }
