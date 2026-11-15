@@ -2548,6 +2548,13 @@ func TestJSONGoldens(t *testing.T) {
 			convertedCollectionFixture(),
 		},
 		{
+			// #654: one item of a plan summary's attention list - its id and
+			// its reasons; a reason code a frontend does not know is shown as
+			// is (#657 adds more).
+			"collection_attention_item",
+			core.CollectionAttentionItem{ID: "item:7", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionExternal}},
+		},
+		{
 			// #654: a converted collection plan's overview - the counts both
 			// frontends lead with, and the items needing the user, with why.
 			"collection_plan_summary",
