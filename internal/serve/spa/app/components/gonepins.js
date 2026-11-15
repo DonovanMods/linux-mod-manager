@@ -7,14 +7,18 @@
 // other attention item: a mod the user skipped that the new version pins
 // at an available file, which comes back unless they keep it skipped.
 //
-// Each gone pin offers two choices, the CLI's flags: install the mod's
-// current main file instead (--use-current, the suggested one) or skip the
-// mod (--skip). A choice is a PLAN-time option - it changes what the plan
-// installs - so picking one re-plans (actions.replanWith), and the preview
-// always describes exactly what Confirm submits. Nothing is preselected:
-// the import is the user's to decide, and Confirm stays disabled
-// (confirmplan.js, gonePinsUndecided) until every pin is. Every string was
-// sanitised by core.
+// Each gone pin offers the CLI's choices: install the current file of the
+// same role instead (--use-current, suggested when on offer; a gone main
+// file's stand-in is the mod's current main file, a gone optional's the
+// current file of its category whose name matches), leave a gone optional
+// out and install the rest (--skip-file), or skip the mod (--skip). A
+// choice is a PLAN-time option - it changes what the plan installs - so
+// picking one re-plans (actions.replanWith), and the preview always
+// describes exactly what Confirm submits. Nothing is preselected: the
+// import is the user's to decide, and Confirm stays disabled
+// (confirmplan.js, gonePinsUndecided) until every pin is - a collection
+// update's pin of a mod the user owns only when they take the collection's
+// side of that conflict. Every string was sanitised by core.
 
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
@@ -40,11 +44,49 @@ function pinnedLine(pin) {
   return `The collection pins file ${files}${version}, which NexusMods no longer offers.`;
 }
 
+/** goneFileLine says what stands in for one gone file (core.
+ * CollectionGoneFile) under "use the current file". */
+function goneFileLine(pin, f) {
+  const name = f.name || `File ${f.file_id}`;
+  const role = f.role === "main" ? "its main file" : "an optional file";
+  if (f.replacement)
+    return `${name} (${role}): ${f.role === "main" ? "current main file" : "current file"} ${describeFile(f.replacement)}`;
+  if (pin.current && (pin.not_replaced ?? []).includes(f.file_id))
+    return `${name} (${role}): not replaced`;
+  return f.role === "main"
+    ? `${name} (${role}): NexusMods offers no other file for it`
+    : `${name} (${role}): no current file of the same kind matches it`;
+}
+
+/** gonePinDecision words a decided pin's choice, as the CLI does; "" while
+ * it is undecided. */
+export function gonePinDecision(pin) {
+  switch (pin?.choice) {
+    case "use_current":
+      return "The current file of the same role will be installed instead.";
+    case "skip_file":
+      return "The gone file is left out; the rest of the mod is installed.";
+    case "skip":
+      return "Skipped.";
+    default:
+      return "";
+  }
+}
+
+/** modsPin is "1 mod pins" or "N mods pin". */
+export function modsPin(n) {
+  return n === 1 ? "1 mod pins" : `${n} mods pin`;
+}
+
 /** gonePinsUndecided reports whether a converted collection (core.
- * ConvertedCollection) has a gone pin nobody chose for: its Apply refuses,
- * so Confirm waits. */
-export function gonePinsUndecided(source) {
-  return (source?.gone_pins ?? []).some((pin) => !pin.choice);
+ * ConvertedCollection) has a gone pin nobody chose for that its Apply
+ * needs decided: a conflict's pin only when overridden(key) - the user
+ * takes the collection's side of it. Confirm waits on one. */
+export function gonePinsUndecided(source, overridden) {
+  return (source?.gone_pins ?? []).some(
+    (pin) =>
+      !pin.choice && (!pin.conflict || Boolean(overridden?.(pinKey(pin)))),
+  );
 }
 
 /** GonePinsSection renders a converted collection's gone pins with their
@@ -58,28 +100,34 @@ export function GonePinsSection({ source: c, actions, sectionRef }) {
    * is: an "all" choice is spelt out per pin, so changing one pin keeps
    * the others' answers. */
   function choose(pin, choice) {
-    const useCurrent = new Set();
-    const skip = new Set();
-    for (const p of pins) {
-      if (p.choice === "use_current") useCurrent.add(pinKey(p));
-      if (p.choice === "skip") skip.add(pinKey(p));
-    }
+    const sets = {
+      use_current: new Set(),
+      skip_file: new Set(),
+      skip: new Set(),
+    };
+    for (const p of pins) if (p.choice) sets[p.choice]?.add(pinKey(p));
     const key = pinKey(pin);
-    useCurrent.delete(key);
-    skip.delete(key);
-    (choice === "use_current" ? useCurrent : skip).add(key);
+    for (const set of Object.values(sets)) set.delete(key);
+    sets[choice].add(key);
     actions.replanWith({
-      use_current: [...useCurrent].sort(),
+      use_current: [...sets.use_current].sort(),
       use_current_all: false,
-      skip: [...skip].sort(),
+      skip_file: [...sets.skip_file].sort(),
+      skip: [...sets.skip].sort(),
     });
   }
   function useCurrentForAll() {
-    const skip = pins
-      .filter((p) => p.choice === "skip")
-      .map(pinKey)
-      .sort();
-    actions.replanWith({ use_current: [], use_current_all: true, skip });
+    const keep = (choice) =>
+      pins
+        .filter((p) => p.choice === choice)
+        .map(pinKey)
+        .sort();
+    actions.replanWith({
+      use_current: [],
+      use_current_all: true,
+      skip_file: keep("skip_file"),
+      skip: keep("skip"),
+    });
   }
 
   return html`
@@ -91,11 +139,12 @@ export function GonePinsSection({ source: c, actions, sectionRef }) {
       tabindex="-1"
     >
       <h3 class="plan__heading" id="gone-pins-heading">
-        ${`Needs your attention - ${pins.length === 1 ? "1 mod pins" : `${pins.length} mods pin`} a file NexusMods no longer offers`}
+        ${`Needs your attention - ${modsPin(pins.length)} a file NexusMods no longer offers`}
       </h3>
       <p class="plan__note">
-        Choose for each: its current main file, or leave it out. Nothing is
-        imported until each is decided.
+        Choose for each: the current file of the same role, leaving a gone
+        optional file out, or leaving the mod out. Nothing is imported until
+        each is decided.
       </p>
       <ul class="plan__mods">
         ${pins.map((pin) => {
@@ -110,6 +159,22 @@ export function GonePinsSection({ source: c, actions, sectionRef }) {
             <fieldset class="form-section">
               <legend class="plan__mod-name">${name}</legend>
               <p class="plan__note">${pinnedLine(pin)}</p>
+              <ul class="plan__paths">
+                ${(pin.files ?? []).map(
+                  (f) =>
+                    html`<li key=${f.file_id} data-role=${f.role}>
+                      ${goneFileLine(pin, f)}
+                    </li>`,
+                )}
+              </ul>
+              ${
+                pin.conflict &&
+                !pin.choice &&
+                html`<p class="plan__note">
+                  You changed this mod: your version is kept unless you take the
+                  collection's, and only then does this need deciding.
+                </p>`
+              }
               <label class="form-check">
                 <input
                   type="radio"
@@ -121,10 +186,23 @@ export function GonePinsSection({ source: c, actions, sectionRef }) {
                 />
                 ${
                   pin.current
-                    ? `Install the current file instead (suggested): ${describeFile(pin.current)}`
-                    : "Install the current file instead: NexusMods offers no other file for it"
+                    ? "Install the current file instead (suggested)"
+                    : "Install the current file instead: no current file stands in for it"
                 }
               </label>
+              ${
+                pin.can_skip_file &&
+                html`<label class="form-check">
+                  <input
+                    type="radio"
+                    name=${`gone-pin-${key}`}
+                    data-testid="gone-pin-skip-file"
+                    checked=${pin.choice === "skip_file"}
+                    onChange=${() => choose(pin, "skip_file")}
+                  />
+                  Skip this file (install the rest)
+                </label>`
+              }
               <label class="form-check">
                 <input
                   type="radio"
@@ -133,7 +211,7 @@ export function GonePinsSection({ source: c, actions, sectionRef }) {
                   checked=${pin.choice === "skip"}
                   onChange=${() => choose(pin, "skip")}
                 />
-                Skip this mod
+                ${pin.can_skip_file ? "Skip the whole mod" : "Skip this mod"}
               </label>
             </fieldset>
           </li>`;

@@ -82,13 +82,14 @@ type profileImportPlanRequest struct {
 	NexusCollection string   `json:"nexus_collection,omitzero"`
 	WithOptional    bool     `json:"with_optional,omitzero"`
 	Optional        []string `json:"optional,omitzero"`
-	// UseCurrent, UseCurrentAll and Skip decide the collection's pinned
-	// files NexusMods no longer offers (#657), by "<source-id>:<mod-id>"
-	// (core.CollectionGonePin.Key): `--use-current`, `--use-current-all`
-	// and `--skip`. The plan view's choices re-plan with them.
-	// NexusCollection only.
+	// UseCurrent, UseCurrentAll, SkipFile and Skip decide the
+	// collection's pinned files NexusMods no longer offers (#657), by
+	// "<source-id>:<mod-id>" (core.CollectionGonePin.Key):
+	// `--use-current`, `--use-current-all`, `--skip-file` and `--skip`.
+	// The plan view's choices re-plan with them. NexusCollection only.
 	UseCurrent    []string `json:"use_current,omitzero"`
 	UseCurrentAll bool     `json:"use_current_all,omitzero"`
+	SkipFile      []string `json:"skip_file,omitzero"`
 	Skip          []string `json:"skip,omitzero"`
 	// URL is an https address of an lmm collection or a profile export
 	// (#622): `lmm profile import https://…`. Core fetches it; its hooks
@@ -107,7 +108,7 @@ func (r *profileImportPlanRequest) validate() error {
 			return errors.New(`"url" and "data"/"data_base64"/"upload_id"/"workshop_collection"/"nexus_collection" are mutually exclusive`)
 		}
 		if r.WithOptional || len(r.Optional) > 0 || r.choosesGonePins() {
-			return errors.New(`"with_optional", "optional", "use_current", "use_current_all" and "skip" apply to "nexus_collection" only`)
+			return errors.New(`"with_optional", "optional", "use_current", "use_current_all", "skip_file" and "skip" apply to "nexus_collection" only`)
 		}
 		return nil
 	}
@@ -118,7 +119,7 @@ func (r *profileImportPlanRequest) validate() error {
 		return nil
 	}
 	if r.WithOptional || len(r.Optional) > 0 || r.choosesGonePins() {
-		return errors.New(`"with_optional", "optional", "use_current", "use_current_all" and "skip" apply to "nexus_collection" only`)
+		return errors.New(`"with_optional", "optional", "use_current", "use_current_all", "skip_file" and "skip" apply to "nexus_collection" only`)
 	}
 	if r.UploadID != "" {
 		// The document is read from the upload at plan time; until then
@@ -184,7 +185,7 @@ type profileImportApplyRequest struct {
 
 // choosesGonePins reports whether r decides any gone pin (#657).
 func (r *profileImportPlanRequest) choosesGonePins() bool {
-	return len(r.UseCurrent) > 0 || r.UseCurrentAll || len(r.Skip) > 0
+	return len(r.UseCurrent) > 0 || r.UseCurrentAll || len(r.SkipFile) > 0 || len(r.Skip) > 0
 }
 
 // importOptions renders the request as the core options struct.
@@ -308,7 +309,7 @@ func planNexusCollectionImport(ctx context.Context, s *Server, sel selection, re
 	plan, err := s.svc.PlanSourceCollectionImport(ctx, sel.Game, core.SourceCollectionImportRequest{
 		SourceID: "nexusmods", Ref: req.NexusCollection, ProfileName: req.ProfileName,
 		WithOptional: req.WithOptional, Optional: req.Optional,
-		GonePins: core.GonePinChoices{UseCurrent: req.UseCurrent, UseCurrentAll: req.UseCurrentAll, Skip: req.Skip},
+		GonePins: core.GonePinChoices{UseCurrent: req.UseCurrent, UseCurrentAll: req.UseCurrentAll, SkipFile: req.SkipFile, Skip: req.Skip},
 	})
 	if err != nil {
 		if core.IsBadCollectionRef(err) || core.IsInvalidCollection(err) || errors.Is(err, domain.ErrInvalidProfileName) || core.IsBadGonePinChoice(err) {

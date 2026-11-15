@@ -139,7 +139,8 @@ func doCollectionUpdate(ctx context.Context, service *core.Service, game *domain
 		}
 		return nil
 	}
-	if len(plan.Unsupported) > 0 || hasUndecidedGonePins(plan.Source) {
+	overridden := func(key string) bool { return opts.OverrideConflicts || slices.Contains(opts.Override, key) }
+	if len(plan.Unsupported) > 0 || hasUndecidedGonePins(plan.Source, overridden) {
 		// The plan always renders; the apply refuses, writing nothing.
 		_, err := service.ApplyCollectionUpdate(ctx, game, plan, opts, nil)
 		return err

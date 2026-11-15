@@ -36,7 +36,7 @@ func e2eNexusCollection(gameSourceID, ref string) source.Collection {
 	return source.Collection{ID: ref, Name: "Three Mods", Revision: 3, Author: "curator",
 		URL: "https://www.nexusmods.com/games/" + gameSourceID + "/collections/abcdef", Handle: "/h",
 		Items: []source.CollectionItem{
-			{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten",
+			{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", FileCategory: "MAIN",
 				URL: "https://www.nexusmods.com/" + gameSourceID + "/mods/10?tab=files&file_id=100"},
 			// #657: NexusMods lists every file of a revision; the plan
 			// lists a mod's files only for one its list does not report.

@@ -430,12 +430,21 @@ What the import does with each item:
   [locked](updates.md#locking-a-mod-to-one-version).
 - A pinned file **NexusMods no longer offers** (its author removed it, as
   many authors do with every update) is found by the plan,
-  before anything downloads, and listed under **Needs your attention** with
-  the mod's current main file. Choose for each: `--use-current <mod-id>`
-  installs the current file instead (`--use-current-all` does so for every
-  such mod), and `--skip <mod-id>` leaves the mod out. In the browser each
-  has the same two choices. Nothing is imported until every one is
-  decided. A mod installed at its current file is still the collection's,
+  before anything downloads, and listed under **Needs your attention**
+  with the current file that would stand in for it. The stand-in plays
+  the gone file's role: a gone main file (or a mod whose every pinned file
+  is gone) takes the mod's current main file, and the plan says which of
+  its optional files that does not replace; a gone optional file beside a
+  main file that is still offered takes the current file of the same kind
+  whose name matches it, when exactly one does. lmm never puts the current
+  main file beside the curator's. Choose for each: `--use-current
+  <mod-id>` installs the stand-in instead (`--use-current-all` does so for
+  every such mod that has one), `--skip-file <mod-id>` leaves a gone
+  optional file out and installs the rest of the mod, and `--skip
+  <mod-id>` leaves the mod out. In the browser each has the same choices.
+  Naming a mod whose pinned file is not gone, or a choice its pin does not
+  offer, is refused. Nothing is imported until every one is decided. A mod
+  installed at its current file is still the collection's,
   and lmm remembers which file it stands in for; a skipped mod is
   remembered too (see [Updating a collection
   profile](#updating-a-collection-profile)). Installer choices the curator
@@ -568,10 +577,13 @@ out while the new version pins the same file (the plan lists it as
 skipped). When the curator pins it at a file NexusMods offers, the plan
 lists it under **Needs your attention** and the update adds it back;
 `--keep-skipped <mod-id>` keeps it out (in the browser, its **Keep it
-skipped** tick box). A
-new pin NexusMods no longer offers is decided as at an import, with
-`--use-current`, `--use-current-all` or `--skip` (skipping a mod the profile
-already has keeps the version it has).
+skipped** tick box), and lmm remembers that pin, so the next update offers
+the mod again only when the curator pins another file. A new pin NexusMods
+no longer offers is decided as at an import, with `--use-current`,
+`--use-current-all`, `--skip-file` or `--skip` (skipping a mod the profile
+already has keeps the version it has). For a mod you changed yourself (a
+conflict), your version is kept, so its gone pin needs deciding only if
+you take the collection's with `--override`.
 
 The plugin list, file load orders (Cyberpunk 2077's archive order, see
 [Load order](load-order.md)) and config overrides follow the same rule. lmm remembers

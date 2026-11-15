@@ -101,13 +101,21 @@ export function ConfirmPlanModal({ modal, state, actions }) {
     status === "ready" &&
     (Boolean(plan?.up_to_date) || (plan?.unsupported?.length ?? 0) > 0);
   // Issue 657: a NexusMods collection pinning a file NexusMods no longer
-  // offers is refused by Apply until every such pin is decided; the plan
-  // view's GonePinsSection asks.
+  // offers is refused by Apply until every such pin is decided - a
+  // collection update's pin of a mod the user owns only when they take the
+  // collection's side of that conflict; the plan view's GonePinsSection
+  // asks.
   const gonePinsBlocked =
     status === "ready" &&
     ((kind === "profile_import" &&
       gonePinsUndecided(plan?.collection?.source)) ||
-      (kind === "collection_update" && gonePinsUndecided(plan?.source)));
+      (kind === "collection_update" &&
+        gonePinsUndecided(
+          plan?.source,
+          (key) =>
+            Boolean(modal.applyOptions?.override_conflicts) ||
+            (modal.applyOptions?.override ?? []).includes(key),
+        )));
   // Issue 608: a fill none of whose files matched has nothing to install.
   const emptyFillPlan =
     kind === "profile_fill" &&

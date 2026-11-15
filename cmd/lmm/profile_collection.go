@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -426,7 +427,7 @@ func collectionSummaryParts(s *core.CollectionPlanSummary) []string {
 		parts = append(parts, fmt.Sprintf("%d cannot be imported", s.Unsupported))
 	}
 	if s.GonePins > 0 {
-		parts = append(parts, fmt.Sprintf("%d pin a file NexusMods no longer offers (choose for each)", s.GonePins))
+		parts = append(parts, modsPin(s.GonePins)+" a file NexusMods no longer offers (choose for each)")
 	}
 	if s.Skipped > 0 {
 		parts = append(parts, fmt.Sprintf("%d skipped", s.Skipped))
@@ -496,7 +497,7 @@ func printSourceAttention(c *core.ConvertedCollection) {
 		it := byID[a.ID]
 		reasons := make([]string, len(a.Reasons))
 		for i, r := range a.Reasons {
-			reasons[i] = collectionAttentionText(r, it)
+			reasons[i] = collectionAttentionText(r, it, c)
 		}
 		fmt.Printf("  - %s: %s\n", it.Name, strings.Join(reasons, "; "))
 		if it.State == core.CollectionItemExternal {
@@ -512,7 +513,7 @@ func printSourceAttention(c *core.ConvertedCollection) {
 
 // collectionAttentionText words one attention reason (#654) for item it; a
 // reason this lmm does not know is shown as its code.
-func collectionAttentionText(r core.CollectionAttentionReason, it core.ConvertedCollectionItem) string {
+func collectionAttentionText(r core.CollectionAttentionReason, it core.ConvertedCollectionItem, c *core.ConvertedCollection) string {
 	switch r {
 	case core.CollectionAttentionInstallerQuestions:
 		return "its installer will ask you at install (the collection records no answers)"
@@ -523,7 +524,10 @@ func collectionAttentionText(r core.CollectionAttentionReason, it core.Converted
 	case core.CollectionAttentionOldFile:
 		return "the curator pinned an older file of this mod; lmm installs that exact file"
 	case core.CollectionAttentionGonePin:
-		return "NexusMods no longer offers the file the collection pins (see below)"
+		if d := gonePinDecision(gonePinFor(c, it)); d != "" {
+			return "NexusMods no longer offers the file the collection pins: " + d
+		}
+		return "NexusMods no longer offers the file the collection pins (choose below)"
 	case core.CollectionAttentionReoffered:
 		return "you skipped it because its pinned file was gone; the collection now pins an available file"
 	case core.CollectionAttentionUnsupported:
@@ -537,6 +541,18 @@ func collectionAttentionText(r core.CollectionAttentionReason, it core.Converted
 		return text
 	}
 	return strings.ReplaceAll(string(r), "_", " ")
+}
+
+// gonePinFor is c's gone pin of it's file; the zero pin when it has none.
+func gonePinFor(c *core.ConvertedCollection, it core.ConvertedCollectionItem) core.CollectionGonePin {
+	if c != nil {
+		for _, p := range c.GonePins {
+			if p.ModID == it.ModID && slices.Contains(p.FileIDs, it.FileID) {
+				return p
+			}
+		}
+	}
+	return core.CollectionGonePin{}
 }
 
 // printSourceItem prints one item of a converted collection: its state's

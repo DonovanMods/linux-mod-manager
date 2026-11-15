@@ -37,7 +37,7 @@ import { html, useRef } from "../render.js";
 import { displayVersion, reinstallReason } from "../version.js";
 import { safeWebUrl } from "../weburl.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
-import { GonePinsSection } from "./gonepins.js";
+import { GonePinsSection, gonePinDecision, modsPin } from "./gonepins.js";
 import { formatBytes } from "../progress.js";
 
 /** refLabel names a domain.ModReference - it carries no display name of its
@@ -618,7 +618,7 @@ function summaryParts(s) {
   if (s.gone_pins > 0)
     parts.push({
       key: "gone_pins",
-      text: `${s.gone_pins} pin${s.gone_pins === 1 ? "s" : ""} a file NexusMods no longer offers`,
+      text: `${modsPin(s.gone_pins)} a file NexusMods no longer offers`,
       to: "gone_pins",
     });
   if (s.skipped > 0)
@@ -633,7 +633,7 @@ function summaryParts(s) {
 /** attentionText words one core.CollectionAttentionReason for item it, as
  * the CLI does (collectionAttentionText); a code this page does not know
  * is shown as is. */
-function attentionText(reason, it) {
+function attentionText(reason, it, pin) {
   switch (reason) {
     case "installer_questions":
       return "Its installer will ask you at install (the collection records no answers).";
@@ -643,8 +643,13 @@ function attentionText(reason, it) {
       return "A prerequisite: install it by hand, with its own installer.";
     case "old_file":
       return "The curator pinned an older file of this mod; lmm installs that exact file.";
-    case "gone_pin":
-      return "NexusMods no longer offers the file the collection pins: choose for it above.";
+    case "gone_pin": {
+      // Issue 657 review: once decided, say what happens instead.
+      const decided = gonePinDecision(pin);
+      return decided
+        ? `NexusMods no longer offers the file the collection pins: ${decided}`
+        : "NexusMods no longer offers the file the collection pins: choose for it above.";
+    }
     case "reoffered":
       return "You skipped it because its pinned file was gone; the collection now pins an available file.";
     case "unsupported": {
@@ -675,11 +680,22 @@ function itemTags(it) {
   return tags;
 }
 
+/** pinOf is the gone pin (core.CollectionGonePin) of item it's file, or
+ * null when its file is not gone (issue 657). */
+function pinOf(c, it) {
+  return (
+    (c.gone_pins ?? []).find(
+      (p) =>
+        p.mod_id === it?.mod_id && (p.file_ids ?? []).includes(it?.file_id),
+    ) ?? null
+  );
+}
+
 /** SourceItemRow is one converted item: its name and version, what the
  * import does with it, its facts, its page, and its notes. `reasons` (issue
  * 654) are the attention reasons, worded first when the row is in Needs
  * your attention. */
-function SourceItemRow({ it, reasons }) {
+function SourceItemRow({ it, reasons, pin }) {
   const url = safeWebUrl(it.url);
   const warn = ["manual_download", "external", "unsupported"].includes(
     it.state,
@@ -721,7 +737,7 @@ function SourceItemRow({ it, reasons }) {
           data-testid="attention-reason"
           data-reason=${r}
         >
-          ${attentionText(r, it)}
+          ${attentionText(r, it, pin)}
         </p>`,
     )}
     ${it.note && html`<p class="plan__note">${it.note}</p>`}
@@ -892,6 +908,7 @@ function AttentionSection({ c, summary, sectionRef }) {
               key=${a.id}
               it=${byID.get(a.id)}
               reasons=${a.reasons}
+              pin=${pinOf(c, byID.get(a.id))}
             />`,
         )}
       </ul>`

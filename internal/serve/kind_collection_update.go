@@ -49,11 +49,13 @@ type collectionUpdatePlanRequest struct {
 	Profile      string   `json:"profile"`
 	WithOptional bool     `json:"with_optional,omitzero"`
 	Optional     []string `json:"optional,omitzero"`
-	// UseCurrent, UseCurrentAll and Skip decide the new version's pinned
-	// files NexusMods no longer offers (#657), by "<source-id>:<mod-id>":
-	// `--use-current`, `--use-current-all` and `--skip`.
+	// UseCurrent, UseCurrentAll, SkipFile and Skip decide the new
+	// version's pinned files NexusMods no longer offers (#657), by
+	// "<source-id>:<mod-id>": `--use-current`, `--use-current-all`,
+	// `--skip-file` and `--skip`.
 	UseCurrent    []string `json:"use_current,omitzero"`
 	UseCurrentAll bool     `json:"use_current_all,omitzero"`
+	SkipFile      []string `json:"skip_file,omitzero"`
 	Skip          []string `json:"skip,omitzero"`
 	// KeepSkipped names mods the profile skipped that the new version pins
 	// anew at an available file, to keep skipped (#657): `--keep-skipped`.
@@ -112,7 +114,7 @@ func planCollectionUpdateKind(ctx context.Context, s *Server, sel selection, opt
 		// The plan view's toggles post the whole selection, an empty one
 		// included: an item the user unticks is not re-added.
 		OptionalChosen: req.Optional != nil,
-		GonePins:       core.GonePinChoices{UseCurrent: req.UseCurrent, UseCurrentAll: req.UseCurrentAll, Skip: req.Skip},
+		GonePins:       core.GonePinChoices{UseCurrent: req.UseCurrent, UseCurrentAll: req.UseCurrentAll, SkipFile: req.SkipFile, Skip: req.Skip},
 		KeepSkipped:    req.KeepSkipped,
 	})
 	if err != nil {

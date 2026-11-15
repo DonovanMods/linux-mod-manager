@@ -1208,7 +1208,7 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 	if collection != nil && !jsonOutput {
 		printCollectionPlan(collection, game)
 	}
-	if collection != nil && (len(collection.Unsupported) > 0 || hasUndecidedGonePins(collection.Source)) {
+	if collection != nil && (len(collection.Unsupported) > 0 || hasUndecidedGonePins(collection.Source, nil)) {
 		// The plan always renders; the apply refuses, writing nothing,
 		// and there is nothing to ask first - an unsupported feature, or
 		// (#657) a pinned file the source no longer offers that no flag

@@ -114,6 +114,8 @@ func TestAPIFlow_ProfileImportNexus_GonePinBadRequests(t *testing.T) {
 	seedGoneNexusCollection(t, svc, game)
 	for name, body := range map[string]string{
 		"both ways":           `{"nexus_collection":"abcdef","use_current":["nexusmods:10"],"skip":["nexusmods:10"]}`,
+		"no gone pin":         `{"nexus_collection":"abcdef","skip":["nexusmods:11"]}`,
+		"skip_file on a main": `{"nexus_collection":"abcdef","skip_file":["nexusmods:10"]}`,
 		"without a nexus ref": `{"data":"name: x\ngame_id: g1\nmods: []\n","skip":["nexusmods:10"]}`,
 		"with a url":          `{"url":"https://example.invalid/c.lmmc","use_current_all":true}`,
 	} {
@@ -202,7 +204,7 @@ type reofferedTenSource struct{ goneNexusFixtureSource }
 func (s reofferedTenSource) ResolveGameCollection(ctx context.Context, gameSourceID, ref string) (source.Collection, error) {
 	c, err := s.nexusFixtureSource.ResolveGameCollection(ctx, gameSourceID, ref)
 	c.Revision = 4
-	c.Items[0].FileID = "102"
+	c.Items[0].FileID = "102" // listed, as MAIN: available
 	return c, err
 }
 

@@ -216,6 +216,9 @@ var dialogFixtures = map[string]func(t *testing.T) dialogFixture{
 	},
 	"search": newE2ESearchDialogFixture,
 	"nexus":  func(t *testing.T) dialogFixture { return dialogFixture{e2eFixture: newE2EImportDialogFixture(t)} },
+	// #657: a NexusMods collection pinning a file NexusMods no longer
+	// offers, so its plan shows the gone-pin choices.
+	"gonepins": func(t *testing.T) dialogFixture { return dialogFixture{e2eFixture: newE2EGonePinFixture(t)} },
 	"rollback": func(t *testing.T) dialogFixture {
 		return dialogFixture{e2eFixture: newE2EFixtureWithRollbackReadyMod(t)}
 	},
@@ -528,6 +531,11 @@ var dialogScenarios = []dialogScenario{
 	{name: "profile_import", fixture: "nexus", root: `.modal[data-kind="profile_import"]`,
 		open: func(f dialogFixture) chromedp.Tasks {
 			return chromedp.Tasks{chromedp.Navigate(f.HomePath()), openNexusImport("abcdef"), planOpen("profile_import")}
+		}},
+	{name: "profile_import: gone pins", fixture: "gonepins", root: `.modal[data-kind="profile_import"]`,
+		open: func(f dialogFixture) chromedp.Tasks {
+			return chromedp.Tasks{chromedp.Navigate(f.HomePath()), openNexusImport("abcdef"), planOpen("profile_import"),
+				chromedp.WaitVisible(`[data-testid="gone-pins"]`, chromedp.ByQuery)}
 		}},
 	{name: "collection_update", fixture: "collection", root: `.modal[data-kind="collection_update"]`,
 		open: func(f dialogFixture) chromedp.Tasks {

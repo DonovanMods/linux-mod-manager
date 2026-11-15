@@ -17,11 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   most one file listing per mod it does not vouch for. A file missing from
   the mod's listing is gone; an archived one is not (NexusMods still serves
   it, so the curator's file installs, with a plan note). Each gone pin is
-  listed under **Needs your attention**
-  with the mod's current main file. `lmm profile import --nexus-collection`
-  and `lmm profile sync --collection` take `--use-current <mod>`
-  (repeatable), `--use-current-all` and `--skip <mod>`; the web UI offers
-  the same two choices per mod, and Confirm waits until each is decided.
+  listed under **Needs your attention** with the current file that would
+  stand in for it, in the gone file's role: the mod's current main file
+  for a gone main file, a current file of the same kind whose name matches
+  for a gone optional one (never a current main beside the curator's).
+  `lmm profile import --nexus-collection` and `lmm profile sync
+--collection` take `--use-current <mod>` (repeatable),
+  `--use-current-all`, `--skip-file <mod>` (leave a gone optional file out,
+  install the rest) and `--skip <mod>`; the web UI offers the same choices
+  per mod, and Confirm waits until each is decided.
   Without a choice the import refuses, writing nothing, and `--json` carries
   the pins as the error's `details`. A mod installed at its current file
   keeps `from_collection` and records the pin it stands in for
@@ -31,7 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps a skipped mod out while its pin is still gone, and brings it back,
   listed for attention, when the curator pins an available file
   (`--keep-skipped <mod>`, or the web UI's **Keep it skipped**, keeps it
-  out). It decides its own gone pins the same way. The curator's installer choices are not
+  out, and the declined pin is remembered). It decides its own gone pins
+  the same way; a mod you changed yourself needs its decided only when you
+  take the collection's side of its conflict. The curator's installer choices are not
   replayed on a substituted archive: its installer asks.
 - **A collection's plan is grouped, with a summary first (#654).** A
   NexusMods collection's import plan, and a collection update's, leads
