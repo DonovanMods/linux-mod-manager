@@ -117,7 +117,10 @@ func (e *Extractor) detectFormatFromPath(path string) string {
 	}
 }
 
-// extractZip extracts a ZIP archive using Go's native archive/zip package
+// extractZip extracts a ZIP archive using Go's native archive/zip package,
+// or - when any member uses a compression method archive/zip cannot decode
+// (#656) - through the system 7z (extractZipWith7z). The choice is made for
+// the whole archive before anything is written.
 func (e *Extractor) extractZip(ctx context.Context, archivePath, destDir string) (err error) {
 	r, err := zip.OpenReader(archivePath)
 	if err != nil {
@@ -128,6 +131,10 @@ func (e *Extractor) extractZip(ctx context.Context, archivePath, destDir string)
 			err = fmt.Errorf("closing zip: %w", cerr)
 		}
 	}()
+
+	if f := zipNeeds7z(r.File); f != nil {
+		return e.extractZipWith7z(ctx, archivePath, destDir, f)
+	}
 
 	for _, f := range r.File {
 		if err := ctx.Err(); err != nil {

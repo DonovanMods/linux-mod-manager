@@ -73,13 +73,16 @@ func classifyImportArchive(game *domain.Game, mc adapter.MergeCompiler, filename
 }
 
 // archiveMember is one entry in an archive's table of contents: its
-// archive-internal name exactly as recorded, and whether it is a directory.
+// archive-internal name exactly as recorded, whether it is a directory, and
+// (from a 7z listing) whether it is a symbolic link, which the #656 zip
+// fallback refuses.
 // Directories are listed rather than dropped because they still participate
 // in the reserved-namespace check and in the sole-top-level-directory
 // question DetectModName answers from the extracted tree.
 type archiveMember struct {
 	Path string
 	Dir  bool
+	Link bool
 }
 
 // importMemberRelPath normalizes one archive member's name to the
@@ -324,7 +327,7 @@ func trimVersionSuffix(filename, version string) string {
 func listArchiveMembers(ctx context.Context, e *Extractor, archivePath string) ([]archiveMember, error) {
 	switch e.detectFormatFromPath(archivePath) {
 	case "zip":
-		return listZipMembers(archivePath)
+		return listZipMembers(ctx, archivePath)
 	case "7z", "rar":
 		return list7zMembers(ctx, archivePath)
 	default:
@@ -336,8 +339,11 @@ func listArchiveMembers(ctx context.Context, e *Extractor, archivePath string) (
 }
 
 // listZipMembers lists a zip's members with archive/zip's central directory -
-// no member is decompressed and nothing is written.
-func listZipMembers(archivePath string) (members []archiveMember, err error) {
+// no member is decompressed and nothing is written. A zip with a member
+// archive/zip cannot decode is extracted through 7z (#656), so it is listed
+// through 7z too (list7zZipMembers): the plan then names what that fallback
+// writes, and needs the 7z it needs.
+func listZipMembers(ctx context.Context, archivePath string) (members []archiveMember, err error) {
 	r, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return nil, fmt.Errorf("opening zip: %w", err)
@@ -347,6 +353,10 @@ func listZipMembers(archivePath string) (members []archiveMember, err error) {
 			err = fmt.Errorf("closing zip: %w", cerr)
 		}
 	}()
+
+	if f := zipNeeds7z(r.File); f != nil {
+		return list7zZipMembers(ctx, archivePath, f)
+	}
 
 	members = make([]archiveMember, 0, len(r.File))
 	for _, f := range r.File {
@@ -416,6 +426,9 @@ func parse7zListing(out string) []archiveMember {
 			// the DOS attribute letters are the leading word.
 			attrs, _, _ := strings.Cut(value, " ")
 			current.Dir = strings.Contains(attrs, "D")
+			current.Link = current.Link || isLinkAttributes(value)
+		case "Symbolic Link", "Hard Link":
+			current.Link = current.Link || value != ""
 		}
 	}
 	flush()
