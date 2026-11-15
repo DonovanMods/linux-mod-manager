@@ -969,6 +969,25 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **A collection import in the web UI shows its progress and its failure
+  (#655).** A job whose own control is not on screen (a collection import
+  confirmed in a window that then closes, or an install you navigated
+  away from) now shows its progress in a card at the bottom right, for
+  example **Importing collection…** with "12 of 600" and the item it is
+  on, until it ends; before, only the bell's count said anything was
+  happening. Toasts name the job in words ("Collection import failed",
+  "Deploy finished") instead of its internal name (`profile_import`), and
+  so does the activity tray. A failure that names several mods lists one
+  line per mod, its name and then why, instead of the engine's joined
+  text, which stays under **Details** in the activity tray. A toast's two
+  actions are two separate, spaced buttons. **Show in activity** opens
+  the tray on that job from any page, and a failed import offers **Back
+  to import**, which opens the import window with the failure shown,
+  instead of **Open profiles** (which showed an empty form, as nothing
+  was imported). The web UI's job error and the CLI's `--json` error
+  envelope gain an `items` list (each mod's `source_id`, `mod_id`,
+  `name`, `reason` and `refusal`) when a failure names mods; `error` and
+  `details` are unchanged.
 - **The web UI's collection import is drawn one way (#652).** In the
   **Import collection…** window and the Profiles window's import section,
   every source (a file, a URL, a Steam Workshop collection, a NexusMods

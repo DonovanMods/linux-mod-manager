@@ -2181,6 +2181,23 @@ a.row-menu__item.mod-page-link {
 
 /* issue 535: a failure that leads with what it means keeps the engine's own
  * text one click away, collapsed under "Details". */
+/* issue 655: a failure's per-mod lines - the mod's name, then why. */
+.item-failures {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.item-failures__item {
+  overflow-wrap: anywhere;
+}
+
+.item-failures__name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 .raw-error {
   margin: var(--space-1) 0 0;
   color: var(--text-muted);
@@ -3190,8 +3207,22 @@ a.row-menu__item.mod-page-link {
   font-size: 0.9em;
 }
 
+/* issue 655: a running job's progress, while its own control is off screen. */
+.toast--running {
+  border-left-color: var(--accent);
+}
+
+.toast--running .job-progress__bar {
+  margin-top: var(--space-2);
+}
+
+/* issue 655: a toast's actions are one spaced row (.form-actions), never
+ * two links run together. */
+.toast__actions {
+  margin-top: var(--space-2);
+}
+
 .toast__link {
-  margin-top: var(--space-1);
   color: var(--accent);
 }
 

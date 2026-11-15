@@ -23,10 +23,23 @@ func emitJSON(v any) error {
 // is declared after Error, not because of alphabetical sort (Deterministic
 // governs map ordering, not struct field order), but so "error" is always
 // the first key regardless of whether Details is present; omitempty drops
-// the key entirely when errorDetails found nothing.
+// the key entirely when errorDetails found nothing. Items (#655) is the
+// per-mod failure list a failure naming several mods carries
+// (core.ItemFailuresOf), omitted when there is none - the web UI's job
+// envelope carries the same key.
 type jsonErrorEnvelope struct {
-	Error   string `json:"error"`
-	Details any    `json:"details,omitempty"`
+	Error   string             `json:"error"`
+	Details any                `json:"details,omitempty"`
+	Items   []core.ItemFailure `json:"items,omitempty"`
+}
+
+// errorItems is core.ItemFailuresOf under errorDetails' guard: a stale plan
+// carries nothing of its own.
+func errorItems(err error) []core.ItemFailure {
+	if errors.Is(err, core.ErrStalePlan) {
+		return nil
+	}
+	return core.ItemFailuresOf(err)
 }
 
 // errorDetails returns the data err carries for the --json error envelope's

@@ -425,7 +425,7 @@ func reportError(err error) {
 		return
 	}
 	if jsonOutput {
-		_ = emitJSON(jsonErrorEnvelope{Error: err.Error(), Details: errorDetails(err)})
+		_ = emitJSON(jsonErrorEnvelope{Error: err.Error(), Details: errorDetails(err), Items: errorItems(err)})
 	} else {
 		fmt.Fprintf(os.Stderr, "%s %v\n", colorRed("Error:"), err)
 		reportExternalToolOutput(err)

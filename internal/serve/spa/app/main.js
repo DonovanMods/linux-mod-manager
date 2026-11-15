@@ -55,18 +55,20 @@ import {
 } from "./jobresult.js";
 import {
   deferredHealthRetryMillis,
+  detachedProgressDelayMillis,
   succeededOriginReleaseMillis,
   holdSucceededReadouts,
   toastDismissMillis,
   unreadRereadDelayMillis,
 } from "./timers.js";
-import { resultTallyLabel, resultTallyTone } from "./progress.js";
+import { jobTitle, resultTallyLabel, resultTallyTone } from "./progress.js";
 import { resolveGamePath } from "./navigation.js";
 import { RELEVANCE, effectiveSort, knownSort } from "./searchsort.js";
 import {
   connectActivity,
   isOriginMounted,
   mountedOriginsSnapshot,
+  onOriginLeft,
   registerOrigin,
 } from "./activity.js";
 import {
@@ -1881,10 +1883,15 @@ async function confirmPlan() {
           openerSelector: modal.openerSelector,
         });
       }
+      rememberJobFacts(jobID, {
+        collection:
+          modal.kind === "profile_import" && Boolean(modal.plan?.collection),
+      });
       store.set({
         modal: null,
         origins: { ...store.get().origins, [modal.origin]: jobID },
       });
+      showDetachedProgress(modal.origin, jobID, modal.kind);
       modal.onConfirmed?.();
     } catch (err) {
       if (store.get().modal?.seq !== modal.seq) return;
@@ -2537,17 +2544,105 @@ let toastSeq = 0;
 /** Pushes a toast. Successes clear themselves after a while; failures do
  * not - a failure nobody saw is the case toasts exist for. A `sticky` toast
  * does not either: a success that still carries something to read (issue
- * 531). */
+ * 531). Nor does a running job's progress (issue 655): it is replaced by
+ * the job's outcome when the job ends. */
 function pushToast(toast) {
   const id = `t${++toastSeq}`;
   store.set({ toasts: [...store.get().toasts, { ...toast, id }] });
-  if (toast.tone !== "failure" && !toast.sticky) {
+  if (toast.tone === "success" && !toast.sticky) {
     setTimeout(() => dismissToast(id), toastDismissMillis);
   }
 }
 
 function dismissToast(id) {
+  const toast = store.get().toasts.find((t) => t.id === id);
+  // A running job's progress the user put away stays away; the job's
+  // outcome still toasts when it ends.
+  if (toast?.tone === "running") dismissedProgress.add(toast.jobID);
   store.set({ toasts: store.get().toasts.filter((t) => t.id !== id) });
+}
+
+// jobFacts is what this page knows about a job it started that its summary
+// does not say: today, whether a profile_import imported a collection
+// (issue 655: its toasts say "Collection import", not "profile_import").
+// Lost on reload, when collectionOrigins answers from the origin instead.
+const jobFacts = new Map();
+
+/** rememberJobFacts records facts about jobID (see jobFacts). */
+function rememberJobFacts(jobID, facts) {
+  jobFacts.set(jobID, facts);
+}
+
+// collectionOrigins are the import doors that only ever import a
+// collection, for a job whose facts this page did not record.
+const collectionOrigins = new Set([
+  "profile-import-collection",
+  "profile-import-nexus-collection",
+]);
+
+/** jobIsCollection reports whether jobID imported a collection, as far as
+ * this page knows. */
+function jobIsCollection(jobID) {
+  const facts = jobFacts.get(jobID);
+  if (facts) return facts.collection;
+  return collectionOrigins.has(originOf(jobID) ?? "");
+}
+
+/** summaryTitle is a job's name in a sentence ("Collection import"). */
+function summaryTitle(summary) {
+  return jobTitle(summary.kind, {
+    collection: jobIsCollection(summary.id),
+    origin: summary.origin,
+  });
+}
+
+// dismissedProgress holds the jobs whose running toast the user dismissed.
+const dismissedProgress = new Set();
+
+/**
+ * showDetachedProgress puts a running job's progress in a toast when the
+ * control that started it is not on screen (issue 655): a collection import
+ * is confirmed in a modal that closes, and a job started from a row the
+ * user then navigated away from has left its control behind - either way
+ * the page otherwise showed nothing but the bell's count until the job
+ * ended. Checked after detachedProgressDelayMillis, so a control that is
+ * only re-mounting comes back first; the toast hides itself while the
+ * control is back on screen (toasts.js), and is replaced by the outcome
+ * when the job ends (onJobDone).
+ */
+function showDetachedProgress(origin, jobID, kind) {
+  setTimeout(() => {
+    if (store.get().origins[origin] !== jobID) return;
+    if (jobEndings.has(jobID) || dismissedProgress.has(jobID)) return;
+    if (isOriginMounted(origin)) return;
+    if (store.get().toasts.some((t) => t.jobID === jobID)) return;
+    pushToast({
+      tone: "running",
+      jobID,
+      origin,
+      kind:
+        kind ??
+        (store.get().jobsIndex ?? []).find((row) => row.id === jobID)?.kind ??
+        "",
+      collection: jobIsCollection(jobID),
+    });
+  }, detachedProgressDelayMillis);
+}
+
+// A control showing a running job that leaves the screen hands the job's
+// progress to a toast.
+onOriginLeft((origin) => {
+  const jobID = store.get().origins[origin];
+  if (jobID) showDetachedProgress(origin, jobID);
+});
+
+/** dropProgressToast removes jobID's running toast, if it has one. */
+function dropProgressToast(jobID) {
+  const toasts = store.get().toasts;
+  if (!toasts.some((t) => t.tone === "running" && t.jobID === jobID)) return;
+  store.set({
+    toasts: toasts.filter((t) => !(t.tone === "running" && t.jobID === jobID)),
+  });
 }
 
 /**
@@ -2609,6 +2704,8 @@ async function onJobDone(summary) {
   // function's first await, which knownEnding relies on.
   const ending = { summary, after: slices.mark(), lost: false };
   jobEndings.set(summary.id, ending);
+  // Its progress toast, if it had one, gives way to its outcome below.
+  dropProgressToast(summary.id);
   toggles.ended(summary.id, ending);
   hydrate(store.get().route, { rehydrate: true });
   refreshSearchResults();
@@ -2645,10 +2742,15 @@ async function onJobDone(summary) {
     return;
 
   if (summary.state === "failed") {
+    // Issue 655: a failure naming several mods (a collection import's)
+    // says one line per mod; the engine's joined text stays in the job's
+    // details in the tray.
+    const items = summary.error?.items ?? [];
     pushToast({
       tone: "failure",
-      title: `${summary.kind} failed`,
-      detail: summary.error?.error ?? "",
+      title: `${summaryTitle(summary)} failed`,
+      detail: items.length > 0 ? "" : (summary.error?.error ?? ""),
+      items,
       jobID: summary.id,
       ...toastAffordance(summary),
     });
@@ -2675,7 +2777,7 @@ async function onJobDone(summary) {
         ? "failure"
         : "success",
     sticky: held,
-    title: `${summary.kind} finished`,
+    title: `${summaryTitle(summary)} finished`,
     // Issue 633: a job held by its warnings (a shared path handed to the
     // next mod in load order) says them here, where the page moved on - a
     // batch's after its tally.
@@ -2718,6 +2820,7 @@ function onJobLost(jobID, err) {
 
   const ending = { summary, after: slices.mark(), lost: true };
   jobEndings.set(jobID, ending);
+  dropProgressToast(jobID);
   const requests = toggles.ended(jobID, ending);
   hydrate(store.get().route, { rehydrate: true });
 
@@ -2760,9 +2863,27 @@ const jobToastAffordances = {
   profile_fill: { action: "openProfilesModal", actionLabel: "Open profiles" },
 };
 
-/** toastAffordance is summary's own extra offer, or nothing. */
+/** toastAffordance is summary's own extra offer, or nothing.
+ *
+ * A FAILED import wrote nothing (a collection import is all-or-nothing), so
+ * the profiles modal has nothing of it to show - it read as a blank form
+ * (issue 655). The failure offers the import dialog again instead, with the
+ * failure shown above its forms. */
 function toastAffordance(summary) {
+  if (summary.kind === "profile_import" && summary.state === "failed") {
+    return {
+      action: "reopenImport",
+      actionLabel: "Back to import",
+      actionArg: summary.id,
+    };
+  }
   return jobToastAffordances[summary.kind] ?? {};
+}
+
+/** reopenImport opens the "Import collection…" dialog with the failed
+ * import jobID's failure shown above its forms (issue 655). */
+function reopenImport(jobID) {
+  store.set({ modal: { type: "import-collection", failedJob: jobID } });
 }
 
 /** originOf finds which control (if any) started jobID. */
@@ -3022,6 +3143,8 @@ const actions = {
   openReorderModal,
   openProfilesModal,
   openImportCollectionModal,
+  reopenImport,
+  jobIsCollection,
   openShortcutsModal,
   openUninstallBatchModal,
   startBatchToggle,

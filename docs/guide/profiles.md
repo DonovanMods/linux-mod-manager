@@ -483,6 +483,16 @@ other than bsdiff's, a plugin rule marking two plugins incompatible) shows
 its plan, with what is missing and which mods need it, and is refused, with
 nothing written. Optional mods that need such a thing are skipped instead.
 
+In the browser, a running import shows its progress in a card at the
+bottom right of the page (**Importing collection…**, with how many of the
+collection's mods it has reached), wherever you go meanwhile. When it
+ends the card says how it went. A failure stays until you close it and
+lists each mod that failed, with why; **Show in activity** opens the
+import's entry in the activity tray, with the full error under
+**Details**, and **Back to import** reopens the import window with the
+failure above its inputs. In the terminal, a refused import prints one
+line per mod, and `--json` lists them under the error's `items`.
+
 ### Updating a collection profile
 
 A profile imported from a link or from a NexusMods collection remembers

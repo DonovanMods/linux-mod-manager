@@ -367,7 +367,7 @@ func (j *job) finish(result any, err error, at time.Time) {
 	if err != nil {
 		j.state = jobFailed
 		j.err = err
-		j.envelope = &apiErrorEnvelope{Error: err.Error(), Details: errorDetails(err)}
+		j.envelope = newAPIErrorEnvelope(err)
 	} else {
 		j.state = jobSucceeded
 		j.result = result

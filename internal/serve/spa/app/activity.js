@@ -41,6 +41,17 @@ export function upsertSummary(list, summary) {
 // make the second invisible to the toast rule.
 const mountedOrigins = new Map();
 
+// originLeft is told when the last control rendering an origin unmounts
+// (issue 655): a job whose control has left the screen keeps its progress
+// on screen elsewhere (main.js#showDetachedProgress).
+let originLeft = null;
+
+/** onOriginLeft sets the one listener told when an origin stops being
+ * rendered by any control. */
+export function onOriginLeft(listener) {
+  originLeft = listener;
+}
+
 /**
  * Registers origin as on-screen and returns the function that unregisters
  * it - shaped for a Preact effect's cleanup, which is its only caller.
@@ -50,8 +61,12 @@ export function registerOrigin(origin) {
   mountedOrigins.set(origin, (mountedOrigins.get(origin) ?? 0) + 1);
   return () => {
     const left = (mountedOrigins.get(origin) ?? 1) - 1;
-    if (left > 0) mountedOrigins.set(origin, left);
-    else mountedOrigins.delete(origin);
+    if (left > 0) {
+      mountedOrigins.set(origin, left);
+      return;
+    }
+    mountedOrigins.delete(origin);
+    originLeft?.(origin);
   };
 }
 
@@ -84,7 +99,7 @@ export function mountedOriginsSnapshot() {
  * that reaches a terminal state - while connected, or while it was not.
  *
  * The store writes are deliberately narrow: this is the only writer of
- * jobsIndex and jobProgress, so no other code path can disagree with the
+ * jobsIndex, jobProgress and jobPositions, so no other code path can disagree with the
  * stream about what the machine is doing. Returns the disconnect function.
  *
  * RECONCILIATION. The stream is a snapshot followed by live frames, and a
@@ -125,9 +140,21 @@ export function connectActivity(
         activityError: null,
       }),
 
+    // jobPositions keeps each job's newest frame that says how far through
+    // its items it is (issue 655): a download tick that follows names no
+    // item, and a collection import's progress would otherwise lose its
+    // "12 of 40" the moment the item's download began.
     onProgress: (frame) =>
       store.set({
         jobProgress: { ...store.get().jobProgress, [frame.job_id]: frame },
+        ...(frame.total > 0
+          ? {
+              jobPositions: {
+                ...store.get().jobPositions,
+                [frame.job_id]: frame,
+              },
+            }
+          : {}),
       }),
 
     onDone: (summary) => {

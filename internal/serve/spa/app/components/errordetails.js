@@ -150,6 +150,38 @@ export function RawError({ text }) {
 }
 
 /**
+ * ItemFailureList is a failure's per-mod lines (issue 655): the envelope's
+ * `items` (core.ItemFailure), one line each - the mod's name, then why. A
+ * collection import that refuses joins every mod's error into one text,
+ * which read as one run-on sentence. `limit` caps the lines for a small
+ * surface (a toast), saying how many more there are; the tray shows them
+ * all.
+ */
+export function ItemFailureList({ items, limit }) {
+  const list = items ?? [];
+  if (list.length === 0) return null;
+  const shown = limit > 0 ? list.slice(0, limit) : list;
+  const more = list.length - shown.length;
+  return html`<ul class="item-failures" data-testid="item-failures">
+    ${shown.map(
+      (item) =>
+        html`<li
+          key=${`${item.source_id}:${item.mod_id}`}
+          class="item-failures__item"
+          data-item=${`${item.source_id}:${item.mod_id}`}
+        >
+          <span class="item-failures__name"
+            >${item.name || `${item.source_id}:${item.mod_id}`}</span
+          >${": "}<span class="item-failures__reason"
+            >${codeSpans(item.reason)}</span
+          >
+        </li>`,
+    )}
+    ${more > 0 && html`<li class="item-failures__more">and ${more} more</li>`}
+  </ul>`;
+}
+
+/**
  * DownloadPage is a failed download's way out (issue 513): the mod's page on
  * its source, as an "Open on <source>" link. For a source that refuses
  * automated downloads it also says what to do with the file once it is

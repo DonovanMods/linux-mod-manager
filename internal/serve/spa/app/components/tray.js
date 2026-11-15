@@ -22,6 +22,7 @@ import { followJob } from "../sse.js";
 import {
   frameFromEvent,
   jobStateLabel,
+  jobTitle,
   mutationLabel,
   progressText,
   progressFraction,
@@ -33,7 +34,12 @@ import {
   useJobResultVerify,
   useJobResultFailures,
 } from "../jobresult.js";
-import { DownloadHeadline, ErrorDetails, RawError } from "./errordetails.js";
+import {
+  DownloadHeadline,
+  ErrorDetails,
+  ItemFailureList,
+  RawError,
+} from "./errordetails.js";
 import { BatchFailures } from "./batchfailures.js";
 import { downloadFailureFor, nextStepFor } from "../failures.js";
 import { PurgeResultDetails } from "./purgeresult.js";
@@ -254,7 +260,13 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
         onClick=${onToggle}
       >
         <span class="tray__kind" data-origin=${job.origin || null}
-          >${job.origin === "auto" ? mutationLabel(job.kind, job.origin) : job.kind}</span
+          >${
+            job.origin === "auto"
+              ? mutationLabel(job.kind, job.origin)
+              : jobTitle(job.kind, {
+                  collection: actions?.jobIsCollection?.(job.id) ?? false,
+                })
+          }</span
         >
         <span class="tray__state tray__state--${tone}">${stateText}</span>
         <span class="tray__caret">${expanded ? "▾" : "▸"}</span>
@@ -402,7 +414,23 @@ function FailureNextStep({ job, actions }) {
   // and the engine's own text moves into a collapsed "Details" - the inline
   // readout's rule (jobprogress.js), here too.
   const download = downloadFailureFor(envelope.details);
-  const headed = Boolean(download?.manual);
+  // Issue 655: a failure naming several mods leads with one line per mod;
+  // the engine's joined text moves into "Details", as a download's does.
+  const items = envelope.items ?? [];
+  const listed = items.length > 0;
+  const headed = Boolean(download?.manual) && !listed;
+
+  if (listed) {
+    return html`
+      <div class="tray__failure">
+        <p class="tray__failure-message">
+          ${items.length === 1 ? "1 mod failed:" : `${items.length} mods failed:`}
+        </p>
+        <${ItemFailureList} items=${items} />
+        <${RawError} text=${envelope.error} />
+      </div>
+    `;
+  }
 
   return html`
     <div class="tray__failure">

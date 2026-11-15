@@ -795,6 +795,18 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #655: a failure naming several mods lists them, one entry
+			// each, after details.
+			"api_error_envelope_items",
+			apiErrorEnvelope{
+				Error: "nexusmods:266: stored file no longer available upstream\nnexusmods:57339: zip: unsupported compression algorithm",
+				Items: []core.ItemFailure{
+					{SourceID: "nexusmods", ModID: "266", Name: "Skyrim Upscaled", Reason: "stored file no longer available upstream", Refusal: core.RefusalOther},
+					{SourceID: "nexusmods", ModID: "57339", Reason: "zip: unsupported compression algorithm", Refusal: core.RefusalOther},
+				},
+			},
+		},
+		{
 			// #330's un-orphaning of AvailableModVersions: the wrapper
 			// document the full mod page's versions table renders. The
 			// Supported-false shape (a source with no version metadata) is
