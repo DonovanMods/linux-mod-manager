@@ -411,6 +411,10 @@ pre,
  *
  * select and the text-like inputs share the default height, border and
  * type size, so a Filter select sits level with the buttons beside it.
+ * The input types are listed one by one (an unlisted type is drawn by the
+ * browser, small and grey, as issue 652's URL field was); input_types_test.go fails on
+ * any <input> in the SPA whose type is neither listed here nor a deliberate
+ * non-text input (checkbox, radio, file, hidden).
  * box-sizing is border-box everywhere (the universal rule above), which is
  * what makes a min-height of --control-height the control's exact height.
  */
@@ -421,6 +425,10 @@ select,
 textarea,
 input[type="search"],
 input[type="text"],
+input[type="url"],
+input[type="number"],
+input[type="email"],
+input[type="tel"],
 input[type="password"] {
   border-radius: var(--control-radius);
   font-family: inherit;
@@ -704,6 +712,10 @@ input:focus-visible {
 select,
 input[type="search"],
 input[type="text"],
+input[type="url"],
+input[type="number"],
+input[type="email"],
+input[type="tel"],
 input[type="password"] {
   height: var(--control-height);
   padding: 0 var(--space-2);
@@ -3542,19 +3554,15 @@ a.row-menu__item.mod-page-link {
   gap: var(--space-2);
 }
 
-.profiles-import label.button {
-  display: inline-block;
-  cursor: pointer;
-}
-
-/* The Steam Workshop collection input (issue 269 W2), the modal's second
-   import source. A column at every width: two text fields and a button in a
-   row would each be a few characters wide inside a modal, and the hint under
-   them is a full sentence. The URL input (issue 622) is laid out the same
-   way, under its own class so a selector for one form never finds the
-   other. */
-.profiles-import__collection,
-.profiles-import__url {
+/* The import section's sources (issue 652): the file, the URL, a Steam
+   Workshop collection (issue 269 W2) and a NexusMods collection (issue
+   607), each laid out the same way - its heading, its own full-width
+   fields, its button, then its one hint underneath. A column at every
+   width: two text fields and a button in a row would each be a few
+   characters wide inside a modal, and the hint is a full sentence. Each
+   form keeps a class of its own as well, so a selector for one never finds
+   another. */
+.profiles-import__section {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -3562,8 +3570,7 @@ a.row-menu__item.mod-page-link {
   margin-top: var(--space-3);
 }
 
-.profiles-import__collection input,
-.profiles-import__url input {
+.profiles-import__section > input {
   width: 100%;
 }
 

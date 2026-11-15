@@ -91,7 +91,7 @@ func TestE2E_CollectionURL_ImportsWithoutHooksAndRecordsTheAddress(t *testing.T)
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		openProfilesImport(),
-		chromedp.SetValue(`[data-testid="import-profile-name"]`, "from-a-friend", chromedp.ByQuery),
+		chromedp.SetValue(`[data-testid="import-url-profile-name"]`, "from-a-friend", chromedp.ByQuery),
 		chromedp.SetValue(`[data-testid="import-url"]`, link, chromedp.ByQuery),
 		clickWhenSettled(`[data-testid="import-url-submit"]`),
 		chromedp.WaitVisible(`[data-testid="lmm-collection"]`, chromedp.ByQuery),

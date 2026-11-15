@@ -88,12 +88,18 @@ func buttonTags(t *testing.T) []buttonTag {
 	return out
 }
 
-// buttonTagsIn finds every <button opening tag in one module's source. A
-// tag ends at the first ">" outside a ${...} interpolation, so a multi-line
-// tag with arrow functions in its handlers is read whole.
+// buttonTagsIn finds every <button opening tag in one module's source.
 func buttonTagsIn(file, src string) []buttonTag {
+	return openingTagsIn(file, src, "button")
+}
+
+// openingTagsIn finds every <name opening tag in one module's source,
+// skipping comment lines. A tag ends at the first ">" outside a ${...}
+// interpolation, so a multi-line tag with arrow functions in its handlers
+// is read whole.
+func openingTagsIn(file, src, name string) []buttonTag {
 	var out []buttonTag
-	for _, loc := range regexp.MustCompile(`<button\b`).FindAllStringIndex(src, -1) {
+	for _, loc := range regexp.MustCompile(`<`+name+`\b`).FindAllStringIndex(src, -1) {
 		lineStart := strings.LastIndex(src[:loc[0]], "\n") + 1
 		prefix := strings.TrimSpace(src[lineStart:loc[0]])
 		if strings.HasPrefix(prefix, "//") || strings.HasPrefix(prefix, "*") || strings.HasPrefix(prefix, "/*") {
@@ -129,7 +135,13 @@ func buttonTagsIn(file, src string) []buttonTag {
 // rather than a quoted value (the text is then the value, interpolations
 // included). ok is false when the tag has no class attribute.
 func classValue(tag string) (value string, isExpr, ok bool) {
-	loc := classAttr.FindStringSubmatchIndex(tag)
+	return attrValue(tag, classAttr)
+}
+
+// attrValue is classValue for any attribute: attr matches the attribute's
+// name and "=", then its opening quote or "${" as group 1.
+func attrValue(tag string, attr *regexp.Regexp) (value string, isExpr, ok bool) {
+	loc := attr.FindStringSubmatchIndex(tag)
 	if loc == nil {
 		return "", false, false
 	}
