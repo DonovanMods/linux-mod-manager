@@ -1,6 +1,7 @@
 package serve_test
 
-// #655: a collection import started from the "Import collection…" modal
+// #655 (and #660's ruling that a collection import is never all or
+// nothing): a collection import started from the "Import collection…" modal
 // gave no feedback while it ran, and its failure toast read
 // "profile_import failed", with the engine's joined text for a body and two
 // actions run together ("Open profilesShow in activity"), one of which
@@ -176,54 +177,54 @@ func awaitJobsSettled() chromedp.Action {
 	})
 }
 
-// failureToastJS reads the failure toast: its title, its per-mod lines and
-// its action buttons, with the gap between the first two.
-const failureToastJS = `(() => {
-	const toast = document.querySelector(".toast--failure");
+// outcomeToastJS reads the outcome toast: its title, its detail and its
+// action buttons, with the gap between the first two.
+const outcomeToastJS = `(() => {
+	const toast = document.querySelector(".toast--failure, .toast--success");
 	const buttons = [...toast.querySelectorAll(".toast__actions button")];
 	const a = buttons[0]?.getBoundingClientRect();
 	const b = buttons[1]?.getBoundingClientRect();
 	const sameRow = a && b && Math.abs(a.top - b.top) < 2;
 	return {
+		tone: toast.classList.contains("toast--failure") ? "attention" : "success",
 		title: toast.querySelector(".toast__title").textContent,
-		items: [...toast.querySelectorAll(".item-failures__item")].map((li) => li.textContent.replace(/\s+/g, " ").trim()),
 		detail: toast.querySelector(".toast__detail")?.textContent ?? "",
 		buttons: buttons.map((el) => el.textContent.trim()),
 		gap: !a || !b ? -1 : sameRow ? b.left - a.right : b.top - a.bottom,
 	};
 })()`
 
-type e2eFailureToast struct {
+type e2eOutcomeToast struct {
+	Tone    string   `json:"tone"`
 	Title   string   `json:"title"`
-	Items   []string `json:"items"`
 	Detail  string   `json:"detail"`
 	Buttons []string `json:"buttons"`
 	Gap     float64  `json:"gap"`
 }
 
-// assertCollectionFailureToast holds the failure toast to issue 655's four
-// points: a human title, one line per failed mod, and two spaced actions.
-func assertCollectionFailureToast(t *testing.T, got e2eFailureToast) {
+// assertCollectionTodoToast holds the outcome toast of a collection import
+// that left items to finish (#660): the import is no longer refused - it
+// finishes, and the toast stays, needing attention, counting what failed.
+// (Part 2 of #660 gives it Finish collection.)
+func assertCollectionTodoToast(t *testing.T, got e2eOutcomeToast, failed int) {
 	t.Helper()
-	assert.Equal(t, "Collection import failed", got.Title)
-	assert.Equal(t, []string{
-		"Item " + e2eLongImportFirstFailed + ": getting download URL: " + errE2ELongImportBadZip.Error(),
-		"Item " + e2eLongImportLastFailed + ": getting download URL: " + errE2ELongImportGone.Error(),
-	}, got.Items, "one line per failed mod: its name, then why")
-	assert.Empty(t, got.Detail, "the joined engine text is not the toast's body")
-	assert.Equal(t, []string{"Back to import", "Show in activity"}, got.Buttons)
+	assert.Equal(t, "Collection import finished", got.Title)
+	assert.Equal(t, "attention", got.Tone, "an import that left items to finish is not a plain success")
+	assert.Contains(t, got.Detail, fmt.Sprintf("%d failed", failed))
+	assert.Equal(t, []string{"Open profiles", "Show in activity"}, got.Buttons)
 	assert.GreaterOrEqual(t, got.Gap, 4.0, "the two actions are two spaced controls")
 }
 
-// TestE2E_ImportFeedback_ProgressThenAStickyFailure is the owner's report:
-// the import shows its progress the moment it is confirmed and while it
-// runs, and its failure - after more events than the job ring holds - stays
-// on screen, readable, until dismissed.
-func TestE2E_ImportFeedback_ProgressThenAStickyFailure(t *testing.T) {
+// TestE2E_ImportFeedback_ProgressThenAStickyOutcome is the owner's report
+// (#655), under #660's ruling: the import shows its progress the moment it
+// is confirmed and while it runs, installs every mod it can, and its
+// outcome - after more events than the job ring holds - stays on screen,
+// needing attention, until dismissed.
+func TestE2E_ImportFeedback_ProgressThenAStickyOutcome(t *testing.T) {
 	f, release := newE2ELongImportFixture(t, e2eFailTwo)
 
 	var title, progress string
-	var toast e2eFailureToast
+	var toast e2eOutcomeToast
 	var running, toastsLeft int
 	var jobs string
 	f.runInBrowser(t,
@@ -231,9 +232,10 @@ func TestE2E_ImportFeedback_ProgressThenAStickyFailure(t *testing.T) {
 		startLongImportFromModal(),
 		awaitRunningToast(e2eLongImportItems, &title, &progress),
 		chromedp.ActionFunc(func(context.Context) error { release(); return nil }),
+		awaitJobsSettled(),
 		chromedp.WaitVisible(`.toast--failure`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelectorAll(".toast--running").length`, &running),
-		chromedp.Evaluate(failureToastJS, &toast),
+		chromedp.Evaluate(outcomeToastJS, &toast),
 		quietWindow(),
 		chromedp.Evaluate(`document.querySelectorAll(".toast--failure").length`, &toastsLeft),
 		chromedp.Evaluate(`fetch("/api/v1/jobs").then((r) => r.text())`, &jobs, awaitPromise),
@@ -242,79 +244,68 @@ func TestE2E_ImportFeedback_ProgressThenAStickyFailure(t *testing.T) {
 	assert.Equal(t, "Importing collection…", title)
 	assert.Contains(t, progress, "of 600", "the import counts its items")
 	assert.Zero(t, running, "the outcome replaces the progress")
-	assertCollectionFailureToast(t, toast)
-	assert.Equal(t, 1, toastsLeft, "a failure stays until dismissed")
+	assertCollectionTodoToast(t, toast, 2)
+	assert.Equal(t, 1, toastsLeft, "it stays until dismissed")
 	assert.Contains(t, jobs, `"dropped_events"`, "the job outran its event ring, and its end still arrived")
+	assert.Contains(t, jobs, `"todos": 2`, "the job's tally carries the items left to finish")
+	assert.Contains(t, jobs, `"state": "succeeded"`, "#660: the import is not refused")
 	assert.Empty(t, f.BrowserErrors())
 }
 
 // TestE2E_ImportFeedback_ShowInActivityOpensTheJob: the toast's "Show in
-// activity" opens the tray on THIS job, named in words, with one line per
-// failed mod and the engine's whole text under Details.
+// activity" opens the tray on THIS job, named in words.
 func TestE2E_ImportFeedback_ShowInActivityOpensTheJob(t *testing.T) {
 	f, release := newE2ELongImportFixture(t, e2eFailTwo)
 	release()
 
-	var kind, failure, raw string
+	var kind string
 	var expanded bool
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		startLongImportFromModal(),
+		awaitJobsSettled(),
 		chromedp.WaitVisible(`.toast--failure`, chromedp.ByQuery),
 		clickWhenSettled(`.toast--failure [data-action="toast-activity"]`),
-		chromedp.WaitVisible(`.tray__row[data-state="failed"] .item-failures`, chromedp.ByQuery),
-		textContent(`.tray__row[data-state="failed"] .tray__kind`, &kind),
-		textContent(`.tray__row[data-state="failed"] .tray__failure`, &failure),
-		chromedp.Evaluate(`document.querySelector('.tray__row[data-state="failed"] .tray__summary').getAttribute("aria-expanded") === "true"`, &expanded),
-		clickWhenSettled(`.tray__row[data-state="failed"] .raw-error__summary`),
-		textContent(`.tray__row[data-state="failed"] .raw-error__text`, &raw),
+		chromedp.WaitVisible(`.tray__row[data-state="succeeded"] .tray__summary[aria-expanded="true"]`, chromedp.ByQuery),
+		textContent(`.tray__row[data-state="succeeded"] .tray__kind`, &kind),
+		chromedp.Evaluate(`document.querySelector('.tray__row[data-state="succeeded"] .tray__summary').getAttribute("aria-expanded") === "true"`, &expanded),
 	)
 
 	assert.Equal(t, "Collection import", kind)
 	assert.True(t, expanded, "the tray opens on this job")
-	assert.Contains(t, failure, "2 mods refused")
-	assert.Contains(t, failure, "Item "+e2eLongImportFirstFailed+": getting download URL: "+errE2ELongImportBadZip.Error())
-	assert.Contains(t, raw, "nexusmods:"+e2eLongImportLastFailed+": getting download URL", "the engine's own text is kept in the details")
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_ImportFeedback_BackToImportShowsTheFailure: "Back to import"
-// opens the import dialog with the failure above its forms, not an empty
-// form.
-func TestE2E_ImportFeedback_BackToImportShowsTheFailure(t *testing.T) {
+// TestE2E_ImportFeedback_ItemsLeftToFinishAreListed (#660): the import
+// leaves the mods it could not install on the profile's list of items to
+// finish, each with its reason and action - what Part 2's Finish
+// collection panel shows.
+func TestE2E_ImportFeedback_ItemsLeftToFinishAreListed(t *testing.T) {
 	f, release := newE2ELongImportFixture(t, e2eFailTwo)
 	release()
 
-	var readout string
-	var refInput bool
-	// "Back to import" is not offered where there is no game to import
-	// into; here, on Mission Control, it is.
+	var report struct {
+		Total int `json:"total"`
+		Todos []struct {
+			ModID  string `json:"mod_id"`
+			Reason string `json:"reason"`
+			Action string `json:"action"`
+		} `json:"todos"`
+	}
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		startLongImportFromModal(),
-		chromedp.WaitVisible(`.toast--failure`, chromedp.ByQuery),
-		clickWhenSettled(`.toast--failure [data-action="toast-action"]`),
-		chromedp.WaitVisible(`.modal[data-kind="import-collection"] [data-testid="import-failure"]`, chromedp.ByQuery),
-		textContent(`[data-testid="import-failure"]`, &readout),
-		chromedp.Evaluate(`document.querySelector('.modal[data-kind="import-collection"] [data-testid="nexus-collection-ref"]') !== null`, &refInput),
+		awaitJobsSettled(),
+		chromedp.Evaluate(`fetch("/api/v1/profiles/"+encodeURIComponent("Long Collection")+"/todos?game=`+f.Game.ID+`").then((r) => r.json())`, &report, awaitPromise),
 	)
-
-	assert.Contains(t, readout, "The last import failed")
-	assert.Contains(t, readout, "Item "+e2eLongImportFirstFailed)
-	assert.Contains(t, readout, "Item "+e2eLongImportLastFailed)
-	assert.True(t, refInput, "the import's own forms are there to try again")
-
-	// The failed import's reference is filled back in, and closing the
-	// dialog gives focus to the profile picker (the toast is gone).
-	var ref string
-	f.runInBrowser(t,
-		chromedp.Value(`.modal[data-kind="import-collection"] [data-testid="nexus-collection-ref"]`, &ref, chromedp.ByQuery),
-		settleEffects(),
-		chromedp.KeyEvent("\x1b"),
-		waitGone(`.modal`),
-		pollUntil(`document.activeElement?.classList.contains("profile-picker__trigger") === true`),
-	)
-	assert.Equal(t, "longcoll", ref)
+	assert.Equal(t, e2eLongImportItems, report.Total)
+	require.Len(t, report.Todos, 2)
+	assert.Equal(t, e2eLongImportFirstFailed, report.Todos[0].ModID)
+	assert.Equal(t, e2eLongImportLastFailed, report.Todos[1].ModID)
+	for _, todo := range report.Todos {
+		assert.NotEmpty(t, todo.Reason)
+		assert.Equal(t, "retry", todo.Action)
+	}
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -374,57 +365,42 @@ func TestE2E_ImportFeedback_EveryDoor(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f, release := newE2ELongImportFixture(t, e2eFailTwo)
 			var title, progress string
-			var toast e2eFailureToast
+			var toast e2eOutcomeToast
 			f.runInBrowser(t,
 				door(f),
 				confirmImportPlan(),
 				awaitRunningToast(e2eLongImportItems, &title, &progress),
 				chromedp.ActionFunc(func(context.Context) error { release(); return nil }),
+				awaitJobsSettled(),
 				chromedp.WaitVisible(`.toast--failure`, chromedp.ByQuery),
-				chromedp.Evaluate(failureToastJS, &toast),
+				chromedp.Evaluate(outcomeToastJS, &toast),
 			)
 			assert.Equal(t, "Importing collection…", title)
-			assertCollectionFailureToast(t, toast)
+			assertCollectionTodoToast(t, toast, 2)
 			assert.Empty(t, f.BrowserErrors())
 		})
 	}
 }
 
-// TestE2E_ImportFeedback_ManyFailuresAreCapped (#655 review S2): an import
-// whose every item failed lists a few in the toast and ten in the import
-// dialog, each saying how many more there are; the tray lists them all.
-func TestE2E_ImportFeedback_ManyFailuresAreCapped(t *testing.T) {
+// TestE2E_ImportFeedback_EveryItemFailing (#660): an import whose every
+// item failed still saves the profile, every item left to finish, and its
+// toast counts them.
+func TestE2E_ImportFeedback_EveryItemFailing(t *testing.T) {
 	f, release := newE2ELongImportFixture(t, e2eFailAll)
 	release()
 
-	var toastSummary, toastMore, readoutMore string
-	var toastLines, readoutLines, trayLines int
+	var toast e2eOutcomeToast
+	var todos int
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		startLongImportFromModal(),
+		awaitJobsSettled(),
 		chromedp.WaitVisible(`.toast--failure`, chromedp.ByQuery),
-		textContent(`.toast--failure [data-testid="item-failures-summary"]`, &toastSummary),
-		chromedp.Evaluate(`document.querySelectorAll(".toast--failure .item-failures__item").length`, &toastLines),
-		textContent(`.toast--failure [data-testid="item-failures-more"]`, &toastMore),
-		clickWhenSettled(`.toast--failure [data-action="toast-action"]`),
-		chromedp.WaitVisible(`[data-testid="import-failure"]`, chromedp.ByQuery),
-		chromedp.Evaluate(`document.querySelectorAll('[data-testid="import-failure"] .item-failures__item').length`, &readoutLines),
-		textContent(`[data-testid="import-failure"] [data-testid="item-failures-more"]`, &readoutMore),
-		settleEffects(),
-		chromedp.KeyEvent("\x1b"),
-		waitGone(`.modal`),
-		clickWhenSettled(`.activity-bell__trigger`),
-		clickWhenSettled(`.tray__row[data-state="failed"] .tray__summary`),
-		chromedp.WaitVisible(`.tray__row[data-state="failed"] .item-failures`, chromedp.ByQuery),
-		chromedp.Evaluate(`document.querySelectorAll('.tray__row[data-state="failed"] .item-failures__item').length`, &trayLines),
+		chromedp.Evaluate(outcomeToastJS, &toast),
+		chromedp.Evaluate(`fetch("/api/v1/profiles/"+encodeURIComponent("Long Collection")+"/todos?game=`+f.Game.ID+`").then((r) => r.json()).then((d) => d.todos.length)`, &todos, awaitPromise),
 	)
-
-	assert.Equal(t, "600 mods refused", strings.TrimSpace(toastSummary))
-	assert.Equal(t, 5, toastLines)
-	assert.Equal(t, "and 595 more", strings.TrimSpace(toastMore))
-	assert.Equal(t, 10, readoutLines)
-	assert.Equal(t, "and 590 more", strings.TrimSpace(readoutMore))
-	assert.Equal(t, 600, trayLines, "the tray lists every one")
+	assertCollectionTodoToast(t, toast, e2eLongImportItems)
+	assert.Equal(t, e2eLongImportItems, todos)
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -572,10 +548,11 @@ func TestE2E_ToastActivity_NotFromSetup(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_ImportFeedback_RefusedImportKeepsItsNextStep (#655 review B1): a
-// refused import's tray entry lists its mods AND keeps what it offered
-// before - here a FOMOD question's "Answer installer…" and its summary.
-func TestE2E_ImportFeedback_RefusedImportKeepsItsNextStep(t *testing.T) {
+// TestE2E_ImportFeedback_AnInstallerIsLeftToFinish (#660): a collection
+// whose recorded installer choices no longer fit no longer stops to ask:
+// the other mod installs, the job succeeds, and the installer is left to
+// finish, with "answer it to continue".
+func TestE2E_ImportFeedback_AnInstallerIsLeftToFinish(t *testing.T) {
 	f := newE2EFixtureWithSearchableMods(t)
 	f.Src.addMod(e2eSearchSourceMod{
 		mod:      domain.Mod{ID: "wizard", SourceID: "fake", Name: "Wizard Mod", Version: "1.0"},
@@ -589,7 +566,16 @@ func TestE2E_ImportFeedback_RefusedImportKeepsItsNextStep(t *testing.T) {
 	importPath := filepath.Join(t.TempDir(), "pack.yaml")
 	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
 
-	var message, lines, held, next string
+	var report struct {
+		Todos []struct {
+			ModID       string `json:"mod_id"`
+			Reason      string `json:"reason"`
+			FomodReason string `json:"fomod_reason"`
+			Action      string `json:"action"`
+			Remedy      string `json:"remedy"`
+		} `json:"todos"`
+	}
+	var wizard bool
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
@@ -607,23 +593,19 @@ func TestE2E_ImportFeedback_RefusedImportKeepsItsNextStep(t *testing.T) {
 		`, nil),
 		settleEffects(),
 		clickWhenSettled(`.modal[data-kind="profile_import"] [data-action="confirm"]`),
-		chromedp.WaitVisible(fomodModal, chromedp.ByQuery),
-		settleEffects(),
-		chromedp.KeyEvent("\x1b"),
-		waitGone(`.modal`),
-		clickWhenSettled(`.activity-bell__trigger`),
-		clickWhenSettled(`.tray__row[data-state="failed"] .tray__summary`),
-		chromedp.WaitVisible(`.tray__row[data-state="failed"] .item-failures`, chromedp.ByQuery),
-		textContent(`.tray__row[data-state="failed"] .tray__failure-message`, &message),
-		textContent(`.tray__row[data-state="failed"] .item-failures__item`, &lines),
-		textContent(`.tray__row[data-state="failed"] .item-failures__held`, &held),
-		textContent(`.tray__row[data-state="failed"] .tray__failure button[data-action="fomod"]`, &next),
+		awaitJobsSettled(),
+		quietWindow(),
+		chromedp.Evaluate(`document.querySelector(`+"`"+fomodModal+"`"+`) !== null`, &wizard),
+		chromedp.Evaluate(`fetch("/api/v1/profiles/"+encodeURIComponent("Wizard Pack")+"/todos?game=`+f.Game.ID+`").then((r) => r.json())`, &report, awaitPromise),
 	)
 
-	assert.Equal(t, "1 mod refused · 1 held back", strings.TrimSpace(message))
-	assert.Contains(t, lines, "Wizard Mod")
-	assert.Contains(t, held, "1 mod held back")
-	assert.Equal(t, "Answer installer…", strings.TrimSpace(next), "the refusal's next step is still offered")
+	assert.False(t, wizard, "the import never stops to ask")
+	require.Len(t, report.Todos, 1)
+	assert.Equal(t, "wizard", report.Todos[0].ModID)
+	assert.Equal(t, "installer_questions", report.Todos[0].Reason)
+	assert.Equal(t, "stale", report.Todos[0].FomodReason)
+	assert.Equal(t, "answer_installer", report.Todos[0].Action)
+	assert.Contains(t, report.Todos[0].Remedy, "installer changed since the curator recorded their choices; answer it to continue")
 	assert.Empty(t, f.BrowserErrors())
 }
 
