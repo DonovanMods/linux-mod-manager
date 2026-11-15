@@ -2870,7 +2870,8 @@ const jobToastAffordances = {
  * (issue 655). The failure offers the import dialog again instead, with the
  * failure shown above its forms. */
 function toastAffordance(summary) {
-  if (summary.kind === "profile_import" && summary.state === "failed") {
+  const failed = summary.state === "failed";
+  if (failed && summary.kind === "profile_import") {
     return {
       action: "reopenImport",
       actionLabel: "Back to import",

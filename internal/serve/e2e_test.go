@@ -4518,7 +4518,7 @@ func TestE2E_ProfilesModal_ImportWithoutInstallReportsSkippedNotFailed(t *testin
 	var trayText string
 	require.Eventually(t, func() bool {
 		f.runInBrowser(t, textContent(`.tray`, &trayText))
-		return strings.Contains(trayText, "profile_import") &&
+		return strings.Contains(trayText, "Profile import") &&
 			(strings.Contains(trayText, "skipped") || strings.Contains(trayText, "failed"))
 	}, 5*time.Second, 100*time.Millisecond, "the tray must show the finished profile_import job's own tally")
 
@@ -4590,7 +4590,7 @@ func TestE2E_ProfileImportNoInstallOverridesTheInstallCheckbox(t *testing.T) {
 	var trayText string
 	require.Eventually(t, func() bool {
 		f.runInBrowser(t, textContent(`.tray`, &trayText))
-		return strings.Contains(trayText, "profile_import") && strings.Contains(trayText, "skipped")
+		return strings.Contains(trayText, "Profile import") && strings.Contains(trayText, "skipped")
 	}, 5*time.Second, 100*time.Millisecond, "the tray must show the pending mods as skipped, not attempted")
 	assert.NotContains(t, trayText, "failed",
 		"a failed download attempt would mean the checked Install box was not actually overridden")
@@ -4669,7 +4669,7 @@ mods: []
 	var trayText string
 	require.Eventually(t, func() bool {
 		f.runInBrowser(t, textContent(`.tray`, &trayText))
-		return strings.Contains(trayText, "profile_import")
+		return strings.Contains(trayText, "Profile import")
 	}, 5*time.Second, 100*time.Millisecond, "the tray must show the finished profile_import job")
 
 	assert.Contains(t, trayText, "succeeded", "an all-zero tally must fall back to the tray's own bare state word, not an honest-looking but empty tally")

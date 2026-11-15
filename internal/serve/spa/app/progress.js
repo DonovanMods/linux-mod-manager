@@ -157,7 +157,8 @@ export function jobRunningLabel(
   kind,
   { collection = false, origin = "" } = {},
 ) {
-  if (kind === "profile_import" && collection && origin !== "auto") {
+  const automatic = origin === "auto";
+  if (kind === "profile_import" && collection && !automatic) {
     return "Importing collection";
   }
   return mutationLabel(kind, origin);
