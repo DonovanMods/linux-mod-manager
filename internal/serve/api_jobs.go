@@ -12,6 +12,7 @@
 package serve
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -154,10 +155,30 @@ func (s *Server) handleAPIPlan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, planResponse{
-		PlanID: s.plans.Put(pending, kind.Name),
+		PlanID: s.plans.PutAbout(pending, kind.Name, planAbout(sel, document)),
 		Kind:   kind.Name,
 		Plan:   document,
 	})
+}
+
+// planAbout is what the job a plan starts will say about its subject
+// (#655): the game and profile the plan was made for and, for a profile
+// import that imports a collection (an lmm collection, a NexusMods
+// collection or a Steam Workshop collection), the collection's name.
+func planAbout(sel selection, document any) jobAbout {
+	var about jobAbout
+	if sel.Game != nil {
+		about.Game, about.Profile = sel.Game.ID, sel.Profile
+	}
+	if plan, ok := document.(*core.ImportPlan); ok && plan != nil {
+		switch {
+		case plan.Collection != nil:
+			about.Collection = cmp.Or(plan.Collection.Name, "collection")
+		case plan.WorkshopCollection != nil:
+			about.Collection = cmp.Or(plan.WorkshopCollection.Name, "Steam Workshop collection")
+		}
+	}
+	return about
 }
 
 // decodeAPIRequest decodes body into v with unknown members rejected, so a
@@ -229,7 +250,7 @@ func (s *Server) handleAPIStartJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pending := stored.Plan
-	id, err := s.jobs.Start(kind.Name, func(ctx context.Context, sink core.EventSink) (any, error) {
+	id, err := s.jobs.StartAbout(kind.Name, stored.About, func(ctx context.Context, sink core.EventSink) (any, error) {
 		return kind.Apply(ctx, s, pending, opts, sink)
 	})
 	if errors.Is(err, errRegistryClosing) {

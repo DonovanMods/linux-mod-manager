@@ -1204,7 +1204,7 @@ func TestE2E_OffScreenCompletionRaisesAToast(t *testing.T) {
 		chromedp.Evaluate(`document.querySelectorAll(".job-progress").length`, &morphed),
 	)
 
-	assert.Contains(t, toast, "deploy", "the toast must name the mutation that finished")
+	assert.Contains(t, toast, "Deploy", "the toast must name the mutation that finished")
 	assert.Zero(t, morphed, "no control started this job, so none may claim it")
 	assert.Empty(t, f.BrowserErrors())
 }
@@ -1355,7 +1355,7 @@ func TestE2E_TrayShowsARunningJobWithProgress(t *testing.T) {
 	)
 
 	assert.Equal(t, "1", badge, "the bell counts what is happening")
-	assert.Equal(t, "deploy", kind)
+	assert.Equal(t, "Deploy", kind, "issue 655: the tray names a job in words")
 	assert.Contains(t, detail, "of 2", "a running row carries its progress, not just its state")
 	assert.Contains(t, live, "of 2", "the library's live line reads the same frame")
 	assert.Contains(t, live, "Deploying", "M3: the header line must also NAME the kind (mutationLabel), not just carry the phase text")
@@ -1427,7 +1427,7 @@ func TestE2E_QueuedJobDoesNotRenderRunningProgress(t *testing.T) {
 			&sectionTitle),
 	)
 
-	assert.Equal(t, "enable", kind)
+	assert.Equal(t, "Enable", kind, "issue 655: the tray names a job in words")
 	assert.Contains(t, sectionTitle, "Queued")
 	assert.Zero(t, progressBlocks, "a queued row must not render the running-progress block at all")
 	assert.NotContains(t, rowText, "Working…", `a row under "Queued" must never read "Working…"`)
@@ -4518,7 +4518,7 @@ func TestE2E_ProfilesModal_ImportWithoutInstallReportsSkippedNotFailed(t *testin
 	var trayText string
 	require.Eventually(t, func() bool {
 		f.runInBrowser(t, textContent(`.tray`, &trayText))
-		return strings.Contains(trayText, "profile_import") &&
+		return strings.Contains(trayText, "Profile import") &&
 			(strings.Contains(trayText, "skipped") || strings.Contains(trayText, "failed"))
 	}, 5*time.Second, 100*time.Millisecond, "the tray must show the finished profile_import job's own tally")
 
@@ -4590,7 +4590,7 @@ func TestE2E_ProfileImportNoInstallOverridesTheInstallCheckbox(t *testing.T) {
 	var trayText string
 	require.Eventually(t, func() bool {
 		f.runInBrowser(t, textContent(`.tray`, &trayText))
-		return strings.Contains(trayText, "profile_import") && strings.Contains(trayText, "skipped")
+		return strings.Contains(trayText, "Profile import") && strings.Contains(trayText, "skipped")
 	}, 5*time.Second, 100*time.Millisecond, "the tray must show the pending mods as skipped, not attempted")
 	assert.NotContains(t, trayText, "failed",
 		"a failed download attempt would mean the checked Install box was not actually overridden")
@@ -4669,7 +4669,7 @@ mods: []
 	var trayText string
 	require.Eventually(t, func() bool {
 		f.runInBrowser(t, textContent(`.tray`, &trayText))
-		return strings.Contains(trayText, "profile_import")
+		return strings.Contains(trayText, "Profile import")
 	}, 5*time.Second, 100*time.Millisecond, "the tray must show the finished profile_import job")
 
 	assert.Contains(t, trayText, "succeeded", "an all-zero tally must fall back to the tray's own bare state word, not an honest-looking but empty tally")

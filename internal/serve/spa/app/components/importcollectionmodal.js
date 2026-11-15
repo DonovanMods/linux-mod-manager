@@ -18,10 +18,19 @@
 // as it does from the profiles modal. The section offers only the
 // collection sources the game maps, read from state.status (issue 652), so
 // this modal is handed the store's state as the profiles modal is.
+//
+// Issue 655: a failed import's toast offers "Back to import", which opens
+// this modal with modal.failedJob naming the job - its failure is shown
+// above the forms, one line per mod, so the dialog opens on what went wrong
+// rather than on empty fields - and modal.prefill fills the failed import's
+// own inputs back in (its reference, its profile name; a file is named, as
+// a browser cannot pick it again for the user).
 
 import { html } from "../render.js";
 import { Modal } from "./modal.js";
 import { ImportProfileForm } from "./profilesmodal.js";
+import { ItemFailureList, RawError } from "./errordetails.js";
+import { failureSummary, failuresOf } from "../itemfailures.js";
 
 /** ImportCollectionModal renders only when the shared modal slot holds
  * this shape. openerSelector is the stable control focus returns to on
@@ -40,6 +49,7 @@ export function ImportCollectionModal({ modal, state, actions }) {
       onClose=${close}
       openerSelector=${modal.openerSelector}
     >
+      <${ImportFailure} jobID=${modal.failedJob} state=${state} />
       <p class="empty-state__hint">
         A collection imports as a new profile of this game. You review what it
         would do before anything is written.
@@ -49,7 +59,35 @@ export function ImportCollectionModal({ modal, state, actions }) {
         actions=${actions}
         close=${close}
         heading=${null}
+        prefill=${modal.prefill}
       />
     <//>
+  `;
+}
+
+// importFailureLimit is how many failed mods the readout lists before
+// "and N more"; the activity tray, one click away, lists them all.
+const importFailureLimit = 10;
+
+/** ImportFailure is the failed import jobID's failure, from the jobs index:
+ * how many mods failed (and how many were only held back), the first
+ * importFailureLimit of them one line each, and the engine's own text under
+ * "Details". Nothing when there is no such job (it has aged out of the
+ * index) or it did not fail. */
+function ImportFailure({ jobID, state }) {
+  if (!jobID) return null;
+  const job = (state.jobsIndex ?? []).find((row) => row.id === jobID);
+  if (!job || job.state !== "failed") return null;
+  const envelope = job.error ?? {};
+  const items = failuresOf(job);
+  return html`
+    <div class="modal__error" role="alert" data-testid="import-failure">
+      <p>
+        The last import failed.${" "}
+        ${items.length > 0 ? failureSummary(items) : envelope.error}
+      </p>
+      <${ItemFailureList} items=${items} limit=${importFailureLimit} />
+      ${items.length > 0 && html`<${RawError} text=${envelope.error} />`}
+    </div>
   `;
 }

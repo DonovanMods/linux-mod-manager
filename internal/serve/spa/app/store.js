@@ -108,6 +108,10 @@ export function initialState() {
     // say how far along a job is. Only the newest frame is kept: it is a
     // POSITION, not a log (the log is the per-job stream, one click away).
     jobProgress: {},
+    // jobPositions is the newest frame per job id that carries an item
+    // count (frame.total > 0) - "12 of 40" - which jobProgress loses to
+    // each download tick (issue 655). activity.js is its only writer.
+    jobPositions: {},
     // origins maps a control's origin key ("deploy", later
     // "install:fake/123") to the job id it started, which is what lets the
     // control that was clicked morph into that job's progress and no other.

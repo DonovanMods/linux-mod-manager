@@ -174,6 +174,8 @@ export function App({ state, onThemeChange, actions }) {
     <${FromFileInput} actions=${actions} />
     <${Toasts}
       toasts=${state.toasts}
+      progress=${state.jobProgress}
+      positions=${state.jobPositions}
       route=${route}
       onDismiss=${actions.dismissToast}
       actions=${actions}

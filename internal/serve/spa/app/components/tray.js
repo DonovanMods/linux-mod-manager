@@ -22,6 +22,7 @@ import { followJob } from "../sse.js";
 import {
   frameFromEvent,
   jobStateLabel,
+  jobTitle,
   mutationLabel,
   progressText,
   progressFraction,
@@ -33,9 +34,15 @@ import {
   useJobResultVerify,
   useJobResultFailures,
 } from "../jobresult.js";
-import { DownloadHeadline, ErrorDetails, RawError } from "./errordetails.js";
+import {
+  DownloadHeadline,
+  ErrorDetails,
+  ItemFailureList,
+  RawError,
+} from "./errordetails.js";
 import { BatchFailures } from "./batchfailures.js";
 import { downloadFailureFor, nextStepFor } from "../failures.js";
+import { failureSummary, failuresOf } from "../itemfailures.js";
 import { PurgeResultDetails } from "./purgeresult.js";
 import { VerifyFixResult } from "./verifyfixresult.js";
 
@@ -254,7 +261,13 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
         onClick=${onToggle}
       >
         <span class="tray__kind" data-origin=${job.origin || null}
-          >${job.origin === "auto" ? mutationLabel(job.kind, job.origin) : job.kind}</span
+          >${
+            job.origin === "auto"
+              ? mutationLabel(job.kind, job.origin)
+              : jobTitle(job.kind, {
+                  collection: actions?.jobIsCollection?.(job.id) ?? false,
+                })
+          }</span
         >
         <span class="tray__state tray__state--${tone}">${stateText}</span>
         <span class="tray__caret">${expanded ? "▾" : "▸"}</span>
@@ -402,6 +415,15 @@ function FailureNextStep({ job, actions }) {
   // and the engine's own text moves into a collapsed "Details" - the inline
   // readout's rule (jobprogress.js), here too.
   const download = downloadFailureFor(envelope.details);
+  // Issue 655: a failure naming several mods leads with how many, then one
+  // line per mod; the engine's joined text moves into "Details", as a
+  // download's does. Everything else a failure offers stays: the next step
+  // (OverwriteButton - "Answer installer…" for a FOMOD question), and the
+  // details' own shape (a loader's setup steps, the question's summary, a
+  // download's page) - only the generic document view of a result whose
+  // failures are already listed is left out.
+  const items = failuresOf(job);
+  const listed = items.length > 0;
   const headed = Boolean(download?.manual);
 
   return html`
@@ -413,16 +435,20 @@ function FailureNextStep({ job, actions }) {
                 failure=${download}
                 actions=${actions}
               />`
-            : (envelope.error ?? "failed")
+            : listed
+              ? failureSummary(items)
+              : (envelope.error ?? "failed")
         }
       </p>
+      <${ItemFailureList} items=${items} />
       <${OverwriteButton} job=${job} actions=${actions} />
       <${ErrorDetails}
         details=${envelope.details}
         actions=${actions}
         headed=${headed}
+        noDocument=${listed}
       />
-      ${headed && html`<${RawError} text=${envelope.error} />`}
+      ${(headed || listed) && html`<${RawError} text=${envelope.error} />`}
     </div>
   `;
 }

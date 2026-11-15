@@ -173,6 +173,21 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #655: a running collection import names its game and the
+			// collection, so a reloaded page can still call it one.
+			"job_summary_collection",
+			jobSummary{
+				ID:         "0123456789abcdef0123456789abcdef",
+				Kind:       "profile_import",
+				State:      jobRunning,
+				StartedAt:  goldenTime,
+				Game:       "skyrim-se",
+				Profile:    "default",
+				Collection: "Long Collection",
+				EventCount: 0,
+			},
+		},
+		{
 			// The updates shape: applied/failed/skipped and the skipped
 			// items' own sentences.
 			"job_tally",
@@ -792,6 +807,18 @@ func TestServeJSONGoldens(t *testing.T) {
 			apiErrorEnvelope{
 				Error:   "profile switch finished with warnings",
 				Details: (&core.ProfileWarningsError{Warnings: []string{"1 mod could not be undeployed"}}).Details(),
+			},
+		},
+		{
+			// #655: a failure naming several mods lists them, one entry
+			// each, after details.
+			"api_error_envelope_items",
+			apiErrorEnvelope{
+				Error: "nexusmods:266: stored file no longer available upstream\nnexusmods:57339: zip: unsupported compression algorithm",
+				Items: []core.ItemFailure{
+					{SourceID: "nexusmods", ModID: "266", Name: "Skyrim Upscaled", Reason: "stored file no longer available upstream", Refusal: core.RefusalOther},
+					{SourceID: "nexusmods", ModID: "57339", Reason: "zip: unsupported compression algorithm", Refusal: core.RefusalOther},
+				},
 			},
 		},
 		{

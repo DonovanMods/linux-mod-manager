@@ -1459,9 +1459,11 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		// returned below names the refusal and prints its setup steps.
 		fmt.Printf("\n--- Summary ---\n")
 		fmt.Printf("Nothing was imported: profile %s was not saved and no mod was written.\n", result.ProfileName)
+		items := make([]refusedItem, 0, len(result.Failures))
 		for _, f := range result.Failures {
-			printRefusedItem(f.Name, f.SourceID, f.ModID, f.Reason, f.Refusal)
+			items = append(items, refusedItem{Name: f.Name, SourceID: f.SourceID, ModID: f.ModID, Reason: f.Reason, Refusal: f.Refusal})
 		}
+		printRefusedItems(items)
 		if err := fomodUnanswered(result.FomodChoicesRequired); err != nil && incompleteErr == nil {
 			incompleteErr = err
 		}

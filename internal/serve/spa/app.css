@@ -2195,6 +2195,34 @@ a.row-menu__item.mod-page-link {
   overflow-wrap: anywhere;
 }
 
+/* issue 655: a failure's per-mod lines - the mod's name, then why - and,
+ * for an import refused with nothing written, how many were held back. */
+.item-failures__summary {
+  margin: var(--space-1) 0 0;
+  color: var(--text-secondary);
+}
+
+.item-failures {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.item-failures__item {
+  overflow-wrap: anywhere;
+}
+
+.item-failures__name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.item-failures__more,
+.item-failures__held {
+  color: var(--text-muted);
+}
+
 /* issue 533: a finished update batch's failed items, one entry each - the
  * item's name and the change that was attempted, then why, then its way out.
  * In the job readout's flex row the list takes the full line under the tally
@@ -3180,6 +3208,9 @@ a.row-menu__item.mod-page-link {
   flex-direction: column;
   gap: var(--space-2);
   max-width: 24rem;
+  /* issue 655: a stack of toasts scrolls rather than covering the page. */
+  max-height: calc(100vh - 2 * var(--space-6));
+  overflow-y: auto;
 }
 
 .toast {
@@ -3219,8 +3250,29 @@ a.row-menu__item.mod-page-link {
   font-size: 0.9em;
 }
 
+/* issue 655: a running job's progress, while its own control is off screen. */
+.toast--running {
+  border-left-color: var(--accent);
+}
+
+.toast__jobs {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.toast--running .job-progress__bar {
+  margin-top: var(--space-2);
+}
+
+/* issue 655: a toast's actions are one spaced row (.form-actions), never
+ * two links run together. */
+.toast__actions {
+  margin-top: var(--space-2);
+}
+
 .toast__link {
-  margin-top: var(--space-1);
   color: var(--accent);
 }
 
