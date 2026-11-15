@@ -14,6 +14,7 @@
 // sanitised by core.
 
 import { html } from "../render.js";
+import { displayVersion } from "../version.js";
 
 /** pinKey is a gone pin's "<source-id>:<mod-id>", what the choices name. */
 function pinKey(pin) {
@@ -24,13 +25,15 @@ function pinKey(pin) {
 function describeFile(file) {
   if (!file) return "";
   const name = file.name || `file ${file.file_id}`;
-  return file.version ? `${name} (version ${file.version})` : name;
+  const version = displayVersion(file);
+  return version ? `${name} (version ${version})` : name;
 }
 
 /** pinnedLine says what the collection pins for a gone pin. */
 function pinnedLine(pin) {
   const files = (pin.file_ids ?? []).join(", ");
-  const version = pin.version ? `, version ${pin.version}` : "";
+  const shown = displayVersion(pin);
+  const version = shown ? `, version ${shown}` : "";
   return `The collection pins file ${files}${version}, which NexusMods no longer offers.`;
 }
 
