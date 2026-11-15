@@ -68,6 +68,11 @@ type CollectionUpdateRequest struct {
 	WithOptional   bool
 	Optional       []string
 	OptionalChosen bool
+	// GonePins are the user's choices for the new version's pins that the
+	// source no longer offers (#657), as an import's: a source collection
+	// only. Skipping a mod the profile already has keeps its entry as it
+	// is.
+	GonePins GonePinChoices
 }
 
 // ErrCollectionNotUpdatable refuses an update of a profile that records no
@@ -242,6 +247,12 @@ type CollectionUpdatePlan struct {
 	// version changes: the user's version is kept unless the apply
 	// overrides it.
 	Conflicts []CollectionUpdateItem `json:"conflicts,omitempty"`
+	// Skipped are the mods the profile records as skipped because their
+	// pinned file was gone (#657) that the new version still pins at a
+	// file the source does not offer: kept out. A skipped mod the new
+	// version pins at another file is a conflict instead, kept out unless
+	// the apply overrides it.
+	Skipped []CollectionUpdateItem `json:"skipped,omitempty"`
 
 	// Plugins is what the update does to the profile's plugin list; absent
 	// when nothing.
@@ -318,6 +329,16 @@ type CollectionUpdatePlan struct {
 	patchSources map[string]bool
 	patchListed  map[string]bool
 	snapshot     installedSnapshot
+	// #657: substituted is, per collection entry the update leaves at its
+	// mod's current file, the gone pin it stands in for; skips are the
+	// skip records the updated profile keeps, beside reoffered - skipped
+	// mods the new version pins anew, offered as conflicts, whose record
+	// stays unless the apply overrides them; gonePinMD5 is the curator's
+	// md5 a substitute's recorded choices are checked against.
+	substituted map[string]*domain.CollectionPin
+	skips       []domain.CollectionSkip
+	reoffered   map[string]domain.CollectionSkip
+	gonePinMD5  map[string]map[string]string
 }
 
 // CollectionUpdateOptions is the user's say over an update, taken at Apply
@@ -421,6 +442,9 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 	if origin.input != CollectionFromSource && (req.WithOptional || len(req.Optional) > 0) {
 		return nil, errors.New("opting optional items in applies to a source's collection (NexusMods) only")
 	}
+	if err := req.GonePins.validate(); err != nil {
+		return nil, err
+	}
 	installed, err := s.GetInstalledMods(ctx, game.ID, req.Profile)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
@@ -470,6 +494,9 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 		plan.SourceID, plan.Slug = origin.sourceID, origin.slug
 		conv, err = s.convertForUpdate(ctx, game, base, origin, req)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.resolveUpdatePins(ctx, game, base, conv, req.GonePins, plan); err != nil {
 			return nil, err
 		}
 		data, err := config.MarshalCollection(conv.Document)
@@ -709,6 +736,14 @@ func (p *CollectionUpdatePlan) diffEntries() {
 		want := item.Ref
 		entry := CollectionUpdateItem{SourceID: want.SourceID, ModID: want.ModID, Name: item.Name, NewVersion: want.Version}
 		ref, ok := have[key]
+		if rec, skipped := p.reoffered[key]; skipped && !ok {
+			// #657: the user skipped it; the new version pins it anew.
+			entry.Version = rec.Pin.Version
+			entry.Changes = pinChanges(domain.ModReference{Version: rec.Pin.Version, FileIDs: rec.Pin.FileIDs}, want, false)
+			entry.Note = reofferedNote
+			p.Conflicts = append(p.Conflicts, entry)
+			continue
+		}
 		if !ok {
 			p.Added = append(p.Added, entry)
 			continue
@@ -935,12 +970,17 @@ func updateTarget(plan *CollectionUpdatePlan, base *domain.Profile, c updateChoi
 			entries = append(entries, ref)
 			continue
 		}
+		if _, skipped := plan.reoffered[key]; skipped && !ok && !c.override[key] {
+			// #657: skipped by the user, and kept out.
+			continue
+		}
 		next := item.Ref
 		if ok {
 			// The profile's own intent about the entry stays.
 			next.Disabled, next.Category = ref.Disabled, ref.Category
 		}
 		next.FromCollection = true
+		next.SubstitutedFor = plan.substituted[key].Clone()
 		marks[key] = true
 		entries = append(entries, next)
 	}
@@ -972,6 +1012,12 @@ func updateTarget(plan *CollectionUpdatePlan, base *domain.Profile, c updateChoi
 	target.Mods = mods
 
 	target.Plugins, target.CollectionBaseline = mergeCollectionPlugins(plan, base, c)
+	target.CollectionBaseline.Skipped = slices.Clone(plan.skips)
+	for _, key := range slices.Sorted(maps.Keys(plan.reoffered)) {
+		if !c.override[key] {
+			target.CollectionBaseline.Skipped = append(target.CollectionBaseline.Skipped, plan.reoffered[key])
+		}
+	}
 	b, hasBase := baselineOf(base)
 	target.LoadOrders, _ = mergeLoadOrders(base.LoadOrders, b.LoadOrders, plan.doc.LoadOrders, hasBase, c.overrides)
 	var heldBack []RestrictedOverride
@@ -997,6 +1043,11 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	}
 	if len(plan.Unsupported) > 0 {
 		return result, &CollectionUnsupportedError{Unsupported: plan.Unsupported, Supported: supportedExcept(plan.Unsupported)}
+	}
+	// #657: every new pin the source no longer offers is the user's to
+	// decide first.
+	if undecided := undecidedGonePins(plan.Source); len(undecided) > 0 {
+		return result, &CollectionGonePinsError{Pins: undecided}
 	}
 	choices, err := resolveUpdateChoices(plan, opts)
 	if err != nil {
@@ -1067,11 +1118,18 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	if err != nil {
 		return result, err
 	}
+	substituted := map[string]*domain.CollectionPin{}
+	for _, ref := range target.Mods {
+		if ref.SubstitutedFor != nil {
+			substituted[domain.ModKey(ref.SourceID, ref.ModID)] = ref.SubstitutedFor
+		}
+	}
 	ip.collectionState = &collectionState{collection: target.Collection, external: target.External, plugins: target.Plugins,
-		loadOrders: target.LoadOrders, fromCollection: marks, baseline: target.CollectionBaseline}
+		loadOrders: target.LoadOrders, fromCollection: marks, baseline: target.CollectionBaseline, substituted: substituted}
 	// #609: the new version's recorded installer choices replay only
-	// against the curator's archive, as at an import.
-	ip.archiveMD5 = collectionArchiveMD5s(plan.doc)
+	// against the curator's archive, as at an import - a substitute's
+	// against the gone pin's (#657).
+	ip.archiveMD5 = mergeArchiveMD5(collectionArchiveMD5s(plan.doc), plan.gonePinMD5)
 	// #610: the patches the new version brings are admitted by this update.
 	ip.patchSources = plan.patchSources
 	// --allow-any-overrides admits only what the plan listed

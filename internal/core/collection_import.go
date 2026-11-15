@@ -323,6 +323,10 @@ type collectionState struct {
 	// dropMods are mod keys the apply holds back (#623: bundled items
 	// holding code, without AllowAnyOverrides): left out of the profile.
 	dropMods map[string]string
+	// substituted maps the entries installed at their mod's current file
+	// because the pinned one was gone to that pin (#657), by domain.ModKey:
+	// the saved profile records it on each (ModReference.SubstitutedFor).
+	substituted map[string]*domain.CollectionPin
 }
 
 // applyTo sets c's state on profile; a nil c sets nothing.
@@ -335,7 +339,9 @@ func (c *collectionState) applyTo(profile *domain.Profile) {
 	profile.LoadOrders = c.loadOrders.Clone()
 	for i := range profile.Mods {
 		ref := &profile.Mods[i]
-		ref.FromCollection = c.fromCollection[domain.ModKey(ref.SourceID, ref.ModID)]
+		key := domain.ModKey(ref.SourceID, ref.ModID)
+		ref.FromCollection = c.fromCollection[key]
+		ref.SubstitutedFor = c.substituted[key].Clone()
 	}
 	if len(c.dropMods) > 0 {
 		profile.Mods = slices.DeleteFunc(profile.Mods, func(r domain.ModReference) bool {
@@ -356,6 +362,7 @@ func (c *collectionState) finish(profile *domain.Profile) {
 	if c.baseline != nil {
 		b.Plugins = c.baseline.Plugins.Clone()
 		b.LoadOrders = c.baseline.LoadOrders.Clone()
+		b.Skipped = slices.Clone(c.baseline.Skipped)
 	}
 	b.Overrides = overrideHashes(profile.Overrides)
 	// An empty baseline is kept, not dropped: it says the collection
@@ -694,6 +701,11 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 	original := plan
 	if len(c.Unsupported) > 0 {
 		return &ProfileImportResult{}, &CollectionUnsupportedError{Unsupported: c.Unsupported, Supported: supportedExcept(c.Unsupported)}
+	}
+	// #657: every pinned file the source no longer offers is the user's to
+	// decide before anything is written.
+	if undecided := undecidedGonePins(c.Source); len(undecided) > 0 {
+		return &ProfileImportResult{}, &CollectionGonePinsError{Pins: undecided}
 	}
 	if !c.HooksImportable {
 		// A URL's hooks are never applied (#622): the plan's profile holds

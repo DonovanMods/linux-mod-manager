@@ -1,5 +1,7 @@
 package domain
 
+import "slices"
+
 // HookExplicitFlags tracks which hooks were explicitly set in profile config
 // This allows distinguishing between "not set" (inherit from game) and "set to empty" (disable)
 type HookExplicitFlags struct {
@@ -73,11 +75,50 @@ type CollectionBaseline struct {
 	// LoadOrders are the collection's file load orders (#620), as it last
 	// applied them.
 	LoadOrders FileLoadOrders
+	// Skipped are the collection's mods the user chose to skip because the
+	// file the collection pins was no longer offered (#657): left out of
+	// the profile, and kept out by a collection update unless the user
+	// takes the collection's new pin for one.
+	Skipped []CollectionSkip
+}
+
+// CollectionPin is a collection's pin of one mod (#657): the version and
+// the files it installs.
+type CollectionPin struct {
+	Version string   `yaml:"version,omitempty" json:"version,omitempty"`
+	FileIDs []string `yaml:"file_ids,omitempty" json:"file_ids,omitempty"`
+}
+
+// Same reports whether p pins version and fileIDs (in any order).
+func (p *CollectionPin) Same(version string, fileIDs []string) bool {
+	if p == nil || p.Version != version || len(p.FileIDs) != len(fileIDs) {
+		return false
+	}
+	a, b := slices.Clone(p.FileIDs), slices.Clone(fileIDs)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(a, b)
+}
+
+// Clone is a copy of p sharing nothing with it; nil stays nil.
+func (p *CollectionPin) Clone() *CollectionPin {
+	if p == nil {
+		return nil
+	}
+	return &CollectionPin{Version: p.Version, FileIDs: slices.Clone(p.FileIDs)}
+}
+
+// CollectionSkip is one mod of a collection the user skipped (#657): the
+// mod, and the pin that was no longer offered.
+type CollectionSkip struct {
+	SourceID string        `yaml:"source_id"`
+	ModID    string        `yaml:"mod_id"`
+	Pin      CollectionPin `yaml:"pin,omitempty"`
 }
 
 // IsZero reports whether b records nothing.
 func (b *CollectionBaseline) IsZero() bool {
-	return b == nil || (b.Plugins.IsZero() && len(b.Overrides) == 0 && b.LoadOrders.IsZero())
+	return b == nil || (b.Plugins.IsZero() && len(b.Overrides) == 0 && b.LoadOrders.IsZero() && len(b.Skipped) == 0)
 }
 
 // FindRef returns a pointer into p.Mods for the reference matching

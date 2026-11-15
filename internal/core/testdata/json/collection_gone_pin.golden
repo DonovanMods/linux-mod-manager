@@ -1,0 +1,15 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "266",
+  "name": "Unofficial Skyrim Special Edition Patch",
+  "version": "4.3.8a",
+  "file_ids": [
+    "733846"
+  ],
+  "current": {
+    "file_id": "800000",
+    "name": "USSEP",
+    "version": "4.3.9"
+  },
+  "choice": "use_current"
+}

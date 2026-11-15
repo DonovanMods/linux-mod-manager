@@ -34,6 +34,25 @@ type collectionSource struct {
 	filesByMod map[string][]string // mod id -> file ids it serves
 	urlErr     error
 	refreshes  int
+	// #657: listing replaces a mod's file listing, listErr fails it, and
+	// listCalls counts the listings asked for, by mod id.
+	listing   map[string][]domain.DownloadableFile
+	listErr   map[string]error
+	listCalls map[string]int
+}
+
+// listed is the listing a test set for mod, counting the call; ok is false
+// when it set none.
+func (s *collectionSource) listed(mod *domain.Mod) ([]domain.DownloadableFile, bool, error) {
+	if s.listCalls == nil {
+		s.listCalls = map[string]int{}
+	}
+	s.listCalls[mod.ID]++
+	if err := s.listErr[mod.ID]; err != nil {
+		return nil, true, err
+	}
+	files, ok := s.listing[mod.ID]
+	return files, ok, nil
 }
 
 func (s *collectionSource) ResolveGameCollection(ctx context.Context, gameSourceID, ref string) (source.Collection, error) {
@@ -75,6 +94,9 @@ func (s *collectionSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, 
 }
 
 func (s *collectionSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	if files, ok, err := s.listed(mod); ok || err != nil {
+		return files, err
+	}
 	var out []domain.DownloadableFile
 	for _, id := range s.filesByMod[mod.ID] {
 		out = append(out, domain.DownloadableFile{ID: id, Name: "File " + id, FileName: mod.ID + "-" + id + ".zip", Version: "1"})

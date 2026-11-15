@@ -597,7 +597,7 @@ func (pm *ProfileManager) upsertModRef(ctx context.Context, gameID, profileName 
 			profile.Mods[i].Version = mod.Version
 			profile.Mods[i].FileIDs = mod.FileIDs
 			if disown {
-				profile.Mods[i].FromCollection = false
+				profile.Mods[i].FromCollection, profile.Mods[i].SubstitutedFor = false, nil
 			}
 			// #614: an install of a FOMOD records the choices it was
 			// installed with, an install of a tree that is not one clears
@@ -719,7 +719,7 @@ func (pm *ProfileManager) SetModLock(ctx context.Context, gameID, profileName, s
 			profile.Mods[i].Locked = true
 			// #613: a lock the user sets makes the entry theirs; a
 			// collection update no longer moves it.
-			profile.Mods[i].FromCollection = false
+			profile.Mods[i].FromCollection, profile.Mods[i].SubstitutedFor = false, nil
 			if version != "" {
 				profile.Mods[i].Version = version
 			}
@@ -749,7 +749,7 @@ func (pm *ProfileManager) disownRef(ctx context.Context, gameID, profileName, so
 	changed := false
 	for i := range profile.Mods {
 		if profile.Mods[i].SourceID == sourceID && profile.Mods[i].ModID == modID && profile.Mods[i].FromCollection {
-			profile.Mods[i].FromCollection = false
+			profile.Mods[i].FromCollection, profile.Mods[i].SubstitutedFor = false, nil
 			changed = true
 		}
 	}
@@ -777,7 +777,7 @@ func (pm *ProfileManager) ClearModLock(ctx context.Context, gameID, profileName,
 		if profile.Mods[i].SourceID == sourceID && profile.Mods[i].ModID == modID {
 			profile.Mods[i].Locked = false
 			// #613: so does unlocking it (design §1).
-			profile.Mods[i].FromCollection = false
+			profile.Mods[i].FromCollection, profile.Mods[i].SubstitutedFor = false, nil
 			return pm.save(profile)
 		}
 	}

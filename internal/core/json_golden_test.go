@@ -2661,6 +2661,29 @@ func TestJSONGoldens(t *testing.T) {
 				Conflicts: []string{"Mine.esp"}, Moved: []string{"A.esp", "B.esp"}, RulesConflict: true},
 		},
 		{
+			// #657: a mod's current main file, which installs in place of
+			// a gone pin.
+			"collection_current_file",
+			core.CollectionCurrentFile{FileID: "800000", Name: "Unofficial Skyrim Special Edition Patch", Version: "4.3.9"},
+		},
+		{
+			// #657: a pinned file NexusMods no longer offers, decided.
+			"collection_gone_pin",
+			core.CollectionGonePin{SourceID: "nexusmods", ModID: "266", Name: "Unofficial Skyrim Special Edition Patch", Version: "4.3.8a",
+				FileIDs: []string{"733846"}, Current: &core.CollectionCurrentFile{FileID: "800000", Name: "USSEP", Version: "4.3.9"},
+				Choice: core.GonePinUseCurrent},
+		},
+		{
+			// #657: the --json error envelope's details for undecided gone
+			// pins - one with a current file, one without.
+			"collection_gone_pins_error",
+			core.CollectionGonePinsError{Pins: []core.CollectionGonePin{
+				{SourceID: "nexusmods", ModID: "266", Name: "Unofficial Skyrim Special Edition Patch", Version: "4.3.8a",
+					FileIDs: []string{"733846"}, Current: &core.CollectionCurrentFile{FileID: "800000", Name: "USSEP", Version: "4.3.9"}},
+				{SourceID: "nexusmods", ModID: "999", Name: "Removed Mod", Version: "1.0", FileIDs: []string{"5000"}},
+			}},
+		},
+		{
 			// #613: the --json error envelope's details for an origin
 			// serving an older version.
 			"collection_update_mismatch_error",

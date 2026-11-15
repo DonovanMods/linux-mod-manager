@@ -35,6 +35,10 @@ type SourceCollectionImportRequest struct {
 	// default (owner ruling, 2026-11-10).
 	WithOptional bool
 	Optional     []string
+	// GonePins are the user's choices for the items whose pinned file the
+	// source no longer offers (#657): each mod's current main file
+	// instead, or skipping it. A pin left undecided makes Apply refuse.
+	GonePins GonePinChoices
 }
 
 // PlanSourceCollectionImport resolves req's collection on its source for
@@ -48,20 +52,51 @@ type SourceCollectionImportRequest struct {
 // refuses (*CollectionUnsupportedError). A reference the source cannot
 // resolve is IsBadCollectionRef.
 func (s *Service) PlanSourceCollectionImport(ctx context.Context, game *domain.Game, req SourceCollectionImportRequest) (*ImportPlan, error) {
+	if err := req.GonePins.validate(); err != nil {
+		return nil, err
+	}
 	conv, err := s.ConvertSourceCollection(ctx, game, req.SourceID, req.Ref,
 		CollectionConvertOptions{WithOptional: req.WithOptional, Optional: req.Optional})
 	if err != nil {
 		return nil, err
 	}
-	data, err := config.MarshalCollection(conv.Document)
-	if err != nil {
-		return nil, fmt.Errorf("writing the converted collection: %w", err)
-	}
-	plan, err := s.planCollectionImport(ctx, CollectionImportRequest{
-		Data: data, Input: CollectionFromSource, GameID: game.ID, ProfileName: req.ProfileName,
-	}, "", nil, conv.recipe)
+	plan, err := s.planConvertedCollection(ctx, game, req, conv)
 	if err != nil {
 		return nil, err
+	}
+	// #657: the pins of what the plan downloads that the source no longer
+	// offers, each decided by the user's choices; a decision that changes
+	// the document plans it again.
+	downloads := map[string]bool{}
+	for _, ref := range slices.Concat(plan.NeedsRedownload, plan.Missing) {
+		downloads[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
+	checker := s.newPinChecker(game, conv)
+	pins, err := checker.findGonePins(ctx, func(item domain.CollectionItem) bool {
+		return downloads[domain.ModKey(item.Ref.SourceID, item.Ref.ModID)]
+	})
+	if err != nil {
+		return nil, err
+	}
+	req.GonePins.echo(conv)
+	conv.Notes = append(conv.Notes, checker.warnings...)
+	if len(pins) > 0 {
+		outcome := decideGonePins(conv, pins, req.GonePins, nil)
+		if outcome.changed {
+			if plan, err = s.planConvertedCollection(ctx, game, req, conv); err != nil {
+				return nil, err
+			}
+		}
+		state := plan.collectionState
+		state.substituted = outcome.substituted
+		if len(outcome.skipped) > 0 {
+			state.baseline.Skipped = outcome.skipped
+		}
+		plan.archiveMD5 = mergeArchiveMD5(plan.archiveMD5, outcome.archiveMD5)
+		for i := range plan.Profile.Mods {
+			ref := &plan.Profile.Mods[i]
+			ref.SubstitutedFor = outcome.substituted[domain.ModKey(ref.SourceID, ref.ModID)].Clone()
+		}
 	}
 	c := plan.Collection
 	c.Source = conv
@@ -115,6 +150,17 @@ func (s *Service) PlanSourceCollectionImport(ctx context.Context, game *domain.G
 	}
 	conv.recount()
 	return plan, nil
+}
+
+// planConvertedCollection plans importing conv's document as req asks.
+func (s *Service) planConvertedCollection(ctx context.Context, game *domain.Game, req SourceCollectionImportRequest, conv *ConvertedCollection) (*ImportPlan, error) {
+	data, err := config.MarshalCollection(conv.Document)
+	if err != nil {
+		return nil, fmt.Errorf("writing the converted collection: %w", err)
+	}
+	return s.planCollectionImport(ctx, CollectionImportRequest{
+		Data: data, Input: CollectionFromSource, GameID: game.ID, ProfileName: req.ProfileName,
+	}, "", nil, conv.recipe)
 }
 
 // accountTier is the source account's tier, when the source reports one and

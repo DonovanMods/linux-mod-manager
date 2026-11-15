@@ -62,6 +62,10 @@ type CollectionBaselineConfig struct {
 	Plugins    *ProfilePluginsConfig `yaml:"plugins,omitempty"`
 	Overrides  map[string]string     `yaml:"overrides,omitempty"`
 	LoadOrders domain.FileLoadOrders `yaml:"load_orders,omitempty"`
+	// Skipped is #657's: the collection's mods the user skipped because
+	// their pinned file was gone. Omitted when none, so a file without it
+	// is unchanged.
+	Skipped []domain.CollectionSkip `yaml:"skipped,omitempty"`
 }
 
 // baselineFromConfig is the domain baseline c records; nil records none.
@@ -75,7 +79,20 @@ func baselineFromConfig(c *CollectionBaselineConfig) *domain.CollectionBaseline 
 	if len(c.Overrides) > 0 {
 		b.Overrides = maps.Clone(c.Overrides)
 	}
+	b.Skipped = cloneSkips(c.Skipped)
 	return b
+}
+
+// cloneSkips is a deep copy of skips, nil when there are none.
+func cloneSkips(skips []domain.CollectionSkip) []domain.CollectionSkip {
+	if len(skips) == 0 {
+		return nil
+	}
+	out := make([]domain.CollectionSkip, len(skips))
+	for i, s := range skips {
+		out[i] = domain.CollectionSkip{SourceID: s.SourceID, ModID: s.ModID, Pin: *s.Pin.Clone()}
+	}
+	return out
 }
 
 // baselineConfigOf is b as the profile file writes it: nil for none, and
@@ -91,6 +108,7 @@ func baselineConfigOf(b *domain.CollectionBaseline) *CollectionBaselineConfig {
 	if len(b.Overrides) > 0 {
 		out.Overrides = maps.Clone(b.Overrides)
 	}
+	out.Skipped = cloneSkips(b.Skipped)
 	return out
 }
 
@@ -100,7 +118,10 @@ func sameBaseline(a, b *domain.CollectionBaseline) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return a.Plugins.Equal(b.Plugins) && maps.Equal(a.Overrides, b.Overrides) && a.LoadOrders.Equal(b.LoadOrders)
+	return a.Plugins.Equal(b.Plugins) && maps.Equal(a.Overrides, b.Overrides) && a.LoadOrders.Equal(b.LoadOrders) &&
+		slices.EqualFunc(a.Skipped, b.Skipped, func(x, y domain.CollectionSkip) bool {
+			return x.SourceID == y.SourceID && x.ModID == y.ModID && x.Pin.Version == y.Pin.Version && slices.Equal(x.Pin.FileIDs, y.Pin.FileIDs)
+		})
 }
 
 // ModReferenceConfig is the YAML representation of a mod reference.
@@ -137,6 +158,10 @@ type ModReferenceConfig struct {
 	// collection brought in (domain.ModReference.FromCollection); omitted
 	// when false, so a file without it is unchanged.
 	FromCollection bool `yaml:"from_collection,omitempty"`
+	// SubstitutedFor is #657's record of the gone pin a collection entry's
+	// current file stands in for (domain.ModReference.SubstitutedFor);
+	// omitted when nil, so a file without it is unchanged.
+	SubstitutedFor *domain.CollectionPin `yaml:"substituted_for,omitempty"`
 	// FileList and Patches are #610's exact file lists and binary patches,
 	// keyed by file id; omitted when empty, so a file without them is
 	// unchanged.
@@ -334,6 +359,7 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 			FomodFiles:     m.FomodFiles.Clone(),
 			FomodOrder:     slices.Clone(m.FomodOrder),
 			FromCollection: m.FromCollection,
+			SubstitutedFor: m.SubstitutedFor.Clone(),
 			// #610: copied, so the profile's maps are its own.
 			FileList: m.FileList.Clone(),
 			Patches:  m.Patches.Clone(),

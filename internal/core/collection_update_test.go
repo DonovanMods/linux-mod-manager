@@ -42,6 +42,9 @@ func (s *revisionSource) ParseManifest(root fs.FS) (source.CollectionManifest, e
 }
 
 func (s *revisionSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	if files, ok, err := s.listed(mod); ok || err != nil {
+		return files, err
+	}
 	var out []domain.DownloadableFile
 	for _, id := range s.filesByMod[mod.ID] {
 		v := s.versions[id]

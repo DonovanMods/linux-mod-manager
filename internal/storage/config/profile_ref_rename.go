@@ -64,7 +64,7 @@ func RenameProfileModRef(configDir, gameID, profileName string, r ModRefRename) 
 		ref := &profile.Mods[i]
 		if domain.ModKey(ref.SourceID, ref.ModID) == from {
 			ref.SourceID, ref.ModID, ref.Version = r.ToSourceID, r.ToModID, r.Version
-			ref.FromCollection = false
+			ref.FromCollection, ref.SubstitutedFor = false, nil
 		}
 	}
 
