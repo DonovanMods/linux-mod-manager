@@ -44,9 +44,13 @@ var domainPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 // parseCollectionRef reads what a user typed for a collection: a slug, a
 // collection page URL (https://www.nexusmods.com/games/<domain>/
 // collections/<slug>, or the older next.nexusmods.com/<domain>/
-// collections/<slug>), either optionally suffixed with "@<revision>". A
-// URL's /revisions/<n> form is not accepted: no sample has confirmed it
-// (design §1), and guessing at a URL is how the wrong thing is imported.
+// collections/<slug>), either optionally suffixed with "@<revision>", or a
+// revision's own page (the same URL with /revisions/<n>, read as
+// slug@<n>; #650). A page URL may be http or https: it is an identifier
+// read here, never fetched - the collection is resolved through the API,
+// over https, whatever address was typed. The web UI's search box reads
+// the same forms (internal/serve's collectionlink.js), and both are held
+// to testdata/collection_refs.json.
 func parseCollectionRef(ref string) (collectionRef, error) {
 	ref = strings.TrimSpace(ref)
 	bad := func(why string) (collectionRef, error) {
@@ -70,24 +74,37 @@ func parseCollectionRef(ref string) (collectionRef, error) {
 		if err != nil {
 			return bad("the URL does not parse")
 		}
-		if u.Scheme != "https" {
-			return bad("the URL is not https")
+		if u.Scheme != "https" && u.Scheme != "http" {
+			return bad("the URL is not a web address")
 		}
 		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		// A collection page is <domain>/collections/<slug> under its
+		// host's prefix; a revision's page adds revisions/<n>.
 		switch strings.ToLower(u.Hostname()) {
 		case "www.nexusmods.com", "nexusmods.com":
-			if len(parts) != 4 || parts[0] != "games" || parts[2] != "collections" {
+			if len(parts) < 1 || parts[0] != "games" {
 				return bad("the URL is not a collection page")
 			}
-			out.domain, body = parts[1], parts[3]
+			parts = parts[1:]
 		case "next.nexusmods.com":
-			if len(parts) != 3 || parts[1] != "collections" {
-				return bad("the URL is not a collection page")
-			}
-			out.domain, body = parts[0], parts[2]
 		default:
 			return bad("the URL is not on nexusmods.com")
 		}
+		switch {
+		case len(parts) == 3 && parts[1] == "collections":
+		case len(parts) == 5 && parts[1] == "collections" && parts[3] == "revisions":
+			if out.revision != 0 {
+				return bad("the URL names a revision and so does the @")
+			}
+			n, err := strconv.Atoi(parts[4])
+			if err != nil || n <= 0 {
+				return bad("the URL's revision is not a positive number")
+			}
+			out.revision = n
+		default:
+			return bad("the URL is not a collection page")
+		}
+		out.domain, body = parts[0], parts[2]
 		if !domainPattern.MatchString(out.domain) {
 			return bad("the URL's game is not a NexusMods game name")
 		}

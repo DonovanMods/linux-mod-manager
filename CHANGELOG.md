@@ -21,8 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Workshop collection's link, and offers **Import it…**, which opens the
   same plan the Profiles window does. A NexusMods collection for another
   game than the selected one says so instead of offering an import the
-  source would refuse. The CLI is unchanged: `lmm profile import
---nexus-collection` and `lmm profile import https://…` already did this.
+  source would refuse.
+- **`--nexus-collection` takes a revision's page address and an `http://`
+  page address (#650).** `lmm profile import --nexus-collection
+https://www.nexusmods.com/games/<game>/collections/<slug>/revisions/<n>`
+  (or the `next.nexusmods.com` form) imports revision `<n>`, as
+  `<slug>@<n>` does; naming a revision both ways is refused. An `http://`
+  collection page address is read as its `https://` one: it only names the
+  collection, which lmm always resolves through the NexusMods API over
+  https (a collection fetched from a `.lmmc` address is still https only).
+  The web UI's NexusMods input and its search box take the same forms, and
+  the two parsers are held to one shared fixture.
 
 - **Baldur's Gate 3's .pak mods deploy where the game loads them (#636).**
   On a game with the `baldurs-gate-3` adapter, every `.pak` a mod ships now

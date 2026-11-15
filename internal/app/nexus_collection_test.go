@@ -148,6 +148,20 @@ func notesContain(c *core.ConvertedCollection, sub string) bool {
 	return false
 }
 
+// #650: the real source reads a revision's own page address, http or
+// https, as slug@revision, and the converted collection records the
+// canonical https page as its origin.
+func TestNexusCollection_RevisionPageAddress(t *testing.T) {
+	game := &domain.Game{ID: "cp2077", Name: "Cyberpunk 2077", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		SourceIDs: map[string]string{"nexusmods": "cyberpunk2077"}}
+	c := convertNexusFixture(t, game, "http://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/revisions/484", "iszwwe", 484,
+		"revision-cyberpunk2077-iszwwe-484.json", "cyberpunk2077-iszwwe-484.json", core.CollectionConvertOptions{})
+
+	assert.Equal(t, 484, c.Revision)
+	assert.Equal(t, &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "iszwwe", Revision: 484,
+		URL: "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe", Author: "curator"}, c.Document.Info.Origin)
+}
+
 // The Cyberpunk sample: every item pinned and locked, FOMOD replayed, its
 // 27 rules all among members, its 11 exact file lists carried (C5, #610);
 // refused for the archive load order (C9) on a game without the adapter -

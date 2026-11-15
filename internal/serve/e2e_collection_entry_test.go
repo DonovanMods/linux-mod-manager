@@ -9,6 +9,9 @@ package serve_test
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -119,6 +122,57 @@ func TestE2E_CollectionLink_ParsesWhatCoreAccepts(t *testing.T) {
 	assert.Nil(t, got["yaml"], "only a .lmmc address is unmistakably a collection")
 	assert.Equal(t, map[string]any{"source": "steamworkshop", "ref": "3512001122"}, got["workshop"])
 	assert.Nil(t, got["empty"])
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_CollectionLink_AgreesWithTheSourceParser holds collectionlink.js
+// to internal/source/nexusmods/testdata/collection_refs.json, the fixture
+// nexusmods.parseCollectionRef is held to as well (TestParseCollectionRef):
+// the search box offers exactly the references `lmm profile import
+// --nexus-collection` takes, naming the same game, slug and revision.
+func TestE2E_CollectionLink_AgreesWithTheSourceParser(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "source", "nexusmods", "testdata", "collection_refs.json"))
+	require.NoError(t, err)
+	var fixture struct {
+		Cases []struct {
+			Ref      string `json:"ref"`
+			Domain   string `json:"domain"`
+			Slug     string `json:"slug"`
+			Revision int    `json:"revision"`
+			Invalid  bool   `json:"invalid"`
+		} `json:"cases"`
+	}
+	require.NoError(t, json.Unmarshal(data, &fixture))
+	require.NotEmpty(t, fixture.Cases)
+
+	f := newE2EFixture(t)
+	type parsed struct {
+		Nexus    bool   `json:"nexus"`
+		Domain   string `json:"domain"`
+		Slug     string `json:"slug"`
+		Revision int    `json:"revision"`
+	}
+	var got []parsed
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { collectionLink } = await import("/static/app/collectionlink.js");
+			const fixture = `+string(data)+`;
+			return fixture.cases.map((c) => {
+				const r = collectionLink(c.ref);
+				return r && r.source === "nexusmods"
+					? { nexus: true, domain: r.domain, slug: r.slug, revision: r.revision }
+					: { nexus: false, domain: "", slug: "", revision: 0 };
+			});
+		})()`, &got, awaitPromise),
+	)
+
+	require.Len(t, got, len(fixture.Cases))
+	for i, c := range fixture.Cases {
+		want := parsed{Nexus: !c.Invalid, Domain: c.Domain, Slug: c.Slug, Revision: c.Revision}
+		assert.Equal(t, want, got[i], "%q", c.Ref)
+	}
 	assert.Empty(t, f.BrowserErrors())
 }
 

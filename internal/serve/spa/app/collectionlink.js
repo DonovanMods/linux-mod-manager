@@ -9,10 +9,12 @@
 //   - a NexusMods collection: its page address (www.nexusmods.com/games/
 //     <game>/collections/<slug>, or next.nexusmods.com/<game>/collections/
 //     <slug>), optionally suffixed "@<revision>", or a bare slug or
-//     slug@revision - the forms nexusmods.parseCollectionRef accepts. A
-//     revision page (…/collections/<slug>/revisions/<n>) is the website's
-//     own address for one revision, and is read as slug@n, the form the
-//     source accepts for it;
+//     slug@revision, or a revision's own page (…/collections/<slug>/
+//     revisions/<n>, read as slug@n), over http or https - exactly the
+//     forms nexusmods.parseCollectionRef accepts. Both parsers are held to
+//     one fixture, internal/source/nexusmods/testdata/collection_refs.json
+//     (TestParseCollectionRef, and TestE2E_CollectionLink_AgreesWithTheSourceParser
+//     here);
 //   - an lmm collection's address: an http(s) URL whose path ends .lmmc.
 //     Only https imports (core.parseCollectionURL); a plain-http one is
 //     still recognised, so the offer can say why it will not import;
@@ -68,27 +70,16 @@ export function collectionLink(text) {
 /** urlLink reads an http(s) address: a NexusMods collection page or a
  * .lmmc file. */
 function urlLink(trimmed) {
-  // nexusmods.parseCollectionRef splits a trailing "@<revision>" off the
-  // whole reference before parsing the URL; so does this.
-  let body = trimmed;
-  let revision = 0;
-  const at = body.lastIndexOf("@");
-  if (at >= 0 && /^[1-9][0-9]*$/.test(body.slice(at + 1))) {
-    revision = Number(body.slice(at + 1));
-    body = body.slice(0, at);
-  }
+  const nexus = nexusRef(trimmed);
+  if (nexus) return nexus;
 
   let url;
   try {
-    url = new URL(body);
+    url = new URL(trimmed);
   } catch {
     return null;
   }
-
-  const nexus = nexusPage(url, revision);
-  if (nexus) return nexus;
-
-  if (revision === 0 && /\.lmmc$/i.test(url.pathname)) {
+  if (/\.lmmc$/i.test(url.pathname)) {
     return {
       source: "url",
       url: trimmed,
@@ -98,31 +89,66 @@ function urlLink(trimmed) {
   return null;
 }
 
-/** nexusPage reads url as a NexusMods collection page, or returns null. */
-function nexusPage(url, atRevision) {
+/** positiveInt is strconv.Atoi(s) when that is above zero, and 0
+ * otherwise - the revision rule nexusmods.parseCollectionRef applies. */
+function positiveInt(s) {
+  if (!/^[+-]?[0-9]+$/.test(s)) return 0;
+  const n = Number(s);
+  return Number.isSafeInteger(n) && n > 0 ? n : 0;
+}
+
+/** splitRevision splits a trailing "@<revision>" off text, as
+ * nexusmods.parseCollectionRef does before anything else: an "@" whose
+ * tail is not a positive number makes the whole reference invalid (null). */
+function splitRevision(text) {
+  const at = text.lastIndexOf("@");
+  if (at < 0) return { body: text, revision: 0 };
+  const revision = positiveInt(text.slice(at + 1));
+  return revision ? { body: text.slice(0, at), revision } : null;
+}
+
+/** nexusRef reads an http(s) address as a NexusMods collection page (or a
+ * revision's page), or returns null - nexusmods.parseCollectionRef's URL
+ * branch, rule for rule. */
+function nexusRef(trimmed) {
+  const split = splitRevision(trimmed);
+  if (!split) return null;
+  let revision = split.revision;
+
+  let url;
+  try {
+    url = new URL(split.body);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+
+  // Go's strings.Split(strings.Trim(path, "/"), "/"): an empty segment in
+  // the middle is kept, and makes the address no collection page.
+  let parts = url.pathname.replace(/^\/+|\/+$/g, "").split("/");
   const host = url.hostname.toLowerCase();
-  const parts = url.pathname.split("/").filter((p) => p !== "");
-  let domain, slug, rest;
   if (NEXUS_HOSTS.has(host)) {
-    if (parts[0] !== "games" || parts[2] !== "collections") return null;
-    [domain, slug, rest] = [parts[1], parts[3], parts.slice(4)];
-  } else if (host === NEXUS_NEXT_HOST) {
-    if (parts[1] !== "collections") return null;
-    [domain, slug, rest] = [parts[0], parts[2], parts.slice(3)];
-  } else {
+    if (parts[0] !== "games") return null;
+    parts = parts.slice(1);
+  } else if (host !== NEXUS_NEXT_HOST) {
     return null;
   }
 
-  let revision = atRevision;
-  if (rest.length === 2 && rest[0] === "revisions" && atRevision === 0) {
-    if (!/^[1-9][0-9]*$/.test(rest[1])) return null;
-    revision = Number(rest[1]);
-  } else if (rest.length !== 0) {
+  if (
+    parts.length === 5 &&
+    parts[1] === "collections" &&
+    parts[3] === "revisions"
+  ) {
+    // A revision's own page; naming one with "@" as well is refused.
+    if (revision) return null;
+    revision = positiveInt(parts[4]);
+    if (!revision) return null;
+  } else if (parts.length !== 3 || parts[1] !== "collections") {
     return null;
   }
 
-  domain = (domain ?? "").toLowerCase();
-  slug = (slug ?? "").toLowerCase();
+  const domain = parts[0];
+  const slug = parts[2].toLowerCase();
   if (!NEXUS_DOMAIN.test(domain) || !NEXUS_SLUG.test(slug)) return null;
 
   const page = `https://www.nexusmods.com/games/${domain}/collections/${slug}`;
@@ -138,17 +164,18 @@ function nexusPage(url, atRevision) {
 
 /** bareSlug reads a slug or slug@revision typed on its own. */
 function bareSlug(trimmed) {
-  const m = /^([A-Za-z0-9]{1,32})(?:@([1-9][0-9]*))?$/.exec(trimmed);
-  if (!m) return null;
-  const revision = m[2] ? Number(m[2]) : 0;
+  const split = splitRevision(trimmed);
+  if (!split) return null;
+  const slug = split.body.toLowerCase();
+  if (!NEXUS_SLUG.test(slug)) return null;
   return {
     source: "nexusmods",
     domain: "",
-    slug: m[1].toLowerCase(),
-    revision,
+    slug,
+    revision: split.revision,
     ref: trimmed,
     // A word on its own is offered only once the search found nothing for
     // it; slug@revision is no search anyone types.
-    tentative: revision === 0,
+    tentative: split.revision === 0,
   };
 }

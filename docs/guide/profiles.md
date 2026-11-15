@@ -368,18 +368,22 @@ lmm profile import --nexus-collection iszwwe --game cyberpunk2077
 lmm profile import --nexus-collection iszwwe@484 --game cyberpunk2077
 lmm profile import --nexus-collection https://www.nexusmods.com/games/skyrimspecialedition/collections/xk05aw --as essentials
 lmm profile import --nexus-collection xk05aw --with-optional
+lmm profile import --nexus-collection https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/revisions/484
 ```
 
 Give the collection's slug (the code at the end of its page's address),
-`slug@revision` for one revision, or the page's address. Without a
+`slug@revision` for one revision, or the page's address; the address of
+one revision's page (ending `/revisions/484`) imports that revision, as
+`iszwwe@484` does. An `http://` page address works as well as `https://`:
+lmm only reads the collection's name from it, and always talks to
+NexusMods over https. Without a
 revision you get the latest one, and the plan says which. A link to
 another game's collection is refused. In the browser, type the same thing
 into **NexusMods collection** (in the Profiles window, or **Import
 collection…** in the profile picker's menu), or paste the collection's
 page address into the search box and press **Import it…** on the offer
-above the results. The search box also takes the address of one
-revision's page (ending `/revisions/4`) and imports that revision, as
-`slug@4` does.
+above the results. The search box recognises the same slugs and
+addresses the terminal takes.
 
 You need a NexusMods API key (see [Your first mods](first-mods.md)), and
 lmm needs the `7z` command, because the recipe is a `.7z` file (see

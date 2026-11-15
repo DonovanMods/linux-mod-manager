@@ -31,46 +31,34 @@ var (
 	_ source.CollectionManifestFetcher = (*NexusMods)(nil)
 )
 
+// TestParseCollectionRef holds the parser to testdata/collection_refs.json,
+// the fixture the web UI's collectionlink.js is held to as well
+// (internal/serve's TestE2E_CollectionLink_AgreesWithTheSourceParser): the
+// search box offers exactly the references this accepts (#650).
 func TestParseCollectionRef(t *testing.T) {
-	cases := []struct {
-		ref     string
-		domain  string
-		slug    string
-		rev     int
-		wantErr bool
-	}{
-		{ref: "iszwwe", slug: "iszwwe"},
-		{ref: "  iszwwe@484 ", slug: "iszwwe", rev: 484},
-		{ref: "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe", domain: "cyberpunk2077", slug: "iszwwe"},
-		{ref: "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/", domain: "cyberpunk2077", slug: "iszwwe"},
-		{ref: "https://nexusmods.com/games/cyberpunk2077/collections/iszwwe@484", domain: "cyberpunk2077", slug: "iszwwe", rev: 484},
-		{ref: "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe?tab=mods", domain: "cyberpunk2077", slug: "iszwwe"},
-		{ref: "https://next.nexusmods.com/skyrimspecialedition/collections/xk05aw", domain: "skyrimspecialedition", slug: "xk05aw"},
-		{ref: "", wantErr: true},
-		{ref: "iszwwe@", wantErr: true},
-		{ref: "iszwwe@0", wantErr: true},
-		{ref: "iszwwe@-3", wantErr: true},
-		{ref: "iszwwe@abc", wantErr: true},
-		{ref: "ISZWWE", slug: "iszwwe"},
-		{ref: "not a slug", wantErr: true},
-		{ref: "../etc", wantErr: true},
-		{ref: "http://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe", wantErr: true},
-		{ref: "https://evil.example/games/cyberpunk2077/collections/iszwwe", wantErr: true},
-		{ref: "https://www.nexusmods.com/cyberpunk2077/mods/107", wantErr: true},
-		// The /revisions/<n> URL form is unverified (design §1), so it is
-		// not guessed at.
-		{ref: "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/revisions/484", wantErr: true},
+	data, err := os.ReadFile(filepath.Join("testdata", "collection_refs.json"))
+	require.NoError(t, err)
+	var fixture struct {
+		Cases []struct {
+			Ref      string `json:"ref"`
+			Domain   string `json:"domain"`
+			Slug     string `json:"slug"`
+			Revision int    `json:"revision"`
+			Invalid  bool   `json:"invalid"`
+		} `json:"cases"`
 	}
-	for _, tc := range cases {
-		t.Run(tc.ref, func(t *testing.T) {
-			got, err := parseCollectionRef(tc.ref)
-			if tc.wantErr {
+	require.NoError(t, json.Unmarshal(data, &fixture))
+	require.NotEmpty(t, fixture.Cases)
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Ref, func(t *testing.T) {
+			got, err := parseCollectionRef(tc.Ref)
+			if tc.Invalid {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, source.ErrInvalidReference)
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, collectionRef{domain: tc.domain, slug: tc.slug, revision: tc.rev}, got)
+			assert.Equal(t, collectionRef{domain: tc.Domain, slug: tc.Slug, revision: tc.Revision}, got)
 		})
 	}
 }
@@ -133,6 +121,22 @@ func TestResolveGameCollection_RecordedRevision(t *testing.T) {
 	assert.Equal(t, "exact", first.UpdatePolicy)
 	assert.Equal(t, "https://www.nexusmods.com/cyberpunk2077/mods/"+first.ModID+"?tab=files&file_id="+first.FileID, first.URL)
 	assert.Positive(t, first.SizeBytes)
+}
+
+// #650: a revision's own page address asks for that revision, as
+// slug@revision does.
+func TestResolveGameCollection_RevisionPageAddress(t *testing.T) {
+	srv, seen := revisionServer(t, "revision-cyberpunk2077-iszwwe-484.json")
+	nm := New(nil, "testapikey")
+	nm.client.graphqlURL = srv.URL
+
+	c, err := nm.ResolveGameCollection(context.Background(), "cyberpunk2077", "http://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/revisions/484")
+	require.NoError(t, err)
+	require.Len(t, *seen, 1)
+	assert.Equal(t, map[string]any{"slug": "iszwwe", "revision": float64(484), "domain": "cyberpunk2077", "adult": true}, (*seen)[0])
+	assert.Equal(t, 484, c.Revision)
+	assert.Equal(t, "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe", c.URL,
+		"the recorded page is the https one whatever address was typed")
 }
 
 func TestResolveGameCollection_LatestOmitsTheRevision(t *testing.T) {
