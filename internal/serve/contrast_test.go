@@ -79,6 +79,10 @@ var textPairs = struct {
 		// The tooltip (issue 525) is the inverse of the page: its text on
 		// the primary text colour as its fill.
 		{"--text-inverted", "--text-primary"},
+		// A field's placeholder (issue 653) on the field's own sunken fill,
+		// and on the raised fill of a code editor's textarea.
+		{"--text-placeholder", "--surface-sunken"},
+		{"--text-placeholder", "--surface-raised"},
 	},
 }
 

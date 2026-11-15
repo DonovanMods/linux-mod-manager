@@ -25,6 +25,7 @@ import {
   deleteUpload,
 } from "../api.js";
 import { InlineJob } from "./jobprogress.js";
+import { FilePicker } from "./filepicker.js";
 
 const IMPORT_ORIGIN = "setup:import-archive";
 
@@ -53,7 +54,6 @@ export function SetupImportArchive({ state, actions }) {
   const [error, setError] = useState(null);
   const [sourceID, setSourceID] = useState("");
   const [modID, setModID] = useState("");
-  const fileInput = useRef(null);
   const abortRef = useRef(null);
 
   useEffect(() => {
@@ -62,10 +62,7 @@ export function SetupImportArchive({ state, actions }) {
       .catch(() => setSources([]));
   }, []);
 
-  async function onPick(e) {
-    const file = e.currentTarget.files?.[0];
-    e.currentTarget.value = "";
-    if (!file) return;
+  async function onPick([file]) {
     setError(null);
     if (file.size > maxUploadBytes) {
       setError(
@@ -146,23 +143,22 @@ export function SetupImportArchive({ state, actions }) {
   }, [jobID, state.jobsIndex]);
 
   return html`
-    <div class="setup-section" data-testid="setup-import-archive">
+    <div
+      class="form-section form-section--measure setup-section"
+      data-testid="setup-import-archive"
+    >
       ${
         !upload &&
         !jobActive &&
         html`
-          <label class="button setup-import__pick">
-            ${uploading ? "Uploading…" : "Choose archive…"}
-            <input
-              ref=${fileInput}
-              type="file"
-              accept=".zip,.7z,.rar"
-              disabled=${uploading}
-              onChange=${onPick}
-              hidden
-            />
-          </label>
-          <p class="empty-state__hint">
+          <${FilePicker}
+            label=${uploading ? "Uploading…" : "Choose archive…"}
+            inputLabel="Archive to import"
+            accept=".zip,.7z,.rar"
+            disabled=${uploading}
+            onFiles=${onPick}
+          />
+          <p class="form-hint">
             .zip, .7z or .rar, up to ${formatBytes(maxUploadBytes)}.
           </p>
         `
@@ -189,7 +185,10 @@ export function SetupImportArchive({ state, actions }) {
       ${
         (upload || jobActive) &&
         html`
-          <div class="setup-import__staged" data-testid="staged-upload">
+          <div
+            class="form-section setup-import__staged"
+            data-testid="staged-upload"
+          >
             ${
               upload &&
               html`
@@ -200,7 +199,7 @@ export function SetupImportArchive({ state, actions }) {
                   not imported.
                 </p>
 
-                <label class="plan__control">
+                <label class="form-field">
                   Link to a source (optional)
                   <select
                     value=${sourceID}
@@ -214,7 +213,7 @@ export function SetupImportArchive({ state, actions }) {
                 ${
                   sourceID &&
                   html`
-                    <label class="plan__control">
+                    <label class="form-field">
                       Mod ID on that source
                       <input
                         type="text"
@@ -228,7 +227,7 @@ export function SetupImportArchive({ state, actions }) {
               `
             }
 
-            <div class="setup-section__actions">
+            <div class="form-actions setup-section__actions">
               <${InlineJob}
                 origin=${IMPORT_ORIGIN}
                 state=${state}

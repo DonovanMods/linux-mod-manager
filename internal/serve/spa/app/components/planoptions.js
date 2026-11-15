@@ -34,7 +34,7 @@ export function PlanAdvanced({ children }) {
   return html`
     <details class="plan__advanced" data-testid="plan-advanced">
       <summary class="plan__advanced-summary">Advanced</summary>
-      <div class="plan__advanced-body">${children}</div>
+      <div class="form-section plan__advanced-body">${children}</div>
     </details>
   `;
 }
@@ -42,7 +42,7 @@ export function PlanAdvanced({ children }) {
 /** Option is the shared label/checkbox/hint shell both flavours render. */
 function Option({ name, label, hint, checked, disabled, onChange }) {
   return html`
-    <label class="plan__option">
+    <label class="form-check">
       <input
         type="checkbox"
         name=${name}
@@ -51,7 +51,8 @@ function Option({ name, label, hint, checked, disabled, onChange }) {
         onChange=${(e) => onChange(e.currentTarget.checked)}
       />
       <span class="plan__option-label">
-        ${label} ${hint && html`<span class="plan__option-hint">${hint}</span>`}
+        ${label}
+        ${hint && html`<span class="form-hint plan__option-hint">${hint}</span>`}
       </span>
     </label>
   `;
@@ -113,9 +114,10 @@ export function PlanSelect({
   options,
 }) {
   return html`
-    <label class="plan__option plan__option--select">
+    <label class="form-field">
       <span class="plan__option-label">
-        ${label} ${hint && html`<span class="plan__option-hint">${hint}</span>`}
+        ${label}
+        ${hint && html`<span class="form-hint plan__option-hint">${hint}</span>`}
       </span>
       <select
         name=${name}

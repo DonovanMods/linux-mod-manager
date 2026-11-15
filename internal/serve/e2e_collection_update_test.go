@@ -51,7 +51,13 @@ mods:
   - {source_id: fake, mod_id: four, version: "2.0", disabled: true}
 `
 
-func TestE2E_CollectionUpdate_PlanChoicesAndApply(t *testing.T) {
+// newE2ECollectionUpdateFixture is a game with a collection profile,
+// "shared", imported from an https address that now serves its next
+// version - so the profile offers an update - with "four" locked by the
+// user, so the update's change to it is a conflict. It returns the
+// address's server URL as well.
+func newE2ECollectionUpdateFixture(t *testing.T) (e2eFixture, string) {
+	t.Helper()
 	sandboxE2EEnv(t)
 	var body atomic.Pointer[string]
 	v1 := e2eUpdateV1
@@ -94,6 +100,12 @@ func TestE2E_CollectionUpdate_PlanChoicesAndApply(t *testing.T) {
 	baseURL := startE2EServer(t, svc)
 	browser, browserErrors := newE2EBrowser(t)
 	f := e2eFixture{Ctx: browser, BaseURL: baseURL, Svc: svc, Game: game, Profile: "default", BrowserErrors: browserErrors}
+	return f, srv.URL
+}
+
+func TestE2E_CollectionUpdate_PlanChoicesAndApply(t *testing.T) {
+	f, srvURL := newE2ECollectionUpdateFixture(t)
+	svc, game := f.Svc, f.Game
 
 	var planText string
 	var plainSyncRows int
@@ -118,7 +130,7 @@ func TestE2E_CollectionUpdate_PlanChoicesAndApply(t *testing.T) {
 	assert.Contains(t, planText, "1.0 → 1.1")
 	assert.Contains(t, planText, "No longer in the collection (1)")
 	assert.Contains(t, planText, "Conflicts - mods you locked or edited (1)")
-	assert.NotContains(t, planText, srv.URL+"/shared.yaml?", "no query to redact, none shown")
+	assert.NotContains(t, planText, srvURL+"/shared.yaml?", "no query to redact, none shown")
 
 	require.Eventually(t, func() bool {
 		p, err := config.LoadProfile(svc.ConfigDir(), game.ID, "shared")

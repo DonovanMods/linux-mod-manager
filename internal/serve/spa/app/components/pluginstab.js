@@ -505,7 +505,7 @@ function PluginRules({ report, busy, names, run }) {
         ${names.map((n) => html`<option value=${n}></option>`)}
       </datalist>
       <form
-        class="plugins-rules__form"
+        class="form-row plugins-rules__form"
         data-testid="plugins-rule-form"
         onSubmit=${(e) => {
           e.preventDefault();
@@ -550,7 +550,7 @@ function PluginRules({ report, busy, names, run }) {
         </button>
       </form>
       <form
-        class="plugins-rules__form"
+        class="form-row plugins-rules__form"
         data-testid="plugins-group-form"
         onSubmit=${(e) => {
           e.preventDefault();

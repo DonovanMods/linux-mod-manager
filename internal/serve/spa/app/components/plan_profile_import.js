@@ -615,7 +615,7 @@ export function SourceCollectionSection({ source: c, actions }) {
       }
       ${
         optionalItems.length > 0 &&
-        html`<label class="plan__control">
+        html`<label class="form-check">
           <input
             type="checkbox"
             data-testid="source-with-optional"
@@ -766,7 +766,7 @@ function ImportGates({ plan, modal, actions }) {
         </ul>
         ${
           hooksImportable
-            ? html`<label class="plan__control">
+            ? html`<label class="form-check">
                   <input type="checkbox" onChange=${setWithHooks} />
                   Import these hooks
                 </label>
@@ -803,7 +803,7 @@ function ImportGates({ plan, modal, actions }) {
               html`<li key=${o.path} class="mono">${o.path} - ${o.reason}</li>`,
           )}
         </ul>
-        <label class="plan__control">
+        <label class="form-check">
           <input
             type="checkbox"
             checked=${anyOverrides}
@@ -835,7 +835,7 @@ function ImportGates({ plan, modal, actions }) {
             ),
           )}
         </ul>
-        <label class="plan__control">
+        <label class="form-check">
           <input
             type="checkbox"
             data-testid="import-bundled-code"
@@ -880,7 +880,7 @@ function ImportGates({ plan, modal, actions }) {
               </li>`,
           )}
         </ul>
-        <label class="plan__control">
+        <label class="form-check">
           <input
             type="checkbox"
             data-testid="import-patch-code"
@@ -966,7 +966,7 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
             A profile named <span class="mono">${plan.profile?.name}</span>
             already exists.
           </p>
-          <label class="plan__control">
+          <label class="form-check">
             <input type="checkbox" onChange=${setForce} />
             Overwrite the existing profile
           </label>
@@ -975,7 +975,7 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
       ${
         pending > 0 &&
         html`
-          <label class="plan__control">
+          <label class="form-check">
             <input type="checkbox" onChange=${setInstall} />
             Download and install ${pending} pending
             mod${pending === 1 ? "" : "s"}

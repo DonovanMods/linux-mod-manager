@@ -213,8 +213,8 @@ export function FolderPicker({
         </button>
       `}
     >
-      <div class="folder-picker" data-testid="folder-picker">
-        <div class="folder-picker__bar">
+      <div class="form-section folder-picker" data-testid="folder-picker">
+        <div class="form-row folder-picker__bar">
           <button
             type="button"
             class="button"
@@ -226,7 +226,7 @@ export function FolderPicker({
           </button>
           <input
             type="text"
-            class="mono"
+            class="field--mono"
             name="folder-path"
             aria-label="Folder path"
             spellcheck=${false}
@@ -275,17 +275,14 @@ export function FolderPicker({
           ${
             !error &&
             listing?.requested &&
-            html`<p
-              class="empty-state__hint"
-              data-testid="folder-picker-nearest"
-            >
+            html`<p class="form-hint" data-testid="folder-picker-nearest">
               ${listing.requested} does not exist; showing the nearest folder
               that does.
             </p>`
           }
         </div>
 
-        <label class="plan__control plan__control--inline">
+        <label class="form-check">
           <input
             type="checkbox"
             name="folder-hidden"
@@ -442,7 +439,7 @@ export function FolderField({
 }) {
   const text = (value ?? "").trim();
   return html`
-    <div class="folder-field">
+    <div class="form-row folder-field">
       ${children}
       <${BrowseButton}
         start=${isAbsolutePathText(text) ? text : (fallback ?? "")}

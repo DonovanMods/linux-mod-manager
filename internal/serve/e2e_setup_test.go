@@ -1266,7 +1266,7 @@ api:
 		clickWhenSettled(`[data-action="new-source"]`),
 		chromedp.WaitVisible(`[data-testid="source-editor"]`, chromedp.ByQuery),
 		chromedp.SetValue(`.source-editor__textarea`, yaml, chromedp.ByQuery),
-		clickWhenSettled(`.plan__control--inline input[type="checkbox"]`),
+		clickWhenSettled(`.source-editor .form-check input[type="checkbox"]`),
 		chromedp.WaitVisible(`.source-editor input[type="text"]`, chromedp.ByQuery),
 		chromedp.SendKeys(`.source-editor input[type="text"]`, "some-mod-id", chromedp.ByQuery),
 		clickWhenSettled(`[data-action="validate-source"]`),

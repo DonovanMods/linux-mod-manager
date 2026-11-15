@@ -808,6 +808,38 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Changed
 
+- **Every field and form in the web UI is drawn one way (#653).** The
+  control system that made every button one height and look (#518) now
+  covers every other control and every form: text fields, selects and
+  text areas share the button height, so a field and its button line up;
+  checkboxes and radios are one size in the accent colour, and Setup's
+  automatic-update setting is drawn as an on/off switch; every file picker
+  is a real button you can reach with Tab (Setup's **Choose archive…** and
+  the fill drop zone's **Choose files…** were labels dressed as buttons);
+  a refused field is outlined in red beside its reason. Every dialog,
+  Setup panel and the mod slide-over lays out its fields the same way:
+  heading, fields, buttons, hint. Visible changes: a checkbox sits beside
+  its text everywhere (several collection-import and collection-update
+  options stacked the box above the text); the add-game form's catalog
+  search field and **Search** button share a row; a plan's Advanced choice
+  (deploy's link method) puts its label over its select; Setup's fields
+  keep a reading width. The audit, by surface: Setup (games and the add
+  form, the game editor, authentication, custom-source editor, archive
+  import, adopt, search indexes, updates); the profiles window (create,
+  rename, duplicate, export with files, fill from downloads, the four
+  import sources) and **Import collection…**; the confirm windows' option
+  controls (install's version and files, re-link, copy, purge's
+  type-the-name, update-from-file's version prompt, every Advanced
+  option); the FOMOD wizard and installer picker; the plugins tab's rule
+  and group forms; the library toolbar and search page filters; the mod
+  slide-over's settings and category. [docs/control-system.md](docs/control-system.md)
+  says which class to use for what, and ratchet tests fail on a control or
+  form styled by hand, plus a browser test that opens all 40 dialogs and
+  forms in both themes (and again at a phone width). Whether a game maps the Steam Workshop, NexusMods or CurseForge
+  is now decided by one rule everywhere in the web UI (a non-empty
+  identifier, as core decides it), where the import window treated an
+  empty mapping as mapped.
+
 - **Removing the mod that wins a shared file hands it to the next mod in
   load order (#633).** When two enabled mods ship the same file and the one
   later in the load order goes - `lmm uninstall`, `lmm mod disable`, an

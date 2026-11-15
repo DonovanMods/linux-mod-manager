@@ -78,7 +78,10 @@ export function SetupUpdates() {
 
   if (!status) {
     return html`
-      <div class="setup-section" data-testid="setup-updates">
+      <div
+        class="form-section form-section--measure setup-section"
+        data-testid="setup-updates"
+      >
         ${
           error
             ? html`<p class="app-error">${error}</p>`
@@ -97,7 +100,7 @@ export function SetupUpdates() {
 
   return html`
     <div
-      class="setup-section"
+      class="form-section form-section--measure setup-section"
       data-testid="setup-updates"
       data-applicable=${applicable ? "true" : "false"}
     >
@@ -159,7 +162,7 @@ export function SetupUpdates() {
           </div>`
         }
       </dl>
-      <label class="plan__control plan__control--inline">
+      <label class="form-check">
         <input
           type="checkbox"
           role="switch"
@@ -171,11 +174,7 @@ export function SetupUpdates() {
         />
         Update automatically
       </label>
-      <p
-        class="empty-state__hint"
-        id=${reasonID}
-        data-testid="setup-updates-reason"
-      >
+      <p class="form-hint" id=${reasonID} data-testid="setup-updates-reason">
         ${
           !applicable
             ? auto?.reason ||

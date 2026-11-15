@@ -47,7 +47,7 @@ export function SourcesMapEditor({ sources, value, onChange, disabled }) {
       ${(sources ?? []).map(
         (s) => html`
           <div class="sources-map__row" key=${s.id}>
-            <label class="sources-map__toggle">
+            <label class="form-check sources-map__toggle">
               <input
                 type="checkbox"
                 name=${`source-${s.id}`}
@@ -56,7 +56,7 @@ export function SourcesMapEditor({ sources, value, onChange, disabled }) {
                 onChange=${(e) => setMapped(s.id, e.currentTarget.checked)}
               />
               ${s.name ?? s.id}${" "}
-              <span class="mono empty-state__hint">${s.id}</span>
+              <span class="mono form-hint">${s.id}</span>
             </label>
             <input
               type="text"

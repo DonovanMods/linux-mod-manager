@@ -98,7 +98,10 @@ export function SetupSources({ onChanged } = {}) {
   }
 
   return html`
-    <div class="setup-section" data-testid="setup-sources">
+    <div
+      class="form-section form-section--measure setup-section"
+      data-testid="setup-sources"
+    >
       <table class="setup-table">
         <thead>
           <tr>
@@ -128,7 +131,7 @@ export function SetupSources({ onChanged } = {}) {
         </tbody>
       </table>
 
-      <div class="setup-section__actions">
+      <div class="form-actions setup-section__actions">
         <button
           type="button"
           class="button"
@@ -399,14 +402,14 @@ function SourceEditor({ id, onSaved, onCancel }) {
   // other "true"/"false" literal under spa/app is a data-* or aria-*
   // attribute, which ARE strings by spec and are correct as written.
   return html`
-    <div class="source-editor" data-testid="source-editor">
+    <div class="form-section source-editor" data-testid="source-editor">
       ${loadError && html`<p class="modal__error">${loadError}</p>`}
       <div class="source-editor__frame">
         <div class="source-editor__gutter" aria-hidden="true">
           ${Array.from({ length: lines }, (_, i) => html`<span key=${i}>${i + 1}</span>`)}
         </div>
         <textarea
-          class="source-editor__textarea mono"
+          class="field--code source-editor__textarea"
           ref=${textareaRef}
           name="source-yaml"
           aria-label="Source definition (YAML)"
@@ -427,13 +430,13 @@ function SourceEditor({ id, onSaved, onCancel }) {
           }}
           onChoose=${insertPath}
         />
-        <span class="empty-state__hint"
+        <span class="form-hint"
           >Puts a folder's absolute path at the cursor, over any selected
           text.</span
         >
       </div>
 
-      <label class="plan__control plan__control--inline">
+      <label class="form-check">
         <input
           type="checkbox"
           checked=${probe}
@@ -444,9 +447,9 @@ function SourceEditor({ id, onSaved, onCancel }) {
       ${
         probe &&
         html`
-          <label class="plan__control">
+          <label class="form-field">
             Mod ID to probe with
-            <span class="empty-state__hint"
+            <span class="form-hint"
               >(required for an api source with no search endpoint)</span
             >
             <input
@@ -458,7 +461,7 @@ function SourceEditor({ id, onSaved, onCancel }) {
         `
       }
 
-      <div class="setup-section__actions">
+      <div class="form-actions setup-section__actions">
         <button
           type="button"
           class="button"

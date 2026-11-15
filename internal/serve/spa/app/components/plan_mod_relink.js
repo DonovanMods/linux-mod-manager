@@ -94,8 +94,8 @@ export function RelinkPlanView({ plan, modal, actions, state }) {
         }
       </section>
 
-      <div class="plan__form">
-        <label class="plan__control">
+      <div class="form-row plan__form">
+        <label class="form-field">
           New source
           <select
             name="relink-source"
@@ -112,7 +112,7 @@ export function RelinkPlanView({ plan, modal, actions, state }) {
             )}
           </select>
         </label>
-        <label class="plan__control">
+        <label class="form-field">
           New mod id
           <input
             type="text"
@@ -160,7 +160,7 @@ export function RelinkPlanView({ plan, modal, actions, state }) {
  */
 function MetadataOverride({ modal, actions, name, label }) {
   return html`
-    <label class="plan__control">
+    <label class="form-field">
       ${label}
       <input
         type="text"

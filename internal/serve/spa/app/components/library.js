@@ -1114,7 +1114,7 @@ export function Library({
             liveActivity || ""
           }</span
         >
-        <label class="library__control">
+        <label class="form-field form-field--inline library__control">
           Filter
           <select
             name="filter"
@@ -1124,7 +1124,7 @@ export function Library({
             ${FILTER_NAMES.map((f) => html`<option value=${f}>${FILTER_LABELS[f]}</option>`)}
           </select>
         </label>
-        <label class="library__control">
+        <label class="form-field form-field--inline library__control">
           Sort
           <select
             name="sort"
@@ -1140,7 +1140,7 @@ export function Library({
           // always was.
           ""
         }
-        <label class="library__control">
+        <label class="form-check library__control">
           <input
             type="checkbox"
             name="group-by-category"
@@ -1227,7 +1227,7 @@ export function Library({
                         // press is about to take.
                         ""
                       }
-                      <label class="library__select-all">
+                      <label class="form-check library__select-all">
                         <input
                           type="checkbox"
                           data-testid="select-all"

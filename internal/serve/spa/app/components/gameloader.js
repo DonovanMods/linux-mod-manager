@@ -61,8 +61,8 @@ export function loaderSpec(draft) {
 export function GameLoaderEditor({ value, onChange, disabled }) {
   const patch = (part) => onChange({ ...value, ...part });
   return html`
-    <div class="loader-editor" data-testid="loader-editor">
-      <label class="plan__control">
+    <div class="form-section loader-editor" data-testid="loader-editor">
+      <label class="form-field">
         Mod loader
         <select
           name="loader-kind"
@@ -77,7 +77,7 @@ export function GameLoaderEditor({ value, onChange, disabled }) {
       ${
         value.kind &&
         html`
-          <label class="plan__control">
+          <label class="form-field">
             Installed version
             <input
               type="text"
@@ -88,7 +88,7 @@ export function GameLoaderEditor({ value, onChange, disabled }) {
               onInput=${(e) => patch({ version: e.currentTarget.value })}
             />
           </label>
-          <label class="plan__control">
+          <label class="form-field">
             Unity runtime
             <select
               name="loader-runtime"
@@ -101,7 +101,7 @@ export function GameLoaderEditor({ value, onChange, disabled }) {
               )}
             </select>
           </label>
-          <label class="plan__control">
+          <label class="form-field">
             Bootstrap
             <select
               name="loader-bootstrap"
@@ -114,7 +114,7 @@ export function GameLoaderEditor({ value, onChange, disabled }) {
               )}
             </select>
           </label>
-          <p class="empty-state__hint">
+          <p class="form-hint">
             lmm does not install the loader and never writes a Steam launch
             option. Record what you installed here, and lmm will tell you the
             option to paste and check afterwards that it loaded.

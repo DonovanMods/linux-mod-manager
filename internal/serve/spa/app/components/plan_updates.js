@@ -140,7 +140,7 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
                     : `${displayVersion(u.installed_mod)} → ${displayUpdateTarget(u)}`;
               return html`
                 <li key=${key} class="plan__mod">
-                  <label>
+                  <label class="form-check">
                     <input
                       type="checkbox"
                       checked
@@ -148,10 +148,13 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
                       aria-label=${`Drop ${u.installed_mod.name} from this batch`}
                       onChange=${() => drop(key)}
                     />
-                    <span class="plan__mod-name">${u.installed_mod.name}</span
-                    >${" "}
-                    <span class="plan__mod-detail ${skipped ? "" : "mono"}"
-                      >${detail}</span
+                    <span
+                      ><span class="plan__mod-name"
+                        >${u.installed_mod.name}</span
+                      >${" "}
+                      <span class="plan__mod-detail ${skipped ? "" : "mono"}"
+                        >${detail}</span
+                      ></span
                     >
                   </label>
                 </li>

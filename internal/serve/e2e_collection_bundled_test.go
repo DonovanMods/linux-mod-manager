@@ -100,7 +100,7 @@ func TestE2E_BundledCollection_PlanListsItemsAndHoldsCodeBack(t *testing.T) {
 // clickPlanControl ticks the plan view's checkbox whose label holds text.
 func clickPlanControl(text string) chromedp.Action {
 	return chromedp.Evaluate(fmt.Sprintf(`
-		Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] label.plan__control'))
+		Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] label.form-check'))
 			.find((l) => l.textContent.includes(%q))?.querySelector('input').click();
 	`, text), nil)
 }

@@ -224,7 +224,10 @@ export function SetupGames({
   // refuses (`adapter_error`, issue 449) is the exception: it uses none, and
   // the cell says so (adaptercell.js).
   return html`
-    <div class="setup-section" data-testid="setup-games">
+    <div
+      class="form-section form-section--measure setup-section"
+      data-testid="setup-games"
+    >
       <table class="setup-table setup-table--games">
         <thead>
           <tr>
@@ -328,7 +331,7 @@ export function SetupGames({
         </tbody>
       </table>
 
-      <div class="setup-section__actions">
+      <div class="form-actions setup-section__actions">
         <button
           type="button"
           class="button"

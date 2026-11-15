@@ -92,7 +92,10 @@ export function SetupAuth({ focusSource = "" } = {}) {
   const orphaned = report.orphaned ?? [];
 
   return html`
-    <div class="setup-section" data-testid="setup-auth">
+    <div
+      class="form-section form-section--measure setup-section"
+      data-testid="setup-auth"
+    >
       <ul class="setup-auth__list" ref=${listRef}>
         ${sources.map(
           (s) =>
@@ -226,7 +229,7 @@ function AuthSourceRow({ source, onChanged }) {
               </button>
             `
           : html`
-              <form class="setup-auth__login" onSubmit=${login}>
+              <form class="form-row setup-auth__login" onSubmit=${login}>
                 <input
                   type="password"
                   autocomplete="off"
@@ -254,7 +257,7 @@ function AuthSourceRow({ source, onChanged }) {
         // field, so it is text now.
         !source.authenticated &&
         source.env_var &&
-        html`<span class="setup-auth__env-var empty-state__hint"
+        html`<span class="setup-auth__env-var form-hint"
           >or set <span class="mono">${source.env_var}</span></span
         >`
       }
@@ -277,7 +280,7 @@ function AuthSourceRow({ source, onChanged }) {
         !source.authenticated &&
         source.instructions &&
         html`<p
-          class="setup-auth__instructions empty-state__hint"
+          class="setup-auth__instructions form-hint"
           data-testid=${`auth-instructions-${source.id}`}
         >
           ${source.instructions}

@@ -23,13 +23,17 @@
 
 import { html, useState } from "../render.js";
 import { InlineJob } from "./jobprogress.js";
+import { isSourceMapped } from "../sourcemapping.js";
 
 const ADOPT_ORIGIN = "setup:adopt";
 const WORKSHOP_ORIGIN = "setup:workshop-adopt";
 
 export function SetupAdopt({ state, actions }) {
   const [skipMatch, setSkipMatch] = useState(false);
-  const workshopMapped = Boolean(state?.status?.source_ids?.steamworkshop);
+  const workshopMapped = isSourceMapped(
+    state?.status?.source_ids,
+    "steamworkshop",
+  );
 
   function start() {
     actions.openPlan({
@@ -52,12 +56,15 @@ export function SetupAdopt({ state, actions }) {
   }
 
   return html`
-    <div class="setup-section" data-testid="setup-adopt">
-      <p class="empty-state__hint">
+    <div
+      class="form-section form-section--measure setup-section"
+      data-testid="setup-adopt"
+    >
+      <p class="form-hint">
         Scans the game's mod directory for files lmm doesn't already track and
         offers to bring them under management.
       </p>
-      <label class="plan__control plan__control--inline">
+      <label class="form-check">
         <input
           type="checkbox"
           checked=${skipMatch}
@@ -65,7 +72,7 @@ export function SetupAdopt({ state, actions }) {
         />
         Skip source matching (faster, no metadata lookup)
       </label>
-      <div class="setup-section__actions">
+      <div class="form-actions setup-section__actions">
         <${InlineJob} origin=${ADOPT_ORIGIN} state=${state} actions=${actions}>
           <button
             type="button"
@@ -81,15 +88,18 @@ export function SetupAdopt({ state, actions }) {
     ${
       workshopMapped &&
       html`
-        <div class="setup-section" data-testid="setup-workshop-adopt">
-          <h3 class="plan__heading">Steam Workshop</h3>
-          <p class="empty-state__hint">
+        <div
+          class="form-section form-section--measure setup-section"
+          data-testid="setup-workshop-adopt"
+        >
+          <h3 class="form-section__heading">Steam Workshop</h3>
+          <p class="form-hint">
             Reads what the Steam client has already downloaded for this game and
             records the items lmm doesn't track yet. Nothing is downloaded,
             moved or copied - Steam owns those files where they sit, and the
             game loads them from there.
           </p>
-          <div class="setup-section__actions">
+          <div class="form-actions setup-section__actions">
             <${InlineJob}
               origin=${WORKSHOP_ORIGIN}
               state=${state}

@@ -33,7 +33,7 @@ export function PurgePlanView({ plan, modal, actions }) {
   // on screen explaining why. Harmless - there is nothing to purge - but
   // undocumented, and it would break outright the moment the input moved.
   const confirmName = html`
-    <label class="plan__confirm-name">
+    <label class="form-field plan__confirm-name">
       <span>Type <span class="mono">${plan.profile}</span> to confirm</span>
       <input
         type="text"

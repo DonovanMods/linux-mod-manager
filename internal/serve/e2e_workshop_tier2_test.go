@@ -293,7 +293,7 @@ func TestE2E_WorkshopTier2_TheCollectionPlanRendersItsOwnDocument(t *testing.T) 
 		chromedp.WaitVisible(`[data-testid="collection-items"]`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="profile_import"]`, &modal),
 		textContent(`[data-testid="collection-header"]`, &header),
-		chromedp.Evaluate(`Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] .plan__control')).filter((l) => l.textContent.includes("Download and install")).length;`, &installControls),
+		chromedp.Evaluate(`Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] .form-check')).filter((l) => l.textContent.includes("Download and install")).length;`, &installControls),
 		chromedp.Evaluate(`document.querySelectorAll('.modal[data-kind="profile_import"] .plan__advanced').length;`, &advanced),
 		chromedp.Evaluate(`document.querySelectorAll('[data-testid="collection-items"] a[href*="steamcommunity.com"]').length;`, &links),
 	)
