@@ -194,6 +194,9 @@ type ConvertedCollection struct {
 	// (#620), with how many of each order's files the recipe ties to one of
 	// the collection's mods.
 	LoadOrders []ConvertedLoadOrder `json:"load_orders,omitempty"`
+	// Summary is the plan's overview (#654): the counts both frontends show
+	// first, and the items that need the user. Set with Counts.
+	Summary *CollectionPlanSummary `json:"summary,omitempty"`
 
 	// loadOrderMods maps, per load-order id, a file of the order to the
 	// collection mod the recipe's hint ties it to, for the plan.
@@ -211,6 +214,10 @@ type ConvertedCollection struct {
 	// itself does not carry (it is in phase order). The import's apply
 	// reads it, so an installer sees only earlier phases' files.
 	phases map[string]int
+	// facts is what the plan summary (#654) reads of each item beyond its
+	// wire fields, by ConvertedCollectionItem.ID: whether its installer
+	// asks, and whether it is a prerequisite step.
+	facts map[string]itemFacts
 }
 
 // ConvertedCollectionItem is one item of a converted collection.
@@ -314,6 +321,8 @@ type convItem struct {
 	fileList []domain.FileListEntry
 	patches  []domain.FilePatch
 	bundle   *bundledItem
+	// prerequisite marks an item turned into a prerequisite step (#635).
+	prerequisite bool
 }
 
 // inEntry reports whether it belongs in its mod's profile entry: it is
@@ -524,8 +533,13 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 		return nil, err
 	}
 	out.Notes = append(out.Notes, warnings...)
+	out.facts = make(map[string]itemFacts, len(items))
 	for _, it := range items {
 		out.Items = append(out.Items, it.ConvertedCollectionItem)
+		out.facts[it.ID] = itemFacts{
+			installerAsks: it.Installer && len(it.choices) == 0,
+			prerequisite:  it.prerequisite,
+		}
 	}
 	out.WithOptional = in.withOptional
 	for id := range in.optional {
@@ -1344,4 +1358,5 @@ func (c *ConvertedCollection) recount() {
 	for _, it := range c.Items {
 		c.Counts[it.State]++
 	}
+	c.Summary = c.summarise()
 }

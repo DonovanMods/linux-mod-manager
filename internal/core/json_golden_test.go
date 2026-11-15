@@ -2548,6 +2548,21 @@ func TestJSONGoldens(t *testing.T) {
 			convertedCollectionFixture(),
 		},
 		{
+			// #654: a converted collection plan's overview - the counts both
+			// frontends lead with, and the items needing the user, with why.
+			"collection_plan_summary",
+			core.CollectionPlanSummary{
+				Items: 9, Install: 3, Installed: 1, Optional: 2, OptionalSelected: 1,
+				InstallerQuestions: 1, ManualDownload: 0, External: 2, Unsupported: 1,
+				Attention: []core.CollectionAttentionItem{
+					{ID: "2:22", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionInstallerQuestions, core.CollectionAttentionOldFile}},
+					{ID: "2400:240", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionPrerequisite}},
+					{ID: "6:66", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionUnsupported}},
+					{ID: "item:7", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionExternal}},
+				},
+			},
+		},
+		{
 			// #607: the JSON plan of `lmm profile import --nexus-collection`
 			// - the converted document's import plan with the source
 			// collection beside it (CollectionImport.Source).
