@@ -496,7 +496,7 @@ func (s *Service) planArchiveContents(ctx context.Context, game *domain.Game, ar
 		}
 	case importKindExtract:
 		if !NewExtractor().CanExtract(archivePath) {
-			return nil, fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
+			return nil, fmt.Errorf("%w: %s", ErrUnsupportedArchive, filepath.Ext(archivePath))
 		}
 		if members, err = listArchiveMembers(ctx, NewExtractor(), archivePath); err != nil {
 			return nil, err

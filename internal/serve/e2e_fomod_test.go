@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -277,7 +278,7 @@ func TestE2E_FomodWizard_UseTheInstallersDefaults(t *testing.T) {
 // so the import comes back with the (stale) question, the wizard asks it,
 // and its answer - re-posted over the same file, uploaded again - imports
 // the profile with the new choices (#615 web parity).
-func TestE2E_FomodWizard_ACollectionWithStaleRecordedChoices(t *testing.T) {
+func TestE2E_FomodWizard_ACollectionWithStaleRecordedChoicesIsLeftToFinish(t *testing.T) {
 	f := newE2EFixtureWithSearchableMods(t)
 	f.Src.addMod(e2eSearchSourceMod{
 		mod:      domain.Mod{ID: "wizard", SourceID: "fake", Name: "Wizard Mod", Version: "1.0"},
@@ -311,7 +312,11 @@ func TestE2E_FomodWizard_ACollectionWithStaleRecordedChoices(t *testing.T) {
 	assert.Contains(t, plan, "Size > Texture: Gone")
 	assert.Contains(t, plan, "Replayed as written")
 
-	var stale string
+	// #660: the import no longer stops to ask - the installer is left to
+	// finish, its reason saying the recorded choices are stale (Part 2's
+	// Finish collection asks it).
+	var wizard bool
+	var todos []e2eTodo
 	f.runInBrowser(t,
 		chromedp.Evaluate(`
 			Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] label.form-check'))
@@ -319,22 +324,15 @@ func TestE2E_FomodWizard_ACollectionWithStaleRecordedChoices(t *testing.T) {
 		`, nil),
 		settleEffects(),
 		clickWhenSettled(`.modal[data-kind="profile_import"] [data-action="confirm"]`),
-		chromedp.WaitVisible(fomodModal+` [data-testid="fomod-step"][data-mod="fake:wizard"]`, chromedp.ByQuery),
-		textContent(fomodModal, &stale),
-		chromedp.Click(fomodModal+` [data-option="2K"] input`, chromedp.ByQuery),
-		clickWhenSettled(fomodModal+` [data-action="fomod-finish"]`),
-		waitGone(fomodModal),
+		awaitJobsSettled(),
+		quietWindow(),
+		chromedp.Evaluate(`document.querySelector(`+"`"+fomodModal+"`"+`) !== null`, &wizard),
+		fetchTodos(f.Game.ID, "Wizard Pack", &todos),
 	)
-	assert.Contains(t, stale, "no longer fit", "the wizard says the recorded choices are stale")
-	require.Eventually(t, func() bool {
-		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "Wizard Pack")
-		if err != nil {
-			return false
-		}
-		ref := p.FindRef("fake", "wizard")
-		return ref != nil && len(ref.Fomod.Steps) > 0 && len(ref.Fomod.Steps[0].Groups) > 0 &&
-			len(ref.Fomod.Steps[0].Groups[0].Choices) == 1 && ref.Fomod.Steps[0].Groups[0].Choices[0].Name == "2K"
-	}, 30*time.Second, e2ePollInterval, "the profile records the answered choices")
+	assert.False(t, wizard, "the import never stops to ask")
+	require.Len(t, todos, 1)
+	assert.Equal(t, "installer_questions", todos[0].Reason)
+	assert.Equal(t, "stale", todos[0].FomodReason)
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -502,4 +500,18 @@ func stableFocusJS(sel string) string {
 		window.__stableFocus = ok ? el : null;
 		return ok && prev === el;
 	})()`, sel)
+}
+
+// e2eTodo is one item of GET /api/v1/profiles/{name}/todos (#660).
+type e2eTodo struct {
+	ModID       string `json:"mod_id"`
+	Reason      string `json:"reason"`
+	FomodReason string `json:"fomod_reason"`
+	Action      string `json:"action"`
+	Remedy      string `json:"remedy"`
+}
+
+// fetchTodos reads profile's items left to finish from the page.
+func fetchTodos(gameID, profile string, into *[]e2eTodo) chromedp.Action {
+	return chromedp.Evaluate(`fetch("/api/v1/profiles/"+encodeURIComponent(`+strconv.Quote(profile)+`)+"/todos?game="+`+strconv.Quote(gameID)+`).then((r) => r.json()).then((d) => d.todos)`, into, awaitPromise)
 }

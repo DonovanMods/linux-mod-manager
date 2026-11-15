@@ -11,7 +11,6 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
-	"errors"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -220,18 +219,19 @@ func TestCollectionPhases_AlreadyCachedEarlierPhaseIsPresent(t *testing.T) {
 func TestCollectionSourceMD5_ADifferentArchiveAsks(t *testing.T) {
 	f := newPhasedFixture(t, phasedRecipe)
 	f.src.md5["11"] = strings.Repeat("f", 32)
+	// #660: the question is the item's to-do; the rest installs.
 	_, err := f.apply(t, nil)
-	var q *core.FomodChoicesRequiredError
-	require.True(t, errors.As(err, &q), "got %v", err)
-	require.Len(t, q.Mods, 1)
-	assert.Equal(t, core.FomodReasonArchiveMismatch, q.Mods[0].Reason)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+	require.Len(t, incomplete.Result.Todos, 1)
+	assert.Equal(t, core.FomodReasonArchiveMismatch, incomplete.Result.Todos[0].FomodReason)
 	sum := md5.Sum(f.installer)
-	require.NotNil(t, q.Mods[0].ArchiveMismatch)
-	assert.Equal(t, hex.EncodeToString(sum[:]), q.Mods[0].ArchiveMismatch.ActualMD5)
 
 	// The curator's own archive replays unasked.
 	f.src.md5["11"] = hex.EncodeToString(sum[:])
-	_, err = f.apply(t, nil)
+	plan, err := f.svc.PlanSourceCollectionImport(context.Background(), f.game, core.SourceCollectionImportRequest{SourceID: "nexusmods", Ref: "phased"})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 	require.NoError(t, err)
 	assert.Contains(t, f.installerFiles(t), "patch.txt")
 }

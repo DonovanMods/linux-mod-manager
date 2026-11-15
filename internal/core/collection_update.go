@@ -1058,15 +1058,34 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	if len(plan.Unsupported) > 0 {
 		return result, &CollectionUnsupportedError{Unsupported: plan.Unsupported, Supported: supportedExcept(plan.Unsupported)}
 	}
-	// #657: every new pin the source no longer offers is the user's to
-	// decide first.
+	// #657/#660: a new pin the source no longer offers, with no current
+	// file to stand in for it, is not downloaded: the item is left in the
+	// profile with a gone_pin to-do, as at an import. Every other item is
+	// applied.
 	overridden := func(key string) bool { return opts.OverrideConflicts || slices.Contains(opts.Override, key) }
-	if undecided := undecidedGonePins(plan.Source, overridden); len(undecided) > 0 {
-		return result, &CollectionGonePinsError{Pins: undecided}
+	todoHeld := map[string]*domain.CollectionTodo{}
+	keepYours := map[string]bool{}
+	for _, p := range undecidedGonePins(plan.Source, overridden) {
+		if p.Conflict {
+			// The entry is the user's, installed and working: overriding
+			// it with a pin nothing can install would leave a gap, so their
+			// version is kept, and the result says how to take the
+			// collection's.
+			keepYours[p.Key()] = true
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: your version is kept - %s no longer offers the file the collection pins, and nothing stands in for it",
+				p.describe(), plan.Source.sourceName()))
+			continue
+		}
+		todoHeld[p.Key()] = &domain.CollectionTodo{Reason: domain.TodoGonePin, Name: p.Name,
+			FileIDs: slices.Clone(p.FileIDs), CanSkipFile: p.CanSkipFile,
+			Detail: fmt.Sprintf("%s no longer offers %s, and no current file stands in for it", plan.Source.sourceName(), describePin(p.Version, p.FileIDs))}
 	}
 	choices, err := resolveUpdateChoices(plan, opts)
 	if err != nil {
 		return result, err
+	}
+	for key := range keepYours {
+		delete(choices.override, key)
 	}
 	// #610: a patch to code is refused, not dropped, as at an import.
 	if plan.RestrictedPatches > 0 && !opts.AllowAnyOverrides {
@@ -1169,18 +1188,33 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	importOpts := ProfileImportOptions{
 		Force: true, Install: true, Fomod: opts.Fomod, AllowAnyOverrides: opts.AllowAnyOverrides,
 		// The profile's own hooks are the target's; a document's never are.
-		WithHooks:    true,
-		AllOrNothing: plan.Origin == CollectionFromSource,
+		WithHooks: true,
+		// #660: an update installs what it can and leaves the rest to do.
+		RecordTodos: true,
 	}
-	pending := 0
 	if plan.manualDownload {
 		// As a source collection's import on a free account: only what
-		// needs no download is installed, and the rest is recorded pending.
-		// #610: a bundled item needs no download.
-		keep := slices.Concat(bundledOnly(ip.NeedsRedownload), bundledOnly(ip.Missing))
-		pending = len(ip.NeedsRedownload) + len(ip.Missing) - len(keep)
-		ip.NeedsRedownload, ip.Missing = bundledOnly(ip.NeedsRedownload), bundledOnly(ip.Missing)
+		// needs no download is installed (#610: a bundled item needs
+		// none), and the rest is left a manual-download to-do.
+		var names map[string]string
+		if plan.Source != nil {
+			names = plan.Source.itemNames()
+		}
+		for _, ref := range slices.Concat(ip.NeedsRedownload, ip.Missing) {
+			if key := domain.ModKey(ref.SourceID, ref.ModID); ref.SourceID != domain.SourceCollection && todoHeld[key] == nil {
+				todoHeld[key] = &domain.CollectionTodo{Reason: domain.TodoManualDownload, Name: names[key],
+					Detail: "this account is not served downloads through the API"}
+			}
+		}
 	}
+	manualPending := 0
+	for _, t := range todoHeld {
+		if t.Reason == domain.TodoManualDownload {
+			manualPending++
+		}
+	}
+	ip, pending := ip.installingNone(todoHeld)
+	importOpts.heldTodos = todoHeld
 	if b := plan.bundle; b != nil {
 		if err := s.keepPendingBundle(game, b, opts.AllowAnyOverrides); err != nil {
 			return result, err
@@ -1191,14 +1225,15 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	if importResult != nil && importResult.ProfileName != "" && !importResult.Refused {
 		importResult.OverridesSkipped = heldBack
 		importResult.BundledSkipped = bundledSkipped
-		if pending > 0 {
-			importResult.Skipped += pending
-			importResult.Notes = append(importResult.Notes, fmt.Sprintf("This account is not served downloads through the API, so %d item(s) the new version adds or moves are recorded pending: get each file from its page and install it from the file.", pending))
+		importResult.Skipped += pending
+		if manualPending > 0 {
+			importResult.Notes = append(importResult.Notes, fmt.Sprintf("This account is not served downloads through the API, so %d item(s) the new version adds or moves are recorded pending: get each file from its page and install it from the file.", manualPending))
 		}
-	}
-	if plan.Origin == CollectionFromSource {
-		if lapsed := s.lapsedAccount(plan.SourceID, err); lapsed != nil {
-			return result, lapsed
+		if terr := s.recordCollectionTodos(ctx, game, importResult, todoHeld); terr != nil && err == nil {
+			err = terr
+		}
+		if err == nil && needsUser(importResult.Todos) {
+			err = &ProfileImportIncompleteError{Profile: importResult.ProfileName, Result: importResult}
 		}
 	}
 	if importResult == nil || importResult.ProfileName == "" || importResult.Refused {

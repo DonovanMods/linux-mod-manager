@@ -643,6 +643,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		for _, w := range plan.Warnings {
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
+		printIncomplete(plan.Unresolved) // #660
 	}
 
 	if plan.FlagOnly {
@@ -1208,11 +1209,11 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 	if collection != nil && !jsonOutput {
 		printCollectionPlan(collection, game)
 	}
-	if collection != nil && (len(collection.Unsupported) > 0 || hasUndecidedGonePins(collection.Source, nil)) {
+	if collection != nil && len(collection.Unsupported) > 0 {
 		// The plan always renders; the apply refuses, writing nothing,
-		// and there is nothing to ask first - an unsupported feature, or
-		// (#657) a pinned file the source no longer offers that no flag
-		// decided.
+		// and there is nothing to ask first: an unsupported feature. (A
+		// pinned file the source no longer offers no longer refuses,
+		// #660: it defaults to the current file, or is left to finish.)
 		_, err := service.ApplyCollectionImport(ctx, game, plan, core.ProfileImportOptions{}, nil)
 		return err
 	}
@@ -1356,6 +1357,8 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 				fmt.Println()
 			}
 			fmt.Printf("    Error: %s\n", p.Detail)
+		case core.ImportDownloadReused:
+			fmt.Printf("    %s\n", p.Detail)
 		case core.ImportDownloadDone:
 			fmt.Println()
 		case core.ImportModInstalled:
@@ -1389,6 +1392,18 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		}
 		return r.FomodChoicesRequired
 	})
+	// #660: a collection import never stops to ask; once it has installed
+	// everything else, the answers --fomod-choices or --fomod-defaults give
+	// answer the installers it left to finish.
+	if collection != nil && (fomodDefaults || fomodChoicesPath != "") && result != nil && len(result.Todos) > 0 &&
+		(err == nil || errors.As(err, new(*core.ProfileImportIncompleteError))) {
+		if ferr := finishInstallersAfterImport(ctx, service, game, fa, result); ferr != nil {
+			return ferr
+		}
+		if result.Failed == 0 {
+			err = nil
+		}
+	}
 	// #485: saving the profile and continuing past a failed mod remains a
 	// useful partial outcome, but it is not a successful import. The typed
 	// error carries result for --json; plain output keeps the summary below.
@@ -1429,10 +1444,6 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		for _, note := range result.Notes {
 			fmt.Printf("  %s\n", note)
 		}
-		// #608: the pending items install in one go once downloaded.
-		if collection.Source != nil && collection.Source.ManualDownload && result.Skipped > 0 && result.ProfileName != "" {
-			fmt.Printf("  Once they are downloaded, install them all at once: lmm profile fill %q <download-folder>\n", result.ProfileName)
-		}
 	}
 	printImportGatesResult(plan, result)
 
@@ -1442,6 +1453,22 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 	// as the loud backstop, matching applyRecompile's identical fix (M4).
 	for _, w := range result.Warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+
+	// #660: a collection import installs what it can and lists the rest as
+	// items left to do, each with the command that resolves it; its last
+	// line is the command to run next.
+	if collection != nil && !noInstall && !declined && result.Total > 0 {
+		fmt.Printf("\n--- Summary ---\n")
+		if result.ReusedDownloads > 0 {
+			fmt.Printf("Reused %d downloaded file(s) from an earlier attempt.\n", result.ReusedDownloads)
+		}
+		printCollectionImportSummary(result)
+		if incompleteErr != nil {
+			// Already said, in full: the exit status says it is unfinished.
+			return fmt.Errorf("%w", ErrReported)
+		}
+		return nil
 	}
 
 	switch {
@@ -1840,6 +1867,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	if profileApplyDryRun && jsonOutput {
 		return emitJSON(plan)
 	}
+	printIncomplete(plan.Unresolved) // #660
 
 	if plan.NoChanges {
 		if jsonOutput {

@@ -177,29 +177,39 @@ func TestFlowCollectionUpdate_AnInstallersQuestionRoundTrips(t *testing.T) {
 	v2 := "lmm_collection: 1\nid: coll-1\nversion: 2\nname: shared\ngame_id: g1\nmods:\n  - {source_id: " + fixtureSourceID + ", mod_id: " + fomodModID + ", version: \"1.0\", file_ids: [w1]}\n"
 	body.Store(&v2)
 
+	// #660: the update applies, leaving the installer to finish; its job
+	// succeeds with the item on its tally.
 	j = runFlow(t, s, game, "collection_update", `{"profile":"shared"}`, "")
 	st := j.status()
+	require.Equal(t, jobSucceeded, st.State, "%+v", st.Error)
+	require.NotNil(t, st.Tally)
+	assert.Equal(t, "collection_update", st.Tally.Kind)
+	assert.Equal(t, 1, st.Tally.Todos)
+	saved, err := config.LoadProfile(svc.ConfigDir(), game.ID, "shared")
+	require.NoError(t, err)
+	assert.Equal(t, 2, saved.Collection.Version, "the update applied")
+
+	// Finishing it asks, as a profile import's job reports it (the web UI's
+	// fomodQuestionFor reads it there), and the answers install it.
+	key := fixtureSourceID + ":" + fomodModID
+	id := planFlowFor(t, s, game, "shared", "collection_finish", `{"retry":["`+key+`"]}`)
+	j = startFlowJob(t, s, id, "")
+	st = j.status()
 	require.Equal(t, jobFailed, st.State)
-	require.NotNil(t, st.Error)
 	raw, err := json.Marshal(st.Error.Details)
 	require.NoError(t, err)
-	// The import result's question, as a profile import's job reports it
-	// (the web UI's fomodQuestionFor reads it there).
 	var details struct {
 		Question core.FomodChoicesRequiredError `json:"fomod_choices_required"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &details))
 	require.NotEmpty(t, details.Question.Mods, "details: %s", raw)
 	assert.Equal(t, fomodModID, details.Question.Mods[0].ModID)
-	saved, err := config.LoadProfile(svc.ConfigDir(), game.ID, "shared")
-	require.NoError(t, err)
-	assert.Equal(t, 1, saved.Collection.Version, "nothing written")
 
-	j = runFlow(t, s, game, "collection_update", `{"profile":"shared"}`, fomodAnswer(t, sizeStep("2K", 0)))
+	id = planFlowFor(t, s, game, "shared", "collection_finish", `{"retry":["`+key+`"]}`)
+	j = startFlowJob(t, s, id, fomodAnswer(t, sizeStep("2K", 0)))
 	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
 	saved, err = config.LoadProfile(svc.ConfigDir(), game.ID, "shared")
 	require.NoError(t, err)
-	assert.Equal(t, 2, saved.Collection.Version)
 	ref := saved.FindRef(fixtureSourceID, fomodModID)
 	require.NotNil(t, ref)
 	assert.Equal(t, "2K", ref.Fomod.Steps[0].Groups[0].Choices[0].Name)

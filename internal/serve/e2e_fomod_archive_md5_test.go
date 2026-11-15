@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +19,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-func TestE2E_FomodWizard_ACollectionForAnotherArchive(t *testing.T) {
+func TestE2E_FomodWizard_ACollectionForAnotherArchiveIsLeftToFinish(t *testing.T) {
 	f := newE2EFixtureWithSearchableMods(t)
 	f.Src.addMod(e2eSearchSourceMod{
 		mod:      domain.Mod{ID: "wizard", SourceID: "fake", Name: "Wizard Mod", Version: "1.0"},
@@ -34,8 +33,11 @@ func TestE2E_FomodWizard_ACollectionForAnotherArchive(t *testing.T) {
 	importPath := filepath.Join(t.TempDir(), "pack.yaml")
 	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
 
-	var note string
-	var picked bool
+	// #660: the import no longer stops to ask - the installer is left to
+	// finish, its reason saying the archive is another (Part 2's Finish
+	// collection asks it).
+	var wizard bool
+	var todos []e2eTodo
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
@@ -56,23 +58,15 @@ func TestE2E_FomodWizard_ACollectionForAnotherArchive(t *testing.T) {
 		`, nil),
 		settleEffects(),
 		clickWhenSettled(`.modal[data-kind="profile_import"] [data-action="confirm"]`),
-		chromedp.WaitVisible(fomodModal+` [data-testid="fomod-step"][data-mod="fake:wizard"]`, chromedp.ByQuery),
-		textContent(fomodModal+` .plan__note`, &note),
-		chromedp.Evaluate(`document.querySelector('`+fomodModal+` [data-option="2K"] input').checked`, &picked),
-		clickWhenSettled(fomodModal+` [data-action="fomod-finish"]`),
-		waitGone(fomodModal),
+		awaitJobsSettled(),
+		quietWindow(),
+		chromedp.Evaluate(`document.querySelector(`+"`"+fomodModal+"`"+`) !== null`, &wizard),
+		fetchTodos(f.Game.ID, "Pinned Pack", &todos),
 	)
-	assert.Contains(t, note, "not the archive the collection's choices were recorded against")
-	assert.Contains(t, note, recorded, "the recorded md5 is shown")
-	assert.True(t, picked, "the collection's choice is selected")
-	require.Eventually(t, func() bool {
-		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "Pinned Pack")
-		if err != nil {
-			return false
-		}
-		ref := p.FindRef("fake", "wizard")
-		return ref != nil && len(ref.Fomod.Steps) > 0 && len(ref.Fomod.Steps[0].Groups) > 0 &&
-			len(ref.Fomod.Steps[0].Groups[0].Choices) == 1 && ref.Fomod.Steps[0].Groups[0].Choices[0].Name == "2K"
-	}, 30*time.Second, e2ePollInterval, "the profile records the answered choices")
+	assert.False(t, wizard, "the import never stops to ask")
+	require.Len(t, todos, 1)
+	assert.Equal(t, "installer_questions", todos[0].Reason)
+	assert.Equal(t, "archive_mismatch", todos[0].FomodReason)
+	assert.Contains(t, todos[0].Remedy, "not the archive the curator recorded their choices against")
 	assert.Empty(t, f.BrowserErrors())
 }

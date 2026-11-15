@@ -575,6 +575,9 @@ func (pm *ProfileManager) putRef(ctx context.Context, gameID, profileName string
 	if err != nil {
 		return err
 	}
+	// #660: the copy installs the mod here, which resolves any item this
+	// profile's collection had left to do for it.
+	ref.Todo = nil
 	found := false
 	for i := range profile.Mods {
 		if profile.Mods[i].SourceID == ref.SourceID && profile.Mods[i].ModID == ref.ModID {

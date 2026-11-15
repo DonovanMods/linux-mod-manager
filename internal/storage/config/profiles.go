@@ -163,6 +163,10 @@ type ModReferenceConfig struct {
 	// current file stands in for (domain.ModReference.SubstitutedFor);
 	// omitted when nil, so a file without it is unchanged.
 	SubstitutedFor *domain.CollectionPin `yaml:"substituted_for,omitempty"`
+	// Todo is #660's record of why a collection item is not installed
+	// (domain.ModReference.Todo); omitted when nil, so a file without it
+	// is unchanged.
+	Todo *domain.CollectionTodo `yaml:"todo,omitempty"`
 	// FileList and Patches are #610's exact file lists and binary patches,
 	// keyed by file id; omitted when empty, so a file without them is
 	// unchanged.
@@ -361,6 +365,7 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 			FomodOrder:     slices.Clone(m.FomodOrder),
 			FromCollection: m.FromCollection,
 			SubstitutedFor: m.SubstitutedFor.Clone(),
+			Todo:           m.Todo.Clone(),
 			// #610: copied, so the profile's maps are its own.
 			FileList: m.FileList.Clone(),
 			Patches:  m.Patches.Clone(),
@@ -462,6 +467,21 @@ type exportedProfileYAML struct {
 // --json`, #309) so the two document formats cannot drift apart on what
 // counts as "the exported profile".
 func ExportProfileValue(profile *domain.Profile) *domain.ExportedProfile {
+	exported := SnapshotProfileValue(profile)
+	// #660 review: this machine's records are never exported - not in the
+	// YAML (their yaml "-" tags), and not in this value either, which
+	// `profile export --json` emits.
+	for i := range exported.Mods {
+		exported.Mods[i].Todo, exported.Mods[i].SubstitutedFor = nil, nil
+	}
+	return exported
+}
+
+// SnapshotProfileValue is ExportProfileValue keeping this machine's records
+// - each mod's to-do (#660) and the gone pin a substitute stands in for
+// (#657): a snapshot is this machine's own state, and a restore must put
+// them back. Its Mods are a copy, never profile's own slice.
+func SnapshotProfileValue(profile *domain.Profile) *domain.ExportedProfile {
 	var linkMethod string
 	if profile.LinkMethodExplicit {
 		linkMethod = profile.LinkMethod.String()
@@ -473,10 +493,11 @@ func ExportProfileValue(profile *domain.Profile) *domain.ExportedProfile {
 			overrides[path] = string(content)
 		}
 	}
+	mods := slices.Clone(profile.Mods)
 	return &domain.ExportedProfile{
 		Name:          profile.Name,
 		GameID:        profile.GameID,
-		Mods:          profile.Mods,
+		Mods:          mods,
 		LinkMethod:    linkMethod,
 		Overrides:     overrides,
 		Hooks:         profile.Hooks,

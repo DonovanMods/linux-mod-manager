@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A collection import installs what it can, and the rest is left to
+  finish (#660).** A collection import (NexusMods, `.lmmc`, a link) and a
+  collection update are no longer all or nothing: one mod that fails no
+  longer throws away the other 999. Every mod that installs is installed;
+  each one that does not stays in the profile, in its place in the load
+  order, with why and the one action that resolves it - answer its
+  installer, use the mod's current file, retry the download, download it
+  by hand, install a missing tool, or skip it (the skip is remembered, so
+  an update does not add it back). The import never stops part-way to
+  ask. It ends "Imported 998 of 1000 mods; 2 need you", with the command
+  for each, and its last line is the command to run next. **`lmm profile
+finish <profile>`** lists and resolves the list (`--retry <mod>|all`,
+  `--use-current`, `--skip-file`, `--skip`, `--from <folder>`, the FOMOD
+  flags, `--dry-run`, `--json`); a retry reuses the archives an earlier
+  attempt downloaded, and says so. Deploy, launch, `profile switch` and
+  `profile apply` run on an unfinished collection with a warning that the
+  game may not behave as the curator intended, and leave its items alone;
+  `lmm status` counts them. The web UI's API gains the `collection_finish`
+  plan kind and `GET /api/v1/profiles/{name}/todos`; a collection import
+  job that leaves items to finish succeeds, with them on its tally
+  (`todos`, `total`).
+- **A gone pin defaults to the mod's current file (#660).** When a file the
+  collection pins is gone and a current file stands in for it, the import
+  installs the current file without asking first, and the plan says so -
+  and says when the curator pinned that version exactly (`curator_exact`
+  in `--json`, beside `default`). `--skip <mod>` leaves it out instead. A
+  gone pin nothing stands in for is left to finish rather than refusing
+  the import. In the browser the current file is preselected, with Skip
+  beside it.
+
 - **A collection pinning a file NexusMods no longer offers is decided at
   plan time, per mod (#657).** Authors who remove old files on every update
   (the Unofficial Skyrim Special Edition Patch does) used to fail a
@@ -859,6 +889,24 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
     marked `fomod_reanswer` and says so on the Updates card.
 
 ### Changed
+
+- **A failed collection item gets advice that fits it (#660).** "Reinstall
+  the mod or run 'lmm update' to adopt the current version" is an
+  installed mod's remedy; a collection item whose pinned file is gone was
+  never installed, so its text is the fact alone and its to-do carries the
+  action. An installed mod keeps the old sentence.
+- **A collection import with failed items is no longer refused (#660).** It
+  used to write nothing when one mod failed (C2's all-or-nothing rule);
+  the owner ruled that out. The CLI exits non-zero while anything is
+  left to finish (a gone pin nothing stands in for included), and
+  `--json` gains `todos` and `total`; a free account's import, whose mods
+  are pending downloads, still exits zero. A gone pin no longer refuses an
+  import or update, so `CollectionGonePinsError` (#657, never released) is
+  removed. `profile export --json` no longer carries a mod's
+  `substituted_for` (nor its new `todo`): both are this machine's records,
+  which the YAML export already left out. A snapshot keeps both, and a
+  restore puts them back. A NexusMods account that stops being served downloads
+  mid-import now leaves each mod a manual download rather than refusing.
 
 - **Every field and form in the web UI is drawn one way (#653).** The
   control system that made every button one height and look (#518) now

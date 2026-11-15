@@ -708,6 +708,20 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileFillApplyRequest{Fomod: sampleServeFomodAnswers()},
 		},
 		{
+			// #660: the Finish collection panel's actions.
+			"collection_finish_plan_request",
+			collectionFinishPlanRequest{Retry: []string{"nexusmods:4044"}, UseCurrent: []string{"nexusmods:266"},
+				SkipFile: []string{"nexusmods:105"}, Skip: []string{"nexusmods:999"}},
+		},
+		{
+			"collection_finish_plan_request_retry_all",
+			collectionFinishPlanRequest{RetryAll: true},
+		},
+		{
+			"collection_finish_apply_request",
+			collectionFinishApplyRequest{Fomod: sampleServeFomodAnswers()},
+		},
+		{
 			// #333's import_archive halves. The plan request names a STAGED
 			// UPLOAD, never a path; the apply request's accept_conflicts is
 			// the Overwrite affordance, which maps to

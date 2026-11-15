@@ -103,21 +103,6 @@ func printReoffered(plan *core.CollectionUpdatePlan) {
 	}
 }
 
-// hasUndecidedGonePins reports whether c has a gone pin nobody chose for
-// that the apply must have decided: a conflict's pin only when overridden
-// says the user takes the collection's side of it (nil: never).
-func hasUndecidedGonePins(c *core.ConvertedCollection, overridden func(key string) bool) bool {
-	if c == nil {
-		return false
-	}
-	for _, p := range c.GonePins {
-		if p.Choice == "" && (!p.Conflict || (overridden != nil && overridden(p.Key()))) {
-			return true
-		}
-	}
-	return false
-}
-
 // gonePinDecision says what will happen to a decided pin, or "" while it
 // is undecided.
 func gonePinDecision(p core.CollectionGonePin) string {
@@ -142,8 +127,8 @@ func modsPin(n int) string {
 
 // printGonePins lists c's gone pins as needing attention: each gone file
 // with its role and stand-in, what will happen to it, and the flags that
-// decide an undecided one. command names the command, for the hint.
-func printGonePins(c *core.ConvertedCollection, command string) {
+// decide it otherwise.
+func printGonePins(c *core.ConvertedCollection) {
 	if len(c.GonePins) == 0 {
 		return
 	}
@@ -185,10 +170,18 @@ func printGonePins(c *core.ConvertedCollection, command string) {
 			fmt.Printf("      → your version is kept; to take the collection's (--override %s), decide this file too\n", p.ModID)
 			continue
 		}
+		if p.Default {
+			// #660 owner ruling: the current file is the default, and
+			// skipping it the alternative.
+			fmt.Printf("      → %s\n", defaultGonePinLine(p, firstNonEmptyString(p.Name, p.Key())))
+			continue
+		}
 		if d := gonePinDecision(p); d != "" {
 			fmt.Printf("      → %s\n", d)
 			continue
 		}
+		// #660: nothing stands in for it, and the import goes ahead: the
+		// item is left to finish.
 		var choose []string
 		if p.CanUseCurrent() {
 			choose = append(choose, "--use-current "+p.ModID+" (the current file)")
@@ -197,11 +190,24 @@ func printGonePins(c *core.ConvertedCollection, command string) {
 			choose = append(choose, "--skip-file "+p.ModID+" (install the rest)")
 		}
 		choose = append(choose, "--skip "+p.ModID)
-		fmt.Printf("      choose: %s\n", strings.Join(choose, ", or "))
+		fmt.Printf("      → left to finish after the import (lmm profile finish), or decide now: %s\n", strings.Join(choose, ", or "))
 	}
-	if hasUndecidedGonePins(c, nil) {
-		fmt.Printf("  Nothing is imported until each is decided: re-run `%s` with --use-current <mod>, --use-current-all, --skip-file <mod> or --skip <mod>.\n", command)
+}
+
+// defaultGonePinLine is a defaulted gone pin's plan line (#660 owner
+// ruling): "<mod> <pinned> is no longer on NexusMods; installing the
+// current <version> instead (--skip <mod> to leave it out)", saying when
+// the curator pinned the version exactly.
+func defaultGonePinLine(p core.CollectionGonePin, name string) string {
+	current := "file"
+	if p.Current != nil {
+		current = firstNonEmptyString(p.Current.Version, describeCurrentFile(p.Current))
 	}
+	pinned := firstNonEmptyString(p.Version, "file "+strings.Join(p.FileIDs, ", "))
+	if p.CuratorExact && p.Version != "" {
+		return fmt.Sprintf("%s: the curator pinned %s exactly, and NexusMods no longer offers it; installing the current %s instead (--skip %s to leave it out)", name, pinned, current, p.ModID)
+	}
+	return fmt.Sprintf("%s %s is no longer on NexusMods; installing the current %s instead (--skip %s to leave it out)", name, pinned, current, p.ModID)
 }
 
 // describeCurrentFile names a current file, with its version.

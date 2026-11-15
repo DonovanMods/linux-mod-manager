@@ -40,6 +40,16 @@
     "installed": 0,
     "failed": 0,
     "skipped": 1,
-    "hooks_withheld": 1
+    "hooks_withheld": 1,
+    "todos": [
+      {
+        "source_id": "src",
+        "mod_id": "a",
+        "reason": "not_installed",
+        "action": "retry",
+        "remedy": "src:a is not installed; retry to install it"
+      }
+    ],
+    "total": 1
   }
 }

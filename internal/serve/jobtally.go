@@ -32,6 +32,11 @@ import "github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 //     a profile that is not the active one, recorded), Failed, Skipped -
 //     the pins still pending, which the fill had no file for - and
 //     Warnings.
+//   - "collection_update" (core.CollectionUpdateResult, #660): only for
+//     an update that left items to do - its import's counts and Todos.
+//   - "collection_finish" (core.CollectionFinishResult, #660): Installed
+//     (or recorded), Failed - the items that failed again - Skipped (the
+//     items skipped), and Todos/Total, the list left.
 //   - "catalog_relink" (core.AutoRelinkResult, #590): Applied counts the
 //     re-links made, Failed the ones that failed, and Notes says each
 //     re-link in words.
@@ -40,7 +45,8 @@ import "github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 // as zero; Failed and Skipped are common to both and always present.
 type jobTally struct {
 	// Kind is the result shape: "updates", "profile_import",
-	// "profile_fill" or "catalog_relink".
+	// "profile_fill", "collection_update", "collection_finish" or
+	// "catalog_relink".
 	Kind string `json:"kind"`
 
 	// Applied counts an update batch's completed items.
@@ -61,6 +67,13 @@ type jobTally struct {
 	// skipped" alone invites a guess; the note is what makes the count
 	// honest.
 	SkippedNotes []string `json:"skipped_notes,omitempty"`
+
+	// Todos counts a collection import's (or a collection finish's) items
+	// left to do (#660), and Total the items its profile lists: "imported
+	// Total-Todos of Total". A job with Todos is one that needs the user -
+	// the web UI shows it as needing attention, never as a plain success.
+	Todos int `json:"todos,omitzero"`
+	Total int `json:"total,omitzero"`
 
 	// Notes is one sentence per item a "catalog_relink" job re-linked
 	// (#590): "<name> moved to a new ID in <source>; re-linked (<old> ->
@@ -114,7 +127,7 @@ func tallyOfResult(result any) *jobTally {
 			Warnings:  len(r.Warnings),
 		}
 	case *core.ProfileImportResult:
-		if r == nil || r.Installed+r.Failed+r.Skipped == 0 {
+		if r == nil || r.Installed+r.Failed+r.Skipped+len(r.Todos) == 0 {
 			return nil
 		}
 		return &jobTally{
@@ -123,6 +136,36 @@ func tallyOfResult(result any) *jobTally {
 			Failed:    r.Failed,
 			Skipped:   r.Skipped,
 			Warnings:  len(r.Warnings),
+			Todos:     len(r.Todos),
+			Total:     r.Total,
+		}
+	case *core.CollectionUpdateResult:
+		// #660: only an update that left items to do has a tally to show:
+		// what it installed, and the list left.
+		if r == nil || r.Import == nil || len(r.Import.Todos) == 0 {
+			return nil
+		}
+		return &jobTally{
+			Kind:      "collection_update",
+			Installed: r.Import.Installed,
+			Failed:    r.Import.Failed,
+			Skipped:   r.Import.Skipped,
+			Warnings:  len(r.Import.Warnings),
+			Todos:     len(r.Import.Todos),
+			Total:     r.Import.Total,
+		}
+	case *core.CollectionFinishResult:
+		if r == nil {
+			return nil
+		}
+		return &jobTally{
+			Kind:      "collection_finish",
+			Installed: r.Installed + r.Recorded,
+			Failed:    r.Failed,
+			Skipped:   len(r.Skipped),
+			Warnings:  len(r.Warnings),
+			Todos:     len(r.Todos),
+			Total:     r.Total,
 		}
 	}
 	return nil

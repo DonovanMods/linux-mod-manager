@@ -137,5 +137,13 @@ func applyCollectionUpdateKind(ctx context.Context, s *Server, pending, opts any
 	if !ok {
 		return nil, fmt.Errorf("collection update apply: unexpected options type %T", opts)
 	}
-	return s.svc.ApplyCollectionUpdate(ctx, p.Game, p.Plan, req.updateOptions(), sink)
+	result, err := s.svc.ApplyCollectionUpdate(ctx, p.Game, p.Plan, req.updateOptions(), sink)
+	// #660: as a collection import's, an update that applied what it could
+	// and left the rest to finish is a job that succeeded, its items left
+	// to do on its tally.
+	var incomplete *core.ProfileImportIncompleteError
+	if errors.As(err, &incomplete) && result != nil && result.Import != nil && len(result.Import.Todos) > 0 && !result.Import.Refused {
+		return result, nil
+	}
+	return result, err
 }

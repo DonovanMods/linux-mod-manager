@@ -945,6 +945,12 @@ const (
 	// problem. Detail is the raw text (no prefix), mirrored on
 	// CopyModResult.Warnings.
 	ModCopyWarning
+
+	// ImportDownloadReused fires when an import (or a profile fill, or a
+	// collection's finish) installs a mod from an archive an earlier
+	// attempt downloaded and kept, rather than downloading it again
+	// (#660; retained_download.go). Detail names the file.
+	ImportDownloadReused
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -1006,6 +1012,8 @@ var deployPhaseNames = [...]string{
 	SourceRetrying: "source_retrying", SourceSuspended: "source_suspended",
 
 	ModCopyCopied: "mod_copy_copied", ModCopySkipped: "mod_copy_skipped", ModCopyWarning: "mod_copy_warning",
+
+	ImportDownloadReused: "import_download_reused",
 }
 
 // String returns the phase's wire name.

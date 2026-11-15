@@ -150,7 +150,7 @@ func selectFilesForVersion(files []domain.DownloadableFile, storedFileIDs []stri
 				// instead of reinstall.
 				return nil, fmt.Errorf("%w: installed file(s) (ID(s): %s) do not match recorded version %q, which is not available upstream - run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version", ErrVersionNotFound, strings.Join(storedFileIDs, ", "), version)
 			}
-			return nil, fmt.Errorf("%w (file ID(s): %s; version %q not available) - reinstall the mod or run 'lmm update' to adopt the current version", ErrStoredFilesUnavailable, strings.Join(storedFileIDs, ", "), version)
+			return nil, &StoredFilesUnavailableError{FileIDs: storedFileIDs, Version: version, versioned: true}
 		}
 		return nil, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", ErrVersionNotFound, version, strings.Join(availableVersions(files), ", "))
 	}
@@ -233,7 +233,7 @@ func selectDeployFiles(files []domain.DownloadableFile, storedFileIDs []string, 
 			return found, false, nil
 		}
 		if !allowFallback {
-			return nil, false, fmt.Errorf("%w (file ID(s): %s) - reinstall the mod or run 'lmm update' to adopt the current version", ErrStoredFilesUnavailable, strings.Join(storedFileIDs, ", "))
+			return nil, false, &StoredFilesUnavailableError{FileIDs: storedFileIDs}
 		}
 		return []*domain.DownloadableFile{primaryFile(files)}, true, nil
 	}
@@ -260,3 +260,31 @@ func sameFileIDSet(selected []*domain.DownloadableFile, currentFileIDs []string)
 	}
 	return len(seen) == len(current)
 }
+
+// StoredFilesUnavailableError is ErrStoredFilesUnavailable with the files
+// it names (#660): the file ids a mod's record (or a collection's pin)
+// asks for that its source no longer offers, and the version, when one was
+// asked for. Its Error is the installed mod's sentence, remedy included;
+// Bare is the fact alone, for a caller whose remedy is another - a
+// collection item, whose to-do carries its own action.
+type StoredFilesUnavailableError struct {
+	FileIDs   []string
+	Version   string
+	versioned bool
+}
+
+// Bare is the failure without the installed mod's remedy.
+func (e *StoredFilesUnavailableError) Bare() string {
+	if e.versioned {
+		return fmt.Sprintf("%s (file ID(s): %s; version %q not available)", ErrStoredFilesUnavailable, strings.Join(e.FileIDs, ", "), e.Version)
+	}
+	return fmt.Sprintf("%s (file ID(s): %s)", ErrStoredFilesUnavailable, strings.Join(e.FileIDs, ", "))
+}
+
+// Error is Bare with the remedy for an installed mod.
+func (e *StoredFilesUnavailableError) Error() string {
+	return e.Bare() + " - reinstall the mod or run 'lmm update' to adopt the current version"
+}
+
+// Unwrap makes errors.Is(err, ErrStoredFilesUnavailable) true.
+func (e *StoredFilesUnavailableError) Unwrap() error { return ErrStoredFilesUnavailable }

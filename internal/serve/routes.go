@@ -77,6 +77,7 @@ func (s *Server) routes() {
 	// The reorder modal's load-order tabs (api_loadorders.go, #620): a
 	// game's file load orders (Cyberpunk 2077's archives), and `lmm
 	// load-order`'s edits to them.
+	s.mux.Handle("GET /api/v1/profiles/{name}/todos", s.wrap(s.handleAPIProfileTodos))
 	s.mux.Handle("GET /api/v1/profiles/{name}/load-orders", s.wrap(s.handleAPIProfileLoadOrders))
 	s.mux.Handle("POST /api/v1/profiles/{name}/load-orders", s.wrap(s.handleAPIProfileLoadOrderEdit))
 	// The Setup surface's game half (api_games.go): the chooser's listing,

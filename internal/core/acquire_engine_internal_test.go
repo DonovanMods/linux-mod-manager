@@ -115,14 +115,12 @@ func TestRunAcquire_AnAnswerableRefusalBlocksWithNothingWritten(t *testing.T) {
 	}, log.steps, "no begin, no commit, no settled failure; the clean item is retained")
 }
 
-func TestRunAcquire_BlockAllRefusesOnAnyFailure(t *testing.T) {
+// #660: a collection import blocks on nothing - an answerable refusal
+// settles as its item's failure, and the clean items commit.
+func TestRunAcquire_BlockNoneSettlesEveryFailure(t *testing.T) {
 	var log engineLog
-	err := runAcquire(context.Background(), fakeRun(acquirePolicy{blockAll: true}, &log, nil, errFlaky, nil))
-	var refused *AcquireRefusedError
-	require.ErrorAs(t, err, &refused)
-	require.Len(t, refused.Refusals, 1)
-	assert.ErrorIs(t, err, errFlaky)
-	assert.Equal(t, []string{"acquire 0", "acquire 1", "acquire 2", "retain 0", "retain 2"}, log.steps)
+	require.NoError(t, runAcquire(context.Background(), fakeRun(acquirePolicy{blockNone: true}, &log, nil, errLoader, nil)))
+	assert.Equal(t, []string{"acquire 0", "acquire 1", "acquire 2", "begin", "commit 0", "failed 1", "commit 2"}, log.steps)
 }
 
 func TestRunAcquire_InterleavedSettlesEachItemBeforeTheNext(t *testing.T) {
@@ -240,4 +238,30 @@ func TestRunAcquire_AFailedItemsPartialFilesAreRetainedWhenBlocked(t *testing.T)
 	var refused *AcquireRefusedError
 	require.ErrorAs(t, runAcquire(context.Background(), run), &refused)
 	assert.Equal(t, []bool{true}, retained, "released once, retained")
+}
+
+// #660 review: under blockNone a failed item's own acquired files (a
+// multi-file mod whose later file failed) are kept for the retry, as a
+// blocked run keeps them; an ordinary run releases them.
+func TestRunAcquire_BlockNoneRetainsAFailedItemsFiles(t *testing.T) {
+	for _, tc := range []struct {
+		policy acquirePolicy
+		want   []bool
+	}{
+		{acquirePolicy{blockNone: true}, []bool{true}},
+		{acquirePolicy{}, []bool{false}},
+	} {
+		var released []bool
+		run := fakeRun(tc.policy, &engineLog{}, nil, errFlaky)
+		inner := run.acquire
+		run.acquire = func(ctx context.Context, i int) (fakeItem, *acquireFailure) {
+			it, f := inner(ctx, i)
+			if f != nil {
+				f.release = func(blocked bool) { released = append(released, blocked) }
+			}
+			return it, f
+		}
+		require.NoError(t, runAcquire(context.Background(), run))
+		assert.Equal(t, tc.want, released, "blockNone=%v", tc.policy.blockNone)
+	}
 }

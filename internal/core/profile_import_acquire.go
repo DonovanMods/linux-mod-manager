@@ -54,13 +54,19 @@ func recordImportFailure(result *ProfileImportResult, ref domain.ModReference, n
 //
 // states are the item's FOMOD file states (importFileStates): the import's
 // document's plugin list, and a collection's install phases.
-func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan *ImportPlan, ref domain.ModReference, scope Scope, answers map[string]domain.FomodChoices, states fileStatesOpts, result *ProfileImportResult, emit func(Event), failed map[string]string) (*importStaged, *acquireFailure) {
+//
+// failedErrs, when not nil, receives the error behind every failure, for
+// a collection's to-dos (#660).
+func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan *ImportPlan, ref domain.ModReference, scope Scope, answers map[string]domain.FomodChoices, states fileStatesOpts, result *ProfileImportResult, emit func(Event), failed map[string]string, failedErrs map[string]error) (*importStaged, *acquireFailure) {
 	scope.Mod = &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID}
 	emit(ModEvent{Scope: scope, Phase: ImportModInstalling})
 
 	st := &importStaged{ref: ref, key: domain.ModKey(ref.SourceID, ref.ModID), scope: scope}
 	fail := func(reason string, err error) *acquireFailure {
 		failed[st.key] = reason
+		if failedErrs != nil {
+			failedErrs[st.key] = err
+		}
 		name := st.scope.ModName
 		emit(ModEvent{Scope: st.scope, Phase: ImportModFailed, Detail: reason})
 		return &acquireFailure{
@@ -98,7 +104,7 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	mod, err := s.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
 	if err != nil {
 		if supplied == nil {
-			return nil, fail(fmt.Sprintf("failed to fetch mod: %v", err), err)
+			return nil, fail(fmt.Sprintf("failed to fetch mod: %v", err), &sourceFetchError{err})
 		}
 		mod = &domain.Mod{ID: ref.ModID, SourceID: ref.SourceID, GameID: game.ID, Version: ref.Version,
 			Name: cmp.Or(plan.fillNames[st.key], domain.ModKey(ref.SourceID, ref.ModID))}
@@ -111,10 +117,10 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 		files, err = suppliedFiles(files, err, ref, supplied)
 	}
 	if err != nil {
-		return nil, fail(fmt.Sprintf("failed to get files: %v", err), err)
+		return nil, fail(fmt.Sprintf("failed to get files: %v", err), &sourceFetchError{err})
 	}
 	if len(files) == 0 {
-		return nil, fail("no downloadable files", errors.New("no downloadable files"))
+		return nil, fail("no downloadable files", ErrNoDownloadableFiles)
 	}
 
 	// Select files to download - use the DB-stored FileIDs for a
@@ -122,13 +128,22 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	// (see ImportPlan.storedFileIDs' doc comment for why this can't just be
 	// ref.FileIDs uniformly).
 	var fileIDsToUse []string
-	if stored, ok := plan.storedFileIDs[st.key]; ok {
+	stored, fromRecord := plan.storedFileIDs[st.key]
+	if fromRecord {
 		fileIDsToUse = stored
 	} else if len(ref.FileIDs) > 0 {
 		fileIDsToUse = ref.FileIDs
 	}
 	filesToDownload, err := selectFilesForVersion(files, fileIDsToUse, ref.Version)
 	if err != nil {
+		// #660: "reinstall the mod or run 'lmm update'" is an installed
+		// mod's remedy. A pin the imported document names was never
+		// installed: the fact alone, and a collection's to-do says what
+		// to do about it.
+		var gone *StoredFilesUnavailableError
+		if !fromRecord && errors.As(err, &gone) {
+			return nil, fail(gone.Bare(), err)
+		}
 		return nil, fail(err.Error(), err)
 	}
 
@@ -200,6 +215,12 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 		if err != nil && asks.take(err, file) {
 			continue
 		}
+		if err == nil && a.reused {
+			// #660: an archive an earlier attempt kept, installed without
+			// a second download.
+			result.ReusedDownloads++
+			emit(StepEvent{Scope: st.scope, Phase: ImportDownloadReused, Detail: "reusing the downloaded " + a.file.FileName})
+		}
 		if err != nil {
 			f := fail(fmt.Sprintf(reason, err), err)
 			// The mod's earlier files go with the failure, so a refusal
@@ -213,7 +234,14 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	}
 	emit(StepEvent{Scope: st.scope, Phase: ImportDownloadDone})
 	if err := asks.finish(mod, fx, st.files); err != nil {
-		f := fail(fmt.Sprintf("download failed: %v", err), err)
+		reason := fmt.Sprintf("download failed: %v", err)
+		var q *FomodChoicesRequiredError
+		if plan.todoMode && errors.As(err, &q) {
+			// #660 review: in a collection import (or its finish) the
+			// question is the item's to-do, not a command to run again.
+			reason = q.fact() + "; left to finish: answer its installer"
+		}
+		f := fail(reason, err)
 		f.release = s.releaseFilesFunc(st.files)
 		return nil, f
 	}

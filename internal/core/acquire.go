@@ -66,6 +66,9 @@ type acquiredFile struct {
 	// archive is what a blocked Apply retains for its re-run.
 	archivePath string
 	download    *DownloadResult
+	// reused says the archive is one an earlier refused or failed attempt
+	// kept (retained_download.go), installed without downloading it again.
+	reused bool
 
 	owned []string
 	log   *slog.Logger
@@ -283,6 +286,7 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 		}
 	} else {
 		archivePath = retainedPath
+		a.reused = true
 	}
 	if err := s.acquireArchive(ctx, a, src, game, mod, file, archivePath, downloadResult, true, fx, sink); err != nil {
 		return nil, err

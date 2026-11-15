@@ -2735,14 +2735,83 @@ func TestJSONGoldens(t *testing.T) {
 				CanSkipFile: true, Conflict: true, Choice: core.GonePinSkipFile},
 		},
 		{
-			// #657: the --json error envelope's details for undecided gone
-			// pins - one with a current file, one without.
-			"collection_gone_pins_error",
-			core.CollectionGonePinsError{Pins: []core.CollectionGonePin{
-				{SourceID: "nexusmods", ModID: "266", Name: "Unofficial Skyrim Special Edition Patch", Version: "4.3.8a",
-					FileIDs: []string{"733846"}, Current: &core.CollectionCurrentFile{FileID: "800000", Name: "USSEP", Version: "4.3.9"}},
-				{SourceID: "nexusmods", ModID: "999", Name: "Removed Mod", Version: "1.0", FileIDs: []string{"5000"}},
+			// #660: a gone pin's default - the current file - when the
+			// curator pinned the version exactly.
+			"collection_gone_pin_default",
+			core.CollectionGonePin{SourceID: "nexusmods", ModID: "266", Name: "Unofficial Skyrim Special Edition Patch", Version: "4.3.8a",
+				FileIDs: []string{"733846"}, Current: &core.CollectionCurrentFile{FileID: "800000", Name: "USSEP", Version: "4.3.9"},
+				Choice: core.GonePinUseCurrent, Default: true, CuratorExact: true},
+		},
+		{
+			// #660: a deploy, switch or apply plan's readout of an
+			// unfinished collection.
+			"collection_incomplete",
+			core.CollectionIncomplete{Warning: "collection incomplete: 1 item(s) unresolved (FSMP); the game may not behave as the curator intended - finish it with `lmm profile finish`",
+				Items: []core.CollectionTodoItem{{SourceID: "nexusmods", ModID: "4044", Name: "FSMP", Reason: domain.TodoInstallerQuestions,
+					FomodReason: core.FomodReasonStale, Action: core.TodoActionAnswerInstaller,
+					Remedy: "FSMP's installer changed since the curator recorded their choices; answer it to continue"}}},
+		},
+		{
+			// #660: one item left to finish.
+			"collection_todo_item",
+			core.CollectionTodoItem{SourceID: "nexusmods", ModID: "4044", Name: "FSMP", Reason: domain.TodoInstallerQuestions,
+				FomodReason: core.FomodReasonStale, Action: core.TodoActionAnswerInstaller,
+				Remedy: "FSMP's installer changed since the curator recorded their choices; answer it to continue"},
+		},
+		{
+			// #660: `lmm profile finish --json`'s list.
+			"collection_todo_report",
+			core.CollectionTodoReport{Profile: "Skyrim Plus", Collection: "Skyrim Plus", Total: 1000, Todos: []core.CollectionTodoItem{
+				core.CollectionTodoItem{SourceID: "nexusmods", ModID: "4044", Name: "FSMP", Reason: domain.TodoInstallerQuestions,
+					FomodReason: core.FomodReasonStale, Action: core.TodoActionAnswerInstaller,
+					Remedy: "FSMP's installer changed since the curator recorded their choices; answer it to continue"},
+				core.CollectionTodoItem{SourceID: "nexusmods", ModID: "999", Name: "Removed Mod", Reason: domain.TodoGonePin,
+					Detail: "NexusMods no longer offers file 5000 (version 1.0), and no current file stands in for it",
+					Action: core.TodoActionChooseFile, Remedy: "the source no longer offers the file the collection pins for Removed Mod: use the mod's current file, or skip it",
+					FileIDs: []string{"5000"}},
 			}},
+		},
+		{
+			// #660: one item a finish installs.
+			"collection_finish_item",
+			core.CollectionFinishItem{Todo: core.CollectionTodoItem{SourceID: "nexusmods", ModID: "999", Name: "Removed Mod", Reason: domain.TodoGonePin,
+				Detail: "NexusMods no longer offers file 5000 (version 1.0), and no current file stands in for it",
+				Action: core.TodoActionChooseFile, Remedy: "the source no longer offers the file the collection pins for Removed Mod: use the mod's current file, or skip it",
+				FileIDs: []string{"5000"}}, Choice: core.FinishUseCurrent,
+				Current: &core.CollectionCurrentFile{FileID: "6000", Name: "Removed Mod 2", Version: "2.0"}, Reused: 1},
+		},
+		{
+			// #660: what a finish will do.
+			"collection_finish_plan",
+			core.CollectionFinishPlan{Profile: "Skyrim Plus", GameID: "skyrimse",
+				Todos: []core.CollectionTodoItem{core.CollectionTodoItem{SourceID: "nexusmods", ModID: "4044", Name: "FSMP", Reason: domain.TodoInstallerQuestions,
+					FomodReason: core.FomodReasonStale, Action: core.TodoActionAnswerInstaller,
+					Remedy: "FSMP's installer changed since the curator recorded their choices; answer it to continue"}},
+				Install: []core.CollectionFinishItem{{Todo: core.CollectionTodoItem{SourceID: "nexusmods", ModID: "4044", Name: "FSMP", Reason: domain.TodoInstallerQuestions,
+					FomodReason: core.FomodReasonStale, Action: core.TodoActionAnswerInstaller,
+					Remedy: "FSMP's installer changed since the curator recorded their choices; answer it to continue"}, Choice: core.FinishRetry, Reused: 1}},
+				Skip: []core.CollectionTodoItem{}, ReusableDownloads: 1},
+		},
+		{
+			// #660: what a finish did, one item failing again.
+			"collection_finish_result",
+			core.CollectionFinishResult{Profile: "Skyrim Plus", Installed: 1, Skipped: []string{"nexusmods:999"}, Failed: 1,
+				Failures: []core.ItemFailure{{SourceID: "nexusmods", ModID: "4044", Name: "FSMP", Reason: "download failed: HTTP 503"}},
+				Todos: []core.CollectionTodoItem{core.CollectionTodoItem{SourceID: "nexusmods", ModID: "4044", Name: "FSMP", Reason: domain.TodoInstallerQuestions,
+					FomodReason: core.FomodReasonStale, Action: core.TodoActionAnswerInstaller,
+					Remedy: "FSMP's installer changed since the curator recorded their choices; answer it to continue"}}, Total: 999, ReusedDownloads: 1},
+		},
+		{
+			// #660: a collection import that installed what it could.
+			"profile_import_collection_todos",
+			core.ProfileImportResult{ProfileName: "Skyrim Plus", Installed: 998, Failed: 1,
+				Failures: []core.ItemFailure{{SourceID: "nexusmods", ModID: "4044", Name: "FSMP", Reason: "download failed: FSMP has an installer (FOMOD) whose choices need answering"}},
+				Todos: []core.CollectionTodoItem{core.CollectionTodoItem{SourceID: "nexusmods", ModID: "4044", Name: "FSMP", Reason: domain.TodoInstallerQuestions,
+					FomodReason: core.FomodReasonStale, Action: core.TodoActionAnswerInstaller,
+					Remedy: "FSMP's installer changed since the curator recorded their choices; answer it to continue"}, core.CollectionTodoItem{SourceID: "nexusmods", ModID: "999", Name: "Removed Mod", Reason: domain.TodoGonePin,
+					Detail: "NexusMods no longer offers file 5000 (version 1.0), and no current file stands in for it",
+					Action: core.TodoActionChooseFile, Remedy: "the source no longer offers the file the collection pins for Removed Mod: use the mod's current file, or skip it",
+					FileIDs: []string{"5000"}}}, Total: 1000, ReusedDownloads: 3},
 		},
 		{
 			// #613: the --json error envelope's details for an origin

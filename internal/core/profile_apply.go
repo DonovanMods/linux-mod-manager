@@ -81,6 +81,12 @@ type ProfileApplyPlan struct {
 	// apply leaves in place. Additive; absent when there are none.
 	Overrides []OverrideChange `json:"overrides,omitempty"`
 
+	// Unresolved is the profile's collection items left to do (#660):
+	// the apply leaves them alone - Finish collection resolves them - and
+	// warns that the game may not behave as the curator intended. Absent
+	// for a profile with none.
+	Unresolved *CollectionIncomplete `json:"unresolved,omitempty"`
+
 	// NoChanges is true when all three buckets are empty and no override
 	// changes (#631) - the system already matches the profile and
 	// ApplyProfileApply has nothing to do (the CLI prints "System already
@@ -501,6 +507,13 @@ func (s *Service) diffProfileApply(ctx context.Context, pm *ProfileManager, game
 	// profile.Mods, not a range over profileKeys; seen reproduces the dedup
 	// profileKeys gave that pass for free.
 	seen := make(map[string]bool, len(profile.Mods))
+	// #660: a collection item left to do is Finish collection's to
+	// resolve, not the converge's to retry (or refuse) mid-run.
+	installedKeys := make(map[string]bool, len(installedByKey))
+	for key := range installedByKey {
+		installedKeys[key] = true
+	}
+	plan.Unresolved = incompleteOf(recordedTodos(profile, installedKeys))
 	// #371/#269: resolved once, and only if pass 2 actually finds a ref
 	// with no row here - the common apply has nothing to look up.
 	var externalElsewhere map[string]domain.InstalledMod
@@ -519,6 +532,10 @@ func (s *Service) diffProfileApply(ctx context.Context, pm *ProfileManager, game
 			// imported profile looks like on a machine with no database.
 			// A converge run must not fetch and deploy a mod the document
 			// says is switched off; enabling it later is what fetches it.
+			continue
+		}
+		if ref.Todo != nil {
+			drift.Unresolved++
 			continue
 		}
 		drift.NotInstalled++

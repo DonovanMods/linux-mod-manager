@@ -2,8 +2,8 @@ package serve_test
 
 // #657: the web UI's half of a NexusMods collection pinning a file
 // NexusMods no longer offers. The plan view lists it as needing attention
-// with the mod's current main file; Confirm waits until it is decided;
-// choosing the current file re-plans, and the import then installs it.
+// with the mod's current main file, preselected as the default (#660), and
+// the import installs it.
 
 import (
 	"context"
@@ -32,7 +32,7 @@ func (e2eGoneTenSource) ResolveGameCollection(_ context.Context, gameSourceID, r
 	return c, nil
 }
 
-func TestE2E_NexusCollection_ChooseTheCurrentFileThenImport(t *testing.T) {
+func TestE2E_NexusCollection_TheCurrentFileIsTheDefault(t *testing.T) {
 	sandboxE2EEnv(t)
 	src := newE2ESearchSource(t, "nexusmods")
 	src.addMod(e2eSearchSourceMod{
@@ -53,28 +53,30 @@ func TestE2E_NexusCollection_ChooseTheCurrentFileThenImport(t *testing.T) {
 	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
 	seedE2ENexusRecipe(t, f, "abcdef", e2eNexusRecipe)
 
-	var attention, decided string
+	// #660 owner ruling: the current file is preselected, with Skip beside
+	// it, and Confirm is enabled at once.
+	var attention, line string
 	var confirmDisabled bool
+	var choice string
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		openNexusImport("abcdef"),
 		chromedp.WaitVisible(`[data-testid="gone-pins"]`, chromedp.ByQuery),
 		textContent(`[data-testid="gone-pins"]`, &attention),
+		textContent(`[data-gone-pin="nexusmods:10"] [data-testid="gone-pin-default"]`, &line),
+		chromedp.Evaluate(`document.querySelector('[data-gone-pin="nexusmods:10"]').dataset.choice`, &choice),
 		chromedp.Evaluate(`document.querySelector('.modal [data-action="confirm"]').disabled`, &confirmDisabled),
-		clickWhenSettled(`[data-gone-pin="nexusmods:10"] [data-testid="gone-pin-use-current"]`),
-		pollUntil(`document.querySelector('[data-gone-pin="nexusmods:10"]')?.dataset.choice === "use_current"`),
-		textContent(`[data-testid="gone-pins"]`, &decided),
-		pollUntil(`!document.querySelector('.modal [data-action="confirm"]').disabled`),
 		chromedp.Click(`.modal .form-check input[type="checkbox"]`, chromedp.ByQuery),
 		clickWhenSettled(`.modal [data-action="confirm"]`),
 	)
 	assert.Contains(t, attention, "Needs your attention - 1 mod pins a file NexusMods no longer offers")
 	assert.Contains(t, attention, "The collection pins file 100, version 1.0")
 	assert.Contains(t, attention, "File 100 (its main file): current main file Ten Two (version 2.0)")
-	assert.Contains(t, attention, "Install the current file instead (suggested)")
+	assert.Contains(t, attention, "Install the current file instead (the default)")
 	assert.Contains(t, attention, "Skip this mod")
-	assert.True(t, confirmDisabled, "Confirm waits until every gone pin is decided")
-	assert.NotEmpty(t, decided)
+	assert.Equal(t, "use_current", choice, "the current file is preselected")
+	assert.Contains(t, line, "The curator pinned 1.0 exactly, and NexusMods no longer offers it; installing the current 2.0 instead.")
+	assert.False(t, confirmDisabled, "nothing to decide first")
 
 	require.Eventually(t, func() bool {
 		rows, err := f.Svc.GetInstalledMods(t.Context(), f.Game.ID, "Three Mods")

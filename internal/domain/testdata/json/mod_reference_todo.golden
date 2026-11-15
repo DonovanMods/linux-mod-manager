@@ -1,0 +1,15 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "4044",
+  "version": "2.1",
+  "file_ids": [
+    "9000"
+  ],
+  "locked": false,
+  "from_collection": true,
+  "todo": {
+    "reason": "installer_questions",
+    "name": "FSMP",
+    "fomod_reason": "stale"
+  }
+}

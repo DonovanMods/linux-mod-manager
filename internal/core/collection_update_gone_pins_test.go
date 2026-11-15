@@ -186,10 +186,11 @@ func TestCollectionUpdate_FindsAndDecidesTheNewVersionsGonePins(t *testing.T) {
 	assert.Equal(t, "nexusmods:13", plan.Source.GonePins[0].Key())
 	assert.Equal(t, 1, f.src.listCalls["13"])
 	assert.Zero(t, f.src.listCalls["10"], "an unchanged pin needs no check")
-	_, err := f.svc.ApplyCollectionUpdate(context.Background(), f.game, plan, core.CollectionUpdateOptions{}, nil)
-	require.True(t, core.IsCollectionGonePins(err), "got %v", err)
+	// #660: decided by default - the current file.
+	assert.Equal(t, core.GonePinUseCurrent, plan.Source.GonePins[0].Choice)
+	assert.True(t, plan.Source.GonePins[0].Default)
 
-	plan, err = f.svc.PlanCollectionUpdate(context.Background(), f.game, core.CollectionUpdateRequest{
+	plan, err := f.svc.PlanCollectionUpdate(context.Background(), f.game, core.CollectionUpdateRequest{
 		Profile: "coll", GonePins: core.GonePinChoices{Skip: []string{"nexusmods:13"}}})
 	require.NoError(t, err)
 	assert.NotContains(t, keys(plan.Added), "nexusmods:13")
@@ -294,8 +295,8 @@ func TestCollectionUpdate_KeepSkippedPersists(t *testing.T) {
 
 // TestCollectionUpdate_AConflictsGonePinIsDecidedOnlyWhenOverridden
 // (review): an entry the user owns keeps their version unless the apply
-// overrides the conflict, so its new pin being gone needs a decision only
-// then.
+// overrides the conflict; then its gone pin takes the default, the current
+// file (#660 review S5).
 func TestCollectionUpdate_AConflictsGonePinIsDecidedOnlyWhenOverridden(t *testing.T) {
 	f := newUpdateFixture(t)
 	ctx := context.Background()
@@ -318,9 +319,13 @@ func TestCollectionUpdate_AConflictsGonePinIsDecidedOnlyWhenOverridden(t *testin
 	plan := f.planUpdate(t)
 	require.Contains(t, keys(plan.Conflicts), "nexusmods:11")
 	require.Len(t, plan.Source.GonePins, 1)
-	assert.True(t, plan.Source.GonePins[0].Conflict)
-	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{Override: []string{"nexusmods:11"}}, nil)
-	require.True(t, core.IsCollectionGonePins(err), "overriding needs the decision: %v", err)
+	pin := plan.Source.GonePins[0]
+	assert.True(t, pin.Conflict)
+	// #660 review S5: the same default as an import's - the current file -
+	// which applies only when the user takes the collection's side.
+	assert.Equal(t, core.GonePinUseCurrent, pin.Choice)
+	assert.True(t, pin.Default)
+
 	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
 	require.NoError(t, err, "the user's version wins: nothing to decide")
 	assert.Equal(t, []string{"110"}, f.profile(t).FindRef("nexusmods", "11").FileIDs)
@@ -331,10 +336,36 @@ func TestCollectionUpdate_AConflictsGonePinIsDecidedOnlyWhenOverridden(t *testin
 		{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", FileCategory: "MAIN"},
 		{Kind: source.CollectionItemModFile, FileID: "111"},
 	})
-	plan, err = f.svc.PlanCollectionUpdate(ctx, f.game, core.CollectionUpdateRequest{Profile: "coll",
-		GonePins: core.GonePinChoices{UseCurrent: []string{"nexusmods:11"}}})
-	require.NoError(t, err)
+	plan = f.planUpdate(t)
 	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{Override: []string{"nexusmods:11"}}, nil)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"112"}, f.profile(t).FindRef("nexusmods", "11").FileIDs)
+	assert.Equal(t, []string{"112"}, f.profile(t).FindRef("nexusmods", "11").FileIDs, "overriding takes the default: the current file")
+}
+
+// #660: an overridden conflict whose new pin is gone with nothing standing
+// in for it keeps the user's working version, and the result says so -
+// never suggesting a current file there is none of.
+func TestCollectionUpdate_AnOverriddenConflictWithNothingInItsPlaceKeepsYours(t *testing.T) {
+	f := newUpdateFixture(t)
+	ctx := context.Background()
+	f.importNexus(t)
+	_, err := f.svc.SetModLock(ctx, "nexusmods", "11", "skyrim", "coll", "")
+	require.NoError(t, err)
+	f.publish(t, 4, `{"name": "Three Mods", "mods": [
+	{"name": "Ten", "modId": "10", "fileId": "100"},
+	{"name": "Eleven", "modId": "11", "fileId": "111"}]}`, []source.CollectionItem{
+		{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", FileCategory: "MAIN"},
+		{Kind: source.CollectionItemModFile, FileID: "111"},
+	})
+	f.src.listErr = map[string]error{"11": domain.ErrModNotFound}
+
+	plan := f.planUpdate(t)
+	require.Len(t, plan.Source.GonePins, 1)
+	assert.Empty(t, plan.Source.GonePins[0].Choice)
+	result, err := f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{Override: []string{"nexusmods:11"}}, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Warnings)
+	assert.Contains(t, result.Warnings[0], "your version is kept")
+	assert.NotContains(t, result.Warnings[0], "--use-current")
+	assert.Equal(t, []string{"110"}, f.profile(t).FindRef("nexusmods", "11").FileIDs)
 }

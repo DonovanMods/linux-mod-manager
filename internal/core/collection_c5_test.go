@@ -292,14 +292,22 @@ func TestSourceCollection_PatchBaselineMismatchRefusesTheImport(t *testing.T) {
 	f := newC5Fixture(t, c5Recipe(`Mod\manifest.json`, c5CRC("another baseline")), c5Trees(t, c5Patch(t)))
 	plan := f.plan(t, core.SourceCollectionImportRequest{})
 	require.Empty(t, plan.Collection.Unsupported, "the plan cannot see the archive")
-	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, core.ErrTreeInput)
+	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete)
 	assert.Contains(t, err.Error(), "CRC32")
-	_, err = config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Replicated")
-	assert.Error(t, err, "nothing was written, the profile included")
-	_, ok := f.deployed(t, "r6/scripts/A.reds")
-	assert.False(t, ok)
+	// #660: the mod is refused, never installed unpatched - and, a
+	// collection import being never all or nothing, it is left a to-do.
+	require.Len(t, result.Todos, 1)
+	assert.Equal(t, domain.TodoRefused, result.Todos[0].Reason)
+	assert.Contains(t, result.Todos[0].Detail, "CRC32")
+	saved, err := config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Replicated")
+	require.NoError(t, err)
+	assert.NotNil(t, saved.FindRef("nexusmods", "21").Todo)
+	_, ok := f.deployed(t, "Mod/manifest.json")
+	assert.False(t, ok, "the mod whose patch does not fit is not installed unpatched")
+	_, ok = f.deployed(t, "r6/scripts/A.reds")
+	assert.True(t, ok, "the rest of the collection installs")
 }
 
 // TestSourceCollection_PatchToCodeNeedsAllowAnyOverrides: a patch to a DLL

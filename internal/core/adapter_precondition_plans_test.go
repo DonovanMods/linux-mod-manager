@@ -93,6 +93,11 @@ var gatedPlans = []gatedPlan{
 		_, err := svc.PlanProfileApply(context.Background(), g, "default")
 		return err
 	}},
+	{"PlanCollectionFinish", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		markCollectionProfile(t, svc, g.ID, "default")
+		_, err := svc.PlanCollectionFinish(context.Background(), g, core.CollectionFinishRequest{Profile: "default"})
+		return err
+	}},
 	{"PlanProfileFill", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
 		markCollectionProfile(t, svc, g.ID, "default")
 		_, err := svc.PlanProfileFill(context.Background(), g, core.ProfileFillRequest{Profile: "default", Paths: []string{t.TempDir()}})

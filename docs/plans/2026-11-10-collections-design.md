@@ -37,6 +37,28 @@ The *apply* cannot be plain `ApplyImport`, for two reasons. A Nexus import **ins
 
 The re-run is the existing #225 round trip (conflict Overwrite): the CLI re-runs Apply with the answers in its Options, and the SPA re-plans and re-posts, since serve's plans are single-use (`plans.go` `Take`). The retained archives make the re-run cheap.
 
+*Superseded for collections, 2026-11-15 (#660, owner rulings).* A collection import is **never all or nothing**. The decide step above still runs for an ordinary install-shaped Apply, but a collection import (NexusMods, `.lmmc`, URL; a Workshop collection installs nothing) and a collection update block on nothing (`acquirePolicy.blockNone`, `ProfileImportOptions.RecordTodos`): every item that acquires and commits cleanly is installed, an installer's question included settles as its item's failure, and the import never pauses to ask. Each item that failed stays in the profile, in its place in the load order, with a **to-do** record (`ModReference.Todo`, `todo:` in the profile file, never exported) giving its reason and one action:
+
+| Reason | Action |
+|---|---|
+| `installer_questions` (recorded choices stale, unanswered, or made against another archive: `fomod_reason`) | answer the installer |
+| `gone_pin` (a pinned file the source no longer offers, nothing standing in for it) | skip the file / skip / retry once it is back (a finish may still take the mod's current file) |
+| `mod_gone` (the source no longer has the mod at all) | skip |
+| `download_failed` (the source or the network) | retry |
+| `manual_download` (a free account, or no download link) | download by hand, then `lmm profile fill` |
+| `unsupported_archive` (or a missing 7z) | install the tool, then retry |
+| `refused` (anything else: a loader, a patch whose baseline does not match) | the reason, then retry or skip |
+| `not_installed` (a listed item with no record: an older lmm dropped it) | retry |
+
+Every item can also be skipped, which records the skip in the collection baseline (#657's `baseline.skipped`). A held item's record (a gone pin, a manual download) is saved with the profile itself, and a failure's is written even when the run is cancelled, so no listed item lacks its reason; a finish that fails again carries the record's facts forward (an installer's curator md5s, a gone pin's files). The CLI exits non-zero while any item is left to finish, a free account's manual downloads excepted (#608). **Finish collection** resolves the list - `lmm profile finish` and the web UI's panel, through `PlanCollectionFinish`/`ApplyCollectionFinish` and the `collection_finish` plan kind - each item on its own, in its place in the load order, reusing any archive an earlier attempt kept (and saying so). Deploy, play, switch and apply run on an unfinished collection with a warning (`unresolved` on their plans) and leave its to-dos alone; the drift summary counts them (`unresolved`). The CLI keeps a non-zero exit for an import with failed items; the web UI's job succeeds, with the to-dos on its tally, shown as needing attention.
+
+A pinned file the source no longer offers (#657) defaults to the mod's current file when one stands in for it, with Skip beside it - at an import, and at a collection update, an overridden conflict's pin included; the plan says when the curator pinned that version exactly (`curator_exact`). An overridden conflict whose new pin nothing stands in for keeps the user's working version, with a warning. `CollectionGonePinsError` is gone: nothing refuses on a gone pin any more. This differs from Vortex on purpose, as two other choices here do:
+
+- **One failure never blocks the rest.** Vortex agrees per member (`InstallManager.ts:6151-6162`: a failed dependency settles as failed and the install goes on).
+- **A gone exact pin installs the current file by default.** Vortex substitutes a newer file only when the curator's update policy allows it (`latest`/`prefer`, or `prefer` with an archived file, `InstallManager.ts:5823-5843`); an exact pin whose file is gone fails, with advice to install the current version by hand (`InstallManager.ts:6170-6176`). lmm installs the current file unless the user skips it, and says the curator did not pin it.
+- **Stale installer choices ask.** Vortex replays a collection's preset choices unattended, with no fit check (`installer_fomod_native/installer.ts:43-53`); lmm asks (#614), as a to-do.
+- **A patch whose CRC32 baseline does not match is refused** (Vortex warns and installs unpatched); for a collection that is now that item's `refused` to-do rather than the whole import's refusal.
+
 The profile has to carry more per mod than an id; §4–§6 add those fields.
 
 ### The two halves, and where each comes from
@@ -429,7 +451,7 @@ With §4 and §5 in place, replaying a collection's recipe is mostly mapping:
 A free account cannot get API download links, and automating the website's "slow download" is not something lmm will do, whatever the ToS says (§11 Q1 notes the ToS wording is unverified). The import still works:
 
 1. The plan marks every Nexus item `manual_download`, with the file page URL.
-2. Apply saves the profile (pins, choices, plugin rules), with every item pending.
+2. Apply saves the profile (pins, choices, plugin rules), with every item pending - each a `manual_download` to-do (#660), on the Finish collection list.
 3. **`lmm profile fill <profile> <dir>`** matches the archives in a directory, typically `~/Downloads`, against the pending pins by **md5** (the manifest records each file's md5 and size), then installs the matches with their recorded choices, as if downloaded. The SPA equivalent is a drop zone on the collection's import result. This makes a 200-mod collection a matter of clicking "slow download" 200 times and then running one command, with no automation of Nexus's site.
 
 ### Revision updates

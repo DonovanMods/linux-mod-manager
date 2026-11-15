@@ -52,7 +52,10 @@ func seedGoneNexusCollection(t *testing.T, svc *core.Service, game *domain.Game)
 	svc.RegisterSource(goneNexusFixtureSource{nexusFixtureSource: src})
 }
 
-func TestAPIFlow_ProfileImportNexus_GonePinRefusesUntilDecided(t *testing.T) {
+// #660 owner ruling: a gone pin with a current file defaults to it - the
+// plan carries the choice, marked the default - and the import goes ahead
+// with no decision first.
+func TestAPIFlow_ProfileImportNexus_GonePinDefaultsToTheCurrentFile(t *testing.T) {
 	s, svc, game := newFlowFixtureServer(t)
 	seedGoneNexusCollection(t, svc, game)
 
@@ -62,15 +65,14 @@ func TestAPIFlow_ProfileImportNexus_GonePinRefusesUntilDecided(t *testing.T) {
 	assert.Equal(t, "nexusmods:10", c.GonePins[0].Key())
 	require.NotNil(t, c.GonePins[0].Current)
 	assert.Equal(t, "101", c.GonePins[0].Current.FileID)
-	assert.Empty(t, c.GonePins[0].Choice)
+	assert.Equal(t, core.GonePinUseCurrent, c.GonePins[0].Choice)
+	assert.True(t, c.GonePins[0].Default)
 
 	j := startFlowJob(t, s, planID, `{"install":true}`)
-	require.Equal(t, jobFailed, j.status().State)
-	require.NotNil(t, j.status().Error)
-	assert.Contains(t, j.status().Error.Error, "no longer offers")
-	assert.NotNil(t, j.status().Error.Details, "the pins travel as the details")
-	_, err := svc.NewProfileManager().Get(t.Context(), game.ID, "Three Mods")
-	require.ErrorIs(t, err, domain.ErrProfileNotFound, "nothing was written")
+	require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
+	saved, err := config.LoadProfile(svc.ConfigDir(), game.ID, "Three Mods")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"101"}, saved.FindRef("nexusmods", "10").FileIDs)
 }
 
 func TestAPIFlow_ProfileImportNexus_GonePinUseCurrent(t *testing.T) {

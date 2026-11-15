@@ -56,6 +56,10 @@ type ProfileDrift struct {
 	// Overrides counts the files the profile's overrides would change
 	// (#631): ProfileApplyPlan.Overrides, less the ones kept as they are.
 	Overrides int `json:"overrides,omitzero"`
+	// Unresolved counts the profile's collection items left to do (#660):
+	// not installed, and not counted in NotInstalled - an apply leaves
+	// them alone; Finish collection resolves them. Not part of Total.
+	Unresolved int `json:"unresolved,omitzero"`
 }
 
 // Total is every change the drift counts: mods and override files.
@@ -136,7 +140,7 @@ func (s *Service) profileDrift(ctx context.Context, game *domain.Game, pm *Profi
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if drift.Total() == 0 {
+	if drift.Total() == 0 && drift.Unresolved == 0 {
 		return nil, nil
 	}
 	return &drift, nil

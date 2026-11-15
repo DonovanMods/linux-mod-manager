@@ -2,12 +2,12 @@ package main
 
 // #657: `lmm profile import --nexus-collection` with a pinned file
 // NexusMods no longer offers. The plan lists it as needing attention, with
-// the mod's current main file; without a choice the import refuses, naming
-// the flags; --use-current installs the current file instead, --skip
-// leaves the mod out. --json carries the refusal's pins as its details.
+// the mod's current main file, which is the default (#660); --skip leaves
+// the mod out. One nothing stands in for is left to finish.
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,21 +57,22 @@ func setGonePinFlags(t *testing.T, f gonePinFlags) {
 	t.Cleanup(func() { profileImportGonePins = old })
 }
 
-func TestDoNexusCollectionImport_AGonePinRefusesWithoutAChoice(t *testing.T) {
-	svc, game, _ := goneTenService(t)
+// #660 owner ruling: a gone pin with a current file defaults to it - no
+// flag needed - and the plan says so, with the flag that skips it instead.
+func TestDoNexusCollectionImport_AGonePinDefaultsToTheCurrentFile(t *testing.T) {
+	svc, game, configDir := goneTenService(t)
 	setNexusFlags(t, "abcdef", false)
 	stdout, _, err := captureStdoutStderrErr(t, func() error {
 		return doNexusCollectionImport(context.Background(), svc, game)
 	})
-	require.True(t, core.IsCollectionGonePins(err), "got %v", err)
+	require.NoError(t, err, stdout)
 	assert.Contains(t, stdout, "Needs your attention - 1 mod pins a file NexusMods no longer offers")
 	assert.Contains(t, stdout, "! Ten (nexusmods:10): the collection pins file 100, version 1.0, which NexusMods no longer offers")
 	assert.Contains(t, stdout, "file 100 (its main file): current main file Ten Two, version 2.0")
-	assert.Contains(t, stdout, "Ten: NexusMods no longer offers the file the collection pins (choose below)")
-	assert.Contains(t, stdout, "choose: --use-current 10 (the current file), or --skip 10")
-	assert.NotContains(t, stdout, "Imported profile")
-	_, err = svc.NewProfileManager().Get(context.Background(), game.ID, "Three Mods")
-	assert.ErrorIs(t, err, domain.ErrProfileNotFound, "nothing was written")
+	assert.Contains(t, stdout, "→ Ten: the curator pinned 1.0 exactly, and NexusMods no longer offers it; installing the current 2.0 instead (--skip 10 to leave it out)")
+	saved, err := config.LoadProfile(configDir, game.ID, "Three Mods")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"101"}, saved.FindRef("nexusmods", "10").FileIDs)
 }
 
 func TestDoNexusCollectionImport_UseCurrent(t *testing.T) {
@@ -109,44 +110,28 @@ func TestDoNexusCollectionImport_Skip(t *testing.T) {
 	require.Len(t, saved.CollectionBaseline.Skipped, 1)
 }
 
+// #660: --json shows each gone pin's effective choice and whether it was
+// the default, and whether the curator pinned the version exactly.
 func TestDoNexusCollectionImport_GonePinJSON(t *testing.T) {
 	svc, game, _ := goneTenService(t)
 	setNexusFlags(t, "abcdef", false)
 	withJSONOutput(t)
-	err := doNexusCollectionImport(context.Background(), svc, game)
-	require.True(t, core.IsCollectionGonePins(err), "got %v", err)
-	var gone *core.CollectionGonePinsError
-	require.ErrorAs(t, err, &gone)
-	assert.Equal(t, "nexusmods:10", gone.Pins[0].Key())
-	assert.Equal(t, "101", gone.Pins[0].Current.FileID)
-}
-
-func TestReportError_JSON_CollectionGonePinsError(t *testing.T) {
-	withJSONOutput(t)
-	err := &core.CollectionGonePinsError{Pins: []core.CollectionGonePin{{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1.0",
-		FileIDs: []string{"100"}, Current: &core.CollectionCurrentFile{FileID: "101", Name: "Ten Two", Version: "2.0"}}}}
-	out := captureStdout(t, func() error { reportError(err); return nil })
-	assert.Equal(t, "{\n"+
-		"  \"error\": \"the collection pins 1 file(s) the source no longer offers - Ten: the collection pins file 100 (version 1.0); choose for each: --use-current <mod> (or --use-current-all) installs the current file of the same role instead, --skip-file <mod> leaves out a gone optional file and installs the rest, --skip <mod> leaves the mod out\",\n"+
-		"  \"details\": {\n"+
-		"    \"pins\": [\n"+
-		"      {\n"+
-		"        \"source_id\": \"nexusmods\",\n"+
-		"        \"mod_id\": \"10\",\n"+
-		"        \"name\": \"Ten\",\n"+
-		"        \"version\": \"1.0\",\n"+
-		"        \"file_ids\": [\n"+
-		"          \"100\"\n"+
-		"        ],\n"+
-		"        \"current\": {\n"+
-		"          \"file_id\": \"101\",\n"+
-		"          \"name\": \"Ten Two\",\n"+
-		"          \"version\": \"2.0\"\n"+
-		"        }\n"+
-		"      }\n"+
-		"    ]\n"+
-		"  }\n"+
-		"}\n", out)
+	stdout, _, err := captureStdoutStderrErr(t, func() error { return doNexusCollectionImport(context.Background(), svc, game) })
+	require.NoError(t, err)
+	var doc struct {
+		Collection struct {
+			Source struct {
+				GonePins []core.CollectionGonePin `json:"gone_pins"`
+			} `json:"source"`
+		} `json:"collection"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &doc), stdout)
+	require.Len(t, doc.Collection.Source.GonePins, 1)
+	pin := doc.Collection.Source.GonePins[0]
+	assert.Equal(t, "nexusmods:10", pin.Key())
+	assert.Equal(t, core.GonePinUseCurrent, pin.Choice)
+	assert.True(t, pin.Default)
+	assert.True(t, pin.CuratorExact)
 }
 
 func TestRunProfileImport_GonePinFlagsNeedNexusCollection(t *testing.T) {
@@ -187,7 +172,7 @@ func TestPrintCollectionUpdatePlan_GonePinsAndSkipped(t *testing.T) {
 	assert.Contains(t, stdout, "⊘ Ten (nexusmods:10) 1: kept out")
 	assert.Contains(t, stdout, "! Thirteen (nexusmods:13): the collection pins file 130, which NexusMods no longer offers")
 	assert.Contains(t, stdout, "file 130 (its main file): current main file file 131, version 2")
-	assert.Contains(t, stdout, "re-run `lmm profile sync --collection` with --use-current <mod>")
+	assert.Contains(t, stdout, "--use-current 13 (the current file), or --skip 13")
 }
 
 // reofferedTenDouble serves the collection at revision 4, which pins Ten
@@ -292,16 +277,22 @@ const twoFileTenRecipe = `{"Name": "Three Mods", "Mods": [
 // current file matches offers --skip-file (the rest installs) or --skip,
 // never the current main file beside the pinned one.
 func TestDoNexusCollectionImport_SkipFile(t *testing.T) {
-	svc, game, configDir := nexusCollectionServiceAs(t, twoFileTenRecipe, "skyrimspecialedition", func(d *nexusCollectionDouble) source.ModSource {
+	svc, game, _ := nexusCollectionServiceAs(t, twoFileTenRecipe, "skyrimspecialedition", func(d *nexusCollectionDouble) source.ModSource {
 		return twoFileTenDouble{d}
 	})
 	setNexusFlags(t, "abcdef", false)
 	stdout, _, err := captureStdoutStderrErr(t, func() error { return doNexusCollectionImport(context.Background(), svc, game) })
-	require.True(t, core.IsCollectionGonePins(err), "got %v", err)
+	// #660: nothing stands in for it, and the import is not refused - it
+	// is left unfinished, so the exit is non-zero (review S4).
+	require.ErrorIs(t, err, ErrReported, stdout)
 	assert.Contains(t, stdout, "Ten Optional Patch (an optional file): no current file of the same kind matches it")
-	assert.Contains(t, stdout, "choose: --skip-file 10 (install the rest), or --skip 10")
+	assert.Contains(t, stdout, "left to finish after the import (lmm profile finish), or decide now: --skip-file 10 (install the rest), or --skip 10")
 	assert.NotContains(t, stdout, "--use-current 10")
+	assert.Contains(t, stdout, `lmm profile finish "Three Mods" --skip-file 10 (or --skip 10)`, "the to-do names its command")
 
+	svc, game, configDir := nexusCollectionServiceAs(t, twoFileTenRecipe, "skyrimspecialedition", func(d *nexusCollectionDouble) source.ModSource {
+		return twoFileTenDouble{d}
+	})
 	setGonePinFlags(t, gonePinFlags{skipFile: []string{"10"}})
 	stdout, _, err = captureStdoutStderrErr(t, func() error { return doNexusCollectionImport(context.Background(), svc, game) })
 	require.NoError(t, err, stdout)

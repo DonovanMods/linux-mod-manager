@@ -500,18 +500,27 @@ func TestDoCollectionImport_StaleRecordedChoicesAreAnswered(t *testing.T) {
 	profileImportYes = true
 	t.Cleanup(func() { profileImportYes = oldYes })
 
-	// Nothing answers it: the question, a non-zero exit, nothing written.
-	_, err := captureStdoutErr(t, func() error { return doCollectionImport(context.Background(), svc, []byte(doc), game.ID) })
+	// #660: nothing answers it, and the import does not stop to ask: the
+	// installer is left to finish, the exit is non-zero, and the last line
+	// is the command that finishes it.
+	out, err := captureStdoutErr(t, func() error { return doCollectionImport(context.Background(), svc, []byte(doc), game.ID) })
 	require.Error(t, err)
 	assert.NotZero(t, exitCodeFor(err))
-	var q *core.FomodChoicesRequiredError
-	require.True(t, errors.As(err, &q), "got %v", err)
+	assert.Contains(t, out, "Imported 0 of 1 mod; 1 need you:")
+	assert.Contains(t, out, "installer changed since the curator recorded their choices; answer it to continue")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	assert.Equal(t, `lmm profile finish "Wizard Pack"`, lines[len(lines)-1], "the last line is the next command")
 	_, perr := svc.NewProfileManager().Get(context.Background(), game.ID, "Wizard Pack")
-	assert.Error(t, perr, "nothing was written")
+	require.NoError(t, perr, "the profile is saved, with the installer to finish")
 
+	// --fomod-defaults answers it, once the rest is installed.
 	fomodDefaults = true
-	out, err := captureStdoutErr(t, func() error { return doCollectionImport(context.Background(), svc, []byte(doc), game.ID) })
+	oldForce := profileImportForce
+	profileImportForce = true
+	t.Cleanup(func() { profileImportForce = oldForce })
+	out, err = captureStdoutErr(t, func() error { return doCollectionImport(context.Background(), svc, []byte(doc), game.ID) })
 	require.NoError(t, err, out)
+	assert.Contains(t, out, "Imported 1 mod.")
 	p, err := svc.NewProfileManager().Get(context.Background(), game.ID, "Wizard Pack")
 	require.NoError(t, err)
 	ref := p.FindRef("test-src", "mod1")
@@ -534,9 +543,16 @@ func TestDoCollectionImport_AnotherArchiveIsAskedWithTheReason(t *testing.T) {
 	oldYes := profileImportYes
 	profileImportYes = true
 	t.Cleanup(func() { profileImportYes = oldYes })
-	terminalInput("") // keep the collection's 2K
-
+	// #660: the import leaves the installer to finish; finishing it walks
+	// the question, saying why.
 	out, err := captureStdoutErr(t, func() error { return doCollectionImport(context.Background(), svc, []byte(doc), game.ID) })
+	require.Error(t, err)
+	assert.Contains(t, out, "download is not the archive the curator recorded their choices against")
+	assert.Contains(t, out, `lmm profile finish "Pinned Pack" --retry mod1`)
+
+	terminalInput("") // keep the collection's 2K
+	setFinishFlags(t, []string{"mod1"})
+	out, err = captureStdoutErr(t, func() error { return doProfileFinish(context.Background(), svc, game, "Pinned Pack") })
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "not the archive the collection's installer choices were recorded against")
 	assert.Contains(t, out, "md5 "+recorded)

@@ -33,7 +33,9 @@ type collectionSource struct {
 	tierErr    error
 	filesByMod map[string][]string // mod id -> file ids it serves
 	urlErr     error
-	refreshes  int
+	// urlErrs fails one mod's download URL, by mod id (#660).
+	urlErrs   map[string]error
+	refreshes int
 	// #657: listing replaces a mod's file listing, listErr fails it, and
 	// listCalls counts the listings asked for, by mod id.
 	listing   map[string][]domain.DownloadableFile
@@ -89,6 +91,9 @@ func (s *collectionSource) RefreshAccountTier(ctx context.Context) (source.Tier,
 func (s *collectionSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	if s.urlErr != nil {
 		return "", s.urlErr
+	}
+	if err := s.urlErrs[mod.ID]; err != nil {
+		return "", err
 	}
 	return s.mockSourceWithDownloads.GetDownloadURL(ctx, mod, fileID)
 }
@@ -230,16 +235,18 @@ func TestApplySourceCollectionImport_InstallsAllAndSetsLatestToAuto(t *testing.T
 	assert.False(t, saved.Mods[1].Locked, "latest is not")
 }
 
-func TestApplySourceCollectionImport_IsAllOrNothing(t *testing.T) {
+// #660 (owner ruling, replacing C2's all-or-nothing): one item that
+// cannot be acquired no longer refuses the collection - the rest install.
+func TestApplySourceCollectionImport_IsNeverAllOrNothing(t *testing.T) {
 	f := newSourceImportFixture(t, source.TierPremium)
 	f.src.filesByMod["11"] = nil // its pinned file is gone
 	plan := f.plan(t, core.SourceCollectionImportRequest{})
-	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
-	require.Error(t, err, "one item that cannot be acquired refuses the whole collection")
-	_, err = config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Three Mods")
-	assert.Error(t, err, "nothing was written, the profile included")
+	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete)
 	_, err = f.svc.GetInstalledMod(context.Background(), "nexusmods", "10", "skyrim", "Three Mods")
-	assert.Error(t, err)
+	require.NoError(t, err, "the item that works is installed")
+	assert.Equal(t, map[string]string{"11": domain.TodoGonePin}, todoReasons(result.Todos))
 }
 
 func TestSourceCollectionImport_FreeAccountPlansManualDownloads(t *testing.T) {
@@ -354,15 +361,19 @@ func TestPlanSourceCollectionImport_AsksForAFreshTier(t *testing.T) {
 
 // #607 C2b review, nit 8: an account planned as Premium that lapses before
 // Apply gets ONE refusal saying to plan again, not one per mod.
-func TestApplySourceCollectionImport_ALapsedAccountIsOneRefusal(t *testing.T) {
+// #660: an account that lost Premium between the plan and the apply no
+// longer refuses the import: each item it cannot download is left a
+// manual-download to-do, as a free account's are.
+func TestApplySourceCollectionImport_ALapsedAccountLeavesManualDownloads(t *testing.T) {
 	f := newSourceImportFixture(t, source.TierPremium)
 	plan := f.plan(t, core.SourceCollectionImportRequest{})
 	f.src.urlErr = &source.AccountRestrictedError{Reason: "Premium only"}
-	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
-	require.ErrorIs(t, err, source.ErrAccountRestricted)
-	assert.Contains(t, err.Error(), "plan the import again")
+	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+	assert.Equal(t, map[string]string{"10": domain.TodoManualDownload, "11": domain.TodoManualDownload}, todoReasons(result.Todos))
 	_, err = config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Three Mods")
-	assert.Error(t, err, "nothing was written")
+	require.NoError(t, err, "the profile is saved, with its items to finish")
 }
 
 // #607 C2b re-review B: a re-import over an existing row (--force) whose

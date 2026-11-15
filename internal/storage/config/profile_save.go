@@ -31,7 +31,7 @@ const profileBackupSuffix = ".bak"
 // order, so a file lmm wrote stays exactly as a whole write would have it.
 var (
 	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins", "load_orders", "collection_baseline"}
-	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod", "fomod_files", "fomod_order", "from_collection", "substituted_for", "file_list", "patches"}
+	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod", "fomod_files", "fomod_order", "from_collection", "substituted_for", "todo", "file_list", "patches"}
 )
 
 // profileFileHookYAML is ProfileHookConfigYAML as a profile file is written:
@@ -116,6 +116,7 @@ func refConfigsOf(mods []domain.ModReference) []ModReferenceConfig {
 			FomodOrder:     slices.Clone(m.FomodOrder),
 			FromCollection: m.FromCollection,
 			SubstitutedFor: m.SubstitutedFor.Clone(),
+			Todo:           m.Todo.Clone(),
 			// #610: nil when empty, so the keys are not written.
 			FileList: m.FileList.Clone(),
 			Patches:  m.Patches.Clone(),
@@ -637,7 +638,7 @@ func sameRef(a, b ModReferenceConfig) bool {
 		slices.Equal(a.FileIDs, b.FileIDs) && a.Locked == b.Locked && a.Disabled == b.Disabled &&
 		a.Category == b.Category && a.ModType == b.ModType && a.Fomod.Equal(b.Fomod) &&
 		a.FomodFiles.Equal(b.FomodFiles) && slices.Equal(a.FomodOrder, b.FomodOrder) &&
-		a.FromCollection == b.FromCollection && samePin(a.SubstitutedFor, b.SubstitutedFor) &&
+		a.FromCollection == b.FromCollection && samePin(a.SubstitutedFor, b.SubstitutedFor) && a.Todo.Equal(b.Todo) &&
 		a.FileList.Equal(b.FileList) && a.Patches.Equal(b.Patches)
 }
 
@@ -1062,7 +1063,7 @@ func refOf(c ModReferenceConfig) domain.ModReference {
 		SourceID: c.SourceID, ModID: c.ModID, Version: c.Version,
 		FileIDs: c.FileIDs, Locked: c.Locked, Disabled: c.Disabled, Category: c.Category,
 		ModType: c.ModType, Fomod: c.Fomod, FomodFiles: c.FomodFiles.Clone(), FomodOrder: slices.Clone(c.FomodOrder),
-		FromCollection: c.FromCollection, SubstitutedFor: c.SubstitutedFor.Clone(),
+		FromCollection: c.FromCollection, SubstitutedFor: c.SubstitutedFor.Clone(), Todo: c.Todo.Clone(),
 		FileList: c.FileList.Clone(), Patches: c.Patches.Clone(),
 	}
 }
@@ -1206,6 +1207,17 @@ func (e *docEditor) editItem(item modItem, have, want ModReferenceConfig) (strin
 			if !zero {
 				wantText, err = e.blockText(ModReferenceConfig{SubstitutedFor: want.SubstitutedFor}, "substituted_for", item.keyCol)
 			}
+		case "todo":
+			if have.Todo.Equal(want.Todo) {
+				continue
+			}
+			if flow {
+				return "", errors.New("todo: a flow reference cannot hold the to-do block")
+			}
+			zero = want.Todo == nil
+			if !zero {
+				wantText, err = e.blockText(ModReferenceConfig{Todo: want.Todo}, "todo", item.keyCol)
+			}
 		case "category":
 			if have.Category == want.Category {
 				continue
@@ -1308,7 +1320,7 @@ func (e *docEditor) listText(key string, ids []string, block bool, keyCol int) (
 // written whole by blockText: fomod (#614), fomod_files (#634), file_list
 // and patches (#610).
 func isBlockRefKey(key string) bool {
-	return key == "fomod" || key == "fomod_files" || key == "file_list" || key == "patches" || key == "substituted_for"
+	return key == "fomod" || key == "fomod_files" || key == "file_list" || key == "patches" || key == "substituted_for" || key == "todo"
 }
 
 // blockText is a nested-block entry (fomod, #614; fomod_files, #634) as a

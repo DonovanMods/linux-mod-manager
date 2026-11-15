@@ -289,6 +289,16 @@ func (e *ProfileImportIncompleteError) Error() string {
 	if e.Result != nil && e.Result.Refused && e.refusal != nil {
 		return fmt.Sprintf("profile %q was not imported - nothing was written: %v", e.Profile, e.refusal)
 	}
+	if e.Result != nil && e.Result.Failed == 0 && len(e.Result.Todos) > 0 {
+		// #660: an item held back from the apply (a gone pin nothing
+		// stands in for) failed nothing, and is still left to finish.
+		names := make([]string, 0, len(e.Result.Todos))
+		for _, t := range e.Result.Todos {
+			names = append(names, t.label()+": "+t.Remedy)
+		}
+		return fmt.Sprintf("profile %q was not fully imported - %d item(s) left to finish: %s",
+			e.Profile, len(e.Result.Todos), strings.Join(names, "; "))
+	}
 	return fmt.Sprintf("profile %q was not fully imported - %d mod(s) failed: %s",
 		e.Profile, e.Result.Failed, failedImportModsText(e.Result.Failures))
 }

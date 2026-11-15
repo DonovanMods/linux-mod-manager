@@ -380,7 +380,7 @@ func printSourceCollection(c *core.ConvertedCollection, command string) {
 		fmt.Printf("Summary: %s\n", strings.Join(collectionSummaryParts(c.Summary), ", "))
 		printSourceOptional(c)
 		printSourceAttention(c)
-		printGonePins(c, command)
+		printGonePins(c)
 		fmt.Printf("\nEvery item (%d), in the collection's order:\n", len(c.Items))
 	}
 	for _, it := range c.Items {
@@ -390,7 +390,7 @@ func printSourceCollection(c *core.ConvertedCollection, command string) {
 		fmt.Printf("  Optional items are left out; --with-optional installs them.\n")
 	}
 	if c.Summary == nil {
-		printGonePins(c, command)
+		printGonePins(c)
 	}
 	if len(c.Tools) > 0 {
 		fmt.Printf("\nThe curator's tool shortcuts (listed only; lmm never creates or runs them):\n")
@@ -427,7 +427,7 @@ func collectionSummaryParts(s *core.CollectionPlanSummary) []string {
 		parts = append(parts, fmt.Sprintf("%d cannot be imported", s.Unsupported))
 	}
 	if s.GonePins > 0 {
-		parts = append(parts, modsPin(s.GonePins)+" a file NexusMods no longer offers (choose for each)")
+		parts = append(parts, modsPin(s.GonePins)+" a file NexusMods no longer offers with nothing in its place (left to finish)")
 	}
 	if s.Skipped > 0 {
 		parts = append(parts, fmt.Sprintf("%d skipped", s.Skipped))
@@ -527,7 +527,7 @@ func collectionAttentionText(r core.CollectionAttentionReason, it core.Converted
 		if d := gonePinDecision(gonePinFor(c, it)); d != "" {
 			return "NexusMods no longer offers the file the collection pins: " + d
 		}
-		return "NexusMods no longer offers the file the collection pins (choose below)"
+		return "NexusMods no longer offers the file the collection pins, and nothing stands in for it: left to finish (see below)"
 	case core.CollectionAttentionReoffered:
 		return "you skipped it because its pinned file was gone; the collection now pins an available file"
 	case core.CollectionAttentionUnsupported:

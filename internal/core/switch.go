@@ -53,6 +53,12 @@ type SwitchPlan struct {
 	ToDisable []domain.InstalledMod `json:"to_disable"`
 	ToInstall []domain.ModReference `json:"to_install"` // in To but not installed anywhere -> download+install (FileIDs preserved from the installed mod's own record when this is really a cache-miss redeploy - see PlanProfileSwitch)
 
+	// Unresolved is the target profile's collection items left to do
+	// (#660): the switch leaves them out of ToInstall - Finish collection
+	// resolves them - and warns that the game may not behave as the
+	// curator intended. Absent for a profile with none.
+	Unresolved *CollectionIncomplete `json:"unresolved,omitempty"`
+
 	// PriorVersions carries, keyed by domain.ModKey(SourceID, ModID), the
 	// installed row a ToInstall or ToEnable entry converges AWAY from -
 	// review round 1 finding 1: neither list's element type has room for
@@ -330,6 +336,13 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		if hasOwn {
 			row = tr
 		}
+		if ref.Todo != nil && !hasOwn {
+			// #660: a collection item the target profile has left to do
+			// is Finish collection's to resolve - never installed, enabled
+			// from another profile's copy, or converged here, whatever the
+			// outgoing profile has of it (SwitchPlan.Unresolved).
+			continue
+		}
 		if installed && !hasOwn && !im.External && isArchiveVariant(im.Variant) {
 			// #644: the row is another profile's imported archive - its
 			// own custom build, never this profile's. Installed from the
@@ -477,9 +490,14 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		skip[domain.ModKey(ref.SourceID, ref.ModID)] = true
 	}
 	overrides := s.planOverrideChanges(ctx, game, targetProfile, skip)
+	installedKeys := make(map[string]bool, len(targetInstalled))
+	for key := range targetInstalled {
+		installedKeys[key] = true
+	}
 
 	return &SwitchPlan{
-		GameID: game.ID, From: currentName, To: target,
+		Unresolved: incompleteOf(recordedTodos(targetProfile, installedKeys)),
+		GameID:     game.ID, From: currentName, To: target,
 		ToDisable: toDisable, ToEnable: toEnable, ToInstall: toInstall,
 		PriorVersions:     priorVersions,
 		ReinstallReasons:  reinstallReasons,
