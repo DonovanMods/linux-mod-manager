@@ -473,6 +473,14 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			}
 		}()
 
+		// The extraction checks the staging filesystem's free space; the
+		// cache's is checked here too when it is another one, since the
+		// tree is then copied rather than renamed into it (#658).
+		realEntry := i.cache.ModPath(cache.Key{GameID: game.ID, SourceID: sourceID, ModID: modID, Version: version})
+		if err := i.extractor.preflightOtherFilesystem(ctx, archivePath, tempDir, realEntry); err != nil {
+			return nil, err
+		}
+
 		extractedPath := filepath.Join(tempDir, "extracted")
 		if err := i.extractor.Extract(ctx, archivePath, extractedPath); err != nil {
 			return nil, fmt.Errorf("extracting archive: %w", err)

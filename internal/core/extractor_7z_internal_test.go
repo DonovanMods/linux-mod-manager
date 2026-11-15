@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -497,4 +498,57 @@ func TestRar_RefusesRealLinkMembers(t *testing.T) {
 			assert.Empty(t, entriesUnder(t, dest))
 		})
 	}
+}
+
+// Free space is counted as df does: available fragments times the
+// fragment size, the block size only when the filesystem reports none.
+func TestStatfsAvailable(t *testing.T) {
+	assert.Equal(t, uint64(10*1024), statfsAvailable(syscall.Statfs_t{Bavail: 10, Bsize: 4096, Frsize: 1024}))
+	assert.Equal(t, uint64(10*4096), statfsAvailable(syscall.Statfs_t{Bavail: 10, Bsize: 4096}))
+	assert.Equal(t, uint64(0), statfsAvailable(syscall.Statfs_t{Bavail: 10}))
+}
+
+// A member whose DOS attributes mark a reparse point (L) is a link when no
+// Unix mode says otherwise.
+func TestParse7zListing_ReparsePointIsALink(t *testing.T) {
+	members := parse7zListing("----------\nPath = junction\nAttributes = AL\n\nPath = plain\nAttributes = A\n\nPath = moded\nAttributes = AL -rw-r--r--\n\n")
+	require.Len(t, members, 3)
+	assert.True(t, members[0].Link, "a reparse point with no Unix mode")
+	assert.False(t, members[1].Link)
+	assert.False(t, members[2].Link, "the Unix mode says it is a regular file")
+}
+
+// An import whose staging and cache sit on different filesystems checks
+// the cache's free space too, before extracting anything.
+func TestImport_PreflightsTheCacheFilesystemWhenItIsAnotherOne(t *testing.T) {
+	cacheRoot := t.TempDir()
+	stagingRoot := t.TempDir()
+	imp := NewImporter(cache.New(cacheRoot))
+	imp.stagingRoot = stagingRoot
+
+	savedSpace, savedSame := availableSpace, sameFilesystem
+	t.Cleanup(func() { availableSpace, sameFilesystem = savedSpace, savedSame })
+	availableSpace = func(dir string) (uint64, bool) {
+		if strings.HasPrefix(dir, cacheRoot) {
+			return 10, true
+		}
+		return 1 << 40, true
+	}
+	archive := writeListingZip(t, filepath.Join(t.TempDir(), "mod.zip"), "a.esp")
+	game := &domain.Game{ID: "g1", DeployMode: domain.DeployExtract}
+	opts := ImportOptions{SourceID: "local", ModID: "m1"}
+
+	sameFilesystem = func(string, string) bool { return true }
+	_, err := imp.ImportForTest(context.Background(), archive, game, opts)
+	require.NoError(t, err, "on one filesystem, the extraction's own check covers it")
+
+	sameFilesystem = func(string, string) bool { return false }
+	opts.ModID = "m2"
+	_, err = imp.ImportForTest(context.Background(), archive, game, opts)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errInsufficientSpace), "got %v", err)
+	assert.Contains(t, err.Error(), cacheRoot)
+	entries, err := os.ReadDir(stagingRoot)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "refused before anything was extracted")
 }

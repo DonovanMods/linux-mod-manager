@@ -423,6 +423,11 @@ func parse7zListing(out string) []archiveMember {
 			attrs, _, _ := strings.Cut(value, " ")
 			current.Dir = strings.Contains(attrs, "D")
 			current.Link = current.Link || isLinkAttributes(value)
+			// A reparse point (DOS "L": a Windows symlink or junction)
+			// is a link unless a Unix mode says what the entry is.
+			if !hasUnixMode(value) && strings.Contains(attrs, "L") {
+				current.Link = true
+			}
 		case "Symbolic Link", "Hard Link":
 			current.Link = current.Link || value != ""
 		}

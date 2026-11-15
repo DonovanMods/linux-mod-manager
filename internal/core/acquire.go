@@ -161,8 +161,10 @@ func (s *Service) commitAcquired(ctx context.Context, a *acquiredFile) (*Downloa
 }
 
 // newAcquired starts an acquisition for (mod, file) and creates nothing.
-func (s *Service) newAcquired(gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile) *acquiredFile {
-	a := &acquiredFile{gameCache: gameCache, game: game, mod: *mod, file: file, sourceID: sourceID, log: s.logger()}
+// sink is the acquiring flow's, for the commit's warnings (#658); every
+// constructor passes it, so none can drop them.
+func (s *Service) newAcquired(gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) *acquiredFile {
+	a := &acquiredFile{gameCache: gameCache, game: game, mod: *mod, file: file, sourceID: sourceID, log: s.logger(), sink: sink}
 	a.tree = acquireTreePath(gameCache.ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}), file.ID)
 	return a
 }
@@ -235,8 +237,7 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 	if err != nil {
 		return nil, err
 	}
-	a = s.newAcquired(gameCache, sourceID, game, mod, file)
-	a.sink = sink
+	a = s.newAcquired(gameCache, sourceID, game, mod, file, sink)
 	a.owned = append(a.owned, tempDir)
 	// pending, not a: a `return nil, err` has already set the named result
 	// to nil by the time this runs.
@@ -419,8 +420,7 @@ func (s *Service) acquireLocal(ctx context.Context, gameCache *cache.Cache, game
 	if err != nil {
 		return nil, fmt.Errorf("local mod path: %w", err)
 	}
-	a = s.newAcquired(gameCache, mod.SourceID, game, mod, file)
-	a.sink = sink
+	a = s.newAcquired(gameCache, mod.SourceID, game, mod, file, sink)
 	if err := a.claimTree(); err != nil {
 		return nil, err
 	}
@@ -534,14 +534,14 @@ func (s *Service) commitAcquiredRaw(ctx context.Context, a *acquiredFile) (*Down
 			s.logger().Debug("removing staging directory failed", "path", stagePath, "err", rmErr)
 		}
 	}()
-	a.warnDroppedLinks(dropped)
-
 	if err := mergeAcquiredTree(a.tree, stagePath); err != nil {
 		return nil, fmt.Errorf("staging acquired members: %w", err)
 	}
 	if err := commitStagedCacheWithMarker(modCacheKey(a.game.ID, a.mod), cachePath, stagePath, a.file.ID, a.members); err != nil {
 		return nil, err
 	}
+	// Only now is each dropped entry really gone from the cache entry.
+	a.warnDroppedLinks(dropped)
 	// The retained copy is dead weight once the bytes are in the cache -
 	// whichever member set (extracted, stored, compiled) they became.
 	if a.download != nil {

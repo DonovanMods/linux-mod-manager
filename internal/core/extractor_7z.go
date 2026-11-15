@@ -27,11 +27,13 @@ package core
 // judged by its own rules (seedFromCache).
 
 import (
+	"archive/zip"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -171,7 +173,9 @@ func checkExtractedTree(dir, label string) error {
 		if err != nil {
 			return err
 		}
-		if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink != 1 {
+		// More than one link, not "not one": a FUSE filesystem may report
+		// zero for a file it does not count links on.
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
 			return fmt.Errorf("the %s member %s is a hard link, which lmm does not extract", label, filepath.ToSlash(rel))
 		}
 		return nil
@@ -251,6 +255,17 @@ func isLinkAttributes(attrs string) bool {
 	return false
 }
 
+// hasUnixMode reports whether a `7z l -slt` Attributes value carries a
+// Unix mode word (e.g. "-rw-r--r--", "drwxr-xr-x", "lrwxrwxrwx").
+func hasUnixMode(attrs string) bool {
+	for _, word := range strings.Fields(attrs) {
+		if len(word) == 10 && strings.ContainsRune("-dlcbps", rune(word[0])) && strings.Trim(word[1:], "rwxsStT-") == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // errInsufficientSpace marks checkFreeSpace's refusal.
 var errInsufficientSpace = errors.New("not enough free space")
 
@@ -258,10 +273,96 @@ var errInsufficientSpace = errors.New("not enough free space")
 // filesystem, and whether it could tell. A seam: tests cannot fill a disk.
 var availableSpace = func(dir string) (uint64, bool) {
 	var st syscall.Statfs_t
-	if err := syscall.Statfs(dir, &st); err != nil || st.Bsize <= 0 {
+	if err := syscall.Statfs(dir, &st); err != nil {
 		return 0, false
 	}
-	return st.Bavail * uint64(st.Bsize), true
+	free := statfsAvailable(st)
+	return free, free > 0 || st.Bavail == 0
+}
+
+// statfsAvailable is a statfs result's space free to an unprivileged
+// writer, counted as df counts it: available blocks times the fragment
+// size, or the block size when the filesystem reports no fragment size.
+// Zero when it reports neither.
+func statfsAvailable(st syscall.Statfs_t) uint64 {
+	unit := st.Frsize
+	if unit <= 0 {
+		unit = st.Bsize
+	}
+	if unit <= 0 {
+		return 0
+	}
+	return st.Bavail * uint64(unit)
+}
+
+// sameFilesystem reports whether the existing paths a and b sit on one
+// filesystem, and true when either cannot be read: the caller then skips
+// a check it cannot make. A seam: tests cannot mount a second filesystem.
+var sameFilesystem = func(a, b string) bool {
+	var sa, sb syscall.Stat_t
+	if syscall.Stat(a, &sa) != nil || syscall.Stat(b, &sb) != nil {
+		return true
+	}
+	return sa.Dev == sb.Dev
+}
+
+// existingAncestor is path, or the nearest directory above it that exists.
+func existingAncestor(path string) string {
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return path
+		}
+		path = parent
+	}
+}
+
+// preflightOtherFilesystem checks dest's filesystem has room for what
+// archivePath unpacks to, when dest is not on stagingDir's: an extraction
+// into stagingDir checks that one itself (checkFreeSpace), and its later
+// copy into dest would otherwise find out only part way through. An
+// archive whose size cannot be read is not refused here; the extraction
+// reports what is wrong with it.
+func (e *Extractor) preflightOtherFilesystem(ctx context.Context, archivePath, stagingDir, dest string) error {
+	destDir := existingAncestor(dest)
+	if sameFilesystem(stagingDir, destDir) {
+		return nil
+	}
+	declared, err := e.declaredSize(ctx, archivePath)
+	if err != nil {
+		return nil
+	}
+	return checkFreeSpace(archivePath, destDir, declared)
+}
+
+// declaredSize is the total size archivePath's members declare: a zip's
+// central directory, or a 7z listing for anything 7z reads (a .7z, a .rar,
+// a zip archive/zip cannot decode).
+func (e *Extractor) declaredSize(ctx context.Context, archivePath string) (uint64, error) {
+	format := e.detectFormatFromPath(archivePath)
+	switch format {
+	case "zip":
+		r, err := zip.OpenReader(archivePath)
+		if err != nil {
+			return 0, err
+		}
+		defer func() { _ = r.Close() }()
+		if f := zipNeeds7z(r.File); f != nil {
+			_, total, err := list7zZipMembers(ctx, archivePath, f)
+			return total, err
+		}
+		return zipDeclaredSize(r.File), nil
+	case "7z", "rar":
+		if _, err := exec.LookPath("7z"); err != nil {
+			return 0, err
+		}
+		_, total, err := list7zArchive(ctx, archivePath, format)
+		return total, err
+	}
+	return 0, fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
 }
 
 // checkFreeSpace refuses an extraction whose declared size is more than
