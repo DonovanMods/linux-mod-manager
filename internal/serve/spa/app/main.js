@@ -67,7 +67,7 @@ import {
   collectionTallyLabel,
   isCollectionTally,
   jobTitle,
-  resultTallyLabel,
+  outcomeLabel,
   resultTallyTone,
 } from "./progress.js";
 import { resolveGamePath } from "./navigation.js";
@@ -373,6 +373,8 @@ async function hydrate(route, { rehydrate = false } = {}) {
         `/api/v1/profiles/${encodeURIComponent(route.profile)}/todos`,
       ),
   ]);
+  const todos = store.get().todos;
+  if (todos?.profile === route.profile) noteTodos(route.game, todos);
 }
 
 // homeContext is the "game:profile" whose documents the home slices hold
@@ -1482,6 +1484,19 @@ function openProfilesModal() {
  * on screen. */
 function openImportCollectionModal({ openerSelector } = {}) {
   store.set({ modal: { type: "import-collection", openerSelector } });
+}
+
+/** noteTodos records how many items a collection profile has left to
+ * finish, as last read (issue 660: state.liveTodos, "game:profile" ->
+ * count) - what lets a finished import's tray entry stop asking for
+ * attention once its collection is finished, wherever it was finished. */
+function noteTodos(game, report) {
+  if (!game || !report?.profile) return;
+  const key = `${game}:${report.profile}`;
+  const count = report.todos?.length ?? 0;
+  const live = store.get().liveTodos ?? {};
+  if (live[key] === count) return;
+  store.set({ liveTodos: { ...live, [key]: count } });
 }
 
 /** openFinishCollection opens Finish collection (issue 660) over a
@@ -2609,8 +2624,8 @@ function toastDetail(tally, read, counted) {
   const parts = [];
   // Issue 660: a collection's job counts its collection - from the result,
   // since a recorded-only import has no tally.
-  if (counted) parts.push(collectionTallyLabel(counted));
-  else if (tally) parts.push(resultTallyLabel(tally));
+  const label = outcomeLabel(tally, counted);
+  if (label) parts.push(label);
   if (read?.warnings?.length > 0) parts.push(read.warnings.join(" "));
   return parts.join(" · ") || undefined;
 }
@@ -3351,6 +3366,7 @@ const actions = {
   openProfilesModal,
   openImportCollectionModal,
   openFinishCollection,
+  noteTodos,
   reopenImport,
   jobIsCollection,
   openShortcutsModal,

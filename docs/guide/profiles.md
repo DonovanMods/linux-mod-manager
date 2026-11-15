@@ -555,7 +555,8 @@ collection's mods it has reached). The card stays on the other pages of
 the web UI, and comes back if you reload the page while the import runs.
 When it ends the card says how it went: "Imported 40 mods", or, when
 mods are left to finish, "Imported 38 of 40 mods; 2 need you" in amber
-rather than green, with **Finish collection** first. **Show in activity**
+rather than green, with **Finish collection** first. Into a profile that
+is not the active one it says "Recorded", as the CLI does. **Show in activity**
 opens the import's entry in the activity tray (on the Setup page it is not
 offered, so an unsaved draft there is not lost); the entry offers
 **Finish collection** too. With `--json`, an
@@ -597,7 +598,7 @@ attempt downloaded is installed without downloading it again ("Reusing
 prints the list (or the plan, or the result).
 
 In the browser, **Finish collection** opens a list of the mods left to
-finish, each with why and its one action beside **Skip…**:
+finish ("2 of 40 need you"), each with why and its one action beside **Skip…**:
 **Answer installer…** (the installer's questions open in the installer
 wizard once you confirm), **Use current file…** or **Skip file…** for a
 gone pin, **Retry…**, or **Download by hand…**, which opens the same
@@ -605,7 +606,9 @@ folder chooser and drop zone as **Fill from downloads…**. A mod its source
 deleted offers only Skip. **Retry all…** retries everything on the list.
 Each opens a plan to confirm first, which says how many downloaded files
 it reuses; the list comes back afterwards, with the job's progress at the
-top, and refreshes when it ends. Finish collection is on the Profile card
+top, and refreshes when it ends. Once the list is empty, the import's
+activity entry stops offering Finish collection and the bell stops counting
+it. Finish collection is on the Profile card
 ("Finish collection: 2 of 40 need you"), on the profile's row in **Manage
 profiles…**, and on the import's own card and activity entry.
 

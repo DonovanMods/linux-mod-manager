@@ -30,7 +30,6 @@ import { Modal } from "./modal.js";
 import { getProfileTodos } from "../api.js";
 import { InlineJob } from "./jobprogress.js";
 import { FillDropZone } from "./filldropzone.js";
-import { collectionTallyLabel } from "../progress.js";
 import { todoName } from "./plan_collection_finish.js";
 
 /** finishOrigin is the origin every collection_finish job of profile is
@@ -67,20 +66,24 @@ export function todoKey(todo) {
   return `${todo.source_id}:${todo.mod_id}`;
 }
 
-/** finishSummary is the panel's lead sentence for a todo report. */
+/** finishSummary is the panel's lead sentence for a todo report, in `lmm
+ * profile finish`'s words: "2 of 40 need you." The list does not say
+ * whether the mods were installed or only recorded, so it counts only
+ * what is left. */
 export function finishSummary(report) {
   const total = report?.total ?? 0;
   const todos = report?.todos?.length ?? 0;
   if (total === 0) return "";
-  return `${collectionTallyLabel({ total, todos })}.`;
+  return `${todos} of ${total} need you.`;
 }
 
-/** jobRunning reports whether origin's job is still running. */
+/** jobRunning reports whether origin's job is still running. A job the
+ * jobs index no longer holds is not: it ended long ago. */
 function jobRunning(state, origin) {
   const id = state.origins?.[origin];
   if (!id) return false;
   const summary = (state.jobsIndex ?? []).find((row) => row.id === id);
-  return !summary || summary.state === "running";
+  return summary?.state === "running";
 }
 
 /** FinishCollectionModal renders the shared modal slot's
@@ -93,6 +96,10 @@ export function FinishCollectionModal({ modal, state, actions }) {
   const [error, setError] = useState(null);
   // The row whose fill drop zone is open, by key.
   const [filling, setFilling] = useState("");
+  // Which job endings the list on screen was read after: until the read
+  // for the latest lands, the list may still offer an item a job just
+  // resolved, so its buttons wait.
+  const [readFor, setReadFor] = useState(null);
 
   // The list is re-read whenever a job ends: a finish or a fill this panel
   // started, or anything else that changed the profile meanwhile.
@@ -108,9 +115,14 @@ export function FinishCollectionModal({ modal, state, actions }) {
         if (!live) return;
         setReport(doc);
         setError(null);
+        setReadFor(ended);
+        // The tray's entries for this collection count from it too.
+        actions.noteTodos?.(game, doc);
       })
       .catch((err) => {
-        if (live) setError(err?.message ?? String(err));
+        if (!live) return;
+        setError(err?.message ?? String(err));
+        setReadFor(ended);
       });
     return () => {
       live = false;
@@ -121,6 +133,7 @@ export function FinishCollectionModal({ modal, state, actions }) {
 
   const todos = report?.todos ?? [];
   const busy =
+    readFor !== ended ||
     jobRunning(state, finishOrigin(profile)) ||
     jobRunning(state, fillOrigin(profile));
   const returnTo = {

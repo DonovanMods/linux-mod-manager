@@ -90,8 +90,16 @@ export function useJobResultLoadOrders(jobID, jobState) {
 // import, update or finish left items to finish in (issue 660): {profile,
 // todos}, or null when it left none. Same shared read.
 export function useJobResultFinish(jobID, jobState) {
-  const collection = useJobResultRead(jobID, jobState)?.collection;
+  const collection = useJobResultCollection(jobID, jobState);
   return collection?.todos > 0 ? collection : null;
+}
+
+// useJobResultCollection returns a finished collection job's count of its
+// collection (collectionOf: {profile, todos, total, recorded}), or null -
+// what its readout says ("Recorded 1 of 3 mods; 2 need you"). Same shared
+// read.
+export function useJobResultCollection(jobID, jobState) {
+  return useJobResultRead(jobID, jobState)?.collection ?? null;
 }
 
 // useJobResultLoader returns the loader refusal a finished job's result
@@ -208,7 +216,21 @@ export function collectionOf(kind, result) {
   }
   const total = doc?.total ?? 0;
   if (!profile || total === 0) return null;
-  return { profile, todos: doc?.todos?.length ?? 0, total };
+  return {
+    profile,
+    todos: doc?.todos?.length ?? 0,
+    total,
+    // Recorded into a profile that is not the active one: nothing was
+    // installed ("Recorded N of M", as the CLI says it).
+    recorded: Boolean(doc?.recorded_only),
+  };
+}
+
+/** cachedJobCollection is jobID's collection count (collectionOf) from a
+ * read already made, or null - for a caller that cannot wait on one (the
+ * activity bell's count, issue 660). */
+export function cachedJobCollection(jobID) {
+  return readCache.get(jobID)?.collection ?? null;
 }
 
 /** resultWarnings is a result's warnings: its own, and - an update batch's

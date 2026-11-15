@@ -16,6 +16,7 @@
 // what went wrong far more often than to admire what went right.
 
 import { FillDropZone } from "./filldropzone.js";
+import { getProfileTodos } from "../api.js";
 import { html, useEffect, useRef, useState } from "../render.js";
 import { useMenuPlacement } from "../menuplacement.js";
 import { followJob } from "../sse.js";
@@ -27,10 +28,13 @@ import {
   mutationLabel,
   progressText,
   progressFraction,
-  resultTallyLabel,
+  outcomeLabel,
   resultTallyTone,
 } from "../progress.js";
 import {
+  cachedJobCollection,
+  fetchJobResult,
+  useJobResultCollection,
   useJobResultFinish,
   useJobResultPurge,
   useJobResultVerify,
@@ -60,7 +64,10 @@ const maxStreamedEvents = 200;
  * opened: one that failed, or an automatic job (issue 587) whose batch
  * failed an item - the job itself "succeeded", but no one clicked for it,
  * so nothing else would tell the user an update of theirs did not apply. */
-function needsAttention(job) {
+function needsAttention(job, liveTodos) {
+  // Issue 660: a collection job whose collection has since been finished
+  // (its profile's live list is empty, state.liveTodos) needs nothing more.
+  if (collectionFinished(job, liveTodos)) return false;
   if (job.state === "failed") return true;
   // Issue 660: a collection import, update or finish that left items to
   // finish needs the user, whoever started it.
@@ -72,13 +79,78 @@ function needsAttention(job) {
   );
 }
 
+/** leftToFinish reports whether job is a collection job that left items
+ * to finish (issue 660): a collection import, update or finish whose tally
+ * counts them, or a finish that failed with an item left. */
+function leftToFinish(job) {
+  if (job.state === "succeeded") return (job.tally?.todos ?? 0) > 0;
+  return job.state === "failed" && job.kind === "collection_finish";
+}
+
+/**
+ * useCollectionsLeft keeps what the bell needs to stop counting a
+ * collection job once its collection is finished (issue 660): each such
+ * job's result read (which names the profile) and that profile's live
+ * to-do list (state.liveTodos), re-read whenever a job ends. A page that
+ * did not start the job - or was reloaded since - knows neither otherwise.
+ */
+function useCollectionsLeft(jobs, actions) {
+  const [, setReads] = useState(0);
+  const pending = jobs.filter(leftToFinish);
+  const key = jobs.map((j) => `${j.id}:${j.state}`).join(",");
+  useEffect(() => {
+    if (pending.length === 0) return undefined;
+    let live = true;
+    Promise.all(pending.map((job) => fetchJobResult(job.id))).then(() => {
+      if (!live) return;
+      const seen = new Set();
+      for (const job of pending) {
+        const collection = cachedJobCollection(job.id);
+        const at = `${job.game ?? ""}:${collection?.profile ?? ""}`;
+        if (!job.game || !collection?.profile || seen.has(at)) continue;
+        seen.add(at);
+        getProfileTodos(collection.profile, { game: job.game })
+          .then((doc) => {
+            if (live) actions?.noteTodos?.(job.game, doc);
+          })
+          .catch(() => {});
+      }
+      setReads((n) => n + 1);
+    });
+    return () => {
+      live = false;
+    };
+  }, [key]);
+}
+
+/** liveTodoCount is how many items the collection a job left to finish
+ * has left now, as last read (state.liveTodos), or undefined when that is
+ * not known: the job's count of its collection (its result, read) names
+ * the profile, and the job its game. */
+function liveTodoCount(
+  job,
+  liveTodos,
+  collection = cachedJobCollection(job.id),
+) {
+  if (!collection?.profile) return undefined;
+  return liveTodos?.[`${job.game ?? ""}:${collection.profile}`];
+}
+
+/** collectionFinished reports whether job left a collection's items to
+ * finish that are all finished now (issue 660). */
+function collectionFinished(job, liveTodos) {
+  const collection = cachedJobCollection(job.id);
+  if (!collection || (collection.todos ?? 0) === 0) return false;
+  return liveTodoCount(job, liveTodos, collection) === 0;
+}
+
 /** newestFailureEnd is the latest ended_at, in epoch milliseconds, among the
  * failed jobs - 0 when none has a readable one. Date.parse of a missing
  * ended_at is NaN, which Math.max would poison; it is skipped instead. */
-function newestFailureEnd(jobs) {
+function newestFailureEnd(jobs, liveTodos) {
   let newest = 0;
   for (const job of jobs) {
-    if (!needsAttention(job)) continue;
+    if (!needsAttention(job, liveTodos)) continue;
     const ended = Date.parse(job.ended_at);
     if (ended > newest) newest = ended;
   }
@@ -106,6 +178,7 @@ export function ActivityBell({
   // The watermark is app-level (store.js: activityAckedAt), shared by every
   // bell that is ever mounted - see issue 537.
   const acknowledgedAt = state.activityAckedAt ?? 0;
+  useCollectionsLeft(jobs, actions);
 
   const active = jobs.filter((job) => job.state === "running");
   const unseenFailures = jobs.filter(
@@ -113,7 +186,9 @@ export function ActivityBell({
     // honest default for a job whose ended_at cannot be read. An "|| 0"
     // fallback here would parse as "0", which V8 reads as 2000-01-01, a
     // large positive timestamp that always reads as "unseen".
-    (job) => needsAttention(job) && Date.parse(job.ended_at) > acknowledgedAt,
+    (job) =>
+      needsAttention(job, state.liveTodos) &&
+      Date.parse(job.ended_at) > acknowledgedAt,
   );
   const count = active.length || unseenFailures.length;
   const tone = active.length > 0 ? "active" : "failed";
@@ -126,7 +201,7 @@ export function ActivityBell({
     // Acknowledge by the SERVER's finish time of the newest failure on
     // show, not by the client's clock: a skewed browser clock would
     // otherwise swallow (ahead) or resurrect (behind) failures.
-    const newest = newestFailureEnd(jobs);
+    const newest = newestFailureEnd(jobs, state.liveTodos);
     if (newest > acknowledgedAt) actions?.acknowledgeActivity?.(newest);
     onOpen();
   }
@@ -181,6 +256,12 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
   const queued = jobs.filter((j) => labelOf(j) === "queued");
   const failed = jobs.filter((j) => j.state === "failed");
   const done = jobs.filter((j) => j.state === "succeeded");
+  // Issue 660: which jobs have ended - a row re-reads its collection's
+  // live to-do list when another job ends.
+  const ended = jobs
+    .filter((j) => j.state !== "running")
+    .map((j) => j.id)
+    .join(",");
 
   const missingDeepLink =
     deepLinkJob && !jobs.some((job) => job.id === deepLinkJob);
@@ -200,6 +281,8 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
                 expanded=${expanded === job.id}
                 onToggle=${() => setExpanded(expanded === job.id ? "" : job.id)}
                 actions=${actions}
+                liveTodos=${state.liveTodos}
+                ended=${ended}
               />
             `,
           )}
@@ -236,7 +319,15 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
 
 /** TrayRow is one job: what it is, how it is going, and - once expanded -
  * everything it has said. */
-function TrayRow({ job, frame, expanded, onToggle, actions }) {
+function TrayRow({
+  job,
+  frame,
+  expanded,
+  onToggle,
+  actions,
+  liveTodos,
+  ended,
+}) {
   const label = jobStateLabel(job, frame);
   const fraction = progressFraction(frame);
   // I3, unit 6 fix wave: see jobprogress.js's identical use for why
@@ -246,18 +337,42 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
   const purgeResult = useJobResultPurge(job.id, job.state);
   const repairResult = useJobResultVerify(job.id, job.state);
   const batchFailures = useJobResultFailures(job.id, job.state);
-  // Issue 660: the profile a collection job left items to finish in.
+  // Issue 660: the profile a collection job left items to finish in, and
+  // its count of its collection ("Recorded 1 of 3 mods; 2 need you").
   const finish = useJobResultFinish(job.id, job.state);
+  const collection = useJobResultCollection(job.id, job.state);
+  // Its collection's live list, re-read when a job ends: the entry offers
+  // Finish collection, with the count left now, only while one is.
+  useEffect(() => {
+    if (!finish?.profile || !job.game) return undefined;
+    let live = true;
+    getProfileTodos(finish.profile, { game: job.game })
+      .then((doc) => {
+        if (live) actions.noteTodos?.(job.game, doc);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [finish?.profile, job.game, ended]);
+  const leftNow = finish ? liveTodoCount(job, liveTodos, finish) : undefined;
+  const finishLeft = leftNow ?? finish?.todos ?? 0;
   const fillTarget =
     job.kind === "profile_import" &&
     job.state === "succeeded" &&
     (job.tally?.skipped ?? 0) > 0
       ? (actions.fillTargetFor?.(job.id) ?? null)
       : null;
+  const finished = finish && leftNow === 0;
   const tone =
-    job.state === "succeeded" && tally ? resultTallyTone(tally) : job.state;
-  const stateText =
-    job.state === "succeeded" && tally ? resultTallyLabel(tally) : label;
+    job.state === "succeeded" && tally
+      ? finished
+        ? "succeeded"
+        : resultTallyTone(tally)
+      : job.state;
+  const outcome =
+    job.state === "succeeded" ? outcomeLabel(tally, collection) : "";
+  const stateText = outcome || label;
 
   return html`
     <li class="tray__row" data-job=${job.id} data-state=${label}>
@@ -305,7 +420,7 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
       }
       ${job.state === "failed" && html`<${FailureNextStep} job=${job} actions=${actions} />`}
       ${
-        finish &&
+        finishLeft > 0 &&
         html`<div class="form-actions tray__finish">
           <button
             type="button"
@@ -319,7 +434,7 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
                 at: job.profile,
               })}
           >
-            ${`Finish collection (${finish.todos})…`}
+            ${`Finish collection (${finishLeft})…`}
           </button>
         </div>`
       }

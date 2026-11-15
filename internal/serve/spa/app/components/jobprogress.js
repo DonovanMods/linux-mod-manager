@@ -20,10 +20,11 @@ import {
   progressFraction,
   jobStateLabel,
   mutationLabel,
-  resultTallyLabel,
+  outcomeLabel,
   resultTallyTone,
 } from "../progress.js";
 import {
+  useJobResultCollection,
   useJobResultFailures,
   useJobResultLoader,
   useJobResultPlugins,
@@ -171,6 +172,10 @@ export function JobProgress({
   const batchFailures = useJobResultFailures(jobID, state);
   // Issue 602: a refused install batch's loader refusal, from its result.
   const resultLoader = useJobResultLoader(jobID, state);
+  // Issue 660: a collection job counts its collection from its result -
+  // "Recorded" for one into a profile that is not the active one, which
+  // its tally cannot say (and a clean recorded import has no tally).
+  const collection = useJobResultCollection(jobID, state);
 
   if (state === "running") {
     const fraction = progressFraction(frame);
@@ -263,9 +268,7 @@ export function JobProgress({
               />`
             : failed
               ? `Failed: ${summary?.error?.error ?? "unknown error"}`
-              : tally
-                ? resultTallyLabel(tally)
-                : "Done"
+              : outcomeLabel(tally, collection) || "Done"
         }
       </span>
       ${

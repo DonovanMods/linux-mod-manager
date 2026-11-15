@@ -128,7 +128,7 @@ func TestE2E_FinishCollection_ImportAnswerDeployRetry(t *testing.T) {
 		chromedp.Evaluate(outcomeToastJS, &toast),
 	)
 	assert.Equal(t, "Collection import finished", toast.Title)
-	assert.Equal(t, "Imported 1 of 3 mods; 2 need you", toast.Detail)
+	assert.Equal(t, "Recorded 1 of 3 mods; 2 need you", toast.Detail, "the profile is not the active one: recorded, as the CLI says it")
 	assert.Equal(t, []string{"Finish collection", "Show in activity"}, toast.Buttons, "Finish collection leads")
 
 	// 2. Finish collection lists both items, each with its reason.
@@ -141,7 +141,7 @@ func TestE2E_FinishCollection_ImportAnswerDeployRetry(t *testing.T) {
 		textContent(finishPanel+` [data-testid="finish-summary"]`, &summary),
 	)
 	assert.Equal(t, []string{"fake:wizard=installer_questions", "fake:flaky=download_failed"}, rows)
-	assert.Contains(t, summary, "Imported 1 of 3 mods; 2 need you.")
+	assert.Contains(t, summary, "2 of 3 need you.")
 
 	// 3. Answering the installer resolves one: the finish plan, then the
 	// wizard over the panel, which comes back with one item left.
@@ -165,11 +165,22 @@ func TestE2E_FinishCollection_ImportAnswerDeployRetry(t *testing.T) {
 	// 4. Switched to, with one item still left: the switch and the deploy
 	// both warn, naming it, the Profile card counts it, and Play launches
 	// and says the collection is incomplete.
-	var switchWarning, deployWarning, unresolved, finishButton string
+	var switchWarning, deployWarning, unresolved, finishButton, card string
+	var trayFinish []string
+	var applyOffered bool
 	var played e2eOutcomeToast
 	f.runInBrowser(t,
 		clickWhenSettled(finishPanel+` [data-action="close-finish"]`),
 		waitGone(finishPanel),
+		// The import's tray entry offers Finish collection with the count
+		// left now, not the import's own.
+		clickWhenSettled(`.activity-bell__trigger`),
+		pollUntil(`[...document.querySelectorAll('.tray [data-action="finish-collection"]')].some((b) => b.textContent.includes("(1)"))`),
+		chromedp.Evaluate(`[...document.querySelectorAll('.tray [data-action="finish-collection"]')].map((b) => b.textContent.trim())`, &trayFinish),
+		clickWhenSettled(`.activity-bell__trigger`),
+		// Opening the tray acknowledged everything; forget that, so step 5
+		// sees what the bell counts on its own.
+		chromedp.Evaluate(`localStorage.clear()`, nil),
 		clickWhenSettled(`.profile-picker__trigger`),
 		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
 		settleEffects(),
@@ -183,6 +194,8 @@ func TestE2E_FinishCollection_ImportAnswerDeployRetry(t *testing.T) {
 		chromedp.WaitVisible(`.card--profile [data-testid="profile-unresolved"]`, chromedp.ByQuery),
 		textContent(`.card--profile [data-testid="profile-unresolved"]`, &unresolved),
 		textContent(`.card--profile [data-action="finish-collection"]`, &finishButton),
+		textContent(`.card--profile`, &card),
+		chromedp.Evaluate(`document.querySelector('.card--profile [data-action="apply-profile"]') !== null`, &applyOffered),
 		clickWhenSettled(`[data-action="deploy"]`),
 		chromedp.WaitVisible(`.modal[data-kind="deploy"] [data-testid="plan-unresolved"]`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="deploy"] [data-testid="plan-unresolved"]`, &deployWarning),
@@ -203,12 +216,19 @@ func TestE2E_FinishCollection_ImportAnswerDeployRetry(t *testing.T) {
 	}
 	assert.Equal(t, "Collection incomplete: 1 item left to finish", unresolved)
 	assert.Equal(t, "Finish collection: 1 of 3 need you", finishButton)
+	assert.NotContains(t, card, "not installed", "the item left to finish is said once, as one")
+	assert.False(t, applyOffered, "an item left to finish is not Apply's to install")
+	assert.NotEmpty(t, trayFinish)
+	for _, label := range trayFinish {
+		assert.Equal(t, "Finish collection (1)…", label)
+	}
 
 	// 5. The source serves the file again: a retry from the Profile card's
 	// Finish collection resolves the last item.
 	f.Src.recovered.Store(true)
 	var todos []e2eTodo
-	var cards int
+	var cards, trayFinishLeft int
+	var installed []string
 	f.runInBrowser(t,
 		clickWhenSettled(`.card--profile [data-action="finish-collection"]`),
 		chromedp.WaitVisible(finishPanel+` [data-todo="fake:flaky"]`, chromedp.ByQuery),
@@ -221,15 +241,26 @@ func TestE2E_FinishCollection_ImportAnswerDeployRetry(t *testing.T) {
 		pollUntil(`document.querySelector('.card--profile [data-action="finish-collection"]') === null`),
 		chromedp.Evaluate(`document.querySelectorAll('[data-testid="profile-unresolved"]').length`, &cards),
 		fetchTodos(f.Game.ID, e2eFinishPack, &todos),
+		// The bell no longer counts the jobs that left the collection
+		// unfinished, and their tray entries no longer offer to finish it.
+		pollUntil(`document.querySelector('.activity-bell__count') === null`),
+		clickWhenSettled(`.activity-bell__trigger`),
+		chromedp.WaitVisible(`.tray__row`, chromedp.ByQuery),
+		quietWindow(),
+		chromedp.Evaluate(`document.querySelectorAll('.tray [data-action="finish-collection"]').length`, &trayFinishLeft),
+		chromedp.Evaluate(`fetch("/api/v1/mods?game=`+f.Game.ID+`&profile=`+e2eFinishPack+`").then((r) => r.json()).then((d) => d.mods.map((m) => m.name).sort())`, &installed, awaitPromise),
 	)
 	assert.Empty(t, todos)
 	assert.Zero(t, cards)
+	assert.Zero(t, trayFinishLeft, "a finished collection has nothing left to offer")
+	assert.Equal(t, []string{"Better Boots", "Flaky Mod", "Wizard Mod"}, installed, "every mod of the collection is installed")
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_FinishCollection_ACleanImportReadsImported: an import that
-// installs every mod is a plain success: "Imported 2 mods".
-func TestE2E_FinishCollection_ACleanImportReadsImported(t *testing.T) {
+// TestE2E_FinishCollection_ACleanImportIsAPlainSuccess: an import with
+// nothing left to finish is a plain success, counted as the CLI counts it:
+// "Recorded 2 mods" into a profile that is not the active one.
+func TestE2E_FinishCollection_ACleanImportIsAPlainSuccess(t *testing.T) {
 	f := newE2EFixtureWithSearchableMods(t)
 	doc := "lmm_collection: 1\nname: Clean Pack\nmods:\n" +
 		"  - {source_id: fake, mod_id: " + e2eSearchInstallModID + ", version: \"2.0\"}\n" +
@@ -256,7 +287,7 @@ func TestE2E_FinishCollection_ACleanImportReadsImported(t *testing.T) {
 	)
 	assert.Equal(t, "success", toast.Tone)
 	assert.Equal(t, "Collection import finished", toast.Title)
-	assert.Equal(t, "Imported 2 mods", toast.Detail)
+	assert.Equal(t, "Recorded 2 mods", toast.Detail, "into a profile that is not the active one")
 	assert.NotContains(t, toast.Buttons, "Finish collection")
 	assert.Empty(t, f.BrowserErrors())
 }
@@ -310,7 +341,7 @@ func TestE2E_FinishCollection_EachItemHasItsAction(t *testing.T) {
 		chromedp.Evaluate(`Object.fromEntries([...document.querySelectorAll('`+finishPanel+` [data-todo]')]
 			.map((row) => [row.dataset.todo, [...row.querySelectorAll("button")].map((b) => b.dataset.action)]))`, &actions),
 	)
-	assert.Contains(t, label, "Imported 0 of 5 mods; 5 need you.")
+	assert.Contains(t, label, "5 of 5 need you.")
 	assert.Equal(t, map[string][]string{
 		"nexusmods:10": {"finish-download", "finish-skip"},
 		"nexusmods:11": {"finish-retry", "finish-skip"},
@@ -343,9 +374,11 @@ func TestE2E_FinishCollection_EachItemHasItsAction(t *testing.T) {
 
 // TestE2E_FinishCollection_TallyWordsAndTrayLogCollapse pins, in the
 // browser, a collection tally's words and tone - "Imported N of M mods; K
-// need you" needing attention, "Imported M mods" a success - and the
-// activity entry's event log keeping only the latest progress line per
-// item, with warnings and failures kept.
+// need you" needing attention, "Imported M mods" a success, "Recorded" for
+// a profile that is not the active one - and the activity entry's event
+// log keeping only the latest plain progress line per mod, by the event's
+// exact mod (two mods may share a name), while every other line - a
+// failure, a refusal, a note, an unavailable item, a warning - is kept.
 func TestE2E_FinishCollection_TallyWordsAndTrayLogCollapse(t *testing.T) {
 	f := newE2EFixture(t)
 
@@ -355,6 +388,7 @@ func TestE2E_FinishCollection_TallyWordsAndTrayLogCollapse(t *testing.T) {
 		Clean       string   `json:"clean"`
 		CleanTone   string   `json:"cleanTone"`
 		Pending     string   `json:"pending"`
+		Recorded    string   `json:"recorded"`
 		Log         []string `json:"log"`
 	}
 	f.runInBrowser(t,
@@ -365,23 +399,28 @@ func TestE2E_FinishCollection_TallyWordsAndTrayLogCollapse(t *testing.T) {
 			const partial = { kind: "profile_import", installed: 38, failed: 2, skipped: 0, todos: 2, total: 40 };
 			const clean = { kind: "profile_import", installed: 40, failed: 0, skipped: 0, total: 40 };
 			const pending = { kind: "profile_import", installed: 0, failed: 0, skipped: 40, total: 40 };
-			const frames = [
-				{ type: "step", op: "import", phase: "import_downloading", mod_name: "A", index: 1, total: 2 },
-				{ type: "download", op: "import", mod_name: "A", index: 1, total: 2, percent: 50 },
-				{ type: "step", op: "import", phase: "import_downloading", mod_name: "B", index: 2, total: 2 },
-				{ type: "download", op: "import", mod_name: "A", index: 1, total: 2, percent: 100 },
-				{ type: "step", op: "import", phase: "import_mod_failed", mod_name: "B", index: 2, total: 2, detail: "boom" },
-				{ type: "warning", op: "import", mod_name: "A", detail: "careful" },
-				{ type: "step", op: "import", phase: "import_mod_installed", mod_name: "A", index: 1, total: 2 },
-				{ type: "step", op: "import", phase: "import_saved" },
+			const mod = (id) => ({ source_id: "fake", mod_id: id });
+			const ev = (type, id, phase, extra) => ({ type, data: { op: "switch", mod: mod(id), mod_name: "Same Name", phase, ...extra } });
+			const events = [
+				ev("step", "1", "switch_downloading"),
+				ev("download", "1", "switch_downloading", { percent: 50 }),
+				ev("step", "1", "switch_install_error", { detail: "boom" }),
+				ev("download", "1", "switch_downloading", { percent: 100 }),
+				ev("step", "2", "install_lock_refusal", { detail: "locked" }),
+				ev("step", "2", "switch_downloading"),
+				ev("step", "3", "workshop_unavailable", { detail: "gone" }),
+				ev("step", "2", "install_note", { detail: "a note" }),
+				ev("step", "2", "switch_installing"),
+				ev("step", "1", "switch_install_note", { detail: "another note" }),
 			];
 			let log = [];
-			frames.forEach((frame, i) => { log = p.appendCollapsed(log, { key: i, frame }); });
+			events.forEach((event, i) => { log = p.appendCollapsed(log, { key: i, frame: p.frameFromEvent(event) }); });
 			return {
 				partial: p.resultTallyLabel(partial), partialTone: p.resultTallyTone(partial),
 				clean: p.resultTallyLabel(clean), cleanTone: p.resultTallyTone(clean),
 				pending: p.resultTallyLabel(pending),
-				log: log.map((e) => (e.frame.phase || e.frame.type) + ":" + (e.frame.mod_name || "")),
+				recorded: p.collectionTallyLabel({ total: 3, todos: 2, recorded: true }),
+				log: log.map((e) => (e.frame.type === "download" ? "download" : e.frame.phase) + ":" + e.frame.mod_key),
 			};
 		})()`, &got, awaitPromise),
 	)
@@ -390,12 +429,43 @@ func TestE2E_FinishCollection_TallyWordsAndTrayLogCollapse(t *testing.T) {
 	assert.Equal(t, "Imported 40 mods", got.Clean)
 	assert.Equal(t, "succeeded", got.CleanTone)
 	assert.Equal(t, "0 installed · 40 skipped", got.Pending, "an import that saved its mods pending keeps its words")
+	assert.Equal(t, "Recorded 1 of 3 mods; 2 need you", got.Recorded)
 	assert.Equal(t, []string{
-		"import_downloading:B",
-		"import_mod_failed:B",
-		"warning:A",
-		"import_mod_installed:A",
-		"import_saved:",
-	}, got.Log)
+		"switch_install_error:fake:1",
+		"download:fake:1",
+		"install_lock_refusal:fake:2",
+		"workshop_unavailable:fake:3",
+		"install_note:fake:2",
+		"switch_installing:fake:2",
+		"switch_install_note:fake:1",
+	}, got.Log, "only plain progress collapses, per exact mod")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FinishCollection_TheProfileCardCountsItemsOnce: a profile whose
+// only difference is its items left to finish says them once - as items
+// left to finish, never also as "mods not installed" - and offers Finish
+// collection, not Apply profile.
+func TestE2E_FinishCollection_TheProfileCardCountsItemsOnce(t *testing.T) {
+	f := newE2EFillFixture(t)
+	seedFinishProfile(t, f.e2eFixture)
+
+	var card, title, button string
+	var applyOffered bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/g/"+f.Game.ID+"/Fin"),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.card--profile [data-testid="profile-unresolved"]`, chromedp.ByQuery),
+		pollUntil(`document.querySelector('.card--profile [data-action="finish-collection"]') !== null`),
+		textContent(`.card--profile`, &card),
+		textContent(`.card--profile .card__title`, &title),
+		textContent(`.card--profile [data-action="finish-collection"]`, &button),
+		chromedp.Evaluate(`document.querySelector('.card--profile [data-action="apply-profile"]') !== null`, &applyOffered),
+	)
+	assert.Contains(t, card, "Collection incomplete: 5 items left to finish")
+	assert.NotContains(t, card, "not installed", "an item left to finish is not also a mod not installed")
+	assert.False(t, applyOffered, "items left to finish alone offer no Apply profile")
+	assert.Equal(t, "◎ Profile (5)", title)
+	assert.Equal(t, "Finish collection: 5 of 5 need you", button)
 	assert.Empty(t, f.BrowserErrors())
 }
