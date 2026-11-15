@@ -69,6 +69,11 @@ const (
 	// (#608). It runs the import's per-mod engine, so it emits the Import*
 	// phase family; Scope.Op is what tells the two apart.
 	OpProfileFill Op = "profile_fill"
+	// OpCollectionFinish is `lmm profile finish` - resolving a collection
+	// profile's items left to do (#660). It runs the import's per-mod
+	// engine, so it emits the Import* phase family; Scope.Op tells it
+	// apart.
+	OpCollectionFinish Op = "collection_finish"
 )
 
 // Scope is embedded in every event: which operation, which mod (if any),

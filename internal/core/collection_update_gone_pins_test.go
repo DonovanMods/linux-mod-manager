@@ -186,10 +186,11 @@ func TestCollectionUpdate_FindsAndDecidesTheNewVersionsGonePins(t *testing.T) {
 	assert.Equal(t, "nexusmods:13", plan.Source.GonePins[0].Key())
 	assert.Equal(t, 1, f.src.listCalls["13"])
 	assert.Zero(t, f.src.listCalls["10"], "an unchanged pin needs no check")
-	_, err := f.svc.ApplyCollectionUpdate(context.Background(), f.game, plan, core.CollectionUpdateOptions{}, nil)
-	require.True(t, core.IsCollectionGonePins(err), "got %v", err)
+	// #660: decided by default - the current file.
+	assert.Equal(t, core.GonePinUseCurrent, plan.Source.GonePins[0].Choice)
+	assert.True(t, plan.Source.GonePins[0].Default)
 
-	plan, err = f.svc.PlanCollectionUpdate(context.Background(), f.game, core.CollectionUpdateRequest{
+	plan, err := f.svc.PlanCollectionUpdate(context.Background(), f.game, core.CollectionUpdateRequest{
 		Profile: "coll", GonePins: core.GonePinChoices{Skip: []string{"nexusmods:13"}}})
 	require.NoError(t, err)
 	assert.NotContains(t, keys(plan.Added), "nexusmods:13")
@@ -319,10 +320,13 @@ func TestCollectionUpdate_AConflictsGonePinIsDecidedOnlyWhenOverridden(t *testin
 	require.Contains(t, keys(plan.Conflicts), "nexusmods:11")
 	require.Len(t, plan.Source.GonePins, 1)
 	assert.True(t, plan.Source.GonePins[0].Conflict)
-	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{Override: []string{"nexusmods:11"}}, nil)
-	require.True(t, core.IsCollectionGonePins(err), "overriding needs the decision: %v", err)
-	_, err = f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
-	require.NoError(t, err, "the user's version wins: nothing to decide")
+	// #660: overriding without a decision no longer refuses: the user's
+	// working version is kept, and the result says how to take the
+	// collection's.
+	result, err := f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{Override: []string{"nexusmods:11"}}, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Warnings)
+	assert.Contains(t, result.Warnings[0], "your version is kept")
 	assert.Equal(t, []string{"110"}, f.profile(t).FindRef("nexusmods", "11").FileIDs)
 
 	f.publish(t, 5, `{"name": "Three Mods", "mods": [

@@ -115,14 +115,12 @@ func TestRunAcquire_AnAnswerableRefusalBlocksWithNothingWritten(t *testing.T) {
 	}, log.steps, "no begin, no commit, no settled failure; the clean item is retained")
 }
 
-func TestRunAcquire_BlockAllRefusesOnAnyFailure(t *testing.T) {
+// #660: a collection import blocks on nothing - an answerable refusal
+// settles as its item's failure, and the clean items commit.
+func TestRunAcquire_BlockNoneSettlesEveryFailure(t *testing.T) {
 	var log engineLog
-	err := runAcquire(context.Background(), fakeRun(acquirePolicy{blockAll: true}, &log, nil, errFlaky, nil))
-	var refused *AcquireRefusedError
-	require.ErrorAs(t, err, &refused)
-	require.Len(t, refused.Refusals, 1)
-	assert.ErrorIs(t, err, errFlaky)
-	assert.Equal(t, []string{"acquire 0", "acquire 1", "acquire 2", "retain 0", "retain 2"}, log.steps)
+	require.NoError(t, runAcquire(context.Background(), fakeRun(acquirePolicy{blockNone: true}, &log, nil, errLoader, nil)))
+	assert.Equal(t, []string{"acquire 0", "acquire 1", "acquire 2", "begin", "commit 0", "failed 1", "commit 2"}, log.steps)
 }
 
 func TestRunAcquire_InterleavedSettlesEachItemBeforeTheNext(t *testing.T) {

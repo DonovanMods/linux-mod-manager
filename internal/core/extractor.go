@@ -33,10 +33,10 @@ func (e *Extractor) Extract(ctx context.Context, archivePath, destDir string) er
 	if format == "" {
 		ext := filepath.Ext(archivePath)
 		if ext != "" {
-			return fmt.Errorf("unsupported archive format: %s", ext)
+			return fmt.Errorf("%w: %s", ErrUnsupportedArchive, ext)
 		}
 
-		return fmt.Errorf("unsupported archive format for path: %s", archivePath)
+		return fmt.Errorf("%w for path: %s", ErrUnsupportedArchive, archivePath)
 	}
 
 	// Create destination directory
@@ -50,7 +50,7 @@ func (e *Extractor) Extract(ctx context.Context, archivePath, destDir string) er
 	case "7z", "rar":
 		return e.extract7z(ctx, archivePath, destDir, format)
 	default:
-		return fmt.Errorf("unsupported archive format: %s", format)
+		return fmt.Errorf("%w: %s", ErrUnsupportedArchive, format)
 	}
 }
 
@@ -254,6 +254,11 @@ func (e *Extractor) sanitizePath(destDir, filePath string) (string, error) {
 
 	return destPath, nil
 }
+
+// ErrUnsupportedArchive is an archive whose format lmm cannot extract
+// (#660): its text is the "unsupported archive format" every such failure
+// already began with.
+var ErrUnsupportedArchive = errors.New("unsupported archive format")
 
 // ErrSevenZipMissing is the system 7z command not being on PATH: lmm reads
 // .7z and .rar archives - every NexusMods collection's recipe among them

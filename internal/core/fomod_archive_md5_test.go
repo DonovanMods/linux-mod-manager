@@ -87,7 +87,20 @@ func TestCollectionFomod_ADifferentArchiveIsAskedAboutWithTheReason(t *testing.T
 	ctx := context.Background()
 	recorded := strings.Repeat("0", 32)
 
+	// #660: the question is the item's to-do, never a refusal.
 	err := f.importCollection(t, md5Collection(recorded), nil)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+	require.Len(t, incomplete.Result.Todos, 1)
+	assert.Equal(t, core.FomodReasonArchiveMismatch, incomplete.Result.Todos[0].FomodReason)
+	assert.Empty(t, f.deployed(t, "textures/t.dds"))
+	require.NotNil(t, f.ref(t, "col", "mod1").Todo)
+
+	// Finishing it without answers asks, with the reason - the collection's
+	// md5 is still what the archive is checked against.
+	plan, err := f.svc.PlanCollectionFinish(ctx, f.game, core.CollectionFinishRequest{Profile: "col", RetryAll: true})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyCollectionFinish(ctx, f.game, plan, core.CollectionFinishOptions{}, nil)
 	var q *core.FomodChoicesRequiredError
 	require.True(t, errors.As(err, &q), "got %v", err)
 	require.Len(t, q.Mods, 1)
@@ -97,16 +110,17 @@ func TestCollectionFomod_ADifferentArchiveIsAskedAboutWithTheReason(t *testing.T
 	assert.Equal(t, recorded, m.ArchiveMismatch.ExpectedMD5)
 	assert.Equal(t, actual, m.ArchiveMismatch.ActualMD5)
 	assert.Equal(t, "4K", m.Choices[0].Groups[0].Choices[0].Name, "the curator's choices are the preselection")
-	assert.Contains(t, err.Error(), "not the archive")
-	_, err = f.svc.NewProfileManager().Get(ctx, "g1", "col")
-	assert.Error(t, err, "nothing was written, the profile included")
-	assert.Empty(t, f.deployed(t, "textures/t.dds"))
+	assert.Contains(t, q.Error(), "not the archive")
 
-	require.NoError(t, f.importCollection(t, md5Collection(recorded), map[string]domain.FomodChoices{"src:mod1": answer("2K")}))
+	plan, err = f.svc.PlanCollectionFinish(ctx, f.game, core.CollectionFinishRequest{Profile: "col", RetryAll: true})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyCollectionFinish(ctx, f.game, plan, core.CollectionFinishOptions{Fomod: map[string]domain.FomodChoices{"src:mod1": answer("2K")}}, nil)
+	require.NoError(t, err)
 	assert.Equal(t, "2K-a", f.deployed(t, "textures/t.dds"))
 	ref := f.ref(t, "col", "mod1")
 	assert.Equal(t, "2K", ref.Fomod.Steps[0].Groups[0].Choices[0].Name, "the answer is what the profile records")
-	assert.Equal(t, 1, f.mock.DownloadCount(), "the answered re-run fetched nothing again")
+	assert.Nil(t, ref.Todo)
+	assert.Equal(t, 1, f.mock.DownloadCount(), "the answered finish fetched nothing again")
 }
 
 // TestCollectionFomod_AMalformedMD5IsIgnored: a stranger's md5 that is not

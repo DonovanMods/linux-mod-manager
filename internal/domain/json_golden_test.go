@@ -619,6 +619,17 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #660: why a collection item is not installed.
+			"collection_todo",
+			domain.CollectionTodo{Reason: domain.TodoGonePin, Name: "Removed Mod", Detail: "NexusMods no longer offers file 5000",
+				FileIDs: []string{"5000", "5001"}, CanSkipFile: true},
+		},
+		{
+			"mod_reference_todo",
+			domain.ModReference{SourceID: "nexusmods", ModID: "4044", Version: "2.1", FileIDs: []string{"9000"}, FromCollection: true,
+				Todo: &domain.CollectionTodo{Reason: domain.TodoInstallerQuestions, Name: "FSMP", FomodReason: "stale"}},
+		},
+		{
 			// #657: a gone pin an entry's current file stands in for.
 			"collection_pin",
 			domain.CollectionPin{Version: "4.3.8a", FileIDs: []string{"733846"}},

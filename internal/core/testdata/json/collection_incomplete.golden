@@ -1,0 +1,14 @@
+{
+  "warning": "collection incomplete: 1 item(s) unresolved (FSMP); the game may not behave as the curator intended - finish it with `lmm profile finish`",
+  "items": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "4044",
+      "name": "FSMP",
+      "reason": "installer_questions",
+      "fomod_reason": "stale",
+      "action": "answer_installer",
+      "remedy": "FSMP's installer changed since the curator recorded their choices; answer it to continue"
+    }
+  ]
+}

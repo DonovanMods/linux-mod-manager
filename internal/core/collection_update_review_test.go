@@ -192,19 +192,24 @@ func TestCollectionUpdate_AnsweringAnInstallersQuestions(t *testing.T) {
 	f.serve(urlDocument(t, "coll-1", 2, versionTwo))
 	plan := f.planUpdate(t)
 
-	_, err := f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
-	var q *core.FomodChoicesRequiredError
-	require.True(t, errors.As(err, &q), "the installer asks: %v", err)
-	assert.Equal(t, 1, f.profile(t).Collection.Version, "nothing written")
+	// #660: the update applies what it can; the installer's questions are
+	// the item's to-do, answered by finishing the collection.
+	result, err := f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+	assert.Equal(t, 2, f.profile(t).Collection.Version, "the update applied")
+	require.Len(t, result.Import.Todos, 1)
+	assert.Equal(t, domain.TodoInstallerQuestions, result.Import.Todos[0].Reason)
 
-	result, err := f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{
+	finish, err := f.svc.PlanCollectionFinish(ctx, f.game, core.CollectionFinishRequest{Profile: "coll", Retry: []string{"nexusmods:13"}})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyCollectionFinish(ctx, f.game, finish, core.CollectionFinishOptions{
 		Fomod: map[string]domain.FomodChoices{"nexusmods:13": answer("2K")},
 	}, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 1, result.Added)
 	saved := f.profile(t)
-	assert.Equal(t, 2, saved.Collection.Version)
 	assert.Equal(t, "2K", saved.FindRef("nexusmods", "13").Fomod.Steps[0].Groups[0].Choices[0].Name, "the answers are recorded")
+	assert.Nil(t, saved.FindRef("nexusmods", "13").Todo)
 }
 
 // pluginDoc is a version of the collection carrying a plugin list and
@@ -367,11 +372,12 @@ func TestCollectionUpdate_CarriesTheMD5Pin(t *testing.T) {
 				assert.Equal(t, 2, f.profile(t).Collection.Version)
 				return
 			}
-			var q *core.FomodChoicesRequiredError
-			require.True(t, errors.As(err, &q), "got %v", err)
-			require.Len(t, q.Mods, 1)
-			assert.Equal(t, core.FomodReasonArchiveMismatch, q.Mods[0].Reason)
-			assert.Equal(t, 1, f.profile(t).Collection.Version, "nothing written")
+			var incomplete *core.ProfileImportIncompleteError
+			require.ErrorAs(t, err, &incomplete)
+			require.Len(t, incomplete.Result.Todos, 1)
+			assert.Equal(t, core.FomodReasonArchiveMismatch, incomplete.Result.Todos[0].FomodReason)
+			assert.Equal(t, recorded, incomplete.Result.Todos[0].Detail+f.profile(t).FindRef("nexusmods", "13").Todo.ArchiveMD5["130"],
+				"the to-do keeps the collection's md5 for the finish to check against")
 		})
 	}
 }

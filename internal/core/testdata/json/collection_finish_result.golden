@@ -1,0 +1,29 @@
+{
+  "profile": "Skyrim Plus",
+  "installed": 1,
+  "skipped": [
+    "nexusmods:999"
+  ],
+  "failed": 1,
+  "failures": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "4044",
+      "name": "FSMP",
+      "reason": "download failed: HTTP 503"
+    }
+  ],
+  "todos": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "4044",
+      "name": "FSMP",
+      "reason": "installer_questions",
+      "fomod_reason": "stale",
+      "action": "answer_installer",
+      "remedy": "FSMP's installer changed since the curator recorded their choices; answer it to continue"
+    }
+  ],
+  "total": 999,
+  "reused_downloads": 1
+}

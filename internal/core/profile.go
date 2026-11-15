@@ -556,6 +556,7 @@ func (pm *ProfileManager) upsertModByUser(ctx context.Context, gameID, profileNa
 // ref it updates in place.
 func (pm *ProfileManager) upsertModRef(ctx context.Context, gameID, profileName string, mod domain.ModReference, rec fomodRecord, disown bool) error {
 	mod.SetFomodRecord(domain.FomodRecord{})
+	mod.Todo = nil
 	if rec.op == fomodSet {
 		mod.SetFomodRecord(rec.rec)
 	}
@@ -596,6 +597,9 @@ func (pm *ProfileManager) upsertModRef(ctx context.Context, gameID, profileName 
 			}
 			profile.Mods[i].Version = mod.Version
 			profile.Mods[i].FileIDs = mod.FileIDs
+			// #660: every upsert records an install, which resolves the
+			// item's to-do.
+			profile.Mods[i].Todo = nil
 			if disown {
 				profile.Mods[i].FromCollection, profile.Mods[i].SubstitutedFor = false, nil
 			}

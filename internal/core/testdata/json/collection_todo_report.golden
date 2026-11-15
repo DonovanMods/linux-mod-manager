@@ -1,0 +1,28 @@
+{
+  "profile": "Skyrim Plus",
+  "collection": "Skyrim Plus",
+  "total": 1000,
+  "todos": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "4044",
+      "name": "FSMP",
+      "reason": "installer_questions",
+      "fomod_reason": "stale",
+      "action": "answer_installer",
+      "remedy": "FSMP's installer changed since the curator recorded their choices; answer it to continue"
+    },
+    {
+      "source_id": "nexusmods",
+      "mod_id": "999",
+      "name": "Removed Mod",
+      "reason": "gone_pin",
+      "detail": "NexusMods no longer offers file 5000 (version 1.0), and no current file stands in for it",
+      "action": "choose_file",
+      "remedy": "the source no longer offers the file the collection pins for Removed Mod: use the mod's current file, or skip it",
+      "file_ids": [
+        "5000"
+      ]
+    }
+  ]
+}

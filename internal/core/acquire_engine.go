@@ -63,11 +63,13 @@
 // WHAT BLOCKS. In an ordinary Apply only an ANSWERABLE refusal blocks: one
 // the user answers and then re-runs the same command (answerableRefusal).
 // Unanswerable failures keep their per-item counting, because blocking a
-// whole profile import on one mod's flaky CDN would be a regression. In
-// all-or-nothing mode (acquirePolicy.blockAll: a collection apply, C2,
-// through ProfileImportOptions.AllOrNothing) every acquire failure blocks,
-// because a half-applied collection is the outcome that looks like it
-// worked.
+// whole profile import on one mod's flaky CDN would be a regression. A
+// collection import blocks on NOTHING (acquirePolicy.blockNone, through
+// ProfileImportOptions.RecordTodos; owner ruling 2026-11-15, #660, which
+// replaced C2's all-or-nothing): every item that installs is installed, a
+// question included settles as its item's failure, and each failed item is
+// left in the profile with a to-do (collection_todo.go). The import never
+// pauses to ask.
 package core
 
 import (
@@ -93,14 +95,15 @@ const (
 // acquire refusal".
 type acquirePolicy struct {
 	mode acquireMode
-	// blockAll makes every acquire failure block, not only answerable
-	// ones (all-or-nothing; meaningless when interleaved).
-	blockAll bool
+	// blockNone makes no acquire failure block, an answerable one
+	// included: each settles as its item's failure (a collection import,
+	// #660).
+	blockNone bool
 }
 
 // blocks reports whether an acquire failure stops the Apply at decide.
 func (p acquirePolicy) blocks(err error) bool {
-	return p.blockAll || answerableRefusal(err)
+	return !p.blockNone && answerableRefusal(err)
 }
 
 // answerableRefusal reports whether an acquire refusal is one the user

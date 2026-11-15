@@ -2,8 +2,8 @@ package core_test
 
 // #657: a source collection pinning a file its source no longer offers -
 // found at plan time, at most one listing call per mod, and decided per
-// mod: the mod's current main file instead, or skip it. Apply refuses
-// until every one is decided; the decision is recorded on the profile.
+// mod: the mod's current main file instead (the default, #660), or skip it;
+// the decision is recorded on the profile.
 
 import (
 	"context"
@@ -62,23 +62,17 @@ func TestPlanSourceCollectionImport_FindsAGonePin(t *testing.T) {
 	assert.Equal(t, "Ten", pin.Name)
 	assert.Equal(t, []string{"100"}, pin.FileIDs)
 	assert.Equal(t, &core.CollectionCurrentFile{FileID: "101", Name: "Ten 2", Version: "2"}, pin.Current)
-	assert.Empty(t, pin.Choice, "undecided")
+	assert.Equal(t, core.GonePinUseCurrent, pin.Choice, "#660: the current file is the default")
+	assert.True(t, pin.Default)
 	assert.Contains(t, itemNamed(c, "Ten").Note, "no longer offers")
 	// #654's summary counts it and lists it under Needs your attention.
 	require.NotNil(t, c.Summary)
-	assert.Equal(t, 1, c.Summary.GonePins)
-	assert.Contains(t, c.Summary.Attention, core.CollectionAttentionItem{ID: "10:100", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionGonePin}})
 	assert.Equal(t, map[string]int{"10": 1}, f.src.listCalls,
 		"only the mod the list does not vouch for is listed, once; the optional item is not planned")
 
+	// #660: decided by default, so the import goes ahead.
 	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
-	var refused *core.CollectionGonePinsError
-	require.ErrorAs(t, err, &refused)
-	require.Len(t, refused.Pins, 1)
-	assert.True(t, core.IsCollectionGonePins(err))
-	assert.Contains(t, err.Error(), "--use-current")
-	_, err = f.svc.NewProfileManager().Get(context.Background(), f.game.ID, plan.Profile.Name)
-	assert.ErrorIs(t, err, domain.ErrProfileNotFound, "nothing was written")
+	require.NoError(t, err)
 }
 
 func TestPlanSourceCollectionImport_AFileTheListLeavesOutIsChecked(t *testing.T) {
@@ -174,13 +168,16 @@ func TestPlanSourceCollectionImport_AModGoneEntirelyCanOnlyBeSkipped(t *testing.
 	pin := plan.Collection.Source.GonePins[0]
 	assert.Nil(t, pin.Current)
 	assert.Empty(t, pin.Choice, "there is no current file to use")
-	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
-	assert.True(t, core.IsCollectionGonePins(err))
-	assert.Contains(t, err.Error(), "no current file")
-
-	plan = f.plan(t, core.SourceCollectionImportRequest{GonePins: core.GonePinChoices{Skip: []string{"nexusmods:10"}}})
-	_, err = f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	// #660: not a refusal - the item is left a gone_pin to-do.
+	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
 	require.NoError(t, err)
+	require.Len(t, result.Todos, 1)
+	assert.Equal(t, domain.TodoGonePin, result.Todos[0].Reason)
+
+	plan = f.plan(t, core.SourceCollectionImportRequest{ProfileName: "skipping", GonePins: core.GonePinChoices{Skip: []string{"nexusmods:10"}}})
+	result, err = f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Todos, "skipped, it is no to-do")
 }
 
 func TestPlanSourceCollectionImport_AListingThatFailsIsAWarning(t *testing.T) {
@@ -224,11 +221,13 @@ func TestCollectionGonePin_ASubstituteAsksAboutTheCuratorsChoices(t *testing.T) 
 		SourceID: "nexusmods", Ref: "phased", GonePins: core.GonePinChoices{UseCurrent: []string{"nexusmods:11"}},
 	})
 	require.NoError(t, err)
-	_, err = f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
-	var q *core.FomodChoicesRequiredError
-	require.True(t, errors.As(err, &q), "got %v", err)
-	require.Len(t, q.Mods, 1)
-	assert.Equal(t, core.FomodReasonArchiveMismatch, q.Mods[0].Reason)
+	// #660: the question is a to-do, not a refusal.
+	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+	require.Len(t, result.Todos, 1)
+	assert.Equal(t, domain.TodoInstallerQuestions, result.Todos[0].Reason)
+	assert.Equal(t, core.FomodReasonArchiveMismatch, result.Todos[0].FomodReason)
 }
 
 // TestCollectionGonePin_ALaterInstallOfASubstituteAsks: after a

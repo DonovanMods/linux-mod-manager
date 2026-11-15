@@ -283,30 +283,26 @@ func TestApplyImport_AnUnanswerableFailureIsCountedPerItem(t *testing.T) {
 	assert.True(t, fx.svc.GetGameCache(fx.game).Exists(cache.Key{GameID: fx.game.ID, SourceID: "repo", ModID: "plain", Version: "1.0.0"}))
 }
 
-// All-or-nothing (a collection apply's mode, C2) blocks on EVERY acquire
-// failure, the unanswerable kind included, and is reachable through
-// ApplyImport itself.
-func TestApplyImport_AllOrNothingRefusesOnAnyAcquireFailure(t *testing.T) {
-	fx := newAcquireFixture(t, plainMod("plain", "Plain"))
-	plan := fx.importPlan(t, "plain", "ghost")
+// #660 (owner ruling, replacing C2's all-or-nothing): a collection's mode
+// blocks on NOTHING. A refusal the user answers (the loader) settles as its
+// item's failure like an unanswerable one, and every clean item installs.
+func TestApplyImport_RecordTodosNeverBlocks(t *testing.T) {
+	fx := newAcquireFixture(t, plainMod("plain", "Plain"), loaderMod("thing", "Thing"))
+	plan := fx.importPlan(t, "plain", "thing", "ghost")
 
-	_, err := fx.svc.ApplyImport(context.Background(), fx.game, plan,
-		core.ProfileImportOptions{Install: true, AllOrNothing: true}, nil)
-	var refused *core.AcquireRefusedError
-	require.ErrorAs(t, err, &refused)
-	require.Len(t, refused.Refusals, 1)
-	assert.Equal(t, "ghost", refused.Refusals[0].ModID)
-	assert.NotErrorIs(t, err, core.ErrStalePlan)
-	fx.requireNothingWritten(t, "plain")
-	assert.Equal(t, 1, fx.retainedEntries(t), "the clean mod's archive is kept for the re-run")
-
-	// The same plan, without the mode, is the ordinary import: the clean
-	// mod installs from the kept archive.
-	result, err := fx.svc.ApplyImport(context.Background(), fx.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	result, err := fx.svc.ApplyImport(context.Background(), fx.game, plan,
+		core.ProfileImportOptions{Install: true, RecordTodos: true}, nil)
 	var incomplete *core.ProfileImportIncompleteError
-	require.ErrorAs(t, err, &incomplete)
-	assert.Equal(t, 1, result.Installed)
-	assert.Equal(t, int64(1), fx.fetches("plain"), "no second download")
+	require.ErrorAs(t, err, &incomplete, "a partial import is still not a clean one")
+	assert.False(t, result.Refused)
+	assert.Equal(t, 1, result.Installed, "the clean mod installs")
+	assert.Equal(t, 2, result.Failed)
+	_, err = fx.svc.GetInstalledMod(context.Background(), "repo", "plain", fx.game.ID, "target")
+	require.NoError(t, err)
+	profile, err := fx.svc.NewProfileManager().Get(context.Background(), fx.game.ID, "target")
+	require.NoError(t, err)
+	assert.Len(t, profile.Mods, 3, "the failed items stay in the profile, in their place")
+	assert.Equal(t, 1, fx.retainedEntries(t), "the refused mod's archive is kept for its retry")
 }
 
 // The mode-selection rule's behavioural half (acquire_engine.go):

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -678,14 +679,15 @@ type ProfileImportOptions struct {
 	// counted in Skipped - the same outcome a declined prompt produced.
 	Install bool
 
-	// AllOrNothing makes EVERY acquire failure refuse the whole import
-	// with nothing written, not only a refusal the user answers (#602):
-	// a download error on one mod then blocks the rest, and Apply returns
-	// the bare *AcquireRefusedError naming every refused item. It is the
-	// collection apply's mode (C2), where a half-applied list is the
-	// outcome that looks like it worked; an ordinary import leaves it
-	// false and keeps per-mod failure counting.
-	AllOrNothing bool
+	// RecordTodos is a collection import's mode (#660, owner ruling
+	// 2026-11-15, replacing C2's all-or-nothing): no acquire failure
+	// blocks - an installer's question included - so every item that can
+	// be installed is, and each item that failed stays in the profile with
+	// a to-do record (domain.ModReference.Todo) saying why and what
+	// resolves it. The result lists them (Todos). An ordinary import
+	// leaves it false: a question still refuses the import with nothing
+	// written, and a failed mod is only counted.
+	RecordTodos bool
 
 	// Fomod answers FOMOD installer questions (#614), keyed by
 	// domain.ModKey, as InstallOptions.Fomod does. A mod with no entry
@@ -788,6 +790,24 @@ type ProfileImportResult struct {
 	// script or a loader configuration - and --allow-any-overrides was not
 	// given. Absent when none was, so every other result is unchanged.
 	BundledSkipped []string `json:"bundled_skipped,omitempty"`
+
+	// Todos are a collection import's items left to do (#660): every item
+	// the profile lists that is not installed, each with why and the one
+	// action that resolves it - "Finish collection". Total counts the
+	// items the profile lists, so "imported Total-len(Todos) of Total".
+	// Both are absent for an ordinary import, and Todos for a collection
+	// import that installed everything.
+	Todos []CollectionTodoItem `json:"todos,omitempty"`
+	Total int                  `json:"total,omitzero"`
+	// ReusedDownloads counts the archives an earlier attempt downloaded
+	// and kept that this run installed from rather than downloading again
+	// (#660; retained_download.go). Absent when none.
+	ReusedDownloads int `json:"reused_downloads,omitzero"`
+
+	// todoRecords are the to-dos this run's failures record, by
+	// domain.ModKey, for the collection flow to write with its own
+	// (recordCollectionTodos).
+	todoRecords map[string]*domain.CollectionTodo
 }
 
 // ApplyImport executes a plan produced by PlanImport. With nothing to
@@ -955,6 +975,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	// the refused document, which lists every item (refusedImport).
 	names := make(map[string]string, total)
 	failed := make(map[string]string)
+	failedErrs := make(map[string]error)
 	var installer *Installer
 	// staged are the items acquired so far, for a later phase's file
 	// states (importFileStates).
@@ -964,13 +985,13 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		inRun[domain.ModKey(ref.SourceID, ref.ModID)] = true
 	}
 	run := acquireRun[*importStaged]{
-		policy: acquirePolicy{mode: acquirePhased, blockAll: opts.AllOrNothing},
+		policy: acquirePolicy{mode: acquirePhased, blockNone: opts.RecordTodos},
 		n:      total,
 		key:    func(i int) string { return domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID) },
 		acquire: func(ctx context.Context, i int) (*importStaged, *acquireFailure) {
 			key := domain.ModKey(toInstall[i].SourceID, toInstall[i].ModID)
 			states := s.importFileStates(game, plan, key, staged, inRun)
-			st, failure := s.acquireImportItem(ctx, game, plan, toInstall[i], Scope{Op: OpImport, Index: i + 1, Total: total}, opts.Fomod, states, result, emit, failed)
+			st, failure := s.acquireImportItem(ctx, game, plan, toInstall[i], Scope{Op: OpImport, Index: i + 1, Total: total}, opts.Fomod, states, result, emit, failed, failedErrs)
 			if st != nil {
 				staged = append(staged, st)
 			}
@@ -997,10 +1018,24 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	}
 	if err := runAcquire(ctx, run); err != nil {
 		var refused *AcquireRefusedError
-		if errors.As(err, &refused) && !opts.AllOrNothing {
+		if errors.As(err, &refused) {
 			return result, refusedImport(plan, toInstall, refused, names, failed, result)
 		}
 		return result, err
+	}
+	if opts.RecordTodos {
+		// #660: each failed item's to-do, for the collection flow to
+		// write: a failure at acquire carries its error, one at commit (a
+		// deploy, a save) only its text.
+		result.todoRecords = make(map[string]*domain.CollectionTodo, len(result.Failures))
+		for _, f := range result.Failures {
+			key := domain.ModKey(f.SourceID, f.ModID)
+			todo := todoFor(f.Name, f.Reason, failedErrs[key])
+			if todo.Reason == domain.TodoInstallerQuestions {
+				todo.ArchiveMD5 = maps.Clone(plan.archiveMD5[key])
+			}
+			result.todoRecords[key] = todo
+		}
 	}
 
 	// #197 I3 fix: profile import deploys mods (installer.Install above) the

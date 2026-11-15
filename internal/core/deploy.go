@@ -249,6 +249,11 @@ type DeployPlan struct {
 	// whenever no mod is selected (the deploy then writes no override).
 	Overrides []OverrideChange `json:"overrides,omitempty"`
 
+	// Unresolved is the profile's collection items left to do (#660): the
+	// deploy may run, and warns that the game may not behave as the
+	// curator intended. Absent for a profile with none.
+	Unresolved *CollectionIncomplete `json:"unresolved,omitempty"`
+
 	// NoChanges reports that this deploy has nothing to act on at all: no
 	// mod selected and no purge pass. It is NOT a claim that the deploy
 	// would write no bytes - a selected mod always redeploys its files,
@@ -378,6 +383,11 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	profileRefs := map[string]domain.ModReference{}
 	if profile, perr := config.LoadProfile(s.configDir, game.ID, profileName); perr == nil {
 		profileRefs = firstRefs(profile.Mods)
+		installedKeys := make(map[string]bool, len(installedMods))
+		for _, m := range installedMods {
+			installedKeys[domain.ModKey(m.SourceID, m.ID)] = true
+		}
+		plan.Unresolved = incompleteOf(collectionTodos(profile, installedKeys))
 	}
 	// stampLock marks ref locked when the profile says so. Version is
 	// deliberately left as the installed row's: it is what this deploy will

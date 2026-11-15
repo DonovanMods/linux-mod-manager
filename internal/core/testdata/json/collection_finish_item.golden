@@ -1,0 +1,21 @@
+{
+  "todo": {
+    "source_id": "nexusmods",
+    "mod_id": "999",
+    "name": "Removed Mod",
+    "reason": "gone_pin",
+    "detail": "NexusMods no longer offers file 5000 (version 1.0), and no current file stands in for it",
+    "action": "choose_file",
+    "remedy": "the source no longer offers the file the collection pins for Removed Mod: use the mod's current file, or skip it",
+    "file_ids": [
+      "5000"
+    ]
+  },
+  "choice": "use_current",
+  "current": {
+    "file_id": "6000",
+    "name": "Removed Mod 2",
+    "version": "2.0"
+  },
+  "reused": 1
+}

@@ -163,6 +163,10 @@ type ModReferenceConfig struct {
 	// current file stands in for (domain.ModReference.SubstitutedFor);
 	// omitted when nil, so a file without it is unchanged.
 	SubstitutedFor *domain.CollectionPin `yaml:"substituted_for,omitempty"`
+	// Todo is #660's record of why a collection item is not installed
+	// (domain.ModReference.Todo); omitted when nil, so a file without it
+	// is unchanged.
+	Todo *domain.CollectionTodo `yaml:"todo,omitempty"`
 	// FileList and Patches are #610's exact file lists and binary patches,
 	// keyed by file id; omitted when empty, so a file without them is
 	// unchanged.
@@ -361,6 +365,7 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 			FomodOrder:     slices.Clone(m.FomodOrder),
 			FromCollection: m.FromCollection,
 			SubstitutedFor: m.SubstitutedFor.Clone(),
+			Todo:           m.Todo.Clone(),
 			// #610: copied, so the profile's maps are its own.
 			FileList: m.FileList.Clone(),
 			Patches:  m.Patches.Clone(),

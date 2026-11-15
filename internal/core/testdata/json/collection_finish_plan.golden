@@ -1,0 +1,33 @@
+{
+  "profile": "Skyrim Plus",
+  "game_id": "skyrimse",
+  "todos": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "4044",
+      "name": "FSMP",
+      "reason": "installer_questions",
+      "fomod_reason": "stale",
+      "action": "answer_installer",
+      "remedy": "FSMP's installer changed since the curator recorded their choices; answer it to continue"
+    }
+  ],
+  "install": [
+    {
+      "todo": {
+        "source_id": "nexusmods",
+        "mod_id": "4044",
+        "name": "FSMP",
+        "reason": "installer_questions",
+        "fomod_reason": "stale",
+        "action": "answer_installer",
+        "remedy": "FSMP's installer changed since the curator recorded their choices; answer it to continue"
+      },
+      "choice": "retry",
+      "reused": 1
+    }
+  ],
+  "skip": [],
+  "reusable_downloads": 1,
+  "no_changes": false
+}

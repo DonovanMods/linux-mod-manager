@@ -459,7 +459,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	default:
 		// Extract mode: validate and extract the archive
 		if !i.extractor.CanExtract(archivePath) {
-			return nil, fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
+			return nil, fmt.Errorf("%w: %s", ErrUnsupportedArchive, filepath.Ext(archivePath))
 		}
 
 		// Extract to a staging directory first

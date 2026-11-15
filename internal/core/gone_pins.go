@@ -15,10 +15,13 @@
 // is archived.
 //
 // Each gone pin is the user's to decide (owner ruling, 2026-11-15): install
-// the mod's current main file instead, or skip the mod. Until every one is
-// decided, Apply refuses (*CollectionGonePinsError). The choices are plan
-// options, as opting in an optional item is, because they change what the
-// plan installs. A substituted entry records the pin it stands in for
+// the mod's current main file instead, or skip the mod. A pin with a
+// current file to stand in for it defaults to that file (owner ruling,
+// #660), the plan saying so - and saying when the curator pinned the
+// version exactly, which Vortex would not substitute. A pin nothing stands
+// in for no longer refuses the import: its item is left a gone_pin to-do
+// (collection_todo.go). The choices are plan options, as opting in an
+// optional item is, because they change what the plan installs. A substituted entry records the pin it stands in for
 // (domain.ModReference.SubstitutedFor); a skipped one is recorded in the
 // profile's collection baseline, so a collection update neither undoes the
 // substitute nor re-adds the mod silently.
@@ -208,9 +211,19 @@ type CollectionGonePin struct {
 	// pin be decided.
 	Conflict bool `json:"conflict,omitzero"`
 	// Choice is what the import does: GonePinUseCurrent, GonePinSkipFile,
-	// GonePinSkip, or empty while undecided - and Apply refuses until
-	// every pin is decided.
+	// GonePinSkip, or empty when nothing can be done but skip - and the
+	// import then leaves the item a gone_pin to-do (#660) rather than
+	// refusing.
 	Choice string `json:"choice,omitempty"`
+	// Default says Choice is the default, not the user's (#660 owner
+	// ruling): a pin with a current file to stand in for it installs that
+	// file unless the user skips it.
+	Default bool `json:"default,omitzero"`
+	// CuratorExact says the curator pinned this version exactly (the
+	// collection's "exact" update policy) - so the current file is one the
+	// curator did not test. Vortex installs no newer file for an exact pin;
+	// lmm does by default, and says so (#660 owner ruling).
+	CuratorExact bool `json:"curator_exact,omitzero"`
 
 	// pin is the collection's whole pin of the mod, which a stand-in
 	// records; md5 the curator's archive md5 of each gone file.
@@ -690,9 +703,18 @@ func decideGonePins(conv *ConvertedCollection, pins []CollectionGonePin, choices
 	for i := range pins {
 		p := &pins[i]
 		p.Choice = choices.choiceFor(*p)
+		p.CuratorExact = conv.pinnedExactly(*p)
+		if p.Choice == "" && p.CanUseCurrent() && !p.Conflict {
+			// #660 owner ruling: the current file is the default, and
+			// skipping it the alternative.
+			p.Choice, p.Default = GonePinUseCurrent, true
+		}
 		note := fmt.Sprintf("%s no longer offers the file the collection pins", conv.sourceName())
 		switch p.Choice {
 		case GonePinUseCurrent:
+			if p.CuratorExact && p.Version != "" {
+				note += fmt.Sprintf("; the curator pinned %s exactly", p.Version)
+			}
 			note += "; " + describeStandIns(*p)
 			if substituteEntry(conv.Document, p, &out) {
 				out.changed = true
@@ -721,9 +743,9 @@ func decideGonePins(conv *ConvertedCollection, pins []CollectionGonePin, choices
 			case p.CanUseCurrent():
 				note += ": choose to " + describeStandIns(*p) + ", or to skip it"
 			case p.CanSkipFile:
-				note += ", and no current file matches it: leave it out and install the rest, or skip the mod"
+				note += ", and no current file matches it: the item is left to finish - leave the file out and install the rest, or skip the mod"
 			default:
-				note += ", and it offers no other: skip it to import the rest"
+				note += ", and it offers no other: the item is left to finish - skip it, or retry once the file is offered again"
 			}
 		}
 		for j := range conv.Items {
@@ -1089,4 +1111,18 @@ func (s *Service) resolveUpdatePins(ctx context.Context, game *domain.Game, base
 	plan.skips = append(plan.skips, outcome.skipped...)
 	plan.gonePinMD5 = outcome.archiveMD5
 	return nil
+}
+
+// pinnedExactly reports whether the curator pinned p's files exactly: the
+// collection's "exact" update policy (or none, which is exact) on any of
+// its gone files.
+func (c *ConvertedCollection) pinnedExactly(p CollectionGonePin) bool {
+	for _, it := range c.Items {
+		if it.ModID == p.ModID && slices.Contains(p.FileIDs, it.FileID) {
+			if it.UpdatePolicy == "" || it.UpdatePolicy == "exact" {
+				return true
+			}
+		}
+	}
+	return false
 }

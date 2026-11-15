@@ -702,10 +702,14 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 	if len(c.Unsupported) > 0 {
 		return &ProfileImportResult{}, &CollectionUnsupportedError{Unsupported: c.Unsupported, Supported: supportedExcept(c.Unsupported)}
 	}
-	// #657: every pinned file the source no longer offers is the user's to
-	// decide before anything is written.
-	if undecided := undecidedGonePins(c.Source, nil); len(undecided) > 0 {
-		return &ProfileImportResult{}, &CollectionGonePinsError{Pins: undecided}
+	// #660: a pinned file the source no longer offers, with no current
+	// file to stand in for it (#657), is not downloaded: the item is left
+	// in the profile with a gone_pin to-do. Every other item installs.
+	held := map[string]*domain.CollectionTodo{}
+	for _, p := range undecidedGonePins(c.Source, nil) {
+		held[p.Key()] = &domain.CollectionTodo{Reason: domain.TodoGonePin, Name: p.Name,
+			FileIDs: slices.Clone(p.FileIDs), CanSkipFile: p.CanSkipFile,
+			Detail: fmt.Sprintf("%s no longer offers %s, and no current file stands in for it", c.Source.sourceName(), describePin(p.Version, p.FileIDs))}
 	}
 	if !c.HooksImportable {
 		// A URL's hooks are never applied (#622): the plan's profile holds
@@ -739,39 +743,38 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 			return &ProfileImportResult{}, err
 		}
 	}
-	if c.Source != nil {
-		// A converted source collection is all or nothing at acquire (owner
-		// ruling, #602): a half-installed collection is the outcome that
-		// looks like it worked. An account the source serves no downloads
-		// to installs only what needs none - a mod another profile already
-		// has - and saves the profile with every other item pending.
-		opts.AllOrNothing = true
-		if c.Source.ManualDownload {
-			// #610: a bundled item is no download - the recipe carries it -
-			// so it installs on any account.
-			trimmed := *plan
-			trimmed.NeedsRedownload, trimmed.Missing = bundledOnly(plan.NeedsRedownload), bundledOnly(plan.Missing)
-			plan = &trimmed
+	// #660 (owner ruling 2026-11-15, replacing C2's all-or-nothing): a
+	// collection import installs every item it can and leaves each one it
+	// could not in the profile with a to-do - an installer's question
+	// included, so it never pauses to ask.
+	opts.RecordTodos = true
+	if c.Source != nil && c.Source.ManualDownload {
+		// An account the source serves no downloads to installs only what
+		// needs none - a mod another profile already has, and (#610) a
+		// bundled item, whose recipe carries it - and leaves every other
+		// item a manual-download to-do.
+		names := c.Source.itemNames()
+		for _, ref := range slices.Concat(plan.NeedsRedownload, plan.Missing) {
+			if key := domain.ModKey(ref.SourceID, ref.ModID); ref.SourceID != domain.SourceCollection && held[key] == nil {
+				held[key] = &domain.CollectionTodo{Reason: domain.TodoManualDownload, Name: names[key],
+					Detail: fmt.Sprintf("%s serves this account no downloads through its API", c.Source.sourceName())}
+			}
 		}
 	}
+	plan, heldBack := plan.installingNone(held)
 	result, err := s.ApplyImport(ctx, game, plan, opts, sink)
-	if c.Source != nil {
-		if lapsed := s.lapsedAccount(c.Source.SourceID, err); lapsed != nil {
-			return result, lapsed
-		}
-	}
 	if result == nil || result.ProfileName == "" {
 		return result, err
 	}
 	result.BundledSkipped = bundledSkipped
+	if terr := s.recordCollectionTodos(ctx, game, result, held); terr != nil && err == nil {
+		err = terr
+	}
+	// The items held back from the apply (a free account's downloads, a
+	// gone pin nothing stands in for) are pending, as a --no-install
+	// import counts its pending mods.
+	result.Skipped += heldBack
 	if c.Source != nil && err == nil {
-		if plan != original {
-			// The items a free account cannot download were held back
-			// from the apply; they are pending, as a --no-install import
-			// counts its pending mods.
-			result.Skipped += len(original.NeedsRedownload) + len(original.Missing) -
-				len(plan.NeedsRedownload) - len(plan.Missing)
-		}
 		finishSourceCollection(original, c.Source, result, opts)
 	}
 	if n := len(c.External); n > 0 {
@@ -1497,4 +1500,68 @@ func bundledOnly(refs []domain.ModReference) []domain.ModReference {
 		}
 	}
 	return out
+}
+
+// installingNone is p without downloading the mods held names (by
+// domain.ModKey): they stay in the profile it saves, pending, and are not
+// acquired. It also returns how many it held back.
+func (p *ImportPlan) installingNone(held map[string]*domain.CollectionTodo) (*ImportPlan, int) {
+	if len(held) == 0 {
+		return p, 0
+	}
+	n := 0
+	keep := func(refs []domain.ModReference) []domain.ModReference {
+		var out []domain.ModReference
+		for _, r := range refs {
+			if held[domain.ModKey(r.SourceID, r.ModID)] != nil {
+				n++
+				continue
+			}
+			out = append(out, r)
+		}
+		return out
+	}
+	trimmed := *p
+	trimmed.NeedsRedownload, trimmed.Missing = keep(p.NeedsRedownload), keep(p.Missing)
+	return &trimmed, n
+}
+
+// itemNames is each converted item's name, by domain.ModKey.
+func (c *ConvertedCollection) itemNames() map[string]string {
+	out := map[string]string{}
+	for _, it := range c.Items {
+		if key := domain.ModKey(c.SourceID, it.ModID); out[key] == "" {
+			out[key] = it.Name
+		}
+	}
+	return out
+}
+
+// recordCollectionTodos writes a collection import's to-dos - its failed
+// items' (result.todoRecords) and the ones held back from the apply
+// (held) - on the saved profile in one write, and fills the result's list
+// and count from the profile as it now stands (#660).
+func (s *Service) recordCollectionTodos(ctx context.Context, game *domain.Game, result *ProfileImportResult, held map[string]*domain.CollectionTodo) error {
+	records := make(map[string]*domain.CollectionTodo, len(held)+len(result.todoRecords))
+	for key, t := range held {
+		records[key] = t
+	}
+	for key, t := range result.todoRecords {
+		records[key] = t
+	}
+	pm := s.NewProfileManager()
+	if err := pm.writeTodos(ctx, game.ID, result.ProfileName, records); err != nil {
+		return fmt.Errorf("recording the collection's items to finish: %w", err)
+	}
+	profile, err := pm.Get(ctx, game.ID, result.ProfileName)
+	if err != nil {
+		return err
+	}
+	todos, err := s.profileTodos(ctx, game.ID, profile)
+	if err != nil {
+		return err
+	}
+	result.Todos = todos
+	result.Total = countListed(profile)
+	return nil
 }

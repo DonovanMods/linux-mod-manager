@@ -334,9 +334,9 @@ func listArchiveMembers(ctx context.Context, e *Extractor, archivePath string) (
 		return list7zMembers(ctx, archivePath, "rar")
 	default:
 		if ext := filepath.Ext(archivePath); ext != "" {
-			return nil, fmt.Errorf("unsupported archive format: %s", ext)
+			return nil, fmt.Errorf("%w: %s", ErrUnsupportedArchive, ext)
 		}
-		return nil, fmt.Errorf("unsupported archive format for path: %s", archivePath)
+		return nil, fmt.Errorf("%w for path: %s", ErrUnsupportedArchive, archivePath)
 	}
 }
 

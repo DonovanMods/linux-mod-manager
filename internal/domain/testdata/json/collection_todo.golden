@@ -1,0 +1,10 @@
+{
+  "reason": "gone_pin",
+  "name": "Removed Mod",
+  "detail": "NexusMods no longer offers file 5000",
+  "file_ids": [
+    "5000",
+    "5001"
+  ],
+  "can_skip_file": true
+}

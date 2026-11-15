@@ -268,6 +268,15 @@ type ModReference struct {
 	// nil for every other entry, and omitted.
 	SubstitutedFor *CollectionPin `yaml:"-" json:"substituted_for,omitempty"`
 
+	// Todo records why a collection item is not installed and what
+	// resolves it (#660): the import installs every item it can and leaves
+	// each one it could not in the profile, in its place, with this
+	// record. This machine's record, like SubstitutedFor: the profile file
+	// carries it (`todo:`), no export or document does (yaml "-"), and a
+	// successful install of the item clears it. nil for every other entry,
+	// and omitted.
+	Todo *CollectionTodo `yaml:"-" json:"todo,omitempty"`
+
 	// External and UpdatedAt are DISPLAY facts a plan document carries so a
 	// renderer never has to print Version raw (#365, part of #269).
 	//

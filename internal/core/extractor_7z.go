@@ -362,7 +362,7 @@ func (e *Extractor) declaredSize(ctx context.Context, archivePath string) (uint6
 		_, total, err := list7zArchive(ctx, archivePath, format)
 		return total, err
 	}
-	return 0, fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
+	return 0, fmt.Errorf("%w: %s", ErrUnsupportedArchive, filepath.Ext(archivePath))
 }
 
 // checkFreeSpace refuses an extraction whose declared size is more than
