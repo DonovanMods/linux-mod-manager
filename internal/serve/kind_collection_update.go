@@ -49,6 +49,12 @@ type collectionUpdatePlanRequest struct {
 	Profile      string   `json:"profile"`
 	WithOptional bool     `json:"with_optional,omitzero"`
 	Optional     []string `json:"optional,omitzero"`
+	// UseCurrent, UseCurrentAll and Skip decide the new version's pinned
+	// files NexusMods no longer offers (#657), by "<source-id>:<mod-id>":
+	// `--use-current`, `--use-current-all` and `--skip`.
+	UseCurrent    []string `json:"use_current,omitzero"`
+	UseCurrentAll bool     `json:"use_current_all,omitzero"`
+	Skip          []string `json:"skip,omitzero"`
 }
 
 // validate implements validatingOptions.
@@ -101,8 +107,12 @@ func planCollectionUpdateKind(ctx context.Context, s *Server, sel selection, opt
 		// The plan view's toggles post the whole selection, an empty one
 		// included: an item the user unticks is not re-added.
 		OptionalChosen: req.Optional != nil,
+		GonePins:       core.GonePinChoices{UseCurrent: req.UseCurrent, UseCurrentAll: req.UseCurrentAll, Skip: req.Skip},
 	})
 	if err != nil {
+		if core.IsBadGonePinChoice(err) {
+			return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
+		}
 		return nil, nil, err
 	}
 	return plan, &pendingCollectionUpdate{Game: sel.Game, Plan: plan}, nil

@@ -38,6 +38,10 @@ func e2eNexusCollection(gameSourceID, ref string) source.Collection {
 		Items: []source.CollectionItem{
 			{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten",
 				URL: "https://www.nexusmods.com/" + gameSourceID + "/mods/10?tab=files&file_id=100"},
+			// #657: NexusMods lists every file of a revision; the plan
+			// lists a mod's files only for one its list does not report.
+			{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Eleven", FileCategory: "MAIN"},
+			{Kind: source.CollectionItemModFile, ModID: "12", FileID: "120", Name: "Twelve", FileCategory: "MAIN"},
 		}}
 }
 
