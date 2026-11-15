@@ -4691,6 +4691,10 @@ a.row-menu__item.mod-page-link {
   min-width: 0;
 }
 
+.finish-collection__title {
+  margin: 0;
+}
+
 .finish-collection__name {
   margin-right: var(--space-2);
   color: var(--text-primary);

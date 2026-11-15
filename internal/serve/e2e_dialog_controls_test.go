@@ -552,7 +552,7 @@ var dialogScenarios = []dialogScenario{
 		}},
 	// #660: Finish collection, with a row's fill drop zone open, and the
 	// collection_finish plan one of its rows opens.
-	{name: "finish-collection", fixture: "finish", root: finishPanel, wantField: true,
+	{name: "finish-collection", fixture: "finish", root: finishPanel,
 		open: func(f dialogFixture) chromedp.Tasks {
 			return append(openFinishFromProfiles(f),
 				clickWhenSettled(finishPanel+` [data-todo="nexusmods:10"] [data-action="finish-download"]`),

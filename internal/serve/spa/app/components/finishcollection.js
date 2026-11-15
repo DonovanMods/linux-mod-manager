@@ -249,9 +249,11 @@ function TodoRow({
       data-todo=${key}
       data-reason=${todo.reason}
     >
-      <div class="finish-collection__text">
-        <span class="finish-collection__name">${label}</span>
-        <span class="badge badge--warn">${reasonLabel(todo)}</span>
+      <div class="form-section finish-collection__text">
+        <p class="finish-collection__title">
+          <span class="finish-collection__name">${label}</span>${" "}
+          <span class="badge badge--warn">${reasonLabel(todo)}</span>
+        </p>
         <p class="form-hint">${todo.remedy}</p>
         ${
           todo.detail &&
