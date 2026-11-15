@@ -81,7 +81,18 @@
         "This NexusMods account is not served downloads through the API, so 1 item(s) are manual downloads: the import saves the profile with them pending, and each item links its file's page."
       ],
       "account_tier": "free",
-      "manual_download": true
+      "manual_download": true,
+      "summary": {
+        "items": 2,
+        "install": 0,
+        "installed": 0,
+        "optional": 1,
+        "optional_selected": 0,
+        "installer_questions": 0,
+        "manual_download": 1,
+        "external": 0,
+        "unsupported": 0
+      }
     }
   },
   "result": {

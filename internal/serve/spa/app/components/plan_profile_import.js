@@ -33,7 +33,7 @@
 // .lmmc's. A patch to code is the same box again - and without it the
 // import is refused rather than installed unpatched.
 
-import { html } from "../render.js";
+import { html, useRef } from "../render.js";
 import { displayVersion, reinstallReason } from "../version.js";
 import { safeWebUrl } from "../weburl.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
@@ -565,33 +565,347 @@ const sourceStateLabel = {
   unsupported: "cannot be imported",
 };
 
-/** SourceCollectionSection renders core.ConvertedCollection (issue 607): a
- * source's collection - a NexusMods one - converted into the lmm
- * collection this plan imports. Every item is listed with what the import
- * does with it; an optional item carries a checkbox that re-plans with it
- * opted in or out (`--with-optional` per item), because the preview must
- * describe exactly what Confirm submits. Every string was sanitised by core,
- * and links pass safeWebUrl again before they become an href. */
-export function SourceCollectionSection({ source: c, actions }) {
-  const items = c.items ?? [];
+/** summaryParts words core.CollectionPlanSummary's counts (issue 654) as
+ * the CLI does (collectionSummaryParts): what is installed always, every
+ * other count only when it is not zero. Each names the section it links to. */
+function summaryParts(s) {
+  const parts = [
+    {
+      key: "install",
+      text: `${s.install} will be installed`,
+      to: "everything",
+    },
+  ];
+  if (s.installed > 0)
+    parts.push({
+      key: "installed",
+      text: `${s.installed} already installed`,
+      to: "everything",
+    });
+  if (s.optional > 0)
+    parts.push({
+      key: "optional",
+      text: `${s.optional} optional (${s.optional_selected} selected)`,
+      to: "optional",
+    });
+  if (s.installer_questions > 0)
+    parts.push({
+      key: "installer_questions",
+      text: `${s.installer_questions} will ask installer questions`,
+      to: "attention",
+    });
+  if (s.manual_download > 0)
+    parts.push({
+      key: "manual_download",
+      text: `${s.manual_download} to download by hand`,
+      to: "attention",
+    });
+  if (s.external > 0)
+    parts.push({
+      key: "external",
+      text: `${s.external} external or prerequisite`,
+      to: "attention",
+    });
+  if (s.unsupported > 0)
+    parts.push({
+      key: "unsupported",
+      text: `${s.unsupported} cannot be imported`,
+      to: "attention",
+    });
+  return parts;
+}
+
+/** attentionText words one core.CollectionAttentionReason for item it, as
+ * the CLI does (collectionAttentionText); a code this page does not know
+ * is shown as is. */
+function attentionText(reason, it) {
+  switch (reason) {
+    case "installer_questions":
+      return "Its installer will ask you at install (the collection records no answers).";
+    case "external":
+      return "lmm does not fetch it: get it by hand.";
+    case "prerequisite":
+      return "A prerequisite: install it by hand, with its own installer.";
+    case "old_file":
+      return "The curator pinned an older file of this mod; lmm installs that exact file.";
+    case "unsupported": {
+      const needs =
+        (it.features ?? []).length > 0
+          ? ` (needs ${it.features.join(", ")})`
+          : "";
+      return it.optional
+        ? `lmm cannot import it${needs}, so this optional mod is left out.`
+        : `lmm cannot import it${needs}.`;
+    }
+    default:
+      return reason.replaceAll("_", " ");
+  }
+}
+
+/** itemTags are a converted item's facts in brackets after its state. */
+function itemTags(it) {
+  const tags = [];
+  if (it.file_category && it.file_category !== "MAIN")
+    tags.push(`${it.file_category.toLowerCase().replaceAll("_", " ")} file`);
+  if (it.mod_type) tags.push(`type ${it.mod_type}`);
+  if (it.installer) tags.push("installer choices");
+  // Issue 610: replicate mode and patches.
+  if (it.file_list > 0) tags.push(`exact file list of ${it.file_list}`);
+  if (it.patches > 0)
+    tags.push(`${it.patches} patch${it.patches === 1 ? "" : "es"}`);
+  return tags;
+}
+
+/** SourceItemRow is one converted item: its name and version, what the
+ * import does with it, its facts, its page, and its notes. `reasons` (issue
+ * 654) are the attention reasons, worded first when the row is in Needs
+ * your attention. */
+function SourceItemRow({ it, reasons }) {
+  const url = safeWebUrl(it.url);
+  const warn = ["manual_download", "external", "unsupported"].includes(
+    it.state,
+  );
+  const tags = itemTags(it);
+  if (it.optional) tags.unshift("optional");
+  // A NexusMods version is readable as is; displayVersion is the one
+  // sanctioned reader of a version (issue 458).
+  const shown = displayVersion(it);
+  return html`<li
+    class=${`plan__mod${warn ? " plan__mod--warn" : ""}`}
+    data-state=${it.state}
+    data-item=${it.id}
+  >
+    <span class="plan__mod-name">${it.name}</span>${
+      shown
+        ? html`${" "}<span class="plan__mod-detail mono">${shown}</span>`
+        : null
+    }${" "}<span
+      class=${`plan__mod-detail${warn ? " plan__mod-detail--warn" : ""}`}
+      >${sourceStateLabel[it.state] ?? it.state}</span
+    >
+    ${tags.length > 0 && html`${" "}<span class="plan__mod-detail">(${tags.join("; ")})</span>`}
+    ${
+      url &&
+      html`${" "}<a
+          class="plan__mod-detail"
+          href=${url}
+          target="_blank"
+          rel="noopener noreferrer"
+          >${it.state === "external" ? "where to get it" : "file page"}</a
+        >`
+    }
+    ${(reasons ?? []).map(
+      (r) =>
+        html`<p
+          key=${r}
+          class="plan__note plan__note--warn"
+          data-testid="attention-reason"
+          data-reason=${r}
+        >
+          ${attentionText(r, it)}
+        </p>`,
+    )}
+    ${it.note && html`<p class="plan__note">${it.note}</p>`}
+    ${
+      (it.features ?? []).length > 0 &&
+      !(reasons ?? []).includes("unsupported") &&
+      html`<p class="plan__note plan__note--warn">
+        Needs ${it.features.join(", ")}
+      </p>`
+    }
+    ${it.instructions && html`<p class="plan__note">${it.instructions}</p>`}
+  </li>`;
+}
+
+/** OptionalSection lists a collection's optional mods (issue 654), the only
+ * real choices in it, each a checkbox with its version, the curator's words
+ * for it and its file page. A toggle re-plans with the item opted in or out
+ * (`optional`, or `with_optional` for Select all), because the preview must
+ * describe exactly what Confirm submits. */
+function OptionalSection({ c, items, actions, sectionRef }) {
+  if (items.length === 0) return null;
   const optional = new Set(c.optional ?? []);
-  const optionalItems = items.filter((it) => it.optional);
   function included(it) {
-    return c.with_optional || optional.has(it.id);
+    return (
+      it.state !== "optional_skipped" &&
+      it.state !== "unsupported" &&
+      (c.with_optional || optional.has(it.id))
+    );
   }
   function toggle(it, on) {
-    const next = new Set(
-      c.with_optional ? optionalItems.map((o) => o.id) : optional,
-    );
+    const next = new Set(c.with_optional ? items.map((o) => o.id) : optional);
     if (on) next.add(it.id);
     else next.delete(it.id);
     actions.replanWith({ with_optional: false, optional: [...next].sort() });
   }
-  function toggleAll(e) {
-    actions.replanWith({
-      with_optional: e.currentTarget.checked,
-      optional: [],
-    });
+  function selectAll() {
+    actions.replanWith({ with_optional: true, optional: [] });
+  }
+  function selectNone() {
+    actions.replanWith({ with_optional: false, optional: [] });
+  }
+  const selectable = items.filter((it) => it.state !== "unsupported");
+  const allIn = selectable.length > 0 && selectable.every(included);
+  const noneIn = !selectable.some(included);
+  return html`<section
+    class="plan__section form-section"
+    data-testid="collection-optional"
+    ref=${sectionRef}
+    tabindex="-1"
+  >
+    <h3 class="form-section__heading">Optional mods (${items.length})</h3>
+    <p class="form-hint">
+      The collection's curator recommends these but does not require them. Tick
+      the ones to install.
+    </p>
+    <div class="form-actions">
+      <button
+        type="button"
+        class="button button--small"
+        data-action="optional-select-all"
+        disabled=${allIn}
+        onClick=${selectAll}
+      >
+        Select all
+      </button>
+      <button
+        type="button"
+        class="button button--small"
+        data-action="optional-select-none"
+        disabled=${noneIn}
+        onClick=${selectNone}
+      >
+        Select none
+      </button>
+    </div>
+    <ul class="plan__mods">
+      ${items.map((it) => {
+        const url = safeWebUrl(it.url);
+        const shown = displayVersion(it);
+        return html`<li
+          key=${it.id}
+          class="plan__mod plan__mod--choice"
+          data-state=${it.state}
+          data-item=${it.id}
+        >
+          <label class="form-check">
+            <input
+              type="checkbox"
+              data-testid="source-optional-toggle"
+              checked=${included(it)}
+              disabled=${it.state === "unsupported"}
+              onChange=${(e) => toggle(it, e.currentTarget.checked)}
+            />
+            <span class="plan__choice-text"
+              ><span class="plan__mod-name">${it.name}</span>${
+                shown
+                  ? html`${" "}<span class="plan__mod-detail mono"
+                        >${shown}</span
+                      >`
+                  : null
+              }</span
+            >
+          </label>
+          <div class="plan__choice-detail">
+            ${
+              it.state === "unsupported" &&
+              html`<p class="plan__note plan__note--warn">
+                lmm cannot import
+                it${
+                  (it.features ?? []).length > 0
+                    ? ` (needs ${it.features.join(", ")})`
+                    : ""
+                },
+                so it is left out.
+              </p>`
+            }
+            ${it.instructions && html`<p class="plan__note">${it.instructions}</p>`}
+            ${
+              url &&
+              html`<a
+                class="plan__mod-detail plan__choice-link"
+                href=${url}
+                target="_blank"
+                rel="noopener noreferrer"
+                >file page</a
+              >`
+            }
+          </div>
+        </li>`;
+      })}
+    </ul>
+  </section>`;
+}
+
+/** AttentionSection lists the items that need the user (issue 654:
+ * core.CollectionPlanSummary.attention), each with why. A free account's
+ * downloads by hand are said once: every item to install is one. */
+function AttentionSection({ c, summary, sectionRef }) {
+  const byID = new Map((c.items ?? []).map((it) => [it.id, it]));
+  const attention = (summary.attention ?? []).filter((a) => byID.has(a.id));
+  if (attention.length === 0 && !(summary.manual_download > 0)) return null;
+  const count = attention.length + (summary.manual_download > 0 ? 1 : 0);
+  return html`<section
+    class="plan__section"
+    data-testid="collection-attention"
+    ref=${sectionRef}
+    tabindex="-1"
+  >
+    <h3 class="plan__heading">Needs your attention (${count})</h3>
+    ${
+      summary.manual_download > 0 &&
+      html`<p
+        class="plan__note plan__note--warn"
+        data-testid="attention-manual"
+      >
+        ${summary.manual_download}
+        ${" "}item${summary.manual_download === 1 ? "" : "s"} to download by
+        hand: this account is not served downloads through the API. Each item
+        links its file's page.
+      </p>`
+    }
+    ${
+      attention.length > 0 &&
+      html`<ul class="plan__mods">
+        ${attention.map(
+          (a) =>
+            html`<${SourceItemRow}
+              key=${a.id}
+              it=${byID.get(a.id)}
+              reasons=${a.reasons}
+            />`,
+        )}
+      </ul>`
+    }
+  </section>`;
+}
+
+/** SourceCollectionSection renders core.ConvertedCollection (issue 607): a
+ * source's collection - a NexusMods one - converted into the lmm
+ * collection this plan imports. Issue 654 groups it for a collection of
+ * hundreds: the summary line first (each count goes to its section), the
+ * optional mods (the only real choices), the items that need the user, and
+ * every item behind a disclosure, closed by default. Every string was
+ * sanitised by core, and links pass safeWebUrl again before they become an
+ * href. The collection update plan renders the same section. */
+export function SourceCollectionSection({ source: c, actions }) {
+  const items = c.items ?? [];
+  const summary = c.summary ?? null;
+  const optionalItems = items.filter((it) => it.optional);
+  const optionalRef = useRef(null);
+  const attentionRef = useRef(null);
+  const everythingRef = useRef(null);
+  const refs = {
+    optional: optionalRef,
+    attention: attentionRef,
+    everything: everythingRef,
+  };
+  function goTo(to) {
+    const el = refs[to]?.current;
+    if (!el) return;
+    if (el.tagName === "DETAILS") el.open = true;
+    el.scrollIntoView({ block: "start" });
+    el.focus({ preventScroll: true });
   }
   const counts = Object.entries(c.counts ?? {})
     .filter(([, n]) => n > 0)
@@ -602,7 +916,23 @@ export function SourceCollectionSection({ source: c, actions }) {
       <h3 class="plan__heading">
         ${`${items.length} item${items.length === 1 ? "" : "s"} at revision ${c.revision}`}
       </h3>
-      ${counts && html`<p class="plan__note">${counts}</p>`}
+      ${
+        summary
+          ? html`<p class="plan__note" data-testid="collection-summary">
+              ${summaryParts(summary).map(
+                (p, i) =>
+                  html`${i > 0 ? " · " : ""}<button
+                      type="button"
+                      class="button button--link"
+                      data-count=${p.key}
+                      onClick=${() => goTo(p.to)}
+                    >
+                      ${p.text}
+                    </button>`,
+              )}
+            </p>`
+          : counts && html`<p class="plan__note">${counts}</p>`
+      }
       ${
         c.manifest_error &&
         html`<p
@@ -613,86 +943,35 @@ export function SourceCollectionSection({ source: c, actions }) {
           install it: ${c.manifest_error}
         </p>`
       }
-      ${
-        optionalItems.length > 0 &&
-        html`<label class="form-check">
-          <input
-            type="checkbox"
-            data-testid="source-with-optional"
-            checked=${!!c.with_optional}
-            onChange=${toggleAll}
-          />
-          Include every optional item (${optionalItems.length})
-        </label>`
-      }
-      <ul class="plan__mods" data-testid="source-items">
-        ${items.map((it) => {
-          const url = safeWebUrl(it.url);
-          const warn = ["manual_download", "external", "unsupported"].includes(
-            it.state,
-          );
-          const tags = [];
-          if (it.file_category && it.file_category !== "MAIN")
-            tags.push(
-              `${it.file_category.toLowerCase().replaceAll("_", " ")} file`,
-            );
-          if (it.mod_type) tags.push(`type ${it.mod_type}`);
-          if (it.installer) tags.push("installer choices");
-          // Issue 610: replicate mode and patches.
-          if (it.file_list > 0) tags.push(`exact file list of ${it.file_list}`);
-          if (it.patches > 0)
-            tags.push(`${it.patches} patch${it.patches === 1 ? "" : "es"}`);
-          // A NexusMods version is readable as is; displayVersion is the
-          // one sanctioned reader of a version (issue 458).
-          const shown = displayVersion(it);
-          return html`<li
-            key=${it.id}
-            class=${`plan__mod${warn ? " plan__mod--warn" : ""}`}
-            data-state=${it.state}
-            data-item=${it.id}
-          >
-            ${
-              it.optional &&
-              html`<input
-                  type="checkbox"
-                  aria-label=${`Include ${it.name}`}
-                  data-testid="source-optional-toggle"
-                  checked=${it.state !== "optional_skipped" && it.state !== "unsupported" && included(it)}
-                  disabled=${it.state === "unsupported"}
-                  onChange=${(e) => toggle(it, e.currentTarget.checked)}
-                />${" "}`
-            }<span class="plan__mod-name">${it.name}</span>${
-              shown
-                ? html`${" "}<span class="plan__mod-detail mono"
-                      >${shown}</span
-                    >`
-                : null
-            }${" "}<span
-              class=${`plan__mod-detail${warn ? " plan__mod-detail--warn" : ""}`}
-              >${sourceStateLabel[it.state] ?? it.state}</span
-            >
-            ${tags.length > 0 && html`${" "}<span class="plan__mod-detail">(${tags.join("; ")})</span>`}
-            ${
-              url &&
-              html`${" "}<a
-                  class="plan__mod-detail"
-                  href=${url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  >${it.state === "external" ? "where to get it" : "file page"}</a
-                >`
-            }
-            ${it.note && html`<p class="plan__note">${it.note}</p>`}
-            ${
-              (it.features ?? []).length > 0 &&
-              html`<p class="plan__note plan__note--warn">
-                Needs ${it.features.join(", ")}
-              </p>`
-            }
-            ${it.instructions && html`<p class="plan__note">${it.instructions}</p>`}
-          </li>`;
-        })}
-      </ul>
+    </section>
+    <${OptionalSection}
+      c=${c}
+      items=${optionalItems}
+      actions=${actions}
+      sectionRef=${optionalRef}
+    />
+    ${
+      summary &&
+      html`<${AttentionSection}
+        c=${c}
+        summary=${summary}
+        sectionRef=${attentionRef}
+      />`
+    }
+    <section class="plan__section">
+      <details
+        class="plan__disclosure"
+        data-testid="collection-everything"
+        ref=${everythingRef}
+        tabindex="-1"
+      >
+        <summary class="plan__disclosure-summary">
+          Every item, in the collection's order (${items.length})
+        </summary>
+        <ul class="plan__mods" data-testid="source-items">
+          ${items.map((it) => html`<${SourceItemRow} key=${it.id} it=${it} />`)}
+        </ul>
+      </details>
       ${
         (c.tools ?? []).length > 0 &&
         html`<h4 class="plan__heading">

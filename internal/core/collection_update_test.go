@@ -211,6 +211,11 @@ func TestCollectionUpdate_NexusRevisionBump(t *testing.T) {
 	assert.Empty(t, plan.Conflicts)
 	require.NotNil(t, plan.Source)
 	assert.Equal(t, 4, plan.Source.Revision)
+	// #654: the update plan carries the same overview as the import's.
+	require.NotNil(t, plan.Source.Summary)
+	assert.Equal(t, len(plan.Source.Items), plan.Source.Summary.Items)
+	assert.Equal(t, plan.Source.Counts[core.CollectionItemWillInstall]+plan.Source.Counts[core.CollectionItemBundled],
+		plan.Source.Summary.Install)
 
 	result, err := f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
 	require.NoError(t, err)
@@ -581,4 +586,23 @@ func TestCollectionUpdate_SameVersionFileSwapReinstalls(t *testing.T) {
 	applyPlan, err := f.svc.PlanProfileApply(ctx, f.game, "coll")
 	require.NoError(t, err)
 	assert.True(t, applyPlan.NoChanges, "the profile and the installation agree")
+}
+
+// #654 review: an optional id that names no optional item of the collection
+// refuses the import plan and the update plan alike, naming it.
+func TestCollection_UnknownOptionalIDIsRefused(t *testing.T) {
+	f := newUpdateFixture(t)
+	ctx := context.Background()
+	_, err := f.svc.PlanSourceCollectionImport(ctx, f.game, core.SourceCollectionImportRequest{
+		SourceID: "nexusmods", Ref: "abcdef", ProfileName: "coll", Optional: []string{"12:12"},
+	})
+	require.ErrorIs(t, err, core.ErrUnknownOptionalItem)
+	assert.Contains(t, err.Error(), "12:12")
+	assert.Contains(t, err.Error(), "12:120", "the plan's optional id is named")
+
+	f.importNexus(t)
+	f.bumpNexus(t)
+	_, err = f.svc.PlanCollectionUpdate(ctx, f.game, core.CollectionUpdateRequest{Profile: "coll", Optional: []string{"10:101"}, OptionalChosen: true})
+	require.ErrorIs(t, err, core.ErrUnknownOptionalItem, "a required item is not an optional one")
+	assert.Contains(t, err.Error(), "10:101")
 }

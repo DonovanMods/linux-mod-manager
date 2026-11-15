@@ -188,7 +188,7 @@ func TestE2E_CollectionLink_SearchPageOffersTheNexusImport(t *testing.T) {
 		chromedp.WaitVisible(`[data-testid="collection-offer"][data-source="nexusmods"]`, chromedp.ByQuery),
 		textContent(`[data-testid="collection-offer"]`, &offer),
 		clickWhenSettled(`[data-testid="collection-offer"] button`),
-		chromedp.WaitVisible(`[data-testid="source-items"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="source-collection"]`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="profile_import"]`, &modal),
 	)
 
@@ -210,7 +210,7 @@ func TestE2E_CollectionLink_OmnibarOffersTheImport(t *testing.T) {
 		chromedp.SendKeys(`.omnibar`, e2eNexusCollectionURL+"\r", chromedp.ByQuery),
 		chromedp.WaitVisible(`.omnibar-results [data-testid="collection-offer"][data-source="nexusmods"]`, chromedp.ByQuery),
 		clickWhenSettled(`.omnibar-results [data-testid="collection-offer"] button`),
-		chromedp.WaitVisible(`[data-testid="source-items"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="source-collection"]`, chromedp.ByQuery),
 	)
 	assert.Equal(t, []string{e2eNexusCollectionURL}, refs())
 	assert.Empty(t, f.BrowserErrors())
@@ -314,7 +314,7 @@ func TestE2E_ImportCollection_PickerMenuOpensTheImport(t *testing.T) {
 		textContent(`.modal[data-kind="import-collection"]`, &modal),
 		chromedp.SetValue(`[data-testid="nexus-collection-ref"]`, e2eNexusCollectionURL, chromedp.ByQuery),
 		clickWhenSettled(`[data-testid="nexus-collection-import"]`),
-		chromedp.WaitVisible(`[data-testid="source-items"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="source-collection"]`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="profile_import"]`, &plan),
 	)
 

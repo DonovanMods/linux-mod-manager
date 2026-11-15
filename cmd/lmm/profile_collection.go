@@ -357,8 +357,10 @@ var sourceItemStates = []core.CollectionItemState{
 }
 
 // printSourceCollection prints a converted source collection (#607): the
-// recipe's state, each item with what the import does with it, the
-// curator's tools and the conversion's notes.
+// recipe's state, then (#654) the plan's summary, the optional mods with
+// the ids --optional takes, the items that need the user with why, and
+// every item with what the import does with it; then the curator's tools
+// and the conversion's notes.
 func printSourceCollection(c *core.ConvertedCollection) {
 	if c.ManifestError != "" {
 		fmt.Printf("\n✗ The collection's recipe could not be read, so lmm cannot tell how to install it:\n  %s\n", c.ManifestError)
@@ -370,50 +372,14 @@ func printSourceCollection(c *core.ConvertedCollection) {
 		}
 	}
 	fmt.Printf("\n%d item(s) at revision %d: %s\n", len(c.Items), c.Revision, strings.Join(counts, ", "))
+	if c.Summary != nil {
+		fmt.Printf("Summary: %s\n", strings.Join(collectionSummaryParts(c.Summary), ", "))
+		printSourceOptional(c)
+		printSourceAttention(c)
+		fmt.Printf("\nEvery item (%d), in the collection's order:\n", len(c.Items))
+	}
 	for _, it := range c.Items {
-		line := fmt.Sprintf("  %s %s", sourceItemMarks[it.State], it.Name)
-		if it.Version != "" {
-			line += " " + it.Version
-		}
-		var tags []string
-		if it.Optional {
-			tags = append(tags, "optional")
-		}
-		if it.FileCategory != "" && it.FileCategory != "MAIN" {
-			tags = append(tags, strings.ToLower(strings.ReplaceAll(it.FileCategory, "_", " "))+" file")
-		}
-		if it.ModType != "" {
-			tags = append(tags, "type "+it.ModType)
-		}
-		if it.Installer {
-			tags = append(tags, "installer choices")
-		}
-		// #610: replicate mode, patches and the recipe's own files.
-		if it.FileList > 0 {
-			tags = append(tags, fmt.Sprintf("exact file list of %d", it.FileList))
-		}
-		if it.Patches > 0 {
-			tags = append(tags, fmt.Sprintf("%d patch(es)", it.Patches))
-		}
-		if it.State == core.CollectionItemBundled {
-			tags = append(tags, "bundled in the collection")
-		}
-		if len(it.Features) > 0 {
-			tags = append(tags, "needs "+strings.Join(it.Features, ", "))
-		}
-		if len(tags) > 0 {
-			line += " (" + strings.Join(tags, "; ") + ")"
-		}
-		fmt.Println(line)
-		if it.Note != "" {
-			fmt.Printf("      %s\n", it.Note)
-		}
-		if (it.State == core.CollectionItemManualDownload || it.State == core.CollectionItemExternal) && it.URL != "" {
-			fmt.Printf("      %s\n", it.URL)
-		}
-		if it.Instructions != "" {
-			fmt.Println(indentLines(it.Instructions, "      "))
-		}
+		printSourceItem(it)
 	}
 	if c.Counts[core.CollectionItemOptionalSkipped] > 0 && !c.WithOptional {
 		fmt.Printf("  Optional items are left out; --with-optional installs them.\n")
@@ -426,6 +392,181 @@ func printSourceCollection(c *core.ConvertedCollection) {
 	}
 	for _, note := range c.Notes {
 		fmt.Printf("  · %s\n", note)
+	}
+}
+
+// collectionSummaryParts words a plan summary's counts (#654), in the
+// order the web UI's summary line shows them: what is installed always,
+// every other count only when it is not zero.
+func collectionSummaryParts(s *core.CollectionPlanSummary) []string {
+	parts := []string{fmt.Sprintf("%d will be installed", s.Install)}
+	if s.Installed > 0 {
+		parts = append(parts, fmt.Sprintf("%d already installed", s.Installed))
+	}
+	if s.Optional > 0 {
+		parts = append(parts, fmt.Sprintf("%d optional (%d selected)", s.Optional, s.OptionalSelected))
+	}
+	if s.InstallerQuestions > 0 {
+		parts = append(parts, fmt.Sprintf("%d will ask installer questions", s.InstallerQuestions))
+	}
+	if s.ManualDownload > 0 {
+		parts = append(parts, fmt.Sprintf("%d to download by hand", s.ManualDownload))
+	}
+	if s.External > 0 {
+		parts = append(parts, fmt.Sprintf("%d external or prerequisite", s.External))
+	}
+	if s.Unsupported > 0 {
+		parts = append(parts, fmt.Sprintf("%d cannot be imported", s.Unsupported))
+	}
+	return parts
+}
+
+// printSourceOptional lists a collection's optional mods (#654): whether
+// each is in, its version, the id --optional takes, its page and the
+// curator's words for it.
+func printSourceOptional(c *core.ConvertedCollection) {
+	var optional []core.ConvertedCollectionItem
+	for _, it := range c.Items {
+		if it.Optional {
+			optional = append(optional, it)
+		}
+	}
+	if len(optional) == 0 {
+		return
+	}
+	fmt.Printf("\nOptional mods (%d) - opt one in with --optional <id>, or every one with --with-optional:\n", len(optional))
+	for _, it := range optional {
+		mark := "[ ]"
+		switch it.State {
+		case core.CollectionItemOptionalSkipped:
+		case core.CollectionItemUnsupported:
+			mark = "[-]"
+		default:
+			mark = "[x]"
+		}
+		line := fmt.Sprintf("  %s %s", mark, it.Name)
+		if it.Version != "" {
+			line += " " + it.Version
+		}
+		line += "  id " + it.ID
+		if it.State == core.CollectionItemUnsupported {
+			line += " (cannot be imported)"
+		}
+		fmt.Println(line)
+		if it.URL != "" {
+			fmt.Printf("      %s\n", it.URL)
+		}
+		if it.Instructions != "" {
+			fmt.Println(indentLines(it.Instructions, "      "))
+		}
+	}
+}
+
+// printSourceAttention lists the items that need the user (#654), each
+// with why; a free account's downloads by hand are said once, not item by
+// item.
+func printSourceAttention(c *core.ConvertedCollection) {
+	s := c.Summary
+	attention := s.Attention
+	if len(attention) == 0 && s.ManualDownload == 0 {
+		return
+	}
+	byID := make(map[string]core.ConvertedCollectionItem, len(c.Items))
+	for _, it := range c.Items {
+		byID[it.ID] = it
+	}
+	fmt.Printf("\nNeeds your attention (%d):\n", len(attention)+min(s.ManualDownload, 1))
+	if s.ManualDownload > 0 {
+		fmt.Printf("  - %d item(s) to download by hand: this account is not served downloads through the API; each item below links its file's page\n", s.ManualDownload)
+	}
+	for _, a := range attention {
+		it := byID[a.ID]
+		reasons := make([]string, len(a.Reasons))
+		for i, r := range a.Reasons {
+			reasons[i] = collectionAttentionText(r, it)
+		}
+		fmt.Printf("  - %s: %s\n", it.Name, strings.Join(reasons, "; "))
+		if it.State == core.CollectionItemExternal {
+			if it.URL != "" {
+				fmt.Printf("      %s\n", it.URL)
+			}
+			if it.Instructions != "" {
+				fmt.Println(indentLines(it.Instructions, "      "))
+			}
+		}
+	}
+}
+
+// collectionAttentionText words one attention reason (#654) for item it; a
+// reason this lmm does not know is shown as its code.
+func collectionAttentionText(r core.CollectionAttentionReason, it core.ConvertedCollectionItem) string {
+	switch r {
+	case core.CollectionAttentionInstallerQuestions:
+		return "its installer will ask you at install (the collection records no answers)"
+	case core.CollectionAttentionExternal:
+		return "lmm does not fetch it: get it by hand"
+	case core.CollectionAttentionPrerequisite:
+		return "a prerequisite: install it by hand, with its own installer"
+	case core.CollectionAttentionOldFile:
+		return "the curator pinned an older file of this mod; lmm installs that exact file"
+	case core.CollectionAttentionUnsupported:
+		text := "lmm cannot import it"
+		if len(it.Features) > 0 {
+			text += " (needs " + strings.Join(it.Features, ", ") + ")"
+		}
+		if it.Optional {
+			text += ", so this optional mod is left out"
+		}
+		return text
+	}
+	return strings.ReplaceAll(string(r), "_", " ")
+}
+
+// printSourceItem prints one item of a converted collection: its state's
+// mark, name and version, its tags, and its notes and links.
+func printSourceItem(it core.ConvertedCollectionItem) {
+	line := fmt.Sprintf("  %s %s", sourceItemMarks[it.State], it.Name)
+	if it.Version != "" {
+		line += " " + it.Version
+	}
+	var tags []string
+	if it.Optional {
+		tags = append(tags, "optional")
+	}
+	if it.FileCategory != "" && it.FileCategory != "MAIN" {
+		tags = append(tags, strings.ToLower(strings.ReplaceAll(it.FileCategory, "_", " "))+" file")
+	}
+	if it.ModType != "" {
+		tags = append(tags, "type "+it.ModType)
+	}
+	if it.Installer {
+		tags = append(tags, "installer choices")
+	}
+	// #610: replicate mode, patches and the recipe's own files.
+	if it.FileList > 0 {
+		tags = append(tags, fmt.Sprintf("exact file list of %d", it.FileList))
+	}
+	if it.Patches > 0 {
+		tags = append(tags, fmt.Sprintf("%d patch(es)", it.Patches))
+	}
+	if it.State == core.CollectionItemBundled {
+		tags = append(tags, "bundled in the collection")
+	}
+	if len(it.Features) > 0 {
+		tags = append(tags, "needs "+strings.Join(it.Features, ", "))
+	}
+	if len(tags) > 0 {
+		line += " (" + strings.Join(tags, "; ") + ")"
+	}
+	fmt.Println(line)
+	if it.Note != "" {
+		fmt.Printf("      %s\n", it.Note)
+	}
+	if (it.State == core.CollectionItemManualDownload || it.State == core.CollectionItemExternal) && it.URL != "" {
+		fmt.Printf("      %s\n", it.URL)
+	}
+	if it.Instructions != "" {
+		fmt.Println(indentLines(it.Instructions, "      "))
 	}
 }
 

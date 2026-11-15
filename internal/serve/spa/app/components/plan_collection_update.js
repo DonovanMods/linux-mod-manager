@@ -15,6 +15,11 @@
 // checkbox never re-fetches the collection: it patches the modal's
 // applyOptions. Checking every row is the CLI's --remove-obsolete /
 // --override-conflicts. Every string was sanitised by core.
+//
+// A NexusMods origin's new revision renders through the import plan's
+// SourceCollectionSection, so it is grouped the same way (issue 654): its
+// summary line, its optional mods, the items that need the user, and every
+// item behind a disclosure.
 
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
