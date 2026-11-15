@@ -234,7 +234,14 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	}
 	emit(StepEvent{Scope: st.scope, Phase: ImportDownloadDone})
 	if err := asks.finish(mod, fx, st.files); err != nil {
-		f := fail(fmt.Sprintf("download failed: %v", err), err)
+		reason := fmt.Sprintf("download failed: %v", err)
+		var q *FomodChoicesRequiredError
+		if plan.todoMode && errors.As(err, &q) {
+			// #660 review: in a collection import (or its finish) the
+			// question is the item's to-do, not a command to run again.
+			reason = q.fact() + "; left to finish: answer its installer"
+		}
+		f := fail(reason, err)
 		f.release = s.releaseFilesFunc(st.files)
 		return nil, f
 	}

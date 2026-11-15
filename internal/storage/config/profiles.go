@@ -467,6 +467,21 @@ type exportedProfileYAML struct {
 // --json`, #309) so the two document formats cannot drift apart on what
 // counts as "the exported profile".
 func ExportProfileValue(profile *domain.Profile) *domain.ExportedProfile {
+	exported := SnapshotProfileValue(profile)
+	// #660 review: this machine's records are never exported - not in the
+	// YAML (their yaml "-" tags), and not in this value either, which
+	// `profile export --json` emits.
+	for i := range exported.Mods {
+		exported.Mods[i].Todo, exported.Mods[i].SubstitutedFor = nil, nil
+	}
+	return exported
+}
+
+// SnapshotProfileValue is ExportProfileValue keeping this machine's records
+// - each mod's to-do (#660) and the gone pin a substitute stands in for
+// (#657): a snapshot is this machine's own state, and a restore must put
+// them back. Its Mods are a copy, never profile's own slice.
+func SnapshotProfileValue(profile *domain.Profile) *domain.ExportedProfile {
 	var linkMethod string
 	if profile.LinkMethodExplicit {
 		linkMethod = profile.LinkMethod.String()
@@ -478,10 +493,11 @@ func ExportProfileValue(profile *domain.Profile) *domain.ExportedProfile {
 			overrides[path] = string(content)
 		}
 	}
+	mods := slices.Clone(profile.Mods)
 	return &domain.ExportedProfile{
 		Name:          profile.Name,
 		GameID:        profile.GameID,
-		Mods:          profile.Mods,
+		Mods:          mods,
 		LinkMethod:    linkMethod,
 		Overrides:     overrides,
 		Hooks:         profile.Hooks,

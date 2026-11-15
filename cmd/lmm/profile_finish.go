@@ -284,7 +284,11 @@ func todoCommand(profile string, t core.CollectionTodoItem) string {
 		if t.CanSkipFile {
 			return fmt.Sprintf("%s --skip-file %s (or --skip %s)", base, t.ModID, t.ModID)
 		}
-		return fmt.Sprintf("%s --use-current %s (or --skip %s)", base, t.ModID, t.ModID)
+		// Nothing stood in for the gone file, so no --use-current is
+		// suggested (#660 review): skip it, or retry once it is back.
+		return fmt.Sprintf("%s --skip %s (or --retry %s once the file is back)", base, t.ModID, t.ModID)
+	case core.TodoActionSkip:
+		return fmt.Sprintf("%s --skip %s", base, t.ModID)
 	case core.TodoActionDownload:
 		return fmt.Sprintf("%s --from <download-folder>", base)
 	}

@@ -239,3 +239,29 @@ func TestRunAcquire_AFailedItemsPartialFilesAreRetainedWhenBlocked(t *testing.T)
 	require.ErrorAs(t, runAcquire(context.Background(), run), &refused)
 	assert.Equal(t, []bool{true}, retained, "released once, retained")
 }
+
+// #660 review: under blockNone a failed item's own acquired files (a
+// multi-file mod whose later file failed) are kept for the retry, as a
+// blocked run keeps them; an ordinary run releases them.
+func TestRunAcquire_BlockNoneRetainsAFailedItemsFiles(t *testing.T) {
+	for _, tc := range []struct {
+		policy acquirePolicy
+		want   []bool
+	}{
+		{acquirePolicy{blockNone: true}, []bool{true}},
+		{acquirePolicy{}, []bool{false}},
+	} {
+		var released []bool
+		run := fakeRun(tc.policy, &engineLog{}, nil, errFlaky)
+		inner := run.acquire
+		run.acquire = func(ctx context.Context, i int) (fakeItem, *acquireFailure) {
+			it, f := inner(ctx, i)
+			if f != nil {
+				f.release = func(blocked bool) { released = append(released, blocked) }
+			}
+			return it, f
+		}
+		require.NoError(t, runAcquire(context.Background(), run))
+		assert.Equal(t, tc.want, released, "blockNone=%v", tc.policy.blockNone)
+	}
+}

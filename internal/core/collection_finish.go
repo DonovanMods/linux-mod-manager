@@ -335,7 +335,9 @@ func standInRef(ref domain.ModReference, gone []string, current *CollectionCurre
 		ids = append(ids, id)
 	}
 	if current != nil {
-		ids = append(ids, current.FileID)
+		if !slices.Contains(ids, current.FileID) {
+			ids = append(ids, current.FileID)
+		}
 		if current.Version != "" {
 			ref.Version = current.Version
 		}
@@ -445,9 +447,18 @@ func (s *Service) applyCollectionFinish(ctx context.Context, game *domain.Game, 
 	for _, ref := range plan.refs {
 		have := profile.FindRef(ref.SourceID, ref.ModID)
 		if !slices.Equal(have.FileIDs, ref.FileIDs) || have.Version != ref.Version {
-			todo := have.Todo
+			// #660 review S6: the to-do moves with the pin in this same
+			// save. Should the run stop before the install, the item is
+			// listed as not installed at its new pin - a retry - and never
+			// as the gone pin it no longer is, which a second --use-current
+			// would stand in for again.
+			name := ""
+			if have.Todo != nil {
+				name = have.Todo.Name
+			}
 			*have = ref
-			have.Todo = todo
+			have.Todo = &domain.CollectionTodo{Reason: domain.TodoNotInstalled, Name: name,
+				Detail: "its pin moved to the files that stand in for the gone ones; not installed yet"}
 			changed = true
 		}
 	}
@@ -488,7 +499,7 @@ func sameFinishRef(have, want domain.ModReference) bool {
 // blocking on nothing, and records each failure's to-do.
 func (s *Service) finishInstall(ctx context.Context, game *domain.Game, plan *CollectionFinishPlan, profile *domain.Profile, deploy bool, opts CollectionFinishOptions, result *CollectionFinishResult, emit func(Event)) error {
 	refs := plan.refs
-	iplan := &ImportPlan{Profile: profile, archiveMD5: map[string]map[string]string{}}
+	iplan := &ImportPlan{Profile: profile, archiveMD5: map[string]map[string]string{}, todoMode: true}
 	for _, ref := range refs {
 		// #609: an installer's recorded choices replay only against the
 		// archive the collection recorded them for.
@@ -534,7 +545,7 @@ func (s *Service) finishInstall(ctx context.Context, game *domain.Game, plan *Co
 	var questions []FomodQuestion
 	for _, f := range ir.Failures {
 		key := domain.ModKey(f.SourceID, f.ModID)
-		records[key] = todoFor(f.Name, f.Reason, failedErrs[key])
+		records[key] = carryTodo(todoFor(f.Name, f.Reason, failedErrs[key]), plan.base[key].Todo, iplan.archiveMD5[key])
 		var q *FomodChoicesRequiredError
 		if errors.As(failedErrs[key], &q) {
 			questions = append(questions, q.Mods...)

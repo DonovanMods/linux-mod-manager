@@ -267,36 +267,6 @@ type CollectionCurrentFile struct {
 	Version string `json:"version,omitempty"`
 }
 
-// CollectionGonePinsError refuses an import or update with a pinned file
-// the source no longer offers that the user has not decided about (#657).
-// Nothing is written.
-type CollectionGonePinsError struct {
-	// Pins are the undecided pins, in the collection's order.
-	Pins []CollectionGonePin `json:"pins"`
-}
-
-// Error implements error.
-func (e *CollectionGonePinsError) Error() string {
-	lines := make([]string, len(e.Pins))
-	for i, p := range e.Pins {
-		lines[i] = p.describe()
-		if !p.CanUseCurrent() {
-			lines[i] += " (no current file stands in for it)"
-		}
-	}
-	return fmt.Sprintf("the collection pins %d file(s) the source no longer offers - %s; choose for each: --use-current <mod> (or --use-current-all) installs the current file of the same role instead, --skip-file <mod> leaves out a gone optional file and installs the rest, --skip <mod> leaves the mod out",
-		len(e.Pins), strings.Join(lines, "; "))
-}
-
-// Details implements the --json error envelope's extension point.
-func (e *CollectionGonePinsError) Details() any { return e }
-
-// IsCollectionGonePins reports whether err refused undecided gone pins.
-func IsCollectionGonePins(err error) bool {
-	var target *CollectionGonePinsError
-	return errors.As(err, &target)
-}
-
 // undecidedGonePins is c's gone pins nobody chose for; nil for a nil c. A
 // conflict's pin counts only when overridden reports the user takes the
 // collection's side of it.
@@ -704,7 +674,10 @@ func decideGonePins(conv *ConvertedCollection, pins []CollectionGonePin, choices
 		p := &pins[i]
 		p.Choice = choices.choiceFor(*p)
 		p.CuratorExact = conv.pinnedExactly(*p)
-		if p.Choice == "" && p.CanUseCurrent() && !p.Conflict {
+		if p.Choice == "" && p.CanUseCurrent() {
+			// A conflict's pin too: it applies only when the user takes
+			// the collection's side of the conflict, and then the same
+			// default holds (#660 review S5).
 			// #660 owner ruling: the current file is the default, and
 			// skipping it the alternative.
 			p.Choice, p.Default = GonePinUseCurrent, true

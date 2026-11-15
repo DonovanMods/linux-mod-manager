@@ -57,8 +57,9 @@ type FomodChoicesRequiredError struct {
 	Mods []FomodQuestion `json:"mods"`
 }
 
-// Error names the mods and what the user does next.
-func (e *FomodChoicesRequiredError) Error() string {
+// fact names the mods and why their installers ask, without the remedy
+// (#660: a collection's to-do carries its own).
+func (e *FomodChoicesRequiredError) fact() string {
 	names := make([]string, 0, len(e.Mods))
 	stale, otherArchive := false, false
 	for _, q := range e.Mods {
@@ -86,7 +87,12 @@ func (e *FomodChoicesRequiredError) Error() string {
 	if otherArchive {
 		msg += " (the downloaded archive is not the archive the collection's choices were recorded against)"
 	}
-	return msg + "; answer them and run the same command again"
+	return msg
+}
+
+// Error names the mods and what the user does next.
+func (e *FomodChoicesRequiredError) Error() string {
+	return e.fact() + "; answer them and run the same command again"
 }
 
 // Details implements the --json error envelope's extension point: the

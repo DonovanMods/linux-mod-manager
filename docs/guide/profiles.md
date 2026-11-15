@@ -540,7 +540,8 @@ lmm profile finish "Skyrim Plus"
 ```
 
 The last line is always the command to run next, and the exit status is
-non-zero while a mod failed. `--fomod-choices <file>` or
+non-zero while anything is left to finish - except a free account's files
+to download by hand, which is how that import is meant to end. `--fomod-choices <file>` or
 `--fomod-defaults` on the import answers the installers once everything
 else is installed. A collection that uses something this version of lmm
 can't do yet (a patch in a format other than bsdiff's, a plugin rule
@@ -581,8 +582,9 @@ lmm profile finish "Skyrim Plus" --from ~/Downloads
   mod on the list. An installer that asks is answered at the terminal, or
   with `--fomod-choices` or `--fomod-defaults`.
 - `--use-current <mod-id>` installs a gone pin's mod at its current main
-  file, and `--skip-file <mod-id>` installs it without its gone optional
-  files.
+  file, if it has one now, and `--skip-file <mod-id>` installs it without
+  its gone optional files. A mod NexusMods no longer has at all can only
+  be skipped.
 - `--skip <mod-id>` leaves the mod out. lmm remembers the skip, so a
   collection update doesn't add the mod back without asking.
 - `--from <folder>` installs the files you downloaded by hand from that
@@ -674,9 +676,9 @@ no longer offers is handled as at an import: the current file stands in
 by default, `--skip-file` or `--skip` decide otherwise (skipping a mod the
 profile already has keeps the version it has), and one nothing stands in
 for is left to finish. For a mod you changed yourself (a conflict), your
-version is kept; if you take the collection's with `--override` and
-nothing stands in for its gone file, your version is still kept, and the
-update says so.
+version is kept unless you take the collection's with `--override`; then
+the current file stands in by default, and if nothing does, your version
+is still kept, and the update says so.
 
 The plugin list, file load orders (Cyberpunk 2077's archive order, see
 [Load order](load-order.md)) and config overrides follow the same rule. lmm remembers

@@ -170,7 +170,8 @@ func TestPlanSourceCollectionImport_AModGoneEntirelyCanOnlyBeSkipped(t *testing.
 	assert.Empty(t, pin.Choice, "there is no current file to use")
 	// #660: not a refusal - the item is left a gone_pin to-do.
 	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
-	require.NoError(t, err)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete, "#660 review S4: a to-do left means an unfinished import")
 	require.Len(t, result.Todos, 1)
 	assert.Equal(t, domain.TodoGonePin, result.Todos[0].Reason)
 

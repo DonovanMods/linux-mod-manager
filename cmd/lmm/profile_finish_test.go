@@ -49,7 +49,10 @@ func importLeavingTodos(t *testing.T) (*core.Service, *domain.Game, string, stri
 	})
 	setNexusFlags(t, "abcdef", false)
 	out, _, err := captureStdoutStderrErr(t, func() error { return doNexusCollectionImport(context.Background(), svc, game) })
-	require.NoError(t, err, out)
+	// #660 review S4: an item left to finish is an unfinished import: a
+	// non-zero exit, the output already said everything.
+	require.ErrorIs(t, err, ErrReported, out)
+	assert.NotZero(t, exitCodeFor(err))
 	return svc, game, configDir, out
 }
 

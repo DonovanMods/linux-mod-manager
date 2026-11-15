@@ -30,6 +30,9 @@ const (
 	// needs a tool that is not installed (CollectionTodo.Detail names it).
 	// Retried once the tool is installed.
 	TodoUnsupportedArchive = "unsupported_archive"
+	// TodoModGone: the source no longer has the mod at all (deleted, or
+	// hidden). Skipped - or retried, should it come back.
+	TodoModGone = "mod_gone"
 	// TodoNotInstalled: the profile lists the item, the collection put it
 	// there, and it has no install - with no record of why (an older lmm
 	// rewrote the profile, or the import was interrupted). Retried, it

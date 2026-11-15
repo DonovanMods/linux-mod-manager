@@ -190,6 +190,12 @@ type importAdjust struct {
 	collection    *collectionState
 	withholdHooks bool
 	dropOverrides []RestrictedOverride
+	// todos are a collection import's items held back from its apply (a
+	// gone pin nothing stands in for, a manual download), by
+	// domain.ModKey: saved on their references with the profile itself, so
+	// the record is never missing for an item the import never tried
+	// (#660 review S3).
+	todos map[string]*domain.CollectionTodo
 }
 
 // applyTo adjusts profile, the document's profile, before it is saved.
@@ -205,4 +211,9 @@ func (a importAdjust) applyTo(profile *domain.Profile) {
 		profile.Overrides = nil
 	}
 	a.collection.finish(profile)
+	for i := range profile.Mods {
+		if todo := a.todos[domain.ModKey(profile.Mods[i].SourceID, profile.Mods[i].ModID)]; todo != nil {
+			profile.Mods[i].Todo = todo.Clone()
+		}
+	}
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -21,6 +20,11 @@ import (
 // parses the given data and inspects existing DB/cache/profile state, but
 // never writes anything.
 type ImportPlan struct {
+	// todoMode says the plan runs as a collection import's (or its
+	// finish's), where a failure is the item's to-do (#660): a FOMOD
+	// question's text then names the to-do, not a command to run again.
+	todoMode bool `json:"-"`
+
 	// Profile is the parsed-but-not-yet-saved profile (ProfileManager.
 	// ParseProfile's result) - its Name/Mods drive both the CLI's preview
 	// print and ApplyImport's own save step.
@@ -688,6 +692,9 @@ type ProfileImportOptions struct {
 	// leaves it false: a question still refuses the import with nothing
 	// written, and a failed mod is only counted.
 	RecordTodos bool
+	// heldTodos are the to-dos of the items a collection flow held back
+	// from the apply, saved with the profile (importAdjust.todos).
+	heldTodos map[string]*domain.CollectionTodo
 
 	// Fomod answers FOMOD installer questions (#614), keyed by
 	// domain.ModKey, as InstallOptions.Fomod does. A mod with no entry
@@ -860,6 +867,11 @@ func (s *Service) applyImportHeld(ctx context.Context, game *domain.Game, plan *
 
 func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, sink EventSink) (*ProfileImportResult, error) {
 	result := &ProfileImportResult{}
+	if opts.RecordTodos && !plan.todoMode {
+		todo := *plan
+		todo.todoMode = true
+		plan = &todo
+	}
 	emit := func(e Event) {
 		if sink != nil {
 			sink(e)
@@ -915,7 +927,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 
 	var profile *domain.Profile
 	saveProfile := func(ctx context.Context) error {
-		adj := importAdjust{collection: plan.collectionState, withholdHooks: !opts.WithHooks}
+		adj := importAdjust{collection: plan.collectionState, withholdHooks: !opts.WithHooks, todos: opts.heldTodos}
 		if !opts.AllowAnyOverrides {
 			adj.dropOverrides = plan.RestrictedOverrides
 		}
@@ -1016,26 +1028,24 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		},
 		release: func(st *importStaged, blocked bool) { s.releaseAcquired(st.files, blocked) },
 	}
-	if err := runAcquire(ctx, run); err != nil {
+	runErr := runAcquire(ctx, run)
+	if opts.RecordTodos {
+		// #660: each failed item's to-do, for the collection flow to
+		// write: a failure at acquire carries its error, one at commit (a
+		// deploy, a save) only its text. A run stopped part-way (a
+		// cancellation) records the failures that settled before it.
+		result.todoRecords = make(map[string]*domain.CollectionTodo, len(result.Failures))
+		for _, f := range result.Failures {
+			key := domain.ModKey(f.SourceID, f.ModID)
+			result.todoRecords[key] = carryTodo(todoFor(f.Name, f.Reason, failedErrs[key]), nil, plan.archiveMD5[key])
+		}
+	}
+	if err := runErr; err != nil {
 		var refused *AcquireRefusedError
 		if errors.As(err, &refused) {
 			return result, refusedImport(plan, toInstall, refused, names, failed, result)
 		}
 		return result, err
-	}
-	if opts.RecordTodos {
-		// #660: each failed item's to-do, for the collection flow to
-		// write: a failure at acquire carries its error, one at commit (a
-		// deploy, a save) only its text.
-		result.todoRecords = make(map[string]*domain.CollectionTodo, len(result.Failures))
-		for _, f := range result.Failures {
-			key := domain.ModKey(f.SourceID, f.ModID)
-			todo := todoFor(f.Name, f.Reason, failedErrs[key])
-			if todo.Reason == domain.TodoInstallerQuestions {
-				todo.ArchiveMD5 = maps.Clone(plan.archiveMD5[key])
-			}
-			result.todoRecords[key] = todo
-		}
 	}
 
 	// #197 I3 fix: profile import deploys mods (installer.Install above) the

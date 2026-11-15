@@ -16,6 +16,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -28,8 +30,9 @@ const (
 	// TodoActionAnswerInstaller: answer the item's FOMOD installer; the
 	// answers install it.
 	TodoActionAnswerInstaller = "answer_installer"
-	// TodoActionChooseFile: the pinned file is gone - use the mod's current
-	// file, leave the gone file out (CanSkipFile), or skip the mod.
+	// TodoActionChooseFile: the pinned file is gone - leave the gone file
+	// out (CanSkipFile), skip the mod, or retry once the file is offered
+	// again (or, at a finish, take the mod's current main file).
 	TodoActionChooseFile = "choose_file"
 	// TodoActionRetry: try the install again (once the tool the remedy
 	// names is installed, for an unsupported archive).
@@ -37,6 +40,9 @@ const (
 	// TodoActionDownload: download the file by hand and install it from
 	// the downloads folder (`lmm profile fill`).
 	TodoActionDownload = "download"
+	// TodoActionSkip: nothing installs the item - its mod is gone - so
+	// leaving it out is the action (a retry is still allowed).
+	TodoActionSkip = "skip"
 )
 
 // CollectionTodoItem is one item of a collection profile's to-do list:
@@ -105,14 +111,20 @@ func incompleteOf(todos []CollectionTodoItem) *CollectionIncomplete {
 }
 
 // recordedTodos are profile's to-dos that carry a record: the items a
-// converge leaves alone (an item with no record converges as any listed
-// mod does). installed names the profile's rows by domain.ModKey.
+// deploy, switch or apply leaves alone - Finish collection resolves them.
+// installed names the profile's OWN rows by domain.ModKey: an item another
+// profile has installed is still this one's to do. (A listed item with no
+// record converges as any listed mod does.)
 func recordedTodos(profile *domain.Profile, installed map[string]bool) []CollectionTodoItem {
 	var out []CollectionTodoItem
-	for _, t := range collectionTodos(profile, installed) {
-		if t.Reason != domain.TodoNotInstalled {
-			out = append(out, t)
+	seen := map[string]bool{}
+	for _, ref := range profile.Mods {
+		key := domain.ModKey(ref.SourceID, ref.ModID)
+		if seen[key] || ref.Todo == nil || ref.Disabled || installed[key] {
+			continue
 		}
+		seen[key] = true
+		out = append(out, todoItem(ref, ref.Todo))
 	}
 	return out
 }
@@ -155,7 +167,7 @@ func todoRemedy(t CollectionTodoItem) (string, string) {
 		}
 		return TodoActionAnswerInstaller, fmt.Sprintf("%s's installer has choices the collection does not record; answer it to continue", name)
 	case domain.TodoGonePin:
-		text := fmt.Sprintf("the source no longer offers the file the collection pins for %s: use the mod's current file, or skip it", name)
+		text := fmt.Sprintf("the source no longer offers the file the collection pins for %s, and nothing stands in for it: skip it, or retry once the file is offered again", name)
 		if t.CanSkipFile {
 			text = fmt.Sprintf("the source no longer offers a file the collection pins for %s: leave that file out and install the rest, or skip it", name)
 		}
@@ -169,6 +181,8 @@ func todoRemedy(t CollectionTodoItem) (string, string) {
 		return TodoActionRetry, fmt.Sprintf("lmm cannot extract %s's archive; retry once a tool that can is installed, or skip it", name)
 	case domain.TodoDownloadFailed:
 		return TodoActionRetry, fmt.Sprintf("the download of %s failed; retry it", name)
+	case domain.TodoModGone:
+		return TodoActionSkip, fmt.Sprintf("%s is no longer on its source: skip it, or retry should it come back", name)
 	case domain.TodoNotInstalled:
 		return TodoActionRetry, fmt.Sprintf("%s is not installed; retry to install it", name)
 	}
@@ -201,6 +215,8 @@ func todoFor(name, reason string, err error) *domain.CollectionTodo {
 				t.FomodReason = q.Reason
 			}
 		}
+	case errors.Is(err, domain.ErrModNotFound):
+		t.Reason = domain.TodoModGone
 	case errors.As(err, &gone):
 		t.Reason, t.Detail, t.FileIDs = domain.TodoGonePin, gone.Bare(), gone.FileIDs
 	case errors.Is(err, ErrStoredFilesUnavailable), errors.Is(err, ErrNoDownloadableFiles):
@@ -216,6 +232,51 @@ func todoFor(name, reason string, err error) *domain.CollectionTodo {
 		t.Reason = domain.TodoDownloadFailed
 	}
 	return t
+}
+
+// needsUser reports whether todos hold an item that keeps an import from
+// being clean (#660 review S4): anything but a manual download - a free
+// account's pending files are the import's documented outcome (#608) - or
+// an item the import was told not to install (not_installed).
+func needsUser(todos []CollectionTodoItem) bool {
+	for _, t := range todos {
+		if t.Reason != domain.TodoManualDownload && t.Reason != domain.TodoNotInstalled {
+			return true
+		}
+	}
+	return false
+}
+
+// carryTodo is next, the to-do a failure records now, with what it must
+// not lose from prior, the item's to-do before this run (#660 review B1):
+// the name, an installer's curator md5s - so a later finish still replays
+// the recorded choices only against the curator's archive (#609) - and a
+// gone pin's files. archiveMD5 is the run's own md5s for the item, which
+// win over prior's. Nil prior and nil archiveMD5 change nothing.
+func carryTodo(next, prior *domain.CollectionTodo, archiveMD5 map[string]string) *domain.CollectionTodo {
+	if next == nil {
+		return nil
+	}
+	if next.Name == "" && prior != nil {
+		next.Name = prior.Name
+	}
+	if next.Reason == domain.TodoInstallerQuestions && len(next.ArchiveMD5) == 0 {
+		switch {
+		case len(archiveMD5) > 0:
+			next.ArchiveMD5 = maps.Clone(archiveMD5)
+		case prior != nil && len(prior.ArchiveMD5) > 0:
+			next.ArchiveMD5 = maps.Clone(prior.ArchiveMD5)
+		}
+	}
+	if next.Reason == domain.TodoGonePin && prior != nil && prior.Reason == domain.TodoGonePin {
+		if len(next.FileIDs) == 0 {
+			next.FileIDs = slices.Clone(prior.FileIDs)
+		}
+		if slices.Equal(next.FileIDs, prior.FileIDs) {
+			next.CanSkipFile = next.CanSkipFile || prior.CanSkipFile
+		}
+	}
+	return next
 }
 
 // collectionTodos is profile's to-do list against its installed rows
