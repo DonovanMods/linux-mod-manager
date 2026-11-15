@@ -215,6 +215,8 @@ func TestAPIJobStatus_ReportsTheJobStatusDocument(t *testing.T) {
 		State         jobState           `json:"state"`
 		StartedAt     time.Time          `json:"started_at"`
 		EndedAt       time.Time          `json:"ended_at"`
+		Game          string             `json:"game"`
+		Profile       string             `json:"profile"`
 		Result        *core.DeployResult `json:"result"`
 		EventCount    int                `json:"event_count"`
 		DroppedEvents int                `json:"dropped_events"`
@@ -225,6 +227,8 @@ func TestAPIJobStatus_ReportsTheJobStatusDocument(t *testing.T) {
 	assert.Equal(t, jobSucceeded, got.State)
 	assert.False(t, got.StartedAt.IsZero())
 	assert.False(t, got.EndedAt.IsZero())
+	assert.NotEmpty(t, got.Game, "#655: the job names the game its plan was made for")
+	assert.NotEmpty(t, got.Profile, "#655: and the profile")
 	require.NotNil(t, got.Result)
 	assert.Equal(t, 1, got.Result.Deployed)
 	assert.Positive(t, got.EventCount, "a real deploy emits events")
