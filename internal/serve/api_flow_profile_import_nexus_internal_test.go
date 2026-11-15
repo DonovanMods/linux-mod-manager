@@ -288,3 +288,42 @@ func TestAPIFlow_ProfileImportNexus_SMAPIIsAPrerequisiteStep(t *testing.T) {
 	require.Len(t, profile.Mods, 1, "SMAPI is never a profile entry")
 	assert.Equal(t, "10", profile.Mods[0].ModID)
 }
+
+// #654: the plan carries the summary the plan view leads with, and a
+// re-plan with an optional mod opted in (the toggle's own request) carries
+// fresh counts; the import then saves exactly that selection.
+func TestAPIFlow_ProfileImportNexus_SummaryFollowsTheSelection(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	seedNexusCollection(t, svc, game, source.TierPremium)
+
+	_, raw := planFlow(t, s, game, "profile_import", `{"nexus_collection":"abcdef"}`)
+	c := nexusPlanSource(t, raw)
+	require.NotNil(t, c.Summary)
+	assert.Equal(t, core.CollectionPlanSummary{Items: 3, Install: 2, Optional: 1}, *c.Summary)
+
+	planID, raw := planFlow(t, s, game, "profile_import", `{"nexus_collection":"abcdef","with_optional":false,"optional":["12:120"]}`)
+	c = nexusPlanSource(t, raw)
+	require.NotNil(t, c.Summary)
+	assert.Equal(t, core.CollectionPlanSummary{Items: 3, Install: 3, Optional: 1, OptionalSelected: 1}, *c.Summary)
+
+	j := startFlowJob(t, s, planID, `{}`)
+	require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
+	profile, err := svc.NewProfileManager().Get(t.Context(), game.ID, "Three Mods")
+	require.NoError(t, err)
+	assert.NotNil(t, profile.FindRef("nexusmods", "12"), "the opted-in item is imported")
+}
+
+// #654 review: the optional list the plan view posts is checked by core -
+// an id that names no optional item of the collection (a required item's
+// here) is the caller's 400, naming it and the ids the plan lists.
+func TestAPIFlow_ProfileImportNexus_UnknownOptionalIDIsRefused(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	seedNexusCollection(t, svc, game, source.TierPremium)
+	for _, id := range []string{"99:1", "10:100"} {
+		rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/profile_import", game),
+			`{"nexus_collection":"abcdef","optional":["`+id+`"]}`)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), id)
+		assert.Contains(t, rec.Body.String(), "12:120", "the collection's optional ids are named")
+	}
+}

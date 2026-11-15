@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A collection's plan is grouped, with a summary first (#654).** A
+  NexusMods collection's import plan, and a collection update's, leads
+  with a summary line: how many mods will be installed, how many are
+  optional and how many of those are selected, how many installers will ask
+  questions, how many to download by hand, how many external or
+  prerequisite items, and anything lmm cannot import. Then the optional
+  mods (each with its version, the curator's description, its file page
+  and its id), then **Needs your attention** (installers that will ask,
+  old-version files, items to get by hand and prerequisite steps, each
+  with why), then every item. In the browser each count goes to its
+  section, the optional mods are tick boxes beside their names with
+  **Select all** and **Select none**, toggling one updates the summary,
+  the full list is folded away until opened, and long names and notes wrap
+  instead of running off the window. The `--json` plan gains
+  `collection.source.summary` (and the update plan `source.summary`):
+  the counts and the attention items with reason codes.
+- **`lmm profile import --nexus-collection` takes `--optional <id>`
+  (#654)**, repeatable, to include one optional mod by the id the plan
+  lists, as `lmm profile sync --collection` already did and as the web
+  UI's per-mod tick box does. On both commands, and in the web UI, an id
+  that is not one of the collection's optional mods is now refused with
+  the ids that are, instead of being accepted and opting nothing in.
 - **Importing a collection is easy to find in the web UI (#650).** The
   profile picker's menu has **Import collection…** under **Manage
   profiles…**, and Mission Control's Profile card has the same button: it

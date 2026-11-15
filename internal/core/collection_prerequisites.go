@@ -71,6 +71,7 @@ func prerequisiteFor(sourceID, gameSourceID, modType string) (prerequisiteInstal
 // type - the type is the prerequisite's, never a profile entry's.
 func (it *convItem) asPrerequisite(p prerequisiteInstaller) {
 	it.kind = source.CollectionItemExternal
+	it.prerequisite = true
 	it.ModType = ""
 	if it.URL == "" {
 		it.URL = p.page
