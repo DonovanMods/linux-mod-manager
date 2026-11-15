@@ -350,6 +350,7 @@ var (
 	profileImportCollection   string
 	profileImportNexus        string
 	profileImportWithOptional bool
+	profileImportOptional     []string
 	profileImportAs           string
 	profileImportWithHooks    bool
 	profileImportAnyOverrides bool
@@ -390,6 +391,8 @@ func init() {
 		"import a NexusMods collection (its slug, slug@revision, or the URL of its page) instead of a file")
 	profileImportCmd.Flags().BoolVar(&profileImportWithOptional, "with-optional", false,
 		"with --nexus-collection, install the collection's optional mods too (they are left out by default)")
+	profileImportCmd.Flags().StringSliceVar(&profileImportOptional, "optional", nil,
+		"with --nexus-collection, install this optional item (its id as the plan lists it, mod-id:file-id; repeatable)")
 	profileImportCmd.Flags().StringVar(&profileImportAs, "as", "",
 		"name the imported profile (a collection, --workshop-collection or --nexus-collection; an older profile export names its own)")
 	profileImportCmd.Flags().BoolVar(&profileImportWithHooks, "with-hooks", false,
@@ -982,6 +985,9 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	if profileImportWithOptional {
 		return fmt.Errorf("--with-optional opts a NexusMods collection's optional mods in; use it with --nexus-collection")
 	}
+	if len(profileImportOptional) > 0 {
+		return fmt.Errorf("--optional opts one of a NexusMods collection's optional mods in; use it with --nexus-collection")
+	}
 	// #269 W2: --workshop-collection is a second INPUT to the same flow,
 	// mutually exclusive with a file - a collection is not a document on
 	// disk, and taking both would leave lmm guessing which one the user
@@ -1118,6 +1124,7 @@ func doProfileImportCollection(ctx context.Context, service *core.Service, game 
 func doNexusCollectionImport(ctx context.Context, service *core.Service, game *domain.Game) error {
 	plan, err := service.PlanSourceCollectionImport(ctx, game, core.SourceCollectionImportRequest{
 		SourceID: "nexusmods", Ref: profileImportNexus, ProfileName: profileImportAs, WithOptional: profileImportWithOptional,
+		Optional: profileImportOptional,
 	})
 	if err != nil {
 		return err

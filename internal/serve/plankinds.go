@@ -211,6 +211,10 @@ func planErrorStatus(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, errBadPlanRequest):
 		return http.StatusBadRequest
+	// #654 review: an optional id the collection has no optional item for
+	// (a profile import's or a collection update's) is the caller's input.
+	case errors.Is(err, core.ErrUnknownOptionalItem):
+		return http.StatusBadRequest
 	case errors.Is(err, core.ErrProfileNotActive), errors.Is(err, core.ErrActiveProfileUnknown):
 		return http.StatusConflict
 	case errors.Is(err, domain.ErrModNotFound),

@@ -1,0 +1,38 @@
+{
+  "items": 9,
+  "install": 3,
+  "installed": 1,
+  "optional": 2,
+  "optional_selected": 1,
+  "installer_questions": 1,
+  "manual_download": 0,
+  "external": 2,
+  "unsupported": 1,
+  "attention": [
+    {
+      "id": "2:22",
+      "reasons": [
+        "installer_questions",
+        "old_file"
+      ]
+    },
+    {
+      "id": "2400:240",
+      "reasons": [
+        "prerequisite"
+      ]
+    },
+    {
+      "id": "6:66",
+      "reasons": [
+        "unsupported"
+      ]
+    },
+    {
+      "id": "item:7",
+      "reasons": [
+        "external"
+      ]
+    }
+  ]
+}
