@@ -535,9 +535,16 @@ func TestE2E_FinishCollection_LiveTodosHelpers(t *testing.T) {
 			let calls = 0;
 			let release;
 			const slow = () => { calls++; return new Promise((r) => { release = () => r({ profile: "dup", todos: [] }); }); };
-			const a = lt.refreshLiveTodos("g1", "dup", note, slow);
-			const b = lt.refreshLiveTodos("g1", "dup", note, slow);
+			// The first caller's effect was cancelled while the read was out
+			// (its note no longer records anything); a second caller joins
+			// mid-flight, and its note must still land.
+			let cancelled = false;
+			const first = (game, doc) => { if (!cancelled) notes.push("first:" + game + ":" + doc.profile + "=" + doc.todos.length); };
+			const joined = (game, doc) => notes.push("joined:" + game + ":" + doc.profile + "=" + doc.todos.length);
+			const a = lt.refreshLiveTodos("g1", "dup", first, slow);
 			await new Promise((r) => setTimeout(r, 0));
+			cancelled = true;
+			const b = lt.refreshLiveTodos("g1", "dup", joined, slow);
 			release();
 			await Promise.all([a, b]);
 			return { same: same !== null, moved: moved !== null, other: other !== null, notes, calls };
@@ -546,7 +553,8 @@ func TestE2E_FinishCollection_LiveTodosHelpers(t *testing.T) {
 	assert.Equal(t, true, got["same"])
 	assert.Equal(t, false, got["moved"], "another game's hydrate has replaced the page")
 	assert.Equal(t, false, got["other"], "the list is another profile's")
-	assert.Equal(t, []any{"g1:gone=0", "g1:here=2", "g1:dup=0"}, got["notes"], "404 is nothing left; another failure notes nothing")
+	assert.Equal(t, []any{"g1:gone=0", "g1:here=2", "joined:g1:dup=0"}, got["notes"],
+		"404 is nothing left; another failure notes nothing; a caller that joins a read in flight is noted too, though the first caller is gone")
 	assert.EqualValues(t, 1, got["calls"], "one read of a list at a time")
 	assert.Empty(t, f.BrowserErrors())
 }

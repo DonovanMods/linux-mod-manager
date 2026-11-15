@@ -113,9 +113,12 @@ function useCollectionsLeft(jobs, actions) {
         // One read per list, shared by every entry of that collection (the
         // tray's rows count from what it notes). A 404 - the profile was
         // deleted or renamed - is nothing left to finish.
-        refreshLiveTodos(job.game, collection.profile, (game, doc) => {
-          if (live) actions?.noteTodos?.(game, doc);
-        });
+        // Noted whether or not this effect has been cleaned up since: the
+        // count is the page's (a store write), not this render's, and a
+        // re-run that joins the same read must not lose it.
+        refreshLiveTodos(job.game, collection.profile, (game, doc) =>
+          actions?.noteTodos?.(game, doc),
+        );
       }
       setReads((n) => n + 1);
     });

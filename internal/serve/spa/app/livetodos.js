@@ -27,8 +27,9 @@ export function hydratedTodos(route, current, report) {
   return report.profile === route.profile ? report : null;
 }
 
-// inFlight is each list's read under way, by liveTodosKey: one read of a
-// list at a time, however many entries ask for it.
+// inFlight is each list's read under way, by liveTodosKey - {done, notes}:
+// one read of a list at a time, however many entries ask for it, and every
+// caller's note hears its answer (one that joins mid-flight included).
 const inFlight = new Map();
 
 /**
@@ -41,18 +42,22 @@ const inFlight = new Map();
 export function refreshLiveTodos(game, profile, note, read = getProfileTodos) {
   const key = liveTodosKey(game, profile);
   const pending = inFlight.get(key);
-  if (pending) return pending;
+  if (pending) {
+    pending.notes.push(note);
+    return pending.done;
+  }
+  const notes = [note];
+  const tell = (doc) => {
+    for (const each of notes) each(game, doc);
+  };
   const done = Promise.resolve()
     .then(() => read(profile, { game }))
-    .then(
-      (doc) => note(game, doc),
-      (err) => {
-        if (err instanceof ApiError && err.status === 404) {
-          note(game, { profile, todos: [] });
-        }
-      },
-    )
+    .then(tell, (err) => {
+      if (err instanceof ApiError && err.status === 404) {
+        tell({ profile, todos: [] });
+      }
+    })
     .finally(() => inFlight.delete(key));
-  inFlight.set(key, done);
+  inFlight.set(key, { done, notes });
   return done;
 }
