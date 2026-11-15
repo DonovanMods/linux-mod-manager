@@ -15,7 +15,9 @@
 // ask for between them and the field they did.
 //
 // Each form closes this modal and opens the plan in the shared modal slot,
-// as it does from the profiles modal.
+// as it does from the profiles modal. The section offers only the
+// collection sources the game maps, read from state.status (issue 652), so
+// this modal is handed the store's state as the profiles modal is.
 
 import { html } from "../render.js";
 import { Modal } from "./modal.js";
@@ -24,7 +26,7 @@ import { ImportProfileForm } from "./profilesmodal.js";
 /** ImportCollectionModal renders only when the shared modal slot holds
  * this shape. openerSelector is the stable control focus returns to on
  * close (modal.js), for an opener that was a menu item. */
-export function ImportCollectionModal({ modal, actions }) {
+export function ImportCollectionModal({ modal, state, actions }) {
   if (modal?.type !== "import-collection") return null;
 
   function close() {
@@ -43,9 +45,10 @@ export function ImportCollectionModal({ modal, actions }) {
         would do before anything is written.
       </p>
       <${ImportProfileForm}
+        state=${state}
         actions=${actions}
         close=${close}
-        heading="From a file"
+        heading=${null}
       />
     <//>
   `;

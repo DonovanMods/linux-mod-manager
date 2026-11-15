@@ -141,7 +141,11 @@ export function App({ state, onThemeChange, actions }) {
     }
     ${
       modalType === "import-collection" &&
-      html`<${ImportCollectionModal} modal=${state.modal} actions=${actions} />`
+      html`<${ImportCollectionModal}
+        modal=${state.modal}
+        state=${state}
+        actions=${actions}
+      />`
     }
     ${
       modalType === "shortcuts" &&

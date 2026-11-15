@@ -24,7 +24,8 @@
 // failed to parse (task-A review note). Every read of `.mods` below goes
 // through `(x.mods ?? [])` for that reason, not just for the list.
 
-import { html, useEffect, useState } from "../render.js";
+import { html, useEffect, useRef, useState } from "../render.js";
+import { navigate, setupPath } from "../router.js";
 import { Modal } from "./modal.js";
 import { codeSpans } from "../errortext.js";
 import { FillDropZone } from "./filldropzone.js";
@@ -113,7 +114,7 @@ export function ProfilesModal({ modal, state, actions }) {
       </ul>
 
       <${CreateProfileForm} context=${context} afterMutation=${afterMutation} />
-      <${ImportProfileForm} actions=${actions} close=${close} />
+      <${ImportProfileForm} state=${state} actions=${actions} close=${close} />
     <//>
   `;
 }
@@ -705,7 +706,67 @@ function BundleExportRow({ profile, context, close }) {
   `;
 }
 
-/** ImportProfileForm uploads the picked file - an lmm collection (.lmmc, or
+/** ImportProfileForm is the whole import section: one form per source -
+ * a file, a URL, a Steam Workshop collection and a NexusMods collection -
+ * each laid out alike (issue 652): its heading, its own full-width fields
+ * (a profile name of its own among them), its button, then its hint. The
+ * "Import collection…" modal (importcollectionmodal.js, issue 650) renders
+ * this same component, so the two doors cannot drift apart.
+ *
+ * A collection source is offered only when the game maps it
+ * (state.status.source_ids, the selected game's own document): a Workshop
+ * collection is no use for a game the Workshop does not serve, and the plan
+ * would only refuse it. The file and the URL are always offered. A game
+ * that maps neither gets one line saying where to map them. heading is the
+ * section's own heading, or nothing where the modal's title already says
+ * what it is for. */
+export function ImportProfileForm({
+  state,
+  actions,
+  close,
+  heading = "Import a profile",
+}) {
+  const status = state?.status;
+  const mapped = status?.source_ids ?? {};
+  const workshop = Object.hasOwn(mapped, "steamworkshop");
+  const nexus = Object.hasOwn(mapped, "nexusmods");
+  const { game, profile } = state?.route ?? {};
+  const setupHref = game && profile ? setupPath(game, profile, "games") : "";
+
+  return html`
+    <div class="profiles-import">
+      ${heading && html`<h3 class="plan__heading">${heading}</h3>`}
+      <${ImportFileForm} actions=${actions} close=${close} />
+      <${ImportURLForm} actions=${actions} close=${close} />
+      ${workshop && html`<${ImportCollectionForm} actions=${actions} close=${close} />`}
+      ${nexus && html`<${ImportNexusCollectionForm} actions=${actions} close=${close} />`}
+      ${
+        status &&
+        !workshop &&
+        !nexus &&
+        html`<p class="empty-state__hint" data-testid="import-map-sources">
+          To import a Steam Workshop or NexusMods collection, map that source to
+          this game in${" "}
+          ${
+            setupHref
+              ? html`<a
+                  href=${setupHref}
+                  onClick=${(e) => {
+                    e.preventDefault();
+                    close();
+                    navigate(setupHref);
+                  }}
+                  >Setup › Games</a
+                >`
+              : "Setup › Games"
+          }.
+        </p>`
+      }
+    </div>
+  `;
+}
+
+/** ImportFileForm uploads the picked file - an lmm collection (.lmmc, or
  * its YAML) or an older profile export - through POST /api/v1/uploads and
  * hands the upload to the confirm-plan framework as the profile-import
  * kind's request (kind_profile_import.go). Uploading, rather than posting
@@ -718,19 +779,14 @@ function BundleExportRow({ profile, context, close }) {
  * here, as `--game` does; the plan warns when the collection names another
  * game.
  *
- * It is the whole import section - the file, then the URL, Workshop and
- * NexusMods inputs - and the "Import collection…" modal
- * (importcollectionmodal.js, issue 650) renders this same component, so
- * the two doors cannot drift apart. heading is the file input's own
- * heading: that modal's title already says what the section is for. */
-export function ImportProfileForm({
-  actions,
-  close,
-  heading = "Import a profile",
-}) {
+ * "Choose file…" is a real button that opens the hidden file input, as
+ * "Update from file…" does (updatefromfile.js): a label dressed as a button
+ * was drawn and focused unlike every other button here (issue 652). */
+function ImportFileForm({ actions, close }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [name, setName] = useState("");
+  const fileRef = useRef(null);
 
   async function onPick(e) {
     const file = e.currentTarget.files?.[0];
@@ -761,31 +817,46 @@ export function ImportProfileForm({
   }
 
   return html`
-    <div class="profiles-import">
-      <h3 class="plan__heading">${heading}</h3>
+    <form
+      class="profiles-import__section profiles-import__file"
+      data-source="file"
+      onSubmit=${(e) => e.preventDefault()}
+    >
+      <h4 class="plan__heading">From a file</h4>
       <input
         type="text"
         aria-label="Name for the imported collection's profile"
-        placeholder="Profile name (optional, collections only)"
+        placeholder="Profile name (optional)"
         data-testid="import-profile-name"
         value=${name}
         onInput=${(e) => setName(e.currentTarget.value)}
       />
-      <label class="button">
+      <button
+        type="button"
+        class="button button--primary"
+        data-testid="import-file-choose"
+        disabled=${busy}
+        onClick=${() => fileRef.current?.click()}
+      >
         ${busy ? "Uploading…" : "Choose file…"}
-        <input
-          type="file"
-          accept=".lmmc,.json,.yaml,.yml,application/json"
-          disabled=${busy}
-          onChange=${onPick}
-          hidden
-        />
-      </label>
+      </button>
+      <input
+        ref=${fileRef}
+        type="file"
+        accept=".lmmc,.json,.yaml,.yml,application/json"
+        aria-label="Collection or profile export to import"
+        tabindex="-1"
+        aria-hidden="true"
+        disabled=${busy}
+        onChange=${onPick}
+        hidden
+      />
       ${error && html`<p class="modal__error">${error}</p>`}
-      <${ImportURLForm} actions=${actions} close=${close} name=${name} />
-      <${ImportCollectionForm} actions=${actions} close=${close} />
-      <${ImportNexusCollectionForm} actions=${actions} close=${close} />
-    </div>
+      <p class="empty-state__hint">
+        An lmm collection (.lmmc), or a profile export (.yaml or .json), which
+        keeps its own name.
+      </p>
+    </form>
   `;
 }
 
@@ -794,10 +865,11 @@ export function ImportProfileForm({
  * server fetches it - https only, size-capped - and plans it as a file's
  * import, into the game selected here, except that its hooks are never
  * imported (the plan says so and offers no checkbox) and the address is
- * recorded as the profile's origin. The optional name above it is `--as`,
- * as it is for a file. */
-export function ImportURLForm({ actions, close, name }) {
+ * recorded as the profile's origin. Its own optional name is `--as`, as it
+ * is for a file. */
+export function ImportURLForm({ actions, close }) {
   const [url, setURL] = useState("");
+  const [name, setName] = useState("");
   const trimmed = url.trim();
   const plain = /^http:\/\//i.test(trimmed);
 
@@ -812,13 +884,17 @@ export function ImportURLForm({ actions, close, name }) {
       confirmLabel: "Import",
       options: {
         url: trimmed,
-        ...(name?.trim() ? { profile_name: name.trim() } : {}),
+        ...(name.trim() ? { profile_name: name.trim() } : {}),
       },
     });
   }
 
   return html`
-    <form class="profiles-import__url" onSubmit=${submit}>
+    <form
+      class="profiles-import__section profiles-import__url"
+      data-source="url"
+      onSubmit=${submit}
+    >
       <h4 class="plan__heading">From a URL</h4>
       <input
         type="url"
@@ -827,6 +903,14 @@ export function ImportURLForm({ actions, close, name }) {
         data-testid="import-url"
         value=${url}
         onInput=${(e) => setURL(e.currentTarget.value)}
+      />
+      <input
+        type="text"
+        aria-label="Name for the profile imported from the URL"
+        placeholder="Profile name (optional)"
+        data-testid="import-url-profile-name"
+        value=${name}
+        onInput=${(e) => setName(e.currentTarget.value)}
       />
       <button
         type="submit"
@@ -885,7 +969,11 @@ export function ImportCollectionForm({ actions, close }) {
   }
 
   return html`
-    <form class="profiles-import__collection" onSubmit=${submit}>
+    <form
+      class="profiles-import__section profiles-import__collection"
+      data-source="steamworkshop"
+      onSubmit=${submit}
+    >
       <h4 class="plan__heading">Steam Workshop collection</h4>
       <input
         type="text"
@@ -897,7 +985,7 @@ export function ImportCollectionForm({ actions, close }) {
       />
       <input
         type="text"
-        aria-label="Name for the imported profile"
+        aria-label="Name for the imported Steam Workshop collection's profile"
         placeholder="Profile name (optional)"
         data-testid="collection-profile-name"
         value=${name}
@@ -906,6 +994,7 @@ export function ImportCollectionForm({ actions, close }) {
       <button
         type="submit"
         class="button button--primary"
+        data-testid="collection-import"
         disabled=${!ref.trim()}
       >
         Import collection
@@ -947,7 +1036,11 @@ export function ImportNexusCollectionForm({ actions, close }) {
   }
 
   return html`
-    <form class="profiles-import__collection" onSubmit=${submit}>
+    <form
+      class="profiles-import__section profiles-import__nexus"
+      data-source="nexusmods"
+      onSubmit=${submit}
+    >
       <h4 class="plan__heading">NexusMods collection</h4>
       <input
         type="text"

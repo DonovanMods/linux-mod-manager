@@ -937,6 +937,20 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **The web UI's collection import is drawn one way (#652).** In the
+  **Import collection…** window and the Profiles window's import section,
+  every source (a file, a URL, a Steam Workshop collection, a NexusMods
+  collection) is laid out alike: its heading, its own full-width fields,
+  its button, then a one-line hint. The URL field is no longer a small
+  browser-default box: every text-entry field type the web UI uses is
+  drawn by the same field style, and a test fails on an `<input>` of a type
+  that style does not cover. **Choose file…** is a real button like the
+  others, the file and the URL each have their own **Profile name** field
+  (the file's name no longer silently applied to the URL import too), and
+  the Steam Workshop and NexusMods sections appear only for a game that
+  uses that site; a game that uses neither shows one line linking to
+  **Setup → Games**, where its sources are mapped.
+
 - **`lmm verify --fix` no longer removes the last copy of a mod lmm cannot
   download again (#645).** A mod imported from an archive (with no source,
   or from an archive its source does not list, #644), or one that records

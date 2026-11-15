@@ -33,8 +33,11 @@ nothing is downloaded again if lmm already has it.
   rename, duplicate, delete, export and import profiles.
 - **Import collection…**, in the picker's menu under **Manage profiles…**,
   opens the import on its own: a collection file, a collection's address,
-  a Steam Workshop collection or a NexusMods collection. Mission Control's
-  **Profile** card, when it's showing, has the same button. See
+  and a Steam Workshop or NexusMods collection when the game uses that
+  site (its sources, in the game's editor under **⚙ Setup → Games**; a game
+  that uses neither says so, with a link there). Each kind of import has
+  its own **Profile name** field. Mission Control's **Profile** card, when
+  it's showing, has the same button. See
   [Sharing a profile](#sharing-a-profile).
 - Pasting a collection's address into the **search box** offers to import
   it instead of searching for it: a NexusMods collection's page (or its
@@ -161,7 +164,7 @@ on its own. **Export** downloads a `.lmmc` file. **Import** takes the same files
 terminal does, of any size it does: choose the file, and the import shows
 its plan before anything is written. To import a collection under another
 profile name (what `--as` does), type the name into the **Profile name**
-field before choosing the file. The import goes into the game you have
+field under **From a file** before pressing **Choose file…**. The import goes into the game you have
 selected, as `--game` does, and the plan warns when the collection names a
 different game. The plan has a box for each thing an import holds back
 (see below): **Import these hooks** for `--with-hooks`, and **Import these
@@ -354,7 +357,8 @@ from a link takes `--as` (in the browser, the **Profile name** field), since
 it imports the way a collection does.
 
 A Steam Workshop **collection** can be imported as a profile too, by pasting
-its link into the Profiles window, or with
+its link into **Steam Workshop collection** in the Profiles window (offered
+when the game uses the Steam Workshop), or with
 `lmm profile import --workshop-collection <link>`.
 
 ### Importing a NexusMods collection
@@ -380,7 +384,8 @@ NexusMods over https. Without a
 revision you get the latest one, and the plan says which. A link to
 another game's collection is refused. In the browser, type the same thing
 into **NexusMods collection** (in the Profiles window, or **Import
-collection…** in the profile picker's menu), or paste the collection's
+collection…** in the profile picker's menu; it is offered when the game
+uses NexusMods), or paste the collection's
 page address into the search box and press **Import it…** on the offer
 above the results. The search box recognises the same slugs and
 addresses the terminal takes.
