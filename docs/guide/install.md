@@ -71,6 +71,12 @@ LZMA, Deflate64, Zstandard or PPMd); the error names the method when `7z`
 is missing. Most distributions call the package `p7zip` or `7zip`. The `.deb` and `.rpm` packages suggest it for
 you; otherwise, install it if a mod ever fails to unpack.
 
+Whichever way an archive is unpacked, lmm reads its contents first and,
+before writing anything, refuses one with a file that would land outside
+the mod; an archive unpacked through `7z` is also refused when it holds a
+symbolic or hard link. An archive that unpacks to more than the disk has
+free is refused too, with both sizes named.
+
 ## Check that it worked
 
 ```bash

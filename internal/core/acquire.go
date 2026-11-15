@@ -69,6 +69,9 @@ type acquiredFile struct {
 
 	owned []string
 	log   *slog.Logger
+	// sink is the acquiring flow's event sink, for the commit's warnings
+	// (#658); nil for a caller that passed none.
+	sink EventSink
 
 	// fomod is the FOMOD resolve step's outcome when this file was an
 	// installer (#614): mod.Variant is then its variant. Nil for any other
@@ -233,6 +236,7 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 		return nil, err
 	}
 	a = s.newAcquired(gameCache, sourceID, game, mod, file)
+	a.sink = sink
 	a.owned = append(a.owned, tempDir)
 	// pending, not a: a `return nil, err` has already set the named result
 	// to nil by the time this runs.
@@ -416,6 +420,7 @@ func (s *Service) acquireLocal(ctx context.Context, gameCache *cache.Cache, game
 		return nil, fmt.Errorf("local mod path: %w", err)
 	}
 	a = s.newAcquired(gameCache, mod.SourceID, game, mod, file)
+	a.sink = sink
 	if err := a.claimTree(); err != nil {
 		return nil, err
 	}
@@ -514,11 +519,12 @@ func (s *Service) acquireLocal(ctx context.Context, gameCache *cache.Cache, game
 
 func (s *Service) commitAcquiredRaw(ctx context.Context, a *acquiredFile) (*DownloadModResult, error) {
 	var cachePath, stagePath string
+	var dropped []string
 	var err error
 	if a.unseeded {
 		cachePath, stagePath, err = prepareUnseededStaging(a.gameCache, a.game, &a.mod)
 	} else {
-		cachePath, stagePath, err = prepareStaging(ctx, a.gameCache, a.game, &a.mod)
+		cachePath, stagePath, dropped, err = prepareStaging(ctx, a.gameCache, a.game, &a.mod)
 	}
 	if err != nil {
 		return nil, err
@@ -528,6 +534,7 @@ func (s *Service) commitAcquiredRaw(ctx context.Context, a *acquiredFile) (*Down
 			s.logger().Debug("removing staging directory failed", "path", stagePath, "err", rmErr)
 		}
 	}()
+	a.warnDroppedLinks(dropped)
 
 	if err := mergeAcquiredTree(a.tree, stagePath); err != nil {
 		return nil, fmt.Errorf("staging acquired members: %w", err)
@@ -567,10 +574,40 @@ func mergeAcquiredTree(tree, stagePath string) error {
 		}
 		dest := filepath.Join(stagePath, rel)
 		if d.IsDir() {
+			// Never into a link (#658): the seed holds none, so one here
+			// would mean something wrote it since.
+			if err := refuseLinkAt(dest); err != nil {
+				return err
+			}
 			return os.MkdirAll(dest, 0755)
 		}
 		return os.Rename(path, dest)
 	})
+}
+
+// warnDroppedLinks reports each entry the reseed left out of the mod's
+// cache entry (prepareStaging, #658) - a link an extraction from before
+// #658 left there, or a special file - naming the mod, on the log and the
+// flow's sink under the phase every flow forwards (DownloadWarning). The
+// commit then drops each from the entry.
+func (a *acquiredFile) warnDroppedLinks(dropped []string) {
+	name := a.mod.Name
+	if name == "" {
+		name = a.mod.SourceID + ":" + a.mod.ID
+	}
+	for _, rel := range dropped {
+		msg := fmt.Sprintf("removed %s from %s's cache: lmm keeps no links or special files in a mod's cache, and an earlier extraction left this one", rel, name)
+		if a.log != nil {
+			a.log.Warn(msg, "mod", name)
+		}
+		if a.sink != nil {
+			a.sink(WarningEvent{
+				Scope:   Scope{Op: OpInstall, ModName: a.mod.Name, Mod: &domain.ModReference{SourceID: a.mod.SourceID, ModID: a.mod.ID}},
+				Phase:   DownloadWarning,
+				Message: msg,
+			})
+		}
+	}
 }
 
 // extractPristine extracts archivePath into tree, a PRISTINE directory,

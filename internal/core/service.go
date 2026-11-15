@@ -1765,26 +1765,78 @@ func digestDirectoryMembers(root string, members []string) (string, error) {
 // this call, matching the pre-extraction behavior where the caller's own
 // defer was armed BEFORE the copy step (see
 // TestPrepareStagingCleansPartialStagingOnCopyFailure). A cancelled ctx
-// aborts the seed copy per entry (copyDir) and takes that same
+// aborts the seed copy per entry (seedFromCache) and takes that same
 // error-with-no-debris path.
-func prepareStaging(ctx context.Context, gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
+//
+// The seed copies the entry's regular files and directories only (#658).
+// Nothing lmm writes into a cache entry is a link, but an extraction from
+// before #658 could leave one there (a .7z or .rar symlink member), and
+// one in staging would let a later member be written through it. Such an
+// entry - or a special file - is left out of the seed, so the commit drops
+// it from the entry; dropped names each, entry-relative, for the caller to
+// warn about.
+func prepareStaging(ctx context.Context, gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, dropped []string, err error) {
 	cachePath, stagePath, err = prepareUnseededStaging(gameCache, game, mod)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	if gameCache.Exists(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, Variant: mod.Variant}) {
-		if err := copyDir(ctx, cachePath, stagePath); err != nil {
+		if dropped, err = seedFromCache(ctx, cachePath, stagePath); err != nil {
 			// Best-effort: restore the "no debris" guarantee even though
-			// copyDir itself already failed. A cleanup failure here isn't
+			// the seed itself already failed. A cleanup failure here isn't
 			// worth surfacing over the original error - it's the same
 			// filesystem that just failed on us, and the .staging path will
 			// simply be cleared again (os.RemoveAll above) on the next
 			// attempt for this exact (SourceID, ID, Version) either way.
 			_ = os.RemoveAll(stagePath)
-			return "", "", fmt.Errorf("staging existing cache: %w", err)
+			return "", "", nil, fmt.Errorf("staging existing cache: %w", err)
 		}
 	}
-	return cachePath, stagePath, nil
+	return cachePath, stagePath, dropped, nil
+}
+
+// seedFromCache copies the cache entry at src into dst for prepareStaging:
+// its directories and regular files, never following a link below src
+// (src itself may sit under a linked data directory, so it is resolved
+// first). Every other entry - a symlink, a FIFO, a device - is left out
+// and returned, src-relative and slash-separated. ctx is honoured per
+// entry.
+func seedFromCache(ctx context.Context, src, dst string) ([]string, error) {
+	root, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %s: %w", src, err)
+	}
+	var dropped []string
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		switch {
+		case d.IsDir():
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			return os.MkdirAll(target, info.Mode().Perm())
+		case d.Type().IsRegular():
+			return copyFileStreaming(path, target)
+		default:
+			dropped = append(dropped, filepath.ToSlash(rel))
+			return nil
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return dropped, nil
 }
 
 // prepareUnseededStaging is prepareStaging WITHOUT the existing-entry seed:
@@ -1828,7 +1880,7 @@ func prepareUnseededStaging(gameCache *cache.Cache, game *domain.Game, mod *doma
 // members.
 //
 // prepareStaging seeds stagePath from the existing cache entry when one is
-// present, and copyDir copies dotfiles, so markers written by a mod's earlier
+// present, and seedFromCache copies dotfiles, so markers written by a mod's earlier
 // files survive into every later file's commit. (Directory ingests stage
 // UNSEEDED instead - prepareUnseededStaging, #166 - their single synthetic
 // file ID means there are no earlier files' markers to carry forward.)

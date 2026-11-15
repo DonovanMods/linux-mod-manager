@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,7 +49,7 @@ func (e *Extractor) Extract(ctx context.Context, archivePath, destDir string) er
 	case "zip":
 		return e.extractZip(ctx, archivePath, destDir)
 	case "7z", "rar":
-		return e.extract7z(ctx, archivePath, destDir)
+		return e.extract7z(ctx, archivePath, destDir, format)
 	default:
 		return fmt.Errorf("unsupported archive format: %s", format)
 	}
@@ -134,6 +133,9 @@ func (e *Extractor) extractZip(ctx context.Context, archivePath, destDir string)
 
 	if f := zipNeeds7z(r.File); f != nil {
 		return e.extractZipWith7z(ctx, archivePath, destDir, f)
+	}
+	if err := checkFreeSpace(archivePath, destDir, zipDeclaredSize(r.File)); err != nil {
+		return err
 	}
 
 	for _, f := range r.File {
@@ -230,7 +232,7 @@ func errReservedName(name string) error {
 // right below, and copyDir's symlink containment check): the archive is
 // malformed or hostile and the user should see why. Legitimate markers never
 // arrive by extraction - they are written by cache.MarkFileComplete and
-// reseeded into staging by prepareStaging's copyDir.
+// reseeded into staging by prepareStaging's seedFromCache.
 func (e *Extractor) sanitizePath(destDir, filePath string) (string, error) {
 	// Clean the path to remove any . or .. components
 	cleanPath := filepath.Clean(filePath)
@@ -262,99 +264,19 @@ const extract7zTimeout = 5 * time.Minute
 // (#607) - through it.
 var ErrSevenZipMissing = errors.New("7z command not found")
 
-// extract7z extracts archives using the system 7z command.
-// This handles .7z and .rar files. A timeout prevents hangs on corrupted archives.
-func (e *Extractor) extract7z(ctx context.Context, archivePath, destDir string) error {
-	_, err := exec.LookPath("7z")
-	if err != nil {
+// extract7z extracts a .7z or .rar archive (format names which) through
+// the system 7z, by the route every 7z extraction takes (extractThrough7z,
+// #658): the listing is judged before anything is written, 7z writes into
+// a private directory, and that tree is checked - no links, no special
+// files, no escaping or reserved names - before anything moves into
+// destDir. A timeout prevents hangs on corrupted archives.
+func (e *Extractor) extract7z(ctx context.Context, archivePath, destDir, format string) error {
+	if _, err := exec.LookPath("7z"); err != nil {
 		return fmt.Errorf("%w: install p7zip-full to extract .7z and .rar files", ErrSevenZipMissing)
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, extract7zTimeout)
-	defer cancel()
-
-	// The reserved-namespace check the native zip path makes per member (see
-	// sanitizePath) has no equivalent hook here - 7z writes the members
-	// itself - so it has to be made against what 7z actually produced.
-	// destDir is NOT necessarily empty: prepareStaging reseeds it from the
-	// existing cache entry before each file of a multi-file mod, so genuine
-	// markers from earlier files are legitimately already present. Only
-	// reserved names this extraction ADDED are rejected.
-	preexisting, err := reservedNamesIn(destDir)
+	members, declared, err := list7zArchive(ctx, archivePath, format)
 	if err != nil {
 		return err
 	}
-
-	// -y: assume yes to all queries; -o: output directory (no space between -o and path)
-	cmd := exec.CommandContext(ctx, "7z", "x", "-y", "-o"+destDir, archivePath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("7z extraction timed out after %v", extract7zTimeout)
-		}
-		return fmt.Errorf("7z extraction failed: %w\nOutput: %s", err, string(output))
-	}
-
-	return rejectNewReservedNames(destDir, preexisting)
-}
-
-// reservedNamesIn returns the destDir-relative paths of entries already using
-// the reserved cache prefix, so a later sweep can tell them apart from ones an
-// extraction introduced. Reserved directories are recorded but not descended
-// into, matching rejectNewReservedNames.
-func reservedNamesIn(destDir string) (map[string]bool, error) {
-	found := make(map[string]bool)
-	if _, err := os.Stat(destDir); err != nil {
-		if os.IsNotExist(err) {
-			return found, nil
-		}
-		return nil, fmt.Errorf("inspecting destination directory: %w", err)
-	}
-
-	err := filepath.WalkDir(destDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if path == destDir || !strings.HasPrefix(d.Name(), cache.ReservedPrefix) {
-			return nil
-		}
-		rel, err := filepath.Rel(destDir, path)
-		if err != nil {
-			return err
-		}
-		found[rel] = true
-		if d.IsDir() {
-			return fs.SkipDir
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("inspecting destination directory: %w", err)
-	}
-	return found, nil
-}
-
-// rejectNewReservedNames fails when an extraction introduced any entry using
-// lmm's reserved cache namespace - see sanitizePath for why such a member is
-// refused rather than skipped.
-func rejectNewReservedNames(destDir string, preexisting map[string]bool) error {
-	return filepath.WalkDir(destDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if path == destDir || !strings.HasPrefix(d.Name(), cache.ReservedPrefix) {
-			return nil
-		}
-		rel, err := filepath.Rel(destDir, path)
-		if err != nil {
-			return err
-		}
-		if preexisting[rel] {
-			if d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		return errReservedName(rel)
-	})
+	return e.extractThrough7z(ctx, archivePath, destDir, format, members, declared)
 }

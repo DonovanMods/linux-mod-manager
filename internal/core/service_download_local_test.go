@@ -306,7 +306,7 @@ func TestPrepareStagingCleansPartialStagingOnCopyFailure(t *testing.T) {
 
 	expectedStagePath := cachePath + ".staging"
 
-	_, _, err := prepareStaging(context.Background(), gameCache, game, mod)
+	_, _, _, err := prepareStaging(context.Background(), gameCache, game, mod)
 	require.Error(t, err)
 
 	_, statErr := os.Stat(expectedStagePath)
