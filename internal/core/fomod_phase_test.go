@@ -92,9 +92,9 @@ func newPhasedFixture(t *testing.T, recipe string) *phasedFixture {
 	downloads := newMockSourceWithDownloads("nexusmods")
 	t.Cleanup(downloads.Close)
 	items := []source.CollectionItem{
-		{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Early"},
-		{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Installer"},
-		{Kind: source.CollectionItemModFile, ModID: "12", FileID: "120", Name: "Late"},
+		{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Early", FileCategory: "MAIN"},
+		{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Installer", FileCategory: "MAIN"},
+		{Kind: source.CollectionItemModFile, ModID: "12", FileID: "120", Name: "Late", FileCategory: "MAIN"},
 	}
 	installer := phasedInstaller(t)
 	src := &phasedSource{

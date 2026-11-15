@@ -15,7 +15,7 @@ Needs your attention (5):
   - Opt Refused: lmm cannot import it (needs file_overrides), so this optional mod is left out
   - SMAPI: a prerequisite: install it by hand, with its own installer
       https://www.nexusmods.com/stardewvalley/mods/2400
-  - Ext: lmm does not fetch it: get it by hand; gone pin
+  - Ext: lmm does not fetch it: get it by hand; future reason
       https://ext.example
       Unzip it.
 

@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
+	"slices"
 	"strconv"
 	"sync"
 
@@ -76,7 +77,13 @@ func (s *Service) recipeMD5For(ctx context.Context, game *domain.Game, profileNa
 	if game == nil || profileName == "" {
 		return nil
 	}
-	origin := sync.OnceValue(func() *domain.CollectionOrigin {
+	type pinned struct {
+		origin domain.CollectionOrigin
+		// substituted is the gone pin the mod's current file stands in for
+		// (#657): its choices were recorded against that pin's archive.
+		substituted *domain.CollectionPin
+	}
+	origin := sync.OnceValue(func() *pinned {
 		p, err := s.NewProfileManager().Get(ctx, game.ID, profileName)
 		if err != nil || p.Collection == nil || p.Collection.Origin == nil {
 			return nil
@@ -85,18 +92,33 @@ func (s *Service) recipeMD5For(ctx context.Context, game *domain.Game, profileNa
 		if o.SourceID != sourceID || o.Slug == "" || o.Revision <= 0 {
 			return nil
 		}
-		return &o
+		out := &pinned{origin: o}
+		if ref := p.FindRef(sourceID, modID); ref != nil {
+			out.substituted = ref.SubstitutedFor.Clone()
+		}
+		return out
 	})
 	return func(fileID string) (string, error) {
-		o := origin()
-		if o == nil {
+		pin := origin()
+		if pin == nil {
 			return "", nil
 		}
-		files, err := s.pinnedRecipeFacts(ctx, game, *o)
+		o := pin.origin
+		files, err := s.pinnedRecipeFacts(ctx, game, o)
 		if err != nil {
 			return "", fmt.Errorf("reading collection %s revision %d's recipe: %w", o.Slug, o.Revision, err)
 		}
 		sum := files[recipeKey(modID, fileID)].md5
+		if sub := pin.substituted; sum == "" && sub != nil && !slices.Contains(sub.FileIDs, fileID) {
+			// #657: a file installed in place of a gone pin is checked
+			// against the pinned archive, which it is not - so the
+			// curator's choices are asked about, never replayed unchecked.
+			for _, id := range sub.FileIDs {
+				if sum = files[recipeKey(modID, id)].md5; sum != "" {
+					break
+				}
+			}
+		}
 		if !isHexDigest(sum, md5.Size) {
 			return "", nil
 		}

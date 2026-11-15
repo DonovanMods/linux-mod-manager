@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A collection pinning a file NexusMods no longer offers is decided at
+  plan time, per mod (#657).** Authors who remove old files on every update
+  (the Unofficial Skyrim Special Edition Patch does) used to fail a
+  NexusMods collection's whole import after every other download. The plan
+  now finds such pins first, from the collection's own file list and at
+  most one file listing per mod it does not vouch for. A file missing from
+  the mod's listing is gone; an archived one is not (NexusMods still serves
+  it, so the curator's file installs, with a plan note). Each gone pin is
+  listed under **Needs your attention** with the current file that would
+  stand in for it, in the gone file's role: the mod's current main file
+  for a gone main file, a current file of the same kind whose name matches
+  for a gone optional one (never a current main beside the curator's).
+  `lmm profile import --nexus-collection` and `lmm profile sync
+--collection` take `--use-current <mod>` (repeatable),
+  `--use-current-all`, `--skip-file <mod>` (leave a gone optional file out,
+  install the rest) and `--skip <mod>`; the web UI offers the same choices
+  per mod, and Confirm waits until each is decided.
+  Without a choice the import refuses, writing nothing, and `--json` carries
+  the pins as the error's `details`. A mod installed at its current file
+  keeps `from_collection` and records the pin it stands in for
+  (`substituted_for:` in the profile file); a skipped mod is recorded under
+  `collection_baseline: skipped:`. A collection update leaves a substitute
+  while the same gone file is pinned and follows the curator's newer pin,
+  keeps a skipped mod out while its pin is still gone, and brings it back,
+  listed for attention, when the curator pins an available file
+  (`--keep-skipped <mod>`, or the web UI's **Keep it skipped**, keeps it
+  out, and the declined pin is remembered). It decides its own gone pins
+  the same way; a mod you changed yourself needs its decided only when you
+  take the collection's side of its conflict. The curator's installer choices are not
+  replayed on a substituted archive: its installer asks.
 - **A collection's plan is grouped, with a summary first (#654).** A
   NexusMods collection's import plan, and a collection update's, leads
   with a summary line: how many mods will be installed, how many are

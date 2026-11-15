@@ -2649,6 +2649,30 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #657: a skipped mod a new version pins anew at an available
+			// file, kept skipped by the user's choice.
+			"collection_update_item_reoffered_kept",
+			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "266", Name: "USSEP", Version: "4.3.8a", NewVersion: "4.3.9",
+				Note:        "previously skipped because its pinned file was gone; the collection now pins file 800000 (version 4.3.9), which is available; kept skipped",
+				KeepSkipped: true},
+		},
+		{
+			// #657: an update plan's skipped mods - one still pinned at its
+			// gone file, one pinned anew and kept skipped - and the choice
+			// echoed.
+			"collection_update_plan_skipped",
+			core.CollectionUpdatePlan{
+				GameID: "skyrim", Profile: "coll", Origin: core.CollectionFromSource, SourceID: "nexusmods", Slug: "abcdef",
+				ID: "nexusmods:abcdef", Name: "Three Mods", Version: 3, NewVersion: 4,
+				Skipped: []core.CollectionUpdateItem{{SourceID: "nexusmods", ModID: "13", Name: "Thirteen", Version: "1", NewVersion: "1",
+					Note: "skipped when its pinned file was gone, and the collection still pins that file"}},
+				Reoffered: []core.CollectionUpdateItem{{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1", NewVersion: "3",
+					Note:        "previously skipped because its pinned file was gone; the collection now pins file 102 (version 3), which is available; kept skipped",
+					KeepSkipped: true}},
+				KeepSkipped: []string{"nexusmods:10"},
+			},
+		},
+		{
 			// #613: one entry of an update plan's buckets, with every field.
 			"collection_update_item",
 			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1", NewVersion: "2", Changes: []string{"version", "files", "lock"}, Locked: true},
@@ -2681,6 +2705,44 @@ func TestJSONGoldens(t *testing.T) {
 			core.CollectionPluginChange{Added: []string{"New.esp"}, Removed: []string{"Old.esp"}, Reordered: true, Rules: true,
 				Summary:   &core.CollectionPluginSummary{Plugins: 3, Active: 2, Inactive: []string{"Off.esp"}, Managed: true},
 				Conflicts: []string{"Mine.esp"}, Moved: []string{"A.esp", "B.esp"}, RulesConflict: true},
+		},
+		{
+			// #657: a mod's current main file, which installs in place of
+			// a gone pin.
+			"collection_current_file",
+			core.CollectionCurrentFile{FileID: "800000", Name: "Unofficial Skyrim Special Edition Patch", Version: "4.3.9"},
+		},
+		{
+			// #657: a pinned file NexusMods no longer offers, decided.
+			"collection_gone_pin",
+			core.CollectionGonePin{SourceID: "nexusmods", ModID: "266", Name: "Unofficial Skyrim Special Edition Patch", Version: "4.3.8a",
+				FileIDs: []string{"733846"}, Current: &core.CollectionCurrentFile{FileID: "800000", Name: "USSEP", Version: "4.3.9"},
+				Choice: core.GonePinUseCurrent},
+		},
+		{
+			// #657 review: a gone optional file beside a pinned main, its
+			// same-category stand-in matched by name.
+			"collection_gone_file",
+			core.CollectionGoneFile{FileID: "105", Name: "Ten Optional Patch", Role: core.GoneFileSecondary,
+				Replacement: &core.CollectionCurrentFile{FileID: "106", Name: "Ten Optional Patch v2", Version: "2"}},
+		},
+		{
+			// #657 review: a gone optional no current file matches: it can
+			// be left out, or the mod skipped; a conflict's pin.
+			"collection_gone_pin_secondary",
+			core.CollectionGonePin{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1", FileIDs: []string{"105"},
+				Files:       []core.CollectionGoneFile{{FileID: "105", Name: "Ten Optional Patch", Role: core.GoneFileSecondary}},
+				CanSkipFile: true, Conflict: true, Choice: core.GonePinSkipFile},
+		},
+		{
+			// #657: the --json error envelope's details for undecided gone
+			// pins - one with a current file, one without.
+			"collection_gone_pins_error",
+			core.CollectionGonePinsError{Pins: []core.CollectionGonePin{
+				{SourceID: "nexusmods", ModID: "266", Name: "Unofficial Skyrim Special Edition Patch", Version: "4.3.8a",
+					FileIDs: []string{"733846"}, Current: &core.CollectionCurrentFile{FileID: "800000", Name: "USSEP", Version: "4.3.9"}},
+				{SourceID: "nexusmods", ModID: "999", Name: "Removed Mod", Version: "1.0", FileIDs: []string{"5000"}},
+			}},
 		},
 		{
 			// #613: the --json error envelope's details for an origin

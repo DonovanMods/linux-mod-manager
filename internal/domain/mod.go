@@ -257,6 +257,17 @@ type ModReference struct {
 	// without it is byte-identical.
 	FromCollection bool `yaml:"-" json:"from_collection,omitzero"`
 
+	// SubstitutedFor records that the collection pinned a file its source
+	// no longer offered, and the import installed the mod's current file
+	// instead (#657): the pin it stands in for. A collection update then
+	// knows the entry is not the user's edit - a new revision pinning the
+	// same gone file leaves it as it is, and one pinning another file is
+	// offered as the collection's change. This machine's record, like
+	// FromCollection: the profile file carries it, no export or document
+	// does (yaml "-"), and a user who takes the entry over clears both.
+	// nil for every other entry, and omitted.
+	SubstitutedFor *CollectionPin `yaml:"-" json:"substituted_for,omitempty"`
+
 	// External and UpdatedAt are DISPLAY facts a plan document carries so a
 	// renderer never has to print Version raw (#365, part of #269).
 	//

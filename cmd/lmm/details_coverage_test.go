@@ -37,6 +37,7 @@ var detailsCoverage = map[string]string{
 	// #613: an update refused for what its origin now serves - another
 	// collection, or an older version - with both identities as data.
 	"core.CollectionUpdateMismatchError": "TestReportError_JSON_CollectionUpdateMismatchError",
+	"core.CollectionGonePinsError":       "TestReportError_JSON_CollectionGonePinsError",
 	// #530: update-from-file's two refusals - the advertised and matched
 	// files, and the archive that needs a version - as data.
 	"core.ArchiveMismatchError":        "TestReportError_JSON_ArchiveMismatchError",

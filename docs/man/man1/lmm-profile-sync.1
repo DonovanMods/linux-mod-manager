@@ -80,6 +80,10 @@ Examples:
 	help for sync
 
 .PP
+\fB--keep-skipped\fP=[]
+	with --collection, keep skipping this mod you skipped because its pinned file was gone, though the collection now pins an available file (source:mod-id, or the mod id; repeatable; it comes back by default)
+
+.PP
 \fB--optional\fP=[]
 	with --collection, install this optional item of a NexusMods collection (its id as the plan lists it, mod-id:file-id; repeatable)
 
@@ -98,6 +102,22 @@ Examples:
 .PP
 \fB--remove-obsolete\fP[=false]
 	with --collection, remove every mod the new version drops (they are kept by default)
+
+.PP
+\fB--skip\fP=[]
+	with --collection, leave out this mod, whose pinned file NexusMods no longer offers (source:mod-id, or the mod id; repeatable)
+
+.PP
+\fB--skip-file\fP=[]
+	with --collection, leave out this mod's gone optional file and install the rest of it (source:mod-id, or the mod id; repeatable)
+
+.PP
+\fB--use-current\fP=[]
+	with --collection, install the current file of the same role in place of this mod's pinned file NexusMods no longer offers (source:mod-id, or the mod id; repeatable)
+
+.PP
+\fB--use-current-all\fP[=false]
+	with --collection, install the current file of the same role in place of every pinned file NexusMods no longer offers, where one stands in
 
 .PP
 \fB--with-optional\fP[=false]

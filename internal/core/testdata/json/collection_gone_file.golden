@@ -1,0 +1,10 @@
+{
+  "file_id": "105",
+  "name": "Ten Optional Patch",
+  "role": "secondary",
+  "replacement": {
+    "file_id": "106",
+    "name": "Ten Optional Patch v2",
+    "version": "2"
+  }
+}

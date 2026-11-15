@@ -34,6 +34,25 @@ type collectionSource struct {
 	filesByMod map[string][]string // mod id -> file ids it serves
 	urlErr     error
 	refreshes  int
+	// #657: listing replaces a mod's file listing, listErr fails it, and
+	// listCalls counts the listings asked for, by mod id.
+	listing   map[string][]domain.DownloadableFile
+	listErr   map[string]error
+	listCalls map[string]int
+}
+
+// listed is the listing a test set for mod, counting the call; ok is false
+// when it set none.
+func (s *collectionSource) listed(mod *domain.Mod) ([]domain.DownloadableFile, bool, error) {
+	if s.listCalls == nil {
+		s.listCalls = map[string]int{}
+	}
+	s.listCalls[mod.ID]++
+	if err := s.listErr[mod.ID]; err != nil {
+		return nil, true, err
+	}
+	files, ok := s.listing[mod.ID]
+	return files, ok, nil
 }
 
 func (s *collectionSource) ResolveGameCollection(ctx context.Context, gameSourceID, ref string) (source.Collection, error) {
@@ -75,6 +94,9 @@ func (s *collectionSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, 
 }
 
 func (s *collectionSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	if files, ok, err := s.listed(mod); ok || err != nil {
+		return files, err
+	}
 	var out []domain.DownloadableFile
 	for _, id := range s.filesByMod[mod.ID] {
 		out = append(out, domain.DownloadableFile{ID: id, Name: "File " + id, FileName: mod.ID + "-" + id + ".zip", Version: "1"})
@@ -95,7 +117,13 @@ type sourceImportFixture struct {
 
 func newSourceImportFixture(t *testing.T, tier source.Tier) *sourceImportFixture {
 	t.Helper()
-	archive := recipeArchive(t, threeModRecipe)
+	return newSourceImportFixtureWith(t, tier, threeModRecipe)
+}
+
+// newSourceImportFixtureWith is newSourceImportFixture serving recipe.
+func newSourceImportFixtureWith(t *testing.T, tier source.Tier, recipe string) *sourceImportFixture {
+	t.Helper()
+	archive := recipeArchive(t, recipe)
 	cdn := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(archive) }))
 	t.Cleanup(cdn.Close)
 	home := t.TempDir()
@@ -115,9 +143,9 @@ func newSourceImportFixture(t *testing.T, tier source.Tier) *sourceImportFixture
 			collection: source.Collection{ID: "abcdef", Name: "Three Mods", Revision: 3, Author: "curator",
 				URL: "https://www.nexusmods.com/games/skyrimspecialedition/collections/abcdef", Handle: "/h",
 				Items: []source.CollectionItem{
-					{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", URL: "https://www.nexusmods.com/skyrimspecialedition/mods/10?tab=files&file_id=100"},
-					{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Eleven"},
-					{Kind: source.CollectionItemModFile, ModID: "12", FileID: "120", Name: "Twelve"},
+					{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", FileCategory: "MAIN", URL: "https://www.nexusmods.com/skyrimspecialedition/mods/10?tab=files&file_id=100"},
+					{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Eleven", FileCategory: "MAIN"},
+					{Kind: source.CollectionItemModFile, ModID: "12", FileID: "120", Name: "Twelve", FileCategory: "MAIN"},
 				}}},
 		tier:       tier,
 		filesByMod: map[string][]string{"10": {"100"}, "11": {"110"}, "12": {"120"}},

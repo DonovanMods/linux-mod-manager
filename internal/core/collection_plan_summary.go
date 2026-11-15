@@ -37,6 +37,15 @@ const (
 	// required one refuses the import (CollectionImport.Unsupported names
 	// why), an optional one is left out.
 	CollectionAttentionUnsupported CollectionAttentionReason = "unsupported"
+	// CollectionAttentionGonePin is an item whose pinned file the source
+	// no longer offers (#657): the user installs the mod's current main
+	// file instead, or skips it (ConvertedCollection.GonePins).
+	CollectionAttentionGonePin CollectionAttentionReason = "gone_pin"
+	// CollectionAttentionReoffered is a mod the user skipped because its
+	// pinned file was gone that a collection update pins anew at an
+	// available file (#657): it comes back unless the user keeps it
+	// skipped (CollectionUpdatePlan.Reoffered).
+	CollectionAttentionReoffered CollectionAttentionReason = "reoffered"
 )
 
 // CollectionPlanSummary is a converted collection plan's overview (#654).
@@ -63,6 +72,11 @@ type CollectionPlanSummary struct {
 	// Unsupported counts the items lmm cannot import: a required one
 	// refuses the import, an optional one is skipped.
 	Unsupported int `json:"unsupported"`
+	// GonePins counts the items whose pinned file the source no longer
+	// offers that the user has not decided about (#657), and Skipped the
+	// items the user skipped for it. Both omitted when zero.
+	GonePins int `json:"gone_pins,omitzero"`
+	Skipped  int `json:"skipped,omitzero"`
 	// Attention lists the items that need the user, in the collection's
 	// order. A free account's manual downloads are counted but not listed:
 	// the account is their one reason, which the plan says once.
@@ -89,6 +103,15 @@ var oldFileCategories = []string{"OLD_VERSION", "ARCHIVED"}
 // summarise is c's CollectionPlanSummary, from its items' states.
 func (c *ConvertedCollection) summarise() *CollectionPlanSummary {
 	s := &CollectionPlanSummary{Items: len(c.Items)}
+	gone := map[string]string{}
+	for _, p := range c.GonePins {
+		for _, id := range p.FileIDs {
+			gone[p.ModID+":"+id] = p.Choice
+		}
+		if p.Choice == "" {
+			s.GonePins++
+		}
+	}
 	for _, it := range c.Items {
 		facts := c.facts[it.ID]
 		if it.Optional {
@@ -120,6 +143,16 @@ func (c *ConvertedCollection) summarise() *CollectionPlanSummary {
 			// it cannot be imported, and the list says which and why.
 			s.Unsupported++
 			reasons = append(reasons, CollectionAttentionUnsupported)
+		case CollectionItemSkipped:
+			s.Skipped++
+		}
+		// #657: a gone pin needs the user whatever they chose, and a mod a
+		// collection update brings back is said so.
+		if _, ok := gone[it.ModID+":"+it.FileID]; ok && it.ModID != "" {
+			reasons = append(reasons, CollectionAttentionGonePin)
+		}
+		if c.reoffered[it.ID] {
+			reasons = append(reasons, CollectionAttentionReoffered)
 		}
 		if toInstall {
 			if facts.installerAsks {

@@ -27,6 +27,8 @@ var (
 	profileSyncWithOptional      bool
 	profileSyncOptional          []string
 	profileSyncAnyOverrides      bool
+	profileSyncGonePins          gonePinFlags
+	profileSyncKeepSkipped       []string
 )
 
 func init() {
@@ -47,6 +49,9 @@ func init() {
 		"with --collection, install this optional item of a NexusMods collection (its id as the plan lists it, mod-id:file-id; repeatable)")
 	f.BoolVar(&profileSyncAnyOverrides, "allow-any-overrides", false,
 		"with --collection, import the new version's overrides that are not text config files, its bundled files that hold code, and its patches to code too")
+	profileSyncGonePins.register(profileSyncCmd, "with --collection, ")
+	f.StringSliceVar(&profileSyncKeepSkipped, "keep-skipped", nil,
+		"with --collection, keep skipping this mod you skipped because its pinned file was gone, though the collection now pins an available file (source:mod-id, or the mod id; repeatable; it comes back by default)")
 	addFomodFlags(profileSyncCmd)
 }
 
@@ -59,13 +64,14 @@ func collectionSyncFlagsUsed() []string {
 		"--override": len(profileSyncOverride) > 0, "--override-conflicts": profileSyncOverrideConflicts,
 		"--with-optional": profileSyncWithOptional, "--optional": len(profileSyncOptional) > 0,
 		"--allow-any-overrides": profileSyncAnyOverrides,
+		"--keep-skipped":        len(profileSyncKeepSkipped) > 0,
 		"--fomod-choices":       fomodChoicesPath != "", "--fomod-defaults": fomodDefaults,
 	} {
 		if set {
 			used = append(used, name)
 		}
 	}
-	return used
+	return append(used, profileSyncGonePins.used()...)
 }
 
 // resolveUpdateKeys turns each --remove/--override argument into the key
@@ -103,6 +109,8 @@ func doCollectionUpdate(ctx context.Context, service *core.Service, game *domain
 	profileName := profileSyncTarget(ctx, service, game, args)
 	plan, err := service.PlanCollectionUpdate(ctx, game, core.CollectionUpdateRequest{
 		Profile: profileName, WithOptional: profileSyncWithOptional, Optional: profileSyncOptional,
+		GonePins:    profileSyncGonePins.choices("nexusmods"),
+		KeepSkipped: modKeys(profileSyncKeepSkipped, "nexusmods"),
 	})
 	if err != nil {
 		return err
@@ -131,7 +139,8 @@ func doCollectionUpdate(ctx context.Context, service *core.Service, game *domain
 		}
 		return nil
 	}
-	if len(plan.Unsupported) > 0 {
+	overridden := func(key string) bool { return opts.OverrideConflicts || slices.Contains(opts.Override, key) }
+	if len(plan.Unsupported) > 0 || hasUndecidedGonePins(plan.Source, overridden) {
 		// The plan always renders; the apply refuses, writing nothing.
 		_, err := service.ApplyCollectionUpdate(ctx, game, plan, opts, nil)
 		return err
@@ -278,6 +287,16 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 			}
 		}
 	}
+	if len(plan.Skipped) > 0 {
+		fmt.Printf("\nSkipped - mods you skipped because their pinned file was gone (%d):\n", len(plan.Skipped))
+		for _, it := range plan.Skipped {
+			fmt.Printf("  ⊘ %s %s: kept out\n", updateItemLabel(it), it.NewVersion)
+			if it.Note != "" {
+				fmt.Printf("      %s\n", it.Note)
+			}
+		}
+	}
+	printReoffered(plan)
 	if len(plan.Removed) > 0 {
 		remove := map[string]bool{}
 		for _, key := range opts.Remove {
@@ -427,7 +446,7 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 		fmt.Printf("\nNo longer in the collection, to get by hand: %s (remove it yourself if you installed it)\n", e.Name)
 	}
 	if plan.Source != nil {
-		printSourceCollection(plan.Source)
+		printSourceCollection(plan.Source, "lmm profile sync --collection")
 	}
 	if len(plan.Unsupported) > 0 {
 		fmt.Printf("\n✗ The new version needs features this version of lmm cannot import:\n")

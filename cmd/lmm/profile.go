@@ -350,6 +350,7 @@ var (
 	profileImportCollection   string
 	profileImportNexus        string
 	profileImportWithOptional bool
+	profileImportGonePins     gonePinFlags
 	profileImportOptional     []string
 	profileImportAs           string
 	profileImportWithHooks    bool
@@ -391,6 +392,7 @@ func init() {
 		"import a NexusMods collection (its slug, slug@revision, or the URL of its page) instead of a file")
 	profileImportCmd.Flags().BoolVar(&profileImportWithOptional, "with-optional", false,
 		"with --nexus-collection, install the collection's optional mods too (they are left out by default)")
+	profileImportGonePins.register(profileImportCmd, "with --nexus-collection, ")
 	profileImportCmd.Flags().StringSliceVar(&profileImportOptional, "optional", nil,
 		"with --nexus-collection, install this optional item (its id as the plan lists it, mod-id:file-id; repeatable)")
 	profileImportCmd.Flags().StringVar(&profileImportAs, "as", "",
@@ -985,6 +987,9 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	if profileImportWithOptional {
 		return fmt.Errorf("--with-optional opts a NexusMods collection's optional mods in; use it with --nexus-collection")
 	}
+	if used := profileImportGonePins.used(); len(used) > 0 {
+		return fmt.Errorf("%s decide a NexusMods collection's pinned files the source no longer offers; use them with --nexus-collection", strings.Join(used, ", "))
+	}
 	if len(profileImportOptional) > 0 {
 		return fmt.Errorf("--optional opts one of a NexusMods collection's optional mods in; use it with --nexus-collection")
 	}
@@ -1124,6 +1129,7 @@ func doProfileImportCollection(ctx context.Context, service *core.Service, game 
 func doNexusCollectionImport(ctx context.Context, service *core.Service, game *domain.Game) error {
 	plan, err := service.PlanSourceCollectionImport(ctx, game, core.SourceCollectionImportRequest{
 		SourceID: "nexusmods", Ref: profileImportNexus, ProfileName: profileImportAs, WithOptional: profileImportWithOptional,
+		GonePins: profileImportGonePins.choices("nexusmods"),
 		Optional: profileImportOptional,
 	})
 	if err != nil {
@@ -1202,9 +1208,11 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 	if collection != nil && !jsonOutput {
 		printCollectionPlan(collection, game)
 	}
-	if collection != nil && len(collection.Unsupported) > 0 {
+	if collection != nil && (len(collection.Unsupported) > 0 || hasUndecidedGonePins(collection.Source, nil)) {
 		// The plan always renders; the apply refuses, writing nothing,
-		// and there is nothing to ask first.
+		// and there is nothing to ask first - an unsupported feature, or
+		// (#657) a pinned file the source no longer offers that no flag
+		// decided.
 		_, err := service.ApplyCollectionImport(ctx, game, plan, core.ProfileImportOptions{}, nil)
 		return err
 	}

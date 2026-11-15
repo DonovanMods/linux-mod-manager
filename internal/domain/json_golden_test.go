@@ -619,6 +619,16 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #657: a gone pin an entry's current file stands in for.
+			"collection_pin",
+			domain.CollectionPin{Version: "4.3.8a", FileIDs: []string{"733846"}},
+		},
+		{
+			"mod_reference_substituted_for",
+			domain.ModReference{SourceID: "nexusmods", ModID: "266", Version: "4.3.9", FileIDs: []string{"800000"}, FromCollection: true,
+				SubstitutedFor: &domain.CollectionPin{Version: "4.3.8a", FileIDs: []string{"733846"}}},
+		},
+		{
 			"collection_origin",
 			domain.CollectionOrigin{SourceID: "nexusmods", Slug: "iszwwe", Revision: 484, URL: "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe", Author: "curator"},
 		},

@@ -138,6 +138,22 @@ Examples:
 	with --nexus-collection, install this optional item (its id as the plan lists it, mod-id:file-id; repeatable)
 
 .PP
+\fB--skip\fP=[]
+	with --nexus-collection, leave out this mod, whose pinned file NexusMods no longer offers (source:mod-id, or the mod id; repeatable)
+
+.PP
+\fB--skip-file\fP=[]
+	with --nexus-collection, leave out this mod's gone optional file and install the rest of it (source:mod-id, or the mod id; repeatable)
+
+.PP
+\fB--use-current\fP=[]
+	with --nexus-collection, install the current file of the same role in place of this mod's pinned file NexusMods no longer offers (source:mod-id, or the mod id; repeatable)
+
+.PP
+\fB--use-current-all\fP[=false]
+	with --nexus-collection, install the current file of the same role in place of every pinned file NexusMods no longer offers, where one stands in
+
+.PP
 \fB--with-hooks\fP[=false]
 	import the hooks the file carries (they are scripts lmm runs; listed in the plan)
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -58,7 +59,7 @@ func printCollectionPlan(c *core.CollectionImport, game *domain.Game) {
 	printCollectionPlugins(c.Plugins, game)
 	printCollectionLoadOrders(c.LoadOrders, game)
 	if c.Source != nil {
-		printSourceCollection(c.Source)
+		printSourceCollection(c.Source, "lmm profile import --nexus-collection")
 	}
 	if len(c.Unsupported) > 0 {
 		fmt.Printf("\n✗ This collection needs features this version of lmm cannot import:\n")
@@ -348,20 +349,23 @@ var sourceItemMarks = map[core.CollectionItemState]string{
 	core.CollectionItemBundled:         "▣",
 	core.CollectionItemOptionalSkipped: "○",
 	core.CollectionItemUnsupported:     "✗",
+	core.CollectionItemSkipped:         "⊘",
 }
 
 // sourceItemStates is the order the states are summarised in.
 var sourceItemStates = []core.CollectionItemState{
 	core.CollectionItemInstalled, core.CollectionItemWillInstall, core.CollectionItemManualDownload,
 	core.CollectionItemExternal, core.CollectionItemBundled, core.CollectionItemOptionalSkipped, core.CollectionItemUnsupported,
+	core.CollectionItemSkipped,
 }
 
 // printSourceCollection prints a converted source collection (#607): the
 // recipe's state, then (#654) the plan's summary, the optional mods with
 // the ids --optional takes, the items that need the user with why, and
 // every item with what the import does with it; then the curator's tools
-// and the conversion's notes.
-func printSourceCollection(c *core.ConvertedCollection) {
+// and the conversion's notes. command names the command, for the hint on
+// deciding a gone pin (#657).
+func printSourceCollection(c *core.ConvertedCollection, command string) {
 	if c.ManifestError != "" {
 		fmt.Printf("\n✗ The collection's recipe could not be read, so lmm cannot tell how to install it:\n  %s\n", c.ManifestError)
 	}
@@ -376,6 +380,7 @@ func printSourceCollection(c *core.ConvertedCollection) {
 		fmt.Printf("Summary: %s\n", strings.Join(collectionSummaryParts(c.Summary), ", "))
 		printSourceOptional(c)
 		printSourceAttention(c)
+		printGonePins(c, command)
 		fmt.Printf("\nEvery item (%d), in the collection's order:\n", len(c.Items))
 	}
 	for _, it := range c.Items {
@@ -383,6 +388,9 @@ func printSourceCollection(c *core.ConvertedCollection) {
 	}
 	if c.Counts[core.CollectionItemOptionalSkipped] > 0 && !c.WithOptional {
 		fmt.Printf("  Optional items are left out; --with-optional installs them.\n")
+	}
+	if c.Summary == nil {
+		printGonePins(c, command)
 	}
 	if len(c.Tools) > 0 {
 		fmt.Printf("\nThe curator's tool shortcuts (listed only; lmm never creates or runs them):\n")
@@ -417,6 +425,12 @@ func collectionSummaryParts(s *core.CollectionPlanSummary) []string {
 	}
 	if s.Unsupported > 0 {
 		parts = append(parts, fmt.Sprintf("%d cannot be imported", s.Unsupported))
+	}
+	if s.GonePins > 0 {
+		parts = append(parts, modsPin(s.GonePins)+" a file NexusMods no longer offers (choose for each)")
+	}
+	if s.Skipped > 0 {
+		parts = append(parts, fmt.Sprintf("%d skipped", s.Skipped))
 	}
 	return parts
 }
@@ -483,7 +497,7 @@ func printSourceAttention(c *core.ConvertedCollection) {
 		it := byID[a.ID]
 		reasons := make([]string, len(a.Reasons))
 		for i, r := range a.Reasons {
-			reasons[i] = collectionAttentionText(r, it)
+			reasons[i] = collectionAttentionText(r, it, c)
 		}
 		fmt.Printf("  - %s: %s\n", it.Name, strings.Join(reasons, "; "))
 		if it.State == core.CollectionItemExternal {
@@ -499,7 +513,7 @@ func printSourceAttention(c *core.ConvertedCollection) {
 
 // collectionAttentionText words one attention reason (#654) for item it; a
 // reason this lmm does not know is shown as its code.
-func collectionAttentionText(r core.CollectionAttentionReason, it core.ConvertedCollectionItem) string {
+func collectionAttentionText(r core.CollectionAttentionReason, it core.ConvertedCollectionItem, c *core.ConvertedCollection) string {
 	switch r {
 	case core.CollectionAttentionInstallerQuestions:
 		return "its installer will ask you at install (the collection records no answers)"
@@ -509,6 +523,13 @@ func collectionAttentionText(r core.CollectionAttentionReason, it core.Converted
 		return "a prerequisite: install it by hand, with its own installer"
 	case core.CollectionAttentionOldFile:
 		return "the curator pinned an older file of this mod; lmm installs that exact file"
+	case core.CollectionAttentionGonePin:
+		if d := gonePinDecision(gonePinFor(c, it)); d != "" {
+			return "NexusMods no longer offers the file the collection pins: " + d
+		}
+		return "NexusMods no longer offers the file the collection pins (choose below)"
+	case core.CollectionAttentionReoffered:
+		return "you skipped it because its pinned file was gone; the collection now pins an available file"
 	case core.CollectionAttentionUnsupported:
 		text := "lmm cannot import it"
 		if len(it.Features) > 0 {
@@ -520,6 +541,18 @@ func collectionAttentionText(r core.CollectionAttentionReason, it core.Converted
 		return text
 	}
 	return strings.ReplaceAll(string(r), "_", " ")
+}
+
+// gonePinFor is c's gone pin of it's file; the zero pin when it has none.
+func gonePinFor(c *core.ConvertedCollection, it core.ConvertedCollectionItem) core.CollectionGonePin {
+	if c != nil {
+		for _, p := range c.GonePins {
+			if p.ModID == it.ModID && slices.Contains(p.FileIDs, it.FileID) {
+				return p
+			}
+		}
+	}
+	return core.CollectionGonePin{}
 }
 
 // printSourceItem prints one item of a converted collection: its state's

@@ -1,0 +1,9 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "266",
+  "name": "USSEP",
+  "version": "4.3.8a",
+  "new_version": "4.3.9",
+  "note": "previously skipped because its pinned file was gone; the collection now pins file 800000 (version 4.3.9), which is available; kept skipped",
+  "keep_skipped": true
+}

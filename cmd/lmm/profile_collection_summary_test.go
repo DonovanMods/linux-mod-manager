@@ -62,7 +62,7 @@ func groupedCollectionFixture() *core.ConvertedCollection {
 				{ID: "3:33", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionOldFile}},
 				{ID: "6:66", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionUnsupported}},
 				{ID: "2400:240", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionPrerequisite}},
-				{ID: "item:7", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionExternal, "gone_pin"}},
+				{ID: "item:7", Reasons: []core.CollectionAttentionReason{core.CollectionAttentionExternal, "future_reason"}},
 			},
 		},
 	}
@@ -70,7 +70,7 @@ func groupedCollectionFixture() *core.ConvertedCollection {
 
 func TestPrintSourceCollection_GroupedGolden(t *testing.T) {
 	stdout, _, err := captureStdoutStderrErr(t, func() error {
-		printSourceCollection(groupedCollectionFixture())
+		printSourceCollection(groupedCollectionFixture(), "lmm profile import --nexus-collection")
 		return nil
 	})
 	require.NoError(t, err)
@@ -91,7 +91,7 @@ func sectionsInOrder(t *testing.T, text string, headings ...string) {
 
 func TestPrintSourceCollection_SectionOrder(t *testing.T) {
 	stdout, _, err := captureStdoutStderrErr(t, func() error {
-		printSourceCollection(groupedCollectionFixture())
+		printSourceCollection(groupedCollectionFixture(), "lmm profile import --nexus-collection")
 		return nil
 	})
 	require.NoError(t, err)
@@ -100,7 +100,7 @@ func TestPrintSourceCollection_SectionOrder(t *testing.T) {
 		"Optional mods (3)", "[ ] Opt 2.0  id 4:44", "Recommended for 4K screens.", "[x] Opt In 2.1  id 5:55", "[-] Opt Refused  id 6:66 (cannot be imported)",
 		"Needs your attention (5):", "Asks: its installer will ask you", "Old: the curator pinned an older file",
 		"Opt Refused: lmm cannot import it (needs file_overrides), so this optional mod is left out",
-		"SMAPI: a prerequisite", "Ext: lmm does not fetch it: get it by hand; gone pin",
+		"SMAPI: a prerequisite", "Ext: lmm does not fetch it: get it by hand; future reason",
 		"Every item (8), in the collection's order:", "Plain 1.0")
 }
 
@@ -110,7 +110,7 @@ func TestPrintSourceCollection_NoSummaryKeepsTheList(t *testing.T) {
 	c := groupedCollectionFixture()
 	c.Summary = nil
 	stdout, _, err := captureStdoutStderrErr(t, func() error {
-		printSourceCollection(c)
+		printSourceCollection(c, "lmm profile import --nexus-collection")
 		return nil
 	})
 	require.NoError(t, err)
