@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A collection pinning a file NexusMods no longer offers is decided at
+  plan time, per mod (#657).** Authors who remove old files on every update
+  (the Unofficial Skyrim Special Edition Patch does) used to fail a
+  NexusMods collection's whole import after every other download. The plan
+  now finds such pins first, from the collection's own file list and at
+  most one file listing per mod it does not vouch for, treating an archived
+  or removed file as gone, and lists each under **Needs your attention**
+  with the mod's current main file. `lmm profile import --nexus-collection`
+  and `lmm profile sync --collection` take `--use-current <mod>`
+  (repeatable), `--use-current-all` and `--skip <mod>`; the web UI offers
+  the same two choices per mod, and Confirm waits until each is decided.
+  Without a choice the import refuses, writing nothing, and `--json` carries
+  the pins as the error's `details`. A mod installed at its current file
+  keeps `from_collection` and records the pin it stands in for
+  (`substituted_for:` in the profile file); a skipped mod is recorded under
+  `collection_baseline: skipped:`. A collection update leaves a substitute
+  while the same gone file is pinned and follows the curator's newer pin,
+  keeps a skipped mod out (offering a new pin as a conflict), and decides
+  its own gone pins the same way. The curator's installer choices are not
+  replayed on a substituted archive: its installer asks.
 - **Importing a collection is easy to find in the web UI (#650).** The
   profile picker's menu has **Import collection…** under **Manage
   profiles…**, and Mission Control's Profile card has the same button: it

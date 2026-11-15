@@ -37,6 +37,7 @@ import { html } from "../render.js";
 import { displayVersion, reinstallReason } from "../version.js";
 import { safeWebUrl } from "../weburl.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
+import { GonePinsSection } from "./gonepins.js";
 import { formatBytes } from "../progress.js";
 
 /** refLabel names a domain.ModReference - it carries no display name of its
@@ -563,6 +564,7 @@ const sourceStateLabel = {
   bundled: "bundled in the collection",
   optional_skipped: "optional - not included",
   unsupported: "cannot be imported",
+  skipped: "skipped - its pinned file is gone",
 };
 
 /** SourceCollectionSection renders core.ConvertedCollection (issue 607): a
@@ -959,6 +961,15 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
         }.
       </p>
 
+      ${
+        // Issue 657: pinned files NexusMods no longer offers, decided
+        // before anything else.
+        sourceCollection &&
+        html`<${GonePinsSection}
+          source=${sourceCollection}
+          actions=${actions}
+        />`
+      }
       ${
         plan.exists &&
         html`

@@ -28,6 +28,7 @@ import { planRendererFor } from "./planrenderers.js";
 import { VersionPrompt } from "./plan_update_from_archive.js";
 import { copyReplaces } from "./plan_mod_copy.js";
 import { codeSpans } from "../errortext.js";
+import { gonePinsUndecided } from "./gonepins.js";
 
 /**
  * ConfirmPlanModal renders whatever the store's `modal` slice holds, which
@@ -99,6 +100,14 @@ export function ConfirmPlanModal({ modal, state, actions }) {
     kind === "collection_update" &&
     status === "ready" &&
     (Boolean(plan?.up_to_date) || (plan?.unsupported?.length ?? 0) > 0);
+  // Issue 657: a NexusMods collection pinning a file NexusMods no longer
+  // offers is refused by Apply until every such pin is decided; the plan
+  // view's GonePinsSection asks.
+  const gonePinsBlocked =
+    status === "ready" &&
+    ((kind === "profile_import" &&
+      gonePinsUndecided(plan?.collection?.source)) ||
+      (kind === "collection_update" && gonePinsUndecided(plan?.source)));
   // Issue 608: a fill none of whose files matched has nothing to install.
   const emptyFillPlan =
     kind === "profile_fill" &&
@@ -180,7 +189,7 @@ export function ConfirmPlanModal({ modal, state, actions }) {
             type="button"
             class="button button--primary"
             data-action="confirm"
-            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || fromFileRefused || emptyCopyPlan || collectionUpdateBlocked || emptyFillPlan || noInstallFiles || !nameTyped}
+            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || fromFileRefused || emptyCopyPlan || collectionUpdateBlocked || gonePinsBlocked || emptyFillPlan || noInstallFiles || !nameTyped}
             onClick=${actions.confirmPlan}
           >
             ${busy ? "Starting…" : (effectiveConfirmLabel ?? "Confirm")}

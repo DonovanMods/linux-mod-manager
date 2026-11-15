@@ -20,6 +20,7 @@ import { html } from "../render.js";
 import { displayVersion } from "../version.js";
 import { PlanWarnings } from "./planwarnings.js";
 import { SourceCollectionSection } from "./plan_profile_import.js";
+import { GonePinsSection } from "./gonepins.js";
 
 /** keyOf is an entry's "source:mod" key, the one the options name. */
 function keyOf(it) {
@@ -491,6 +492,12 @@ export function CollectionUpdatePlanView({ plan, modal, actions }) {
       <p class="plan__note">From <span class="mono">${from}</span>.</p>
       <${PlanWarnings} warnings=${plan.warnings} testID="update-warnings" />
       ${
+        // Issue 657: the new version's pinned files NexusMods no longer
+        // offers, decided before anything else.
+        plan.source &&
+        html`<${GonePinsSection} source=${plan.source} actions=${actions} />`
+      }
+      ${
         plan.install_instructions &&
         html`<p class="plan__note">
           <strong>Install instructions:</strong> ${plan.install_instructions}
@@ -512,6 +519,11 @@ export function CollectionUpdatePlanView({ plan, modal, actions }) {
         heading="Will move to the collection's new pin"
         items=${plan.changed}
         testID="update-changed"
+      />
+      <${EntryList}
+        heading="Skipped - kept out, their pinned file is still gone"
+        items=${plan.skipped}
+        testID="update-skipped"
       />
       <${ChoiceList}
         heading="No longer in the collection"
