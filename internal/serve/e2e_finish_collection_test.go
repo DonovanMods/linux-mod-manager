@@ -228,7 +228,7 @@ func TestE2E_FinishCollection_ImportAnswerDeployRetry(t *testing.T) {
 	f.Src.recovered.Store(true)
 	var todos []e2eTodo
 	var cards, trayFinishLeft int
-	var installed []string
+	var installed, trayStates []string
 	f.runInBrowser(t,
 		clickWhenSettled(`.card--profile [data-action="finish-collection"]`),
 		chromedp.WaitVisible(finishPanel+` [data-todo="fake:flaky"]`, chromedp.ByQuery),
@@ -248,11 +248,16 @@ func TestE2E_FinishCollection_ImportAnswerDeployRetry(t *testing.T) {
 		chromedp.WaitVisible(`.tray__row`, chromedp.ByQuery),
 		quietWindow(),
 		chromedp.Evaluate(`document.querySelectorAll('.tray [data-action="finish-collection"]').length`, &trayFinishLeft),
+		chromedp.Evaluate(`[...document.querySelectorAll('.tray__state')].map((el) => el.textContent.trim())`, &trayStates),
 		chromedp.Evaluate(`fetch("/api/v1/mods?game=`+f.Game.ID+`&profile=`+e2eFinishPack+`").then((r) => r.json()).then((d) => d.mods.map((m) => m.name).sort())`, &installed, awaitPromise),
 	)
 	assert.Empty(t, todos)
 	assert.Zero(t, cards)
 	assert.Zero(t, trayFinishLeft, "a finished collection has nothing left to offer")
+	assert.Contains(t, trayStates, "Recorded 3 mods", "the import's entry reads as a clean one once its collection is finished")
+	for _, state := range trayStates {
+		assert.NotContains(t, state, "need you", "no entry still says items need the user")
+	}
 	assert.Equal(t, []string{"Better Boots", "Flaky Mod", "Wizard Mod"}, installed, "every mod of the collection is installed")
 	assert.Empty(t, f.BrowserErrors())
 }
@@ -467,5 +472,81 @@ func TestE2E_FinishCollection_TheProfileCardCountsItemsOnce(t *testing.T) {
 	assert.False(t, applyOffered, "items left to finish alone offer no Apply profile")
 	assert.Equal(t, "◎ Profile (5)", title)
 	assert.Equal(t, "Finish collection: 5 of 5 need you", button)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FinishCollection_ADeletedProfileLeavesNothingToFinish: a
+// collection profile deleted with items left to finish has nothing left
+// to finish - its to-do list answers 404 - so its import's tray entry
+// stops asking for attention and offering Finish collection.
+func TestE2E_FinishCollection_ADeletedProfileLeavesNothingToFinish(t *testing.T) {
+	f, path := newE2EFinishFixture(t)
+
+	var counted bool
+	var trayFinish int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		importFinishPack(path),
+		awaitJobsSettled(),
+		chromedp.WaitVisible(`.toast--attention`, chromedp.ByQuery),
+		pollUntil(`document.querySelector('.activity-bell__count') !== null`),
+		chromedp.Evaluate(`document.querySelector('.activity-bell__count') !== null`, &counted),
+		chromedp.Evaluate(`import("/static/app/api.js").then((api) => api.deleteProfile(`+"`"+e2eFinishPack+"`"+`, { game: `+"`"+f.Game.ID+"`"+` })).then(() => true)`, nil, awaitPromise),
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		pollUntil(`document.querySelector('.activity-bell__count') === null`),
+		clickWhenSettled(`.activity-bell__trigger`),
+		chromedp.WaitVisible(`.tray__row`, chromedp.ByQuery),
+		quietWindow(),
+		chromedp.Evaluate(`document.querySelectorAll('.tray [data-action="finish-collection"]').length`, &trayFinish),
+	)
+	assert.True(t, counted, "before the delete, the import needs attention")
+	assert.Zero(t, trayFinish, "a deleted profile has nothing left to finish")
+	// The deleted profile's list answers 404, which the browser logs.
+	assertOnlyExpectedErrors(t, f.BrowserErrors(), "/api/v1/profiles/"+e2eFinishPack+"/todos")
+}
+
+// TestE2E_FinishCollection_LiveTodosHelpers pins livetodos.js: a hydrate's
+// to-do list counts for its game only while the page is still on that
+// game and profile (a newer hydrate of another game with a profile of the
+// same name must not be written under the old game), and a 404 - the
+// profile is gone - counts as nothing left, while any other failure keeps
+// the last count.
+func TestE2E_FinishCollection_LiveTodosHelpers(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var got map[string]any
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const lt = await import("/static/app/livetodos.js");
+			const { ApiError } = await import("/static/app/api.js");
+			const report = { profile: "default", total: 3, todos: [{}] };
+			const same = lt.hydratedTodos({ game: "g1", profile: "default" }, { game: "g1", profile: "default" }, report);
+			const moved = lt.hydratedTodos({ game: "g1", profile: "default" }, { game: "g2", profile: "default" }, report);
+			const other = lt.hydratedTodos({ game: "g1", profile: "default" }, { game: "g1", profile: "default" }, { ...report, profile: "x" });
+			const notes = [];
+			const note = (game, doc) => notes.push(game + ":" + doc.profile + "=" + doc.todos.length);
+			await lt.refreshLiveTodos("g1", "gone", note, () => Promise.reject(new ApiError(404, "profile not found")));
+			await lt.refreshLiveTodos("g1", "flaky", note, () => Promise.reject(new ApiError(500, "boom")));
+			await lt.refreshLiveTodos("g1", "here", note, () => Promise.resolve({ profile: "here", todos: [{}, {}] }));
+			let calls = 0;
+			let release;
+			const slow = () => { calls++; return new Promise((r) => { release = () => r({ profile: "dup", todos: [] }); }); };
+			const a = lt.refreshLiveTodos("g1", "dup", note, slow);
+			const b = lt.refreshLiveTodos("g1", "dup", note, slow);
+			await new Promise((r) => setTimeout(r, 0));
+			release();
+			await Promise.all([a, b]);
+			return { same: same !== null, moved: moved !== null, other: other !== null, notes, calls };
+		})()`, &got, awaitPromise),
+	)
+	assert.Equal(t, true, got["same"])
+	assert.Equal(t, false, got["moved"], "another game's hydrate has replaced the page")
+	assert.Equal(t, false, got["other"], "the list is another profile's")
+	assert.Equal(t, []any{"g1:gone=0", "g1:here=2", "g1:dup=0"}, got["notes"], "404 is nothing left; another failure notes nothing")
+	assert.EqualValues(t, 1, got["calls"], "one read of a list at a time")
 	assert.Empty(t, f.BrowserErrors())
 }

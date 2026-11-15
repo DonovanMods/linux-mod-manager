@@ -27,7 +27,7 @@
 
 import { html, useEffect, useState } from "../render.js";
 import { Modal } from "./modal.js";
-import { getProfileTodos } from "../api.js";
+import { ApiError, getProfileTodos } from "../api.js";
 import { InlineJob } from "./jobprogress.js";
 import { FillDropZone } from "./filldropzone.js";
 import { todoName } from "./plan_collection_finish.js";
@@ -123,6 +123,11 @@ export function FinishCollectionModal({ modal, state, actions }) {
         if (!live) return;
         setError(err?.message ?? String(err));
         setReadFor(ended);
+        // Issue 660: a profile deleted or renamed has nothing left to
+        // finish; any other failure keeps the last count.
+        if (err instanceof ApiError && err.status === 404) {
+          actions.noteTodos?.(game, { profile, todos: [] });
+        }
       });
     return () => {
       live = false;

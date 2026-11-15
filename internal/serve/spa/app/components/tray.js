@@ -16,7 +16,7 @@
 // what went wrong far more often than to admire what went right.
 
 import { FillDropZone } from "./filldropzone.js";
-import { getProfileTodos } from "../api.js";
+import { liveTodosKey, refreshLiveTodos } from "../livetodos.js";
 import { html, useEffect, useRef, useState } from "../render.js";
 import { useMenuPlacement } from "../menuplacement.js";
 import { followJob } from "../sse.js";
@@ -28,6 +28,7 @@ import {
   mutationLabel,
   progressText,
   progressFraction,
+  collectionTallyLabel,
   outcomeLabel,
   resultTallyTone,
 } from "../progress.js";
@@ -106,14 +107,15 @@ function useCollectionsLeft(jobs, actions) {
       const seen = new Set();
       for (const job of pending) {
         const collection = cachedJobCollection(job.id);
-        const at = `${job.game ?? ""}:${collection?.profile ?? ""}`;
+        const at = liveTodosKey(job.game, collection?.profile);
         if (!job.game || !collection?.profile || seen.has(at)) continue;
         seen.add(at);
-        getProfileTodos(collection.profile, { game: job.game })
-          .then((doc) => {
-            if (live) actions?.noteTodos?.(job.game, doc);
-          })
-          .catch(() => {});
+        // One read per list, shared by every entry of that collection (the
+        // tray's rows count from what it notes). A 404 - the profile was
+        // deleted or renamed - is nothing left to finish.
+        refreshLiveTodos(job.game, collection.profile, (game, doc) => {
+          if (live) actions?.noteTodos?.(game, doc);
+        });
       }
       setReads((n) => n + 1);
     });
@@ -133,7 +135,7 @@ function liveTodoCount(
   collection = cachedJobCollection(job.id),
 ) {
   if (!collection?.profile) return undefined;
-  return liveTodos?.[`${job.game ?? ""}:${collection.profile}`];
+  return liveTodos?.[liveTodosKey(job.game, collection.profile)];
 }
 
 /** collectionFinished reports whether job left a collection's items to
@@ -256,13 +258,6 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
   const queued = jobs.filter((j) => labelOf(j) === "queued");
   const failed = jobs.filter((j) => j.state === "failed");
   const done = jobs.filter((j) => j.state === "succeeded");
-  // Issue 660: which jobs have ended - a row re-reads its collection's
-  // live to-do list when another job ends.
-  const ended = jobs
-    .filter((j) => j.state !== "running")
-    .map((j) => j.id)
-    .join(",");
-
   const missingDeepLink =
     deepLinkJob && !jobs.some((job) => job.id === deepLinkJob);
 
@@ -282,7 +277,6 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
                 onToggle=${() => setExpanded(expanded === job.id ? "" : job.id)}
                 actions=${actions}
                 liveTodos=${state.liveTodos}
-                ended=${ended}
               />
             `,
           )}
@@ -319,15 +313,7 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
 
 /** TrayRow is one job: what it is, how it is going, and - once expanded -
  * everything it has said. */
-function TrayRow({
-  job,
-  frame,
-  expanded,
-  onToggle,
-  actions,
-  liveTodos,
-  ended,
-}) {
+function TrayRow({ job, frame, expanded, onToggle, actions, liveTodos }) {
   const label = jobStateLabel(job, frame);
   const fraction = progressFraction(frame);
   // I3, unit 6 fix wave: see jobprogress.js's identical use for why
@@ -341,20 +327,9 @@ function TrayRow({
   // its count of its collection ("Recorded 1 of 3 mods; 2 need you").
   const finish = useJobResultFinish(job.id, job.state);
   const collection = useJobResultCollection(job.id, job.state);
-  // Its collection's live list, re-read when a job ends: the entry offers
-  // Finish collection, with the count left now, only while one is.
-  useEffect(() => {
-    if (!finish?.profile || !job.game) return undefined;
-    let live = true;
-    getProfileTodos(finish.profile, { game: job.game })
-      .then((doc) => {
-        if (live) actions.noteTodos?.(job.game, doc);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [finish?.profile, job.game, ended]);
+  // Its collection's live list - read by the bell (useCollectionsLeft)
+  // whenever a job ends: the entry offers Finish collection, with the
+  // count left now, only while one is.
   const leftNow = finish ? liveTodoCount(job, liveTodos, finish) : undefined;
   const finishLeft = leftNow ?? finish?.todos ?? 0;
   const fillTarget =
@@ -370,8 +345,14 @@ function TrayRow({
         ? "succeeded"
         : resultTallyTone(tally)
       : job.state;
+  // A finished collection's entry reads as a clean one ("Recorded 40
+  // mods"): what it left to finish is done.
   const outcome =
-    job.state === "succeeded" ? outcomeLabel(tally, collection) : "";
+    job.state !== "succeeded"
+      ? ""
+      : finished
+        ? collectionTallyLabel({ ...collection, todos: 0 })
+        : outcomeLabel(tally, collection);
   const stateText = outcome || label;
 
   return html`

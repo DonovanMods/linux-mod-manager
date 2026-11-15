@@ -71,6 +71,7 @@ import {
   resultTallyTone,
 } from "./progress.js";
 import { resolveGamePath } from "./navigation.js";
+import { hydratedTodos, liveTodosKey } from "./livetodos.js";
 import { RELEVANCE, effectiveSort, knownSort } from "./searchsort.js";
 import {
   connectActivity,
@@ -373,8 +374,13 @@ async function hydrate(route, { rehydrate = false } = {}) {
         `/api/v1/profiles/${encodeURIComponent(route.profile)}/todos`,
       ),
   ]);
-  const todos = store.get().todos;
-  if (todos?.profile === route.profile) noteTodos(route.game, todos);
+  // Only while this hydrate is the page's newest, and the page is still on
+  // its game and profile: a newer one of another game, with a profile of
+  // the same name, may have replaced the list meanwhile.
+  const todos = isCurrentHydration(seq)
+    ? hydratedTodos(route, store.get().route, store.get().todos)
+    : null;
+  if (todos) noteTodos(route.game, todos);
 }
 
 // homeContext is the "game:profile" whose documents the home slices hold
@@ -1492,7 +1498,7 @@ function openImportCollectionModal({ openerSelector } = {}) {
  * attention once its collection is finished, wherever it was finished. */
 function noteTodos(game, report) {
   if (!game || !report?.profile) return;
-  const key = `${game}:${report.profile}`;
+  const key = liveTodosKey(game, report.profile);
   const count = report.todos?.length ?? 0;
   const live = store.get().liveTodos ?? {};
   if (live[key] === count) return;
