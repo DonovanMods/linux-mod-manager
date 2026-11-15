@@ -211,6 +211,11 @@ func TestCollectionUpdate_NexusRevisionBump(t *testing.T) {
 	assert.Empty(t, plan.Conflicts)
 	require.NotNil(t, plan.Source)
 	assert.Equal(t, 4, plan.Source.Revision)
+	// #654: the update plan carries the same overview as the import's.
+	require.NotNil(t, plan.Source.Summary)
+	assert.Equal(t, len(plan.Source.Items), plan.Source.Summary.Items)
+	assert.Equal(t, plan.Source.Counts[core.CollectionItemWillInstall]+plan.Source.Counts[core.CollectionItemBundled],
+		plan.Source.Summary.Install)
 
 	result, err := f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
 	require.NoError(t, err)
