@@ -1,0 +1,11 @@
+{
+  "id": "0123456789abcdef0123456789abcdef",
+  "kind": "profile_import",
+  "state": "running",
+  "started_at": "2026-08-30T12:00:00Z",
+  "game": "skyrim-se",
+  "profile": "default",
+  "collection": "Long Collection",
+  "event_count": 0,
+  "dropped_events": 0
+}

@@ -99,8 +99,9 @@ export function mountedOriginsSnapshot() {
  * that reaches a terminal state - while connected, or while it was not.
  *
  * The store writes are deliberately narrow: this is the only writer of
- * jobsIndex, jobProgress and jobPositions, so no other code path can disagree with the
- * stream about what the machine is doing. Returns the disconnect function.
+ * jobsIndex, jobProgress and jobPositions, so no other code path can
+ * disagree with the stream about what the machine is doing. onFirstSnapshot
+ * is called once, with the first snapshot's jobs. Returns the disconnect function.
  *
  * RECONCILIATION. The stream is a snapshot followed by live frames, and a
  * reconnect gets a fresh snapshot rather than a replay - so a job that ended
@@ -119,8 +120,9 @@ export function mountedOriginsSnapshot() {
  */
 export function connectActivity(
   store,
-  { onJobDone, onJobLost, watchedJobs } = {},
+  { onJobDone, onJobLost, watchedJobs, onFirstSnapshot } = {},
 ) {
+  let first = true;
   return followActivity({
     onSnapshot: (index) => {
       const jobs = index.jobs ?? [];
@@ -130,8 +132,18 @@ export function connectActivity(
           .map((job) => job.id),
         ...(watchedJobs?.() ?? []),
       ]);
-      store.set({ jobsIndex: jobs, activityError: null });
+      store.set({
+        jobsIndex: jobs,
+        activityError: null,
+        jobPositions: runningOnly(store.get().jobPositions, jobs),
+      });
       reconcile(waitedOn, jobs, { onJobDone, onJobLost });
+      // issue 655: the page's first look at what is running (a reload
+      // mid-import) - main.js shows each running job's progress.
+      if (first) {
+        first = false;
+        onFirstSnapshot?.(jobs);
+      }
     },
 
     onStarted: (summary) =>
@@ -158,7 +170,13 @@ export function connectActivity(
       }),
 
     onDone: (summary) => {
-      store.set({ jobsIndex: upsertSummary(store.get().jobsIndex, summary) });
+      // A finished job's position is no use to anyone (issue 655).
+      const positions = { ...store.get().jobPositions };
+      delete positions[summary.id];
+      store.set({
+        jobsIndex: upsertSummary(store.get().jobsIndex, summary),
+        jobPositions: positions,
+      });
       onJobDone?.(summary);
     },
 
@@ -176,6 +194,16 @@ export function connectActivity(
 
     onError: (message) => store.set({ activityError: message }),
   });
+}
+
+/** runningOnly is positions kept for the jobs still running in jobs. */
+function runningOnly(positions, jobs) {
+  const running = new Set(
+    jobs.filter((job) => job.state === "running").map((job) => job.id),
+  );
+  return Object.fromEntries(
+    Object.entries(positions ?? {}).filter(([id]) => running.has(id)),
+  );
 }
 
 /** reconcile ends every job in `ids` that the snapshot `jobs` - or the

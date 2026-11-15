@@ -35,13 +35,6 @@ func TestAcquireRefusedError_ItemFailuresCarriesTheRefusalCode(t *testing.T) {
 	}
 }
 
-func TestProfileImportIncompleteError_ItemFailuresAreTheResultsFailures(t *testing.T) {
-	failures := []ItemFailure{{SourceID: "s", ModID: "1", Name: "One", Reason: "no downloadable files"}}
-	err := &ProfileImportIncompleteError{Profile: "p", Result: &ProfileImportResult{Failed: 1, Failures: failures}}
-	assert.Equal(t, failures, err.ItemFailures())
-	assert.Nil(t, (&ProfileImportIncompleteError{Profile: "p"}).ItemFailures(), "no result, no items")
-}
-
 func TestItemFailuresOf(t *testing.T) {
 	refused := newAcquireRefusedError([]AcquireRefusal{
 		{SourceID: "s", ModID: "1", Name: "One", Err: errors.New("gone")},
@@ -50,7 +43,7 @@ func TestItemFailuresOf(t *testing.T) {
 	assert.Len(t, ItemFailuresOf(fmt.Errorf("wrapped: %w", refused)), 2, "found through a wrap")
 	incomplete := &ProfileImportIncompleteError{Profile: "p", Result: &ProfileImportResult{Refused: true,
 		Failures: []ItemFailure{{SourceID: "s", ModID: "1", Reason: "gone"}}}, refusal: refused}
-	assert.Len(t, ItemFailuresOf(incomplete), 1, "the outermost error's own list wins")
+	assert.Nil(t, ItemFailuresOf(incomplete), "an incomplete import's details.failures already list them")
 	assert.Nil(t, ItemFailuresOf(errors.New("plain")))
 	assert.Nil(t, ItemFailuresOf(nil))
 	assert.Nil(t, ItemFailuresOf(fmt.Errorf("%w", ErrStalePlan)))

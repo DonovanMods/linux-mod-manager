@@ -173,6 +173,21 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #655: a running collection import names its game and the
+			// collection, so a reloaded page can still call it one.
+			"job_summary_collection",
+			jobSummary{
+				ID:         "0123456789abcdef0123456789abcdef",
+				Kind:       "profile_import",
+				State:      jobRunning,
+				StartedAt:  goldenTime,
+				Game:       "skyrim-se",
+				Profile:    "default",
+				Collection: "Long Collection",
+				EventCount: 0,
+			},
+		},
+		{
 			// The updates shape: applied/failed/skipped and the skipped
 			// items' own sentences.
 			"job_tally",

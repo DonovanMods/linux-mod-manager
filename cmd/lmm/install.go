@@ -1579,11 +1579,55 @@ func installResultQuestion(r *core.InstallResult) *core.FomodChoicesRequiredErro
 // prints them.
 func printRefusedInstall(result *core.InstallResult) {
 	fmt.Println("Nothing was installed: a mod needs something lmm cannot supply, so no mod was written.")
+	items := make([]refusedItem, 0, len(result.Failed))
 	for _, ref := range result.Failed {
-		printRefusedItem(ref.Name, ref.SourceID, ref.ModID, ref.Reason, ref.Refusal)
+		items = append(items, refusedItem{Name: ref.Name, SourceID: ref.SourceID, ModID: ref.ModID, Reason: ref.Reason, Refusal: ref.Refusal})
 	}
+	printRefusedItems(items)
 	if result.LoaderRequired != nil {
 		reportLoaderSetup(result.LoaderRequired)
+	}
+}
+
+// refusedItem is one item of a refused install or import, as
+// printRefusedItems lists it.
+type refusedItem struct {
+	Name, SourceID, ModID, Reason, Refusal string
+}
+
+// heldBackNamedMax is how many held-back items printRefusedItems still
+// names one by one; past it they are counted on one line (#655).
+const heldBackNamedMax = 3
+
+// printRefusedItems lists a refused install's or import's items (#655
+// review S1): a line saying how many refused and how many were only held
+// back, then each refusal with its reason, then the held-back items - each
+// named while there are only a few, counted on one line past
+// heldBackNamedMax. A big collection holds back hundreds of mods behind one
+// refusal, and listing them all buried the one line that mattered.
+func printRefusedItems(items []refusedItem) {
+	var refused, held []refusedItem
+	for _, it := range items {
+		if it.Refusal == core.RefusalHeldBack {
+			held = append(held, it)
+		} else {
+			refused = append(refused, it)
+		}
+	}
+	summary := fmt.Sprintf("%d mod%s refused", len(refused), plural(len(refused)))
+	if len(held) > 0 {
+		summary += fmt.Sprintf(" · %d held back", len(held))
+	}
+	fmt.Println(summary)
+	for _, it := range refused {
+		printRefusedItem(it.Name, it.SourceID, it.ModID, it.Reason, it.Refusal)
+	}
+	if len(held) > heldBackNamedMax {
+		fmt.Printf("  - %d mods held back, not written because another mod refused\n", len(held))
+		return
+	}
+	for _, it := range held {
+		printRefusedItem(it.Name, it.SourceID, it.ModID, it.Reason, it.Refusal)
 	}
 }
 

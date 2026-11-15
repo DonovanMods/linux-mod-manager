@@ -297,15 +297,6 @@ func (e *ProfileImportIncompleteError) Error() string {
 // envelope's "details" field.
 func (e *ProfileImportIncompleteError) Details() any { return e.Result }
 
-// ItemFailures is the result's failed items, one per mod (#655), or nil
-// when there is no result.
-func (e *ProfileImportIncompleteError) ItemFailures() []ItemFailure {
-	if e.Result == nil {
-		return nil
-	}
-	return e.Result.Failures
-}
-
 // Unwrap is the refusal behind a Refused import, nil otherwise.
 func (e *ProfileImportIncompleteError) Unwrap() error { return e.refusal }
 

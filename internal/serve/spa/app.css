@@ -2181,7 +2181,27 @@ a.row-menu__item.mod-page-link {
 
 /* issue 535: a failure that leads with what it means keeps the engine's own
  * text one click away, collapsed under "Details". */
-/* issue 655: a failure's per-mod lines - the mod's name, then why. */
+.raw-error {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+}
+
+.raw-error__summary {
+  cursor: pointer;
+}
+
+.raw-error__text {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+
+/* issue 655: a failure's per-mod lines - the mod's name, then why - and,
+ * for an import refused with nothing written, how many were held back. */
+.item-failures__summary {
+  margin: var(--space-1) 0 0;
+  color: var(--text-secondary);
+}
+
 .item-failures {
   margin: var(--space-1) 0 0;
   padding-left: var(--space-4);
@@ -2198,18 +2218,9 @@ a.row-menu__item.mod-page-link {
   font-weight: 600;
 }
 
-.raw-error {
-  margin: var(--space-1) 0 0;
+.item-failures__more,
+.item-failures__held {
   color: var(--text-muted);
-}
-
-.raw-error__summary {
-  cursor: pointer;
-}
-
-.raw-error__text {
-  margin: var(--space-1) 0 0;
-  overflow-wrap: anywhere;
 }
 
 /* issue 533: a finished update batch's failed items, one entry each - the
@@ -3168,6 +3179,9 @@ a.row-menu__item.mod-page-link {
   flex-direction: column;
   gap: var(--space-2);
   max-width: 24rem;
+  /* issue 655: a stack of toasts scrolls rather than covering the page. */
+  max-height: calc(100vh - 2 * var(--space-6));
+  overflow-y: auto;
 }
 
 .toast {
@@ -3210,6 +3224,13 @@ a.row-menu__item.mod-page-link {
 /* issue 655: a running job's progress, while its own control is off screen. */
 .toast--running {
   border-left-color: var(--accent);
+}
+
+.toast__jobs {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+  color: var(--text-secondary);
+  font-size: 0.9em;
 }
 
 .toast--running .job-progress__bar {

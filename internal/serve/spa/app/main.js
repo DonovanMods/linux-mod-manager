@@ -12,6 +12,7 @@ import {
   parseLocation,
   onRouteChange,
   navigate,
+  contextPath,
   documentTitle,
   modPageKey,
 } from "./router.js";
@@ -44,6 +45,7 @@ import {
   jobStatus,
 } from "./api.js";
 import { fomodQuestionFor, mergeQuestions } from "./fomod.js";
+import { failuresOf } from "./itemfailures.js";
 import { DEPLOY_ORIGIN } from "./components/topbar.js";
 import { PLAY_NOT_ACTIVE_REASON } from "./components/playbutton.js";
 import { updateFromFileInputID } from "./components/updatefromfile.js";
@@ -1885,7 +1887,10 @@ async function confirmPlan() {
       }
       rememberJobFacts(jobID, {
         collection:
-          modal.kind === "profile_import" && Boolean(modal.plan?.collection),
+          modal.kind === "profile_import" &&
+          Boolean(modal.plan?.collection || modal.plan?.workshop_collection),
+        options: modal.options,
+        fileName: uploadFiles.get(modal.options?.upload_id)?.name,
       });
       store.set({
         modal: null,
@@ -2563,9 +2568,12 @@ function dismissToast(id) {
 }
 
 // jobFacts is what this page knows about a job it started that its summary
-// does not say: today, whether a profile_import imported a collection
-// (issue 655: its toasts say "Collection import", not "profile_import").
-// Lost on reload, when collectionOrigins answers from the origin instead.
+// does not say (issue 655): the plan's own request (options), and the name
+// of the file an import uploaded - what "Back to import" fills the import
+// dialog back in with. Page-lifetime: after a reload a failed import's
+// dialog opens with the failure but empty fields. Whether a job imports a
+// collection, and where it ran, the summary itself says (jobs.go's
+// Collection, Game and Profile), so those survive a reload.
 const jobFacts = new Map();
 
 /** rememberJobFacts records facts about jobID (see jobFacts). */
@@ -2573,25 +2581,23 @@ function rememberJobFacts(jobID, facts) {
   jobFacts.set(jobID, facts);
 }
 
-// collectionOrigins are the import doors that only ever import a
-// collection, for a job whose facts this page did not record.
-const collectionOrigins = new Set([
-  "profile-import-collection",
-  "profile-import-nexus-collection",
-]);
+/** jobSummaryOf is jobID's row in the jobs index, if the page has it. */
+function jobSummaryOf(jobID) {
+  return (store.get().jobsIndex ?? []).find((row) => row.id === jobID);
+}
 
-/** jobIsCollection reports whether jobID imported a collection, as far as
- * this page knows. */
+/** jobIsCollection reports whether jobID imports a collection: its
+ * summary's collection (issue 655), or what this page recorded when it
+ * started the job, for the moment before the summary has arrived. */
 function jobIsCollection(jobID) {
-  const facts = jobFacts.get(jobID);
-  if (facts) return facts.collection;
-  return collectionOrigins.has(originOf(jobID) ?? "");
+  if (jobSummaryOf(jobID)?.collection) return true;
+  return Boolean(jobFacts.get(jobID)?.collection);
 }
 
 /** summaryTitle is a job's name in a sentence ("Collection import"). */
 function summaryTitle(summary) {
   return jobTitle(summary.kind, {
-    collection: jobIsCollection(summary.id),
+    collection: Boolean(summary.collection) || jobIsCollection(summary.id),
     origin: summary.origin,
   });
 }
@@ -2635,6 +2641,29 @@ onOriginLeft((origin) => {
   const jobID = store.get().origins[origin];
   if (jobID) showDetachedProgress(origin, jobID);
 });
+
+/**
+ * showRunningJobs is the page's first activity snapshot (issue 655 review
+ * S3): a page loaded - or reloaded - while a job runs has no origin for it,
+ * so nothing would show that job's progress but the bell's count. Every
+ * running job gets its progress toast, named from its summary (a
+ * collection import says so, jobs.go's Collection). Later snapshots (a
+ * reconnect) leave the toasts as they are.
+ */
+function showRunningJobs(jobs) {
+  for (const job of jobs) {
+    if (job.state !== "running") continue;
+    if (originOf(job.id) || dismissedProgress.has(job.id)) continue;
+    if (store.get().toasts.some((t) => t.jobID === job.id)) continue;
+    pushToast({
+      tone: "running",
+      jobID: job.id,
+      kind: job.kind,
+      collection: Boolean(job.collection),
+      auto: job.origin === "auto",
+    });
+  }
+}
 
 /** dropProgressToast removes jobID's running toast, if it has one. */
 function dropProgressToast(jobID) {
@@ -2745,7 +2774,7 @@ async function onJobDone(summary) {
     // Issue 655: a failure naming several mods (a collection import's)
     // says one line per mod; the engine's joined text stays in the job's
     // details in the tray.
-    const items = summary.error?.items ?? [];
+    const items = failuresOf(summary);
     pushToast({
       tone: "failure",
       title: `${summaryTitle(summary)} failed`,
@@ -2882,9 +2911,33 @@ function toastAffordance(summary) {
 }
 
 /** reopenImport opens the "Import collection…" dialog with the failed
- * import jobID's failure shown above its forms (issue 655). */
+ * import jobID's failure shown above its forms (issue 655), its inputs
+ * filled back in from the failed import's own request when this page
+ * started it. The import goes into the game the failed one ran for, so a
+ * page that has moved to another game goes back to it first. Focus returns
+ * to the profile picker's trigger on close: the toast that opened the
+ * dialog is gone by then. */
 function reopenImport(jobID) {
-  store.set({ modal: { type: "import-collection", failedJob: jobID } });
+  const route = store.get().route;
+  if (route.view === "chooser") return;
+  const summary = jobSummaryOf(jobID);
+  const facts = jobFacts.get(jobID);
+  const game = summary?.game || route.game;
+  const profile = summary?.profile || route.profile;
+  if (game && profile && game !== route.game) {
+    navigate(contextPath(game, profile));
+  }
+  const prefill = facts?.options
+    ? { ...facts.options, file_name: facts.fileName }
+    : undefined;
+  store.set({
+    modal: {
+      type: "import-collection",
+      failedJob: jobID,
+      prefill,
+      openerSelector: ".profile-picker__trigger",
+    },
+  });
 }
 
 /** originOf finds which control (if any) started jobID. */
@@ -3228,4 +3281,9 @@ go(parseLocation());
 // One session-long connection, opened after the first route is on screen:
 // every job this process runs - started here, in another tab, or before
 // this page loaded - arrives on it (activity.js).
-connectActivity(store, { onJobDone, onJobLost, watchedJobs });
+connectActivity(store, {
+  onJobDone,
+  onJobLost,
+  watchedJobs,
+  onFirstSnapshot: showRunningJobs,
+});

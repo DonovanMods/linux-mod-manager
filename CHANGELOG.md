@@ -974,20 +974,30 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   confirmed in a window that then closes, or an install you navigated
   away from) now shows its progress in a card at the bottom right, for
   example **Importing collection…** with "12 of 600" and the item it is
-  on, until it ends; before, only the bell's count said anything was
-  happening. Toasts name the job in words ("Collection import failed",
-  "Deploy finished") instead of its internal name (`profile_import`), and
-  so does the activity tray. A failure that names several mods lists one
-  line per mod, its name and then why, instead of the engine's joined
-  text, which stays under **Details** in the activity tray. A toast's two
-  actions are two separate, spaced buttons. **Show in activity** opens
-  the tray on that job from any page, and a failed import offers **Back
-  to import**, which opens the import window with the failure shown,
-  instead of **Open profiles** (which showed an empty form, as nothing
-  was imported). The web UI's job error and the CLI's `--json` error
-  envelope gain an `items` list (each mod's `source_id`, `mod_id`,
-  `name`, `reason` and `refusal`) when a failure names mods; `error` and
-  `details` are unchanged.
+  on, until it ends; a page reloaded mid-job shows it again, and more than
+  three running jobs share one "N jobs running…" card. Before, only the
+  bell's count said anything was happening. Toasts name the job in words
+  ("Collection import failed", "Deploy finished") instead of its internal
+  name (`profile_import`), and so does the activity tray. A failure that
+  names several mods says how many, then lists one line per mod, its name
+  and then why (the first five in a toast, ten in the import window, all
+  in the activity tray), instead of the engine's joined text, which stays
+  under **Details**; a refused import leads with the mod that refused and
+  counts the ones only held back behind it ("1 mod refused · 299 held
+  back"), in the terminal too. The tray keeps a refusal's next step
+  (**Answer installer…**, a loader's setup steps) beside the list. A
+  toast's two actions are two separate, spaced buttons. **Show in
+  activity** opens the tray on that job from any page but Setup (where it
+  would drop an unsaved draft), and a failed import offers **Back to
+  import**, which opens the import window with the failure shown and the
+  failed collection filled back in, in that import's game, instead of
+  **Open profiles** (which showed an empty form, as nothing was imported).
+  The web UI's job error and the CLI's `--json` error envelope gain an
+  `items` list (each mod's `source_id`, `mod_id`, `name`, `reason` and
+  `refusal`) when a refusal names mods; an incomplete profile import keeps
+  its list in `details.failures` only, and `error` and `details` are
+  unchanged. A job's status and the jobs index gain `game`, `profile` and
+  `collection` (the collection a profile import imports).
 - **A `.zip` compressed with BZIP2, LZMA, Deflate64, Zstandard or PPMd
   installs (#656).** lmm reads `.zip` archives itself, but only those
   compressed the usual way (Deflate, or stored); some mod authors use

@@ -12,6 +12,7 @@
 // what the document carries, invent nothing.
 
 import { html } from "../render.js";
+import { failureSummary, splitFailures } from "../itemfailures.js";
 import { codeSpans } from "../errortext.js";
 import {
   adapterRefusalFor,
@@ -44,9 +45,11 @@ function loaderLabel(kind) {
  * ErrorDetails renders an error envelope's `details`, or nothing when there
  * are none. `actions`, when given, lets a failed download offer "Update from
  * file…" or "Install from file…" (DownloadPage); `headed` says the surface
- * already led with that download's headline (DownloadHeadline).
+ * already led with that download's headline (DownloadHeadline);
+ * `noDocument` drops the generic document view a details value with no
+ * shape of its own falls back to.
  */
-export function ErrorDetails({ details, actions, headed }) {
+export function ErrorDetails({ details, actions, headed, noDocument }) {
   if (!details) return null;
 
   const loader = loaderSetupFor(details);
@@ -93,6 +96,9 @@ export function ErrorDetails({ details, actions, headed }) {
     `;
   }
 
+  // noDocument (issue 655): a surface that already listed the failure's
+  // per-mod lines does not want the whole result document under them.
+  if (noDocument) return null;
   return html`<${DocumentView} value=${details} />`;
 }
 
@@ -150,35 +156,59 @@ export function RawError({ text }) {
 }
 
 /**
- * ItemFailureList is a failure's per-mod lines (issue 655): the envelope's
- * `items` (core.ItemFailure), one line each - the mod's name, then why. A
- * collection import that refuses joins every mod's error into one text,
- * which read as one run-on sentence. `limit` caps the lines for a small
- * surface (a toast), saying how many more there are; the tray shows them
- * all.
+ * ItemFailureList is a failure's per-mod lines (issue 655): each mod that
+ * failed or refused, its name and then why, and - for an import refused
+ * with nothing written - how many more were only held back behind them,
+ * counted on one line rather than listed (a big collection holds back
+ * hundreds). `summary` leads with failureSummary's line; `limit` caps the
+ * failed lines for a small surface, saying how many more there are.
  */
-export function ItemFailureList({ items, limit }) {
+export function ItemFailureList({ items, limit, summary }) {
   const list = items ?? [];
   if (list.length === 0) return null;
-  const shown = limit > 0 ? list.slice(0, limit) : list;
-  const more = list.length - shown.length;
-  return html`<ul class="item-failures" data-testid="item-failures">
-    ${shown.map(
-      (item) =>
-        html`<li
-          key=${`${item.source_id}:${item.mod_id}`}
-          class="item-failures__item"
-          data-item=${`${item.source_id}:${item.mod_id}`}
-        >
-          <span class="item-failures__name"
-            >${item.name || `${item.source_id}:${item.mod_id}`}</span
-          >${": "}<span class="item-failures__reason"
-            >${codeSpans(item.reason)}</span
+  const { failed, held } = splitFailures(list);
+  const shown = limit > 0 ? failed.slice(0, limit) : failed;
+  const more = failed.length - shown.length;
+  return html`
+    ${
+      summary &&
+      html`<p
+        class="item-failures__summary"
+        data-testid="item-failures-summary"
+      >
+        ${failureSummary(list)}
+      </p>`
+    }
+    <ul class="item-failures" data-testid="item-failures">
+      ${shown.map(
+        (item) =>
+          html`<li
+            key=${`${item.source_id}:${item.mod_id}`}
+            class="item-failures__item"
+            data-item=${`${item.source_id}:${item.mod_id}`}
           >
-        </li>`,
-    )}
-    ${more > 0 && html`<li class="item-failures__more">and ${more} more</li>`}
-  </ul>`;
+            <span class="item-failures__name"
+              >${item.name || `${item.source_id}:${item.mod_id}`}</span
+            >${": "}<span class="item-failures__reason"
+              >${codeSpans(item.reason)}</span
+            >
+          </li>`,
+      )}
+      ${
+        more > 0 &&
+        html`<li class="item-failures__more" data-testid="item-failures-more">
+          and ${more} more
+        </li>`
+      }
+      ${
+        held.length > 0 &&
+        html`<li class="item-failures__held" data-testid="item-failures-held">
+          ${held.length} ${held.length === 1 ? "mod" : "mods"} held back: not
+          written because another mod refused
+        </li>`
+      }
+    </ul>
+  `;
 }
 
 /**

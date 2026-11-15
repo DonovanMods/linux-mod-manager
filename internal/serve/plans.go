@@ -62,6 +62,9 @@ type storedPlan struct {
 	// Plan is the object Put was given - pointer identity preserved, so
 	// its unexported json:"-" freshness snapshot survives to Apply.
 	Plan any
+	// About is what the job redeeming this plan says about its subject
+	// (#655, PutAbout); zero for a plan stored with Put.
+	About jobAbout
 	// StoredAt is when Put accepted it, by the store's clock.
 	StoredAt time.Time
 }
@@ -104,8 +107,15 @@ func newPlanStore(ttl time.Duration, cap int, now func() time.Time) *planStore {
 // is not - the TTL alone only reclaims a plan once it has sat unswept for up
 // to ten minutes, and this bounds the store against churn faster than that.
 func (s *planStore) Put(plan any, kind string) planID {
+	return s.PutAbout(plan, kind, jobAbout{})
+}
+
+// PutAbout is Put for a plan whose job names its game, profile and
+// collection
+// (jobAbout, #655).
+func (s *planStore) PutAbout(plan any, kind string, about jobAbout) planID {
 	now := s.now()
-	entry := &storedPlan{ID: newPlanID(), Kind: kind, Plan: plan, StoredAt: now}
+	entry := &storedPlan{ID: newPlanID(), Kind: kind, Plan: plan, About: about, StoredAt: now}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

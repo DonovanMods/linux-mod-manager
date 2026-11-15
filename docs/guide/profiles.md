@@ -485,13 +485,19 @@ nothing written. Optional mods that need such a thing are skipped instead.
 
 In the browser, a running import shows its progress in a card at the
 bottom right of the page (**Importing collection…**, with how many of the
-collection's mods it has reached), wherever you go meanwhile. When it
-ends the card says how it went. A failure stays until you close it and
-lists each mod that failed, with why; **Show in activity** opens the
-import's entry in the activity tray, with the full error under
-**Details**, and **Back to import** reopens the import window with the
-failure above its inputs. In the terminal, a refused import prints one
-line per mod, and `--json` lists them under the error's `items`.
+collection's mods it has reached). The card stays on the other pages of
+the web UI, and comes back if you reload the page while the import runs.
+When it ends the card says how it went. A failure stays until you close
+it: it says how many mods failed (for a refused import, which one refused
+and how many were only held back behind it) and lists the first few with
+why. **Show in activity** opens the import's entry in the activity tray,
+with every mod and the full error under **Details** (on the Setup page
+it is not offered, so an unsaved draft there is not lost), and **Back to
+import** reopens the import window with the failure above its inputs and
+the collection you imported filled back in. In the terminal, a refused
+import names the mod that refused and counts the ones held back, and a
+NexusMods collection's `--json` error lists each refused mod under
+`items`.
 
 ### Updating a collection profile
 

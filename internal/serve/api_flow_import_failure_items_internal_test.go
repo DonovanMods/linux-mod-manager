@@ -34,15 +34,20 @@ func TestAPIFlow_ProfileImportNexus_FailureListsEveryFailedMod(t *testing.T) {
 	assert.Equal(t, "11", status.Error.Items[1].ModID)
 	assert.NotEmpty(t, status.Error.Items[0].Reason)
 	assert.False(t, status.EndedAt.IsZero(), "a failed job says when it ended")
+	assert.Equal(t, game.ID, status.Game, "the job names the game its plan was made for")
+	assert.NotEmpty(t, status.Profile, "and the profile")
+	assert.Equal(t, "Three Mods", status.Collection, "and the collection it imports")
 
 	// The jobs index carries the same envelope, and ended_at.
 	rec := doAPI(s, http.MethodGet, "/api/v1/jobs", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var index struct {
 		Jobs []struct {
-			State   string `json:"state"`
-			EndedAt string `json:"ended_at"`
-			Error   struct {
+			State      string `json:"state"`
+			EndedAt    string `json:"ended_at"`
+			Game       string `json:"game"`
+			Collection string `json:"collection"`
+			Error      struct {
 				Items []core.ItemFailure `json:"items"`
 			} `json:"error"`
 		} `json:"jobs"`
@@ -51,5 +56,17 @@ func TestAPIFlow_ProfileImportNexus_FailureListsEveryFailedMod(t *testing.T) {
 	require.Len(t, index.Jobs, 1)
 	assert.Equal(t, "failed", index.Jobs[0].State)
 	assert.NotEmpty(t, index.Jobs[0].EndedAt)
+	assert.Equal(t, game.ID, index.Jobs[0].Game)
+	assert.Equal(t, "Three Mods", index.Jobs[0].Collection)
 	assert.Len(t, index.Jobs[0].Error.Items, 2)
+}
+
+// TestAPIFlow_AJobNamesItsGameButNoCollection: a job that imports no
+// collection names its game only.
+func TestAPIFlow_AJobNamesItsGameButNoCollection(t *testing.T) {
+	s, _, game := newFlowFixtureServer(t)
+	j := runFlow(t, s, game, "deploy", "", "")
+	status := j.status()
+	assert.Equal(t, game.ID, status.Game)
+	assert.Empty(t, status.Collection)
 }

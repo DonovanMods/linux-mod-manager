@@ -28,6 +28,10 @@ import {
 } from "../progress.js";
 import { ItemFailureList } from "./errordetails.js";
 
+// maxRunningToasts is how many running jobs get a progress toast each;
+// more share one (RunningGroupBody).
+const maxRunningToasts = 3;
+
 // toastItemLimit is how many of a failure's per-mod lines a toast shows; the
 // tray, one click away, shows them all.
 const toastItemLimit = 5;
@@ -65,47 +69,81 @@ export function Toasts({
 }) {
   // A running toast whose control is back on screen hides: the control is
   // showing that job's progress itself.
-  const list = (toasts ?? []).filter(
+  const visible = (toasts ?? []).filter(
     (toast) => toast.tone !== "running" || !isOriginMounted(toast.origin),
   );
+  // Past maxRunningToasts, the running jobs share one toast that counts
+  // them (issue 655 review): a stack of progress cards would cover the page.
+  const running = visible.filter((toast) => toast.tone === "running");
+  const list =
+    running.length > maxRunningToasts
+      ? [
+          ...visible.filter((toast) => toast.tone !== "running"),
+          {
+            id: "running-group",
+            tone: "running",
+            group: running,
+            jobID: running[0].jobID,
+          },
+        ]
+      : visible;
   if (list.length === 0) return null;
 
-  const canOpenTray = Boolean(route?.game);
+  // "Show in activity" opens the tray on Mission Control. From Setup it is
+  // not offered: the YAML and game editors' drafts there are the page's own
+  // state, and leaving would discard them (issue 655 review S5).
+  const canOpenTray = Boolean(route?.game) && route?.view !== "setup";
+  // The chooser has no game to import into.
+  const canAct = route?.view !== "chooser";
 
   return html`
     <div class="toasts" role="region" aria-label="Recent activity">
       ${list.map((toast) => {
         const hasAction =
-          toast.action && typeof actions?.[toast.action] === "function";
+          canAct &&
+          toast.action &&
+          typeof actions?.[toast.action] === "function";
         const showActivity = canOpenTray && toast.jobID;
+        // A running toast's live region is its title alone (RunningToastBody):
+        // its count changes with every frame, and a status role on the whole
+        // card would announce each one.
+        const role =
+          toast.tone === "failure"
+            ? "alert"
+            : toast.tone === "running"
+              ? null
+              : "status";
         return html`
           <div
             key=${toast.id}
             class="toast toast--${toast.tone}"
-            role=${toast.tone === "failure" ? "alert" : "status"}
-            data-job=${toast.jobID || null}
+            role=${role}
+            data-job=${toast.group ? null : toast.jobID || null}
           >
             <div class="toast__body">
               ${
-                toast.tone === "running"
-                  ? html`<${RunningToastBody}
-                      toast=${toast}
-                      frame=${progress?.[toast.jobID]}
-                      position=${positions?.[toast.jobID]}
-                    />`
-                  : html`
-                      <p class="toast__title">${toast.title}</p>
-                      ${
-                        toast.detail &&
-                        html`<p class="toast__detail">
-                          ${codeSpans(toast.detail)}
-                        </p>`
-                      }
-                      <${ItemFailureList}
-                        items=${toast.items}
-                        limit=${toastItemLimit}
-                      />
-                    `
+                toast.group
+                  ? html`<${RunningGroupBody} toasts=${toast.group} />`
+                  : toast.tone === "running"
+                    ? html`<${RunningToastBody}
+                        toast=${toast}
+                        frame=${progress?.[toast.jobID]}
+                        position=${positions?.[toast.jobID]}
+                      />`
+                    : html`
+                        <p class="toast__title">${toast.title}</p>
+                        ${
+                          toast.detail &&
+                          html`<p class="toast__detail">
+                            ${codeSpans(toast.detail)}
+                          </p>`
+                        }
+                        <${ItemFailureList}
+                          items=${toast.items}
+                          limit=${toastItemLimit}
+                          summary=${true}
+                        />
+                      `
               }
               ${
                 (hasAction || showActivity) &&
@@ -151,7 +189,10 @@ export function Toasts({
               type="button"
               class="button button--quiet button--icon button--small toast__dismiss"
               aria-label="Dismiss"
-              onClick=${() => onDismiss(toast.id)}
+              onClick=${() =>
+                toast.group
+                  ? toast.group.forEach((each) => onDismiss(each.id))
+                  : onDismiss(toast.id)}
             >
               ✕
             </button>
@@ -169,7 +210,7 @@ export function Toasts({
  * on, and the current download's own progress when one is under way.
  */
 function RunningToastBody({ toast, frame, position }) {
-  const label = jobRunningLabel(toast.kind, { collection: toast.collection });
+  const label = runningLabel(toast);
   const counted = position?.total > 0;
   const fraction = counted
     ? Math.min(1, Math.max(0, (position.index ?? 0) / position.total))
@@ -186,7 +227,7 @@ function RunningToastBody({ toast, frame, position }) {
   if (bytes) parts.push(`downloading ${bytes}`);
 
   return html`
-    <p class="toast__title">${label}…</p>
+    <p class="toast__title" role="status">${label}…</p>
     <div
       class="job-progress__bar ${fraction === null ? "job-progress__bar--indeterminate" : ""}"
     >
@@ -198,5 +239,26 @@ function RunningToastBody({ toast, frame, position }) {
     <p class="toast__detail" data-testid="toast-progress">
       ${parts.join(" · ") || "Starting…"}
     </p>
+  `;
+}
+
+/** runningLabel names a running toast's job ("Importing collection"). */
+function runningLabel(toast) {
+  return jobRunningLabel(toast.kind, {
+    collection: toast.collection,
+    origin: toast.auto ? "auto" : "",
+  });
+}
+
+/** RunningGroupBody is the one toast several running jobs share: how many
+ * there are, and what each is. */
+function RunningGroupBody({ toasts }) {
+  return html`
+    <p class="toast__title" role="status">${toasts.length} jobs running…</p>
+    <ul class="toast__jobs" data-testid="toast-running-group">
+      ${toasts.map(
+        (toast) => html`<li key=${toast.id}>${runningLabel(toast)}</li>`,
+      )}
+    </ul>
   `;
 }

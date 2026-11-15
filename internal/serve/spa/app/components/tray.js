@@ -42,6 +42,7 @@ import {
 } from "./errordetails.js";
 import { BatchFailures } from "./batchfailures.js";
 import { downloadFailureFor, nextStepFor } from "../failures.js";
+import { failureSummary, failuresOf } from "../itemfailures.js";
 import { PurgeResultDetails } from "./purgeresult.js";
 import { VerifyFixResult } from "./verifyfixresult.js";
 
@@ -414,23 +415,16 @@ function FailureNextStep({ job, actions }) {
   // and the engine's own text moves into a collapsed "Details" - the inline
   // readout's rule (jobprogress.js), here too.
   const download = downloadFailureFor(envelope.details);
-  // Issue 655: a failure naming several mods leads with one line per mod;
-  // the engine's joined text moves into "Details", as a download's does.
-  const items = envelope.items ?? [];
+  // Issue 655: a failure naming several mods leads with how many, then one
+  // line per mod; the engine's joined text moves into "Details", as a
+  // download's does. Everything else a failure offers stays: the next step
+  // (OverwriteButton - "Answer installer…" for a FOMOD question), and the
+  // details' own shape (a loader's setup steps, the question's summary, a
+  // download's page) - only the generic document view of a result whose
+  // failures are already listed is left out.
+  const items = failuresOf(job);
   const listed = items.length > 0;
-  const headed = Boolean(download?.manual) && !listed;
-
-  if (listed) {
-    return html`
-      <div class="tray__failure">
-        <p class="tray__failure-message">
-          ${items.length === 1 ? "1 mod failed:" : `${items.length} mods failed:`}
-        </p>
-        <${ItemFailureList} items=${items} />
-        <${RawError} text=${envelope.error} />
-      </div>
-    `;
-  }
+  const headed = Boolean(download?.manual);
 
   return html`
     <div class="tray__failure">
@@ -441,16 +435,20 @@ function FailureNextStep({ job, actions }) {
                 failure=${download}
                 actions=${actions}
               />`
-            : (envelope.error ?? "failed")
+            : listed
+              ? failureSummary(items)
+              : (envelope.error ?? "failed")
         }
       </p>
+      <${ItemFailureList} items=${items} />
       <${OverwriteButton} job=${job} actions=${actions} />
       <${ErrorDetails}
         details=${envelope.details}
         actions=${actions}
         headed=${headed}
+        noDocument=${listed}
       />
-      ${headed && html`<${RawError} text=${envelope.error} />`}
+      ${(headed || listed) && html`<${RawError} text=${envelope.error} />`}
     </div>
   `;
 }
