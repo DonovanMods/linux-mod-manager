@@ -31,6 +31,17 @@ nothing is downloaded again if lmm already has it.
   with everything else, lmm shows you what will change before it does it.
 - The **Profiles** window, opened from the picker, is where you create,
   rename, duplicate, delete, export and import profiles.
+- **Import collection…**, in the picker's menu under **Manage profiles…**,
+  opens the import on its own: a collection file, a collection's address,
+  a Steam Workshop collection or a NexusMods collection. Mission Control's
+  **Profile** card, when it's showing, has the same button. See
+  [Sharing a profile](#sharing-a-profile).
+- Pasting a collection's address into the **search box** offers to import
+  it instead of searching for it: a NexusMods collection's page (or its
+  slug, when the search finds no mods for it), an `https://` address of a
+  `.lmmc` file, or a Steam Workshop collection's link. A NexusMods
+  collection for a different game than the one you have selected says so
+  rather than offering an import that would be refused.
 
 ## In the terminal
 
@@ -144,8 +155,9 @@ file exported by an older version of lmm. One exception: a profile
 imported from a NexusMods collection whose mods are patched carries those
 patches only in a `.lmmc` file, so share that one (the export says so).
 
-In the browser, **Export** and **Import** are in the Profiles window.
-**Export** downloads a `.lmmc` file. **Import** takes the same files the
+In the browser, **Export** and **Import** are in the Profiles window, and
+**Import collection…** in the profile picker's menu opens the same import
+on its own. **Export** downloads a `.lmmc` file. **Import** takes the same files the
 terminal does, of any size it does: choose the file, and the import shows
 its plan before anything is written. To import a collection under another
 profile name (what `--as` does), type the name into the **Profile name**
@@ -313,8 +325,10 @@ lmm profile import https://example.com/coop.lmmc
 lmm profile import https://example.com/coop.yaml --as coop-friday --game cp2077
 ```
 
-In the browser, paste the address into **From a URL** in the Profiles
-window and press **Import from URL**. The address must be `https://`, and
+In the browser, paste the address into **From a URL** (in the Profiles
+window, or **Import collection…** in the profile picker's menu) and press
+**Import from URL**; or paste a `.lmmc` address into the search box and
+press **Import it…** on the offer above the results. The address must be `https://`, and
 it must lead to the file itself (a `.lmmc`, its YAML, or an older export),
 not to a web page about it. lmm downloads at most 64 MiB for a `.lmmc` and
 4 MiB for a YAML file, and won't follow a link that sends it on to a plain
@@ -354,13 +368,22 @@ lmm profile import --nexus-collection iszwwe --game cyberpunk2077
 lmm profile import --nexus-collection iszwwe@484 --game cyberpunk2077
 lmm profile import --nexus-collection https://www.nexusmods.com/games/skyrimspecialedition/collections/xk05aw --as essentials
 lmm profile import --nexus-collection xk05aw --with-optional
+lmm profile import --nexus-collection https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/revisions/484
 ```
 
 Give the collection's slug (the code at the end of its page's address),
-`slug@revision` for one revision, or the page's address. Without a
+`slug@revision` for one revision, or the page's address; the address of
+one revision's page (ending `/revisions/484`) imports that revision, as
+`iszwwe@484` does. An `http://` page address works as well as `https://`:
+lmm only reads the collection's name from it, and always talks to
+NexusMods over https. Without a
 revision you get the latest one, and the plan says which. A link to
 another game's collection is refused. In the browser, type the same thing
-into **NexusMods collection** in the Profiles window.
+into **NexusMods collection** (in the Profiles window, or **Import
+collection…** in the profile picker's menu), or paste the collection's
+page address into the search box and press **Import it…** on the offer
+above the results. The search box recognises the same slugs and
+addresses the terminal takes.
 
 You need a NexusMods API key (see [Your first mods](first-mods.md)), and
 lmm needs the `7z` command, because the recipe is a `.7z` file (see

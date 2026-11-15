@@ -1,0 +1,120 @@
+{
+  "comment": "What a user may type for a NexusMods collection, and what it names. Held to parseCollectionRef (collection_test.go's TestParseCollectionRef_SharedFixture) and to the web UI's collectionlink.js (internal/serve's TestE2E_CollectionLink_AgreesWithTheSourceParser), so the search box offers exactly the references `lmm profile import --nexus-collection` takes. invalid: true means not a NexusMods collection reference.",
+  "cases": [
+    { "ref": "iszwwe", "slug": "iszwwe" },
+    { "ref": "  iszwwe@484 ", "slug": "iszwwe", "revision": 484 },
+    { "ref": "ISZWWE", "slug": "iszwwe" },
+    { "ref": "iszwwe@04", "slug": "iszwwe", "revision": 4 },
+    {
+      "ref": "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe",
+      "domain": "cyberpunk2077",
+      "slug": "iszwwe"
+    },
+    {
+      "ref": "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/",
+      "domain": "cyberpunk2077",
+      "slug": "iszwwe"
+    },
+    {
+      "ref": "https://nexusmods.com/games/cyberpunk2077/collections/iszwwe@484",
+      "domain": "cyberpunk2077",
+      "slug": "iszwwe",
+      "revision": 484
+    },
+    {
+      "ref": "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe?tab=mods",
+      "domain": "cyberpunk2077",
+      "slug": "iszwwe"
+    },
+    {
+      "ref": "https://www.nexusmods.com/games/cyberpunk2077/collections/IszWwe",
+      "domain": "cyberpunk2077",
+      "slug": "iszwwe"
+    },
+    {
+      "ref": "https://next.nexusmods.com/skyrimspecialedition/collections/xk05aw",
+      "domain": "skyrimspecialedition",
+      "slug": "xk05aw"
+    },
+    {
+      "ref": "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/revisions/484",
+      "domain": "cyberpunk2077",
+      "slug": "iszwwe",
+      "revision": 484
+    },
+    {
+      "ref": "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/revisions/484/?tab=mods",
+      "domain": "cyberpunk2077",
+      "slug": "iszwwe",
+      "revision": 484
+    },
+    {
+      "ref": "https://next.nexusmods.com/skyrimspecialedition/collections/xk05aw/revisions/3",
+      "domain": "skyrimspecialedition",
+      "slug": "xk05aw",
+      "revision": 3
+    },
+    {
+      "ref": "http://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe",
+      "domain": "cyberpunk2077",
+      "slug": "iszwwe"
+    },
+    {
+      "ref": "http://next.nexusmods.com/skyrimspecialedition/collections/xk05aw/revisions/3",
+      "domain": "skyrimspecialedition",
+      "slug": "xk05aw",
+      "revision": 3
+    },
+    { "ref": "", "invalid": true },
+    { "ref": "iszwwe@", "invalid": true },
+    { "ref": "iszwwe@0", "invalid": true },
+    { "ref": "iszwwe@-3", "invalid": true },
+    { "ref": "iszwwe@abc", "invalid": true },
+    { "ref": "not a slug", "invalid": true },
+    { "ref": "../etc", "invalid": true },
+    {
+      "ref": "ftp://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe",
+      "invalid": true
+    },
+    {
+      "ref": "https://evil.example/games/cyberpunk2077/collections/iszwwe",
+      "invalid": true
+    },
+    {
+      "ref": "https://user@www.nexusmods.com/games/cyberpunk2077/collections/iszwwe",
+      "invalid": true
+    },
+    {
+      "ref": "https://www.nexusmods.com/cyberpunk2077/mods/107",
+      "invalid": true
+    },
+    {
+      "ref": "https://www.nexusmods.com/games/Cyberpunk2077/collections/iszwwe",
+      "invalid": true
+    },
+    {
+      "ref": "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/revisions/0",
+      "invalid": true
+    },
+    {
+      "ref": "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/revisions/abc",
+      "invalid": true
+    },
+    {
+      "ref": "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/revisions",
+      "invalid": true
+    },
+    {
+      "ref": "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/revisions/484@3",
+      "invalid": true
+    },
+    {
+      "ref": "https://www.nexusmods.com/games/cyberpunk2077/collections/iszwwe/mods",
+      "invalid": true
+    },
+    {
+      "ref": "https://www.nexusmods.com/games//cyberpunk2077/collections/iszwwe",
+      "invalid": true
+    }
+  ]
+}

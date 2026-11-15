@@ -1401,6 +1401,18 @@ function ProfileCard({
             Sync…
           </button>
         <//>
+        ${
+          /* issue 650: a collection imports as a new profile - the other
+          way to get a profile into the shape you want. */ ""
+        }
+        <button
+          type="button"
+          class="button"
+          data-action="import-collection"
+          onClick=${() => actions.openImportCollectionModal()}
+        >
+          Import collection…
+        </button>
       </div>
     </div>
   `;

@@ -19,6 +19,7 @@ import { SetupPage } from "./setup.js";
 import { ConfirmPlanModal } from "./confirmplan.js";
 import { ReorderModal } from "./reordermodal.js";
 import { ProfilesModal } from "./profilesmodal.js";
+import { ImportCollectionModal } from "./importcollectionmodal.js";
 import { UninstallBatchModal } from "./uninstallbatchmodal.js";
 import { ShortcutsModal } from "./shortcutsmodal.js";
 import { LaunchDriftModal } from "./launchmodal.js";
@@ -137,6 +138,10 @@ export function App({ state, onThemeChange, actions }) {
         state=${state}
         actions=${actions}
       />`
+    }
+    ${
+      modalType === "import-collection" &&
+      html`<${ImportCollectionModal} modal=${state.modal} actions=${actions} />`
     }
     ${
       modalType === "shortcuts" &&

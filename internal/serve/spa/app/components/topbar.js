@@ -474,6 +474,24 @@ function ProfilePicker({
                 Manage profiles…
               </button>
             </li>
+            <li>
+              <button
+                type="button"
+                class="menu-item picker__item"
+                data-action="import-collection"
+                onClick=${() => {
+                  onClose();
+                  // issue 650: the visible door to importing a collection.
+                  // The menu item closes with the menu, so focus returns to
+                  // the picker's trigger (modal.js's openerSelector).
+                  actions.openImportCollectionModal({
+                    openerSelector: ".profile-picker__trigger",
+                  });
+                }}
+              >
+                Import collection…
+              </button>
+            </li>
           </ul>
         `
       }

@@ -1435,6 +1435,15 @@ function openProfilesModal() {
   store.set({ modal: { type: "profiles" } });
 }
 
+/** openImportCollectionModal opens "Import collection…" (issue 650): the
+ * profile picker menu's entry and the Profile card's. openerSelector names
+ * the control focus returns to when the opener was a menu item that closed
+ * with its menu (modal.js); the card's button passes none, since it stays
+ * on screen. */
+function openImportCollectionModal({ openerSelector } = {}) {
+  store.set({ modal: { type: "import-collection", openerSelector } });
+}
+
 /** openShortcutsModal opens the keyboard-shortcuts help (design doc §Modals,
  * issue 334's gate review Important 3) - reachable from the top bar's own
  * "?" control and from the `?` key on any screen. Read-only: it renders
@@ -3012,6 +3021,7 @@ const actions = {
   fillTargetFor,
   openReorderModal,
   openProfilesModal,
+  openImportCollectionModal,
   openShortcutsModal,
   openUninstallBatchModal,
   startBatchToggle,

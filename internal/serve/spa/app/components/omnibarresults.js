@@ -11,6 +11,10 @@
 // The fan-out is capped and never pages (main.js#OMNIBAR_FANOUT_LIMIT), so a
 // ready report ends with "See all results" - the way to the dedicated search
 // page (searchpage.js) for the same query, which does page (issue 500).
+//
+// A pasted collection link gets the search page's own offer to import it
+// (collectionoffer.js, issue 650): this is the search box a user pastes
+// into, and a collection's address finds no mods.
 
 import { html } from "../render.js";
 import { contextPath, navigate } from "../router.js";
@@ -20,6 +24,8 @@ import {
   warningsCaption,
 } from "./searchresults.js";
 import { Arrow } from "./arrow.js";
+import { CollectionOffer } from "./collectionoffer.js";
+import { collectionLink } from "../collectionlink.js";
 
 export function OmnibarResults({ omnibarSearch, query, state, actions }) {
   const q = (query ?? "").trim();
@@ -39,10 +45,18 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
     `;
   }
 
+  const collection = collectionLink(q);
+
   if (omnibarSearch.status === "error") {
     return html`
       <section class="library omnibar-results">
         <h2 class="section-header">From sources</h2>
+        <${CollectionOffer}
+          link=${collection}
+          state=${state}
+          actions=${actions}
+          noResults=${true}
+        />
         <p class="empty-state__hint">
           Couldn't search sources: ${omnibarSearch.error}
         </p>
@@ -65,6 +79,12 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
       <h2 class="section-header">
         From sources (${hits.length})${warningsCaption(warnings)}
       </h2>
+      <${CollectionOffer}
+        link=${collection}
+        state=${state}
+        actions=${actions}
+        noResults=${hits.length === 0}
+      />
       ${
         hits.length === 0 &&
         skippedNotice !== "" &&

@@ -30,12 +30,14 @@ import (
 type nexusCollectionDouble struct {
 	goldenSearchSource
 	archiveURL string
+	gotRef     string
 }
 
 func (*nexusCollectionDouble) ID() string   { return "nexusmods" }
 func (*nexusCollectionDouble) Name() string { return "NexusMods" }
 
-func (*nexusCollectionDouble) ResolveGameCollection(_ context.Context, gameSourceID, _ string) (source.Collection, error) {
+func (d *nexusCollectionDouble) ResolveGameCollection(_ context.Context, gameSourceID, ref string) (source.Collection, error) {
+	d.gotRef = ref
 	return source.Collection{ID: "abcdef", Name: "Three Mods", Revision: 3, Author: "curator",
 		URL: "https://www.nexusmods.com/games/" + gameSourceID + "/collections/abcdef", Handle: "/h",
 		Items: []source.CollectionItem{
@@ -139,6 +141,33 @@ func TestDoNexusCollectionImport_FreeAccountPlansAndSavesThePending(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, saved.Mods, 1)
 	assert.Equal(t, "nexusmods:abcdef", saved.Collection.ID)
+}
+
+// #650: a revision's page address and an http page address are references
+// --nexus-collection takes as typed - the CLI forwards them verbatim, and
+// the source reads them (nexusmods' TestParseCollectionRef, over the
+// fixture the web UI's search box is held to as well). profile import has
+// no --dry-run; a free account's import downloads nothing.
+func TestDoNexusCollectionImport_RevisionPageAddress(t *testing.T) {
+	for _, ref := range []string{
+		"https://www.nexusmods.com/games/skyrimspecialedition/collections/abcdef/revisions/3",
+		"http://www.nexusmods.com/games/skyrimspecialedition/collections/abcdef",
+	} {
+		t.Run(ref, func(t *testing.T) {
+			svc, game, _ := nexusCollectionService(t)
+			src, err := svc.GetSource("nexusmods")
+			require.NoError(t, err)
+			double := src.(*nexusCollectionDouble)
+			setNexusFlags(t, ref, false)
+			stdout, _, err := captureStdoutStderrErr(t, func() error {
+				return doNexusCollectionImport(context.Background(), svc, game)
+			})
+			require.NoError(t, err, stdout)
+			assert.Equal(t, ref, double.gotRef, "the address reaches the source as typed")
+			assert.Contains(t, stdout, "2 item(s) at revision 3")
+			assert.Contains(t, stdout, "✓ Imported profile: Three Mods")
+		})
+	}
 }
 
 func TestDoNexusCollectionImport_WithOptional(t *testing.T) {
