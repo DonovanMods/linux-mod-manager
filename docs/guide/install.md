@@ -65,8 +65,10 @@ sudo mv lmm /usr/local/bin/
 ## Optional: 7-Zip
 
 lmm opens `.zip` archives by itself. Some mods are packed as `.7z` or `.rar`
-instead, and for those lmm uses the `7z` program. Most distributions call
-the package `p7zip` or `7zip`. The `.deb` and `.rpm` packages suggest it for
+instead, and for those lmm uses the `7z` program. It uses `7z` too for the
+occasional `.zip` compressed with a method lmm cannot read itself (BZIP2,
+LZMA, Deflate64, Zstandard or PPMd); the error names the method when `7z`
+is missing. Most distributions call the package `p7zip` or `7zip`. The `.deb` and `.rpm` packages suggest it for
 you; otherwise, install it if a mod ever fails to unpack.
 
 ## Check that it worked

@@ -252,7 +252,8 @@ These install `/usr/bin/lmm`, the man pages under `/usr/share/man/man1`
 (`man lmm`), shell completions, and the README, CHANGELOG and LICENSE under
 `/usr/share/doc/lmm`. `p7zip` is a _recommended_ dependency, not a required
 one: lmm extracts `.zip` archives itself and shells out to `7z` (and `unrar`)
-only for `.7z` and `.rar` mods.
+only for `.7z` and `.rar` mods, and for a `.zip` compressed with a method
+Go's zip reader cannot decode (BZIP2, LZMA, Deflate64, Zstandard, PPMd).
 
 ### From GitHub Releases
 
