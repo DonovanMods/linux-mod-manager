@@ -595,11 +595,16 @@ func availableFiles(files []domain.DownloadableFile) []domain.DownloadableFile {
 	return out
 }
 
-// versionToken matches a version inside a file name ("v1.2", "4.3.8a").
-var versionToken = regexp.MustCompile(`(?i)\bv?\d+(?:[._-]\d+)*[a-z]?\b`)
+// versionToken matches a version inside a file name: one after a "v"
+// ("v1", "v1.2a") or a dotted one ("1.2", "4.3.8a"). A bare number or a
+// number with a letter ("4K", "2K", "1080p", "512", "2048") is a
+// resolution or a size - part of what the file is - so it stays in the
+// name (#657 re-review: "Textures 4K" must not match "Textures 2K").
+var versionToken = regexp.MustCompile(`(?i)\b(?:v\d+(?:[._]\d+)*|\d+(?:[._]\d+)+)[a-z]?\b`)
 
 // normaliseFileName is a file name compared without case, versions or
-// punctuation, so "Ten Patch v1.2" and "Ten Patch 1.3" match.
+// punctuation, so "Ten Patch v1.2" and "Ten Patch 1.3" match, and
+// "Textures 4K" and "Textures 2K" do not.
 func normaliseFileName(name string) string {
 	name = versionToken.ReplaceAllString(strings.ToLower(name), " ")
 	name = strings.Map(func(r rune) rune {

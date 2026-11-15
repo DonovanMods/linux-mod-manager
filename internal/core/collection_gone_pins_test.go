@@ -10,6 +10,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -303,7 +304,14 @@ const twoFileTenRecipe = `{"name": "Three Mods", "mods": [
 // 10's listing.
 func newTwoFileFixture(t *testing.T, listing []domain.DownloadableFile) *sourceImportFixture {
 	t.Helper()
-	f := newSourceImportFixtureWith(t, source.TierPremium, twoFileTenRecipe)
+	return newTwoFileFixtureNamed(t, "Ten Optional Patch", listing)
+}
+
+// newTwoFileFixtureNamed is newTwoFileFixture with the gone optional 105
+// named optionalName.
+func newTwoFileFixtureNamed(t *testing.T, optionalName string, listing []domain.DownloadableFile) *sourceImportFixture {
+	t.Helper()
+	f := newSourceImportFixtureWith(t, source.TierPremium, strings.Replace(twoFileTenRecipe, `"Ten Optional Patch"`, `"`+optionalName+`"`, 1))
 	f.src.recipe.collection.Items = []source.CollectionItem{
 		{Kind: source.CollectionItemModFile, ModID: "10", FileID: "100", Name: "Ten", FileCategory: "OLD_VERSION"},
 		{Kind: source.CollectionItemModFile, FileID: "105"},
@@ -388,7 +396,7 @@ func TestGonePin_TwoMatchingOptionalsAreNoMatch(t *testing.T) {
 		domain.DownloadableFile{ID: "106", Name: "Ten Optional Patch v2", Version: "2", Category: "OPTIONAL"},
 		domain.DownloadableFile{ID: "109", Name: "Ten Optional Patch (SE)", Version: "2", Category: "OPTIONAL"},
 	))
-	f.src.listing["10"][3].Name = "Ten Optional Patch 3"
+	f.src.listing["10"][3].Name = "Ten Optional Patch v3"
 	plan := f.plan(t, core.SourceCollectionImportRequest{})
 	assert.Nil(t, plan.Collection.Source.GonePins[0].Current)
 }
@@ -420,4 +428,29 @@ func TestGonePin_AChoiceNamingNoGonePinIsRefused(t *testing.T) {
 		SourceID: "nexusmods", Ref: "abcdef", GonePins: core.GonePinChoices{Skip: []string{"nexusmods:11"}}})
 	require.True(t, core.IsBadGonePinChoice(err), "got %v", err)
 	assert.Contains(t, err.Error(), "nexusmods:11 names no mod whose pinned file is gone; the plan's are nexusmods:10")
+}
+
+// TestGonePin_AResolutionIsPartOfTheName (#657 re-review): 4K, 2K, 1080p,
+// 512 and 2048 name what a file is, not its version, so a gone "Textures
+// 4K" is not stood in for by the 2K file that is still offered - and
+// --use-current-all cannot take it silently - while a version, after a "v"
+// or dotted, still differs freely.
+func TestGonePin_AResolutionIsPartOfTheName(t *testing.T) {
+	f := newTwoFileFixtureNamed(t, "Textures 4K", tenOldMain(
+		domain.DownloadableFile{ID: "106", FileName: "f106.zip", Name: "Textures 2K", Version: "2", Category: "OPTIONAL"}))
+	plan := f.plan(t, core.SourceCollectionImportRequest{GonePins: core.GonePinChoices{UseCurrentAll: true}})
+	pin := plan.Collection.Source.GonePins[0]
+	assert.Nil(t, pin.Files[0].Replacement, "2K is not 4K")
+	assert.Nil(t, pin.Current)
+	assert.True(t, pin.CanSkipFile, "skip_file or skip only")
+	assert.Empty(t, pin.Choice, "--use-current-all takes nothing")
+
+	f = newTwoFileFixtureNamed(t, "Textures 4K v1.0", tenOldMain(
+		domain.DownloadableFile{ID: "106", FileName: "f106.zip", Name: "Textures 2K v1.2", Version: "2", Category: "OPTIONAL"},
+		domain.DownloadableFile{ID: "108", FileName: "f108.zip", Name: "Textures 4K v1.2", Version: "2", Category: "OPTIONAL"}))
+	plan = f.plan(t, core.SourceCollectionImportRequest{GonePins: core.GonePinChoices{UseCurrentAll: true}})
+	pin = plan.Collection.Source.GonePins[0]
+	require.NotNil(t, pin.Files[0].Replacement)
+	assert.Equal(t, "108", pin.Files[0].Replacement.FileID, "the same resolution at another version")
+	assert.Equal(t, core.GonePinUseCurrent, pin.Choice)
 }
