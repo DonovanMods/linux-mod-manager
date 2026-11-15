@@ -152,3 +152,28 @@ func TestCollectionFomod_TheMD5IsNotSavedOnTheProfile(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(export), actual)
 }
+
+// #660 review B1: an installer left to finish keeps the curator's md5
+// through a finish that fails again, so a second finish still asks rather
+// than replaying the recorded choices on another archive (#609).
+func TestCollectionFinish_ASecondFinishStillChecksTheArchive(t *testing.T) {
+	f, _ := newMD5Fixture(t)
+	ctx := context.Background()
+	recorded := strings.Repeat("0", 32)
+	err := f.importCollection(t, md5Collection(recorded), nil)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+
+	for round := 1; round <= 2; round++ {
+		plan, err := f.svc.PlanCollectionFinish(ctx, f.game, core.CollectionFinishRequest{Profile: "col", RetryAll: true})
+		require.NoError(t, err)
+		_, err = f.svc.ApplyCollectionFinish(ctx, f.game, plan, core.CollectionFinishOptions{}, nil)
+		var q *core.FomodChoicesRequiredError
+		require.True(t, errors.As(err, &q), "round %d: got %v", round, err)
+		assert.Equal(t, core.FomodReasonArchiveMismatch, q.Mods[0].Reason, "round %d", round)
+		assert.Empty(t, f.deployed(t, "textures/t.dds"), "round %d: nothing replayed on another archive", round)
+		ref := f.ref(t, "col", "mod1")
+		require.NotNil(t, ref.Todo, "round %d", round)
+		assert.Equal(t, map[string]string{"mod1": recorded}, ref.Todo.ArchiveMD5, "round %d: the md5 is carried forward", round)
+	}
+}

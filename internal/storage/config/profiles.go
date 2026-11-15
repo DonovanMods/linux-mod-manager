@@ -478,10 +478,17 @@ func ExportProfileValue(profile *domain.Profile) *domain.ExportedProfile {
 			overrides[path] = string(content)
 		}
 	}
+	// #660 review: this machine's records are never exported - not in the
+	// YAML (their yaml "-" tags), and not in this value either, which
+	// `profile export --json` emits.
+	mods := slices.Clone(profile.Mods)
+	for i := range mods {
+		mods[i].Todo, mods[i].SubstitutedFor = nil, nil
+	}
 	return &domain.ExportedProfile{
 		Name:          profile.Name,
 		GameID:        profile.GameID,
-		Mods:          profile.Mods,
+		Mods:          mods,
 		LinkMethod:    linkMethod,
 		Overrides:     overrides,
 		Hooks:         profile.Hooks,

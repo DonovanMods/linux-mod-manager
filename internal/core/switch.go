@@ -336,6 +336,13 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		if hasOwn {
 			row = tr
 		}
+		if ref.Todo != nil && !hasOwn {
+			// #660: a collection item the target profile has left to do
+			// is Finish collection's to resolve - never installed, enabled
+			// from another profile's copy, or converged here, whatever the
+			// outgoing profile has of it (SwitchPlan.Unresolved).
+			continue
+		}
 		if installed && !hasOwn && !im.External && isArchiveVariant(im.Variant) {
 			// #644: the row is another profile's imported archive - its
 			// own custom build, never this profile's. Installed from the
@@ -374,8 +381,6 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 
 		live := liveOutgoing(key)
 		switch {
-		case !installed && ref.Todo != nil:
-			// #660: Finish collection's to resolve (SwitchPlan.Unresolved).
 		case !installed:
 			toInstall = append(toInstall, ref)
 		case (ref.Version != "" && row.Version != ref.Version) || fomodDrift(ref, row) || row.ModType != ref.ModType || fileSetDrift(ref, row):
@@ -485,8 +490,8 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		skip[domain.ModKey(ref.SourceID, ref.ModID)] = true
 	}
 	overrides := s.planOverrideChanges(ctx, game, targetProfile, skip)
-	installedKeys := make(map[string]bool, len(allInstalled))
-	for key := range allInstalled {
+	installedKeys := make(map[string]bool, len(targetInstalled))
+	for key := range targetInstalled {
 		installedKeys[key] = true
 	}
 

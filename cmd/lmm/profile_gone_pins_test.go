@@ -134,34 +134,6 @@ func TestDoNexusCollectionImport_GonePinJSON(t *testing.T) {
 	assert.True(t, pin.CuratorExact)
 }
 
-func TestReportError_JSON_CollectionGonePinsError(t *testing.T) {
-	withJSONOutput(t)
-	err := &core.CollectionGonePinsError{Pins: []core.CollectionGonePin{{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1.0",
-		FileIDs: []string{"100"}, Current: &core.CollectionCurrentFile{FileID: "101", Name: "Ten Two", Version: "2.0"}}}}
-	out := captureStdout(t, func() error { reportError(err); return nil })
-	assert.Equal(t, "{\n"+
-		"  \"error\": \"the collection pins 1 file(s) the source no longer offers - Ten: the collection pins file 100 (version 1.0); choose for each: --use-current <mod> (or --use-current-all) installs the current file of the same role instead, --skip-file <mod> leaves out a gone optional file and installs the rest, --skip <mod> leaves the mod out\",\n"+
-		"  \"details\": {\n"+
-		"    \"pins\": [\n"+
-		"      {\n"+
-		"        \"source_id\": \"nexusmods\",\n"+
-		"        \"mod_id\": \"10\",\n"+
-		"        \"name\": \"Ten\",\n"+
-		"        \"version\": \"1.0\",\n"+
-		"        \"file_ids\": [\n"+
-		"          \"100\"\n"+
-		"        ],\n"+
-		"        \"current\": {\n"+
-		"          \"file_id\": \"101\",\n"+
-		"          \"name\": \"Ten Two\",\n"+
-		"          \"version\": \"2.0\"\n"+
-		"        }\n"+
-		"      }\n"+
-		"    ]\n"+
-		"  }\n"+
-		"}\n", out)
-}
-
 func TestRunProfileImport_GonePinFlagsNeedNexusCollection(t *testing.T) {
 	setGonePinFlags(t, gonePinFlags{useCurrentAll: true})
 	err := runProfileImport(profileImportCmd, []string{"some.yaml"})
@@ -310,7 +282,9 @@ func TestDoNexusCollectionImport_SkipFile(t *testing.T) {
 	})
 	setNexusFlags(t, "abcdef", false)
 	stdout, _, err := captureStdoutStderrErr(t, func() error { return doNexusCollectionImport(context.Background(), svc, game) })
-	require.NoError(t, err, "#660: nothing stands in for it, and the import is not refused: %s", stdout)
+	// #660: nothing stands in for it, and the import is not refused - it
+	// is left unfinished, so the exit is non-zero (review S4).
+	require.ErrorIs(t, err, ErrReported, stdout)
 	assert.Contains(t, stdout, "Ten Optional Patch (an optional file): no current file of the same kind matches it")
 	assert.Contains(t, stdout, "left to finish after the import (lmm profile finish), or decide now: --skip-file 10 (install the rest), or --skip 10")
 	assert.NotContains(t, stdout, "--use-current 10")

@@ -897,10 +897,14 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   action. An installed mod keeps the old sentence.
 - **A collection import with failed items is no longer refused (#660).** It
   used to write nothing when one mod failed (C2's all-or-nothing rule);
-  the owner ruled that out. The CLI still exits non-zero while a mod
-  failed (as any partial import does), and `--json` gains `todos` and
-  `total`; a free account's import, whose mods are pending downloads,
-  still exits zero. A NexusMods account that stops being served downloads
+  the owner ruled that out. The CLI exits non-zero while anything is
+  left to finish (a gone pin nothing stands in for included), and
+  `--json` gains `todos` and `total`; a free account's import, whose mods
+  are pending downloads, still exits zero. A gone pin no longer refuses an
+  import or update, so `CollectionGonePinsError` (#657, never released) is
+  removed. `profile export --json` no longer carries a mod's
+  `substituted_for` (nor its new `todo`): both are this machine's records,
+  which the YAML export already left out. A NexusMods account that stops being served downloads
   mid-import now leaves each mod a manual download rather than refusing.
 
 - **Every field and form in the web UI is drawn one way (#653).** The

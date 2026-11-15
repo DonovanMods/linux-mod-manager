@@ -335,7 +335,10 @@ func (a *acquireItems[T]) releaseAll(blocked bool) {
 // settle commits a clean item, or records a failed one as the flow's
 // per-item failure, and releases it either way.
 func (a *acquireItems[T]) settle(ctx context.Context, it *acquiredItem[T]) error {
-	defer a.release(it, false)
+	// Under blockNone a failed item is left to finish (#660): what it
+	// acquired before it failed - a multi-file mod's earlier files - is
+	// kept for the retry, as a blocked run keeps it.
+	defer a.release(it, it.failure != nil && a.r.policy.blockNone)
 	if it.failure != nil {
 		if it.failure.settle != nil {
 			it.failure.settle()

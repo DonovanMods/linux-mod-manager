@@ -2735,16 +2735,6 @@ func TestJSONGoldens(t *testing.T) {
 				CanSkipFile: true, Conflict: true, Choice: core.GonePinSkipFile},
 		},
 		{
-			// #657: the --json error envelope's details for undecided gone
-			// pins - one with a current file, one without.
-			"collection_gone_pins_error",
-			core.CollectionGonePinsError{Pins: []core.CollectionGonePin{
-				{SourceID: "nexusmods", ModID: "266", Name: "Unofficial Skyrim Special Edition Patch", Version: "4.3.8a",
-					FileIDs: []string{"733846"}, Current: &core.CollectionCurrentFile{FileID: "800000", Name: "USSEP", Version: "4.3.9"}},
-				{SourceID: "nexusmods", ModID: "999", Name: "Removed Mod", Version: "1.0", FileIDs: []string{"5000"}},
-			}},
-		},
-		{
 			// #660: a gone pin's default - the current file - when the
 			// curator pinned the version exactly.
 			"collection_gone_pin_default",

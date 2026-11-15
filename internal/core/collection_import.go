@@ -762,6 +762,7 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 		}
 	}
 	plan, heldBack := plan.installingNone(held)
+	opts.heldTodos = held
 	result, err := s.ApplyImport(ctx, game, plan, opts, sink)
 	if result == nil || result.ProfileName == "" {
 		return result, err
@@ -769,6 +770,11 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 	result.BundledSkipped = bundledSkipped
 	if terr := s.recordCollectionTodos(ctx, game, result, held); terr != nil && err == nil {
 		err = terr
+	}
+	if err == nil && needsUser(result.Todos) {
+		// A held item (a gone pin nothing stands in for) failed nothing,
+		// and still leaves the import unfinished.
+		err = &ProfileImportIncompleteError{Profile: result.ProfileName, Result: result}
 	}
 	// The items held back from the apply (a free account's downloads, a
 	// gone pin nothing stands in for) are pending, as a --no-install
@@ -1537,6 +1543,11 @@ func (s *Service) recordCollectionTodos(ctx context.Context, game *domain.Game, 
 	for key, t := range result.todoRecords {
 		records[key] = t
 	}
+	// #660 review S3: the records are written whatever became of the
+	// caller's context - what failed before a cancellation failed either
+	// way, and a profile without its records would list those items with
+	// no reason.
+	ctx = context.WithoutCancel(ctx)
 	pm := s.NewProfileManager()
 	if err := pm.writeTodos(ctx, game.ID, result.ProfileName, records); err != nil {
 		return fmt.Errorf("recording the collection's items to finish: %w", err)

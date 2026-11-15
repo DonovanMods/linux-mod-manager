@@ -6,6 +6,7 @@ package config_test
 // exported, never in a collection document.
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -58,4 +59,21 @@ func TestSaveProfile_TodoReasonChangesInPlace(t *testing.T) {
 	reloaded, err := config.LoadProfile(dir, "tg", "default")
 	require.NoError(t, err)
 	require.Equal(t, &domain.CollectionTodo{Reason: domain.TodoGonePin, FileIDs: []string{"9"}}, reloaded.FindRef("local", "beta").Todo)
+}
+
+// TestExportProfileValue_CarriesNoMachineRecords: `profile export --json`
+// emits ExportProfileValue, which - like the YAML export - carries neither
+// a to-do nor the pin a substitute stands in for (#660 review).
+func TestExportProfileValue_CarriesNoMachineRecords(t *testing.T) {
+	profile := &domain.Profile{Name: "p", GameID: "g", Mods: []domain.ModReference{{
+		SourceID: "nexusmods", ModID: "266", Version: "4.3.9",
+		Todo:           &domain.CollectionTodo{Reason: domain.TodoDownloadFailed},
+		SubstitutedFor: &domain.CollectionPin{Version: "4.3.8a", FileIDs: []string{"733846"}},
+	}}}
+	exported := config.ExportProfileValue(profile)
+	data, err := json.Marshal(exported)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "todo")
+	require.NotContains(t, string(data), "substituted_for")
+	require.NotNil(t, profile.Mods[0].Todo, "the profile itself keeps its records")
 }

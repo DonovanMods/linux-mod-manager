@@ -100,7 +100,9 @@ func TestCollectionImport_AGonePinNothingStandsInForIsATodo(t *testing.T) {
 	assert.Empty(t, plan.Collection.Source.GonePins[0].Choice, "nothing to install in its place")
 
 	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
-	require.NoError(t, err, "a gone pin no longer refuses the import")
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete, "a gone pin no longer refuses the import, and leaves it unfinished")
+	assert.Contains(t, err.Error(), "1 item(s) left to finish")
 	assert.Equal(t, 1, result.Installed)
 	require.Len(t, result.Todos, 1)
 	todo := result.Todos[0]
@@ -238,7 +240,7 @@ func TestCollectionFinish_UseCurrentForAGonePin(t *testing.T) {
 	f := newGonePinFixture(t)
 	f.src.listErr = map[string]error{"10": domain.ErrModNotFound}
 	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, f.plan(t, core.SourceCollectionImportRequest{}), core.ProfileImportOptions{Install: true}, nil)
-	require.NoError(t, err)
+	require.ErrorAs(t, err, new(*core.ProfileImportIncompleteError))
 	f.src.listErr = nil // the mod page is back, with a current file
 
 	plan, result, err := f.finish(t, core.CollectionFinishRequest{UseCurrent: []string{"nexusmods:10"}}, nil)
@@ -274,22 +276,12 @@ func TestCollectionFinish_RefusesWhatAnItemDoesNotOffer(t *testing.T) {
 
 // #660 ruling 3: an unfinished collection deploys, switches and applies,
 // leaving its to-dos alone and warning about them.
-func TestCollectionTodos_DeployApplyAndSwitchWarnAndLeaveThemAlone(t *testing.T) {
+func TestCollectionTodos_DeployAndApplyWarnAndLeaveThemAlone(t *testing.T) {
 	f := importWithTodos(t)
 	ctx := context.Background()
 	live, err := f.svc.NewProfileManager().GetDefault(ctx, f.game.ID)
 	require.NoError(t, err)
-	if live.Name != "Three Mods" {
-		switchPlan, err := f.svc.PlanProfileSwitch(ctx, f.game, "Three Mods")
-		require.NoError(t, err)
-		require.NotNil(t, switchPlan.Unresolved, "the switch warns")
-		assert.Contains(t, switchPlan.Unresolved.Warning, "collection incomplete: 2 item(s) unresolved")
-		for _, ref := range switchPlan.ToInstall {
-			assert.NotContains(t, []string{"11", "12"}, ref.ModID, "a to-do is not retried mid-switch")
-		}
-		_, err = f.svc.ApplyProfileSwitch(ctx, f.game, switchPlan, nil)
-		require.NoError(t, err)
-	}
+	require.Equal(t, "Three Mods", live.Name, "the import made it the active profile")
 
 	apply, err := f.svc.PlanProfileApply(ctx, f.game, "Three Mods")
 	require.NoError(t, err)
@@ -310,6 +302,52 @@ func TestCollectionTodos_DeployApplyAndSwitchWarnAndLeaveThemAlone(t *testing.T)
 	require.NotNil(t, status.ProfileDrift)
 	assert.Equal(t, 2, status.ProfileDrift.Unresolved, "the drift summary counts them")
 	assert.Zero(t, status.ProfileDrift.NotInstalled)
+}
+
+// #660 review S1/S2: switching to an unfinished collection leaves its
+// to-dos alone and warns about every one - even when the profile switched
+// away from has those mods installed, which must not be enabled or
+// converged into the collection.
+func TestCollectionTodos_SwitchingBackLeavesThemAloneWhateverTheOutgoingProfileHas(t *testing.T) {
+	f := importWithTodos(t)
+	ctx := context.Background()
+	// Another profile of the same collection, with every mod installed.
+	f.src.urlErrs = nil
+	other := f.plan(t, core.SourceCollectionImportRequest{WithOptional: true, ProfileName: "Other"})
+	_, err := f.svc.ApplyCollectionImport(ctx, f.game, other, core.ProfileImportOptions{Install: true,
+		Fomod: map[string]domain.FomodChoices{"nexusmods:12": answer("4K")}}, nil)
+	require.NoError(t, err)
+
+	_, err = f.svc.GetInstalledMod(ctx, "nexusmods", "11", "skyrim", "Other")
+	require.NoError(t, err, "the outgoing profile has mod 11")
+
+	away, err := f.svc.PlanProfileSwitch(ctx, f.game, "Other")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyProfileSwitch(ctx, f.game, away, nil)
+	require.NoError(t, err)
+	live, err := f.svc.NewProfileManager().GetDefault(ctx, f.game.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Other", live.Name)
+
+	back, err := f.svc.PlanProfileSwitch(ctx, f.game, "Three Mods")
+	require.NoError(t, err)
+	require.NotNil(t, back.Unresolved, "the switch warns")
+	assert.Contains(t, back.Unresolved.Warning, "collection incomplete: 2 item(s) unresolved")
+	assert.Equal(t, map[string]string{"11": domain.TodoDownloadFailed, "12": domain.TodoInstallerQuestions}, todoReasons(back.Unresolved.Items),
+		"every to-do is named, the ones the outgoing profile has included")
+	for _, ref := range back.ToInstall {
+		assert.NotContains(t, []string{"11", "12"}, ref.ModID, "a to-do is not installed mid-switch")
+	}
+	for _, row := range back.ToEnable {
+		assert.NotContains(t, []string{"11", "12"}, row.ID, "nor enabled from another profile's copy")
+	}
+	_, err = f.svc.ApplyProfileSwitch(ctx, f.game, back, nil)
+	require.NoError(t, err, "an unfinished collection switches")
+	_, err = f.svc.GetInstalledMod(ctx, "nexusmods", "11", "skyrim", "Three Mods")
+	assert.Error(t, err, "still left to finish")
+	report, err := f.svc.CollectionTodos(ctx, f.game, "Three Mods")
+	require.NoError(t, err)
+	assert.Len(t, report.Todos, 2)
 }
 
 // #660: a collection update of a profile with items left to finish retries
@@ -339,4 +377,136 @@ func TestCollectionUpdate_WithItemsLeftToFinish(t *testing.T) {
 	row, err := f.svc.GetInstalledMod(ctx, "nexusmods", "10", "skyrim", "coll")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"101"}, row.FileIDs)
+}
+
+// #660 review S6: a finish that moves a gone pin to the current file and
+// stops before the install leaves the ref and its to-do agreeing - not
+// installed at the new pin, a retry - and finishing again installs it
+// once, never with the current file twice.
+func TestCollectionFinish_AStoppedUseCurrentIsRetriedCleanly(t *testing.T) {
+	f := newGonePinFixture(t)
+	f.src.listErr = map[string]error{"10": domain.ErrModNotFound}
+	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, f.plan(t, core.SourceCollectionImportRequest{}), core.ProfileImportOptions{Install: true}, nil)
+	require.ErrorAs(t, err, new(*core.ProfileImportIncompleteError))
+	f.src.listErr = nil
+
+	plan, err := f.svc.PlanCollectionFinish(context.Background(), f.game, core.CollectionFinishRequest{Profile: "Three Mods", UseCurrent: []string{"nexusmods:10"}})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stopAtInstall := func(e core.Event) {
+		if p, ok := e.(core.StepEvent); ok && p.Phase == core.ImportInstalling {
+			cancel()
+		}
+	}
+	_, err = f.svc.ApplyCollectionFinish(ctx, f.game, plan, core.CollectionFinishOptions{}, stopAtInstall)
+	require.ErrorIs(t, err, context.Canceled)
+	saved, err := config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Three Mods")
+	require.NoError(t, err)
+	ref := saved.FindRef("nexusmods", "10")
+	assert.Equal(t, []string{"101"}, ref.FileIDs)
+	require.NotNil(t, ref.Todo)
+	assert.Equal(t, domain.TodoNotInstalled, ref.Todo.Reason, "the to-do moved with the pin")
+
+	_, err = f.svc.PlanCollectionFinish(context.Background(), f.game, core.CollectionFinishRequest{Profile: "Three Mods", UseCurrent: []string{"nexusmods:10"}})
+	assert.True(t, core.IsBadFinishChoice(err), "it is no gone pin any more: %v", err)
+	_, result, err := f.finish(t, core.CollectionFinishRequest{Retry: []string{"nexusmods:10"}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Installed)
+	saved, err = config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Three Mods")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"101"}, saved.FindRef("nexusmods", "10").FileIDs, "the current file once")
+	assert.Nil(t, saved.FindRef("nexusmods", "10").Todo)
+}
+
+// #660 review S3: an import cancelled part-way keeps the record of every
+// item it left to do - the one it held back from the start (saved with the
+// profile itself) and the one that failed before the cancellation.
+func TestCollectionImport_ACancelledImportKeepsEveryRecord(t *testing.T) {
+	f := newGonePinFixture(t)
+	f.src.listErr = map[string]error{"10": domain.ErrModNotFound} // a held gone pin
+	f.src.urlErrs = map[string]error{"11": errors.New("HTTP 503 from the CDN")}
+	plan := f.plan(t, core.SourceCollectionImportRequest{WithOptional: true})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cancelAtTheLast := func(e core.Event) {
+		if p, ok := e.(core.ModEvent); ok && p.Phase == core.ImportModInstalled && p.Mod != nil && p.Mod.ModID == "12" {
+			cancel()
+		}
+	}
+	_, _ = f.svc.ApplyCollectionImport(ctx, f.game, plan, core.ProfileImportOptions{Install: true}, cancelAtTheLast)
+	require.Error(t, ctx.Err(), "the import was cancelled")
+
+	saved, err := config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Three Mods")
+	require.NoError(t, err)
+	require.NotNil(t, saved.FindRef("nexusmods", "10").Todo)
+	assert.Equal(t, domain.TodoGonePin, saved.FindRef("nexusmods", "10").Todo.Reason)
+	require.NotNil(t, saved.FindRef("nexusmods", "11").Todo, "the failure before the cancellation is recorded")
+	assert.Equal(t, domain.TodoDownloadFailed, saved.FindRef("nexusmods", "11").Todo.Reason)
+}
+
+// #660 review S3: a held item's record is saved with the profile itself,
+// before anything installs - so an import stopped before its end still
+// lists why.
+func TestCollectionImport_HeldRecordsAreSavedWithTheProfile(t *testing.T) {
+	f := newGonePinFixture(t)
+	f.src.listErr = map[string]error{"10": domain.ErrModNotFound}
+	plan := f.plan(t, core.SourceCollectionImportRequest{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cancelOnSave := func(e core.Event) {
+		if p, ok := e.(core.StepEvent); ok && p.Phase == core.ImportSaved {
+			cancel()
+		}
+	}
+	_, err := f.svc.ApplyCollectionImport(ctx, f.game, plan, core.ProfileImportOptions{Install: true}, cancelOnSave)
+	require.Error(t, err)
+	saved, err := config.LoadProfile(f.svc.ConfigDir(), "skyrim", "Three Mods")
+	require.NoError(t, err)
+	require.NotNil(t, saved.FindRef("nexusmods", "10").Todo)
+	assert.Equal(t, domain.TodoGonePin, saved.FindRef("nexusmods", "10").Todo.Reason)
+}
+
+// #660 review: a mod its source deleted is no download to retry - it is
+// gone, and skipping it is the action.
+func TestCollectionImport_ADeletedModIsGoneNotADownloadFailure(t *testing.T) {
+	f := newSourceImportFixture(t, source.TierPremium)
+	plan := f.plan(t, core.SourceCollectionImportRequest{})
+	delete(f.src.mods, "skyrimspecialedition/11")
+	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.ErrorAs(t, err, new(*core.ProfileImportIncompleteError))
+	require.Len(t, result.Todos, 1)
+	assert.Equal(t, domain.TodoModGone, result.Todos[0].Reason)
+	assert.Equal(t, core.TodoActionSkip, result.Todos[0].Action)
+	assert.NotContains(t, result.Todos[0].Remedy, "retry it")
+}
+
+// #660 review: an installer left to finish says so - not "run the same
+// command again", which is a single install's advice.
+func TestCollectionImport_AnInstallersFailureNamesTheFinish(t *testing.T) {
+	f := newTodoFixture(t)
+	result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, f.plan(t, core.SourceCollectionImportRequest{WithOptional: true}), core.ProfileImportOptions{Install: true}, nil)
+	require.ErrorAs(t, err, new(*core.ProfileImportIncompleteError))
+	for _, failure := range result.Failures {
+		if failure.ModID != "12" {
+			continue
+		}
+		assert.NotContains(t, failure.Reason, "run the same command again")
+		assert.NotContains(t, failure.Reason, "download failed")
+		assert.Contains(t, failure.Reason, "left to finish: answer its installer")
+	}
+	assert.NotContains(t, err.Error(), "run the same command again")
+}
+
+// #660 review: a gone pin's to-do suggests what can resolve it - skipping
+// it (or its gone file), or a retry once the file is back - never a current
+// file there was none of.
+func TestCollectionTodo_AGonePinsRemedyNeverSuggestsAMissingCurrentFile(t *testing.T) {
+	f := newGonePinFixture(t)
+	f.src.listErr = map[string]error{"10": domain.ErrModNotFound}
+	result, _ := f.svc.ApplyCollectionImport(context.Background(), f.game, f.plan(t, core.SourceCollectionImportRequest{}), core.ProfileImportOptions{Install: true}, nil)
+	require.Len(t, result.Todos, 1)
+	assert.NotContains(t, result.Todos[0].Remedy, "current file")
+	assert.Contains(t, result.Todos[0].Remedy, "skip it")
 }

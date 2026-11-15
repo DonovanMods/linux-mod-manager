@@ -1072,8 +1072,8 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 			// version is kept, and the result says how to take the
 			// collection's.
 			keepYours[p.Key()] = true
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: your version is kept - %s no longer offers the file the collection pins; update with --use-current %s to take the mod's current file instead",
-				p.describe(), plan.Source.sourceName(), p.Key()))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: your version is kept - %s no longer offers the file the collection pins, and nothing stands in for it",
+				p.describe(), plan.Source.sourceName()))
 			continue
 		}
 		todoHeld[p.Key()] = &domain.CollectionTodo{Reason: domain.TodoGonePin, Name: p.Name,
@@ -1214,6 +1214,7 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		}
 	}
 	ip, pending := ip.installingNone(todoHeld)
+	importOpts.heldTodos = todoHeld
 	if b := plan.bundle; b != nil {
 		if err := s.keepPendingBundle(game, b, opts.AllowAnyOverrides); err != nil {
 			return result, err
@@ -1230,6 +1231,9 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		}
 		if terr := s.recordCollectionTodos(ctx, game, importResult, todoHeld); terr != nil && err == nil {
 			err = terr
+		}
+		if err == nil && needsUser(importResult.Todos) {
+			err = &ProfileImportIncompleteError{Profile: importResult.ProfileName, Result: importResult}
 		}
 	}
 	if importResult == nil || importResult.ProfileName == "" || importResult.Refused {
