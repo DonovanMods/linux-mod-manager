@@ -161,7 +161,20 @@ export function GonePinsSection({ source: c, actions, sectionRef }) {
             data-choice=${pin.choice || ""}
           >
             <fieldset class="form-section">
-              <legend class="plan__mod-name">${name}</legend>
+              <legend class="plan__mod-name">
+                ${name}${" "}
+                ${
+                  // Issue 660: the curator pinned this version exactly -
+                  // the current file is one they did not choose.
+                  pin.curator_exact &&
+                  html`<span
+                    class="badge badge--warn"
+                    data-testid="gone-pin-curator-exact"
+                    title="The curator pinned this version exactly; the current file is a version they did not test"
+                    >curator pinned exactly</span
+                  >`
+                }
+              </legend>
               <p class="plan__note">${pinnedLine(pin)}</p>
               <ul class="plan__paths">
                 ${(pin.files ?? []).map(

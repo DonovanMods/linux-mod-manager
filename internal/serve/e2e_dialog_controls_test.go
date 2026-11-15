@@ -250,6 +250,12 @@ var dialogFixtures = map[string]func(t *testing.T) dialogFixture{
 		f.seedFillProfile(t)
 		return dialogFixture{e2eFixture: f.e2eFixture, files: map[string]string{"ten": f.ten}}
 	},
+	// #660: a collection profile with an item of each kind left to finish.
+	"finish": func(t *testing.T) dialogFixture {
+		f := newE2EFillFixture(t)
+		seedFinishProfile(t, f.e2eFixture)
+		return dialogFixture{e2eFixture: f.e2eFixture}
+	},
 }
 
 // newE2ESearchDialogFixture is the searchable-mods fixture with two FOMOD
@@ -544,6 +550,20 @@ var dialogScenarios = []dialogScenario{
 				chromedp.WaitVisible(`[data-testid="update-summary"]`, chromedp.ByQuery),
 				planOpen("collection_update"))
 		}},
+	// #660: Finish collection, with a row's fill drop zone open, and the
+	// collection_finish plan one of its rows opens.
+	{name: "finish-collection", fixture: "finish", root: finishPanel,
+		open: func(f dialogFixture) chromedp.Tasks {
+			return append(openFinishFromProfiles(f),
+				clickWhenSettled(finishPanel+` [data-todo="nexusmods:10"] [data-action="finish-download"]`),
+				chromedp.WaitVisible(finishPanel+` [data-testid="fill-drop"] [data-action="fill-folder"]`, chromedp.ByQuery))
+		}},
+	{name: "collection_finish", fixture: "finish", root: `.modal[data-kind="collection_finish"]`,
+		open: func(f dialogFixture) chromedp.Tasks {
+			return append(openFinishFromProfiles(f),
+				clickWhenSettled(finishPanel+` [data-todo="nexusmods:11"] [data-action="finish-retry"]`),
+				planOpen("collection_finish"))
+		}},
 	{name: "profile_fill", fixture: "fill", root: `.modal[data-kind="profile_fill"]`,
 		open: func(f dialogFixture) chromedp.Tasks {
 			return inProfilesModal(f,
@@ -608,11 +628,7 @@ var dialogScenarios = []dialogScenario{
 // dialogKindsNotDriven is every modal kind TestE2E_EveryDialogsControlsLineUp
 // does not open, with the reason. Empty, and meant to stay that way: a new
 // entry needs a reason a reviewer accepts.
-var dialogKindsNotDriven = map[string]string{
-	// #660 Part 1 ships the kind's API; Part 2's Finish collection panel
-	// is the dialog that opens it, and adds its scenario.
-	"collection_finish": "no SPA control opens it until #660 Part 2 (Finish collection)",
-}
+var dialogKindsNotDriven = map[string]string{}
 
 // openAddGameForm shows Setup › Games' add form.
 func openAddGameForm() chromedp.Tasks {

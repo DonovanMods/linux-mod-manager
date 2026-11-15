@@ -79,6 +79,7 @@ const mutationKindLabels = {
   verify_fix: "Repairing",
   profile_import: "Importing profile",
   profile_fill: "Installing downloads",
+  collection_finish: "Finishing collection",
   enable: "Enabling",
   disable: "Disabling",
   snapshot_restore: "Restoring snapshot",
@@ -113,6 +114,7 @@ export function mutationLabel(kind, origin) {
 const jobKindTitles = {
   adopt: "Adopt",
   catalog_relink: "Re-link",
+  collection_finish: "Finish collection",
   collection_update: "Collection update",
   deploy: "Deploy",
   disable: "Disable",
@@ -296,6 +298,18 @@ export function jobStateLabel(summary, frame) {
 export function resultTallyLabel(tally) {
   const failed = tally.failed ?? 0;
   const skipped = tally.skipped ?? 0;
+  // issue 660: a collection's import, update or finish counts its items
+  // against the collection: "Imported 38 of 40 mods; 2 need you".
+  // An import that only saved its mods pending (Download and install left
+  // unchecked) keeps its "n installed · m skipped".
+  if (
+    isCollectionTally(tally) &&
+    ((tally.todos ?? 0) > 0 ||
+      skipped === 0 ||
+      tally.kind === "collection_finish")
+  ) {
+    return collectionTallyLabel(tally);
+  }
   if (tally.kind === "profile_fill") {
     // issue 608: what the files installed, and what is still to download.
     const parts = [`${tally.installed ?? 0} installed`, `${skipped} pending`];
@@ -326,7 +340,54 @@ export function resultTallyLabel(tally) {
 // `applied`. "profile_import" stays last: spa_internal_test.go's import
 // scanner reads a quoted word that follows `import"` on the same line as a
 // module path.
-const INSTALLED_TALLY_KINDS = new Set(["profile_fill", "profile_import"]);
+const INSTALLED_TALLY_KINDS = new Set([
+  "collection_finish",
+  "collection_update",
+  "profile_fill",
+  "profile_import",
+]);
+
+/** isCollectionTally reports whether tally counts a collection's items
+ * (issue 660): the tally of a collection import, update or finish, which carries
+ * the items its profile lists as `total`. */
+export function isCollectionTally(tally) {
+  return (tally?.total ?? 0) > 0;
+}
+
+/** collectionTallyLabel is a collection tally in words (issue 660):
+ * "Imported 38 of 40 mods; 2 need you" while items are left to finish,
+ * "Imported 40 mods" once none is - "Recorded", as the CLI says it, for
+ * one into a profile that is not the active one (`recorded`: its mods are
+ * recorded, nothing installed). */
+export function collectionTallyLabel(tally) {
+  const total = tally.total ?? 0;
+  const todos = tally.todos ?? 0;
+  const verb = tally.recorded ? "Recorded" : "Imported";
+  const mods = (n) => `${n} mod${n === 1 ? "" : "s"}`;
+  if (todos === 0) return `${verb} ${mods(total)}`;
+  // The CLI's own words (cmd/lmm/profile_finish.go): "K need you", for one
+  // as for several.
+  return `${verb} ${Math.max(0, total - todos)} of ${mods(total)}; ${todos} need you`;
+}
+
+/** outcomeLabel is a finished batch's words (issue 660): a collection
+ * job's count of its collection (jobresult.js collectionOf: "Recorded 1 of
+ * 3 mods; 2 need you"), which knows what its tally does not - whether the
+ * profile was the active one, and a clean recorded import's count - else
+ * its tally's (resultTallyLabel), else "". An import that only saved its
+ * mods pending keeps its tally's "n installed · m skipped". */
+export function outcomeLabel(tally, collection) {
+  if (
+    collection &&
+    (!tally ||
+      tally.kind === "collection_finish" ||
+      (collection.todos ?? 0) > 0 ||
+      (tally.skipped ?? 0) === 0)
+  ) {
+    return collectionTallyLabel(collection);
+  }
+  return tally ? resultTallyLabel(tally) : "";
+}
 
 /**
  * resultTallyTone says how alarmed the tally should look, in the same
@@ -343,6 +404,9 @@ const INSTALLED_TALLY_KINDS = new Set(["profile_fill", "profile_import"]);
  * has failed === 0 and is "succeeded", never "failed".
  */
 export function resultTallyTone(tally) {
+  // issue 660: a collection with items left to finish needs the user -
+  // never a plain success, and not a failure: the rest installed.
+  if ((tally.todos ?? 0) > 0) return "attention";
   if ((tally.failed ?? 0) === 0) return "succeeded";
   const applied = INSTALLED_TALLY_KINDS.has(tally.kind)
     ? tally.installed
@@ -374,6 +438,11 @@ export function frameFromEvent({ type, data } = {}) {
     phase: event.phase,
     op: event.op,
     mod_name: event.mod_name,
+    // The scope's exact mod (core.Scope.Mod), "source:mod": what an event
+    // log keys an item's progress by (appendCollapsed).
+    mod_key: event.mod?.source_id
+      ? `${event.mod.source_id}:${event.mod.mod_id}`
+      : "",
     index: event.index,
     total: event.total,
     detail: event.detail ?? event.message,
@@ -381,6 +450,48 @@ export function frameFromEvent({ type, data } = {}) {
     downloaded: event.downloaded,
     total_bytes: event.total_bytes,
   };
+}
+
+// PROGRESS_PHASE is the closed list of phases that only say where an item
+// has got to (issue 660): downloading, a download done, extracting,
+// installing, compiling, deploying, fetching. A job's event log keeps only
+// the latest of these per item (appendCollapsed). Every other phase - a
+// failure, a refusal, a note, a warning, an item skipped, unavailable or
+// done - says something of its own and is always kept.
+const PROGRESS_PHASE =
+  /_(downloading|download_done|extracting|installing|installing_mod|mod_installing|compiling|deploying|fetching)$/;
+
+/** frameModKey is the exact mod a frame is about - its scope's mod,
+ * "source:mod" (frameFromEvent's mod_key) - else its place in the batch,
+ * or "" for neither. Never its display name: two mods may share one. */
+function frameModKey(frame) {
+  if (frame.mod_key) return frame.mod_key;
+  return frame.index > 0 ? `#${frame.index}/${frame.total ?? ""}` : "";
+}
+
+/** itemProgressKey is the item a progress frame reports on (issue 660) -
+ * its op and its exact mod - or null for a frame that is not a plain
+ * progress line (PROGRESS_PHASE; a download's byte count is one) or that
+ * names no item. */
+export function itemProgressKey(frame) {
+  if (!frame) return null;
+  const progress =
+    frame.type === "download" || PROGRESS_PHASE.test(frame.phase ?? "");
+  if (!progress) return null;
+  const item = frameModKey(frame);
+  if (!item) return null;
+  return `${frame.op ?? ""}|${item}`;
+}
+
+/** appendCollapsed is events with entry ({key, frame}) appended, an earlier
+ * progress line for the same item dropped (issue 660): a collection's
+ * hundreds of items each said where they were - downloading, every
+ * download tick, installing - and the log was a wall of lines. Any line
+ * that is not plain progress is always kept. */
+export function appendCollapsed(events, entry) {
+  const item = itemProgressKey(entry.frame);
+  if (!item) return [...events, entry];
+  return [...events.filter((e) => itemProgressKey(e.frame) !== item), entry];
 }
 
 // verifyFrame is a core.VerifyEvent's frame, or null for one with nothing to

@@ -14,6 +14,7 @@
 import { html } from "../render.js";
 import { displayVersion, reinstallReason } from "../version.js";
 import { PlanOverrides } from "./planoverrides.js";
+import { UnresolvedWarning } from "./planwarnings.js";
 
 /** ModList renders one bucket of installed mods (to_enable/to_disable),
  * which carry their own names. */
@@ -72,6 +73,7 @@ export function ProfileApplyPlanView({ plan }) {
       <p class="plan__summary">
         Making <span class="mono">${plan.profile}</span> match what it lists.
       </p>
+      <${UnresolvedWarning} unresolved=${plan.unresolved} />
 
       ${
         plan.no_changes &&

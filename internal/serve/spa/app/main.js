@@ -63,8 +63,15 @@ import {
   toastDismissMillis,
   unreadRereadDelayMillis,
 } from "./timers.js";
-import { jobTitle, resultTallyLabel, resultTallyTone } from "./progress.js";
+import {
+  collectionTallyLabel,
+  isCollectionTally,
+  jobTitle,
+  outcomeLabel,
+  resultTallyTone,
+} from "./progress.js";
 import { resolveGamePath } from "./navigation.js";
+import { hydratedTodos, liveTodosKey } from "./livetodos.js";
 import { RELEVANCE, effectiveSort, knownSort } from "./searchsort.js";
 import {
   connectActivity,
@@ -338,6 +345,7 @@ async function hydrate(route, { rehydrate = false } = {}) {
     "health",
     "conflicts",
     "snapshots",
+    "todos",
   ]);
   const load = (key, path, opts) =>
     loadSlice(seq, homeClaim, key, path, context, {
@@ -356,7 +364,23 @@ async function hydrate(route, { rehydrate = false } = {}) {
     // is - one hydrate, one set of fetchErrors, and a card that can
     // tell "no snapshots" from "couldn't list them".
     load("snapshots", "/api/v1/snapshots"),
+    // issue 660: the route profile's collection items left to finish, for
+    // the Profile card's "Finish collection" - not one of the loads the
+    // page names while it waits (TRACKED_LOADS): the card shows it when
+    // it has something to say.
+    route.profile &&
+      load(
+        "todos",
+        `/api/v1/profiles/${encodeURIComponent(route.profile)}/todos`,
+      ),
   ]);
+  // Only while this hydrate is the page's newest, and the page is still on
+  // its game and profile: a newer one of another game, with a profile of
+  // the same name, may have replaced the list meanwhile.
+  const todos = isCurrentHydration(seq)
+    ? hydratedTodos(route, store.get().route, store.get().todos)
+    : null;
+  if (todos) noteTodos(route.game, todos);
 }
 
 // homeContext is the "game:profile" whose documents the home slices hold
@@ -401,6 +425,7 @@ function dropStaleHomeSlices(context) {
     health: null,
     conflicts: null,
     snapshots: null,
+    todos: null,
     fetchErrors: {
       ...store.get().fetchErrors,
       mods: null,
@@ -408,6 +433,7 @@ function dropStaleHomeSlices(context) {
       health: null,
       conflicts: null,
       snapshots: null,
+      todos: null,
     },
   });
 }
@@ -1181,6 +1207,7 @@ async function openPlan({
   openerSelector,
   context: contextOverride,
   extra,
+  returnTo,
 }) {
   modalSeq += 1;
   const seq = modalSeq;
@@ -1238,6 +1265,11 @@ async function openPlan({
     // 608: the dropped files the fill drop zone never uploaded), for the
     // kind's renderer to show beside the plan.
     extra,
+    // returnTo (issue 660) is the modal this plan was opened from and goes
+    // back to - once confirmed (confirmPlan) or cancelled (closeModal) -
+    // rather than leaving the slot empty: Finish collection, whose list
+    // the user works through one item at a time.
+    returnTo,
   };
 
   store.set({ modal: { ...base, status: "planning" } });
@@ -1407,6 +1439,8 @@ async function replanWith(planPatch, applyPatch) {
     onConfirmed: modal.onConfirmed,
     openerSelector: modal.openerSelector,
     context: modal.context,
+    extra: modal.extra,
+    returnTo: modal.returnTo,
   });
 }
 
@@ -1419,7 +1453,17 @@ async function replanWith(planPatch, applyPatch) {
  * modal) is fenced the same way Cancel has always fenced it. */
 function closeModal() {
   modalSeq += 1;
-  store.set({ modal: null });
+  // Issue 660: a modal opened over another (a plan or the installer wizard
+  // over Finish collection) goes back to it.
+  store.set({ modal: reopened(store.get().modal?.returnTo) });
+}
+
+/** reopened is the modal a closing one returns to (its returnTo), as a
+ * fresh open of it, or null for none. */
+function reopened(returnTo) {
+  if (!returnTo) return null;
+  modalSeq += 1;
+  return { ...returnTo, seq: modalSeq };
 }
 
 /** openReorderModal opens the reorder modal over profileName - reachable
@@ -1446,6 +1490,43 @@ function openProfilesModal() {
  * on screen. */
 function openImportCollectionModal({ openerSelector } = {}) {
   store.set({ modal: { type: "import-collection", openerSelector } });
+}
+
+/** noteTodos records how many items a collection profile has left to
+ * finish, as last read (issue 660: state.liveTodos, "game:profile" ->
+ * count) - what lets a finished import's tray entry stop asking for
+ * attention once its collection is finished, wherever it was finished. */
+function noteTodos(game, report) {
+  if (!game || !report?.profile) return;
+  const key = liveTodosKey(game, report.profile);
+  const count = report.todos?.length ?? 0;
+  const live = store.get().liveTodos ?? {};
+  if (live[key] === count) return;
+  store.set({ liveTodos: { ...live, [key]: count } });
+}
+
+/** openFinishCollection opens Finish collection (issue 660) over a
+ * collection profile's items left to finish: the Profile card's, the
+ * profiles modal row's and a collection job's toast and tray entry. A job
+ * of another game goes back to that game first (`at` is the profile its
+ * page was on). openerSelector names the control focus returns to; a
+ * toast's is gone by then, so the profile picker's trigger is the
+ * default. */
+function openFinishCollection({ game, profile, at, openerSelector } = {}) {
+  const route = store.get().route;
+  if (route.view === "chooser" || !profile) return;
+  const target = game || route.game;
+  if (target !== route.game && at) navigate(contextPath(target, at));
+  modalSeq += 1;
+  store.set({
+    modal: {
+      type: "finish-collection",
+      seq: modalSeq,
+      game: target,
+      profile,
+      openerSelector: openerSelector ?? ".profile-picker__trigger",
+    },
+  });
 }
 
 /** openShortcutsModal opens the keyboard-shortcuts help (design doc §Modals,
@@ -1893,7 +1974,7 @@ async function confirmPlan() {
         fileName: uploadFiles.get(modal.options?.upload_id)?.name,
       });
       store.set({
-        modal: null,
+        modal: reopened(modal.returnTo),
         origins: { ...store.get().origins, [modal.origin]: jobID },
       });
       showDetachedProgress(modal.origin, jobID, modal.kind);
@@ -2020,6 +2101,7 @@ async function retryInstallOverwrite(jobID) {
 // the answers as the identical "fomod" apply-time option.
 const fomodKinds = new Set([
   "install",
+  "collection_finish",
   "collection_update",
   "import_archive",
   "profile_import",
@@ -2095,12 +2177,19 @@ function canAnswerFomod(jobID) {
   return Boolean(origin && fomodRequests.get(origin));
 }
 
-/** openFomodWizard opens the installer wizard over question for origin. */
+/** openFomodWizard opens the installer wizard over question for origin.
+ * Opened over Finish collection (issue 660), it goes back there once
+ * answered or cancelled. */
 function openFomodWizard(question, origin) {
+  const current = store.get().modal;
   modalSeq += 1;
   const req = fomodRequests.get(origin);
   store.set({
     modal: {
+      returnTo:
+        current?.type === "finish-collection"
+          ? { ...current, seq: undefined }
+          : undefined,
       type: "fomod",
       seq: modalSeq,
       question,
@@ -2537,9 +2626,12 @@ async function releaseSucceededOrigin(origin, summary) {
 
 /** toastDetail is a held job's toast text: its batch tally, then its
  * result's warnings (issue 633), or undefined for neither. */
-function toastDetail(tally, read) {
+function toastDetail(tally, read, counted) {
   const parts = [];
-  if (tally) parts.push(resultTallyLabel(tally));
+  // Issue 660: a collection's job counts its collection - from the result,
+  // since a recorded-only import has no tally.
+  const label = outcomeLabel(tally, counted);
+  if (label) parts.push(label);
   if (read?.warnings?.length > 0) parts.push(read.warnings.join(" "));
   return parts.join(" · ") || undefined;
 }
@@ -2754,7 +2846,9 @@ async function onJobDone(summary) {
   // which case the tray's "Answer installer…" stays the way in.
   if (origin && fomodRequests.has(origin)) {
     const question = await fomodQuestionOf(summary);
-    if (question && !store.get().modal) {
+    // Issue 660: Finish collection's own "Answer installer…" asks over it.
+    const over = store.get().modal;
+    if (question && (!over || over.type === "finish-collection")) {
       openFomodWizard(question, origin);
       // A failed job's failure IS the question, which the wizard now asks.
       // A batch that succeeded still says what else happened to it - its
@@ -2795,25 +2889,69 @@ async function onJobDone(summary) {
   // batch's failed items are already in its tally (issue 364), so every
   // other toast goes up the moment the job ends instead of after a second
   // round trip.
-  const read = resultMayHoldNextStep(summary)
-    ? await fetchJobResult(summary.id)
-    : null;
-  const held = readoutHasNextStep(summary, read);
+  //
+  // Issue 660: a collection's import, update or finish is read too - its
+  // result names the profile its items left to finish are in.
   const tally = summary.tally;
+  const collection =
+    isCollectionTally(tally) ||
+    COLLECTION_KINDS.has(summary.kind) ||
+    (summary.kind === "profile_import" && jobIsCollection(summary.id));
+  const read =
+    resultMayHoldNextStep(summary) || collection
+      ? await fetchJobResult(summary.id)
+      : null;
+  const held = readoutHasNextStep(summary, read);
+  const counted = collection ? (read?.collection ?? null) : null;
+  const finish = counted?.todos > 0 ? counted : null;
   pushToast({
-    tone:
-      held && tally && resultTallyTone(tally) !== "succeeded"
-        ? "failure"
-        : "success",
+    tone: held && tally ? toastTone(resultTallyTone(tally)) : "success",
     sticky: held,
-    title: `${summaryTitle(summary)} finished`,
+    title:
+      summary.kind === "collection_finish"
+        ? "Finish collection done"
+        : `${summaryTitle(summary)} finished`,
     // Issue 633: a job held by its warnings (a shared path handed to the
     // next mod in load order) says them here, where the page moved on - a
-    // batch's after its tally.
-    detail: held ? toastDetail(tally, read) : undefined,
+    // batch's after its tally. Issue 660: a collection's says how many of
+    // its mods it installed, and how many need the user ("Imported 38 of
+    // 40 mods; 2 need you") - the list itself is Finish collection's.
+    detail: finish
+      ? collectionTallyLabel(finish)
+      : held || counted
+        ? toastDetail(tally, read, counted)
+        : undefined,
     jobID: summary.id,
-    ...toastAffordance(summary),
+    ...(finish ? finishAffordance(summary, finish) : toastAffordance(summary)),
   });
+}
+
+// COLLECTION_KINDS are the job kinds that always act on a collection
+// (issue 660); a profile_import does when its summary says so.
+const COLLECTION_KINDS = new Set(["collection_update", "collection_finish"]);
+
+/** toastTone is the toast tone for a tally's tone: a success, a collection
+ * that needs the user (issue 660: "attention", never a green success), or
+ * a failure. */
+function toastTone(tone) {
+  if (tone === "succeeded") return "success";
+  if (tone === "attention") return "attention";
+  return "failure";
+}
+
+/** finishAffordance is a toast's offer of Finish collection for the
+ * profile a collection job left items to finish in (issue 660), leading
+ * the toast's actions. */
+function finishAffordance(summary, finish) {
+  return {
+    action: "openFinishCollection",
+    actionLabel: "Finish collection",
+    actionArg: {
+      game: summary.game,
+      profile: finish.profile,
+      at: summary.profile,
+    },
+  };
 }
 
 /**
@@ -2900,6 +3038,12 @@ const jobToastAffordances = {
  * failure shown above its forms. */
 function toastAffordance(summary) {
   const failed = summary.state === "failed";
+  // Issue 660: a finish in which an item failed again leaves the list
+  // where it was: the failure offers it again.
+  if (failed && summary.kind === "collection_finish") {
+    const profile = summary.error?.details?.profile || summary.profile;
+    if (profile) return finishAffordance(summary, { profile });
+  }
   if (failed && summary.kind === "profile_import") {
     return {
       action: "reopenImport",
@@ -2989,6 +3133,22 @@ async function launchGame({ force = false, target } = {}) {
   }
 }
 
+/** unresolvedItems is how many collection items profile has left to
+ * finish (issue 660), as far as this page knows: the route profile's
+ * to-do list, else the active profile's drift summary. */
+function unresolvedItems(game, profile) {
+  const { todos, status, route } = store.get();
+  if (route.game === game && todos?.profile === profile)
+    return todos.todos?.length ?? 0;
+  const drift = status?.id === game ? status?.profile_drift : null;
+  return drift?.profile === profile ? (drift.unresolved ?? 0) : 0;
+}
+
+/** incompleteSentence is an incomplete collection's warning in words. */
+function incompleteSentence(n) {
+  return `Collection incomplete: ${n} item${n === 1 ? "" : "s"} left to finish, so the game may not behave as the curator intended.`;
+}
+
 /**
  * requestLaunch is the launch POST itself, for a caller already holding
  * state.launching. Undeployed changes (409 with core.LaunchDriftError's
@@ -3004,12 +3164,26 @@ async function requestLaunch({ game, profile, name }, force) {
       profile,
       ...(force ? { force: true } : {}),
     });
+    // Issue 660: a collection profile with items left to finish launches,
+    // and says the game may not behave as the curator intended - as `lmm
+    // launch --deploy` does - with Finish collection to resolve them.
+    const unresolved = unresolvedItems(game, profile);
+    const warnings = [...(result.warnings ?? [])];
+    if (unresolved > 0) warnings.push(incompleteSentence(unresolved));
     pushToast({
-      tone: "success",
+      tone: unresolved > 0 ? "attention" : "success",
+      sticky: unresolved > 0,
       title: result.requested
         ? `Launch requested: ${name} (via ${launchMethodLabel(result.method)})`
         : `Started ${name}`,
-      detail: (result.warnings ?? []).join(" ") || undefined,
+      detail: warnings.join(" ") || undefined,
+      ...(unresolved > 0
+        ? {
+            action: "openFinishCollection",
+            actionLabel: "Finish collection",
+            actionArg: { game, profile },
+          }
+        : {}),
     });
   } catch (err) {
     if (
@@ -3197,6 +3371,8 @@ const actions = {
   openReorderModal,
   openProfilesModal,
   openImportCollectionModal,
+  openFinishCollection,
+  noteTodos,
   reopenImport,
   jobIsCollection,
   openShortcutsModal,

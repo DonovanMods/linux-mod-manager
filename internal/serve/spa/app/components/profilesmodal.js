@@ -39,6 +39,7 @@ import {
   setDefaultProfile,
   profileExportURL,
   recordProfileCollection,
+  getProfileTodos,
   uploadArchive,
   getBundleCandidates,
 } from "../api.js";
@@ -134,6 +135,21 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [filling, setFilling] = useState(false);
+  // Issue 660: how many collection items the profile has left to finish -
+  // its own read, since the listing does not say (an empty list for a
+  // profile with no collection).
+  const [todoCount, setTodoCount] = useState(0);
+  useEffect(() => {
+    let live = true;
+    getProfileTodos(profile.name, context)
+      .then((doc) => {
+        if (live) setTodoCount(doc?.todos?.length ?? 0);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [profile, context.game]);
 
   function reset() {
     setMode("view");
@@ -473,6 +489,24 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
             onClick=${updateCollection}
           >
             Update collection…
+          </button>`
+        }
+        ${
+          // Issue 660: a collection profile with items left to finish.
+          todoCount > 0 &&
+          html`<button
+            type="button"
+            class="button button--small"
+            data-action="finish-collection"
+            data-profile=${profile.name}
+            disabled=${busy}
+            onClick=${() =>
+              actions.openFinishCollection({
+                game: context.game,
+                profile: profile.name,
+              })}
+          >
+            ${`Finish collection (${todoCount})…`}
           </button>`
         }
         ${

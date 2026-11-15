@@ -16,6 +16,7 @@ import {
   ApplyOption,
 } from "./planoptions.js";
 import { PlanOverrides } from "./planoverrides.js";
+import { UnresolvedWarning } from "./planwarnings.js";
 
 /** DeployPlanView renders core.DeployPlan (internal/core/deploy.go). */
 export function DeployPlanView({ plan, modal, state, actions }) {
@@ -45,6 +46,7 @@ export function DeployPlanView({ plan, modal, state, actions }) {
         <p class="plan__note">
           Nothing to deploy: no mod is selected and there is nothing to purge.
         </p>
+        <${UnresolvedWarning} unresolved=${plan.unresolved} />
       </div>
     `;
   }
@@ -54,6 +56,7 @@ export function DeployPlanView({ plan, modal, state, actions }) {
       <p class="plan__summary">
         Deploying into profile <span class="mono">${plan.profile}</span>.
       </p>
+      <${UnresolvedWarning} unresolved=${plan.unresolved} />
 
       ${
         purge.length > 0 &&

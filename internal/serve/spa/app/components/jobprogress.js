@@ -20,10 +20,11 @@ import {
   progressFraction,
   jobStateLabel,
   mutationLabel,
-  resultTallyLabel,
+  outcomeLabel,
   resultTallyTone,
 } from "../progress.js";
 import {
+  useJobResultCollection,
   useJobResultFailures,
   useJobResultLoader,
   useJobResultPlugins,
@@ -71,14 +72,16 @@ export function InlineJob({
   useEffect(() => registerOrigin(origin), [origin]);
 
   const jobID = state.origins?.[origin];
-  if (!jobID) return children;
+  // A readout-only InlineJob (issue 660's Finish collection panel) has no
+  // children: nothing shows until its origin starts a job.
+  if (!jobID) return children ?? null;
 
   const summary = (state.jobsIndex ?? []).find((row) => row.id === jobID);
   // readoutElsewhere (issue 535): the surface renders the FINISHED readout
   // on a line of its own (FinishedJobReadout), so the control comes back
   // here once the job is over. While it runs the control still morphs.
   if (readoutElsewhere && summary && summary.state !== "running") {
-    return children;
+    return children ?? null;
   }
   const frame = state.jobProgress?.[jobID];
 
@@ -169,6 +172,10 @@ export function JobProgress({
   const batchFailures = useJobResultFailures(jobID, state);
   // Issue 602: a refused install batch's loader refusal, from its result.
   const resultLoader = useJobResultLoader(jobID, state);
+  // Issue 660: a collection job counts its collection from its result -
+  // "Recorded" for one into a profile that is not the active one, which
+  // its tally cannot say (and a clean recorded import has no tally).
+  const collection = useJobResultCollection(jobID, state);
 
   if (state === "running") {
     const fraction = progressFraction(frame);
@@ -261,9 +268,7 @@ export function JobProgress({
               />`
             : failed
               ? `Failed: ${summary?.error?.error ?? "unknown error"}`
-              : tally
-                ? resultTallyLabel(tally)
-                : "Done"
+              : outcomeLabel(tally, collection) || "Done"
         }
       </span>
       ${

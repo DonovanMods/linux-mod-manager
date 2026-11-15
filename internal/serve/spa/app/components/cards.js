@@ -145,13 +145,27 @@ export function AttentionCards({
   // at that is not the active one (core computes no drift for those).
   const active = isActiveProfile(state);
   const drift = active ? activeDrift(state) : null;
-  const notInstalled = active
+  // Issue 660: the profile's collection items left to finish.
+  const finish = finishCounts(state, drift);
+  const listedNotInstalled = active
     ? (drift?.not_installed ?? 0)
     : mods
       ? notInstalledCount(state, mods)
       : 0;
+  // A to-do is a listed mod with no install behind it, so the counts above
+  // include it - all of them for the subtraction, and for the active
+  // profile the ones with no record, which core's drift counts as not
+  // installed (its recorded ones it counts apart, as unresolved). Finish
+  // collection resolves them, so they are said there, once, and never
+  // offer Apply on their own.
+  const todosCounted = active
+    ? Math.max(0, finish.left - (drift?.unresolved ?? 0))
+    : finish.left;
+  const notInstalled = Math.max(0, listedNotInstalled - todosCounted);
   const notListed = mods ? notListedCount(state, mods) : 0;
-  const driftTotal = drift ? driftCount(drift) : 0;
+  const driftTotal = drift
+    ? Math.max(0, driftCount(drift) - (listedNotInstalled - notInstalled))
+    : 0;
 
   if (
     updateRows.length === 0 &&
@@ -168,6 +182,7 @@ export function AttentionCards({
     notListed === 0 &&
     driftTotal === 0 &&
     listedOff.length === 0 &&
+    finish.left === 0 &&
     !hasError
   ) {
     return null;
@@ -214,9 +229,12 @@ export function AttentionCards({
         (notInstalled > 0 ||
           notListed > 0 ||
           driftTotal > 0 ||
-          listedOff.length > 0) &&
+          listedOff.length > 0 ||
+          finish.left > 0) &&
         html`<${ProfileCard}
           state=${state}
+          finish=${finish}
+          driftTotal=${driftTotal}
           notInstalled=${notInstalled}
           notListed=${notListed}
           listedOff=${listedOff}
@@ -1188,6 +1206,21 @@ function notInstalledCount(state, mods) {
   );
 }
 
+/** finishCounts is the route profile's collection items left to finish
+ * (issue 660): {left, total} - left from its to-do list (state.todos),
+ * else the active profile's drift summary (core.ProfileDrift.unresolved);
+ * total the items the collection lists, or the profile's mod count. */
+export function finishCounts(state, drift) {
+  const profile = state?.route?.profile;
+  const todos = state?.todos?.profile === profile ? state.todos : null;
+  const summary = (state?.status?.profiles ?? []).find(
+    (p) => p.name === profile,
+  );
+  const left = todos ? (todos.todos?.length ?? 0) : (drift?.unresolved ?? 0);
+  const total = todos?.total || summary?.mod_count || left;
+  return { left, total };
+}
+
 /** isActiveProfile reports whether the profile this route shows is the
  * game's active one - the only profile `lmm profile apply` acts on, and the
  * one GET /api/v1/status reports drift for (issue 641). */
@@ -1292,6 +1325,8 @@ export function notListedCount(state, mods) {
  * FOMOD choices, a mod type or an override, not only a mod not installed. */
 function ProfileCard({
   state,
+  finish,
+  driftTotal,
   notInstalled,
   notListed,
   listedOff,
@@ -1318,12 +1353,16 @@ function ProfileCard({
   const driftLine = drift ? driftSummary(drift, driftSkip) : "";
   // Apply is offered on what the apply plan would do: for the active
   // profile, its drift; for another, the listed mods it lacks (whose plan
-  // then says the profile must be switched to first).
-  const driftTotal = drift ? driftCount(drift) : 0;
+  // then says the profile must be switched to first). Issue 660: both
+  // without the items left to finish (AttentionCards), which Finish
+  // collection resolves - never Apply.
   const offerApply = active ? driftTotal > 0 : notInstalled > 0;
-  const count = active
-    ? Math.max(driftTotal, notListed) + listedOff.length
-    : (notInstalled || notListed) + listedOff.length;
+  // Issue 660: the items left to finish count once, on their own.
+  const left = finish?.left ?? 0;
+  const count =
+    (active ? Math.max(driftTotal, notListed) : notInstalled || notListed) +
+    listedOff.length +
+    left;
 
   function apply() {
     actions.openPlan({
@@ -1362,6 +1401,14 @@ function ProfileCard({
           </li>`
         }
         ${
+          left > 0 &&
+          html`<li class="card__row" data-testid="profile-unresolved">
+            <span class="card__row-name"
+              >${`Collection incomplete: ${left} item${left === 1 ? "" : "s"} left to finish`}</span
+            >
+          </li>`
+        }
+        ${
           listedOff.length > 0 &&
           html`<li class="card__row" data-testid="profile-listed-off">
             <span class="card__row-name">${offSentence}</span>
@@ -1370,6 +1417,22 @@ function ProfileCard({
       </ul>
       <${ListedOffList} refs=${listedOff} state=${state} actions=${actions} />
       <div class="card__actions">
+        ${
+          (finish?.left ?? 0) > 0 &&
+          html`<button
+            type="button"
+            class="button button--primary"
+            data-action="finish-collection"
+            onClick=${() =>
+              actions.openFinishCollection({
+                game: state.route.game,
+                profile: state.route.profile,
+                openerSelector: '[data-action="finish-collection"]',
+              })}
+          >
+            ${`Finish collection: ${finish.left} of ${finish.total} need you`}
+          </button>`
+        }
         ${
           offerApply &&
           html`<${InlineJob}
