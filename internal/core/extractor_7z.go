@@ -18,7 +18,8 @@ package core
 //     through a link already in destDir;
 //   - the private directory is made writable before it is removed, so a
 //     no-write mode 7z applied cannot leave it behind;
-//   - extract7zTimeout bounds both 7z runs.
+//   - both 7z runs end on the caller's ctx or on the no-progress watchdog
+//     (run7z), never on a fixed time limit.
 //
 // The nlink check runs on the private directory only: 7z wrote everything
 // in it, so a second link to one of its files can only be the archive's.
@@ -31,7 +32,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -46,23 +46,21 @@ import (
 // in a message ("zip", "7z", "rar"). It returns the members and their
 // declared total size. The caller has already checked 7z is on PATH.
 func list7zArchive(ctx context.Context, archivePath, label string) ([]archiveMember, uint64, error) {
-	ctx, cancel := context.WithTimeout(ctx, extract7zTimeout)
-	defer cancel()
-
-	output, err := exec.CommandContext(ctx, "7z", "l", "-slt", "--", archivePath).CombinedOutput()
+	stdout, stderr, err := run7z(ctx, archivePath, "listing", "", "l", "-slt", "--", archivePath)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, 0, fmt.Errorf("7z listing timed out after %v", extract7zTimeout)
+		if errors.Is(err, errSevenZipStalled) || ctx.Err() != nil {
+			return nil, 0, err
 		}
-		return nil, 0, fmt.Errorf("7z listing failed: %w\nOutput: %s", err, string(output))
+		return nil, 0, fmt.Errorf("7z listing failed: %w\nOutput: %s", err, sevenZipOutput(stdout, stderr))
 	}
-	members := parse7zListing(string(output))
+	output := string(stdout)
+	members := parse7zListing(output)
 	for _, m := range members {
 		if m.Link {
 			return nil, 0, fmt.Errorf("the %s member %s is a link, which lmm does not extract", label, m.Path)
 		}
 	}
-	return members, sum7zSizes(string(output)), nil
+	return members, sum7zSizes(output), nil
 }
 
 // sum7zSizes is the total of every entry's "Size" in `7z l -slt` output -
@@ -122,15 +120,12 @@ func (e *Extractor) extractThrough7z(ctx context.Context, archivePath, destDir, 
 	}
 	defer removePrivateTree(tmp)
 
-	ctx, cancel := context.WithTimeout(ctx, extract7zTimeout)
-	defer cancel()
-
-	output, err := exec.CommandContext(ctx, "7z", "x", "-y", "-o"+tmp, "--", archivePath).CombinedOutput()
+	stdout, stderr, err := run7z(ctx, archivePath, "extraction", tmp, "x", "-y", "-o"+tmp, "--", archivePath)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("7z extraction timed out after %v", extract7zTimeout)
+		if errors.Is(err, errSevenZipStalled) || ctx.Err() != nil {
+			return err
 		}
-		return fmt.Errorf("7z extraction failed: %w\nOutput: %s", err, string(output))
+		return fmt.Errorf("7z extraction failed: %w\nOutput: %s", err, sevenZipOutput(stdout, stderr))
 	}
 
 	if err := checkExtractedTree(tmp, label); err != nil {

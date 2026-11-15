@@ -996,6 +996,14 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   disk has free is refused with both sizes named, instead of failing part
   way through. There is no fixed size limit.
 
+- **A large `.7z` or `.rar` no longer fails after five minutes (#658).**
+  Every `7z` run (listing or unpacking a `.7z`, a `.rar`, a zip `7z`
+  unpacks for lmm, or a collection's recipe) used to be stopped after five
+  minutes, which a multi-gigabyte texture pack on a slow disk can need.
+  There is no time limit now: a run is stopped only when it is cancelled,
+  or when it has written nothing and printed nothing for two minutes, and
+  that error names the archive.
+
 - **The web UI's collection import is drawn one way (#652).** In the
   **Import collection…** window and the Profiles window's import section,
   every source (a file, a URL, a Steam Workshop collection, a NexusMods

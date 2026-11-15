@@ -371,8 +371,8 @@ func listZipMembers(ctx context.Context, archivePath string) (members []archiveM
 // list7zMembers lists a .7z/.rar archive (format names which, for a
 // message) through `7z l -slt`, refusing a link member as the extraction
 // does (list7zArchive, #658), so a plan never promises an archive the
-// ingest refuses. The same timeout the extraction path uses guards a
-// corrupt archive.
+// ingest refuses. The no-progress watchdog the extraction uses (run7z)
+// guards a corrupt archive.
 func list7zMembers(ctx context.Context, archivePath, format string) ([]archiveMember, error) {
 	if _, err := exec.LookPath("7z"); err != nil {
 		return nil, fmt.Errorf("7z command not found: install p7zip-full to extract .7z and .rar files")

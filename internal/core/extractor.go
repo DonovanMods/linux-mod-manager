@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
@@ -256,9 +255,6 @@ func (e *Extractor) sanitizePath(destDir, filePath string) (string, error) {
 	return destPath, nil
 }
 
-// extract7zTimeout is the maximum time allowed for 7z extraction (corrupted archives or hangs).
-const extract7zTimeout = 5 * time.Minute
-
 // ErrSevenZipMissing is the system 7z command not being on PATH: lmm reads
 // .7z and .rar archives - every NexusMods collection's recipe among them
 // (#607) - through it.
@@ -269,7 +265,8 @@ var ErrSevenZipMissing = errors.New("7z command not found")
 // #658): the listing is judged before anything is written, 7z writes into
 // a private directory, and that tree is checked - no links, no special
 // files, no escaping or reserved names - before anything moves into
-// destDir. A timeout prevents hangs on corrupted archives.
+// destDir. The no-progress watchdog (run7z), not a fixed time limit, ends
+// a run stuck on a corrupt archive.
 func (e *Extractor) extract7z(ctx context.Context, archivePath, destDir, format string) error {
 	if _, err := exec.LookPath("7z"); err != nil {
 		return fmt.Errorf("%w: install p7zip-full to extract .7z and .rar files", ErrSevenZipMissing)
