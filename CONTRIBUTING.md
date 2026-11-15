@@ -55,6 +55,7 @@ makes an adapter a table test rather than a second copy of the deploy path.
 - Follow standard Go conventions and the project’s existing style.
 - Error handling: wrap errors with `fmt.Errorf("context: %w", err)` where useful.
 - Tests: use `testify/require` for setup and `testify/assert` for expectations when appropriate.
+- Web UI (`lmm serve`): every button, field and form uses the control system in `internal/serve/spa/app.css`. [docs/control-system.md](docs/control-system.md) says which class to use for what; ratchet tests fail on a control or form styled by hand.
 
 ## Documentation
 

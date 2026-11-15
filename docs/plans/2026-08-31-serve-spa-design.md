@@ -176,6 +176,13 @@ delimited block of `app.css` (`@control-system begin` … `end`).
   beside a text input is default size, as the input is. `--icon` makes a glyph-only control
   square at either size.
 - **Menus**: `.menu-item` is one item in a picker, a row's ⋯ menu or the activity tray.
+- **Fields and forms** (#653): the same block draws every other control - text fields, select
+  and textarea at the button height, checkbox, radio and a `role="switch"` toggle, the file
+  picker (a `.button` over a hidden input, `components/filepicker.js`), fieldset and legend,
+  `aria-invalid` with `.form-error`, disabled and read-only - and lays out every form, dialog
+  section, Setup panel and slide-over setting with `.form-section`, `.form-field`,
+  `.form-check`, `.form-row`, `.form-actions` and `.form-hint`. Which class to use for what:
+  [docs/control-system.md](../control-system.md).
 - **Tabs** (#520): a tab reserves its bold label's width (a hidden, zero-height bold copy
   from `data-label`), so selecting one never moves its neighbours.
 - **Arrows** (#520): a navigation arrow (Prev/Next, Back to library, More info, the
