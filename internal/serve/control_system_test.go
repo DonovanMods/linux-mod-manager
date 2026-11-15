@@ -52,7 +52,7 @@ const (
 // and colour - the variant's look), radius, and type size (font-size, and
 // the font shorthand that sets it, and the line-height that sizes a box).
 var controlDefiningProperty = regexp.MustCompile(
-	`^(height|min-height|max-height|padding(-[a-z-]+)?|border(-[a-z-]+)?|font|font-size|line-height)$`)
+	`^(height|min-height|max-height|block-size|min-block-size|max-block-size|padding(-[a-z-]+)?|border(-[a-z-]+)?|font|font-size|line-height)$`)
 
 // buttonTag is one <button ...> opening tag found in an SPA module.
 type buttonTag struct {
@@ -320,7 +320,7 @@ func TestNoControlStylingOutsideTheControlBlock(t *testing.T) {
 
 // buttonElement matches the button type selector (not a .button class, not
 // a [type="button"] attribute, not a longer name).
-var buttonElement = regexp.MustCompile(`(^|[\s>+~(,])button($|[^\w-"])`)
+var buttonElement = regexp.MustCompile(`(?i)(^|[\s>+~(,])button($|[^\w-"])`)
 
 // controlStylingViolations is TestNoControlStylingOutsideTheControlBlock's
 // checker over any stylesheet, so its own reach can be tested.
@@ -366,7 +366,7 @@ func reshapeViolations(css string, targets func(selector string) bool, why strin
 // targetsButton reports whether a selector list names the button element
 // or any class in classes.
 func targetsButton(selector string, classes map[string]bool) bool {
-	if buttonElement.MatchString(selector) {
+	if buttonElement.MatchString(selector) || universalSelector.MatchString(selector) {
 		return true
 	}
 	for _, m := range regexp.MustCompile(`\.([A-Za-z_][\w-]*)`).FindAllStringSubmatch(selector, -1) {
@@ -447,12 +447,17 @@ func fieldTargetClasses(t *testing.T) map[string]bool {
 
 // fieldElement matches the input, select and textarea type selectors (not
 // a class or a longer name that starts with one of them).
-var fieldElement = regexp.MustCompile(`(^|[\s>+~(,])(input|select|textarea)($|[^\w-"])`)
+var fieldElement = regexp.MustCompile(`(?i)(^|[\s>+~(,])(input|select|textarea)($|[^\w-"])`)
+
+// universalSelector matches a selector component that is the universal
+// selector, alone or qualified only by pseudo-classes (".x > *",
+// "*:hover"): it targets every control there is.
+var universalSelector = regexp.MustCompile(`(^|[\s>+~(,])\*($|[\s>+~),:\[])`)
 
 // targetsField reports whether a selector list names a field element or
 // any class in classes.
 func targetsField(selector string, classes map[string]bool) bool {
-	if fieldElement.MatchString(selector) {
+	if fieldElement.MatchString(selector) || universalSelector.MatchString(selector) {
 		return true
 	}
 	for _, m := range regexp.MustCompile(`\.([A-Za-z_][\w-]*)`).FindAllStringSubmatch(selector, -1) {
@@ -494,14 +499,19 @@ func TestFieldStylingCheck_CatchesEveryForm(t *testing.T) {
 		"@media (min-width: 1px) {\n  select { font-size: 2em; }\n}\n" +
 		".input-group { padding: 1rem; }\n" +
 		"[type=\"text\"] { padding: 0; }\n" +
-		".form :is(input, select) { line-height: 2; }\n"
+		".form :is(input, select) { line-height: 2; }\n" +
+		".row > * { padding: 0; }\n" +
+		".bar INPUT { block-size: 3rem; }\n" +
+		"*, *::before { box-sizing: border-box; }\n"
 	got := fieldStylingViolations(css, classes)
-	require.Len(t, got, 4, strings.Join(got, "\n"))
+	require.Len(t, got, 6, strings.Join(got, "\n"))
 	assert.Contains(t, got[0], "app.css:4:")
 	assert.Contains(t, got[0], "padding")
 	assert.Contains(t, got[1], "border-radius")
 	assert.Contains(t, got[2], "font-size")
 	assert.Contains(t, got[3], "line-height")
+	assert.Contains(t, got[4], `".row > *"`, "a universal selector reaches every field")
+	assert.Contains(t, got[5], "block-size", "an uppercase element and the logical height both count")
 }
 
 // formLayoutClasses are the form-layout classes each container element

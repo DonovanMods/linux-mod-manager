@@ -179,7 +179,7 @@ delimited block of `app.css` (`@control-system begin` … `end`).
 - **Fields and forms** (#653): the same block draws every other control - text fields, select
   and textarea at the button height, checkbox, radio and a `role="switch"` toggle, the file
   picker (a `.button` over a hidden input, `components/filepicker.js`), fieldset and legend,
-  `aria-invalid` with `.form-error`, disabled and read-only - and lays out every form, dialog
+  `aria-invalid` with `.form-error`, and the disabled state - and lays out every form, dialog
   section, Setup panel and slide-over setting with `.form-section`, `.form-field`,
   `.form-check`, `.form-row`, `.form-actions` and `.form-hint`. Which class to use for what:
   [docs/control-system.md](../control-system.md).

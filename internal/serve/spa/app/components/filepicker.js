@@ -5,6 +5,12 @@
 // one is not focusable at all (issue 652). The picker is a real .button
 // that opens a hidden input, so it is sized, focused and labelled like
 // every other button here, and this is the one place that pairs the two.
+//
+// updatefromfile.js keeps its own page-wide input on purpose: "Update from
+// file…" and "Install from file…" are opened from many surfaces (row menus,
+// cards, the slide-over, a failed job's chip), each naming the mod, so one
+// input on the page carries the browser's dialog and main.js routes the
+// chosen file to the mod that asked.
 
 import { html, useRef } from "../render.js";
 

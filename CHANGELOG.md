@@ -834,8 +834,8 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   and group forms; the library toolbar and search page filters; the mod
   slide-over's settings and category. [docs/control-system.md](docs/control-system.md)
   says which class to use for what, and ratchet tests fail on a control or
-  form styled by hand, plus a browser test that opens every dialog in both
-  themes. Whether a game maps the Steam Workshop, NexusMods or CurseForge
+  form styled by hand, plus a browser test that opens all 40 dialogs and
+  forms in both themes (and again at a phone width). Whether a game maps the Steam Workshop, NexusMods or CurseForge
   is now decided by one rule everywhere in the web UI (a non-empty
   identifier, as core decides it), where the import window treated an
   empty mapping as mapped.

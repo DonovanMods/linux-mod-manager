@@ -741,7 +741,7 @@ export function ImportProfileForm({
   const setupHref = game && profile ? setupPath(game, profile, "games") : "";
 
   return html`
-    <div class="profiles-import">
+    <div class="form-section profiles-import">
       ${heading && html`<h3 class="form-section__heading">${heading}</h3>`}
       <${ImportFileForm} actions=${actions} close=${close} />
       <${ImportURLForm} actions=${actions} close=${close} />

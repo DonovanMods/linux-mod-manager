@@ -1001,22 +1001,24 @@ export function GameAddForm({
         open=${Boolean(errorFor("game_id"))}
       >
         <summary>Advanced</summary>
-        <label class="form-field">
-          Game id
-          <input
-            type="text"
-            name="add-game-id"
-            placeholder=${detectedRow ? detectedRow.slug : "derived automatically if left blank"}
-            value=${spec.gameID ?? ""}
-            onInput=${(e) =>
-              patch({ gameID: e.currentTarget.value || undefined })}
-          />
-        </label>
-        <p class="form-hint">
-          The local games.yaml key (--game-id). Set automatically by a catalog
-          match above; override it here to choose it by hand.
-        </p>
-        ${errorFor("game_id") && html`<p class="modal__error">${errorFor("game_id")}</p>`}
+        <div class="form-section">
+          <label class="form-field">
+            Game id
+            <input
+              type="text"
+              name="add-game-id"
+              placeholder=${detectedRow ? detectedRow.slug : "derived automatically if left blank"}
+              value=${spec.gameID ?? ""}
+              onInput=${(e) =>
+                patch({ gameID: e.currentTarget.value || undefined })}
+            />
+          </label>
+          <p class="form-hint">
+            The local games.yaml key (--game-id). Set automatically by a catalog
+            match above; override it here to choose it by hand.
+          </p>
+          ${errorFor("game_id") && html`<p class="modal__error">${errorFor("game_id")}</p>`}
+        </div>
       </details>
 
       ${
@@ -1024,16 +1026,19 @@ export function GameAddForm({
         html`
           <details class="setup-add__extra-sources">
             <summary>Also map other sources (optional)</summary>
-            <p class="form-hint">
-              A game can draw mods from more than one source. The identifier may
-              be empty - that is how a directory source is normally configured.
-            </p>
-            <${SourcesMapEditor}
-              sources=${(sources ?? []).filter((s) => s.id !== spec.sourceID)}
-              value=${spec.extraSources}
-              disabled=${busy}
-              onChange=${(map) => patch({ extraSources: map })}
-            />
+            <div class="form-section">
+              <p class="form-hint">
+                A game can draw mods from more than one source. The identifier
+                may be empty - that is how a directory source is normally
+                configured.
+              </p>
+              <${SourcesMapEditor}
+                sources=${(sources ?? []).filter((s) => s.id !== spec.sourceID)}
+                value=${spec.extraSources}
+                disabled=${busy}
+                onChange=${(map) => patch({ extraSources: map })}
+              />
+            </div>
           </details>
         `
       }

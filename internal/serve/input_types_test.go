@@ -30,8 +30,14 @@ import (
 // need no control height - but the control block still draws each one
 // (issue 653): a box to tick or a radio, one rem square in the accent; a
 // file input, never drawn, behind a visible .button. Each must be named by
-// a rule in the block (blockInputTypes), or it is drawn by the browser.
-var nonTextInputTypes = []string{"checkbox", "radio", "file"}
+// the block's own base rule for it - the rule that sets the property given
+// here - or it is drawn by the browser. A rule that only refines it (a
+// switch, a disabled state) does not count.
+var nonTextInputTypes = map[string]string{
+	"checkbox": "accent-color",
+	"radio":    "accent-color",
+	"file":     "display",
+}
 
 // unstyledInputTypes are the input types the control block deliberately
 // does not draw, with the reason. A new entry needs a reason a reviewer
@@ -46,19 +52,33 @@ var typeAttr = regexp.MustCompile(`(?:^|\s)type=("|\$\{)`)
 // inputTypeSelector matches an attribute selector on an input's type.
 var inputTypeSelector = regexp.MustCompile(`input\[type="([a-z-]+)"\]`)
 
-// styledInputTypes returns the input types the control block gives the
-// control height: the types named in a rule inside the block that sets
-// height.
+// styledInputTypes returns the text types the control block gives the
+// control height: the types named in the block's base field rule, the one
+// that sets height (a non-text type is never a text field, whatever a rule
+// of its own sets).
 func styledInputTypes(css string) []string {
+	var out []string
+	for _, ty := range blockInputTypesSetting(css, "height") {
+		if _, nonText := nonTextInputTypes[ty]; !nonText {
+			out = append(out, ty)
+		}
+	}
+	return out
+}
+
+// blockInputTypesSetting returns every input type named in the selector of
+// a rule inside the control block that sets property.
+func blockInputTypesSetting(css, property string) []string {
 	begin := strings.Index(css, controlBlockBegin)
 	end := strings.Index(css, controlBlockEnd)
 	if begin < 0 || end < begin {
 		return nil
 	}
 	block := cssComment.ReplaceAllString(css[begin:end], "")
+	sets := regexp.MustCompile(`(^|;)\s*` + regexp.QuoteMeta(property) + `\s*:`)
 	var out []string
 	for _, m := range cssRule.FindAllStringSubmatch(block, -1) {
-		if !regexp.MustCompile(`(^|;)\s*height\s*:`).MatchString(m[2]) {
+		if !sets.MatchString(m[2]) {
 			continue
 		}
 		for _, t := range inputTypeSelector.FindAllStringSubmatch(m[1], -1) {
@@ -70,33 +90,13 @@ func styledInputTypes(css string) []string {
 	return out
 }
 
-// blockInputTypes returns every input type a rule inside the control block
-// names in its selector, whatever the rule sets.
-func blockInputTypes(css string) []string {
-	begin := strings.Index(css, controlBlockBegin)
-	end := strings.Index(css, controlBlockEnd)
-	if begin < 0 || end < begin {
-		return nil
-	}
-	block := cssComment.ReplaceAllString(css[begin:end], "")
-	var out []string
-	for _, m := range cssRule.FindAllStringSubmatch(block, -1) {
-		for _, t := range inputTypeSelector.FindAllStringSubmatch(m[1], -1) {
-			if !slices.Contains(out, t[1]) {
-				out = append(out, t[1])
-			}
-		}
-	}
-	return out
-}
-
 // drawnInputTypes is every type an <input> in the SPA may have: the text
-// types the block gives the control height, the non-text types the block
-// names, and the deliberate exceptions.
+// types the block gives the control height, the non-text types its base
+// rule for them names, and the deliberate exceptions.
 func drawnInputTypes(css string) []string {
 	out := styledInputTypes(css)
-	for _, ty := range blockInputTypes(css) {
-		if slices.Contains(nonTextInputTypes, ty) && !slices.Contains(out, ty) {
+	for ty, property := range nonTextInputTypes {
+		if slices.Contains(blockInputTypesSetting(css, property), ty) {
 			out = append(out, ty)
 		}
 	}
@@ -188,12 +188,14 @@ func TestInputTypeCheck_CatchesEveryForm(t *testing.T) {
 		"select,\ninput[type=\"text\"],\ninput[type=\"url\"] {\n  height: var(--control-height);\n}\n" +
 		"input[type=\"color\"] { border-radius: 0; }\n" +
 		"input[type=\"checkbox\"],\ninput[type=\"radio\"] { accent-color: var(--accent); }\n" +
+		"input[type=\"checkbox\"][role=\"switch\"] { height: 1rem; }\n" +
+		"input[type=\"file\"]:disabled { cursor: none; }\n" +
 		controlBlockEnd + "\ninput[type=\"date\"] { height: 2rem; }\ninput[type=\"file\"] { display: none; }\n"
 	assert.Equal(t, []string{"text", "url"}, styledInputTypes(css),
 		"only a rule inside the block that sets height counts; a comment, a height-less rule and a rule outside the block do not")
 	styled := drawnInputTypes(css)
 	assert.ElementsMatch(t, []string{"text", "url", "checkbox", "radio", "hidden"}, styled,
-		"a non-text type counts once the block names it (color is not a non-text type; file is named only outside the block)")
+		"a non-text type counts once the block's base rule for it names it: color is not a non-text type, and file is named in the block only by a rule that refines it (and its base rule is outside the block)")
 
 	src := "// an <input> in prose\n" +
 		"html`<input type=\"text\" />\n" +

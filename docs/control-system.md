@@ -38,7 +38,6 @@ own. The design history is in
 | An on/off setting that takes effect at once | `<input type="checkbox" role="switch">` |
 | A file to upload | `FilePicker` from `components/filepicker.js`: a `.button` over a hidden file input. Never a `<label>` dressed as a button |
 | A field the form refuses | `aria-invalid="true"` on the field, and the reason in a `.form-error` |
-| A value shown in a field's frame that cannot be edited | `readonly` |
 
 A one-line field is exactly `--control-height`, the default button's height,
 so a field and its button line up. Disabled controls use `disabled`; the
@@ -48,7 +47,7 @@ block draws them.
 
 | You need | Use |
 | --- | --- |
-| A titled unit: heading, fields, actions, hint | `.form-section` (a `<form>`, `<div>` or `<fieldset>`), heading `.form-section__heading` (or a `<legend>`) |
+| A titled unit: heading, fields, actions, hint | `.form-section` (a `<form>`, `<div>` or `<fieldset>`), heading `.form-section__heading` (or a `<legend>`). Any container that holds form parts is one, a `<details>` body included (a `.form-section` inside it) |
 | A label over its control | `<label class="form-field">Label <input …></label>` |
 | A label over a control that cannot sit inside a `<label>` (a path field with its Browse… button) | `<div class="form-field">` holding `<label class="form-field__label" for=…>` |
 | A label beside its control (a toolbar's Filter) | `form-field form-field--inline` |
@@ -77,10 +76,14 @@ width, flex), but it never reshapes a control or lays out a form.
 - `e2e_controls_test.go`: the top bar and library toolbar share one control
   height.
 - `e2e_dialog_controls_test.go`: every modal, the mod slide-over and every
-  Setup form, opened from a table of how to open each, in both themes and
-  every layout face: fields and default buttons one height, small buttons
-  the small height, and a `.form-row`'s field and button on one line. A new
-  dialog gets a row; `TestE2E_DialogScenariosCoverEveryKind` fails until it
-  has one.
+  Setup form (40 scenarios), opened from a table of how to open each, in
+  both themes and every layout face: fields and default buttons one height,
+  small buttons the small height, a `.form-row`'s field and button on one
+  line, and the form rhythm - no part of a form closer to the one before it
+  than `--form-gap` (`--form-field-gap` inside a field), so a container that
+  is not a `.form-section` cannot collapse its parts together. A second pass
+  opens each at 375px: no control overruns its dialog, and a modal keeps a
+  16px gutter. A new dialog gets a row; `TestE2E_DialogScenariosCoverEveryKind`
+  fails until it has one.
 - `contrast_test.go` and `no_hardcoded_color_test.go`: colours come only from
   the theme tokens, at WCAG AA in both themes.

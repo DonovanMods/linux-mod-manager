@@ -116,7 +116,7 @@ func typeBox(id string) string {
 // the list does not carry is still shown - by id - and kept.
 func TestE2E_GameEditor_PicksCurseForgeVersionTypesByName(t *testing.T) {
 	f := newE2EFixtureWithSetupGames(t)
-	f.Svc.RegisterSource(&e2eVersionTypesSource{fakeSource: newFakeSource("curseforge")})
+	f.Svc.RegisterSource(e2eStrictVersionTypesSource{&e2eVersionTypesSource{fakeSource: newFakeSource("curseforge")}})
 	game, err := f.Svc.GetGame("drive")
 	require.NoError(t, err)
 	game.CurseForge = &domain.GameCurseForge{GameVersionTypes: []int{12345}}
@@ -180,6 +180,38 @@ func TestE2E_GameEditor_CurseForgePickerFallsBackToTheIDField(t *testing.T) {
 	assertOnlyExpectedErrors(t, f.BrowserErrors(), "/api/v1/sources/curseforge/version-types")
 }
 
+// TestE2E_GameEditor_AnEmptyCurseForgeMappingSaysHowToSetIt (#653): a game
+// that maps CurseForge to an empty identifier still asks for the list, so
+// the field says what core says - the mapping is empty, and how to set it -
+// rather than nothing at all.
+func TestE2E_GameEditor_AnEmptyCurseForgeMappingSaysHowToSetIt(t *testing.T) {
+	f := newE2EFixtureWithSetupGames(t)
+	f.Svc.RegisterSource(e2eStrictVersionTypesSource{&e2eVersionTypesSource{fakeSource: newFakeSource("curseforge")}})
+	game, err := f.Svc.GetGame("drive")
+	require.NoError(t, err)
+	game.SourceIDs["curseforge"] = ""
+	require.NoError(t, f.Svc.SaveGame(t.Context(), game))
+
+	var why string
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1280, 900),
+		chromedp.Navigate(f.SetupPath("games")),
+		setupGamesReady(),
+		openEditor("drive"),
+		chromedp.WaitVisible(editorSel(`[data-testid="curseforge-types-unavailable"]`), chromedp.ByQuery),
+		chromedp.Text(editorSel(`[data-testid="curseforge-types-unavailable"]`), &why, chromedp.ByQuery),
+	)
+	assert.Contains(t, why, "empty identifier")
+	assert.Contains(t, why, "lmm game edit drive --source curseforge=")
+	assertOnlyExpectedErrors(t, f.BrowserErrors(), "/api/v1/sources/curseforge/version-types")
+}
+
+// e2eStrictVersionTypesSource is a version-types source that needs the
+// game's identifier, as CurseForge does.
+type e2eStrictVersionTypesSource struct{ *e2eVersionTypesSource }
+
+func (e2eStrictVersionTypesSource) IgnoresGameIdentifier() bool { return false }
+
 // e2ePerGameVersionTypesSource lists different version types for each
 // CurseForge game identifier, as CurseForge does.
 type e2ePerGameVersionTypesSource struct {
@@ -232,7 +264,7 @@ func TestE2E_GameEditor_CurseForgePickerFollowsTheSavedIdentifier(t *testing.T) 
 // so there is nothing to save.
 func TestE2E_GameEditor_CurseForgeRetickIsNotAChange(t *testing.T) {
 	f := newE2EFixtureWithSetupGames(t)
-	f.Svc.RegisterSource(&e2eVersionTypesSource{fakeSource: newFakeSource("curseforge")})
+	f.Svc.RegisterSource(e2eStrictVersionTypesSource{&e2eVersionTypesSource{fakeSource: newFakeSource("curseforge")}})
 	game, err := f.Svc.GetGame("drive")
 	require.NoError(t, err)
 	game.CurseForge = &domain.GameCurseForge{GameVersionTypes: []int{67408, 517}}

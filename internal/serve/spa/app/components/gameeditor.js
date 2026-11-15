@@ -19,7 +19,6 @@ import {
   useState,
 } from "../render.js";
 import { codeSpans } from "../errortext.js";
-import { isSourceMapped } from "../sourcemapping.js";
 import { ApiError, getKnownGames, getSourceVersionTypes } from "../api.js";
 import { SourcesMapEditor } from "./sourcesmap.js";
 import {
@@ -213,7 +212,10 @@ function CurseForgeTypesPicker({
   patch,
   fallback,
 }) {
-  const mapped = isSourceMapped(game.source_ids, "curseforge");
+  // The key's presence, not isSourceMapped: a mapping with an empty
+  // identifier still asks, so core's own answer - "maps source curseforge
+  // to an empty identifier; set it with …" - is what the field says.
+  const mapped = Object.hasOwn(game.source_ids ?? {}, "curseforge");
   // The list belongs to the SAVED CurseForge game: a save that re-points
   // the identifier reads the new game's list, and one that drops the
   // mapping drops the list for the id field.
@@ -239,10 +241,7 @@ function CurseForgeTypesPicker({
   }, [game.id, mapped, identifier]);
 
   if (mapped && !list && !failure) {
-    return html`<p
-      class="empty-state__hint"
-      data-testid="curseforge-types-loading"
-    >
+    return html`<p class="form-hint" data-testid="curseforge-types-loading">
       Reading CurseForge's version types for this game…
     </p>`;
   }
@@ -664,7 +663,7 @@ export function GameEditor({
               Nothing was saved: see the field marked above.
             </p>`
           }
-          ${saved && !dirty && !error && html`<p class="empty-state__hint" data-testid="game-saved">Saved.</p>`}
+          ${saved && !dirty && !error && html`<p class="form-hint" data-testid="game-saved">Saved.</p>`}
         </div>
       </div>
     </div>

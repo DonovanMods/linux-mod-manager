@@ -88,7 +88,7 @@ export function SourceIndexes({ sources } = {}) {
       data-testid="source-indexes"
     >
       <h2 class="section-header">Local search indexes</h2>
-      <p class="empty-state__hint">
+      <p class="form-hint">
         Thunderstore has no search endpoint, so lmm keeps a copy of each
         community's catalogue and searches that. It is built on the first search
         and refreshed every six hours; refresh it here when a package published
@@ -129,7 +129,7 @@ export function SourceIndexes({ sources } = {}) {
           )}
         </tbody>
       </table>
-      <p class="empty-state__hint" data-testid="source-indexes-total">
+      <p class="form-hint" data-testid="source-indexes-total">
         Total on disk: ${formatBytes(total) || "0 B"}
       </p>
       <${PrunePanel} onChanged=${reload} />
@@ -243,7 +243,7 @@ function IndexRow({ entry, hold, onChanged }) {
         ${
           hold &&
           html`
-            <span class="empty-state__hint" data-testid="index-held-until">
+            <span class="form-hint" data-testid="index-held-until">
               held until ${holdClock(hold.retry_at)}
             </span>
           `
@@ -268,7 +268,7 @@ function IndexRow({ entry, hold, onChanged }) {
         ${
           entry.keep_reason &&
           html`
-            <p class="empty-state__hint" data-testid="index-keep-reason">
+            <p class="form-hint" data-testid="index-keep-reason">
               Prune keeps this: ${entry.keep_reason}
             </p>
           `
@@ -425,7 +425,7 @@ function PrunePanel({ onChanged }) {
       ${
         kept.length > 0 &&
         html`
-          <p class="empty-state__hint">Kept:</p>
+          <p class="form-hint">Kept:</p>
           <ul class="source-indexes__preview-list">
             ${kept.map(
               (e) => html`

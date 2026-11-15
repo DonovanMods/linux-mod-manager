@@ -78,6 +78,8 @@
   --text-primary: #10151c;
   --text-secondary: #4a5461;
   --text-muted: #5f6874;
+  /* A field's placeholder: muted, and still readable on the sunken fill. */
+  --text-placeholder: #5f6874;
   --text-inverted: #f7f9fb;
 
   /* Lines. */
@@ -128,6 +130,11 @@
   --control-font-size: 0.9375rem;
   --control-font-size-sm: 0.8125rem;
   --control-line-height: 1.25;
+  /* Form rhythm (issue 653): the space between the parts of a form - its
+   * heading, fields, actions and hint - and between a field's label, its
+   * control and its hint. */
+  --form-gap: var(--space-3);
+  --form-field-gap: var(--space-1);
 
   /* Motion (issue 334, owner demo 1: "mild UI animations for the slide-over
    * and a consistent motion language app-wide").
@@ -183,6 +190,7 @@
     --text-primary: #e8edf4;
     --text-secondary: #a8b3c1;
     --text-muted: #7c8896;
+    --text-placeholder: #7c8896;
     --text-inverted: #0b0f14;
 
     --border-subtle: #223044;
@@ -212,6 +220,7 @@
   --text-primary: #e8edf4;
   --text-secondary: #a8b3c1;
   --text-muted: #7c8896;
+  --text-placeholder: #7c8896;
   --text-inverted: #0b0f14;
 
   --border-subtle: #223044;
@@ -781,17 +790,16 @@ textarea {
   line-height: 1.5;
 }
 
-.field--code:focus-visible {
+.source-editor__frame > .field--code:focus-visible {
   outline: none;
 }
 
-/* Read-only: a value shown in a field's frame that cannot be typed into -
- * the quiet border and the page's own fill, its text still readable. */
-input[readonly],
-textarea[readonly] {
-  border-color: var(--border-subtle);
-  background: var(--surface-base);
-  color: var(--text-secondary);
+/* A placeholder is an example, not a value: the muted placeholder token,
+ * at full strength (contrast_test.go holds it to 4.5:1 on the field's
+ * sunken fill). */
+::placeholder {
+  color: var(--text-placeholder);
+  opacity: 1;
 }
 
 /* Inline validation: a field the form refuses carries aria-invalid="true"
@@ -889,6 +897,13 @@ legend {
   font-size: 0.85em;
 }
 
+/* A rendered legend is not one of its fieldset's flex items, so the
+ * section's gap does not reach it: a section's legend keeps the gap a
+ * heading would. */
+fieldset.form-section > legend {
+  margin-bottom: var(--form-gap);
+}
+
 /* A search field carries this application's own clear control
  * (.omnibar__clear), which also resets what the search fanned out; the
  * browser's built-in cancel only empties the field, and drawing both put
@@ -932,8 +947,14 @@ input[type="search"]::-webkit-search-decoration {
 .form-section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--form-gap);
   min-width: 0;
+}
+
+/* A disclosure in a form: its <details> holds a .form-section, set off
+ * from the summary that opens it. */
+summary + .form-section {
+  margin-top: var(--form-gap);
 }
 
 .form-section + .form-section {
@@ -962,7 +983,7 @@ input[type="search"]::-webkit-search-decoration {
 .form-field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--form-field-gap);
   min-width: 0;
   color: var(--text-secondary);
   font-size: 0.85em;
@@ -2452,6 +2473,12 @@ a.row-menu__item.mod-page-link {
   border-bottom: none;
 }
 
+/* A plan row's own choice (a collection update's "take this change") sits
+ * under the row's text, not flush against it. */
+.plan__mod > .form-check {
+  margin-top: var(--form-field-gap);
+}
+
 .plan__mod--skipped .plan__mod-name {
   color: var(--text-muted);
   text-decoration: line-through;
@@ -2560,8 +2587,11 @@ a.row-menu__item.mod-page-link {
   font-size: 1rem;
 }
 
+/* A FOMOD group's name is the question being asked, so it keeps the body's
+ * type size rather than a field label's. */
 .fomod__legend {
   color: var(--text-primary);
+  font-size: 1rem;
   font-weight: 600;
 }
 
@@ -3718,6 +3748,7 @@ a.row-menu__item.mod-page-link {
 
 .profiles-row__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
 }

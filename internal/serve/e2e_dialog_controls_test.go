@@ -12,7 +12,18 @@ package serve_test
 //   - every default-size button is that same height, and every small one
 //     shares the small height;
 //   - in a .form-row, a field and a button on one line share a top and a
-//     bottom.
+//     bottom;
+//   - the parts of a form stand apart: a form-layout item (a section, its
+//     heading, a field, a check, a row, actions, a hint) sits at least the
+//     form rhythm's gap below whatever comes before it - a wrapped row's
+//     gap inside a .form-row or .form-actions; --form-gap in a
+//     .form-section, and next to a section or a heading wherever it is;
+//     --form-field-gap otherwise - so a container that is not a
+//     .form-section cannot collapse its parts together.
+//
+// TestE2E_EveryDialogFitsANarrowWindow opens each one again at 375px and
+// holds every control inside its dialog, and a modal or slide-over panel
+// inside the window with a side gutter.
 //
 // A new dialog joins by gaining a row. TestE2E_DialogScenariosCoverEveryKind
 // fails when a plan kind or a modal kind has none.
@@ -67,7 +78,71 @@ const dialogControlsJS = `((root) => {
 			.filter(visible)
 			.filter((el) => el.closest(".form-row") === row)
 			.map(box));
-	return { fields, buttons, rows };
+	// The form rhythm (see the file comment): each token resolved to px.
+	const px = (v) => {
+		const d = document.createElement("div");
+		d.style.height = v;
+		document.body.appendChild(d);
+		const h = d.getBoundingClientRect().height;
+		d.remove();
+		return h;
+	};
+	const formGap = px("var(--form-gap)"), fieldGap = px("var(--form-field-gap)"), rowGap = px("var(--space-2)");
+	const LAYOUT = ".form-section, .form-section__heading, .form-field, .form-check, .form-row, .form-actions, .form-hint, .form-error";
+	const prevVisible = (el) => {
+		let p = el.previousElementSibling;
+		while (p && !visible(p)) p = p.previousElementSibling;
+		return p;
+	};
+	const tight = [];
+	for (const el of [...scope.querySelectorAll(LAYOUT)].filter(visible)) {
+		const prev = prevVisible(el);
+		if (!prev) continue;
+		const a = prev.getBoundingClientRect(), b = el.getBoundingClientRect();
+		if (b.top < a.bottom - 0.5) continue; // side by side, not stacked
+		const parent = el.parentElement;
+		const sectional = (n) => n.matches(".form-section, .form-section__heading, h1, h2, h3, h4, h5, h6, legend");
+		const min = parent.matches(".form-field") ? fieldGap
+			: parent.matches(".form-row, .form-actions") ? rowGap
+			: sectional(el) || sectional(prev) || parent.matches(".form-section") ? formGap
+			: fieldGap;
+		const gap = b.top - a.bottom;
+		if (gap < min - 0.5) tight.push({ what: name(el), prev: name(prev), gap, min });
+	}
+	return { fields, buttons, rows, tight };
+})`
+
+// dialogFitJS measures, at the current width, the controls that overrun
+// the dialog root names, and where the modal or slide-over panel holding
+// it sits in the window.
+const dialogFitJS = `((root) => {
+	const scope = document.querySelector(root);
+	if (!scope) return null;
+	const visible = (el) => {
+		const r = el.getBoundingClientRect();
+		const s = getComputedStyle(el);
+		return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
+	};
+	const name = (el) => el.tagName.toLowerCase() + (el.name ? '[name="' + el.name + '"]' : "") +
+		" " + (el.textContent || el.placeholder || el.getAttribute("aria-label") || "").trim().slice(0, 30);
+	const box = scope.getBoundingClientRect();
+	const overruns = [...scope.querySelectorAll('button, a.button, select, textarea, input:not([type="hidden"]):not([type="file"])')]
+		.filter(visible)
+		.filter((el) => {
+			const r = el.getBoundingClientRect();
+			return r.left < box.left - 0.5 || r.right > box.right + 0.5;
+		})
+		.map(name);
+	const slide = scope.matches(".slide-over");
+	const panel = slide ? scope.querySelector(".slide-over__panel") : scope.closest(".modal");
+	const p = panel ? panel.getBoundingClientRect() : null;
+	return {
+		overruns,
+		panel: p ? [p.left, p.right] : null,
+		// A slide-over is anchored to the window's right edge by design.
+		anchoredRight: slide,
+		viewport: window.innerWidth,
+	};
 })`
 
 type dialogControl struct {
@@ -78,10 +153,26 @@ type dialogControl struct {
 	Small  bool    `json:"small"`
 }
 
+// dialogGap is two parts of a form closer together than the form rhythm.
+type dialogGap struct {
+	What string  `json:"what"`
+	Prev string  `json:"prev"`
+	Gap  float64 `json:"gap"`
+	Min  float64 `json:"min"`
+}
+
 type dialogControlsReport struct {
 	Fields  []dialogControl   `json:"fields"`
 	Buttons []dialogControl   `json:"buttons"`
 	Rows    [][]dialogControl `json:"rows"`
+	Tight   []dialogGap       `json:"tight"`
+}
+
+type dialogFitReport struct {
+	Overruns      []string  `json:"overruns"`
+	Panel         []float64 `json:"panel"`
+	AnchoredRight bool      `json:"anchoredRight"`
+	Viewport      float64   `json:"viewport"`
 }
 
 // dialogFixture is a fixture a scenario opens its dialog in, with the
@@ -264,6 +355,7 @@ var dialogScenarios = []dialogScenario{
 	{name: "profiles: renaming", fixture: "copyable", root: `.modal[data-kind="profiles"]`, wantField: true,
 		open: func(f dialogFixture) chromedp.Tasks {
 			return inProfilesModal(f,
+				pollUntil(`[...document.querySelectorAll('.profiles-row:has([data-profile="spare"]) button')].some((b) => b.textContent.includes("Rename"))`),
 				clickByText(`.profiles-row:has([data-profile="spare"]) button`, "Rename"),
 				chromedp.WaitVisible(`.profiles-row form.form-row input`, chromedp.ByQuery))
 		}},
@@ -463,9 +555,13 @@ var dialogScenarios = []dialogScenario{
 		}},
 
 	// Setup's forms.
-	{name: "setup: add a game", fixture: "copyable", root: `[data-testid="setup-add-game"]`, wantField: true,
+	// Two sources (the fake and the auth one), so "Also map other sources"
+	// renders; both disclosures are opened so their bodies are measured.
+	{name: "setup: add a game", fixture: "search", root: `[data-testid="setup-add-game"]`, wantField: true,
 		open: func(f dialogFixture) chromedp.Tasks {
-			return chromedp.Tasks{chromedp.Navigate(f.SetupPath("games")), openAddGameForm()}
+			return chromedp.Tasks{chromedp.Navigate(f.SetupPath("games")), openAddGameForm(),
+				chromedp.WaitVisible(`[data-testid="setup-add-game"] .setup-add__extra-sources`, chromedp.ByQuery),
+				chromedp.Evaluate(`document.querySelectorAll('[data-testid="setup-add-game"] details').forEach((d) => { d.open = true; })`, nil)}
 		}},
 	{name: "setup: game editor", fixture: "copyable", root: `[data-testid="game-editor"]`, wantField: true,
 		open: func(f dialogFixture) chromedp.Tasks {
@@ -494,7 +590,7 @@ var dialogScenarios = []dialogScenario{
 				chromedp.SetUploadFiles(`[data-testid="setup-import-archive"] input[type="file"]`, []string{f.files["import"]}, chromedp.ByQuery),
 				chromedp.WaitVisible(`[data-testid="staged-upload"] select`, chromedp.ByQuery)}
 		}},
-	{name: "setup: adopt", fixture: "workshop", root: `.setup-page`,
+	{name: "setup: adopt", fixture: "workshop", root: `.setup-page__body`,
 		open: func(f dialogFixture) chromedp.Tasks {
 			return chromedp.Tasks{chromedp.Navigate(f.SetupPath("adopt")),
 				chromedp.WaitVisible(`[data-testid="setup-workshop-adopt"] .button`, chromedp.ByQuery)}
@@ -564,20 +660,17 @@ func assertDialogControls(t *testing.T, where string, got dialogControlsReport, 
 				"%s: form-row %d: %s's bottom is %.2f, %s's is %.2f - a field and its button line up", where, i, c.What, c.Bottom, first.What, first.Bottom)
 		}
 	}
+	for _, g := range got.Tight {
+		t.Errorf("%s: %s sits %.2fpx below %s, under the form rhythm's %.2fpx - its container lays the form out without the form-layout classes",
+			where, g.What, g.Gap, g.Prev, g.Min)
+	}
 }
 
 // TestE2E_EveryDialogsControlsLineUp opens every dialog in dialogScenarios,
 // in each theme and layout face, and holds its fields and buttons to one
 // height and its form rows to one line.
 func TestE2E_EveryDialogsControlsLineUp(t *testing.T) {
-	fixtures := map[string]dialogFixture{}
-	for _, s := range dialogScenarios {
-		if _, ok := fixtures[s.fixture]; !ok {
-			build, known := dialogFixtures[s.fixture]
-			require.True(t, known, "%s: unknown fixture %q", s.name, s.fixture)
-			fixtures[s.fixture] = build(t)
-		}
-	}
+	fixtures := buildDialogFixtures(t)
 	for _, face := range e2eLayoutFaces {
 		t.Run(face.name, func(t *testing.T) {
 			// Each fixture drives a tab of its own: the face goes on every one.
@@ -614,6 +707,72 @@ func TestE2E_EveryDialogsControlsLineUp(t *testing.T) {
 	}
 }
 
+// dialogNarrowGutter is the least space a modal or slide-over panel keeps
+// to the window's edge at a phone width.
+const dialogNarrowGutter = 16
+
+// dialogNarrowExceptions are the dialogs that do not yet fit a 375px
+// window, with the reason. Each was already so on develop before #653.
+var dialogNarrowExceptions = map[string]string{
+	"launch-drift":  "its footer's Cancel / Deploy & launch / Launch anyway row does not wrap and overruns the modal at 375px - as on develop before #653",
+	"folder-picker": "a breadcrumb is one path segment on a button that never wraps, and the fixture's temporary folder name is wider than a 375px modal - as on develop before #653",
+}
+
+// TestE2E_EveryDialogFitsANarrowWindow opens every dialog in
+// dialogScenarios in a 375px window and holds every control inside its
+// dialog, and a modal or slide-over panel inside the window with a
+// dialogNarrowGutter on each side. (A page that scrolls sideways at this
+// width is a separate, known gap: the page is not measured, the dialog
+// is.)
+func TestE2E_EveryDialogFitsANarrowWindow(t *testing.T) {
+	fixtures := buildDialogFixtures(t)
+	for _, s := range dialogScenarios {
+		t.Run(s.name, func(t *testing.T) {
+			f := fixtures[s.fixture]
+			var got dialogFitReport
+			f.runInBrowser(t, chromedp.EmulateViewport(375, 800))
+			f.runInBrowser(t, s.open(f)...)
+			f.runInBrowser(t,
+				settleEffects(),
+				// A panel slides in: measure where it comes to rest.
+				pollUntil(`document.getAnimations().every((a) => a.playState !== "running")`),
+				chromedp.Evaluate(dialogFitJS+`(`+jsString(s.root)+`)`, &got),
+			)
+			if reason, ok := dialogNarrowExceptions[s.name]; ok {
+				t.Skipf("known not to fit 375px yet: %s", reason)
+			}
+			assert.Empty(t, got.Overruns, "%s: controls overrun the dialog at 375px", s.name)
+			if got.Panel != nil {
+				assert.GreaterOrEqual(t, got.Panel[0], float64(dialogNarrowGutter)-0.5,
+					"%s: the panel's left edge is %.1fpx from the window's", s.name, got.Panel[0])
+				gutter := float64(dialogNarrowGutter)
+				if got.AnchoredRight {
+					gutter = 0
+				}
+				assert.LessOrEqual(t, got.Panel[1], got.Viewport-gutter+0.5,
+					"%s: the panel's right edge is %.1fpx from the window's", s.name, got.Viewport-got.Panel[1])
+			}
+		})
+	}
+	for _, f := range fixtures {
+		assertOnlyExpectedErrors(t, f.BrowserErrors(), "/launch", "/api/v1/plans/update_from_archive")
+	}
+}
+
+// buildDialogFixtures builds every fixture dialogScenarios names, once.
+func buildDialogFixtures(t *testing.T) map[string]dialogFixture {
+	t.Helper()
+	fixtures := map[string]dialogFixture{}
+	for _, s := range dialogScenarios {
+		if _, ok := fixtures[s.fixture]; !ok {
+			build, known := dialogFixtures[s.fixture]
+			require.True(t, known, "%s: unknown fixture %q", s.name, s.fixture)
+			fixtures[s.fixture] = build(t)
+		}
+	}
+	return fixtures
+}
+
 // TestE2E_DialogScenariosCoverEveryKind fails when a modal kind the SPA can
 // open - a plan kind (plankinds.go's closed table, each one a confirm-plan
 // modal) or a modal of its own (a Modal kind="..." in spa/app) - has no
@@ -636,9 +795,7 @@ func TestE2E_DialogScenariosCoverEveryKind(t *testing.T) {
 		if readErr != nil {
 			return readErr
 		}
-		for _, m := range regexp.MustCompile(`(?m)^\s*kind="([a-z_-]+)"`).FindAllStringSubmatch(string(data), -1) {
-			kinds = append(kinds, m[1])
-		}
+		kinds = append(kinds, modalKindsIn(string(data))...)
 		return nil
 	})
 	require.NoError(t, err)
@@ -658,6 +815,28 @@ func TestE2E_DialogScenariosCoverEveryKind(t *testing.T) {
 	}
 	sort.Strings(missing)
 	assert.Empty(t, missing, "modal kinds with no row in dialogScenarios (or reasoned entry in dialogKindsNotDriven)")
+}
+
+// modalKind matches a kind="..." attribute - a Modal's kind, wherever it
+// sits in its tag - and not data-kind="..." (which stamps it on the DOM).
+var modalKind = regexp.MustCompile(`(?:^|[^\w-])kind="([a-z_-]+)"`)
+
+// modalKindsIn returns every literal Modal kind in one module's source.
+func modalKindsIn(src string) []string {
+	var out []string
+	for _, m := range modalKind.FindAllStringSubmatch(src, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// TestModalKindScan_ReadsEveryShape pins the coverage guard's reach: a kind
+// on its own line, one on the same line as the tag, and not data-kind.
+func TestModalKindScan_ReadsEveryShape(t *testing.T) {
+	src := "html`<${Modal}\n  kind=\"profiles\"\n  title=\"x\">\n" +
+		"<${Modal} kind=\"brand-new\" title=\"x\">\n" +
+		"<div data-kind=\"not-a-modal\" class=\"modal\">`"
+	assert.Equal(t, []string{"profiles", "brand-new"}, modalKindsIn(src))
 }
 
 // planKindNames reads every plan kind's name from the kind_*.go files -
