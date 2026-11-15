@@ -884,7 +884,7 @@ func (s *Service) acquireSuppliedRaw(ctx context.Context, gameCache *cache.Cache
 	if err != nil {
 		return nil, err
 	}
-	a = s.newAcquired(gameCache, sourceID, game, mod, file)
+	a = s.newAcquired(gameCache, sourceID, game, mod, file, sink)
 	a.owned = append(a.owned, tempDir)
 	defer func(pending *acquiredFile) {
 		if err != nil {

@@ -420,9 +420,9 @@ func (s *Service) downloadRecipe(ctx context.Context, link, dest string) (err er
 // maxCollectionManifestBytes - checked BEFORE anything is extracted, so a
 // highly compressed member is never inflated.
 func (s *Service) checkRecipeListing(ctx context.Context, archive string) error {
-	out, err := exec.CommandContext(ctx, "7z", "l", "-slt", "--", archive).Output()
+	out, stderr, err := run7z(ctx, archive, "listing", "", "l", "-slt", "--", archive)
 	if err != nil {
-		s.logger().Debug("listing a collection recipe failed", "err", err, "output", string(out))
+		s.logger().Debug("listing a collection recipe failed", "err", err, "output", sevenZipOutput(out, stderr))
 		return fmt.Errorf("%w: the recipe archive could not be listed (7z could not read it)", source.ErrInvalidManifest)
 	}
 	return checkRecipeListingText(string(out))
@@ -497,11 +497,9 @@ func checkRecipeListingText(out string) error {
 // names local paths and can carry the archive's text, so it goes to the
 // debug log, never into the message.
 func (s *Service) extractRecipeManifest(ctx context.Context, archive, dest string) error {
-	ctx, cancel := context.WithTimeout(ctx, extract7zTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "7z", "x", "-y", "-r-", "-o"+dest, "--", archive, collectionRecipeManifest, recipeBundledDir, recipePatchesDir).CombinedOutput()
+	out, stderr, err := run7z(ctx, archive, "extraction", dest, "x", "-y", "-r-", "-o"+dest, "--", archive, collectionRecipeManifest, recipeBundledDir, recipePatchesDir)
 	if err != nil {
-		s.logger().Debug("extracting a collection recipe failed", "err", err, "output", string(out))
+		s.logger().Debug("extracting a collection recipe failed", "err", err, "output", sevenZipOutput(out, stderr))
 		return fmt.Errorf("%w: 7z could not extract the recipe's %s", source.ErrInvalidManifest, collectionRecipeManifest)
 	}
 	return os.WriteFile(filepath.Join(dest, recipeFilesMarker), nil, 0o644)

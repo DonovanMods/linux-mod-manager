@@ -328,8 +328,10 @@ func listArchiveMembers(ctx context.Context, e *Extractor, archivePath string) (
 	switch e.detectFormatFromPath(archivePath) {
 	case "zip":
 		return listZipMembers(ctx, archivePath)
-	case "7z", "rar":
-		return list7zMembers(ctx, archivePath)
+	case "7z":
+		return list7zMembers(ctx, archivePath, "7z")
+	case "rar":
+		return list7zMembers(ctx, archivePath, "rar")
 	default:
 		if ext := filepath.Ext(archivePath); ext != "" {
 			return nil, fmt.Errorf("unsupported archive format: %s", ext)
@@ -355,7 +357,8 @@ func listZipMembers(ctx context.Context, archivePath string) (members []archiveM
 	}()
 
 	if f := zipNeeds7z(r.File); f != nil {
-		return list7zZipMembers(ctx, archivePath, f)
+		members, _, err := list7zZipMembers(ctx, archivePath, f)
+		return members, err
 	}
 
 	members = make([]archiveMember, 0, len(r.File))
@@ -365,30 +368,23 @@ func listZipMembers(ctx context.Context, archivePath string) (members []archiveM
 	return members, nil
 }
 
-// list7zMembers lists a .7z/.rar archive through `7z l -slt`, which prints
-// one blank-line-separated block per entry after a "----------" separator.
-// Only "Path" and "Attributes" are read: an entry whose attributes carry the
-// DOS directory bit is a directory, everything else a file. The same timeout
-// the extraction path uses guards a corrupt archive.
-func list7zMembers(ctx context.Context, archivePath string) ([]archiveMember, error) {
+// list7zMembers lists a .7z/.rar archive (format names which, for a
+// message) through `7z l -slt`, refusing a link member as the extraction
+// does (list7zArchive, #658), so a plan never promises an archive the
+// ingest refuses. The no-progress watchdog the extraction uses (run7z)
+// guards a corrupt archive.
+func list7zMembers(ctx context.Context, archivePath, format string) ([]archiveMember, error) {
 	if _, err := exec.LookPath("7z"); err != nil {
 		return nil, fmt.Errorf("7z command not found: install p7zip-full to extract .7z and .rar files")
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, extract7zTimeout)
-	defer cancel()
-
-	output, err := exec.CommandContext(ctx, "7z", "l", "-slt", archivePath).CombinedOutput()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("7z listing timed out after %v", extract7zTimeout)
-		}
-		return nil, fmt.Errorf("7z listing failed: %w\nOutput: %s", err, string(output))
-	}
-	return parse7zListing(string(output)), nil
+	members, _, err := list7zArchive(ctx, archivePath, format)
+	return members, err
 }
 
-// parse7zListing turns `7z l -slt` output into members. Everything before the
+// parse7zListing turns `7z l -slt` output into members: one blank-line-
+// separated block per entry, of which "Path", "Attributes" and the link
+// lines are read. An entry whose attributes carry the DOS directory bit is
+// a directory, everything else a file. Everything before the
 // "----------" separator is the ARCHIVE's own header block (which carries a
 // "Path =" line naming the archive itself) and is skipped.
 func parse7zListing(out string) []archiveMember {
@@ -427,6 +423,11 @@ func parse7zListing(out string) []archiveMember {
 			attrs, _, _ := strings.Cut(value, " ")
 			current.Dir = strings.Contains(attrs, "D")
 			current.Link = current.Link || isLinkAttributes(value)
+			// A reparse point (DOS "L": a Windows symlink or junction)
+			// is a link unless a Unix mode says what the entry is.
+			if !hasUnixMode(value) && strings.Contains(attrs, "L") {
+				current.Link = true
+			}
 		case "Symbolic Link", "Hard Link":
 			current.Link = current.Link || value != ""
 		}

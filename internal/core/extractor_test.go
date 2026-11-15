@@ -377,10 +377,10 @@ func TestExtractor_Extract_RejectsReservedCacheMarkerNames(t *testing.T) {
 }
 
 // TestExtractor_Extract_ReservedNameRejection_AppliesTo7z covers the external
-// extractor path (.7z/.rar shell out to the system 7z binary, so there is no
-// per-member hook to reject at - the guard has to inspect what 7z actually
-// wrote). Skipped where 7z isn't installed, same as any other 7z-dependent
-// behavior.
+// extractor path (.7z/.rar shell out to the system 7z binary, so the guard
+// judges the archive's listing before 7z writes anything, and each entry
+// again as it moves out of the private directory, #658). Skipped where 7z
+// isn't installed, same as any other 7z-dependent behavior.
 func TestExtractor_Extract_ReservedNameRejection_AppliesTo7z(t *testing.T) {
 	if _, err := exec.LookPath("7z"); err != nil {
 		t.Skip("7z not installed")
