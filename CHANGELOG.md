@@ -1033,6 +1033,29 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   through `7z` too. Without `7z` installed, the error names the member,
   its compression method, and that installing 7-Zip fixes it.
 
+- **`.7z` and `.rar` archives are checked like `.zip` ones (#658).** lmm
+  now unpacks a `.7z` or `.rar` the way it unpacks a zip through `7z`: it
+  reads the archive's contents first and refuses, with nothing written, a
+  member that is a symbolic or hard link, lands outside the mod, or uses
+  lmm's reserved `.lmm-` names. Before, a link inside a `.7z` or `.rar`
+  could land in lmm's cache. Planning an import of one (`lmm import
+<archive>`, and the web UI's import) refuses a link member too. A mod
+  whose cache still holds a link from an earlier unpacking loses it the
+  next time a file is added to that cache entry, with a warning naming the
+  mod; before, a link pointing outside the mod made every later install of
+  that version fail. Every archive (`.zip`, `.7z`, `.rar`) is also checked
+  against the free disk space first: one that unpacks to more than the
+  disk has free is refused with both sizes named, instead of failing part
+  way through. There is no fixed size limit.
+
+- **A large `.7z` or `.rar` no longer fails after five minutes (#658).**
+  Every `7z` run (listing or unpacking a `.7z`, a `.rar`, a zip `7z`
+  unpacks for lmm, or a collection's recipe) used to be stopped after five
+  minutes, which a multi-gigabyte texture pack on a slow disk can need.
+  There is no time limit now: a run is stopped only when it is cancelled,
+  or when it has written nothing and printed nothing for two minutes, and
+  that error names the archive.
+
 - **The web UI's collection import is drawn one way (#652).** In the
   **Import collection…** window and the Profiles window's import section,
   every source (a file, a URL, a Steam Workshop collection, a NexusMods
