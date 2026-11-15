@@ -24,14 +24,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// goneNexusFixtureSource is nexusFixtureSource whose list files Ten's
-// pinned file as archived, and whose listing offers 101 as Ten's main.
+// goneNexusFixtureSource is nexusFixtureSource whose list has no record
+// of Ten's pinned file (its author removed it), and whose listing offers
+// only 101, Ten's main file.
 type goneNexusFixtureSource struct{ *nexusFixtureSource }
 
 func (s goneNexusFixtureSource) ResolveGameCollection(ctx context.Context, gameSourceID, ref string) (source.Collection, error) {
 	c, err := s.nexusFixtureSource.ResolveGameCollection(ctx, gameSourceID, ref)
 	if len(c.Items) > 0 {
-		c.Items[0].FileCategory = "ARCHIVED"
+		c.Items[0].ModID = ""
 	}
 	return c, err
 }
@@ -41,7 +42,6 @@ func (goneNexusFixtureSource) GetModFiles(_ context.Context, mod *domain.Mod) ([
 		return nil, nil
 	}
 	return []domain.DownloadableFile{
-		{ID: "100", FileName: "ten-1.zip", Version: "1.0", Category: "ARCHIVED"},
 		{ID: "101", FileName: "ten-2.zip", Name: "Ten Two", Version: "2.0", Category: "MAIN", IsPrimary: true},
 	}, nil
 }
@@ -132,7 +132,8 @@ type revisionFourGoneSource struct{ goneNexusFixtureSource }
 func (s revisionFourGoneSource) ResolveGameCollection(ctx context.Context, gameSourceID, ref string) (source.Collection, error) {
 	c, err := s.goneNexusFixtureSource.ResolveGameCollection(ctx, gameSourceID, ref)
 	c.Revision = 4
-	c.Items = append(c.Items, source.CollectionItem{Kind: source.CollectionItemModFile, ModID: "13", FileID: "130", Name: "Thirteen", FileCategory: "ARCHIVED"})
+	// NexusMods has no record of 13's file: its author removed it.
+	c.Items = append(c.Items, source.CollectionItem{Kind: source.CollectionItemModFile, FileID: "130"})
 	return c, err
 }
 
@@ -192,4 +193,62 @@ func seedNexusRevision(t *testing.T, svc *core.Service, game *domain.Game, rev i
 	entry := filepath.Join(svc.GlobalCacheDir(), game.ID, "collections", "nexusmods-abcdef", strconv.Itoa(rev))
 	require.NoError(t, os.MkdirAll(entry, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(entry, "collection.json"), []byte(recipe), 0o644))
+}
+
+// reofferedTenSource serves revision 4, which pins Ten anew at file 102,
+// available.
+type reofferedTenSource struct{ goneNexusFixtureSource }
+
+func (s reofferedTenSource) ResolveGameCollection(ctx context.Context, gameSourceID, ref string) (source.Collection, error) {
+	c, err := s.nexusFixtureSource.ResolveGameCollection(ctx, gameSourceID, ref)
+	c.Revision = 4
+	c.Items[0].FileID = "102"
+	return c, err
+}
+
+// TestFlowCollectionUpdate_ASkippedModComesBack (#657): a mod the import
+// skipped, which the new version pins at an available file, is in the
+// plan's reoffered list and added by default; the plan view's toggle
+// re-plans with keep_skipped, which keeps it out.
+func TestFlowCollectionUpdate_ASkippedModComesBack(t *testing.T) {
+	for _, keep := range []bool{false, true} {
+		s, svc, game := newFlowFixtureServer(t)
+		seedGoneNexusCollection(t, svc, game)
+		j := runFlow(t, s, game, "profile_import", `{"nexus_collection":"abcdef","skip":["nexusmods:10"]}`, `{"install":true}`)
+		require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
+		src, err := svc.GetSource("nexusmods")
+		require.NoError(t, err)
+		svc.RegisterSource(reofferedTenSource{src.(goneNexusFixtureSource)})
+		seedNexusRevision(t, svc, game, 4, `{"Name": "Three Mods", "Mods": [
+	{"Name": "Ten", "Version": "3.0", "SourceType": "nexus", "ModID": "10", "FileID": "102", "UpdatePolicy": "exact"},
+	{"Name": "Eleven", "Version": "1.1", "SourceType": "nexus", "ModID": "11", "FileID": "110", "UpdatePolicy": "latest"}]}`)
+
+		body := `{"profile":"Three Mods"}`
+		if keep {
+			body = `{"profile":"Three Mods","keep_skipped":["nexusmods:10"]}`
+		}
+		_, raw := planFlow(t, s, game, "collection_update", body)
+		var resp struct {
+			Plan core.CollectionUpdatePlan `json:"plan"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &resp))
+		require.Len(t, resp.Plan.Reoffered, 1)
+		assert.Equal(t, "nexusmods:10", resp.Plan.Reoffered[0].Key())
+		assert.Contains(t, resp.Plan.Reoffered[0].Note, "which is available")
+		assert.Equal(t, keep, resp.Plan.Reoffered[0].KeepSkipped)
+
+		j = runFlow(t, s, game, "collection_update", body, `{}`)
+		require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
+		saved, err := config.LoadProfile(svc.ConfigDir(), game.ID, "Three Mods")
+		require.NoError(t, err)
+		if keep {
+			assert.Nil(t, saved.FindRef("nexusmods", "10"))
+			assert.Len(t, saved.CollectionBaseline.Skipped, 1)
+			continue
+		}
+		ten := saved.FindRef("nexusmods", "10")
+		require.NotNil(t, ten, "added by default")
+		assert.Equal(t, []string{"102"}, ten.FileIDs)
+		assert.Empty(t, saved.CollectionBaseline.Skipped)
+	}
 }

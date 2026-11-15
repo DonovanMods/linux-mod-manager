@@ -410,10 +410,11 @@ each time it plans a collection, so after upgrading to Premium, plan again.
 The plan lists every item and what the import does with it:
 
 - Each mod is pinned to the **exact file** the curator chose, even an old
-  one. A mod the curator pinned exactly is
+  or archived one (NexusMods still serves an archived file, and the plan
+  notes that it is archived). A mod the curator pinned exactly is
   [locked](updates.md#locking-a-mod-to-one-version).
-- A pinned file **NexusMods no longer offers** (its author removed or
-  archived it, as many authors do with every update) is found by the plan,
+- A pinned file **NexusMods no longer offers** (its author removed it, as
+  many authors do with every update) is found by the plan,
   before anything downloads, and listed under **Needs your attention** with
   the mod's current main file. Choose for each: `--use-current <mod-id>`
   installs the current file instead (`--use-current-all` does so for every
@@ -546,8 +547,10 @@ A mod the import installed at its current file, because the pinned one was
 gone, stays as it is while the new version still pins that gone file, and
 moves to the curator's new pin when there is one. A mod you skipped stays
 out while the new version pins the same file (the plan lists it as
-skipped); when the curator pins another file it is listed as a conflict,
-kept out unless you take the collection's with `--override <mod-id>`. A
+skipped). When the curator pins it at a file NexusMods offers, the plan
+lists it under **Needs your attention** and the update adds it back;
+`--keep-skipped <mod-id>` keeps it out (in the browser, its **Keep it
+skipped** tick box). A
 new pin NexusMods no longer offers is decided as at an import, with
 `--use-current`, `--use-current-all` or `--skip` (skipping a mod the profile
 already has keeps the version it has).

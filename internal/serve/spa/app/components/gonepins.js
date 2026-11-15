@@ -2,7 +2,9 @@
 // collection's pinned files NexusMods no longer offers (issue 657). It is
 // its own component so both plan views (plan_profile_import.js, and
 // plan_collection_update.js) render the same thing, and so a restructured
-// plan view only has to place it.
+// plan view only has to place it. ReofferedSection is the update view's
+// other attention item: a mod the user skipped that the new version pins
+// at an available file, which comes back unless they keep it skipped.
 //
 // Each gone pin offers two choices, the CLI's flags: install the mod's
 // current main file instead (--use-current, the suggested one) or skip the
@@ -147,6 +149,61 @@ export function GonePinsSection({ source: c, actions }) {
           </button>
         </div>`
       }
+    </section>
+  `;
+}
+
+/** ReofferedSection renders a collection update's skipped mods that the
+ * new version pins anew at an available file (core.CollectionUpdatePlan.
+ * reoffered): each comes back by default, and its "Keep it skipped" box
+ * re-plans with keep_skipped (`--keep-skipped`), as an optional item's
+ * toggle does. Its note names the file and version the collection now
+ * pins. Nothing when there are none. */
+export function ReofferedSection({ plan, actions }) {
+  const items = plan?.reoffered ?? [];
+  if (items.length === 0) return null;
+  const kept = new Set(plan.keep_skipped ?? []);
+  function toggle(key, on) {
+    const next = new Set(kept);
+    if (on) next.add(key);
+    else next.delete(key);
+    actions.replanWith({ keep_skipped: [...next].sort() });
+  }
+  return html`
+    <section
+      class="plan__section plan__attention"
+      data-testid="update-reoffered"
+      aria-labelledby="update-reoffered-heading"
+    >
+      <h3 class="plan__heading" id="update-reoffered-heading">
+        ${`Needs your attention - ${items.length === 1 ? "1 skipped mod is" : `${items.length} skipped mods are`} pinned at an available file again`}
+      </h3>
+      <ul class="plan__mods">
+        ${items.map((it) => {
+          const key = `${it.source_id}:${it.mod_id}`;
+          return html`<li
+            key=${key}
+            class="plan__mod"
+            data-reoffered=${key}
+            data-keep=${it.keep_skipped ? "true" : "false"}
+          >
+            <span class="plan__mod-name">${it.name || key}</span>${" "}
+            <span class="plan__mod-detail"
+              >${it.keep_skipped ? "kept skipped" : "will be added"}</span
+            >
+            ${it.note && html`<p class="plan__note">${it.note}</p>`}
+            <label class="form-check">
+              <input
+                type="checkbox"
+                data-testid="update-keep-skipped"
+                checked=${!!it.keep_skipped}
+                onChange=${(e) => toggle(key, e.currentTarget.checked)}
+              />
+              Keep it skipped
+            </label>
+          </li>`;
+        })}
+      </ul>
     </section>
   `;
 }

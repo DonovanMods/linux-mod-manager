@@ -55,6 +55,11 @@ type collectionUpdatePlanRequest struct {
 	UseCurrent    []string `json:"use_current,omitzero"`
 	UseCurrentAll bool     `json:"use_current_all,omitzero"`
 	Skip          []string `json:"skip,omitzero"`
+	// KeepSkipped names mods the profile skipped that the new version pins
+	// anew at an available file, to keep skipped (#657): `--keep-skipped`.
+	// The plan view's toggles re-plan with it; every other such mod comes
+	// back.
+	KeepSkipped []string `json:"keep_skipped,omitzero"`
 }
 
 // validate implements validatingOptions.
@@ -108,6 +113,7 @@ func planCollectionUpdateKind(ctx context.Context, s *Server, sel selection, opt
 		// included: an item the user unticks is not re-added.
 		OptionalChosen: req.Optional != nil,
 		GonePins:       core.GonePinChoices{UseCurrent: req.UseCurrent, UseCurrentAll: req.UseCurrentAll, Skip: req.Skip},
+		KeepSkipped:    req.KeepSkipped,
 	})
 	if err != nil {
 		if core.IsBadGonePinChoice(err) {

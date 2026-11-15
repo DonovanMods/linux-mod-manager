@@ -4,7 +4,8 @@ package core_test
 // gone pin. A substitute is not the user's edit - it stays while the
 // curator pins the same gone file, and follows the curator's newer pin. A
 // skipped mod is never re-added silently: it stays out while the same
-// file is pinned, and a new pin is offered as a conflict. And the new
+// file is pinned, and a new pin that is available brings it back, listed
+// for the user's attention, unless they keep it skipped. And the new
 // version's own gone pins are found and decided as an import's are.
 
 import (
@@ -19,13 +20,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// goneTen makes the update fixture's mod 10 pin (file 100) archived, with
-// 101 (version 2) its current file and 102 (version 3) served too.
+// goneTen makes the update fixture's mod 10 pin (file 100) gone - the
+// list has no record of it and the listing leaves it out - with 101
+// (version 2) its current file and 102 (version 3) served too.
 func (f *updateFixture) goneTen(t *testing.T) {
 	t.Helper()
-	f.src.recipe.collection.Items[0].FileCategory = "ARCHIVED"
+	f.src.recipe.collection.Items[0].ModID = ""
 	f.src.listing = map[string][]domain.DownloadableFile{"10": {
-		{ID: "100", FileName: "f100.zip", Version: "1", Category: "ARCHIVED"},
 		{ID: "101", FileName: "f101.zip", Name: "Ten 2", Version: "2", Category: "MAIN", IsPrimary: true},
 	}}
 	f.src.versions["102"] = "3"
@@ -44,7 +45,7 @@ func (f *updateFixture) importChoosing(t *testing.T, choices core.GonePinChoices
 
 // bumpTo publishes revision 4 pinning tenFile for mod 10, beside 11 and
 // the new 13.
-func (f *updateFixture) bumpTo(t *testing.T, tenFile, tenCategory string) {
+func (f *updateFixture) bumpTo(t *testing.T, tenFile string, tenGone bool) {
 	t.Helper()
 	archive := recipeArchive(t, `{"name": "Three Mods", "mods": [
 	{"name": "Ten", "modId": "10", "fileId": "`+tenFile+`"},
@@ -57,8 +58,13 @@ func (f *updateFixture) bumpTo(t *testing.T, tenFile, tenCategory string) {
 		f.src.listing["10"] = append(f.src.listing["10"], domain.DownloadableFile{ID: "102", FileName: "f102.zip", Version: "3", Category: "MAIN"})
 	}
 	f.src.listCalls = nil
+	defer func() {
+		if tenGone {
+			c.Items[0].ModID = "" // NexusMods has no record of the file
+		}
+	}()
 	c.Items = []source.CollectionItem{
-		{Kind: source.CollectionItemModFile, ModID: "10", FileID: tenFile, Name: "Ten", FileCategory: tenCategory},
+		{Kind: source.CollectionItemModFile, ModID: "10", FileID: tenFile, Name: "Ten"},
 		{Kind: source.CollectionItemModFile, ModID: "11", FileID: "110", Name: "Eleven"},
 		{Kind: source.CollectionItemModFile, ModID: "13", FileID: "130", Name: "Thirteen"},
 	}
@@ -69,7 +75,7 @@ func TestCollectionUpdate_ASubstituteStandsWhileTheSameFileIsPinned(t *testing.T
 	f.goneTen(t)
 	f.importChoosing(t, core.GonePinChoices{UseCurrentAll: true})
 	require.NotNil(t, f.profile(t).FindRef("nexusmods", "10").SubstitutedFor)
-	f.bumpTo(t, "100", "ARCHIVED")
+	f.bumpTo(t, "100", true)
 
 	plan := f.planUpdate(t)
 	assert.NotContains(t, keys(plan.Changed), "nexusmods:10", "the substitute is not the user's edit, and the pin did not move")
@@ -87,7 +93,7 @@ func TestCollectionUpdate_ASubstituteFollowsTheCuratorsNewerPin(t *testing.T) {
 	f := newUpdateFixture(t)
 	f.goneTen(t)
 	f.importChoosing(t, core.GonePinChoices{UseCurrentAll: true})
-	f.bumpTo(t, "102", "MAIN")
+	f.bumpTo(t, "102", false)
 
 	plan := f.planUpdate(t)
 	require.Contains(t, keys(plan.Changed), "nexusmods:10", "the curator's newer pin is offered")
@@ -103,7 +109,7 @@ func TestCollectionUpdate_ASkippedModStaysOutWhileTheSameFileIsPinned(t *testing
 	f := newUpdateFixture(t)
 	f.goneTen(t)
 	f.importChoosing(t, core.GonePinChoices{Skip: []string{"nexusmods:10"}})
-	f.bumpTo(t, "100", "ARCHIVED")
+	f.bumpTo(t, "100", true)
 
 	plan := f.planUpdate(t)
 	assert.Equal(t, []string{"nexusmods:10"}, keys(plan.Skipped))
@@ -116,49 +122,58 @@ func TestCollectionUpdate_ASkippedModStaysOutWhileTheSameFileIsPinned(t *testing
 	require.Len(t, saved.CollectionBaseline.Skipped, 1, "the record is kept")
 }
 
-func TestCollectionUpdate_ASkippedModsNewPinIsAConflict(t *testing.T) {
-	for _, override := range []bool{false, true} {
+// TestCollectionUpdate_ASkippedModComesBackWhenRePinned (owner ruling,
+// 2026-11-15): a skipped mod the new version pins at an available file is
+// listed for the user's attention and added by default; keeping it skipped
+// is the user's choice, which keeps its record.
+func TestCollectionUpdate_ASkippedModComesBackWhenRePinned(t *testing.T) {
+	for _, keep := range []bool{false, true} {
 		f := newUpdateFixture(t)
 		f.goneTen(t)
 		f.importChoosing(t, core.GonePinChoices{Skip: []string{"nexusmods:10"}})
-		f.bumpTo(t, "102", "MAIN")
+		f.bumpTo(t, "102", false)
 
-		plan := f.planUpdate(t)
-		require.Contains(t, keys(plan.Conflicts), "nexusmods:10")
-		assert.NotContains(t, keys(plan.Added), "nexusmods:10")
-		for _, c := range plan.Conflicts {
-			if c.Key() == "nexusmods:10" {
-				assert.Contains(t, c.Note, "skipped")
-				assert.Equal(t, "3", c.NewVersion)
-			}
+		req := core.CollectionUpdateRequest{Profile: "coll"}
+		if keep {
+			req.KeepSkipped = []string{"nexusmods:10"}
 		}
-		opts := core.CollectionUpdateOptions{}
-		if override {
-			opts.Override = []string{"nexusmods:10"}
-		}
-		_, err := f.svc.ApplyCollectionUpdate(context.Background(), f.game, plan, opts, nil)
+		plan, err := f.svc.PlanCollectionUpdate(context.Background(), f.game, req)
+		require.NoError(t, err)
+		require.Len(t, plan.Reoffered, 1)
+		back := plan.Reoffered[0]
+		assert.Equal(t, "nexusmods:10", back.Key())
+		assert.Equal(t, "3", back.NewVersion)
+		assert.Contains(t, back.Note, "previously skipped because its pinned file was gone; the collection now pins file 102 (version 3), which is available")
+		assert.Equal(t, keep, back.KeepSkipped)
+		assert.NotContains(t, keys(plan.Added), "nexusmods:10", "listed once, for attention")
+		assert.NotContains(t, keys(plan.Conflicts), "nexusmods:10")
+
+		result, err := f.svc.ApplyCollectionUpdate(context.Background(), f.game, plan, core.CollectionUpdateOptions{}, nil)
 		require.NoError(t, err)
 		saved := f.profile(t)
-		if !override {
-			assert.Nil(t, saved.FindRef("nexusmods", "10"), "kept out unless overridden")
-			assert.Len(t, saved.CollectionBaseline.Skipped, 1)
+		if keep {
+			assert.Nil(t, saved.FindRef("nexusmods", "10"), "kept skipped")
+			assert.Len(t, saved.CollectionBaseline.Skipped, 1, "the record stays")
+			assert.Equal(t, []string{"nexusmods:10"}, plan.KeepSkipped)
 			continue
 		}
+		assert.Equal(t, 2, result.Added, "13 and the returning 10")
 		ten := saved.FindRef("nexusmods", "10")
-		require.NotNil(t, ten, "overridden: added at the new pin")
+		require.NotNil(t, ten, "added by default")
 		assert.Equal(t, []string{"102"}, ten.FileIDs)
 		assert.True(t, ten.FromCollection)
-		assert.Empty(t, saved.CollectionBaseline.Skipped, "no longer skipped")
+		assert.Empty(t, saved.CollectionBaseline.Skipped, "installed: no longer skipped")
+		_, err = f.svc.GetInstalledMod(context.Background(), "nexusmods", "10", "skyrim", "coll")
+		require.NoError(t, err)
 	}
 }
 
 func TestCollectionUpdate_FindsAndDecidesTheNewVersionsGonePins(t *testing.T) {
 	f := newUpdateFixture(t)
 	f.importNexus(t)
-	f.bumpTo(t, "100", "")
-	f.src.recipe.collection.Items[2].FileCategory = "ARCHIVED"
+	f.bumpTo(t, "100", false)
+	f.src.recipe.collection.Items[2].ModID = ""
 	f.src.listing = map[string][]domain.DownloadableFile{"13": {
-		{ID: "130", FileName: "f130.zip", Version: "1", Category: "ARCHIVED"},
 		{ID: "131", FileName: "f131.zip", Name: "Thirteen 2", Version: "2", Category: "MAIN", IsPrimary: true},
 	}}
 	f.downloads.AddDownload("131", createTestZipBytes(t, map[string]string{"file131.txt": "content 131"}))
@@ -186,8 +201,8 @@ func TestCollectionUpdate_FindsAndDecidesTheNewVersionsGonePins(t *testing.T) {
 func TestCollectionUpdate_UseCurrentForAnAddedMod(t *testing.T) {
 	f := newUpdateFixture(t)
 	f.importNexus(t)
-	f.bumpTo(t, "100", "")
-	f.src.recipe.collection.Items[2].FileCategory = "ARCHIVED"
+	f.bumpTo(t, "100", false)
+	f.src.recipe.collection.Items[2].ModID = ""
 	f.src.listing = map[string][]domain.DownloadableFile{"13": {
 		{ID: "131", FileName: "f131.zip", Name: "Thirteen 2", Version: "2", Category: "MAIN", IsPrimary: true},
 	}}

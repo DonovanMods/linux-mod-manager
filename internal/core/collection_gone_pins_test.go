@@ -21,21 +21,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// tenListing is mod 10's listing once its pinned file 100 is archived and
-// file 101 (version 2) is its main file.
+// tenListing is mod 10's listing once its author removed its pinned file
+// 100 and file 101 (version 2) is its main file.
 func tenListing() []domain.DownloadableFile {
 	return []domain.DownloadableFile{
-		{ID: "100", FileName: "f100.zip", Name: "Ten 1", Version: "1", Category: "ARCHIVED"},
 		{ID: "101", FileName: "f101.zip", Name: "Ten 2", Version: "2", Category: "MAIN", IsPrimary: true},
 	}
 }
 
-// newGonePinFixture is the three-mod collection whose list reports mod
-// 10's pinned file as archived, with file 101 served as its current one.
+// newGonePinFixture is the three-mod collection whose list has no record
+// of mod 10's pinned file (NexusMods removed it), with file 101 served as
+// its current one.
 func newGonePinFixture(t *testing.T) *sourceImportFixture {
 	t.Helper()
 	f := newSourceImportFixture(t, source.TierPremium)
-	f.src.recipe.collection.Items[0].FileCategory = "ARCHIVED"
+	f.src.recipe.collection.Items[0].ModID = ""
 	f.src.listing = map[string][]domain.DownloadableFile{"10": tenListing()}
 	f.src.AddDownload("101", createTestZipBytes(t, map[string]string{"mod10.esp": "plugin 10 v2"}))
 	return f
@@ -84,7 +84,7 @@ func TestPlanSourceCollectionImport_AFileTheListLeavesOutIsChecked(t *testing.T)
 	assert.Equal(t, map[string]int{"10": 1}, f.src.listCalls)
 
 	f.src.listCalls = nil
-	f.src.listing = map[string][]domain.DownloadableFile{"10": tenListing()[1:]}
+	f.src.listing = map[string][]domain.DownloadableFile{"10": tenListing()}
 	plan = f.plan(t, core.SourceCollectionImportRequest{})
 	require.Len(t, plan.Collection.Source.GonePins, 1, "a file the listing leaves out is gone")
 }
@@ -190,7 +190,7 @@ func TestPlanSourceCollectionImport_WhatNeedsNoDownloadIsNotChecked(t *testing.T
 	_, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
 	require.NoError(t, err)
 
-	f.src.recipe.collection.Items[0].FileCategory = "ARCHIVED"
+	f.src.recipe.collection.Items[0].ModID = ""
 	f.src.listing = map[string][]domain.DownloadableFile{"10": tenListing()}
 	f.src.listCalls = nil
 	plan = f.plan(t, core.SourceCollectionImportRequest{})
@@ -205,9 +205,8 @@ func TestCollectionGonePin_ASubstituteAsksAboutTheCuratorsChoices(t *testing.T) 
 	f := newPhasedFixture(t, phasedRecipe)
 	sum := md5.Sum(f.installer)
 	f.src.md5["11"] = hex.EncodeToString(sum[:])
-	f.src.recipe.collection.Items[1].FileCategory = "ARCHIVED"
+	f.src.recipe.collection.Items[1].ModID = ""
 	f.src.listing = map[string][]domain.DownloadableFile{"11": {
-		{ID: "110", FileName: "f110.zip", Version: "1", Category: "ARCHIVED"},
 		{ID: "111", FileName: "f111.zip", Name: "Installer 2", Version: "2", Category: "MAIN", IsPrimary: true},
 	}}
 	cfg := flowModuleConfig("4K")
@@ -232,7 +231,7 @@ func TestCollectionGonePin_ALaterInstallOfASubstituteAsks(t *testing.T) {
 	f := newPhasedFixture(t, phasedRecipe)
 	sum := md5.Sum(f.installer)
 	f.src.md5["11"] = hex.EncodeToString(sum[:])
-	f.src.recipe.collection.Items[1].FileCategory = "ARCHIVED"
+	f.src.recipe.collection.Items[1].ModID = ""
 	f.src.listing = map[string][]domain.DownloadableFile{"11": {
 		{ID: "111", FileName: "f111.zip", Name: "Installer 2", Version: "2", Category: "MAIN", IsPrimary: true},
 	}}
@@ -253,4 +252,35 @@ func TestCollectionGonePin_ALaterInstallOfASubstituteAsks(t *testing.T) {
 	var q *core.FomodChoicesRequiredError
 	require.True(t, errors.As(err, &q), "got %v", err)
 	assert.Equal(t, core.FomodReasonArchiveMismatch, q.Mods[0].Reason)
+}
+
+// TestPlanSourceCollectionImport_AnArchivedPinIsKept (owner ruling,
+// 2026-11-15): NexusMods still serves an archived file, and the curator's
+// exact file is the point of a collection - so it is no gone pin. The plan
+// notes it is archived, and installs it.
+func TestPlanSourceCollectionImport_AnArchivedPinIsKept(t *testing.T) {
+	t.Run("the list says archived", func(t *testing.T) {
+		f := newSourceImportFixture(t, source.TierPremium)
+		f.src.recipe.collection.Items[0].FileCategory = "ARCHIVED"
+		plan := f.plan(t, core.SourceCollectionImportRequest{})
+		c := plan.Collection.Source
+		assert.Empty(t, c.GonePins)
+		assert.Zero(t, f.src.listCalls["10"], "the list vouches for an archived file: no listing")
+		assert.Contains(t, itemNamed(c, "Ten").Note, "archived on NexusMods; installing the curator's file")
+		assert.Equal(t, []string{"100"}, plan.Profile.FindRef("nexusmods", "10").FileIDs)
+		result, err := f.svc.ApplyCollectionImport(context.Background(), f.game, plan, core.ProfileImportOptions{Install: true}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, 2, result.Installed, "the curator's archived file installs")
+	})
+	t.Run("the listing says archived", func(t *testing.T) {
+		f := newSourceImportFixture(t, source.TierPremium)
+		f.src.recipe.collection.Items[0].ModID = ""
+		f.src.listing = map[string][]domain.DownloadableFile{"10": append([]domain.DownloadableFile{
+			{ID: "100", FileName: "f100.zip", Name: "Ten 1", Version: "1", Category: "ARCHIVED"}}, tenListing()...)}
+		plan := f.plan(t, core.SourceCollectionImportRequest{})
+		c := plan.Collection.Source
+		assert.Empty(t, c.GonePins)
+		assert.Contains(t, itemNamed(c, "Ten").Note, "archived on NexusMods")
+		assert.Equal(t, []string{"100"}, plan.Profile.FindRef("nexusmods", "10").FileIDs)
+	})
 }

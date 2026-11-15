@@ -50,21 +50,47 @@ func (f *gonePinFlags) used() []string {
 // choices is the flags as core's choices, a bare mod id taken as
 // sourceID's.
 func (f *gonePinFlags) choices(sourceID string) core.GonePinChoices {
-	key := func(args []string) []string {
-		var out []string
-		for _, arg := range args {
-			arg = strings.TrimSpace(arg)
-			if arg == "" {
-				continue
-			}
-			if !strings.Contains(arg, ":") {
-				arg = sourceID + ":" + arg
-			}
-			out = append(out, arg)
+	return core.GonePinChoices{UseCurrent: modKeys(f.useCurrent, sourceID), UseCurrentAll: f.useCurrentAll, Skip: modKeys(f.skip, sourceID)}
+}
+
+// modKeys is args as domain.ModKey keys, a bare mod id taken as
+// sourceID's; blank arguments are dropped.
+func modKeys(args []string, sourceID string) []string {
+	var out []string
+	for _, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			continue
 		}
-		return out
+		if !strings.Contains(arg, ":") {
+			arg = sourceID + ":" + arg
+		}
+		out = append(out, arg)
 	}
-	return core.GonePinChoices{UseCurrent: key(f.useCurrent), UseCurrentAll: f.useCurrentAll, Skip: key(f.skip)}
+	return out
+}
+
+// printReoffered lists the mods the profile skipped that the new version
+// pins anew at an available file (#657): they need the user's attention,
+// and each comes back unless --keep-skipped names it.
+func printReoffered(plan *core.CollectionUpdatePlan) {
+	if len(plan.Reoffered) == 0 {
+		return
+	}
+	fmt.Printf("\n⚠ Needs your attention - %d skipped mod(s) the collection now pins at an available file:\n", len(plan.Reoffered))
+	for _, it := range plan.Reoffered {
+		what := "will be added"
+		if it.KeepSkipped {
+			what = "kept skipped (--keep-skipped)"
+		}
+		fmt.Printf("  ! %s %s: %s\n", updateItemLabel(it), it.NewVersion, what)
+		if it.Note != "" {
+			fmt.Printf("      %s\n", it.Note)
+		}
+		if !it.KeepSkipped {
+			fmt.Printf("      keep it skipped with --keep-skipped %s\n", it.ModID)
+		}
+	}
 }
 
 // hasUndecidedGonePins reports whether c has a gone pin nobody chose for.

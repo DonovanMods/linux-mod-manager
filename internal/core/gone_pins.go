@@ -6,10 +6,13 @@
 // does), so a collection soon pins a file nobody can download. Found only
 // at acquire, after every other download, that failed the whole import. A
 // plan now finds it first, and bounded: the published list the plan
-// already resolved says, for each file it reports, whether it is archived
-// or removed; only a mod with a file the list does not vouch for costs one
-// listing call, made at most once per mod per plan. A pin is gone when the
-// listing leaves its file out or files it as archived or removed.
+// already resolved reports each file it still has; only a mod with a file
+// the list does not vouch for costs one listing call, made at most once
+// per mod per plan. A pin is gone when the listing leaves its file out (or
+// files it as removed). An ARCHIVED file is not gone (owner ruling,
+// 2026-11-15): NexusMods still serves it, and the curator's exact file is
+// the point of a collection, so it is installed, with a plan note saying it
+// is archived.
 //
 // Each gone pin is the user's to decide (owner ruling, 2026-11-15): install
 // the mod's current main file instead, or skip the mod. Until every one is
@@ -192,13 +195,34 @@ func undecidedGonePins(c *ConvertedCollection) []CollectionGonePin {
 }
 
 // isGoneCategory reports whether a source files a file in category as no
-// longer offered: archived or removed.
+// longer offered: removed. An archived file is still offered.
 func isGoneCategory(category string) bool {
 	switch strings.ToUpper(category) {
-	case "ARCHIVED", "REMOVED", "DELETED":
+	case "REMOVED", "DELETED":
 		return true
 	}
 	return false
+}
+
+// isArchivedCategory reports whether category is an archived file's: still
+// offered, but no longer on the mod's page.
+func isArchivedCategory(category string) bool { return strings.EqualFold(category, "ARCHIVED") }
+
+// noteArchived says on modID's item for fileID that the file the
+// collection pins is archived, and is installed all the same.
+func (pc *pinChecker) noteArchived(modID, fileID string) {
+	note := fmt.Sprintf("archived on %s; installing the curator's file", pc.conv.sourceName())
+	for i := range pc.conv.Items {
+		it := &pc.conv.Items[i]
+		if it.ModID != modID || it.FileID != fileID || strings.Contains(it.Note, note) {
+			continue
+		}
+		if it.Note == "" {
+			it.Note = note
+		} else {
+			it.Note += "; " + note
+		}
+	}
 }
 
 // pinListing is one mod's file listing, fetched at most once per plan.
@@ -246,13 +270,18 @@ func (pc *pinChecker) listing(ctx context.Context, modID string) *pinListing {
 }
 
 // vouched reports whether the published list reports modID's file fileID
-// and does not file it as archived or removed, so no listing is needed. A
-// file the list leaves out, or names without its details (NexusMods
-// reports no file record for a deleted file), is checked.
+// and does not file it as removed, so no listing is needed; a file it
+// files as archived is noted. A file the list leaves out, or names
+// without its details (NexusMods reports no file record for a deleted
+// file), is checked.
 func (pc *pinChecker) vouched(modID, fileID string) bool {
 	for _, it := range pc.conv.Items {
 		if it.ModID == modID && it.FileID == fileID {
-			return it.listed && !isGoneCategory(it.FileCategory)
+			ok := it.listed && !isGoneCategory(it.FileCategory)
+			if ok && isArchivedCategory(it.FileCategory) {
+				pc.noteArchived(modID, fileID)
+			}
+			return ok
 		}
 	}
 	return false
@@ -266,7 +295,13 @@ func (pc *pinChecker) check(ctx context.Context, item domain.CollectionItem) (*C
 	if ref.SourceID != pc.conv.SourceID || ref.ModID == "" || len(ref.FileIDs) == 0 {
 		return nil, nil
 	}
-	if !slices.ContainsFunc(ref.FileIDs, func(id string) bool { return !pc.vouched(ref.ModID, id) }) {
+	unvouched := false
+	for _, id := range ref.FileIDs {
+		if !pc.vouched(ref.ModID, id) {
+			unvouched = true
+		}
+	}
+	if !unvouched {
 		return nil, nil
 	}
 	l := pc.listing(ctx, ref.ModID)
@@ -282,6 +317,9 @@ func (pc *pinChecker) check(ctx context.Context, item domain.CollectionItem) (*C
 	for _, f := range l.files {
 		if !isGoneCategory(f.Category) {
 			offered[f.ID] = true
+		}
+		if isArchivedCategory(f.Category) && slices.Contains(ref.FileIDs, f.ID) {
+			pc.noteArchived(ref.ModID, f.ID)
 		}
 	}
 	var gone []string
@@ -510,18 +548,32 @@ func mergeArchiveMD5(into, extra map[string]map[string]string) map[string]map[st
 	return into
 }
 
-// reofferedNote is a conflict's note for a mod the user skipped that a
-// collection update pins anew (#657).
-const reofferedNote = "skipped when its pinned file was gone; the collection now pins another file: override this conflict to add the mod"
+// reofferedNote is the note on a mod the user skipped that a collection
+// update pins anew at an available file (#657): the file is named by
+// pinned.
+func reofferedNote(pinned string) string {
+	return "previously skipped because its pinned file was gone; the collection now pins " + pinned + ", which is available"
+}
+
+// describePin names a pin's files and version as a sentence does.
+func describePin(version string, fileIDs []string) string {
+	out := "file " + strings.Join(fileIDs, ", ")
+	if version != "" {
+		out += " (version " + version + ")"
+	}
+	return out
+}
 
 // resolveUpdatePins applies what the profile recorded about gone pins to a
 // collection update's new version, and finds and decides the new
 // version's own (#657). A mod the profile skipped stays out while the new
-// version pins the same file, and is offered as a conflict when it pins
-// another one that is offered. An entry standing in for a gone pin stays
-// as it is while the new version pins that same file. Every other entry
-// the update downloads is checked, as an import's are.
-func (s *Service) resolveUpdatePins(ctx context.Context, game *domain.Game, base *domain.Profile, conv *ConvertedCollection, choices GonePinChoices, plan *CollectionUpdatePlan) error {
+// version pins the same file (or a file the source does not offer
+// either); one it pins anew at an available file comes back, listed for
+// the user's attention (CollectionUpdatePlan.Reoffered), unless keep names
+// it, which keeps it skipped. An entry standing in for a gone pin stays as
+// it is while the new version pins that same file. Every other entry the
+// update downloads is checked, as an import's are.
+func (s *Service) resolveUpdatePins(ctx context.Context, game *domain.Game, base *domain.Profile, conv *ConvertedCollection, choices GonePinChoices, keep []string, plan *CollectionUpdatePlan) error {
 	have := firstRefs(base.Mods)
 	records := map[string]domain.CollectionSkip{}
 	if b := base.CollectionBaseline; b != nil {
@@ -531,18 +583,25 @@ func (s *Service) resolveUpdatePins(ctx context.Context, game *domain.Game, base
 	}
 	plan.substituted = map[string]*domain.CollectionPin{}
 	plan.reoffered = map[string]domain.CollectionSkip{}
-	keepSkipped := func(item domain.CollectionItem, rec domain.CollectionSkip, note string) {
-		key := domain.ModKey(rec.SourceID, rec.ModID)
-		plan.Skipped = append(plan.Skipped, CollectionUpdateItem{SourceID: rec.SourceID, ModID: rec.ModID, Name: item.Name,
-			Version: rec.Pin.Version, NewVersion: item.Ref.Version, Note: note})
-		plan.skips = append(plan.skips, rec)
+	markSkipped := func(key, note string) {
 		for j := range conv.Items {
 			if it := &conv.Items[j]; domain.ModKey(conv.SourceID, it.ModID) == key && it.State == CollectionItemWillInstall {
 				it.State, it.Note = CollectionItemSkipped, note
 			}
 		}
 	}
+	keepSkipped := func(item domain.CollectionItem, rec domain.CollectionSkip, note string) {
+		plan.Skipped = append(plan.Skipped, CollectionUpdateItem{SourceID: rec.SourceID, ModID: rec.ModID, Name: item.Name,
+			Version: rec.Pin.Version, NewVersion: item.Ref.Version, Note: note})
+		plan.skips = append(plan.skips, rec)
+		markSkipped(domain.ModKey(rec.SourceID, rec.ModID), note)
+	}
 	doc := conv.Document
+	dropItem := func(key string) {
+		doc.Items = slices.DeleteFunc(doc.Items, func(it domain.CollectionItem) bool {
+			return domain.ModKey(it.Ref.SourceID, it.Ref.ModID) == key
+		})
+	}
 	var items []domain.CollectionItem
 	for _, item := range doc.Items {
 		key := domain.ModKey(item.Ref.SourceID, item.Ref.ModID)
@@ -557,9 +616,9 @@ func (s *Service) resolveUpdatePins(ctx context.Context, game *domain.Game, base
 		if ok && ref.FromCollection && ref.SubstitutedFor.Same(item.Ref.Version, item.Ref.FileIDs) {
 			// The curator still pins the gone file: the substitute stands.
 			plan.substituted[key] = ref.SubstitutedFor.Clone()
-			keep := ref
-			keep.FromCollection, keep.SubstitutedFor = false, nil
-			item.Ref = keep
+			kept := ref
+			kept.FromCollection, kept.SubstitutedFor = false, nil
+			item.Ref = kept
 		}
 		items = append(items, item)
 	}
@@ -586,13 +645,41 @@ func (s *Service) resolveUpdatePins(ctx context.Context, game *domain.Game, base
 		}
 		// The new pin of a mod the user skipped is gone too: it stays out.
 		delete(plan.reoffered, p.Key())
-		for i, item := range doc.Items {
+		for _, item := range doc.Items {
 			if domain.ModKey(item.Ref.SourceID, item.Ref.ModID) == p.Key() {
 				keepSkipped(item, rec, "skipped when its pinned file was gone, and the source does not offer the file the collection now pins either")
-				doc.Items = slices.Delete(doc.Items, i, i+1)
 				break
 			}
 		}
+		dropItem(p.Key())
+	}
+	// A skipped mod pinned anew at an available file comes back, unless
+	// the user keeps it skipped.
+	plan.KeepSkipped = sortedUnique(keep)
+	for _, item := range slices.Clone(doc.Items) {
+		key := domain.ModKey(item.Ref.SourceID, item.Ref.ModID)
+		rec, ok := plan.reoffered[key]
+		if !ok {
+			continue
+		}
+		entry := CollectionUpdateItem{SourceID: rec.SourceID, ModID: rec.ModID, Name: item.Name,
+			Version: rec.Pin.Version, NewVersion: item.Ref.Version,
+			Note: reofferedNote(describePin(item.Ref.Version, item.Ref.FileIDs))}
+		if slices.Contains(keep, key) {
+			entry.KeepSkipped = true
+			entry.Note += "; kept skipped"
+			plan.skips = append(plan.skips, rec)
+			markSkipped(key, entry.Note)
+			dropItem(key)
+			delete(plan.reoffered, key)
+		} else {
+			for j := range conv.Items {
+				if it := &conv.Items[j]; domain.ModKey(conv.SourceID, it.ModID) == key && it.State == CollectionItemWillInstall {
+					it.Note = entry.Note
+				}
+			}
+		}
+		plan.Reoffered = append(plan.Reoffered, entry)
 	}
 	if len(asked) == 0 {
 		conv.recount()

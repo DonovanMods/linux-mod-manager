@@ -20,7 +20,7 @@ import { html } from "../render.js";
 import { displayVersion } from "../version.js";
 import { PlanWarnings } from "./planwarnings.js";
 import { SourceCollectionSection } from "./plan_profile_import.js";
-import { GonePinsSection } from "./gonepins.js";
+import { GonePinsSection, ReofferedSection } from "./gonepins.js";
 
 /** keyOf is an entry's "source:mod" key, the one the options name. */
 function keyOf(it) {
@@ -497,6 +497,7 @@ export function CollectionUpdatePlanView({ plan, modal, actions }) {
         plan.source &&
         html`<${GonePinsSection} source=${plan.source} actions=${actions} />`
       }
+      <${ReofferedSection} plan=${plan} actions=${actions} />
       ${
         plan.install_instructions &&
         html`<p class="plan__note">

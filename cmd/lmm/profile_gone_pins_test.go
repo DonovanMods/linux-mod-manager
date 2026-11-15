@@ -8,6 +8,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -19,15 +21,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// goneTenDouble is the NexusMods double whose list files Ten's pinned
-// file 100 as archived, and whose listing offers 101 as Ten's main file.
+// goneTenDouble is the NexusMods double whose list has no record of Ten's
+// pinned file 100 (its author removed it), and whose listing offers only
+// 101, Ten's main file.
 type goneTenDouble struct {
 	*nexusCollectionDouble
 }
 
 func (d *goneTenDouble) ResolveGameCollection(ctx context.Context, gameSourceID, ref string) (source.Collection, error) {
 	c, err := d.nexusCollectionDouble.ResolveGameCollection(ctx, gameSourceID, ref)
-	c.Items[0].FileCategory = "ARCHIVED"
+	c.Items[0].ModID = ""
 	return c, err
 }
 
@@ -36,7 +39,6 @@ func (*goneTenDouble) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.
 		return nil, nil
 	}
 	return []domain.DownloadableFile{
-		{ID: "100", FileName: "ten-1.zip", Version: "1.0", Category: "ARCHIVED"},
 		{ID: "101", FileName: "ten-2.zip", Name: "Ten Two", Version: "2.0", Category: "MAIN", IsPrimary: true},
 	}, nil
 }
@@ -184,4 +186,76 @@ func TestPrintCollectionUpdatePlan_GonePinsAndSkipped(t *testing.T) {
 	assert.Contains(t, stdout, "! Thirteen (nexusmods:13): the collection pins file 130, which NexusMods no longer offers")
 	assert.Contains(t, stdout, "current main file: file 131, version 2")
 	assert.Contains(t, stdout, "re-run `lmm profile sync --collection` with --use-current <mod>")
+}
+
+// reofferedTenDouble serves the collection at revision 4, which pins Ten
+// anew at file 102 - available - beside Twelve.
+type reofferedTenDouble struct{ *goneTenDouble }
+
+func (d reofferedTenDouble) ResolveGameCollection(ctx context.Context, gameSourceID, ref string) (source.Collection, error) {
+	c, err := d.nexusCollectionDouble.ResolveGameCollection(ctx, gameSourceID, ref)
+	c.Revision = 4
+	c.Items[0].FileID = "102"
+	return c, err
+}
+
+const reofferedTenRecipe = `{"Name": "Three Mods", "Mods": [
+	{"Name": "Ten", "Version": "3.0", "SourceType": "nexus", "ModID": "10", "FileID": "102", "UpdatePolicy": "exact"},
+	{"Name": "Twelve", "Version": "2.0", "SourceType": "nexus", "ModID": "12", "FileID": "120", "UpdatePolicy": "latest", "Optional": true}]}`
+
+// TestDoCollectionUpdate_ASkippedModComesBack (#657): a mod the import
+// skipped, which revision 4 pins at an available file, is listed for
+// attention and added; --keep-skipped keeps it out.
+func TestDoCollectionUpdate_ASkippedModComesBack(t *testing.T) {
+	for _, keep := range []bool{false, true} {
+		svc, game, configDir := goneTenService(t)
+		setNexusFlags(t, "abcdef", false)
+		setGonePinFlags(t, gonePinFlags{skip: []string{"10"}})
+		_, _, err := captureStdoutStderrErr(t, func() error { return doNexusCollectionImport(context.Background(), svc, game) })
+		require.NoError(t, err)
+
+		src, err := svc.GetSource("nexusmods")
+		require.NoError(t, err)
+		svc.RegisterSource(reofferedTenDouble{src.(*goneTenDouble)})
+		entry := filepath.Join(svc.GlobalCacheDir(), game.ID, "collections", "nexusmods-abcdef", "4")
+		require.NoError(t, os.MkdirAll(entry, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(entry, "collection.json"), []byte(reofferedTenRecipe), 0o644))
+
+		oldKeep := profileSyncKeepSkipped
+		t.Cleanup(func() { profileSyncKeepSkipped = oldKeep })
+		setCollectionSyncFlags(t, func() {
+			profileSyncYes = true
+			profileSyncKeepSkipped = nil
+			if keep {
+				profileSyncKeepSkipped = []string{"10"}
+			}
+		})
+		stdout, _, err := captureStdoutStderrErr(t, func() error {
+			return doCollectionUpdate(context.Background(), svc, game, []string{"Three Mods"})
+		})
+		require.NoError(t, err, stdout)
+		assert.Contains(t, stdout, "Needs your attention - 1 skipped mod(s) the collection now pins at an available file")
+		assert.Contains(t, stdout, "previously skipped because its pinned file was gone; the collection now pins file 102 (version 3.0), which is available")
+		saved, err := config.LoadProfile(configDir, game.ID, "Three Mods")
+		require.NoError(t, err)
+		if keep {
+			assert.Contains(t, stdout, "kept skipped (--keep-skipped)")
+			assert.Nil(t, saved.FindRef("nexusmods", "10"))
+			assert.Len(t, saved.CollectionBaseline.Skipped, 1)
+			continue
+		}
+		assert.Contains(t, stdout, "will be added")
+		assert.Contains(t, stdout, "keep it skipped with --keep-skipped 10")
+		ten := saved.FindRef("nexusmods", "10")
+		require.NotNil(t, ten, "it comes back by default")
+		assert.Equal(t, []string{"102"}, ten.FileIDs)
+		assert.Empty(t, saved.CollectionBaseline.Skipped)
+	}
+}
+
+func TestRunProfileSync_KeepSkippedNeedsCollection(t *testing.T) {
+	old := profileSyncKeepSkipped
+	profileSyncKeepSkipped = []string{"10"}
+	t.Cleanup(func() { profileSyncKeepSkipped = old })
+	assert.Contains(t, collectionSyncFlagsUsed(), "--keep-skipped")
 }

@@ -73,6 +73,11 @@ type CollectionUpdateRequest struct {
 	// only. Skipping a mod the profile already has keeps its entry as it
 	// is.
 	GonePins GonePinChoices
+	// KeepSkipped names mods the profile skipped (#657), by domain.ModKey,
+	// to keep skipped though the new version pins them at an available
+	// file (CollectionUpdatePlan.Reoffered): `--keep-skipped`. Every other
+	// such mod comes back.
+	KeepSkipped []string
 }
 
 // ErrCollectionNotUpdatable refuses an update of a profile that records no
@@ -162,6 +167,9 @@ type CollectionUpdateItem struct {
 	// entry's files change at the same version, so the update reinstalls
 	// the mod with the new files (#639).
 	Note string `json:"note,omitempty"`
+	// KeepSkipped marks a Reoffered entry the update keeps skipped (#657):
+	// the plan was made with CollectionUpdateRequest.KeepSkipped naming it.
+	KeepSkipped bool `json:"keep_skipped,omitzero"`
 }
 
 // sameVersionFilesNote is CollectionUpdateItem.Note for a pin whose files
@@ -174,6 +182,18 @@ func (it *CollectionUpdateItem) noteChanges() {
 	if slices.Contains(it.Changes, "files") && !slices.Contains(it.Changes, "version") {
 		it.Note = sameVersionFilesNote
 	}
+}
+
+// addedEntries is every entry the update adds: Added, and the skipped
+// mods it brings back (#657).
+func (p *CollectionUpdatePlan) addedEntries() []CollectionUpdateItem {
+	out := slices.Clone(p.Added)
+	for _, it := range p.Reoffered {
+		if !it.KeepSkipped {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // Key is the entry's domain.ModKey, which CollectionUpdateOptions names.
@@ -249,10 +269,14 @@ type CollectionUpdatePlan struct {
 	Conflicts []CollectionUpdateItem `json:"conflicts,omitempty"`
 	// Skipped are the mods the profile records as skipped because their
 	// pinned file was gone (#657) that the new version still pins at a
-	// file the source does not offer: kept out. A skipped mod the new
-	// version pins at another file is a conflict instead, kept out unless
-	// the apply overrides it.
+	// file the source does not offer: kept out.
 	Skipped []CollectionUpdateItem `json:"skipped,omitempty"`
+	// Reoffered are the mods the profile skipped that the new version pins
+	// anew at an available file (#657), for the user's attention: each is
+	// added, unless the plan was made keeping it skipped (its KeepSkipped,
+	// and the request's KeepSkipped, echoed here).
+	Reoffered   []CollectionUpdateItem `json:"reoffered,omitempty"`
+	KeepSkipped []string               `json:"keep_skipped,omitempty"`
 
 	// Plugins is what the update does to the profile's plugin list; absent
 	// when nothing.
@@ -331,9 +355,9 @@ type CollectionUpdatePlan struct {
 	snapshot     installedSnapshot
 	// #657: substituted is, per collection entry the update leaves at its
 	// mod's current file, the gone pin it stands in for; skips are the
-	// skip records the updated profile keeps, beside reoffered - skipped
-	// mods the new version pins anew, offered as conflicts, whose record
-	// stays unless the apply overrides them; gonePinMD5 is the curator's
+	// skip records the updated profile keeps; reoffered the skipped mods
+	// the new version pins anew that it adds, whose records it drops;
+	// gonePinMD5 is the curator's
 	// md5 a substitute's recorded choices are checked against.
 	substituted map[string]*domain.CollectionPin
 	skips       []domain.CollectionSkip
@@ -496,7 +520,7 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 		if err != nil {
 			return nil, err
 		}
-		if err := s.resolveUpdatePins(ctx, game, base, conv, req.GonePins, plan); err != nil {
+		if err := s.resolveUpdatePins(ctx, game, base, conv, req.GonePins, req.KeepSkipped, plan); err != nil {
 			return nil, err
 		}
 		data, err := config.MarshalCollection(conv.Document)
@@ -662,6 +686,7 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 	}
 	plan.Warnings = warnings
 	plan.NoChanges = len(plan.Added) == 0 && len(plan.Changed) == 0 && len(plan.Removed) == 0 && len(plan.Conflicts) == 0 &&
+		len(plan.reoffered) == 0 &&
 		plan.Plugins == nil && len(plan.OverridesAdded) == 0 && len(plan.OverridesChanged) == 0 &&
 		len(plan.OverridesRemoved) == 0 && len(plan.OverrideConflicts) == 0 && len(plan.LoadOrders) == 0 &&
 		len(plan.ExternalAdded) == 0 && len(plan.ExternalRemoved) == 0
@@ -736,12 +761,9 @@ func (p *CollectionUpdatePlan) diffEntries() {
 		want := item.Ref
 		entry := CollectionUpdateItem{SourceID: want.SourceID, ModID: want.ModID, Name: item.Name, NewVersion: want.Version}
 		ref, ok := have[key]
-		if rec, skipped := p.reoffered[key]; skipped && !ok {
-			// #657: the user skipped it; the new version pins it anew.
-			entry.Version = rec.Pin.Version
-			entry.Changes = pinChanges(domain.ModReference{Version: rec.Pin.Version, FileIDs: rec.Pin.FileIDs}, want, false)
-			entry.Note = reofferedNote
-			p.Conflicts = append(p.Conflicts, entry)
+		if _, skipped := p.reoffered[key]; skipped && !ok {
+			// #657: the user skipped it; it comes back, listed in
+			// Reoffered.
 			continue
 		}
 		if !ok {
@@ -970,10 +992,6 @@ func updateTarget(plan *CollectionUpdatePlan, base *domain.Profile, c updateChoi
 			entries = append(entries, ref)
 			continue
 		}
-		if _, skipped := plan.reoffered[key]; skipped && !ok && !c.override[key] {
-			// #657: skipped by the user, and kept out.
-			continue
-		}
 		next := item.Ref
 		if ok {
 			// The profile's own intent about the entry stays.
@@ -1012,12 +1030,8 @@ func updateTarget(plan *CollectionUpdatePlan, base *domain.Profile, c updateChoi
 	target.Mods = mods
 
 	target.Plugins, target.CollectionBaseline = mergeCollectionPlugins(plan, base, c)
+	// #657: a skipped mod the update brings back is no longer skipped.
 	target.CollectionBaseline.Skipped = slices.Clone(plan.skips)
-	for _, key := range slices.Sorted(maps.Keys(plan.reoffered)) {
-		if !c.override[key] {
-			target.CollectionBaseline.Skipped = append(target.CollectionBaseline.Skipped, plan.reoffered[key])
-		}
-	}
 	b, hasBase := baselineOf(base)
 	target.LoadOrders, _ = mergeLoadOrders(base.LoadOrders, b.LoadOrders, plan.doc.LoadOrders, hasBase, c.overrides)
 	var heldBack []RestrictedOverride
@@ -1140,7 +1154,7 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	// overrides stay as they are.
 	ip.RestrictedOverrides = nil
 	added := map[string]bool{}
-	for _, it := range plan.Added {
+	for _, it := range plan.addedEntries() {
 		added[it.Key()] = true
 	}
 	for key := range plan.autoUpdate {
@@ -1190,7 +1204,7 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		// Nothing was written.
 		return result, err
 	}
-	for _, it := range plan.Added {
+	for _, it := range plan.addedEntries() {
 		if marks[it.Key()] {
 			result.Added++
 		}

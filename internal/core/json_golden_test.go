@@ -2627,6 +2627,30 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #657: a skipped mod a new version pins anew at an available
+			// file, kept skipped by the user's choice.
+			"collection_update_item_reoffered_kept",
+			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "266", Name: "USSEP", Version: "4.3.8a", NewVersion: "4.3.9",
+				Note:        "previously skipped because its pinned file was gone; the collection now pins file 800000 (version 4.3.9), which is available; kept skipped",
+				KeepSkipped: true},
+		},
+		{
+			// #657: an update plan's skipped mods - one still pinned at its
+			// gone file, one pinned anew and kept skipped - and the choice
+			// echoed.
+			"collection_update_plan_skipped",
+			core.CollectionUpdatePlan{
+				GameID: "skyrim", Profile: "coll", Origin: core.CollectionFromSource, SourceID: "nexusmods", Slug: "abcdef",
+				ID: "nexusmods:abcdef", Name: "Three Mods", Version: 3, NewVersion: 4,
+				Skipped: []core.CollectionUpdateItem{{SourceID: "nexusmods", ModID: "13", Name: "Thirteen", Version: "1", NewVersion: "1",
+					Note: "skipped when its pinned file was gone, and the collection still pins that file"}},
+				Reoffered: []core.CollectionUpdateItem{{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1", NewVersion: "3",
+					Note:        "previously skipped because its pinned file was gone; the collection now pins file 102 (version 3), which is available; kept skipped",
+					KeepSkipped: true}},
+				KeepSkipped: []string{"nexusmods:10"},
+			},
+		},
+		{
 			// #613: one entry of an update plan's buckets, with every field.
 			"collection_update_item",
 			core.CollectionUpdateItem{SourceID: "nexusmods", ModID: "10", Name: "Ten", Version: "1", NewVersion: "2", Changes: []string{"version", "files", "lock"}, Locked: true},

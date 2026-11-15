@@ -28,6 +28,7 @@ var (
 	profileSyncOptional          []string
 	profileSyncAnyOverrides      bool
 	profileSyncGonePins          gonePinFlags
+	profileSyncKeepSkipped       []string
 )
 
 func init() {
@@ -49,6 +50,8 @@ func init() {
 	f.BoolVar(&profileSyncAnyOverrides, "allow-any-overrides", false,
 		"with --collection, import the new version's overrides that are not text config files, its bundled files that hold code, and its patches to code too")
 	profileSyncGonePins.register(profileSyncCmd, "with --collection, ")
+	f.StringSliceVar(&profileSyncKeepSkipped, "keep-skipped", nil,
+		"with --collection, keep skipping this mod you skipped because its pinned file was gone, though the collection now pins an available file (source:mod-id, or the mod id; repeatable; it comes back by default)")
 	addFomodFlags(profileSyncCmd)
 }
 
@@ -61,6 +64,7 @@ func collectionSyncFlagsUsed() []string {
 		"--override": len(profileSyncOverride) > 0, "--override-conflicts": profileSyncOverrideConflicts,
 		"--with-optional": profileSyncWithOptional, "--optional": len(profileSyncOptional) > 0,
 		"--allow-any-overrides": profileSyncAnyOverrides,
+		"--keep-skipped":        len(profileSyncKeepSkipped) > 0,
 		"--fomod-choices":       fomodChoicesPath != "", "--fomod-defaults": fomodDefaults,
 	} {
 		if set {
@@ -105,7 +109,8 @@ func doCollectionUpdate(ctx context.Context, service *core.Service, game *domain
 	profileName := profileSyncTarget(ctx, service, game, args)
 	plan, err := service.PlanCollectionUpdate(ctx, game, core.CollectionUpdateRequest{
 		Profile: profileName, WithOptional: profileSyncWithOptional, Optional: profileSyncOptional,
-		GonePins: profileSyncGonePins.choices("nexusmods"),
+		GonePins:    profileSyncGonePins.choices("nexusmods"),
+		KeepSkipped: modKeys(profileSyncKeepSkipped, "nexusmods"),
 	})
 	if err != nil {
 		return err
@@ -290,6 +295,7 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 			}
 		}
 	}
+	printReoffered(plan)
 	if plan.Source != nil {
 		printGonePins(plan.Source, "lmm profile sync --collection")
 	}

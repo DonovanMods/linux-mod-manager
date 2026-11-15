@@ -18,13 +18,13 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
-// e2eGoneTenSource is the Premium double whose list files Ten's pinned
-// file as archived.
+// e2eGoneTenSource is the Premium double whose list has no record of
+// Ten's pinned file: its author removed it.
 type e2eGoneTenSource struct{ e2ePremiumNexusSource }
 
 func (e2eGoneTenSource) ResolveGameCollection(_ context.Context, gameSourceID, ref string) (source.Collection, error) {
 	c := e2eNexusCollection(gameSourceID, ref)
-	c.Items[0].FileCategory = "ARCHIVED"
+	c.Items[0].ModID = ""
 	return c, nil
 }
 
@@ -34,7 +34,6 @@ func TestE2E_NexusCollection_ChooseTheCurrentFileThenImport(t *testing.T) {
 	src.addMod(e2eSearchSourceMod{
 		mod: domain.Mod{ID: "10", SourceID: "nexusmods", Name: "Ten", Version: "2.0"},
 		files: []domain.DownloadableFile{
-			{ID: "100", Name: "Old", FileName: "ten-1.zip", Version: "1.0", Category: "ARCHIVED", Size: 16},
 			{ID: "101", Name: "Ten Two", FileName: "ten-2.zip", Version: "2.0", Category: "MAIN", IsPrimary: true, Size: 16},
 		},
 		members: map[string]string{"101": "ten.esp"},
