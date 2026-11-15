@@ -22,7 +22,7 @@
 import { html } from "../render.js";
 import { contextPath } from "../router.js";
 import { RELEVANCE, effectiveSort, offeredSorts } from "../searchsort.js";
-import { workshopCollectionRef } from "../workshopcollection.js";
+import { collectionLink } from "../collectionlink.js";
 import { SourceResultsList, skippedSignInNotice } from "./searchresults.js";
 import { AddAPIKeyButton } from "./addapikey.js";
 import { ModPanel } from "./modpanel.js";
@@ -30,6 +30,7 @@ import { AwayBar } from "./awaybar.js";
 import { codeSpans } from "../errortext.js";
 import { ErrorDetails } from "./errordetails.js";
 import { Arrow } from "./arrow.js";
+import { CollectionOffer } from "./collectionoffer.js";
 
 // See tagsSupported below.
 const TAG_CAPABLE_SOURCES = new Set(["nexusmods", "thunderstore"]);
@@ -39,9 +40,10 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   // since a change to any of them re-fetches (main.js#runSearchPage).
   const searchPage = state.searchPage;
   const query = (route.q ?? "").trim();
-  // A pasted Workshop link is not a search term, and searching for it finds
-  // nothing. Offer what the user actually meant (issue 269 W2).
-  const collectionRef = workshopCollectionRef(query);
+  // A pasted collection link is not a search term, and searching for it
+  // finds nothing. Offer what the user actually meant (issue 269 W2 for a
+  // Workshop link, issue 650 for every other collection).
+  const collection = collectionLink(query);
   const matches = searchPage && searchPage.query === query;
   const report = matches ? searchPage.report : null;
   const hits = report?.mods ?? [];
@@ -117,7 +119,12 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
       <main id="main" class="app-main search-page">
         <p class="app-error">Couldn't search: ${codeSpans(searchPage.error)}</p>
         <${ErrorDetails} details=${searchPage.details} />
-        <${CollectionOffer} collectionRef=${collectionRef} actions=${actions} />
+        <${CollectionOffer}
+          link=${collection}
+          state=${state}
+          actions=${actions}
+          noResults=${true}
+        />
       </main>
     `;
   }
@@ -132,7 +139,20 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   return html`
     ${header}
     <main id="main" class="app-main search-page" data-hydrated="true">
-      <${CollectionOffer} collectionRef=${collectionRef} actions=${actions} />
+      <${CollectionOffer}
+        link=${collection}
+        state=${state}
+        actions=${actions}
+        noResults=${
+          // A bare slug is offered when the search, unfiltered, found
+          // nothing - not when a filter narrowed a real word's hits away.
+          hits.length === 0 &&
+          searchPage.page === 0 &&
+          !searchPage.category &&
+          !searchPage.source &&
+          !searchPage.tags
+        }
+      />
       <div class="search-page__toolbar">
         <h1 class="section-header">
           Results for “${searchPage.query}” — ${pageSummary}
@@ -303,38 +323,4 @@ function searchPagePath(home, query, sort) {
   return sort && sort !== RELEVANCE
     ? `${base}&sort=${encodeURIComponent(sort)}`
     : base;
-}
-
-/** CollectionOffer is the search page's answer to a pasted Steam Workshop
- * collection link: the search itself will find nothing for it, so this
- * offers the import that link is actually good for.
- *
- * It renders on the ERROR branch too, and that is the point - a search for
- * a URL against a Workshop source with no key answers "authentication
- * required", which is precisely the moment a user most needs to be told
- * that importing the collection needs no key at all.
- *
- * Renders nothing when the query is not a Workshop link. */
-function CollectionOffer({ collectionRef, actions }) {
-  if (!collectionRef) return null;
-  return html`
-    <p class="plan__note" data-testid="collection-offer">
-      That looks like a Steam Workshop link.${" "}
-      <button
-        type="button"
-        class="button button--small button--primary"
-        onClick=${() =>
-          actions.openPlan({
-            kind: "profile_import",
-            origin: "profile-import-collection",
-            title: "Import Steam Workshop collection",
-            confirmLabel: "Import",
-            options: { workshop_collection: collectionRef },
-          })}
-      >
-        Import it as a profile</button
-      >${" "}
-      <span class="empty-state__hint">No API key needed.</span>
-    </p>
-  `;
 }

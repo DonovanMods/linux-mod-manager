@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Importing a collection is easy to find in the web UI (#650).** The
+  profile picker's menu has **Import collection…** under **Manage
+  profiles…**, and Mission Control's Profile card has the same button: it
+  opens a small window with the Profiles window's own import inputs (a
+  collection file, a collection's address, a Steam Workshop collection, a
+  NexusMods collection). The search box (the omnibar and the search page)
+  now recognises a pasted NexusMods collection address (with or without a
+  revision), a bare slug when the search finds no mods for it, and an
+  `https://` address of a `.lmmc` file, as it already recognised a Steam
+  Workshop collection's link, and offers **Import it…**, which opens the
+  same plan the Profiles window does. A NexusMods collection for another
+  game than the selected one says so instead of offering an import the
+  source would refuse. The CLI is unchanged: `lmm profile import
+--nexus-collection` and `lmm profile import https://…` already did this.
+
 - **Baldur's Gate 3's .pak mods deploy where the game loads them (#636).**
   On a game with the `baldurs-gate-3` adapter, every `.pak` a mod ships now
   deploys into the `Mods` folder in the game's Wine/Proton prefix

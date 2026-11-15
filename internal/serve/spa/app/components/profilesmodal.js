@@ -716,8 +716,18 @@ function BundleExportRow({ profile, context, close }) {
  * imported under it. An older profile export names its own profile, and
  * the plan refuses a name for one, saying so. The game is the one selected
  * here, as `--game` does; the plan warns when the collection names another
- * game. */
-function ImportProfileForm({ actions, close }) {
+ * game.
+ *
+ * It is the whole import section - the file, then the URL, Workshop and
+ * NexusMods inputs - and the "Import collection…" modal
+ * (importcollectionmodal.js, issue 650) renders this same component, so
+ * the two doors cannot drift apart. heading is the file input's own
+ * heading: that modal's title already says what the section is for. */
+export function ImportProfileForm({
+  actions,
+  close,
+  heading = "Import a profile",
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [name, setName] = useState("");
@@ -752,7 +762,7 @@ function ImportProfileForm({ actions, close }) {
 
   return html`
     <div class="profiles-import">
-      <h3 class="plan__heading">Import a profile</h3>
+      <h3 class="plan__heading">${heading}</h3>
       <input
         type="text"
         aria-label="Name for the imported collection's profile"
