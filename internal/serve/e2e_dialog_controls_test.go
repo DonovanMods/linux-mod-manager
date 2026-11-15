@@ -608,7 +608,11 @@ var dialogScenarios = []dialogScenario{
 // dialogKindsNotDriven is every modal kind TestE2E_EveryDialogsControlsLineUp
 // does not open, with the reason. Empty, and meant to stay that way: a new
 // entry needs a reason a reviewer accepts.
-var dialogKindsNotDriven = map[string]string{}
+var dialogKindsNotDriven = map[string]string{
+	// #660 Part 1 ships the kind's API; Part 2's Finish collection panel
+	// is the dialog that opens it, and adds its scenario.
+	"collection_finish": "no SPA control opens it until #660 Part 2 (Finish collection)",
+}
 
 // openAddGameForm shows Setup › Games' add form.
 func openAddGameForm() chromedp.Tasks {
