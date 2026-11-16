@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Baldur's Gate 3: lmm enables the .pak mods it deploys (#646).** The game
+  loads a pak from its `Mods` folder only while its mod list,
+  `PlayerProfiles/Public/modsettings.lsx` in the game's prefix, names it.
+  On a game set up with `adapter: baldurs-gate-3`, every deploy now lists
+  the module each pak's `meta.lsx` declares. The game's own `GustavX` entry
+  stays first, an entry lmm did not add (a mod you or the in-game manager
+  enabled) is kept byte for byte where it is, a pak with no `meta.lsx` (an
+  override pak) gets no entry, as in Vortex, and a pak lmm cannot read is
+  left out with a warning that names it. lmm never creates the list: until
+  the game has written it on its first run, a deploy warns instead. A list
+  from before Patch 7 is left alone, with a warning. The list lmm first
+  replaced is kept, and `lmm purge` (or switching off every mod with a pak)
+  puts it back, keeping what changed in it since.
+  - The paks' order is the profile's `load_orders: {baldursgate3: [...]}`,
+    shown and changed with `lmm load-order list|move|reset` and the web
+    reorder modal's new **Paks** tab. A pak the order does not name goes at
+    the end, and `reset` keeps the paks listed in the order they have.
+  - `lmm verify` and the Health card report a pak the list has dropped or
+    moved (the game empties its list when it meets a mod it cannot load),
+    and `--fix` lists it again.
+  - A NexusMods collection's top-level `loadOrder` fills the pak order on a
+    Baldur's Gate 3 game, so such collections are no longer refused for
+    `manifest:loadOrder` (every other game's still is). `mergedData`, which
+    the survey found only in Witcher 3 script-merge collections, stays
+    refused.
+  - The paks are read by a new standard-library reader of Larian's LSPK
+    format (versions 15, 16 and 18; LZ4 and zlib), which reads only a pak's
+    file list and `meta.lsx`, caps every size, and is fuzzed. A
+    zstd-compressed `meta.lsx`, which none of the 56 most popular mods
+    surveyed uses, is not read; the deploy says so.
+  - JSON, all additive: `FileLoadOrderReport` gains `enables` (true for a
+    list that enables its files), `CollectionLoadOrderSummary` gains
+    `enables`, and load-order findings gain the codes
+    `load_order_pak_unreadable`, `load_order_list_missing` and
+    `load_order_list_format`. The deploy's Baldur's Gate 3 advice now names
+    the list lmm writes instead of saying it doesn't.
+
 - **Plan previews name the mod a shared file passes to (#638).** When
   removing a mod's file hands a shared path to the next mod in load order
   (#633), the plan now says so before you confirm, instead of only after:

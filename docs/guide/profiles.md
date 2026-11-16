@@ -503,6 +503,12 @@ What the import does with each item:
   under `profile.load_orders`). lmm writes it at every deploy, on a game set
   up with `adapter: cyberpunk2077`; on any other game such a collection is
   refused. See [Archive load order](load-order.md).
+- The curator's **pak order** (Baldur's Gate 3's mod list,
+  `modsettings.lsx`) becomes the profile's pak order. The plan lists it,
+  and lmm lists the paks in the game's mod list in that order at every
+  deploy, on a game set up with `adapter: baldurs-gate-3`. Any other game's
+  collection with such an order is refused, as before. See
+  [Pak mods and their order](bg3-mods.md).
 - A mod the curator installed with an **exact file list** (Vortex's
   "replicate" mode) installs only the files on that list, each checked
   against the checksum the collection records; the plan says how many.

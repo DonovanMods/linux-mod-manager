@@ -35,7 +35,7 @@ under `internal/adapter/` and one registration line — and *nothing* in
 | `d2r` | `adapter: d2r` only, which Battle.net detection's Diablo II: Resurrected entry sets (#546) | Lays every archive out as `<name>/<name>.mpq/` under the game's `mods` folder, and names the `-mod <name> -txt` the deployed profile needs (`LaunchAdvisor`). |
 | `bethesda` | `adapter: bethesda` only, which Steam detection sets for Skyrim Special Edition/Anniversary Edition, Skyrim VR, Fallout 4, Fallout 4 VR, Starfield and Skyrim (#606) | Lays a game-root-relative archive (a `Data/` folder, SKSE's version-named wrapper) out relative to `Data/`, and carries each game's plugin rules (`PluginOrderer`, which core sorts and writes `Plugins.txt` by: #616) and game-root file table (`RootRouter`, which core deploys by: #629). |
 | `cyberpunk2077` | `adapter: cyberpunk2077` only, which Steam detection sets for Cyberpunk 2077 (#620) | Carries the game's archive load order (`FileLoadOrderer`: `cyberpunk2077-archive`, written to `archive/pc/mod/modlist.txt`), which core writes from the profile's `load_orders:`; otherwise the identity. |
-| `witcher3`, `baldurs-gate-3` | `adapter: witcher3` / `adapter: baldurs-gate-3` only, which Steam detection sets for The Witcher 3 and Baldur's Gate 3 (#635) | A table of the Vortex mod types a NexusMods collection states for the game and the root each deploys to (`RootRouter`). `witcher3` is otherwise the identity. `baldurs-gate-3` also deploys every `.pak` mod into the game's `Mods` folder inside its Wine/Proton prefix (`RootRouter` + `PrefixPlacer`, #636), skips Vortex's `info.json`, and says after a deploy that lmm does not write `modsettings.lsx` yet (`LaunchAdvisor`). One package, `internal/adapter/modtypes`. |
+| `witcher3`, `baldurs-gate-3` | `adapter: witcher3` / `adapter: baldurs-gate-3` only, which Steam detection sets for The Witcher 3 and Baldur's Gate 3 (#635) | A table of the Vortex mod types a NexusMods collection states for the game and the root each deploys to (`RootRouter`). `witcher3` is otherwise the identity. `baldurs-gate-3` also deploys every `.pak` mod into the game's `Mods` folder inside its Wine/Proton prefix (`RootRouter` + `PrefixPlacer`, #636), skips Vortex's `info.json`, carries the `.pak` order core writes to `modsettings.lsx` (`FileLoadOrderer`: `baldursgate3`, `FileListModSettings`, #646), and says after a deploy what can reset that list (`LaunchAdvisor`). One package, `internal/adapter/modtypes`. |
 
 `lmm game list` always names what *this* build actually ships, and
 `lmm game add --adapter` / `lmm game edit --adapter` validate against the
@@ -166,7 +166,7 @@ adapter.
 | `PluginOrderer` | `PluginRules(g) PluginSpec` | `bethesda` | the plugin-list sync after every deploying flow (`syncMergedPak`), verify's plugin tier, and purge's restore (#616) |
 | `RootRouter` | `RouteRoots(g, files) []DeployRoot`, `RootForModType(g, type) (DeployRoot, bool)` | `bethesda`, `witcher3`, `baldurs-gate-3` | deploys a root-routed file under `install_path` (#629) or, for `RootPrefix`, under the game's prefix user directory (#636), and every removal, verify, purge and conflict report finds it there |
 | `PrefixPlacer` | `PrefixPath(g, member) string` | `baldurs-gate-3` | places a file `RouteRoots` sends to `RootPrefix`: the path under the prefix's Windows user directory it deploys to (#636). A `RootPrefix` answer from an adapter that is no `PrefixPlacer` is treated as no answer |
-| `FileLoadOrderer` | `FileLoadOrders(g) []FileLoadOrderSpec` | `cyberpunk2077` | the load-order sync beside the plugin list (`syncMergedPak`), purge's restore, `lmm load-order` and the reorder modal's load-order tab, and the collection gate's `file_load_order:<id>` (#620) |
+| `FileLoadOrderer` | `FileLoadOrders(g) []FileLoadOrderSpec` | `cyberpunk2077`, `baldurs-gate-3` | the load-order sync beside the plugin list (`syncMergedPak`), purge's restore, `lmm load-order` and the reorder modal's load-order tab, and the collection gate's `file_load_order:<id>` (#620); a `FileListModSettings` order (#646) is written by `internal/core/modsettings_sync.go`, and a `CollectionLoadOrder` one is what a Vortex collection's top-level `loadOrder` fills |
 | `LayoutNeutral` | `LayoutNeutral()` (a marker) | `generic-files`, `cyberpunk2077`, `witcher3` | treats a switch between two layout-neutral adapters as moving nothing: no reinstall warning on `lmm game edit --adapter`, the game page or verify's `adapter_suggested` note (#635) |
 | `PrefixConsumer` | `UsesPrefix(g) bool` | `bethesda`, `baldurs-gate-3` | reports a prefix it cannot resolve as a `prefix_unresolved` finding (`lmm verify`, `lmm game show`) |
 
@@ -617,7 +617,48 @@ sends each `.pak` into the prefix instead:
 | A pak is rooted at itself, so the `Mods` folder stays flat | a wrapper folder in the archive is dropped (`PrefixPath` takes the file name) | `[VXG]` `index.tsx:55, 248` (`STOP_PATTERNS ['[^/]*\.pak$']`); a subfolder in `Mods` makes the game reset its mod list (BG3 Mod Manager's changelog, github.com/LaughingLeader/BG3ModManager/wiki/Changelog, Patch 8 Hotfix 1) |
 | A pak named like one of the game's own is a replacer | it stays in `Data/`, and the stated type `bg3-replacer` deploys there too | `[VXG]` `common.ts:87` (`ORIGINAL_FILES`), `modTypes.ts` (`isReplacer`), `index.tsx:294-297` (`registerModType(MOD_TYPE_REPLACER, …, getGameDataPath)`) |
 | `info.json` is never deployed | `RouteFile` skips it | `[VXG]` `common.ts:79` (`IGNORE_PATTERNS`), `index.tsx:250` (`ignoreDeploy`) |
-| A pak loads only once `modsettings.lsx` enables it | `PlayerProfiles/Public/modsettings.lsx` beside `Mods`, entries built from each pak's own `meta.lsx`; a pak with none (an override) applies regardless. lmm does not write it yet (#646): the adapter's `LaunchAdvice` says so after a deploy that placed a pak | `[VXG]` `util.ts:35-37, 66-69` (`profilesPath`, `'Public'`), `loadOrder.ts` (`readPAKs`, `writeModSettings`); NexusMods App's BG3 notes ("Pak archives that are present in the Mods folder, but not listed in the modsettings.lsx file are considered disabled by the game") |
+| A pak loads only once `modsettings.lsx` enables it | `PlayerProfiles/Public/modsettings.lsx` beside `Mods`, entries built from each pak's own `meta.lsx`; a pak with none (an override) applies regardless. lmm writes it (#646, below) | `[VXG]` `util.ts:35-37, 66-69` (`profilesPath`, `'Public'`), `loadOrder.ts` (`readPAKs`, `writeModSettings`); NexusMods App's BG3 notes ("Pak archives that are present in the Mods folder, but not listed in the modsettings.lsx file are considered disabled by the game") |
+
+**Baldur's Gate 3's mod list (#646).** The adapter declares the `.pak`
+order as a `FileListModSettings` file load order; core reads each deployed
+pak's modules with `internal/larian` (stdlib only) and writes the list in
+`internal/core/modsettings_sync.go`. The facts it rests on:
+
+| Fact | Value | Source |
+| --- | --- | --- |
+| The list's shape since Patch 7 | `region ModuleSettings > node root > children > node Mods > children > node ModuleShortDesc`, one per enabled module, in load order; attributes `Folder` LSString, `MD5` LSString, `Name` LSString, `PublishHandle` uint64, `UUID` guid, `Version64` int64 | `[VXG]` `common.ts:3-47` (`DEFAULT_MOD_SETTINGS_V8`, `_V7`), `loadOrder.ts:467-486` (the attributes Vortex writes, in that order); `[NMA]` "Load Order" |
+| The game's own entry | `GustavX` (UUID `cb555efe-2d9e-131f-8195-a89329d218ea`) from Patch 8 (game 4.67.58), `GustavDev` (`28ac9ce2-…`) on Patch 7 (4.58.49); always first | `[VXG]` `common.ts:3-47`, `util.ts:164-191` (`PATCH_8`, `PATCH_7`); bg3.wiki Modding:Installing_mods ("Gustav should always be the first item loaded") |
+| Before Patch 7 (game < 4.58.49) | the order was a separate `ModOrder` node of `Module/UUID` entries; lmm does not write that format and says so | `[VXG]` `common.ts:49-72` (`DEFAULT_MOD_SETTINGS_V6`), `loadOrder.ts:499-513` |
+| Which entry is the game's own | a `Name` starting with `Gustav` (Vortex's test when it rewrites the list), or one of the game's module UUIDs | `[VXG]` `loadOrder.ts:444-446`; `[BMM]` `IgnoredMods.json` |
+| Last loaded wins | entries later in the list win a conflict (`FirstWins` false) | `[NMA]` "Pak mods are loaded in order defined in ... modsettings.lsx, last loaded wins" |
+| A pak's module | `Mods/<Folder>/meta.lsx` in the pak: region `Config`, node `root`, child `ModuleInfo`'s `UUID`, `Folder`, `Name`, `Version64`, `MD5`; Folder falls back to the folder, Name to Folder, Version64 to `1` | `[VXG]` `util.ts:315-338` (`extractPakInfoImpl` and its fallbacks); `[NMA]` "Pak Metadata"; every meta.lsx in the 56-pak survey (below) sat at `Mods/<Folder>/meta.lsx` |
+| Override paks are never listed | a pak with no `meta.lsx` is "listed" (locked) in Vortex's terms, and `exportTo` drops it | `[VXG]` `cache.ts:119-134` (`isLOListed`: no meta.lsx), `loadOrder.ts:448-450` (`!entry.data?.isListed`) |
+| A mod's copies of the game's own modules | skipped by UUID: one popular pak ships ten base `meta.lsx` files beside its own | `[BMM]` `IgnoredMods.json`; the survey |
+| A module UUID need not be hex | `GOLDWEIG-HTZE-RO12-4444-deeeeeeeeeef` ships in a top-100 mod, so lmm accepts any ASCII letters, digits and hyphens | the survey |
+| The game resets the list when a mod cannot load | it runs with no mods; `lmm verify` reports the drift, `--fix` lists the paks again | `[VXG]` `util.ts:448-459` (Vortex's "modsettings.lsx file was reset" dialog) |
+| Vortex keys the game's one load order by the game, entry ids the pak file names | `PakOrderID` `baldursgate3`; a collection carries it as the top-level `loadOrder` (`CollectionLoadOrder`) | `[VXG]` `index.tsx:299-301` (`registerLoadOrder({gameId: GAME_ID})`), `common.ts:73`, `loadOrder.ts:125-133`; one 1,627-entry BG3 recipe read 2026-11-16 (`{id, modId, enabled, name, data, locked, index}`) |
+| The LSPK package (v15/v16/v18) | header, file list (one LZ4 block), entries, per-file compression flags | `[LSL]` `PackageFormat.cs`, `PackageReader.cs`, `Compression.cs`; `[NMA]` "Pak File Format"; `internal/larian`'s package comment |
+
+lmm departs from Vortex in one place on purpose: Vortex rewrites the list
+keeping only the `Gustav` entry and its own (`loadOrder.ts:444-446`), which
+drops every mod the user enabled another way. lmm keeps every entry it did
+not add, where it is (#646's scope).
+
+The survey (2026-11-16): 56 `.pak` files from the most downloaded and most
+endorsed BG3 mods on Nexus Mods, fetched with the owner's key into a
+scratch directory and never committed. 55 were v18, 1 v15; 46 used LZ4,
+10 stored some files uncompressed, 3 used zlib; none used zstd and none
+was solid, so lmm decodes LZ4 (block) and zlib and refuses zstd and solid
+packages with a warning naming the pak. LSLib's `divine` CLI cannot write
+zstd (its `-c` takes `zlib`, `zlibfast`, `lz4`, `lz4hc`, `none`); only its
+GUI offers it (`ConverterApp/PackagePane.cs`).
+
+Sources: `[LSL]` github.com/Norbyte/lslib at 6f5f698 (MIT); `[NMA]`
+github.com/Nexus-Mods/NexusMods.App at 48284f3,
+`docs/developers/games/0003-BaldursGate3.md` (GPL-3.0); `[BMM]`
+github.com/LaughingLeader/BG3ModManager at fc35358,
+`src/GUI/Resources/IgnoredMods.json` (MIT); `[VXG]` as above. All read for
+facts; no code was copied.
 
 Left out of the table, so a collection that states them is still refused:
 `bg3-bg3se` deploys to the game's `bin/` folder (`[VXG]` `index.tsx:284-287`),
