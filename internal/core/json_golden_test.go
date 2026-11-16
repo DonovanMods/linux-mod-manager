@@ -2820,6 +2820,26 @@ func TestJSONGoldens(t *testing.T) {
 			core.CollectionUpdateMismatchError{Code: core.CollectionUpdateOlderVersion, ID: "coll-1", Version: 5, FetchedID: "coll-1", FetchedVersion: 4},
 		},
 		{
+			// #647: one version a refused mixed-version install selection
+			// spans, with its files.
+			"mixed_version",
+			core.MixedVersion{Version: "1.0", Files: []core.MixedVersionFile{{ID: "11", FileName: "main-1.0.zip"}, {ID: "12", FileName: "patch-1.0.zip"}}},
+		},
+		{
+			// #647: one selected file, named by id alone when the source
+			// gives it no name.
+			"mixed_version_file",
+			core.MixedVersionFile{ID: "13"},
+		},
+		{
+			// #647: the --json error envelope's details for the refusal.
+			"mixed_version_selection_error_details",
+			(&core.MixedVersionSelectionError{Versions: []core.MixedVersion{
+				{Version: "2.0", Files: []core.MixedVersionFile{{ID: "21", FileName: "main-2.0.zip"}}},
+				{Version: "1.0", Files: []core.MixedVersionFile{{ID: "12", FileName: "patch-1.0.zip"}}},
+			}}).Details(),
+		},
+		{
 			// #613: an origin serving the profile's own version.
 			"collection_update_plan_up_to_date",
 			core.CollectionUpdatePlan{

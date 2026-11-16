@@ -669,9 +669,16 @@ func (s *Service) sourceDisplayName(id string) string {
 	return id
 }
 
-// ValidateInstallFileSelection rejects an install selection that mixes a
-// merge-compiling game's exmodz variant with any other file (#211): the two
-// are alternate forms of the same mod, and installing both double-applies
+// ValidateInstallFileSelection rejects an install selection that cannot be
+// installed as one mod. Two rules, in this order:
+//
+//   - Files of more than one version of the mod (#647):
+//     *MixedVersionSelectionError. A file with no version is compatible with
+//     any one version. ApplyInstall runs this on its final selection, so a
+//     frontend calling it first (the CLI's --file) only refuses earlier.
+//   - A merge-compiling game's exmodz variant with any other file (#211).
+//
+// The second rule in full: the exmodz variant and its pak sibling are alternate forms of the same mod, and installing both double-applies
 // its table edits (the pak deploys standalone while the exmodz joins the
 // merged pak). A game with no compile capability is never restricted, and
 // single-file selections are always fine.
@@ -687,6 +694,9 @@ func (s *Service) sourceDisplayName(id string) string {
 func (s *Service) ValidateInstallFileSelection(game *domain.Game, files []domain.DownloadableFile) error {
 	if len(files) < 2 {
 		return nil
+	}
+	if err := mixedVersionSelection(files); err != nil {
+		return err
 	}
 	mc, ok := s.optionalCompiler(game)
 	if !ok {

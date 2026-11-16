@@ -7,9 +7,12 @@ package serve
 // failed job with core's own message, nothing installed.
 
 import (
+	"encoding/json"
+	"net/http"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,6 +72,51 @@ func TestFlowInstall_SeveralFilesRefusedLikeTheCLI(t *testing.T) {
 	assert.Equal(t, "Mod_P.pak and Mod.exmodz are alternate forms of the same mod - select one", j.status().Error.Error)
 
 	_, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "alt", game.ID, "default")
+	require.ErrorIs(t, err, domain.ErrModNotFound, "a refused selection installs nothing")
+	assert.Equal(t, before, src.downloadCount(), "nor downloads anything")
+}
+
+// TestFlowInstall_MixedVersionFilesRefused crafts what the picker never
+// sends (#647): file_ids naming a 2.0 file and a 1.0 file, with no version.
+// The job fails with core's refusal, and the envelope a client reads names
+// the code and each version's files; nothing is installed or downloaded.
+func TestFlowInstall_MixedVersionFilesRefused(t *testing.T) {
+	s, svc, game, src := newInstallFixtureServer(t)
+	src.mods["mv"] = &installSourceMod{
+		mod: domain.Mod{ID: "mv", SourceID: fixtureSourceID, Name: "Two Versions", Version: "2.0", GameID: game.ID},
+		files: []domain.DownloadableFile{
+			{ID: "mv2", Name: "Main", FileName: "main-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true, Size: 64},
+			{ID: "mv1", Name: "Patch", FileName: "patch-1.0.zip", Version: "1.0", Category: "OPTIONAL", Size: 64},
+		},
+		members: map[string]string{"mv2": "Mods/main.pak", "mv1": "Mods/patch.pak"},
+	}
+	before := src.downloadCount()
+
+	j := runFlow(t, s, game, "install", installPlanBody("mv"), `{"file_ids":["mv2","mv1"]}`)
+	require.Equal(t, jobFailed, j.status().State)
+	var mixed *core.MixedVersionSelectionError
+	require.ErrorAs(t, j.failure(), &mixed)
+
+	rec := doAPI(s, http.MethodGet, "/api/v1/jobs/"+string(j.status().ID), "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	var status struct {
+		Error struct {
+			Error   string `json:"error"`
+			Details struct {
+				Code     string              `json:"code"`
+				Versions []core.MixedVersion `json:"versions"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status), rec.Body.String())
+	assert.Equal(t, "these files belong to versions 2.0 (main-2.0.zip) and 1.0 (patch-1.0.zip); pick one version", status.Error.Error)
+	assert.Equal(t, core.MixedVersionFilesCode, status.Error.Details.Code)
+	assert.Equal(t, []core.MixedVersion{
+		{Version: "2.0", Files: []core.MixedVersionFile{{ID: "mv2", FileName: "main-2.0.zip"}}},
+		{Version: "1.0", Files: []core.MixedVersionFile{{ID: "mv1", FileName: "patch-1.0.zip"}}},
+	}, status.Error.Details.Versions)
+
+	_, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "mv", game.ID, "default")
 	require.ErrorIs(t, err, domain.ErrModNotFound, "a refused selection installs nothing")
 	assert.Equal(t, before, src.downloadCount(), "nor downloads anything")
 }

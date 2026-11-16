@@ -95,6 +95,13 @@ patch, the preview lists them with a checkbox each. The main file starts
 checked; check every file you want and they all install together. In the
 terminal, name them with `lmm install --file <id>,<id>`.
 
+The files you install together all come from one version of the mod. When a
+mod offers files from several versions, you choose the version first, and
+the preview then lists only that version's files. `lmm install` in the
+terminal asks the same way: a version, then its files (`--version <v>` skips
+the version question). A `--file` list that names files from different
+versions is refused, and nothing is installed.
+
 The install runs in the background. The bell icon at the top shows its
 progress, and you can keep working while it runs. If the mod needs other mods
 to work, lmm finds and installs those as well.
