@@ -126,14 +126,22 @@ func relUnder(root, path string) (string, bool) {
 // outside the mod_path. A profile that cannot be read overrides nothing: the
 // flow that reads it for its own purposes reports the failure.
 func (s *Service) overriddenModFiles(game *domain.Game, profileName string) overriddenFiles {
+	files, _ := s.readOverriddenModFiles(game, profileName)
+	return files
+}
+
+// readOverriddenModFiles is overriddenModFiles with the profile's read
+// failure, for a caller that must tell "no overrides" from "could not
+// read them" (Installer.readOverridesOnce, #661).
+func (s *Service) readOverriddenModFiles(game *domain.Game, profileName string) (overriddenFiles, error) {
 	if profileName == "" {
-		return nil
+		return nil, nil
 	}
 	profile, err := config.LoadProfile(s.configDir, game.ID, profileName)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return overriddenDeployed(game, profile)
+	return overriddenDeployed(game, profile), nil
 }
 
 // overriddenDeployed is overriddenModFiles for a profile already read.

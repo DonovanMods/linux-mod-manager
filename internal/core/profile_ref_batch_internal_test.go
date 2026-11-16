@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -334,9 +335,11 @@ func TestRefBookkeepingTiming(t *testing.T) {
 	}
 }
 
-// TestProfileRefBatch_CloseIsTheLastWrite pins close: it saves what is
-// pending, and afterwards - even when that save failed - the flow's
-// deferred flush writes nothing over what the flow saved since.
+// TestProfileRefBatch_CloseIsTheLastWrite pins close when its save keeps
+// failing: it tries twice, reports how many installed mods the profile does
+// not record and names them (a whole batch can be behind one note, where a
+// failed per-item save lost one ref), and afterwards the flow's deferred
+// flush writes nothing over what the flow saved since.
 func TestProfileRefBatch_CloseIsTheLastWrite(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root writes through a read-only directory")
@@ -347,12 +350,22 @@ func TestProfileRefBatch_CloseIsTheLastWrite(t *testing.T) {
 	saves := &atomic.Int64{}
 	pm.saves = saves
 	b := &profileRefBatch{pm: pm, gameID: "g1", profileName: "col", items: 10, window: time.Hour, now: time.Now}
-	require.NoError(t, b.upsert(ctx, domain.ModReference{SourceID: "src", ModID: "fomodkeep", Version: "7"}, fomodRecord{op: fomodKeep}))
+	ids := []string{"fomodkeep", "fomodset", "collected", "todo", "off", "twice", "fomodkeep"}
+	for _, id := range ids {
+		require.NoError(t, b.upsert(ctx, domain.ModReference{SourceID: "src", ModID: id, Version: "7"}, fomodRecord{op: fomodKeep}))
+	}
 
 	require.NoError(t, os.Chmod(path, 0o444))
 	require.NoError(t, os.Chmod(filepath.Dir(path), 0o555))
 	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(path), 0o755) })
-	require.Error(t, b.close(), "the failed save is reported")
+	result := &ProfileImportResult{}
+	var events []Event
+	flushImportedRefs(b, Scope{Op: OpImport}, result, func(e Event) { events = append(events, e) })
+	assert.Equal(t, int64(2), saves.Load(), "the save is tried twice")
+	require.Len(t, result.Notes, 1, "the failure is one note")
+	assert.Contains(t, result.Notes[0], "Warning: could not update profile: ")
+	assert.Contains(t, result.Notes[0], "; 6 installed mods are not recorded in it (src:fomodkeep, src:fomodset, src:collected, src:todo, src:off, ...)")
+	require.Len(t, events, 1)
 	require.NoError(t, os.Chmod(filepath.Dir(path), 0o755))
 	require.NoError(t, os.Chmod(path, 0o644))
 
@@ -362,14 +375,76 @@ func TestProfileRefBatch_CloseIsTheLastWrite(t *testing.T) {
 	assert.Equal(t, before, saves.Load(), "nothing is written after close")
 }
 
+// TestProfileRefBatch_CloseRetriesItsSave pins the retry: a save that
+// fails once at close is tried again, and its refs are written.
+func TestProfileRefBatch_CloseRetriesItsSave(t *testing.T) {
+	ctx := context.Background()
+	dir, _ := writeRefBatchProfile(t)
+	b := &profileRefBatch{pm: NewProfileManager(dir, nil), gameID: "g1", profileName: "col", items: 10, window: time.Hour, now: time.Now}
+	failures := 1
+	b.saveDoc = func(p *domain.Profile) error {
+		if failures > 0 {
+			failures--
+			return errors.New("disk hiccup")
+		}
+		return b.pm.save(p)
+	}
+	require.NoError(t, b.upsert(ctx, domain.ModReference{SourceID: "src", ModID: "fomodkeep", Version: "7"}, fomodRecord{op: fomodKeep}))
+	require.NoError(t, b.close(), "the second try saved it")
+	saved, err := config.LoadProfile(dir, "g1", "col")
+	require.NoError(t, err)
+	assert.Equal(t, "7", saved.FindRef("src", "fomodkeep").Version)
+}
+
+// TestUnrecordedRefs pins the note's count and names: singular, and the
+// first five then an ellipsis.
+func TestUnrecordedRefs(t *testing.T) {
+	assert.Equal(t, "1 installed mod is not recorded in it (a:1)", unrecordedRefs([]string{"a:1"}))
+	assert.Equal(t, "2 installed mods are not recorded in it (a:1, a:2)", unrecordedRefs([]string{"a:1", "a:2"}))
+	assert.Equal(t, "5 installed mods are not recorded in it (a:1, a:2, a:3, a:4, a:5)", unrecordedRefs([]string{"a:1", "a:2", "a:3", "a:4", "a:5"}))
+}
+
+// TestInstaller_ReadOverridesOnce_AFailedReadIsNotKept pins the memo
+// against a transient read failure: the profile cannot be read at the
+// first deploy, so that deploy places no override, but the next deploy
+// reads it again and places it - as the per-mod read did. A successful read
+// with no overrides is kept, though: a later change is not seen.
+func TestInstaller_ReadOverridesOnce_AFailedReadIsNotKept(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads an unreadable file")
+	}
+	svc := newBareService(t)
+	root := t.TempDir()
+	game := &domain.Game{ID: "g1", InstallPath: root, ModPath: root}
+	require.NoError(t, config.SaveProfile(svc.configDir, &domain.Profile{Name: "p", GameID: "g1",
+		Overrides: map[string][]byte{"a.txt": []byte("mine")}}))
+	require.NoError(t, config.SaveProfile(svc.configDir, &domain.Profile{Name: "empty", GameID: "g1"}))
+	path, err := config.ProfilePath(svc.configDir, "g1", "p")
+	require.NoError(t, err)
+
+	i := svc.newInstallerWithLinker(game, svc.getLinker(domain.LinkSymlink))
+	i.readOverridesOnce()
+	require.NoError(t, os.Chmod(path, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	assert.Empty(t, i.overridesFor(game, "p"), "an unreadable profile overrides nothing")
+	require.NoError(t, os.Chmod(path, 0o644))
+	got := i.overridesFor(game, "p")
+	assert.Equal(t, []byte("mine"), got[domain.ModPathFile("a.txt")], "the next deploy reads it again")
+
+	assert.Empty(t, i.overridesFor(game, "empty"))
+	require.NoError(t, config.SaveProfile(svc.configDir, &domain.Profile{Name: "empty", GameID: "g1",
+		Overrides: map[string][]byte{"a.txt": []byte("later")}}))
+	assert.Empty(t, i.overridesFor(game, "empty"), "a read that found no overrides is kept")
+}
+
 // TestInstaller_ReadOverridesOnce pins the loop's override reads (#661):
 // one read per profile, whatever the number of mods deployed, and each
 // profile its own answer.
 func TestInstaller_ReadOverridesOnce(t *testing.T) {
 	reads := map[string]int{}
-	i := &Installer{overridden: func(_ *domain.Game, profile string) overriddenFiles {
+	i := &Installer{overridden: func(_ *domain.Game, profile string) (overriddenFiles, error) {
 		reads[profile]++
-		return overriddenFiles{domain.ModPathFile(profile): []byte(profile)}
+		return overriddenFiles{domain.ModPathFile(profile): []byte(profile)}, nil
 	}}
 	i.readOverridesOnce()
 	game := &domain.Game{ID: "g1"}

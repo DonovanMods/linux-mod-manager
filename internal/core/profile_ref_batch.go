@@ -29,11 +29,23 @@
 // all (profileRefBatch.close), so no installed row ends a run without its
 // ref on disk. Only a process that dies mid-batch can leave the profile
 // behind its rows, by at most one batch (see refBatchItems).
+//
+// A read-only query between two saves - a web UI GET, which takes no
+// beginOp - can see the profile behind the rows the loop has installed,
+// by up to one batch, until the next save; the rows and the document are
+// two stores read separately either way, and the per-item writes left the
+// same gap for the length of one item.
+//
+// The loop's Installer reads the profile's overrides once, too
+// (readOverridesOnce), rather than parsing the document for every mod it
+// deploys.
 package core
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +55,8 @@ import (
 
 // refBatchItems is how many ref upserts a batch holds before it saves:
 // the most a process that dies mid-loop can leave the profile behind its
-// DB rows by. At 25 a 600-item collection makes 24 saves instead of 600.
+// DB rows by. At 25 a 600-item collection makes 25 saves instead of 600
+// (24 full batches and the close).
 const refBatchItems = 25
 
 // refBatchWindow is how long a batch holds its first pending upsert before
@@ -66,6 +79,12 @@ type profileRefBatch struct {
 	// since is when the oldest of them was applied.
 	pending int
 	since   time.Time
+	// keys are the mods whose pending upserts doc holds (domain.ModKey),
+	// each once, in order: what close names when it cannot save them.
+	keys []string
+	// saveDoc, when set, replaces pm.save (a test seam for a save that
+	// fails once).
+	saveDoc func(*domain.Profile) error
 
 	items  int
 	window time.Duration
@@ -112,6 +131,9 @@ func (b *profileRefBatch) upsert(ctx context.Context, mod domain.ModReference, r
 		b.since = b.now()
 	}
 	b.pending++
+	if key := domain.ModKey(mod.SourceID, mod.ModID); !slices.Contains(b.keys, key) {
+		b.keys = append(b.keys, key)
+	}
 	if appended || b.pending >= b.items || b.now().Sub(b.since) >= b.window {
 		return b.flush()
 	}
@@ -119,18 +141,39 @@ func (b *profileRefBatch) upsert(ctx context.Context, mod domain.ModReference, r
 }
 
 // close is the flow's last flush, once its loop has ended: it saves what
-// is pending and then lets the document go, saved or not, so that a later
-// flush - the flow's deferred one, there for a panicking commit - writes
-// nothing over what the flow saves to the profile after its loop (a
-// finish's to-dos). A failure is returned for the flow to report, as a
-// failed per-item save was.
+// is pending - trying twice, since one failure here can leave a whole
+// batch unrecorded where a failed per-item save lost one ref - and then
+// lets the document go, saved or not, so that a later flush (the flow's
+// deferred one, there for a panicking commit) writes nothing over what the
+// flow saves to the profile after its loop (a finish's to-dos). A failure
+// is returned for the flow to report, as a failed per-item save was, and
+// says which installed mods the profile does not record.
 func (b *profileRefBatch) close() error {
 	if b == nil {
 		return nil
 	}
 	err := b.flush()
-	b.doc, b.pending = nil, 0
+	if err != nil {
+		if err = b.flush(); err != nil {
+			err = fmt.Errorf("%w; %s", err, unrecordedRefs(b.keys))
+		}
+	}
+	b.doc, b.pending, b.keys = nil, 0, nil
 	return err
+}
+
+// unrecordedRefs is close's account of the mods keys names: how many, and
+// the first few.
+func unrecordedRefs(keys []string) string {
+	const named = 5
+	list := strings.Join(keys[:min(len(keys), named)], ", ")
+	if len(keys) > named {
+		list += ", ..."
+	}
+	if len(keys) == 1 {
+		return fmt.Sprintf("1 installed mod is not recorded in it (%s)", list)
+	}
+	return fmt.Sprintf("%d installed mods are not recorded in it (%s)", len(keys), list)
 }
 
 // flush saves the document when it holds an upsert not saved yet. It takes
@@ -141,10 +184,14 @@ func (b *profileRefBatch) flush() error {
 	if b == nil || b.pending == 0 {
 		return nil
 	}
-	if err := b.pm.save(b.doc); err != nil {
+	save := b.pm.save
+	if b.saveDoc != nil {
+		save = b.saveDoc
+	}
+	if err := save(b.doc); err != nil {
 		return err
 	}
-	b.pending = 0
+	b.pending, b.keys = 0, nil
 	return nil
 }
 
@@ -153,7 +200,10 @@ func (b *profileRefBatch) flush() error {
 // read parsed the whole profile document for every mod it placed, the
 // other quadratic half of a large import. The overrides cannot change
 // while the loop runs - it holds beginOp, and its ref upserts touch no
-// override - so the first answer is every later one.
+// override - so the first answer is every later one. A read that failed
+// (the profile could not be loaded) is not kept: it placed no override,
+// as before, and the next deploy reads again, as the per-mod read did. A
+// read that found no overrides is kept.
 func (i *Installer) readOverridesOnce() {
 	read := i.overridden
 	if read == nil {
@@ -162,15 +212,17 @@ func (i *Installer) readOverridesOnce() {
 	type key struct{ game, profile string }
 	var mu sync.Mutex
 	memo := map[key]overriddenFiles{}
-	i.overridden = func(game *domain.Game, profileName string) overriddenFiles {
+	i.overridden = func(game *domain.Game, profileName string) (overriddenFiles, error) {
 		k := key{game.ID, profileName}
 		mu.Lock()
 		defer mu.Unlock()
 		if files, ok := memo[k]; ok {
-			return files
+			return files, nil
 		}
-		files := read(game, profileName)
-		memo[k] = files
-		return files
+		files, err := read(game, profileName)
+		if err == nil {
+			memo[k] = files
+		}
+		return files, err
 	}
 }

@@ -2429,7 +2429,7 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	installer.cacheRoots = s.cacheRoots(game)
 	// #630: and every one places a file the profile overrides as the
 	// overridden copy.
-	installer.overridden = s.overriddenModFiles
+	installer.overridden = s.readOverriddenModFiles
 	// #633: and every removal that takes a mod away for good hands a
 	// shared path to the next mod in the profile's load order.
 	installer.heirs = s.pathHeirsFor("", nil, nil)

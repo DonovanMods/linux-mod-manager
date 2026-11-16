@@ -99,11 +99,12 @@ type Installer struct {
 	// F1). Nil - an Installer built without a Service - has none.
 	cacheRoots []string
 
-	// overridden is Service.overriddenModFiles: the files under a game's
-	// mod path a profile's overrides replace (#630), which a deploy places
-	// as overridden copies instead of links. Nil - an Installer built
-	// without a Service - overrides nothing.
-	overridden func(game *domain.Game, profileName string) overriddenFiles
+	// overridden is Service.readOverriddenModFiles: the files under a
+	// game's mod path a profile's overrides replace (#630), which a deploy
+	// places as overridden copies instead of links, or the profile's read
+	// failure. Nil - an Installer built without a Service - overrides
+	// nothing.
+	overridden func(game *domain.Game, profileName string) (overriddenFiles, error)
 
 	// placing is overridden's answer for the Install or replace in
 	// progress, which its rollbacks place and remove by too.
@@ -603,7 +604,10 @@ func (i *Installer) overridesFor(game *domain.Game, profileName string) overridd
 	if i.overridden == nil {
 		return nil
 	}
-	return i.overridden(game, profileName)
+	// A profile that cannot be read overrides nothing: the flow that
+	// reads it for its own purposes reports the failure.
+	files, _ := i.overridden(game, profileName)
+	return files
 }
 
 // place deploys file - srcPath, at dstPath under game's mod path - once
