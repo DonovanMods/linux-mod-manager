@@ -27,6 +27,12 @@ it writes the unit to ~/.config/systemd/user, pointing at this lmm binary.
 installed; you never need to uninstall and reinstall it to restart it.
 
 .PP
+\&'lmm service status' and 'lmm service restart' name the lmm binary the
+service runs and warn when it is not the one you are running - after a
+\&'make install' to a new path, say. 'lmm service restart --switch' points
+the service at the binary you are running and restarts it.
+
+.PP
 The service starts when you log in. To start it at boot without a login,
 run 'loginctl enable-linger $USER' once; lmm never runs it for you.
 

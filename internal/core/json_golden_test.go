@@ -3598,6 +3598,43 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #649: `lmm service status|restart`'s document with the binary
+			// each unit runs beside the running one - here a unit left on a
+			// previous mise Go install's build.
+			"service_report_binary_mismatch",
+			core.ServiceReport{
+				Units: []core.UnitStatus{{
+					Name: "lmm-serve.service", Installed: true, Origin: core.UnitOriginUser,
+					Path:    "/home/user/.config/systemd/user/lmm-serve.service",
+					Enabled: true, Active: true, EnabledState: "enabled", ActiveState: "active",
+					Binary:         &core.LmmBinary{Path: "/home/user/.local/share/mise/installs/go/1.27.3/bin/lmm", Version: "2.3.0 (dev: v2.3.0-39-gdef)"},
+					BinaryMismatch: true,
+				}},
+				Running: &core.LmmBinary{Path: "/home/user/.local/share/mise/installs/go/1.27.4/bin/lmm", Version: "2.3.0 (dev: v2.3.0-484-gabc)"},
+			},
+		},
+		{
+			// #649: `lmm service install` (or `restart --switch`) over a
+			// unit on another binary says what it changed.
+			"service_report_binary_updated",
+			core.ServiceReport{
+				Changed: true,
+				Units: []core.UnitStatus{{
+					Name: "lmm-serve.service", Installed: true, Origin: core.UnitOriginUser,
+					Path:    "/home/user/.config/systemd/user/lmm-serve.service",
+					Enabled: true, Active: true, EnabledState: "enabled", ActiveState: "active",
+					Binary:         &core.LmmBinary{Path: "/home/user/.local/share/mise/installs/go/1.27.4/bin/lmm", Version: "2.3.0"},
+					Change:         core.UnitUpdated,
+					PreviousBinary: "/home/user/.local/share/mise/installs/go/1.27.3/bin/lmm",
+					Restarted:      true,
+				}},
+			},
+		},
+		{
+			"lmm_binary",
+			core.LmmBinary{Path: "/usr/bin/lmm", Version: core.UnknownBinaryVersion},
+		},
+		{
 			"env_only_credential",
 			core.EnvOnlyCredential{SourceID: "nexusmods", Name: "Nexus Mods", EnvVar: "NEXUSMODS_API_KEY"},
 		},

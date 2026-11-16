@@ -58,7 +58,14 @@ lmm service install --addr 127.0.0.1:8080
 ```
 
 Running `lmm service install` again, say with a new address, or after you
-move the `lmm` program, rewrites the service file and restarts the service.
+move the `lmm` program, rewrites the service file and restarts the service,
+and says what changed:
+
+```text
+Updated lmm-serve.service to run /…/go/1.27.4/bin/lmm (was /…/go/1.27.3/bin/lmm); restarted.
+```
+
+When there was nothing to change, it says "Already installed".
 
 lmm already installs new versions of itself, after a command or from the
 background web interface (see
@@ -100,6 +107,37 @@ put it there), whether it starts when you log in, whether it is running
 now, and whether it starts at boot. Add `--json` for a version a script can
 read.
 
+It also shows which `lmm` program the service runs, and that program's
+version:
+
+```text
+lmm-serve.service
+  installed:  yes, by lmm service install (/home/you/.config/systemd/user/lmm-serve.service)
+  enabled:    yes (enabled)
+  running:    yes (active)
+  binary:     /home/you/go/bin/lmm (2.3.0)
+```
+
+If that isn't the `lmm` you are running, it says so, and how to fix it.
+This happens when a new build of lmm goes somewhere else than the old one
+did, for example after an update of the Go toolchain that `make install`
+or `go install` builds with: the service keeps running the old program
+until you point it at the new one.
+
+```text
+! lmm-serve.service runs /…/go/1.27.3/bin/lmm (2.3.0-39); you are running /…/go/1.27.4/bin/lmm (2.3.0-484).
+  Run 'lmm service restart --switch' to point the service at this binary and restart it (or 'lmm service install' with the options you installed it with).
+```
+
+The web interface shows the same thing under **Setup** > **Updates**, as
+**Background service**.
+
+A service a package installed always runs the package's program, which lmm
+never changes. If you run another `lmm` (one you built yourself, say), the
+warning says how to run that one instead: with `lmm serve`, or by
+overriding the service's `ExecStart` with
+`systemctl --user edit lmm-serve`.
+
 If it isn't running, its log says why:
 
 ```bash
@@ -123,6 +161,24 @@ A restart stops anything the web interface is in the middle of, as closing
 `lmm serve` would, so wait until it has finished. It doesn't turn the
 service on: if you turned it off, it won't start again the next time you log
 in.
+
+If the service runs a different `lmm` program from the one you ran
+`lmm service restart` with, the restart warns about it (see
+[Is it running?](#is-it-running)) and restarts the service on its old
+program all the same. To move it to the program you are running, add
+`--switch`:
+
+```bash
+lmm service restart --switch
+```
+
+That changes only which program the service file runs. Its address, and
+the `--config` and `--data` it was installed with, stay as they are. lmm
+only does this for a service file it wrote; it never rewrites a package's.
+If you changed the service's `ExecStart` with `systemctl --user edit
+lmm-serve`, that change still wins after the switch, and `--switch` says
+so and fails rather than claim it worked: `systemctl --user cat lmm-serve`
+shows the change, and `systemctl --user edit lmm-serve` removes it.
 
 ## Starting at boot, without logging in
 

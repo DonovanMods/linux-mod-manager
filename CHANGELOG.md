@@ -1102,6 +1102,32 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **`lmm service` says which lmm binary the service runs (#649).**
+  `lmm service install` writes the path of the lmm that ran it into
+  `lmm-serve.service`, and that path can be one a later build no longer
+  goes to (a mise Go upgrade moves `make install` from `.../go/1.27.3/bin`
+  to `.../go/1.27.4/bin`). The service then kept running the old build
+  while `restart` and `status` said nothing. Now `lmm service status`
+  names the binary each unit runs and its version, and `status` and
+  `restart` warn when that is a different file from the lmm you are
+  running: "lmm-serve.service runs /…/1.27.3/bin/lmm (2.3.0-39); you are
+  running /…/1.27.4/bin/lmm (2.3.0-484)", with the fix. `restart` still
+  restarts the unit as it is; the new **`lmm service restart --switch`**
+  first points lmm's own units at the running binary, keeping their
+  address, `--config`, `--data`, environment, line endings and systemd's
+  `-`/`@`/`+`/`!` prefixes, then restarts, and fails rather than report
+  success when a drop-in still overrides `ExecStart`. A unit a
+  package installed is never rewritten: there is no warning when you run
+  the packaged binary, and for another lmm the warning says how to run
+  it instead. `lmm service install` over an existing unit says what it
+  changed ("Updated lmm-serve.service to run … (was …); restarted.") and
+  keeps "Already installed" for when nothing did. `--json` is additive:
+  units gain `binary` (`path`, `version`, "unknown" when it could not be
+  read), `binary_mismatch`, `change` and `previous_binary`, and status and
+  restart gain `running`; an unchanged install's document is as it was.
+  The web UI's **Setup** > **Updates** shows the service's binary and the
+  same warning, read from the new `GET /api/v1/service`.
+
 - **A running lmm stops when a newer lmm upgrades the database under it
   (#648).** The database's version was checked only when lmm started, so a
   `lmm serve` left running across an upgrade (or a command waiting for

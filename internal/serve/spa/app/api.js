@@ -748,6 +748,12 @@ export const deleteUpload = (uploadID) =>
  * own, and never scoped to a game). */
 export const getLmmRelease = () => get("/api/v1/updates/lmm");
 
+/** getServiceStatus reads GET /api/v1/service (issue 649): core.ServiceReport,
+ * `lmm service status --json`'s document - the lmm binary lmm-serve.service
+ * runs, beside the one this server runs. null (204) from a server that does
+ * not report its service; 422 where there is no systemd user manager. */
+export const getServiceStatus = () => get("/api/v1/service");
+
 /** putAutoUpdate writes config.yaml's auto_update (issue 586) and answers
  * the same core.ReleaseStatus getLmmRelease reads, after the write. */
 export const putAutoUpdate = (enabled) =>

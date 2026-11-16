@@ -77,6 +77,12 @@ type Options struct {
 	// or restarts anything. Only consulted alongside a ReleaseChecker.
 	AutoUpdater AutoUpdater
 
+	// ServiceStatus reports lmm-serve.service and the lmm binary each unit
+	// runs, for GET /api/v1/service (#649): *core.UserUnits in production.
+	// nil (every test that does not set one) answers 204, which keeps this
+	// package's tests off the real user manager.
+	ServiceStatus ServiceStatuser
+
 	// Notices receives the lines a person running the server should read
 	// - the release check's one-time first-run notice - beside the
 	// "listening on" line; nil discards them.
@@ -177,6 +183,11 @@ type Server struct {
 	// autoUpdater is Options.AutoUpdater (api_release.go); nil when the
 	// server never updates lmm.
 	autoUpdater AutoUpdater
+	// serviceStatus is Options.ServiceStatus (api_service.go); nil when
+	// the server does not report its systemd service.
+	serviceStatus ServiceStatuser
+	// serviceCache shares GET /api/v1/service's reads between requests.
+	serviceCache serviceStatusCache
 	// notices is Options.Notices, never nil.
 	notices io.Writer
 	// installedCheckEvery is how often Serve looks for a newer binary
@@ -232,6 +243,7 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		version:                 opts.Version,
 		releases:                opts.ReleaseChecker,
 		autoUpdater:             opts.AutoUpdater,
+		serviceStatus:           opts.ServiceStatus,
 		notices:                 opts.Notices,
 
 		installedCheckEvery: installedCheckEvery,

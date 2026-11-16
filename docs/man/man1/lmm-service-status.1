@@ -15,6 +15,13 @@ running, the unit file systemd uses, and whether lingering is on - that is,
 whether your user services start at boot rather than at login.
 
 .PP
+It also names the lmm binary each unit runs and that binary's version, and
+warns when it is a different file from the lmm you are running, with the
+command that points the service at this one: 'lmm service restart --switch'
+for a unit 'lmm service install' wrote. A unit your lmm package installed
+runs the packaged binary, which lmm never rewrites.
+
+.PP
 Examples:
   lmm service status
   lmm service status --json

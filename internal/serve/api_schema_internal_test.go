@@ -155,6 +155,9 @@ func TestAPI_SchemaGateSparesTheRoutesThatNeverReadTheDatabase(t *testing.T) {
 		// No release checker in this fixture: the route's own 404, not
 		// the gate's 503.
 		{http.MethodPost, "/api/v1/updates/lmm/notice", http.StatusNotFound},
+		// #649: the service's binary, the restart's target. No status
+		// source in this fixture: the route's own 204.
+		{http.MethodGet, "/api/v1/service", http.StatusNoContent},
 	} {
 		rec := doAPI(s, req.method, req.target, "")
 		assert.Equal(t, req.want, rec.Code, "%s %s is spared: %s", req.method, req.target, rec.Body.String())

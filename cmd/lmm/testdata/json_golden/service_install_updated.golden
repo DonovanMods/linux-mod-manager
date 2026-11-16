@@ -1,0 +1,22 @@
+{
+  "changed": true,
+  "units": [
+    {
+      "name": "lmm-serve.service",
+      "installed": true,
+      "origin": "user",
+      "path": "<UNIT-PATH>",
+      "enabled": true,
+      "active": true,
+      "enabled_state": "enabled",
+      "active_state": "active",
+      "binary": {
+        "path": "<BIN>/go/1.27.4/bin/lmm",
+        "version": "<VERSION>"
+      },
+      "change": "updated",
+      "previous_binary": "<BIN>/go/1.27.3/bin/lmm"
+    }
+  ],
+  "linger": false
+}

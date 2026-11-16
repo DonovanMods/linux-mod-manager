@@ -41,6 +41,10 @@ type fakeSystemd struct {
 	// others is the enabled/active state of every unit but
 	// lmm-serve.service, whose state is enabled and active above (#569).
 	others map[string]*[2]bool
+	// loadState and execStart are what `show -p LoadState -p ExecStart
+	// <unit>` prints, by unit (#649); a unit without an entry prints empty
+	// values, as one systemd has not loaded does.
+	loadState, execStart map[string]string
 }
 
 // state returns the enabled and active flags the verb's unit argument
@@ -91,6 +95,10 @@ func (f *fakeSystemd) run(_ context.Context, name string, args ...string) ([]byt
 	case "show":
 		if len(args) > 3 && args[2] == "-p" && args[3] == "UnitPath" {
 			return []byte(f.unitPath + "\n"), nil
+		}
+		if len(args) > 3 && args[2] == "-p" && args[3] == "LoadState" {
+			unit := args[len(args)-1]
+			return []byte("LoadState=" + f.loadState[unit] + "\nExecStart=" + f.execStart[unit] + "\n"), nil
 		}
 	case "show-environment":
 		keys := make([]string, 0, len(f.env))
@@ -237,6 +245,7 @@ func TestUserUnits_InstallWritesEnablesAndStarts(t *testing.T) {
 	assert.Equal(t, core.UnitStatus{
 		Name: systemd.ServeUnitName, Installed: true, Origin: core.UnitOriginUser, Path: unitPath,
 		Enabled: true, Active: true, EnabledState: "enabled", ActiveState: "active",
+		Change: core.UnitInstalled,
 	}, report.Units[0])
 	assert.False(t, report.Linger)
 }

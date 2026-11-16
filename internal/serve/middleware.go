@@ -114,8 +114,9 @@ func (s *Server) wrap(fn http.HandlerFunc) http.Handler {
 
 // wrapNoDB is wrap without schemaGate (#648 review), for the few /api/v1
 // routes that read nothing from the database: the job registry's (GET
-// /jobs, /jobs/{id}, /jobs/{id}/events), the activity stream (/events), and
-// lmm's own release status and its notice (/updates/lmm). They must keep
+// /jobs, /jobs/{id}, /jobs/{id}/events), the activity stream (/events),
+// lmm's own release status and its notice (/updates/lmm), and
+// lmm-serve.service's status (/service, #649). They must keep
 // answering once a newer lmm has migrated the database - the activity
 // stream would otherwise drop and reopen forever, a job that was running
 // when the migration landed could not be followed after a reload, and the

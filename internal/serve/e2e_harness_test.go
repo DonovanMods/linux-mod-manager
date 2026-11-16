@@ -446,9 +446,17 @@ func startE2EServer(t *testing.T, svc *core.Service) string {
 // checker (#568); nil is "no checker", which every other fixture uses.
 func startE2EServerWithReleases(t *testing.T, svc *core.Service, rc *core.ReleaseChecker) string {
 	t.Helper()
+	return startE2EServerWithOptions(t, svc, func(o *serve.Options) { o.ReleaseChecker = rc })
+}
 
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler),
-		serve.Options{Addr: "127.0.0.1:0", ShutdownGrace: e2eShutdownGrace, Version: e2eLmmVersion, ReleaseChecker: rc})
+// startE2EServerWithOptions is startE2EServer with edit applied to the
+// server's Options first - a release checker, a service status (#649).
+func startE2EServerWithOptions(t *testing.T, svc *core.Service, edit func(*serve.Options)) string {
+	t.Helper()
+
+	opts := serve.Options{Addr: "127.0.0.1:0", ShutdownGrace: e2eShutdownGrace, Version: e2eLmmVersion}
+	edit(&opts)
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), opts)
 	addr, err := srv.Listen()
 	require.NoError(t, err)
 

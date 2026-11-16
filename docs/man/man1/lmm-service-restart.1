@@ -28,14 +28,29 @@ A restart stops any job the web UI is running, as stopping 'lmm serve'
 would.
 
 .PP
+It warns when the service runs a different lmm binary from the one you are
+running, and restarts it on that binary all the same. --switch first points
+the units 'lmm service install' wrote at the binary you are running,
+changing nothing else in them (the address, --config and --data stay), then
+restarts. A unit your lmm package installed is never rewritten. If a
+drop-in ('systemctl --user edit lmm-serve') overrides ExecStart, the
+service still runs the drop-in's program after the restart, and --switch
+says so and fails: lmm never edits a drop-in.
+
+.PP
 Examples:
   lmm service restart
+  lmm service restart --switch
   lmm service restart --json
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
 	help for restart
+
+.PP
+\fB--switch\fP[=false]
+	first point the service at this lmm binary, keeping its other settings
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

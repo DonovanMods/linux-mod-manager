@@ -18,9 +18,21 @@ import (
 // touches the real user manager.
 var newUserUnits = core.NewUserUnits
 
+// serviceUnits is newUserUnits with this binary's version set, which status
+// and restart report beside the version of the binary the unit runs (#649).
+func serviceUnits() (*core.UserUnits, error) {
+	units, err := newUserUnits()
+	if err != nil {
+		return nil, err
+	}
+	units.Version = computeDisplayVersion(version, buildDescribe)
+	return units, nil
+}
+
 var (
-	serviceAddr       string
-	serviceAutoUpdate bool
+	serviceAddr          string
+	serviceAutoUpdate    bool
+	serviceRestartSwitch bool
 )
 
 // serviceCmd groups the systemd user-service commands (#567). None of them
@@ -42,6 +54,11 @@ it writes the unit to ~/.config/systemd/user, pointing at this lmm binary.
 'lmm service restart' restarts the service, whichever way it was
 installed; you never need to uninstall and reinstall it to restart it.
 
+'lmm service status' and 'lmm service restart' name the lmm binary the
+service runs and warn when it is not the one you are running - after a
+'make install' to a new path, say. 'lmm service restart --switch' points
+the service at the binary you are running and restarts it.
+
 The service starts when you log in. To start it at boot without a login,
 run 'loginctl enable-linger $USER' once; lmm never runs it for you.`,
 }
@@ -61,7 +78,8 @@ PATH, not your shell's (see: systemctl --user show-environment), so 7z,
 unrar and steamcmd must be on that one.
 
 Running it again rewrites the unit (say, with a new --addr) and restarts the
-service. If a package already installed the unit, nothing is written: lmm
+service, and says what changed: the binary the unit now runs and the one it
+ran before. If a package already installed the unit, nothing is written: lmm
 tells you the systemctl command that turns it on. A unit file lmm did not
 write is left alone.
 
@@ -112,6 +130,12 @@ var serviceStatusCmd = &cobra.Command{
 running, the unit file systemd uses, and whether lingering is on - that is,
 whether your user services start at boot rather than at login.
 
+It also names the lmm binary each unit runs and that binary's version, and
+warns when it is a different file from the lmm you are running, with the
+command that points the service at this one: 'lmm service restart --switch'
+for a unit 'lmm service install' wrote. A unit your lmm package installed
+runs the packaged binary, which lmm never rewrites.
+
 Examples:
   lmm service status
   lmm service status --json`,
@@ -139,11 +163,24 @@ key you stored with 'lmm auth login' or a PATH you changed with
 A restart stops any job the web UI is running, as stopping 'lmm serve'
 would.
 
+It warns when the service runs a different lmm binary from the one you are
+running, and restarts it on that binary all the same. --switch first points
+the units 'lmm service install' wrote at the binary you are running,
+changing nothing else in them (the address, --config and --data stay), then
+restarts. A unit your lmm package installed is never rewritten. If a
+drop-in ('systemctl --user edit lmm-serve') overrides ExecStart, the
+service still runs the drop-in's program after the restart, and --switch
+says so and fails: lmm never edits a drop-in.
+
 Examples:
   lmm service restart
+  lmm service restart --switch
   lmm service restart --json`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		if serviceRestartSwitch {
+			return doServiceRestartSwitch(cmd.Context())
+		}
 		return doServiceRestart(cmd.Context())
 	},
 }
@@ -151,6 +188,7 @@ Examples:
 func init() {
 	serviceInstallCmd.Flags().StringVar(&serviceAddr, "addr", "", "address 'lmm serve' listens on (host:port; default "+defaultServeAddr+")")
 	serviceInstallCmd.Flags().BoolVar(&serviceAutoUpdate, "auto-update", false, "also install lmm-update.timer, which runs 'lmm self-update --auto' daily (for a machine where lmm rarely runs)")
+	serviceRestartCmd.Flags().BoolVar(&serviceRestartSwitch, "switch", false, "first point the service at this lmm binary, keeping its other settings")
 	serviceCmd.AddCommand(serviceInstallCmd, serviceUninstallCmd, serviceRestartCmd, serviceStatusCmd)
 	rootCmd.AddCommand(serviceCmd)
 }
@@ -241,7 +279,7 @@ func doServiceInstallWith(ctx context.Context, cmd *cobra.Command, addr string, 
 		}
 		*d.to = abs
 	}
-	units, err := newUserUnits()
+	units, err := serviceUnits()
 	if err != nil {
 		return err
 	}
@@ -257,11 +295,7 @@ func doServiceInstallWith(ctx context.Context, cmd *cobra.Command, addr string, 
 		addr = defaultServeAddr
 	}
 	for _, u := range report.Units {
-		verb := "Installed"
-		if !report.Changed {
-			verb = "Already installed"
-		}
-		fmt.Printf("%s %s at %s\n", verb, colorBold(u.Name), u.Path)
+		fmt.Println(installLine(u))
 		switch u.Name {
 		case core.UpdateServiceName:
 			continue
@@ -282,7 +316,7 @@ func doServiceInstallWith(ctx context.Context, cmd *cobra.Command, addr string, 
 
 // doServiceUninstall removes the unit `lmm service install` wrote.
 func doServiceUninstall(ctx context.Context) error {
-	units, err := newUserUnits()
+	units, err := serviceUnits()
 	if err != nil {
 		return err
 	}
@@ -311,7 +345,7 @@ func doServiceUninstall(ctx context.Context) error {
 // doServiceRestart restarts lmm-serve.service (#591) and says whether it
 // came back up.
 func doServiceRestart(ctx context.Context) error {
-	units, err := newUserUnits()
+	units, err := serviceUnits()
 	if err != nil {
 		return err
 	}
@@ -319,8 +353,39 @@ func doServiceRestart(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	return printServiceRestart(report)
+}
+
+// doServiceRestartSwitch is `lmm service restart --switch` (#649): lmm's
+// own units are pointed at this binary first, then restarted.
+func doServiceRestartSwitch(ctx context.Context) error {
+	units, err := serviceUnits()
+	if err != nil {
+		return err
+	}
+	report, err := units.RestartSwitch(ctx)
+	if err != nil {
+		return err
+	}
+	return printServiceRestart(report)
+}
+
+// printServiceRestart renders a restart's report: each unit --switch
+// pointed at this binary, whether lmm-serve.service came back up, and a
+// unit that still runs another binary.
+func printServiceRestart(report core.ServiceReport) error {
 	if jsonOutput {
 		return emitJSON(report)
+	}
+	for _, u := range report.Units {
+		if u.Change != core.UnitUpdated {
+			continue
+		}
+		if u.PreviousBinary != "" && u.Binary != nil {
+			fmt.Printf("Pointed %s at %s (was %s).\n", colorBold(u.Name), u.Binary.Path, u.PreviousBinary)
+		} else {
+			fmt.Printf("Updated %s at %s.\n", colorBold(u.Name), u.Path)
+		}
 	}
 	for _, u := range report.Units {
 		if u.Name != core.ServeUnitName {
@@ -336,12 +401,55 @@ func doServiceRestart(ctx context.Context) error {
 			fmt.Println(colorDim("  It is turned off, so it will not start when you next log in; turn it on with: systemctl --user enable " + u.Name))
 		}
 	}
+	printBinaryMismatches(report)
 	return nil
+}
+
+// installLine is install's line for one unit (#649): what it did to the
+// file - installed it, pointed it at this binary, rewrote it, or left it
+// as it was - and whether it restarted the unit.
+func installLine(u core.UnitStatus) string {
+	restarted := ""
+	if u.Restarted {
+		restarted = "; restarted"
+	}
+	switch {
+	case u.Change == core.UnitInstalled:
+		return fmt.Sprintf("Installed %s at %s", colorBold(u.Name), u.Path)
+	case u.Change == core.UnitUpdated && u.PreviousBinary != "" && u.Binary != nil:
+		return fmt.Sprintf("Updated %s to run %s (was %s)%s.", colorBold(u.Name), u.Binary.Path, u.PreviousBinary, restarted)
+	case u.Change == core.UnitUpdated:
+		return fmt.Sprintf("Updated %s at %s%s.", colorBold(u.Name), u.Path, restarted)
+	}
+	return fmt.Sprintf("Already installed %s at %s", colorBold(u.Name), u.Path)
+}
+
+// printBinaryMismatches warns once per unit that runs a different lmm
+// binary from this one (#649), with the way to point it at this one: for
+// lmm's own unit --switch, which keeps its settings; a package's unit is
+// never rewritten, so the warning says how to run this lmm instead.
+func printBinaryMismatches(report core.ServiceReport) {
+	if report.Running == nil {
+		return
+	}
+	for _, u := range report.Units {
+		if !u.BinaryMismatch || u.Binary == nil {
+			continue
+		}
+		fmt.Printf("%s %s runs %s (%s); you are running %s (%s).\n", colorYellow("!"),
+			u.Name, u.Binary.Path, u.Binary.Version, report.Running.Path, report.Running.Version)
+		if u.Origin == core.UnitOriginPackage {
+			fmt.Printf("  It is your lmm package's unit, which lmm does not rewrite: run this lmm with 'lmm serve', or override its ExecStart with: systemctl --user edit %s\n",
+				strings.TrimSuffix(u.Name, ".service"))
+			continue
+		}
+		fmt.Println("  Run 'lmm service restart --switch' to point the service at this binary and restart it (or 'lmm service install' with the options you installed it with).")
+	}
 }
 
 // doServiceStatus prints each unit's state and whether lingering is on.
 func doServiceStatus(ctx context.Context) error {
-	units, err := newUserUnits()
+	units, err := serviceUnits()
 	if err != nil {
 		return err
 	}
@@ -365,6 +473,15 @@ func doServiceStatus(ctx context.Context) error {
 		}
 		fmt.Printf("  enabled:    %s (%s)\n", yesNo(u.Enabled), u.EnabledState)
 		fmt.Printf("  running:    %s (%s)\n", yesNo(u.Active), u.ActiveState)
+		if u.Binary != nil {
+			if u.Binary.Path == "" {
+				// systemd has it loaded with no ExecStart (#649): a
+				// drop-in reset it, so the unit file's line is not it.
+				fmt.Printf("  binary:     unknown - systemd names no program for it; see: systemctl --user cat %s\n", strings.TrimSuffix(u.Name, ".service"))
+			} else {
+				fmt.Printf("  binary:     %s (%s)\n", u.Binary.Path, u.Binary.Version)
+			}
+		}
 		switch {
 		case !u.Installed:
 			fmt.Println(colorDim("  Install it with: lmm service install"))
@@ -378,6 +495,7 @@ func doServiceStatus(ctx context.Context) error {
 		fmt.Println("lingering:    off - your user services start when you log in")
 		printLingerHint(false, units.User)
 	}
+	printBinaryMismatches(report)
 	printEnvOnlyCredentials(report.EnvOnlyCredentials)
 	return nil
 }
