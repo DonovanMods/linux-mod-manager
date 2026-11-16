@@ -36,6 +36,9 @@ function counts(hit) {
 export function CollectionResultRow({ hit, actions }) {
   const updated = updatedPhrase(hit.updated_at);
   const size = formatBytes(hit.size_bytes);
+  // One string, so no formatter can split it across a line break that htm
+  // would read as the space it drops ("3mods").
+  const contents = `${hit.mod_count} mod${hit.mod_count === 1 ? "" : "s"}${size ? ` · ${size}` : ""}`;
   return html`
     <li
       class="search-result search-result--detailed"
@@ -50,12 +53,7 @@ export function CollectionResultRow({ hit, actions }) {
           <span class="badge search-result__source" title="Source"
             >${hit.source_id}</span
           >
-          <span class="badge search-result__category"
-            >${hit.mod_count}
-            mod${hit.mod_count === 1 ? "" : "s"}${
-              size ? ` · ${size}` : ""
-            }</span
-          >
+          <span class="badge search-result__category">${contents}</span>
           ${
             hit.adult &&
             html`<span class="badge badge--warn" data-testid="collection-adult"
