@@ -320,13 +320,10 @@ func isMainLikeCategory(category string) bool {
 }
 
 // isSecondaryCategory reports whether category is a file beside a main
-// one: an optional, update or miscellaneous file.
+// one: an optional, update or miscellaneous file - #662's one
+// classification, domain.IsSecondaryFileCategory.
 func isSecondaryCategory(category string) bool {
-	switch strings.ToUpper(category) {
-	case "OPTIONAL", "UPDATE", "MISCELLANEOUS":
-		return true
-	}
-	return false
+	return domain.IsSecondaryFileCategory(category)
 }
 
 // noteArchived says on modID's item for fileID that the file the

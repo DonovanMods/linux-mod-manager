@@ -115,10 +115,39 @@ func TestEffectiveInstalledVersion(t *testing.T) {
 		{"first non-empty when no primary has a version", "1.5",
 			[]*DownloadableFile{f("10", "", true), f("11", "1.0", false)}, "1.0"},
 		{"nil entries skipped", "1.5", []*DownloadableFile{nil, f("10", "1.0", false)}, "1.0"},
+		// #662: an optional, update or miscellaneous file may carry its own
+		// version beside any main file, so the main file names the mod's
+		// version wherever it is listed.
+		{"a main file's version over an earlier optional's", "1.5",
+			[]*DownloadableFile{cat(f("10", "0.5", false), "OPTIONAL"), cat(f("11", "1.0", false), "MAIN")}, "1.0"},
+		{"a main file's version over a primary optional's", "1.5",
+			[]*DownloadableFile{cat(f("10", "0.5", true), "UPDATE"), cat(f("11", "1.0", false), "")}, "1.0"},
+		{"the primary main file's over another main's", "1.5",
+			[]*DownloadableFile{cat(f("10", "0.9", false), "MAIN"), cat(f("11", "1.0", true), "MAIN")}, "1.0"},
+		{"only non-main files: the first versioned one", "1.5",
+			[]*DownloadableFile{cat(f("10", "0.5", false), "MISCELLANEOUS"), cat(f("11", "0.6", false), "OPTIONAL")}, "0.5"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, EffectiveInstalledVersion(tt.modVer, tt.selected))
 		})
+	}
+}
+
+// cat sets f's source category.
+func cat(f *DownloadableFile, category string) *DownloadableFile {
+	f.Category = category
+	return f
+}
+
+// TestIsSecondaryFileCategory is #662's classification: only the
+// categories that name a file beside a main one are secondary; an empty,
+// unknown or archived category counts as main.
+func TestIsSecondaryFileCategory(t *testing.T) {
+	for _, c := range []string{"OPTIONAL", "UPDATE", "MISCELLANEOUS", "optional", "Update"} {
+		assert.True(t, IsSecondaryFileCategory(c), c)
+	}
+	for _, c := range []string{"", "MAIN", "OLD_VERSION", "ARCHIVED", "DELETED", "Release", "Beta", "EXMODZ", "something"} {
+		assert.False(t, IsSecondaryFileCategory(c), c)
 	}
 }
