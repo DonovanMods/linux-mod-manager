@@ -76,7 +76,7 @@ var allowedRawVersionReads = map[string]map[string]versionAllowance{
 		"version": {1, "lockedNote's fallback, reached only past its own `installed_mod?.external` early return - a locked EXTERNAL row says the bare word 'locked', because its lock target IS the content id."},
 	},
 	"components/setupupdates.js": {
-		"version": {1, "core.AutoUpdateFailure.Version (#586): the lmm RELEASE an automatic update failed to install (\"2.4.0\"), never a mod's version, so no external content id can reach it."},
+		"version": {4, "core.AutoUpdateFailure.Version (#586): the lmm RELEASE an automatic update failed to install (\"2.4.0\"); and core.LmmBinary.Version, three reads (#649): the version an lmm BINARY reports - the one lmm-serve.service runs (row and warning) and this server's own (\"2.3.0 (dev: ...)\"). None is a mod's version, so no external content id can reach them."},
 	},
 	"components/cards.js": {
 		"new_version": {1, "The Updates card's Skip (#542) sends the row's own new_version to POST .../skip-update as the version to skip - a wire value, never rendered; the row's own detail line goes through displayUpdateTarget."},
