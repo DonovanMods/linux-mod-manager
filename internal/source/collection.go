@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -98,6 +99,65 @@ type Collection struct {
 // Revision says which that was.
 type GameCollectionResolver interface {
 	ResolveGameCollection(ctx context.Context, gameSourceID, ref string) (Collection, error)
+}
+
+// GameCollectionSearcher finds a game's collections on the source (#651):
+// NexusMods' collectionsV2 query, filtered to the game's domain. Optional,
+// type-asserted, like GameCollectionResolver; a hit's URL is a reference
+// that source's ResolveGameCollection accepts, so a search result imports
+// as it is.
+type GameCollectionSearcher interface {
+	SearchGameCollections(ctx context.Context, gameSourceID string, q CollectionSearchQuery) (CollectionSearchResult, error)
+}
+
+// CollectionSearchQuery is one collection search. Query is matched against
+// collection names (empty lists the game's collections in Sort's order).
+// Sort is the mod search's vocabulary (domain.SearchSorts): relevance
+// leaves the source's own order, the others order by that field,
+// descending. Page is zero-based; PageSize is how many to return (0 lets
+// the source apply its default).
+type CollectionSearchQuery struct {
+	Query    string
+	Sort     domain.SearchSort
+	Page     int
+	PageSize int
+}
+
+// CollectionSearchResult is one page of a collection search: the hits in
+// the source's order, and Total, how many collections match in all (the
+// source's count, across every page).
+type CollectionSearchResult struct {
+	Collections []CollectionSummary
+	Total       int
+}
+
+// CollectionSummary is one collection a search found, as the source lists
+// it: enough to choose one, not its item list (ResolveGameCollection reads
+// that). Revision, ModCount, SizeBytes and Adult describe the latest
+// published revision, which is what an import without "@<revision>"
+// resolves.
+type CollectionSummary struct {
+	// ID is the collection's identity on the source (NexusMods' slug), and
+	// URL its page: the reference to import it by.
+	ID  string
+	URL string
+	// Name, Author and Summary are the curator's.
+	Name    string
+	Author  string
+	Summary string
+	// Endorsements and Downloads are the source's counts for the whole
+	// collection.
+	Endorsements int
+	Downloads    int
+	// Revision is the latest published revision's number; ModCount and
+	// SizeBytes are its item count and total download size.
+	Revision  int
+	ModCount  int
+	SizeBytes int64
+	// Adult is the source's adult-content flag for that revision.
+	Adult bool
+	// UpdatedAt is when the collection last changed; zero when unknown.
+	UpdatedAt time.Time
 }
 
 // CollectionManifestFetcher is the recipe half. Optional, type-asserted,

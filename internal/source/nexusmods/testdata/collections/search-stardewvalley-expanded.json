@@ -1,0 +1,70 @@
+{
+  "data": {
+    "collectionsV2": {
+      "totalCount": 155,
+      "nodes": [
+        {
+          "slug": "tckf0m",
+          "name": "Stardew Valley VERY Expanded",
+          "summary": "A recorded summary, replaced (tckf0m).",
+          "endorsements": 4893,
+          "totalDownloads": 767891,
+          "updatedAt": "2026-11-16T08:49:03Z",
+          "game": {
+            "domainName": "stardewvalley"
+          },
+          "user": {
+            "name": "curator1"
+          },
+          "latestPublishedRevision": {
+            "revisionNumber": 114,
+            "modCount": 105,
+            "totalSize": "464703554",
+            "adultContent": false
+          }
+        },
+        {
+          "slug": "g3i395",
+          "name": "Mega Expanded Stardew",
+          "summary": "A recorded summary, replaced (g3i395).",
+          "endorsements": 691,
+          "totalDownloads": 111299,
+          "updatedAt": "2026-11-16T09:12:44Z",
+          "game": {
+            "domainName": "stardewvalley"
+          },
+          "user": {
+            "name": "curator2"
+          },
+          "latestPublishedRevision": {
+            "revisionNumber": 107,
+            "modCount": 578,
+            "totalSize": "775772754",
+            "adultContent": false
+          }
+        },
+        {
+          "slug": "9cnwku",
+          "name": "Expanded Xtardew Valley",
+          "summary": "A recorded summary, replaced (9cnwku).",
+          "endorsements": 72,
+          "totalDownloads": 40518,
+          "updatedAt": "2026-11-16T13:18:26Z",
+          "game": {
+            "domainName": "stardewvalley"
+          },
+          "user": {
+            "name": "curator3"
+          },
+          "latestPublishedRevision": {
+            "revisionNumber": 4,
+            "modCount": 38,
+            "totalSize": "288269282",
+            "adultContent": true
+          }
+        }
+      ]
+    }
+  },
+  "_provenance": "Recorded 2026-11-16 from a live, anonymous collectionsV2 request (#651): stardewvalley, name WILDCARD \"expanded\", hasPublishedRevision, sorted by endorsements DESC, count 3, offset 0. Author names and summaries are replaced with placeholders; everything else is as NexusMods answered."
+}
