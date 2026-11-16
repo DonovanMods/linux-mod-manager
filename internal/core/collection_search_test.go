@@ -120,6 +120,7 @@ func TestSearchCollections_Refusals(t *testing.T) {
 
 	_, err = svc.SearchCollections(ctx, game, "x", core.CollectionSearchOptions{SourceID: "nope"})
 	require.Error(t, err)
+	assert.True(t, core.IsCollectionSearchUnsupported(err), "an unknown source is the caller's input")
 
 	other := &domain.Game{ID: "cf-only", Name: "CF Only", SourceIDs: map[string]string{"curseforge": "1"}}
 	_, err = svc.SearchCollections(ctx, other, "x", core.CollectionSearchOptions{})

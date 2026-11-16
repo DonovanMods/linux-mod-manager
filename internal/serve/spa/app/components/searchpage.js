@@ -18,6 +18,14 @@
 // page 0 with ?sort=, so it orders the whole catalog the sources can order.
 // The select offers only the sorts the report lists in sorts_available - a
 // sort no source that answered can order by is never shown (searchsort.js).
+//
+// Issue 651: a game with a source whose collections can be searched
+// (NexusMods) gets a Mods / Collections tab pair. The Collections tab is
+// `lmm search --collections`: the same query, sort and pager over the game's
+// collections, each with Import (collectionresults.js), and no category,
+// source or tag filters, which mean nothing to a collection. Its query may be
+// empty - the route ?type=collections with no ?q= lists the game's
+// collections, as the CLI does with no query.
 
 import { html } from "../render.js";
 import { contextPath } from "../router.js";
@@ -31,6 +39,13 @@ import { codeSpans } from "../errortext.js";
 import { ErrorDetails } from "./errordetails.js";
 import { Arrow } from "./arrow.js";
 import { CollectionOffer } from "./collectionoffer.js";
+import { CollectionResultsList } from "./collectionresults.js";
+import {
+  COLLECTIONS,
+  MODS,
+  collectionsSearchable,
+  knownSearchType,
+} from "../searchtype.js";
 
 // See tagsSupported below.
 const TAG_CAPABLE_SOURCES = new Set(["nexusmods", "thunderstore"]);
@@ -40,13 +55,22 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   // since a change to any of them re-fetches (main.js#runSearchPage).
   const searchPage = state.searchPage;
   const query = (route.q ?? "").trim();
+  const canSearchCollections = collectionsSearchable(state?.status);
+  // What this page searches: the route's ?type= (main.js runs the same
+  // search). A game with no collection source gets no tabs, and a
+  // collections link to it says why the search failed.
+  const type = knownSearchType(route.type);
+  const collections = type === COLLECTIONS;
   // A pasted collection link is not a search term, and searching for it
   // finds nothing. Offer what the user actually meant (issue 269 W2 for a
   // Workshop link, issue 650 for every other collection).
   const collection = collectionLink(query);
-  const matches = searchPage && searchPage.query === query;
+  const matches =
+    searchPage &&
+    searchPage.query === query &&
+    (searchPage.type ?? MODS) === type;
   const report = matches ? searchPage.report : null;
-  const hits = report?.mods ?? [];
+  const hits = (collections ? report?.collections : report?.mods) ?? [];
   const facets = matches ? searchPage.facets : null;
   // Issue 383 (F1): the sources that CAN search but were left out for want of a
   // key. Reported apart from warnings and attempted_count, so the notice
@@ -87,10 +111,15 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
     />
   `;
 
-  if (!query) {
+  const tabs =
+    (canSearchCollections || collections) &&
+    html`<${SearchTypeTabs} type=${type} actions=${actions} />`;
+
+  if (!query && !collections) {
     return html`
       ${header}
       <main id="main" class="app-main search-page">
+        ${tabs}
         <p class="empty-state__hint">
           Search from the omnibar (or a deep link with ?q=) to browse results
           here.
@@ -102,6 +131,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   if (!matches || searchPage.status === "loading") {
     return html`${header}
       <main id="main" class="app-main search-page">
+        ${tabs}
         <p class="app-booting">Searching…</p>
         ${
           matches &&
@@ -117,6 +147,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
     return html`
       ${header}
       <main id="main" class="app-main search-page">
+        ${tabs}
         <p class="app-error">Couldn't search: ${codeSpans(searchPage.error)}</p>
         <${ErrorDetails} details=${searchPage.details} />
         <${CollectionOffer}
@@ -135,10 +166,21 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   // pre-cap merge). "more available" is the has_more cue a reader needs to
   // know a Next page exists at all.
   const pageSummary = `Page ${searchPage.page + 1} · ${hits.length} on this page${report.has_more ? " · more available" : ""}`;
+  // A collection search does have the catalog's total: the source counts
+  // every match (core.CollectionSearchReport.total_results).
+  const heading = collections
+    ? `${searchPage.query ? `Collections matching “${searchPage.query}”` : "Collections"} — ${pageSummary} · ${report.total_results} in all`
+    : `Results for “${searchPage.query}” — ${pageSummary}`;
 
   return html`
     ${header}
-    <main id="main" class="app-main search-page" data-hydrated="true">
+    <main
+      id="main"
+      class="app-main search-page"
+      data-hydrated="true"
+      data-search-type=${type}
+    >
+      ${tabs}
       <${CollectionOffer}
         link=${collection}
         state=${state}
@@ -154,10 +196,9 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
         }
       />
       <div class="search-page__toolbar">
-        <h1 class="section-header">
-          Results for “${searchPage.query}” — ${pageSummary}
-        </h1>
+        <h1 class="section-header">${heading}</h1>
         ${
+          !collections &&
           (facets?.categories.length ?? 0) > 0 &&
           html`
             <label class="form-field form-field--inline library__control">
@@ -177,6 +218,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
           `
         }
         ${
+          !collections &&
           (facets?.sourceIDs.length ?? 0) > 1 &&
           html`
             <label class="form-field form-field--inline library__control">
@@ -201,6 +243,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
           // silently narrows nothing is worse than no filter at all. The
           // game's own source map is what answers that, since it is the set
           // /api/v1/search will fan out across.
+          !collections &&
           tagsSupported &&
           html`
             <label class="form-field form-field--inline library__control">
@@ -240,6 +283,12 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
       </div>
 
       ${
+        collections &&
+        hits.length === 0 &&
+        html`<p class="empty-state__hint">No collections match this search.</p>`
+      }
+      ${
+        !collections &&
         hits.length === 0 &&
         skippedNotice !== "" &&
         html`<p class="empty-state__hint" data-testid="search-skipped-sign-in">
@@ -257,6 +306,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
         </p>`
       }
       ${
+        !collections &&
         skippedNotice === "" &&
         report.attempted_count === 0 &&
         html`<p class="empty-state__hint">
@@ -264,19 +314,23 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
         </p>`
       }
       ${
+        !collections &&
         hits.length === 0 &&
         (report.warnings ?? []).length === 0 &&
         report.attempted_count !== 0 &&
         html`<p class="empty-state__hint">No results match this search.</p>`
       }
-
-      <${SourceResultsList}
-        hits=${hits}
-        warnings=${report.warnings}
-        state=${state}
-        actions=${actions}
-        detailed=${true}
-      />
+      ${
+        collections
+          ? html`<${CollectionResultsList} hits=${hits} actions=${actions} />`
+          : html`<${SourceResultsList}
+              hits=${hits}
+              warnings=${report.warnings}
+              state=${state}
+              actions=${actions}
+              detailed=${true}
+            />`
+      }
 
       <div class="search-page__pager">
         <button
@@ -323,4 +377,52 @@ function searchPagePath(home, query, sort) {
   return sort && sort !== RELEVANCE
     ? `${base}&sort=${encodeURIComponent(sort)}`
     : base;
+}
+
+/** SEARCH_TYPES are the tabs, in order: [type, label]. */
+const SEARCH_TYPES = [
+  [MODS, "Mods"],
+  [COLLECTIONS, "Collections"],
+];
+
+/** SearchTypeTabs is the Mods / Collections tab pair (issue 651). Choosing
+ * one re-runs the search at page 0 (main.js#searchPageSetType), which also
+ * writes ?type= to the URL. Arrow keys move between the tabs, as a tablist's
+ * do; only the selected one is in the tab order. */
+function SearchTypeTabs({ type, actions }) {
+  function onKeyDown(e) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const i = SEARCH_TYPES.findIndex(([key]) => key === type);
+    const step = e.key === "ArrowRight" ? 1 : -1;
+    const [next] =
+      SEARCH_TYPES[(i + step + SEARCH_TYPES.length) % SEARCH_TYPES.length];
+    actions.searchPageSetType(next);
+    requestAnimationFrame(() =>
+      document
+        .querySelector(`.search-page__tabs [data-type="${next}"]`)
+        ?.focus(),
+    );
+  }
+  return html`
+    <div class="search-page__tabs" role="tablist" aria-label="Search for">
+      ${SEARCH_TYPES.map(
+        ([key, label]) =>
+          html`<button
+            key=${key}
+            type="button"
+            role="tab"
+            class="button button--tab"
+            data-type=${key}
+            data-label=${label}
+            aria-selected=${type === key ? "true" : "false"}
+            tabindex=${type === key ? "0" : "-1"}
+            onKeyDown=${onKeyDown}
+            onClick=${() => type !== key && actions.searchPageSetType(key)}
+          >
+            ${label}
+          </button>`,
+      )}
+    </div>
+  `;
 }

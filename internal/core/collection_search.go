@@ -22,8 +22,9 @@ import (
 const DefaultCollectionPageSize = 20
 
 // ErrCollectionSearchUnsupported is a collection search no source of the
-// game can answer: the named source lists no collections, the game has no
-// such source, or its id on the source is not configured. It is the
+// game can answer: the named source is not registered or lists no
+// collections, the game has no such source, or its id on the source is not
+// configured. It is the
 // caller's input (IsCollectionSearchUnsupported), not a failure.
 var ErrCollectionSearchUnsupported = errors.New("no collection search")
 
@@ -148,7 +149,7 @@ func (s *Service) collectionSearcher(game *domain.Game, sourceID string) (string
 	if sourceID != "" {
 		src, err := s.GetSource(sourceID)
 		if err != nil {
-			return "", nil, err
+			return "", nil, fmt.Errorf("%w: %w", ErrCollectionSearchUnsupported, err)
 		}
 		searcher, ok := src.(source.GameCollectionSearcher)
 		if !ok {

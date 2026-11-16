@@ -25,12 +25,23 @@
 // rather than on empty fields - and modal.prefill fills the failed import's
 // own inputs back in (its reference, its profile name; a file is named, as
 // a browser cannot pick it again for the user).
+//
+// Issue 651: the search page's Collections tab opens this dialog with
+// modal.prefill naming the chosen collection's URL, and for a game whose
+// collections can be searched the dialog links back to that tab ("Browse
+// collections"), for a user who has no collection in mind yet.
 
 import { html } from "../render.js";
 import { Modal } from "./modal.js";
 import { ImportProfileForm } from "./profilesmodal.js";
 import { ItemFailureList, RawError } from "./errordetails.js";
 import { failureSummary, failuresOf } from "../itemfailures.js";
+import { contextPath, navigate } from "../router.js";
+import {
+  COLLECTIONS,
+  collectionsSearchable,
+  searchPath,
+} from "../searchtype.js";
 
 /** ImportCollectionModal renders only when the shared modal slot holds
  * this shape. openerSelector is the stable control focus returns to on
@@ -54,6 +65,7 @@ export function ImportCollectionModal({ modal, state, actions }) {
         A collection imports as a new profile of this game. You review what it
         would do before anything is written.
       </p>
+      <${BrowseCollections} state=${state} close=${close} />
       <${ImportProfileForm}
         state=${state}
         actions=${actions}
@@ -89,5 +101,34 @@ function ImportFailure({ jobID, state }) {
       <${ItemFailureList} items=${items} limit=${importFailureLimit} />
       ${items.length > 0 && html`<${RawError} text=${envelope.error} />`}
     </div>
+  `;
+}
+
+/** BrowseCollections links to the search page's Collections tab (issue
+ * 651), listing the game's collections, when the game has a source whose
+ * collections can be searched. */
+function BrowseCollections({ state, close }) {
+  if (!collectionsSearchable(state?.status)) return null;
+  const route = state.route;
+  const path = searchPath(
+    contextPath(route.game, route.profile),
+    "",
+    COLLECTIONS,
+  );
+  return html`
+    <p class="form-hint">
+      No collection in mind?${" "}
+      <a
+        class="button button--link"
+        data-testid="browse-collections"
+        href=${path}
+        onClick=${(e) => {
+          e.preventDefault();
+          close();
+          navigate(path);
+        }}
+        >Browse this game's NexusMods collections</a
+      >
+    </p>
   `;
 }
