@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
@@ -818,4 +820,34 @@ func TestCache_Delete_RemovesAnEntrySetAsideByACrashedPublish(t *testing.T) {
 	assert.NoDirExists(t, c.ModPath(k), "the entry is not restored")
 	assert.NoDirExists(t, aside, "and its set-aside copy is gone")
 	assert.False(t, c.Exists(k))
+}
+
+// TestCache_ListFilesSkipsLinksAndSpecialFiles (#659): a link or a FIFO left
+// in an entry by an extraction from before #658 is never content - a copy
+// deploy or CloneMod that opened the FIFO would block, and a link may lead
+// anywhere. Neither is listed, nor copied by CloneMod.
+func TestCache_ListFilesSkipsLinksAndSpecialFiles(t *testing.T) {
+	c := cache.New(t.TempDir())
+	k := cache.Key{GameID: "g", SourceID: "s", ModID: "m", Version: "1"}
+	require.NoError(t, c.Store(k, "real.esp", []byte("x")))
+	dir := c.ModPath(k)
+	require.NoError(t, syscall.Mkfifo(filepath.Join(dir, "pipe.esp"), 0o644))
+	require.NoError(t, os.Symlink("/etc/passwd", filepath.Join(dir, "link.esp")))
+	require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(dir, "linkdir")))
+
+	files, err := c.ListFiles(k)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"real.esp"}, files)
+
+	dst := cache.New(t.TempDir())
+	done := make(chan error, 1)
+	go func() { done <- c.CloneMod(context.Background(), dst, k) }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("CloneMod blocked opening a FIFO")
+	}
+	_, err = os.Lstat(dst.GetFilePath(k, "pipe.esp"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }

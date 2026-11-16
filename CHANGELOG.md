@@ -1199,6 +1199,28 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   through `7z` too. Without `7z` installed, the error names the member,
   its compression method, and that installing 7-Zip fixes it.
 
+- **Verify reports a link left in a mod's cache, and Repair removes it
+  (#659).** An archive unpacked by an lmm before #658 could leave a
+  symbolic link in a mod's cache. Until another file was added to that
+  mod, nothing said so. `lmm verify` now reports each symbolic link or
+  special file (a named pipe, socket or device) in an installed mod's cache
+  as **LINK IN CACHE**, naming the mod and the path, without ever following
+  it. `lmm verify --fix` deletes the link itself, never what it points to.
+  If the link stood in place of one of the mod's own files, the same run
+  reports that file as missing from the cache (`cache_incomplete`) and
+  downloads it again. A mod imported from an archive has to be imported
+  again. Deploy no longer places a named pipe, socket or device from a
+  mod's cache in the game folder: a copy deploy used to hang opening a
+  named pipe, and a symlink or hard-link deploy put it in the game folder.
+  Symbolic links were already skipped. Re-installing a mod and copying a
+  mod to another profile skip them too. A link standing in place of a mod's file
+  is no longer reported as a stale deployment, so `verify --fix` keeps the
+  file in the game folder. `--json` is additive: findings gain the statuses
+  `cache_link` (a warning; `file_id` is the path inside the mod's cache) and
+  `fixed_cache_link`. The web UI's **Health** card shows the row with
+  **Repair**, and the finished job lists the removal under what it
+  repaired.
+
 - **`.7z` and `.rar` archives are checked like `.zip` ones (#658).** lmm
   now unpacks a `.7z` or `.rar` the way it unpacks a zip through `7z`: it
   reads the archive's contents first and refuses, with nothing written, a

@@ -1362,6 +1362,24 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #659: a link or special file in a mod's cache entry - FileID
+			// is the path relative to the entry - and the row --fix's
+			// removal resolves it to.
+			"verify_finding_cache_link",
+			core.VerifyFinding{
+				ModID: "8939586", ModName: "Auctionator", FileID: "Interface/evil.lua", Status: core.VerifyStatusCacheLink,
+				Note:    "Interface/evil.lua in the cache entry is a symbolic link; lmm keeps none in a mod's cache, never deploys or follows one, and --fix removes it",
+				Fixable: true,
+			},
+		},
+		{
+			"verify_finding_fixed_cache_link",
+			core.VerifyFinding{
+				ModID: "8939586", ModName: "Auctionator", FileID: "Interface/evil.lua", Status: core.VerifyStatusFixedCacheLink,
+				Note: "removed Interface/evil.lua, a symbolic link, from the cache entry",
+			},
+		},
+		{
 			// #517: a row a --fix run repaired to "ok" says how, so the web
 			// UI can tell it from an untouched one. omitzero, so every
 			// other row carries no key at all.
