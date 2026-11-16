@@ -78,6 +78,9 @@ var allowedRawVersionReads = map[string]map[string]versionAllowance{
 	"components/setupupdates.js": {
 		"version": {1, "core.AutoUpdateFailure.Version (#586): the lmm RELEASE an automatic update failed to install (\"2.4.0\"), never a mod's version, so no external content id can reach it."},
 	},
+	"components/schemabanner.js": {
+		"version": {1, "core.SchemaUpgradedError.Version (#648): the database's SCHEMA version a newer lmm migrated it to (an integer like 29), never a mod's version, so no external content id can reach it."},
+	},
 	"components/cards.js": {
 		"new_version": {1, "The Updates card's Skip (#542) sends the row's own new_version to POST .../skip-update as the version to skip - a wire value, never rendered; the row's own detail line goes through displayUpdateTarget."},
 	},
