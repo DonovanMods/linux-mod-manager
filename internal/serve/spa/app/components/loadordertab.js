@@ -1,6 +1,9 @@
 // loadordertab.js - one of the reorder modal's load-order tabs (issue 620):
-// a game's file load order, Cyberpunk 2077's archives, the third axis
-// beside mod order and a Bethesda game's plugin order.
+// a game's file load order, Cyberpunk 2077's archives or Baldur's Gate 3's
+// paks (issue 646), the third axis beside mod order and a Bethesda game's
+// plugin order. A report with enables set is a list that enables its files
+// as well as ordering them (modsettings.lsx): the tab says so, and words
+// what placed each file to match.
 //
 // It renders core.FileLoadOrderReport verbatim - the order, what placed
 // each file, the mod that ships it - and never works an order out itself:
@@ -28,15 +31,19 @@ function placementLabel(entry) {
   }
 }
 
-/** placementTitle explains a row's badge. */
-function placementTitle(entry) {
+/** placementTitle explains a row's badge; enables is the report's. */
+function placementTitle(entry, enables) {
   switch (entry.placement) {
     case "order":
       return "the profile's load order puts it here";
     case "external":
-      return "lmm did not deploy it: it keeps its place in the order the game loads it in";
+      return enables
+        ? "lmm did not add it (the game's own entry, or a mod enabled outside lmm): it keeps its place"
+        : "lmm did not deploy it: it keeps its place in the order the game loads it in";
     default:
-      return "not in the profile's order yet: its alphabetical place, where the game loads it with no list";
+      return enables
+        ? "not in the profile's order yet: after the ordered ones, where the list has it, or at the end"
+        : "not in the profile's order yet: its alphabetical place, where the game loads it with no list";
   }
 }
 
@@ -138,11 +145,21 @@ export function LoadOrderTab({ profileName, context, report, onReport }) {
         bottom${
           report.first_wins
             ? ": one higher in the list wins a conflict with one lower down"
-            : ""
+            : report.enables
+              ? ": one lower down wins a conflict with one higher up"
+              : ""
         }.
-        Each change is saved as you make
-        it${report.active ? ` and written to ${listName}` : ""}. Files lmm did
-        not deploy are never reordered.
+        ${
+          report.enables &&
+          html`${listName} enables them too: one it does not list does not load. `
+        }Each
+        change is saved as you make
+        it${report.active ? ` and written to ${listName}` : ""}.
+        ${
+          report.enables
+            ? "Entries lmm did not add are never moved."
+            : "Files lmm did not deploy are never reordered."
+        }
       </p>
       ${
         report.list_file &&
@@ -151,11 +168,17 @@ export function LoadOrderTab({ profileName, context, report, onReport }) {
       ${
         report.active &&
         !report.recorded &&
-        html`<p class="plan__note" data-testid="load-order-unrecorded">
-          The profile orders nothing yet: the game uses its own (alphabetical)
-          order, shown here. Moving a file records the order, and lmm writes
-          ${" "}${listName} from then on.
-        </p>`
+        (report.enables
+          ? html`<p class="plan__note" data-testid="load-order-unrecorded">
+              The profile orders nothing yet: lmm keeps its files in the order
+              ${" "}${listName} has them, new ones at the end. Moving a file
+              records the order.
+            </p>`
+          : html`<p class="plan__note" data-testid="load-order-unrecorded">
+              The profile orders nothing yet: the game uses its own
+              (alphabetical) order, shown here. Moving a file records the order,
+              and lmm writes ${" "}${listName} from then on.
+            </p>`)
       }
       ${
         !report.active &&
@@ -233,7 +256,7 @@ export function LoadOrderTab({ profileName, context, report, onReport }) {
                       <span
                         class="badge badge--policy"
                         data-testid="load-order-placement"
-                        title=${placementTitle(row)}
+                        title=${placementTitle(row, report.enables)}
                         >${placementLabel(row)}</span
                       >
                       ${

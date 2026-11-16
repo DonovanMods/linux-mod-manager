@@ -228,7 +228,8 @@ function ReorderModalBody({ modal, state, actions }) {
     plugins.status === "retrying";
 
   // The load-order tabs (issue 620): one per file load order of a game
-  // whose adapter has one (Cyberpunk 2077's archives). As for plugins, the
+  // whose adapter has one (Cyberpunk 2077's archives, Baldur's Gate 3's
+  // paks - issue 646). As for plugins, the
   // modal owns the report - none (the route's 204) is no tab - and keeps
   // each edit's answer. A read that fails offers no tab: the Mods tab is
   // unaffected, and the CLI's `lmm load-order list` says why.
