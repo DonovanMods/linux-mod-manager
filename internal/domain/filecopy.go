@@ -14,9 +14,10 @@ import (
 // Each file's name (its file name without the extension, else its display
 // name) is split into lower-case tokens on everything that is not a letter
 // or a digit. From each, its own version markers are taken out: every run
-// of tokens spelling the file's WHOLE Version ("5" "2" for 5.2, or "52"),
-// with a "v", "version" or "ver" before it ("v1" "2", "v12"), and every
-// long all-digit token (a NexusMods download name's upload timestamp). The
+// of tokens spelling the file's WHOLE Version ("5" "2" for 5.2, "v1" "2"),
+// a version that is one token ("1", or "12" for 1.2) only after a version
+// word ("v1", "ver 12"), the "v", "version" or "ver" before either, and
+// every long all-digit token (a NexusMods download name's upload time). The
 // two are copies only when what is left is the same, in any order. A token
 // mixing letters and digits ("2k", "1080p", "part1"), a word, or a number
 // that is only part of the file's version ("Part 2" at 2.0) stays, so it
@@ -82,7 +83,7 @@ func copyKey(f DownloadableFile) []string {
 		for k := i; k < i+n; k++ {
 			marked[k] = true
 		}
-		if i > 0 && (tokens[i-1] == "v" || tokens[i-1] == "version" || tokens[i-1] == "ver") {
+		if i > 0 && isVersionWord(tokens[i-1]) {
 			marked[i-1] = true
 		}
 		i += n - 1
@@ -99,23 +100,33 @@ func copyKey(f DownloadableFile) []string {
 }
 
 // versionRunAt is the length of the run of tokens at i that spells the
-// whole version - its parts one per token, or joined into one, either way
-// optionally with "v" fused to the first - or 0.
+// whole version, or 0. A version of several parts may be spelled one part
+// per token ("5" "2" for 5.2), with or without a "v" fused to the first.
+// A run of ONE token - a one-part version ("1"), or several parts joined
+// ("12" for 1.2) - counts only after a version word: "v" fused to it
+// ("v1", "v12") or a "v", "ver" or "version" token just before it. A bare
+// number is as likely a part's own ("Part 1", "Disc 2"), and taking it
+// for a version would call two parts copies.
 func versionRunAt(tokens []string, i int, version []string, joined string) int {
 	if len(version) == 0 {
 		return 0
 	}
 	t := strings.TrimPrefix(tokens[i], "v")
-	if t == joined || tokens[i] == joined {
-		return 1
-	}
-	if i+len(version) > len(tokens) || (t != version[0] && tokens[i] != version[0]) {
-		return 0
-	}
-	if slices.Equal(tokens[i+1:i+len(version)], version[1:]) {
+	fused := t != tokens[i]
+	if len(version) > 1 && i+len(version) <= len(tokens) && (t == version[0] || tokens[i] == version[0]) &&
+		slices.Equal(tokens[i+1:i+len(version)], version[1:]) {
 		return len(version)
 	}
+	prefixed := fused || (i > 0 && isVersionWord(tokens[i-1]))
+	if prefixed && (t == joined || tokens[i] == joined) {
+		return 1
+	}
 	return 0
+}
+
+// isVersionWord reports whether t is a word that introduces a version.
+func isVersionWord(t string) bool {
+	return t == "v" || t == "ver" || t == "version"
 }
 
 // isTimestamp reports whether t is a long all-digit token: an upload time

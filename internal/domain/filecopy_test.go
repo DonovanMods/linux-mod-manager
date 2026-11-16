@@ -21,13 +21,15 @@ func TestSameFile(t *testing.T) {
 		{"NexusMods download names: mod id, version and timestamp", f("", "MyMod-1234-1-0-1600000000.7z", "1.0"), f("", "MyMod-1234-1-2-1610000000.7z", "1.2")},
 		{"display names only", f("SkyUI 5.2", "", "5.2"), f("SkyUI 5.1", "", "5.1")},
 		{"a v-prefixed version", f("", "Mod v1.2.zip", "1.2"), f("", "Mod-v2.zip", "2")},
-		{"the word version", f("", "Mod version 3.zip", "3"), f("", "Mod 2.zip", "2")},
+		{"the word version", f("", "Mod version 3.zip", "3"), f("", "Mod v2.zip", "2")},
+		{"a one-part version after v", f("Mod v1", "", "1"), f("Mod v2", "", "2")},
+		{"a joined version after v", f("Mod v12", "", "1.2"), f("Mod v13", "", "1.3")},
+		{"a joined version after a separate ver", f("Mod ver 12", "", "1.2"), f("Mod ver 13", "", "1.3")},
 		{"case", f("", "SKYUI_5_2.zip", "5.2"), f("", "skyui-5-1.zip", "5.1")},
 		{"a double extension", f("", "Mod-1.0.tar.gz", "1.0"), f("", "Mod-2.0.zip", "2.0")},
 		{"a name with no version beside one with", f("", "main.esp", ""), f("", "main-2.0.esp", "2.0")},
 		{"a version with a suffix", f("", "SkyUI_5_2SE.7z", "5.2SE"), f("", "SkyUI_5_1SE.7z", "5.1SE")},
 		{"a NexusMods name carrying its version twice, no v", f("", "SkyUI_5_2_SE-12604-5-2-1573245213.7z", "5.2"), f("", "SkyUI_5_1_SE-12604-5-1-1580000000.7z", "5.1")},
-		{"a version written as one number", f("", "Mod-12.zip", "1.2"), f("", "Mod-13.zip", "1.3")},
 	}
 	for _, tc := range copies {
 		t.Run("copies/"+tc.name, func(t *testing.T) {
@@ -52,6 +54,16 @@ func TestSameFile(t *testing.T) {
 		{"chapters", f("Chapter 1", "", "1.0"), f("Chapter 2", "", "1.2")},
 		{"discs", f("", "Disc_1.zip", "1.0"), f("", "Disc_2.zip", "2.0")},
 		{"a name carrying only part of its version", f("Main 3", "", "3.0"), f("", "main-1.0.zip", "1.0")},
+		// A version that is one token - a one-part version, or one written
+		// joined ("12" for 1.2) - counts only after v, ver or version: a
+		// bare number is as likely a part's ("Part 1", "Disc 2"). The cost:
+		// SkyUI-5.zip at 5 and SkyUI-4.zip at 4 are separate too, which only
+		// leaves a stale file installed, never drops a component.
+		{"parts at one-part versions", f("Part 1", "", "1"), f("Part 2", "", "2")},
+		{"discs at one-part versions", f("", "Disc_1.zip", "1"), f("", "Disc_2.zip", "2")},
+		{"a bare number at a one-part version", f("Mod 2", "", "2"), f("Mod 3", "", "3")},
+		{"a bare number spelling a joined version", f("Part 12", "", "1.2"), f("Part 13", "", "1.3")},
+		{"the accepted cost: a bare one-part version", f("", "SkyUI-5.zip", "5"), f("", "SkyUI-4.zip", "4")},
 	}
 	for _, tc := range separate {
 		t.Run("separate/"+tc.name, func(t *testing.T) {
