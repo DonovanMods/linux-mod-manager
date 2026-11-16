@@ -252,9 +252,10 @@ func TestProfileRefBatch_SavesAtItsBounds(t *testing.T) {
 }
 
 // TestProfileRefBatch_AFailedSaveKeepsItsUpserts pins a save that fails
-// mid-batch: the upsert that reached the bound reports it, as the per-item
-// write reported its own failed save, and nothing is dropped - the next
-// save writes every pending ref.
+// mid-batch: nothing is dropped - the next save writes every pending ref.
+// The upsert that reached the bound does not report it (#663): its change
+// is not lost yet, and close's last save is what names a ref the profile
+// lacks, so one failed save is one warning, as it was per item.
 func TestProfileRefBatch_AFailedSaveKeepsItsUpserts(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root writes through a read-only directory")
@@ -270,7 +271,7 @@ func TestProfileRefBatch_AFailedSaveKeepsItsUpserts(t *testing.T) {
 	require.NoError(t, os.Chmod(filepath.Dir(path), 0o555))
 	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(path), 0o755) })
 	err := b.upsert(ctx, domain.ModReference{SourceID: "src", ModID: "fomodset", Version: "8"}, keep)
-	require.Error(t, err, "the save at the bound fails")
+	require.NoError(t, err, "the save at the bound fails, which is not this upsert's failure")
 	assert.Equal(t, 2, b.pending, "and keeps both upserts")
 
 	require.NoError(t, os.Chmod(filepath.Dir(path), 0o755))
@@ -396,12 +397,15 @@ func TestProfileRefBatch_CloseRetriesItsSave(t *testing.T) {
 	assert.Equal(t, "7", saved.FindRef("src", "fomodkeep").Version)
 }
 
-// TestUnrecordedRefs pins the note's count and names: singular, and the
-// first five then an ellipsis.
+// TestUnrecordedRefs pins the note's count, noun and names: singular, and
+// the first five then an ellipsis.
 func TestUnrecordedRefs(t *testing.T) {
-	assert.Equal(t, "1 installed mod is not recorded in it (a:1)", unrecordedRefs([]string{"a:1"}))
-	assert.Equal(t, "2 installed mods are not recorded in it (a:1, a:2)", unrecordedRefs([]string{"a:1", "a:2"}))
-	assert.Equal(t, "5 installed mods are not recorded in it (a:1, a:2, a:3, a:4, a:5)", unrecordedRefs([]string{"a:1", "a:2", "a:3", "a:4", "a:5"}))
+	mods := func(keys ...string) string { return unrecordedRefs(keys, "installed mod", "installed mods") }
+	assert.Equal(t, "1 installed mod is not recorded in it (a:1)", mods("a:1"))
+	assert.Equal(t, "2 installed mods are not recorded in it (a:1, a:2)", mods("a:1", "a:2"))
+	assert.Equal(t, "5 installed mods are not recorded in it (a:1, a:2, a:3, a:4, a:5)", mods("a:1", "a:2", "a:3", "a:4", "a:5"))
+	assert.Equal(t, "1 change is not recorded in it (a:1)", unrecordedRefs([]string{"a:1"}, "change", "changes"))
+	assert.Equal(t, "2 changes are not recorded in it (a:1, a:2)", unrecordedRefs([]string{"a:1", "a:2"}, "change", "changes"))
 }
 
 // TestInstaller_ReadOverridesOnce_AFailedReadIsNotKept pins the memo
@@ -457,4 +461,91 @@ func TestInstaller_ReadOverridesOnce(t *testing.T) {
 	none := &Installer{}
 	none.readOverridesOnce()
 	assert.Nil(t, none.overridesFor(game, "a"), "an Installer built without a Service still reads none")
+}
+
+// TestProfileRefBatch_AddAndRemoveFollowTheirPerItemRules pins a sync's
+// batched writes (#663) to AddMod's and RemoveMod's rules: an add of a mod
+// the document lists and a removal of one it does not are refused with
+// the document and the pending count unchanged, the same errors the
+// per-item writes return; neither saves at once, as an appending upsert
+// does, since no loop that adds or removes reads the profile meanwhile.
+func TestProfileRefBatch_AddAndRemoveFollowTheirPerItemRules(t *testing.T) {
+	ctx := context.Background()
+	dir, _ := writeRefBatchProfile(t)
+	pm := NewProfileManager(dir, nil)
+	saves := &atomic.Int64{}
+	pm.saves = saves
+	b := &profileRefBatch{pm: pm, gameID: "g1", profileName: "col", items: 10, window: time.Hour, now: time.Now}
+
+	require.NoError(t, b.add(ctx, domain.ModReference{SourceID: "src", ModID: "new", Version: "1", FileIDs: []string{"n"}}))
+	err := b.add(ctx, domain.ModReference{SourceID: "src", ModID: "new"})
+	require.EqualError(t, err, "mod already in profile: src:new")
+	require.NoError(t, b.remove(ctx, "src", "off"))
+	require.ErrorIs(t, b.remove(ctx, "src", "off"), domain.ErrModNotFound)
+	assert.Equal(t, 2, b.pending, "the refusals are not pending writes")
+	assert.Equal(t, int64(0), saves.Load(), "an add saves with its batch, not at once")
+
+	require.NoError(t, b.close())
+	saved, err := config.LoadProfile(dir, "g1", "col")
+	require.NoError(t, err)
+	require.NotNil(t, saved.FindRef("src", "new"))
+	assert.Equal(t, []string{"n"}, saved.FindRef("src", "new").FileIDs)
+	assert.Nil(t, saved.FindRef("src", "off"))
+	assert.Equal(t, "src:new", saved.Mods[len(saved.Mods)-1].SourceID+":"+saved.Mods[len(saved.Mods)-1].ModID, "an add appends")
+}
+
+// TestProfileRefBatch_AFailedBoundSaveBacksOff pins #663's back-off: after
+// a save at the bound fails, the batch does not try the whole save again
+// at every later write, but a full bound later - by count, and by window -
+// or at close.
+func TestProfileRefBatch_AFailedBoundSaveBacksOff(t *testing.T) {
+	ctx := context.Background()
+	keep := fomodRecord{op: fomodKeep}
+	ref := func(id string) domain.ModReference {
+		return domain.ModReference{SourceID: "src", ModID: id, Version: "7"}
+	}
+	ids := []string{"fomodkeep", "fomodset", "collected", "todo", "off", "twice", "fomodkeep"}
+
+	t.Run("by count", func(t *testing.T) {
+		dir, _ := writeRefBatchProfile(t)
+		attempts := 0
+		b := &profileRefBatch{pm: NewProfileManager(dir, nil), gameID: "g1", profileName: "col", items: 2, window: time.Hour, now: time.Now}
+		b.saveDoc = func(*domain.Profile) error { attempts++; return errors.New("disk full") }
+		for _, id := range ids {
+			require.NoError(t, b.upsert(ctx, ref(id), keep))
+		}
+		assert.Equal(t, 3, attempts, "tried at 2, 4 and 6 pending writes - not at every write from the 2nd on")
+		assert.Equal(t, 7, b.pending, "nothing dropped")
+		attempts = 0
+		require.Error(t, b.close())
+		assert.Equal(t, 2, attempts, "close still tries twice")
+	})
+
+	t.Run("by window", func(t *testing.T) {
+		dir, _ := writeRefBatchProfile(t)
+		attempts := 0
+		clock := time.Unix(0, 0)
+		b := &profileRefBatch{pm: NewProfileManager(dir, nil), gameID: "g1", profileName: "col", items: 100, window: 2 * time.Second,
+			now: func() time.Time { return clock }}
+		fail := true
+		b.saveDoc = func(p *domain.Profile) error {
+			attempts++
+			if fail {
+				return errors.New("disk full")
+			}
+			return b.pm.save(p)
+		}
+		for i, at := range []int{0, 3, 4, 5} {
+			clock = time.Unix(int64(at), 0)
+			require.NoError(t, b.upsert(ctx, ref(ids[i]), keep))
+		}
+		assert.Equal(t, 2, attempts, "tried at 3s and, a window after that failure, at 5s - not at 4s")
+
+		fail = false
+		clock = time.Unix(7, 0)
+		require.NoError(t, b.upsert(ctx, ref(ids[4]), keep))
+		assert.Equal(t, 3, attempts)
+		assert.Zero(t, b.pending, "a window on, the save succeeds and the batch starts over")
+		assert.Equal(t, 0, b.bound)
+	})
 }

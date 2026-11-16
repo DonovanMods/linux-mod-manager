@@ -513,16 +513,24 @@ func (pm *ProfileManager) AddMod(ctx context.Context, gameID, profileName string
 	if err != nil {
 		return err
 	}
+	if err := addRef(profile, mod); err != nil {
+		return err
+	}
+	return pm.save(profile)
+}
 
-	// Check for duplicates
+// addRef is AddMod's rule applied to profile in memory, shared with a
+// batch that holds the document (profileRefBatch.add, #663): mod is
+// appended, unless the profile already lists it, which is refused with
+// profile untouched.
+func addRef(profile *domain.Profile, mod domain.ModReference) error {
 	for _, m := range profile.Mods {
 		if m.SourceID == mod.SourceID && m.ModID == mod.ModID {
 			return fmt.Errorf("mod already in profile: %s:%s", mod.SourceID, mod.ModID)
 		}
 	}
-
 	profile.Mods = append(profile.Mods, mod)
-	return pm.save(profile)
+	return nil
 }
 
 // UpsertMod adds or updates a mod reference in a profile.
@@ -1128,7 +1136,17 @@ func (pm *ProfileManager) RemoveMod(ctx context.Context, gameID, profileName, so
 	if err != nil {
 		return err
 	}
+	if err := removeRef(profile, sourceID, modID); err != nil {
+		return err
+	}
+	return pm.save(profile)
+}
 
+// removeRef is RemoveMod's rule applied to profile in memory, shared with
+// a batch that holds the document (profileRefBatch.remove, #663): every
+// ref of sourceID/modID goes, or domain.ErrModNotFound when there is none,
+// with profile untouched.
+func removeRef(profile *domain.Profile, sourceID, modID string) error {
 	found := false
 	newMods := make([]domain.ModReference, 0, len(profile.Mods))
 	for _, m := range profile.Mods {
@@ -1138,13 +1156,11 @@ func (pm *ProfileManager) RemoveMod(ctx context.Context, gameID, profileName, so
 		}
 		newMods = append(newMods, m)
 	}
-
 	if !found {
 		return domain.ErrModNotFound
 	}
-
 	profile.Mods = newMods
-	return pm.save(profile)
+	return nil
 }
 
 // RenameModRef renames gameID/profileName's reference to
