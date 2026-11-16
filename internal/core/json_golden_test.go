@@ -739,6 +739,10 @@ func TestJSONGoldens(t *testing.T) {
 			sampleHandOffs()[1],
 		},
 		{
+			"hand_off_mod",
+			sampleHandOffs()[0].To,
+		},
+		{
 			"uninstall_plan_handoffs",
 			core.UninstallPlan{
 				Mod:      domain.InstalledMod{Mod: jsonGoldenMod, ProfileName: "default", UpdatePolicy: domain.UpdateNotify, InstalledAt: fixedTime, LinkMethod: domain.LinkSymlink, Enabled: true},
