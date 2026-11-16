@@ -1,0 +1,54 @@
+{
+  "game_id": "bg3",
+  "profile": "default",
+  "id": "baldursgate3",
+  "label": "Paks",
+  "list_file": "/pfx/drive_c/users/steamuser/AppData/Local/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public/modsettings.lsx",
+  "first_wins": false,
+  "enables": true,
+  "active": true,
+  "recorded": true,
+  "files": [
+    {
+      "position": 1,
+      "name": "GustavX",
+      "managed": false,
+      "placement": "external"
+    },
+    {
+      "position": 2,
+      "name": "ImprovedUI.pak",
+      "managed": true,
+      "source_id": "nexusmods",
+      "mod_id": "366",
+      "mod_name": "ImpUI",
+      "placement": "order"
+    },
+    {
+      "position": 3,
+      "name": "A user's mod",
+      "managed": false,
+      "placement": "external"
+    },
+    {
+      "position": 4,
+      "name": "Camera.pak",
+      "managed": true,
+      "source_id": "nexusmods",
+      "mod_id": "945",
+      "mod_name": "Native Camera Tweaks",
+      "placement": "default"
+    }
+  ],
+  "not_deployed": [
+    "Gone.pak"
+  ],
+  "findings": [
+    {
+      "code": "load_order_pak_unreadable",
+      "severity": "warning",
+      "file": "Zstd.pak",
+      "message": "Zstd.pak is not listed in modsettings.lsx, so the game will not load it: lmm could not read the module it declares (its meta.lsx is zstd-compressed, which lmm does not read) - reinstall the mod, or enable it with BG3 Mod Manager"
+    }
+  ]
+}

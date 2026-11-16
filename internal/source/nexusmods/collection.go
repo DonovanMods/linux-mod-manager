@@ -423,7 +423,7 @@ const manifestName = "collection.json"
 // manifests of #607's survey). Any other non-empty key is a feature lmm
 // cannot replay, so it is reported in Unknown.
 var (
-	topKeys = keySet("info", "mods", "modRules", "plugins", "pluginRules", "tools", "collectionConfig", "fbLoadOrders",
+	topKeys = keySet("info", "mods", "modRules", "plugins", "pluginRules", "tools", "collectionConfig", "fbLoadOrders", "loadOrder",
 		// extensionVersion is the curator's Vortex collections-extension
 		// version: informational (ruled 2026-11-13).
 		"extensionVersion")
@@ -453,10 +453,16 @@ var (
 	fileLoadOrderKeys = keySet("id", "entries")
 	// fileLoadOrderEntryKeys are an fbLoadOrders entry's keys (#620).
 	fileLoadOrderEntryKeys = keySet("id", "name", "enabled", "modId")
-	hashKeys               = keySet("path", "md5", "xxh64")
-	choiceStepKeys         = keySet("name", "groups")
-	choiceGroupKeys        = keySet("name", "choices")
-	choiceOptionKeys       = keySet("name", "idx")
+	// loadOrderEntryKeys are a top-level loadOrder entry's keys (#646):
+	// fbLoadOrders' four, and what Vortex's file-based load order adds to
+	// an entry (ILoadOrderEntry: data, locked, pos, prefix; index in the
+	// surveyed BG3 recipe). data is the curator's copy of the pak's
+	// meta.lsx facts: lmm reads the pak itself.
+	loadOrderEntryKeys = keySet("id", "name", "enabled", "modId", "data", "locked", "index", "pos", "prefix")
+	hashKeys           = keySet("path", "md5", "xxh64")
+	choiceStepKeys     = keySet("name", "groups")
+	choiceGroupKeys    = keySet("name", "choices")
+	choiceOptionKeys   = keySet("name", "idx")
 )
 
 func keySet(keys ...string) map[string]bool {
@@ -738,6 +744,7 @@ func (p *manifestParser) parse(data []byte) (source.CollectionManifest, error) {
 	if m.FileLoadOrders, err = p.fileLoadOrders(top["fbLoadOrders"]); err != nil {
 		return m, err
 	}
+	m.LoadOrder = p.loadOrder(top["loadOrder"])
 	m.Unknown = p.unknown
 	return m, nil
 }
@@ -1129,6 +1136,68 @@ func (p *manifestParser) fileLoadOrderEntry(raw json.RawMessage, where string) (
 		return source.ManifestFileLoadOrderEntry{}, err
 	}
 	p.note(obj, fileLoadOrderEntryKeys, "fbLoadOrders.entries.", "")
+	var e source.ManifestFileLoadOrderEntry
+	id, err := str(obj, "id")
+	if err != nil {
+		return e, fmt.Errorf("%s.%v", where, err)
+	}
+	name, err := str(obj, "name")
+	if err != nil {
+		return e, fmt.Errorf("%s.%v", where, err)
+	}
+	e.Name = id
+	if e.Name == "" {
+		e.Name = name
+	}
+	if e.ModHint, err = str(obj, "modId"); err != nil {
+		return e, fmt.Errorf("%s.%v", where, err)
+	}
+	if e.Enabled, err = boolean(obj, "enabled", true); err != nil {
+		return e, fmt.Errorf("%s.%v", where, err)
+	}
+	return e, nil
+}
+
+// loadOrder reads the top-level loadOrder (#646): a list of entries, each
+// {id, name, enabled, modId, data, locked, index} in the surveyed BG3
+// recipe (VERIFIED 2026-11-16: 1,627 entries, id the pak's file name).
+// It is read leniently, as fbLoadOrders' entries are: entries that cannot
+// be read leave the order reported with why (Invalid). nil when absent or
+// empty, which raises nothing.
+func (p *manifestParser) loadOrder(raw json.RawMessage) *source.ManifestFileLoadOrder {
+	if isEmpty(raw) {
+		return nil
+	}
+	list, err := array(raw, "loadOrder")
+	if err != nil {
+		return &source.ManifestFileLoadOrder{Entries: 1, Invalid: err.Error()}
+	}
+	if len(list) == 0 {
+		return nil
+	}
+	lo := &source.ManifestFileLoadOrder{Entries: len(list)}
+	for j, raw := range list {
+		where := fmt.Sprintf("loadOrder[%d]", j)
+		obj, err := object(raw, where)
+		if err != nil {
+			lo.Files, lo.Invalid = nil, err.Error()
+			break
+		}
+		p.note(obj, loadOrderEntryKeys, "loadOrder.", "")
+		e, err := p.loadOrderEntry(obj, where)
+		if err != nil {
+			lo.Files, lo.Invalid = nil, err.Error()
+			break
+		}
+		lo.Files = append(lo.Files, e)
+	}
+	return lo
+}
+
+// loadOrderEntry reads one top-level loadOrder entry: the file is its id
+// (what Vortex's BG3 extension keys an entry by, the pak's file name), else
+// its name; enabled is true unless it says false; modId is the hint.
+func (p *manifestParser) loadOrderEntry(obj map[string]json.RawMessage, where string) (source.ManifestFileLoadOrderEntry, error) {
 	var e source.ManifestFileLoadOrderEntry
 	id, err := str(obj, "id")
 	if err != nil {

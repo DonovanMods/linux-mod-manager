@@ -204,6 +204,13 @@ type CollectionManifest struct {
 	// FileLoadOrders are the collection's file-based load orders, one per
 	// load-order id, with how many entries each holds.
 	FileLoadOrders []ManifestFileLoadOrder
+	// LoadOrder is the collection's top-level load order, when it has one
+	// (#646): the game's one load order, which Vortex keys by the game
+	// rather than by an id - Baldur's Gate 3's paks, by file name. Its ID
+	// is empty: the importer gives it the id of the game's order a
+	// collection carries this way, or refuses it (manifest:loadOrder) for
+	// a game without one. nil when absent or empty.
+	LoadOrder *ManifestFileLoadOrder
 	// Unknown is every non-empty key the parser did not recognise.
 	Unknown []ManifestUnknownKey
 }

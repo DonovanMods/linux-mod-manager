@@ -15,8 +15,9 @@ loaded first: the archive, what placed it, and the mod that ships it.
 
 .PP
 The "placed by" column says why an archive is where it is: order (the
-profile's order), default (not in the order yet: its alphabetical place),
-or external (not deployed by lmm; it keeps its place in the list).
+profile's order), default (not in the order yet: its alphabetical place -
+for Baldur's Gate 3, after the ordered paks), or external (not deployed by
+lmm; it keeps its place in the list).
 
 
 .SH OPTIONS
@@ -69,6 +70,7 @@ or external (not deployed by lmm; it keeps its place in the list).
 .EX
   lmm load-order list
   lmm load-order list -p coop --json
+  lmm load-order list --id baldursgate3
 .EE
 
 

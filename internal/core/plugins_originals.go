@@ -61,8 +61,25 @@ type prefixOriginal struct {
 	// deploy that lmm itself put in the list: a purge takes them out too,
 	// back to where the game loads them unlisted. Never set on a plugin
 	// list's row.
-	Added      []string  `json:"added,omitempty"`
-	CapturedAt time.Time `json:"captured_at"`
+	Added []string `json:"added,omitempty"`
+	// Adopted are, for Baldur's Gate 3's mod list (#646 review), the
+	// entries lmm took over after its first write: an entry the user added
+	// for a module that a pak lmm deployed later declares. Each is kept as
+	// the user wrote it, with the entry it followed, so lmm gives it back
+	// when its pak goes - on a disable, and on a purge, which the captured
+	// original alone could not. Never set on any other row.
+	Adopted    []adoptedEntry `json:"adopted,omitempty"`
+	CapturedAt time.Time      `json:"captured_at"`
+}
+
+// adoptedEntry is one entry of a mod list lmm took over (#646 review).
+type adoptedEntry struct {
+	// UUID is the module's, lower case; After the UUID of the entry it
+	// followed when lmm took it over ("" for the first).
+	UUID  string `json:"uuid"`
+	After string `json:"after,omitempty"`
+	// Entry is the entry's own bytes, as the user wrote it.
+	Entry string `json:"entry"`
 }
 
 // key is the row's identity: the same file, however its name is cased.
@@ -268,6 +285,27 @@ func (p *prefixOriginals) setOwnedAdded(prefix, user, path string, owned, added 
 			return nil
 		}
 		m.Files[i].Owned, m.Files[i].Added = slices.Clone(owned), slices.Clone(added)
+		return p.write(m)
+	}
+	return nil
+}
+
+// setAdopted records adopted on the row for prefix/user/path, if lmm keeps
+// one, writing the manifest only when it changed (#646 review).
+func (p *prefixOriginals) setAdopted(prefix, user, path string, adopted []adoptedEntry) error {
+	m, err := p.read()
+	if err != nil {
+		return err
+	}
+	key := prefixOriginal{Prefix: prefix, User: user, Path: path}.key()
+	for i := range m.Files {
+		if m.Files[i].key() != key {
+			continue
+		}
+		if slices.Equal(m.Files[i].Adopted, adopted) {
+			return nil
+		}
+		m.Files[i].Adopted = slices.Clone(adopted)
 		return p.write(m)
 	}
 	return nil

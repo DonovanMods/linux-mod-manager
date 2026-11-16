@@ -36,6 +36,18 @@ import (
 // directory, that Baldur's Gate 3 loads .pak mods from.
 const bg3ModsDir = "AppData/Local/Larian Studios/Baldur's Gate 3/Mods"
 
+// bg3ProfileDir is the folder, relative to the prefix's Windows user
+// directory, that holds the game's mod list, modsettings.lsx: the Public
+// player profile beside the Mods folder ([VXG] util.ts:35-37 profilesPath,
+// :66-70 getActivePlayerProfile - "Public" for every game version since
+// 4.1.206; NexusMods.App's BG3 developer notes, "Load Order").
+const bg3ProfileDir = "AppData/Local/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public"
+
+// PakOrderID is Baldur's Gate 3's load order id: the game's id in Vortex,
+// which keys the game's one load order by the game ([VXG] index.tsx:299-301
+// registerLoadOrder({gameId: GAME_ID}), common.ts:73 GAME_ID).
+const PakOrderID = "baldursgate3"
+
 // bg3GamePaks are the game's own .pak files, lower-cased ([VXG] common.ts:87
 // ORIGINAL_FILES): a mod's pak named like one replaces it in Data/.
 var bg3GamePaks = map[string]bool{
@@ -56,12 +68,13 @@ type BG3 struct {
 
 // Compile-time proof of the capabilities BG3 has.
 var (
-	_ adapter.GameAdapter    = (*BG3)(nil)
-	_ adapter.RootRouter     = (*BG3)(nil)
-	_ adapter.PrefixPlacer   = (*BG3)(nil)
-	_ adapter.PrefixConsumer = (*BG3)(nil)
-	_ adapter.FileRouter     = (*BG3)(nil)
-	_ adapter.LaunchAdvisor  = (*BG3)(nil)
+	_ adapter.GameAdapter     = (*BG3)(nil)
+	_ adapter.RootRouter      = (*BG3)(nil)
+	_ adapter.PrefixPlacer    = (*BG3)(nil)
+	_ adapter.PrefixConsumer  = (*BG3)(nil)
+	_ adapter.FileRouter      = (*BG3)(nil)
+	_ adapter.LaunchAdvisor   = (*BG3)(nil)
+	_ adapter.FileLoadOrderer = (*BG3)(nil)
 )
 
 // BaldursGate3 returns Baldur's Gate 3's adapter.
@@ -130,16 +143,42 @@ func (*BG3) RouteFile(_ *domain.Game, rel string) adapter.FileRoute {
 	return adapter.RouteLink
 }
 
-// LaunchAdvice says what lmm does not do yet (#646): a .pak mod that
-// carries a meta.lsx loads only once the game's modsettings.lsx lists it.
-// It sets no launch arguments.
+// FileLoadOrders returns the .pak order (#646): the paks in the Mods
+// folder, listed - by the module each one's meta.lsx declares - in
+// modsettings.lsx, which both enables them and orders them; the last one
+// loaded wins a conflict (NexusMods.App's BG3 developer notes, "Load
+// Order"). Core writes it (adapter.FileListModSettings). A Vortex
+// collection carries it as its top-level loadOrder, whose entries' ids are
+// the pak file names ([VXG] loadOrder.ts:125-133 deserialize).
+func (*BG3) FileLoadOrders(*domain.Game) []adapter.FileLoadOrderSpec {
+	return []adapter.FileLoadOrderSpec{PakOrder()}
+}
+
+// PakOrder is Baldur's Gate 3's .pak load order spec.
+func PakOrder() adapter.FileLoadOrderSpec {
+	return adapter.FileLoadOrderSpec{
+		ID:                  PakOrderID,
+		Label:               "Paks",
+		Dir:                 adapter.RootedPath{Root: adapter.SpecRootUserDir, Path: bg3ModsDir},
+		ListDir:             adapter.RootedPath{Root: adapter.SpecRootUserDir, Path: bg3ProfileDir},
+		Extensions:          []string{".pak"},
+		ListFile:            "modsettings.lsx",
+		Format:              adapter.FileListModSettings,
+		CollectionLoadOrder: true,
+	}
+}
+
+// LaunchAdvice, when a .pak is deployed, says what can undo lmm's
+// modsettings.lsx (#646): the game resets the list - and runs with no mods
+// - when it finds a mod it cannot load ([VXG] util.ts:448-459, Vortex's
+// "modsettings.lsx file was reset" dialog). It sets no launch arguments.
 func (*BG3) LaunchAdvice(_ *domain.Game, mods []adapter.DeployedMod, _ string) adapter.Advice {
 	for _, m := range mods {
 		for _, f := range m.PrefixFiles {
 			if isModPak(f) {
 				return adapter.Advice{Lines: []string{
-					"Baldur's Gate 3 loads a .pak mod from its Mods folder only once the game's mod list, modsettings.lsx (PlayerProfiles/Public, beside the Mods folder in the game's prefix), enables it; lmm doesn't write that file yet.",
-					"Enable the deployed .pak mods with a tool that writes it, such as BG3 Mod Manager. A pak that only replaces game files and has no meta.lsx needs no entry.",
+					"Baldur's Gate 3 loads a .pak mod from its Mods folder only while its mod list, modsettings.lsx (PlayerProfiles/Public, beside the Mods folder in the game's prefix), enables it; lmm lists the paks it deploys there at every deploy.",
+					"If the game finds a mod it cannot load, it resets that list and runs without mods: `lmm verify` reports it, and `lmm verify --fix` (or `lmm deploy`) lists them again. A pak that only replaces game files, with no meta.lsx, needs no entry.",
 				}}
 			}
 		}

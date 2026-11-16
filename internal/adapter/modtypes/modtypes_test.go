@@ -96,8 +96,8 @@ func TestBG3_SkipsInfoJSON(t *testing.T) {
 	assert.Equal(t, adapter.RouteLink, adapter.Route(BaldursGate3(), g, "MyMod.pak"))
 }
 
-// The advice names what lmm does not do yet (modsettings.lsx, #646), and
-// only when a .pak is deployed into the prefix.
+// The advice names the mod list lmm writes (modsettings.lsx, #646) and
+// what resets it, and only when a .pak is deployed into the prefix.
 func TestBG3_LaunchAdviceNamesModsettings(t *testing.T) {
 	g := &domain.Game{}
 	none := adapter.LaunchAdvice(BaldursGate3(), g, []adapter.DeployedMod{{Name: "loose", Files: []string{"Public/x.lsx"}}}, "")
@@ -107,5 +107,24 @@ func TestBG3_LaunchAdviceNamesModsettings(t *testing.T) {
 	assert.Empty(t, adv.Args)
 	require.NotEmpty(t, adv.Lines)
 	assert.Contains(t, adv.Lines[0], "modsettings.lsx")
-	assert.Contains(t, adv.Lines[0], "lmm doesn't write that file yet")
+	assert.Contains(t, adv.Lines[0], "lmm lists the paks it deploys there")
+	assert.Contains(t, adv.Lines[1], "lmm verify --fix")
+}
+
+// The .pak order (#646): the Mods folder's paks, listed in modsettings.lsx
+// in the Public player profile beside it - a list that enables them - and
+// the order a Vortex collection carries as its top-level loadOrder.
+func TestBG3_PakLoadOrder(t *testing.T) {
+	specs := adapter.FileLoadOrders(BaldursGate3(), &domain.Game{})
+	require.Len(t, specs, 1)
+	s := specs[0]
+	assert.Equal(t, "baldursgate3", s.ID)
+	assert.Equal(t, adapter.RootedPath{Root: adapter.SpecRootUserDir, Path: "AppData/Local/Larian Studios/Baldur's Gate 3/Mods"}, s.Dir)
+	assert.Equal(t, "AppData/Local/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public", s.ListDirectory().Path)
+	assert.Equal(t, "modsettings.lsx", s.ListFile)
+	assert.True(t, s.Enables())
+	assert.True(t, s.CollectionLoadOrder)
+	assert.False(t, s.FirstWins, "the last pak loaded wins")
+	assert.True(t, s.Covers("MyMod.PAK"))
+	assert.False(t, s.Covers("info.json"))
 }

@@ -4573,6 +4573,33 @@ func TestJSONGoldens(t *testing.T) {
 			core.FileLoadOrdersReport{GameID: "cyberpunk2077", Profile: "default", Orders: []core.FileLoadOrderReport{goldenLoadOrderReport}},
 		},
 		{
+			// #646: Baldur's Gate 3's .pak order - a list that enables: the
+			// game's own entry and a user's mod external, lmm's paks by name.
+			"file_load_order_report_modsettings",
+			core.FileLoadOrderReport{
+				GameID: "bg3", Profile: "default", ID: "baldursgate3", Label: "Paks", Enables: true, Active: true, Recorded: true,
+				ListFile: "/pfx/drive_c/users/steamuser/AppData/Local/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public/modsettings.lsx",
+				Files: []core.FileLoadOrderEntry{
+					{Position: 1, Name: "GustavX", Placement: core.LoadOrderPlacedExternal},
+					{Position: 2, Name: "ImprovedUI.pak", Managed: true, SourceID: "nexusmods", ModID: "366", ModName: "ImpUI", Placement: core.LoadOrderPlacedOrder},
+					{Position: 3, Name: "A user's mod", Placement: core.LoadOrderPlacedExternal},
+					{Position: 4, Name: "Camera.pak", Managed: true, SourceID: "nexusmods", ModID: "945", ModName: "Native Camera Tweaks", Placement: core.LoadOrderPlacedDefault},
+				},
+				NotDeployed: []string{"Gone.pak"},
+				Findings: []core.LoadOrderFinding{{Code: core.LoadOrderFindingPakUnreadable, Severity: core.PluginSeverityWarning, File: "Zstd.pak",
+					Message: "Zstd.pak is not listed in modsettings.lsx, so the game will not load it: lmm could not read the module it declares (its meta.lsx is zstd-compressed, which lmm does not read) - reinstall the mod, or enable it with BG3 Mod Manager"}},
+			},
+		},
+		{
+			// #646: a deploy that could not enable the paks: the game has not
+			// written its mod list yet.
+			"file_load_order_result_list_missing",
+			core.FileLoadOrderResult{ID: "baldursgate3", Status: core.PluginListSkipped,
+				ListFile: "/pfx/drive_c/users/steamuser/AppData/Local/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public/modsettings.lsx",
+				Findings: []core.LoadOrderFinding{{Code: core.LoadOrderFindingListMissing, Severity: core.PluginSeverityWarning, File: "modsettings.lsx",
+					Message: "modsettings.lsx is not there yet (/pfx/.../modsettings.lsx), so the paks lmm deploys are not enabled: run the game once so it writes its mod list, then `lmm deploy` (or `lmm verify --fix`) lists them"}}},
+		},
+		{
 			// #620: one load-order edit - a move.
 			"file_load_order_edit",
 			core.FileLoadOrderEdit{ID: "cyberpunk2077-archive", Op: core.LoadOrderOpMove, File: "b.archive", Before: "a.archive"},
@@ -4604,6 +4631,13 @@ func TestJSONGoldens(t *testing.T) {
 			"collection_load_order_summary",
 			core.CollectionLoadOrderSummary{ID: "cyberpunk2077-archive", Label: "Archives", Managed: true, FirstWins: true,
 				Files: []core.CollectionLoadOrderFile{{Name: "! fixes.archive", Mod: "Story Quest Fixes"}, {Name: "basegame_x.archive"}}},
+		},
+		{
+			// #646: a collection's Baldur's Gate 3 pak order, which lmm lists
+			// in the game's mod list (enables).
+			"collection_load_order_summary_paks",
+			core.CollectionLoadOrderSummary{ID: "baldursgate3", Label: "Paks", Managed: true, Enables: true,
+				Files: []core.CollectionLoadOrderFile{{Name: "ImpUI.pak", Mod: "ImpUI"}, {Name: "Override.pak"}}},
 		},
 		{
 			// #620: one file of a collection's load order.
