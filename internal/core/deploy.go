@@ -1118,9 +1118,21 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		return skip("no files available")
 	}
 
-	filesToDownload, err := selectFilesForVersion(files, mod.FileIDs, mod.Version)
+	// #662: a row whose stored main files mix versions heals to one - a
+	// collection's mod keeps the curator's files - and the deploy says so:
+	// it has no plan that could have.
+	fromCollection := false
+	if ref := s.recordedRef(ctx, game.ID, mod.ProfileName, mod.SourceID, mod.ID); ref != nil {
+		fromCollection = ref.FromCollection
+	}
+	sel, err := selectStoredFiles(files, mod.FileIDs, mod.Version, fromCollection, fetchedMod.Version)
 	if err != nil {
 		return skip(err.Error())
+	}
+	filesToDownload := sel.files
+	for _, msg := range unpreviewedStoredFiles(sel, domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}, mod.Name, nil, nil) {
+		result.Warnings = append(result.Warnings, msg)
+		emit(WarningEvent{Scope: scope, Phase: DeployWarning, Message: msg})
 	}
 
 	// fetchedMod (not the InstalledMod's own mod.Mod - see this function's
@@ -1133,6 +1145,9 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	// (using the InstalledMod's own, unmodified mod.Version) fails with "mod
 	// not in cache" even though the download just succeeded.
 	fetchedMod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload)
+	if sel.mixed != nil || sel.heal != nil {
+		fetchedMod.Version = sel.version
+	}
 
 	// #614: a FOMOD mod's tree is rebuilt from the profile's recorded
 	// choices - the same tree only if they still fit and name the row's

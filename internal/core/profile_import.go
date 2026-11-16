@@ -90,6 +90,15 @@ type ImportPlan struct {
 	// empty.
 	ReinstallReasons map[string]string `json:"reinstall_reasons,omitempty"`
 
+	// Heals is each NeedsRedownload or Missing mod whose stored file ids
+	// still mix main files of more than one version (#662): the import
+	// installs one version's main files with every secondary file, and
+	// records those ids on the reference. Read from the source at plan
+	// time for the user's own references with more than one file; a
+	// collection's are installed as the curator chose them, which the
+	// collection's own notes say. Additive; absent when there are none.
+	Heals []StoredFilesHeal `json:"heals,omitempty"`
+
 	// WorkshopCollection describes the Steam Workshop collection this plan
 	// was built from, when it was built from one
 	// (Service.PlanWorkshopCollectionImport, #269 W2): what the collection
@@ -521,7 +530,22 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 	s.stampRefDisplay(missing, displayRows)
 	s.stampRefDisplay(profile.Mods, displayRows)
 
+	// #662: the user's own references this import replays, with the ids
+	// it replays - a collection's are the curator's, never healed.
+	var replayed []domain.ModReference
+	for _, ref := range slices.Concat(needsRedownload, missing) {
+		if ref.FromCollection {
+			continue
+		}
+		if ids, ok := storedFileIDs[domain.ModKey(ref.SourceID, ref.ModID)]; ok {
+			ref.FileIDs = ids
+		}
+		replayed = append(replayed, ref)
+	}
+	heals, _ := s.previewStoredFiles(ctx, game, replayed)
+
 	return &ImportPlan{
+		Heals:               heals,
 		Hooks:               listHooks(profile.Hooks, profile.HooksExplicit),
 		RestrictedOverrides: restrictedOverrides(profile),
 		TreeInputs:          s.importTreeInputs(game, profile.Mods, nil),

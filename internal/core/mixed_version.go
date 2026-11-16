@@ -2,6 +2,7 @@ package core
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -320,4 +321,79 @@ func (h StoredFilesHeal) Sentence() string {
 func (c CuratorMixedFiles) Sentence() string {
 	name := cmp.Or(c.Name, domain.ModKey(c.SourceID, c.ModID))
 	return fmt.Sprintf("%s: the collection's files mix main files of versions %s; installed as the curator chose them", name, mixedVersionFilesText(c.Versions))
+}
+
+// previewStoredFiles is what a plan that resolves nothing at plan time
+// (switch, import) says about refs' stored file ids (#662): for every ref
+// with more than one stored file, the only kind whose main files can mix,
+// the source is asked for the mod's file listing and selectStoredFiles'
+// heal or collection note taken. Best-effort: a mod the source cannot
+// describe now is left out, and the flow's own resolution warns about its
+// heal instead (unpreviewedStoredFiles). refs carry the ids the flow will
+// replay.
+func (s *Service) previewStoredFiles(ctx context.Context, game *domain.Game, refs []domain.ModReference) ([]StoredFilesHeal, []CuratorMixedFiles) {
+	var heals []StoredFilesHeal
+	var mixed []CuratorMixedFiles
+	for _, ref := range refs {
+		if len(uniqueIDs(ref.FileIDs)) < 2 || ctx.Err() != nil {
+			continue
+		}
+		mod, err := s.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
+		if err != nil {
+			continue
+		}
+		files, err := s.GetModFiles(ctx, game, ref.SourceID, mod)
+		if err != nil {
+			continue
+		}
+		sel, err := selectStoredFiles(files, ref.FileIDs, ref.Version, ref.FromCollection, mod.Version)
+		if err != nil {
+			continue
+		}
+		if sel.heal != nil {
+			sel.heal.SourceID, sel.heal.ModID, sel.heal.Name = ref.SourceID, ref.ModID, mod.Name
+			heals = append(heals, *sel.heal)
+		}
+		if len(sel.mixed) > 0 {
+			mixed = append(mixed, CuratorMixedFiles{SourceID: ref.SourceID, ModID: ref.ModID, Name: mod.Name, Versions: sel.mixed})
+		}
+	}
+	return heals, mixed
+}
+
+// unpreviewedStoredFiles is the warning for a heal or a collection note a
+// flow's resolution found that its plan did not name (#662): the plan
+// could not look the mod up, or the source's listing changed since. A heal
+// is never silent; one the plan named is not said twice.
+func unpreviewedStoredFiles(sel storedSelection, ref domain.ModReference, name string, heals []StoredFilesHeal, mixed []CuratorMixedFiles) []string {
+	var out []string
+	if sel.heal != nil && !slices.ContainsFunc(heals, func(h StoredFilesHeal) bool { return h.SourceID == ref.SourceID && h.ModID == ref.ModID }) {
+		h := *sel.heal
+		h.SourceID, h.ModID, h.Name = ref.SourceID, ref.ModID, name
+		out = append(out, h.Sentence())
+	}
+	if len(sel.mixed) > 0 && !slices.ContainsFunc(mixed, func(c CuratorMixedFiles) bool { return c.SourceID == ref.SourceID && c.ModID == ref.ModID }) {
+		out = append(out, CuratorMixedFiles{SourceID: ref.SourceID, ModID: ref.ModID, Name: name, Versions: sel.mixed}.Sentence())
+	}
+	return out
+}
+
+// staleUpdateMains is an update's heal (#662) over an installed set's main
+// versions: the main files of every version but the installed one (which
+// the update replaces) and the target (which already is the update) are
+// stale. Nil when the set mixes no versions or none is stale.
+func staleUpdateMains(mains []MixedVersion, installed, target string) *StoredFilesHeal {
+	if len(mains) < 2 {
+		return nil
+	}
+	heal := &StoredFilesHeal{Version: installed}
+	for _, v := range mains {
+		if v.Version != installed && v.Version != target {
+			heal.Dropped = append(heal.Dropped, v)
+		}
+	}
+	if len(heal.Dropped) == 0 {
+		return nil
+	}
+	return heal
 }

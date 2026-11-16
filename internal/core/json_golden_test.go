@@ -760,6 +760,26 @@ func TestJSONGoldens(t *testing.T) {
 			core.SwitchPlan{GameID: "skyrim-se", From: "default", To: "hardcore", Handoffs: sampleHandOffs()},
 		},
 		{
+			// #662: the plans that replay stored file ids name each heal and
+			// each collection mod installing the curator's mixed files.
+			"profile_apply_plan_heals",
+			core.ProfileApplyPlan{GameID: "skyrim-se", Profile: "default", Heals: sampleHeals(), CuratorMixed: sampleCuratorMixed()},
+		},
+		{
+			"switch_plan_heals",
+			core.SwitchPlan{GameID: "skyrim-se", From: "default", To: "hardcore", Heals: sampleHeals(), CuratorMixed: sampleCuratorMixed()},
+		},
+		{
+			"import_plan_heals",
+			core.ImportPlan{
+				Installed:       []domain.ModReference{},
+				AlreadyCached:   []domain.ModReference{},
+				NeedsRedownload: []domain.ModReference{},
+				Missing:         []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "2.0", FileIDs: []string{"11", "21", "31"}}},
+				Heals:           sampleHeals(),
+			},
+		},
+		{
 			"rollback_plan_handoffs",
 			core.RollbackPlan{
 				Mod:         domain.InstalledMod{Mod: jsonGoldenMod, ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify},
@@ -2908,6 +2928,29 @@ func TestJSONGoldens(t *testing.T) {
 			}}).Details(),
 		},
 		{
+			// #662: a user's stored files healed to the recorded version.
+			"stored_files_heal",
+			core.StoredFilesHeal{SourceID: "nexusmods", ModID: "42", Name: "Some Mod", Version: "2.0", Dropped: []core.MixedVersion{
+				{Version: "1.0", Files: []core.MixedVersionFile{{ID: "11", FileName: "main-1.0.zip"}}},
+			}},
+		},
+		{
+			// #662: no main file at the recorded version, so the newest's
+			// were kept.
+			"stored_files_heal_newest",
+			core.StoredFilesHeal{SourceID: "nexusmods", ModID: "42", Version: "3.0", RecordedVersion: "0.9", Dropped: []core.MixedVersion{
+				{Version: "2.0", Files: []core.MixedVersionFile{{ID: "21", FileName: "main-2.0.zip"}}},
+			}},
+		},
+		{
+			// #662: a collection's mod installing the curator's mixed files.
+			"curator_mixed_files",
+			core.CuratorMixedFiles{SourceID: "nexusmods", ModID: "42", Name: "Some Mod", Versions: []core.MixedVersion{
+				{Version: "1.0", Files: []core.MixedVersionFile{{ID: "11", FileName: "main-1.0.zip"}}},
+				{Version: "2.0", Files: []core.MixedVersionFile{{ID: "21", FileName: "main-2.0.zip"}}},
+			}},
+		},
+		{
 			// #613: an origin serving the profile's own version.
 			"collection_update_plan_up_to_date",
 			core.CollectionUpdatePlan{
@@ -4915,4 +4958,19 @@ func sampleHandOffs() []core.HandOff {
 		{Path: "Data/shared.esp", From: from, To: core.HandOffMod{SourceID: "nexusmods", ModID: "7", Name: "Realistic Needs"}},
 		{Path: "d3d11.dll", Root: domain.RootInstallPath, From: from, To: core.HandOffMod{SourceID: "local", ModID: "reshade", Name: "ReShade"}},
 	}
+}
+
+// sampleHeals is one #662 heal, for the plan goldens.
+func sampleHeals() []core.StoredFilesHeal {
+	return []core.StoredFilesHeal{{SourceID: "nexusmods", ModID: "42", Name: "Some Mod", Version: "2.0", Dropped: []core.MixedVersion{
+		{Version: "1.0", Files: []core.MixedVersionFile{{ID: "11", FileName: "main-1.0.zip"}}},
+	}}}
+}
+
+// sampleCuratorMixed is one #662 collection note, for the plan goldens.
+func sampleCuratorMixed() []core.CuratorMixedFiles {
+	return []core.CuratorMixedFiles{{SourceID: "nexusmods", ModID: "77", Name: "Curated Mod", Versions: []core.MixedVersion{
+		{Version: "1.0", Files: []core.MixedVersionFile{{ID: "71", FileName: "curated-1.0.zip"}}},
+		{Version: "1.1", Files: []core.MixedVersionFile{{ID: "72", FileName: "curated-1.1.zip"}}},
+	}}}
 }

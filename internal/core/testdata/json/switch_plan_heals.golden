@@ -1,0 +1,56 @@
+{
+  "game_id": "skyrim-se",
+  "from": "default",
+  "to": "hardcore",
+  "to_enable": [],
+  "to_disable": [],
+  "to_install": [],
+  "heals": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "42",
+      "name": "Some Mod",
+      "version": "2.0",
+      "dropped": [
+        {
+          "version": "1.0",
+          "files": [
+            {
+              "id": "11",
+              "file_name": "main-1.0.zip"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "curator_mixed": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "77",
+      "name": "Curated Mod",
+      "versions": [
+        {
+          "version": "1.0",
+          "files": [
+            {
+              "id": "71",
+              "file_name": "curated-1.0.zip"
+            }
+          ]
+        },
+        {
+          "version": "1.1",
+          "files": [
+            {
+              "id": "72",
+              "file_name": "curated-1.1.zip"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "no_changes": false,
+  "already_active": false
+}

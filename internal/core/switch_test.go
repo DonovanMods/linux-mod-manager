@@ -1293,14 +1293,14 @@ func TestApplyProfileSwitch_VersionlessSource_KeepsLegacyBehavior(t *testing.T) 
 // recorded version, selectVersionedDeployFiles must return the WHOLE stored
 // set as-is - not re-resolve to matches(version), which would be the
 // narrower set. Here ref.Version is "1.5" (the primary file10's own
-// version), and the stored pair is [file10 (1.5, primary), file9 (1.0)]:
-// EffectiveInstalledVersion picks file10's version ("1.5", since it's
-// primary) as representative, agreeing with the record, so the fast path
-// fires and keeps file9 riding along even though file9's own version isn't
-// 1.5. Rule 3 (stored ∩ matches) would instead compute matches("1.5") =
-// [file10] only and keep just that one file - the DIFFERENT, narrower
-// outcome that distinguishes "fast path took over" from "matches-based
-// resolution ran instead".
+// version), and the stored pair is [file10 (1.5, primary), file9 (1.0)].
+//
+// #662 changed this case's outcome on purpose: file9 is ARCHIVED, which
+// counts as a main file, so the pair mixes main files of two versions and
+// the switch heals it to the recorded 1.5 - file9 is dropped, and with no
+// plan preview (this plan is built by hand) the switch warns. The fast
+// path still keeps a SECONDARY file of another version riding along; that
+// is TestSelectStoredFiles_OneMainVersionIsNotAHeal's to pin.
 func TestApplyProfileSwitch_StoredIDsBothAgree_FastPathReturnsWholeSet(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
@@ -1327,8 +1327,10 @@ func TestApplyProfileSwitch_StoredIDsBothAgree_FastPathReturnsWholeSet(t *testin
 
 	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"10", "9"}, installed.FileIDs,
-		"the fast path must keep the whole stored set, not re-resolve to the narrower matches(\"1.5\") set")
+	assert.Equal(t, []string{"10"}, installed.FileIDs, "#662: the 1.0 main file is healed away")
+	assert.Equal(t, "1.5", installed.Version)
+	assert.Equal(t, []string{"Mod One: its stored main files are of more than one version; keeping version 1.5 and dropping mod1-old.zip (1.0)"}, result.Warnings,
+		"a heal the plan did not preview is warned about")
 }
 
 // TestApplyProfileSwitch_VersionMatchesNothing_NoStoredIDs_ErrVersionNotFoundWrap

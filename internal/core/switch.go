@@ -107,6 +107,21 @@ type SwitchPlan struct {
 	// there are none.
 	Handoffs []HandOff `json:"handoffs,omitempty"`
 
+	// Heals is each ToInstall mod whose stored file ids still mix main
+	// files of more than one version (#662): the switch installs one
+	// version's main files with every secondary file, and records those
+	// ids on To's reference. Read from the source at plan time for the
+	// references with more than one file; a mod the plan could not look
+	// up is healed all the same, with a warning. Additive; absent when
+	// there are none.
+	Heals []StoredFilesHeal `json:"heals,omitempty"`
+
+	// CuratorMixed is each ToInstall mod of To's collection whose curator's
+	// files mix main files of more than one version (#662): installed
+	// exactly as the collection names them. Additive; absent when there
+	// are none.
+	CuratorMixed []CuratorMixedFiles `json:"curator_mixed,omitempty"`
+
 	NoChanges     bool `json:"no_changes"`     // To's mod set matches From's content-wise and no override changes (#631); only SetDefault is needed
 	AlreadyActive bool `json:"already_active"` // To is already the active default profile; nothing to plan
 
@@ -517,6 +532,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	}
 	// #638: the shared paths the switch hands on, named before it runs.
 	plan.Handoffs = s.planSwitchHandOffs(ctx, game, plan)
+	plan.Heals, plan.CuratorMixed = s.previewStoredFiles(ctx, game, plan.ToInstall)
 	return plan, nil
 }
 
@@ -986,13 +1002,20 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				continue
 			}
 
-			filesToDownload, err := selectFilesForVersion(files, ref.FileIDs, ref.Version)
+			// #662: stored ids whose main files mix versions heal to one
+			// (a collection's are installed as they are), as the plan said.
+			sel, err := selectStoredFiles(files, ref.FileIDs, ref.Version, ref.FromCollection, mod.Version)
 			if err != nil {
 				fail(err.Error())
 				continue
 			}
+			filesToDownload := sel.files
+			for _, msg := range unpreviewedStoredFiles(sel, ref, mod.Name, plan.Heals, plan.CuratorMixed) {
+				result.Warnings = append(result.Warnings, msg)
+				emit(WarningEvent{Scope: scope, Phase: SwitchInstallWarning, Message: msg})
+			}
 
-			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
+			mod.Version = sel.version // #94
 			version = mod.Version
 
 			downloadedFileIDs := make([]string, 0, len(filesToDownload))

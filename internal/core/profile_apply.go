@@ -93,6 +93,19 @@ type ProfileApplyPlan struct {
 	// for a profile with none.
 	Unresolved *CollectionIncomplete `json:"unresolved,omitempty"`
 
+	// Heals is each ToInstall mod whose stored file ids still mix main
+	// files of more than one version (#662): the apply installs one
+	// version's main files with every secondary file, and records those
+	// ids on the profile's reference. Additive; absent when there are
+	// none.
+	Heals []StoredFilesHeal `json:"heals,omitempty"`
+
+	// CuratorMixed is each ToInstall mod of the profile's collection whose
+	// curator's files mix main files of more than one version (#662):
+	// installed exactly as the collection names them. Additive; absent
+	// when there are none.
+	CuratorMixed []CuratorMixedFiles `json:"curator_mixed,omitempty"`
+
 	// NoChanges is true when all three buckets are empty and no override
 	// changes (#631) - the system already matches the profile and
 	// ApplyProfileApply has nothing to do (the CLI prints "System already
@@ -179,6 +192,12 @@ type ProfileApplyInstall struct {
 	// not: ReinstallFilesChanged, for a profile that pins another set of
 	// its files (#639). Empty otherwise.
 	Reason string `json:"reason,omitempty"`
+
+	// heal and mixed are what resolving the entry found about its stored
+	// files (#662), which PlanProfileApply lists as the plan's Heals and
+	// CuratorMixed; Files is already the healed selection.
+	heal  *StoredFilesHeal
+	mixed []MixedVersion
 }
 
 // profileApplyFailure builds the InstalledRef ApplyProfileApply records for
@@ -382,7 +401,14 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 	}
 
 	for i := range plan.ToInstall {
-		s.resolveProfileApplyInstall(ctx, game, &plan.ToInstall[i])
+		entry := &plan.ToInstall[i]
+		s.resolveProfileApplyInstall(ctx, game, entry)
+		if entry.heal != nil {
+			plan.Heals = append(plan.Heals, *entry.heal)
+		}
+		if len(entry.mixed) > 0 {
+			plan.CuratorMixed = append(plan.CuratorMixed, CuratorMixedFiles{SourceID: entry.Ref.SourceID, ModID: entry.Ref.ModID, Name: entry.Mod.Name, Versions: entry.mixed})
+		}
 	}
 
 	// The rows and the document this plan was decided from (see
@@ -502,6 +528,8 @@ func (s *Service) diffProfileApply(ctx context.Context, pm *ProfileManager, game
 				ModID:    im.ID,
 				Version:  im.Version,
 				FileIDs:  im.FileIDs,
+				// #662: a collection's mod keeps the curator's files.
+				FromCollection: ref.FromCollection,
 			}}
 			if isArchiveVariant(im.Variant) {
 				// #644: an imported archive's tree; no download is it.
@@ -615,14 +643,21 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 	// Ref.FileIDs is the single selection input on both paths: a cache-miss
 	// re-download carries the DB row's IDs, every other entry the profile's
 	// own (empty for an unpinned ref, which selectFilesForVersion then
-	// resolves by version/primary).
-	selected, err := selectFilesForVersion(files, entry.Ref.FileIDs, entry.Ref.Version)
+	// resolves by version/primary). #662: stored ids whose main files mix
+	// versions heal to one (a collection's are installed as they are).
+	sel, err := selectStoredFiles(files, entry.Ref.FileIDs, entry.Ref.Version, entry.Ref.FromCollection, mod.Version)
 	if err != nil {
 		entry.Error = err.Error()
 		return
 	}
+	selected := sel.files
+	if sel.heal != nil {
+		sel.heal.SourceID, sel.heal.ModID, sel.heal.Name = entry.Ref.SourceID, entry.Ref.ModID, mod.Name
+		entry.heal = sel.heal
+	}
+	entry.mixed = sel.mixed
 
-	mod.Version = domain.EffectiveInstalledVersion(mod.Version, selected) // #94
+	mod.Version = sel.version // #94
 	// #614: a FOMOD mod's entry is the variant its recorded choices name;
 	// #639: and the file-set variant of it when that entry holds another
 	// set of the version's files.
