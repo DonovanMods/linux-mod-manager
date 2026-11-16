@@ -65,6 +65,51 @@ func (e *SchemaUpgradedError) Unwrap() error { return e.Err }
 // Details implements the --json error envelope's extension point.
 func (e *SchemaUpgradedError) Details() any { return e }
 
+// SchemaTooNewError is the open's refusal of a database a newer lmm had
+// already migrated when this lmm started (NewService): the sentence the
+// storage layer has always given, behind "opening database: ", with the
+// same details SchemaUpgradedError carries (#648 review), so a script
+// branches on one code for both. The remedy differs - this binary is the
+// old one, so it says to upgrade lmm - which is why the two stay separate
+// types: errors.As tells an open's refusal from a running process's.
+type SchemaTooNewError struct {
+	Code      string `json:"code"`
+	Version   int    `json:"version"`
+	Supported int    `json:"supported"`
+	// Err is the storage layer's refusal (*db.SchemaTooNewError), kept for
+	// errors.Is(err, ErrSchemaTooNew), errors.As and the sentence.
+	Err error `json:"-"`
+}
+
+// Error is the open's sentence, unchanged.
+func (e *SchemaTooNewError) Error() string {
+	if e.Err == nil {
+		return fmt.Sprintf("opening database: %v (schema version %d; this lmm reads up to %d)", ErrSchemaTooNew, e.Version, e.Supported)
+	}
+	return "opening database: " + e.Err.Error()
+}
+
+// Unwrap keeps errors.Is(err, ErrSchemaTooNew) true.
+func (e *SchemaTooNewError) Unwrap() error {
+	if e.Err == nil {
+		return ErrSchemaTooNew
+	}
+	return e.Err
+}
+
+// Details implements the --json error envelope's extension point.
+func (e *SchemaTooNewError) Details() any { return e }
+
+// openRefusal is NewService's error for a failed database open: the
+// too-new refusal as a SchemaTooNewError, anything else wrapped as ever.
+func openRefusal(err error) error {
+	var tooNew *db.SchemaTooNewError
+	if errors.As(err, &tooNew) {
+		return &SchemaTooNewError{Code: SchemaTooNewCode, Version: tooNew.Version, Supported: tooNew.Supported, Err: err}
+	}
+	return fmt.Errorf("opening database: %w", err)
+}
+
 // CheckSchema reports whether the database is still one this lmm can read:
 // nil, or a *SchemaUpgradedError once another, newer lmm has migrated it
 // since this Service opened it (#648). Every mutation asks this as it takes

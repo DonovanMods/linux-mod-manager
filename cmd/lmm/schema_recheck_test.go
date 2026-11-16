@@ -170,3 +170,57 @@ func waitForLockWaiter(t *testing.T, path string) {
 	}
 	t.Fatal("the command never started waiting on the lock")
 }
+
+// TestReportError_JSON_SchemaTooNewError pins the open-time refusal's
+// --json envelope (#648 review): its sentence as ever, and the same
+// details as the running refusal, so a script branches on one code.
+func TestReportError_JSON_SchemaTooNewError(t *testing.T) {
+	withJSONOutput(t)
+
+	err := &core.SchemaTooNewError{
+		Code: core.SchemaTooNewCode, Version: 29, Supported: 28,
+		Err: &db.SchemaTooNewError{Path: "/home/u/.local/share/lmm/lmm.db", Version: 29, Supported: 28},
+	}
+	out := captureStdout(t, func() error { reportError(err); return nil })
+
+	assert.Equal(t, "{\n"+
+		"  \"error\": \"opening database: the database at /home/u/.local/share/lmm/lmm.db was written by a newer lmm (schema version 29; this lmm reads up to 28): upgrade lmm to open it\",\n"+
+		"  \"details\": {\n"+
+		"    \"code\": \"schema_too_new\",\n"+
+		"    \"version\": 29,\n"+
+		"    \"supported\": 28\n"+
+		"  }\n"+
+		"}\n", out)
+}
+
+// TestCLI_ADatabaseFromANewerLMMCarriesTheCode: a real command against an
+// already-too-new database reports that envelope under --json.
+func TestCLI_ADatabaseFromANewerLMMCarriesTheCode(t *testing.T) {
+	setupAdapterWarningGames(t)
+	newer := migrateAsNewerLMM(t, filepath.Join(dataDir, "lmm.db"))
+
+	restoreFlags(t)
+	cfgDir, datDir := configDir, dataDir
+	resetChangedFlags(rootCmd)
+	configDir, dataDir = cfgDir, datDir
+	rootCmd.SetArgs([]string{"status", "--json"})
+	var runErr error
+	stdout, _, _ := captureStdoutAndStderr(t, func() error {
+		runErr = rootCmd.ExecuteContext(context.Background())
+		if runErr != nil {
+			reportError(runErr)
+		}
+		return nil
+	})
+	require.ErrorIs(t, runErr, core.ErrSchemaTooNew)
+
+	var doc struct {
+		Error   string         `json:"error"`
+		Details map[string]any `json:"details"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &doc), "one error document: %q", stdout)
+	assert.Contains(t, doc.Error, "was written by a newer lmm")
+	assert.Equal(t, core.SchemaTooNewCode, doc.Details["code"])
+	assert.EqualValues(t, newer, doc.Details["version"])
+	assert.EqualValues(t, newer-1, doc.Details["supported"])
+}

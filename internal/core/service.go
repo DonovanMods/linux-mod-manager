@@ -316,7 +316,8 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	dbPath := filepath.Join(cfg.DataDir, "lmm.db")
 	database, err := db.OpenWithOptions(dbPath, db.Options{Logger: log, KeyPath: cfg.KeyPath, WarnWriter: cfg.WarnWriter})
 	if err != nil {
-		return nil, fmt.Errorf("opening database: %w", err)
+		// #648 review: a too-new database carries its details as data.
+		return nil, openRefusal(err)
 	}
 
 	// Load games. The fingerprint is taken BEFORE the read on purpose: a

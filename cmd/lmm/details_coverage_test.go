@@ -96,7 +96,9 @@ var detailsCoverage = map[string]string{
 	"core.ProfileWarningsError":         "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
 	// #648: a newer lmm migrated the database under a running one - the
 	// code and both schema versions, for the web UI's restart banner.
-	"core.SchemaUpgradedError":         "TestReportError_JSON_SchemaUpgradedError",
+	"core.SchemaUpgradedError": "TestReportError_JSON_SchemaUpgradedError",
+	// #648 review: and the open's refusal of a database already that new.
+	"core.SchemaTooNewError":           "TestReportError_JSON_SchemaTooNewError",
 	"core.SnapshotRestorePartialError": "TestReportError_JSON_SnapshotRestorePartialError",
 	"core.SourceInUseError":            "TestReportError_JSON_SourceInUseError",
 	"core.TokenKeyError":               "TestReportError_JSON_TokenKeyError",

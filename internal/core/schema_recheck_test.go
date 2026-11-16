@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -144,4 +145,33 @@ func TestSchemaUpgradedError_Details(t *testing.T) {
 	assert.Equal(t, 29, err.Version)
 	assert.Equal(t, 28, err.Supported)
 	assert.ErrorIs(t, err, ErrSchemaTooNew)
+}
+
+// TestNewService_ADatabaseAlreadyTooNewCarriesTheCode (#648 review): the
+// open-time refusal carries the same details as the running one - code
+// schema_too_new and both versions - so a script branches on one code for
+// both. Its sentence is unchanged.
+func TestNewService_ADatabaseAlreadyTooNewCarriesTheCode(t *testing.T) {
+	dataDir := t.TempDir()
+	path := filepath.Join(dataDir, "lmm.db")
+	seed, err := db.New(path)
+	require.NoError(t, err)
+	require.NoError(t, seed.Close())
+	newer := migrateAsNewerLMM(t, path)
+
+	svc, err := NewService(ServiceConfig{ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir()})
+	require.Error(t, err)
+	assert.Nil(t, svc)
+	assert.ErrorIs(t, err, ErrSchemaTooNew)
+
+	var atOpen *SchemaTooNewError
+	require.ErrorAs(t, err, &atOpen)
+	assert.Equal(t, &SchemaTooNewError{Code: SchemaTooNewCode, Version: newer, Supported: newer - 1, Err: atOpen.Err}, atOpen)
+	assert.Same(t, atOpen, atOpen.Details())
+	var upgraded *SchemaUpgradedError
+	assert.False(t, errors.As(err, &upgraded), "an open's refusal is not the running process's")
+
+	var dbErr *db.SchemaTooNewError
+	require.ErrorAs(t, err, &dbErr)
+	assert.Equal(t, "opening database: "+dbErr.Error(), err.Error(), "the sentence is the one the open always gave")
 }
