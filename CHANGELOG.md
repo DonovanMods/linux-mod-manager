@@ -966,6 +966,40 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   API refuses the same selection the same way. A file the source gives no
   version goes with any version. **Behaviour change:** a mixed-version
   `--file` list that used to install now fails.
+- **Only a mod's main files must share one version (#662).** #647's rule
+  is narrowed to what actually breaks: an optional, update or miscellaneous
+  file (by the source's own category) often carries its own version, such
+  as a 1.2 patch for a 4.3 main file, and may now go with any version's
+  main file. A file the source gives no category, or one in an archived
+  category (where a source keeps an old file of any role), counts as a main
+  file, so a source that does not classify its files keeps #647's rule.
+  `lmm install` asks for a version only when the main files span more than
+  one, and then lists the chosen version's files followed by every
+  optional, update and miscellaneous file of another version, each labelled
+  with its version; the web UI's picker does the same. A `--file` list of a
+  main file and another version's optional patch, which #647 refused, now
+  installs and records the main file's version; two main files of
+  different versions are still refused. A mod's recorded version is now
+  named by its main file whichever file the source lists first.
+
+  A profile entry whose stored files still mix main files of more than one
+  version (recorded before #647, or edited by hand) is no longer replayed
+  as it is or partly dropped without a word. `lmm profile apply`,
+  `lmm profile switch` and `lmm profile import` (and their web UI jobs)
+  heal it: the main files of the entry's recorded version stay (the
+  newest version's when none is at the recorded one), every optional,
+  update and miscellaneous file stays, and the other main files are
+  dropped. Each plan says so before you confirm ("Will heal 1 mod(s) whose
+  stored main files are of more than one version: ~ Mod: keeps version
+  2.0, drops main-1.0.zip (1.0)"), its `--json` carries the new `heals`
+  member, and the run records the healed files on the profile, so the next
+  apply has nothing to do. A deploy that has to download a mod again and
+  an update heal the same way and warn, since neither has a file-level
+  plan; an update drops only main files of neither the installed nor the
+  new version. A collection's own entry is never healed: it installs the
+  curator's exact files, and the plan notes it (`curator_mixed`; a
+  NexusMods collection's import notes it too).
+
 - **A failed collection item gets advice that fits it (#660).** "Reinstall
   the mod or run 'lmm update' to adopt the current version" is an
   installed mod's remedy; a collection item whose pinned file is gone was

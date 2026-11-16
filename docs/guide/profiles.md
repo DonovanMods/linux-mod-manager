@@ -809,3 +809,16 @@ other files than the ones installed is reinstalled the same way, by an
 apply or a switch to the profile. A file swapped for another at the same
 version shows in the plan as `reinstall: files changed`. The order the
 files are listed in doesn't matter.
+
+A profile entry can still list main files from more than one version of a
+mod: one recorded before lmm checked this, or edited by hand. When an
+apply, a switch or an import installs that mod, it keeps the main files of
+the version the entry records (the newest version's, if none is at that
+version) and every optional, update and miscellaneous file, and drops the
+other main files. The plan lists each such mod under **Stored files healed
+to one version** (`Will heal ...` in the terminal) with the version kept
+and the files dropped, and the profile records the files kept, so the next
+apply has nothing to do. A deploy that has to download the mod again, or an
+update, does the same and says so in a warning. A collection's own entry is
+the exception: the curator chose those files, so they install as they are,
+and the plan lists the mod under **Collection files of mixed versions**.
