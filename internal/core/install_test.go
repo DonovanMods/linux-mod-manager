@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -874,9 +873,12 @@ func TestService_ApplyInstall_ForceReinstall_MissingCacheEntryCancelledDuringAct
 // missing entry: cloning its broken member must still fail rather than hiding
 // a real I/O error behind the recovery path.
 func TestService_ApplyInstall_ForceReinstall_BrokenCacheEntryStillFails(t *testing.T) {
-	// A Unix socket is a portable-enough unreadable cache member for this
-	// Linux application, but its path has a 108-byte kernel limit. Keep just
-	// the cache root short; the other test paths remain t.TempDir-owned.
+	// #659: a regular file nobody may read is the unreadable member - a
+	// socket used to be, until every copy of an entry learned to skip
+	// special files, which are never content.
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file with no read permission")
+	}
 	cacheDir, err := os.MkdirTemp("", "lmm477-")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(cacheDir) })
@@ -897,9 +899,7 @@ func TestService_ApplyInstall_ForceReinstall_BrokenCacheEntryStillFails(t *testi
 	// #639: the row records no files, so this marker is what makes the
 	// entry the reinstalled file's tree - the transaction's case.
 	require.NoError(t, cache.MarkFileComplete(entry, "mod1"))
-	socket, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(entry, "unreadable.sock"), Net: "unix"})
-	require.NoError(t, err)
-	defer func() { require.NoError(t, socket.Close(), "closing test socket") }()
+	require.NoError(t, os.WriteFile(filepath.Join(entry, "unreadable.esp"), []byte("x"), 0))
 
 	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)

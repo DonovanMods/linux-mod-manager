@@ -1,0 +1,28 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "result": {
+    "findings": [
+      {
+        "mod_id": "mod1",
+        "mod_name": "Mod One",
+        "file_id": "evil.esp",
+        "status": "cache_link",
+        "note": "evil.esp in the cache entry is a symbolic link; lmm keeps none in a mod's cache, never deploys or follows one, and --fix removes it",
+        "fixable": true
+      },
+      {
+        "mod_id": "mod1",
+        "mod_name": "Mod One",
+        "file_id": "2",
+        "status": "ok"
+      }
+    ],
+    "issues": 0,
+    "warnings": 1,
+    "checked": 2,
+    "has_files": true,
+    "mods": 1,
+    "checked_at": "<TIME>"
+  }
+}
