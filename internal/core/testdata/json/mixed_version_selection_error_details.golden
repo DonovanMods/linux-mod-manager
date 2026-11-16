@@ -1,0 +1,23 @@
+{
+  "code": "mixed_version_files",
+  "versions": [
+    {
+      "version": "2.0",
+      "files": [
+        {
+          "id": "21",
+          "file_name": "main-2.0.zip"
+        }
+      ]
+    },
+    {
+      "version": "1.0",
+      "files": [
+        {
+          "id": "12",
+          "file_name": "patch-1.0.zip"
+        }
+      ]
+    }
+  ]
+}
