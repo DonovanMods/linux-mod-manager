@@ -3180,6 +3180,13 @@ a.row-menu__item.mod-page-link {
   margin: 0;
 }
 
+/* Issue 648: a newer lmm upgraded the database under this server. Not a
+ * notice to dismiss but a stop - nothing works until a restart - so it
+ * carries the danger edge and no close button. */
+.release-banner--alert {
+  border-left: 4px solid var(--danger);
+}
+
 /* The tool's own output, for a failure lmm could not classify - the same
  * tail the terminal prints under its error line. */
 .job-progress__tool-output {

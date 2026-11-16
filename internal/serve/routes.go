@@ -26,14 +26,17 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/search", s.wrap(s.handleAPISearch))
 	s.mux.Handle("GET /api/v1/updates", s.wrap(s.handleAPIUpdates))
 	// lmm's own release, not a mod's (#568, api_release.go).
-	s.mux.Handle("GET /api/v1/updates/lmm", s.wrap(s.handleAPIReleaseStatus))
-	s.mux.Handle("GET /api/v1/service", s.wrap(s.handleAPIServiceStatus))
+	s.mux.Handle("GET /api/v1/updates/lmm", s.wrapNoDB(s.handleAPIReleaseStatus))
+	// lmm-serve.service and the lmm binary it runs (#649, api_service.go):
+	// no database, so it answers past #648's schema gate, where it says
+	// which binary the service should be restarted onto.
+	s.mux.Handle("GET /api/v1/service", s.wrapNoDB(s.handleAPIServiceStatus))
 	// Setup > Updates' "Update automatically" switch (#586): a
 	// single-step config.yaml write, answered with the status above.
 	s.mux.Handle("PUT /api/v1/settings/auto-update", s.wrap(s.handleAPIAutoUpdateSetting))
 	// The web UI showed the automatic update's notice (#586): told once,
 	// for every frontend.
-	s.mux.Handle("POST /api/v1/updates/lmm/notice", s.wrap(s.handleAPIAutoUpdateNotice))
+	s.mux.Handle("POST /api/v1/updates/lmm/notice", s.wrapNoDB(s.handleAPIAutoUpdateNotice))
 	s.mux.Handle("GET /api/v1/profiles", s.wrap(s.handleAPIProfiles))
 	s.mux.Handle("GET /api/v1/health", s.wrap(s.handleAPIHealth))
 	s.mux.Handle("GET /api/v1/conflicts", s.wrap(s.handleAPIConflicts))
@@ -160,14 +163,14 @@ func (s *Server) routes() {
 	// The activity tray's index (api_activity.go). GET and POST on the same
 	// path are two routes to net/http's method-aware mux, so the index sits
 	// beside the mutation entry point rather than needing a path of its own.
-	s.mux.Handle("GET /api/v1/jobs", s.wrap(s.handleAPIJobs))
-	s.mux.Handle("GET /api/v1/jobs/{id}", s.wrap(s.handleAPIJobStatus))
-	s.mux.Handle("GET /api/v1/jobs/{id}/events", s.wrap(s.handleAPIJobEvents))
+	s.mux.Handle("GET /api/v1/jobs", s.wrapNoDB(s.handleAPIJobs))
+	s.mux.Handle("GET /api/v1/jobs/{id}", s.wrapNoDB(s.handleAPIJobStatus))
+	s.mux.Handle("GET /api/v1/jobs/{id}/events", s.wrapNoDB(s.handleAPIJobEvents))
 	// The multiplexed session stream (api_activity.go). It sits beside the
 	// per-job stream above rather than replacing it: this one summarises
 	// every job's lifecycle for the tray, that one carries one job's full
 	// typed events for whoever opened it.
-	s.mux.Handle("GET /api/v1/events", s.wrap(s.handleAPIEvents))
+	s.mux.Handle("GET /api/v1/events", s.wrapNoDB(s.handleAPIEvents))
 	// The /api/v1/ subtree fallback must be registered LAST in spirit
 	// (net/http's most-specific-pattern-wins makes the order irrelevant in
 	// fact): it claims every /api/v1 path no route above took, so no API

@@ -1128,6 +1128,22 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   The web UI's **Setup** > **Updates** shows the service's binary and the
   same warning, read from the new `GET /api/v1/service`.
 
+- **A running lmm stops when a newer lmm upgrades the database under it
+  (#648).** The database's version was checked only when lmm started, so a
+  `lmm serve` left running across an upgrade (or a command waiting for
+  another to finish) kept writing to a database a newer lmm had changed,
+  and failed part-way with an SQL error. Every change now checks first and
+  refuses with "another, newer lmm upgraded the database; restart this lmm
+  (for the web UI: `lmm service install` or restart lmm serve on the newer
+  binary)". The web UI refuses every request that reads or writes the
+  database the same way (HTTP 503) and shows a banner saying so, which
+  stays until it is restarted onto the newer binary; the activity stream,
+  job status and lmm's own release status keep answering. Under `--json`
+  and in the web UI's error envelope the refusal's details are
+  `{"code": "schema_too_new", "version", "supported"}` - and so are the
+  details of the refusal at start-up of a database that was already newer,
+  whose message is unchanged.
+
 - **A collection import in the web UI shows its progress and its failure
   (#655).** A job whose own control is not on screen (a collection import
   confirmed in a window that then closes, or an install you navigated

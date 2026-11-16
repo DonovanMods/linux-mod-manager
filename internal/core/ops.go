@@ -57,6 +57,15 @@ func (s *Service) beginOpVia(ctx context.Context, acquire func(context.Context) 
 	if err != nil {
 		return nil, err
 	}
+	// #648: a newer lmm may have migrated the database since this one
+	// opened it - while a CLI command waited on the lock just above, or at
+	// any point in `lmm serve`'s life. Checked once the slot is held, so a
+	// wait cannot hide a migration, and before anything below writes (the
+	// backfill included): a refusal here has run nothing.
+	if err := s.CheckSchema(ctx); err != nil {
+		release()
+		return nil, err
+	}
 	// #431 (fix round 2): a profile-document backfill still owed runs
 	// FIRST, inside this slot. The mutation about to run can write the very
 	// flag values the backfill reads as evidence - `lmm purge` clears
