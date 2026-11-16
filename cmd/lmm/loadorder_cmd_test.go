@@ -171,6 +171,16 @@ func TestCLI_CollectionPlanPrintsTheLoadOrder(t *testing.T) {
 	assert.Contains(t, stdout, "… and 2 more")
 	assert.Contains(t, stdout, "written to Cyberpunk 2077's list at every deploy")
 	assert.Contains(t, stdout, "does not write this load order")
+
+	// #646: an order whose list enables its files says lmm lists them.
+	stdout = captureStdout(t, func() error {
+		printCollectionLoadOrders([]core.CollectionLoadOrderSummary{
+			{ID: "baldursgate3", Label: "Paks", Managed: true, Enables: true, Files: []core.CollectionLoadOrderFile{{Name: "ImpUI.pak"}}},
+		}, &domain.Game{ID: "bg3", Name: "Baldur's Gate 3"})
+		return nil
+	})
+	assert.Contains(t, stdout, "Paks load order (baldursgate3): 1 file(s)\n")
+	assert.Contains(t, stdout, "lmm lists these files in Baldur's Gate 3's mod list, in this order, at every deploy")
 }
 
 // verify prints a drifted load-order list, and says how to repair it.

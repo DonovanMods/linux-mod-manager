@@ -1,0 +1,15 @@
+{
+  "id": "baldursgate3",
+  "label": "Paks",
+  "managed": true,
+  "enables": true,
+  "files": [
+    {
+      "name": "ImpUI.pak",
+      "mod": "ImpUI"
+    },
+    {
+      "name": "Override.pak"
+    }
+  ]
+}

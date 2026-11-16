@@ -4545,6 +4545,13 @@ func TestJSONGoldens(t *testing.T) {
 				Files: []core.CollectionLoadOrderFile{{Name: "! fixes.archive", Mod: "Story Quest Fixes"}, {Name: "basegame_x.archive"}}},
 		},
 		{
+			// #646: a collection's Baldur's Gate 3 pak order, which lmm lists
+			// in the game's mod list (enables).
+			"collection_load_order_summary_paks",
+			core.CollectionLoadOrderSummary{ID: "baldursgate3", Label: "Paks", Managed: true, Enables: true,
+				Files: []core.CollectionLoadOrderFile{{Name: "ImpUI.pak", Mod: "ImpUI"}, {Name: "Override.pak"}}},
+		},
+		{
 			// #620: one file of a collection's load order.
 			"collection_load_order_file",
 			core.CollectionLoadOrderFile{Name: "! fixes.archive", Mod: "Story Quest Fixes"},

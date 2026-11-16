@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -124,5 +125,51 @@ func TestE2E_LoadOrderTab_BG3PaksEnableAndMove(t *testing.T) {
 	assert.Contains(t, plan, "lmm keeps listing its files in modsettings.lsx")
 	data = readFileE2E(t, list)
 	assert.Less(t, strings.Index(data, e2eUUIDB), strings.Index(data, e2eUUIDA), "the paks keep their order and stay listed")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+const e2eNexusPakRecipe = `{"Name": "Faerun", "Mods": [
+	{"Name": "Ten", "Version": "1.0", "SourceType": "nexus", "ModID": "10", "FileID": "100", "UpdatePolicy": "exact"}],
+	"LoadOrder": {"Entries": 2, "Files": [
+		{"Name": "Ten.pak", "Enabled": true, "ModHint": "Ten-10-1-0"},
+		{"Name": "Other.pak", "Enabled": true, "ModHint": "Other-99-1"}]}}`
+
+// A NexusMods collection's top-level loadOrder on a Baldur's Gate 3 game
+// (#646): the import plan shows the pak order and says lmm lists the paks
+// in the game's mod list, and the import saves it on the profile.
+func TestE2E_NexusCollection_PlanShowsThePakOrder(t *testing.T) {
+	f := newE2EFixture(t)
+	app.RegisterAdapters(f.Svc)
+	f.Svc.RegisterSource(e2eNexusSource{newFakeSource("nexusmods")})
+	prefix := filepath.Join(t.TempDir(), "pfx")
+	require.NoError(t, os.MkdirAll(filepath.Join(prefix, "drive_c", "users", "steamuser", "AppData", "Local"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(prefix, "system.reg"), []byte("WINE REGISTRY Version 2\n"), 0o644))
+	f.Game.SourceIDs["nexusmods"] = "baldursgate3"
+	f.Game.Adapter = "baldurs-gate-3"
+	f.Game.Prefix, f.Game.PrefixUser = prefix, "steamuser"
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+	seedE2ENexusRecipe(t, f, "paks", e2eNexusPakRecipe)
+
+	var heading, applied, files string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		openNexusImport("paks"),
+		chromedp.WaitVisible(`[data-testid="collection-load-order"]`, chromedp.ByQuery),
+		textContent(`[data-testid="collection-load-order"] .plan__heading`, &heading),
+		textContent(`[data-testid="collection-load-order-applied"]`, &applied),
+		clickWhenSettled(`[data-testid="collection-load-order"] summary`),
+		chromedp.WaitVisible(`[data-testid="collection-load-order-files"]`, chromedp.ByQuery),
+		textContent(`[data-testid="collection-load-order-files"]`, &files),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+	)
+	assert.Equal(t, "Paks load order (2)", heading)
+	assert.Contains(t, applied, "lmm lists these files in the game's mod list")
+	assert.Contains(t, files, "1. Ten.pak")
+	assert.Contains(t, files, "2. Other.pak")
+
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "Faerun")
+		return err == nil && len(p.LoadOrders["baldursgate3"]) == 2
+	}, 15*time.Second, 50*time.Millisecond, "the import saves the pak order on the profile")
 	assert.Empty(t, f.BrowserErrors())
 }

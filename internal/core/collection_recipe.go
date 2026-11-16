@@ -97,6 +97,9 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 	// #620: a recipe's file load order is replayed only where the game's
 	// adapter writes it.
 	in.loadOrders = s.loadOrderSupport(game)
+	// #646: and its top-level loadOrder, where the game's adapter has the
+	// order a collection carries that way.
+	in.collectionLoadOrder = s.collectionLoadOrderID(game)
 	in.withOptional = opts.WithOptional
 	if len(opts.Optional) > 0 {
 		in.optional = make(map[string]bool, len(opts.Optional))
@@ -107,7 +110,7 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 
 	dir, err := s.fetchCollectionRecipe(ctx, game, sourceID, fetcher, list)
 	if err == nil {
-		in.manifest, err = parseRecipe(dir, fetcher, in.loadOrders)
+		in.manifest, err = parseRecipe(dir, fetcher, in.loadOrders, in.collectionLoadOrder)
 	}
 	if err == nil && recipeNeedsFiles(in.manifest) && !recipeHasFiles(dir) {
 		// #610: an entry C2 extracted holds the manifest alone; this
@@ -116,7 +119,7 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 		in.manifest = nil
 		if err = os.RemoveAll(dir); err == nil {
 			if dir, err = s.fetchCollectionRecipe(ctx, game, sourceID, fetcher, list); err == nil {
-				in.manifest, err = parseRecipe(dir, fetcher, in.loadOrders)
+				in.manifest, err = parseRecipe(dir, fetcher, in.loadOrders, in.collectionLoadOrder)
 			}
 		}
 	}
@@ -143,7 +146,7 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 // parseRecipe parses the recipe in dir through an os.Root - nothing the
 // parser opens can leave the entry, whatever is in it - and refuses a file
 // load order the game writes but could not be read.
-func parseRecipe(dir string, fetcher source.CollectionManifestFetcher, loadOrders func(string) bool) (*source.CollectionManifest, error) {
+func parseRecipe(dir string, fetcher source.CollectionManifestFetcher, loadOrders func(string) bool, collectionLoadOrder string) (*source.CollectionManifest, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
@@ -151,7 +154,7 @@ func parseRecipe(dir string, fetcher source.CollectionManifestFetcher, loadOrder
 	defer func() { _ = root.Close() }()
 	m, err := fetcher.ParseManifest(root.FS())
 	if err == nil {
-		err = unreadableLoadOrder(&m, loadOrders)
+		err = unreadableLoadOrder(&m, loadOrders, collectionLoadOrder)
 	}
 	if err != nil {
 		return nil, err
@@ -184,13 +187,30 @@ func (s *Service) modTypeRoutes(game *domain.Game) func(modType string) bool {
 // is the recipe's to replay, so the recipe is unreadable, as a parse error
 // makes it. An order the game does not write is refused by its feature
 // whatever its entries hold, so its unreadable entries change nothing.
-func unreadableLoadOrder(m *source.CollectionManifest, supported func(id string) bool) error {
+func unreadableLoadOrder(m *source.CollectionManifest, supported func(id string) bool, collectionLoadOrder string) error {
 	for _, lo := range m.FileLoadOrders {
 		if lo.Invalid != "" && supported != nil && supported(lo.ID) {
 			return fmt.Errorf("%w: the %s load order: %s", source.ErrInvalidManifest, lo.ID, lo.Invalid)
 		}
 	}
+	// #646: the top-level loadOrder is the game's order collectionLoadOrder
+	// (empty: the game has none, and the feature refuses it).
+	if lo := m.LoadOrder; lo != nil && lo.Invalid != "" && collectionLoadOrder != "" && supported != nil && supported(collectionLoadOrder) {
+		return fmt.Errorf("%w: the collection's load order: %s", source.ErrInvalidManifest, lo.Invalid)
+	}
 	return nil
+}
+
+// collectionLoadOrderID is the id of game's file load order a collection
+// carries as its top-level loadOrder (adapter.FileLoadOrderSpec.
+// CollectionLoadOrder, #646), or "" when it has none.
+func (s *Service) collectionLoadOrderID(game *domain.Game) string {
+	for _, spec := range s.loadOrderSpecs(game) {
+		if spec.CollectionLoadOrder {
+			return spec.ID
+		}
+	}
+	return ""
 }
 
 // loadOrderSupport reports which file load orders game's adapter writes

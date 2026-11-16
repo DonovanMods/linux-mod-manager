@@ -187,6 +187,9 @@ type CollectionLoadOrderSummary struct {
 	// a conflict with a later one.
 	Managed   bool `json:"managed"`
 	FirstWins bool `json:"first_wins,omitzero"`
+	// Enables is whether the order's list enables the files as well as
+	// ordering them (#646, Baldur's Gate 3's modsettings.lsx).
+	Enables bool `json:"enables,omitzero"`
 	// Files are the order's files, first loaded first.
 	Files []CollectionLoadOrderFile `json:"files"`
 }
@@ -206,7 +209,7 @@ func (s *Service) summariseLoadOrders(game *domain.Game, orders domain.FileLoadO
 	for _, id := range orders.IDs() {
 		sum := CollectionLoadOrderSummary{ID: id, Files: []CollectionLoadOrderFile{}}
 		if spec, ok := s.loadOrderSpec(game, id); ok {
-			sum.Label, sum.Managed, sum.FirstWins = spec.Label, true, spec.FirstWins
+			sum.Label, sum.Managed, sum.FirstWins, sum.Enables = spec.Label, true, spec.FirstWins, spec.Enables()
 		}
 		for _, name := range orders[id] {
 			sum.Files = append(sum.Files, CollectionLoadOrderFile{Name: name})

@@ -4,7 +4,10 @@
 //
 // Each order raises file_load_order:<id>, supported for a game whose
 // adapter writes that order (adapter.FileLoadOrderer: Cyberpunk 2077's
-// cyberpunk2077-archive). Only a supported order is carried into the
+// cyberpunk2077-archive). A recipe's top-level loadOrder (#646) is the
+// game's order a collection carries that way (Baldur's Gate 3's
+// baldursgate3, adapter.FileLoadOrderSpec.CollectionLoadOrder), under that
+// order's id; for any other game it raises manifest:loadOrder. Only a supported order is carried into the
 // document; any other blocks the import, as before. The names are the
 // curator's, kept exactly as written - they are matched against the files
 // deployed - and L1's checks (checkCollectionLoadOrders) refuse one that
@@ -13,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -48,8 +52,15 @@ func convertLoadOrders(in convertInput, out *ConvertedCollection, items []*convI
 			}
 		}
 	}
+	all := m.FileLoadOrders
+	if m.LoadOrder != nil && in.collectionLoadOrder != "" {
+		// #646: the top-level loadOrder, under the game's order's id.
+		lo := *m.LoadOrder
+		lo.ID = in.collectionLoadOrder
+		all = append(slices.Clone(all), lo)
+	}
 	var orders domain.FileLoadOrders
-	for _, lo := range m.FileLoadOrders {
+	for _, lo := range all {
 		if !in.loadOrders(lo.ID) {
 			continue
 		}

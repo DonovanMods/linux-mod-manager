@@ -323,6 +323,11 @@ type convertInput struct {
 	// loadOrders reports which of a recipe's file load orders the game's
 	// adapter writes (#620); nil supports none.
 	loadOrders func(id string) bool
+	// collectionLoadOrder is the id of the game's file load order a recipe
+	// carries as its top-level loadOrder (#646: Baldur's Gate 3's paks),
+	// or "" for a game with none, whose top-level loadOrder is refused as
+	// manifest:loadOrder.
+	collectionLoadOrder string
 	// recipe is what the recipe's archive holds beside its manifest
 	// (#610): its bundled/ trees and patches/ files, read by
 	// ConvertSourceCollection. nil when nothing was read, and then a
@@ -405,6 +410,16 @@ func convertCollection(raw convertInput) (*ConvertedCollection, error) {
 		// adapter writes it (supported, below).
 		for _, lo := range in.manifest.FileLoadOrders {
 			raiseCollection(CollectionFeatureFileLoadOrderPrefix + lo.ID)
+		}
+		// #646: the top-level loadOrder is the game's own order, where its
+		// adapter has one a collection carries that way; anywhere else it is
+		// the unknown key it always was.
+		if in.manifest.LoadOrder != nil {
+			if in.collectionLoadOrder != "" {
+				raiseCollection(CollectionFeatureFileLoadOrderPrefix + in.collectionLoadOrder)
+			} else {
+				raiseCollection(CollectionFeatureManifestKeyPrefix + "loadOrder")
+			}
 		}
 	} else {
 		out.ManifestError = in.manifestErr

@@ -370,9 +370,12 @@ func printCollectionLoadOrders(orders []core.CollectionLoadOrderSummary, game *d
 				fmt.Printf("  %3d. %s\n", i+1, f.Name)
 			}
 		}
-		if o.Managed {
+		switch {
+		case o.Managed && o.Enables:
+			fmt.Printf("  Saved on the profile: lmm lists these files in %s's mod list, in this order, at every deploy.\n", game.Name)
+		case o.Managed:
 			fmt.Printf("  Saved on the profile and written to %s's list at every deploy.\n", game.Name)
-		} else {
+		default:
 			fmt.Printf("  %s's adapter does not write this load order, so the import is refused for it.\n", game.Name)
 		}
 	}
