@@ -41,11 +41,11 @@ func TestStoredFileLines(t *testing.T) {
 
 func TestStoredFileLines_SanitizesNames(t *testing.T) {
 	lines := storedFileLines([]core.StoredFilesHeal{{SourceID: "src", ModID: "1", Name: "Mod\x1b[31m", Version: "2.0", Dropped: []core.MixedVersion{
-		{Version: "1.0", Files: []core.MixedVersionFile{{ID: "11", FileName: "a‮.zip"}}},
+		{Version: "1.0", Files: []core.MixedVersionFile{{ID: "11", FileName: "a\u202e.zip"}}},
 	}}}, nil)
 	for _, l := range lines {
 		assert.NotContains(t, l, "\x1b")
-		assert.NotContains(t, l, "‮")
+		assert.NotContains(t, l, "\u202e")
 	}
 }
 
