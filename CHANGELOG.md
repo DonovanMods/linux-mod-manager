@@ -908,6 +908,21 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Changed
 
+- **An install takes files from one version of a mod (#647).**
+  `lmm install` used to accept files of different versions together (through
+  the file picker or `--file a,b`), install them all, and record one
+  version, so the mod's files no longer matched its recorded version and a
+  later update or rollback worked from the wrong one. Now, when a mod's
+  files span more than one version, the picker asks for the version first
+  and then lists only that version's files, as the web UI's picker already
+  did; `--version` skips the version step, and `--yes` installs the same
+  default file as before. A `--file` list naming files of different
+  versions is refused with "these files belong to versions X and Y; pick
+  one version", nothing downloaded, and the `--json` error's details carry
+  the code `mixed_version_files` and each version's files. The web UI's
+  API refuses the same selection the same way. A file the source gives no
+  version goes with any version. **Behaviour change:** a mixed-version
+  `--file` list that used to install now fails.
 - **A failed collection item gets advice that fits it (#660).** "Reinstall
   the mod or run 'lmm update' to adopt the current version" is an
   installed mod's remedy; a collection item whose pinned file is gone was
