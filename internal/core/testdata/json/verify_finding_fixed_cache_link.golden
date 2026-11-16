@@ -1,0 +1,7 @@
+{
+  "mod_id": "8939586",
+  "mod_name": "Auctionator",
+  "file_id": "Interface/evil.lua",
+  "status": "fixed_cache_link",
+  "note": "removed Interface/evil.lua, a symbolic link, from the cache entry"
+}

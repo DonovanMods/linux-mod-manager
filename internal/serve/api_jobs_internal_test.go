@@ -98,6 +98,15 @@ func TestAPIStartJob_PlanIsSingleUse(t *testing.T) {
 	require.Equal(t, http.StatusConflict, second.Code, second.Body.String())
 	assert.Equal(t, apiContentType, second.Header().Get("Content-Type"))
 	assert.Contains(t, decodeEnvelope(t, second.Body.Bytes()).Error, "no longer available")
+
+	// The first job's Apply is still deploying into the test's temp dirs;
+	// let it finish before t.TempDir's cleanup removes them, or the
+	// cleanup races its writes ("directory not empty").
+	var started struct {
+		JobID jobID `json:"job_id"`
+	}
+	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &started))
+	awaitJob(t, s, started.JobID)
 }
 
 // TestAPIStartJob_UnknownPlanID_409 answers an id that was never issued the

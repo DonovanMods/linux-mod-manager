@@ -133,6 +133,10 @@ type VerifyFinding struct {
 	//	                      (#642); a mod with no recorded file is not,
 	//	                      nor is a deployed copy convergence kept as the
 	//	                      only one left (#645, LastCopyReason)
+	//	cache_link            always: --fix removes the link or special
+	//	                      file from the cache entry (#659); a recorded
+	//	                      member it stood for is then a cache_incomplete
+	//	                      row with that row's own fixability
 	//	no_checksum           a non-local source: redownload-to-populate,
 	//	                      or, for a file the source won't serve, a fill
 	//	                      from the mod's own complete cache entry (#514)
@@ -955,6 +959,11 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	result.Mods, result.Unverified = verifyScope(installedMods, files, opts.ModFilter)
 	r.emitEv(VerifyEvent{Kind: VerifyEvBegin, HasFiles: result.HasFiles, Mods: result.Mods})
 	if err := r.modPathPass(); err != nil {
+		return result, err
+	}
+	// #659: before every pass that reads a cache entry, so a link --fix
+	// removes is what they all see gone.
+	if err := r.cacheLinkPass(installedMods); err != nil {
 		return result, err
 	}
 

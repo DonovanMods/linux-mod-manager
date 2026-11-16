@@ -39,6 +39,16 @@ from a lost file: import the archive again, or delete the file from the
 game folder by hand - verify then lists only its leftover record, which
 **Repair** (or `lmm verify --fix`) drops.
 
+A mod's cache should hold only the mod's own files. If it holds a
+symbolic link, or a special file such as a named pipe, verify names the
+mod and the path (**LINK IN CACHE** in the terminal). An archive unpacked
+by an older lmm could leave one there. lmm never deploys or follows one,
+and **Repair** (or `lmm verify --fix`) deletes the link itself, never what
+it points to. If the link stood in place of one of the mod's own files,
+verify also reports that file as missing from the cache, and the same
+repair downloads it again. A mod imported from an archive has to be
+imported again instead.
+
 The **Verify** button is in the library toolbar. In the terminal:
 
 ```bash

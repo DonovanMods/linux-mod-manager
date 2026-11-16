@@ -593,7 +593,8 @@ func (c *Cache) Store(k Key, relativePath string, content []byte) error {
 	return nil
 }
 
-// ListFiles returns all files in a cached mod version.
+// ListFiles returns all regular files in a cached mod version: a symlink
+// or special file in it is never listed (#659).
 //
 // This is the choke point every consumer of a cache entry's contents goes
 // through - Installer.Install/Replace/Undeploy, DetectConflicts, `lmm
@@ -627,8 +628,13 @@ func walkEntries(modPath string, includeReserved bool) ([]string, error) {
 		if !includeReserved && isReserved(d.Name()) {
 			return nil
 		}
-		// Skip symlinks to avoid traversing outside cache root
-		if d.Type()&fs.ModeSymlink != 0 {
+		// Only regular files are content (#659). A symlink could lead
+		// outside the cache root, and a FIFO, socket or device would block
+		// or misbehave in whatever opens it - a copy deploy, CloneMod - so
+		// neither is ever listed, deployed or copied. Nothing lmm writes is
+		// one; an extraction from before #658 could leave one, which `lmm
+		// verify` reports as cache_link and --fix removes.
+		if !d.Type().IsRegular() {
 			return nil
 		}
 
