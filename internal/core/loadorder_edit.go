@@ -20,7 +20,9 @@ import (
 // sees, with the move applied, so recording it moves nothing else. A
 // profile that ordered nothing starts ordering the list with its first
 // move. A reset clears the profile's order: lmm hands the list back to the
-// game (and the user) at once, as a purge would.
+// game (and the user) at once, as a purge would - except for a list that
+// enables its files (#646, Baldur's Gate 3), which lmm keeps writing, in
+// the order it has.
 //
 // Only lmm's own files are the profile's to move: a file lmm did not
 // deploy keeps its place in the order the game loads it in (#620's
@@ -133,7 +135,13 @@ func (s *Service) PlanFileLoadOrderEdit(ctx context.Context, game *domain.Game, 
 	case LoadOrderOpReset:
 		plan.NoChanges = len(base) == 0
 		if !plan.NoChanges {
-			plan.Changes = []string{fmt.Sprintf("clear the profile's %s order (%d file(s)): the game's own order applies again", spec.Label, len(dedupeNames(base)))}
+			after := "the game's own order applies again"
+			if spec.Enables() {
+				// #646: the list enables the files too, so it stays lmm's to
+				// write; only the recorded order goes.
+				after = fmt.Sprintf("lmm keeps listing its files in %s in the order it has them now, new ones at the end", spec.ListFile)
+			}
+			plan.Changes = []string{fmt.Sprintf("clear the profile's %s order (%d file(s)): %s", spec.Label, len(dedupeNames(base)), after)}
 		}
 	case LoadOrderOpMove:
 		next, change, err := moveInOrder(before, base, edit)
@@ -144,8 +152,10 @@ func (s *Service) PlanFileLoadOrderEdit(ctx context.Context, game *domain.Game, 
 		plan.NoChanges = slices.Equal(next, base)
 		if !plan.NoChanges {
 			plan.Changes = []string{change}
-			if len(base) == 0 {
+			if len(base) == 0 && !spec.Enables() {
 				plan.Changes = append(plan.Changes, fmt.Sprintf("the profile now orders the %s list, so lmm writes %s at every deploy", spec.Label, spec.ListFile))
+			} else if len(base) == 0 {
+				plan.Changes = append(plan.Changes, fmt.Sprintf("the profile now records the %s order, which lmm writes to %s at every deploy", spec.Label, spec.ListFile))
 			}
 		}
 	default:

@@ -48,3 +48,19 @@ func TestFileLoadOrderSpec_Covers(t *testing.T) {
 	assert.Equal(t, "lines", adapter.FileListLines.String())
 	assert.Equal(t, "none", adapter.FileListNone.String())
 }
+
+func TestFileLoadOrderSpec_ListDirectoryAndEnables(t *testing.T) {
+	spec := adapter.FileLoadOrderSpec{ID: "x", Dir: adapter.RootedPath{Root: adapter.SpecRootUserDir, Path: "a/Mods"},
+		Extensions: []string{".pak"}, ListFile: "modsettings.lsx", Format: adapter.FileListModSettings}
+	assert.Equal(t, spec.Dir, spec.ListDirectory(), "no ListDir is Dir")
+	assert.True(t, spec.Enables())
+	assert.True(t, spec.Valid())
+	spec.ListDir = adapter.RootedPath{Root: adapter.SpecRootUserDir, Path: "a/PlayerProfiles/Public"}
+	assert.Equal(t, "a/PlayerProfiles/Public", spec.ListDirectory().Path)
+	assert.True(t, spec.Valid())
+	spec.ListDir.Root = adapter.SpecRootGame
+	assert.False(t, spec.Valid(), "a list directory under another root is no spec")
+	assert.False(t, adapter.FileLoadOrderSpec{Format: adapter.FileListLines}.Enables())
+	assert.Equal(t, "modsettings", adapter.FileListModSettings.String())
+	assert.Equal(t, "user_dir", adapter.SpecRootUserDir.String())
+}

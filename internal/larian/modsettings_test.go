@@ -191,3 +191,21 @@ func TestParseModSettings_Refuses(t *testing.T) {
 		})
 	}
 }
+
+// An entry read from another file - a kept original - is written as its
+// own bytes, and is never taken for this file's entry at the same place.
+func TestRender_AnEntryFromAnotherFileIsNotThisFilesOwn(t *testing.T) {
+	current, err := ParseModSettings([]byte(patch8))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := strings.Replace(patch8, "Mod Configuration Menu", "Another Menu", 1)
+	original, err := ParseModSettings([]byte(other))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := current.Render([]ModEntry{current.Entries[0], original.Entries[1]})
+	if string(out) == patch8 || !strings.Contains(string(out), "Another Menu") {
+		t.Fatalf("the other file's entry was taken for this file's own:\n%s", out)
+	}
+}

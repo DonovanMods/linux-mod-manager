@@ -21,6 +21,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/larian"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
@@ -213,6 +214,11 @@ type Service struct {
 	// user directory still checks out (prefixRootMemo).
 	prefixRootsMu sync.Mutex
 	prefixRoots   map[string]prefixRootMemo
+	// pakMeta caches the modules a Baldur's Gate 3 .pak declares (#646),
+	// by the file's identity, size and modification time (pakModules):
+	// every deploy reads them for the game's mod list.
+	pakMetaMu sync.Mutex
+	pakMeta   map[pakMetaKey][]larian.Module
 	// opLockPath is ServiceConfig.OpLockPath: the advisory lock file
 	// beginOp takes around every mutation, or "" for no cross-process lock.
 	opLockPath string

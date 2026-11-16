@@ -104,6 +104,10 @@ const (
 	// list file. For every game PluginSpec covers, the "My Games" folder
 	// and the AppData folder have the same name.
 	SpecRootMyGames
+	// SpecRootUserDir is the Windows user directory inside the game's
+	// Wine prefix (drive_c/users/<user>): where Baldur's Gate 3 keeps its
+	// Mods folder and its mod list (#646). Only a file load order uses it.
+	SpecRootUserDir
 )
 
 // String returns the root's diagnostic name.
@@ -113,6 +117,8 @@ func (r SpecRoot) String() string {
 		return "game"
 	case SpecRootMyGames:
 		return "my_games"
+	case SpecRootUserDir:
+		return "user_dir"
 	default:
 		return "unknown"
 	}

@@ -15,9 +15,10 @@ import (
 // for each of the game's file load orders, and what placed each one.
 
 // ErrNoFileLoadOrder is the refusal for a game whose adapter has no file
-// load order, or not the one asked for: only Cyberpunk 2077 (adapter:
-// cyberpunk2077) has one.
-var ErrNoFileLoadOrder = errors.New("this game has no file load order: only a game on the cyberpunk2077 adapter has one (lmm game edit <game> --adapter cyberpunk2077)")
+// load order, or not the one asked for: Cyberpunk 2077 (adapter:
+// cyberpunk2077) and Baldur's Gate 3 (adapter: baldurs-gate-3, #646) have
+// one.
+var ErrNoFileLoadOrder = errors.New("this game has no file load order: only a game on the cyberpunk2077 or baldurs-gate-3 adapter has one (lmm game edit <game> --adapter <adapter>)")
 
 // FileLoadOrderEntry is one file of a FileLoadOrderReport.
 type FileLoadOrderEntry struct {
@@ -49,6 +50,13 @@ type FileLoadOrderReport struct {
 	// FirstWins reports that a file earlier in the order wins a conflict
 	// with a later one.
 	FirstWins bool `json:"first_wins"`
+	// Enables reports that the list enables the files as well as ordering
+	// them (#646, Baldur's Gate 3's modsettings.lsx): lmm writes it at
+	// every deploy, whether or not the profile records an order, and a
+	// file it does not name does not load. Files' external entries are the
+	// list's own (the game's base entry, mods enabled outside lmm), named
+	// by their display names.
+	Enables bool `json:"enables,omitzero"`
 	// Active reports that Profile is the game's active profile. Only its
 	// files are deployed, so only its effective order can be worked out:
 	// for another profile Files is empty and NotDeployed is its whole
@@ -138,7 +146,7 @@ func (s *Service) fileLoadOrder(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 	report := &FileLoadOrderReport{
-		GameID: game.ID, Profile: profileName, ID: spec.ID, Label: spec.Label, FirstWins: spec.FirstWins,
+		GameID: game.ID, Profile: profileName, ID: spec.ID, Label: spec.Label, FirstWins: spec.FirstWins, Enables: spec.Enables(),
 		Recorded: len(order) > 0, Files: []FileLoadOrderEntry{},
 	}
 	if _, recordedOnly, err := s.profileScope(ctx, game.ID, profileName); err != nil {
@@ -176,6 +184,9 @@ func (s *Service) fileLoadOrder(ctx context.Context, game *domain.Game, profileN
 		report.Files = append(report.Files, e)
 	}
 	for _, name := range dedupeNames(order) {
+		if c.ms != nil && c.ms.unlisted[loadOrderKey(name)] {
+			continue // deployed, but a pak with no entry of its own (#646)
+		}
 		if _, ok := c.managed[loadOrderKey(name)]; !ok {
 			report.NotDeployed = append(report.NotDeployed, name)
 		}

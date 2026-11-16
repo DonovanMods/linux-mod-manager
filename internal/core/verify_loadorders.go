@@ -6,6 +6,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
@@ -129,12 +130,25 @@ func loadOrderDrift(c *loadOrderComputation) []string {
 // memo: their size and modification time, or "" for a game with none.
 func (s *Service) loadOrderToken(game *domain.Game) string {
 	specs := s.loadOrderSpecs(game)
-	if len(specs) == 0 || game.InstallPath == "" {
+	if len(specs) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	for _, spec := range specs {
-		p := foldPath(game.InstallPath, path.Join(spec.Dir.Path, spec.ListFile))
+		base := game.InstallPath
+		if spec.ListDirectory().Root == adapter.SpecRootUserDir {
+			st := s.ResolvePrefix(game)
+			if !st.Resolved {
+				b.WriteString("unresolved;")
+				continue
+			}
+			base = st.UserPath
+		}
+		if base == "" {
+			b.WriteString("absent;")
+			continue
+		}
+		p := foldPath(base, path.Join(spec.ListDirectory().Path, spec.ListFile))
 		if p == "" {
 			b.WriteString("absent;")
 			continue

@@ -50,15 +50,18 @@ type ModSettings struct {
 type ModEntry struct {
 	UUID, Folder, Name, Version64, MD5 string
 
-	// index is the entry's place in the parsed file, or -1 for an entry
-	// that is not from it (NewModEntry). An entry from the file is
-	// written back as its own bytes.
+	// doc and index are the parsed file the entry is from and its place
+	// there; nil and -1 for a new entry (NewModEntry). An entry from a
+	// file - this one, or another, such as a kept original - is written
+	// back as its own bytes.
+	doc   *ModSettings
 	index int
 	raw   []byte
 }
 
-// FromFile reports whether e is one of the parsed file's own entries.
-func (e ModEntry) FromFile() bool { return e.index >= 0 && e.raw != nil }
+// FromFile reports whether e was read from a file, and is written back as
+// it was there.
+func (e ModEntry) FromFile() bool { return e.doc != nil && e.raw != nil }
 
 // NewModEntry is the entry for m, as Vortex writes one for a Patch 7 or 8
 // list [VXG loadOrder.ts exportTo: Folder, MD5, Name, PublishHandle 0,
@@ -93,7 +96,7 @@ func ParseModSettings(data []byte) (*ModSettings, error) {
 	}
 	s := &ModSettings{data: data, mods: mods, HasModOrder: root.child("ModOrder") != nil}
 	for _, n := range mods.Children {
-		e := ModEntry{index: len(s.Entries), raw: data[n.Start:n.End]}
+		e := ModEntry{doc: s, index: len(s.Entries), raw: data[n.Start:n.End]}
 		e.UUID, _ = n.attr("UUID")
 		e.Folder, _ = n.attr("Folder")
 		e.Name, _ = n.attr("Name")
@@ -165,14 +168,14 @@ func (s *ModSettings) Render(entries []ModEntry) []byte {
 	return append(out, s.data[s.mods.End:]...)
 }
 
-// unchanged reports whether entries are exactly the parsed file's own, in
+// unchanged reports whether entries are exactly this parsed file's own, in
 // its order.
 func (s *ModSettings) unchanged(entries []ModEntry) bool {
 	if len(entries) != len(s.Entries) {
 		return false
 	}
 	for i, e := range entries {
-		if !e.FromFile() || e.index != i {
+		if e.doc != s || e.index != i {
 			return false
 		}
 	}
