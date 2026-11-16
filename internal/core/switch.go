@@ -765,6 +765,12 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	if err != nil {
 		return result, err
 	}
+	// #663: nothing this flow does changes either profile's overrides (its
+	// ref writes touch none, and beginOp keeps every other writer out), so
+	// its deploys - and the hand-off's, placed by toInstaller - read them
+	// once.
+	fromInstaller.readOverridesOnce()
+	toInstaller.readOverridesOnce()
 	// #633: a path a disabled mod gives up passes to the next mod in the
 	// TARGET profile's load order that stays deployed through the switch,
 	// placed by the target's Installer and recorded under the target - not
@@ -929,12 +935,21 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		emit(ModEvent{Scope: scope, Phase: SwitchEnabled})
 	}
 
+	// #663: the install loop's refs in the target profile, a batch at a
+	// time (#661's profileRefBatch); closed once the loop ends - done or
+	// cancelled - before the active mark below rewrites the target's file,
+	// and flushed by the defer should an item panic.
+	refs := s.newRefBatch(pm, game.ID, plan.To)
+	defer func() { _ = refs.flush() }()
+	var loopErr error
 	if totalInstall := len(plan.ToInstall); totalInstall > 0 {
 		emit(StepEvent{Scope: Scope{Op: OpSwitch, Total: totalInstall}, Phase: SwitchInstalling})
 
+	install:
 		for idx, ref := range plan.ToInstall {
 			if err := ctx.Err(); err != nil {
-				return result, err
+				loopErr = err
+				break
 			}
 
 			scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalInstall, Mod: &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID}}
@@ -1101,7 +1116,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
 			fomodRec := fomodRecordOf(resolved)
 			if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-				return pm.upsertMod(ctx, game.ID, plan.To, modRef, fomodRec)
+				return refs.upsert(ctx, modRef, fomodRec)
 			}); err != nil {
 				// Ruling 16 (A): the DB row and the deployment are already in
 				// place, so the ref that completes them is written even under
@@ -1109,7 +1124,8 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				// of being absorbed into the #294 warning below, which is for
 				// a business refusal.
 				if cerr := ctx.Err(); cerr != nil {
-					return result, cerr
+					loopErr = cerr
+					break install
 				}
 				// #294 (Ruling 5's class extension, Task 13b): a refusal
 				// here (today, only a LOCKED ref, #143) leaves the profile
@@ -1130,6 +1146,18 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			result.Outcomes = append(result.Outcomes, outcomeOf(installedMod, installed))
 			emit(ModEvent{Scope: scope, Phase: SwitchInstalled})
 		}
+	}
+	// #663: what the loop recorded is on disk before SetDefault loads and
+	// rewrites the target's file; a save that fails even on its retry is
+	// the warning a failed per-item write was, naming the installed mods
+	// the profile does not record.
+	if err := refs.close(); err != nil {
+		msg := fmt.Sprintf("could not update profile: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(StepEvent{Scope: Scope{Op: OpSwitch}, Phase: SwitchInstallWarning, Detail: msg})
+	}
+	if loopErr != nil {
+		return result, loopErr
 	}
 
 	if err := pm.SetDefault(ctx, game.ID, plan.To); err != nil {

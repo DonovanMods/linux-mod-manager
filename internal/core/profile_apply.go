@@ -869,6 +869,10 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 	if err != nil {
 		return result, err
 	}
+	// #663: nothing this flow does changes the profile's overrides (its
+	// ref writes touch none, and beginOp keeps every other writer out), so
+	// its deploys read them once.
+	installer.readOverridesOnce()
 	// #633: a path a disabled mod gives up passes to the next mod in load
 	// order this apply leaves deployed - not to one it turns off or
 	// deploys again itself. A mod it reinstalls at another version does
@@ -974,12 +978,21 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		emit(ModEvent{Scope: scope, Phase: SwitchEnabled})
 	}
 
+	// #663: the install loop's profile refs, a batch at a time (#661's
+	// profileRefBatch); closed once the loop ends - done or cancelled -
+	// before anything below reads or writes the profile, and flushed by
+	// the defer should an item panic.
+	refs := s.newRefBatch(pm, game.ID, plan.Profile)
+	defer func() { _ = refs.flush() }()
+	var loopErr error
 	if totalInstall := len(plan.ToInstall); totalInstall > 0 {
 		emit(StepEvent{Scope: Scope{Op: OpProfileApply, Total: totalInstall}, Phase: SwitchInstalling})
 
+	install:
 		for idx := range plan.ToInstall {
 			if err := ctx.Err(); err != nil {
-				return result, err
+				loopErr = err
+				break
 			}
 
 			entry := &plan.ToInstall[idx]
@@ -1117,15 +1130,20 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 
 			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
 			fomodRec := fomodRecordOf(resolved)
-			if err := pm.upsertMod(ctx, game.ID, plan.Profile, modRef, fomodRec); err != nil {
-				// v2 Phase 3 Task 18: UpsertMod's own ctx.Err() guard can now
-				// be what makes this call fail, so a cancellation must stay
-				// fatal here exactly as it would at this loop's top-of-
-				// iteration check - not fall into the #294 warning path
-				// below, which is for a business refusal (a locked ref), or
-				// the run would report success despite never finishing.
+			if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+				return refs.upsert(ctx, modRef, fomodRec)
+			}); err != nil {
+				// Ruling 16 (A), #663: the DB row and the deployment are
+				// already in place, so the ref that completes them is
+				// written even under a cancelled ctx, as switch's always
+				// was - and the cancellation stays fatal here exactly as
+				// it would at this loop's top-of-iteration check, not
+				// absorbed into the #294 warning below, which is for a
+				// business refusal (a locked ref), or the run would report
+				// success despite never finishing.
 				if ctxErr := ctx.Err(); ctxErr != nil {
-					return result, ctxErr
+					loopErr = ctxErr
+					break install
 				}
 				// #294 (Ruling 5), the Phase 3 behaviour fix ruling 9
 				// deferred: a refusal here (today, only a LOCKED ref, #143)
@@ -1145,6 +1163,16 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			}
 			emit(ModEvent{Scope: scope, Phase: SwitchInstalled})
 		}
+	}
+	// #663: what the loop recorded is on disk before the merged-pak sync
+	// reads the profile (and writes its plugin list); a save that fails
+	// even on its retry is the warning a failed per-item write was, naming
+	// the installed mods the profile does not record.
+	if err := refs.close(); err != nil {
+		warn(Scope{Op: OpProfileApply}, SwitchInstallWarning, fmt.Sprintf("could not update profile: %v", err))
+	}
+	if loopErr != nil {
+		return result, loopErr
 	}
 
 	// #197: the sync's diagnostics are Warnings, not Notes - a failure here
