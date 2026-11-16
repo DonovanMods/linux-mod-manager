@@ -104,13 +104,13 @@ func TestHandOffLines_SanitizesNamesAndPaths(t *testing.T) {
 	lines := handOffLines([]core.HandOff{{
 		Path: "Data/\x1b[31mred.esp",
 		From: core.HandOffMod{SourceID: "src", ModID: "a", Name: "Mod \x1b]0;pwned\x07A"},
-		To:   core.HandOffMod{SourceID: "src", ModID: "b", Name: "Mod‮B"},
+		To:   core.HandOffMod{SourceID: "src", ModID: "b", Name: "Mod\u202eB"},
 	}})
 	require.Len(t, lines, 2)
 	for _, l := range lines {
 		assert.NotContains(t, l, "\x1b")
 		assert.NotContains(t, l, "\x07")
-		assert.NotContains(t, l, "‮")
+		assert.NotContains(t, l, "\u202e")
 	}
-	assert.Equal(t, domain.SanitizeLine("Data/\x1b[31mred.esp")+" passes to "+domain.SanitizeLine("Mod‮B")+" (from "+domain.SanitizeLine("Mod \x1b]0;pwned\x07A")+")", strings.TrimPrefix(lines[1], "  "))
+	assert.Equal(t, domain.SanitizeLine("Data/\x1b[31mred.esp")+" passes to "+domain.SanitizeLine("Mod\u202eB")+" (from "+domain.SanitizeLine("Mod \x1b]0;pwned\x07A")+")", strings.TrimPrefix(lines[1], "  "))
 }
