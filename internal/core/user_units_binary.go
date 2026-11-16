@@ -98,20 +98,28 @@ func readBinaryVersion(ctx context.Context, path string) (string, error) {
 	cmd := exec.CommandContext(ctx, path, "--version")
 	cmd.Env = minimalEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.Cancel = func() error { return killProcessGroup(cmd.Process.Pid) }
 	cmd.WaitDelay = binaryVersionWaitDelay
 	out := &limitedBuffer{max: binaryVersionMaxOutput}
 	cmd.Stdout = out
 	err := cmd.Run()
-	if cmd.Process != nil {
-		// A child the binary left behind, still in its group.
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// The binary exited but a child it left behind, still in its
+		// group, held the output open; the group lives as long as that
+		// child does, so its id is still this run's. Only then: after a
+		// clean exit the leader is reaped, and its pid could already lead
+		// someone else's group.
+		_ = killProcessGroup(cmd.Process.Pid)
 	}
 	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		return "", err
 	}
 	return parseVersionOutput(out.String())
 }
+
+// killProcessGroup sends SIGKILL to the process group pgid leads. A seam:
+// a test counts the kills.
+var killProcessGroup = func(pgid int) error { return syscall.Kill(-pgid, syscall.SIGKILL) }
 
 // minimalEnv is the environment a `--version` run gets: PATH and HOME,
 // as this process has them.
@@ -353,29 +361,44 @@ func parseExecStartLine(line string) (l execStartLine, ok bool, err error) {
 }
 
 // splitExecWord splits an ExecStart= value into its first word, as written
-// (prefixes, quotes and escapes kept), and the rest.
+// (prefixes, quotes and escapes kept), and the rest. The program may be
+// bare, or wholly in double or single quotes, as systemd reads them; a
+// quote that is not closed, or one part-way into a bare word (which
+// systemd joins with what is around it), is an error - lmm refuses a
+// program it cannot place exactly rather than guess where it ends.
 func splitExecWord(v string) (word, rest string, err error) {
 	start := len(v) - len(strings.TrimLeft(v, execPrefixes))
-	if strings.HasPrefix(v[start:], `"`) {
+	if start < len(v) && (v[start] == '"' || v[start] == '\'') {
+		quote := v[start]
 		for i := start + 1; i < len(v); i++ {
 			switch v[i] {
 			case '\\':
 				i++
-			case '"':
-				return v[:i+1], v[i+1:], nil
+			case quote:
+				word, rest = v[:i+1], v[i+1:]
+				if rest != "" && !strings.ContainsAny(rest[:1], " \t") {
+					return "", "", fmt.Errorf("the program %q runs on past its closing quote", v)
+				}
+				return word, rest, nil
 			}
 		}
 		return "", "", fmt.Errorf("unterminated quote in %q", v)
 	}
+	word, rest = v, ""
 	if i := strings.IndexAny(v, " \t"); i >= 0 {
-		return v[:i], v[i:], nil
+		word, rest = v[:i], v[i:]
 	}
-	return v, "", nil
+	if strings.ContainsAny(word, `"'`) {
+		return "", "", fmt.Errorf("the program %q has a quote part-way into it", word)
+	}
+	return word, rest, nil
 }
 
-// unquoteExecWord undoes systemdQuote on one ExecStart word.
+// unquoteExecWord undoes the quoting of one ExecStart word: double quotes
+// (as systemdQuote writes them) or single quotes, with their backslash
+// escapes, then the doubled % and $.
 func unquoteExecWord(word string) string {
-	if len(word) >= 2 && word[0] == '"' && word[len(word)-1] == '"' {
+	if len(word) >= 2 && (word[0] == '"' || word[0] == '\'') && word[len(word)-1] == word[0] {
 		var b strings.Builder
 		inner := word[1 : len(word)-1]
 		for i := 0; i < len(inner); i++ {

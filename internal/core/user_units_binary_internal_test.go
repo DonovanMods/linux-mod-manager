@@ -1,8 +1,10 @@
 package core
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -78,6 +80,31 @@ func TestSwitchExecStart(t *testing.T) {
 			want:     "ExecStart = /new/lmm serve\n",
 			previous: "/bin/lmm",
 		},
+		"a single-quoted program": {
+			in:       "ExecStart='/my dir/lmm' serve\n",
+			want:     "ExecStart=/new/lmm serve\n",
+			previous: "/my dir/lmm",
+		},
+		"a single-quoted program with no arguments": {
+			in:       "ExecStart='/my dir/lmm'\n",
+			want:     "ExecStart=/new/lmm\n",
+			previous: "/my dir/lmm",
+		},
+		"a prefix before single quotes stays": {
+			in:       "ExecStart=-'/my dir/lmm' serve\n",
+			want:     "ExecStart=-/new/lmm serve\n",
+			previous: "/my dir/lmm",
+		},
+		"a prefix inside single quotes stays": {
+			in:       "ExecStart='-/my dir/lmm' serve\n",
+			want:     "ExecStart=-/new/lmm serve\n",
+			previous: "/my dir/lmm",
+		},
+		"a double quote inside single quotes": {
+			in:       "ExecStart='/my \"dir\"/lmm' serve\n",
+			want:     "ExecStart=/new/lmm serve\n",
+			previous: "/my \"dir\"/lmm",
+		},
 		"not ExecStartPre": {
 			in:       "ExecStartPre=/bin/true\nExecStart=/bin/lmm\n",
 			want:     "ExecStartPre=/bin/true\nExecStart=/new/lmm\n",
@@ -92,8 +119,17 @@ func TestSwitchExecStart(t *testing.T) {
 		})
 	}
 
-	_, _, err := switchExecStart([]byte("ExecStart=\"/unterminated serve\n"), "/new/lmm")
-	require.Error(t, err, "a program lmm cannot read is refused, not mangled")
+	for _, in := range []string{
+		"ExecStart=\"/unterminated serve\n",
+		"ExecStart='/unterminated serve\n",
+		// A quote part-way into a word: systemd joins the pieces, and lmm
+		// refuses rather than guess where the program ends.
+		"ExecStart=/my' 'dir/lmm serve\n",
+		"ExecStart=/my\"dir\"/lmm serve\n",
+	} {
+		_, _, err := switchExecStart([]byte(in), "/new/lmm")
+		require.Error(t, err, "%q: a program lmm cannot read is refused, not mangled", in)
+	}
 }
 
 // unitFileBinary reads the program of the ExecStart that runs: it agrees
@@ -102,16 +138,19 @@ func TestSwitchExecStart(t *testing.T) {
 func TestUnitFileBinary(t *testing.T) {
 	dir := t.TempDir()
 	for name, tc := range map[string]struct{ unit, want string }{
-		"plain":            {"[Service]\nExecStart=/bin/lmm serve\n", "/bin/lmm"},
-		"no arguments":     {"[Service]\nExecStart=/bin/lmm\n", "/bin/lmm"},
-		"CRLF":             {"[Service]\r\nExecStart=/bin/lmm\r\n", "/bin/lmm"},
-		"indented":         {"[Service]\n  ExecStart=/bin/lmm serve\n", "/bin/lmm"},
-		"spaces around =":  {"[Service]\nExecStart = /bin/lmm serve\n", "/bin/lmm"},
-		"prefix":           {"[Service]\nExecStart=-/bin/lmm serve\n", "/bin/lmm"},
-		"reset then a new": {"[Service]\nExecStart=/old/lmm serve\nExecStart=\nExecStart=/bin/lmm serve\n", "/bin/lmm"},
-		"reset last":       {"[Service]\nExecStart=/old/lmm serve\nExecStart=\n", ""},
-		"none":             {"[Service]\nRestart=on-failure\n", ""},
-		"ExecStartPre":     {"[Service]\nExecStartPre=/bin/true\nExecStart=/bin/lmm\n", "/bin/lmm"},
+		"plain":                {"[Service]\nExecStart=/bin/lmm serve\n", "/bin/lmm"},
+		"no arguments":         {"[Service]\nExecStart=/bin/lmm\n", "/bin/lmm"},
+		"CRLF":                 {"[Service]\r\nExecStart=/bin/lmm\r\n", "/bin/lmm"},
+		"indented":             {"[Service]\n  ExecStart=/bin/lmm serve\n", "/bin/lmm"},
+		"spaces around =":      {"[Service]\nExecStart = /bin/lmm serve\n", "/bin/lmm"},
+		"prefix":               {"[Service]\nExecStart=-/bin/lmm serve\n", "/bin/lmm"},
+		"reset then a new":     {"[Service]\nExecStart=/old/lmm serve\nExecStart=\nExecStart=/bin/lmm serve\n", "/bin/lmm"},
+		"reset last":           {"[Service]\nExecStart=/old/lmm serve\nExecStart=\n", ""},
+		"none":                 {"[Service]\nRestart=on-failure\n", ""},
+		"ExecStartPre":         {"[Service]\nExecStartPre=/bin/true\nExecStart=/bin/lmm\n", "/bin/lmm"},
+		"single quotes":        {"[Service]\nExecStart='/my dir/lmm' serve\n", "/my dir/lmm"},
+		"single, prefixed":     {"[Service]\nExecStart=-'/my dir/lmm'\n", "/my dir/lmm"},
+		"single, unterminated": {"[Service]\nExecStart='/my dir/lmm serve\n", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(dir, name+".service")
@@ -156,4 +195,34 @@ func TestLimitedBuffer(t *testing.T) {
 	assert.Equal(t, 6, n, "the whole write is accepted")
 	_, _ = b.Write([]byte("gh"))
 	assert.Equal(t, "abcd", b.String())
+}
+
+// readBinaryVersion kills the process group after the run only when a
+// member outlived the binary and held its output open (ErrWaitDelay): once
+// the leader has exited cleanly and been reaped, its pid - and so its
+// group id - may belong to someone else (#649 review).
+func TestReadBinaryVersion_KillsTheGroupOnlyForALeftoverChild(t *testing.T) {
+	var kills atomic.Int32
+	old := killProcessGroup
+	killProcessGroup = func(pid int) error {
+		kills.Add(1)
+		return old(pid)
+	}
+	t.Cleanup(func() { killProcessGroup = old })
+	dir := t.TempDir()
+	script := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755))
+		return p
+	}
+
+	v, err := readBinaryVersion(context.Background(), script("clean", `echo "lmm version 2.3.0"`))
+	require.NoError(t, err)
+	assert.Equal(t, "2.3.0", v)
+	assert.Zero(t, kills.Load(), "a clean exit: no group kill")
+
+	v, err = readBinaryVersion(context.Background(), script("forks", `echo "lmm version 2.3.0"; sleep 30 &`))
+	require.NoError(t, err)
+	assert.Equal(t, "2.3.0", v)
+	assert.Equal(t, int32(1), kills.Load(), "the child left holding the output is killed")
 }
