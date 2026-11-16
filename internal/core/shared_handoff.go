@@ -254,7 +254,16 @@ type heirScope struct {
 	flow     *heirFlow
 	gone     map[string]bool
 	versions map[string]domain.Mod
-	read     map[string][]domain.InstalledMod
+	// read is each heir profile's candidates, read the first time a
+	// removal asks and kept for the whole plan. A known, accepted gap: a
+	// mod the walk itself newly deploys is never added. In Apply, a mod
+	// `mod copy --all --replace` installs into the destination (one with no
+	// live row there before) has a deployed row once its entry is done, so
+	// a later entry's removal can hand a path to it. The plan, reading
+	// before the copy walk, does not see that row and can name another
+	// heir, or none. Apply decides from live rows, and its ledger reports
+	// the mod that really took the path.
+	read map[string][]domain.InstalledMod
 	// stranded is the #451 check's answer, once strandedAsked.
 	stranded      error
 	strandedAsked bool
@@ -409,6 +418,17 @@ func (ho *handOff) resolve(ctx context.Context, i *Installer, game *domain.Game,
 // A removal almost always gives up a path no other mod ships, which no
 // candidate's listing can be spared for, so listing them all up front
 // costs nothing a walk would not.
+//
+// The rank is built once per removal and is not rebuilt. heirFor finds a
+// path's shippers in the flow's index, so a candidate whose listing
+// heirFlow.changed forgot after index ran is no longer found there, and
+// heirFor skips it. The walk this replaced would have listed it again.
+// That is safe only because changed() never runs inside one removal: it
+// runs where a flow deploys (at the start of Installer.Install and
+// Installer.replace, through heirFlowChanged), between removals, never
+// while a removal's handOffPath calls are asking heirFor. Anything that calls changed() inside a removal
+// must also clear h.rank so index lists again, or a forgotten candidate is
+// silently passed over.
 func (h *pathHeirs) index(game *domain.Game, placer *Installer) {
 	if h.rank != nil {
 		return
@@ -425,7 +445,9 @@ func (h *pathHeirs) index(game *domain.Game, placer *Installer) {
 }
 
 // heirFor is the first candidate, winner first, whose cache entry deploys
-// file, and the item it deploys there.
+// file, and the item it deploys there. It relies on index's rank still
+// matching the flow's listings: see index for why that holds within one
+// removal.
 func (h *pathHeirs) heirFor(game *domain.Game, placer *Installer, file domain.DeployPath) (*domain.InstalledMod, deployItem, bool) {
 	h.index(game, placer)
 	best := -1
