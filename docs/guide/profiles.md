@@ -391,6 +391,28 @@ page address into the search box and press **Import it…** on the offer
 above the results. The search box recognises the same slugs and
 addresses the terminal takes.
 
+To find a collection rather than import one you already know, search the
+game's NexusMods collections:
+
+```bash
+lmm search --collections "survival" --game skyrim-se
+lmm search --collections --game skyrim-se --sort popular --limit 20
+```
+
+Each result shows the collection's name, its curator, its endorsements,
+how many mods its latest revision holds, that revision's number, and its
+page address: pass the address to `lmm profile import --nexus-collection`.
+Without a search term you get the game's collections in the order
+`--sort` names (relevance, updated, downloads or popular); `--limit` sets
+how many (up to 100), and `--json` prints them as a document. Searching needs no API
+key. Adult collections are listed, as NexusMods lists them, and marked
+`[adult]`. In the browser, search as usual and choose the **Collections**
+tab on the search page (or **Search collections** under the search box's
+results; **Browse this game's NexusMods collections** in **Import
+collection…** lists them all): each collection has **Import…**, which
+opens **Import collection…** with its address filled in, so you can name
+the profile before the plan.
+
 You need a NexusMods API key (see [Your first mods](first-mods.md)), and
 lmm needs the `7z` command, because the recipe is a `.7z` file (see
 [Installing lmm](install.md#optional-7-zip)); the plan says so if `7z` is

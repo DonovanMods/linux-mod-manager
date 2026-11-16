@@ -1882,6 +1882,35 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #651: one collection a search found; its url is the
+			// reference `lmm profile import --nexus-collection` takes.
+			"collection_hit",
+			core.CollectionHit{SourceID: "nexusmods", ID: "tckf0m", Name: "Stardew Valley VERY Expanded", Author: "curator",
+				Summary: "A curated list.", URL: "https://www.nexusmods.com/games/stardewvalley/collections/tckf0m",
+				Endorsements: 4893, Downloads: 767891, Revision: 114, ModCount: 105, SizeBytes: 464703554,
+				UpdatedAt: fixedTime},
+		},
+		{
+			// #651: one page of a collection search. Author, summary and
+			// updated_at are omitted when the source states none (the
+			// second hit), and adult is always present.
+			"collection_search_report",
+			core.CollectionSearchReport{
+				GameID: "stardew", SourceID: "nexusmods", Query: "expanded",
+				Collections: []core.CollectionHit{
+					{SourceID: "nexusmods", ID: "tckf0m", Name: "Stardew Valley VERY Expanded", Author: "curator",
+						Summary: "A curated list.", URL: "https://www.nexusmods.com/games/stardewvalley/collections/tckf0m",
+						Endorsements: 4893, Downloads: 767891, Revision: 114, ModCount: 105, SizeBytes: 464703554,
+						UpdatedAt: fixedTime},
+					{SourceID: "nexusmods", ID: "9cnwku", Name: "Expanded Xtardew Valley",
+						URL: "https://www.nexusmods.com/games/stardewvalley/collections/9cnwku", Revision: 4, ModCount: 38,
+						SizeBytes: 288269282, Adult: true},
+				},
+				TotalResults: 155, Sort: domain.SortPopular, SortsAvailable: domain.SearchSorts(),
+				Page: 0, PageSize: 2, HasMore: true,
+			},
+		},
+		{
 			"game_list_entry",
 			goldenGameListEntry,
 		},

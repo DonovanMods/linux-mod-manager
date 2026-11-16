@@ -8,8 +8,10 @@
 //                                             flow when no games exist)
 //   /g/{game}/{profile}                      Mission Control
 //   /g/{game}/{profile}/mod/{source}/{id}    full mod page
-//   /g/{game}/{profile}/search?q=&sort=      search page (sort is optional:
-//                                             absent is relevance, issue 503)
+//   /g/{game}/{profile}/search?q=&sort=&type=  search page (sort is optional:
+//                                             absent is relevance, issue 503;
+//                                             type=collections searches the
+//                                             game's collections, issue 651)
 //   /g/{game}/{profile}/setup?section=       the Setup page (issue 333):
 //                                             games/auth/sources/import
 //
@@ -53,6 +55,10 @@ export function parseLocation(url = window.location) {
     // deep link keep it. Raw here - the router does not know the vocabulary;
     // main.js validates it against searchsort.js before it reaches the wire.
     route.sort = params.get("sort") || "";
+    // ?type= is what the page searches (issue 651): absent is mods,
+    // "collections" the game's collections. Raw, as ?sort= is; main.js reads
+    // it through searchtype.js.
+    route.type = params.get("type") || "";
     return route;
   }
   if (rest[0] === "mod" && rest.length >= 3) {

@@ -219,6 +219,26 @@ export function search(query, opts, context) {
   return get(url.pathname + url.search);
 }
 
+/** Searches the game's collections (issue 651): GET
+ * /api/v1/search/collections, returning core.CollectionSearchReport
+ * verbatim - the document `lmm search --collections --json` emits. The query
+ * may be empty (it lists the game's collections); opts.page/pageSize page
+ * through them and opts.sort orders them, relevance (or none) sending
+ * nothing, as search() does. */
+export function searchCollections(query, opts, context) {
+  const url = new URL(
+    scoped("/api/v1/search/collections", context),
+    window.location.origin,
+  );
+  if (query) url.searchParams.set("q", query);
+  if (opts?.page != null) url.searchParams.set("page", String(opts.page));
+  if (opts?.pageSize != null)
+    url.searchParams.set("page_size", String(opts.pageSize));
+  if (opts?.sort && opts.sort !== RELEVANCE)
+    url.searchParams.set("sort", opts.sort);
+  return get(url.pathname + url.search);
+}
+
 /** Starts an enable/disable job directly - the one sanctioned plan-free
  * mutation path (kind_toggle.go); no plan step, so there is nothing to
  * confirm before it runs. Returns the same start document startJob does, or

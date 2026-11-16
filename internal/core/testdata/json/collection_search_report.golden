@@ -1,0 +1,45 @@
+{
+  "game_id": "stardew",
+  "source_id": "nexusmods",
+  "query": "expanded",
+  "collections": [
+    {
+      "source_id": "nexusmods",
+      "id": "tckf0m",
+      "name": "Stardew Valley VERY Expanded",
+      "author": "curator",
+      "summary": "A curated list.",
+      "url": "https://www.nexusmods.com/games/stardewvalley/collections/tckf0m",
+      "endorsements": 4893,
+      "downloads": 767891,
+      "revision": 114,
+      "mod_count": 105,
+      "size_bytes": 464703554,
+      "adult": false,
+      "updated_at": "2026-08-27T12:00:00Z"
+    },
+    {
+      "source_id": "nexusmods",
+      "id": "9cnwku",
+      "name": "Expanded Xtardew Valley",
+      "url": "https://www.nexusmods.com/games/stardewvalley/collections/9cnwku",
+      "endorsements": 0,
+      "downloads": 0,
+      "revision": 4,
+      "mod_count": 38,
+      "size_bytes": 288269282,
+      "adult": true
+    }
+  ],
+  "total_results": 155,
+  "sort": "popular",
+  "sorts_available": [
+    "relevance",
+    "updated",
+    "downloads",
+    "popular"
+  ],
+  "page": 0,
+  "page_size": 2,
+  "has_more": true
+}

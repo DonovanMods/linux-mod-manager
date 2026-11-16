@@ -15,6 +15,13 @@
 // A pasted collection link gets the search page's own offer to import it
 // (collectionoffer.js, issue 650): this is the search box a user pastes
 // into, and a collection's address finds no mods.
+//
+// Issue 651: for a game whose collections can be searched, "Search
+// collections" beside "See all results" opens the search page's Collections
+// tab for the same query. Collection hits are not fanned out here: the fan-out
+// is a few mod rows under the library, and a second search of a different
+// kind on every Enter would cost a NexusMods request each time for rows a
+// user who wanted collections reads better on the page built for them.
 
 import { html } from "../render.js";
 import { contextPath, navigate } from "../router.js";
@@ -26,6 +33,11 @@ import {
 import { Arrow } from "./arrow.js";
 import { CollectionOffer } from "./collectionoffer.js";
 import { collectionLink } from "../collectionlink.js";
+import {
+  COLLECTIONS,
+  collectionsSearchable,
+  searchPath,
+} from "../searchtype.js";
 
 export function OmnibarResults({ omnibarSearch, query, state, actions }) {
   const q = (query ?? "").trim();
@@ -72,7 +84,11 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
   // with nothing that can search.
   const skippedNotice = skippedSignInNotice(report.skipped_unauthenticated);
   const route = state.route;
-  const allResultsPath = `${contextPath(route.game, route.profile)}/search?q=${encodeURIComponent(q)}`;
+  const home = contextPath(route.game, route.profile);
+  const allResultsPath = searchPath(home, q);
+  const collectionsPath = collectionsSearchable(state.status)
+    ? searchPath(home, q, COLLECTIONS)
+    : "";
 
   return html`
     <section class="library omnibar-results">
@@ -121,6 +137,19 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
           >See all results${report.has_more ? " (more available)" : ""}${" "}
           <${Arrow} dir="right"
         /></a>
+        ${
+          collectionsPath &&
+          html`${" "}<a
+              class="button button--small"
+              data-testid="search-collections"
+              href=${collectionsPath}
+              onClick=${(e) => {
+                e.preventDefault();
+                navigate(collectionsPath);
+              }}
+              >Search collections <${Arrow} dir="right"
+            /></a>`
+        }
       </p>
     </section>
   `;

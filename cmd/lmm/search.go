@@ -25,11 +25,14 @@ var (
 	searchTags     []string
 	searchRefresh  bool
 	searchSort     string
+	// searchCollections is --collections (#651): search the game's
+	// collections instead of its mods.
+	searchCollections bool
 )
 
 var searchCmd = &cobra.Command{
 	Use:   "search <query>",
-	Short: "Search for mods",
+	Short: "Search for mods, or with --collections for collections",
 	Long: `Search for mods in the configured sources.
 
 If --source is not specified, all configured sources for the game are
@@ -67,13 +70,23 @@ that finds nothing names what it skipped and the login command, and
 searching it directly with '-s' still reports that authentication is
 required.
 
+--collections searches the game's NexusMods collections instead (no API key
+needed): name, curator, endorsements, mod count and latest revision, with each
+collection's URL. The query is optional there - without one, the game's
+collections are listed in --sort's order - and --limit (at most 100 there),
+--sort and --source apply as above; --category, --tag, --refresh and --profile are mod-search
+filters and are refused. Adult collections are listed, as NexusMods lists
+them, and marked [adult]. Import one as a new profile with
+'lmm profile import --nexus-collection <url>'.
+
 Examples:
   lmm search skyui --game skyrim-se
   lmm search "immersive armor" --game skyrim-se --source nexusmods
   lmm search "armor" --game skyrim-se --category Armour --tag lore-friendly
   lmm search "armor" --game skyrim-se --profile survival
-  lmm search "armor" --game skyrim-se --sort updated`,
-	Args: cobra.MinimumNArgs(1),
+  lmm search "armor" --game skyrim-se --sort updated
+  lmm search --collections "survival" --game skyrim-se --sort popular`,
+	Args: searchArgs,
 	RunE: runSearch,
 }
 
@@ -85,6 +98,8 @@ func init() {
 	searchCmd.Flags().StringSliceVar(&searchTags, "tag", nil, "filter by tag (repeatable; source-specific)")
 	addSearchSortFlag(searchCmd, &searchSort)
 	searchCmd.Flags().BoolVar(&searchRefresh, "refresh", false, "rebuild a locally cached source index (Thunderstore) before searching")
+	searchCmd.Flags().BoolVar(&searchCollections, "collections", false, "search the game's NexusMods collections instead of mods; import one by its URL with 'lmm profile import --nexus-collection'")
+	markCollectionsExclusive(searchCmd)
 
 	rootCmd.AddCommand(searchCmd)
 }
@@ -118,6 +133,26 @@ func completeSearchSort(*cobra.Command, []string, string) ([]string, cobra.Shell
 		out[i] = string(s) + "\t" + searchSortDescriptions[s]
 	}
 	return out, cobra.ShellCompDirectiveNoFileComp
+}
+
+// markCollectionsExclusive refuses the mod search's own filters beside
+// --collections (#651): a collection search has no category, tag, local
+// index or installed-mod marks, and a filter silently ignored is worse than
+// a refusal.
+func markCollectionsExclusive(cmd *cobra.Command) {
+	for _, flag := range []string{"category", "tag", "refresh", "profile"} {
+		cmd.MarkFlagsMutuallyExclusive("collections", flag)
+	}
+}
+
+// searchArgs is `lmm search`'s argument rule: a query is required for a
+// mod search, as it always was, and optional for --collections, where none
+// lists the game's collections.
+func searchArgs(cmd *cobra.Command, args []string) error {
+	if searchCollections {
+		return nil
+	}
+	return cobra.MinimumNArgs(1)(cmd, args)
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -190,6 +225,9 @@ func searchPageSize(limit int) int {
 }
 
 func doSearch(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
+	if searchCollections {
+		return doSearchCollections(ctx, service, game, strings.Join(args, " "))
+	}
 	query := args[0]
 	if len(args) > 1 {
 		// Join multiple args as single query
@@ -357,18 +395,22 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		// hit can be a Steam Workshop item, whose Version is the 19-digit
 		// content id. core.SearchHit.External is stamped for exactly this -
 		// a catalog document has no installed row to read the fact from.
+		// Every cell is the source's text, made safe to print (#651
+		// review: no control, tab, newline or bidi rune reaches the
+		// terminal or breaks a column) BEFORE truncation, which only
+		// counts runes.
 		cells := []string{
-			mod.ID,
-			truncate(mod.Name, 40),
-			truncate(core.AuthorText(&mod.Mod), 20), // #420: the persona name where one resolved
-			displayModVersion(mod.External, mod.Version, mod.UpdatedAt),
+			domain.SanitizeLine(mod.ID),
+			truncate(domain.SanitizeLine(mod.Name), 40),
+			truncate(domain.SanitizeLine(core.AuthorText(&mod.Mod)), 20), // #420: the persona name where one resolved
+			domain.SanitizeLine(displayModVersion(mod.External, mod.Version, mod.UpdatedAt)),
 		}
 		if showUpdated {
 			// "-", not a blank cell, for an undated hit beside dated ones:
 			// the column says this source reported no date.
 			cells = append(cells, cmp.Or(displayAge(mod.UpdatedAt, cliNow()), "-"))
 		}
-		cells = append(cells, mod.SourceID, installedMark)
+		cells = append(cells, domain.SanitizeLine(mod.SourceID), installedMark)
 		if _, err := fmt.Fprintln(w, strings.Join(cells, "\t")); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
