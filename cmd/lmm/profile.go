@@ -759,6 +759,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 			}
 		}
 		printOverrideChanges(plan.Overrides)
+		printHandOffs("", plan.Handoffs) // #638
 	}
 
 	// A dry run stops here: it has shown the plan and must change nothing.
@@ -1942,6 +1943,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			}
 		}
 		printOverrideChanges(plan.Overrides)
+		printHandOffs("", plan.Handoffs) // #638
 	}
 
 	// A dry run stops here: it has shown the plan and must change nothing.

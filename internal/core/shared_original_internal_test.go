@@ -131,6 +131,6 @@ func TestPathHeirs_AnUnreadableProfileHandsNothingOn(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "default.yaml"), []byte("mods: [unterminated\n"), 0o644))
 
-	_, err = svc.pathHeirsFor("", nil, nil).resolve(ctx, game, "default", &domain.Mod{ID: "going", SourceID: "src"})
+	_, err = svc.pathHeirsFor("", nil, nil).resolve(ctx, game, "default", &domain.Mod{ID: "going", SourceID: "src"}, nil)
 	require.Error(t, err)
 }

@@ -80,6 +80,7 @@ func applyUpdateFromFile(ctx context.Context, service *core.Service, game *domai
 		for _, w := range plan.Warnings {
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
+		printHandOffs("  ", plan.Handoffs) // #638
 	}
 	if plan.Locked {
 		if jsonOutput {

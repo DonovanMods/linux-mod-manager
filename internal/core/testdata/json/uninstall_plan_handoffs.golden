@@ -1,0 +1,62 @@
+{
+  "mod": {
+    "id": "42",
+    "source_id": "nexusmods",
+    "name": "Sample Mod",
+    "version": "1.2.3",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "skyrim-se",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "updated_at": "2026-08-27T12:00:00Z",
+    "profile_name": "default",
+    "update_policy": "notify",
+    "installed_at": "2026-08-27T12:00:00Z",
+    "enabled": true,
+    "deployed": false,
+    "link_method": "symlink",
+    "manual_download": false,
+    "convert_paks": false
+  },
+  "files": [
+    "Data/shared.esp",
+    "<game root>/d3d11.dll"
+  ],
+  "keep_cache": false,
+  "hooks": [],
+  "handoffs": [
+    {
+      "path": "Data/shared.esp",
+      "from": {
+        "source_id": "nexusmods",
+        "mod_id": "42",
+        "name": "Sample Mod"
+      },
+      "to": {
+        "source_id": "nexusmods",
+        "mod_id": "7",
+        "name": "Realistic Needs"
+      }
+    },
+    {
+      "path": "d3d11.dll",
+      "root": "install_path",
+      "from": {
+        "source_id": "nexusmods",
+        "mod_id": "42",
+        "name": "Sample Mod"
+      },
+      "to": {
+        "source_id": "local",
+        "mod_id": "reshade",
+        "name": "ReShade"
+      }
+    }
+  ]
+}

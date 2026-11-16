@@ -91,6 +91,13 @@ type UninstallPlan struct {
 	// removes them under the directory where lmm deployed them (#451, #488).
 	Stranded []PurgeStrandedPath `json:"stranded,omitempty"`
 
+	// Handoffs is each shared path the uninstall passes to the next mod in
+	// the profile's load order that ships it, instead of putting the
+	// original back (#633/#638), computed as Apply computes it. Apply
+	// decides again from live state and reports what it did. Additive;
+	// absent when there are none.
+	Handoffs []HandOff `json:"handoffs,omitempty"`
+
 	// snapshot is Ruling 5's precondition: the installed-mod set this plan
 	// was computed from, re-derived and compared by ApplyUninstall.
 	snapshot installedSnapshot `json:"-"`
@@ -190,6 +197,9 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 			if isDeployedNow(game, f) {
 				plan.Files = append(plan.Files, f.String())
 			}
+		}
+		if !mod.External {
+			plan.Handoffs = s.planUninstallHandOffs(ctx, game, profileName, &mod.Mod)
 		}
 	}
 	if !opts.KeepCache && !mod.External {

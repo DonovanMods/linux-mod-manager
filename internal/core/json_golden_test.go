@@ -733,6 +733,56 @@ func TestJSONGoldens(t *testing.T) {
 			core.OverrideChange{Path: "Data/k.ini", Action: core.OverrideUpdate, SourceID: "nexusmods", ModID: "7"},
 		},
 		{
+			// #638: one shared path a plan's removal hands to the next mod
+			// in load order - a game-root file, so root is present.
+			"hand_off",
+			sampleHandOffs()[1],
+		},
+		{
+			"hand_off_mod",
+			sampleHandOffs()[0].To,
+		},
+		{
+			"uninstall_plan_handoffs",
+			core.UninstallPlan{
+				Mod:      domain.InstalledMod{Mod: jsonGoldenMod, ProfileName: "default", UpdatePolicy: domain.UpdateNotify, InstalledAt: fixedTime, LinkMethod: domain.LinkSymlink, Enabled: true},
+				Files:    []string{"Data/shared.esp", "<game root>/d3d11.dll"},
+				Hooks:    []string{},
+				Handoffs: sampleHandOffs(),
+			},
+		},
+		{
+			"profile_apply_plan_handoffs",
+			core.ProfileApplyPlan{GameID: "skyrim-se", Profile: "default", Handoffs: sampleHandOffs()},
+		},
+		{
+			"switch_plan_handoffs",
+			core.SwitchPlan{GameID: "skyrim-se", From: "default", To: "hardcore", Handoffs: sampleHandOffs()},
+		},
+		{
+			"rollback_plan_handoffs",
+			core.RollbackPlan{
+				Mod:         domain.InstalledMod{Mod: jsonGoldenMod, ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify},
+				FromVersion: "1.2.3", ToVersion: "1.2.2",
+				Handoffs: sampleHandOffs(),
+			},
+		},
+		{
+			"update_from_archive_plan_handoffs",
+			core.UpdateFromArchivePlan{
+				Archive: "/downloads/Sample-Mod-1.2.4.zip", ArchiveName: "Sample-Mod-1.2.4.zip",
+				Mod:         domain.InstalledMod{Mod: jsonGoldenMod, ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify},
+				FromVersion: "1.2.3", ToVersion: "1.2.4", FileIDs: []string{}, Match: core.ArchiveMatchNone,
+				Files: []string{"Data/Sample.esp"}, Hooks: []string{}, Warnings: []string{},
+				Handoffs: sampleHandOffs(),
+			},
+		},
+		{
+			"copy_mod_entry_handoffs",
+			core.CopyModEntry{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3",
+				AlreadyListed: true, ExistingVersion: "1.2.2", Handoffs: sampleHandOffs()},
+		},
+		{
 			// #631 (owner ruling): a deploy's override pass previews the
 			// game files it changes.
 			"deploy_plan_overrides",
@@ -4856,3 +4906,13 @@ var (
 		Findings:    []core.LoadOrderFinding{goldenLoadOrderFinding},
 	}
 )
+
+// sampleHandOffs is the #638 goldens' hand-offs: a mod_path file and a
+// game-root one, from one removed mod to two heirs.
+func sampleHandOffs() []core.HandOff {
+	from := core.HandOffMod{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod"}
+	return []core.HandOff{
+		{Path: "Data/shared.esp", From: from, To: core.HandOffMod{SourceID: "nexusmods", ModID: "7", Name: "Realistic Needs"}},
+		{Path: "d3d11.dll", Root: domain.RootInstallPath, From: from, To: core.HandOffMod{SourceID: "local", ModID: "reshade", Name: "ReShade"}},
+	}
+}

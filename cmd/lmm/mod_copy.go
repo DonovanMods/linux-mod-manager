@@ -193,6 +193,10 @@ func renderCopyModPlan(plan *core.CopyModPlan) {
 			line += fmt.Sprintf(" - already listed (v%s); needs --replace", e.ExistingVersion)
 		}
 		fmt.Println(line)
+		// #638: what replacing the listed mod hands on.
+		if e.AlreadyListed && copyReplace {
+			printHandOffs("    ", e.Handoffs)
+		}
 	}
 	for _, s := range plan.Skipped {
 		fmt.Printf("  - %s: skipped (%s)\n", copySkipName(s), s.Reason)

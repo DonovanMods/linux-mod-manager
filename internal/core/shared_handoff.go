@@ -79,6 +79,9 @@ type pathHeirs struct {
 	profile    string
 	flow       *heirFlow
 	candidates []domain.InstalledMod
+	// rank is each candidate's place, winner first, by its listing's key:
+	// set once every candidate is listed (pathHeirs.index).
+	rank map[heirListingKey]int
 }
 
 // heirFlow is one flow's listings of the cache entries of one game's heirs
@@ -88,11 +91,20 @@ type pathHeirs struct {
 type heirFlow struct {
 	mu       sync.Mutex
 	listings map[heirListingKey]map[domain.DeployPath]deployItem
+	// shippers indexes listings by path (#638): the listed entries that
+	// deploy each path, so a removal looks a path up instead of asking
+	// every candidate's listing in turn.
+	shippers map[domain.DeployPath]map[heirListingKey]bool
 }
 
 // heirListingHook, when set, runs once per cache entry a flow lists for
 // its heirs: the tests' count of the listings a flow makes (#633 review).
 var heirListingHook func()
+
+// heirCandidatesHook, when set, runs once per read of a profile's heir
+// candidates (its document and its rows): the tests' count of the reads a
+// plan makes (#638 review).
+var heirCandidatesHook func()
 
 // heirListingKey names one listing: a cache entry, routed by a stated type.
 type heirListingKey struct {
@@ -130,6 +142,9 @@ func (s *Service) forgetHeirFlows() {
 // as a deploy reads them; a document that cannot be read is an error, so
 // nothing is handed on rather than handed to the wrong mod.
 func (s *Service) heirCandidates(ctx context.Context, gameID, profile string) ([]domain.InstalledMod, error) {
+	if heirCandidatesHook != nil {
+		heirCandidatesHook()
+	}
 	doc, err := config.LoadProfile(s.configDir, gameID, profile)
 	if err != nil {
 		return nil, fmt.Errorf("loading profile %s: %w", profile, err)
@@ -167,17 +182,37 @@ func (f *heirFlow) changed(game *domain.Game, mods ...*domain.Mod) {
 	defer f.mu.Unlock()
 	for _, m := range mods {
 		k := modCacheKey(game.ID, *m)
-		for lk := range f.listings {
-			if lk.key == k {
-				delete(f.listings, lk)
+		for lk, files := range f.listings {
+			if lk.key != k {
+				continue
 			}
+			for path := range files {
+				delete(f.shippers[path], lk)
+			}
+			delete(f.listings, lk)
 		}
 	}
 }
 
+// listingKeyOf is the key mod's listing is kept under.
+func listingKeyOf(game *domain.Game, mod *domain.InstalledMod) heirListingKey {
+	return heirListingKey{key: modCacheKey(game.ID, mod.Mod), modType: mod.ModType}
+}
+
+// shippersOf is the listed entries that deploy path.
+func (f *heirFlow) shippersOf(path domain.DeployPath) []heirListingKey {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	keys := make([]heirListingKey, 0, len(f.shippers[path]))
+	for k := range f.shippers[path] {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // listing is mod's deployable files by path, listed once per flow.
 func (f *heirFlow) listing(placer *Installer, game *domain.Game, mod *domain.InstalledMod) map[domain.DeployPath]deployItem {
-	k := heirListingKey{key: modCacheKey(game.ID, mod.Mod), modType: mod.ModType}
+	k := listingKeyOf(game, mod)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if files, ok := f.listings[k]; ok {
@@ -196,16 +231,88 @@ func (f *heirFlow) listing(placer *Installer, game *domain.Game, mod *domain.Ins
 	}
 	if f.listings == nil {
 		f.listings = make(map[heirListingKey]map[domain.DeployPath]deployItem)
+		f.shippers = make(map[domain.DeployPath]map[heirListingKey]bool)
 	}
 	f.listings[k] = files
+	for path := range files {
+		if f.shippers[path] == nil {
+			f.shippers[path] = make(map[heirListingKey]bool)
+		}
+		f.shippers[path][k] = true
+	}
 	return files
 }
 
-// resolve is the heirs of a removal of removing under removalProfile.
-func (h *heirSource) resolve(ctx context.Context, game *domain.Game, removalProfile string, removing *domain.Mod) (*pathHeirs, error) {
+// heirScope is how a plan's removals read their heirs (#638): through the
+// plan's own listings, never the running mutation's; each heir profile's
+// candidates read once for the whole plan, not once per removal; less the
+// mods the simulated flow has removed so far, and at the versions it has
+// moved mods to (a replace's row is the new version afterwards, as
+// Apply's re-read finds it). An Apply's removal has none: it reads its
+// heirs live, each time.
+type heirScope struct {
+	flow     *heirFlow
+	gone     map[string]bool
+	versions map[string]domain.Mod
+	// read is each heir profile's candidates, read the first time a
+	// removal asks and kept for the whole plan. A known, accepted gap: a
+	// mod the walk itself newly deploys is never added. In Apply, a mod
+	// `mod copy --all --replace` installs into the destination (one with no
+	// live row there before) has a deployed row once its entry is done, so
+	// a later entry's removal can hand a path to it. The plan, reading
+	// before the copy walk, does not see that row and can name another
+	// heir, or none. Apply decides from live rows, and its ledger reports
+	// the mod that really took the path.
+	read map[string][]domain.InstalledMod
+	// stranded is the #451 check's answer, once strandedAsked.
+	stranded      error
+	strandedAsked bool
+}
+
+// refuseStranded is placer.refuseStranded (#451), asked once per scope: a
+// plan's removals all ask it of the same records. A nil scope (Apply)
+// asks every time.
+func (sc *heirScope) refuseStranded(ctx context.Context, placer *Installer, game *domain.Game) error {
+	if sc == nil {
+		return placer.refuseStranded(ctx, game)
+	}
+	if !sc.strandedAsked {
+		sc.stranded, sc.strandedAsked = placer.refuseStranded(ctx, game), true
+	}
+	return sc.stranded
+}
+
+// candidates is profile's candidates, winner first, read once per scope.
+func (sc *heirScope) candidates(ctx context.Context, svc *Service, gameID, profile string) ([]domain.InstalledMod, error) {
+	if mods, ok := sc.read[profile]; ok {
+		return mods, nil
+	}
+	mods, err := svc.heirCandidates(ctx, gameID, profile)
+	if err != nil {
+		return nil, err
+	}
+	if sc.read == nil {
+		sc.read = make(map[string][]domain.InstalledMod)
+	}
+	sc.read[profile] = mods
+	return mods, nil
+}
+
+// resolve is the heirs of a removal of removing under removalProfile: read
+// live and listed through the running mutation's heirFlow, or - sc set -
+// through a plan's scope.
+func (h *heirSource) resolve(ctx context.Context, game *domain.Game, removalProfile string, removing *domain.Mod, sc *heirScope) (*pathHeirs, error) {
 	profile := h.profileFor(removalProfile)
-	flow := h.svc.heirFlowFor(game.ID)
-	mods, err := h.svc.heirCandidates(ctx, game.ID, profile)
+	var flow *heirFlow
+	var mods []domain.InstalledMod
+	var err error
+	if sc == nil {
+		flow = h.svc.heirFlowFor(game.ID)
+		mods, err = h.svc.heirCandidates(ctx, game.ID, profile)
+	} else {
+		flow = sc.flow
+		mods, err = sc.candidates(ctx, h.svc, game.ID, profile)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -213,9 +320,18 @@ func (h *heirSource) resolve(ctx context.Context, game *domain.Game, removalProf
 	heirs := &pathHeirs{profile: profile, flow: flow}
 	for _, m := range mods {
 		key := domain.ModKey(m.SourceID, m.ID)
-		if key != going && !h.exclude[key] {
-			heirs.candidates = append(heirs.candidates, m)
+		if key == going || h.exclude[key] {
+			continue
 		}
+		if sc != nil {
+			if sc.gone[key] {
+				continue
+			}
+			if v, ok := sc.versions[key]; ok {
+				m.Version, m.Variant, m.ModType = v.Version, v.Variant, v.ModType
+			}
+		}
+		heirs.candidates = append(heirs.candidates, m)
 	}
 	return heirs, nil
 }
@@ -240,6 +356,9 @@ type handOff struct {
 	resolved bool
 	heirs    *pathHeirs
 	placer   *Installer
+
+	// scope is a plan's (#638, heirScope); nil for an Apply's removal.
+	scope *heirScope
 }
 
 // newHandOff is the hand-off state for a removal of mod through i, or nil
@@ -269,7 +388,7 @@ func (ho *handOff) resolve(ctx context.Context, i *Installer, game *domain.Game,
 		return ho.heirs
 	}
 	ho.resolved = true
-	heirs, err := i.heirs.resolve(ctx, game, profileName, ho.removing)
+	heirs, err := i.heirs.resolve(ctx, game, profileName, ho.removing, ho.scope)
 	if err != nil {
 		i.log.Warn("could not list the mods that may take a shared path; the removal leaves it as before", "err", err)
 		return nil
@@ -286,23 +405,62 @@ func (ho *handOff) resolve(ctx context.Context, i *Installer, game *domain.Game,
 	if placer.refused != nil {
 		return nil
 	}
-	if err := placer.refuseStranded(ctx, game); err != nil {
+	if err := ho.scope.refuseStranded(ctx, placer, game); err != nil {
 		return nil
 	}
 	ho.heirs, ho.placer = heirs, placer
 	return heirs
 }
 
-// heirFor is the first candidate, winner first, whose cache entry deploys
-// file, and the item it deploys there.
-func (h *pathHeirs) heirFor(game *domain.Game, placer *Installer, file domain.DeployPath) (*domain.InstalledMod, deployItem, bool) {
+// index lists every candidate - each cache entry once per flow, however
+// many removals ask - and ranks them, winner first, so heirFor looks a
+// path up in the flow's index (#638) instead of walking the candidates.
+// A removal almost always gives up a path no other mod ships, which no
+// candidate's listing can be spared for, so listing them all up front
+// costs nothing a walk would not.
+//
+// The rank is built once per removal and is not rebuilt. heirFor finds a
+// path's shippers in the flow's index, so a candidate whose listing
+// heirFlow.changed forgot after index ran is no longer found there, and
+// heirFor skips it. The walk this replaced would have listed it again.
+// That is safe only because changed() never runs inside one removal: it
+// runs where a flow deploys (at the start of Installer.Install and
+// Installer.replace, through heirFlowChanged), between removals, never
+// while a removal's handOffPath calls are asking heirFor. Anything that calls changed() inside a removal
+// must also clear h.rank so index lists again, or a forgotten candidate is
+// silently passed over.
+func (h *pathHeirs) index(game *domain.Game, placer *Installer) {
+	if h.rank != nil {
+		return
+	}
+	h.rank = make(map[heirListingKey]int, len(h.candidates))
 	for j := range h.candidates {
 		c := &h.candidates[j]
-		if item, ok := h.flow.listing(placer, game, c)[file]; ok {
-			return c, item, true
+		h.flow.listing(placer, game, c)
+		k := listingKeyOf(game, c)
+		if _, seen := h.rank[k]; !seen {
+			h.rank[k] = j
 		}
 	}
-	return nil, deployItem{}, false
+}
+
+// heirFor is the first candidate, winner first, whose cache entry deploys
+// file, and the item it deploys there. It relies on index's rank still
+// matching the flow's listings: see index for why that holds within one
+// removal.
+func (h *pathHeirs) heirFor(game *domain.Game, placer *Installer, file domain.DeployPath) (*domain.InstalledMod, deployItem, bool) {
+	h.index(game, placer)
+	best := -1
+	for _, k := range h.flow.shippersOf(file) {
+		if r, ok := h.rank[k]; ok && (best < 0 || r < best) {
+			best = r
+		}
+	}
+	if best < 0 {
+		return nil, deployItem{}, false
+	}
+	c := &h.candidates[best]
+	return c, h.flow.listing(placer, game, c)[file], true
 }
 
 // handOffPath hands file, whose lmm file the removal ho is part of has just
@@ -347,11 +505,7 @@ func (i *Installer) noteHandOff(h handedPath) {
 // whether the file was placed.
 func (i *Installer) placeHeir(ctx context.Context, game *domain.Game, profileName string, others *otherGameRecords, mod *domain.Mod, item deployItem, dstPath string) bool {
 	file := item.path
-	// #636: a prefix file has nowhere to go without the prefix.
-	if file.IsPrefix() && game.PrefixRoot == nil {
-		return false
-	}
-	if _, ok := heldElsewhere(others, file, dstPath); ok {
+	if !heirPlaceable(game, others, file, dstPath) {
 		return false
 	}
 	check := i.keepOnDeploy(ctx, i.judgeFor(game, profileName, others, nil), file, dstPath)
@@ -378,6 +532,17 @@ func (i *Installer) placeHeir(ctx context.Context, game *domain.Game, profileNam
 		}
 	}
 	return true
+}
+
+// heirPlaceable is placeHeir's first two refusals, which a plan asks too
+// (#638): a prefix file has nowhere to go without the prefix (#636), and a
+// path another game records is left as it is (#445).
+func heirPlaceable(game *domain.Game, others *otherGameRecords, file domain.DeployPath, dstPath string) bool {
+	if file.IsPrefix() && game.PrefixRoot == nil {
+		return false
+	}
+	_, held := heldElsewhere(others, file, dstPath)
+	return !held
 }
 
 // modLabel is mod's name, or its key when it has none.

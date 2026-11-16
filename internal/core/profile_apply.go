@@ -81,6 +81,12 @@ type ProfileApplyPlan struct {
 	// apply leaves in place. Additive; absent when there are none.
 	Overrides []OverrideChange `json:"overrides,omitempty"`
 
+	// Handoffs is each shared path a mod the apply turns off or moves to
+	// another version passes to the next mod in load order that stays
+	// deployed (#633/#638), by its final owner. Additive; absent when
+	// there are none.
+	Handoffs []HandOff `json:"handoffs,omitempty"`
+
 	// Unresolved is the profile's collection items left to do (#660):
 	// the apply leaves them alone - Finish collection resolves them - and
 	// warns that the game may not behave as the curator intended. Absent
@@ -345,6 +351,8 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 		plan.NoChanges = plan.NoChanges && !overrideChanged(plan.Overrides)
 		plan.overridesDigest = overridesDigest(profile)
 	}
+	// #638: the shared paths the apply hands on, named before it runs.
+	plan.Handoffs = s.planApplyHandOffs(ctx, game, plan)
 	return plan, nil
 }
 
@@ -873,7 +881,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 	// on again if the new version no longer ships it. (A switch differs:
 	// its heirs are the target profile's rows, whose version need not be
 	// the one on disk.)
-	installer.heirs = s.pathHeirsFor("", nil, excludeKeys(plan.ToDisable, plan.ToEnable))
+	installer.heirs = s.applyHeirs(plan)
 	pm := s.NewProfileManager()
 
 	totalDisable := len(plan.ToDisable)

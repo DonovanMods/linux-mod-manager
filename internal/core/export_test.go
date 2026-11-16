@@ -500,6 +500,14 @@ func CountHeirListingsForTest(count func()) (restore func()) {
 	return func() { heirListingHook = prev }
 }
 
+// CountHeirCandidateReadsForTest counts the reads of a profile's heir
+// candidates (#638) until the returned func restores the previous hook.
+func CountHeirCandidateReadsForTest(count func()) (restore func()) {
+	prev := heirCandidatesHook
+	heirCandidatesHook = count
+	return func() { heirCandidatesHook = prev }
+}
+
 // RecordOverrideWriteForTest records, as applyOneOverride does just before
 // a write, that an override is about to write content at rel of gameID's
 // install path, over lmm's own earlier write prev - without writing it: the

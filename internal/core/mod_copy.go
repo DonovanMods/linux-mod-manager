@@ -76,6 +76,11 @@ type CopyModEntry struct {
 	// unless CopyModOptions.Replace is set - or, in an All copy, skips it.
 	AlreadyListed   bool   `json:"already_listed"`
 	ExistingVersion string `json:"existing_version,omitempty"`
+	// Handoffs is each shared path replacing the destination's live row
+	// (CopyModOptions.Replace) passes to the next mod in load order,
+	// because the copied version does not ship it (#638). Only in the
+	// game's active profile. Additive; absent when there are none.
+	Handoffs []HandOff `json:"handoffs,omitempty"`
 }
 
 // CopyModSkip is a mod a copy leaves out, with the reason as a sentence.
@@ -198,6 +203,7 @@ func (s *Service) PlanCopyMod(ctx context.Context, game *domain.Game, req CopyMo
 			return nil, errors.New(skip)
 		}
 		plan.Mods = []CopyModEntry{entry}
+		s.planCopyHandOffs(ctx, game, plan)
 		return plan, nil
 	}
 
@@ -223,6 +229,8 @@ func (s *Service) PlanCopyMod(ctx context.Context, game *domain.Game, req CopyMo
 		plan.Mods = append(plan.Mods, entry)
 	}
 	plan.NoChanges = len(plan.Mods) == 0
+	// #638: what replacing each listed mod would hand on.
+	s.planCopyHandOffs(ctx, game, plan)
 	return plan, nil
 }
 
