@@ -119,24 +119,61 @@ type DownloadableFile struct {
 }
 
 // EffectiveInstalledVersion resolves the version string that describes what
-// the selected files actually are: the primary selected file's Version when
-// it carries one, else the first selected file with a non-empty Version,
-// else modVersion (the mod-level version). Install-recording flows stamp
-// this onto the mod before downloading so the DB row, the profile
-// ModReference, and the cache directory key all describe the bytes on disk
-// (issue #94) instead of the mod-level latest.
+// the selected files actually are: a main file's Version, the primary one's
+// first, else the primary selected file's Version when it carries one, else
+// the first selected file with a non-empty Version, else modVersion (the
+// mod-level version). Install-recording flows stamp this onto the mod
+// before downloading so the DB row, the profile ModReference, and the cache
+// directory key all describe the bytes on disk (issue #94) instead of the
+// mod-level latest.
+//
+// A main file names the version first (#662): an optional, update or
+// miscellaneous file (IsSecondaryFileCategory) may carry its own version
+// beside any main file - a 1.2 patch for a 4.3 main file - and the mod is
+// still at 4.3, whichever of the two its source lists first.
 func EffectiveInstalledVersion(modVersion string, selected []*DownloadableFile) string {
-	for _, f := range selected {
-		if f != nil && f.IsPrimary && f.Version != "" {
-			return f.Version
-		}
+	if v := firstFileVersion(selected, true); v != "" {
+		return v
 	}
-	for _, f := range selected {
-		if f != nil && f.Version != "" {
-			return f.Version
-		}
+	if v := firstFileVersion(selected, false); v != "" {
+		return v
 	}
 	return modVersion
+}
+
+// firstFileVersion is the version of the primary selected file that carries
+// one, else of the first that does - among the main files only when
+// mainOnly.
+func firstFileVersion(selected []*DownloadableFile, mainOnly bool) string {
+	fits := func(f *DownloadableFile) bool {
+		return f != nil && f.Version != "" && (!mainOnly || !IsSecondaryFileCategory(f.Category))
+	}
+	for _, f := range selected {
+		if fits(f) && f.IsPrimary {
+			return f.Version
+		}
+	}
+	for _, f := range selected {
+		if fits(f) {
+			return f.Version
+		}
+	}
+	return ""
+}
+
+// IsSecondaryFileCategory reports whether a source's file category names a
+// file that goes beside a main one - OPTIONAL, UPDATE or MISCELLANEOUS, in
+// any case - rather than a main file (#662). Every other category counts as
+// main: an empty one (a source that does not classify its files), one lmm
+// does not know, and the archived ones (ARCHIVED, OLD_VERSION, DELETED),
+// where a source moves a file of any role, so an old main file there is
+// still a main file.
+func IsSecondaryFileCategory(category string) bool {
+	switch strings.ToUpper(category) {
+	case "OPTIONAL", "UPDATE", "MISCELLANEOUS":
+		return true
+	}
+	return false
 }
 
 // ModReference is a pointer to a mod (used in profiles, dependencies)

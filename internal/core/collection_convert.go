@@ -980,6 +980,11 @@ func buildCollectionDocument(in convertInput, out *ConvertedCollection, items []
 				e.item.Ref.FomodFiles[it.FileID] = domain.FomodChoices{Steps: slices.Clone(it.choices)}
 			}
 		}
+		// #662: the curator's main files of more than one version are
+		// installed as chosen, never healed - said here, at the plan.
+		if v := curatorMainVersions(e.members); len(v) > 1 {
+			out.Notes = append(out.Notes, CuratorMixedFiles{SourceID: in.sourceID, ModID: e.item.Ref.ModID, Name: e.item.Name, Versions: v}.Sentence()+".")
+		}
 		// exact locks the entry; prefer leaves it unlocked; latest leaves
 		// it unlocked AND auto-updating - but only when every file of the
 		// mod is latest, since one exact file keeps the whole entry locked.
@@ -1413,4 +1418,15 @@ func (c *ConvertedCollection) recount() {
 		c.Counts[it.State]++
 	}
 	c.Summary = c.summarise()
+}
+
+// curatorMainVersions is an entry's copies of one main file at different
+// versions (#662), the source's category deciding which files are main - a
+// file whose category the list does not report counts as main.
+func curatorMainVersions(members []*convItem) []MixedVersion {
+	files := make([]*domain.DownloadableFile, len(members))
+	for i, it := range members {
+		files[i] = &domain.DownloadableFile{ID: it.FileID, Name: it.Name, FileName: it.fileName, Version: it.Version, Category: it.FileCategory}
+	}
+	return copyConflicts(files)
 }

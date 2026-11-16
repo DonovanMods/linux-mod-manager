@@ -1020,6 +1020,62 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   API refuses the same selection the same way. A file the source gives no
   version goes with any version. **Behaviour change:** a mixed-version
   `--file` list that used to install now fails.
+- **Only copies of one main file must share a version (#662).** #647's
+  rule is narrowed to what actually breaks. An optional, update or
+  miscellaneous file (by the source's own category) often carries its own
+  version, such as a 1.2 patch for a 4.3 main file, and may now go with any
+  version's main file. And two main files conflict only when they are
+  copies of one file: an author may version a mod's parts separately, such
+  as "Core 1.2" beside "Textures 1.0" or "Textures 2K" beside "Textures
+  4K", and those install together. Two files are copies only when their
+  names are the same once each name's own whole version (and a download's
+  upload timestamp) is taken out: `SkyUI_5_2_SE.7z` at 5.2 and
+  `SkyUI_5_1_SE.7z` at 5.1 are copies, as are two NexusMods downloads of
+  one file at different versions; `Core` and `Textures`, `2K` and `4K`,
+  `Part1` and `Part2`, or `Disc_1` at 1.0 and `Disc_2` at 2.0 are not. A file the source gives no
+  category, or one in an archived category (where a source keeps an old
+  file of any role), counts as a main file, so a source that does not
+  classify its files keeps #647's rule for copies. `lmm install` asks for
+  a version only when copies of one main file span more than one, and then
+  lists the chosen version's files followed by every other file that is
+  not a copy of one of them, each labelled with its version; the web UI's
+  picker does the same (its plan carries the new `file_copies` member). A
+  `--file` list of a main file and another version's optional patch, or of
+  two separate components at their own versions, which #647 refused, now
+  installs; two copies of one main file at different versions are still
+  refused. A mod's recorded version is now named by its main file
+  whichever file the source lists first.
+
+  A profile entry whose stored main files hold copies of one file at more
+  than one version (recorded before #647, or edited by hand) is no longer
+  replayed as it is or partly dropped without a word. `lmm profile apply`,
+  `lmm profile switch` and `lmm profile import` (and their web UI jobs)
+  heal it: of each file, the copy at the entry's recorded version stays
+  (the newest copy when none is at it) and the other copies are dropped;
+  separate components and every optional, update and miscellaneous file
+  stay. Each plan says so before you confirm ("1 mod(s) have stored main
+  files of more than one version: ~ Mod: keeps version 2.0, drops
+  main-1.0.zip (1.0)"), names a separate component it keeps at another
+  version, and says how to use a dropped copy instead (reinstall the mod at
+  its version); its `--json` carries the new `heals` member. The run
+  records the files it kept on the profile, so the next apply has nothing
+  to do. Switch and import plans ask the source about at most 25 mods for
+  this and say how many they left for the run (`heals_unchecked` on an
+  import plan). A deploy that has to download a mod again, and an update -
+  an automatic one included - heal the same way and warn, since neither has
+  a file-level plan; neither ever drops a separate component, and a deploy
+  whose heal would move the mod to another version skips it, saying so. A
+  stored entry keeps its recorded version while any of its files carries
+  it, so a mod recorded before this change rebuilds as it was.
+
+  A collection's own entry is never healed: it installs the curator's exact
+  files, and the plan notes copies at several versions (`curator_mixed` on
+  an apply plan; a switch warns as it installs it, and a NexusMods
+  collection's import notes it). One change for a collection entry pinned
+  at a version none of its files carries: it now installs exactly those
+  files and records their version, where it used to look for other files
+  at the pinned version.
+
 - **A failed collection item gets advice that fits it (#660).** "Reinstall
   the mod or run 'lmm update' to adopt the current version" is an
   installed mod's remedy; a collection item whose pinned file is gone was

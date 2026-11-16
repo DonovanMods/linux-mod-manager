@@ -837,3 +837,22 @@ other files than the ones installed is reinstalled the same way, by an
 apply or a switch to the profile. A file swapped for another at the same
 version shows in the plan as `reinstall: files changed`. The order the
 files are listed in doesn't matter.
+
+A profile entry can still list copies of one main file from more than one
+version of a mod: one recorded before lmm checked this, or edited by hand.
+When an apply, a switch or an import installs that mod, it keeps the copy
+at the version the entry records (the newest copy, if none is at that
+version) and drops the others; a separate part of the mod at its own
+version ("Textures 1.0" beside "Core 1.2"), and every optional, update and
+miscellaneous file, stays. The plan lists each such mod under **Stored
+files of more than one version** (`... have stored main files of more than
+one version` in the terminal) with the version kept, the files dropped
+and any separate part kept, and the profile records the files kept, so the
+next apply has nothing to do. To use a dropped copy instead, reinstall the
+mod at that copy's version. A switch or import plan looks up at most 25
+such mods and says how many it left; the rest are healed when the run
+reaches them, with a warning. A deploy that has to download the mod again,
+or an update, does the same and says so in a warning; neither drops a
+separate part. A collection's own entry is the exception: the curator
+chose those files, so they install as they are, and the apply plan lists
+the mod under **Collection files of mixed versions**.

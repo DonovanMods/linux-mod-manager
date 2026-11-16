@@ -39,6 +39,7 @@ import { safeWebUrl } from "../weburl.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 import { GonePinsSection, gonePinDecision, modsPin } from "./gonepins.js";
 import { formatBytes } from "../progress.js";
+import { PlanStoredFiles } from "./planstoredfiles.js";
 
 /** refLabel names a domain.ModReference - it carries no display name of its
  * own (domain.ModReference's own fields: source_id, mod_id, version,
@@ -1352,6 +1353,15 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
                 reasons=${plan.reinstall_reasons}
               />
               <${RefList} heading="Missing entirely" refs=${missing} />
+              <${PlanStoredFiles} heals=${plan.heals} testID="profile-import" />
+              ${
+                plan.heals_unchecked > 0 &&
+                html`<p class="plan__note">
+                  ${plan.heals_unchecked} more mod(s) with several stored files
+                  were not looked up; any heal is said when the import reaches
+                  it.
+                </p>`
+              }
             `
       }
       ${

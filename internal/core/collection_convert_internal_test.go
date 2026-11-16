@@ -774,3 +774,32 @@ func TestConvert_BundleWithoutItsTreeStaysRefused(t *testing.T) {
 	assert.Contains(t, itemByName(t, c, "Marker").Note, "holds no bundled/")
 	assert.Equal(t, "Bundled - Marker (v1)", itemByName(t, c, "Marker").Bundled)
 }
+
+// TestConvert_CuratorsMixedMainVersionsAreNoted (#662): one mod's files
+// whose main files are of two versions install as the curator chose them,
+// and the plan's notes say so; a secondary file of its own version beside
+// one main version is no mix at all.
+func TestConvert_CuratorsMixedMainVersionsAreNoted(t *testing.T) {
+	a := nexusMod("Mod 1.0", "1", "11", "aa")
+	b := nexusMod("Mod 2.0", "1", "12", "ab")
+	b.Version = "2.0"
+	m := &source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{a, b}}
+	c := mustConvert(t, convertInputFor(m))
+	require.Len(t, c.Document.Items, 1)
+	assert.Equal(t, []string{"11", "12"}, c.Document.Items[0].Ref.FileIDs, "both of the curator's files")
+	assert.Contains(t, c.Notes, "Mod 1.0: the collection's files mix main files of versions 1.0 (Mod 1.0) and 2.0 (Mod 2.0); installed as the curator chose them.")
+
+	// Two separate components at their own versions are no mix.
+	comp := nexusMod("Textures", "1", "12", "ab")
+	comp.Version = "2.0"
+	c = mustConvert(t, convertInputFor(&source.CollectionManifest{Name: "C", Mods: []source.ManifestMod{nexusMod("Core", "1", "11", "aa"), comp}}))
+	assert.False(t, containsSubstring(c.Notes, "mix main files"), "separate components: %v", c.Notes)
+
+	in := convertInputFor(m)
+	in.list.Items = []source.CollectionItem{
+		{Kind: source.CollectionItemModFile, ModID: "1", FileID: "11", FileCategory: "MAIN"},
+		{Kind: source.CollectionItemModFile, ModID: "1", FileID: "12", FileCategory: "OPTIONAL"},
+	}
+	c = mustConvert(t, in)
+	assert.False(t, containsSubstring(c.Notes, "mix main files"), "an optional file is no mix: %v", c.Notes)
+}

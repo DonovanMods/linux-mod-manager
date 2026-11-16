@@ -95,12 +95,21 @@ patch, the preview lists them with a checkbox each. The main file starts
 checked; check every file you want and they all install together. In the
 terminal, name them with `lmm install --file <id>,<id>`.
 
-The files you install together all come from one version of the mod. When a
-mod offers files from several versions, you choose the version first, and
-the preview then lists only that version's files. `lmm install` in the
-terminal asks the same way: a version, then its files (`--version <v>` skips
-the version question). A `--file` list that names files from different
-versions is refused, and nothing is installed.
+Copies of one main file always come from one version of the mod. When a
+mod offers a main file at several versions, you choose the version first,
+and the preview then lists that version's files. Optional, update and
+miscellaneous files often carry a version of their own (a 1.2 patch for a
+4.3 main file), and some mods version their parts separately ("Core 1.2"
+beside "Textures 1.0"), so those are listed too, after the chosen
+version's files, each labelled with its version, and you can install them
+with any version. `lmm install` in the terminal asks the same way: a
+version, then its files (`--version <v>` skips the version question). A
+`--file` list that names two copies of one main file at different versions
+is refused, and nothing is installed. lmm goes by the category the mod's
+site gives each file (a file with no category counts as a main file).
+Two files are copies when their names differ only by their versions
+(`SkyUI_5_2_SE` at 5.2 and `SkyUI_5_1_SE` at 5.1); "Textures 2K" and
+"Textures 4K" are two parts.
 
 The install runs in the background. The bell icon at the top shows its
 progress, and you can keep working while it runs. If the mod needs other mods

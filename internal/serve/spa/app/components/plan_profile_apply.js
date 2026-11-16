@@ -15,6 +15,7 @@ import { html } from "../render.js";
 import { displayVersion, reinstallReason } from "../version.js";
 import { PlanOverrides } from "./planoverrides.js";
 import { PlanHandOffs } from "./planhandoffs.js";
+import { PlanStoredFiles } from "./planstoredfiles.js";
 import { UnresolvedWarning } from "./planwarnings.js";
 
 /** ModList renders one bucket of installed mods (to_enable/to_disable),
@@ -163,6 +164,11 @@ export function ProfileApplyPlanView({ plan }) {
       <${PlanHandOffs}
         handoffs=${plan.handoffs}
         testID="profile-apply-handoffs"
+      />
+      <${PlanStoredFiles}
+        heals=${plan.heals}
+        curator=${plan.curator_mixed}
+        testID="profile-apply"
       />
     </div>
   `;

@@ -5,6 +5,11 @@ package main
 // picker's shape (#637). A --file list naming files of two versions is
 // refused by core, with the versions and their files in the message and in
 // the --json envelope's details.
+//
+// #662 narrowed both to the main files: the version step appears only when
+// the MAIN files span more than one version, and an optional, update or
+// miscellaneous file of any version is offered beside the chosen version's
+// files, labelled with its own version.
 
 import (
 	"context"
@@ -65,8 +70,71 @@ func TestSelectInstallFiles_AsksForVersionFirst(t *testing.T) {
 	assert.Contains(t, versions, "[1] 2.0 (2 files) <- default", "the primary file's version is the default")
 	assert.Contains(t, versions, "[2] 1.0 (2 files)")
 	assert.Contains(t, files, "main-1.0.esp")
-	assert.NotContains(t, files, "main-2.0.esp", "only the chosen version's files are offered")
-	assert.NotContains(t, files, "patch-2.0.esp")
+	assert.NotContains(t, files, "main-2.0.esp", "only the chosen version's main files are offered")
+	assert.Contains(t, files, "[3] patch-2.0.esp (OPTIONAL, version 2.0, 10 B)",
+		"#662: another version's optional file is offered after the chosen version's, labelled with its version")
+}
+
+// TestSelectInstallFiles_SecondaryFilesOfOtherVersionsJoin (#662): after
+// the version step, the chosen version's files come first and every
+// secondary file of another version follows; any of them may be picked
+// together.
+func TestSelectInstallFiles_SecondaryFilesOfOtherVersionsJoin(t *testing.T) {
+	setPickerFlags(t)
+	files := append(twoVersionFiles(), domain.DownloadableFile{ID: "hotfix", Name: "Hotfix", FileName: "hotfix-0.3.esp", Version: "0.3", Category: "UPDATE", Size: 10})
+	var selected []*domain.DownloadableFile
+	out := captureStdout(t, func() error {
+		var err error
+		selected, err = selectInstallFilesFrom(strings.NewReader("1\n1,4\n"), files, nil)
+		return err
+	})
+	assert.Equal(t, []string{"main2", "hotfix"}, selectedIDs(selected))
+	versions, list, ok := strings.Cut(out, "Available files:")
+	require.True(t, ok, out)
+	assert.NotContains(t, versions, "0.3", "a version with no main file is no choice")
+	assert.Contains(t, list, "[1] main-2.0.esp (MAIN, version 2.0, 10 B) <- default")
+	assert.Contains(t, list, "[3] patch-1.0.esp (OPTIONAL, version 1.0, 10 B)")
+	assert.Contains(t, list, "[4] hotfix-0.3.esp (UPDATE, version 0.3, 10 B)")
+	assert.NotContains(t, list, "main-1.0.esp")
+}
+
+// TestSelectInstallFiles_OneMainVersionAsksNoVersion (#662): a main file
+// and an optional patch of its own version are one choice, not two
+// versions - no version step, both files listed with their versions.
+func TestSelectInstallFiles_OneMainVersionAsksNoVersion(t *testing.T) {
+	setPickerFlags(t)
+	files := []domain.DownloadableFile{
+		{ID: "main", Name: "Main", FileName: "main-4.3.esp", Version: "4.3", Category: "MAIN", IsPrimary: true, Size: 10},
+		{ID: "patch", Name: "Patch", FileName: "patch-1.2.esp", Version: "1.2", Category: "OPTIONAL", Size: 10},
+	}
+	var selected []*domain.DownloadableFile
+	out := captureStdout(t, func() error {
+		var err error
+		selected, err = selectInstallFilesFrom(strings.NewReader("1,2\n"), files, nil)
+		return err
+	})
+	assert.NotContains(t, out, "Available versions:")
+	assert.Contains(t, out, "[2] patch-1.2.esp (OPTIONAL, version 1.2, 10 B)")
+	assert.Equal(t, []string{"main", "patch"}, selectedIDs(selected))
+}
+
+// TestSelectInstallFiles_UncategorisedFilesKeepTheVersionStep (#662): a
+// source that gives its files no category keeps #647's picker - every
+// file is a main file.
+func TestSelectInstallFiles_UncategorisedFilesKeepTheVersionStep(t *testing.T) {
+	setPickerFlags(t)
+	files := []domain.DownloadableFile{
+		{ID: "a", FileName: "mod-2.0.esp", Version: "2.0", IsPrimary: true},
+		{ID: "b", FileName: "mod-1.0.esp", Version: "1.0"},
+	}
+	var selected []*domain.DownloadableFile
+	out := captureStdout(t, func() error {
+		var err error
+		selected, err = selectInstallFilesFrom(strings.NewReader("2\n"), files, nil)
+		return err
+	})
+	assert.Contains(t, out, "Available versions:")
+	assert.Equal(t, []string{"b"}, selectedIDs(selected))
 }
 
 // TestSelectInstallFiles_VersionDefaultIsThePrimarysVersion: Enter at both
@@ -83,10 +151,11 @@ func TestSelectInstallFiles_VersionDefaultIsThePrimarysVersion(t *testing.T) {
 }
 
 // TestSelectInstallFiles_VersionWithOneFileNeedsNoFilePrompt: a version
-// with a single file is that file.
+// with a single file, and no secondary file of another version to offer
+// beside it (#662), is that file.
 func TestSelectInstallFiles_VersionWithOneFileNeedsNoFilePrompt(t *testing.T) {
 	setPickerFlags(t)
-	files := append(twoVersionFiles()[:2], domain.DownloadableFile{ID: "old", FileName: "main-0.9.esp", Version: "0.9", Category: "OLD_VERSION"})
+	files := append(twoVersionFiles()[:1], domain.DownloadableFile{ID: "old", FileName: "main-0.9.esp", Version: "0.9", Category: "OLD_VERSION"})
 	var selected []*domain.DownloadableFile
 	out := captureStdout(t, func() error {
 		var err error
@@ -118,7 +187,7 @@ func TestSelectInstallFiles_NoVersionIsAVersionOfItsOwn(t *testing.T) {
 	setPickerFlags(t)
 	files := []domain.DownloadableFile{
 		{ID: "v", FileName: "main-2.0.esp", Version: "2.0", IsPrimary: true},
-		{ID: "bare", FileName: "extras.esp"},
+		{ID: "bare", FileName: "main.esp"},
 	}
 	var selected []*domain.DownloadableFile
 	out := captureStdout(t, func() error {
@@ -179,25 +248,39 @@ func TestDoInstall_PickerInstallsOneVersion(t *testing.T) {
 	assert.ElementsMatch(t, []string{"main1", "patch1"}, row.FileIDs)
 }
 
-// TestDoInstall_FileFlagMixedVersionsRefused: `--file main2,patch1` names
-// files of 2.0 and 1.0. The install is refused with core's message, a
+// TestDoInstall_FileFlagMixedVersionsRefused: `--file main2,main1` names
+// main files of 2.0 and 1.0. The install is refused with core's message, a
 // non-zero exit, nothing downloaded, and the --json envelope carries the
 // code and each version's files.
 func TestDoInstall_FileFlagMixedVersionsRefused(t *testing.T) {
 	svc, game, src := setupTwoVersionInstall(t)
-	installFileID = "main2,patch1"
+	installFileID = "main2,main1"
 
 	_, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
 	var mixed *core.MixedVersionSelectionError
 	require.True(t, errors.As(err, &mixed), "got %v", err)
-	assert.Equal(t, "these files belong to versions 2.0 (main-2.0.esp) and 1.0 (patch-1.0.esp); pick one version", err.Error())
+	assert.Equal(t, "these files belong to versions 2.0 (main-2.0.esp) and 1.0 (main-1.0.esp); pick one version", err.Error())
 	assert.Equal(t, exitError, exitCodeFor(err))
 	assert.Zero(t, src.served.Load(), "nothing is downloaded")
 	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	assert.ErrorIs(t, dbErr, domain.ErrModNotFound)
 
 	stderr := captureStderr(t, func() { reportError(err) })
-	assert.Contains(t, stderr, "Error: these files belong to versions 2.0 (main-2.0.esp) and 1.0 (patch-1.0.esp); pick one version")
+	assert.Contains(t, stderr, "Error: these files belong to versions 2.0 (main-2.0.esp) and 1.0 (main-1.0.esp); pick one version")
+}
+
+// TestDoInstall_FileFlagMainWithAnotherVersionsPatchInstalls (#662):
+// `--file main2,patch1` - the 2.0 main file and the 1.0 optional patch -
+// installs, which #647 refused; the row records the main file's version.
+func TestDoInstall_FileFlagMainWithAnotherVersionsPatchInstalls(t *testing.T) {
+	svc, game, _ := setupTwoVersionInstall(t)
+	installFileID = "main2,patch1"
+	out, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	require.NoError(t, err, out)
+	row, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", row.Version)
+	assert.ElementsMatch(t, []string{"main2", "patch1"}, row.FileIDs)
 }
 
 // TestReportError_JSON_MixedVersionSelectionError pins the refusal's
@@ -251,4 +334,32 @@ func stdinLines(t *testing.T, lines ...string) {
 	old := os.Stdin
 	os.Stdin = r
 	t.Cleanup(func() { os.Stdin = old; _ = r.Close() })
+}
+
+// TestSelectInstallFiles_SeparateComponentsAskNoVersion (#662): main files
+// that are separate components (Core 1.2, Textures 1.0) are no version
+// choice - both are offered, each with its version.
+func TestSelectInstallFiles_SeparateComponentsAskNoVersion(t *testing.T) {
+	setPickerFlags(t)
+	files := []domain.DownloadableFile{
+		{ID: "core", Name: "Core", FileName: "Core-1.2.zip", Version: "1.2", Category: "MAIN", IsPrimary: true, Size: 10},
+		{ID: "core11", Name: "Core", FileName: "Core-1.1.zip", Version: "1.1", Category: "MAIN", Size: 10},
+		{ID: "tex", Name: "Textures", FileName: "Textures-1.0.zip", Version: "1.0", Category: "MAIN", Size: 10},
+	}
+	var selected []*domain.DownloadableFile
+	out := captureStdout(t, func() error {
+		var err error
+		// Core's two copies are a version choice; Textures is offered
+		// beside either.
+		selected, err = selectInstallFilesFrom(strings.NewReader("1\n1,2\n"), files, nil)
+		return err
+	})
+	versions, list, ok := strings.Cut(out, "Available files:")
+	require.True(t, ok, out)
+	assert.Contains(t, versions, "[1] 1.2")
+	assert.Contains(t, versions, "[2] 1.1")
+	assert.NotContains(t, versions, "1.0", "a separate component's version is no choice")
+	assert.Contains(t, list, "[2] Textures-1.0.zip (MAIN, version 1.0, 10 B)")
+	assert.NotContains(t, list, "Core-1.1.zip")
+	assert.Equal(t, []string{"core", "tex"}, selectedIDs(selected))
 }

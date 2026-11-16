@@ -1,0 +1,25 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "42",
+  "name": "Some Mod",
+  "versions": [
+    {
+      "version": "1.0",
+      "files": [
+        {
+          "id": "11",
+          "file_name": "main-1.0.zip"
+        }
+      ]
+    },
+    {
+      "version": "2.0",
+      "files": [
+        {
+          "id": "21",
+          "file_name": "main-2.0.zip"
+        }
+      ]
+    }
+  ]
+}

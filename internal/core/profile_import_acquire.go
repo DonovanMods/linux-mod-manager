@@ -134,7 +134,10 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	} else if len(ref.FileIDs) > 0 {
 		fileIDsToUse = ref.FileIDs
 	}
-	filesToDownload, err := selectFilesForVersion(files, fileIDsToUse, ref.Version)
+	// #662: stored ids whose main files mix versions heal to one (a
+	// collection's are installed as they are; its import plan's
+	// conversion said so).
+	sel, err := selectStoredFiles(files, fileIDsToUse, ref.Version, ref.FromCollection, mod.Version)
 	if err != nil {
 		// #660: "reinstall the mod or run 'lmm update'" is an installed
 		// mod's remedy. A pin the imported document names was never
@@ -147,7 +150,12 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 		return nil, fail(err.Error(), err)
 	}
 
-	mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
+	filesToDownload := sel.files
+	sel.mixed = nil
+	for _, msg := range unpreviewedStoredFiles(sel, ref, mod.Name, plan.Heals, nil) {
+		note(msg)
+	}
+	mod.Version = sel.version // #94
 	// #607: the imported reference's stated type is the row's, and every
 	// deploy of it routes by it.
 	mod.ModType = ref.ModType

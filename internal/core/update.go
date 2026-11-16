@@ -1057,7 +1057,34 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 			}
 		}
 	}
-	filesToDownload, selectionWarnings, err := selectUpdateDeployFiles(files, newVersion, mod.Version, mod.FileIDs, effectiveFileIDs, replacedIDs)
+	// #662: installed ids holding copies of one main file at different
+	// versions heal before the update reads them, so a stale copy is not
+	// carried over as an "unchanged extra" beside the new one. Only copies
+	// are dropped (domain.SameFile): a main file that is a separate
+	// component at another version is a file the mod uses, and an update -
+	// an automatic one included - never drops it. A collection's mod keeps
+	// the curator's files. The update's plan resolves no files, so the
+	// heal is said here.
+	currentFileIDs := mod.FileIDs
+	if recorded := s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID); recorded == nil || !recorded.FromCollection {
+		if heal := healStoredMains(storedFilesFound(files, mod.FileIDs), mod.Version); heal != nil && len(heal.Dropped) > 0 {
+			heal.SourceID, heal.ModID, heal.Name = mod.SourceID, mod.ID, mod.Name
+			dropped := droppedIDs(heal)
+			var cur, eff []string
+			for i, id := range mod.FileIDs {
+				if dropped[id] {
+					continue
+				}
+				cur = append(cur, id)
+				eff = append(eff, effectiveFileIDs[i])
+			}
+			currentFileIDs, effectiveFileIDs = cur, eff
+			msg := heal.Sentence()
+			result.Warnings = append(result.Warnings, msg)
+			emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
+		}
+	}
+	filesToDownload, selectionWarnings, err := selectUpdateDeployFiles(files, newVersion, mod.Version, currentFileIDs, effectiveFileIDs, replacedIDs)
 	var unavailable *UpdateTargetUnavailableError
 	if errors.As(err, &unavailable) {
 		unavailable.SourceID, unavailable.ModID, unavailable.ModName, unavailable.Profile = mod.SourceID, mod.ID, mod.Name, profileName
@@ -1077,7 +1104,14 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// flag freshly-updated mods whose file version differs from the mod
 	// version. effectiveVersion keys the cache (via newMod.Version), the DB
 	// row, and the profile ref below, matching every install flow.
+	//
+	// #662: a main file at the target version names it, so a separate
+	// component kept at its own version (Textures 1.0 beside Core 1.3)
+	// never becomes the version the mod records.
 	effectiveVersion := domain.EffectiveInstalledVersion(newVersion, filesToDownload)
+	if slices.ContainsFunc(filesToDownload, func(f *domain.DownloadableFile) bool { return isVersionedMain(f) && f.Version == newVersion }) {
+		effectiveVersion = newVersion
+	}
 	newMod.Version = effectiveVersion
 
 	var downloadedFileIDs []string
