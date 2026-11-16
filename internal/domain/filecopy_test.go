@@ -26,6 +26,8 @@ func TestSameFile(t *testing.T) {
 		{"a double extension", f("", "Mod-1.0.tar.gz", "1.0"), f("", "Mod-2.0.zip", "2.0")},
 		{"a name with no version beside one with", f("", "main.esp", ""), f("", "main-2.0.esp", "2.0")},
 		{"a version with a suffix", f("", "SkyUI_5_2SE.7z", "5.2SE"), f("", "SkyUI_5_1SE.7z", "5.1SE")},
+		{"a NexusMods name carrying its version twice, no v", f("", "SkyUI_5_2_SE-12604-5-2-1573245213.7z", "5.2"), f("", "SkyUI_5_1_SE-12604-5-1-1580000000.7z", "5.1")},
+		{"a version written as one number", f("", "Mod-12.zip", "1.2"), f("", "Mod-13.zip", "1.3")},
 	}
 	for _, tc := range copies {
 		t.Run("copies/"+tc.name, func(t *testing.T) {
@@ -44,6 +46,12 @@ func TestSameFile(t *testing.T) {
 		{"an option by resolution", f("Option A 1080p", "", "1.0"), f("Option A 1440p", "", "1.1")},
 		{"a word one lacks", f("", "mod1.zip", "1.5"), f("", "mod1-old.zip", "1.0")},
 		{"nothing to tell them apart", f("", "", "1.0"), f("", "", "2.0")},
+		// A lone number that is only one part of the file's version is no
+		// version marker: the whole version must appear in the name.
+		{"parts whose numbers are parts of their versions", f("Part 1", "", "1.2"), f("Part 2", "", "2.0")},
+		{"chapters", f("Chapter 1", "", "1.0"), f("Chapter 2", "", "1.2")},
+		{"discs", f("", "Disc_1.zip", "1.0"), f("", "Disc_2.zip", "2.0")},
+		{"a name carrying only part of its version", f("Main 3", "", "3.0"), f("", "main-1.0.zip", "1.0")},
 	}
 	for _, tc := range separate {
 		t.Run("separate/"+tc.name, func(t *testing.T) {
@@ -62,4 +70,15 @@ func TestGroupCopies(t *testing.T) {
 		{FileName: "Textures_2K-0.9.zip", Version: "0.9"},
 	}
 	assert.Equal(t, []int{0, 1, 0, 2, 1}, GroupCopies(files))
+}
+
+// TestGroupCopies_NoChains: an item joins a group only when it relates to
+// every member. b relates to a and to c, but a and c do not relate, so c
+// starts a group of its own rather than joining a's through b. (SameFile
+// compares canonical forms, so it never chains itself; the grouping does
+// not rely on that.)
+func TestGroupCopies_NoChains(t *testing.T) {
+	related := map[[2]int]bool{{0, 1}: true, {1, 2}: true}
+	same := func(i, j int) bool { return related[[2]int{min(i, j), max(i, j)}] }
+	assert.Equal(t, []int{0, 0, 1}, groupBy(3, same))
 }

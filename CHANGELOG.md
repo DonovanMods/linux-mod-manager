@@ -1027,12 +1027,12 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   version's main file. And two main files conflict only when they are
   copies of one file: an author may version a mod's parts separately, such
   as "Core 1.2" beside "Textures 1.0" or "Textures 2K" beside "Textures
-  4K", and those install together. Two files are copies only when every
-  word or number by which their names differ is part of their own version
-  (or a download's upload timestamp): `SkyUI_5_2_SE.7z` at 5.2 and
+  4K", and those install together. Two files are copies only when their
+  names are the same once each name's own whole version (and a download's
+  upload timestamp) is taken out: `SkyUI_5_2_SE.7z` at 5.2 and
   `SkyUI_5_1_SE.7z` at 5.1 are copies, as are two NexusMods downloads of
-  one file at different versions; `Core` and `Textures`, `2K` and `4K`, or
-  `Part1` and `Part2` are not. A file the source gives no
+  one file at different versions; `Core` and `Textures`, `2K` and `4K`,
+  `Part1` and `Part2`, or `Disc_1` at 1.0 and `Disc_2` at 2.0 are not. A file the source gives no
   category, or one in an archived category (where a source keeps an old
   file of any role), counts as a main file, so a source that does not
   classify its files keeps #647's rule for copies. `lmm install` asks for

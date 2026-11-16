@@ -159,22 +159,28 @@ func selectFilesForVersion(files []domain.DownloadableFile, storedFileIDs []stri
 }
 
 // storedSetHolds reports whether stored files found upstream still agree
-// with the recorded version: a main file among them carries it and no two
-// of them are copies - or nameless, so possibly copies - of one file at
-// different versions (#662: a separate
-// component, or an optional patch, may carry another version), or the
-// rule that stamped records before #662 - the primary file's version, else
-// the first versioned file's - names it, so a record stamped that way keeps
-// its files. Stored files of no version at all agree with any. Copies of
-// one main file at different versions never reach here from a user's
-// reference: selectStoredFiles heals them first.
+// with the recorded version. They do when a main file among them carries
+// it and no two are copies of one file at different versions (#662: a
+// separate component, or an optional patch, may carry another version).
+// Otherwise the rule that stamped records before #662 decides - the
+// primary file's version, else the first versioned file's - so a record
+// stamped that way keeps its files. Stored files of no version at all
+// agree with any.
+//
+// A main file with no name at all, at another version, cannot be told
+// apart from the one at version, so it leaves the answer to the older rule
+// too. No source lists such a file, so this is not reported to the user.
+// Copies at different versions never reach here from a user's reference:
+// selectStoredFiles heals them first.
 func storedSetHolds(found []*domain.DownloadableFile, version string) bool {
-	// A nameless main file at another version cannot be told apart from
-	// the one at version, so it leaves the answer to the older rule.
 	nameless := slices.ContainsFunc(found, func(f *domain.DownloadableFile) bool {
-		return isVersionedMain(f) && f.Version != version && strings.TrimSpace(f.FileName) == "" && strings.TrimSpace(f.Name) == ""
+		return isVersionedMain(f) && f.Version != version &&
+			strings.TrimSpace(f.FileName) == "" && strings.TrimSpace(f.Name) == ""
 	})
-	if !nameless && len(copyConflicts(found)) == 0 && slices.ContainsFunc(found, func(f *domain.DownloadableFile) bool { return isVersionedMain(f) && f.Version == version }) {
+	carried := slices.ContainsFunc(found, func(f *domain.DownloadableFile) bool {
+		return isVersionedMain(f) && f.Version == version
+	})
+	if !nameless && carried && len(copyConflicts(found)) == 0 {
 		return true
 	}
 	for _, f := range found {

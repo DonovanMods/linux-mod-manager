@@ -33,7 +33,7 @@ func TestValidateInstallFileSelection_MixedVersions(t *testing.T) {
 	main1 := domain.DownloadableFile{ID: "m1", FileName: "main-1.0.zip", Version: "1.0"}
 	opt1 := domain.DownloadableFile{ID: "o1", FileName: "patch-1.0.zip", Version: "1.0"}
 	main2 := domain.DownloadableFile{ID: "m2", FileName: "main-2.0.zip", Version: "2.0"}
-	main3 := domain.DownloadableFile{ID: "m3", Name: "Main 3", Version: "3.0"}
+	main3 := domain.DownloadableFile{ID: "m3", Name: "Main 3.0", Version: "3.0"}
 	bare := domain.DownloadableFile{ID: "b", FileName: "extras.zip"}
 
 	// #662: the source's categories. OLD_VERSION is where Nexus keeps a
@@ -95,7 +95,7 @@ func TestValidateInstallFileSelection_MixedVersions(t *testing.T) {
 	t.Run("three versions", func(t *testing.T) {
 		err := svc.ValidateInstallFileSelection(game, []domain.DownloadableFile{main3, main1, main2})
 		require.Error(t, err)
-		assert.Equal(t, "these files belong to versions 3.0 (Main 3), 1.0 (main-1.0.zip) and 2.0 (main-2.0.zip); pick one version", err.Error())
+		assert.Equal(t, "these files belong to versions 3.0 (Main 3.0), 1.0 (main-1.0.zip) and 2.0 (main-2.0.zip); pick one version", err.Error())
 	})
 }
 

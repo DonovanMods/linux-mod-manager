@@ -224,9 +224,10 @@ type storedSelection struct {
 	files []*domain.DownloadableFile
 	// version is the version the mod records for them (#94).
 	version string
-	// heal is set when a user's reference was healed; mixed when a collection's reference
-	// installs the curator's copies at several versions as they are.
-	// Neither carries the mod's identity: the caller adds it.
+	// heal is set when a user's reference was healed; mixed when a
+	// collection's reference installs the curator's copies at several
+	// versions as they are. Neither carries the mod's identity: the caller
+	// adds it.
 	heal  *StoredFilesHeal
 	mixed []MixedVersion
 }
