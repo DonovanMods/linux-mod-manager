@@ -989,6 +989,11 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	failed := make(map[string]string)
 	failedErrs := make(map[string]error)
 	var installer *Installer
+	// refs holds the install loop's profile refs (#661), made once the
+	// document is saved; a commit that panics still has the refs of the
+	// items before it written.
+	var refs *profileRefBatch
+	defer func() { _ = refs.flush() }()
 	// staged are the items acquired so far, for a later phase's file
 	// states (importFileStates).
 	var staged []*importStaged
@@ -1019,16 +1024,23 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 			if err := saveProfile(ctx); err != nil {
 				return err
 			}
+			refs = s.newRefBatch(pm, game.ID, profile.Name)
 			var err error
 			installer, err = s.getInstallerForProfile(ctx, game, profile.Name)
+			if err == nil {
+				installer.readOverridesOnce()
+			}
 			return err
 		},
 		commit: func(ctx context.Context, _ int, st *importStaged) error {
-			return s.commitImportItem(ctx, game, plan, profile.Name, pm, installer, st, deploy, result, emit)
+			return s.commitImportItem(ctx, game, plan, profile.Name, refs, installer, st, deploy, result, emit)
 		},
 		release: func(st *importStaged, blocked bool) { s.releaseAcquired(st.files, blocked) },
 	}
 	runErr := runAcquire(ctx, run)
+	// #661: what the loop committed is on disk before anything reads the
+	// profile again (the merged-pak sync below, a collection's to-dos).
+	flushImportedRefs(refs, Scope{Op: OpImport}, result, emit)
 	if opts.RecordTodos {
 		// #660: each failed item's to-do, for the collection flow to
 		// write: a failure at acquire carries its error, one at commit (a
@@ -1211,7 +1223,9 @@ func (s *Service) rowChecksums(ctx context.Context, game *domain.Game, row domai
 
 // recordImportedRef writes the profile ref completing an installed row the
 // import loop just saved, turning a refusal into the flow's --verbose-gated
-// note (ProfileImportResult.Notes + ImportNote).
+// note (ProfileImportResult.Notes + ImportNote). The ref goes into the
+// flow's batch (#661), which saves it with the batch's others; the flow
+// flushes the batch when its loop ends (flushImportedRefs).
 //
 // Ruling 16 (A): the DB row and the deployment are already in place, so the
 // profile ref that completes them is written even under a cancelled ctx
@@ -1220,9 +1234,9 @@ func (s *Service) rowChecksums(ctx context.Context, game *domain.Game, row domai
 // than swallowed into a note; anything else is the note. A write that
 // SUCCEEDED returns nil whatever the ctx says, so the caller counts the mod
 // it genuinely finished and stops at its next top-of-loop check.
-func (s *Service) recordImportedRef(ctx context.Context, pm *ProfileManager, gameID, profileName string, ref domain.ModReference, fomodRec fomodRecord, scope Scope, result *ProfileImportResult, emit func(Event)) error {
+func (s *Service) recordImportedRef(ctx context.Context, refs *profileRefBatch, ref domain.ModReference, fomodRec fomodRecord, scope Scope, result *ProfileImportResult, emit func(Event)) error {
 	err := completeProfileWrite(ctx, func(ctx context.Context) error {
-		return pm.upsertMod(ctx, gameID, profileName, ref, fomodRec)
+		return refs.upsert(ctx, ref, fomodRec)
 	})
 	if err == nil {
 		return nil
@@ -1230,8 +1244,24 @@ func (s *Service) recordImportedRef(ctx context.Context, pm *ProfileManager, gam
 	if cerr := ctx.Err(); cerr != nil {
 		return cerr
 	}
+	noteProfileWriteFailure(err, scope, result, emit)
+	return nil
+}
+
+// flushImportedRefs saves what the flow's batch still holds once its
+// install loop has ended - done, failed or cancelled (#661) - so every row
+// the loop wrote has its ref on disk (Ruling 16). A save that fails is the
+// note a failed per-item write was.
+func flushImportedRefs(refs *profileRefBatch, scope Scope, result *ProfileImportResult, emit func(Event)) {
+	if err := refs.close(); err != nil {
+		noteProfileWriteFailure(err, scope, result, emit)
+	}
+}
+
+// noteProfileWriteFailure is an import's note for a profile ref it could
+// not write.
+func noteProfileWriteFailure(err error, scope Scope, result *ProfileImportResult, emit func(Event)) {
 	msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 	result.Notes = append(result.Notes, msg)
 	emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
-	return nil
 }

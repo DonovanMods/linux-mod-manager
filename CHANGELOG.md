@@ -908,6 +908,20 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Changed
 
+- **A large collection import no longer slows down as it goes (#661).**
+  A profile import - a collection import or update included -
+  `lmm profile finish` and `lmm profile fill` (and their web UI jobs) used
+  to rewrite the whole profile file once per installed mod and re-read it
+  for every mod they deployed, so their bookkeeping grew with the square
+  of the collection's size. They now write the profile 25 mods at a time
+  (or every 2 seconds), and once more when the install ends - finished,
+  failed or cancelled - and read it once. A 600-mod import from a local
+  test source (no real downloads) took 6.5 s and now takes 0.5 s; the
+  profile file
+  each flow ends with is unchanged, and no installed mod ends a cancelled
+  run without its profile entry. `lmm profile apply` and
+  `lmm profile switch` still write once per mod.
+
 - **An install takes files from one version of a mod (#647).**
   `lmm install` used to accept files of different versions together (through
   the file picker or `--file a,b`), install them all, and record one

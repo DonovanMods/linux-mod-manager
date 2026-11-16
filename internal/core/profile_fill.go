@@ -983,6 +983,10 @@ func (s *Service) applyProfileFill(ctx context.Context, game *domain.Game, plan 
 	emit(StepEvent{Scope: Scope{Op: OpProfileFill, Total: total}, Phase: ImportInstalling})
 	names := make(map[string]string, total)
 	failed := make(map[string]string)
+	// #661: the loop's profile refs, a batch at a time; flushed once the
+	// loop ends, and by the defer should a commit panic.
+	batch := s.newRefBatch(pm, game.ID, profile.Name)
+	defer func() { _ = batch.flush() }()
 	var installer *Installer
 	run := acquireRun[*importStaged]{
 		policy: acquirePolicy{mode: acquirePhased},
@@ -1002,14 +1006,18 @@ func (s *Service) applyProfileFill(ctx context.Context, game *domain.Game, plan 
 		begin: func(ctx context.Context) error {
 			var err error
 			installer, err = s.getInstallerForProfile(ctx, game, profile.Name)
+			if err == nil {
+				installer.readOverridesOnce()
+			}
 			return err
 		},
 		commit: func(ctx context.Context, _ int, st *importStaged) error {
-			return s.commitImportItem(ctx, game, iplan, profile.Name, pm, installer, st, deploy, ir, emit)
+			return s.commitImportItem(ctx, game, iplan, profile.Name, batch, installer, st, deploy, ir, emit)
 		},
 		release: func(st *importStaged, blocked bool) { s.releaseAcquired(st.files, blocked) },
 	}
 	runErr := runAcquire(ctx, run)
+	flushImportedRefs(batch, Scope{Op: OpProfileFill}, ir, emit)
 	var refused *AcquireRefusedError
 	if errors.As(runErr, &refused) {
 		_ = refusedImport(iplan, refs, refused, names, failed, ir)

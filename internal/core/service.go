@@ -276,6 +276,16 @@ type Service struct {
 	// production.
 	reinstallTxnOpened func(cache.Key)
 
+	// refBatchItems, when positive, replaces refBatchItems as the size of
+	// every profileRefBatch this Service makes (#661). Test-only seam
+	// (export_test.go's SetRefBatchItemsForTest); always 0 in production.
+	refBatchItems int
+	// profileSaves counts the profile saves of every ProfileManager this
+	// Service hands out (#661): the ratchet that holds an import's profile
+	// writes to its batches reads it (export_test.go's
+	// ProfileSavesForTest). Counting is all it does.
+	profileSaves atomic.Int64
+
 	// afterDeployLink, when non-nil, runs after the Installer has placed a
 	// file in the game directory and before it records the deployed_files
 	// row for it - the half-written window a read-only verify must never
@@ -2455,6 +2465,7 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 func (s *Service) NewProfileManager() *ProfileManager {
 	pm := NewProfileManager(s.configDir, s.db)
 	pm.warn = s.warnWriter
+	pm.saves = &s.profileSaves
 	return pm
 }
 

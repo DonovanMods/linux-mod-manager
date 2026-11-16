@@ -540,3 +540,15 @@ func ConvergeLastCopiesForTest(r *ConvergeResult) []ConvergedFile {
 	}
 	return out
 }
+
+// SetRefBatchItemsForTest sizes every profileRefBatch s makes (#661): 1
+// saves after every upsert, as the per-item writes did.
+func (s *Service) SetRefBatchItemsForTest(n int) {
+	s.refBatchItems = n
+}
+
+// ProfileSavesForTest is how many profile saves s's ProfileManagers have
+// made so far (#661).
+func (s *Service) ProfileSavesForTest() int64 {
+	return s.profileSaves.Load()
+}

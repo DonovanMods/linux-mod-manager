@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -55,6 +56,9 @@ type ProfileManager struct {
 	// WarnWriter), where a save reports what it did beyond writing the
 	// document (save); nil for a ProfileManager built without a Service.
 	warn io.Writer
+	// saves, when set, counts every save and saveRenamed (the Service's
+	// profileSaves, #661); nil for a ProfileManager built without one.
+	saves *atomic.Int64
 }
 
 // NewProfileManager creates a new profile manager
@@ -70,6 +74,7 @@ func NewProfileManager(configDir string, database *db.DB) *ProfileManager {
 // rewrite whole and where it kept the original, or a write it could not make
 // atomically (#441 review F6, F10).
 func (pm *ProfileManager) save(profile *domain.Profile) error {
+	pm.countSave()
 	report, err := config.SaveProfileReporting(pm.configDir, profile)
 	pm.report(report)
 	return err
@@ -77,9 +82,17 @@ func (pm *ProfileManager) save(profile *domain.Profile) error {
 
 // saveRenamed is save for config.SaveRenamedProfile.
 func (pm *ProfileManager) saveRenamed(profile *domain.Profile, oldName string) error {
+	pm.countSave()
 	report, err := config.SaveRenamedProfileReporting(pm.configDir, profile, oldName)
 	pm.report(report)
 	return err
+}
+
+// countSave counts one save on pm.saves, when it is set.
+func (pm *ProfileManager) countSave() {
+	if pm.saves != nil {
+		pm.saves.Add(1)
+	}
 }
 
 func (pm *ProfileManager) report(report config.SaveReport) {
@@ -553,13 +566,10 @@ func (pm *ProfileManager) upsertModByUser(ctx context.Context, gameID, profileNa
 }
 
 // upsertModRef is upsertMod's body; disown clears from_collection on the
-// ref it updates in place.
+// ref it updates in place. One load, upsertRef's change, one save: a flow
+// that records many refs in a loop holds the document instead
+// (profileRefBatch, #661), applying the identical upsertRef to it.
 func (pm *ProfileManager) upsertModRef(ctx context.Context, gameID, profileName string, mod domain.ModReference, rec fomodRecord, disown bool) error {
-	mod.SetFomodRecord(domain.FomodRecord{})
-	mod.Todo = nil
-	if rec.op == fomodSet {
-		mod.SetFomodRecord(rec.rec)
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -567,6 +577,25 @@ func (pm *ProfileManager) upsertModRef(ctx context.Context, gameID, profileName 
 	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
 	if err != nil {
 		return err
+	}
+	if _, err := upsertRef(profile, profileName, mod, rec, disown); err != nil {
+		return err
+	}
+	return pm.save(profile)
+}
+
+// upsertRef is one ref upsert applied to profile in memory - the per-ref
+// rule every install-style write follows, whether it saves the document at
+// once (upsertModRef) or with a batch of others (profileRefBatch, #661).
+// It updates the ref for mod's SourceID/ModID in place, keeping its
+// position, or appends mod when the profile has none; appended reports the
+// latter. A refusal (a locked ref at another version, #143) leaves profile
+// untouched. profileName names the profile in that refusal.
+func upsertRef(profile *domain.Profile, profileName string, mod domain.ModReference, rec fomodRecord, disown bool) (appended bool, err error) {
+	mod.SetFomodRecord(domain.FomodRecord{})
+	mod.Todo = nil
+	if rec.op == fomodSet {
+		mod.SetFomodRecord(rec.rec)
 	}
 
 	// Look for existing mod and update in place
@@ -587,7 +616,7 @@ func (pm *ProfileManager) upsertModRef(ctx context.Context, gameID, profileName 
 				// unconditional on apply/sync/switch, which is what made
 				// its old `profile %q` quoting user-visible drift.
 				locked := profile.Mods[i]
-				return fmt.Errorf("%w (refusing to record v%s)",
+				return false, fmt.Errorf("%w (refusing to record v%s)",
 					LockedRefRefusalError(
 						domain.Mod{ID: mod.ModID, SourceID: mod.SourceID, Name: domain.ModKey(mod.SourceID, mod.ModID)},
 						profileName,
@@ -634,7 +663,7 @@ func (pm *ProfileManager) upsertModRef(ctx context.Context, gameID, profileName 
 		profile.Mods = append(profile.Mods, mod)
 	}
 
-	return pm.save(profile)
+	return !found, nil
 }
 
 // healRefFileIDs moves every ref of sourceID/modID that pins exactly the
