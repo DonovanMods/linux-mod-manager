@@ -146,6 +146,10 @@ type UpdateFromArchivePlan struct {
 	// not among them - Match states it, and a frontend words it beside its
 	// own way to proceed (ArchiveMismatchError.Sentence). Never nil.
 	Warnings []string `json:"warnings"`
+	// Handoffs is each shared path the update passes to the next mod in
+	// load order, because the new version does not ship it (#638).
+	// Additive; absent when there are none.
+	Handoffs []HandOff `json:"handoffs,omitempty"`
 
 	// matchedFileID is the file whose completion marker Apply stamps.
 	matchedFileID string `json:"-"`
@@ -308,6 +312,7 @@ func (s *Service) PlanUpdateFromArchive(ctx context.Context, game *domain.Game, 
 	if plan.Files == nil {
 		plan.Files = []string{}
 	}
+	plan.Handoffs = s.planArchiveUpdateHandOffs(ctx, game, profileName, &mod.Mod, contents.files)
 
 	locked, lockedVersion, err := s.lockState(ctx, game.ID, profileName, mod.SourceID, mod.ID)
 	if err != nil {

@@ -1,0 +1,37 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "to_disable": [],
+  "to_enable": [],
+  "to_install": [],
+  "handoffs": [
+    {
+      "path": "Data/shared.esp",
+      "from": {
+        "source_id": "nexusmods",
+        "mod_id": "42",
+        "name": "Sample Mod"
+      },
+      "to": {
+        "source_id": "nexusmods",
+        "mod_id": "7",
+        "name": "Realistic Needs"
+      }
+    },
+    {
+      "path": "d3d11.dll",
+      "root": "install_path",
+      "from": {
+        "source_id": "nexusmods",
+        "mod_id": "42",
+        "name": "Sample Mod"
+      },
+      "to": {
+        "source_id": "local",
+        "mod_id": "reshade",
+        "name": "ReShade"
+      }
+    }
+  ],
+  "no_changes": false
+}

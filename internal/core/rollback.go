@@ -60,6 +60,10 @@ type RollbackPlan struct {
 	// only needs to report it for a renderer that wants to refuse before
 	// ever calling ApplyRollback, matching doUpdateRollback's own ordering.
 	CacheMissing bool `json:"cache_missing"`
+	// Handoffs is each shared path the rollback passes to the next mod in
+	// load order, because the previous version does not ship it (#638).
+	// Additive; absent when there are none.
+	Handoffs []HandOff `json:"handoffs,omitempty"`
 	// snapshot is the installed-mod set this plan was computed against
 	// (Ruling 5): ApplyRollback re-derives it under beginOp and returns
 	// ErrStalePlan when it no longer matches. Unexported and outside the
@@ -133,6 +137,9 @@ func (s *Service) PlanRollback(ctx context.Context, game *domain.Game, profileNa
 	// #639: an entry refilled by another set of the version's files is not
 	// the rollback's tree: missing, as far as a rollback goes.
 	plan.CacheMissing = !s.rollbackTargetHolds(ctx, game, mod)
+	if !plan.CacheMissing {
+		plan.Handoffs = s.planRollbackHandOffs(ctx, game, mod)
+	}
 
 	return plan, nil
 }

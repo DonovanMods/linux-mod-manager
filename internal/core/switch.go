@@ -101,6 +101,12 @@ type SwitchPlan struct {
 	// the switch leaves in place. Additive; absent when there are none.
 	Overrides []OverrideChange `json:"overrides,omitempty"`
 
+	// Handoffs is each shared path a mod the switch turns off or replaces
+	// passes to the next mod in the target profile's load order that stays
+	// deployed (#633/#638), by its final owner. Additive; absent when
+	// there are none.
+	Handoffs []HandOff `json:"handoffs,omitempty"`
+
 	NoChanges     bool `json:"no_changes"`     // To's mod set matches From's content-wise and no override changes (#631); only SetDefault is needed
 	AlreadyActive bool `json:"already_active"` // To is already the active default profile; nothing to plan
 
@@ -495,7 +501,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		installedKeys[key] = true
 	}
 
-	return &SwitchPlan{
+	plan := &SwitchPlan{
 		Unresolved: incompleteOf(recordedTodos(targetProfile, installedKeys)),
 		GameID:     game.ID, From: currentName, To: target,
 		ToDisable: toDisable, ToEnable: toEnable, ToInstall: toInstall,
@@ -508,7 +514,10 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		snapshot:          snapshot,
 		targetSnapshot:    targetSnapshot,
 		archiveGone:       archiveGone,
-	}, nil
+	}
+	// #638: the shared paths the switch hands on, named before it runs.
+	plan.Handoffs = s.planSwitchHandOffs(ctx, game, plan)
+	return plan, nil
 }
 
 // SwitchResult reports the outcome of ApplyProfileSwitch. As with
@@ -762,12 +771,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	// to one the switch turns off or deploys itself.
 	// The switch's own installs are left out too: each one's live row is
 	// another version, which its own deploy replaces.
-	excluded := excludeKeys(plan.ToDisable, plan.ToEnable)
-	for _, ref := range plan.ToInstall {
-		excluded[domain.ModKey(ref.SourceID, ref.ModID)] = true
-	}
-	fromInstaller.heirs = s.pathHeirsFor(plan.To, toInstaller, excluded)
-	toInstaller.heirs = s.pathHeirsFor(plan.To, nil, excluded)
+	s.wireSwitchHeirs(plan, fromInstaller, toInstaller)
 	pm := s.NewProfileManager()
 
 	totalDisable := len(plan.ToDisable)

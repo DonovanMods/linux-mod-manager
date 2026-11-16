@@ -1,0 +1,14 @@
+{
+  "path": "d3d11.dll",
+  "root": "install_path",
+  "from": {
+    "source_id": "nexusmods",
+    "mod_id": "42",
+    "name": "Sample Mod"
+  },
+  "to": {
+    "source_id": "local",
+    "mod_id": "reshade",
+    "name": "ReShade"
+  }
+}

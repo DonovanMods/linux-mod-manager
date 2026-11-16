@@ -201,10 +201,16 @@ func (f *heirFlow) listing(placer *Installer, game *domain.Game, mod *domain.Ins
 	return files
 }
 
-// resolve is the heirs of a removal of removing under removalProfile.
-func (h *heirSource) resolve(ctx context.Context, game *domain.Game, removalProfile string, removing *domain.Mod) (*pathHeirs, error) {
+// resolve is the heirs of a removal of removing under removalProfile,
+// listed through flow (nil: the running mutation's, Service.heirFlowFor),
+// leaving out the mods in also as well as h's own exclusions. A plan
+// passes its own flow and the mods its simulated flow has removed so far
+// (#638, handOffPlanner); Apply passes neither.
+func (h *heirSource) resolve(ctx context.Context, game *domain.Game, removalProfile string, removing *domain.Mod, flow *heirFlow, also map[string]bool) (*pathHeirs, error) {
 	profile := h.profileFor(removalProfile)
-	flow := h.svc.heirFlowFor(game.ID)
+	if flow == nil {
+		flow = h.svc.heirFlowFor(game.ID)
+	}
 	mods, err := h.svc.heirCandidates(ctx, game.ID, profile)
 	if err != nil {
 		return nil, err
@@ -213,7 +219,7 @@ func (h *heirSource) resolve(ctx context.Context, game *domain.Game, removalProf
 	heirs := &pathHeirs{profile: profile, flow: flow}
 	for _, m := range mods {
 		key := domain.ModKey(m.SourceID, m.ID)
-		if key != going && !h.exclude[key] {
+		if key != going && !h.exclude[key] && !also[key] {
 			heirs.candidates = append(heirs.candidates, m)
 		}
 	}
@@ -240,6 +246,12 @@ type handOff struct {
 	resolved bool
 	heirs    *pathHeirs
 	placer   *Installer
+
+	// flow and also are a plan's (#638): the listings it makes for its
+	// own heirs, and the mods its simulated flow has removed so far. Both
+	// nil for an Apply's removal.
+	flow *heirFlow
+	also map[string]bool
 }
 
 // newHandOff is the hand-off state for a removal of mod through i, or nil
@@ -269,7 +281,7 @@ func (ho *handOff) resolve(ctx context.Context, i *Installer, game *domain.Game,
 		return ho.heirs
 	}
 	ho.resolved = true
-	heirs, err := i.heirs.resolve(ctx, game, profileName, ho.removing)
+	heirs, err := i.heirs.resolve(ctx, game, profileName, ho.removing, ho.flow, ho.also)
 	if err != nil {
 		i.log.Warn("could not list the mods that may take a shared path; the removal leaves it as before", "err", err)
 		return nil
@@ -347,11 +359,7 @@ func (i *Installer) noteHandOff(h handedPath) {
 // whether the file was placed.
 func (i *Installer) placeHeir(ctx context.Context, game *domain.Game, profileName string, others *otherGameRecords, mod *domain.Mod, item deployItem, dstPath string) bool {
 	file := item.path
-	// #636: a prefix file has nowhere to go without the prefix.
-	if file.IsPrefix() && game.PrefixRoot == nil {
-		return false
-	}
-	if _, ok := heldElsewhere(others, file, dstPath); ok {
+	if !heirPlaceable(game, others, file, dstPath) {
 		return false
 	}
 	check := i.keepOnDeploy(ctx, i.judgeFor(game, profileName, others, nil), file, dstPath)
@@ -378,6 +386,17 @@ func (i *Installer) placeHeir(ctx context.Context, game *domain.Game, profileNam
 		}
 	}
 	return true
+}
+
+// heirPlaceable is placeHeir's first two refusals, which a plan asks too
+// (#638): a prefix file has nowhere to go without the prefix (#636), and a
+// path another game records is left as it is (#445).
+func heirPlaceable(game *domain.Game, others *otherGameRecords, file domain.DeployPath, dstPath string) bool {
+	if file.IsPrefix() && game.PrefixRoot == nil {
+		return false
+	}
+	_, held := heldElsewhere(others, file, dstPath)
+	return !held
 }
 
 // modLabel is mod's name, or its key when it has none.
