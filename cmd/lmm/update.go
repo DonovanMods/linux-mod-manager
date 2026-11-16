@@ -1479,6 +1479,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	if !jsonOutput {
 		fmt.Printf("Rolling back %s %s → %s...\n", plan.Mod.Name,
 			displayModVersion(wv, plan.FromVersion, plan.Mod.UpdatedAt), displayRollbackTarget(wv, plan.ToVersion))
+		printHandOffs("  ", plan.Handoffs) // #638
 	}
 
 	opts := core.RollbackOptions{

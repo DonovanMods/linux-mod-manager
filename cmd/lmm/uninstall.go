@@ -250,6 +250,7 @@ func renderUninstallPlan(plan *core.UninstallPlan, profileName string) {
 			}
 		}
 		printStrandedUninstallHint(plan.Mod.GameID, profileName, plan.Stranded, true)
+		printHandOffs("  ", plan.Handoffs) // #638
 		switch {
 		case plan.KeepCache:
 			fmt.Println("  Cache files preserved")
