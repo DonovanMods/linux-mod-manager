@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -173,6 +174,31 @@ func TestApplyProfileSync_CancelledMidBatch_WhatItCountedIsOnDisk(t *testing.T) 
 	for _, ref := range saved.Mods {
 		assert.Contains(t, ids, ref.ModID)
 	}
+}
+
+// TestApplyProfileSync_AFailedSaveNamesItsChanges pins the wording of a
+// sync whose profile cannot be saved: its writes are adds and removals as
+// well as updates, so the warning counts changes, not installed mods.
+func TestApplyProfileSync_AFailedSaveNamesItsChanges(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes through a read-only directory")
+	}
+	fx, _ := syncFixture(t, "z", 3)
+	plan, err := fx.svc.PlanProfileSync(context.Background(), fx.game, "default")
+	require.NoError(t, err)
+	require.Len(t, plan.ToAdd, 3)
+	path, err := config.ProfilePath(fx.svc.ConfigDir(), fx.game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(path, 0o444))
+	require.NoError(t, os.Chmod(filepath.Dir(path), 0o555))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(path), 0o755) })
+
+	result, err := fx.svc.ApplyProfileSync(context.Background(), fx.game, plan, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Warnings, 1, "one failed save, one warning")
+	assert.Contains(t, result.Warnings[0], "could not update profile: ")
+	assert.Contains(t, result.Warnings[0], "; 3 changes are not recorded in it (repo:z000, repo:z001, repo:z002)")
+	assert.NotContains(t, result.Warnings[0], "installed")
 }
 
 // TestApplyProfileApply_ProfileSavesAreBatched is #663's ratchet: a

@@ -340,7 +340,9 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 	// - done or cancelled - so every ref the sync counted is on disk
 	// before it returns, as each per-item save left it. A sync writes no
 	// DB row, so Ruling 16 has no pair here to split.
-	refs := s.newRefBatch(pm, plan.GameID, plan.Profile)
+	// Its writes are adds and removals as well as updates, so a save that
+	// fails names them as changes, not installed mods.
+	refs := s.newRefBatch(pm, plan.GameID, plan.Profile).describe("change", "changes")
 	defer func() { _ = refs.flush() }()
 	loopErr := s.syncProfileRefs(ctx, plan, refs, result, note, warn)
 	if err := refs.close(); err != nil {

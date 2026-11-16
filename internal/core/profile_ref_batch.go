@@ -25,7 +25,9 @@
 // collection origin and the mod's own substituted pin: fileStatesForWith,
 // recipeMD5For) - is nothing upsertRef changes in place; an upsert that
 // APPENDS a ref (the document did not list the mod) changes the order, so
-// it is saved at once.
+// it is saved at once. A sync's adds and removals change the order too,
+// and deliberately do not save at once: the sync loop reads nothing from
+// the profile and installs nothing, so they wait for the batch's bound.
 //
 // Ruling 16: an item's DB row is written before its ref, and the ref is
 // recorded in the held document even under a cancelled ctx (the caller
@@ -91,6 +93,14 @@ type profileRefBatch struct {
 	// saveDoc, when set, replaces pm.save (a test seam for a save that
 	// fails once).
 	saveDoc func(*domain.Profile) error
+	// bound is the pending count at which change next saves: items, or
+	// further out after a save there failed (see change). 0 means items.
+	bound int
+	// one and many name what close's failure counts (unrecordedRefs);
+	// empty means installed mods, every install loop's writes. A sync,
+	// whose writes are adds and removals too, names them otherwise
+	// (describe).
+	one, many string
 
 	items  int
 	window time.Duration
@@ -105,6 +115,14 @@ func (s *Service) newRefBatch(pm *ProfileManager, gameID, profileName string) *p
 	if s.refBatchItems > 0 {
 		b.items = s.refBatchItems
 	}
+	return b
+}
+
+// describe names what b's writes are in close's failure - one and many
+// being the singular and plural - for a flow whose writes are not each an
+// installed mod's ref (a sync's adds and removals, #663). It returns b.
+func (b *profileRefBatch) describe(one, many string) *profileRefBatch {
+	b.one, b.many = one, many
 	return b
 }
 
@@ -155,7 +173,11 @@ func (b *profileRefBatch) remove(ctx context.Context, sourceID, modID string) er
 // document and the next save carries it, so it is not yet a ref the
 // profile lacks - only close's last save says that, naming every mod it
 // could not record (#663: reporting both made one failed save two
-// warnings, where the per-item write it replaces made one).
+// warnings, where the per-item write it replaces made one). Nor is it
+// tried again at every later change: the next try is a full bound later
+// (another items writes, or another window), or at close - except for an
+// appending upsert, which saves at once whatever came before, for the
+// loop's own reads.
 func (b *profileRefBatch) change(ctx context.Context, key string, write func(*domain.Profile) (flushNow bool, err error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -178,8 +200,13 @@ func (b *profileRefBatch) change(ctx context.Context, key string, write func(*do
 	if !slices.Contains(b.keys, key) {
 		b.keys = append(b.keys, key)
 	}
-	if flushNow || b.pending >= b.items || b.now().Sub(b.since) >= b.window {
-		_ = b.flush()
+	if b.bound == 0 {
+		b.bound = b.items
+	}
+	if flushNow || b.pending >= b.bound || b.now().Sub(b.since) >= b.window {
+		if b.flush() != nil {
+			b.bound, b.since = b.pending+b.items, b.now()
+		}
 	}
 	return nil
 }
@@ -191,7 +218,8 @@ func (b *profileRefBatch) change(ctx context.Context, key string, write func(*do
 // deferred one, there for a panicking commit) writes nothing over what the
 // flow saves to the profile after its loop (a finish's to-dos). A failure
 // is returned for the flow to report, as a failed per-item save was, and
-// says which installed mods the profile does not record.
+// says which installed mods (or, for a sync, changes) the profile does not
+// record.
 func (b *profileRefBatch) close() error {
 	if b == nil {
 		return nil
@@ -199,25 +227,29 @@ func (b *profileRefBatch) close() error {
 	err := b.flush()
 	if err != nil {
 		if err = b.flush(); err != nil {
-			err = fmt.Errorf("%w; %s", err, unrecordedRefs(b.keys))
+			one, many := b.one, b.many
+			if one == "" {
+				one, many = "installed mod", "installed mods"
+			}
+			err = fmt.Errorf("%w; %s", err, unrecordedRefs(b.keys, one, many))
 		}
 	}
 	b.doc, b.pending, b.keys = nil, 0, nil
 	return err
 }
 
-// unrecordedRefs is close's account of the mods keys names: how many, and
-// the first few.
-func unrecordedRefs(keys []string) string {
+// unrecordedRefs is close's account of the mods keys names: how many - of
+// one or many, the singular and plural noun - and the first few.
+func unrecordedRefs(keys []string, one, many string) string {
 	const named = 5
 	list := strings.Join(keys[:min(len(keys), named)], ", ")
 	if len(keys) > named {
 		list += ", ..."
 	}
 	if len(keys) == 1 {
-		return fmt.Sprintf("1 installed mod is not recorded in it (%s)", list)
+		return fmt.Sprintf("1 %s is not recorded in it (%s)", one, list)
 	}
-	return fmt.Sprintf("%d installed mods are not recorded in it (%s)", len(keys), list)
+	return fmt.Sprintf("%d %s are not recorded in it (%s)", len(keys), many, list)
 }
 
 // flush saves the document when it holds an upsert not saved yet. It takes
@@ -235,7 +267,7 @@ func (b *profileRefBatch) flush() error {
 	if err := save(b.doc); err != nil {
 		return err
 	}
-	b.pending, b.keys = 0, nil
+	b.pending, b.keys, b.bound = 0, nil, 0
 	return nil
 }
 
