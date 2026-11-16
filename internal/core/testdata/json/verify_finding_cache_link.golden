@@ -1,0 +1,8 @@
+{
+  "mod_id": "8939586",
+  "mod_name": "Auctionator",
+  "file_id": "Interface/evil.lua",
+  "status": "cache_link",
+  "note": "Interface/evil.lua in the cache entry is a symbolic link; lmm keeps none in a mod's cache, never deploys or follows one, and --fix removes it",
+  "fixable": true
+}

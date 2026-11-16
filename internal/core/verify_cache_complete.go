@@ -142,14 +142,50 @@ func stampedEntry(dir string) bool {
 
 // goneMembers is the members, of those a marker records, that are no
 // longer in dir.
+//
+// #659: a member whose path is a link or special file, or that sits under
+// a link to a directory, is gone too - it is not the content its marker
+// vouches for, and deploy never lists it (cache.ListFiles). Each path is
+// judged a component at a time with Lstat, so no link is followed.
 func goneMembers(dir string, members []string) []string {
 	var gone []string
+	realDirs := make(map[string]bool)
 	for _, m := range members {
-		if _, err := os.Lstat(filepath.Join(dir, m)); errors.Is(err, fs.ErrNotExist) {
+		if !memberPresent(dir, m, realDirs) {
 			gone = append(gone, filepath.ToSlash(m))
 		}
 	}
 	return gone
+}
+
+// memberPresent reports whether member is a regular file in dir reached
+// through real directories only, judged without following any link. An
+// error other than "does not exist" reads as present, as it always has:
+// an unreadable entry is reported by the checks that list it. realDirs
+// memoises the directories already judged real.
+func memberPresent(dir, member string, realDirs map[string]bool) bool {
+	parts := strings.Split(filepath.Clean(member), string(filepath.Separator))
+	path := dir
+	for i, part := range parts {
+		path = filepath.Join(path, part)
+		last := i == len(parts)-1
+		if !last && realDirs[path] {
+			continue
+		}
+		info, err := os.Lstat(path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			return false
+		case err != nil:
+			return true
+		case last:
+			return info.Mode().IsRegular()
+		case !info.IsDir():
+			return false
+		}
+		realDirs[path] = true
+	}
+	return true
 }
 
 // deployedGoneNote is the note for a loss the deployed records show.

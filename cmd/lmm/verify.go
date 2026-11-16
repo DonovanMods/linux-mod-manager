@@ -190,9 +190,14 @@ entry is there but lost a file's content - note names what is gone - and
 deployed copy as stale. For a mod lmm cannot download again - imported
 from an archive - a copied or hard-linked file whose cache member is gone
 is kept as the only copy left, and its row names that deployed path and is
-not fixable), "no_checksum", "file_count_mismatch", "skipped",
-"version_mismatch", "version_unverifiable", "stale_compile",
-"stale_deployment", "fixed_stale_deployment", "conversion_failed",
+not fixable), "cache_link" (a symbolic link or special file inside the
+mod's cache entry - file_id is its path relative to the entry, never
+followed - a warning --fix removes; when it stood where one of the mod's
+files belongs, the same run reports and re-downloads that file as
+"cache_incomplete") and "fixed_cache_link", "no_checksum",
+"file_count_mismatch", "skipped", "version_mismatch",
+"version_unverifiable", "stale_compile", "stale_deployment",
+"fixed_stale_deployment", "conversion_failed",
 "needs_reingest", "fixed_needs_reingest", "external_missing",
 "external_stale" (Steam has updated a tracked Workshop item since lmm
 recorded its revision - recorded and effective carry the two content ids,
@@ -609,6 +614,17 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		if !f.Fixable && f.FixableReason != "" {
 			fmt.Printf("  %s\n", f.FixableReason)
 		}
+
+	case core.VerifyStatusCacheLink:
+		// #659: a link or special file in the mod's cache entry; the note
+		// names the path and what --fix does, or why a removal failed.
+		fmt.Printf("%s %s - LINK IN CACHE (%s)\n", colorYellow("?"), cmp.Or(f.ModName, f.ModID), f.Note)
+		if !f.Fixable && f.FixableReason != "" {
+			fmt.Printf("  %s\n", f.FixableReason)
+		}
+
+	case core.VerifyStatusFixedCacheLink:
+		fmt.Println(colorGreen(fmt.Sprintf("Fixed: %s - %s", cmp.Or(f.ModName, f.ModID), f.Note)))
 
 	case "ok":
 		switch {
