@@ -24,6 +24,7 @@ func (s *Server) routes() {
 	// The mod panel's category picker suggestions (#592, api_mod_category.go).
 	s.mux.Handle("GET /api/v1/categories", s.wrap(s.handleAPICategories))
 	s.mux.Handle("GET /api/v1/search", s.wrap(s.handleAPISearch))
+	s.mux.Handle("GET /api/v1/search/collections", s.wrap(s.handleAPISearchCollections))
 	s.mux.Handle("GET /api/v1/updates", s.wrap(s.handleAPIUpdates))
 	// lmm's own release, not a mod's (#568, api_release.go).
 	s.mux.Handle("GET /api/v1/updates/lmm", s.wrapNoDB(s.handleAPIReleaseStatus))

@@ -36,6 +36,7 @@ import {
   getModFiles,
   getModVersions,
   search as apiSearch,
+  searchCollections as apiSearchCollections,
   uploadArchive,
   deleteUpload,
   maxUploadBytes,
@@ -73,6 +74,7 @@ import {
 import { resolveGamePath } from "./navigation.js";
 import { hydratedTodos, liveTodosKey } from "./livetodos.js";
 import { RELEVANCE, effectiveSort, knownSort } from "./searchsort.js";
+import { COLLECTIONS, MODS, knownSearchType } from "./searchtype.js";
 import {
   connectActivity,
   isOriginMounted,
@@ -952,6 +954,11 @@ function facetsFromReport(report) {
  * already narrowed to "Armor" carries no "Weapons" hits at all, so
  * recomputing from it would make every OTHER category vanish from its own
  * picker the moment one was chosen. Reset only on a genuinely new query.
+ *
+ * type (issue 651) is what is searched: MODS, or COLLECTIONS - the game's
+ * collections (GET /api/v1/search/collections), whose query may be empty
+ * (it lists them) and which takes no category, source or tags; those stay
+ * on the slice for a switch back to mods.
  */
 async function runSearchPage({
   query,
@@ -960,11 +967,13 @@ async function runSearchPage({
   source = "",
   tags = "",
   sort = RELEVANCE,
+  type = MODS,
 }) {
   const q = (query ?? "").trim();
+  const collections = type === COLLECTIONS;
   searchPageSeq += 1;
   const seq = searchPageSeq;
-  if (!q) {
+  if (!q && !collections) {
     store.set({ searchPage: null });
     return;
   }
@@ -981,6 +990,7 @@ async function runSearchPage({
   store.set({
     searchPage: {
       status: "loading",
+      type,
       query: q,
       page,
       pageSize: SEARCH_PAGE_SIZE,
@@ -993,32 +1003,41 @@ async function runSearchPage({
       facets,
     },
   });
-  noteColdIndexes(
-    context.game,
-    source || null,
-    () => {
-      const current = store.get().searchPage;
-      return searchPageSeq === seq && current?.status === "loading"
-        ? current
-        : null;
-    },
-    (next) => store.set({ searchPage: next }),
-  );
-  try {
-    const report = await apiSearch(
-      q,
-      {
-        page,
-        pageSize: SEARCH_PAGE_SIZE,
-        category,
-        source,
-        tags: splitTags(tags),
-        sort,
+  // A collection search builds no local index, so has none to announce.
+  if (!collections)
+    noteColdIndexes(
+      context.game,
+      source || null,
+      () => {
+        const current = store.get().searchPage;
+        return searchPageSeq === seq && current?.status === "loading"
+          ? current
+          : null;
       },
-      context,
+      (next) => store.set({ searchPage: next }),
     );
+  try {
+    const report = collections
+      ? await apiSearchCollections(
+          q,
+          { page, pageSize: SEARCH_PAGE_SIZE, sort },
+          context,
+        )
+      : await apiSearch(
+          q,
+          {
+            page,
+            pageSize: SEARCH_PAGE_SIZE,
+            category,
+            source,
+            tags: splitTags(tags),
+            sort,
+          },
+          context,
+        );
     if (searchPageSeq !== seq) return;
-    const nextFacets = !category && !source ? facetsFromReport(report) : facets;
+    const nextFacets =
+      !collections && !category && !source ? facetsFromReport(report) : facets;
     // The sort the page carries from here on is the one this report can
     // actually honour: a sort no source that answered orders by is not
     // claimed by the select and not sent again (searchsort.js).
@@ -1026,6 +1045,7 @@ async function runSearchPage({
     store.set({
       searchPage: {
         status: "ready",
+        type,
         query: q,
         page,
         pageSize: SEARCH_PAGE_SIZE,
@@ -1038,12 +1058,13 @@ async function runSearchPage({
         facets: nextFacets,
       },
     });
-    writeSortToURL(q, settledSort);
+    writeSortToURL(q, settledSort, type);
   } catch (err) {
     if (searchPageSeq !== seq) return;
     store.set({
       searchPage: {
         status: "error",
+        type,
         query: q,
         page,
         pageSize: SEARCH_PAGE_SIZE,
@@ -1098,11 +1119,17 @@ function splitTags(raw) {
  * to an unfiltered first page (issues 503, 506). */
 function searchPageEntry(route, rehydrate) {
   const query = route.q ?? "";
+  const type = knownSearchType(route.type);
   const current = store.get().searchPage;
-  if (rehydrate && current && current.query === query.trim()) {
+  if (
+    rehydrate &&
+    current &&
+    current.query === query.trim() &&
+    current.type === type
+  ) {
     return searchPageState(current);
   }
-  return { query, page: 0, sort: knownSort(route.sort) };
+  return { query, page: 0, sort: knownSort(route.sort), type };
 }
 
 /** searchPageState is runSearchPage's arguments for a search page slice as
@@ -1118,6 +1145,7 @@ function searchPageState(current) {
     source: current.source,
     tags: current.tags,
     sort: current.sort,
+    type: current.type,
   };
 }
 
@@ -1161,6 +1189,22 @@ function searchPageSetSort(sort) {
   rerunSearchPage({ page: 0, sort: knownSort(sort) });
 }
 
+/** searchPageSetType switches the search page between mods and collections
+ * (issue 651): it rewrites the route's ?type= (a replace, as a sort change
+ * is - a tab is not a new place), and the route change runs the search at
+ * page 0 with the query and sort the URL keeps. Through the URL, not the
+ * slice, so it works from the empty page too, where no search has run. */
+function searchPageSetType(type) {
+  const route = store.get().route;
+  if (route?.view !== "search") return;
+  const url = new URL(window.location.href);
+  if (knownSearchType(type) === COLLECTIONS)
+    url.searchParams.set("type", COLLECTIONS);
+  else url.searchParams.delete("type");
+  url.searchParams.delete("mod");
+  navigate(url.pathname + url.search, { replace: true });
+}
+
 /** writeSortToURL keeps the search route's ?sort= equal to the sort the page
  * is showing, so a reload, a copied link and the slide-over's return path
  * keep it (issue 503). A replace, not a push: choosing a sort is not a new
@@ -1168,12 +1212,15 @@ function searchPageSetSort(sort) {
  * Nothing happens unless the search route for query q is still on screen
  * (the answer may have arrived after the user left), or the URL already says
  * the right thing. */
-function writeSortToURL(q, sort) {
+function writeSortToURL(q, sort, type = MODS) {
   const route = store.get().route;
   if (route?.view !== "search" || (route.q ?? "").trim() !== q) return;
   const url = new URL(window.location.href);
   if (sort === RELEVANCE) url.searchParams.delete("sort");
   else url.searchParams.set("sort", sort);
+  // ?type= the same way (issue 651): what the page is showing.
+  if (type === COLLECTIONS) url.searchParams.set("type", COLLECTIONS);
+  else url.searchParams.delete("type");
   const next = url.pathname + url.search;
   if (next !== window.location.pathname + window.location.search) {
     navigate(next, { replace: true });
@@ -1488,8 +1535,8 @@ function openProfilesModal() {
  * the control focus returns to when the opener was a menu item that closed
  * with its menu (modal.js); the card's button passes none, since it stays
  * on screen. */
-function openImportCollectionModal({ openerSelector } = {}) {
-  store.set({ modal: { type: "import-collection", openerSelector } });
+function openImportCollectionModal({ openerSelector, prefill } = {}) {
+  store.set({ modal: { type: "import-collection", openerSelector, prefill } });
 }
 
 /** noteTodos records how many items a collection profile has left to
@@ -3346,6 +3393,7 @@ const actions = {
   searchPageSetSource,
   searchPageSetTags,
   searchPageSetSort,
+  searchPageSetType,
   startToggle,
   setModLock,
   clearModLock,
@@ -3397,7 +3445,12 @@ const actions = {
 // though view/game/profile stayed the same too - every other route ignores
 // q entirely, matching router.js's own doc comment for it.
 function contextKey(route) {
-  const q = route.view === "search" ? `:${route.q ?? ""}` : "";
+  // The search page's query and what it searches (issue 651: a switch to
+  // the Collections tab is a new search of the same query).
+  const q =
+    route.view === "search"
+      ? `:${route.q ?? ""}:${knownSearchType(route.type)}`
+      : "";
   return `${route.view}:${route.game}:${route.profile}:${route.sourceID ?? ""}:${route.modID ?? ""}${q}`;
 }
 

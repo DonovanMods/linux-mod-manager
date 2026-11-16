@@ -2970,6 +2970,15 @@ a.row-menu__item.mod-page-link {
   margin-top: var(--space-4);
 }
 
+/* The Mods / Collections tab pair (issue 651), laid out as the reorder
+ * modal's load-order tabs are. */
+.search-page__tabs {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
 /* The generic document renderer (a plan with no bespoke view yet, and a
  * failure envelope's typed details). */
 .doc__pairs {

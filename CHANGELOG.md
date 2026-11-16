@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Search a game's NexusMods collections (#651).** `lmm search
+--collections [query]` lists the game's collections on NexusMods (no API
+  key needed): name, curator, endorsements, mod count, latest revision and
+  the page address `lmm profile import --nexus-collection` takes, with
+  `--sort`, `--limit` and `--json` (a new `CollectionSearchReport`
+  document). Without a query it lists the game's collections in the sort's
+  order. Adult collections are listed, as NexusMods lists them, and
+  marked. The web UI's search page gains a **Collections** tab
+  (`?type=collections`, `GET /api/v1/search/collections`) whose results
+  offer **Import…**, opening the import dialog with the address filled in;
+  the search box links to it beside **See all results**, and **Import
+  collection…** links to the game's collections.
+
 - **Plan previews name the mod a shared file passes to (#638).** When
   removing a mod's file hands a shared path to the next mod in load order
   (#633), the plan now says so before you confirm, instead of only after:
