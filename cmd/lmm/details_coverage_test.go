@@ -76,6 +76,9 @@ var detailsCoverage = map[string]string{
 	// envelope as DATA, so the web UI renders the same sentences the
 	// terminal prints instead of carrying its own copy in JavaScript.
 	"core.LoaderRequiredError": "TestReportError_JSON_LoaderRequiredError",
+	// #647: an install selection spanning several versions of a mod - the
+	// refusal's code and each version with its selected files.
+	"core.MixedVersionSelectionError": "TestReportError_JSON_MixedVersionSelectionError",
 	// #614: the FOMOD question document, and the refusal no answer fixes.
 	"core.FomodChoicesRequiredError": "TestReportError_JSON_FomodChoicesRequiredError",
 	"core.PluginOrderCycleError":     "TestReportError_JSON_PluginOrderCycleError",

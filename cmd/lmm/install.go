@@ -121,9 +121,11 @@ func installFileIDList() []string {
 }
 
 // selectInstallFiles applies the --file flag, single-file shortcut, --yes default,
-// or interactive prompt to choose which downloadable files to install.
-// validate, when non-nil, enforces variant-exclusivity rules (#211 -
-// Service.ValidateInstallFileSelection): the --file path returns its error
+// or interactive prompt to choose which downloadable files to install. When
+// the files span more than one version, the interactive prompt asks for the
+// version first and then offers only that version's files (#647).
+// validate, when non-nil, enforces Service.ValidateInstallFileSelection's
+// rules (#211's variant exclusivity, #647's one version): the --file path returns its error
 // as-is (an explicit flag isn't retried), while the interactive path prints
 // it and re-prompts. nil skips validation entirely (no caller currently
 // needs that, but it keeps the signature honest for a future one).
@@ -174,22 +176,41 @@ func selectInstallFilesFrom(r io.Reader, files []domain.DownloadableFile, valida
 		return selected, nil
 	}
 
-	// Find primary file index for default
-	defaultChoice := 1
-	for i := range files {
-		if files[i].IsPrimary {
-			defaultChoice = i + 1
-			break
-		}
-	}
-
 	if installYes {
-		selected := []*domain.DownloadableFile{&files[defaultChoice-1]}
+		selected := []*domain.DownloadableFile{&files[defaultFileChoice(files)-1]}
 		if err := runValidate(selected); err != nil {
 			return nil, err
 		}
 		return selected, nil
 	}
+
+	// reader is created ONCE and shared across every attempt below (the
+	// version prompt, both readMultiSelectionLine's own invalid-format retry
+	// and the validation retry here) - re-wrapping the same underlying r in
+	// a fresh bufio.Reader per attempt (as calling promptMultiSelectionFrom
+	// per-iteration would) silently drops whatever that attempt's Reader
+	// had buffered past the line it returned, losing later input lines
+	// (e.g. this function's own re-prompt test's second line).
+	reader := bufio.NewReader(r)
+
+	// #647: files of several versions are one version's at a time, like
+	// the web picker (#637) - a version first, then that version's files.
+	// --version never gets here with more than one: its pool is one version.
+	if versions := installFileVersions(files); len(versions) > 1 {
+		version, err := selectInstallVersion(reader, files, versions)
+		if err != nil {
+			return nil, err
+		}
+		files = installFilesAt(files, version)
+		if len(files) == 1 {
+			selected := []*domain.DownloadableFile{&files[0]}
+			if err := runValidate(selected); err != nil {
+				return nil, err
+			}
+			return selected, nil
+		}
+	}
+	defaultChoice := defaultFileChoice(files)
 
 	// The listing exists for the prompt that follows it; under --json
 	// readMultiSelectionLine refuses to read stdin (Ruling 2), so printing
@@ -201,14 +222,6 @@ func selectInstallFilesFrom(r io.Reader, files []domain.DownloadableFile, valida
 		}
 	}
 
-	// reader is created ONCE and shared across every attempt below (both
-	// readMultiSelectionLine's own invalid-format retry and the
-	// validation retry here) - re-wrapping the same underlying r in a
-	// fresh bufio.Reader per attempt (as calling promptMultiSelectionFrom
-	// per-iteration would) silently drops whatever that attempt's Reader
-	// had buffered past the line it returned, losing later input lines
-	// (e.g. this function's own re-prompt test's second line).
-	reader := bufio.NewReader(r)
 	for {
 		selections, retry, err := readMultiSelectionLine(reader, "Select file(s) (e.g., 1 or 1,3 or 1-3)", defaultChoice, len(files))
 		if err != nil {
@@ -226,6 +239,100 @@ func selectInstallFilesFrom(r io.Reader, files []domain.DownloadableFile, valida
 			continue
 		}
 		return selected, nil
+	}
+}
+
+// defaultFileChoice is the 1-based row the file prompt defaults to: the
+// primary file, else the first.
+func defaultFileChoice(files []domain.DownloadableFile) int {
+	for i := range files {
+		if files[i].IsPrimary {
+			return i + 1
+		}
+	}
+	return 1
+}
+
+// installFileVersions is the distinct versions of files, in list order. A
+// file with no version is a version of its own (""), as in the web picker.
+func installFileVersions(files []domain.DownloadableFile) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, f := range files {
+		if !seen[f.Version] {
+			seen[f.Version] = true
+			out = append(out, f.Version)
+		}
+	}
+	return out
+}
+
+// installFilesAt is the files at exactly version.
+func installFilesAt(files []domain.DownloadableFile, version string) []domain.DownloadableFile {
+	var out []domain.DownloadableFile
+	for _, f := range files {
+		if f.Version == version {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// displayFileVersion is how the version prompt names version.
+func displayFileVersion(version string) string {
+	if version == "" {
+		return "(no version)"
+	}
+	return version
+}
+
+// selectInstallVersion lists versions and reads one choice from reader
+// (#647). The default is the version of the file the file prompt would
+// default to, so Enter twice installs what Enter once used to. Under --json
+// it refuses like every prompt (readMultiSelectionLine).
+func selectInstallVersion(reader *bufio.Reader, files []domain.DownloadableFile, versions []string) (string, error) {
+	defaultVersion := files[defaultFileChoice(files)-1].Version
+	defaultChoice := 1
+	if !jsonOutput {
+		fmt.Println("\nAvailable versions:")
+	}
+	for i, v := range versions {
+		if v == defaultVersion {
+			defaultChoice = i + 1
+		}
+		if jsonOutput {
+			continue
+		}
+		at := installFilesAt(files, v)
+		count := fmt.Sprintf("%d files", len(at))
+		if len(at) == 1 {
+			count = "1 file"
+		}
+		for _, f := range at {
+			if age := displayAge(f.UploadedAt, cliNow()); age != "" {
+				count += ", " + age // the version's date: its first dated file's, as on the web
+				break
+			}
+		}
+		row := fmt.Sprintf("  [%d] %s (%s)", i+1, displayFileVersion(v), count)
+		if v == defaultVersion {
+			row += " <- default"
+		}
+		fmt.Println(row)
+	}
+	for {
+		selections, retry, err := readMultiSelectionLine(reader, "Select version", defaultChoice, len(versions))
+		if err != nil {
+			return "", err
+		}
+		if retry {
+			continue
+		}
+		if len(selections) != 1 {
+			fmt.Println("Invalid selection: pick one version")
+			continue
+		}
+		return versions[selections[0]-1], nil
 	}
 }
 
@@ -433,6 +540,12 @@ When selecting files interactively, you can choose multiple files (e.g.,
 main + optional patches) using comma-separated values or ranges: 1,3,5 or
 1-3 or 1,3-5. Archived/old-version files are hidden by default; pass
 --show-archived to list and select from them too.
+
+The files you install together all come from one version of the mod. When
+the files on offer span more than one version, you pick the version first
+and then choose among that version's files; --version skips the version
+step. A --file list naming files of different versions is refused. A file
+the source gives no version goes with any version.
 
 Examples:
   lmm install "ore stack" --game starrupture
@@ -706,10 +819,12 @@ func doInstallFromSource(ctx context.Context, service *core.Service, game *domai
 		return fmt.Errorf("no downloadable files available for this mod")
 	}
 
-	// validateFileSelection is the CLI-side enforcement of #211's
-	// variant-exclusivity rule (Service.ValidateInstallFileSelection):
-	// the interactive path re-prompts on a mixed pak+exmodz pick, --file
-	// hard-errors immediately - both friendlier/earlier than the identical
+	// validateFileSelection is the CLI-side enforcement of
+	// Service.ValidateInstallFileSelection (#211's variant exclusivity,
+	// #647's one version per selection): the interactive path re-prompts
+	// on a mixed pak+exmodz pick (a mixed-version pick cannot happen there:
+	// it offers one version's files), --file hard-errors immediately -
+	// both friendlier/earlier than the identical
 	// backstop core.ApplyInstall applies to plan.Files right before this
 	// override (internal/core/install.go).
 	validateFileSelection := func(sel []domain.DownloadableFile) error {
