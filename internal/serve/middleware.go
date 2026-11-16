@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
 
 // csrfFormField and csrfHeaderName are the two places a caller may attach
@@ -109,6 +111,7 @@ func unsafeMethod(m string) bool {
 func (s *Server) wrap(fn http.HandlerFunc) http.Handler {
 	var h http.Handler = fn
 	h = s.freshGames(h)
+	h = s.schemaGate(h)
 	h = s.csrfCheck(h)
 	h = s.originCheck(h)
 	h = s.requestLogging(h)
@@ -150,6 +153,44 @@ func (s *Server) freshGames(next http.Handler) http.Handler {
 		if _, err := s.svc.ReloadGames(); err != nil {
 			s.log.Warn("games.yaml changed but could not be re-read; serving the previous game set",
 				"error", err)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// schemaGate refuses every /api/v1 request once another, newer lmm has
+// migrated the database under this server (#648), with core's
+// SchemaUpgradedError in the ordinary envelope at 503: the remedy as the
+// sentence, the code and both schema versions as the details the SPA's
+// restart banner shows.
+//
+// Reads are refused too, not only mutations (beginOp refuses those in
+// core, whichever frontend asks): a migration can rebuild a table or rename
+// a column, and a read written for the old schema then fails or - worse -
+// answers from a column that no longer means what it did. A server that
+// outlives its open is the one frontend this can reach, which makes this
+// wrapper, the choke point every /api/v1 route already passes, the place to
+// ask; a one-shot CLI query was checked by its own open moments before.
+//
+// It asks once per request - one read of schema_migrations' key, and none
+// at all once refused, since core remembers a refusal. A check that fails
+// for any other reason is logged and the request goes on: the route's own
+// read meets whatever is wrong and answers it, as it did before this gate.
+// It sits inside the Origin/CSRF guards, so a request they refuse costs
+// nothing, and outside freshGames, so a refused one does not re-read
+// games.yaml first. The shell and its assets are not /api/v1 and are never
+// refused: the page has to load to show the banner. Nor does serve exit or
+// restart itself: the same old binary would only refuse again.
+func (s *Server) schemaGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAPIPath(r.URL.Path) {
+			if err := s.svc.CheckSchema(r.Context()); err != nil {
+				if errors.Is(err, core.ErrSchemaTooNew) {
+					s.writeAPIError(w, http.StatusServiceUnavailable, err)
+					return
+				}
+				s.log.Warn("could not check the database schema", "error", err)
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

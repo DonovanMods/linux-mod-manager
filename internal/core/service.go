@@ -224,6 +224,10 @@ type Service struct {
 	// returns, so a false here stays false - which is what lets beginOp and
 	// every enable skip the backfill with one atomic load.
 	backfillPending atomic.Bool
+	// schemaRefused is CheckSchema's remembered refusal (#648): set once
+	// another, newer lmm has migrated the database under this Service, and
+	// never cleared, since a schema never goes back down.
+	schemaRefused atomic.Pointer[SchemaUpgradedError]
 
 	// beforeProfileBackfillScan, when non-nil, runs once the backfill holds
 	// the mutation slot, immediately before it reads its rows. Test-only

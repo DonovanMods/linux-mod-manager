@@ -67,6 +67,34 @@ export class NoAnswerError extends Error {
  */
 export const jobStartDeadlineMillis = 60_000;
 
+/** SCHEMA_TOO_NEW_CODE is core.SchemaTooNewCode: the details code of the
+ * refusal every /api/v1 request gets once another, newer lmm has migrated
+ * the database under this server (issue 648). */
+export const SCHEMA_TOO_NEW_CODE = "schema_too_new";
+
+let schemaRefusal = null;
+const schemaRefusalListeners = new Set();
+
+/** noteSchemaRefusal records a failure's details when they are the
+ * schema refusal, and tells every listener once. The server never takes it
+ * back (a schema does not go back down), so neither does the page: the
+ * first refusal is the one kept. */
+export function noteSchemaRefusal(details) {
+  if (details?.code !== SCHEMA_TOO_NEW_CODE || schemaRefusal) return;
+  schemaRefusal = details;
+  for (const listener of schemaRefusalListeners) listener(details);
+}
+
+/** schemaRefusalNow is the refusal noted so far, or null. */
+export const schemaRefusalNow = () => schemaRefusal;
+
+/** onSchemaRefusal calls listener when the refusal is first noted, and
+ * returns its unsubscribe. */
+export function onSchemaRefusal(listener) {
+  schemaRefusalListeners.add(listener);
+  return () => schemaRefusalListeners.delete(listener);
+}
+
 async function request(method, path, body, { deadlineMillis } = {}) {
   const init = { method, headers: { "X-CSRF-Token": csrfToken } };
   if (body !== undefined) {
@@ -91,6 +119,7 @@ async function request(method, path, body, { deadlineMillis } = {}) {
   const payload = text ? JSON.parse(text) : null;
 
   if (!response.ok) {
+    noteSchemaRefusal(payload?.details);
     throw new ApiError(
       response.status,
       payload?.error || `${method} ${path} failed (${response.status})`,
@@ -573,6 +602,7 @@ export const getSourceDefinition = async (id) => {
     } catch {
       // A non-JSON body (a plain 404) - the status text is all there is.
     }
+    noteSchemaRefusal(payload?.details);
     throw new ApiError(
       response.status,
       payload?.error || `couldn't load the definition (${response.status})`,
@@ -688,6 +718,7 @@ export function uploadArchive(file, { onProgress, signal } = {}) {
         resolve(payload);
         return;
       }
+      noteSchemaRefusal(payload?.details);
       reject(
         new ApiError(
           xhr.status,

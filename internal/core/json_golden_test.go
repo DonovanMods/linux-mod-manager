@@ -3637,6 +3637,13 @@ func TestJSONGoldens(t *testing.T) {
 			core.LaunchDriftError{GameID: "valheim", Profile: "default", Undeployed: 2, StillDeployed: 1, ModPathError: "mod_path /g/mods does not exist"},
 		},
 		{
+			// #648: the refusal a running lmm gives once a newer lmm has
+			// migrated the database - the web UI's restart banner reads
+			// its code and both versions.
+			"schema_upgraded_error",
+			core.SchemaUpgradedError{Code: core.SchemaTooNewCode, Version: 29, Supported: 28},
+		},
+		{
 			// #427: a mod_path lmm deployed into that has gone, with the
 			// repair a frontend can offer as a button - here the BepInEx
 			// game's root.
