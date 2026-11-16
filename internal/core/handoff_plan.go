@@ -167,7 +167,23 @@ func (p *handOffPlanner) remove(ctx context.Context, i *Installer, profile strin
 // each path the old version holds and the new one does not ship is handed
 // on, and the new version holds what it ships.
 func (p *handOffPlanner) replace(ctx context.Context, i *Installer, profile, recordProfile string, oldMod *domain.Mod, newFiles []deployItem) {
+	p.replaceWith(ctx, i, profile, recordProfile, oldMod, func() ([]deployItem, bool) { return newFiles, true })
+}
+
+// replaceWith is replace for a new version whose files are listed only
+// when they matter - the old version holds a path, or the flow has handed
+// one on that the new version may take back - and are not known when
+// list says so (a version not in the cache yet).
+func (p *handOffPlanner) replaceWith(ctx context.Context, i *Installer, profile, recordProfile string, oldMod *domain.Mod, list func() ([]deployItem, bool)) {
 	if p.failed {
+		return
+	}
+	held := p.held(ctx, recordProfile, oldMod)
+	if len(held) == 0 && len(p.ledger) == 0 {
+		return
+	}
+	newFiles, ok := list()
+	if !ok {
 		return
 	}
 	ships := make(map[domain.DeployPath]bool, len(newFiles))
@@ -175,7 +191,7 @@ func (p *handOffPlanner) replace(ctx context.Context, i *Installer, profile, rec
 		ships[f.path] = true
 	}
 	var dropped []domain.DeployPath
-	for _, path := range p.held(ctx, recordProfile, oldMod) {
+	for _, path := range held {
 		if !ships[path] {
 			dropped = append(dropped, path)
 		}
@@ -194,8 +210,13 @@ func (p *handOffPlanner) deployed(profile string, mod *domain.Mod, files []deplo
 }
 
 // deployedFromCache is deployed for mod's cache entry, when the cache
-// holds it; a mod the flow still has to download is not known yet.
+// holds it; a mod the flow still has to download is not known yet. Its
+// files are listed only once the flow has handed a path on: until then
+// there is nothing for it to take back.
 func (p *handOffPlanner) deployedFromCache(i *Installer, profile string, mod *domain.Mod) {
+	if len(p.ledger) == 0 {
+		return
+	}
 	if files, ok := cachedDeployItems(i, p.game, mod); ok {
 		p.deployed(profile, mod, files)
 	}
@@ -396,11 +417,7 @@ func (s *Service) planCopyHandOffs(ctx context.Context, game *domain.Game, plan 
 		case prior.Version == mod.Version:
 			p.deployedFromCache(i, plan.To, &mod)
 		case gameCache.Exists(cache.Key{GameID: game.ID, SourceID: prior.SourceID, ModID: prior.ID, Version: prior.Version, Variant: prior.Variant}):
-			newFiles, ok := cachedDeployItems(i, game, &mod)
-			if !ok {
-				continue
-			}
-			p.replace(ctx, i, plan.To, plan.To, &prior.Mod, newFiles)
+			p.replaceWith(ctx, i, plan.To, plan.To, &prior.Mod, func() ([]deployItem, bool) { return cachedDeployItems(i, game, &mod) })
 		default:
 			p.remove(ctx, i, plan.To, &prior.Mod, &mod)
 			delete(p.gone, domain.ModKey(mod.SourceID, mod.ID))
@@ -436,14 +453,10 @@ func (s *Service) planApplyHandOffs(ctx context.Context, game *domain.Game, plan
 		if entry.Mod == nil || !entry.Cached {
 			continue
 		}
-		newFiles, ok := cachedDeployItems(i, game, entry.Mod)
-		if !ok {
-			continue
-		}
 		if prior := entry.Replaces; prior != nil {
-			p.replace(ctx, i, plan.Profile, plan.Profile, &prior.Mod, newFiles)
+			p.replaceWith(ctx, i, plan.Profile, plan.Profile, &prior.Mod, func() ([]deployItem, bool) { return cachedDeployItems(i, game, entry.Mod) })
 		} else {
-			p.deployed(plan.Profile, entry.Mod, newFiles)
+			p.deployedFromCache(i, plan.Profile, entry.Mod)
 		}
 	}
 	return p.handOffs()
@@ -479,15 +492,11 @@ func (s *Service) planSwitchHandOffs(ctx context.Context, game *domain.Game, pla
 			p.deployedFromCache(toInstaller, plan.To, &im.Mod)
 			continue
 		}
-		newFiles, ok := cachedDeployItems(toInstaller, game, &im.Mod)
-		if !ok {
-			continue
-		}
 		recordProfile := prior.ProfileName
 		if recordProfile == "" {
 			recordProfile = plan.To
 		}
-		p.replace(ctx, toInstaller, plan.To, recordProfile, &prior.Mod, newFiles)
+		p.replaceWith(ctx, toInstaller, plan.To, recordProfile, &prior.Mod, func() ([]deployItem, bool) { return cachedDeployItems(toInstaller, game, &im.Mod) })
 	}
 	return p.handOffs()
 }

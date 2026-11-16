@@ -306,3 +306,28 @@ func TestPlanHandOffs_APlanListsEachHeirOnce(t *testing.T) {
 	require.Len(t, plan.Handoffs, 1, "one path, by its final owner")
 	assert.Equal(t, f.wantHandOff(ids[n-1], ids[n-m-1]), plan.Handoffs[0])
 }
+
+// A path the apply hands on and then deploys again with a mod it enables
+// is that mod's in the end: the plan names no hand-off, as Apply's ledger
+// reports none.
+func TestPlanHandOffs_AnEnableLaterInTheFlowTakesThePathBack(t *testing.T) {
+	ctx := context.Background()
+	f := newHandOffFixture(t, sharedOriginalCases[1], domain.LinkSymlink, false, "first", "second", "third")
+	_, err := f.svc.DisableMod(ctx, f.game, "default", "src", "third")
+	require.NoError(t, err)
+	require.Equal(t, "the second mod's file", readFileString(t, f.dst))
+	pm := f.svc.NewProfileManager()
+	require.NoError(t, pm.SetModDisabled(ctx, f.game.ID, "default", "src", "third", false))
+	require.NoError(t, pm.SetModDisabled(ctx, f.game.ID, "default", "src", "second", true))
+
+	plan, err := f.svc.PlanProfileApply(ctx, f.game, "default")
+	require.NoError(t, err)
+	require.Len(t, plan.ToDisable, 1)
+	require.Len(t, plan.ToEnable, 1)
+	assert.Nil(t, plan.Handoffs, "third deploys the path again after second hands it to first")
+
+	res, err := f.svc.ApplyProfileApply(ctx, f.game, plan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "the third mod's file", readFileString(t, f.dst))
+	assertPlanMatchesLedger(t, f, plan.Handoffs, res.Warnings)
+}
