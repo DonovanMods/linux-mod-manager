@@ -105,11 +105,17 @@ func ValidUUID(s string) bool {
 		return false
 	}
 	for _, r := range s {
-		if !(r == '-' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+		if !isIDRune(r) {
 			return false
 		}
 	}
 	return true
+}
+
+// isIDRune reports whether r may be in a module UUID: an ASCII letter, a
+// digit or a hyphen.
+func isIDRune(r rune) bool {
+	return r == '-' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
 }
 
 // validValue reports whether v can be written to the mod list as it is.

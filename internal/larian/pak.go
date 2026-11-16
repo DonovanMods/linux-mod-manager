@@ -212,7 +212,7 @@ func (p *Pak) ReadFile(f PakFile, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("%s: %w (%d bytes)", f.Name, ErrTooLarge, max(f.SizeOnDisk, want))
 	}
 	stored := make([]byte, f.SizeOnDisk)
-	if _, err := p.r.ReadAt(stored, int64(f.Offset)); err != nil && !(errors.Is(err, io.EOF) && len(stored) == 0) {
+	if _, err := p.r.ReadAt(stored, int64(f.Offset)); err != nil && (!errors.Is(err, io.EOF) || len(stored) > 0) {
 		return nil, fmt.Errorf("%w: reading %s: %v", ErrCorrupt, f.Name, err)
 	}
 	switch method {
