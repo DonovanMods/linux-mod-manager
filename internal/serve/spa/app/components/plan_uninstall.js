@@ -6,6 +6,7 @@
 
 import { html } from "../render.js";
 import { PlanAdvanced, PlanOption, ApplyOption } from "./planoptions.js";
+import { PlanHandOffs } from "./planhandoffs.js";
 
 /** UNINSTALL_EXTERNAL_NOTE mirrors core.UninstallExternalNote verbatim
  * (internal/core/external.go). issue 269: an external mod's uninstall removes
@@ -79,6 +80,10 @@ export function UninstallPlanView({ plan, modal, actions }) {
                     </p>`
               }
 
+              <${PlanHandOffs}
+                handoffs=${plan.handoffs}
+                testID="uninstall-handoffs"
+              />
               <p class="plan__note" data-testid="uninstall-cache-note">
                 ${
                   plan.keep_cache

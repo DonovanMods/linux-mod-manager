@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Plan previews name the mod a shared file passes to (#638).** When
+  removing a mod's file hands a shared path to the next mod in load order
+  (#633), the plan now says so before you confirm, instead of only after:
+  "Data/foo.dll passes to Mod B (from Mod A)". The CLI's previews for
+  `uninstall --dry-run`, `update rollback`, `update --from-file`,
+  `mod copy --replace`, `profile apply` and `profile switch` list them grouped
+  by the mod that takes the files (five paths per mod, then "and N more"),
+  and the web UI's plan views for the same kinds show the same list. The
+  heir is computed from the load-order rule and the functions Apply itself
+  uses; Apply still decides from live state and reports what it did. Every
+  plan document (`--dry-run --json`, `/api/v1` plans) gains an additive
+  `handoffs` list (`path`, `root`, `from`, `to`), absent when there are none;
+  a mod copy carries it per entry. An update from a mod site names none: the
+  new version's files are not known until it is downloaded.
+
 - **A collection import installs what it can, and the rest is left to
   finish (#660).** A collection import (NexusMods, `.lmmc`, a link) and a
   collection update are no longer all or nothing: one mod that fails no

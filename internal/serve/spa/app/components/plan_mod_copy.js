@@ -21,6 +21,7 @@
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
+import { PlanHandOffs } from "./planhandoffs.js";
 
 /**
  * copyReplaces reports whether confirming plan IS the answer "replace":
@@ -76,6 +77,10 @@ export function CopyModPlanView({ plan, modal, actions, state }) {
   const targets = copyTargets(state?.status, plan.from);
   const busy = modal?.status !== "ready";
   const listedAny = mods.some((m) => m.already_listed);
+  // issue 638: what replacing the destination's live rows hands on.
+  const handoffs = mods.flatMap((m) =>
+    m.already_listed ? (m.handoffs ?? []) : [],
+  );
 
   return html`
     <div class="plan plan--mod-copy">
@@ -159,6 +164,15 @@ export function CopyModPlanView({ plan, modal, actions, state }) {
           </ul>
         </section>`
       }
+      <${PlanHandOffs}
+        handoffs=${handoffs}
+        heading=${
+          plan.all
+            ? "Replacing passes shared files to the next mod in load order"
+            : "Shared files passing to the next mod in load order"
+        }
+        testID="copy-handoffs"
+      />
       ${
         skipped.length > 0 &&
         html`<section class="plan__section">

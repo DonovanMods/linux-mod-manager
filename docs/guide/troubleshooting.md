@@ -91,6 +91,18 @@ to a version without the file) puts the next mod's copy in its place
 straight away, and lmm says which mod has the file now. The game's own file
 comes back only once no switched-on mod includes it.
 
+The preview says so before you confirm. The web interface's plan for an
+uninstall, an update from a file, a rollback, a copy that replaces a mod,
+`profile apply` or a profile switch lists the shared files and the mod each
+one passes to, for example "Data/foo.dll passes to Mod B (from Mod A)". In
+the terminal, `lmm uninstall --dry-run`, `lmm update rollback`,
+`lmm update --from-file`, `lmm mod copy --replace`, `lmm profile apply` and
+`lmm profile switch` print the same list, grouped by the mod that takes the
+files (`--dry-run --json` has it as the plan's `handoffs`). An update from a
+mod site doesn't list them: lmm can't tell which files the new version drops
+until it has downloaded it. Switching a mod off with `lmm mod disable` (or the
+library's switch) has no preview, and says which mod has the file afterwards.
+
 ## Save a restore point: snapshots
 
 A **snapshot** records your whole setup for a game: which mods, which

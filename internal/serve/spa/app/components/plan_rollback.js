@@ -3,6 +3,7 @@
 
 import { html } from "../render.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
+import { PlanHandOffs } from "./planhandoffs.js";
 
 /** RollbackPlanView renders core.RollbackPlan (internal/core/rollback.go). */
 export function RollbackPlanView({ plan, modal, actions }) {
@@ -27,6 +28,7 @@ export function RollbackPlanView({ plan, modal, actions }) {
           missing - this rollback would fail.
         </p>`
       }
+      <${PlanHandOffs} handoffs=${plan.handoffs} testID="rollback-handoffs" />
 
       <${PlanAdvanced}>
         <${ApplyOption}
