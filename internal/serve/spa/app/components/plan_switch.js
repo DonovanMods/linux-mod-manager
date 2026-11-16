@@ -20,6 +20,7 @@ import { codeSpans } from "../errortext.js";
 import { PlanWarnings, UnresolvedWarning } from "./planwarnings.js";
 import { PlanOverrides } from "./planoverrides.js";
 import { PlanHandOffs } from "./planhandoffs.js";
+import { PlanStoredFiles } from "./planstoredfiles.js";
 import { reinstallReason } from "../version.js";
 
 /** refLabel names a domain.ModReference the same way plan_profile_import.js
@@ -152,6 +153,11 @@ export function SwitchPlanView({ plan }) {
       }
       <${PlanOverrides} changes=${plan.overrides} testID="switch-overrides" />
       <${PlanHandOffs} handoffs=${plan.handoffs} testID="switch-handoffs" />
+      <${PlanStoredFiles}
+        heals=${plan.heals}
+        curator=${plan.curator_mixed}
+        testID="switch"
+      />
     </div>
   `;
 }

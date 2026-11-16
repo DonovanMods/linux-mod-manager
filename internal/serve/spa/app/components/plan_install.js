@@ -14,9 +14,15 @@
 // asked about in turn (fomodwizard.js labels each page with its file). The
 // default file starts checked; unchecking every file holds Confirm
 // (confirmplan.js) rather than falling back to the default. The picker
-// offers the chosen version's files only, as `--version` with `--file`
-// does; a pick core refuses (issue 211's alternate forms of one mod) fails
-// the job with core's own message, the one the CLI prints. A selection is
+// offers the chosen version's files, and (issue 662) every optional, update
+// or miscellaneous file of another version after them, each row then
+// naming its version - as `lmm install`'s picker does: only main files
+// must share one version, so the version ▾ lists the MAIN files' versions.
+// A pick of the chosen version's files alone is sent with that version, as
+// `--version` with `--file`; one that takes another version's secondary
+// file is sent by file id alone, as `--file` is. A pick core refuses (issue
+// 211's alternate forms of one mod) fails the job with core's own message,
+// the one the CLI prints. A selection is
 // written into the
 // confirm-plan framework's modal.applyOptions via actions.setPlanOptions
 // (main.js) DIRECTLY FROM the select's onChange - never from a useEffect:
@@ -79,6 +85,53 @@ function filesAt(pool, v) {
   return pool.filter((f) => f.version === v);
 }
 
+/** SECONDARY is the source categories of a file that goes beside a main
+ * one (core's domain.IsSecondaryFileCategory, issue 662): it may carry its
+ * own version. Every other category - none, an unknown one, an archived
+ * one - is a main file's. */
+const SECONDARY = new Set(["OPTIONAL", "UPDATE", "MISCELLANEOUS"]);
+
+/** isSecondary reports whether f is an optional, update or miscellaneous
+ * file. */
+export function isSecondary(f) {
+  return SECONDARY.has((f.category ?? "").toUpperCase());
+}
+
+/** filesFor is what the file picker offers for version v (issue 662): the
+ * files at v, then every secondary file of another version - pool order
+ * within each. */
+export function filesFor(pool, v) {
+  return [
+    ...filesAt(pool, v),
+    ...pool.filter((f) => f.version !== v && isSecondary(f)),
+  ];
+}
+
+/** mainVersions is the distinct versions of the pool's main files, first
+ * seen first: the versions the version ▾ offers (issue 662). */
+export function mainVersions(pool) {
+  return distinctVersions(pool.filter((f) => !isSecondary(f)));
+}
+
+/** pickOptions is the applyOptions a pick of ids at version v sends: with
+ * the version while every picked file is at it, else by file id alone -
+ * ApplyInstall's version pool holds that version's files only. */
+export function pickOptions(pool, v, ids) {
+  const atVersion = ids.every((id) =>
+    pool.some((f) => f.id === id && f.version === v),
+  );
+  return atVersion ? { version: v, file_ids: ids } : { file_ids: ids };
+}
+
+/** fileVersionHint names a file's version in a picker row offering files
+ * of several versions (issue 662). */
+function fileVersionHint(f, shown) {
+  if (!shown) return null;
+  return html`${" "}<span class="plan__option-hint"
+      >version ${f.version || "(no version)"}</span
+    >`;
+}
+
 /** defaultFileIDs is what an install of version v picks with no file named:
  * the plan's own Files at the plan's version (PlanInstall's pick, which
  * ApplyInstall installs verbatim), else that version's primary file, else
@@ -119,7 +172,8 @@ function distinctVersions(pool) {
 /** InstallPlanView renders core.InstallPlan (internal/core/install.go). */
 export function InstallPlanView({ plan, modal, actions }) {
   const pool = plan.file_pool ?? [];
-  const versions = distinctVersions(pool);
+  // Issue 662: only the main files' versions are a choice.
+  const versions = mainVersions(pool);
   // The version SELECT only earns its place once there is more than one
   // version to choose between (M6): a pool of several files at the SAME
   // version (the file sub-picker's own case, below) has nothing for it to
@@ -136,7 +190,9 @@ export function InstallPlanView({ plan, modal, actions }) {
   const [version, setVersion] = useState(
     modal?.applyOptions?.version ?? defaultVersion,
   );
-  const filesForVersion = filesAt(pool, version);
+  const filesForVersion = filesFor(pool, version);
+  // Issue 662: a row names its version once the rows carry several.
+  const showFileVersions = distinctVersions(filesForVersion).length > 1;
   const showFilePicker = filesForVersion.length > 1;
   const showPicker = showVersionPicker || showFilePicker;
   // The checked files (issue 637). Seeded from applyOptions for the same
@@ -167,7 +223,7 @@ export function InstallPlanView({ plan, modal, actions }) {
     const ids = defaultFileIDs(plan, pool, v, defaultVersion);
     setVersion(v);
     setFileIDs(ids);
-    actions.setPlanOptions({ version: v, file_ids: ids });
+    actions.setPlanOptions(pickOptions(pool, v, ids));
   }
 
   /** toggleFile checks or unchecks one file, keeping the pool's order (the
@@ -179,7 +235,7 @@ export function InstallPlanView({ plan, modal, actions }) {
       .map((f) => f.id)
       .filter((fid) => (fid === id ? checked : fileIDs.includes(fid)));
     setFileIDs(next);
-    actions.setPlanOptions({ version, file_ids: next });
+    actions.setPlanOptions(pickOptions(pool, version, next));
   }
 
   const deps = plan.dependencies ?? [];
@@ -266,7 +322,8 @@ export function InstallPlanView({ plan, modal, actions }) {
                             toggleFile(f.id, e.currentTarget.checked)}
                         />
                         <span class="plan__option-label">
-                          ${fileOptionLabel(f)} ${fileHint(f)}
+                          ${fileOptionLabel(f)}
+                          ${fileHint(f)}${fileVersionHint(f, showFileVersions)}
                         </span>
                       </label>
                     `,
@@ -300,7 +357,7 @@ export function InstallPlanView({ plan, modal, actions }) {
                   ${installFiles.map(
                     (f) =>
                       html`<li key=${f.id}>
-                        ${f.name || f.file_name}${fileHint(f)}
+                        ${f.name || f.file_name}${fileHint(f)}${fileVersionHint(f, showFileVersions)}
                       </li>`,
                   )}
                 </ul>

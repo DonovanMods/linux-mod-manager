@@ -77,16 +77,17 @@ func TestFlowInstall_SeveralFilesRefusedLikeTheCLI(t *testing.T) {
 }
 
 // TestFlowInstall_MixedVersionFilesRefused crafts what the picker never
-// sends (#647): file_ids naming a 2.0 file and a 1.0 file, with no version.
-// The job fails with core's refusal, and the envelope a client reads names
-// the code and each version's files; nothing is installed or downloaded.
+// sends (#647): file_ids naming a 2.0 main file and a 1.0 main file (#662:
+// only main files must share a version), with no version. The job fails
+// with core's refusal, and the envelope a client reads names the code and
+// each version's files; nothing is installed or downloaded.
 func TestFlowInstall_MixedVersionFilesRefused(t *testing.T) {
 	s, svc, game, src := newInstallFixtureServer(t)
 	src.mods["mv"] = &installSourceMod{
 		mod: domain.Mod{ID: "mv", SourceID: fixtureSourceID, Name: "Two Versions", Version: "2.0", GameID: game.ID},
 		files: []domain.DownloadableFile{
 			{ID: "mv2", Name: "Main", FileName: "main-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true, Size: 64},
-			{ID: "mv1", Name: "Patch", FileName: "patch-1.0.zip", Version: "1.0", Category: "OPTIONAL", Size: 64},
+			{ID: "mv1", Name: "Main", FileName: "main-1.0.zip", Version: "1.0", Category: "MAIN", Size: 64},
 		},
 		members: map[string]string{"mv2": "Mods/main.pak", "mv1": "Mods/patch.pak"},
 	}
@@ -109,14 +110,37 @@ func TestFlowInstall_MixedVersionFilesRefused(t *testing.T) {
 		} `json:"error"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status), rec.Body.String())
-	assert.Equal(t, "these files belong to versions 2.0 (main-2.0.zip) and 1.0 (patch-1.0.zip); pick one version", status.Error.Error)
+	assert.Equal(t, "these files belong to versions 2.0 (main-2.0.zip) and 1.0 (main-1.0.zip); pick one version", status.Error.Error)
 	assert.Equal(t, core.MixedVersionFilesCode, status.Error.Details.Code)
 	assert.Equal(t, []core.MixedVersion{
 		{Version: "2.0", Files: []core.MixedVersionFile{{ID: "mv2", FileName: "main-2.0.zip"}}},
-		{Version: "1.0", Files: []core.MixedVersionFile{{ID: "mv1", FileName: "patch-1.0.zip"}}},
+		{Version: "1.0", Files: []core.MixedVersionFile{{ID: "mv1", FileName: "main-1.0.zip"}}},
 	}, status.Error.Details.Versions)
 
 	_, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "mv", game.ID, "default")
 	require.ErrorIs(t, err, domain.ErrModNotFound, "a refused selection installs nothing")
 	assert.Equal(t, before, src.downloadCount(), "nor downloads anything")
+}
+
+// TestFlowInstall_MainWithAnotherVersionsPatchInstalls (#662) is what the
+// web picker sends for the 2.0 main file and a 1.0 optional patch: file
+// ids alone, no version. It installs both, recording 2.0.
+func TestFlowInstall_MainWithAnotherVersionsPatchInstalls(t *testing.T) {
+	s, svc, game, src := newInstallFixtureServer(t)
+	src.mods["mv"] = &installSourceMod{
+		mod: domain.Mod{ID: "mv", SourceID: fixtureSourceID, Name: "Two Versions", Version: "2.0", GameID: game.ID},
+		files: []domain.DownloadableFile{
+			{ID: "mv2", Name: "Main", FileName: "main-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true, Size: 64},
+			{ID: "mv1", Name: "Patch", FileName: "patch-1.0.zip", Version: "1.0", Category: "OPTIONAL", Size: 64},
+		},
+		members: map[string]string{"mv2": "Mods/main.pak", "mv1": "Mods/patch.pak"},
+	}
+
+	j := runFlow(t, s, game, "install", installPlanBody("mv"), `{"file_ids":["mv2","mv1"]}`)
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	installed, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "mv", game.ID, "default")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"mv2", "mv1"}, installed.FileIDs)
+	assert.Equal(t, "2.0", installed.Version)
+	assert.Equal(t, "payload for mv/mv1", deployedContent(t, game, "Mods/patch.pak"))
 }
