@@ -209,3 +209,25 @@ func TestRender_AnEntryFromAnotherFileIsNotThisFilesOwn(t *testing.T) {
 		t.Fatalf("the other file's entry was taken for this file's own:\n%s", out)
 	}
 }
+
+// An entry's bytes, kept and read back, render as those same bytes.
+func TestEntryFromRaw_RoundTrips(t *testing.T) {
+	s, err := ParseModSettings([]byte(patch8))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := s.Entries[1].Raw()
+	e, err := EntryFromRaw(raw)
+	if err != nil || e.UUID != s.Entries[1].UUID || !bytes.Equal(e.Raw(), raw) {
+		t.Fatalf("got %+v, %v", e, err)
+	}
+	out := s.Render([]ModEntry{s.Entries[0], e})
+	if !bytes.Contains(out, raw) {
+		t.Fatalf("the kept entry was not written as its bytes:\n%s", out)
+	}
+	for _, bad := range []string{"", "<node id=\"ModuleShortDesc\"/><node id=\"ModuleShortDesc\"/>", "</children>"} {
+		if _, err := EntryFromRaw([]byte(bad)); err == nil {
+			t.Errorf("%q read as one entry", bad)
+		}
+	}
+}

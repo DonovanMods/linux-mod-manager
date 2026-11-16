@@ -100,6 +100,7 @@ func (s *Service) ConvertSourceCollection(ctx context.Context, game *domain.Game
 	// #646: and its top-level loadOrder, where the game's adapter has the
 	// order a collection carries that way.
 	in.collectionLoadOrder = s.collectionLoadOrderID(game)
+	in.loadOrderEnables = s.loadOrderEnables(game)
 	in.withOptional = opts.WithOptional
 	if len(opts.Optional) > 0 {
 		in.optional = make(map[string]bool, len(opts.Optional))
@@ -199,6 +200,19 @@ func unreadableLoadOrder(m *source.CollectionManifest, supported func(id string)
 		return fmt.Errorf("%w: the collection's load order: %s", source.ErrInvalidManifest, lo.Invalid)
 	}
 	return nil
+}
+
+// loadOrderEnables reports which of game's file load orders enable their
+// files as well as ordering them (adapter.FileLoadOrderSpec.Enables, #646);
+// nil when none does.
+func (s *Service) loadOrderEnables(game *domain.Game) func(id string) bool {
+	specs := s.loadOrderSpecs(game)
+	if !slices.ContainsFunc(specs, adapter.FileLoadOrderSpec.Enables) {
+		return nil
+	}
+	return func(id string) bool {
+		return slices.ContainsFunc(specs, func(spec adapter.FileLoadOrderSpec) bool { return spec.ID == id && spec.Enables() })
+	}
 }
 
 // collectionLoadOrderID is the id of game's file load order a collection

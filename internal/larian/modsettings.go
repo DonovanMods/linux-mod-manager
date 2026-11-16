@@ -63,6 +63,26 @@ type ModEntry struct {
 // it was there.
 func (e ModEntry) FromFile() bool { return e.doc != nil && e.raw != nil }
 
+// Raw is the entry's own bytes, as it is in the file it was read from;
+// nil for a new entry.
+func (e ModEntry) Raw() []byte { return bytes.Clone(e.raw) }
+
+// EntryFromRaw reads one ModuleShortDesc node, raw as Raw gave it, back
+// into an entry written as those same bytes - a kept copy of an entry a
+// file no longer has.
+func EntryFromRaw(raw []byte) (ModEntry, error) {
+	doc := `<save><region id="ModuleSettings"><node id="root"><children><node id="Mods"><children>` +
+		string(raw) + `</children></node></children></node></region></save>`
+	s, err := ParseModSettings([]byte(doc))
+	if err != nil {
+		return ModEntry{}, err
+	}
+	if len(s.Entries) != 1 {
+		return ModEntry{}, fmt.Errorf("%w: %d entries, not one", ErrNoModList, len(s.Entries))
+	}
+	return s.Entries[0], nil
+}
+
 // NewModEntry is the entry for m, as Vortex writes one for a Patch 7 or 8
 // list [VXG loadOrder.ts exportTo: Folder, MD5, Name, PublishHandle 0,
 // UUID, Version64, in that order].

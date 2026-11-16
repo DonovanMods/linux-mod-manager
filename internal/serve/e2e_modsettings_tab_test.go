@@ -173,3 +173,28 @@ func TestE2E_NexusCollection_PlanShowsThePakOrder(t *testing.T) {
 	}, 15*time.Second, 50*time.Millisecond, "the import saves the pak order on the profile")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// With no modsettings.lsx (the game writes it on its first run, and lmm
+// never makes one up), the Paks tab says what to do instead of "No files
+// deployed." (#646 review).
+func TestE2E_LoadOrderTab_BG3MissingListSaysRunTheGame(t *testing.T) {
+	f, list := newE2EPaksFixture(t)
+	require.NoError(t, os.Remove(list))
+
+	var empty string
+	var rows int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		clickWhenSettled(`.library__toolbar [data-action="reorder"]`),
+		chromedp.WaitVisible(paksTab, chromedp.ByQuery),
+		chromedp.Click(paksTab, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="load-order-empty"]`, chromedp.ByQuery),
+		textContent(`[data-testid="load-order-empty"]`, &empty),
+		chromedp.Evaluate(`document.querySelectorAll('[data-testid="load-order-list"] [data-file]').length`, &rows),
+	)
+	assert.Equal(t, "modsettings.lsx not found: run the game once, then deploy again.", strings.TrimSpace(empty))
+	assert.NotContains(t, empty, "No files deployed")
+	assert.Equal(t, 0, rows)
+	assert.Empty(t, f.BrowserErrors())
+}

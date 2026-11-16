@@ -110,6 +110,7 @@ func paksManifest(files ...source.ManifestFileLoadOrderEntry) *source.Collection
 func withPakOrder(in convertInput) convertInput {
 	in.loadOrders = func(id string) bool { return id == "baldursgate3" }
 	in.collectionLoadOrder = "baldursgate3"
+	in.loadOrderEnables = func(id string) bool { return id == "baldursgate3" }
 	return in
 }
 
@@ -150,4 +151,16 @@ func TestUnreadableTopLevelLoadOrder(t *testing.T) {
 	assert.NoError(t, unreadableLoadOrder(m, nil, ""))
 	err := unreadableLoadOrder(m, func(id string) bool { return id == "baldursgate3" }, "baldursgate3")
 	assert.ErrorIs(t, err, source.ErrInvalidManifest)
+}
+
+// A disabled entry of Baldur's Gate 3's pak order stays deployed and
+// listed, and the note says so, without the Cyberpunk wording that the
+// list "cannot switch a file off": BG3's list can (#646 review).
+func TestConvert_TopLevelLoadOrderDisabledEntryNote(t *testing.T) {
+	off := archiveEntry("Off.pak", "")
+	off.Enabled = false
+	c := mustConvert(t, withPakOrder(convertInputFor(paksManifest(archiveEntry("On.pak", ""), off))))
+	assert.Equal(t, []string{"On.pak", "Off.pak"}, c.Document.LoadOrders["baldursgate3"])
+	assert.True(t, containsSubstring(c.Notes, "deploys and lists them like the others"), "%v", c.Notes)
+	assert.False(t, containsSubstring(c.Notes, "cannot switch a file off"), "%v", c.Notes)
 }

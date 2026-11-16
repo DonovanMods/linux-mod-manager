@@ -123,6 +123,9 @@ func loadOrderDrift(c *loadOrderComputation) []string {
 			break
 		}
 	}
+	if c.ms != nil {
+		out = append(out, c.outdatedModSettings()...)
+	}
 	return out
 }
 

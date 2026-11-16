@@ -328,6 +328,10 @@ type convertInput struct {
 	// or "" for a game with none, whose top-level loadOrder is refused as
 	// manifest:loadOrder.
 	collectionLoadOrder string
+	// loadOrderEnables reports which of the game's file load orders also
+	// enable their files (#646: Baldur's Gate 3's modsettings.lsx), for the
+	// plan's wording; nil for none.
+	loadOrderEnables func(id string) bool
 	// recipe is what the recipe's archive holds beside its manifest
 	// (#610): its bundled/ trees and patches/ files, read by
 	// ConvertSourceCollection. nil when nothing was read, and then a

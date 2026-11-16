@@ -48,6 +48,24 @@ function placementTitle(entry, enables) {
 }
 
 /**
+ * emptyText is what the tab says when the order has no rows: for a list
+ * the game writes itself and lmm never makes up (issue 646, Baldur's Gate
+ * 3's modsettings.lsx), that it is not there yet and what to do.
+ */
+function emptyText(report) {
+  if (!report.active) return "";
+  if (
+    (report.findings ?? []).some((f) => f.code === "load_order_list_missing")
+  ) {
+    const name = report.list_file
+      ? report.list_file.split("/").pop()
+      : "The game's mod list";
+    return `${name} not found: run the game once, then deploy again.`;
+  }
+  return "No files deployed.";
+}
+
+/**
  * LoadOrderTab renders the panel for one load order of profileName. The
  * report is the modal's, and every edit's answer goes back up through
  * onReport, so the order shown on coming back to the tab is the modal's.
@@ -231,8 +249,8 @@ export function LoadOrderTab({ profileName, context, report, onReport }) {
       }
       ${
         rows.length === 0
-          ? html`<p class="plan__note">
-              ${report.active ? "No files deployed." : ""}
+          ? html`<p class="plan__note" data-testid="load-order-empty">
+              ${emptyText(report)}
             </p>`
           : html`<ul
               class="reorder-list plugins-list"

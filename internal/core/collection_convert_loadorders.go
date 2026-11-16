@@ -101,7 +101,14 @@ func convertLoadOrders(in convertInput, out *ConvertedCollection, items []*convI
 		if repeated > 0 {
 			out.Notes = append(out.Notes, fmt.Sprintf("%d file(s) are listed more than once in the collection's %s load order (file names ignore case); each keeps its first place.", repeated, lo.ID))
 		}
-		if disabled > 0 {
+		switch {
+		case disabled > 0 && in.loadOrderEnables != nil && in.loadOrderEnables(lo.ID):
+			// #646: the game's list does switch a file off, but lmm keeps no
+			// deployed file unlisted; Vortex's BG3 extension never disables a
+			// pak through the order either (loadOrder.ts: "not using load
+			// order for enabling/disabling").
+			out.Notes = append(out.Notes, fmt.Sprintf("%d file(s) of the collection's %s load order are marked disabled; lmm deploys and lists them like the others, in place.", disabled, lo.ID))
+		case disabled > 0:
 			out.Notes = append(out.Notes, fmt.Sprintf("%d file(s) of the collection's %s load order are marked disabled; the game's list cannot switch a file off, so they are listed in place, as Vortex lists them.", disabled, lo.ID))
 		}
 	}

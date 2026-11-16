@@ -451,3 +451,71 @@ func bg3Originals(t *testing.T, f *bg3Fixture) []prefixOriginalRow {
 	a := &archiveFixture{dataDir: f.dataDir, game: f.game}
 	return a.originals(t)
 }
+
+// Verify reports an entry of lmm's whose fields no longer match its pak's
+// meta.lsx - the list still names an older version of the mod, or another
+// name or checksum - and --fix rewrites it.
+func TestVerify_ModSettingsOutdatedEntry(t *testing.T) {
+	f := newBG3Fixture(t, domain.LinkCopy)
+	f.writeList(t, lariantest.GustavX)
+	f.mod(t, "a", map[string][]byte{"ModA.pak": lariantest.ModPak("ModA", "Mod A", uuidA)})
+	f.deploy(t)
+
+	// Something rewrites lmm's entry with an older version and a new name.
+	f.writeList(t, lariantest.GustavX, lariantest.Entry{Folder: "ModA", Name: "Mod A (old)", UUID: uuidA, Version64: "1"})
+	ctx := context.Background()
+	res, err := f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	d := findingWithStatus(res.Result, core.VerifyStatusLoadOrderDrift)
+	require.NotNil(t, d, "%+v", res.Result.Findings)
+	assert.Contains(t, d.Note, "ModA.pak's entry in modsettings.lsx does not match its meta.lsx")
+	assert.Contains(t, d.Note, "name")
+	assert.Contains(t, d.Note, "version")
+	assert.True(t, d.Fixable)
+
+	_, err = f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Force: true, Fix: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"GustavX", "Mod A"}, f.entries(t))
+	res, err = f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(res.Result, core.VerifyStatusLoadOrderDrift), "fixed")
+}
+
+// An entry the user added after lmm's first write, for the module a pak
+// lmm deploys later declares, is adopted (lmm orders it and keeps it in
+// step with the pak) - and given back as the user wrote it, at its place,
+// when lmm's pak goes: on a disable, and on a purge, though the captured
+// original never had it (#646 review).
+func TestModSettings_AnAdoptedEntryIsGivenBack(t *testing.T) {
+	usersB := lariantest.Entry{Folder: "UsersB", Name: "The user's B", UUID: uuidB, Version64: "3"}
+	setup := func(t *testing.T) (*bg3Fixture, string) {
+		f := newBG3Fixture(t, domain.LinkCopy)
+		f.writeList(t, lariantest.GustavX)
+		f.mod(t, "a", map[string][]byte{"ModA.pak": lariantest.ModPak("ModA", "Mod A", uuidA)})
+		f.deploy(t)
+		// The user enables module B with another tool, after lmm's write.
+		withB := lariantest.ModSettings(lariantest.GustavX, lariantest.Entry{Folder: "ModA", Name: "Mod A", UUID: uuidA, Version64: "36028797018963968"}, usersB)
+		require.NoError(t, os.WriteFile(f.listPath(), withB, 0o644))
+		userRaw := string(withB[strings.Index(string(withB), `                        <node id="ModuleShortDesc">
+                            <attribute id="Folder" type="LSString" value="UsersB"/>`):])
+		userRaw = userRaw[:strings.Index(userRaw, "</node>")+len("</node>")]
+		// Then lmm deploys a pak declaring module B: lmm's entry now.
+		f.mod(t, "b", map[string][]byte{"ModB.pak": lariantest.ModPak("ModB", "Mod B", uuidB)})
+		f.deploy(t)
+		require.Equal(t, []string{"GustavX", "Mod A", "Mod B"}, f.entries(t), "lmm keeps the adopted entry in step with its pak")
+		return f, strings.TrimLeft(userRaw, " ")
+	}
+	t.Run("disable", func(t *testing.T) {
+		f, userRaw := setup(t)
+		_, err := f.svc.DisableMod(context.Background(), f.game, "default", "src", "b")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"GustavX", "Mod A", "The user's B"}, f.entries(t))
+		assert.Contains(t, readFileString(t, f.listPath()), userRaw, "given back byte for byte")
+	})
+	t.Run("purge", func(t *testing.T) {
+		f, userRaw := setup(t)
+		f.purge(t)
+		assert.Equal(t, []string{"GustavX", "The user's B"}, f.entries(t))
+		assert.Contains(t, readFileString(t, f.listPath()), userRaw, "given back byte for byte")
+	})
+}

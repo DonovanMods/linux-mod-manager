@@ -32,7 +32,8 @@ when it finds the game on Steam. For a copy you added by hand, run
 The game writes `modsettings.lsx` the first time it starts. Until it has,
 lmm can't enable any paks. It doesn't make up the file itself, because
 what goes at the top depends on the game's version. A deploy before then
-installs the paks and warns that they are not enabled yet. Start the game
+installs the paks and warns that they are not enabled yet, and the
+**Paks** tab says the list was not found. Start the game
 once, quit, then run `lmm deploy` (or `lmm verify --fix`) and lmm lists
 them.
 
@@ -47,7 +48,11 @@ for each pak it installed.
   lmm never moves it.
 - **Mods you enabled yourself are left alone.** An entry lmm didn't add,
   whether you added it with another tool or the game's own mod manager did,
-  keeps its place. lmm never moves or removes it.
+  keeps its place. lmm never moves or removes it. One exception: if you
+  enabled a mod yourself and later install the same mod with lmm, lmm
+  takes that entry over, so it moves with your order and stays in step
+  with the pak. When the mod goes again, lmm puts your entry back as you
+  wrote it.
 - **lmm never enables a pak it didn't install.** A pak you put in `Mods`
   yourself stays as you left it, listed or not.
 - **Paks that only replace game files get no entry.** A pak with no
@@ -112,7 +117,8 @@ for a script. `-p` picks a profile other than the active one.
 
 If the game finds a mod it can't load, it empties the mod list and starts
 without mods. `lmm verify` (and the web UI's Health card) reports each of
-your paks the list no longer names, or names out of order.
+your paks the list no longer names, names out of order, or names with a
+different name, version or checksum than the pak itself.
 `lmm verify --fix`, or the next deploy, lists them again. Find out which mod the game
 didn't like before you start it again, or it will reset the list once
 more.

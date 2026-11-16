@@ -94,6 +94,10 @@ type modSettingsState struct {
 	fileEntry map[string]larian.ModEntry
 	// owned are the UUIDs (lower case) of the modules lmm lists.
 	owned []string
+	// adopted are the entries lmm has taken over from the user, from the
+	// kept row, and with this computation's changes: entries it takes over
+	// now added, entries it gives back now removed (#646 review).
+	adopted []adoptedEntry
 }
 
 // modulesFor is the modules of the managed pak named name.
@@ -129,6 +133,7 @@ func (s *Service) computeModSettings(ctx context.Context, game *domain.Game, pro
 				for _, u := range r.Owned {
 					prevOwned[strings.ToLower(u)] = true
 				}
+				ms.adopted = slices.Clone(r.Adopted)
 			}
 		}
 	}
@@ -313,7 +318,15 @@ func (s *Service) readModSettings(c *loadOrderComputation) error {
 // does not order (those the list names in its order, then the rest
 // alphabetically); every other entry the list holds at its place among
 // them (mergeExternals). An entry for a module lmm listed before whose pak
-// it no longer deploys (prevOwned) is dropped.
+// it no longer deploys (prevOwned) is dropped - or, when lmm took it over
+// from the user, given back as the user wrote it.
+//
+// Adoption (#646 review): an entry lmm did not write, for a module a pak
+// lmm deploys declares, becomes lmm's - it is ordered with the pak and
+// kept in step with its meta.lsx. Once lmm holds the list (c.wrote), the
+// entry's own bytes are recorded first, so the user's entry comes back
+// when the pak goes; before that, the original lmm captures at its first
+// write holds it.
 func (c *loadOrderComputation) placeModSettings(prevOwned map[string]bool) {
 	ms := c.ms
 	uuidPak := map[string]string{} // module UUID -> managed pak key
@@ -335,12 +348,24 @@ func (c *loadOrderComputation) placeModSettings(prevOwned map[string]bool) {
 	var base, current []string
 	inList := map[string]bool{}
 	taken := map[string]bool{}
+	adopted := map[string]adoptedEntry{}
+	for _, a := range ms.adopted {
+		adopted[a.UUID] = a
+	}
+	prev := ""
 	for _, e := range ms.parsed.Entries {
 		u := strings.ToLower(e.UUID)
+		after := prev
+		prev = u
 		if _, seen := ms.fileEntry[u]; !seen && u != "" {
 			ms.fileEntry[u] = e
 		}
 		if key, ok := uuidPak[u]; ok {
+			if _, have := adopted[u]; c.wrote && !prevOwned[u] && !have && u != "" {
+				a := adoptedEntry{UUID: u, After: after, Entry: string(e.Raw())}
+				adopted[u] = a
+				ms.adopted = append(ms.adopted, a)
+			}
 			if !inList[key] {
 				inList[key] = true
 				current = append(current, c.onDisk[key])
@@ -348,7 +373,18 @@ func (c *loadOrderComputation) placeModSettings(prevOwned map[string]bool) {
 			continue
 		}
 		if prevOwned[u] {
-			continue // lmm's, for a pak it no longer deploys
+			a, ok := adopted[u]
+			if !ok {
+				continue // lmm's, for a pak it no longer deploys
+			}
+			// The user's own entry lmm took over: given back as written.
+			delete(adopted, u)
+			ms.adopted = slices.DeleteFunc(ms.adopted, func(x adoptedEntry) bool { return x.UUID == u })
+			given, err := larian.EntryFromRaw([]byte(a.Entry))
+			if err != nil {
+				continue
+			}
+			e = given
 		}
 		name := externalEntryName(e, taken)
 		ms.external[name] = e
@@ -414,6 +450,37 @@ func (c *loadOrderComputation) placeModSettings(prevOwned map[string]bool) {
 		}
 	}
 	slices.Sort(ms.owned)
+}
+
+// outdatedModSettings describes each of lmm's paks whose entry the list
+// has, but with fields its meta.lsx no longer states (#646 review): an
+// older version, another name, folder or checksum. A deploy rewrites such
+// an entry (renderModSettings), so verify's --fix does too.
+func (c *loadOrderComputation) outdatedModSettings() []string {
+	ms := c.ms
+	var out []string
+	for _, name := range c.entries {
+		for _, m := range ms.modulesFor(name) {
+			if !slices.Contains(ms.owned, strings.ToLower(m.UUID)) {
+				continue
+			}
+			e, ok := ms.fileEntry[strings.ToLower(m.UUID)]
+			if !ok || e.Matches(m) {
+				continue
+			}
+			var differ []string
+			for _, d := range []struct {
+				field     string
+				have, now string
+			}{{"name", e.Name, m.Name}, {"folder", e.Folder, m.Folder}, {"version", e.Version64, m.Version64}, {"MD5", e.MD5, m.MD5}} {
+				if d.have != d.now {
+					differ = append(differ, d.field)
+				}
+			}
+			out = append(out, fmt.Sprintf("%s's entry in %s does not match its meta.lsx (its %s differ)", name, c.listName, strings.Join(differ, ", ")))
+		}
+	}
+	return out
 }
 
 // externalEntryName is the name an entry lmm did not add goes by in a
@@ -504,6 +571,9 @@ func (s *Service) writeModSettings(game *domain.Game, c *loadOrderComputation) (
 		if err := store.setOwnedAdded(ms.root.Path, ms.root.User, rel, ms.owned, nil); err != nil {
 			return changed, fmt.Errorf("recording which entries in %s are lmm's: %w", c.listName, err)
 		}
+		if err := store.setAdopted(ms.root.Path, ms.root.User, rel, ms.adopted); err != nil {
+			return changed, fmt.Errorf("recording the entries in %s lmm took over: %w", c.listName, err)
+		}
 	}
 	return changed, nil
 }
@@ -553,7 +623,7 @@ func (s *Service) restoreModSettingsRow(store *prefixOriginals, row prefixOrigin
 	}
 	content := original
 	if exists {
-		content = mergeRestoredModSettings(original, current, row.Existed, row.Owned)
+		content = mergeRestoredModSettings(original, current, row.Existed, row.Owned, row.Adopted)
 	}
 	switch {
 	case content == nil && !row.Existed:
@@ -583,10 +653,12 @@ func (s *Service) restoreModSettingsRow(store *prefixOriginals, row prefixOrigin
 
 // mergeRestoredModSettings is the list a purge writes: current without the
 // entries lmm owned, plus every entry of the kept original that current no
-// longer has, after the entry it followed there. The original's own bytes
+// longer has, after the entry it followed there, plus every entry lmm took
+// over from the user (adopted) that neither has, as the user wrote it,
+// after the entry it followed when lmm took it. The original's own bytes
 // when that is exactly the original's list; the original when current is
 // not a list lmm can read (the game cannot read it either).
-func mergeRestoredModSettings(original, current []byte, existed bool, owned []string) []byte {
+func mergeRestoredModSettings(original, current []byte, existed bool, owned []string, adopted []adoptedEntry) []byte {
 	cur, err := larian.ParseModSettings(current)
 	if err != nil || cur.HasModOrder {
 		if existed {
@@ -636,6 +708,21 @@ func mergeRestoredModSettings(original, current []byte, existed bool, owned []st
 	for i, n := range all {
 		keys[i] = n.name
 		entries[i] = byKey[n.name]
+	}
+	for _, a := range adopted {
+		if slices.Contains(keys, a.UUID) {
+			continue // the list, or the original, has it already
+		}
+		e, err := larian.EntryFromRaw([]byte(a.Entry))
+		if err != nil {
+			continue
+		}
+		at := len(keys)
+		if i := slices.Index(keys, a.After); a.After != "" && i >= 0 {
+			at = i + 1
+		}
+		keys = slices.Insert(keys, at, a.UUID)
+		entries = slices.Insert(entries, at, e)
 	}
 	if existed && orig != nil && slices.Equal(keys, baseKeys) {
 		return original

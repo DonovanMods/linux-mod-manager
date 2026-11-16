@@ -28,7 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the end, and `reset` keeps the paks listed in the order they have.
   - `lmm verify` and the Health card report a pak the list has dropped or
     moved (the game empties its list when it meets a mod it cannot load),
+    or whose entry's name, version or checksum no longer matches the pak,
     and `--fix` lists it again.
+  - An entry you added yourself for a mod you later install with lmm is
+    taken over, and given back as you wrote it when that mod is disabled
+    or purged.
   - A NexusMods collection's top-level `loadOrder` fills the pak order on a
     Baldur's Gate 3 game, so such collections are no longer refused for
     `manifest:loadOrder` (every other game's still is). `mergedData`, which
