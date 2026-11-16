@@ -54,8 +54,8 @@
     }
   ],
   "file_copies": {
-    "c12": "core",
-    "t10": "textures"
+    "c12": "c12",
+    "t10": "t10"
   },
   "show_archived": false
 }

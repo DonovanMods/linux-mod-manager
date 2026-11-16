@@ -1133,7 +1133,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		// The heal would move the row to another version (none of the
 		// copies it keeps is at the recorded one), which this deploy -
 		// installing the row as recorded - cannot do.
-		return skip(fmt.Sprintf("its stored main files are copies of one file at versions other than its recorded version %s - reinstall the mod at the version you want, or run 'lmm profile apply' after setting it", mod.Version))
+		return skip(fmt.Sprintf("its stored main files are copies of one file at versions other than its recorded version %s - reinstall the mod at the version you want", mod.Version))
 	}
 	filesToDownload := sel.files
 	for _, msg := range unpreviewedStoredFiles(sel, domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}, mod.Name, nil, nil) {

@@ -277,24 +277,21 @@ func installFileVersions(files []domain.DownloadableFile) []string {
 
 // installMainVersions is the versions the picker's version step offers
 // (#662), in list order: those of the main files that are copies of one
-// file at more than one version (domain.SameFile). A main file that is a
-// separate component, at whatever version, is no version choice - it goes
-// with any. A file with no category is a main file; a main file with no
+// file at more than one version (domain.SameFile, mainCopyGroups). A main
+// file that is a separate component, at whatever version, is no version
+// choice - it goes with any. A file with no category is a main file; a main file with no
 // version is a version of its own (""), as in installFileVersions.
 func installMainVersions(files []domain.DownloadableFile) []string {
-	byKey := make(map[string][]string)
-	for _, f := range files {
-		if domain.IsSecondaryFileCategory(f.Category) {
-			continue
-		}
-		key := domain.FileCopyKey(f)
-		if !slices.Contains(byKey[key], f.Version) {
-			byKey[key] = append(byKey[key], f.Version)
+	groups := mainCopyGroups(files)
+	versionsOf := make(map[int][]string)
+	for i, f := range files {
+		if !domain.IsSecondaryFileCategory(f.Category) && !slices.Contains(versionsOf[groups[i]], f.Version) {
+			versionsOf[groups[i]] = append(versionsOf[groups[i]], f.Version)
 		}
 	}
 	var mains []domain.DownloadableFile
-	for _, f := range files {
-		if !domain.IsSecondaryFileCategory(f.Category) && len(byKey[domain.FileCopyKey(f)]) > 1 {
+	for i, f := range files {
+		if !domain.IsSecondaryFileCategory(f.Category) && len(versionsOf[groups[i]]) > 1 {
 			mains = append(mains, f)
 		}
 	}
@@ -307,22 +304,48 @@ func installMainVersions(files []domain.DownloadableFile) []string {
 // another version, and each main file of a component with no copy at
 // version - each in list order.
 func installFilesFor(files []domain.DownloadableFile, version string) []domain.DownloadableFile {
-	out := installFilesAt(files, version)
-	atVersion := make(map[string]bool)
-	for _, f := range out {
-		if !domain.IsSecondaryFileCategory(f.Category) {
-			atVersion[domain.FileCopyKey(f)] = true
+	groups := mainCopyGroups(files)
+	atVersion := make(map[int]bool)
+	var out []domain.DownloadableFile
+	for i, f := range files {
+		if f.Version == version {
+			out = append(out, f)
+			if !domain.IsSecondaryFileCategory(f.Category) {
+				atVersion[groups[i]] = true
+			}
 		}
 	}
-	for _, f := range files {
+	for i, f := range files {
 		if f.Version == version {
 			continue
 		}
-		if domain.IsSecondaryFileCategory(f.Category) || !atVersion[domain.FileCopyKey(f)] {
+		if domain.IsSecondaryFileCategory(f.Category) || !atVersion[groups[i]] {
 			out = append(out, f)
 		}
 	}
 	return out
+}
+
+// mainCopyGroups is each file's copy group among files' main files
+// (domain.GroupCopies over the main files alone, so no secondary file links
+// two of them); -1 for a secondary file.
+func mainCopyGroups(files []domain.DownloadableFile) []int {
+	var mains []domain.DownloadableFile
+	var at []int
+	for i, f := range files {
+		if !domain.IsSecondaryFileCategory(f.Category) {
+			mains = append(mains, f)
+			at = append(at, i)
+		}
+	}
+	groups := make([]int, len(files))
+	for i := range groups {
+		groups[i] = -1
+	}
+	for j, g := range domain.GroupCopies(mains) {
+		groups[at[j]] = g
+	}
+	return groups
 }
 
 // installFilesAt is the files at exactly version.

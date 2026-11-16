@@ -141,14 +141,27 @@ func TestSelectStoredFiles_SeparateComponentsAreKept(t *testing.T) {
 	}, sel.heal.Dropped)
 	assert.Equal(t, []MixedVersion{{Version: "1.0", Files: []MixedVersionFile{{ID: "t10", FileName: "Textures-1.0.zip"}}}}, sel.heal.Kept)
 
-	// Nothing to drop: a note, and the set installs as it is.
+	// Nothing to drop is no heal: the set installs as it is, unnoted.
 	sel, err = selectStoredFiles(files, []string{"t10", "c12"}, "1.2", false, "1.2")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"c12", "t10"}, selectedIDs(sel.files))
-	require.NotNil(t, sel.heal)
-	assert.Empty(t, sel.heal.Dropped)
-	assert.Equal(t, "1.2", sel.heal.Version)
-	assert.Len(t, sel.heal.Kept, 1)
+	assert.Nil(t, sel.heal)
+	assert.Equal(t, "1.2", sel.version)
+}
+
+// TestSelectStoredFiles_ComponentsTellingApartByDigits (#662 re-review):
+// "Textures 2K" and "Textures 4K" are separate components, though their
+// names differ only in digits; neither is dropped.
+func TestSelectStoredFiles_ComponentsTellingApartByDigits(t *testing.T) {
+	files := []domain.DownloadableFile{
+		{ID: "t2", Name: "Textures 2K", Version: "1.0", Category: "MAIN"},
+		{ID: "t4", Name: "Textures 4K", Version: "1.1", Category: "MAIN", IsPrimary: true},
+	}
+	sel, err := selectStoredFiles(files, []string{"t2", "t4"}, "1.1", false, "1.1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"t2", "t4"}, selectedIDs(sel.files))
+	assert.Nil(t, sel.heal)
+	assert.Equal(t, "1.1", sel.version)
 }
 
 // TestSelectStoredFiles_KeepsAnOlderRulesRecordedVersion (#662 review): a
@@ -169,9 +182,10 @@ func TestSelectStoredFiles_KeepsAnOlderRulesRecordedVersion(t *testing.T) {
 func TestFileCopyKeys(t *testing.T) {
 	assert.Nil(t, fileCopyKeys(healListing()), "every main file a copy of one: no keys needed")
 	keys := fileCopyKeys([]domain.DownloadableFile{
-		{ID: "c", FileName: "Core-1.2.zip", Category: "MAIN"},
-		{ID: "t", FileName: "Textures-1.0.zip", Category: "MAIN"},
+		{ID: "c", FileName: "Core-1.2.zip", Version: "1.2", Category: "MAIN"},
+		{ID: "t", FileName: "Textures-1.0.zip", Version: "1.0", Category: "MAIN"},
+		{ID: "c11", FileName: "Core-1.1.zip", Version: "1.1", Category: "OLD_VERSION"},
 		{ID: "p", FileName: "patch.zip", Category: "OPTIONAL"},
 	})
-	assert.Equal(t, map[string]string{"c": "core", "t": "textures", "p": "patch"}, keys)
+	assert.Equal(t, map[string]string{"c": "c", "t": "t", "c11": "c", "p": "p"}, keys, "a group is named by its first file")
 }

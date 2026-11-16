@@ -2969,7 +2969,7 @@ func TestJSONGoldens(t *testing.T) {
 					{ID: "c12", Name: "Core", FileName: "Core-1.2.zip", Version: "1.2", Category: "MAIN", IsPrimary: true},
 					{ID: "t10", Name: "Textures", FileName: "Textures-1.0.zip", Version: "1.0", Category: "MAIN"},
 				},
-				FileCopies: map[string]string{"c12": "core", "t10": "textures"},
+				FileCopies: map[string]string{"c12": "c12", "t10": "t10"},
 			},
 		},
 		{
@@ -2985,14 +2985,6 @@ func TestJSONGoldens(t *testing.T) {
 			"stored_files_heal_newest",
 			core.StoredFilesHeal{SourceID: "nexusmods", ModID: "42", Version: "3.0", RecordedVersion: "0.9", Dropped: []core.MixedVersion{
 				{Version: "2.0", Files: []core.MixedVersionFile{{ID: "21", FileName: "main-2.0.zip"}}},
-			}},
-		},
-		{
-			// #662: nothing dropped, a separate component kept at another
-			// version.
-			"stored_files_heal_kept",
-			core.StoredFilesHeal{SourceID: "nexusmods", ModID: "42", Version: "1.2", Kept: []core.MixedVersion{
-				{Version: "1.0", Files: []core.MixedVersionFile{{ID: "31", FileName: "textures-1.0.zip"}}},
 			}},
 		},
 		{

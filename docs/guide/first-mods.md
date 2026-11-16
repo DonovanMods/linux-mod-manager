@@ -106,8 +106,10 @@ with any version. `lmm install` in the terminal asks the same way: a
 version, then its files (`--version <v>` skips the version question). A
 `--file` list that names two copies of one main file at different versions
 is refused, and nothing is installed. lmm goes by the category the mod's
-site gives each file (a file with no category counts as a main file), and
-tells copies apart by the file's name without its version and numbers.
+site gives each file (a file with no category counts as a main file).
+Two files are copies when their names differ only by their versions
+(`SkyUI_5_2_SE` at 5.2 and `SkyUI_5_1_SE` at 5.1); "Textures 2K" and
+"Textures 4K" are two parts.
 
 The install runs in the background. The bell icon at the top shows its
 progress, and you can keep working while it runs. If the mod needs other mods

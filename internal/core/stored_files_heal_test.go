@@ -289,10 +289,10 @@ func TestProfileApply_KeepsASeparateComponentAtAnotherVersion(t *testing.T) {
 	assert.True(t, again.NoChanges, "%+v", again.ToInstall)
 }
 
-// TestProfileApply_SeparateComponentsAloneAreANote: Core 1.2 and Textures
-// 1.0, no copies - nothing dropped, both install, and the plan notes the
-// component at another version.
-func TestProfileApply_SeparateComponentsAloneAreANote(t *testing.T) {
+// TestProfileApply_SeparateComponentsAloneAreNoHeal: Core 1.2 and Textures
+// 1.0, no copies - nothing dropped, so nothing to heal or note; both
+// install.
+func TestProfileApply_SeparateComponentsAloneAreNoHeal(t *testing.T) {
 	ctx := context.Background()
 	svc, game, mock := setupInterplayService(t, false)
 	addComponentsMod(t, mock)
@@ -303,9 +303,7 @@ func TestProfileApply_SeparateComponentsAloneAreANote(t *testing.T) {
 
 	plan, err := svc.PlanProfileApply(ctx, game, "default")
 	require.NoError(t, err)
-	require.Len(t, plan.Heals, 1)
-	assert.Empty(t, plan.Heals[0].Dropped)
-	assert.Equal(t, []core.MixedVersion{{Version: "1.0", Files: []core.MixedVersionFile{{ID: "tex-10", FileName: "Textures-1.0.zip"}}}}, plan.Heals[0].Kept)
+	assert.Empty(t, plan.Heals)
 
 	result, err := svc.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, nil)
 	require.NoError(t, err)
@@ -432,4 +430,75 @@ func TestPlanProfileSwitch_BoundsItsLookups(t *testing.T) {
 	assert.EqualValues(t, 25, mock.fileFetches.Load())
 	require.Len(t, plan.Warnings, 1)
 	assert.Contains(t, plan.Warnings[0], "2 more mod(s) with several stored files were not looked up")
+}
+
+// texturesFiles is a mod whose two main components differ in name only by
+// digits: Textures 2K at 1.0, and Textures 4K at 1.1 and (when newer) 1.2.
+func texturesFiles(newer bool) []domain.DownloadableFile {
+	files := []domain.DownloadableFile{
+		{ID: "t2k", Name: "Textures 2K", FileName: "Textures_2K-1.0.zip", Version: "1.0", Category: "MAIN"},
+		{ID: "t4k", Name: "Textures 4K", FileName: "Textures_4K-1.1.zip", Version: "1.1", Category: "MAIN", IsPrimary: true},
+	}
+	if newer {
+		files[1].IsPrimary = false
+		files = append(files, domain.DownloadableFile{ID: "t4k12", Name: "Textures 4K", FileName: "Textures_4K-1.2.zip", Version: "1.2", Category: "MAIN", IsPrimary: true})
+	}
+	return files
+}
+
+// addTexturesMod serves "tex" on mock with texturesFiles.
+func addTexturesMod(t *testing.T, mock *perModMultiFileSource, newer bool) {
+	t.Helper()
+	mock.files["tex"] = texturesFiles(newer)
+	for _, f := range mock.files["tex"] {
+		stageInterplayDownload(t, mock, f.ID, f.ID+".esp")
+	}
+	mock.AddMod("g1", &domain.Mod{ID: "tex", SourceID: "src", Name: "Textures", Version: "1.1", GameID: "g1"})
+}
+
+// TestApplyInstall_ComponentsTellingApartByDigitsInstallTogether (#662
+// re-review): Textures 2K (1.0) and Textures 4K (1.1) are separate main
+// components, not copies, so installing both is no mixed-version refusal.
+func TestApplyInstall_ComponentsTellingApartByDigitsInstallTogether(t *testing.T) {
+	ctx := context.Background()
+	svc, game, mock := setupInterplayService(t, false)
+	addTexturesMod(t, mock, false)
+	plan, err := svc.PlanInstall(ctx, game, "default", "src", "tex", false)
+	require.NoError(t, err)
+	_, err = svc.ApplyInstall(ctx, game, plan, core.InstallOptions{TargetFileIDs: []string{"t2k", "t4k"}}, nil)
+	require.NoError(t, err)
+	row, err := svc.GetInstalledMod(ctx, "src", "tex", "g1", "default")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"t2k", "t4k"}, row.FileIDs)
+	assert.Equal(t, "1.1", row.Version)
+}
+
+// TestAutoUpdate_KeepsComponentsTellingApartByDigits (#662 re-review): the
+// unattended automatic update of Textures 4K 1.1 -> 1.2 keeps Textures 2K
+// 1.0, whose name differs only in digits.
+func TestAutoUpdate_KeepsComponentsTellingApartByDigits(t *testing.T) {
+	ctx := context.Background()
+	svc, game, mock := setupInterplayService(t, false)
+	addTexturesMod(t, mock, true)
+	seedUpdatableMod(t, svc, game, "src", "tex", "Textures", "1.1", []string{"t2k", "t4k"}, map[string][]byte{"t2k.esp": []byte("2"), "t4k.esp": []byte("4")})
+	require.NoError(t, svc.NewProfileManager().SetDefault(ctx, game.ID, "default"))
+	_, err := svc.SetModUpdatePolicy(ctx, "src", "tex", game.ID, "default", domain.UpdateAuto)
+	require.NoError(t, err)
+	installed, err := svc.GetInstalledMods(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, installed, 1)
+
+	plan, err := svc.PlanAutoUpdate(ctx, game, "default", installed, []domain.Update{{InstalledMod: installed[0], NewVersion: "1.2"}})
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	run, err := svc.BeginAutoUpdate(ctx, game, plan, core.UpdateBatchOptions{})
+	require.NoError(t, err)
+	result, err := run.Apply(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Applied, 1, "%+v", result)
+
+	row, err := svc.GetInstalledMod(ctx, "src", "tex", "g1", "default")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"t2k", "t4k12"}, row.FileIDs, "Textures 2K survives the automatic update")
+	assert.Equal(t, "1.2", row.Version)
 }

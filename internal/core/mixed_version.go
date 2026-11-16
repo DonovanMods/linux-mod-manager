@@ -93,23 +93,26 @@ func isVersionedMain(f *domain.DownloadableFile) bool {
 	return f != nil && f.Version != "" && !domain.IsSecondaryFileCategory(f.Category)
 }
 
-// copyGroups groups files' versioned main files by domain.FileCopyKey -
-// each group one file's copies - in the order each first appears.
+// copyGroups groups files' versioned main files into copies of one file
+// (domain.GroupCopies) - each group one file's copies - in the order each
+// first appears.
 func copyGroups(files []*domain.DownloadableFile) [][]*domain.DownloadableFile {
-	var groups [][]*domain.DownloadableFile
-	index := make(map[string]int)
+	var mains []*domain.DownloadableFile
 	for _, f := range files {
-		if !isVersionedMain(f) {
-			continue
+		if isVersionedMain(f) {
+			mains = append(mains, f)
 		}
-		key := domain.FileCopyKey(*f)
-		i, ok := index[key]
-		if !ok {
-			i = len(groups)
-			index[key] = i
+	}
+	vals := make([]domain.DownloadableFile, len(mains))
+	for i, f := range mains {
+		vals[i] = *f
+	}
+	var groups [][]*domain.DownloadableFile
+	for i, g := range domain.GroupCopies(vals) {
+		if g == len(groups) {
 			groups = append(groups, nil)
 		}
-		groups[i] = append(groups[i], f)
+		groups[g] = append(groups[g], mains[i])
 	}
 	return groups
 }
@@ -172,9 +175,9 @@ func mixedVersionFileOf(f *domain.DownloadableFile) MixedVersionFile {
 // conflict: of each such file the copy at the reference's version stays
 // (the newest copy, when none is at it) and the others are Dropped. A main
 // file that is a separate component at another version is Kept, and said
-// so; every optional, update and miscellaneous file stays. The plan names
-// the mod, and the flow records the ids it kept on the reference, so the
-// next run finds nothing to drop.
+// so beside the heal; every optional, update and miscellaneous file stays.
+// The plan names the mod, and the flow records the ids it kept on the
+// reference, so the next run finds nothing to drop.
 //
 // A collection's own reference (from_collection) is never healed: the
 // curator chose those files; see CuratorMixedFiles.
@@ -192,11 +195,11 @@ type StoredFilesHeal struct {
 	RecordedVersion string `json:"recorded_version,omitempty"`
 	// Dropped is each main file dropped because a copy of the same file at
 	// another version stays, by version, in the source's listing order.
-	// Absent when only separate components were found (Kept).
-	Dropped []MixedVersion `json:"dropped,omitempty"`
-	// Kept is each main file kept at another version than Version because
-	// it is a separate component, not a copy of a file the mod has at
-	// Version, by version. Absent when there is none.
+	// Never empty: a stored set with nothing to drop is no heal.
+	Dropped []MixedVersion `json:"dropped"`
+	// Kept is each main file the heal keeps at another version than
+	// Version because it is a separate component, not a copy of a file the
+	// mod has at Version, by version. Absent when there is none.
 	Kept []MixedVersion `json:"kept,omitempty"`
 }
 
@@ -221,8 +224,7 @@ type storedSelection struct {
 	files []*domain.DownloadableFile
 	// version is the version the mod records for them (#94).
 	version string
-	// heal is set when a user's reference was healed or kept a separate
-	// component at another version; mixed when a collection's reference
+	// heal is set when a user's reference was healed; mixed when a collection's reference
 	// installs the curator's copies at several versions as they are.
 	// Neither carries the mod's identity: the caller adds it.
 	heal  *StoredFilesHeal
@@ -292,8 +294,8 @@ func droppedIDs(heal *StoredFilesHeal) map[string]bool {
 // of each main file with copies at different versions, the copy at
 // recorded stays - else the newest copy - and the rest are dropped; a main
 // file left at another version than the one the mod then records is a
-// separate component, kept. Nil when nothing is dropped and no separate
-// component is at another version.
+// separate component, kept and named beside the heal. Nil when nothing is
+// dropped.
 func healStoredMains(found []*domain.DownloadableFile, recorded string) *StoredFilesHeal {
 	var kept, dropped []*domain.DownloadableFile
 	for _, g := range copyGroups(found) {
@@ -339,12 +341,11 @@ func healStoredMains(found []*domain.DownloadableFile, recorded string) *StoredF
 			others = append(others, f)
 		}
 	}
-	if len(dropped) == 0 && len(others) == 0 {
-		return nil
-	}
 	if len(dropped) == 0 {
-		// Nothing dropped: a note only, and the record keeps its version.
-		heal.Version, heal.RecordedVersion = recorded, ""
+		// Nothing to drop is nothing to heal: separate components at their
+		// own versions are a mod's ordinary state, noted only beside a
+		// heal, never on every plan that reinstalls the mod.
+		return nil
 	}
 	inOrder := func(fs []*domain.DownloadableFile) []*domain.DownloadableFile {
 		slices.SortStableFunc(fs, func(a, b *domain.DownloadableFile) int {
@@ -509,18 +510,28 @@ func unpreviewedStoredFiles(sel storedSelection, ref domain.ModReference, name s
 	return out
 }
 
-// fileCopyKeys is InstallPlan.FileCopies for files: each file's
-// domain.FileCopyKey by id, or nil when their main files share one key.
+// fileCopyKeys is InstallPlan.FileCopies for files: each main file's copy
+// group (domain.GroupCopies over the main files), named by the id of its
+// first file, and each secondary file its own id - or nil when the main
+// files are all copies of one file.
 func fileCopyKeys(files []domain.DownloadableFile) map[string]string {
+	var mains []domain.DownloadableFile
 	keys := make(map[string]string, len(files))
-	mainKeys := make(map[string]bool)
 	for _, f := range files {
-		keys[f.ID] = domain.FileCopyKey(f)
-		if !domain.IsSecondaryFileCategory(f.Category) {
-			mainKeys[keys[f.ID]] = true
+		if domain.IsSecondaryFileCategory(f.Category) {
+			keys[f.ID] = f.ID
+			continue
 		}
+		mains = append(mains, f)
 	}
-	if len(mainKeys) < 2 {
+	first := make(map[int]string)
+	for i, g := range domain.GroupCopies(mains) {
+		if _, ok := first[g]; !ok {
+			first[g] = mains[i].ID
+		}
+		keys[mains[i].ID] = first[g]
+	}
+	if len(first) < 2 {
 		return nil
 	}
 	return keys
