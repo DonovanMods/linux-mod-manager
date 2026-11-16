@@ -109,9 +109,30 @@ func unsafeMethod(m string) bool {
 // the Origin/CSRF checks); rootLogging covers the request logging half of
 // that same gap (task-3 re-review New finding 2).
 func (s *Server) wrap(fn http.HandlerFunc) http.Handler {
+	return s.wrapChain(fn, true)
+}
+
+// wrapNoDB is wrap without schemaGate (#648 review), for the few /api/v1
+// routes that read nothing from the database: the job registry's (GET
+// /jobs, /jobs/{id}, /jobs/{id}/events), the activity stream (/events), and
+// lmm's own release status and its notice (/updates/lmm). They must keep
+// answering once a newer lmm has migrated the database - the activity
+// stream would otherwise drop and reopen forever, a job that was running
+// when the migration landed could not be followed after a reload, and the
+// release status could not say the newer binary is installed. A route
+// that reaches the Service for anything but CheckSchema does not belong
+// here.
+func (s *Server) wrapNoDB(fn http.HandlerFunc) http.Handler {
+	return s.wrapChain(fn, false)
+}
+
+// wrapChain is wrap's chain, with schemaGate when gated.
+func (s *Server) wrapChain(fn http.HandlerFunc, gated bool) http.Handler {
 	var h http.Handler = fn
 	h = s.freshGames(h)
-	h = s.schemaGate(h)
+	if gated {
+		h = s.schemaGate(h)
+	}
 	h = s.csrfCheck(h)
 	h = s.originCheck(h)
 	h = s.requestLogging(h)
@@ -158,8 +179,8 @@ func (s *Server) freshGames(next http.Handler) http.Handler {
 	})
 }
 
-// schemaGate refuses every /api/v1 request once another, newer lmm has
-// migrated the database under this server (#648), with core's
+// schemaGate refuses every /api/v1 request that touches the database once
+// another, newer lmm has migrated it under this server (#648), with core's
 // SchemaUpgradedError in the ordinary envelope at 503: the remedy as the
 // sentence, the code and both schema versions as the details the SPA's
 // restart banner shows.
@@ -171,6 +192,7 @@ func (s *Server) freshGames(next http.Handler) http.Handler {
 // outlives its open is the one frontend this can reach, which makes this
 // wrapper, the choke point every /api/v1 route already passes, the place to
 // ask; a one-shot CLI query was checked by its own open moments before.
+// The routes that read no database at all skip it (wrapNoDB).
 //
 // It asks once per request - one read of schema_migrations' key, and none
 // at all once refused, since core remembers a refusal. A check that fails

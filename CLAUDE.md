@@ -91,7 +91,7 @@ internal/
 ├── core/                 # Business logic orchestration (flat package, 57 files); frontends never reach past it
     ├── service.go         # Service facade: construction, ServiceConfig, the query/mutation concurrency contract
     ├── ops.go             # beginOp: the Service's single mutation-serialization slot
-    ├── schema.go          # #648: CheckSchema/SchemaUpgradedError - a newer lmm migrated the DB under a running one; beginOp and serve's /api/v1 gate refuse
+    ├── schema.go          # #648: CheckSchema/SchemaUpgradedError - a newer lmm migrated the DB under a running one; beginOp and serve's /api/v1 gate refuse (wrapNoDB spares the job/activity/release routes); SchemaTooNewError is the open's refusal with the same details
     ├── plan.go            # ErrStalePlan + installedSnapshot: the freshness precondition every Apply re-checks
     ├── errors.go          # Typed errors a frontend branches on: ConflictError, ErrConfirmationRequired, ErrInteractiveOnly
     ├── fetch.go           # The source.Fetcher half of a download - staging, containment, WorkshopFetchError (#269 Tier 3)

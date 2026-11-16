@@ -1,11 +1,14 @@
 package serve
 
 import (
+	"context"
 	"encoding/json/v2"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -118,4 +121,67 @@ func TestAPI_ARunningJobsMutationRefusesTheSameWay(t *testing.T) {
 	upgraded, ok := env.Details.(*core.SchemaUpgradedError)
 	require.True(t, ok, "the job envelope's details are the refusal's: %#v", env.Details)
 	assert.Equal(t, core.SchemaTooNewCode, upgraded.Code)
+}
+
+// TestAPI_SchemaGateSparesTheRoutesThatNeverReadTheDatabase pins the
+// gate's scope (#648 review): the job registry's routes, the activity
+// stream and lmm's own release status read nothing from the database, so
+// they keep answering once the gate is latched - the activity stream does
+// not drop and reopen forever, a job that was running when the migration
+// landed can still be followed after a reload, and the release status can
+// still say a newer binary is installed (the remedy, ready). Every route
+// that reads or writes the database stays refused, health included: its
+// verify reads the installed mods.
+func TestAPI_SchemaGateSparesTheRoutesThatNeverReadTheDatabase(t *testing.T) {
+	s, _, game, path := newSchemaFixtureServer(t)
+
+	// A job that finished around the migration.
+	id, err := s.jobs.Start("deploy", func(context.Context, core.EventSink) (any, error) { return nil, nil })
+	require.NoError(t, err)
+	awaitJob(t, s, id)
+
+	migrateUnderServer(t, path)
+	require.ErrorIs(t, s.svc.CheckSchema(t.Context()), core.ErrSchemaTooNew, "the gate is latched")
+
+	for _, req := range []struct {
+		method, target string
+		want           int
+	}{
+		{http.MethodGet, "/api/v1/jobs", http.StatusOK},
+		{http.MethodGet, "/api/v1/jobs/" + string(id), http.StatusOK},
+		{http.MethodGet, "/api/v1/jobs/" + string(id) + "/events", http.StatusOK},
+		{http.MethodGet, "/api/v1/jobs/no-such-job", http.StatusNotFound},
+		{http.MethodGet, "/api/v1/updates/lmm", http.StatusOK},
+		// No release checker in this fixture: the route's own 404, not
+		// the gate's 503.
+		{http.MethodPost, "/api/v1/updates/lmm/notice", http.StatusNotFound},
+	} {
+		rec := doAPI(s, req.method, req.target, "")
+		assert.Equal(t, req.want, rec.Code, "%s %s is spared: %s", req.method, req.target, rec.Body.String())
+	}
+
+	// The activity stream stays open: it answers 200 and streams until
+	// the client goes away.
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, apiRequest(s, http.MethodGet, "/api/v1/events", "").WithContext(ctx))
+	assert.Equal(t, http.StatusOK, rec.Code, "the activity stream is spared: %s", rec.Body.String())
+	assert.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
+
+	for _, target := range []string{
+		scoped("/api/v1/health", game),
+		scoped("/api/v1/status", game),
+		scoped("/api/v1/conflicts", game),
+		"/api/v1/profiles?" + gameParam + "=" + game.ID,
+	} {
+		rec := doAPI(s, http.MethodGet, target, "")
+		assert.Equal(t, http.StatusServiceUnavailable, rec.Code, "GET %s reads the database: %s", target, rec.Body.String())
+		var env schemaEnvelope
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+		assert.Equal(t, core.SchemaTooNewCode, env.Details.Code, "GET %s", target)
+	}
+	// And a job start, whose Apply would write.
+	rec = doAPI(s, http.MethodPost, "/api/v1/jobs", `{"plan_id":"x"}`)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
 }

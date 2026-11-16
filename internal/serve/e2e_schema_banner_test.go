@@ -3,12 +3,15 @@ package serve_test
 // #648: the "a newer lmm upgraded the database" banner, in a real browser.
 
 import (
+	"context"
 	"log/slog"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,6 +48,11 @@ func TestE2E_SchemaBannerShowsOnceANewerLMMMigratedTheDatabase(t *testing.T) {
 
 	var present bool
 	f.runInBrowser(t,
+		scaleUITimers(),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			_, err := page.AddScriptToEvaluateOnNewDocument(recordEventSourcesJS).Do(ctx)
+			return err
+		}),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelector('[data-testid="schema-banner"]') !== null`, &present),
@@ -83,6 +91,28 @@ func TestE2E_SchemaBannerShowsOnceANewerLMMMigratedTheDatabase(t *testing.T) {
 	assertSchemaBanner(t, text, newer)
 	assert.False(t, dismissible, "a stop, not a notice: there is nothing to dismiss")
 
+	// #648 review: the activity stream reads no database, so the reloaded
+	// page's stream connects and stays open. Refused, it was reported as
+	// "lost the activity stream" and reopened every activityReopenMillis,
+	// forever. The wait spans several (scaled) reopen periods, so a stream
+	// that kept failing would show as more than one connection.
+	var stream struct {
+		Opened int `json:"opened"`
+		State  int `json:"state"`
+	}
+	var lost bool
+	f.runInBrowser(t,
+		chromedp.Sleep(1500*time.Millisecond),
+		chromedp.Evaluate(`(() => {
+			const mine = window.__lmmEventSources.filter((e) => e.url.endsWith("/api/v1/events"));
+			return { opened: mine.length, state: mine.length ? mine[mine.length - 1].readyState : -1 };
+		})()`, &stream),
+		chromedp.Evaluate(`document.body.innerText.includes("lost the activity stream")`, &lost),
+	)
+	assert.Equal(t, 1, stream.Opened, "one activity stream for the page, never reopened")
+	assert.Equal(t, 1, stream.State, "and it is OPEN (EventSource.OPEN), not CLOSED")
+	assert.False(t, lost, "no lost-stream error while the banner is up")
+
 	// The browser's only complaints are the refused requests themselves.
 	for _, e := range f.BrowserErrors() {
 		assert.Contains(t, e, "503", "an unexpected browser error: %s", e)
@@ -99,3 +129,17 @@ func assertSchemaBanner(t *testing.T, text string, newer int) {
 	assert.Contains(t, text, "lmm serve")
 	assert.Contains(t, text, "lmm service install")
 }
+
+// recordEventSourcesJS records every EventSource the page opens, ahead of
+// the page's own scripts, so a scenario can count the activity stream's
+// connections and read the last one's state.
+const recordEventSourcesJS = `(() => {
+	window.__lmmEventSources = [];
+	const Native = window.EventSource;
+	window.EventSource = class extends Native {
+		constructor(url, init) {
+			super(url, init);
+			window.__lmmEventSources.push(this);
+		}
+	};
+})();`
