@@ -61,3 +61,30 @@ func TestOpen_OpensTheCurrentSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, d.Close())
 }
+
+// #648: open checks once, but a process that outlives its open - lmm
+// serve, or a CLI command waiting on the mutation lock - must notice a
+// newer lmm migrating the same file afterwards. CheckSchema re-reads it
+// and refuses exactly as an open would.
+func TestCheckSchema_RefusesOnceANewerLMMMigratedAfterTheOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lmm.db")
+	d, err := db.New(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, d.CheckSchema(t.Context()), "the schema this lmm opened is current")
+
+	// The newer lmm: a second handle on the same file.
+	other, err := db.New(path)
+	require.NoError(t, err)
+	_, err = other.Exec("INSERT INTO schema_migrations (version) VALUES (?)", d.SupportedSchemaVersion()+1)
+	require.NoError(t, err)
+	require.NoError(t, other.Close())
+
+	err = d.CheckSchema(t.Context())
+	require.ErrorIs(t, err, db.ErrSchemaTooNew)
+	var tooNew *db.SchemaTooNewError
+	require.ErrorAs(t, err, &tooNew)
+	assert.Equal(t, d.SupportedSchemaVersion()+1, tooNew.Version)
+	assert.Equal(t, d.SupportedSchemaVersion(), tooNew.Supported)
+	assert.Equal(t, path, tooNew.Path)
+}

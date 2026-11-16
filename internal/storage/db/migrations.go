@@ -29,37 +29,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		return fmt.Errorf("creating migrations table: %w", err)
 	}
 
-	// Apply migrations
-	migrations := []func(context.Context, migrationExec) error{
-		migrateV1,
-		migrateV2,
-		migrateV3,
-		migrateV4,
-		migrateV5,
-		migrateV6,
-		migrateV7,
-		migrateV8,
-		migrateV9,
-		migrateV10,
-		migrateV11,
-		migrateV12,
-		migrateV13,
-		migrateV14,
-		migrateV15,
-		migrateV16,
-		migrateV17,
-		migrateV18,
-		d.migrateV19,
-		migrateV20,
-		migrateV21,
-		migrateV22,
-		migrateV23,
-		migrateV24,
-		migrateV25,
-		migrateV26,
-		migrateV27,
-		migrateV28,
-	}
+	migrations := d.migrations()
 
 	// The ordinary open: the schema is current, and finding that out takes
 	// one read and no lock.
@@ -123,6 +93,65 @@ func (d *DB) migrate(ctx context.Context) error {
 		return fmt.Errorf("committing migrations: %w", err)
 	}
 	committed = true
+	return nil
+}
+
+// migrations is every schema migration this lmm knows, in order: entry i
+// takes the schema from version i to i+1, so its length is the newest
+// version this binary can read (SupportedSchemaVersion).
+func (d *DB) migrations() []func(context.Context, migrationExec) error {
+	return []func(context.Context, migrationExec) error{
+		migrateV1,
+		migrateV2,
+		migrateV3,
+		migrateV4,
+		migrateV5,
+		migrateV6,
+		migrateV7,
+		migrateV8,
+		migrateV9,
+		migrateV10,
+		migrateV11,
+		migrateV12,
+		migrateV13,
+		migrateV14,
+		migrateV15,
+		migrateV16,
+		migrateV17,
+		migrateV18,
+		d.migrateV19,
+		migrateV20,
+		migrateV21,
+		migrateV22,
+		migrateV23,
+		migrateV24,
+		migrateV25,
+		migrateV26,
+		migrateV27,
+		migrateV28,
+	}
+}
+
+// SupportedSchemaVersion is the newest schema version this lmm knows: a
+// database recording a higher one was migrated by a newer lmm.
+func (d *DB) SupportedSchemaVersion() int { return len(d.migrations()) }
+
+// CheckSchema re-reads the database's highest applied migration and refuses
+// with a *SchemaTooNewError (errors.Is ErrSchemaTooNew - the same refusal an
+// open gives) when it is past what this lmm knows (#648). Open checks once;
+// a process that outlives its open - `lmm serve`, or a CLI command waiting
+// on the mutation lock - calls this again, because another, newer lmm can
+// migrate the same file after this one opened it, and every statement this
+// binary runs after that is written against a schema that is no longer
+// there. One read of schema_migrations' primary key, no lock.
+func (d *DB) CheckSchema(ctx context.Context) error {
+	version, err := schemaVersion(ctx, d)
+	if err != nil {
+		return err
+	}
+	if supported := d.SupportedSchemaVersion(); version > supported {
+		return d.schemaTooNew(version, supported)
+	}
 	return nil
 }
 

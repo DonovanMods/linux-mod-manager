@@ -97,9 +97,14 @@ var detailsCoverage = map[string]string{
 	// #470's twin: a switch that ran to the end with a failed mod.
 	"core.ProfileSwitchIncompleteError": "TestDoProfileSwitch_JSON_AFailedModIsTheEnvelope",
 	"core.ProfileWarningsError":         "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
-	"core.SnapshotRestorePartialError":  "TestReportError_JSON_SnapshotRestorePartialError",
-	"core.SourceInUseError":             "TestReportError_JSON_SourceInUseError",
-	"core.TokenKeyError":                "TestReportError_JSON_TokenKeyError",
+	// #648: a newer lmm migrated the database under a running one - the
+	// code and both schema versions, for the web UI's restart banner.
+	"core.SchemaUpgradedError": "TestReportError_JSON_SchemaUpgradedError",
+	// #648 review: and the open's refusal of a database already that new.
+	"core.SchemaTooNewError":           "TestReportError_JSON_SchemaTooNewError",
+	"core.SnapshotRestorePartialError": "TestReportError_JSON_SnapshotRestorePartialError",
+	"core.SourceInUseError":            "TestReportError_JSON_SourceInUseError",
+	"core.TokenKeyError":               "TestReportError_JSON_TokenKeyError",
 	// #505: an update refused because its advertised file is gone upstream.
 	"core.UpdateTargetUnavailableError": "TestReportError_JSON_UpdateTargetUnavailableError",
 	// #269 Tier 3's download failure: the anonymous refusal, the

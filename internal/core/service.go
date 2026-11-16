@@ -224,6 +224,10 @@ type Service struct {
 	// returns, so a false here stays false - which is what lets beginOp and
 	// every enable skip the backfill with one atomic load.
 	backfillPending atomic.Bool
+	// schemaRefused is CheckSchema's remembered refusal (#648): set once
+	// another, newer lmm has migrated the database under this Service, and
+	// never cleared, since a schema never goes back down.
+	schemaRefused atomic.Pointer[SchemaUpgradedError]
 
 	// beforeProfileBackfillScan, when non-nil, runs once the backfill holds
 	// the mutation slot, immediately before it reads its rows. Test-only
@@ -312,7 +316,8 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	dbPath := filepath.Join(cfg.DataDir, "lmm.db")
 	database, err := db.OpenWithOptions(dbPath, db.Options{Logger: log, KeyPath: cfg.KeyPath, WarnWriter: cfg.WarnWriter})
 	if err != nil {
-		return nil, fmt.Errorf("opening database: %w", err)
+		// #648 review: a too-new database carries its details as data.
+		return nil, openRefusal(err)
 	}
 
 	// Load games. The fingerprint is taken BEFORE the read on purpose: a

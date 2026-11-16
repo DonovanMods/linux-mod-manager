@@ -140,6 +140,16 @@ newer lmm changed the database in a way the older one can't read, so the
 older one stops instead of getting your mods wrong. Install the newer lmm
 again; your mods and profiles are still there.
 
+An lmm that is already running can meet the same thing: a web UI (`lmm
+serve`) started before you upgraded, or a command waiting for another to
+finish, while a newer lmm opens the database and upgrades it. The running
+one then refuses every change, saying another, newer lmm upgraded the
+database. The web UI shows a banner saying the same and stops answering
+until it is restarted. Restart it on the newer lmm: if it runs as a
+service, run `lmm service install` from the newer lmm; otherwise stop
+`lmm serve` and start it again. Restarting the old one won't help, since it
+would refuse again.
+
 ## Still stuck?
 
 Search the [issue tracker](https://github.com/DonovanMods/linux-mod-manager/issues),
