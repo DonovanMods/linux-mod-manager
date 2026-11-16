@@ -1,12 +1,15 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/packaging/systemd"
@@ -69,17 +72,76 @@ func (e *PackagedSwitchError) Error() string {
 		e.Unit, e.Path, e.Binary, e.Running, strings.TrimSuffix(e.Unit, ".service"))
 }
 
+// binaryVersionWaitDelay bounds how long a `--version` run's output pipe
+// may stay open after the process exits or is killed - a child it started
+// still holding it - before the run returns.
+const binaryVersionWaitDelay = 500 * time.Millisecond
+
+// binaryVersionMaxOutput caps what a `--version` run's output is kept of:
+// lmm prints one short line, and anything past this is not lmm.
+const binaryVersionMaxOutput = 4 << 10
+
 // readBinaryVersion is UserUnits.BinaryVersion's real implementation: it
 // runs `<path> --version` and returns what follows "lmm version ". Cobra
 // answers --version before any command runs, so nothing is read or
 // written by the binary it asks.
+//
+// path is whatever a unit's ExecStart names, and a drop-in can name any
+// program, which is then run with --version. That is acceptable: it is the
+// user's own unit, which systemd runs as the same user anyway, so nothing
+// gains a privilege. The run is still kept small and bounded: its own
+// process group, killed whole when ctx ends; a minimal environment (PATH
+// and HOME, never the shell's credentials); its output capped; and its
+// pipes closed shortly after it exits, however long a child it left
+// behind holds them.
 func readBinaryVersion(ctx context.Context, path string) (string, error) {
-	out, err := exec.CommandContext(ctx, path, "--version").Output()
-	if err != nil {
+	cmd := exec.CommandContext(ctx, path, "--version")
+	cmd.Env = minimalEnv()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = binaryVersionWaitDelay
+	out := &limitedBuffer{max: binaryVersionMaxOutput}
+	cmd.Stdout = out
+	err := cmd.Run()
+	if cmd.Process != nil {
+		// A child the binary left behind, still in its group.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		return "", err
 	}
-	return parseVersionOutput(string(out))
+	return parseVersionOutput(out.String())
 }
+
+// minimalEnv is the environment a `--version` run gets: PATH and HOME,
+// as this process has them.
+func minimalEnv() []string {
+	var env []string
+	for _, k := range []string{"PATH", "HOME"} {
+		if v, ok := os.LookupEnv(k); ok {
+			env = append(env, k+"="+v)
+		}
+	}
+	return env
+}
+
+// limitedBuffer keeps the first max bytes written to it and accepts, and
+// drops, the rest, so a writer never blocks or fails on it.
+type limitedBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+// Write keeps what fits under max and reports all of p written.
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if room := b.max - b.buf.Len(); room > 0 {
+		b.buf.Write(p[:min(room, len(p))])
+	}
+	return len(p), nil
+}
+
+// String is what was kept.
+func (b *limitedBuffer) String() string { return b.buf.String() }
 
 // parseVersionOutput reads `lmm --version`'s "lmm version X" line.
 func parseVersionOutput(out string) (string, error) {
@@ -147,84 +209,172 @@ func (u *UserUnits) addBinaries(ctx context.Context, r *ServiceReport) {
 		if !s.Installed || !runsBinary(s.Name) {
 			continue
 		}
-		path := u.unitExecBinary(ctx, s.Name, s.Path)
-		if path == "" {
+		path, known := u.unitExecBinary(ctx, s.Name, s.Path)
+		switch {
+		case path != "":
+			s.Binary = &LmmBinary{Path: path, Version: u.binaryVersion(ctx, path)}
+			s.BinaryMismatch = r.Running != nil && !sameBinary(path, running)
+		case known:
+			// systemd has the unit loaded and names no program - a drop-in
+			// reset ExecStart - so what the unit file says is not what runs.
+			s.Binary = &LmmBinary{Version: UnknownBinaryVersion}
+		}
+	}
+}
+
+// unitExecBinary is the program a unit's ExecStart runs. When the user
+// manager has the unit loaded, it is what systemd says, drop-ins included,
+// and known is true even when that names none (a drop-in's reset). Only
+// when systemd has not loaded the unit - or cannot be asked - is it the
+// unit file at path's own ExecStart. "" with known false: neither names
+// one.
+func (u *UserUnits) unitExecBinary(ctx context.Context, name, path string) (program string, known bool) {
+	if out, err := u.systemctl(ctx, "show", "-p", "LoadState", "-p", "ExecStart", name); err == nil {
+		if p, loaded := execStartFromShow(string(out)); loaded {
+			return p, true
+		}
+	}
+	return unitFileBinary(path), false
+}
+
+// execStartFromShow reads `systemctl show -p LoadState -p ExecStart`: the
+// path= of the first ExecStart entry ("{ path=/usr/bin/lmm ; argv[]=... ;
+// ... }"), and whether systemd has the unit loaded - any load state but
+// not-found (or none), so a unit a drop-in left without an ExecStart
+// (bad-setting) still counts as systemd's answer.
+func execStartFromShow(out string) (program string, loaded bool) {
+	for line := range strings.SplitSeq(out, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
 			continue
 		}
-		s.Binary = &LmmBinary{Path: path, Version: u.binaryVersion(ctx, path)}
-		s.BinaryMismatch = r.Running != nil && !sameBinary(path, running)
-	}
-}
-
-// unitExecBinary is the program a unit's ExecStart runs: what the user
-// manager has loaded (drop-ins included) when it says, else the first
-// ExecStart= line of the unit file at path. "" when neither names one.
-func (u *UserUnits) unitExecBinary(ctx context.Context, name, path string) string {
-	if out, err := u.systemctl(ctx, "show", "-p", "ExecStart", "--value", name); err == nil {
-		if p := execPathFromShow(string(out)); p != "" {
-			return p
+		switch k {
+		case "LoadState":
+			loaded = v != "" && v != "not-found"
+		case "ExecStart":
+			if program != "" {
+				continue
+			}
+			if _, rest, ok := strings.Cut(v, "path="); ok {
+				if end := strings.Index(rest, " ;"); end >= 0 {
+					rest = rest[:end]
+				}
+				program = strings.TrimSpace(rest)
+			}
 		}
 	}
-	return u.unitFileBinary(path)
+	return program, loaded
 }
 
-// unitFileBinary is the program of the first ExecStart= line in the unit
-// file at path; "" when it has none or cannot be read.
-func (u *UserUnits) unitFileBinary(path string) string {
+// unitFileBinary is the program of the ExecStart that runs in the unit
+// file at path: the first entry after the last reset (an empty
+// `ExecStart=`), as systemd builds the list. "" when there is none, or the
+// file cannot be read.
+func unitFileBinary(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	for line := range strings.SplitSeq(string(data), "\n") {
-		v, ok := strings.CutPrefix(strings.TrimSpace(line), "ExecStart=")
-		if !ok || strings.TrimSpace(v) == "" {
-			continue
-		}
-		if word, _, ok := splitExecProgram(strings.TrimSpace(v)); ok {
-			return unquoteExecWord(word)
+	program := ""
+	for line := range strings.SplitAfterSeq(string(data), "\n") {
+		l, ok, err := parseExecStartLine(line)
+		switch {
+		case !ok || err != nil:
+		case l.reset():
+			program = ""
+		case program == "":
+			program = l.program
 		}
 	}
-	return ""
+	return program
 }
 
-// execPathFromShow reads the path= field of `systemctl show -p ExecStart
-// --value`'s first entry: "{ path=/usr/bin/lmm ; argv[]=... ; ... }".
-func execPathFromShow(out string) string {
-	_, rest, ok := strings.Cut(out, "path=")
-	if !ok {
-		return ""
-	}
-	if end := strings.Index(rest, " ;"); end >= 0 {
-		rest = rest[:end]
-	}
-	return strings.TrimSpace(rest)
+// execStartLine is one ExecStart= line of a unit file, taken apart so the
+// program can be replaced and every other byte put back as it was.
+type execStartLine struct {
+	// lead is everything up to the value: indent, the key, the = and the
+	// blanks around it.
+	lead string
+	// prefixes are systemd's executable prefixes (- @ : + ! !!) in front
+	// of the program.
+	prefixes string
+	// program is the program, unquoted and unescaped; empty for a reset.
+	program string
+	// rest is everything after the program as written - the arguments -
+	// and, for a reset, the whole blank value.
+	rest string
+	// eol is the line's ending: "\n", "\r\n" or "" for a last line without.
+	eol string
 }
 
-// splitExecProgram splits an ExecStart= value into its first word, as
-// written (quotes and escapes kept), and the rest of the line.
-func splitExecProgram(v string) (word, rest string, ok bool) {
-	start := len(v) - len(strings.TrimLeft(v, "-@:+!"))
+// reset reports an empty `ExecStart=`, which clears the list before it.
+func (l execStartLine) reset() bool { return l.program == "" }
+
+// execPrefixes are the characters systemd reads in front of an ExecStart
+// program.
+const execPrefixes = "-@:+!"
+
+// parseExecStartLine takes apart line when it is an ExecStart= line: ok is
+// false for any other line, and err is a program it cannot read (an
+// unterminated quote).
+func parseExecStartLine(line string) (l execStartLine, ok bool, err error) {
+	body := line
+	switch {
+	case strings.HasSuffix(body, "\r\n"):
+		l.eol, body = "\r\n", strings.TrimSuffix(body, "\r\n")
+	case strings.HasSuffix(body, "\n"):
+		l.eol, body = "\n", strings.TrimSuffix(body, "\n")
+	}
+	key, value, found := strings.Cut(body, "=")
+	if !found || strings.TrimSpace(key) != "ExecStart" {
+		return execStartLine{}, false, nil
+	}
+	trimmed := strings.TrimLeft(value, " \t")
+	l.lead = body[:len(body)-len(trimmed)]
+	if strings.TrimSpace(trimmed) == "" {
+		l.rest = trimmed
+		return l, true, nil
+	}
+	word, rest, err := splitExecWord(trimmed)
+	if err != nil {
+		return execStartLine{}, true, err
+	}
+	l.rest = rest
+	// A prefix may come before quotes or inside them; systemd reads both.
+	l.prefixes = word[:len(word)-len(strings.TrimLeft(word, execPrefixes))]
+	program := unquoteExecWord(word[len(l.prefixes):])
+	inner := strings.TrimLeft(program, execPrefixes)
+	l.prefixes += program[:len(program)-len(inner)]
+	l.program = inner
+	if l.program == "" {
+		return execStartLine{}, true, fmt.Errorf("no program in %q", strings.TrimSpace(body))
+	}
+	return l, true, nil
+}
+
+// splitExecWord splits an ExecStart= value into its first word, as written
+// (prefixes, quotes and escapes kept), and the rest.
+func splitExecWord(v string) (word, rest string, err error) {
+	start := len(v) - len(strings.TrimLeft(v, execPrefixes))
 	if strings.HasPrefix(v[start:], `"`) {
 		for i := start + 1; i < len(v); i++ {
 			switch v[i] {
 			case '\\':
 				i++
 			case '"':
-				return v[:i+1], v[i+1:], true
+				return v[:i+1], v[i+1:], nil
 			}
 		}
-		return "", "", false
+		return "", "", fmt.Errorf("unterminated quote in %q", v)
 	}
 	if i := strings.IndexAny(v, " \t"); i >= 0 {
-		return v[:i], v[i:], true
+		return v[:i], v[i:], nil
 	}
-	return v, "", v != ""
+	return v, "", nil
 }
 
-// unquoteExecWord undoes systemdQuote on one ExecStart word, after any of
-// systemd's executable prefixes (- @ : + !).
+// unquoteExecWord undoes systemdQuote on one ExecStart word.
 func unquoteExecWord(word string) string {
-	word = strings.TrimLeft(word, "-@:+!")
 	if len(word) >= 2 && word[0] == '"' && word[len(word)-1] == '"' {
 		var b strings.Builder
 		inner := word[1 : len(word)-1]
@@ -257,28 +407,54 @@ func resolvedBinaryPath(path string) string {
 }
 
 // switchExecStart rewrites the program of every ExecStart= line in a unit
-// lmm wrote to exe, leaving its arguments and every other line as they
-// are, and returns the program it replaced ("" when there was none).
+// lmm wrote to exe, keeping each line's indent, systemd's executable
+// prefixes, its arguments and its line ending, and every other line as it
+// is; a reset (`ExecStart=` with nothing after it) passes through. It
+// returns the first program it replaced ("" when there was none), and
+// refuses a line whose program it cannot read rather than guess.
 func switchExecStart(data []byte, exe string) ([]byte, string, error) {
-	const directive = "ExecStart="
 	var out strings.Builder
 	previous := ""
 	for line := range strings.SplitAfterSeq(string(data), "\n") {
-		v, ok := strings.CutPrefix(line, directive)
-		if !ok {
+		l, ok, err := parseExecStartLine(line)
+		if err != nil {
+			return nil, "", fmt.Errorf("cannot read the program of %q: %w", strings.TrimSpace(line), err)
+		}
+		if !ok || l.reset() {
 			out.WriteString(line)
 			continue
 		}
-		word, rest, ok := splitExecProgram(v)
-		if !ok {
-			return nil, "", fmt.Errorf("cannot read the program of %q", strings.TrimSpace(line))
-		}
 		if previous == "" {
-			previous = unquoteExecWord(word)
+			previous = l.program
 		}
-		out.WriteString(directive + systemdQuote(exe) + rest)
+		out.WriteString(l.lead + l.prefixes + systemdQuote(exe) + l.rest + l.eol)
 	}
 	return []byte(out.String()), previous, nil
+}
+
+// SwitchOverriddenError is `lmm service restart --switch` finding, after
+// it rewrote the unit file, reloaded and restarted, that the service still
+// does not run the binary it switched to (#649): a drop-in overrides
+// ExecStart, and lmm never edits a drop-in.
+type SwitchOverriddenError struct {
+	// Unit is the unit's file name, e.g. lmm-serve.service.
+	Unit string
+	// Binary is what the unit runs after the switch; empty when systemd
+	// names no program at all.
+	Binary string
+	// Running is the binary the switch pointed the unit file at.
+	Running string
+}
+
+// Error names both binaries and where to look.
+func (e *SwitchOverriddenError) Error() string {
+	runs := e.Binary
+	if runs == "" {
+		runs = "no program lmm can name"
+	}
+	name := strings.TrimSuffix(e.Unit, ".service")
+	return fmt.Sprintf("%s was pointed at %s and restarted, but it still runs %s: a drop-in overrides ExecStart (see: systemctl --user cat %s); change or remove it with: systemctl --user edit %s",
+		e.Unit, e.Running, runs, name, name)
 }
 
 // RestartSwitch is `lmm service restart --switch` (#649): it points
@@ -316,7 +492,7 @@ func (u *UserUnits) RestartSwitch(ctx context.Context) (ServiceReport, error) {
 		return ServiceReport{}, err
 	}
 	if pkg != "" {
-		if bin := u.unitExecBinary(ctx, systemd.ServeUnitName, pkg); bin != "" && !sameBinary(bin, exe) {
+		if bin, _ := u.unitExecBinary(ctx, systemd.ServeUnitName, pkg); bin != "" && !sameBinary(bin, exe) {
 			return ServiceReport{}, &PackagedSwitchError{Unit: systemd.ServeUnitName, Path: pkg, Binary: bin, Running: exe}
 		}
 		return u.restart(ctx, dir)
@@ -367,6 +543,11 @@ func (u *UserUnits) RestartSwitch(ctx context.Context) (ServiceReport, error) {
 	r, err := u.restart(ctx, dir)
 	if err != nil {
 		return r, err
+	}
+	// What systemd runs now, drop-ins included, must be this binary;
+	// otherwise the switch did not take, whatever the file says.
+	if bin, known := u.unitExecBinary(ctx, systemd.ServeUnitName, servePath); known && (bin == "" || !sameBinary(bin, exe)) {
+		return r, &SwitchOverriddenError{Unit: systemd.ServeUnitName, Binary: bin, Running: exe}
 	}
 	r.Changed = len(changed) > 0
 	for i := range r.Units {

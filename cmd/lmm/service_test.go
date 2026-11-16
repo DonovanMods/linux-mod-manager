@@ -24,6 +24,9 @@ type cliSystemd struct {
 	// env is what show-environment prints: the user manager's own
 	// environment, which lmm-serve.service inherits (#582).
 	env string
+	// loaded is what `show -p LoadState -p ExecStart` prints (#649); empty
+	// prints nothing, as for a unit systemd has not loaded.
+	loaded string
 }
 
 func (f *cliSystemd) run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -37,6 +40,10 @@ func (f *cliSystemd) run(_ context.Context, name string, args ...string) ([]byte
 	switch args[1] {
 	case "show-environment":
 		return []byte(f.env), nil
+	case "show":
+		if len(args) > 3 && args[3] == "LoadState" {
+			return []byte(f.loaded), nil
+		}
 	case "enable":
 		f.enabled, f.active = true, f.active || (len(args) > 2 && args[2] == "--now")
 	case "disable":

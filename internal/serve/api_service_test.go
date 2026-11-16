@@ -11,7 +11,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/serve"
@@ -77,4 +80,86 @@ func TestAPIService_NoneConfiguredIs204(t *testing.T) {
 	rec := getService(t, nil)
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	assert.Empty(t, rec.Body.String())
+}
+
+// countingServiceStatus counts its Status calls and, when gate is set,
+// holds each until gate closes.
+type countingServiceStatus struct {
+	calls atomic.Int32
+	gate  chan struct{}
+}
+
+func (c *countingServiceStatus) Status(ctx context.Context) (core.ServiceReport, error) {
+	c.calls.Add(1)
+	if c.gate != nil {
+		select {
+		case <-c.gate:
+		case <-ctx.Done():
+			return core.ServiceReport{}, ctx.Err()
+		}
+	}
+	return mismatchReport, nil
+}
+
+// Each status read runs several systemctl calls and up to two --version
+// execs, so the answer is shared (#649 review): requests close together
+// read one report, and requests at once wait on the one read under way.
+func TestAPIService_SharesOneReadBetweenRequests(t *testing.T) {
+	status := &countingServiceStatus{}
+	srv := serve.New(t.Context(), newFixtureService(t), slog.New(slog.DiscardHandler),
+		serve.Options{Addr: testAddr, ServiceStatus: status})
+	get := func() int {
+		req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/service", nil)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		return rec.Code
+	}
+	require.Equal(t, http.StatusOK, get())
+	require.Equal(t, http.StatusOK, get())
+	assert.Equal(t, int32(1), status.calls.Load(), "the second request reads the cached report")
+
+	held := &countingServiceStatus{gate: make(chan struct{})}
+	srv = serve.New(t.Context(), newFixtureService(t), slog.New(slog.DiscardHandler),
+		serve.Options{Addr: testAddr, ServiceStatus: held})
+	var wg sync.WaitGroup
+	codes := make([]int, 8)
+	for i := range codes {
+		wg.Go(func() {
+			req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/service", nil)
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, req)
+			codes[i] = rec.Code
+		})
+	}
+	require.Eventually(t, func() bool { return held.calls.Load() >= 1 }, 5*time.Second, 5*time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // the other requests join the read under way
+	close(held.gate)
+	wg.Wait()
+	assert.Equal(t, int32(1), held.calls.Load(), "one read for requests at once")
+	for _, c := range codes {
+		assert.Equal(t, http.StatusOK, c)
+	}
+}
+
+// A failed read is not kept: the next request asks again.
+func TestAPIService_DoesNotCacheAFailure(t *testing.T) {
+	status := &failingThenOK{}
+	srv := serve.New(t.Context(), newFixtureService(t), slog.New(slog.DiscardHandler),
+		serve.Options{Addr: testAddr, ServiceStatus: status})
+	for _, want := range []int{http.StatusInternalServerError, http.StatusOK} {
+		req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/service", nil)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		assert.Equal(t, want, rec.Code)
+	}
+}
+
+// failingThenOK fails its first Status call and answers every later one.
+type failingThenOK struct{ calls atomic.Int32 }
+
+func (f *failingThenOK) Status(context.Context) (core.ServiceReport, error) {
+	if f.calls.Add(1) == 1 {
+		return core.ServiceReport{}, errors.New("boom")
+	}
+	return mismatchReport, nil
 }

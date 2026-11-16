@@ -580,7 +580,7 @@ func (u *UserUnits) Install(ctx context.Context, opts ServiceInstallOptions) (Se
 		existed := fileExists(path)
 		previous := ""
 		if existed && runsBinary(unit.name) {
-			previous = u.unitFileBinary(path)
+			previous = unitFileBinary(path)
 		}
 		changed, err := writeUnitFile(path, rendered[i])
 		if err != nil {

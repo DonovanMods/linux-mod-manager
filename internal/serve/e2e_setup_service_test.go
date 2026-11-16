@@ -77,3 +77,26 @@ func TestE2E_SetupUpdatesServiceUnavailable(t *testing.T) {
 	assert.Contains(t, row, "systemctl is not installed")
 	assertOnlyExpectedErrors(t, f.BrowserErrors(), "/api/v1/service")
 }
+
+// A drop-in that resets ExecStart leaves no program to name: the row says
+// so, and there is nothing to warn about (#649 review).
+func TestE2E_SetupUpdatesServiceUnknownBinary(t *testing.T) {
+	report := mismatchReport
+	unit := report.Units[0]
+	unit.Binary, unit.BinaryMismatch = &core.LmmBinary{Version: core.UnknownBinaryVersion}, false
+	report.Units = []core.UnitStatus{unit}
+	f := newE2EFixtureForService(t, fakeServiceStatus{report: report})
+
+	var row string
+	var warned bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("updates")),
+		chromedp.WaitVisible(`[data-testid="setup-updates-service"]`, chromedp.ByQuery),
+		textContent(`[data-testid="setup-updates-service"]`, &row),
+		chromedp.Evaluate(`document.querySelector('[data-testid="setup-updates-service-mismatch"]') !== null`, &warned),
+	)
+	assert.Contains(t, row, "a program lmm cannot name")
+	assert.Contains(t, row, "systemctl --user cat lmm-serve")
+	assert.False(t, warned)
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}

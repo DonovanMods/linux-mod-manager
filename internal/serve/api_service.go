@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -26,6 +27,73 @@ type ServiceStatuser interface {
 // queries and one bounded `<binary> --version` per unit.
 const serviceStatusWait = 15 * time.Second
 
+// serviceStatusTTL is how long one status read answers the requests after
+// it. A read runs several systemctl queries and up to two `--version`
+// execs, and the page asks on every visit to Setup > Updates; a few
+// seconds is long enough to absorb a burst and short enough that a change
+// made from a terminal shows on the next look.
+const serviceStatusTTL = 5 * time.Second
+
+// serviceStatusCache shares status reads between requests (#649 review):
+// a report younger than serviceStatusTTL is answered as is, and requests
+// that arrive while a read is under way wait on that read. A failure is
+// shared with the requests waiting on it but not kept.
+type serviceStatusCache struct {
+	mu     sync.Mutex
+	report core.ServiceReport
+	at     time.Time // when report was read; zero when there is none
+	call   *serviceStatusCall
+}
+
+// serviceStatusCall is one status read under way.
+type serviceStatusCall struct {
+	done   chan struct{}
+	report core.ServiceReport
+	err    error
+}
+
+// read returns a cached report, the one being read, or a new read's. The
+// read runs on its own bounded context, not the first request's, so a tab
+// closed mid-read does not fail the others waiting on it; each request
+// still stops waiting when its own ctx ends.
+func (c *serviceStatusCache) read(ctx context.Context, status ServiceStatuser) (core.ServiceReport, error) {
+	c.mu.Lock()
+	if !c.at.IsZero() && time.Since(c.at) < serviceStatusTTL {
+		r := c.report
+		c.mu.Unlock()
+		return r, nil
+	}
+	call := c.call
+	if call == nil {
+		call = &serviceStatusCall{done: make(chan struct{})}
+		c.call = call
+		go c.run(context.WithoutCancel(ctx), status, call)
+	}
+	c.mu.Unlock()
+
+	select {
+	case <-call.done:
+		return call.report, call.err
+	case <-ctx.Done():
+		return core.ServiceReport{}, ctx.Err()
+	}
+}
+
+// run performs one read and records it.
+func (c *serviceStatusCache) run(ctx context.Context, status ServiceStatuser, call *serviceStatusCall) {
+	ctx, cancel := context.WithTimeout(ctx, serviceStatusWait)
+	defer cancel()
+	call.report, call.err = status.Status(ctx)
+
+	c.mu.Lock()
+	if call.err == nil {
+		c.report, c.at = call.report, time.Now()
+	}
+	c.call = nil
+	c.mu.Unlock()
+	close(call.done)
+}
+
 // handleAPIServiceStatus answers GET /api/v1/service. A server built
 // without a ServiceStatuser answers 204, no document - nothing to report,
 // which the page shows as no row rather than an error; a host without a
@@ -35,9 +103,7 @@ func (s *Server) handleAPIServiceStatus(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), serviceStatusWait)
-	defer cancel()
-	report, err := s.serviceStatus.Status(ctx)
+	report, err := s.serviceCache.read(r.Context(), s.serviceStatus)
 	switch {
 	case errors.Is(err, core.ErrSystemdUnavailable):
 		s.writeAPIError(w, http.StatusUnprocessableEntity, err)

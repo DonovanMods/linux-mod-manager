@@ -167,7 +167,10 @@ It warns when the service runs a different lmm binary from the one you are
 running, and restarts it on that binary all the same. --switch first points
 the units 'lmm service install' wrote at the binary you are running,
 changing nothing else in them (the address, --config and --data stay), then
-restarts. A unit your lmm package installed is never rewritten.
+restarts. A unit your lmm package installed is never rewritten. If a
+drop-in ('systemctl --user edit lmm-serve') overrides ExecStart, the
+service still runs the drop-in's program after the restart, and --switch
+says so and fails: lmm never edits a drop-in.
 
 Examples:
   lmm service restart
@@ -471,7 +474,13 @@ func doServiceStatus(ctx context.Context) error {
 		fmt.Printf("  enabled:    %s (%s)\n", yesNo(u.Enabled), u.EnabledState)
 		fmt.Printf("  running:    %s (%s)\n", yesNo(u.Active), u.ActiveState)
 		if u.Binary != nil {
-			fmt.Printf("  binary:     %s (%s)\n", u.Binary.Path, u.Binary.Version)
+			if u.Binary.Path == "" {
+				// systemd has it loaded with no ExecStart (#649): a
+				// drop-in reset it, so the unit file's line is not it.
+				fmt.Printf("  binary:     unknown - systemd names no program for it; see: systemctl --user cat %s\n", strings.TrimSuffix(u.Name, ".service"))
+			} else {
+				fmt.Printf("  binary:     %s (%s)\n", u.Binary.Path, u.Binary.Version)
+			}
 		}
 		switch {
 		case !u.Installed:

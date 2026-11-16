@@ -71,6 +71,9 @@ function serviceLabel(service) {
   }
   const state = unit.active ? "running" : "not running";
   if (!unit.binary) return `lmm-serve.service, ${state}`;
+  if (!unit.binary.path) {
+    return `lmm-serve.service runs a program lmm cannot name (a drop-in resets its ExecStart; see systemctl --user cat lmm-serve), ${state}`;
+  }
   return `lmm-serve.service runs ${unit.binary.path} (${unit.binary.version}), ${state}`;
 }
 

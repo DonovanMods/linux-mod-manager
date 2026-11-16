@@ -1114,7 +1114,9 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   running /…/1.27.4/bin/lmm (2.3.0-484)", with the fix. `restart` still
   restarts the unit as it is; the new **`lmm service restart --switch`**
   first points lmm's own units at the running binary, keeping their
-  address, `--config`, `--data` and environment, then restarts. A unit a
+  address, `--config`, `--data`, environment, line endings and systemd's
+  `-`/`@`/`+`/`!` prefixes, then restarts, and fails rather than report
+  success when a drop-in still overrides `ExecStart`. A unit a
   package installed is never rewritten: there is no warning when you run
   the packaged binary, and for another lmm the warning says how to run
   it instead. `lmm service install` over an existing unit says what it

@@ -175,6 +175,10 @@ lmm service restart --switch
 That changes only which program the service file runs. Its address, and
 the `--config` and `--data` it was installed with, stay as they are. lmm
 only does this for a service file it wrote; it never rewrites a package's.
+If you changed the service's `ExecStart` with `systemctl --user edit
+lmm-serve`, that change still wins after the switch, and `--switch` says
+so and fails rather than claim it worked: `systemctl --user cat lmm-serve`
+shows the change, and `systemctl --user edit lmm-serve` removes it.
 
 ## Starting at boot, without logging in
 

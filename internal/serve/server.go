@@ -186,6 +186,8 @@ type Server struct {
 	// serviceStatus is Options.ServiceStatus (api_service.go); nil when
 	// the server does not report its systemd service.
 	serviceStatus ServiceStatuser
+	// serviceCache shares GET /api/v1/service's reads between requests.
+	serviceCache serviceStatusCache
 	// notices is Options.Notices, never nil.
 	notices io.Writer
 	// installedCheckEvery is how often Serve looks for a newer binary

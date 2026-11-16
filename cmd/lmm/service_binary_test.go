@@ -204,3 +204,30 @@ func TestJSONGolden_ServiceInstallUnchanged(t *testing.T) {
 	assert.False(t, strings.Contains(out, "binary"), out)
 	assertJSONCLIGolden(t, "service_install_unchanged", out, b.scrub(unitPath)...)
 }
+
+// A drop-in that resets ExecStart leaves systemd with no program to name:
+// status says unknown, not the unit file's line (#649 review).
+func TestServiceStatus_DropInResetIsUnknown(t *testing.T) {
+	fake := &cliSystemd{}
+	b, _ := installedOnOld(t, fake)
+	fake.loaded = "LoadState=bad-setting\nExecStart=\n"
+
+	out := captureStdout(t, func() error { return doServiceStatus(context.Background()) })
+	assert.Contains(t, out, "binary:     unknown")
+	assert.Contains(t, out, "systemctl --user cat lmm-serve")
+	assert.NotContains(t, out, b.old)
+	assert.NotContains(t, out, "you are running")
+}
+
+// --switch under a drop-in that overrides ExecStart is an error naming the
+// drop-in, never "Pointed ... at" alone (#649 review).
+func TestServiceRestartSwitch_DropInOverride(t *testing.T) {
+	fake := &cliSystemd{}
+	b, _ := installedOnOld(t, fake)
+	fake.loaded = "LoadState=loaded\nExecStart={ path=" + b.old + " ; argv[]=" + b.old + " serve ; ignore_errors=no }\n"
+
+	err := doServiceRestartSwitch(context.Background())
+	var dropIn *core.SwitchOverriddenError
+	require.ErrorAs(t, err, &dropIn)
+	assert.Contains(t, err.Error(), "a drop-in overrides ExecStart")
+}

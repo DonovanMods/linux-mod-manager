@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/packaging/systemd"
@@ -138,7 +139,7 @@ func TestUserUnits_StatusPrefersSystemdsExecStart(t *testing.T) {
 	bins := t.TempDir()
 	cur := fakeBinary(t, bins, "new/lmm")
 	override := fakeBinary(t, bins, "override/lmm")
-	fake := &fakeSystemd{execStart: map[string]string{
+	fake := &fakeSystemd{loadState: map[string]string{systemd.ServeUnitName: "loaded"}, execStart: map[string]string{
 		systemd.ServeUnitName: "{ path=" + override + " ; argv[]=" + override + " serve --no-open ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
 	}}
 	units, unitPath := newTestUserUnits(t, fake, cur)
@@ -390,4 +391,92 @@ func TestNewUserUnits_BinaryVersionRunsTheBinary(t *testing.T) {
 	require.Error(t, err)
 	_, err = units.BinaryVersion(ctx, filepath.Join(dir, "missing"))
 	require.Error(t, err)
+}
+
+// The real BinaryVersion is bounded however the binary behaves (#649
+// review): a child left holding its output open, a whole process tree
+// that hangs, output without end, and it runs with a minimal environment.
+func TestNewUserUnits_BinaryVersionIsBounded(t *testing.T) {
+	units, err := core.NewUserUnits()
+	require.NoError(t, err)
+	dir := t.TempDir()
+	script := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755))
+		return p
+	}
+
+	t.Run("a child keeps the output open", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		start := time.Now()
+		v, err := units.BinaryVersion(ctx, script("forks", `echo "lmm version 2.3.0"; sleep 30 &`))
+		require.NoError(t, err)
+		assert.Equal(t, "2.3.0", v)
+		assert.Less(t, time.Since(start), 5*time.Second, "not held until the child exits")
+	})
+	t.Run("the whole tree hangs", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		start := time.Now()
+		_, err := units.BinaryVersion(ctx, script("hangs", `sleep 30`))
+		require.Error(t, err)
+		assert.Less(t, time.Since(start), 5*time.Second, "the process group is killed")
+	})
+	t.Run("output is capped", func(t *testing.T) {
+		v, err := units.BinaryVersion(context.Background(), script("chatty", `printf 'lmm version '; head -c 100000 /dev/zero | tr '\0' a; echo`))
+		require.NoError(t, err)
+		assert.Less(t, len(v), 4096)
+	})
+	t.Run("a minimal environment", func(t *testing.T) {
+		t.Setenv("LMM_TEST_SECRET", "leaked")
+		v, err := units.BinaryVersion(context.Background(), script("env", `echo "lmm version 2.3.0${LMM_TEST_SECRET}"`))
+		require.NoError(t, err)
+		assert.Equal(t, "2.3.0", v, "the shell's other variables are not passed on")
+	})
+}
+
+// A drop-in that resets ExecStart and names nothing leaves the unit with
+// no binary systemd will run: status says unknown rather than the unit
+// file's line, which systemd does not use (#649 review).
+func TestUserUnits_StatusDropInResetIsUnknown(t *testing.T) {
+	bins := t.TempDir()
+	old := fakeBinary(t, bins, "old/lmm")
+	cur := fakeBinary(t, bins, "new/lmm")
+	fake := &fakeSystemd{loadState: map[string]string{systemd.ServeUnitName: "bad-setting"}, execStart: map[string]string{}}
+	units, unitPath := newTestUserUnits(t, fake, cur)
+	units.BinaryVersion = versionsByPath(map[string]string{old: "2.2.0"})
+	writeOwnServeUnit(t, unitPath, old, core.ServiceInstallOptions{})
+
+	report, err := units.Status(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, &core.LmmBinary{Path: "", Version: core.UnknownBinaryVersion}, report.Units[0].Binary)
+	assert.False(t, report.Units[0].BinaryMismatch, "nothing known to compare")
+}
+
+// --switch over a drop-in that overrides ExecStart rewrites the unit file
+// and restarts, but the service still runs the drop-in's binary: that is
+// an error naming the drop-in, never a reported success (#649 review).
+func TestUserUnits_RestartSwitchDropInOverride(t *testing.T) {
+	bins := t.TempDir()
+	old := fakeBinary(t, bins, "old/lmm")
+	cur := fakeBinary(t, bins, "new/lmm")
+	override := fakeBinary(t, bins, "override/lmm")
+	fake := &fakeSystemd{enabled: true, active: true}
+	units, unitPath := newTestUserUnits(t, fake, cur)
+	units.BinaryVersion = versionsByPath(nil)
+	writeOwnServeUnit(t, unitPath, old, core.ServiceInstallOptions{})
+	fake.loadState = map[string]string{systemd.ServeUnitName: "loaded"}
+	fake.execStart = map[string]string{systemd.ServeUnitName: "{ path=" + override + " ; argv[]=" + override + " serve ; ignore_errors=no }"}
+
+	_, err := units.RestartSwitch(context.Background())
+	var dropIn *core.SwitchOverriddenError
+	require.ErrorAs(t, err, &dropIn)
+	assert.Equal(t, override, dropIn.Binary)
+	assert.Equal(t, cur, dropIn.Running)
+	assert.Contains(t, err.Error(), "a drop-in overrides ExecStart")
+	assert.Contains(t, err.Error(), "systemctl --user cat lmm-serve")
+	raw, err := os.ReadFile(unitPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "ExecStart="+cur+" serve", "the unit file itself was switched")
 }
