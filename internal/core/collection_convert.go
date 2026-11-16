@@ -1401,13 +1401,13 @@ func (c *ConvertedCollection) recount() {
 	c.Summary = c.summarise()
 }
 
-// curatorMainVersions groups an entry's files by version among its main
-// files (#662), the source's category deciding which those are - a file
-// whose category the list does not report counts as main.
+// curatorMainVersions is an entry's copies of one main file at different
+// versions (#662), the source's category deciding which files are main - a
+// file whose category the list does not report counts as main.
 func curatorMainVersions(members []*convItem) []MixedVersion {
 	files := make([]*domain.DownloadableFile, len(members))
 	for i, it := range members {
-		files[i] = &domain.DownloadableFile{ID: it.FileID, FileName: cmp.Or(it.fileName, it.Name), Version: it.Version, Category: it.FileCategory}
+		files[i] = &domain.DownloadableFile{ID: it.FileID, Name: it.Name, FileName: it.fileName, Version: it.Version, Category: it.FileCategory}
 	}
-	return mainFileVersions(files)
+	return copyConflicts(files)
 }

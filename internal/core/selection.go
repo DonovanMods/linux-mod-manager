@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -130,7 +131,7 @@ func selectFilesForVersion(files []domain.DownloadableFile, storedFileIDs []stri
 			found = append(found, &files[i])
 		}
 	}
-	if len(found) > 0 && domain.EffectiveInstalledVersion(version, found) == version {
+	if len(found) > 0 && storedSetHolds(found, version) {
 		return found, nil
 	}
 	var matches []*domain.DownloadableFile
@@ -155,6 +156,31 @@ func selectFilesForVersion(files []domain.DownloadableFile, storedFileIDs []stri
 		return nil, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", ErrVersionNotFound, version, strings.Join(availableVersions(files), ", "))
 	}
 	return pickVersionMatch(matches, idSet), nil
+}
+
+// storedSetHolds reports whether stored files found upstream still agree
+// with the recorded version: a main file among them carries it and no two
+// of them are copies of one file at different versions (#662: a separate
+// component, or an optional patch, may carry another version), or the
+// rule that stamped records before #662 - the primary file's version, else
+// the first versioned file's - names it, so a record stamped that way keeps
+// its files. Stored files of no version at all agree with any. Copies of one main file at different versions never reach
+// here from a user's reference: selectStoredFiles heals them first.
+func storedSetHolds(found []*domain.DownloadableFile, version string) bool {
+	if len(copyConflicts(found)) == 0 && slices.ContainsFunc(found, func(f *domain.DownloadableFile) bool { return isVersionedMain(f) && f.Version == version }) {
+		return true
+	}
+	for _, f := range found {
+		if f.IsPrimary && f.Version != "" {
+			return f.Version == version
+		}
+	}
+	for _, f := range found {
+		if f.Version != "" {
+			return f.Version == version
+		}
+	}
+	return true // no stored file names a version: nothing disagrees
 }
 
 // pickVersionMatch narrows matches - every file carrying the version being

@@ -31,8 +31,20 @@
             }
           ]
         }
+      ],
+      "kept": [
+        {
+          "version": "0.9",
+          "files": [
+            {
+              "id": "31",
+              "file_name": "textures-0.9.zip"
+            }
+          ]
+        }
       ]
     }
   ],
+  "heals_unchecked": 3,
   "exists": false
 }

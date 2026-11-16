@@ -63,38 +63,84 @@ type mixedVersionSelectionDetails struct {
 	Versions []MixedVersion `json:"versions"`
 }
 
-// mixedVersionSelection returns a *MixedVersionSelectionError when files'
-// main files span more than one non-empty version, else nil. The grouping
-// follows the files' own order, so the message names versions as the
-// selection did.
+// mixedVersionSelection returns a *MixedVersionSelectionError when two of
+// files' main files are copies of one file at different versions, else nil.
+// The grouping follows the files' own order, so the message names versions
+// as the selection did.
 //
 // Only main files are compared (#662): an optional, update or
 // miscellaneous file (domain.IsSecondaryFileCategory, the source's own
 // category) may carry its own version beside any main file, and is not
 // named. A file with no category counts as main, so a source that does not
-// classify its files keeps #647's rule for every file.
+// classify its files keeps #647's rule. And only copies of one file
+// conflict (domain.SameFile): an author may version a mod's main
+// components separately ("Core 1.2" beside "Textures 1.0"), and those
+// install together.
 func mixedVersionSelection(files []domain.DownloadableFile) error {
 	ptrs := make([]*domain.DownloadableFile, len(files))
 	for i := range files {
 		ptrs[i] = &files[i]
 	}
-	versions := mainFileVersions(ptrs)
-	if len(versions) < 2 {
-		return nil
+	if versions := copyConflicts(ptrs); len(versions) > 1 {
+		return &MixedVersionSelectionError{Versions: versions}
 	}
-	return &MixedVersionSelectionError{Versions: versions}
+	return nil
 }
 
-// mainFileVersions groups files' versioned main files by version, in the
-// files' own order (#662). A file with no version, or a secondary one, is
-// in no group.
-func mainFileVersions(files []*domain.DownloadableFile) []MixedVersion {
+// isVersionedMain reports whether f is a main file that carries a version:
+// the only kind a one-version rule compares.
+func isVersionedMain(f *domain.DownloadableFile) bool {
+	return f != nil && f.Version != "" && !domain.IsSecondaryFileCategory(f.Category)
+}
+
+// copyGroups groups files' versioned main files by domain.FileCopyKey -
+// each group one file's copies - in the order each first appears.
+func copyGroups(files []*domain.DownloadableFile) [][]*domain.DownloadableFile {
+	var groups [][]*domain.DownloadableFile
+	index := make(map[string]int)
+	for _, f := range files {
+		if !isVersionedMain(f) {
+			continue
+		}
+		key := domain.FileCopyKey(*f)
+		i, ok := index[key]
+		if !ok {
+			i = len(groups)
+			index[key] = i
+			groups = append(groups, nil)
+		}
+		groups[i] = append(groups[i], f)
+	}
+	return groups
+}
+
+// spansVersions reports whether group's files carry more than one version.
+func spansVersions(group []*domain.DownloadableFile) bool {
+	return slices.ContainsFunc(group, func(f *domain.DownloadableFile) bool { return f.Version != group[0].Version })
+}
+
+// copyConflicts is files' main files that are copies of one file at
+// different versions (#662), grouped by version in the files' own order -
+// what #647's rule refuses at an install. Empty when there is none.
+func copyConflicts(files []*domain.DownloadableFile) []MixedVersion {
+	var conflicting []*domain.DownloadableFile
+	for _, g := range copyGroups(files) {
+		if spansVersions(g) {
+			conflicting = append(conflicting, g...)
+		}
+	}
+	// In the files' own order, not group by group.
+	slices.SortStableFunc(conflicting, func(a, b *domain.DownloadableFile) int {
+		return cmp.Compare(slices.Index(files, a), slices.Index(files, b))
+	})
+	return byVersion(conflicting)
+}
+
+// byVersion groups files by version, in the files' own order.
+func byVersion(files []*domain.DownloadableFile) []MixedVersion {
 	var versions []MixedVersion
 	index := make(map[string]int)
 	for _, f := range files {
-		if f == nil || f.Version == "" || domain.IsSecondaryFileCategory(f.Category) {
-			continue
-		}
 		i, ok := index[f.Version]
 		if !ok {
 			i = len(versions)
@@ -117,14 +163,18 @@ func mixedVersionFileOf(f *domain.DownloadableFile) MixedVersionFile {
 }
 
 // StoredFilesHeal is a mod whose stored file ids - a profile reference's,
-// or its installed row's - still hold main files of more than one version
+// or its installed row's - hold main files of more than one version
 // (#662): recorded before #647 refused such a selection, or edited in by
 // hand. A flow that replays them (profile apply, switch and import, a
-// deploy's or an update's download) never refuses the mod: it keeps the
-// main files of one version, and every optional, update and miscellaneous
-// file, and drops the other main files. The plan names it, and the flow
-// records the healed file ids on the reference, so the next run finds
-// nothing to heal.
+// deploy's or an update's download) never refuses the mod.
+//
+// Only copies of one file (domain.SameFile) at different versions
+// conflict: of each such file the copy at the reference's version stays
+// (the newest copy, when none is at it) and the others are Dropped. A main
+// file that is a separate component at another version is Kept, and said
+// so; every optional, update and miscellaneous file stays. The plan names
+// the mod, and the flow records the ids it kept on the reference, so the
+// next run finds nothing to drop.
 //
 // A collection's own reference (from_collection) is never healed: the
 // curator chose those files; see CuratorMixedFiles.
@@ -133,31 +183,35 @@ type StoredFilesHeal struct {
 	ModID    string `json:"mod_id"`
 	// Name is the mod's display name, when the source described it.
 	Name string `json:"name,omitempty"`
-	// Version is the version whose main files are kept: the version the
-	// reference records.
+	// Version is the version the mod records once healed: the reference's
+	// own while a main file it keeps carries it.
 	Version string `json:"version"`
-	// RecordedVersion is set only when none of the stored main files is
-	// at the version the reference records (or it records none): Version
-	// is then the newest of their versions, and RecordedVersion the one
-	// the reference recorded, which the heal replaces.
+	// RecordedVersion is set only when no main file the heal keeps is at
+	// the version the reference records (or it records none): Version is
+	// then the newest of theirs, and RecordedVersion the one it replaces.
 	RecordedVersion string `json:"recorded_version,omitempty"`
-	// Dropped is the main files of every other version, by version, in
-	// the source's listing order.
-	Dropped []MixedVersion `json:"dropped"`
+	// Dropped is each main file dropped because a copy of the same file at
+	// another version stays, by version, in the source's listing order.
+	// Absent when only separate components were found (Kept).
+	Dropped []MixedVersion `json:"dropped,omitempty"`
+	// Kept is each main file kept at another version than Version because
+	// it is a separate component, not a copy of a file the mod has at
+	// Version, by version. Absent when there is none.
+	Kept []MixedVersion `json:"kept,omitempty"`
 }
 
 // CuratorMixedFiles is a collection's mod (a from_collection reference)
-// whose files mix main files of more than one version (#662). The
-// curator chose and tested exactly these files, so lmm installs them as
-// they are and only says so; a user's own reference is healed instead
-// (StoredFilesHeal).
+// whose files hold copies of one main file at more than one version
+// (#662). The curator chose and tested exactly these files, so lmm
+// installs them as they are and only says so; a user's own reference is
+// healed instead (StoredFilesHeal).
 type CuratorMixedFiles struct {
 	SourceID string `json:"source_id"`
 	ModID    string `json:"mod_id"`
 	// Name is the mod's display name, when the source described it.
 	Name string `json:"name,omitempty"`
-	// Versions is each version the curator's main files span, with its
-	// files. Always two or more.
+	// Versions is each version the copies span, with its files. Always
+	// two or more.
 	Versions []MixedVersion `json:"versions"`
 }
 
@@ -167,9 +221,10 @@ type storedSelection struct {
 	files []*domain.DownloadableFile
 	// version is the version the mod records for them (#94).
 	version string
-	// heal is set when a user's reference was healed; mixed when a
-	// collection's reference installs the curator's mixed files as they
-	// are. Neither carries the mod's identity: the caller adds it.
+	// heal is set when a user's reference was healed or kept a separate
+	// component at another version; mixed when a collection's reference
+	// installs the curator's copies at several versions as they are.
+	// Neither carries the mod's identity: the caller adds it.
 	heal  *StoredFilesHeal
 	mixed []MixedVersion
 }
@@ -179,74 +234,126 @@ type storedSelection struct {
 //
 //   - A collection's reference (fromCollection) whose stored files are all
 //     still offered installs exactly those files, whatever versions they
-//     carry: the curator's choice. Mixed main versions are reported in
-//     mixed, not healed. Its version stays the one the reference records
-//     while any of its files carries it, so the record the next converge
-//     compares against does not move.
-//   - A user's reference whose stored main files span more than one
-//     version is healed: the main files of the recorded version stay, else
-//     those of the newest version, every secondary file stays, and the
-//     rest of the main files are dropped from the ids before
-//     selectFilesForVersion resolves them.
+//     carry: the curator's choice. Copies at several versions are reported
+//     in mixed, not healed.
+//   - A user's reference whose stored main files hold copies of one file
+//     at different versions is healed (healStoredMains): the dropped copies
+//     leave the ids before selectFilesForVersion resolves them.
 //
-// modVersion is the mod-level version, the #94 stamp's last fallback.
+// The version the mod records stays the stored one (version) while any
+// selected file carries it, so a record stamped by an older rule keeps its
+// cache entry and the next converge sees no drift; else the #94 stamp,
+// whose last fallback is modVersion, the mod-level version.
 func selectStoredFiles(files []domain.DownloadableFile, storedIDs []string, version string, fromCollection bool, modVersion string) (storedSelection, error) {
 	found := storedFilesFound(files, storedIDs)
-	mains := mainFileVersions(found)
 	if fromCollection && len(found) > 0 && len(found) == len(uniqueIDs(storedIDs)) {
-		sel := storedSelection{files: found, version: domain.EffectiveInstalledVersion(modVersion, found)}
-		if version != "" && slices.ContainsFunc(found, func(f *domain.DownloadableFile) bool { return f.Version == version }) {
-			sel.version = version
-		}
-		if len(mains) > 1 {
-			sel.mixed = mains
+		sel := storedSelection{files: found, version: recordedVersionOf(version, modVersion, found)}
+		if conflicts := copyConflicts(found); len(conflicts) > 1 {
+			sel.mixed = conflicts
 		}
 		return sel, nil
 	}
 	var heal *StoredFilesHeal
-	if !fromCollection && len(mains) > 1 {
-		heal = healMainVersions(mains, version)
-		dropped := make(map[string]bool)
-		for _, v := range heal.Dropped {
-			for _, f := range v.Files {
-				dropped[f.ID] = true
-			}
+	if !fromCollection {
+		if heal = healStoredMains(found, version); heal != nil {
+			dropped := droppedIDs(heal)
+			storedIDs = slices.DeleteFunc(slices.Clone(storedIDs), func(id string) bool { return dropped[id] })
+			version = heal.Version
 		}
-		storedIDs = slices.DeleteFunc(slices.Clone(storedIDs), func(id string) bool { return dropped[id] })
-		version = heal.Version
 	}
 	selected, err := selectFilesForVersion(files, storedIDs, version)
 	if err != nil {
 		return storedSelection{}, err
 	}
-	return storedSelection{files: selected, version: domain.EffectiveInstalledVersion(modVersion, selected), heal: heal}, nil
+	return storedSelection{files: selected, version: recordedVersionOf(version, modVersion, selected), heal: heal}, nil
 }
 
-// healMainVersions decides a heal over mains (two or more versions): keep
-// the recorded version's main files, else the newest version's.
-func healMainVersions(mains []MixedVersion, recorded string) *StoredFilesHeal {
-	keep := -1
-	for i, v := range mains {
-		if v.Version == recorded {
-			keep = i
+// recordedVersionOf is the version to record for selected: version while
+// any of them carries it, else domain.EffectiveInstalledVersion's stamp.
+func recordedVersionOf(version, modVersion string, selected []*domain.DownloadableFile) string {
+	if version != "" && slices.ContainsFunc(selected, func(f *domain.DownloadableFile) bool { return f.Version == version }) {
+		return version
+	}
+	return domain.EffectiveInstalledVersion(modVersion, selected)
+}
+
+// droppedIDs is the ids a heal drops.
+func droppedIDs(heal *StoredFilesHeal) map[string]bool {
+	dropped := make(map[string]bool)
+	for _, v := range heal.Dropped {
+		for _, f := range v.Files {
+			dropped[f.ID] = true
 		}
 	}
-	heal := &StoredFilesHeal{}
-	if keep < 0 {
-		keep = 0
-		for i := 1; i < len(mains); i++ {
-			if domain.CompareVersions(mains[i].Version, mains[keep].Version) > 0 {
-				keep = i
+	return dropped
+}
+
+// healStoredMains decides #662's heal over a stored set's files (found):
+// of each main file with copies at different versions, the copy at
+// recorded stays - else the newest copy - and the rest are dropped; a main
+// file left at another version than the one the mod then records is a
+// separate component, kept. Nil when nothing is dropped and no separate
+// component is at another version.
+func healStoredMains(found []*domain.DownloadableFile, recorded string) *StoredFilesHeal {
+	var kept, dropped []*domain.DownloadableFile
+	for _, g := range copyGroups(found) {
+		if !spansVersions(g) {
+			kept = append(kept, g...)
+			continue
+		}
+		keep := ""
+		for _, f := range g {
+			if f.Version == recorded {
+				keep = recorded
+			}
+		}
+		if keep == "" {
+			keep = g[0].Version
+			for _, f := range g[1:] {
+				if domain.CompareVersions(f.Version, keep) > 0 {
+					keep = f.Version
+				}
+			}
+		}
+		for _, f := range g {
+			if f.Version == keep {
+				kept = append(kept, f)
+			} else {
+				dropped = append(dropped, f)
+			}
+		}
+	}
+	heal := &StoredFilesHeal{Version: recorded}
+	if !slices.ContainsFunc(kept, func(f *domain.DownloadableFile) bool { return f.Version == recorded }) && len(kept) > 0 {
+		heal.Version = kept[0].Version
+		for _, f := range kept[1:] {
+			if domain.CompareVersions(f.Version, heal.Version) > 0 {
+				heal.Version = f.Version
 			}
 		}
 		heal.RecordedVersion = recorded
 	}
-	heal.Version = mains[keep].Version
-	for i, v := range mains {
-		if i != keep {
-			heal.Dropped = append(heal.Dropped, v)
+	var others []*domain.DownloadableFile
+	for _, f := range kept {
+		if f.Version != heal.Version {
+			others = append(others, f)
 		}
 	}
+	if len(dropped) == 0 && len(others) == 0 {
+		return nil
+	}
+	if len(dropped) == 0 {
+		// Nothing dropped: a note only, and the record keeps its version.
+		heal.Version, heal.RecordedVersion = recorded, ""
+	}
+	inOrder := func(fs []*domain.DownloadableFile) []*domain.DownloadableFile {
+		slices.SortStableFunc(fs, func(a, b *domain.DownloadableFile) int {
+			return cmp.Compare(slices.Index(found, a), slices.Index(found, b))
+		})
+		return fs
+	}
+	heal.Dropped = byVersion(inOrder(dropped))
+	heal.Kept = byVersion(inOrder(others))
 	return heal
 }
 
@@ -295,24 +402,33 @@ func mixedVersionFilesText(versions []MixedVersion) string {
 	return parts[0]
 }
 
-// Sentence is the heal as one line, for a warning or a plan's text:
-// "Mod X: its stored files mix main files of versions ...; keeping 2.0 and
-// dropping a.zip (1.0)".
+// Sentence is the heal as one line, for a warning or a plan's text: "Mod
+// X: its stored main files are of more than one version; keeping version
+// 2.0 and dropping a.zip (1.0) (reinstall the mod at a dropped file's
+// version to use it instead); keeping c.zip (1.0), a separate component".
 func (h StoredFilesHeal) Sentence() string {
 	name := cmp.Or(h.Name, domain.ModKey(h.SourceID, h.ModID))
-	var dropped []string
-	for _, v := range h.Dropped {
-		for _, f := range v.Files {
-			dropped = append(dropped, fmt.Sprintf("%s (%s)", cmp.Or(f.FileName, f.ID), v.Version))
+	files := func(versions []MixedVersion) string {
+		var out []string
+		for _, v := range versions {
+			for _, f := range v.Files {
+				out = append(out, fmt.Sprintf("%s (%s)", cmp.Or(f.FileName, f.ID), v.Version))
+			}
 		}
+		return strings.Join(out, ", ")
 	}
-	keep := fmt.Sprintf("keeping version %s", h.Version)
-	if h.RecordedVersion != "" {
-		keep = fmt.Sprintf("keeping the newest, %s, since none is at the recorded version %s", h.Version, h.RecordedVersion)
-	} else if h.Version == "" {
-		keep = "keeping the newest"
+	var parts []string
+	if len(h.Dropped) > 0 {
+		keep := fmt.Sprintf("keeping version %s", h.Version)
+		if h.RecordedVersion != "" {
+			keep = fmt.Sprintf("keeping the newest, %s, since none is at the recorded version %s", h.Version, h.RecordedVersion)
+		}
+		parts = append(parts, fmt.Sprintf("%s and dropping %s (reinstall the mod at a dropped file's version to use it instead)", keep, files(h.Dropped)))
 	}
-	return fmt.Sprintf("%s: its stored main files are of more than one version; %s and dropping %s", name, keep, strings.Join(dropped, ", "))
+	if len(h.Kept) > 0 {
+		parts = append(parts, fmt.Sprintf("keeping %s, a separate component", files(h.Kept)))
+	}
+	return fmt.Sprintf("%s: its stored main files are of more than one version; %s", name, strings.Join(parts, "; "))
 }
 
 // Sentence is the note as one line: "Mod X: the collection's files mix
@@ -323,21 +439,32 @@ func (c CuratorMixedFiles) Sentence() string {
 	return fmt.Sprintf("%s: the collection's files mix main files of versions %s; installed as the curator chose them", name, mixedVersionFilesText(c.Versions))
 }
 
+// storedFilesLookupLimit bounds the source lookups one switch or import
+// plan makes to preview #662's heals: the rest are decided, and warned
+// about, when the run reaches them.
+const storedFilesLookupLimit = 25
+
 // previewStoredFiles is what a plan that resolves nothing at plan time
-// (switch, import) says about refs' stored file ids (#662): for every ref
-// with more than one stored file, the only kind whose main files can mix,
-// the source is asked for the mod's file listing and selectStoredFiles'
-// heal or collection note taken. Best-effort: a mod the source cannot
-// describe now is left out, and the flow's own resolution warns about its
-// heal instead (unpreviewedStoredFiles). refs carry the ids the flow will
-// replay.
-func (s *Service) previewStoredFiles(ctx context.Context, game *domain.Game, refs []domain.ModReference) ([]StoredFilesHeal, []CuratorMixedFiles) {
-	var heals []StoredFilesHeal
-	var mixed []CuratorMixedFiles
+// (switch, import) says about refs' stored file ids (#662): for every user
+// ref with more than one stored file, the only kind whose main files can
+// hold copies at several versions, the source is asked for the mod's file
+// listing and selectStoredFiles' heal taken - at most
+// storedFilesLookupLimit of them, unchecked counting the rest. A
+// collection's ref is skipped: it is never healed, and the run itself
+// notes its curator's files. Best-effort: a mod the source cannot describe
+// now is left out, and the run warns about its heal instead
+// (unpreviewedStoredFiles). refs carry the ids the run will replay.
+func (s *Service) previewStoredFiles(ctx context.Context, game *domain.Game, refs []domain.ModReference) (heals []StoredFilesHeal, unchecked int) {
+	looked := 0
 	for _, ref := range refs {
-		if len(uniqueIDs(ref.FileIDs)) < 2 || ctx.Err() != nil {
+		if ref.FromCollection || len(uniqueIDs(ref.FileIDs)) < 2 {
 			continue
 		}
+		if looked == storedFilesLookupLimit || ctx.Err() != nil {
+			unchecked++
+			continue
+		}
+		looked++
 		mod, err := s.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
 		if err != nil {
 			continue
@@ -346,28 +473,32 @@ func (s *Service) previewStoredFiles(ctx context.Context, game *domain.Game, ref
 		if err != nil {
 			continue
 		}
-		sel, err := selectStoredFiles(files, ref.FileIDs, ref.Version, ref.FromCollection, mod.Version)
-		if err != nil {
+		sel, err := selectStoredFiles(files, ref.FileIDs, ref.Version, false, mod.Version)
+		if err != nil || sel.heal == nil {
 			continue
 		}
-		if sel.heal != nil {
-			sel.heal.SourceID, sel.heal.ModID, sel.heal.Name = ref.SourceID, ref.ModID, mod.Name
-			heals = append(heals, *sel.heal)
-		}
-		if len(sel.mixed) > 0 {
-			mixed = append(mixed, CuratorMixedFiles{SourceID: ref.SourceID, ModID: ref.ModID, Name: mod.Name, Versions: sel.mixed})
-		}
+		sel.heal.SourceID, sel.heal.ModID, sel.heal.Name = ref.SourceID, ref.ModID, mod.Name
+		heals = append(heals, *sel.heal)
 	}
-	return heals, mixed
+	return heals, unchecked
 }
 
-// unpreviewedStoredFiles is the warning for a heal or a collection note a
-// flow's resolution found that its plan did not name (#662): the plan
-// could not look the mod up, or the source's listing changed since. A heal
-// is never silent; one the plan named is not said twice.
+// uncheckedStoredFilesNote is a plan's note for the refs previewStoredFiles
+// left unchecked.
+func uncheckedStoredFilesNote(n int) string {
+	return fmt.Sprintf("%d more mod(s) with several stored files were not looked up for this plan; a mod among them whose stored main files hold copies of one file at different versions is healed when the run reaches it, with a warning", n)
+}
+
+// unpreviewedStoredFiles is the warning for a heal that drops a file, or a
+// collection note, that a flow's resolution found and its plan did not
+// name (#662): the plan could not look the mod up, or did not (a bounded
+// or collection preview), or the source's listing changed since. A dropped
+// file is never silent; one the plan named is not said twice. A separate
+// component kept at another version drops nothing, so it is not warned
+// about.
 func unpreviewedStoredFiles(sel storedSelection, ref domain.ModReference, name string, heals []StoredFilesHeal, mixed []CuratorMixedFiles) []string {
 	var out []string
-	if sel.heal != nil && !slices.ContainsFunc(heals, func(h StoredFilesHeal) bool { return h.SourceID == ref.SourceID && h.ModID == ref.ModID }) {
+	if sel.heal != nil && len(sel.heal.Dropped) > 0 && !slices.ContainsFunc(heals, func(h StoredFilesHeal) bool { return h.SourceID == ref.SourceID && h.ModID == ref.ModID }) {
 		h := *sel.heal
 		h.SourceID, h.ModID, h.Name = ref.SourceID, ref.ModID, name
 		out = append(out, h.Sentence())
@@ -376,24 +507,4 @@ func unpreviewedStoredFiles(sel storedSelection, ref domain.ModReference, name s
 		out = append(out, CuratorMixedFiles{SourceID: ref.SourceID, ModID: ref.ModID, Name: name, Versions: sel.mixed}.Sentence())
 	}
 	return out
-}
-
-// staleUpdateMains is an update's heal (#662) over an installed set's main
-// versions: the main files of every version but the installed one (which
-// the update replaces) and the target (which already is the update) are
-// stale. Nil when the set mixes no versions or none is stale.
-func staleUpdateMains(mains []MixedVersion, installed, target string) *StoredFilesHeal {
-	if len(mains) < 2 {
-		return nil
-	}
-	heal := &StoredFilesHeal{Version: installed}
-	for _, v := range mains {
-		if v.Version != installed && v.Version != target {
-			heal.Dropped = append(heal.Dropped, v)
-		}
-	}
-	if len(heal.Dropped) == 0 {
-		return nil
-	}
-	return heal
 }

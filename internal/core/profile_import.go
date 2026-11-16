@@ -98,6 +98,11 @@ type ImportPlan struct {
 	// collection's are installed as the curator chose them, which the
 	// collection's own notes say. Additive; absent when there are none.
 	Heals []StoredFilesHeal `json:"heals,omitempty"`
+	// HealsUnchecked counts the user references with several stored files
+	// that the plan did not look up (#662: it looks up at most 25); one
+	// among them that needs a heal is healed when the import reaches it,
+	// with a warning. omitzero.
+	HealsUnchecked int `json:"heals_unchecked,omitzero"`
 
 	// WorkshopCollection describes the Steam Workshop collection this plan
 	// was built from, when it was built from one
@@ -542,10 +547,11 @@ func (s *Service) planImport(ctx context.Context, game *domain.Game, data []byte
 		}
 		replayed = append(replayed, ref)
 	}
-	heals, _ := s.previewStoredFiles(ctx, game, replayed)
+	heals, unchecked := s.previewStoredFiles(ctx, game, replayed)
 
 	return &ImportPlan{
 		Heals:               heals,
+		HealsUnchecked:      unchecked,
 		Hooks:               listHooks(profile.Hooks, profile.HooksExplicit),
 		RestrictedOverrides: restrictedOverrides(profile),
 		TreeInputs:          s.importTreeInputs(game, profile.Mods, nil),

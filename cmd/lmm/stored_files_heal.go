@@ -9,27 +9,44 @@ import (
 )
 
 // storedFileLines renders a plan's #662 entries: each mod whose stored
-// main files mix versions and that the run heals to one (the version kept
-// and every file dropped), then each collection mod whose curator's files
-// mix versions and that installs as chosen. Nil for neither. Names and
-// file names go through domain.SanitizeLine, as every name the CLI prints
-// from a source is.
+// main files are of more than one version - the copies of one file it
+// drops and the version it keeps, and any separate component it keeps at
+// another version - then each collection mod whose curator's copies of
+// one file span versions and that installs as chosen. Nil for neither.
+// Names and file names go through domain.SanitizeLine, as every name the
+// CLI prints from a source is.
 func storedFileLines(heals []core.StoredFilesHeal, curator []core.CuratorMixedFiles) []string {
 	var lines []string
+	files := func(versions []core.MixedVersion) string {
+		var out []string
+		for _, v := range versions {
+			for _, f := range v.Files {
+				out = append(out, fmt.Sprintf("%s (%s)", domain.SanitizeLine(fileLabel(f)), domain.SanitizeLine(v.Version)))
+			}
+		}
+		return strings.Join(out, ", ")
+	}
 	if len(heals) > 0 {
-		lines = append(lines, fmt.Sprintf("Will heal %d mod(s) whose stored main files are of more than one version:", len(heals)))
+		lines = append(lines, fmt.Sprintf("%d mod(s) have stored main files of more than one version:", len(heals)))
+		dropping := false
 		for _, h := range heals {
-			keep := "keeps version " + domain.SanitizeLine(h.Version)
-			if h.RecordedVersion != "" {
-				keep = fmt.Sprintf("keeps the newest, %s (none is at the recorded %s)", domain.SanitizeLine(h.Version), domain.SanitizeLine(h.RecordedVersion))
-			}
-			var dropped []string
-			for _, v := range h.Dropped {
-				for _, f := range v.Files {
-					dropped = append(dropped, fmt.Sprintf("%s (%s)", domain.SanitizeLine(fileLabel(f)), domain.SanitizeLine(v.Version)))
+			var parts []string
+			mark := "="
+			if len(h.Dropped) > 0 {
+				dropping, mark = true, "~"
+				keep := "keeps version " + domain.SanitizeLine(h.Version)
+				if h.RecordedVersion != "" {
+					keep = fmt.Sprintf("keeps the newest, %s (none is at the recorded %s)", domain.SanitizeLine(h.Version), domain.SanitizeLine(h.RecordedVersion))
 				}
+				parts = append(parts, keep+", drops "+files(h.Dropped))
 			}
-			lines = append(lines, fmt.Sprintf("  ~ %s: %s, drops %s", modLabel(h.Name, h.SourceID, h.ModID), keep, strings.Join(dropped, ", ")))
+			if len(h.Kept) > 0 {
+				parts = append(parts, "keeps "+files(h.Kept)+", a separate component")
+			}
+			lines = append(lines, fmt.Sprintf("  %s %s: %s", mark, modLabel(h.Name, h.SourceID, h.ModID), strings.Join(parts, "; ")))
+		}
+		if dropping {
+			lines = append(lines, "  (a dropped file is a copy of a kept one at another version; reinstall the mod at its version to use it instead)")
 		}
 	}
 	if len(curator) > 0 {

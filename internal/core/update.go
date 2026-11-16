@@ -1057,23 +1057,19 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 			}
 		}
 	}
-	// #662: installed ids whose main files mix versions heal before the
-	// update reads them, so a stale main file of a third version is not
-	// carried over as an "unchanged extra" beside the new one. The
-	// installed version's main files are what the update replaces and the
-	// target version's are already the update, so only the others are
-	// dropped. A collection's mod keeps the curator's files. The update's
-	// plan resolves no files, so the heal is said here.
+	// #662: installed ids holding copies of one main file at different
+	// versions heal before the update reads them, so a stale copy is not
+	// carried over as an "unchanged extra" beside the new one. Only copies
+	// are dropped (domain.SameFile): a main file that is a separate
+	// component at another version is a file the mod uses, and an update -
+	// an automatic one included - never drops it. A collection's mod keeps
+	// the curator's files. The update's plan resolves no files, so the
+	// heal is said here.
 	currentFileIDs := mod.FileIDs
 	if recorded := s.recordedRef(ctx, game.ID, profileName, mod.SourceID, mod.ID); recorded == nil || !recorded.FromCollection {
-		if heal := staleUpdateMains(mainFileVersions(storedFilesFound(files, mod.FileIDs)), mod.Version, newVersion); heal != nil {
+		if heal := healStoredMains(storedFilesFound(files, mod.FileIDs), mod.Version); heal != nil && len(heal.Dropped) > 0 {
 			heal.SourceID, heal.ModID, heal.Name = mod.SourceID, mod.ID, mod.Name
-			dropped := make(map[string]bool)
-			for _, v := range heal.Dropped {
-				for _, f := range v.Files {
-					dropped[f.ID] = true
-				}
-			}
+			dropped := droppedIDs(heal)
 			var cur, eff []string
 			for i, id := range mod.FileIDs {
 				if dropped[id] {
@@ -1108,7 +1104,14 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// flag freshly-updated mods whose file version differs from the mod
 	// version. effectiveVersion keys the cache (via newMod.Version), the DB
 	// row, and the profile ref below, matching every install flow.
+	//
+	// #662: a main file at the target version names it, so a separate
+	// component kept at its own version (Textures 1.0 beside Core 1.3)
+	// never becomes the version the mod records.
 	effectiveVersion := domain.EffectiveInstalledVersion(newVersion, filesToDownload)
+	if slices.ContainsFunc(filesToDownload, func(f *domain.DownloadableFile) bool { return isVersionedMain(f) && f.Version == newVersion }) {
+		effectiveVersion = newVersion
+	}
 	newMod.Version = effectiveVersion
 
 	var downloadedFileIDs []string

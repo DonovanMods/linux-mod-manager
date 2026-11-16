@@ -1351,6 +1351,14 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
               />
               <${RefList} heading="Missing entirely" refs=${missing} />
               <${PlanStoredFiles} heals=${plan.heals} testID="profile-import" />
+              ${
+                plan.heals_unchecked > 0 &&
+                html`<p class="plan__note">
+                  ${plan.heals_unchecked} more mod(s) with several stored files
+                  were not looked up; any heal is said when the import reaches
+                  it.
+                </p>`
+              }
             `
       }
       ${

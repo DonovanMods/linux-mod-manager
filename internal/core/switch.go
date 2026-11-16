@@ -107,20 +107,16 @@ type SwitchPlan struct {
 	// there are none.
 	Handoffs []HandOff `json:"handoffs,omitempty"`
 
-	// Heals is each ToInstall mod whose stored file ids still mix main
-	// files of more than one version (#662): the switch installs one
-	// version's main files with every secondary file, and records those
-	// ids on To's reference. Read from the source at plan time for the
-	// references with more than one file; a mod the plan could not look
-	// up is healed all the same, with a warning. Additive; absent when
-	// there are none.
+	// Heals is each ToInstall mod whose stored main files are of more than
+	// one version (#662): copies of one file at several versions keep one
+	// (the switch records the ids it keeps on To's reference), a separate
+	// component is kept and said so. Read from the source at plan time for
+	// up to 25 user references with more than one file (Warnings counts
+	// the rest); a mod the plan did not look up is healed all the same,
+	// with a warning, and a collection's mod installs the curator's files
+	// with one when they mix versions. Additive; absent when there are
+	// none.
 	Heals []StoredFilesHeal `json:"heals,omitempty"`
-
-	// CuratorMixed is each ToInstall mod of To's collection whose curator's
-	// files mix main files of more than one version (#662): installed
-	// exactly as the collection names them. Additive; absent when there
-	// are none.
-	CuratorMixed []CuratorMixedFiles `json:"curator_mixed,omitempty"`
 
 	NoChanges     bool `json:"no_changes"`     // To's mod set matches From's content-wise and no override changes (#631); only SetDefault is needed
 	AlreadyActive bool `json:"already_active"` // To is already the active default profile; nothing to plan
@@ -532,7 +528,11 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	}
 	// #638: the shared paths the switch hands on, named before it runs.
 	plan.Handoffs = s.planSwitchHandOffs(ctx, game, plan)
-	plan.Heals, plan.CuratorMixed = s.previewStoredFiles(ctx, game, plan.ToInstall)
+	var unchecked int
+	plan.Heals, unchecked = s.previewStoredFiles(ctx, game, plan.ToInstall)
+	if unchecked > 0 {
+		plan.Warnings = append(plan.Warnings, uncheckedStoredFilesNote(unchecked))
+	}
 	return plan, nil
 }
 
@@ -1010,7 +1010,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				continue
 			}
 			filesToDownload := sel.files
-			for _, msg := range unpreviewedStoredFiles(sel, ref, mod.Name, plan.Heals, plan.CuratorMixed) {
+			for _, msg := range unpreviewedStoredFiles(sel, ref, mod.Name, plan.Heals, nil) {
 				result.Warnings = append(result.Warnings, msg)
 				emit(WarningEvent{Scope: scope, Phase: SwitchInstallWarning, Message: msg})
 			}

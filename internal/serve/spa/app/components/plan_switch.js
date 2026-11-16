@@ -153,11 +153,7 @@ export function SwitchPlanView({ plan }) {
       }
       <${PlanOverrides} changes=${plan.overrides} testID="switch-overrides" />
       <${PlanHandOffs} handoffs=${plan.handoffs} testID="switch-handoffs" />
-      <${PlanStoredFiles}
-        heals=${plan.heals}
-        curator=${plan.curator_mixed}
-        testID="switch"
-      />
+      <${PlanStoredFiles} heals=${plan.heals} testID="switch" />
     </div>
   `;
 }

@@ -68,14 +68,14 @@ func TestSelectStoredFiles_OneMainVersionIsNotAHeal(t *testing.T) {
 
 func TestSelectStoredFiles_UncategorisedFilesKeepTheOldRule(t *testing.T) {
 	files := []domain.DownloadableFile{
-		{ID: "a", FileName: "a-2.0.zip", Version: "2.0", IsPrimary: true},
-		{ID: "b", FileName: "b-1.0.zip", Version: "1.0"},
+		{ID: "a", FileName: "mod-2.0.zip", Version: "2.0", IsPrimary: true},
+		{ID: "b", FileName: "mod-1.0.zip", Version: "1.0"},
 	}
 	sel, err := selectStoredFiles(files, []string{"a", "b"}, "2.0", false, "2.0")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a"}, selectedIDs(sel.files), "a file with no category is a main file")
 	require.NotNil(t, sel.heal)
-	assert.Equal(t, []MixedVersion{{Version: "1.0", Files: []MixedVersionFile{{ID: "b", FileName: "b-1.0.zip"}}}}, sel.heal.Dropped)
+	assert.Equal(t, []MixedVersion{{Version: "1.0", Files: []MixedVersionFile{{ID: "b", FileName: "mod-1.0.zip"}}}}, sel.heal.Dropped)
 }
 
 func TestSelectStoredFiles_CollectionRefInstallsTheCuratorsFiles(t *testing.T) {
@@ -109,10 +109,59 @@ func TestStoredFilesHeal_Sentence(t *testing.T) {
 	h := StoredFilesHeal{SourceID: "nexusmods", ModID: "42", Name: "Some Mod", Version: "2.0", Dropped: []MixedVersion{
 		{Version: "1.0", Files: []MixedVersionFile{{ID: "m1", FileName: "main-1.0.zip"}, {ID: "m0"}}},
 	}}
-	assert.Equal(t, "Some Mod: its stored main files are of more than one version; keeping version 2.0 and dropping main-1.0.zip (1.0), m0 (1.0)", h.Sentence())
+	assert.Equal(t, "Some Mod: its stored main files are of more than one version; keeping version 2.0 and dropping main-1.0.zip (1.0), m0 (1.0) (reinstall the mod at a dropped file's version to use it instead)", h.Sentence())
+	h.Kept = []MixedVersion{{Version: "0.9", Files: []MixedVersionFile{{ID: "t", FileName: "textures-0.9.zip"}}}}
+	assert.Equal(t, "Some Mod: its stored main files are of more than one version; keeping version 2.0 and dropping main-1.0.zip (1.0), m0 (1.0) (reinstall the mod at a dropped file's version to use it instead); keeping textures-0.9.zip (0.9), a separate component", h.Sentence())
+	h.Dropped = nil
+	assert.Equal(t, "Some Mod: its stored main files are of more than one version; keeping textures-0.9.zip (0.9), a separate component", h.Sentence())
 	c := CuratorMixedFiles{SourceID: "nexusmods", ModID: "42", Versions: []MixedVersion{
 		{Version: "1.0", Files: []MixedVersionFile{{ID: "m1", FileName: "a.zip"}}},
 		{Version: "2.0", Files: []MixedVersionFile{{ID: "m2", FileName: "b.zip"}}},
 	}}
 	assert.Equal(t, "nexusmods:42: the collection's files mix main files of versions 1.0 (a.zip) and 2.0 (b.zip); installed as the curator chose them", c.Sentence())
+}
+
+func TestSelectStoredFiles_SeparateComponentsAreKept(t *testing.T) {
+	files := []domain.DownloadableFile{
+		{ID: "c12", Name: "Core", FileName: "Core-1.2.zip", Version: "1.2", Category: "MAIN", IsPrimary: true},
+		{ID: "c11", Name: "Core", FileName: "Core-1.1.zip", Version: "1.1", Category: "MAIN"},
+		{ID: "t10", Name: "Textures", FileName: "Textures-1.0.zip", Version: "1.0", Category: "MAIN"},
+		{ID: "t09", Name: "Textures", FileName: "Textures-0.9.zip", Version: "0.9", Category: "MAIN"},
+	}
+	// Core's copies keep the recorded 1.2; Textures has no 1.2, so its
+	// newest copy stays - a separate component, kept and said so.
+	sel, err := selectStoredFiles(files, []string{"c11", "c12", "t09", "t10"}, "1.2", false, "1.2")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"c12", "t10"}, selectedIDs(sel.files))
+	assert.Equal(t, "1.2", sel.version)
+	require.NotNil(t, sel.heal)
+	assert.Equal(t, []MixedVersion{
+		{Version: "1.1", Files: []MixedVersionFile{{ID: "c11", FileName: "Core-1.1.zip"}}},
+		{Version: "0.9", Files: []MixedVersionFile{{ID: "t09", FileName: "Textures-0.9.zip"}}},
+	}, sel.heal.Dropped)
+	assert.Equal(t, []MixedVersion{{Version: "1.0", Files: []MixedVersionFile{{ID: "t10", FileName: "Textures-1.0.zip"}}}}, sel.heal.Kept)
+
+	// Nothing to drop: a note, and the set installs as it is.
+	sel, err = selectStoredFiles(files, []string{"t10", "c12"}, "1.2", false, "1.2")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"c12", "t10"}, selectedIDs(sel.files))
+	require.NotNil(t, sel.heal)
+	assert.Empty(t, sel.heal.Dropped)
+	assert.Equal(t, "1.2", sel.heal.Version)
+	assert.Len(t, sel.heal.Kept, 1)
+}
+
+// TestSelectStoredFiles_KeepsAnOlderRulesRecordedVersion (#662 review): a
+// record stamped by the pre-#662 rule (the first versioned file, here a
+// patch) keeps its version and its files.
+func TestSelectStoredFiles_KeepsAnOlderRulesRecordedVersion(t *testing.T) {
+	files := []domain.DownloadableFile{
+		{ID: "p", FileName: "patch-0.5.zip", Version: "0.5", Category: "OPTIONAL"},
+		{ID: "m", FileName: "mod-1.0.zip", Version: "1.0", Category: "MAIN"},
+	}
+	sel, err := selectStoredFiles(files, []string{"p", "m"}, "0.5", false, "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"p", "m"}, selectedIDs(sel.files))
+	assert.Equal(t, "0.5", sel.version)
+	assert.Nil(t, sel.heal)
 }

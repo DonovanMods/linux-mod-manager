@@ -10,6 +10,8 @@ package core_test
 // miscellaneous file (by the source's own category) may carry its own
 // version beside any main file. A file the source gives no category counts
 // as main, so a source that does not classify its files keeps #647's rule.
+// And only copies of one file conflict (domain.SameFile): separate main
+// components an author versions on their own install together.
 
 import (
 	"context"
@@ -38,11 +40,14 @@ func TestValidateInstallFileSelection_MixedVersions(t *testing.T) {
 	// superseded file of any role, so it counts as main.
 	catMain1 := domain.DownloadableFile{ID: "cm1", FileName: "main-1.0.zip", Version: "1.0", Category: "MAIN"}
 	catMain2 := domain.DownloadableFile{ID: "cm2", FileName: "main-2.0.zip", Version: "2.0", Category: "MAIN"}
-	catOld1 := domain.DownloadableFile{ID: "co1", FileName: "old-1.0.zip", Version: "1.0", Category: "OLD_VERSION"}
+	catOld1 := domain.DownloadableFile{ID: "co1", FileName: "main-1.0.7z", Version: "1.0", Category: "OLD_VERSION"}
 	catOpt := domain.DownloadableFile{ID: "cp", FileName: "patch-1.2.zip", Version: "1.2", Category: "OPTIONAL"}
 	catUpd := domain.DownloadableFile{ID: "cu", FileName: "hotfix-0.3.zip", Version: "0.3", Category: "update"}
 	catMisc := domain.DownloadableFile{ID: "cx", FileName: "extras-9.zip", Version: "9", Category: "MISCELLANEOUS"}
-	catRelease := domain.DownloadableFile{ID: "cr", FileName: "release-3.0.zip", Version: "3.0", Category: "Release"}
+	catRelease := domain.DownloadableFile{ID: "cr", FileName: "main-3.0.zip", Version: "3.0", Category: "Release"}
+	// #662: separate components an author versions on their own.
+	core12 := domain.DownloadableFile{ID: "core", Name: "Core 1.2", Version: "1.2", Category: "MAIN"}
+	tex10 := domain.DownloadableFile{ID: "tex", Name: "Textures 1.0", Version: "1.0", Category: "MAIN"}
 
 	ok := []struct {
 		name  string
@@ -51,6 +56,7 @@ func TestValidateInstallFileSelection_MixedVersions(t *testing.T) {
 		{"#662: a main file and an optional of another version", []domain.DownloadableFile{catMain2, catOpt}},
 		{"#662: secondary files of several versions beside one main", []domain.DownloadableFile{catOpt, catMain1, catUpd, catMisc}},
 		{"#662: secondary files alone, of several versions", []domain.DownloadableFile{catOpt, catUpd}},
+		{"#662: separate main components at their own versions", []domain.DownloadableFile{core12, tex10}},
 		{"one version, several files", []domain.DownloadableFile{main1, opt1}},
 		{"a file with no version joins any version", []domain.DownloadableFile{main2, bare}},
 		{"no versions at all", []domain.DownloadableFile{bare, {ID: "b2", FileName: "more.zip"}}},
@@ -66,18 +72,18 @@ func TestValidateInstallFileSelection_MixedVersions(t *testing.T) {
 		err := svc.ValidateInstallFileSelection(game, []domain.DownloadableFile{main1, main2, opt1, bare})
 		var mixed *core.MixedVersionSelectionError
 		require.True(t, errors.As(err, &mixed), "want *core.MixedVersionSelectionError, got %v", err)
-		assert.Equal(t, "these files belong to versions 1.0 (main-1.0.zip, patch-1.0.zip) and 2.0 (main-2.0.zip); pick one version", err.Error())
+		assert.Equal(t, "these files belong to versions 1.0 (main-1.0.zip) and 2.0 (main-2.0.zip); pick one version", err.Error())
 		assert.Equal(t, []core.MixedVersion{
-			{Version: "1.0", Files: []core.MixedVersionFile{{ID: "m1", FileName: "main-1.0.zip"}, {ID: "o1", FileName: "patch-1.0.zip"}}},
+			{Version: "1.0", Files: []core.MixedVersionFile{{ID: "m1", FileName: "main-1.0.zip"}}},
 			{Version: "2.0", Files: []core.MixedVersionFile{{ID: "m2", FileName: "main-2.0.zip"}}},
-		}, mixed.Versions, "a file with no version belongs to no version, so it is not named")
+		}, mixed.Versions, "only copies of one file are named: the patch is a separate component, and a file with no version belongs to no version")
 	})
 
 	t.Run("#662: two main versions refused, naming only the main files", func(t *testing.T) {
 		err := svc.ValidateInstallFileSelection(game, []domain.DownloadableFile{catMain2, catOpt, catOld1})
 		var mixed *core.MixedVersionSelectionError
 		require.True(t, errors.As(err, &mixed), "want *core.MixedVersionSelectionError, got %v", err)
-		assert.Equal(t, "these files belong to versions 2.0 (main-2.0.zip) and 1.0 (old-1.0.zip); pick one version", err.Error())
+		assert.Equal(t, "these files belong to versions 2.0 (main-2.0.zip) and 1.0 (main-1.0.7z); pick one version", err.Error())
 	})
 
 	t.Run("#662: a category lmm does not know counts as main", func(t *testing.T) {

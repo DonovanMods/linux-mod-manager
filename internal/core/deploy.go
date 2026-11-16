@@ -1125,9 +1125,15 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	if ref := s.recordedRef(ctx, game.ID, mod.ProfileName, mod.SourceID, mod.ID); ref != nil {
 		fromCollection = ref.FromCollection
 	}
-	sel, err := selectStoredFiles(files, mod.FileIDs, mod.Version, fromCollection, fetchedMod.Version)
+	sel, err := selectStoredFiles(files, mod.FileIDs, mod.Version, fromCollection, mod.Version)
 	if err != nil {
 		return skip(err.Error())
+	}
+	if sel.heal != nil && sel.heal.RecordedVersion != "" {
+		// The heal would move the row to another version (none of the
+		// copies it keeps is at the recorded one), which this deploy -
+		// installing the row as recorded - cannot do.
+		return skip(fmt.Sprintf("its stored main files are copies of one file at versions other than its recorded version %s - reinstall the mod at the version you want, or run 'lmm profile apply' after setting it", mod.Version))
 	}
 	filesToDownload := sel.files
 	for _, msg := range unpreviewedStoredFiles(sel, domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}, mod.Name, nil, nil) {
@@ -1144,10 +1150,9 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	// under the WRONG version, and the installer.Install call that follows
 	// (using the InstalledMod's own, unmodified mod.Version) fails with "mod
 	// not in cache" even though the download just succeeded.
-	fetchedMod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload)
-	if sel.mixed != nil || sel.heal != nil {
-		fetchedMod.Version = sel.version
-	}
+	// #662: the row's own version while any selected file carries it, so
+	// a row stamped by an older rule rebuilds the entry it names.
+	fetchedMod.Version = sel.version
 
 	// #614: a FOMOD mod's tree is rebuilt from the profile's recorded
 	// choices - the same tree only if they still fit and name the row's

@@ -767,7 +767,7 @@ func TestJSONGoldens(t *testing.T) {
 		},
 		{
 			"switch_plan_heals",
-			core.SwitchPlan{GameID: "skyrim-se", From: "default", To: "hardcore", Heals: sampleHeals(), CuratorMixed: sampleCuratorMixed()},
+			core.SwitchPlan{GameID: "skyrim-se", From: "default", To: "hardcore", Heals: sampleHeals()},
 		},
 		{
 			"import_plan_heals",
@@ -777,6 +777,7 @@ func TestJSONGoldens(t *testing.T) {
 				NeedsRedownload: []domain.ModReference{},
 				Missing:         []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "2.0", FileIDs: []string{"11", "21", "31"}}},
 				Heals:           sampleHeals(),
+				HealsUnchecked:  3,
 			},
 		},
 		{
@@ -2943,6 +2944,14 @@ func TestJSONGoldens(t *testing.T) {
 			}},
 		},
 		{
+			// #662: nothing dropped, a separate component kept at another
+			// version.
+			"stored_files_heal_kept",
+			core.StoredFilesHeal{SourceID: "nexusmods", ModID: "42", Version: "1.2", Kept: []core.MixedVersion{
+				{Version: "1.0", Files: []core.MixedVersionFile{{ID: "31", FileName: "textures-1.0.zip"}}},
+			}},
+		},
+		{
 			// #662: a collection's mod installing the curator's mixed files.
 			"curator_mixed_files",
 			core.CuratorMixedFiles{SourceID: "nexusmods", ModID: "42", Name: "Some Mod", Versions: []core.MixedVersion{
@@ -4964,6 +4973,8 @@ func sampleHandOffs() []core.HandOff {
 func sampleHeals() []core.StoredFilesHeal {
 	return []core.StoredFilesHeal{{SourceID: "nexusmods", ModID: "42", Name: "Some Mod", Version: "2.0", Dropped: []core.MixedVersion{
 		{Version: "1.0", Files: []core.MixedVersionFile{{ID: "11", FileName: "main-1.0.zip"}}},
+	}, Kept: []core.MixedVersion{
+		{Version: "0.9", Files: []core.MixedVersionFile{{ID: "31", FileName: "textures-0.9.zip"}}},
 	}}}
 }
 
