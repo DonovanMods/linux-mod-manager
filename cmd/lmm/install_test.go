@@ -110,9 +110,9 @@ func TestDisplayFileLabel(t *testing.T) {
 // empty (the pre-#211 shape) render exactly as before.
 func TestInstallFileRow(t *testing.T) {
 	withDesc := domain.DownloadableFile{FileName: "Mod.exmodz", Category: "EXMODZ", Description: "mergeable EXMOD - recommended", IsPrimary: true}
-	assert.Equal(t, "  [2] Mod.exmodz (EXMODZ, 0 B) - mergeable EXMOD - recommended <- default", installFileRow(1, withDesc))
+	assert.Equal(t, "  [2] Mod.exmodz (EXMODZ, 0 B) - mergeable EXMOD - recommended <- default", installFileRow(1, withDesc, false))
 	noDesc := domain.DownloadableFile{FileName: "Mod_P.pak", Category: "PAK"}
-	assert.Equal(t, "  [1] Mod_P.pak (PAK, 0 B)", installFileRow(0, noDesc))
+	assert.Equal(t, "  [1] Mod_P.pak (PAK, 0 B)", installFileRow(0, noDesc, false))
 }
 
 // TestInstallFileRow_ShowsTheFilesDate is #433's install-picker half: a
@@ -124,11 +124,11 @@ func TestInstallFileRow_ShowsTheFilesDate(t *testing.T) {
 	t.Cleanup(func() { cliNow = orig })
 
 	dated := domain.DownloadableFile{FileName: "m-1.1.zip", Category: "MAIN", IsPrimary: true, UploadedAt: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)}
-	assert.Equal(t, "  [1] m-1.1.zip (MAIN, 0 B, 2024-01-15) <- default", installFileRow(0, dated))
+	assert.Equal(t, "  [1] m-1.1.zip (MAIN, 0 B, 2024-01-15) <- default", installFileRow(0, dated, false))
 	recent := domain.DownloadableFile{FileName: "m-1.2.zip", Category: "MAIN", UploadedAt: time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)}
-	assert.Equal(t, "  [2] m-1.2.zip (MAIN, 0 B, 1d ago)", installFileRow(1, recent))
+	assert.Equal(t, "  [2] m-1.2.zip (MAIN, 0 B, 1d ago)", installFileRow(1, recent, false))
 	undated := domain.DownloadableFile{FileName: "m-1.0.zip", Category: "MAIN"}
-	assert.Equal(t, "  [3] m-1.0.zip (MAIN, 0 B)", installFileRow(2, undated))
+	assert.Equal(t, "  [3] m-1.0.zip (MAIN, 0 B)", installFileRow(2, undated, false))
 }
 
 // TestInstallCmd_ShowArchivedFlag tests the show-archived flag exists

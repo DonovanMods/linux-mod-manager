@@ -1,0 +1,79 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "to_disable": [],
+  "to_enable": [],
+  "to_install": [
+    {
+      "ref": {
+        "source_id": "test-src",
+        "mod_id": "mod1",
+        "version": "2.0",
+        "file_ids": [
+          "main2",
+          "main1",
+          "patch1"
+        ],
+        "locked": false
+      },
+      "mod": {
+        "id": "mod1",
+        "source_id": "test-src",
+        "name": "Mod One",
+        "version": "2.0",
+        "author": "",
+        "summary": "",
+        "description": "",
+        "game_id": "g1",
+        "category": "",
+        "downloads": 0,
+        "picture_url": "",
+        "source_url": "",
+        "files": [],
+        "dependencies": []
+      },
+      "files": [
+        {
+          "id": "main2",
+          "name": "Main",
+          "file_name": "main-2.0.esp",
+          "version": "2.0",
+          "size": 10,
+          "is_primary": true,
+          "category": "MAIN"
+        },
+        {
+          "id": "patch1",
+          "name": "Patch",
+          "file_name": "patch-1.0.esp",
+          "version": "1.0",
+          "size": 10,
+          "is_primary": false,
+          "category": "OPTIONAL"
+        }
+      ],
+      "version": "2.0",
+      "cached": false
+    }
+  ],
+  "heals": [
+    {
+      "source_id": "test-src",
+      "mod_id": "mod1",
+      "name": "Mod One",
+      "version": "2.0",
+      "dropped": [
+        {
+          "version": "1.0",
+          "files": [
+            {
+              "id": "main1",
+              "file_name": "main-1.0.esp"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "no_changes": false
+}

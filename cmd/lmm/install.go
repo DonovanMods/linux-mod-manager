@@ -122,10 +122,12 @@ func installFileIDList() []string {
 
 // selectInstallFiles applies the --file flag, single-file shortcut, --yes default,
 // or interactive prompt to choose which downloadable files to install. When
-// the files span more than one version, the interactive prompt asks for the
-// version first and then offers only that version's files (#647).
-// validate, when non-nil, enforces Service.ValidateInstallFileSelection's
-// rules (#211's variant exclusivity, #647's one version): the --file path returns its error
+// the main files span more than one version, the interactive prompt asks
+// for the version first and then offers that version's files, followed by
+// every optional, update or miscellaneous file of another version (#647,
+// #662). validate, when non-nil, enforces
+// Service.ValidateInstallFileSelection's rules (#211's variant
+// exclusivity, #647/#662's one main version): the --file path returns its error
 // as-is (an explicit flag isn't retried), while the interactive path prints
 // it and re-prompts. nil skips validation entirely (no caller currently
 // needs that, but it keeps the signature honest for a future one).
@@ -196,12 +198,15 @@ func selectInstallFilesFrom(r io.Reader, files []domain.DownloadableFile, valida
 	// #647: files of several versions are one version's at a time, like
 	// the web picker (#637) - a version first, then that version's files.
 	// --version never gets here with more than one: its pool is one version.
-	if versions := installFileVersions(files); len(versions) > 1 {
+	// #662: only the MAIN files' versions are a choice; an optional,
+	// update or miscellaneous file of any version is offered after the
+	// chosen version's files.
+	if versions := installMainVersions(files); len(versions) > 1 {
 		version, err := selectInstallVersion(reader, files, versions)
 		if err != nil {
 			return nil, err
 		}
-		files = installFilesAt(files, version)
+		files = installFilesFor(files, version)
 		if len(files) == 1 {
 			selected := []*domain.DownloadableFile{&files[0]}
 			if err := runValidate(selected); err != nil {
@@ -214,11 +219,13 @@ func selectInstallFilesFrom(r io.Reader, files []domain.DownloadableFile, valida
 
 	// The listing exists for the prompt that follows it; under --json
 	// readMultiSelectionLine refuses to read stdin (Ruling 2), so printing
-	// it would only put console text beside the error envelope.
+	// it would only put console text beside the error envelope. #662: when
+	// the files offered carry more than one version, each row names its own.
 	if !jsonOutput {
+		withVersion := len(installFileVersions(files)) > 1
 		fmt.Println("\nAvailable files:")
 		for i, f := range files {
-			fmt.Println(installFileRow(i, f))
+			fmt.Println(installFileRow(i, f, withVersion))
 		}
 	}
 
@@ -262,6 +269,33 @@ func installFileVersions(files []domain.DownloadableFile) []string {
 		if !seen[f.Version] {
 			seen[f.Version] = true
 			out = append(out, f.Version)
+		}
+	}
+	return out
+}
+
+// installMainVersions is the distinct versions of files' main files, in
+// list order (#662) - the versions the picker's version step offers. A
+// file with no category is a main file; a main file with no version is a
+// version of its own (""), as in installFileVersions.
+func installMainVersions(files []domain.DownloadableFile) []string {
+	var mains []domain.DownloadableFile
+	for _, f := range files {
+		if !domain.IsSecondaryFileCategory(f.Category) {
+			mains = append(mains, f)
+		}
+	}
+	return installFileVersions(mains)
+}
+
+// installFilesFor is what the file prompt offers once version is chosen
+// (#662): the files at exactly version, then every secondary file of
+// another version, each in list order.
+func installFilesFor(files []domain.DownloadableFile, version string) []domain.DownloadableFile {
+	out := installFilesAt(files, version)
+	for _, f := range files {
+		if f.Version != version && domain.IsSecondaryFileCategory(f.Category) {
+			out = append(out, f)
 		}
 	}
 	return out
@@ -541,11 +575,15 @@ main + optional patches) using comma-separated values or ranges: 1,3,5 or
 1-3 or 1,3-5. Archived/old-version files are hidden by default; pass
 --show-archived to list and select from them too.
 
-The files you install together all come from one version of the mod. When
-the files on offer span more than one version, you pick the version first
-and then choose among that version's files; --version skips the version
-step. A --file list naming files of different versions is refused. A file
-the source gives no version goes with any version.
+The main files you install together all come from one version of the mod.
+When the main files on offer span more than one version, you pick the
+version first and then choose among that version's files; --version skips
+the version step. Optional, update and miscellaneous files (by the
+source's own category) may carry their own version: they are offered
+beside any version's files, each labelled with its version. A --file list
+naming main files of different versions is refused. A file the source gives
+no category counts as a main file, and a file it gives no version goes with
+any version.
 
 Examples:
   lmm install "ore stack" --game starrupture
@@ -582,13 +620,19 @@ func init() {
 // what tells the user WHY a variant is recommended - e.g. Icarus's
 // "mergeable EXMOD - recommended" vs "prebuilt PAK"; sources that leave it
 // empty render exactly as before.
-func installFileRow(index int, f domain.DownloadableFile) string {
+func installFileRow(index int, f domain.DownloadableFile, withVersion bool) string {
 	sizeStr := formatSize(f.Size)
 	defaultMark := ""
 	if f.IsPrimary {
 		defaultMark = " <- default"
 	}
-	facts := f.Category + ", " + sizeStr
+	facts := f.Category + ", "
+	if withVersion {
+		// #662: files of several versions are offered together, so each
+		// row says which it is.
+		facts += "version " + displayFileVersion(f.Version) + ", "
+	}
+	facts += sizeStr
 	if age := displayAge(f.UploadedAt, cliNow()); age != "" {
 		facts += ", " + age // #433: the file's own date, where the source reports one
 	}
@@ -821,9 +865,10 @@ func doInstallFromSource(ctx context.Context, service *core.Service, game *domai
 
 	// validateFileSelection is the CLI-side enforcement of
 	// Service.ValidateInstallFileSelection (#211's variant exclusivity,
-	// #647's one version per selection): the interactive path re-prompts
-	// on a mixed pak+exmodz pick (a mixed-version pick cannot happen there:
-	// it offers one version's files), --file hard-errors immediately -
+	// #647/#662's one main version per selection): the interactive path
+	// re-prompts on a mixed pak+exmodz pick (a mixed-version pick cannot
+	// happen there: it offers one version's main files), --file
+	// hard-errors immediately -
 	// both friendlier/earlier than the identical
 	// backstop core.ApplyInstall applies to plan.Files right before this
 	// override (internal/core/install.go).

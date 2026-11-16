@@ -46,11 +46,15 @@ main + optional patches) using comma-separated values or ranges: 1,3,5 or
 --show-archived to list and select from them too.
 
 .PP
-The files you install together all come from one version of the mod. When
-the files on offer span more than one version, you pick the version first
-and then choose among that version's files; --version skips the version
-step. A --file list naming files of different versions is refused. A file
-the source gives no version goes with any version.
+The main files you install together all come from one version of the mod.
+When the main files on offer span more than one version, you pick the
+version first and then choose among that version's files; --version skips
+the version step. Optional, update and miscellaneous files (by the
+source's own category) may carry their own version: they are offered
+beside any version's files, each labelled with its version. A --file list
+naming main files of different versions is refused. A file the source gives
+no category counts as a main file, and a file it gives no version goes with
+any version.
 
 .PP
 Examples:

@@ -759,7 +759,8 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 			}
 		}
 		printOverrideChanges(plan.Overrides)
-		printHandOffs("", plan.Handoffs) // #638
+		printHandOffs("", plan.Handoffs)                    // #638
+		printStoredFiles("", plan.Heals, plan.CuratorMixed) // #662
 	}
 
 	// A dry run stops here: it has shown the plan and must change nothing.
@@ -1272,6 +1273,9 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 			for _, ref := range plan.Missing {
 				fmt.Printf("    - %s\n", planRefLine(ref))
 			}
+		}
+		if !noInstall {
+			printStoredFiles("  ", plan.Heals, nil) // #662
 		}
 		if plan.RecordedOnly && !noInstall && len(plan.AlreadyCached)+len(plan.NeedsRedownload)+len(plan.Missing) > 0 {
 			// #462: the game directory holds the active profile's mods.
@@ -1943,7 +1947,8 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			}
 		}
 		printOverrideChanges(plan.Overrides)
-		printHandOffs("", plan.Handoffs) // #638
+		printHandOffs("", plan.Handoffs)                    // #638
+		printStoredFiles("", plan.Heals, plan.CuratorMixed) // #662
 	}
 
 	// A dry run stops here: it has shown the plan and must change nothing.
