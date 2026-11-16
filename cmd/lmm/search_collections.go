@@ -44,18 +44,20 @@ func doSearchCollections(ctx context.Context, service *core.Service, game *domai
 		return fmt.Errorf("writing separator: %w", err)
 	}
 	for _, c := range report.Collections {
-		adult := ""
+		// Every cell is NexusMods' text: made safe to print (no control,
+		// tab, newline or bidi rune) BEFORE truncation, which only counts
+		// runes. The adult marker rides in the name cell, under NAME.
+		name := truncate(domain.SanitizeLine(c.Name), 40)
 		if c.Adult {
-			adult = "[adult]"
+			name += " [adult]"
 		}
 		cells := []string{
-			truncate(c.Name, 40),
-			truncate(c.Author, 20),
+			name,
+			truncate(domain.SanitizeLine(c.Author), 20),
 			strconv.Itoa(c.Endorsements),
 			strconv.Itoa(c.ModCount),
 			strconv.Itoa(c.Revision),
-			c.URL,
-			adult,
+			domain.SanitizeLine(c.URL),
 		}
 		if _, err := fmt.Fprintln(w, strings.Join(cells, "\t")); err != nil {
 			return fmt.Errorf("writing row: %w", err)

@@ -16,6 +16,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -155,5 +156,46 @@ func TestE2E_CollectionSearch_BrowseFromTheImportDialog(t *testing.T) {
 	assert.Contains(t, page, "Collections — Page 1")
 	require.Len(t, queries(), 1)
 	assert.Empty(t, queries()[0].Query, "no query lists the game's collections")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// #651 review: the tab pair is a complete tablist - each tab controls the
+// one tabpanel, which is labelled by the selected tab - and the keyboard
+// moves between tabs with the arrows, Home and End, focus following.
+func TestE2E_CollectionSearch_TablistSemanticsAndKeys(t *testing.T) {
+	f, _, _ := newE2ECollectionSearchFixture(t)
+
+	var wiring map[string]any
+	f.runInBrowser(t,
+		chromedp.Navigate(workshopSearchPath(f, "three")),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"][data-search-type="mods"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(() => {
+			const tabs = [...document.querySelectorAll('.search-page__tabs [role="tab"]')];
+			const panel = document.getElementById(tabs[0].getAttribute("aria-controls"));
+			return {
+				controls: tabs.map((t) => t.getAttribute("aria-controls")),
+				ids: tabs.map((t) => t.id),
+				panelRole: panel?.getAttribute("role") ?? "",
+				labelledBy: panel?.getAttribute("aria-labelledby") ?? "",
+				hasResults: !!panel?.querySelector(".search-results"),
+			};
+		})()`, &wiring),
+		chromedp.Focus(`.search-page__tabs [data-type="mods"]`, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.End),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"][data-search-type="collections"]`, chromedp.ByQuery),
+		pollUntil(`document.activeElement?.dataset.type === "collections"`),
+		chromedp.KeyEvent(kb.Home),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"][data-search-type="mods"]`, chromedp.ByQuery),
+		pollUntil(`document.activeElement?.dataset.type === "mods"`),
+		chromedp.KeyEvent(kb.ArrowRight),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"][data-search-type="collections"]`, chromedp.ByQuery),
+		pollUntil(`document.activeElement?.dataset.type === "collections"`),
+	)
+
+	assert.Equal(t, []any{"search-panel", "search-panel"}, wiring["controls"])
+	assert.Equal(t, []any{"search-tab-mods", "search-tab-collections"}, wiring["ids"])
+	assert.Equal(t, "tabpanel", wiring["panelRole"])
+	assert.Equal(t, "search-tab-mods", wiring["labelledBy"], "labelled by the selected tab")
+	assert.Equal(t, true, wiring["hasResults"], "the panel holds the results")
 	assert.Empty(t, f.BrowserErrors())
 }

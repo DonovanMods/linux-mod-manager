@@ -404,7 +404,7 @@ how many mods its latest revision holds, that revision's number, and its
 page address: pass the address to `lmm profile import --nexus-collection`.
 Without a search term you get the game's collections in the order
 `--sort` names (relevance, updated, downloads or popular); `--limit` sets
-how many, and `--json` prints them as a document. Searching needs no API
+how many (up to 100), and `--json` prints them as a document. Searching needs no API
 key. Adult collections are listed, as NexusMods lists them, and marked
 `[adult]`. In the browser, search as usual and choose the **Collections**
 tab on the search page (or **Search collections** under the search box's

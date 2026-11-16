@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -101,6 +103,10 @@ func TestServer_APISearchCollections_Refusals(t *testing.T) {
 		{"bad page", "?q=x&page=-1", http.StatusBadRequest},
 		{"bad page size", "?q=x&page_size=abc", http.StatusBadRequest},
 		{"an unknown source", "?q=x&source=nope", http.StatusBadRequest},
+		// #651 review: a query over core.MaxCollectionQueryRunes, and a
+		// page past core.MaxCollectionOffset, are the caller's input.
+		{"a query too long", "?q=" + strings.Repeat("a", core.MaxCollectionQueryRunes+1), http.StatusBadRequest},
+		{"a page too deep", "?q=x&page=" + strconv.Itoa(core.MaxCollectionOffset), http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := getCollectionSearch(srv, tc.query)

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"slices"
 	"time"
+	"unicode/utf8"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -20,6 +21,34 @@ import (
 // DefaultCollectionPageSize is how many collections a search returns when
 // the caller names no page size.
 const DefaultCollectionPageSize = 20
+
+// MaxCollectionPageSize is the most collections one search asks for: a
+// larger page size is clamped to it (`--limit 500` asks for "many", and gets
+// a page of this size). NexusMods documents no limit of its own; this is
+// lmm's, so one request stays a modest answer.
+const MaxCollectionPageSize = 100
+
+// MaxCollectionQueryRunes is the longest query a collection search sends,
+// in runes. Longer is refused (IsInvalidCollectionSearch): no collection
+// name is that long, and the text goes to NexusMods verbatim.
+const MaxCollectionQueryRunes = 200
+
+// MaxCollectionOffset bounds how deep a search may page: a page whose first
+// hit would lie past this many is refused (IsInvalidCollectionSearch), which
+// also keeps page*size from overflowing. No game has nearly this many
+// collections.
+const MaxCollectionOffset = 1_000_000
+
+// ErrInvalidCollectionSearch is a collection search whose own request is
+// out of bounds: a query over MaxCollectionQueryRunes, or a page past
+// MaxCollectionOffset. The caller's input, not a failure.
+var ErrInvalidCollectionSearch = errors.New("invalid collection search")
+
+// IsInvalidCollectionSearch reports whether err is
+// ErrInvalidCollectionSearch.
+func IsInvalidCollectionSearch(err error) bool {
+	return errors.Is(err, ErrInvalidCollectionSearch)
+}
 
 // ErrCollectionSearchUnsupported is a collection search no source of the
 // game can answer: the named source is not registered or lists no
@@ -39,7 +68,7 @@ func IsCollectionSearchUnsupported(err error) bool {
 // the game's one source that lists collections. Sort is the mod search's
 // vocabulary (domain.SearchSorts; empty is relevance), validated before
 // the source is asked. Page is zero-based, and PageSize 0 or less is
-// DefaultCollectionPageSize.
+// DefaultCollectionPageSize, more than MaxCollectionPageSize that maximum.
 type CollectionSearchOptions struct {
 	SourceID string
 	Sort     domain.SearchSort
@@ -108,15 +137,28 @@ func (s *Service) SearchCollections(ctx context.Context, game *domain.Game, quer
 	if err != nil {
 		return nil, err
 	}
-	sourceID, searcher, err := s.collectionSearcher(game, opts.SourceID)
-	if err != nil {
-		return nil, err
+	// The query reaches NexusMods as a WILDCARD name filter, unescaped: a
+	// "*" or "?" the user types passes through to the filter's own pattern
+	// syntax, as typed. Only its length is bounded here.
+	if n := utf8.RuneCountInString(query); n > MaxCollectionQueryRunes {
+		return nil, fmt.Errorf("%w: the query is %d characters; at most %d are searched",
+			ErrInvalidCollectionSearch, n, MaxCollectionQueryRunes)
 	}
 	size := opts.PageSize
 	if size <= 0 {
 		size = DefaultCollectionPageSize
 	}
+	size = min(size, MaxCollectionPageSize)
 	page := max(opts.Page, 0)
+	// Divided, never multiplied, so a huge page cannot overflow.
+	if page > MaxCollectionOffset/size {
+		return nil, fmt.Errorf("%w: page %d of %d is past the %d collections a search pages through",
+			ErrInvalidCollectionSearch, page, size, MaxCollectionOffset)
+	}
+	sourceID, searcher, err := s.collectionSearcher(game, opts.SourceID)
+	if err != nil {
+		return nil, err
+	}
 	result, err := searcher.SearchGameCollections(ctx, game.SourceIDs[sourceID], source.CollectionSearchQuery{
 		Query: query, Sort: sortBy, Page: page, PageSize: size,
 	})

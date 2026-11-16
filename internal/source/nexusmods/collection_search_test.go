@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -305,4 +306,38 @@ func mapsKeys[V any](m map[string]V) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// #651 review: a hit's URL is only ever one ResolveGameCollection accepts.
+// A node whose slug fails parseCollectionRef's own pattern is not offered:
+// search must never hand out an address the import would refuse.
+func TestSearchGameCollections_SkipsSlugsImportWouldRefuse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"data":{"collectionsV2":{"totalCount":4,"nodes":[
+			{"slug":"../evil","name":"Traversal","game":{"domainName":"stardewvalley"},"latestPublishedRevision":{"revisionNumber":1,"modCount":1,"totalSize":"1","adultContent":false}},
+			{"slug":"UPPER","name":"Upper","game":{"domainName":"stardewvalley"},"latestPublishedRevision":{"revisionNumber":1,"modCount":1,"totalSize":"1","adultContent":false}},
+			{"slug":"a?b=c","name":"Query","game":{"domainName":"stardewvalley"},"latestPublishedRevision":{"revisionNumber":1,"modCount":1,"totalSize":"1","adultContent":false}},
+			{"slug":"ok1234","name":"Fine","game":{"domainName":"stardewvalley"},"latestPublishedRevision":{"revisionNumber":1,"modCount":1,"totalSize":"1","adultContent":false}}
+		]}}}`)
+	}))
+	t.Cleanup(srv.Close)
+	nm := New(nil, "")
+	nm.client.graphqlURL = srv.URL
+
+	got, err := nm.SearchGameCollections(context.Background(), "stardewvalley", source.CollectionSearchQuery{})
+	require.NoError(t, err)
+	require.Len(t, got.Collections, 1)
+	assert.Equal(t, "ok1234", got.Collections[0].ID)
+	r, err := parseCollectionRef(got.Collections[0].URL)
+	require.NoError(t, err, "the URL a hit carries parses as an import reference")
+	assert.Equal(t, "ok1234", r.slug)
+}
+
+// The source clamps what it sends on its own, whatever its caller: at most
+// maxCollectionPageSize per page, and an offset that cannot overflow.
+func TestSearchGameCollections_ClampsTheRequest(t *testing.T) {
+	vars, err := collectionSearchVariables("stardewvalley", source.CollectionSearchQuery{Page: math.MaxInt, PageSize: 10_000})
+	require.NoError(t, err)
+	assert.Equal(t, maxCollectionPageSize, vars["count"])
+	assert.Equal(t, maxCollectionOffset, vars["offset"])
 }

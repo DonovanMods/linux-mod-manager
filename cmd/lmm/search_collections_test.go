@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,4 +162,54 @@ func newSearchCmdForTest(t *testing.T) *cobra.Command {
 	cmd.Flags().StringP("profile", "p", "", "")
 	markCollectionsExclusive(cmd)
 	return cmd
+}
+
+// hostileText is source text that must never reach the terminal raw: an OSC
+// title sequence, a CSI colour, a tab and a newline (which would break the
+// table's columns and rows) and U+202E (which reverses what follows).
+const hostileText = "Evil\x1b]0;pwned\x07 \x1b[31mred\tcol\nrow‮esrever"
+
+// assertSanitizedTable holds a printed table to SanitizeLine: no control or
+// bidi rune survives, and the table has exactly the rows it should.
+func assertSanitizedTable(t *testing.T, out string, rows int) {
+	t.Helper()
+	for _, bad := range []string{"\x1b", "\x07", "‮", "\t"} {
+		assert.NotContains(t, out, bad)
+	}
+	table := strings.SplitN(out, "\n\n", 2)[0]
+	assert.Len(t, strings.Split(strings.TrimRight(table, "\n"), "\n"), 2+rows, "header, separator and one line per row:\n%s", out)
+	assert.Contains(t, out, truncate(domain.SanitizeLine(hostileText), 20)[:10], "the name is kept, made safe")
+}
+
+// #651 review: a collection's name, author and URL are NexusMods' text,
+// printed into a terminal table.
+func TestDoSearchCollections_SanitizesSourceText(t *testing.T) {
+	svc, game, src := newCollectionSearchService(t)
+	src.result = source.CollectionSearchResult{Total: 1, Collections: []source.CollectionSummary{
+		{ID: "abcdef", Name: hostileText, Author: hostileText, URL: "https://www.nexusmods.com/x\x1b[2J", Revision: 1, Adult: true},
+	}}
+	withCollectionSearchFlags(t, "", 10, "")
+
+	out := captureStdout(t, func() error {
+		return doSearch(context.Background(), svc, game, []string{"x"})
+	})
+	assertSanitizedTable(t, out, 1)
+	assert.Contains(t, out, "[adult]")
+}
+
+// The mod search's table had the same gap: a mod's id, name, author,
+// version and source all come from the source.
+func TestDoSearch_SanitizesSourceText(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	svc.RegisterSource(&goldenSearchSource{mods: []domain.Mod{
+		{ID: "a\x1b[2J", SourceID: "src", Name: hostileText, Version: "1.0‮", Author: hostileText, GameID: game.ID},
+	}})
+	game.SourceIDs = map[string]string{"src": game.ID}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	withSearchFlags(t, "", 10)
+
+	out := captureStdout(t, func() error {
+		return doSearch(context.Background(), svc, game, []string{"evil"})
+	})
+	assertSanitizedTable(t, out, 1)
 }

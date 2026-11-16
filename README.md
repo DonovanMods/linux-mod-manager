@@ -2067,8 +2067,9 @@ value is a 400 whose error names the four. The report echoes the sort in
 `GET /api/v1/search/collections` is `lmm search --collections`: `?q=`
 (optional; absent lists the game's collections), `?sort=`, `?source=` and
 `?page=`/`?page_size=`, answering `core.CollectionSearchReport`. A bad sort,
-or a game with no source whose collections can be searched, is a 400; the
-source failing is a 502.
+a game with no source whose collections can be searched, a query over 200
+characters, or a page starting past the millionth collection is a 400; a
+`page_size` over 100 is clamped to 100. The source failing is a 502.
 
 Two endpoints report on jobs as a whole rather than one at a time — what
 the UI's activity tray is built on:

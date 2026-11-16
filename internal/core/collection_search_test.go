@@ -3,6 +3,8 @@ package core_test
 import (
 	"context"
 	"errors"
+	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -157,4 +159,38 @@ func TestSearchCollections_SourceNoticesReachTheSink(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, core.SourceRetrying, warning.Phase)
 	assert.Contains(t, warning.Message, "Rate limited by NexusMods")
+}
+
+// #651 review: the request a search sends is bounded. A query is at most
+// MaxCollectionQueryRunes runes, a page at most MaxCollectionPageSize hits
+// (clamped, not refused: a CLI --limit 500 asks for "many"), and a page
+// whose offset would pass MaxCollectionOffset is refused - so page*size
+// can never overflow.
+func TestSearchCollections_BoundsTheRequest(t *testing.T) {
+	svc, game, src := newCollectionSearchFixture(t)
+	ctx := context.Background()
+
+	long := strings.Repeat("é", core.MaxCollectionQueryRunes+1)
+	_, err := svc.SearchCollections(ctx, game, long, core.CollectionSearchOptions{})
+	require.Error(t, err)
+	assert.True(t, core.IsInvalidCollectionSearch(err), "%v", err)
+	assert.Zero(t, src.calls, "refused before the source is asked")
+
+	_, err = svc.SearchCollections(ctx, game, long[:len(long)-len("é")], core.CollectionSearchOptions{})
+	require.NoError(t, err, "exactly the limit is fine, counted in runes")
+
+	report, err := svc.SearchCollections(ctx, game, "x", core.CollectionSearchOptions{PageSize: 500})
+	require.NoError(t, err)
+	assert.Equal(t, core.MaxCollectionPageSize, src.gotQ.PageSize)
+	assert.Equal(t, core.MaxCollectionPageSize, report.PageSize)
+
+	calls := src.calls
+	for _, page := range []int{core.MaxCollectionOffset/core.DefaultCollectionPageSize + 1, math.MaxInt} {
+		_, err = svc.SearchCollections(ctx, game, "x", core.CollectionSearchOptions{Page: page})
+		require.Error(t, err, "page %d", page)
+		assert.True(t, core.IsInvalidCollectionSearch(err))
+	}
+	assert.Equal(t, calls, src.calls)
+	_, err = svc.SearchCollections(ctx, game, "x", core.CollectionSearchOptions{Page: core.MaxCollectionOffset / core.DefaultCollectionPageSize})
+	require.NoError(t, err, "the last page within the bound")
 }

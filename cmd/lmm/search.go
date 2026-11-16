@@ -73,8 +73,8 @@ required.
 --collections searches the game's NexusMods collections instead (no API key
 needed): name, curator, endorsements, mod count and latest revision, with each
 collection's URL. The query is optional there - without one, the game's
-collections are listed in --sort's order - and --limit, --sort and --source
-apply as above; --category, --tag, --refresh and --profile are mod-search
+collections are listed in --sort's order - and --limit (at most 100 there),
+--sort and --source apply as above; --category, --tag, --refresh and --profile are mod-search
 filters and are refused. Adult collections are listed, as NexusMods lists
 them, and marked [adult]. Import one as a new profile with
 'lmm profile import --nexus-collection <url>'.
@@ -395,18 +395,22 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		// hit can be a Steam Workshop item, whose Version is the 19-digit
 		// content id. core.SearchHit.External is stamped for exactly this -
 		// a catalog document has no installed row to read the fact from.
+		// Every cell is the source's text, made safe to print (#651
+		// review: no control, tab, newline or bidi rune reaches the
+		// terminal or breaks a column) BEFORE truncation, which only
+		// counts runes.
 		cells := []string{
-			mod.ID,
-			truncate(mod.Name, 40),
-			truncate(core.AuthorText(&mod.Mod), 20), // #420: the persona name where one resolved
-			displayModVersion(mod.External, mod.Version, mod.UpdatedAt),
+			domain.SanitizeLine(mod.ID),
+			truncate(domain.SanitizeLine(mod.Name), 40),
+			truncate(domain.SanitizeLine(core.AuthorText(&mod.Mod)), 20), // #420: the persona name where one resolved
+			domain.SanitizeLine(displayModVersion(mod.External, mod.Version, mod.UpdatedAt)),
 		}
 		if showUpdated {
 			// "-", not a blank cell, for an undated hit beside dated ones:
 			// the column says this source reported no date.
 			cells = append(cells, cmp.Or(displayAge(mod.UpdatedAt, cliNow()), "-"))
 		}
-		cells = append(cells, mod.SourceID, installedMark)
+		cells = append(cells, domain.SanitizeLine(mod.SourceID), installedMark)
 		if _, err := fmt.Fprintln(w, strings.Join(cells, "\t")); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}

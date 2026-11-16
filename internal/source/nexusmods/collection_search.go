@@ -43,6 +43,15 @@ query SearchCollections($filter: CollectionsSearchFilter, $sort: [CollectionsSea
 // the mod search's own default.
 const defaultCollectionPageSize = 20
 
+// maxCollectionPageSize and maxCollectionOffset bound what the source
+// sends whatever its caller asks (core bounds the request first, with the
+// same numbers): a page of at most this many, starting no further in than
+// this, so offset = page*size is never computed past it.
+const (
+	maxCollectionPageSize = 100
+	maxCollectionOffset   = 1_000_000
+)
+
 // collectionSearchResponse is collectionSearchQuery's answer.
 type collectionSearchResponse struct {
 	Data struct {
@@ -110,15 +119,21 @@ func collectionSearchVariables(gameSourceID string, q source.CollectionSearchQue
 	if size <= 0 {
 		size = defaultCollectionPageSize
 	}
-	page := max(q.Page, 0)
+	size = min(size, maxCollectionPageSize)
+	// Divided before it is multiplied, so a huge page cannot overflow.
+	offset := min(max(q.Page, 0), maxCollectionOffset/size) * size
 	filter := map[string]any{
 		"gameDomain":           []map[string]any{{"value": gameSourceID, "op": "EQUALS"}},
 		"hasPublishedRevision": []map[string]any{{"value": true, "op": "EQUALS"}},
 	}
 	if text := strings.TrimSpace(q.Query); text != "" {
+		// The text goes to the WILDCARD filter unescaped, so a "*" or "?"
+		// the user types passes through to it (WILDCARD's own pattern
+		// characters; as typed is the search they asked for). Core bounds
+		// the query's length (core.MaxCollectionQueryRunes).
 		filter["name"] = []map[string]any{{"value": text, "op": "WILDCARD"}}
 	}
-	vars := map[string]any{"filter": filter, "count": size, "offset": page * size}
+	vars := map[string]any{"filter": filter, "count": size, "offset": offset}
 	if member := collectionsSortMember(sort); member != "" {
 		vars["sort"] = []map[string]any{{member: map[string]any{"direction": "DESC"}}}
 	}
@@ -128,9 +143,9 @@ func collectionSearchVariables(gameSourceID string, q source.CollectionSearchQue
 // SearchGameCollections implements source.GameCollectionSearcher: one page
 // of the collections NexusMods lists for the game it knows as gameSourceID.
 // Each hit's URL is its collection page, which ResolveGameCollection takes
-// as a reference. A hit with no published revision, or one NexusMods
-// files under another game, is left out (it could not be imported into
-// this one); Total stays NexusMods' own count.
+// as a reference. A hit with no published revision, a slug the import
+// would refuse, or one NexusMods files under another game, is left out (it
+// could not be imported into this one); Total stays NexusMods' own count.
 func (n *NexusMods) SearchGameCollections(ctx context.Context, gameSourceID string, q source.CollectionSearchQuery) (source.CollectionSearchResult, error) {
 	if !domainPattern.MatchString(gameSourceID) {
 		return source.CollectionSearchResult{}, fmt.Errorf("%w: NexusMods game %q", source.ErrGameIdentifierInvalid, gameSourceID)
@@ -156,7 +171,10 @@ func (n *NexusMods) SearchGameCollections(ctx context.Context, gameSourceID stri
 	}
 	out := source.CollectionSearchResult{Total: page.TotalCount, Collections: make([]source.CollectionSummary, 0, len(page.Nodes))}
 	for _, node := range page.Nodes {
-		if node.Latest == nil || node.Slug == "" {
+		// A slug the import's own parser would refuse (parseCollectionRef's
+		// slugPattern) is never turned into a URL: a hit is only ever an
+		// address `lmm profile import --nexus-collection` accepts.
+		if node.Latest == nil || !slugPattern.MatchString(node.Slug) {
 			continue
 		}
 		if d := node.Game.DomainName; d != "" && d != gameSourceID {

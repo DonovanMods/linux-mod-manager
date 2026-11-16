@@ -15,10 +15,13 @@ import (
 // ?page_size= page through the source's matches (the CLI's --limit is a
 // page size on page 0).
 //
-// A sort outside domain.SearchSorts, and a search no source of the game
-// can answer (core.IsCollectionSearchUnsupported: an unknown or
-// collection-less source, a game without one), are the caller's input:
-// 400. Anything else is the source failing upstream: 502.
+// A sort outside domain.SearchSorts, a search no source of the game can
+// answer (core.IsCollectionSearchUnsupported: an unknown or collection-less
+// source, a game without one), and a request out of core's bounds
+// (core.IsInvalidCollectionSearch: a query over MaxCollectionQueryRunes, a
+// page past MaxCollectionOffset) are the caller's input: 400. A page_size
+// over core.MaxCollectionPageSize is clamped, as the CLI's --limit is.
+// Anything else is the source failing upstream: 502.
 func (s *Server) handleAPISearchCollections(w http.ResponseWriter, r *http.Request) {
 	page, ok := s.parseOptionalIntParam(w, r, "page")
 	if !ok {
@@ -40,7 +43,7 @@ func (s *Server) handleAPISearchCollections(w http.ResponseWriter, r *http.Reque
 	})
 	if err != nil {
 		status := http.StatusBadGateway
-		if core.IsInvalidSearchSort(err) || core.IsCollectionSearchUnsupported(err) {
+		if core.IsInvalidSearchSort(err) || core.IsCollectionSearchUnsupported(err) || core.IsInvalidCollectionSearch(err) {
 			status = http.StatusBadRequest
 		}
 		s.writeAPIError(w, status, err)
