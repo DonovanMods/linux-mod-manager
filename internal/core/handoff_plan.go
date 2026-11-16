@@ -83,18 +83,28 @@ type handOffPlanEntry struct {
 	at       handOffPlanKey
 	from, to HandOffMod
 	toKey    string
+	// tag is the walk's tag when the path was first handed on: a copy's
+	// entry index (planCopyHandOffs), so each path is reported on the
+	// entry whose replace first gave it up.
+	tag int
 }
 
 // handOffPlanner walks one plan's removals in Apply's order (#638).
 type handOffPlanner struct {
 	s    *Service
 	game *domain.Game
-	// flow is the plan's own listings of its heirs' cache entries, never
-	// the running mutation's: a plan runs beside one.
-	flow *heirFlow
-	// gone is the mods the simulated flow has removed so far, which no
-	// later removal of it hands a path to.
-	gone map[string]bool
+	// scope is how the walk's removals read their heirs (heirScope): the
+	// plan's own listings, never the running mutation's (a plan runs beside
+	// one); each heir profile's candidates read once; the mods the walk has
+	// removed so far, which no later removal hands a path to; and the
+	// versions it has moved mods to.
+	scope *heirScope
+	// tag marks the hand-offs the walk notes next (handOffPlanEntry.tag).
+	tag int
+	// others is what the games sharing the game's directories record,
+	// read once for the walk (Installer.otherGamesFor).
+	others     *otherGameRecords
+	othersRead bool
 	// owner is who holds a path as the simulated flow leaves it, where
 	// that differs from the records: a mod's key, or "" for nobody.
 	owner map[handOffPlanKey]string
@@ -108,7 +118,9 @@ type handOffPlanner struct {
 
 // newHandOffPlanner starts a plan's walk over game.
 func (s *Service) newHandOffPlanner(game *domain.Game) *handOffPlanner {
-	return &handOffPlanner{s: s, game: game, flow: &heirFlow{}, gone: map[string]bool{}, owner: map[handOffPlanKey]string{}}
+	return &handOffPlanner{s: s, game: game, owner: map[handOffPlanKey]string{}, scope: &heirScope{
+		flow: &heirFlow{}, gone: map[string]bool{}, versions: map[string]domain.Mod{},
+	}}
 }
 
 // held is the paths mod's own file is at under profile as the simulated
@@ -159,25 +171,28 @@ func (p *handOffPlanner) remove(ctx context.Context, i *Installer, profile strin
 		return
 	}
 	p.handOn(ctx, i, profile, mod, incoming, p.held(ctx, profile, mod))
-	p.gone[domain.ModKey(mod.SourceID, mod.ID)] = true
+	p.scope.gone[domain.ModKey(mod.SourceID, mod.ID)] = true
 }
 
 // replace is Installer.replace of oldMod, whose records are under
-// recordProfile, by a version deploying newFiles, under profile through i:
+// recordProfile, by newMod deploying newFiles, under profile through i:
 // each path the old version holds and the new one does not ship is handed
 // on, and the new version holds what it ships.
-func (p *handOffPlanner) replace(ctx context.Context, i *Installer, profile, recordProfile string, oldMod *domain.Mod, newFiles []deployItem) {
-	p.replaceWith(ctx, i, profile, recordProfile, oldMod, func() ([]deployItem, bool) { return newFiles, true })
+func (p *handOffPlanner) replace(ctx context.Context, i *Installer, profile, recordProfile string, oldMod, newMod *domain.Mod, newFiles []deployItem) {
+	p.replaceWith(ctx, i, profile, recordProfile, oldMod, newMod, func() ([]deployItem, bool) { return newFiles, true })
 }
 
 // replaceWith is replace for a new version whose files are listed only
 // when they matter - the old version holds a path, or the flow has handed
 // one on that the new version may take back - and are not known when
 // list says so (a version not in the cache yet).
-func (p *handOffPlanner) replaceWith(ctx context.Context, i *Installer, profile, recordProfile string, oldMod *domain.Mod, list func() ([]deployItem, bool)) {
+func (p *handOffPlanner) replaceWith(ctx context.Context, i *Installer, profile, recordProfile string, oldMod, newMod *domain.Mod, list func() ([]deployItem, bool)) {
 	if p.failed {
 		return
 	}
+	// Whatever else happens, the row is newMod's afterwards: a later
+	// removal's heirs read it at that version, as Apply's re-read does.
+	defer func() { p.scope.versions[domain.ModKey(newMod.SourceID, newMod.ID)] = *newMod }()
 	held := p.held(ctx, recordProfile, oldMod)
 	if len(held) == 0 && len(p.ledger) == 0 {
 		return
@@ -249,12 +264,16 @@ func (p *handOffPlanner) handOn(ctx context.Context, i *Installer, profile strin
 	if ho == nil {
 		return
 	}
-	ho.flow, ho.also = p.flow, p.gone
-	others, err := i.otherGamesFor(ctx, p.game)
-	if err != nil {
-		p.failed = true
-		return
+	ho.scope = p.scope
+	if !p.othersRead {
+		others, err := i.otherGamesFor(ctx, p.game)
+		if err != nil {
+			p.failed = true
+			return
+		}
+		p.others, p.othersRead = others, true
 	}
+	others := p.others
 	heirs := ho.resolve(ctx, i, p.game, profile)
 	if heirs == nil {
 		return
@@ -271,7 +290,7 @@ func (p *handOffPlanner) handOn(ctx context.Context, i *Installer, profile strin
 		heirKey := domain.ModKey(heir.SourceID, heir.ID)
 		at := handOffPlanKey{heirs.profile, path}
 		p.owner[at] = heirKey
-		p.note(handOffPlanEntry{at: at, from: from, to: handOffModOf(&heir.Mod), toKey: heirKey})
+		p.note(handOffPlanEntry{at: at, from: from, to: handOffModOf(&heir.Mod), toKey: heirKey, tag: p.tag})
 	}
 }
 
@@ -291,17 +310,31 @@ func (p *handOffPlanner) note(e handOffPlanEntry) {
 // holds when the simulated flow is done - its final owner, as Apply's
 // ledger reports it (Service.handOffWarnings) - or nil.
 func (p *handOffPlanner) handOffs() []HandOff {
+	var out []HandOff
+	for _, e := range p.finals() {
+		out = append(out, e.handOff())
+	}
+	return out
+}
+
+// finals is the ledger's entries whose heir still holds the path when the
+// walk is done, or nil when the walk failed.
+func (p *handOffPlanner) finals() []handOffPlanEntry {
 	if p.failed {
 		return nil
 	}
-	var out []HandOff
+	var out []handOffPlanEntry
 	for _, e := range p.ledger {
-		if p.owner[e.at] != e.toKey {
-			continue
+		if p.owner[e.at] == e.toKey {
+			out = append(out, e)
 		}
-		out = append(out, HandOff{Path: e.at.path.Rel, Root: e.at.path.Root, From: e.from, To: e.to})
 	}
 	return out
+}
+
+// handOff is e on the wire.
+func (e handOffPlanEntry) handOff() HandOff {
+	return HandOff{Path: e.at.path.Rel, Root: e.at.path.Root, From: e.from, To: e.to}
 }
 
 // planInstaller is the Installer a plan walks a removal through: the one
@@ -356,13 +389,13 @@ func (s *Service) planUninstallHandOffs(ctx context.Context, game *domain.Game, 
 
 // planReplaceHandOffs is what a replace of oldMod by newMod - an update or
 // a rollback - hands on, newFiles being what newMod deploys.
-func (s *Service) planReplaceHandOffs(ctx context.Context, game *domain.Game, profile string, oldMod *domain.Mod, newFiles []deployItem) []HandOff {
+func (s *Service) planReplaceHandOffs(ctx context.Context, game *domain.Game, profile string, oldMod, newMod *domain.Mod, newFiles []deployItem) []HandOff {
 	i := s.planInstaller(ctx, game, profile)
 	if i == nil {
 		return nil
 	}
 	p := s.newHandOffPlanner(game)
-	p.replace(ctx, i, profile, profile, oldMod, newFiles)
+	p.replace(ctx, i, profile, profile, oldMod, newMod, newFiles)
 	return p.handOffs()
 }
 
@@ -383,12 +416,17 @@ func (s *Service) planRollbackHandOffs(ctx context.Context, game *domain.Game, m
 	if keep, _, narrowed := resolveSharedDirUpdate(game.ID, i.cache, i.cache, &mod.Mod, &prev, mod.FileIDs, mod.PreviousFileIDs, membersOf(newFiles)); narrowed {
 		newFiles = slices.DeleteFunc(newFiles, func(f deployItem) bool { return !keep[f.member] })
 	}
-	return s.planReplaceHandOffs(ctx, game, mod.ProfileName, &mod.Mod, newFiles)
+	return s.planReplaceHandOffs(ctx, game, mod.ProfileName, &mod.Mod, &prev, newFiles)
 }
 
 // planCopyHandOffs fills each entry's Handoffs: what ApplyCopyMod with
-// Replace hands on when it replaces the destination's live row - only in
-// the game's active profile, whose mods are the ones on disk.
+// Replace hands on when it replaces the destination's live rows - only in
+// the game's active profile, whose mods are the ones on disk. The entries
+// are walked in Apply's order, each as Apply treats it: an entry copied
+// switched off takes its live row's files away, one at the live version
+// re-links it, one at another version replaces it (or, its old cache
+// entry gone, removes it and installs the copy), and one with no live row
+// installs. Every entry's row is the copied version afterwards.
 func (s *Service) planCopyHandOffs(ctx context.Context, game *domain.Game, plan *CopyModPlan) {
 	if !plan.DestinationActive {
 		return
@@ -401,35 +439,43 @@ func (s *Service) planCopyHandOffs(ctx context.Context, game *domain.Game, plan 
 	p := s.newHandOffPlanner(game)
 	for j := range plan.Mods {
 		e := &plan.Mods[j]
-		prior, err := s.GetInstalledMod(ctx, e.SourceID, e.ModID, game.ID, plan.To)
-		if err != nil || !prior.Deployed {
-			continue
-		}
 		row, err := s.GetInstalledMod(ctx, e.SourceID, e.ModID, game.ID, plan.From)
 		if err != nil {
 			continue
 		}
 		mod := row.Mod
-		before := len(p.ledger)
+		key := domain.ModKey(mod.SourceID, mod.ID)
+		prior, err := s.GetInstalledMod(ctx, e.SourceID, e.ModID, game.ID, plan.To)
+		live := err == nil && prior.Deployed
+		p.tag = j
 		switch {
 		case e.Disabled:
-			p.remove(ctx, i, plan.To, &prior.Mod, nil)
-		case prior.Version == mod.Version:
+			if live {
+				p.remove(ctx, i, plan.To, &prior.Mod, nil)
+			}
+			p.scope.gone[key] = true
+		case !live, prior.Version == mod.Version:
 			p.deployedFromCache(i, plan.To, &mod)
 		case gameCache.Exists(cache.Key{GameID: game.ID, SourceID: prior.SourceID, ModID: prior.ID, Version: prior.Version, Variant: prior.Variant}):
-			p.replaceWith(ctx, i, plan.To, plan.To, &prior.Mod, func() ([]deployItem, bool) { return cachedDeployItems(i, game, &mod) })
+			p.replaceWith(ctx, i, plan.To, plan.To, &prior.Mod, &mod, func() ([]deployItem, bool) { return cachedDeployItems(i, game, &mod) })
 		default:
 			p.remove(ctx, i, plan.To, &prior.Mod, &mod)
-			delete(p.gone, domain.ModKey(mod.SourceID, mod.ID))
+			delete(p.scope.gone, key)
 			p.deployedFromCache(i, plan.To, &mod)
 		}
-		for _, h := range p.handOffs() {
-			if slices.ContainsFunc(p.ledger[before:], func(e handOffPlanEntry) bool {
-				return e.at.path.Rel == h.Path && e.at.path.Root == h.Root
-			}) {
-				e.Handoffs = append(e.Handoffs, h)
-			}
+		if !e.Disabled {
+			p.scope.versions[key] = mod
 		}
+	}
+	// Each path is reported on the entry whose replace first gave it up
+	// (the tag noted with it), naming the mod that holds it when the whole
+	// copy is done: a path one entry hands to a mod a later entry replaces
+	// passes on again, and the first entry is the one a user confirms
+	// losing it. Not by comparing the ledger before and after each entry:
+	// a later entry moving an already-handed path updates that path's
+	// first record rather than adding one, and would be missed.
+	for _, f := range p.finals() {
+		plan.Mods[f.tag].Handoffs = append(plan.Mods[f.tag].Handoffs, f.handOff())
 	}
 }
 
@@ -454,7 +500,7 @@ func (s *Service) planApplyHandOffs(ctx context.Context, game *domain.Game, plan
 			continue
 		}
 		if prior := entry.Replaces; prior != nil {
-			p.replaceWith(ctx, i, plan.Profile, plan.Profile, &prior.Mod, func() ([]deployItem, bool) { return cachedDeployItems(i, game, entry.Mod) })
+			p.replaceWith(ctx, i, plan.Profile, plan.Profile, &prior.Mod, entry.Mod, func() ([]deployItem, bool) { return cachedDeployItems(i, game, entry.Mod) })
 		} else {
 			p.deployedFromCache(i, plan.Profile, entry.Mod)
 		}
@@ -496,7 +542,7 @@ func (s *Service) planSwitchHandOffs(ctx context.Context, game *domain.Game, pla
 		if recordProfile == "" {
 			recordProfile = plan.To
 		}
-		p.replaceWith(ctx, toInstaller, plan.To, recordProfile, &prior.Mod, func() ([]deployItem, bool) { return cachedDeployItems(toInstaller, game, &im.Mod) })
+		p.replaceWith(ctx, toInstaller, plan.To, recordProfile, &prior.Mod, &im.Mod, func() ([]deployItem, bool) { return cachedDeployItems(toInstaller, game, &im.Mod) })
 	}
 	return p.handOffs()
 }
@@ -505,7 +551,7 @@ func (s *Service) planSwitchHandOffs(ctx context.Context, game *domain.Game, pla
 // mod hands on, files being the archive's members as the ingest caches
 // them (archiveContents.files): routed as deployableFilesFromListing routes
 // a fresh entry, which has no manifest narrowing it yet.
-func (s *Service) planArchiveUpdateHandOffs(ctx context.Context, game *domain.Game, profile string, mod *domain.Mod, files []string) []HandOff {
+func (s *Service) planArchiveUpdateHandOffs(ctx context.Context, game *domain.Game, profile string, mod *domain.Mod, version string, files []string) []HandOff {
 	i := s.planInstaller(ctx, game, profile)
 	if i == nil {
 		return nil
@@ -518,5 +564,7 @@ func (s *Service) planArchiveUpdateHandOffs(ctx context.Context, game *domain.Ga
 	for _, it := range items {
 		keyed[it.member] = it
 	}
-	return s.planReplaceHandOffs(ctx, game, profile, mod, keyed.of(routeDeployables(i.adapter, game, files)))
+	newMod := *mod
+	newMod.Version, newMod.Variant = version, ""
+	return s.planReplaceHandOffs(ctx, game, profile, mod, &newMod, keyed.of(routeDeployables(i.adapter, game, files)))
 }

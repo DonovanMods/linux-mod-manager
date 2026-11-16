@@ -19,7 +19,11 @@ const (
 // handOffLines renders a plan's hand-offs (#638): a header, then one line
 // per heir mod, in the order each first appears - its paths, capped at
 // handOffPathLimit, and the mods they come from. Past handOffHeirLimit
-// heirs, one line counts the rest. Nil for none.
+// heirs, one line counts the rest. Nil for none. The header hedges: the
+// plan names the heir it expects, and Apply decides again from what is
+// there when it runs (and says what it did). Mod names and paths are
+// printed through domain.SanitizeLine, as every name the CLI prints from
+// an installer or a source is.
 func handOffLines(handoffs []core.HandOff) []string {
 	if len(handoffs) == 0 {
 		return nil
@@ -35,16 +39,16 @@ func handOffLines(handoffs []core.HandOff) []string {
 		key := domain.ModKey(h.To.SourceID, h.To.ModID)
 		g, ok := groups[key]
 		if !ok {
-			g = &group{heir: h.To.Name}
+			g = &group{heir: domain.SanitizeLine(h.To.Name)}
 			groups[key] = g
 			order = append(order, key)
 		}
-		g.paths = append(g.paths, domain.DisplayDeployPath(h.Root, h.Path))
-		if !slices.Contains(g.from, h.From.Name) {
-			g.from = append(g.from, h.From.Name)
+		g.paths = append(g.paths, domain.SanitizeLine(domain.DisplayDeployPath(h.Root, h.Path)))
+		if from := domain.SanitizeLine(h.From.Name); !slices.Contains(g.from, from) {
+			g.from = append(g.from, from)
 		}
 	}
-	lines := []string{fmt.Sprintf("%d shared file(s) pass to the next mod in load order that ships them:", len(handoffs))}
+	lines := []string{fmt.Sprintf("%d shared file(s) expected to pass to the next mod in load order that ships them (decided again when it runs):", len(handoffs))}
 	for j, key := range order {
 		if j == handOffHeirLimit {
 			rest := 0

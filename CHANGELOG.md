@@ -18,7 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by the mod that takes the files (five paths per mod, then "and N more"),
   and the web UI's plan views for the same kinds show the same list. The
   heir is computed from the load-order rule and the functions Apply itself
-  uses; Apply still decides from live state and reports what it did. Every
+  uses, and the preview says it is expected: Apply still decides from live
+  state and reports what it did. A plan lists each other mod's cached files
+  at most once and reads the profile once, however many mods it turns off.
+  Every
   plan document (`--dry-run --json`, `/api/v1` plans) gains an additive
   `handoffs` list (`path`, `root`, `from`, `to`), absent when there are none;
   a mod copy carries it per entry. An update from a mod site names none: the

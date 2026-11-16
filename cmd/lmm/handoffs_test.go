@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -27,7 +28,7 @@ func TestHandOffLines_GroupsByHeirAndCaps(t *testing.T) {
 		handoffs = append(handoffs, core.HandOff{Path: fmt.Sprintf("Data/%d.esp", j), From: b, To: a})
 	}
 	assert.Equal(t, []string{
-		"9 shared file(s) pass to the next mod in load order that ships them:",
+		"9 shared file(s) expected to pass to the next mod in load order that ships them (decided again when it runs):",
 		"  Data/foo.dll passes to Mod B (from Mod C)",
 		"  <game root>/d3d11.dll, Data/0.esp, Data/1.esp, Data/2.esp, Data/3.esp and 3 more pass to Mod A (from Mod C, Mod B)",
 	}, handOffLines(handoffs))
@@ -68,7 +69,7 @@ func TestDoProfileApply_DryRun_NamesTheHandOff(t *testing.T) {
 		return doProfileApply(context.Background(), svc, game, nil)
 	})
 	assert.Contains(t, out, "Will disable 1 mod(s):\n  - Mod B (b)\n"+
-		"1 shared file(s) pass to the next mod in load order that ships them:\n"+
+		"1 shared file(s) expected to pass to the next mod in load order that ships them (decided again when it runs):\n"+
 		"  shared.esp passes to Mod A (from Mod B)\n")
 }
 
@@ -81,7 +82,7 @@ func TestDoUninstall_DryRun_NamesTheHandOff(t *testing.T) {
 	out := captureStdout(t, func() error {
 		return doUninstall(context.Background(), svc, game, "b")
 	})
-	assert.Contains(t, out, "  1 shared file(s) pass to the next mod in load order that ships them:\n"+
+	assert.Contains(t, out, "  1 shared file(s) expected to pass to the next mod in load order that ships them (decided again when it runs):\n"+
 		"    shared.esp passes to Mod A (from Mod B)\n")
 }
 
@@ -95,4 +96,21 @@ func TestJSONGolden_ProfileApplyDryRunHandOffs(t *testing.T) {
 		return doProfileApply(context.Background(), svc, game, nil)
 	})
 	assertJSONCLIGolden(t, "profile_apply_dry_run_handoffs", out, game.ModPath, "<MODPATH>")
+}
+
+// A name or path carrying a terminal control sequence is printed safe, as
+// every name the CLI prints from a source or an installer is.
+func TestHandOffLines_SanitizesNamesAndPaths(t *testing.T) {
+	lines := handOffLines([]core.HandOff{{
+		Path: "Data/\x1b[31mred.esp",
+		From: core.HandOffMod{SourceID: "src", ModID: "a", Name: "Mod \x1b]0;pwned\x07A"},
+		To:   core.HandOffMod{SourceID: "src", ModID: "b", Name: "Mod‮B"},
+	}})
+	require.Len(t, lines, 2)
+	for _, l := range lines {
+		assert.NotContains(t, l, "\x1b")
+		assert.NotContains(t, l, "\x07")
+		assert.NotContains(t, l, "‮")
+	}
+	assert.Equal(t, domain.SanitizeLine("Data/\x1b[31mred.esp")+" passes to "+domain.SanitizeLine("Mod‮B")+" (from "+domain.SanitizeLine("Mod \x1b]0;pwned\x07A")+")", strings.TrimPrefix(lines[1], "  "))
 }

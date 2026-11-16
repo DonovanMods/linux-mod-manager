@@ -168,8 +168,8 @@ export function CopyModPlanView({ plan, modal, actions, state }) {
         handoffs=${handoffs}
         heading=${
           plan.all
-            ? "Replacing passes shared files to the next mod in load order"
-            : "Shared files passing to the next mod in load order"
+            ? "Replacing is expected to pass shared files to the next mod in load order"
+            : "Shared files expected to pass to the next mod in load order"
         }
         testID="copy-handoffs"
       />

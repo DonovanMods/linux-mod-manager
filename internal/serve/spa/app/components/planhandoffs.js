@@ -3,7 +3,9 @@
 // `handoffs`, as core.HandOff lists them, one row per mod that takes a
 // path - its paths, and the mods they come from. It groups and caps
 // exactly as the CLI's preview does (cmd/lmm/handoffs.go): five paths per
-// mod before "and N more", ten mods before one row counts the rest.
+// mod before "and N more", ten mods before one row counts the rest. Like
+// the CLI's, it hedges: the plan names the mod it expects, and the run
+// decides again from what is there when it runs, then says what it did.
 
 import { html } from "../render.js";
 import { deployedPath } from "../deploypath.js";
@@ -43,7 +45,7 @@ function pathList(paths) {
  * heading, when given, replaces the section's own. */
 export function PlanHandOffs({
   handoffs,
-  heading = "Shared files passing to the next mod in load order",
+  heading = "Shared files expected to pass to the next mod in load order",
   testID = "plan-handoffs",
 }) {
   const list = handoffs ?? [];
@@ -55,6 +57,10 @@ export function PlanHandOffs({
   return html`
     <section class="plan__section">
       <h3 class="plan__heading">${heading} (${list.length})</h3>
+      <p class="plan__note">
+        Decided again when it runs, from what is there then; the result says
+        which mod has each file.
+      </p>
       <ul class="plan__mods" data-testid=${testID}>
         ${shown.map(
           (g) => html`

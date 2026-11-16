@@ -94,7 +94,9 @@ comes back only once no switched-on mod includes it.
 The preview says so before you confirm. The web interface's plan for an
 uninstall, an update from a file, a rollback, a copy that replaces a mod,
 `profile apply` or a profile switch lists the shared files and the mod each
-one passes to, for example "Data/foo.dll passes to Mod B (from Mod A)". In
+one is expected to pass to, for example "Data/foo.dll passes to Mod B (from
+Mod A)". It is a forecast: lmm decides again when it runs, from what is
+there then, and says which mod has each file afterwards. In
 the terminal, `lmm uninstall --dry-run`, `lmm update rollback`,
 `lmm update --from-file`, `lmm mod copy --replace`, `lmm profile apply` and
 `lmm profile switch` print the same list, grouped by the mod that takes the

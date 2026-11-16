@@ -312,7 +312,7 @@ func (s *Service) PlanUpdateFromArchive(ctx context.Context, game *domain.Game, 
 	if plan.Files == nil {
 		plan.Files = []string{}
 	}
-	plan.Handoffs = s.planArchiveUpdateHandOffs(ctx, game, profileName, &mod.Mod, contents.files)
+	plan.Handoffs = s.planArchiveUpdateHandOffs(ctx, game, profileName, &mod.Mod, plan.ToVersion, contents.files)
 
 	locked, lockedVersion, err := s.lockState(ctx, game.ID, profileName, mod.SourceID, mod.ID)
 	if err != nil {

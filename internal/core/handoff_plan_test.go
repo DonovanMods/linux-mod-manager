@@ -7,6 +7,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -330,4 +331,102 @@ func TestPlanHandOffs_AnEnableLaterInTheFlowTakesThePathBack(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "the third mod's file", readFileString(t, f.dst))
 	assertPlanMatchesLedger(t, f, plan.Handoffs, res.Warnings)
+}
+
+// The work a plan does for its hand-offs is bounded (#638 review): each
+// heir's cache entry is listed at most once, however many mods the plan
+// turns off, and the heir profile's document and rows are read once per
+// plan, not once per removal. A ratchet on counts, not on wall-clock time
+// (handoff_plan_bench_test.go measures that).
+func TestPlanHandOffs_PlanWorkIsBounded(t *testing.T) {
+	ctx := context.Background()
+	const n, m = 30, 10
+	ids := make([]string, n)
+	for j := range ids {
+		ids[j] = fmt.Sprintf("m%02d", j)
+	}
+	f := newHandOffFixture(t, sharedOriginalCases[1], domain.LinkSymlink, false, ids...)
+	pm := f.svc.NewProfileManager()
+	for _, id := range ids[n-m:] {
+		require.NoError(t, pm.SetModDisabled(ctx, f.game.ID, "default", "src", id, true))
+	}
+	// "other" lists the mods default keeps, each with a live row.
+	for _, id := range ids[:n-m] {
+		row, err := f.svc.GetInstalledMod(ctx, "src", id, f.game.ID, "default")
+		require.NoError(t, err)
+		cp := *row
+		cp.ProfileName = "other"
+		require.NoError(t, f.svc.SaveInstalledMod(ctx, &cp))
+		seedProfileWithMod(t, f.svc, f.game.ID, "other", "src", id, "1.0")
+	}
+
+	for name, plan := range map[string]func() []core.HandOff{
+		"apply": func() []core.HandOff {
+			p, err := f.svc.PlanProfileApply(ctx, f.game, "default")
+			require.NoError(t, err)
+			require.Len(t, p.ToDisable, m)
+			return p.Handoffs
+		},
+		"switch": func() []core.HandOff {
+			p, err := f.svc.PlanProfileSwitch(ctx, f.game, "other")
+			require.NoError(t, err)
+			require.Len(t, p.ToDisable, m)
+			return p.Handoffs
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var listings, reads int
+			defer core.CountHeirListingsForTest(func() { listings++ })()
+			defer core.CountHeirCandidateReadsForTest(func() { reads++ })()
+			handoffs := plan()
+			require.Len(t, handoffs, 1)
+			assert.LessOrEqual(t, listings, n-m, "each heir's cache entry listed at most once per plan")
+			assert.Equal(t, 1, reads, "the heir profile is read once per plan, not once per removal")
+		})
+	}
+}
+
+// A hand-off chain across three removals in one flow: a copy that replaces
+// x, y and z - each with a version without the shared path - in either
+// order. Whichever goes first, the path ends with w, the first mod in load
+// order the copy leaves shipping it, and is reported on x's entry, the
+// mod that held it; and the plan agrees with Apply.
+func TestPlanHandOffs_AChainAcrossThreeRemovalsInEitherOrder(t *testing.T) {
+	for name, order := range map[string][]string{
+		"holder_first": {"x", "y", "z"},
+		"holder_last":  {"z", "y", "x"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			forEachHandOffCase(t, func(t *testing.T, c sharedOriginalCase, method domain.LinkMethod, withOriginal bool) {
+				ctx := context.Background()
+				f := newHandOffFixture(t, c, method, withOriginal, "w", "z", "y", "x")
+				for _, id := range order {
+					require.NoError(t, f.svc.GetGameCache(f.game).Store(cache.Key{GameID: f.game.ID, SourceID: "src", ModID: id, Version: "2.0"}, "own/"+id+".txt", []byte("v2")))
+					require.NoError(t, f.svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+						Mod:         domain.Mod{ID: id, SourceID: "src", Name: handOffName(id), Version: "2.0", GameID: f.game.ID},
+						ProfileName: "other", UpdatePolicy: domain.UpdateNotify, Enabled: true,
+					}))
+					seedProfileWithMod(t, f.svc, f.game.ID, "other", "src", id, "2.0")
+				}
+
+				plan, err := f.svc.PlanCopyMod(ctx, f.game, core.CopyModRequest{From: "other", To: "default", All: true})
+				require.NoError(t, err)
+				require.Len(t, plan.Mods, 3)
+				var all []core.HandOff
+				for _, e := range plan.Mods {
+					if e.ModID == "x" {
+						assert.Equal(t, []core.HandOff{f.wantHandOff("x", "w")}, e.Handoffs, "on the entry of the mod that held the path, by its final owner")
+					} else {
+						assert.Empty(t, e.Handoffs, "%s held nothing to give up", e.ModID)
+					}
+					all = append(all, e.Handoffs...)
+				}
+
+				res, err := f.svc.ApplyCopyMod(ctx, f.game, plan, core.CopyModOptions{Replace: true}, nil)
+				require.NoError(t, err)
+				f.assertHeld(t, "w", withOriginal, "the chain ends with w")
+				assertPlanMatchesLedger(t, f, all, res.Warnings)
+			})
+		})
+	}
 }
