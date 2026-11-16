@@ -4402,6 +4402,21 @@ a.row-menu__item.mod-page-link {
   overflow-wrap: anywhere;
 }
 
+/* issue 649: Setup > Updates' warning that lmm-serve.service runs another
+ * lmm binary than this server, with the command that fixes it. */
+.service-binary-warning {
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--warn);
+  background: var(--surface-sunken);
+}
+
+.service-binary-warning__text {
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
 /* issue 606: the adapter lmm's game catalog suggests for a game that uses
  * the identity - a note with the action that takes it. */
 .adapter-suggestion {

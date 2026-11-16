@@ -12,9 +12,16 @@
 // and a development build. Where it is on but the daily release check is
 // off, it says that nothing triggers an update from this machine's commands
 // or this server - only lmm-update.timer still would.
+//
+// Its "Background service" row (issue 649) is GET /api/v1/service, `lmm
+// service status --json`'s document: the lmm binary lmm-serve.service runs
+// and that binary's version, with a warning when it is not the binary this
+// server runs. It is read-only, as the CLI is where the service is
+// installed, restarted and switched; the warning names that command. A
+// server that does not report its service (204, no document) shows no row.
 
 import { html, useEffect, useState } from "../render.js";
-import { getLmmRelease, putAutoUpdate } from "../api.js";
+import { getLmmRelease, getServiceStatus, putAutoUpdate } from "../api.js";
 
 /** INSTALL_LABELS names core.InstallKind for a person. */
 const INSTALL_LABELS = {
@@ -49,16 +56,63 @@ function latestLabel(status) {
   return "Not checked yet";
 }
 
+/** serveUnit is lmm-serve.service's row of a core.ServiceReport. */
+function serveUnit(report) {
+  return report?.units?.find((u) => u.name === "lmm-serve.service");
+}
+
+/** serviceLabel is the "Background service" row's text: the binary the unit
+ * runs, or why there is none to name. */
+function serviceLabel(service) {
+  if (service.error) return `Not available: ${service.error}`;
+  const unit = serveUnit(service.report);
+  if (!unit?.installed) {
+    return "Not installed (lmm service install runs this web UI in the background)";
+  }
+  const state = unit.active ? "running" : "not running";
+  if (!unit.binary) return `lmm-serve.service, ${state}`;
+  return `lmm-serve.service runs ${unit.binary.path} (${unit.binary.version}), ${state}`;
+}
+
+/** ServiceMismatch warns that lmm-serve.service runs another lmm binary
+ * than this server, with the command that points it at the right one - or,
+ * for a package's unit, which lmm never rewrites, how to run another lmm. */
+function ServiceMismatch({ report }) {
+  const unit = serveUnit(report);
+  const running = report?.running;
+  if (!unit?.binary_mismatch || !unit.binary || !running) return null;
+  const remedy =
+    unit.origin === "package"
+      ? "It is your lmm package's unit, which lmm does not rewrite: override its ExecStart with systemctl --user edit lmm-serve."
+      : "Run lmm service restart --switch with the lmm you want it to run, to point the service at that binary and restart it.";
+  return html`<div
+    class="service-binary-warning"
+    role="note"
+    data-testid="setup-updates-service-mismatch"
+  >
+    <p class="service-binary-warning__text">
+      lmm-serve.service runs ${unit.binary.path} (${unit.binary.version}); this
+      web UI runs ${running.path} (${running.version}). ${remedy}
+    </p>
+  </div>`;
+}
+
 export function SetupUpdates() {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // service is GET /api/v1/service's answer: {report} or {error}; null
+  // while it loads and for a server that does not report its service.
+  const [service, setService] = useState(null);
 
   useEffect(() => {
     let live = true;
     getLmmRelease()
       .then((s) => live && setStatus(s))
       .catch((e) => live && setError(e.message || String(e)));
+    getServiceStatus()
+      .then((report) => live && report && setService({ report }))
+      .catch((e) => live && setService({ error: e.message || String(e) }));
     return () => {
       live = false;
     };
@@ -143,6 +197,15 @@ export function SetupUpdates() {
           </dd>
         </div>
         ${
+          service &&
+          html`<div class="doc__pair">
+            <dt class="doc__key">Background service</dt>
+            <dd class="doc__value" data-testid="setup-updates-service">
+              ${serviceLabel(service)}
+            </dd>
+          </div>`
+        }
+        ${
           last &&
           html`<div class="doc__pair">
             <dt class="doc__key">Last automatic update</dt>
@@ -162,6 +225,7 @@ export function SetupUpdates() {
           </div>`
         }
       </dl>
+      ${service?.report && html`<${ServiceMismatch} report=${service.report} />`}
       <label class="form-check">
         <input
           type="checkbox"

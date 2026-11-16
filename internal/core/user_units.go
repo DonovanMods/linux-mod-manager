@@ -170,6 +170,27 @@ type UnitStatus struct {
 	// ActiveState is `systemctl --user is-active`'s answer verbatim
 	// ("active", "inactive", "failed", ...).
 	ActiveState string `json:"active_state"`
+	// Binary is the lmm binary the unit's ExecStart runs, and its version
+	// (#649): what systemd has loaded, drop-ins included, else the unit
+	// file's line. Status and restart fill it for every installed unit with
+	// an ExecStart; install fills it only for a unit it moved to another
+	// binary. Nil otherwise, and for the timer, which runs none.
+	Binary *LmmBinary `json:"binary,omitempty"`
+	// BinaryMismatch is true when Binary is a different file from the lmm
+	// binary that ran the command (ServiceReport.Running), through
+	// symlinks (#649): the unit does not run the lmm the user is running.
+	BinaryMismatch bool `json:"binary_mismatch,omitzero"`
+	// Change is what the command did to this unit's file (#649):
+	// UnitInstalled, UnitUpdated, or empty when it left the file as it was.
+	Change UnitChange `json:"change,omitempty"`
+	// PreviousBinary is the binary the unit's ExecStart named before this
+	// command pointed it at Binary (#649); empty when the binary did not
+	// change.
+	PreviousBinary string `json:"previous_binary,omitempty"`
+	// Restarted is true when install restarted the unit because it was
+	// running, rather than starting it (#649). The text output says so; it
+	// is not part of the JSON document.
+	Restarted bool `json:"-"`
 }
 
 // ServiceReport is the document `lmm service install|uninstall|status`
@@ -192,6 +213,10 @@ type ServiceReport struct {
 	// Authentication) - lmm never copies a key into the unit file, which is
 	// plain text. Filled by install and status; omitempty.
 	EnvOnlyCredentials []EnvOnlyCredential `json:"env_only_credentials,omitempty"`
+	// Running is the lmm binary that ran the command and its version
+	// (#649), which each unit's Binary is compared with. Status and restart
+	// fill it; nil otherwise.
+	Running *LmmBinary `json:"running,omitempty"`
 }
 
 // EnvOnlyCredential names a source whose key comes only from its
@@ -293,6 +318,14 @@ type UserUnits struct {
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
 	// User is the login name loginctl is asked about.
 	User string
+	// Version is the running lmm's version as `lmm --version` prints it
+	// after "lmm version " (#649); empty reads as unknown. The frontend
+	// sets it: core does not know its own build's version.
+	Version string
+	// BinaryVersion asks the lmm binary at path for its version, as
+	// Version reads (#649); the caller bounds it with a short timeout. Nil
+	// reports no binaries at all, the document as it was before #649.
+	BinaryVersion func(ctx context.Context, path string) (string, error)
 }
 
 // NewUserUnits returns UserUnits for this user and machine.
@@ -308,14 +341,15 @@ func NewUserUnits() (*UserUnits, error) {
 		}
 	}
 	return &UserUnits{
-		Home:         home,
-		PackagedDirs: slices.Clone(packagedUnitDirs),
-		Executable:   os.Executable,
-		LookPath:     exec.LookPath,
-		Getenv:       os.Getenv,
-		Sleep:        sleepContext,
-		Run:          runCommand,
-		User:         name,
+		Home:          home,
+		PackagedDirs:  slices.Clone(packagedUnitDirs),
+		Executable:    os.Executable,
+		LookPath:      exec.LookPath,
+		Getenv:        os.Getenv,
+		Sleep:         sleepContext,
+		Run:           runCommand,
+		User:          name,
+		BinaryVersion: readBinaryVersion,
 	}, nil
 }
 
@@ -534,12 +568,36 @@ func (u *UserUnits) Install(ctx context.Context, opts ServiceInstallOptions) (Se
 	}
 
 	anyChanged := false
+	// What each unit's file went through (#649), merged into the report.
+	type outcome struct {
+		change    UnitChange
+		previous  string
+		restarted bool
+	}
+	outcomes := map[string]*outcome{}
 	for i, unit := range install {
-		changed, err := writeUnitFile(filepath.Join(dir, unit.name), rendered[i])
+		path := filepath.Join(dir, unit.name)
+		existed := fileExists(path)
+		previous := ""
+		if existed && runsBinary(unit.name) {
+			previous = u.unitFileBinary(path)
+		}
+		changed, err := writeUnitFile(path, rendered[i])
 		if err != nil {
 			return ServiceReport{}, err
 		}
 		anyChanged = anyChanged || changed
+		o := &outcome{}
+		outcomes[unit.name] = o
+		switch {
+		case changed && !existed:
+			o.change = UnitInstalled
+		case changed:
+			o.change = UnitUpdated
+			if previous != "" && previous != exe {
+				o.previous = previous
+			}
+		}
 	}
 	if _, err := u.systemctl(ctx, "daemon-reload"); err != nil {
 		return ServiceReport{}, fmt.Errorf("systemctl --user daemon-reload: %w", err)
@@ -551,6 +609,7 @@ func (u *UserUnits) Install(ctx context.Context, opts ServiceInstallOptions) (Se
 		steps := [][]string{{"enable", "--now", unit.name}}
 		if u.query(ctx, "is-active", unit.name, "inactive") == "active" {
 			steps = [][]string{{"enable", unit.name}, {"restart", unit.name}}
+			outcomes[unit.name].restarted = true
 		}
 		for _, step := range steps {
 			if _, err := u.systemctl(ctx, step...); err != nil {
@@ -561,7 +620,23 @@ func (u *UserUnits) Install(ctx context.Context, opts ServiceInstallOptions) (Se
 	if u.Sleep != nil {
 		u.Sleep(ctx, settleTime)
 	}
-	return u.report(ctx, dir, anyChanged, nil), nil
+	r := u.report(ctx, dir, anyChanged, nil)
+	for i := range r.Units {
+		s := &r.Units[i]
+		o := outcomes[s.Name]
+		if o == nil {
+			continue
+		}
+		s.Change, s.PreviousBinary, s.Restarted = o.change, o.previous, o.restarted
+		if o.previous != "" {
+			v := u.Version
+			if v == "" {
+				v = UnknownBinaryVersion
+			}
+			s.Binary = &LmmBinary{Path: exe, Version: v}
+		}
+	}
+	return r, nil
 }
 
 // Uninstall disables, stops and removes every unit `lmm service install`
@@ -630,7 +705,9 @@ func (u *UserUnits) Status(ctx context.Context) (ServiceReport, error) {
 	if err != nil {
 		return ServiceReport{}, err
 	}
-	return u.report(ctx, mgr.unitDir(), false, nil), nil
+	r := u.report(ctx, mgr.unitDir(), false, nil)
+	u.addBinaries(ctx, &r)
+	return r, nil
 }
 
 // Restart restarts lmm-serve.service (#591), starting it when it was
@@ -654,13 +731,22 @@ func (u *UserUnits) Restart(ctx context.Context) (ServiceReport, error) {
 	if !fileExists(filepath.Join(dir, systemd.ServeUnitName)) && u.packagedPath(systemd.ServeUnitName) == "" {
 		return ServiceReport{}, ErrServiceNotInstalled
 	}
+	return u.restart(ctx, dir)
+}
+
+// restart runs `systemctl --user restart lmm-serve.service`, waits
+// settleTime and reports every unit with the binaries it runs (#649). It
+// rewrites nothing: a unit that runs another binary is only reported.
+func (u *UserUnits) restart(ctx context.Context, dir string) (ServiceReport, error) {
 	if _, err := u.systemctl(ctx, "restart", systemd.ServeUnitName); err != nil {
 		return ServiceReport{}, fmt.Errorf("systemctl --user restart %s: %w (see: journalctl --user -u lmm-serve)", systemd.ServeUnitName, err)
 	}
 	if u.Sleep != nil {
 		u.Sleep(ctx, settleTime)
 	}
-	return u.report(ctx, dir, false, nil), nil
+	r := u.report(ctx, dir, false, nil)
+	u.addBinaries(ctx, &r)
+	return r, nil
 }
 
 // RestartServeIfActive restarts lmm-serve.service with try-restart when it

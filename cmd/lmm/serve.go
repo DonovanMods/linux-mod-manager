@@ -77,6 +77,9 @@ func doServe(ctx context.Context, cmd *cobra.Command, svc *core.Service) error {
 	if u := serveAutoUpdater(); u != nil {
 		opts.AutoUpdater = u
 	}
+	if units := serveServiceStatus(); units != nil {
+		opts.ServiceStatus = units
+	}
 	srv := serve.New(ctx, svc, svc.Logger(), opts)
 	addr, err := srv.Listen()
 	if err != nil {
@@ -132,6 +135,21 @@ func serveAutoUpdater() *core.SelfUpdater {
 		}
 	}
 	return core.NewSelfUpdater(opts)
+}
+
+// serveServiceStatus is what GET /api/v1/service reads (#649): the same
+// UserUnits `lmm service status` reports through, with this server's own
+// version as the running one. nil, as for the checker, in a binary Execute
+// did not arm, so no test asks the real user manager.
+func serveServiceStatus() *core.UserUnits {
+	if !releaseCheckArmed {
+		return nil
+	}
+	units, err := serviceUnits()
+	if err != nil {
+		return nil
+	}
+	return units
 }
 
 // warnIfNonLoopback prints the loud, undismissable warning

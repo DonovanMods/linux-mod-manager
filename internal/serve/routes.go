@@ -27,6 +27,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/updates", s.wrap(s.handleAPIUpdates))
 	// lmm's own release, not a mod's (#568, api_release.go).
 	s.mux.Handle("GET /api/v1/updates/lmm", s.wrap(s.handleAPIReleaseStatus))
+	s.mux.Handle("GET /api/v1/service", s.wrap(s.handleAPIServiceStatus))
 	// Setup > Updates' "Update automatically" switch (#586): a
 	// single-step config.yaml write, answered with the status above.
 	s.mux.Handle("PUT /api/v1/settings/auto-update", s.wrap(s.handleAPIAutoUpdateSetting))
