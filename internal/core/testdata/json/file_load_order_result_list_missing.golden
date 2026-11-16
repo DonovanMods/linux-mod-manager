@@ -1,0 +1,14 @@
+{
+  "id": "baldursgate3",
+  "status": "skipped",
+  "list_file": "/pfx/drive_c/users/steamuser/AppData/Local/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public/modsettings.lsx",
+  "files": 0,
+  "findings": [
+    {
+      "code": "load_order_list_missing",
+      "severity": "warning",
+      "file": "modsettings.lsx",
+      "message": "modsettings.lsx is not there yet (/pfx/.../modsettings.lsx), so the paks lmm deploys are not enabled: run the game once so it writes its mod list, then `lmm deploy` (or `lmm verify --fix`) lists them"
+    }
+  ]
+}

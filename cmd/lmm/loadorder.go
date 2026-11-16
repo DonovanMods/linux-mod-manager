@@ -1,7 +1,8 @@
 package main
 
 // loadorder.go is `lmm load-order` (#620): a game's file-based load orders -
-// Cyberpunk 2077's archive order, written to archive/pc/mod/modlist.txt -
+// Cyberpunk 2077's archive order, written to archive/pc/mod/modlist.txt,
+// and Baldur's Gate 3's .pak order, written to modsettings.lsx (#646) -
 // listed, and changed through core's PlanFileLoadOrderEdit/
 // ApplyFileLoadOrderEdit pair, so --dry-run prints the plan and writes
 // nothing. The web UI's load-order tab drives the same pair.
@@ -29,12 +30,15 @@ var (
 
 var loadOrderCmd = &cobra.Command{
 	Use:   "load-order",
-	Short: "Show and change a game's file load order (Cyberpunk 2077's archives)",
+	Short: "Show and change a game's file load order (Cyberpunk 2077's archives, Baldur's Gate 3's paks)",
 	Long: `Show and change the order a game loads a set of mod files in, where the
 game reads that order from a list file: Cyberpunk 2077 (a game on the
 cyberpunk2077 adapter) loads the .archive files in archive/pc/mod in the
 order archive/pc/mod/modlist.txt gives, and an archive listed earlier wins
-a conflict with one listed later.
+a conflict with one listed later. Baldur's Gate 3 (the baldurs-gate-3
+adapter) loads the .pak mods in its Mods folder in the order its mod list,
+modsettings.lsx, gives - and only those it lists - and a pak listed later
+wins a conflict.
 
 This is a third ordering axis beside mod order (which mod's file wins when
 two ship the same path) and a Bethesda game's plugin order. The profile
@@ -50,6 +54,17 @@ it now, keeping its order among the others. An archive lmm deploys that the
 order does not name yet goes in next to the archive it sorts after
 alphabetically, which is where the game would load it with no list.
 
+Baldur's Gate 3's list differs, because it enables the paks as well as
+ordering them: lmm writes modsettings.lsx at every deploy whether or not
+the profile records an order, listing the module each .pak's meta.lsx
+declares. It keeps the game's own entry (GustavX) first and every entry it
+did not add - a mod you enabled yourself, or the in-game mod manager did -
+where it is, and never lists a pak it did not deploy. A pak the order does
+not name goes at the end; 'reset' clears the recorded order and keeps the
+paks listed in the order they have. A pak with no meta.lsx only replaces
+game files and needs no entry. lmm never creates modsettings.lsx: run the
+game once so it writes it. A purge puts back the list you had.
+
 -p/--profile picks the profile (default: the active one); --id picks the
 load order when a game has more than one.`,
 	Args: cobra.NoArgs,
@@ -63,10 +78,12 @@ var loadOrderListCmd = &cobra.Command{
 loaded first: the archive, what placed it, and the mod that ships it.
 
 The "placed by" column says why an archive is where it is: order (the
-profile's order), default (not in the order yet: its alphabetical place),
-or external (not deployed by lmm; it keeps its place in the list).`,
+profile's order), default (not in the order yet: its alphabetical place -
+for Baldur's Gate 3, after the ordered paks), or external (not deployed by
+lmm; it keeps its place in the list).`,
 	Example: `  lmm load-order list
-  lmm load-order list -p coop --json`,
+  lmm load-order list -p coop --json
+  lmm load-order list --id baldursgate3`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return withGameService(cmd, doLoadOrderList)
@@ -81,7 +98,8 @@ or the end of the order. The profile records the whole order as 'lmm
 load-order list' shows it, so nothing else moves, and - for the active
 profile - modlist.txt is written now.`,
 	Example: `  lmm load-order move "! fixes.archive" --first
-  lmm load-order move basegame_b.archive --before basegame_a.archive --dry-run`,
+  lmm load-order move basegame_b.archive --before basegame_a.archive --dry-run
+  lmm load-order move ImprovedUI.pak --after MCM.pak`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		edit := core.FileLoadOrderEdit{Op: core.LoadOrderOpMove, File: args[0], Before: loadOrderBefore, After: loadOrderAfter}
@@ -100,7 +118,11 @@ var loadOrderResetCmd = &cobra.Command{
 	Short: "Clear the profile's file load order",
 	Long: `Clear the profile's order: lmm stops writing the list, and puts back the
 modlist.txt the game had before lmm first wrote it (keeping what you
-changed in it since), or removes the one lmm created.`,
+changed in it since), or removes the one lmm created.
+
+For Baldur's Gate 3, whose list also enables the paks, lmm keeps them
+listed in modsettings.lsx in the order they have now; only the recorded
+order goes.`,
 	Example: `  lmm load-order reset --dry-run
   lmm load-order reset`,
 	Args: cobra.NoArgs,
@@ -189,7 +211,7 @@ func doLoadOrderEdit(ctx context.Context, svc *core.Service, game *domain.Game, 
 		switch {
 		case !plan.Active:
 			fmt.Printf("%s is not the active profile: the change would be recorded only.\n", plan.Profile)
-		case plan.Order.Recorded:
+		case plan.Order.Recorded || plan.Order.Enables:
 			fmt.Printf("The game's %s would be written in this order:\n", listFileName(plan.Order))
 		default:
 			fmt.Printf("The profile would order nothing: lmm would hand %s back to the game.\n", listFileName(plan.Order))
@@ -238,12 +260,18 @@ func renderLoadOrder(o *core.FileLoadOrderReport) {
 	if o.ListFile != "" {
 		fmt.Printf("List: %s\n", o.ListFile)
 	}
-	if o.FirstWins {
+	switch {
+	case o.FirstWins:
 		fmt.Println("An archive higher in the order wins a conflict with one lower down.")
+	case o.Enables:
+		fmt.Println("The list enables the files as well as ordering them; one lower down wins a conflict with one higher up.")
 	}
-	if !o.Active {
+	switch {
+	case !o.Active:
 		fmt.Printf("%s is not the active profile: its files are not deployed, so lmm cannot work out their effective order.\n", o.Profile)
-	} else if !o.Recorded {
+	case !o.Recorded && o.Enables:
+		fmt.Println("The profile orders nothing yet: lmm keeps its files in the order the list has them, new ones at the end. 'lmm load-order move' records one.")
+	case !o.Recorded:
 		fmt.Println("The profile orders nothing: the game uses its own order, shown here for lmm's files. 'lmm load-order move' records one.")
 	}
 	fmt.Println()

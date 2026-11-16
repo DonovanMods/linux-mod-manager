@@ -91,7 +91,7 @@ func TestPrefixDeploy_PakGoesToTheModsFolderInThePrefix(t *testing.T) {
 			assertAbsent(t, filepath.Join(modsDir(prefix), "info.json"), "Vortex's info.json is not deployed")
 
 			joined := strings.Join(res.Warnings, "\n")
-			assert.Contains(t, joined, "modsettings.lsx", "the deploy says what lmm does not do yet")
+			assert.Contains(t, joined, "modsettings.lsx", "the deploy names the mod list lmm writes")
 
 			report, err := svc.ModFiles(context.Background(), game, "default", "src", "pak")
 			require.NoError(t, err)
