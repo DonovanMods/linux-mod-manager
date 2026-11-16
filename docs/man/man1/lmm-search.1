@@ -2,7 +2,7 @@
 .TH "LMM" "1" "Nov 2026" "lmm 2.3.0" "User Commands"
 
 .SH NAME
-lmm-search - Search for mods
+lmm-search - Search for mods, or with --collections for collections
 
 
 .SH SYNOPSIS
@@ -52,17 +52,32 @@ searching it directly with '-s' still reports that authentication is
 required.
 
 .PP
+--collections searches the game's NexusMods collections instead (no API key
+needed): name, curator, endorsements, mod count and latest revision, with each
+collection's URL. The query is optional there - without one, the game's
+collections are listed in --sort's order - and --limit, --sort and --source
+apply as above; --category, --tag, --refresh and --profile are mod-search
+filters and are refused. Adult collections are listed, as NexusMods lists
+them, and marked [adult]. Import one as a new profile with
+\&'lmm profile import --nexus-collection <url>\&'.
+
+.PP
 Examples:
   lmm search skyui --game skyrim-se
   lmm search "immersive armor" --game skyrim-se --source nexusmods
   lmm search "armor" --game skyrim-se --category Armour --tag lore-friendly
   lmm search "armor" --game skyrim-se --profile survival
   lmm search "armor" --game skyrim-se --sort updated
+  lmm search --collections "survival" --game skyrim-se --sort popular
 
 
 .SH OPTIONS
 \fB--category\fP=""
 	filter by category (NexusMods: the category name; CurseForge: its numeric id)
+
+.PP
+\fB--collections\fP[=false]
+	search the game's NexusMods collections instead of mods; import one by its URL with 'lmm profile import --nexus-collection'
 
 .PP
 \fB-h\fP, \fB--help\fP[=false]

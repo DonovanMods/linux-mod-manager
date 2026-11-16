@@ -198,8 +198,8 @@ func TestGenManTree_AngleBracketPlaceholdersSurviveInLongHelp(t *testing.T) {
 	}
 	walk(rootCmd)
 
-	assert.Equal(t, 11, checked,
-		"expected exactly 11 commands whose Long/Short help spells an angle-bracket placeholder (game detect, game edit, auth login, verify, snapshot, update, mod skip-update, mod fomod, launch, profile export, profile finish); update this count if the help text changed")
+	assert.Equal(t, 12, checked,
+		"expected exactly 12 commands whose Long/Short help spells an angle-bracket placeholder (game detect, game edit, auth login, verify, snapshot, update, mod skip-update, mod fomod, launch, profile export, profile finish, search); update this count if the help text changed")
 }
 
 // TestGenManTree_UnderscoredNamesSurviveMarkdown is the same generator
