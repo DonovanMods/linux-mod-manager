@@ -2929,6 +2929,21 @@ func TestJSONGoldens(t *testing.T) {
 			}}).Details(),
 		},
 		{
+			// #662: an install plan whose main files are separate
+			// components carries each file's copy key for the picker.
+			"install_plan_file_copies",
+			core.InstallPlan{
+				GameID: "skyrim-se", Profile: "default", SourceID: "nexusmods",
+				Mod:   jsonGoldenMod,
+				Files: []domain.DownloadableFile{{ID: "c12", Name: "Core", FileName: "Core-1.2.zip", Version: "1.2", Category: "MAIN", IsPrimary: true}},
+				FilePool: []domain.DownloadableFile{
+					{ID: "c12", Name: "Core", FileName: "Core-1.2.zip", Version: "1.2", Category: "MAIN", IsPrimary: true},
+					{ID: "t10", Name: "Textures", FileName: "Textures-1.0.zip", Version: "1.0", Category: "MAIN"},
+				},
+				FileCopies: map[string]string{"c12": "core", "t10": "textures"},
+			},
+		},
+		{
 			// #662: a user's stored files healed to the recorded version.
 			"stored_files_heal",
 			core.StoredFilesHeal{SourceID: "nexusmods", ModID: "42", Name: "Some Mod", Version: "2.0", Dropped: []core.MixedVersion{

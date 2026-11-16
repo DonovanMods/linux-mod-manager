@@ -22,6 +22,11 @@ func TestStoredFileLines(t *testing.T) {
 			}},
 			{SourceID: "src", ModID: "2", Version: "3.0", RecordedVersion: "0.9", Dropped: []core.MixedVersion{
 				{Version: "2.0", Files: []core.MixedVersionFile{{ID: "21", FileName: "two-2.0.zip"}}},
+			}, Kept: []core.MixedVersion{
+				{Version: "1.0", Files: []core.MixedVersionFile{{ID: "22", FileName: "textures-1.0.zip"}}},
+			}},
+			{SourceID: "src", ModID: "4", Name: "Parts", Version: "1.2", Kept: []core.MixedVersion{
+				{Version: "1.0", Files: []core.MixedVersionFile{{ID: "41", FileName: "textures-1.0.zip"}}},
 			}},
 		},
 		[]core.CuratorMixedFiles{{SourceID: "src", ModID: "3", Name: "Curated", Versions: []core.MixedVersion{
@@ -30,9 +35,11 @@ func TestStoredFileLines(t *testing.T) {
 		}}},
 	)
 	assert.Equal(t, []string{
-		"Will heal 2 mod(s) whose stored main files are of more than one version:",
+		"3 mod(s) have stored main files of more than one version:",
 		"  ~ Mod One: keeps version 2.0, drops one-1.0.zip (1.0), 12 (1.0)",
-		"  ~ src:2: keeps the newest, 3.0 (none is at the recorded 0.9), drops two-2.0.zip (2.0)",
+		"  ~ src:2: keeps the newest, 3.0 (none is at the recorded 0.9), drops two-2.0.zip (2.0); keeps textures-1.0.zip (1.0), a separate component",
+		"  = Parts: keeps textures-1.0.zip (1.0), a separate component",
+		"  (a dropped file is a copy of a kept one at another version; reinstall the mod at its version to use it instead)",
 		"1 collection mod(s) install the curator's files, which mix versions:",
 		"  = Curated: 1.0 (c-1.0.zip); 1.1 (c-1.1.zip)",
 	}, lines)
@@ -72,7 +79,7 @@ func TestDoProfileApply_DryRun_NamesTheHeal(t *testing.T) {
 	out := captureStdout(t, func() error {
 		return doProfileApply(context.Background(), svc, game, nil)
 	})
-	assert.Contains(t, out, "Will heal 1 mod(s) whose stored main files are of more than one version:\n"+
+	assert.Contains(t, out, "1 mod(s) have stored main files of more than one version:\n"+
 		"  ~ Mod One: keeps version 2.0, drops main-1.0.esp (1.0)\n")
 }
 
@@ -82,7 +89,7 @@ func TestDoProfileApply_DryRun_NamesTheCuratorsMixedFiles(t *testing.T) {
 	out := captureStdout(t, func() error {
 		return doProfileApply(context.Background(), svc, game, nil)
 	})
-	assert.NotContains(t, out, "Will heal")
+	assert.NotContains(t, out, "stored main files of more than one version")
 	assert.Contains(t, out, "1 collection mod(s) install the curator's files, which mix versions:\n"+
 		"  = Mod One: 2.0 (main-2.0.esp); 1.0 (main-1.0.esp)\n")
 }
@@ -134,6 +141,6 @@ func TestDoProfileSwitch_DryRun_NamesTheHeal(t *testing.T) {
 	out := captureStdout(t, func() error {
 		return doProfileSwitch(ctx, svc, game, "stable")
 	})
-	assert.Contains(t, out, "Will heal 1 mod(s) whose stored main files are of more than one version:\n"+
+	assert.Contains(t, out, "1 mod(s) have stored main files of more than one version:\n"+
 		"  ~ Mod One: keeps version 1.0, drops main-2.0.esp (2.0)\n")
 }

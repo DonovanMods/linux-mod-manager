@@ -2,7 +2,9 @@
 // more than one version (issue 662), as core lists them: `heals`, each a
 // user's mod the run heals to one version (the version kept and every main
 // file dropped), and `curator_mixed`, each collection mod that installs the
-// curator's files exactly as the collection names them. Worded as the
+// curator's files exactly as the collection names them. A heal drops only
+// copies of one file at other versions; a separate component at another
+// version is kept and named. Worded as the
 // CLI's preview words them (cmd/lmm/stored_files_heal.go).
 
 import { html } from "../render.js";
@@ -17,15 +19,27 @@ function modName(m) {
   return m.name || `${m.source_id}:${m.mod_id}`;
 }
 
-/** healDetail is one heal's "keeps version 2.0, drops a.zip (1.0)". */
+/** fileList is versions' files as "a.zip (1.0), b.zip (1.0)". */
+function fileList(versions) {
+  return (versions ?? [])
+    .flatMap((v) => (v.files ?? []).map((f) => `${fileName(f)} (${v.version})`))
+    .join(", ");
+}
+
+/** healDetail is one heal's "keeps version 2.0, drops a.zip (1.0); keeps
+ * c.zip (1.0), a separate component" - the CLI's wording. */
 export function healDetail(h) {
-  const keep = h.recorded_version
-    ? `keeps the newest, ${h.version} (none is at the recorded ${h.recorded_version})`
-    : `keeps version ${h.version}`;
-  const dropped = (h.dropped ?? []).flatMap((v) =>
-    (v.files ?? []).map((f) => `${fileName(f)} (${v.version})`),
-  );
-  return `${keep}, drops ${dropped.join(", ")}`;
+  const parts = [];
+  if ((h.dropped ?? []).length > 0) {
+    const keep = h.recorded_version
+      ? `keeps the newest, ${h.version} (none is at the recorded ${h.recorded_version})`
+      : `keeps version ${h.version}`;
+    parts.push(`${keep}, drops ${fileList(h.dropped)}`);
+  }
+  if ((h.kept ?? []).length > 0) {
+    parts.push(`keeps ${fileList(h.kept)}, a separate component`);
+  }
+  return parts.join("; ");
 }
 
 /** curatorDetail is one collection mod's "1.0 (a.zip); 1.1 (b.zip)". */
@@ -47,12 +61,14 @@ export function PlanStoredFiles({ heals, curator, testID = "plan" }) {
       html`
         <section class="plan__section">
           <h3 class="plan__heading">
-            Stored files healed to one version (${healList.length})
+            Stored files of more than one version (${healList.length})
           </h3>
           <p class="plan__note">
-            These mods' stored main files are of more than one version. Each
-            keeps one version's main files and every optional, update and
-            miscellaneous file, and the profile records the files kept.
+            These mods' stored main files are of more than one version. Of
+            copies of one file, the one at the mod's version stays; a separate
+            component, and every optional, update and miscellaneous file, stays
+            too, and the profile records the files kept. To use a dropped copy
+            instead, reinstall the mod at its version.
           </p>
           <ul class="plan__mods" data-testid=${`${testID}-heals`}>
             ${healList.map(

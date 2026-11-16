@@ -15,9 +15,10 @@
 // default file starts checked; unchecking every file holds Confirm
 // (confirmplan.js) rather than falling back to the default. The picker
 // offers the chosen version's files, and (issue 662) every optional, update
-// or miscellaneous file of another version after them, each row then
-// naming its version - as `lmm install`'s picker does: only main files
-// must share one version, so the version ▾ lists the MAIN files' versions.
+// or miscellaneous file of another version after them, and every main file
+// that is a separate component (core's file_copies) - each row then naming
+// its version - as `lmm install`'s picker does: only copies of one main
+// file must share a version, so the version ▾ lists only theirs.
 // A pick of the chosen version's files alone is sent with that version, as
 // `--version` with `--file`; one that takes another version's secondary
 // file is sent by file id alone, as `--file` is. A pick core refuses (issue
@@ -97,20 +98,45 @@ export function isSecondary(f) {
   return SECONDARY.has((f.category ?? "").toUpperCase());
 }
 
+/** copyKey is f's copy key - core's domain.FileCopyKey, which the plan
+ * carries as file_copies (issue 662): two main files with the same key are
+ * copies of one file. Absent, every file shares one key. */
+function copyKey(copies, f) {
+  return copies?.[f.id] ?? "";
+}
+
 /** filesFor is what the file picker offers for version v (issue 662): the
- * files at v, then every secondary file of another version - pool order
- * within each. */
-export function filesFor(pool, v) {
+ * files at v, then every other file that is not a copy of one of them -
+ * each secondary file of another version, and each main file of a
+ * component with no copy at v - pool order within each. */
+export function filesFor(pool, v, copies) {
+  const atV = filesAt(pool, v);
+  const keysAtV = new Set(
+    atV.filter((f) => !isSecondary(f)).map((f) => copyKey(copies, f)),
+  );
   return [
-    ...filesAt(pool, v),
-    ...pool.filter((f) => f.version !== v && isSecondary(f)),
+    ...atV,
+    ...pool.filter(
+      (f) =>
+        f.version !== v && (isSecondary(f) || !keysAtV.has(copyKey(copies, f))),
+    ),
   ];
 }
 
-/** mainVersions is the distinct versions of the pool's main files, first
- * seen first: the versions the version ▾ offers (issue 662). */
-export function mainVersions(pool) {
-  return distinctVersions(pool.filter((f) => !isSecondary(f)));
+/** mainVersions is the versions the version ▾ offers, first seen first
+ * (issue 662): those of the main files that are copies of one file at more
+ * than one version. A separate component's version is no choice. */
+export function mainVersions(pool, copies) {
+  const mains = pool.filter((f) => !isSecondary(f));
+  const versionsOf = new Map();
+  for (const f of mains) {
+    const k = copyKey(copies, f);
+    if (!versionsOf.has(k)) versionsOf.set(k, new Set());
+    versionsOf.get(k).add(f.version);
+  }
+  return distinctVersions(
+    mains.filter((f) => versionsOf.get(copyKey(copies, f)).size > 1),
+  );
 }
 
 /** pickOptions is the applyOptions a pick of ids at version v sends: with
@@ -173,7 +199,7 @@ function distinctVersions(pool) {
 export function InstallPlanView({ plan, modal, actions }) {
   const pool = plan.file_pool ?? [];
   // Issue 662: only the main files' versions are a choice.
-  const versions = mainVersions(pool);
+  const versions = mainVersions(pool, plan.file_copies);
   // The version SELECT only earns its place once there is more than one
   // version to choose between (M6): a pool of several files at the SAME
   // version (the file sub-picker's own case, below) has nothing for it to
@@ -190,7 +216,7 @@ export function InstallPlanView({ plan, modal, actions }) {
   const [version, setVersion] = useState(
     modal?.applyOptions?.version ?? defaultVersion,
   );
-  const filesForVersion = filesFor(pool, version);
+  const filesForVersion = filesFor(pool, version, plan.file_copies);
   // Issue 662: a row names its version once the rows carry several.
   const showFileVersions = distinctVersions(filesForVersion).length > 1;
   const showFilePicker = filesForVersion.length > 1;

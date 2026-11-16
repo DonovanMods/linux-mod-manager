@@ -508,3 +508,20 @@ func unpreviewedStoredFiles(sel storedSelection, ref domain.ModReference, name s
 	}
 	return out
 }
+
+// fileCopyKeys is InstallPlan.FileCopies for files: each file's
+// domain.FileCopyKey by id, or nil when their main files share one key.
+func fileCopyKeys(files []domain.DownloadableFile) map[string]string {
+	keys := make(map[string]string, len(files))
+	mainKeys := make(map[string]bool)
+	for _, f := range files {
+		keys[f.ID] = domain.FileCopyKey(f)
+		if !domain.IsSecondaryFileCategory(f.Category) {
+			mainKeys[keys[f.ID]] = true
+		}
+	}
+	if len(mainKeys) < 2 {
+		return nil
+	}
+	return keys
+}

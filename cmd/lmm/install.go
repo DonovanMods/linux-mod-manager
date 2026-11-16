@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -198,9 +199,9 @@ func selectInstallFilesFrom(r io.Reader, files []domain.DownloadableFile, valida
 	// #647: files of several versions are one version's at a time, like
 	// the web picker (#637) - a version first, then that version's files.
 	// --version never gets here with more than one: its pool is one version.
-	// #662: only the MAIN files' versions are a choice; an optional,
-	// update or miscellaneous file of any version is offered after the
-	// chosen version's files.
+	// #662: only the versions of copies of one main file are a choice; an
+	// optional, update or miscellaneous file of any version, and a separate
+	// main component, is offered after the chosen version's files.
 	if versions := installMainVersions(files); len(versions) > 1 {
 		version, err := selectInstallVersion(reader, files, versions)
 		if err != nil {
@@ -274,14 +275,26 @@ func installFileVersions(files []domain.DownloadableFile) []string {
 	return out
 }
 
-// installMainVersions is the distinct versions of files' main files, in
-// list order (#662) - the versions the picker's version step offers. A
-// file with no category is a main file; a main file with no version is a
-// version of its own (""), as in installFileVersions.
+// installMainVersions is the versions the picker's version step offers
+// (#662), in list order: those of the main files that are copies of one
+// file at more than one version (domain.SameFile). A main file that is a
+// separate component, at whatever version, is no version choice - it goes
+// with any. A file with no category is a main file; a main file with no
+// version is a version of its own (""), as in installFileVersions.
 func installMainVersions(files []domain.DownloadableFile) []string {
+	byKey := make(map[string][]string)
+	for _, f := range files {
+		if domain.IsSecondaryFileCategory(f.Category) {
+			continue
+		}
+		key := domain.FileCopyKey(f)
+		if !slices.Contains(byKey[key], f.Version) {
+			byKey[key] = append(byKey[key], f.Version)
+		}
+	}
 	var mains []domain.DownloadableFile
 	for _, f := range files {
-		if !domain.IsSecondaryFileCategory(f.Category) {
+		if !domain.IsSecondaryFileCategory(f.Category) && len(byKey[domain.FileCopyKey(f)]) > 1 {
 			mains = append(mains, f)
 		}
 	}
@@ -289,12 +302,23 @@ func installMainVersions(files []domain.DownloadableFile) []string {
 }
 
 // installFilesFor is what the file prompt offers once version is chosen
-// (#662): the files at exactly version, then every secondary file of
-// another version, each in list order.
+// (#662): the files at exactly version, then every other file that is not
+// a copy of one of them - each optional, update or miscellaneous file of
+// another version, and each main file of a component with no copy at
+// version - each in list order.
 func installFilesFor(files []domain.DownloadableFile, version string) []domain.DownloadableFile {
 	out := installFilesAt(files, version)
+	atVersion := make(map[string]bool)
+	for _, f := range out {
+		if !domain.IsSecondaryFileCategory(f.Category) {
+			atVersion[domain.FileCopyKey(f)] = true
+		}
+	}
 	for _, f := range files {
-		if f.Version != version && domain.IsSecondaryFileCategory(f.Category) {
+		if f.Version == version {
+			continue
+		}
+		if domain.IsSecondaryFileCategory(f.Category) || !atVersion[domain.FileCopyKey(f)] {
 			out = append(out, f)
 		}
 	}
@@ -575,15 +599,16 @@ main + optional patches) using comma-separated values or ranges: 1,3,5 or
 1-3 or 1,3-5. Archived/old-version files are hidden by default; pass
 --show-archived to list and select from them too.
 
-The main files you install together all come from one version of the mod.
-When the main files on offer span more than one version, you pick the
-version first and then choose among that version's files; --version skips
-the version step. Optional, update and miscellaneous files (by the
-source's own category) may carry their own version: they are offered
-beside any version's files, each labelled with its version. A --file list
-naming main files of different versions is refused. A file the source gives
-no category counts as a main file, and a file it gives no version goes with
-any version.
+Copies of one main file you install together all come from one version
+of the mod. When a main file is on offer at more than one version, you
+pick the version first and then choose among that version's files;
+--version skips the version step. Optional, update and miscellaneous files
+(by the source's own category), and main files that are separate parts
+of the mod (another name, such as Core beside Textures), may carry their
+own version: they are offered beside any version's files, each labelled
+with its version. A --file list naming two copies of one main file at
+different versions is refused. A file the source gives no category counts
+as a main file, and a file it gives no version goes with any version.
 
 Examples:
   lmm install "ore stack" --game starrupture

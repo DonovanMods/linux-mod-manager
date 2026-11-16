@@ -165,3 +165,13 @@ func TestSelectStoredFiles_KeepsAnOlderRulesRecordedVersion(t *testing.T) {
 	assert.Equal(t, "0.5", sel.version)
 	assert.Nil(t, sel.heal)
 }
+
+func TestFileCopyKeys(t *testing.T) {
+	assert.Nil(t, fileCopyKeys(healListing()), "every main file a copy of one: no keys needed")
+	keys := fileCopyKeys([]domain.DownloadableFile{
+		{ID: "c", FileName: "Core-1.2.zip", Category: "MAIN"},
+		{ID: "t", FileName: "Textures-1.0.zip", Category: "MAIN"},
+		{ID: "p", FileName: "patch.zip", Category: "OPTIONAL"},
+	})
+	assert.Equal(t, map[string]string{"c": "core", "t": "textures", "p": "patch"}, keys)
+}

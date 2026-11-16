@@ -151,6 +151,14 @@ type InstallPlan struct {
 	// Empty (like every other single-mod field) on a Batch plan.
 	FilePool []domain.DownloadableFile `json:"file_pool,omitempty"`
 
+	// FileCopies is each FilePool file's domain.FileCopyKey, by file id
+	// (#662): two main files with the same key are copies of one file, so
+	// only those must share a version, and a picker offers a version
+	// choice only among them. Set only when the pool's main files are of
+	// more than one key; absent, every main file is a copy of one file.
+	// Additive.
+	FileCopies map[string]string `json:"file_copies,omitempty"`
+
 	// ShowArchived is the showArchived value PlanInstall was called with -
 	// stored on the plan (Phase 5b Task 2) so ApplyInstall can resolve each
 	// Dependencies entry's own downloadable files (at apply time - see
@@ -421,6 +429,7 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 		return nil, fmt.Errorf("no downloadable files available for this mod")
 	}
 	plan.FilePool = files
+	plan.FileCopies = fileCopyKeys(files)
 	selected, _, err := selectDeployFiles(files, nil, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select files: %w", err)

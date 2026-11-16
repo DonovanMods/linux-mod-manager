@@ -98,3 +98,45 @@ func TestE2E_ProfileApplyPlan_NamesTheHeal(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond, "the apply records the healed ids")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_InstallPicker_SeparateComponentsGoWithAnyVersion (#662 review):
+// Core's two copies are the only version choice; Textures 1.0, a separate
+// main component, is offered beside Core 1.2 and installs with it.
+func TestE2E_InstallPicker_SeparateComponentsGoWithAnyVersion(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+	f.Src.addMod(e2eSearchSourceMod{
+		mod: domain.Mod{ID: "parts", SourceID: "fake", Name: "Parted Mod", Version: "1.2"},
+		files: []domain.DownloadableFile{
+			{ID: "c12", Name: "Core", FileName: "Core-1.2.zip", Version: "1.2", Category: "MAIN", IsPrimary: true, Size: 64},
+			{ID: "c11", Name: "Core", FileName: "Core-1.1.zip", Version: "1.1", Category: "MAIN", Size: 64},
+			{ID: "t10", Name: "Textures", FileName: "Textures-1.0.zip", Version: "1.0", Category: "MAIN", Size: 64},
+		},
+		members: map[string]string{"c12": "Mods/core.pak", "c11": "Mods/core.pak", "t10": "Mods/textures.pak"},
+	})
+	row := searchResultRow("fake", "parts")
+
+	var versions, offered []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "Parted", chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Enter),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		clickWhenSettled(row+" .search-result__install"),
+		chromedp.WaitVisible(installFilesPicker, chromedp.ByQuery),
+		chromedp.Evaluate(`Array.from(document.querySelectorAll('.modal[data-kind="install"] select[name="install-version"] option')).map(o => o.value)`, &versions),
+		chromedp.Evaluate(`Array.from(document.querySelectorAll('`+installFilesPicker+` input[name="install-file"]')).map(i => i.value)`, &offered),
+		clickWhenSettled(installFileBox("t10")),
+		pollUntil(`document.querySelectorAll('`+installFilesList+` li').length === 2`),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+		waitGone(`.modal`),
+		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+	assert.Equal(t, []string{"1.2", "1.1"}, versions, "a separate component's version is no choice")
+	assert.Equal(t, []string{"c12", "t10"}, offered)
+	installed, err := f.Svc.GetInstalledMod(t.Context(), "fake", "parts", f.Game.ID, "default")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"c12", "t10"}, installed.FileIDs)
+	assert.Equal(t, "1.2", installed.Version)
+	assert.Empty(t, f.BrowserErrors())
+}

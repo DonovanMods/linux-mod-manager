@@ -124,8 +124,8 @@ func TestSelectInstallFiles_OneMainVersionAsksNoVersion(t *testing.T) {
 func TestSelectInstallFiles_UncategorisedFilesKeepTheVersionStep(t *testing.T) {
 	setPickerFlags(t)
 	files := []domain.DownloadableFile{
-		{ID: "a", FileName: "a-2.0.esp", Version: "2.0", IsPrimary: true},
-		{ID: "b", FileName: "b-1.0.esp", Version: "1.0"},
+		{ID: "a", FileName: "mod-2.0.esp", Version: "2.0", IsPrimary: true},
+		{ID: "b", FileName: "mod-1.0.esp", Version: "1.0"},
 	}
 	var selected []*domain.DownloadableFile
 	out := captureStdout(t, func() error {
@@ -187,7 +187,7 @@ func TestSelectInstallFiles_NoVersionIsAVersionOfItsOwn(t *testing.T) {
 	setPickerFlags(t)
 	files := []domain.DownloadableFile{
 		{ID: "v", FileName: "main-2.0.esp", Version: "2.0", IsPrimary: true},
-		{ID: "bare", FileName: "extras.esp"},
+		{ID: "bare", FileName: "main.esp"},
 	}
 	var selected []*domain.DownloadableFile
 	out := captureStdout(t, func() error {
@@ -334,4 +334,32 @@ func stdinLines(t *testing.T, lines ...string) {
 	old := os.Stdin
 	os.Stdin = r
 	t.Cleanup(func() { os.Stdin = old; _ = r.Close() })
+}
+
+// TestSelectInstallFiles_SeparateComponentsAskNoVersion (#662): main files
+// that are separate components (Core 1.2, Textures 1.0) are no version
+// choice - both are offered, each with its version.
+func TestSelectInstallFiles_SeparateComponentsAskNoVersion(t *testing.T) {
+	setPickerFlags(t)
+	files := []domain.DownloadableFile{
+		{ID: "core", Name: "Core", FileName: "Core-1.2.zip", Version: "1.2", Category: "MAIN", IsPrimary: true, Size: 10},
+		{ID: "core11", Name: "Core", FileName: "Core-1.1.zip", Version: "1.1", Category: "MAIN", Size: 10},
+		{ID: "tex", Name: "Textures", FileName: "Textures-1.0.zip", Version: "1.0", Category: "MAIN", Size: 10},
+	}
+	var selected []*domain.DownloadableFile
+	out := captureStdout(t, func() error {
+		var err error
+		// Core's two copies are a version choice; Textures is offered
+		// beside either.
+		selected, err = selectInstallFilesFrom(strings.NewReader("1\n1,2\n"), files, nil)
+		return err
+	})
+	versions, list, ok := strings.Cut(out, "Available files:")
+	require.True(t, ok, out)
+	assert.Contains(t, versions, "[1] 1.2")
+	assert.Contains(t, versions, "[2] 1.1")
+	assert.NotContains(t, versions, "1.0", "a separate component's version is no choice")
+	assert.Contains(t, list, "[2] Textures-1.0.zip (MAIN, version 1.0, 10 B)")
+	assert.NotContains(t, list, "Core-1.1.zip")
+	assert.Equal(t, []string{"core", "tex"}, selectedIDs(selected))
 }
