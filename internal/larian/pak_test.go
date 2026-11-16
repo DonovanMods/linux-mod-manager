@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -179,5 +180,25 @@ func TestReadFile_RefusesASizeMismatch(t *testing.T) {
 		if _, err := p.ReadFile(f, 1<<20); !errors.Is(err, ErrCorrupt) {
 			t.Fatalf("method %d: got %v", method, err)
 		}
+	}
+}
+
+// An LZ4 block cannot expand more than ~255 times, so a file list that
+// claims ~50 MiB of entries from a few compressed bytes is refused before
+// lmm allocates room for it.
+func TestOpenPak_RefusesAListLargerThanItsBlockCanHold(t *testing.T) {
+	pak := buildPak(t, pakOptions{version: 18}, testMember{name: "a", data: []byte("x")})
+	listOff := binary.LittleEndian.Uint64(pak[8:])
+	binary.LittleEndian.PutUint32(pak[listOff:], 200_000) // 200,000 × 272 bytes: under the 64 MiB cap
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_, err := OpenPak(bytes.NewReader(pak), int64(len(pak)))
+	runtime.ReadMemStats(&after)
+	if !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("got %v", err)
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 1<<20 {
+		t.Fatalf("allocated %d bytes for a list its block cannot hold", grew)
 	}
 }

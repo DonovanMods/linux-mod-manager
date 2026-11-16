@@ -91,7 +91,17 @@ func ParseMeta(data []byte, folder string) (Module, error) {
 	if m.Folder == "" {
 		return Module{}, fmt.Errorf("%w: no Folder", ErrBadMeta)
 	}
+	if !validFolder(m.Folder) {
+		return Module{}, fmt.Errorf("%w: its Folder %q is not one folder name", ErrBadMeta, m.Folder)
+	}
 	return m, nil
+}
+
+// validFolder reports whether f can be a module's folder: one name, so the
+// game resolves Mods/<Folder> one level down and nowhere else - no path
+// separator, no "..", and no leading dot (".", "..", hidden names).
+func validFolder(f string) bool {
+	return !strings.ContainsAny(f, `/\`) && !strings.Contains(f, "..") && !strings.HasPrefix(f, ".")
 }
 
 // ValidUUID reports whether s can be a module UUID: 1 to 64 ASCII letters,

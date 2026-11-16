@@ -111,3 +111,26 @@ func TestValidUUID(t *testing.T) {
 		}
 	}
 }
+
+// A hostile pak must not make the game resolve Mods/<Folder> anywhere but
+// one folder down: a Folder with a path separator, a "..", or a leading
+// dot is refused, whether the meta.lsx states it or it comes from the
+// member's path.
+func TestParseMeta_RefusesAFolderThatIsAPath(t *testing.T) {
+	for _, folder := range []string{"../Elsewhere", `a\b`, "a/b", "..", ".hidden", "a..b/..", "."} {
+		data := []byte(`<save><region id="Config"><node id="root"><children><node id="ModuleInfo">` +
+			`<attribute id="UUID" value="` + testUUID + `"/><attribute id="Folder" value="` + folder + `"/>` +
+			`</node></children></node></region></save>`)
+		if _, err := ParseMeta(data, "Safe"); !errors.Is(err, ErrBadMeta) {
+			t.Errorf("Folder %q: got %v", folder, err)
+		}
+	}
+	data := []byte(`<save><region id="Config"><node id="root"><children><node id="ModuleInfo">` +
+		`<attribute id="UUID" value="` + testUUID + `"/></node></children></node></region></save>`)
+	if _, err := ParseMeta(data, ".dot"); !errors.Is(err, ErrBadMeta) {
+		t.Errorf("a fallback folder with a leading dot: got %v", err)
+	}
+	if m, err := ParseMeta(data, "Fine_Folder-1.2"); err != nil || m.Folder != "Fine_Folder-1.2" {
+		t.Errorf("a plain folder: %+v, %v", m, err)
+	}
+}

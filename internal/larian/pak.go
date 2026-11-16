@@ -152,6 +152,12 @@ func OpenPak(r io.ReaderAt, size int64) (*Pak, error) {
 	if int64(compressed) > maxFileListBytes {
 		return nil, fmt.Errorf("%w: the file list is %d bytes", ErrTooLarge, compressed)
 	}
+	// An LZ4 block cannot expand more than 255 times (a match of length L
+	// costs at least ~L/255 bytes), so a list larger than that is corrupt:
+	// refused before the room for it is allocated.
+	if listBytes > int64(compressed)*255+64 {
+		return nil, fmt.Errorf("%w: %d bytes of file list cannot decode to %d", ErrCorrupt, compressed, listBytes)
+	}
 	src := make([]byte, compressed)
 	if _, err := r.ReadAt(src, int64(listOffset)+8); err != nil {
 		return nil, fmt.Errorf("%w: reading the file list: %v", ErrCorrupt, err)
