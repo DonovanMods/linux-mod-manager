@@ -262,10 +262,11 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 
 // commitImportItem is commit for one acquired import item: the cache, the
 // deployment, the DB row, its checksums and the profile ref, in the order
-// and under the Ruling 16 pairing the single loop had. A non-nil error is
-// fatal to the whole import (a cancellation, or a profile write that
-// recordImportedRef cannot complete).
-func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan *ImportPlan, profileName string, pm *ProfileManager, installer *Installer, st *importStaged, deploy bool, result *ProfileImportResult, emit func(Event)) error {
+// and under the Ruling 16 pairing the single loop had; the ref goes into
+// the flow's batch (refs, #661). A non-nil error is fatal to the whole
+// import (a cancellation, or a profile write that recordImportedRef cannot
+// complete).
+func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan *ImportPlan, profileName string, refs *profileRefBatch, installer *Installer, st *importStaged, deploy bool, result *ProfileImportResult, emit func(Event)) error {
 	scope := st.scope
 	fail := func(reason string) {
 		recordImportFailure(result, st.ref, scope.ModName, reason)
@@ -287,7 +288,7 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 			emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
 		}
 		s.writeImportPolicy(ctx, game, plan, profileName, st.key, row.SourceID, row.ID, scope, result, emit)
-		if cerr := s.recordImportedRef(ctx, pm, game.ID, profileName, modRef, fomodRecord{op: fomodKeep}, scope, result, emit); cerr != nil {
+		if cerr := s.recordImportedRef(ctx, refs, modRef, fomodRecord{op: fomodKeep}, scope, result, emit); cerr != nil {
 			return cerr
 		}
 		result.countImported(deploy)
@@ -339,7 +340,7 @@ func (s *Service) commitImportItem(ctx context.Context, game *domain.Game, plan 
 
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: st.fileIDs}
 	fomodRec := fomodRecordOf(st.fomod)
-	if cerr := s.recordImportedRef(ctx, pm, game.ID, profileName, modRef, fomodRec, scope, result, emit); cerr != nil {
+	if cerr := s.recordImportedRef(ctx, refs, modRef, fomodRec, scope, result, emit); cerr != nil {
 		return cerr
 	}
 	result.countImported(deploy)

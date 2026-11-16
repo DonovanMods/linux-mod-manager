@@ -513,6 +513,11 @@ func (s *Service) finishInstall(ctx context.Context, game *domain.Game, plan *Co
 	failed := map[string]string{}
 	failedErrs := map[string]error{}
 	pm := s.NewProfileManager()
+	// #661: the loop's profile refs, a batch at a time; flushed below
+	// before the to-dos are written, and by the defer should a commit
+	// panic.
+	batch := s.newRefBatch(pm, game.ID, profile.Name)
+	defer func() { _ = batch.flush() }()
 	var installer *Installer
 	run := acquireRun[*importStaged]{
 		policy: acquirePolicy{mode: acquirePhased, blockNone: true},
@@ -526,14 +531,18 @@ func (s *Service) finishInstall(ctx context.Context, game *domain.Game, plan *Co
 		begin: func(ctx context.Context) error {
 			var err error
 			installer, err = s.getInstallerForProfile(ctx, game, profile.Name)
+			if err == nil {
+				installer.readOverridesOnce()
+			}
 			return err
 		},
 		commit: func(ctx context.Context, _ int, st *importStaged) error {
-			return s.commitImportItem(ctx, game, iplan, profile.Name, pm, installer, st, deploy, ir, emit)
+			return s.commitImportItem(ctx, game, iplan, profile.Name, batch, installer, st, deploy, ir, emit)
 		},
 		release: func(st *importStaged, blocked bool) { s.releaseAcquired(st.files, blocked) },
 	}
 	runErr := runAcquire(ctx, run)
+	flushImportedRefs(batch, Scope{Op: OpCollectionFinish}, ir, emit)
 	result.Installed, result.Recorded, result.Failed = ir.Installed, ir.Recorded, ir.Failed
 	result.Failures, result.ReusedDownloads = ir.Failures, ir.ReusedDownloads
 	result.Warnings = append(result.Warnings, ir.Warnings...)
