@@ -335,60 +335,23 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 		return result, nil
 	}
 
-	for _, ref := range plan.ToAdd {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-		if err := pm.AddMod(ctx, plan.GameID, plan.Profile, ref); err != nil {
-			// v2 Phase 3 Task 18: AddMod's own ctx.Err() guard can now be
-			// what fails this call - a cancellation stays fatal here, same
-			// as this loop's top-of-iteration check, rather than the
-			// swallowed-note path below.
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return result, ctxErr
-			}
-			note(ref, SyncAddNote, fmt.Sprintf("Warning: %v", err))
-		}
-		result.Added++
+	// #663: the three buckets' writes go into one document, saved a batch
+	// at a time (#661's profileRefBatch) and once more when the loops end
+	// - done or cancelled - so every ref the sync counted is on disk
+	// before it returns, as each per-item save left it. A sync writes no
+	// DB row, so Ruling 16 has no pair here to split.
+	refs := s.newRefBatch(pm, plan.GameID, plan.Profile)
+	defer func() { _ = refs.flush() }()
+	loopErr := s.syncProfileRefs(ctx, plan, refs, result, note, warn)
+	if err := refs.close(); err != nil {
+		// The save that failed even on its retry: unconditional, as the
+		// update loop's refusal is, naming the refs it could not record.
+		msg := fmt.Sprintf("could not update profile: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(StepEvent{Scope: Scope{Op: OpProfileSync}, Phase: SyncUpdateWarning, Detail: msg})
 	}
-
-	for _, ref := range plan.ToRemove {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-		if err := pm.RemoveMod(ctx, plan.GameID, plan.Profile, ref.SourceID, ref.ModID); err != nil {
-			// v2 Phase 3 Task 18: same cancellation-stays-fatal guard as
-			// the ToAdd loop above.
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return result, ctxErr
-			}
-			note(ref, SyncRemoveNote, fmt.Sprintf("Warning: %v", err))
-		}
-		result.Removed++
-	}
-
-	for _, ref := range plan.ToUpdate {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-		if err := pm.UpsertMod(ctx, plan.GameID, plan.Profile, ref); err != nil {
-			// v2 Phase 3 Task 18: UpsertMod's own ctx.Err() guard can now be
-			// what fails this call, so a cancellation must stay fatal here
-			// exactly as it would at this loop's top-of-iteration check -
-			// not fall into the #294 warning path below, which is for a
-			// business refusal (a locked ref), or the run would report
-			// success despite never finishing.
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return result, ctxErr
-			}
-			// #294 (Ruling 5), the Phase 3 behaviour fix ruling 9 deferred:
-			// a refusal here (today, only a LOCKED ref, #143) leaves the
-			// profile ref unwritten, so it is a Warning - unconditional -
-			// not the --verbose-only note doProfileSync used to swallow it
-			// into.
-			warn(ref, SyncUpdateWarning, fmt.Sprintf("could not update %s:%s: %v", ref.SourceID, ref.ModID, err))
-		}
-		result.Updated++
+	if loopErr != nil {
+		return result, loopErr
 	}
 
 	// #197: the sync's diagnostics are Warnings, not per-item notes - a
@@ -400,4 +363,74 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 	}
 
 	return result, nil
+}
+
+// syncProfileRefs applies a sync plan's ToAdd, ToRemove and ToUpdate to
+// refs, in that order, counting each on result as the per-item writes did:
+// a refusal is the entry's note or warning and still counted, a
+// cancellation ends the run.
+func (s *Service) syncProfileRefs(ctx context.Context, plan *ProfileSyncPlan, refs *profileRefBatch, result *ProfileSyncResult,
+	note, warn func(domain.ModReference, DeployPhase, string)) error {
+	for _, ref := range plan.ToAdd {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := refs.add(ctx, ref); err != nil {
+			// v2 Phase 3 Task 18: the write's own ctx.Err() guard can be
+			// what fails it - a cancellation stays fatal here, same as
+			// this loop's top-of-iteration check, rather than the
+			// swallowed-note path below.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			note(ref, SyncAddNote, fmt.Sprintf("Warning: %v", err))
+		}
+		result.Added++
+	}
+
+	for _, ref := range plan.ToRemove {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := refs.remove(ctx, ref.SourceID, ref.ModID); err != nil {
+			// v2 Phase 3 Task 18: same cancellation-stays-fatal guard as
+			// the ToAdd loop above.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			note(ref, SyncRemoveNote, fmt.Sprintf("Warning: %v", err))
+		}
+		result.Removed++
+	}
+
+	for _, ref := range plan.ToUpdate {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// UpsertMod's FOMOD rule: recorded choices on the ref are set,
+		// none keeps what the document records.
+		rec := fomodRecord{op: fomodKeep}
+		if !ref.FomodRecord().IsZero() {
+			rec = fomodRecord{op: fomodSet, rec: ref.FomodRecord()}
+		}
+		if err := refs.upsert(ctx, ref, rec); err != nil {
+			// v2 Phase 3 Task 18: the write's own ctx.Err() guard can be
+			// what fails it, so a cancellation must stay fatal here
+			// exactly as it would at this loop's top-of-iteration check -
+			// not fall into the #294 warning path below, which is for a
+			// business refusal (a locked ref), or the run would report
+			// success despite never finishing.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			// #294 (Ruling 5), the Phase 3 behaviour fix ruling 9 deferred:
+			// a refusal here (today, only a LOCKED ref, #143) leaves the
+			// profile ref unwritten, so it is a Warning - unconditional -
+			// not the --verbose-only note doProfileSync used to swallow it
+			// into.
+			warn(ref, SyncUpdateWarning, fmt.Sprintf("could not update %s:%s: %v", ref.SourceID, ref.ModID, err))
+		}
+		result.Updated++
+	}
+	return nil
 }

@@ -252,9 +252,10 @@ func TestProfileRefBatch_SavesAtItsBounds(t *testing.T) {
 }
 
 // TestProfileRefBatch_AFailedSaveKeepsItsUpserts pins a save that fails
-// mid-batch: the upsert that reached the bound reports it, as the per-item
-// write reported its own failed save, and nothing is dropped - the next
-// save writes every pending ref.
+// mid-batch: nothing is dropped - the next save writes every pending ref.
+// The upsert that reached the bound does not report it (#663): its change
+// is not lost yet, and close's last save is what names a ref the profile
+// lacks, so one failed save is one warning, as it was per item.
 func TestProfileRefBatch_AFailedSaveKeepsItsUpserts(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root writes through a read-only directory")
@@ -270,7 +271,7 @@ func TestProfileRefBatch_AFailedSaveKeepsItsUpserts(t *testing.T) {
 	require.NoError(t, os.Chmod(filepath.Dir(path), 0o555))
 	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(path), 0o755) })
 	err := b.upsert(ctx, domain.ModReference{SourceID: "src", ModID: "fomodset", Version: "8"}, keep)
-	require.Error(t, err, "the save at the bound fails")
+	require.NoError(t, err, "the save at the bound fails, which is not this upsert's failure")
 	assert.Equal(t, 2, b.pending, "and keeps both upserts")
 
 	require.NoError(t, os.Chmod(filepath.Dir(path), 0o755))
@@ -457,4 +458,35 @@ func TestInstaller_ReadOverridesOnce(t *testing.T) {
 	none := &Installer{}
 	none.readOverridesOnce()
 	assert.Nil(t, none.overridesFor(game, "a"), "an Installer built without a Service still reads none")
+}
+
+// TestProfileRefBatch_AddAndRemoveFollowTheirPerItemRules pins a sync's
+// batched writes (#663) to AddMod's and RemoveMod's rules: an add of a mod
+// the document lists and a removal of one it does not are refused with
+// the document and the pending count unchanged, the same errors the
+// per-item writes return; neither saves at once, as an appending upsert
+// does, since no loop that adds or removes reads the profile meanwhile.
+func TestProfileRefBatch_AddAndRemoveFollowTheirPerItemRules(t *testing.T) {
+	ctx := context.Background()
+	dir, _ := writeRefBatchProfile(t)
+	pm := NewProfileManager(dir, nil)
+	saves := &atomic.Int64{}
+	pm.saves = saves
+	b := &profileRefBatch{pm: pm, gameID: "g1", profileName: "col", items: 10, window: time.Hour, now: time.Now}
+
+	require.NoError(t, b.add(ctx, domain.ModReference{SourceID: "src", ModID: "new", Version: "1", FileIDs: []string{"n"}}))
+	err := b.add(ctx, domain.ModReference{SourceID: "src", ModID: "new"})
+	require.EqualError(t, err, "mod already in profile: src:new")
+	require.NoError(t, b.remove(ctx, "src", "off"))
+	require.ErrorIs(t, b.remove(ctx, "src", "off"), domain.ErrModNotFound)
+	assert.Equal(t, 2, b.pending, "the refusals are not pending writes")
+	assert.Equal(t, int64(0), saves.Load(), "an add saves with its batch, not at once")
+
+	require.NoError(t, b.close())
+	saved, err := config.LoadProfile(dir, "g1", "col")
+	require.NoError(t, err)
+	require.NotNil(t, saved.FindRef("src", "new"))
+	assert.Equal(t, []string{"n"}, saved.FindRef("src", "new").FileIDs)
+	assert.Nil(t, saved.FindRef("src", "off"))
+	assert.Equal(t, "src:new", saved.Mods[len(saved.Mods)-1].SourceID+":"+saved.Mods[len(saved.Mods)-1].ModID, "an add appends")
 }

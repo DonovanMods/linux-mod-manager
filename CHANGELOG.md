@@ -919,8 +919,19 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   test source (no real downloads) took 6.5 s and now takes 0.5 s; the
   profile file
   each flow ends with is unchanged, and no installed mod ends a cancelled
-  run without its profile entry. `lmm profile apply` and
-  `lmm profile switch` still write once per mod.
+  run without its profile entry.
+
+- **`lmm profile apply`, `lmm profile switch` and `lmm profile sync` write
+  the profile in batches too (#663).** The three (and their web UI jobs)
+  rewrote the whole profile file once per mod, the same slowdown #661
+  removed from imports. They now write it 25 mods at a time (or every
+  2 seconds), and once more when the loop ends. On a local test source (no
+  real downloads), applying a 600-mod profile drops from 7.3 s and 600
+  profile writes to 0.75 s and 24, a switch into one from 8.3 s to 0.8 s,
+  and a sync of 600 entries from 2.9 s to 0.1 s; the profile file each one
+  ends with is unchanged. When a profile write fails, all three report it
+  once, naming the mods the profile does not record (an import used to
+  report a failed mid-batch write a second time).
 
 - **An install takes files from one version of a mod (#647).**
   `lmm install` used to accept files of different versions together (through
@@ -1115,6 +1126,13 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   version as `<version>@<variant>`.
 
 ### Fixed
+
+- **A cancelled `lmm profile apply` no longer leaves an installed mod's
+  profile entry behind (#663).** Cancelling an apply (Ctrl-C, or `lmm serve`
+  shutting down during its web UI job) just after a mod was installed could leave the profile
+  still naming the old version and files of that mod, so the next apply
+  reinstalled it. The entry is now written whatever the cancellation says,
+  as `lmm profile switch` already did.
 
 - **`lmm service` says which lmm binary the service runs (#649).**
   `lmm service install` writes the path of the lmm that ran it into

@@ -1,7 +1,10 @@
 // Package core: this file is profileRefBatch, the profile-ref writes of a
 // flow that installs many mods in one loop - a profile import (a collection
-// import included) and `lmm profile finish` - held in one in-memory
-// document and saved a batch at a time, not once per item (#661).
+// import included), `lmm profile finish` and `lmm profile fill` (#661), and
+// `lmm profile apply` and `lmm profile switch` (#663) - held in one
+// in-memory document and saved a batch at a time, not once per item. `lmm
+// profile sync`, which installs nothing, writes its adds, removals and
+// updates through the same batch (#663).
 //
 // Each item's ref used to be one upsertModRef: load the whole profile,
 // change one ref, save the whole profile. Over n items that is n loads and
@@ -17,14 +20,17 @@
 // mutation in this process (a web UI request) nor another lmm process
 // can edit the profile under it. What the loop itself reads from the
 // profile file while a batch is pending - the hand-off's load order and
-// off markers (heirCandidates), the overrides (overriddenModFiles) - is
-// nothing upsertRef changes in place; an upsert that APPENDS a ref (the
-// document did not list the mod) changes the order, so it is saved at
-// once.
+// off markers (heirCandidates), the overrides (overriddenModFiles), and a
+// FOMOD install's file states and collection pin (the plugins block, the
+// collection origin and the mod's own substituted pin: fileStatesForWith,
+// recipeMD5For) - is nothing upsertRef changes in place; an upsert that
+// APPENDS a ref (the document did not list the mod) changes the order, so
+// it is saved at once.
 //
 // Ruling 16: an item's DB row is written before its ref, and the ref is
 // recorded in the held document even under a cancelled ctx (the caller
-// runs upsert through completeProfileWrite, as before). The flow then
+// runs upsert through completeProfileWrite - as the import's and switch's
+// always did, and apply's does since #663). The flow then
 // flushes when its loop ends - cancelled, failed or done - under no ctx at
 // all (profileRefBatch.close), so no installed row ends a run without its
 // ref on disk. Only a process that dies mid-batch can leave the profile
@@ -107,8 +113,50 @@ func (s *Service) newRefBatch(pm *ProfileManager, gameID, profileName string) *p
 // It returns ctx.Err() before touching anything, as every ProfileManager
 // write does (Ruling 11); a caller completing a DB write runs it through
 // completeProfileWrite. A save it makes on reaching the batch's bound can
-// fail; the change stays in the document and the next save carries it.
+// fail; that is not this write's failure (see change).
 func (b *profileRefBatch) upsert(ctx context.Context, mod domain.ModReference, rec fomodRecord) error {
+	// The per-item write saved at once, so nothing it was handed could
+	// change under it; the held document must not share the caller's
+	// slice either.
+	mod.FileIDs = slices.Clone(mod.FileIDs)
+	return b.change(ctx, domain.ModKey(mod.SourceID, mod.ModID), func(doc *domain.Profile) (bool, error) {
+		return upsertRef(doc, b.profileName, mod, rec, false)
+	})
+}
+
+// add records mod as AddMod does (`lmm profile sync`'s ToAdd, #663): the
+// same refusal of a mod the document already lists, the same append. An
+// add does not save at once, as an appending upsert does: that rule is for
+// a loop that reads the profile file while it installs, and the one loop
+// that adds - a sync's - reads nothing and installs nothing.
+func (b *profileRefBatch) add(ctx context.Context, mod domain.ModReference) error {
+	mod.FileIDs = slices.Clone(mod.FileIDs) // as upsert: no slice shared with the caller
+	return b.change(ctx, domain.ModKey(mod.SourceID, mod.ModID), func(doc *domain.Profile) (bool, error) {
+		return false, addRef(doc, mod)
+	})
+}
+
+// remove drops sourceID/modID's refs as RemoveMod does (a sync's ToRemove,
+// #663): domain.ErrModNotFound, the document unchanged, when it lists
+// none. Like add it does not save at once: only a sync removes.
+func (b *profileRefBatch) remove(ctx context.Context, sourceID, modID string) error {
+	return b.change(ctx, domain.ModKey(sourceID, modID), func(doc *domain.Profile) (bool, error) {
+		return false, removeRef(doc, sourceID, modID)
+	})
+}
+
+// change applies one write to the held document - loading it first, when
+// this is the batch's first - counts it pending under key, and saves the
+// batch when the write says to (flushNow) or the batch has reached its
+// bound. A write that refuses leaves the document and the count as they
+// were.
+//
+// A save made here that fails is not reported: the change stays in the
+// document and the next save carries it, so it is not yet a ref the
+// profile lacks - only close's last save says that, naming every mod it
+// could not record (#663: reporting both made one failed save two
+// warnings, where the per-item write it replaces made one).
+func (b *profileRefBatch) change(ctx context.Context, key string, write func(*domain.Profile) (flushNow bool, err error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -119,11 +167,7 @@ func (b *profileRefBatch) upsert(ctx context.Context, mod domain.ModReference, r
 		}
 		b.doc = doc
 	}
-	// The per-item write saved at once, so nothing it was handed could
-	// change under it; the held document must not share the caller's
-	// slice either.
-	mod.FileIDs = slices.Clone(mod.FileIDs)
-	appended, err := upsertRef(b.doc, b.profileName, mod, rec, false)
+	flushNow, err := write(b.doc)
 	if err != nil {
 		return err
 	}
@@ -131,11 +175,11 @@ func (b *profileRefBatch) upsert(ctx context.Context, mod domain.ModReference, r
 		b.since = b.now()
 	}
 	b.pending++
-	if key := domain.ModKey(mod.SourceID, mod.ModID); !slices.Contains(b.keys, key) {
+	if !slices.Contains(b.keys, key) {
 		b.keys = append(b.keys, key)
 	}
-	if appended || b.pending >= b.items || b.now().Sub(b.since) >= b.window {
-		return b.flush()
+	if flushNow || b.pending >= b.items || b.now().Sub(b.since) >= b.window {
+		_ = b.flush()
 	}
 	return nil
 }

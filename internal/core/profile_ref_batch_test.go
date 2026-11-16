@@ -415,8 +415,9 @@ func TestApplyProfileFill_CancelledMidBatch_EveryRowHasItsRef(t *testing.T) {
 }
 
 // TestApplyBookkeepingTiming measures, with LMM_PERF_661 set, `lmm profile
-// apply` of a profile listing n plain mods, none installed: a converge
-// that still writes one ref per item, which #661 leaves for a follow-up.
+// apply` of a profile listing n plain mods, none installed. #663 batched
+// its ref writes; TestProfileApplyBookkeepingTiming measures it with a
+// switch and a sync.
 func TestApplyBookkeepingTiming(t *testing.T) {
 	if os.Getenv("LMM_PERF_661") == "" {
 		t.Skip("set LMM_PERF_661=1 to measure")
