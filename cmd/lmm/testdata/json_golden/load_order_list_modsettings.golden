@@ -1,0 +1,43 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "orders": [
+    {
+      "game_id": "g1",
+      "profile": "default",
+      "id": "baldursgate3",
+      "label": "Paks",
+      "list_file": "<PROFILE_DIR>/modsettings.lsx",
+      "first_wins": false,
+      "enables": true,
+      "active": true,
+      "recorded": false,
+      "files": [
+        {
+          "position": 1,
+          "name": "GustavX",
+          "managed": false,
+          "placement": "external"
+        },
+        {
+          "position": 2,
+          "name": "Camera.pak",
+          "managed": true,
+          "source_id": "src",
+          "mod_id": "camera",
+          "mod_name": "camera",
+          "placement": "default"
+        },
+        {
+          "position": 3,
+          "name": "Zoom.pak",
+          "managed": true,
+          "source_id": "src",
+          "mod_id": "zoom",
+          "mod_name": "zoom",
+          "placement": "default"
+        }
+      ]
+    }
+  ]
+}

@@ -384,9 +384,13 @@ func TestParseManifest_UnknownAndEmptyKeys(t *testing.T) {
 	m, err := New(nil, "").ParseManifest(fstest.MapFS{"collection.json": {Data: []byte(doc)}})
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{
-		"info.futureInfo", "loadOrder", "mergedData", "collectionConfig.brandNew",
+		"info.futureInfo", "mergedData", "collectionConfig.brandNew",
 		"mods.source.sourceNew", "mods.details.detailNew", "mods.modNew",
 	}, unknownKeyNames(m), "extensionVersion is informational; empty values are absent")
+	// #646: the top-level loadOrder is read, not reported unknown: the
+	// importer decides whether the game has the order it carries.
+	require.NotNil(t, m.LoadOrder)
+	assert.Equal(t, []source.ManifestFileLoadOrderEntry{{Name: "a.pak", Enabled: true}}, m.LoadOrder.Files)
 	assert.Equal(t, []string{"reference.oddKey"}, m.ModRules[0].Unknown,
 		"a rule's unknown key is the rule's: it matters only if the rule is applied")
 	for _, u := range m.Unknown {
@@ -520,4 +524,44 @@ func TestParseManifest_UnreadableFileLoadOrderEntries(t *testing.T) {
 	assert.Nil(t, m.FileLoadOrders[0].Files)
 	assert.Empty(t, m.FileLoadOrders[1].Invalid)
 	assert.Len(t, m.FileLoadOrders[1].Files, 1)
+}
+
+// #646: a Baldur's Gate 3 recipe's top-level loadOrder, in the shape the
+// surveyed recipe has (2026-11-16, 1,627 entries): the pak's file name as
+// id, the curator's pak facts as data, override paks locked. Each entry's
+// file is its id; an empty loadOrder is absent; one whose entries cannot
+// be read is reported with why.
+func TestParseManifest_TopLevelLoadOrder(t *testing.T) {
+	doc := `{
+		"info": {"name": "C", "domainName": "baldursgate3"},
+		"loadOrder": [
+			{"id": "Override.pak", "modId": "Fixer-1-1", "enabled": true, "name": "Override", "locked": true,
+			 "data": {"uuid": "x", "isListed": true}},
+			{"id": "ImpUI.pak", "modId": "ImpUI-366-1", "enabled": true, "name": "ImpUI (ImprovedUI)", "index": 1,
+			 "data": {"author": "a", "folder": "ImpUI", "uuid": "26922ba9-6018-5252-075d-7ff2ba6ed879", "version": "1"}},
+			{"name": "NoId.pak", "enabled": false}
+		],
+		"mods": []
+	}`
+	m, err := New(nil, "").ParseManifest(fstest.MapFS{"collection.json": {Data: []byte(doc)}})
+	require.NoError(t, err)
+	assert.Empty(t, m.Unknown)
+	require.NotNil(t, m.LoadOrder)
+	assert.Empty(t, m.LoadOrder.ID)
+	assert.Equal(t, 3, m.LoadOrder.Entries)
+	assert.Equal(t, []source.ManifestFileLoadOrderEntry{
+		{Name: "Override.pak", Enabled: true, ModHint: "Fixer-1-1"},
+		{Name: "ImpUI.pak", Enabled: true, ModHint: "ImpUI-366-1"},
+		{Name: "NoId.pak"},
+	}, m.LoadOrder.Files)
+
+	m, err = New(nil, "").ParseManifest(fstest.MapFS{"collection.json": {Data: []byte(`{"info": {"name": "C"}, "loadOrder": [], "mods": []}`)}})
+	require.NoError(t, err)
+	assert.Nil(t, m.LoadOrder, "an empty loadOrder is absent")
+
+	m, err = New(nil, "").ParseManifest(fstest.MapFS{"collection.json": {Data: []byte(`{"info": {"name": "C"}, "loadOrder": [{"id": 7}], "mods": []}`)}})
+	require.NoError(t, err)
+	require.NotNil(t, m.LoadOrder)
+	assert.NotEmpty(t, m.LoadOrder.Invalid)
+	assert.Empty(t, m.LoadOrder.Files)
 }

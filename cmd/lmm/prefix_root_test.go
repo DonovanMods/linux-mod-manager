@@ -67,7 +67,7 @@ func TestCLI_PrefixFilesDeployUninstallAndPurge(t *testing.T) {
 	setFlag(t, &verbose, false)
 
 	out := captureCombined(t, func() error { return doDeploy(ctx, svc, game, nil) })
-	assert.Contains(t, out, "modsettings.lsx", "the deploy says what lmm does not do yet")
+	assert.Contains(t, out, "modsettings.lsx", "the deploy names the mod list lmm writes")
 	got, err := os.ReadFile(pak)
 	require.NoError(t, err)
 	assert.Equal(t, "pak", string(got), "the pak is in the prefix's Mods folder, flat")

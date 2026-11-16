@@ -120,6 +120,10 @@ func sanitizeConvertInput(in convertInput) (convertInput, error) {
 		m.GameVersions = slices.Clone(m.GameVersions)
 		m.Unknown = slices.Clone(m.Unknown)
 		m.FileLoadOrders = slices.Clone(m.FileLoadOrders)
+		if m.LoadOrder != nil {
+			lo := *m.LoadOrder
+			m.LoadOrder = &lo
+		}
 		m.ModRules = slices.Clone(m.ModRules)
 		line("the recipe's name", &m.Name)
 		line("the recipe's curator", &m.Author)
@@ -155,6 +159,12 @@ func sanitizeConvertInput(in convertInput) (convertInput, error) {
 			// The names are matched against deployed files and checked by
 			// L1 (checkCollectionLoadOrders), never rewritten; a hint is
 			// display data.
+			lo.Files = slices.Clone(lo.Files)
+			for j := range lo.Files {
+				line("a load order's mod hint", &lo.Files[j].ModHint)
+			}
+		}
+		if lo := m.LoadOrder; lo != nil {
 			lo.Files = slices.Clone(lo.Files)
 			for j := range lo.Files {
 				line("a load order's mod hint", &lo.Files[j].ModHint)

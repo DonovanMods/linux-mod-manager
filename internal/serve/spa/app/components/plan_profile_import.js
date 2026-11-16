@@ -226,8 +226,9 @@ function PluginOrderSection({ summary: p, plugins }) {
 
 /** LoadOrderSection renders one core.CollectionLoadOrderSummary (issue
  * 620): a file load order the import saves on the profile - Cyberpunk
- * 2077's archives - its files (each with the collection mod the source ties
- * it to), and whether lmm writes it for this game. */
+ * 2077's archives, Baldur's Gate 3's paks (issue 646) - its files (each
+ * with the collection mod the source ties it to), and whether lmm writes
+ * it for this game. */
 function LoadOrderSection({ order: o }) {
   const files = o.files ?? [];
   const label = o.label || o.id;
@@ -243,13 +244,15 @@ function LoadOrderSection({ order: o }) {
         data-testid="collection-load-order-applied"
       >
         ${
-          o.managed
-            ? `Saved on the profile and written to the game's list at every deploy${
-                o.first_wins
-                  ? "; a file higher in the order wins a conflict"
-                  : ""
-              }.`
-            : `This game's adapter does not write the ${o.id} load order, so the import is refused for it.`
+          o.managed && o.enables
+            ? "Saved on the profile: lmm lists these files in the game's mod list, in this order, at every deploy; a file lower in the order wins a conflict."
+            : o.managed
+              ? `Saved on the profile and written to the game's list at every deploy${
+                  o.first_wins
+                    ? "; a file higher in the order wins a conflict"
+                    : ""
+                }.`
+              : `This game's adapter does not write the ${o.id} load order, so the import is refused for it.`
         }
       </p>
       ${

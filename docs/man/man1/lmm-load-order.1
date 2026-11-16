@@ -2,7 +2,7 @@
 .TH "LMM" "1" "Nov 2026" "lmm 2.3.0" "User Commands"
 
 .SH NAME
-lmm-load-order - Show and change a game's file load order (Cyberpunk 2077's archives)
+lmm-load-order - Show and change a game's file load order (Cyberpunk 2077's archives, Baldur's Gate 3's paks)
 
 
 .SH SYNOPSIS
@@ -14,7 +14,10 @@ Show and change the order a game loads a set of mod files in, where the
 game reads that order from a list file: Cyberpunk 2077 (a game on the
 cyberpunk2077 adapter) loads the .archive files in archive/pc/mod in the
 order archive/pc/mod/modlist.txt gives, and an archive listed earlier wins
-a conflict with one listed later.
+a conflict with one listed later. Baldur's Gate 3 (the baldurs-gate-3
+adapter) loads the .pak mods in its Mods folder in the order its mod list,
+modsettings.lsx, gives - and only those it lists - and a pak listed later
+wins a conflict.
 
 .PP
 This is a third ordering axis beside mod order (which mod's file wins when
@@ -31,6 +34,18 @@ did not deploy is never reordered: lmm lists each one where the game loads
 it now, keeping its order among the others. An archive lmm deploys that the
 order does not name yet goes in next to the archive it sorts after
 alphabetically, which is where the game would load it with no list.
+
+.PP
+Baldur's Gate 3's list differs, because it enables the paks as well as
+ordering them: lmm writes modsettings.lsx at every deploy whether or not
+the profile records an order, listing the module each .pak's meta.lsx
+declares. It keeps the game's own entry (GustavX) first and every entry it
+did not add - a mod you enabled yourself, or the in-game mod manager did -
+where it is, and never lists a pak it did not deploy. A pak the order does
+not name goes at the end; 'reset' clears the recorded order and keeps the
+paks listed in the order they have. A pak with no meta.lsx only replaces
+game files and needs no entry. lmm never creates modsettings.lsx: run the
+game once so it writes it. A purge puts back the list you had.
 
 .PP
 -p/--profile picks the profile (default: the active one); --id picks the

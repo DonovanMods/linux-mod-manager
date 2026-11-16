@@ -845,6 +845,26 @@ since, or removes the list lmm created. A mod that ships its own
 `modlist.txt` is never written over. See the guide's [Archive load
 order](guide/load-order.md).
 
+Baldur's Gate 3 on `adapter: baldurs-gate-3` has one too, `baldursgate3`
+(#646): its `.pak` mods, by file name, in the order the game's mod list
+(`PlayerProfiles/Public/modsettings.lsx` in its prefix) loads them, the
+last one winning a conflict. That list also enables the paks, so lmm
+writes it at every deploy whether or not the profile records an order:
+without one, lmm's paks keep the order the list has them in, and a new one
+goes at the end; with one, the paks it names go in its order and the rest
+after them. Only lmm's own entries are written: the game's own entry and
+every entry lmm did not add stay where they are. Removing the order
+(`lmm load-order reset`) keeps the paks listed; `lmm purge` puts back the
+list lmm first replaced. See the guide's [Pak mods and their
+order](guide/bg3-mods.md).
+
+```yaml
+load_orders:
+  baldursgate3:
+    - ImprovedUI.pak
+    - MCM.pak
+```
+
 An older lmm that rewrites the profile drops the `load_orders:` block.
 
 #### Upgrading: mods disabled before the marker existed

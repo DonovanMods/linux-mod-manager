@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/modtypes"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -78,11 +79,21 @@ func (s *recipeSource) ParseManifest(root fs.FS) (source.CollectionManifest, err
 				MD5  string `json:"md5"`
 			} `json:"hashes"`
 		} `json:"mods"`
+		// #646: a top-level loadOrder, by entry id.
+		LoadOrder []struct {
+			ID string `json:"id"`
+		} `json:"loadOrder"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return source.CollectionManifest{}, err
 	}
 	m := source.CollectionManifest{Name: doc.Name}
+	if len(doc.LoadOrder) > 0 {
+		m.LoadOrder = &source.ManifestFileLoadOrder{Entries: len(doc.LoadOrder)}
+		for _, e := range doc.LoadOrder {
+			m.LoadOrder.Files = append(m.LoadOrder.Files, source.ManifestFileLoadOrderEntry{Name: e.ID, Enabled: true})
+		}
+	}
 	for _, mod := range doc.Mods {
 		mm := source.ManifestMod{Name: mod.Name, Version: "1", SourceType: cmp.Or(mod.SourceType, "nexus"),
 			ModID: mod.ModID, FileID: mod.FileID, UpdatePolicy: "exact", ModType: mod.Type,
@@ -423,4 +434,24 @@ func TestConvertSourceCollection_RefusesARedirectOffHTTPS(t *testing.T) {
 	assert.Contains(t, c.ManifestError, "plain-http")
 	assert.NotContains(t, c.ManifestError, "SECRET3")
 	assert.Zero(t, plainHits.Load(), "the http address is never requested")
+}
+
+// #646: a Baldur's Gate 3 recipe's top-level loadOrder converts onto the
+// game's .pak order when the game is on the baldurs-gate-3 adapter, and is
+// refused as manifest:loadOrder on a game without that order.
+func TestConvertSourceCollection_TopLevelLoadOrderFollowsTheGamesAdapter(t *testing.T) {
+	recipe := `{"name": "R", "mods": [{"name": "Ten", "modId": "10", "fileId": "100"}], "loadOrder": [{"id": "Ten.pak"}, {"id": "Other.pak"}]}`
+	f := newRecipeFixture(t, recipeArchive(t, recipe))
+	c, err := f.svc.ConvertSourceCollection(context.Background(), f.game, "nexusmods", "abcdef", core.CollectionConvertOptions{})
+	require.NoError(t, err)
+	require.Len(t, c.Unsupported, 1)
+	assert.Equal(t, "manifest:loadOrder", c.Unsupported[0].Feature, "a game with no such order refuses it, as before")
+
+	f.svc.RegisterAdapter(modtypes.BaldursGate3())
+	f.game.Adapter = modtypes.BaldursGate3ID
+	c, err = f.svc.ConvertSourceCollection(context.Background(), f.game, "nexusmods", "abcdef", core.CollectionConvertOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, c.Unsupported)
+	assert.Equal(t, []string{"Ten.pak", "Other.pak"}, c.Document.LoadOrders[modtypes.PakOrderID])
+	assert.Contains(t, c.Document.Requires, "file_load_order:"+modtypes.PakOrderID)
 }

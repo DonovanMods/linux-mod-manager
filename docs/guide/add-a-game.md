@@ -397,10 +397,10 @@ is a link to somewhere else is refused.
 
 The game also has to be told to load a pak: its mod list,
 `PlayerProfiles/Public/modsettings.lsx` beside the `Mods` folder, must
-enable it. lmm doesn't write that file yet, and says so after a deploy
-that placed a pak. Enable the mods with a tool that writes it, such as BG3
-Mod Manager. A pak that only replaces game files and has no `meta.lsx`
-needs no entry.
+enable it. lmm writes that list at every deploy, keeping the game's own
+entry and any mods you enabled some other way, and keeps your paks in the
+order your profile records. See
+[Pak mods and their order](bg3-mods.md).
 
 Switching a game you added before to `baldurs-gate-3` moves its paks: the
 next deploy takes them out of `Data/` and puts them in the `Mods` folder,

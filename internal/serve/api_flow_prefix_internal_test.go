@@ -67,7 +67,7 @@ func TestFlowPrefix_DeployHealthAndPurge(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "not into Data/")
 	res, ok := j.status().Result.(*core.DeployResult)
 	require.True(t, ok, "%T", j.status().Result)
-	assert.Contains(t, res.Warnings, "Baldur's Gate 3 loads a .pak mod from its Mods folder only once the game's mod list, modsettings.lsx (PlayerProfiles/Public, beside the Mods folder in the game's prefix), enables it; lmm doesn't write that file yet.",
+	assert.Contains(t, res.Warnings, "Baldur's Gate 3 loads a .pak mod from its Mods folder only while its mod list, modsettings.lsx (PlayerProfiles/Public, beside the Mods folder in the game's prefix), enables it; lmm lists the paks it deploys there at every deploy.",
 		"the job's result carries the same advice the CLI prints")
 
 	rec := doAPI(s, http.MethodGet, scoped("/api/v1/mods/"+fixtureSourceID+"/m1/files", game), "")

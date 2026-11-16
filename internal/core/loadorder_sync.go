@@ -175,6 +175,9 @@ type loadOrderComputation struct {
 	// nothing to do and nothing to say. restore: the profile orders
 	// nothing, so a list lmm wrote goes back to the user's.
 	skipped, nothing, restore bool
+	// ms is a FileListModSettings order's own state (#646); nil for a
+	// FileListLines one.
+	ms *modSettingsState
 }
 
 // Placement values: why a file is where it is in the effective order.
@@ -200,6 +203,9 @@ func loadOrderKey(name string) string { return strings.ToLower(name) }
 // proposal); report keeps going where a sync would stop with nothing to
 // write, so a report can still show lmm's own order.
 func (s *Service) computeLoadOrder(ctx context.Context, game *domain.Game, profileName string, spec adapter.FileLoadOrderSpec, order []string, report bool) (*loadOrderComputation, error) {
+	if spec.Format == adapter.FileListModSettings {
+		return s.computeModSettings(ctx, game, profileName, spec, order, report)
+	}
 	c := &loadOrderComputation{spec: spec, dirRel: spec.Dir.Path, listName: spec.ListFile, onDisk: map[string]string{}, managed: map[string]int{}, placement: map[string]string{}}
 	profile, _ := config.LoadProfile(s.configDir, game.ID, profileName)
 	if order == nil && profile != nil {
@@ -355,10 +361,18 @@ func (c *loadOrderComputation) skip(message string) {
 	c.findings = append(c.findings, LoadOrderFinding{Code: LoadOrderFindingUnwritable, Severity: PluginSeverityError, Message: message})
 }
 
-// ownsRow reports whether r is the kept original of c's list file.
+// ownsRow reports whether r is the kept original of c's list file: a row
+// under the game's install_path for a list there, or one in a prefix's
+// user directory (r.User set) for a list there (#646).
 func (c *loadOrderComputation) ownsRow(game *domain.Game, r prefixOriginal) bool {
-	return filepath.Clean(r.Prefix) == filepath.Clean(game.InstallPath) &&
-		strings.EqualFold(path.Dir(r.Path), c.spec.Dir.Path) && strings.EqualFold(path.Base(r.Path), c.spec.ListFile)
+	dir := c.spec.ListDirectory()
+	if !strings.EqualFold(path.Dir(r.Path), dir.Path) || !strings.EqualFold(path.Base(r.Path), c.spec.ListFile) {
+		return false
+	}
+	if dir.Root == adapter.SpecRootUserDir {
+		return r.User != ""
+	}
+	return r.User == "" && filepath.Clean(r.Prefix) == filepath.Clean(game.InstallPath)
 }
 
 // place works out c's effective order: the profile's order of the files
@@ -576,6 +590,9 @@ func (c *loadOrderComputation) render() []byte {
 
 // ownedNames is the files c lists that lmm deploys, sorted.
 func (c *loadOrderComputation) ownedNames() []string {
+	if c.ms != nil {
+		return slices.Clone(c.ms.owned)
+	}
 	var out []string
 	for _, n := range c.entries {
 		if _, ok := c.managed[loadOrderKey(n)]; ok {
@@ -708,6 +725,9 @@ func (c *loadOrderComputation) result() *FileLoadOrderResult {
 // reports whether the file changed, and refuses with errLoadOrderChanged
 // when the file is no longer what c was computed from.
 func (s *Service) writeLoadOrder(game *domain.Game, c *loadOrderComputation) (bool, error) {
+	if c.ms != nil {
+		return s.writeModSettings(game, c)
+	}
 	content := c.render()
 	if !c.listExists && len(c.entries) == 0 {
 		return false, nil // nothing to list, and no file to keep in step
@@ -841,6 +861,9 @@ func (s *Service) loadOrderIDFor(game *domain.Game, row prefixOriginal) string {
 // nothing else uses is removed. A row whose install_path cannot be found
 // now (an unmounted drive) is kept, with a finding, for the next purge.
 func (s *Service) restoreLoadOrderRow(store *prefixOriginals, game *domain.Game, row prefixOriginal, id string) FileLoadOrderResult {
+	if row.User != "" {
+		return s.restoreModSettingsRow(store, row, id) // a list in a prefix (#646)
+	}
 	res := FileLoadOrderResult{ID: id, Status: PluginListRestored, ListFile: filepath.Join(row.Prefix, filepath.FromSlash(row.Path))}
 	fail := func(err error) FileLoadOrderResult {
 		res.Status = PluginListSkipped

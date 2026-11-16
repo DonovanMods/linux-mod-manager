@@ -29,6 +29,11 @@ keeps the adapter it had: `lmm verify` suggests the switch, and
 `lmm game edit <game> --adapter cyberpunk2077` makes it. The switch moves
 none of your mods.
 
+Baldur's Gate 3's pak order uses the same commands and the same
+**Reorder…** tab, but its list also switches mods on and off, so lmm
+handles it differently: see
+[Pak mods and their order (Baldur's Gate 3)](bg3-mods.md).
+
 ## Nothing changes until you ask
 
 lmm leaves `modlist.txt` alone until your profile has an order. Until then
