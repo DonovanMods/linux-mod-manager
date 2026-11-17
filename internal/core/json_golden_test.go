@@ -908,6 +908,13 @@ func TestJSONGoldens(t *testing.T) {
 			core.SettingsResult{DefaultGame: "skyrim-se"},
 		},
 		{
+			// #664: which of one mod's files an event is about - embedded in
+			// DownloadEvent and StepEvent (an update's download ticks and its
+			// extracting steps), flat on the event's own object.
+			"file_position",
+			core.FilePosition{FileIndex: 2, FileTotal: 3},
+		},
+		{
 			// #360: the read half of the local-index surface. Game is the
 			// SOURCE's own game id - a Thunderstore community slug - since
 			// that is what identifies the index on disk.
