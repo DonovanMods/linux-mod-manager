@@ -233,13 +233,13 @@ func TestService_ApplyInstall_Batch_TwoFreshMods(t *testing.T) {
 
 	// #602: every mod is acquired (selected, downloaded, checksummed)
 	// before any is committed, so both mods' Installed lines follow both
-	// downloads.
+	// downloads. #664: each archive's extraction is a step of its own.
 	phases, _ := phasesOf(*seen)
 	assert.Equal(t, []core.DeployPhase{
 		core.InstallDepInstalling, core.InstallDepFileSelected, core.InstallDepDownloading,
-		core.InstallDepDownloadDone, core.InstallChecksumComputed,
+		core.ArchiveExtracting, core.InstallDepDownloadDone, core.InstallChecksumComputed,
 		core.InstallDepInstalling, core.InstallDepFileSelected, core.InstallDepDownloading,
-		core.InstallDepDownloadDone, core.InstallChecksumComputed,
+		core.ArchiveExtracting, core.InstallDepDownloadDone, core.InstallChecksumComputed,
 		core.InstallDepInstalled, core.InstallDepInstalled,
 	}, phases)
 }
@@ -474,8 +474,8 @@ func TestService_ApplyInstall_Batch_FailingAfterEachWarnsPerModAndKeepsBothInsta
 	assert.Len(t, batchInstalledRows(t, svc, "g1", "default"), 2, "a failed after_each never removes its mod")
 
 	phases, _ := phasesOf(*seen)
-	require.Len(t, phases, 14)
-	assert.Equal(t, []core.DeployPhase{core.InstallWarning, core.InstallWarning}, phases[12:],
+	require.Len(t, phases, 16, "#664: each mod's archive extraction is a step too")
+	assert.Equal(t, []core.DeployPhase{core.InstallWarning, core.InstallWarning}, phases[14:],
 		"both after_each warnings are deferred to the very end of the batch")
 }
 

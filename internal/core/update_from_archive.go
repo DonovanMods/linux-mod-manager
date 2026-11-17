@@ -683,6 +683,10 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 		entryFor: s.fileSetEntryFor(ctx, game, plan.FileIDs, nil),
 		// #644: committed by commitUpdate, after its last refusal.
 		stage: true,
+		// #664: the ingest's extraction is the update's first step.
+		onExtract: func() {
+			emit(StepEvent{Scope: scope, Phase: ArchiveExtracting, File: &domain.DownloadableFile{FileName: plan.ArchiveName}})
+		},
 	}
 	if archiveEntryApplies(mod.SourceID, plan.FileIDs) {
 		// #644: an archive no source file is: a tree of its own.

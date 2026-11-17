@@ -911,6 +911,12 @@ func lockedRefSentence(mod domain.Mod, profileName string, ref *domain.ModRefere
 // ApplyModUpdate -> SetModLinkMethod -> UpsertMod. This is a
 // behavior-preserving extraction - see the task report for the full mapping.
 //
+// Progress (#664): UpdateDownloading ticks, ArchiveExtracting per archive,
+// UpdateDownloadDone, then commitUpdate's UpdateRunningHook (per hook that
+// runs), UpdateInstalling, UpdateRecording and UpdateModUpdated - all under
+// the mod's scope, so a renderer can say which step the mod is on until it
+// is done.
+//
 // FileIDReplacements resolution mirrors applyUpdate exactly: each of the
 // installed mod's own FileIDs is looked up in upd.FileIDReplacements; a hit
 // substitutes the new (superseding) file ID, a miss retains the ORIGINAL id
@@ -1132,22 +1138,36 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	for i, f := range filesToDownload {
 		fx.fileIDs[i] = f.ID
 	}
-	progressFn := func(e Event) {
-		if forwardFetchStep(e, scope, emit) {
-			return
+	// progressFor is file i's sink. The files are acquired one after
+	// another, each downloaded and then extracted, so each tick and each
+	// extracting step says which file it is (#664) - a renderer measuring
+	// the download from its percent alone would otherwise start over at
+	// the second file.
+	progressFor := func(i int) EventSink {
+		at := FilePosition{FileIndex: i + 1, FileTotal: len(filesToDownload)}
+		return func(e Event) {
+			if forwardFetchStep(e, scope, func(fe Event) {
+				if step, ok := fe.(StepEvent); ok && step.Phase == ArchiveExtracting {
+					step.FilePosition = at
+					fe = step
+				}
+				emit(fe)
+			}) {
+				return
+			}
+			d, ok := e.(DownloadEvent)
+			if !ok || d.TotalBytes <= 0 {
+				return
+			}
+			emit(DownloadEvent{Scope: scope, Phase: UpdateDownloading, Percent: d.Percent, FilePosition: at})
 		}
-		d, ok := e.(DownloadEvent)
-		if !ok || d.TotalBytes <= 0 {
-			return
-		}
-		emit(DownloadEvent{Scope: scope, Phase: UpdateDownloading, Percent: d.Percent})
 	}
 	newMod.Variant = ""
 	results, resolved, err := s.downloadModFiles(ctx, s.GetGameCache(game), mod.SourceID, game, newMod, filesToDownload, fx,
 		// #639: the new files commit to the entry that is exactly their
 		// tree - never layered onto the old set's at the same version,
 		// which the old row (and any other profile's) still names.
-		modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, checkCtx: true, fileSet: true})
+		modFileHooks{sink: func(i int, _ *domain.DownloadableFile) EventSink { return progressFor(i) }, checkCtx: true, fileSet: true})
 	if err != nil {
 		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
 			return result, err
@@ -1218,7 +1238,10 @@ type updateCommit struct {
 // previous_file_ids for rollback), the checksums, the link method, the
 // profile ref, and the merged-pak sync - with ApplyUpdate's compensations on
 // a failed DB or profile write. On success it fills result's identity
-// fields; on error result keeps whatever diagnostics it gathered.
+// fields; on error result keeps whatever diagnostics it gathered. Each of
+// those steps is reported as it starts (#664: UpdateRunningHook,
+// UpdateInstalling, UpdateRecording), and UpdateModUpdated once all are
+// done, for both ApplyUpdate and ApplyUpdateFromArchive.
 func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileName string, c updateCommit, opts UpdateOptions, result *UpdateApplyResult, emit func(Event)) error {
 	mod, newMod, scope := c.mod, c.newMod, c.scope
 	hooks, runner, hookCtx := c.hooks, c.runner, c.hookCtx
@@ -1234,8 +1257,17 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 		return err
 	}
 
+	// #664: each hook that will actually run is a step of its own - a
+	// user's script can take as long as it likes.
+	runUpdateHook := func(name, command string) error {
+		if !opts.SkipHooks && runner != nil && command != "" {
+			emit(StepEvent{Scope: scope, Phase: UpdateRunningHook, Detail: name})
+		}
+		return runHook(ctx, opts.SkipHooks, runner, &hookCtx, name, command)
+	}
+
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
-	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.before_each", hooks.GetUninstallBeforeEach()); err != nil {
+	if err := runUpdateHook("uninstall.before_each", hooks.GetUninstallBeforeEach()); err != nil {
 		if !opts.Force {
 			return fmt.Errorf("uninstall.before_each hook failed: %w", err)
 		}
@@ -1251,7 +1283,7 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = newMod.ID, newMod.Name, newMod.Version
-	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
+	if err := runUpdateHook("install.before_each", hooks.GetInstallBeforeEach()); err != nil {
 		if !opts.Force {
 			return fmt.Errorf("install.before_each hook failed: %w", err)
 		}
@@ -1269,6 +1301,7 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	// commit must restore the old IDs' members and remove the uncommitted
 	// new file's sole members, not leave both deployed. See
 	// Installer.ReplaceForUpdate / resolveSharedDirUpdate.
+	emit(StepEvent{Scope: scope, Phase: UpdateInstalling})
 	if c.commitEntry != nil {
 		if err := c.commitEntry(); err != nil {
 			return err
@@ -1279,17 +1312,19 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	}
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
-	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.after_each", hooks.GetUninstallAfterEach()); err != nil {
+	if err := runUpdateHook("uninstall.after_each", hooks.GetUninstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("uninstall.after_each hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
 		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = newMod.ID, newMod.Name, newMod.Version
-	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_each", hooks.GetInstallAfterEach()); err != nil {
+	if err := runUpdateHook("install.after_each", hooks.GetInstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("install.after_each hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
 		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
+
+	emit(StepEvent{Scope: scope, Phase: UpdateRecording})
 
 	// #614: the choices the replaced version was installed with become
 	// previous_fomod, in the same transaction as previous_version, so a
@@ -1386,6 +1421,7 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 		}
 	}
 
+	emit(ModEvent{Scope: scope, Phase: UpdateModUpdated, Version: effectiveVersion})
 	return nil
 }
 

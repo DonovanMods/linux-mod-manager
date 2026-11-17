@@ -37,6 +37,30 @@ const phasePrefixes = [
   ["source_", ""],
 ];
 
+// phaseLabels names the few phases whose humanized name would read wrong.
+// issue 664: an update's steps read "Extracting · OpenMap", "Updated ·
+// OpenMap" - not "Archive extracting" (archive_extracting is one phase for
+// every flow that extracts a download) or "Mod updated" - and its batch
+// bracket reads "Updating"/"Updated" rather than "Batch item"/"Batch item
+// applied".
+const phaseLabels = {
+  archive_extracting: "Extracting",
+  // A flow's "download done" fires once the file is in the cache - after
+  // its extraction - so it reads "Downloaded", never "Download done" after
+  // "Extracting" (issue 664 review).
+  update_download_done: "Downloaded",
+  deploy_download_done: "Downloaded",
+  switch_download_done: "Downloaded",
+  import_download_done: "Downloaded",
+  install_download_done: "Downloaded",
+  install_dep_download_done: "Dependency downloaded",
+  update_mod_updated: "Updated",
+  update_batch_item: "Updating",
+  update_batch_item_applied: "Updated",
+  update_batch_item_skipped: "Skipped",
+  update_batch_item_failed: "Failed",
+};
+
 /**
  * Humanizes a core phase name ("deploy_merge_synced" -> "Merge synced").
  *
@@ -44,10 +68,12 @@ const phasePrefixes = [
  * the underscores opened up - which is what makes it safe for core to add
  * one without the SPA needing a matching release. That is the design's
  * "humanized" (§Jobs) read as a rule about the vocabulary rather than a
- * hand-maintained table of every one of the ~90 phases in phases.go.
+ * hand-maintained table of every one of the ~90 phases in phases.go;
+ * phaseLabels holds only the exceptions.
  */
 export function humanizePhase(phase) {
   if (!phase) return "";
+  if (phaseLabels[phase]) return phaseLabels[phase];
   let rest = phase;
   for (const [prefix, replacement] of phasePrefixes) {
     if (rest.startsWith(prefix)) {
@@ -219,17 +245,134 @@ export function progressText(frame) {
   return parts.join(" · ") || humanizePhase(frame.type);
 }
 
+// UPDATE_STEPS is how far through ONE mod's update each of its steps is
+// (issue 664), in the order core emits them (internal/core/phases.go). The
+// first ACQUIRE_SHARE is acquiring the mod's files - each one downloaded
+// and then extracted, one file after another (downloadModFiles) - and the
+// steps after it, which used to leave the bar sitting at the download's
+// last percentage, take it the rest of the way. The weights are positions,
+// not timings: what they promise is that each step moves the bar forward
+// and the last one fills it.
+const ACQUIRE_SHARE = 0.55;
+// DOWNLOAD_PART is how much of one file's share of ACQUIRE_SHARE its
+// download fills; its extraction ends the share.
+const DOWNLOAD_PART = 0.9;
+const UPDATE_STEPS = {
+  update_batch_item: 0,
+  update_downloading: 0,
+  archive_extracting: ACQUIRE_SHARE,
+  update_download_done: 0.6,
+  update_running_hook: 0.65,
+  update_installing: 0.75,
+  update_recording: 0.9,
+  update_mod_updated: 1,
+  update_batch_item_applied: 1,
+  update_batch_item_skipped: 1,
+  update_batch_item_failed: 1,
+};
+
+/** acquireStep is where a download tick or an extracting step puts one mod's
+ * update, 0..ACQUIRE_SHARE: within its file's share, by the frame's file
+ * position (core.FilePosition - file_index of file_total; a frame without
+ * one is the mod's only file). */
+function acquireStep(frame) {
+  const total = frame.file_total > 0 ? frame.file_total : 1;
+  const index = Math.min(Math.max(frame.file_index ?? 1, 1), total);
+  const share = ACQUIRE_SHARE / total;
+  const start = (index - 1) * share;
+  if (frame.phase === "archive_extracting") return start + share;
+  return (
+    start + share * DOWNLOAD_PART * (clamp((frame.percent ?? 0) / 100) ?? 0)
+  );
+}
+
+// reached is the furthest each update item's bar has got, keyed by job and
+// the item's batch position (issue 664 review): a backstop, so a frame that
+// would place it earlier - one without the file position that orders it -
+// holds the bar instead of sending it back, and an update frame that is not
+// a step (a warning, a note, a Workshop fetch's heartbeat) holds it where
+// the last step left it. Bounded: the oldest entries go first.
+const reached = new Map();
+const REACHED_LIMIT = 200;
+
+function reachedKey(frame, position, counted) {
+  if (!frame.job_id) return null;
+  return `${frame.job_id}|${counted ? position.index : 0}`;
+}
+
+function remember(key, value) {
+  if (key === null || value === null) return value;
+  const held = reached.get(key);
+  const next = held === undefined ? value : Math.max(held, value);
+  reached.delete(key);
+  reached.set(key, next);
+  if (reached.size > REACHED_LIMIT) {
+    reached.delete(reached.keys().next().value);
+  }
+  return next;
+}
+
+/** isUpdateItemStep reports whether frame is one of an update item's own
+ * steps (issue 664: "Installing", "Recording", ...) - not the batch's bracket
+ * around the item, which carries the item's batch position (index/total)
+ * itself, and not an update frame that is no step (a warning, a note). A
+ * readout that names the item from its batch position adds the step's
+ * words for exactly these. */
+export function isUpdateItemStep(frame) {
+  return (
+    frame?.op === "update" && frame.phase in UPDATE_STEPS && !(frame.total > 0)
+  );
+}
+
+/**
+ * updateStepFraction is how far an update job is, 0..1, from one of its
+ * frames (issue 664) - or null for a frame that is not an update's, which
+ * the caller measures its own way. An update job's events carry no batch
+ * position of their own: `position` is the job's newest frame that did (an
+ * update_batch_item, activity.js's jobPositions), and the item's step is
+ * placed within that item's share of the bar, so a batch of three fills a
+ * third per mod and every step inside one moves it on. With no position (an
+ * update from a file is one mod) the step is the whole bar.
+ *
+ * The bar never goes back within an item (`reached`). An update frame that
+ * is not a step holds the bar where the item has got to; with nothing
+ * reached yet it is the item's start, or null - indeterminate - when there
+ * is no batch position either.
+ */
+export function updateStepFraction(frame, position) {
+  if (!frame || frame.op !== "update") return null;
+  const counted =
+    position?.op === "update" && position.total > 0 && position.index > 0;
+  const key = reachedKey(frame, position, counted);
+  const place = (step) =>
+    counted ? clamp((position.index - 1 + step) / position.total) : clamp(step);
+
+  if (!(frame.phase in UPDATE_STEPS)) {
+    const held = key === null ? undefined : reached.get(key);
+    if (held !== undefined) return held;
+    return counted ? place(0) : null;
+  }
+  const step =
+    frame.phase === "update_downloading" || frame.phase === "archive_extracting"
+      ? acquireStep(frame)
+      : UPDATE_STEPS[frame.phase];
+  return remember(key, place(step));
+}
+
 /**
  * progressFraction is how far along the bar should be, 0..1, or null when
  * the frame cannot say - in which case the control must render an
  * indeterminate bar rather than a confident 0%.
  *
- * A download with a known total is measured in bytes; anything else is
- * measured in batch position, which is the only honest denominator a
- * multi-mod flow has.
+ * An update's steps are placed by updateStepFraction (issue 664), within
+ * the batch position `position` gives. Otherwise a download with a known
+ * total is measured in bytes, and anything else in batch position, which
+ * is the only honest denominator a multi-mod flow has.
  */
-export function progressFraction(frame) {
+export function progressFraction(frame, position) {
   if (!frame) return null;
+  const stepped = updateStepFraction(frame, position);
+  if (stepped !== null) return stepped;
   if (frame.type === "download" && frame.total_bytes > 0) {
     return clamp((frame.percent ?? 0) / 100);
   }
@@ -449,17 +592,20 @@ export function frameFromEvent({ type, data } = {}) {
     percent: event.percent,
     downloaded: event.downloaded,
     total_bytes: event.total_bytes,
+    file_index: event.file_index,
+    file_total: event.file_total,
   };
 }
 
 // PROGRESS_PHASE is the closed list of phases that only say where an item
 // has got to (issue 660): downloading, a download done, extracting,
-// installing, compiling, deploying, fetching. A job's event log keeps only
+// installing, compiling, deploying, fetching - and an update's running a
+// hook and recording (issue 664). A job's event log keeps only
 // the latest of these per item (appendCollapsed). Every other phase - a
 // failure, a refusal, a note, a warning, an item skipped, unavailable or
 // done - says something of its own and is always kept.
 const PROGRESS_PHASE =
-  /_(downloading|download_done|extracting|installing|installing_mod|mod_installing|compiling|deploying|fetching)$/;
+  /_(downloading|download_done|extracting|installing|installing_mod|mod_installing|compiling|deploying|fetching|running_hook|recording)$/;
 
 /** frameModKey is the exact mod a frame is about - its scope's mod,
  * "source:mod" (frameFromEvent's mod_key) - else its place in the batch,

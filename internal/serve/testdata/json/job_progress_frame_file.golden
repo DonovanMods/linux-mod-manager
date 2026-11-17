@@ -1,0 +1,11 @@
+{
+  "job_id": "0123456789abcdef0123456789abcdef",
+  "kind": "updates",
+  "type": "download",
+  "op": "update",
+  "phase": "update_downloading",
+  "mod_name": "Mod One",
+  "percent": 40,
+  "file_index": 2,
+  "file_total": 2
+}

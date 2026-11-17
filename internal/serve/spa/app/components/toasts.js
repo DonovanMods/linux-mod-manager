@@ -24,7 +24,9 @@ import {
   downloadText,
   humanizePhase,
   jobRunningLabel,
+  isUpdateItemStep,
   progressFraction,
+  updateStepFraction,
 } from "../progress.js";
 import { ItemFailureList } from "./errordetails.js";
 
@@ -212,14 +214,21 @@ export function Toasts({
 function RunningToastBody({ toast, frame, position }) {
   const label = runningLabel(toast);
   const counted = position?.total > 0;
-  const fraction = counted
-    ? Math.min(1, Math.max(0, (position.index ?? 0) / position.total))
-    : progressFraction(frame);
+  // Issue 664: an update's frame is placed within its item's share; one
+  // that is not a step holds the bar where the item has got to.
+  const stepped = updateStepFraction(frame, position);
+  const fraction =
+    stepped ??
+    (counted
+      ? Math.min(1, Math.max(0, (position.index ?? 0) / position.total))
+      : progressFraction(frame));
   const parts = [];
   if (counted) {
     parts.push(`${position.index ?? 0} of ${position.total}`);
     if (position.mod_name) parts.push(position.mod_name);
     else if (position.phase) parts.push(humanizePhase(position.phase));
+    // Issue 664: and the step the item's update is on ("Installing").
+    if (isUpdateItemStep(frame)) parts.push(humanizePhase(frame.phase));
   } else if (frame?.phase) {
     parts.push(humanizePhase(frame.phase));
   }

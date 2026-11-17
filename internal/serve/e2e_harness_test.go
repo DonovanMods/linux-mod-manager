@@ -2474,10 +2474,20 @@ const (
 // not.
 func newE2EFixtureWithALockedAndAnUnlockedUpdate(t *testing.T) e2eFixture {
 	t.Helper()
+	return newE2EFixtureWithALockedAndAnUnlockedUpdateGated(t, nil)
+}
+
+// newE2EFixtureWithALockedAndAnUnlockedUpdateGated is the fixture above
+// with the source's downloads held until gate is closed (e2eSearchSource's
+// urlGate): a scenario that must watch an update's progress keeps the job
+// in flight until the control showing it has mounted (#664).
+func newE2EFixtureWithALockedAndAnUnlockedUpdateGated(t *testing.T, gate <-chan struct{}) e2eFixture {
+	t.Helper()
 	sandboxE2EEnv(t)
 
 	src := newE2ESearchSource(t, "fake")
 	src.updatable = true
+	src.urlGate = gate
 	src.addMod(e2eSearchSourceMod{
 		mod: domain.Mod{ID: e2eLockedUpdateModID, SourceID: "fake", Name: "Better Boots", Version: "2.0"},
 		files: []domain.DownloadableFile{

@@ -274,6 +274,23 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #664: a frame that says which of one mod's files it is about
+			// - an update's download tick for its second file of two. Its
+			// own golden, so the frame above stays as it was.
+			"job_progress_frame_file",
+			jobProgressFrame{
+				JobID:     "0123456789abcdef0123456789abcdef",
+				Kind:      "updates",
+				Type:      "download",
+				Op:        "update",
+				Phase:     core.UpdateDownloading.String(),
+				ModName:   "Mod One",
+				Percent:   40,
+				FileIndex: 2,
+				FileTotal: 2,
+			},
+		},
+		{
 			// One read_progress frame (#583): how far a GET that named a
 			// ?progress= token has got - the update check here, the Health
 			// card's verify the other Read value.

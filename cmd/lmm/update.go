@@ -1065,7 +1065,7 @@ func batchProgress(service *core.Service, updates []domain.Update) func(core.Eve
 			}
 		case core.UpdateDownloadDone:
 			if verbose && !jsonOutput {
-				fmt.Println()
+				endProgressLine()
 			}
 		case core.WorkshopFetchStarted, core.WorkshopFetchProgress, core.WorkshopFetchDone:
 			// Not verbose-gated, unlike the download percentage above: a
@@ -1080,6 +1080,10 @@ func batchProgress(service *core.Service, updates []domain.Update) func(core.Eve
 			if verbose && !jsonOutput {
 				fmt.Printf("  %s\n", p.Detail)
 			}
+		default:
+			// #664: a batch stays one line per mod; its steps are
+			// --verbose detail, as its download percentage is.
+			printUpdateStep(p, false)
 		}
 	}
 }
@@ -1331,7 +1335,7 @@ func updateProgress(e core.Event) {
 		}
 	case core.UpdateDownloadDone:
 		if verbose && !jsonOutput {
-			fmt.Println()
+			endProgressLine()
 		}
 	case core.WorkshopFetchStarted, core.WorkshopFetchProgress, core.WorkshopFetchDone:
 		// Not verbose-gated, unlike the download percentage above: a
@@ -1346,7 +1350,47 @@ func updateProgress(e core.Event) {
 		if verbose && !jsonOutput {
 			fmt.Printf("  %s\n", p.Detail)
 		}
+	default:
+		printUpdateStep(p, true)
 	}
+}
+
+// printUpdateStep prints one of an update's steps after its download (#664)
+// - the archive's extraction, a hook, the Replace over the old version, the
+// recording - and reports whether p was one. A single update prints the
+// extraction and the deploy the way `lmm install` does (always true); a
+// batch prints them under --verbose only. The hooks and the recording are
+// --verbose detail either way. The download's carriage-returned progress
+// line is ended first, so a step never prints over it.
+func printUpdateStep(p flowLine, always bool) bool {
+	shown := always || verbose
+	switch p.Phase {
+	case core.ArchiveExtracting:
+		label := "to cache"
+		if p.File != nil {
+			label = displayFileLabel(*p.File)
+		}
+		printStepLine(shown, fmt.Sprintf("  Extracting %s...", label))
+	case core.UpdateRunningHook:
+		printStepLine(verbose, fmt.Sprintf("  Running %s hook...", p.Detail))
+	case core.UpdateInstalling:
+		printStepLine(shown, "  Deploying to game directory...")
+	case core.UpdateRecording:
+		printStepLine(verbose, "  Recording the update...")
+	default:
+		return false
+	}
+	return true
+}
+
+// printStepLine prints line when shown (and never under --json), ending an
+// open progress line first.
+func printStepLine(shown bool, line string) {
+	if !shown || jsonOutput {
+		return
+	}
+	endProgressLine()
+	fmt.Println(line)
 }
 
 // applyRecompile applies a #197 merged-pak staleness row via

@@ -115,6 +115,18 @@ type StepEvent struct {
 	Phase  DeployPhase              `json:"phase"`
 	Detail string                   `json:"detail,omitempty"`
 	File   *domain.DownloadableFile `json:"file,omitempty"`
+	FilePosition
+}
+
+// FilePosition says which of one mod's files an event is about, where a
+// flow acquires several for it one after another (#664: an update's
+// UpdateDownloading ticks and its ArchiveExtracting steps). FileIndex is
+// 1-based; both are zero where the event names no file position - a
+// renderer reads that as the mod's only file. It is separate from Scope's
+// Index/Total, which are the MOD's position in its batch.
+type FilePosition struct {
+	FileIndex int `json:"file_index,omitempty"`
+	FileTotal int `json:"file_total,omitempty"`
 }
 
 // DownloadEvent is a byte/percent tick during a download. Downloaded and
@@ -127,6 +139,7 @@ type DownloadEvent struct {
 	Downloaded int64                    `json:"downloaded"`
 	TotalBytes int64                    `json:"total_bytes"`
 	Percent    float64                  `json:"percent"`
+	FilePosition
 }
 
 // ModEvent is a line about one specific mod's lifecycle — a start notice, a

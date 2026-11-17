@@ -1255,6 +1255,33 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **An update shows every step after its download (#664).** An update said
+  "Download done" for its mod and then nothing while it extracted the
+  archive, ran its hooks, replaced the deployed files and recorded the new
+  version, and its web bar sat where the download left it. The web UI's
+  update readout, its tray entry and the job's event list now name each
+  step for the mod - "Extracting · OpenMap", "Installing · OpenMap",
+  "Recording · OpenMap", "Updated · OpenMap", and "Running hook" for a
+  configured hook. An update's bar moves on at each step, within its mod's
+  share of the batch, instead of sitting at the download's percentage, and
+  never goes back: a mod with several files places each file's download
+  after the one before it, and a warning holds the bar where it is. The
+  batch's own lines read "Updating" and "Updated" rather than "Batch item",
+  and every flow's "Download done" now reads "Downloaded", since it follows
+  the extraction.
+  `lmm update` for one mod, and `lmm update --from-file`, print "Extracting
+  mod-2.0.zip..." and "Deploying to game directory..." under the header, as
+  `lmm install` does; `--verbose` adds the hooks and "Recording the
+  update...", and is where a batch (`lmm update --all`) prints them, beside
+  its download percentage. The extraction step is one new event phase for
+  every flow that extracts a download, so an install, a deploy's
+  re-download of a missing cache entry, a profile switch or apply, and an
+  import report it too, under each flow's own scope. New event phases
+  (additive): `archive_extracting`, `update_running_hook`,
+  `update_installing`, `update_recording`, `update_mod_updated`; an
+  update's download and extracting events also carry `file_index` and
+  `file_total`, as does the activity stream's progress frame.
+
 - **A cancelled `lmm profile apply` no longer leaves an installed mod's
   profile entry behind (#663).** Cancelling an apply (Ctrl-C, or `lmm serve`
   shutting down during its web UI job) just after a mod was installed could leave the profile
