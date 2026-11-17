@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,4 +51,23 @@ func TestFlowUpdates_JobStreamsEachStepAfterTheDownload(t *testing.T) {
 		"update_batch_item", "update_download_done", "update_installing",
 		"update_recording", "update_mod_updated", "update_batch_item_applied",
 	}, "#664: every step after the download reaches the stream, in order (got %v)", phases)
+}
+
+// TestSummarizeJobEvent_CarriesTheFilePosition (#664 review): an update's
+// download ticks and extracting steps say which of the mod's files they are
+// about, and the tray's frame carries it, so the bar can place the second
+// file's download after the first file's rather than back at the start.
+func TestSummarizeJobEvent_CarriesTheFilePosition(t *testing.T) {
+	at := core.FilePosition{FileIndex: 2, FileTotal: 3}
+	for _, e := range []core.Event{
+		core.DownloadEvent{Scope: core.Scope{Op: core.OpUpdate}, Phase: core.UpdateDownloading, Percent: 40, FilePosition: at},
+		core.StepEvent{Scope: core.Scope{Op: core.OpUpdate}, Phase: core.ArchiveExtracting, FilePosition: at},
+	} {
+		frame := summarizeJobEvent("j1", "updates", e)
+		assert.Equal(t, 2, frame.FileIndex, "%T", e)
+		assert.Equal(t, 3, frame.FileTotal, "%T", e)
+	}
+	none := summarizeJobEvent("j1", "updates", core.StepEvent{Scope: core.Scope{Op: core.OpUpdate}, Phase: core.UpdateInstalling})
+	assert.Zero(t, none.FileIndex)
+	assert.Zero(t, none.FileTotal)
 }

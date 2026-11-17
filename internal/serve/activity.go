@@ -268,6 +268,14 @@ type jobProgressFrame struct {
 	Percent    float64 `json:"percent,omitzero"`
 	Downloaded int64   `json:"downloaded,omitzero"`
 	TotalBytes int64   `json:"total_bytes,omitzero"`
+
+	// FileIndex and FileTotal are core.FilePosition (#664): which of one
+	// mod's files a download tick or an extracting step is about, where
+	// the flow acquires several one after another - an update's do. Both
+	// are 0 where the event names none. Index/Total stay the mod's place
+	// in its batch.
+	FileIndex int `json:"file_index,omitzero"`
+	FileTotal int `json:"file_total,omitzero"`
 }
 
 // summarizeJobEvent projects one core event onto its progress frame.
@@ -289,6 +297,7 @@ func summarizeJobEvent(id jobID, kind string, e core.Event) jobProgressFrame {
 	switch ev := e.(type) {
 	case core.StepEvent:
 		frame.Detail = ev.Detail
+		frame.FileIndex, frame.FileTotal = ev.FileIndex, ev.FileTotal
 	case core.ModEvent:
 		frame.Detail = ev.Detail
 	case core.HookEvent:
@@ -299,6 +308,7 @@ func summarizeJobEvent(id jobID, kind string, e core.Event) jobProgressFrame {
 		frame.Percent = ev.Percent
 		frame.Downloaded = ev.Downloaded
 		frame.TotalBytes = ev.TotalBytes
+		frame.FileIndex, frame.FileTotal = ev.FileIndex, ev.FileTotal
 	}
 	return frame
 }

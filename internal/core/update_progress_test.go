@@ -2,6 +2,8 @@ package core_test
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -303,4 +305,59 @@ func TestService_DeployProfile_RedownloadNamesItsExtraction(t *testing.T) {
 	assert.Equal(t, []core.DeployPhase{
 		core.DeployRedownloading, core.ArchiveExtracting, core.DeployDownloadDone, core.DeployDeployed,
 	}, phases)
+}
+
+// #664 review: an update of a mod with several files acquires them one after
+// another - each downloaded, then extracted - so a renderer measuring the
+// download from its percent alone sent the bar back to the start for the
+// second file. Each file's download ticks and its extracting step carry
+// which of the mod's files it is.
+func TestService_ApplyUpdate_EachFileCarriesItsPosition(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-main", "old-extra"},
+		map[string][]byte{"mod1-old.esp": []byte("old-content")})
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "new-main", Name: "Main", FileName: "mod1-main-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true},
+			{ID: "new-extra", Name: "Extra", FileName: "mod1-extra-2.0.zip", Version: "2.0", Category: "OPTIONAL"},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
+	// Small enough for net/http to send a Content-Length, so the download
+	// reports percentages.
+	mock.AddDownload("new-main", createTestZipBytes(t, map[string]string{"main.esp": "main"}))
+	mock.AddDownload("new-extra", createTestZipBytes(t, map[string]string{"extra.esp": "extra"}))
+
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", domain.Update{
+		InstalledMod: *old, NewVersion: "2.0",
+		FileIDReplacements: map[string]string{"old-main": "new-main", "old-extra": "new-extra"},
+	})
+	require.NoError(t, err)
+	sink, seen := core.RecordEvents()
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, sink)
+	require.NoError(t, err)
+
+	// fileOf is the file position of every download tick and extracting
+	// step, in order, as "phase index/total".
+	var positions []string
+	for _, e := range *seen {
+		switch ev := e.(type) {
+		case core.DownloadEvent:
+			if ev.Phase == core.UpdateDownloading {
+				positions = append(positions, fmt.Sprintf("downloading %d/%d", ev.FileIndex, ev.FileTotal))
+			}
+		case core.StepEvent:
+			if ev.Phase == core.ArchiveExtracting {
+				positions = append(positions, fmt.Sprintf("extracting %d/%d", ev.FileIndex, ev.FileTotal))
+			}
+		}
+	}
+	positions = slices.Compact(positions)
+	assert.Equal(t, []string{
+		"downloading 1/2", "extracting 1/2", "downloading 2/2", "extracting 2/2",
+	}, positions)
 }

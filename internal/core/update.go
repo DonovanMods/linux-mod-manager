@@ -1138,22 +1138,36 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	for i, f := range filesToDownload {
 		fx.fileIDs[i] = f.ID
 	}
-	progressFn := func(e Event) {
-		if forwardFetchStep(e, scope, emit) {
-			return
+	// progressFor is file i's sink. The files are acquired one after
+	// another, each downloaded and then extracted, so each tick and each
+	// extracting step says which file it is (#664) - a renderer measuring
+	// the download from its percent alone would otherwise start over at
+	// the second file.
+	progressFor := func(i int) EventSink {
+		at := FilePosition{FileIndex: i + 1, FileTotal: len(filesToDownload)}
+		return func(e Event) {
+			if forwardFetchStep(e, scope, func(fe Event) {
+				if step, ok := fe.(StepEvent); ok && step.Phase == ArchiveExtracting {
+					step.FilePosition = at
+					fe = step
+				}
+				emit(fe)
+			}) {
+				return
+			}
+			d, ok := e.(DownloadEvent)
+			if !ok || d.TotalBytes <= 0 {
+				return
+			}
+			emit(DownloadEvent{Scope: scope, Phase: UpdateDownloading, Percent: d.Percent, FilePosition: at})
 		}
-		d, ok := e.(DownloadEvent)
-		if !ok || d.TotalBytes <= 0 {
-			return
-		}
-		emit(DownloadEvent{Scope: scope, Phase: UpdateDownloading, Percent: d.Percent})
 	}
 	newMod.Variant = ""
 	results, resolved, err := s.downloadModFiles(ctx, s.GetGameCache(game), mod.SourceID, game, newMod, filesToDownload, fx,
 		// #639: the new files commit to the entry that is exactly their
 		// tree - never layered onto the old set's at the same version,
 		// which the old row (and any other profile's) still names.
-		modFileHooks{sink: func(int, *domain.DownloadableFile) EventSink { return progressFn }, checkCtx: true, fileSet: true})
+		modFileHooks{sink: func(i int, _ *domain.DownloadableFile) EventSink { return progressFor(i) }, checkCtx: true, fileSet: true})
 	if err != nil {
 		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
 			return result, err

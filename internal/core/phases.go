@@ -437,7 +437,8 @@ const (
 	// ("\r  Downloading: %.1f%%", verbose-gated in the pre-extraction CLI) -
 	// Percent only, gated on a known total size, matching
 	// DeployDownloading/InstallDepDownloading's own gating (no raw
-	// byte-count fallback - applyUpdate never printed one).
+	// byte-count fallback - applyUpdate never printed one). FilePosition
+	// says which of the update's files is downloading (#664).
 	UpdateDownloading
 	// UpdateDownloadDone fires once, only after EVERY file in the update's
 	// download step has downloaded successfully - mirroring applyUpdate's
@@ -976,7 +977,8 @@ const (
 	// forward it (forwardFetchStep) under their own scope, so a frontend
 	// learns one name for the fact rather than one per flow. An update
 	// from a file (#530) emits it for the archive it ingests, before its
-	// ingest extracts it.
+	// ingest extracts it. An update's carries its FilePosition, as its
+	// UpdateDownloading ticks do: the files are acquired one after another.
 	ArchiveExtracting
 	// UpdateRunningHook fires before each hook an update runs - the two
 	// before_each hooks ahead of the Replace and the two after_each hooks
