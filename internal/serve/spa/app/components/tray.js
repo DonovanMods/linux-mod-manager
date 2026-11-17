@@ -276,6 +276,7 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
                 key=${job.id}
                 job=${job}
                 frame=${state.jobProgress?.[job.id]}
+                position=${state.jobPositions?.[job.id]}
                 expanded=${expanded === job.id}
                 onToggle=${() => setExpanded(expanded === job.id ? "" : job.id)}
                 actions=${actions}
@@ -316,9 +317,18 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
 
 /** TrayRow is one job: what it is, how it is going, and - once expanded -
  * everything it has said. */
-function TrayRow({ job, frame, expanded, onToggle, actions, liveTodos }) {
+function TrayRow({
+  job,
+  frame,
+  position,
+  expanded,
+  onToggle,
+  actions,
+  liveTodos,
+}) {
   const label = jobStateLabel(job, frame);
-  const fraction = progressFraction(frame);
+  // Issue 664: an update's step is placed within its batch position.
+  const fraction = progressFraction(frame, position);
   // I3, unit 6 fix wave: see jobprogress.js's identical use for why
   // "succeeded" alone can lie about a batch that applied nothing. The tally
   // is the summary's own (issue 364).

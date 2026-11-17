@@ -345,8 +345,8 @@ func TestApplyProfileApply_InstallLoop_DownloadsSavesAndUpserts(t *testing.T) {
 	assert.Empty(t, result.Failed)
 
 	assert.Equal(t, []core.DeployPhase{
-		core.SwitchInstalling, core.SwitchInstallingMod, core.SwitchDownloadDone, core.SwitchInstalled,
-	}, applyModPhases(*events))
+		core.SwitchInstalling, core.SwitchInstallingMod, core.ArchiveExtracting, core.SwitchDownloadDone, core.SwitchInstalled,
+	}, applyModPhases(*events), "#664: the archive's extraction is a step of its own")
 
 	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "default")
 	require.NoError(t, err)
@@ -549,7 +549,7 @@ func TestApplyProfileApply_EntryError_ReportsAndContinues(t *testing.T) {
 	phases := applyModPhases(*events)
 	assert.Equal(t, []core.DeployPhase{
 		core.SwitchInstalling, core.SwitchInstallingMod, core.SwitchInstallError,
-		core.SwitchInstallingMod, core.SwitchDownloadDone, core.SwitchInstalled,
+		core.SwitchInstallingMod, core.ArchiveExtracting, core.SwitchDownloadDone, core.SwitchInstalled,
 	}, phases)
 }
 
@@ -638,7 +638,7 @@ func TestApplyProfileApply_InstallLoop_DownloadFailure_DownloadDoneFollowsFailur
 	phases := applyModPhases(*events)
 	assert.Equal(t, []core.DeployPhase{
 		core.SwitchInstalling, core.SwitchInstallingMod, core.SwitchDownloadFailed, core.SwitchDownloadDone,
-		core.SwitchInstallingMod, core.SwitchDownloadDone, core.SwitchInstalled,
+		core.SwitchInstallingMod, core.ArchiveExtracting, core.SwitchDownloadDone, core.SwitchInstalled,
 	}, phases, "SwitchDownloadDone must follow SwitchDownloadFailed just as it follows a successful download")
 
 	_, err = svc.GetInstalledMod(context.Background(), "src", "bad", game.ID, "default")

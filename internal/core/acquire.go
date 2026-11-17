@@ -392,6 +392,11 @@ func (s *Service) acquireArchive(ctx context.Context, a *acquiredFile, src sourc
 	// #609: the md5 a collection's recorded choices are checked against is
 	// the one the download computed - never a second pass over the archive.
 	fx.archiveMD5 = archiveSum(downloadResult.Checksum, archivePath)
+	if sink != nil {
+		// #664: the flow's progressFn forwards it under its own scope
+		// (forwardFetchStep).
+		sink(StepEvent{Phase: ArchiveExtracting, File: file})
+	}
 	members, resolved, err := s.extractPristine(ctx, game, mod, archivePath, a.tree, fx, sink)
 	if err != nil {
 		if network {

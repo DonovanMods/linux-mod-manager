@@ -251,15 +251,20 @@ func (p DeployPhase) isWorkshopFetch() bool {
 // install's included, and "lmm told you how to fix this" depended on which
 // verb you typed. This is the one function every such progressFn already
 // calls first, so forwarding it here reaches them all.
+//
+// ArchiveExtracting rides it too (#664), and for the same reason: the
+// extraction happens beneath every flow's progressFn, after the last
+// download tick, and a flow that dropped it went silent for as long as a
+// large archive takes to extract.
 func forwardFetchStep(e Event, scope Scope, emit func(Event)) bool {
 	if w, ok := e.(WarningEvent); ok && w.Phase == DownloadWarning {
 		emit(WarningEvent{Scope: scope, Phase: DownloadWarning, Message: w.Message})
 		return true
 	}
 	step, ok := e.(StepEvent)
-	if !ok || !step.Phase.isWorkshopFetch() {
+	if !ok || (!step.Phase.isWorkshopFetch() && step.Phase != ArchiveExtracting) {
 		return false
 	}
-	emit(StepEvent{Scope: scope, Phase: step.Phase, Detail: step.Detail})
+	emit(StepEvent{Scope: scope, Phase: step.Phase, Detail: step.Detail, File: step.File})
 	return true
 }

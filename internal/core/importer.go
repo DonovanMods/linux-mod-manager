@@ -43,6 +43,10 @@ type ImportOptions struct {
 	// refused import or update never changes an entry it would have
 	// written over, another profile's included.
 	stage bool
+	// onExtract, when set, is called once, right before the ingest
+	// extracts the archive (#664) - never for one it copies or keeps
+	// whole. An update from a file reports its extracting step with it.
+	onExtract func()
 }
 
 // entry is k, or the entry entryFor names for it.
@@ -482,6 +486,9 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		}
 
 		extractedPath := filepath.Join(tempDir, "extracted")
+		if opts.onExtract != nil {
+			opts.onExtract()
+		}
 		if err := i.extractor.Extract(ctx, archivePath, extractedPath); err != nil {
 			return nil, fmt.Errorf("extracting archive: %w", err)
 		}

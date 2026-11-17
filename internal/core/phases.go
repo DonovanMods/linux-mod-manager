@@ -378,7 +378,9 @@ const (
 	// file was compiled instead (InstallCompiling fires in that case, one
 	// event per compiled file, and this is skipped entirely). The BATCH
 	// path never prints this (batchInstallMods had no equivalent status
-	// line).
+	// line). The extraction itself happens inside each file's acquire, and
+	// is reported there as it starts, per file and on both paths, by
+	// ArchiveExtracting (#664); this is the CLI's line, kept where it was.
 	InstallExtracting
 	// InstallDeploying mirrors "Deploying to game directory...", fired once
 	// right before the STRICT-path primary's Install/Replace. The BATCH
@@ -446,6 +448,11 @@ const (
 	// the success path only. A caller wanting byte-identical pre-extraction
 	// output prints this ONLY under --verbose (the historical gate lived on
 	// the print itself, not just the progress ticks).
+	//
+	// "Every file" includes laying each one out in the cache, so a file
+	// that is an archive reports ArchiveExtracting BEFORE this (#664); the
+	// steps after it are UpdateRunningHook, UpdateInstalling,
+	// UpdateRecording and UpdateModUpdated.
 	UpdateDownloadDone
 	// UpdateBeforeEachForced fires when EITHER of the update's two
 	// Force-gated hooks - uninstall.before_each (old version) or
@@ -951,6 +958,51 @@ const (
 	// attempt downloaded and kept, rather than downloading it again
 	// (#660; retained_download.go). Detail names the file.
 	ImportDownloadReused
+
+	// --- #664: the steps after a download. An update said "Download done"
+	// and then nothing while it extracted, ran its hooks, replaced the
+	// deployed files and recorded the new version. ---
+
+	// ArchiveExtracting fires once per downloaded file whose archive is
+	// being extracted into the cache - its FOMOD installer, when it has
+	// one, resolved in the same step - after the file's last download tick
+	// and before the flow's own "download done". File names the file. A
+	// file the game installs whole (copied, or kept for a merge) is not
+	// extracted and fires nothing.
+	//
+	// Like DownloadWarning it is one phase for every flow, because the
+	// acquire step that extracts is shared: install, update, deploy's
+	// cache-miss redownload, switch, apply, import and snapshot restore all
+	// forward it (forwardFetchStep) under their own scope, so a frontend
+	// learns one name for the fact rather than one per flow. An update
+	// from a file (#530) emits it for the archive it ingests, before its
+	// ingest extracts it.
+	ArchiveExtracting
+	// UpdateRunningHook fires before each hook an update runs - the two
+	// before_each hooks ahead of the Replace and the two after_each hooks
+	// after it - and only for a hook that is configured and not skipped.
+	// Detail is the hook's name ("install.before_each"). A user's hook can
+	// take as long as it likes, and without this the update would sit on
+	// whatever step came before it.
+	UpdateRunningHook
+	// UpdateInstalling fires once, right before the update replaces the
+	// old version's deployed files with the new version's (Replace) - for
+	// an update from a file, before its ingested tree is committed to the
+	// cache, which is part of the same step. It is install's
+	// InstallDeploying and switch's SwitchInstallingMod for an update.
+	UpdateInstalling
+	// UpdateRecording fires once the new version is deployed (and its
+	// after_each hooks have run): the DB row's version swap, which records
+	// what a rollback returns to, the checksums, the profile ref, and the
+	// profile's derived lists - the merged pak, the plugin list and the
+	// load-order files - brought up to date. On a game that compiles a
+	// merged pak the last of these is the long part.
+	UpdateRecording
+	// UpdateModUpdated fires once, last, when an update has fully applied:
+	// the mod is at Version, the version recorded. It is install's
+	// InstallDone and switch's SwitchInstalled for an update. A batch
+	// still brackets the item with UpdateBatchItemApplied after it.
+	UpdateModUpdated
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -1014,6 +1066,10 @@ var deployPhaseNames = [...]string{
 	ModCopyCopied: "mod_copy_copied", ModCopySkipped: "mod_copy_skipped", ModCopyWarning: "mod_copy_warning",
 
 	ImportDownloadReused: "import_download_reused",
+
+	ArchiveExtracting: "archive_extracting", UpdateRunningHook: "update_running_hook",
+	UpdateInstalling: "update_installing", UpdateRecording: "update_recording",
+	UpdateModUpdated: "update_mod_updated",
 }
 
 // String returns the phase's wire name.

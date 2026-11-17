@@ -89,6 +89,7 @@ export function InlineJob({
     jobID=${jobID}
     summary=${summary}
     frame=${frame}
+    position=${state.jobPositions?.[jobID]}
     origin=${origin}
     actions=${actions}
     onDismiss=${() => actions.clearOrigin(origin)}
@@ -147,6 +148,7 @@ export function JobProgress({
   jobID,
   summary,
   frame,
+  position,
   origin,
   actions,
   onDismiss,
@@ -178,7 +180,9 @@ export function JobProgress({
   const collection = useJobResultCollection(jobID, state);
 
   if (state === "running") {
-    const fraction = progressFraction(frame);
+    // Issue 664: an update's step is placed within its batch position
+    // (activity.js's jobPositions), so the bar moves on every step.
+    const fraction = progressFraction(frame, position);
     const label = progressText(frame) || startingLabel(summary);
     return html`
       <div
