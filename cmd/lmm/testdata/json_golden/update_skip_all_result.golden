@@ -1,0 +1,18 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "mods": [
+    {
+      "source_id": "test-src",
+      "mod_id": "a",
+      "name": "Mod A",
+      "version": "2.0"
+    },
+    {
+      "source_id": "test-src",
+      "mod_id": "b",
+      "name": "Mod B",
+      "version": "2.0"
+    }
+  ]
+}
