@@ -38,6 +38,20 @@ previous version is preserved for 'lmm update rollback', and hooks run as
 for any update.
 
 .PP
+A mod the profile's collection locks (a collection import locks each mod
+it pins) is not checked at all: the collection decides its version, so the
+check prints one line counting those mods instead of a row apiece, and
+\&'lmm profile sync <profile> --collection' updates them. Unlocking a mod
+('lmm mod unlock') makes it yours and returns it to the check. A lock you
+set yourself is still checked, and its update shown as locked.
+
+.PP
+--skip-all skips every update the check offers now - 'lmm mod
+skip-update' for each, so nothing is pinned and a newer version is offered
+again - and --unskip-all clears every skipped update. Neither takes a mod
+ID, --all, --dry-run or --from-file.
+
+.PP
 If the update check itself fails partway through (e.g. a source outage),
 whatever was learned before the failure is still printed and the command
 exits non-zero rather than silently claiming success.
@@ -51,7 +65,10 @@ recompile against the current base pak.
 .PP
 --json prints exactly one JSON document to stdout, in one of two shapes:
   - Bulk check (no mod ID): {game_id, profile, updates: [...], skipped:
-    {pinned, local}, error?}. error is present when the check itself
+    {pinned, local, locked?, collection?, collection_sync?, updates?},
+    error?}. skipped.locked counts the mods the collection locks (never
+    checked), skipped.collection names it, and collection_sync says it
+    has an origin 'lmm profile sync --collection' updates from. error is present when the check itself
     failed partway through; updates/skipped still reflect whatever was
     learned first. Each updates[] entry carries the whole installed mod
     under "installed_mod" plus "new_version"; "locked": true means the
@@ -71,6 +88,9 @@ recompile against the current base pak.
     matched_file?, match_normalized?, advertised?, locked, refusal?,
     files, hooks, warnings}. match is "advertised", "mismatch", "listed"
     or "none". Without --dry-run, the single-mod document above.
+  - With --skip-all or --unskip-all: {game_id, profile, mods: [{source_id,
+    mod_id, name, version}]}, the mods whose skip was set (version: the one
+    skipped) or cleared (version: the one the skip held).
   - 'update rollback' emits the rollback document: {mod, mod_name,
     from_version, to_version, status, reason, warnings, notes}, with
     status "rolled_back" or "skipped".
@@ -82,6 +102,8 @@ Examples:
   lmm update 12345 --game skyrim-se --source nexusmods  # Disambiguate by source
   lmm update --game skyrim-se --all              # Apply all available updates
   lmm update --game skyrim-se --dry-run          # Show what would update
+  lmm update --game skyrim-se --skip-all         # Skip every offered update
+  lmm update --game skyrim-se --unskip-all       # Offer every skipped update again
   lmm update 12345 --game wow --from-file ~/Downloads/Mod-2.0.zip  # Update from a downloaded archive
 
 
@@ -126,8 +148,16 @@ Examples:
 	bypass cached source metadata and locally cached source indexes (Steam Workshop caches for hours; the Thunderstore index for six)
 
 .PP
+\fB--skip-all\fP[=false]
+	skip every update the check offers now, without pinning (each mod's offer is hidden until a newer version appears)
+
+.PP
 \fB-s\fP, \fB--source\fP=""
 	mod source for a single-mod update (default: the sole configured source; prompts when several are configured). A bulk check never needs it
+
+.PP
+\fB--unskip-all\fP[=false]
+	clear every skipped update, so the check offers each again
 
 .PP
 \fB--version\fP=""
