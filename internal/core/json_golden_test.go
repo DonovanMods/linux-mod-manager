@@ -528,6 +528,31 @@ func TestJSONGoldens(t *testing.T) {
 			core.ProfileImportResult{ProfileName: "alt", RecordedOnly: true, ActiveProfile: "default", Recorded: 2},
 		},
 		{
+			// #666: a recorded-only import that then switched to its
+			// profile, leaving one mod it could not install.
+			"profile_import_result_switched",
+			core.ProfileImportResult{ProfileName: "alt", RecordedOnly: true, ActiveProfile: "default", Recorded: 2,
+				Switch: &core.ImportSwitch{From: "default", To: "alt", Switched: true,
+					Error: `profile "alt" is now active, but 1 mod(s) failed: src:gone (no source)`,
+					Result: &core.SwitchResult{Disabled: 1, Enabled: 2,
+						Failed: []core.InstalledRef{{SourceID: "src", ModID: "gone", Name: "Gone", Reason: "no source"}}}}},
+		},
+		{
+			// #666: the switch an import ran - here an unfinished
+			// collection's, which leaves its to-dos with the warning, and one
+			// whose plan failed (no result).
+			"import_switch",
+			core.ImportSwitch{From: "default", To: "three-mods", Switched: true,
+				Unresolved: &core.CollectionIncomplete{Warning: "collection incomplete: 1 item(s) unresolved (FSMP); the game may not behave as the curator intended - finish it with `lmm profile finish`",
+					Items: []core.CollectionTodoItem{{SourceID: "nexusmods", ModID: "4044", Name: "FSMP", Reason: domain.TodoDownloadFailed,
+						Action: core.TodoActionRetry, Remedy: "retry it with Finish collection"}}},
+				Result: &core.SwitchResult{Disabled: 3, Enabled: 1, Installed: 0}},
+		},
+		{
+			"import_switch_failed",
+			core.ImportSwitch{To: "three-mods", Error: "resolving the active profile for skyrim: a profile file cannot be read"},
+		},
+		{
 			// #465: a repair that kept the game's profiles.
 			"game_detect_result_kept_profiles",
 			core.GameDetectResult{Saved: []string{"skyrim-se"}, Profiles: []string{}, Warnings: []string{}, KeptProfiles: []string{"skyrim-se"}},

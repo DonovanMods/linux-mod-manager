@@ -1005,6 +1005,12 @@ const (
 	// InstallDone and switch's SwitchInstalled for an update. A batch
 	// still brackets the item with UpdateBatchItemApplied after it.
 	UpdateModUpdated
+
+	// ImportSwitching fires once, when an import whose options ask for a
+	// switch (ProfileImportOptions.Switch, #666) has finished and goes on
+	// to make the imported profile the active one. ModName names that
+	// profile. The switch's own steps follow (OpSwitch's Switch* phases).
+	ImportSwitching
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -1072,6 +1078,8 @@ var deployPhaseNames = [...]string{
 	ArchiveExtracting: "archive_extracting", UpdateRunningHook: "update_running_hook",
 	UpdateInstalling: "update_installing", UpdateRecording: "update_recording",
 	UpdateModUpdated: "update_mod_updated",
+
+	ImportSwitching: "import_switching",
 }
 
 // String returns the phase's wire name.

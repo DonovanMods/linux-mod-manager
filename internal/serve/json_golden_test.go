@@ -675,6 +675,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileImportApplyRequest{Install: true, AllowAnyOverrides: true},
 		},
 		{
+			// #666: switch is `--switch`, the import modal's "Switch to
+			// this profile when the import finishes".
+			"profile_import_apply_request_switch",
+			profileImportApplyRequest{Install: true, Switch: true},
+		},
+		{
 			// #332's one-member profile body, shared by POST
 			// /api/v1/profiles (the name to create) and POST
 			// /api/v1/profiles/{name}/rename (the name to rename TO).

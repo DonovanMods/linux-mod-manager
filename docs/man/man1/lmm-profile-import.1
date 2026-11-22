@@ -89,12 +89,27 @@ nothing, and the profile is a record of what the collection contains
 rather than a set you turn on and off.
 
 .PP
+The game directory holds the active profile's mods, so an import into a
+profile that is not the active one records its mods - downloading what
+the cache lacks - and deploys nothing. --switch then switches to the
+imported profile once the import finishes, as 'lmm profile switch' does:
+the active profile's deployed mods are taken down and the imported
+profile is deployed and made active. A collection with items left to
+finish switches too, with a warning naming them. A switch that fails
+never undoes the import; the import stands, and the switch's error is
+reported beside it. --no-switch never switches. With neither, an
+interactive run shows what the switch would do and asks "Switch to
+<profile> now? [Y/n]" after the import; a run that is not interactive
+(stdin is not a terminal, -y, or --json) does not switch.
+
+.PP
 Examples:
   lmm profile import survival.yaml --game skyrim-se
   lmm profile import survival.yaml --game skyrim-se --yes
   lmm profile import survival.yaml --game skyrim-se --no-install
   lmm profile import survival.yaml --game skyrim-se --force
   lmm profile import survival.lmmc
+  lmm profile import survival.lmmc --yes --switch
   lmm profile import survival.lmmc --game skyrim-se --with-hooks --as survival-2
   lmm profile import https://example.com/survival.lmmc --as survival
   lmm profile import --workshop-collection 2500900001 --game space-engineers-2
@@ -134,6 +149,10 @@ Examples:
 	skip installing missing mods
 
 .PP
+\fB--no-switch\fP[=false]
+	never switch to the imported profile, and do not ask
+
+.PP
 \fB--optional\fP=[]
 	with --nexus-collection, install this optional item (its id as the plan lists it, mod-id:file-id; repeatable)
 
@@ -144,6 +163,10 @@ Examples:
 .PP
 \fB--skip-file\fP=[]
 	with --nexus-collection, leave out this mod's gone optional file and install the rest of it (source:mod-id, or the mod id; repeatable)
+
+.PP
+\fB--switch\fP[=false]
+	switch to the imported profile once the import finishes, deploying it (the active profile's mods are taken down)
 
 .PP
 \fB--use-current\fP=[]

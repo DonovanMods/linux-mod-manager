@@ -1224,6 +1224,82 @@ function ImportGates({ plan, modal, actions }) {
   `;
 }
 
+/** importPending is how many of plan's mods the import installs when told
+ * to - what the "Download and install" checkbox counts. A Workshop
+ * collection installs nothing; a free account only what needs no download
+ * (a mod another profile has, a bundled item). */
+function importPending(plan) {
+  if (plan.workshop_collection) return 0;
+  const alreadyCached = plan.already_cached ?? [];
+  const needsRedownload = plan.needs_redownload ?? [];
+  const missing = plan.missing ?? [];
+  if (plan.collection?.source?.manual_download) {
+    const bundled = [...needsRedownload, ...missing].filter(
+      (ref) => ref.source_id === "lmm-collection",
+    );
+    return alreadyCached.length + bundled.length;
+  }
+  return alreadyCached.length + needsRedownload.length + missing.length;
+}
+
+/** importSwitchBlocked says why the import cannot switch to its profile
+ * (issue 666), or "" when it can: a switch installs every mod the profile
+ * lists, so an import told to install none of them does not switch. */
+function importSwitchBlocked(plan, applyOptions) {
+  if (applyOptions?.no_install) return "Never install is checked";
+  if (importPending(plan) > 0 && !applyOptions?.install) {
+    return "the pending mods are not being installed";
+  }
+  return "";
+}
+
+/** importSwitches is the apply's `switch` option (issue 666): asked for
+ * (the checkbox, checked by default), for an import that would only record
+ * its profile (plan.recorded_only), and one that installs what it records.
+ * confirmPlan sends this rather than the checkbox's own state. */
+export function importSwitches(plan, applyOptions) {
+  return Boolean(
+    plan?.recorded_only &&
+    applyOptions?.switch !== false &&
+    !importSwitchBlocked(plan, applyOptions),
+  );
+}
+
+/** ImportSwitchOption is "Switch to this profile when the import
+ * finishes" (issue 666), for an import into a profile that is not the
+ * active one: checked by default, and saying - before Import is pressed -
+ * that switching takes the active profile's deployed mods down. */
+function ImportSwitchOption({ plan, modal, actions }) {
+  if (!plan.recorded_only) return null;
+  const blocked = importSwitchBlocked(plan, modal?.applyOptions);
+  const name = plan.profile?.name;
+  return html`
+    <div class="form-section" data-testid="import-switch">
+      <label class="form-check">
+        <input
+          type="checkbox"
+          name="switch"
+          checked=${modal?.applyOptions?.switch !== false && !blocked}
+          disabled=${modal?.status !== "ready" || Boolean(blocked)}
+          onChange=${(e) =>
+            actions.setPlanOptions({ switch: e.currentTarget.checked })}
+        />
+        Switch to this profile when the import finishes
+      </label>
+      <p class="plan__note plan__note--warn" data-testid="import-switch-note">
+        ${
+          blocked
+            ? html`Not available: ${blocked}. The import records${" "}
+                <span class="mono">${name}</span> without deploying it.`
+            : html`Switching takes down the mods${" "}
+                <span class="mono">${plan.active_profile}</span> has deployed,
+                and deploys <span class="mono">${name}</span> in their place.`
+        }
+      </p>
+    </div>
+  `;
+}
+
 export function ProfileImportPlanView({ plan, modal, actions }) {
   const lmmCollection = plan.collection ?? null;
   // Issue 607: a source collection (NexusMods) converted into the lmm
@@ -1239,19 +1315,12 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
   const alreadyCached = plan.already_cached ?? [];
   const needsRedownload = plan.needs_redownload ?? [];
   const missing = plan.missing ?? [];
-  // A collection import installs nothing whatever this preview offers, so
-  // it has no pending count to offer it for.
-  // A free account installs only what needs no download: a mod another
-  // profile already has. Everything else is recorded, to fetch by hand.
-  // Issue 610: a collection's bundled items need no download either.
-  const bundled = [...needsRedownload, ...missing].filter(
-    (ref) => ref.source_id === "lmm-collection",
-  );
-  const pending = collection
-    ? 0
-    : manualOnly
-      ? alreadyCached.length + bundled.length
-      : alreadyCached.length + needsRedownload.length + missing.length;
+  // A Workshop collection import installs nothing whatever this preview
+  // offers, so it has no pending count to offer it for. A free account
+  // installs only what needs no download: a mod another profile already
+  // has. Everything else is recorded, to fetch by hand. Issue 610: a
+  // collection's bundled items need no download either.
+  const pending = importPending(plan);
   // A Workshop item is tracked game-wide, so for a collection BOTH buckets
   // count as already present; an ordinary import counts only the rows this
   // profile itself already has.
@@ -1312,6 +1381,7 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
           </p>
         `
       }
+      <${ImportSwitchOption} plan=${plan} modal=${modal} actions=${actions} />
       ${
         // Issue 608: the pending files install in one go once downloaded.
         manualOnly &&

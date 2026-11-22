@@ -1,0 +1,23 @@
+{
+  "from": "default",
+  "to": "three-mods",
+  "switched": true,
+  "unresolved": {
+    "warning": "collection incomplete: 1 item(s) unresolved (FSMP); the game may not behave as the curator intended - finish it with `lmm profile finish`",
+    "items": [
+      {
+        "source_id": "nexusmods",
+        "mod_id": "4044",
+        "name": "FSMP",
+        "reason": "download_failed",
+        "action": "retry",
+        "remedy": "retry it with Finish collection"
+      }
+    ]
+  },
+  "result": {
+    "disabled": 3,
+    "enabled": 1,
+    "installed": 0
+  }
+}

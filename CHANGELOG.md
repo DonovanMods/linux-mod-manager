@@ -72,6 +72,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     installed version, counts as not applied. A collection's locked mods
     are never skipped.
 
+- **Switch to a collection's profile when its import finishes (#666).**
+  Importing into a profile that is not the active one records its mods
+  and deploys nothing, so the library stayed on the old profile.
+  `lmm profile import` now takes `--switch`, which switches to the
+  imported profile once the import finishes, as `lmm profile switch`
+  does: the active profile's mods come down and the imported profile is
+  deployed and made active. `--no-switch` never switches. With neither, an
+  interactive run shows the switch's plan after the import and asks
+  `Switch to <profile> now? [Y/n]`; a run that is not interactive, `-y`
+  or `--json` keeps today's behaviour. In the web UI the import's plan has
+  **Switch to this profile when the import finishes**, ticked by default
+  and saying whose mods come down, and the page moves to the new profile
+  when the job ends. A collection with items left to finish still
+  switches, with its warning; a failed switch never undoes the import.
+  `--json` and the job's result carry a new `switch` object
+  (`core.ImportSwitch`); the job's options take `switch`.
+
 - **Search a game's NexusMods collections (#651).** `lmm search
 --collections [query]` lists the game's collections on NexusMods (no API
   key needed): name, curator, endorsements, mod count, latest revision and

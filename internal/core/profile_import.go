@@ -745,6 +745,41 @@ type ProfileImportOptions struct {
 	// target a text config file (ImportPlan.RestrictedOverrides) is
 	// skipped, and the result lists it (OverridesSkipped).
 	AllowAnyOverrides bool
+
+	// Switch makes the imported profile the game's active one once the
+	// import finishes (#666): `--switch`, and the web UI's "Switch to this
+	// profile when the import finishes". It matters only for an import that
+	// is recorded-only (ImportPlan.RecordedOnly): the switch is `lmm
+	// profile switch`'s own Plan/Apply, run after the import, so the active
+	// profile's deployed files come down and the imported profile deploys.
+	// A switch that fails never undoes the import: the result's Switch
+	// reports it beside the import's own outcome, and the import's error is
+	// the import's alone. An import that refused, or stopped on an error
+	// other than *ProfileImportIncompleteError, does not switch; one that
+	// left mods failed or a collection's items to do does (#660).
+	Switch bool
+}
+
+// ImportSwitch is what ProfileImportOptions.Switch did (#666): the switch
+// to the imported profile, run once the import finished.
+//
+// Switched says the imported profile is now the active one: true for a
+// switch that ran to the end, and for one that made the profile active
+// with some mods it could not install or deploy (Result.Failed, Error).
+// Error is the switch's own failure, as text, when it had one; the
+// import's result stands either way. From is the profile switched away
+// from. Unresolved is the imported collection's items left to do, which the
+// switch leaves out with the warning `lmm profile switch` gives (#660);
+// Warnings are the switch plan's own. Result is the switch's result, absent
+// when the switch never ran (its plan failed).
+type ImportSwitch struct {
+	From       string                `json:"from,omitempty"`
+	To         string                `json:"to"`
+	Switched   bool                  `json:"switched"`
+	Error      string                `json:"error,omitempty"`
+	Unresolved *CollectionIncomplete `json:"unresolved,omitempty"`
+	Warnings   []string              `json:"warnings,omitempty"`
+	Result     *SwitchResult         `json:"result,omitempty"`
 }
 
 // ProfileImportResult reports the outcome of ApplyImport. As with every other
@@ -841,6 +876,12 @@ type ProfileImportResult struct {
 	// (#660; retained_download.go). Absent when none.
 	ReusedDownloads int `json:"reused_downloads,omitzero"`
 
+	// Switch is the switch to the imported profile that
+	// ProfileImportOptions.Switch asked for (#666), once the import
+	// finished. Absent when none was asked for, and when there was nothing
+	// to switch: the import went into the active profile, or did not finish.
+	Switch *ImportSwitch `json:"switch,omitempty"`
+
 	// todoRecords are the to-dos this run's failures record, by
 	// domain.ModKey, for the collection flow to write with its own
 	// (recordCollectionTodos).
@@ -872,13 +913,85 @@ type ProfileImportResult struct {
 // that pair's own doc comments for why a speculative plan is cheap enough to
 // simply discard and recompute instead, for a caller that wants to guard
 // against drift).
+//
+// opts.Switch then switches to the imported profile (#666;
+// switchToImported), after the import's own mutation has ended.
 func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, sink EventSink) (*ProfileImportResult, error) {
+	result, err := s.applyImportOp(ctx, game, plan, opts, sink)
+	if opts.Switch {
+		s.switchToImported(ctx, game, result, err, importInstalls(plan, opts), sink)
+	}
+	return result, err
+}
+
+// importInstalls reports whether an import of plan with opts installs what
+// it records: nothing is pending, or Install is set and NoInstall is not.
+// A switch to the imported profile (#666) runs only then - switching
+// installs every mod the profile lists, which an import told to install
+// none of them must not do behind the user's back.
+func importInstalls(plan *ImportPlan, opts ProfileImportOptions) bool {
+	pending := len(plan.AlreadyCached) + len(plan.NeedsRedownload) + len(plan.Missing)
+	return !opts.NoInstall && (opts.Install || pending == 0)
+}
+
+// applyImportOp is ApplyImport without its switch: the import, under its
+// own mutation slot. ApplyCollectionImport runs it, and switches once its
+// collection's to-dos are recorded.
+func (s *Service) applyImportOp(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, sink EventSink) (*ProfileImportResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &ProfileImportResult{}, err
 	}
 	defer release()
 	return s.applyImportHeld(ctx, game, plan, opts, sink)
+}
+
+// switchToImported is ProfileImportOptions.Switch (#666): once an import
+// that ended with result and err has finished, it switches the game to the
+// imported profile through PlanProfileSwitch/ApplyProfileSwitch - exactly
+// `lmm profile switch`, under its own mutation slot - and records what
+// happened on result.Switch. Nothing it does changes result's import
+// fields or err: a failed switch leaves the import as it was.
+//
+// It switches only an import that saved its profile recorded-only (one
+// into the active profile, or a game's first, deployed already), and that
+// finished: cleanly, or with mods failed or a collection's items left to
+// do (*ProfileImportIncompleteError, #660). Not a refused import, one that
+// stopped on another error, or a cancelled one. An import that left its
+// mods pending (installed false: importInstalls) is not switched either -
+// the switch would install them - and result.Switch says so.
+func (s *Service) switchToImported(ctx context.Context, game *domain.Game, result *ProfileImportResult, err error, installed bool, sink EventSink) {
+	if result == nil || result.ProfileName == "" || result.Refused || !result.RecordedOnly || ctx.Err() != nil {
+		return
+	}
+	if err != nil && !errors.As(err, new(*ProfileImportIncompleteError)) {
+		return
+	}
+	sw := &ImportSwitch{To: result.ProfileName}
+	result.Switch = sw
+	if !installed {
+		sw.Error = ErrImportSwitchUninstalled.Error()
+		return
+	}
+	if sink != nil {
+		sink(StepEvent{Scope: Scope{Op: OpImport, ModName: result.ProfileName}, Phase: ImportSwitching})
+	}
+	plan, perr := s.PlanProfileSwitch(ctx, game, result.ProfileName)
+	if perr != nil {
+		sw.Error = perr.Error()
+		return
+	}
+	sw.From, sw.Unresolved, sw.Warnings = plan.From, plan.Unresolved, plan.Warnings
+	if plan.AlreadyActive {
+		sw.Switched = true
+		return
+	}
+	res, aerr := s.ApplyProfileSwitch(ctx, game, plan, sink)
+	sw.Result = res
+	if aerr != nil {
+		sw.Error = aerr.Error()
+	}
+	sw.Switched = aerr == nil || errors.As(aerr, new(*ProfileSwitchIncompleteError))
 }
 
 // applyImportHeld is ApplyImport for a caller already holding the

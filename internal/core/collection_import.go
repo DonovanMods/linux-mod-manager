@@ -773,10 +773,13 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 	}
 	plan, heldBack := plan.installingNone(held)
 	opts.heldTodos = held
-	result, err := s.ApplyImport(ctx, game, plan, opts, sink)
+	// #666: the switch waits for the collection's to-dos, which its plan
+	// leaves out with a warning.
+	result, err := s.applyImportOp(ctx, game, plan, opts, sink)
 	if result == nil || result.ProfileName == "" {
 		return result, err
 	}
+
 	result.BundledSkipped = bundledSkipped
 	if !result.Refused {
 		// #668: the collection's own conflicts are intended.
@@ -807,6 +810,9 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 	}
 	if n := len(c.External); n > 0 {
 		result.Notes = append(result.Notes, fmt.Sprintf("%d item(s) of this collection are not fetched by lmm: get them by hand (the profile records them, with the curator's instructions).", n))
+	}
+	if opts.Switch {
+		s.switchToImported(ctx, game, result, err, importInstalls(plan, opts), sink)
 	}
 	return result, err
 }

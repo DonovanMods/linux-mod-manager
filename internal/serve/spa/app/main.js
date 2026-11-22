@@ -56,6 +56,7 @@ import { DEPLOY_ORIGIN } from "./components/topbar.js";
 import { PLAY_NOT_ACTIVE_REASON } from "./components/playbutton.js";
 import { updateFromFileInputID } from "./components/updatefromfile.js";
 import { copyReplaces } from "./components/plan_mod_copy.js";
+import { importSwitches } from "./components/plan_profile_import.js";
 import {
   fetchJobResult,
   readoutHasNextStep,
@@ -1309,8 +1310,12 @@ async function openPlan({
     // renderer's own controls (setPlanOptions). It is carried HERE for
     // replanWith (below), which re-opens the same plan with a changed
     // plan-time option and must not throw away an apply-time choice the
-    // user already made in the same modal.
-    applyOptions,
+    // user already made in the same modal. Issue 666: an import's "Switch
+    // to this profile when the import finishes" starts checked.
+    applyOptions:
+      kind === "profile_import"
+        ? { switch: true, ...(applyOptions ?? {}) }
+        : applyOptions,
     onConfirmed,
     openerSelector,
     // extra is what the opener knows that the plan document cannot (issue
@@ -1981,12 +1986,21 @@ async function confirmPlan() {
   //
   // Issue 437: confirming a copy into a profile that already lists the mod
   // is the replace - confirmplan.js labels that click "Replace".
+  //
+  // Issue 666: an import switches to its profile only when the plan's
+  // checkbox says so AND the import installs what it records
+  // (importSwitches) - never for an import into the active profile.
   const applyOptions =
     fromFileKinds.has(modal.kind) && modal.plan?.match === "mismatch"
       ? { ...(modal.applyOptions ?? {}), accept_mismatch: true }
       : modal.kind === "mod_copy" && copyReplaces(modal.plan)
         ? { ...(modal.applyOptions ?? {}), replace: true }
-        : modal.applyOptions;
+        : modal.kind === "profile_import"
+          ? {
+              ...(modal.applyOptions ?? {}),
+              switch: importSwitches(modal.plan, modal.applyOptions),
+            }
+          : modal.applyOptions;
   await startBinding(modal.origin, async () => {
     try {
       const { id: jobID } = await startJob(modal.planID, applyOptions);
@@ -2947,6 +2961,13 @@ async function onJobDone(summary) {
     }
   }
 
+  // Issue 666: an import this page started that switched to the profile it
+  // imported takes the page there, so the library lists that profile's
+  // mods - whatever else the page shows of the job.
+  if (summary.kind === "profile_import" && jobFacts.has(summary.id)) {
+    await followImportSwitch(summary);
+  }
+
   // Either tense counts as "in view": the snapshot answers for a control
   // this function's own refresh took off screen, and the live check for a
   // control that only MOUNTED once the binding landed (a row rendered by
@@ -3014,6 +3035,19 @@ async function onJobDone(summary) {
     jobID: summary.id,
     ...(finish ? finishAffordance(summary, finish) : toastAffordance(summary)),
   });
+}
+
+/** followImportSwitch navigates to the profile a finished import switched
+ * to (issue 666), in the game the import ran for - also when the import
+ * itself failed some mods, as its switch still ran. A switch that did not
+ * happen leaves the page where it is; the job's readout says why. */
+async function followImportSwitch(summary) {
+  if (!summary.game) return;
+  const sw = (await fetchJobResult(summary.id))?.importSwitch;
+  if (!sw?.switched) return;
+  const route = store.get().route;
+  if (route.game === summary.game && route.profile === sw.to) return;
+  navigate(contextPath(summary.game, sw.to));
 }
 
 // COLLECTION_KINDS are the job kinds that always act on a collection

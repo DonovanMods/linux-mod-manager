@@ -313,6 +313,42 @@ import again after you've fixed it doesn't download them again. (Steam
 Workshop items that lmm fetches through steamcmd are the exception: those
 are fetched again.)
 
+### Switching to the imported profile
+
+The game folder holds the active profile's mods, so importing into a new
+profile only records its mods (downloading what lmm doesn't have yet) and
+puts nothing into the game. To play the import, switch to it. The import
+can do that for you as soon as it finishes: it switches the way
+`lmm profile switch` does, so the active profile's mods are taken out of
+the game folder, the imported profile's go in, and it becomes the active
+profile.
+
+```bash
+lmm profile import coop.lmmc --yes --switch
+```
+
+Without `--switch` or `--no-switch`, lmm asks after the import: it shows
+what the switch would take out and put in, then **Switch to coop now?
+[Y/n]**. Press Enter to switch, or `n` to leave the profile as it is and
+switch later with `lmm profile switch coop`. A run that can't ask (input
+isn't from a keyboard, or you passed `--yes` or `--json`) doesn't switch
+unless you pass `--switch`. `--no-switch` never switches and doesn't ask.
+`--switch` can't be used with `--no-install`, because switching installs
+the profile's mods.
+
+In the browser, the import's plan has **Switch to this profile when the
+import finishes**, ticked by default. It says whose mods the switch takes
+out before you press **Import**. When the import is done, the page moves
+to the new profile and the library lists the collection's mods. The box
+can't be ticked while the import isn't installing its mods (**Download
+and install** unticked, or **Never install** ticked).
+
+A collection with items left to finish (see
+[Finishing a collection](#finishing-a-collection))
+still switches, with the same warning a switch gives naming them. If the
+switch fails, the import is kept: lmm says why the switch failed, and
+`lmm profile switch` tries again.
+
 {: .tip }
 To make sure a friend gets *exactly* the version you have, lock the mod
 first (see [Locking a mod](updates.md#locking-a-mod-to-one-version)). Locks

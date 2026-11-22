@@ -233,12 +233,26 @@ whichever profile is active. So switching to a collection profile deploys
 nothing, and the profile is a record of what the collection contains
 rather than a set you turn on and off.
 
+The game directory holds the active profile's mods, so an import into a
+profile that is not the active one records its mods - downloading what
+the cache lacks - and deploys nothing. --switch then switches to the
+imported profile once the import finishes, as 'lmm profile switch' does:
+the active profile's deployed mods are taken down and the imported
+profile is deployed and made active. A collection with items left to
+finish switches too, with a warning naming them. A switch that fails
+never undoes the import; the import stands, and the switch's error is
+reported beside it. --no-switch never switches. With neither, an
+interactive run shows what the switch would do and asks "Switch to
+<profile> now? [Y/n]" after the import; a run that is not interactive
+(stdin is not a terminal, -y, or --json) does not switch.
+
 Examples:
   lmm profile import survival.yaml --game skyrim-se
   lmm profile import survival.yaml --game skyrim-se --yes
   lmm profile import survival.yaml --game skyrim-se --no-install
   lmm profile import survival.yaml --game skyrim-se --force
   lmm profile import survival.lmmc
+  lmm profile import survival.lmmc --yes --switch
   lmm profile import survival.lmmc --game skyrim-se --with-hooks --as survival-2
   lmm profile import https://example.com/survival.lmmc --as survival
   lmm profile import --workshop-collection 2500900001 --game space-engineers-2
@@ -355,6 +369,8 @@ var (
 	profileImportAs           string
 	profileImportWithHooks    bool
 	profileImportAnyOverrides bool
+	profileImportSwitch       bool
+	profileImportNoSwitch     bool
 	profileExportOutput       string
 	profileExportPlain        bool
 	profileExportMeta         core.CollectionExportOptions
@@ -415,6 +431,10 @@ func init() {
 	profileImportCmd.Flags().BoolVar(&profileImportForce, "force", false, "overwrite existing profile")
 	profileImportCmd.Flags().BoolVar(&profileImportNoInstall, "no-install", false, "skip installing missing mods")
 	profileImportCmd.Flags().BoolVarP(&profileImportYes, "yes", "y", false, "auto-confirm downloading/installing missing mods")
+	profileImportCmd.Flags().BoolVar(&profileImportSwitch, "switch", false,
+		"switch to the imported profile once the import finishes, deploying it (the active profile's mods are taken down)")
+	profileImportCmd.Flags().BoolVar(&profileImportNoSwitch, "no-switch", false,
+		"never switch to the imported profile, and do not ask")
 	addFomodFlags(profileImportCmd)
 
 	// Sync flags
@@ -610,6 +630,19 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 // The prompt deliberately stays here rather than in core: core never blocks
 // on user input.
 func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Game, targetName string) error {
+	return runSwitch(ctx, service, game, targetName, switchRun{yes: profileSwitchYes, dryRun: profileSwitchDryRun, prompt: "\nProceed? [Y/n]: "})
+}
+
+// switchRun is how runSwitch runs: `lmm profile switch`'s --yes and
+// --dry-run, and the question it asks before applying - "Proceed?", or an
+// import's offer to switch to the profile it imported (#666).
+type switchRun struct {
+	yes, dryRun bool
+	prompt      string
+}
+
+// runSwitch is doProfileSwitch, run as run says.
+func runSwitch(ctx context.Context, service *core.Service, game *domain.Game, targetName string, run switchRun) error {
 	plan, err := service.PlanProfileSwitch(ctx, game, targetName)
 	if err != nil {
 		return err
@@ -618,7 +651,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	// Ruling 15: --dry-run --json is the Plan document, emitted before any
 	// preview - including the already-active and no-changes readouts, both
 	// of which the plan itself states (AlreadyActive/NoChanges).
-	if profileSwitchDryRun && jsonOutput {
+	if run.dryRun && jsonOutput {
 		return emitJSON(plan)
 	}
 
@@ -633,7 +666,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	if !jsonOutput {
-		if profileSwitchDryRun {
+		if run.dryRun {
 			fmt.Printf("Switch plan for profile %q (dry run)\n\n", targetName)
 		} else {
 			fmt.Printf("Switching to profile: %s\n\n", targetName)
@@ -647,7 +680,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	if plan.FlagOnly {
-		return applyFlagOnlySwitch(ctx, service, game, plan)
+		return applyFlagOnlySwitch(ctx, service, game, plan, run)
 	}
 
 	// progress prints every diagnostic and per-mod status line at its exact
@@ -665,47 +698,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	// nothing to disable, enable or install, so plan.NoChanges is true - and
 	// that branch used to pass core a nil sink, throwing away the one event
 	// core does emit on that path (#345, N3).
-	progress := func(e core.Event) {
-		p, ok := lineOf(e)
-		if !ok {
-			return
-		}
-		switch p.Phase {
-		case core.SwitchDisableNote:
-			if verbose {
-				fmt.Printf("  %s\n", p.Detail)
-			}
-		case core.SwitchDisabled:
-			fmt.Printf("  ✓ Disabled: %s\n", p.ModName)
-		case core.SwitchEnableNote:
-			if verbose {
-				fmt.Printf("  %s\n", p.Detail)
-			}
-		case core.SwitchEnabled:
-			fmt.Printf("  ✓ Enabled: %s\n", p.ModName)
-		case core.SwitchInstalling:
-			fmt.Println("\nInstalling missing mods...")
-		case core.SwitchInstallingMod:
-			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
-		case core.SwitchInstallError:
-			fmt.Printf("    Error: %s\n", p.Detail)
-		case core.SwitchDownloading:
-			printProgressLine("\r    Downloading: %.1f%%", p.Percent)
-		case core.SwitchDownloadFailed:
-			fmt.Println()
-			fmt.Printf("    Error: %s\n", p.Detail)
-		case core.SwitchDownloadDone:
-			fmt.Println()
-		case core.SwitchInstalled:
-			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
-		case core.DeployExternalSkipped:
-			// #269/#345 N3: design §2's advisory - "N Steam Workshop items
-			// stay active regardless of profile". Unconditional, not
-			// --verbose-gated: it explains a fact about the switch the user
-			// cannot see any other way.
-			fmt.Printf("  %s\n", p.Detail)
-		}
-	}
+	progress := switchProgress
 
 	if plan.NoChanges {
 		// #631 review: a file the switch keeps as the user changed it is
@@ -716,7 +709,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		// No mod changes, just switch the default - ApplyProfileSwitch's
 		// three loops are all empty, so this is exactly a SetDefault call.
 		// A dry run must not make even that one write.
-		if profileSwitchDryRun {
+		if run.dryRun {
 			return nil
 		}
 		result, err := service.ApplyProfileSwitch(ctx, game, plan, quietSink(progress))
@@ -764,14 +757,14 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	// A dry run stops here: it has shown the plan and must change nothing.
-	if profileSwitchDryRun {
+	if run.dryRun {
 		return nil
 	}
 
 	// Confirm unless --yes
-	if !profileSwitchYes {
+	if !run.yes {
 		if !jsonOutput {
-			fmt.Print("\nProceed? [Y/n]: ")
+			fmt.Print(run.prompt)
 		}
 		input, err := readPromptLine()
 		if err != nil {
@@ -845,11 +838,11 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 // warning, already printed, so it confirms, marks the target and reports
 // the result's warning - that nothing was deployed or removed, and what to
 // run next.
-func applyFlagOnlySwitch(ctx context.Context, service *core.Service, game *domain.Game, plan *core.SwitchPlan) error {
-	if profileSwitchDryRun {
+func applyFlagOnlySwitch(ctx context.Context, service *core.Service, game *domain.Game, plan *core.SwitchPlan, run switchRun) error {
+	if run.dryRun {
 		return nil
 	}
-	if !profileSwitchYes {
+	if !run.yes {
 		if !jsonOutput {
 			fmt.Printf("Mark %s as the active profile? [Y/n]: ", plan.To)
 		}
@@ -873,6 +866,51 @@ func applyFlagOnlySwitch(ctx context.Context, service *core.Service, game *domai
 	}
 	fmt.Printf("✓ Marked %s as the active profile of %s\n", plan.To, game.ID)
 	return nil
+}
+
+// switchProgress prints a profile switch's events at their exact point of
+// occurrence (doProfileSwitch's, and an import's switch, #666). Nothing
+// prints Notes afterwards: each has its event here already.
+func switchProgress(e core.Event) {
+	p, ok := lineOf(e)
+	if !ok {
+		return
+	}
+	switch p.Phase {
+	case core.SwitchDisableNote:
+		if verbose {
+			fmt.Printf("  %s\n", p.Detail)
+		}
+	case core.SwitchDisabled:
+		fmt.Printf("  ✓ Disabled: %s\n", p.ModName)
+	case core.SwitchEnableNote:
+		if verbose {
+			fmt.Printf("  %s\n", p.Detail)
+		}
+	case core.SwitchEnabled:
+		fmt.Printf("  ✓ Enabled: %s\n", p.ModName)
+	case core.SwitchInstalling:
+		fmt.Println("\nInstalling missing mods...")
+	case core.SwitchInstallingMod:
+		fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
+	case core.SwitchInstallError:
+		fmt.Printf("    Error: %s\n", p.Detail)
+	case core.SwitchDownloading:
+		printProgressLine("\r    Downloading: %.1f%%", p.Percent)
+	case core.SwitchDownloadFailed:
+		fmt.Println()
+		fmt.Printf("    Error: %s\n", p.Detail)
+	case core.SwitchDownloadDone:
+		fmt.Println()
+	case core.SwitchInstalled:
+		fmt.Printf("    ✓ Installed: %s\n", p.ModName)
+	case core.DeployExternalSkipped:
+		// #269/#345 N3: design §2's advisory - "N Steam Workshop items
+		// stay active regardless of profile". Unconditional, not
+		// --verbose-gated: it explains a fact about the switch the user
+		// cannot see any other way.
+		fmt.Printf("  %s\n", p.Detail)
+	}
 }
 
 func runProfileExport(cmd *cobra.Command, args []string) error {
@@ -977,6 +1015,9 @@ func reinstallNote(reason string) string {
 }
 
 func runProfileImport(cmd *cobra.Command, args []string) error {
+	if err := checkImportSwitchFlags(); err != nil {
+		return err
+	}
 	// #607: --nexus-collection is a third input, exclusive of the other
 	// two; --with-optional means something only for it.
 	if profileImportNexus != "" {
@@ -1088,11 +1129,21 @@ func doProfileImportCollection(ctx context.Context, service *core.Service, game 
 		if plan.Exists {
 			fmt.Printf("\nA profile named %q already exists.\n", c.ProfileName)
 		}
+		printImportSwitchNotice(plan, game) // #666
 	}
 
+	switching := false
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
+			return
+		}
+		if switching {
+			switchProgress(e)
+			return
+		}
+		if importSwitchPhase(p) {
+			switching = true
 			return
 		}
 		if p.Phase == core.ImportSaved {
@@ -1101,7 +1152,7 @@ func doProfileImportCollection(ctx context.Context, service *core.Service, game 
 	}
 
 	result, err := service.ApplyWorkshopCollectionImport(ctx, game, plan,
-		core.ProfileImportOptions{Force: profileImportForce}, quietSink(progress))
+		core.ProfileImportOptions{Force: profileImportForce, Switch: profileImportSwitch}, quietSink(progress))
 	if err != nil {
 		return err
 	}
@@ -1109,19 +1160,24 @@ func doProfileImportCollection(ctx context.Context, service *core.Service, game 
 		// The collection AND the result: the counts alone say nothing about
 		// WHICH items need subscribing, and that per-item remedy is the
 		// only part of this flow a script can act on (#346, W2 Minor 6).
-		return emitJSON(&core.WorkshopCollectionImportResult{Collection: c, Result: result})
+		if err := emitJSON(&core.WorkshopCollectionImportResult{Collection: c, Result: result}); err != nil {
+			return err
+		}
+		return reportImportSwitch(result.Switch, nil)
 	}
 	for _, note := range result.Notes {
 		fmt.Printf("  %s\n", note)
 	}
 	// Deliberately NOT the file-import path's "switch ... to make it
 	// active": every ref in a collection profile is a game-global Workshop
-	// item, so a switch to it would deploy nothing and change nothing about
-	// what the game loads (W2 review, Important 5).
+	// item, so a switch to it deploys nothing of the collection's and
+	// changes nothing about what the game loads for it (W2 review,
+	// Important 5). It does take down what the active profile deployed
+	// (#666), which the switch's own plan shows before it is offered.
 	fmt.Printf("\nThe profile records the collection's list. "+
-		"Steam decides what the game loads for these items, so switching to %s deploys nothing.\n",
+		"Steam decides what the game loads for these items, so switching to %s deploys none of them.\n",
 		result.ProfileName)
-	return nil
+	return finishImportSwitch(ctx, service, game, result, true, nil)
 }
 
 // doNexusCollectionImport is `lmm profile import --nexus-collection <ref>`
@@ -1280,11 +1336,12 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 				fmt.Printf("  %d more mod(s) with several stored files were not looked up; any heal is said when the import reaches it.\n", plan.HealsUnchecked)
 			}
 		}
-		if plan.RecordedOnly && !noInstall && len(plan.AlreadyCached)+len(plan.NeedsRedownload)+len(plan.Missing) > 0 {
+		if plan.RecordedOnly && !noInstall && !profileImportSwitch && len(plan.AlreadyCached)+len(plan.NeedsRedownload)+len(plan.Missing) > 0 {
 			// #462: the game directory holds the active profile's mods.
 			fmt.Printf("\n%s is not the active profile of %s (%s is), so the import records these mods in it - downloading what the cache lacks - and deploys nothing; `lmm profile switch %s` deploys them.\n",
 				plan.Profile.Name, game.Name, plan.ActiveProfile, plan.Profile.Name)
 		}
+		printImportSwitchNotice(plan, game) // #666
 		printImportGates(plan)
 	}
 
@@ -1301,6 +1358,7 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 	opts := core.ProfileImportOptions{
 		Force: profileImportForce, NoInstall: profileImportNoInstall,
 		WithHooks: profileImportWithHooks, AllowAnyOverrides: profileImportAnyOverrides,
+		Switch: profileImportSwitch, // #666
 	}
 	if pendingCount > 0 && !noInstall {
 		if profileImportYes {
@@ -1323,6 +1381,8 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 			}
 			if input != "" && input != "y" && input != "yes" {
 				declined = true
+				// #666: a switch would install what was just declined.
+				opts.Switch = false
 				fmt.Printf("Skipped. %s\n", installLaterHint(plan.Profile.Name))
 				// Unreachable under --json: readPromptLine above refuses to
 				// read stdin there (Ruling 2), so a decline is impossible.
@@ -1337,9 +1397,19 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 	// including the sole diagnostic that also lands in result.Notes (see
 	// core.ProfileImportResult's doc comment). Notes is never separately
 	// batch-printed below: it has a corresponding event here already.
+	// --switch's switch (#666) prints as `lmm profile switch` does.
+	switching := false
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
+			return
+		}
+		if switching {
+			switchProgress(e)
+			return
+		}
+		if importSwitchPhase(p) {
+			switching = true
 			return
 		}
 		switch p.Phase {
@@ -1442,7 +1512,7 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		if err := emitJSON(doc); err != nil {
 			return err
 		}
-		return fomodUnanswered(result.FomodChoicesRequired)
+		return reportImportSwitch(result.Switch, fomodUnanswered(result.FomodChoicesRequired))
 	}
 
 	// #621: a collection's notes (its external items) are appended after
@@ -1474,9 +1544,9 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		printCollectionImportSummary(result)
 		if incompleteErr != nil {
 			// Already said, in full: the exit status says it is unfinished.
-			return fmt.Errorf("%w", ErrReported)
+			incompleteErr = fmt.Errorf("%w", ErrReported)
 		}
-		return nil
+		return finishImportSwitch(ctx, service, game, result, !noInstall && !declined, incompleteErr)
 	}
 
 	switch {
@@ -1504,10 +1574,14 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		}
 	default:
 		fmt.Printf("\n--- Summary ---\n")
-		if result.RecordedOnly {
+		switch {
+		case result.RecordedOnly && result.Switch != nil:
+			// #666: the switch, reported below, deployed them.
+			fmt.Printf("Recorded: %d\n", result.Recorded)
+		case result.RecordedOnly:
 			fmt.Printf("Recorded: %d (not deployed: %s is not the active profile - `lmm profile switch %s` deploys them)\n",
 				result.Recorded, result.ProfileName, result.ProfileName)
-		} else {
+		default:
 			fmt.Printf("Installed: %d\n", result.Installed)
 		}
 		if result.Failed > 0 {
@@ -1515,7 +1589,30 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 		}
 	}
 
-	return incompleteErr
+	return finishImportSwitch(ctx, service, game, result, !noInstall && !declined, incompleteErr)
+}
+
+// finishImportSwitch ends a non-JSON import run (#666): it reports what
+// --switch did, or - for an interactive run given neither flag, whose
+// import recorded (offerable: not --no-install, not declined) - offers the
+// switch. err is the import's own outcome, which the switch never changes:
+// a failed switch adds an exit status only to an import that succeeded.
+func finishImportSwitch(ctx context.Context, service *core.Service, game *domain.Game, result *core.ProfileImportResult, offerable bool, err error) error {
+	if result.Switch != nil {
+		return reportImportSwitch(result.Switch, err)
+	}
+	if !offerable || !importSwitchOffered() {
+		return err
+	}
+	serr := offerImportSwitch(ctx, service, game, result)
+	switch {
+	case serr == nil:
+	case err == nil:
+		return serr
+	case !errors.Is(serr, ErrReported):
+		fmt.Fprintf(os.Stderr, "Error: switching to %s: %v\n", result.ProfileName, serr)
+	}
+	return err
 }
 
 func runProfileSync(cmd *cobra.Command, args []string) error {

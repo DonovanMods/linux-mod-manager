@@ -267,6 +267,12 @@ func (e *ProfileSwitchIncompleteError) Error() string {
 // "details" field.
 func (e *ProfileSwitchIncompleteError) Details() any { return e.Result }
 
+// ErrImportSwitchUninstalled is why an import's switch (#666,
+// ProfileImportOptions.Switch) did not run: the import left the profile's
+// mods pending - Install unset, or NoInstall - and switching would install
+// them. It is reported on ImportSwitch.Error; the import stands.
+var ErrImportSwitchUninstalled = errors.New("not switched: the import left the profile's mods pending, and switching would install them; `lmm profile switch` switches to it")
+
 // ProfileImportIncompleteError is ApplyImport's error when the imported
 // profile was saved but one or more requested mods could not be installed
 // (#485). Result is the complete outcome, including every item that did
