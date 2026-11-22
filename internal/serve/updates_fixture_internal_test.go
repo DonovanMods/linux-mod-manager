@@ -65,6 +65,19 @@ type updatesSource struct {
 	// archives, when it holds modID-version, is that file's whole zip,
 	// served as is (#615's FOMOD installers).
 	archives map[string][]byte
+	// notice, when set, is raised once on the call's context by the first
+	// file listing or update check - a source waiting out a throttle, as
+	// its transport would say it (#671).
+	notice     *source.Notice
+	noticeOnce sync.Once
+}
+
+// raiseNotice raises s.notice on ctx, the first time it is called.
+func (s *updatesSource) raiseNotice(ctx context.Context) {
+	if s.notice == nil {
+		return
+	}
+	s.noticeOnce.Do(func() { source.Notify(ctx, *s.notice) })
 }
 
 // newUpdatesSource starts the download server.
@@ -130,7 +143,8 @@ func (*updatesSource) GetDependencies(context.Context, *domain.Mod) ([]domain.Mo
 // selectUpdateDeployFiles is written for: the installed row's stored ID is
 // still listed under the version being moved away from, and the new
 // version's file is the unselected replacement that takes its place.
-func (*updatesSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+func (s *updatesSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	s.raiseNotice(ctx)
 	if !knownUpdatableMod(mod.ID) {
 		return nil, domain.ErrModNotFound
 	}

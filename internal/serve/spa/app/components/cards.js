@@ -1299,8 +1299,9 @@ function HealthCard({
  * and 429): core.VerifyResult's mods/external/unverified counts, said the way
  * a reader needs them - N Steam Workshop items checked only for presence
  * (lmm never deployed their files), M mods with no recorded file to
- * compare. Empty when neither applies. One string, for htm's whitespace
- * rule (conflictLabel). */
+ * compare, K mods the profile's collection locks, whose source the full
+ * tier does not ask (issue 671). Empty when none applies. One string, for
+ * htm's whitespace rule (conflictLabel). */
 export function verifyCoverage(result) {
   const external = result?.external ?? 0;
   const unverified = result?.unverified ?? 0;
@@ -1310,6 +1311,14 @@ export function verifyCoverage(result) {
   }
   if (unverified > 0) {
     parts.push(`${unverified} with nothing to compare`);
+  }
+  // issue 671: the collection's own mods are not asked about - it pins
+  // their files and moves them itself.
+  const locked = result?.collection_locked ?? 0;
+  if (locked > 0) {
+    parts.push(
+      `${locked} left to the collection, not checked against their source`,
+    );
   }
   if (parts.length === 0) return "";
   const mods = result?.mods ?? 0;

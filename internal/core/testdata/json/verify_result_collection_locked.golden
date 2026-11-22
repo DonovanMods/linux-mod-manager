@@ -1,0 +1,18 @@
+{
+  "findings": [
+    {
+      "mod_id": "107",
+      "mod_name": "Cyber Engine Tweaks",
+      "status": "skipped",
+      "note": "could not check version: getting mod files: NexusMods rate limit: try again in 30s (still limited after 3 attempts)",
+      "fixable_reason": "NexusMods rate limit: try again in 30s"
+    }
+  ],
+  "issues": 0,
+  "warnings": 1,
+  "checked": 353,
+  "has_files": true,
+  "mods": 354,
+  "collection_locked": 352,
+  "checked_at": "2026-08-27T12:00:00Z"
+}

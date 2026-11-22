@@ -11,6 +11,8 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
@@ -345,6 +347,15 @@ type VerifyResult struct {
 	Mods       int `json:"mods,omitzero"`
 	External   int `json:"external,omitzero"`
 	Unverified int `json:"unverified,omitzero"`
+	// CollectionLocked counts the mods the full tier's version check left
+	// to their collection (#671): a ref both locked and from_collection is
+	// never sent to its source, as #667 never sends it to the update check.
+	// The collection pins such a mod's files - and their hashes, which the
+	// checksum walk still checks - and moves them itself (`lmm profile sync
+	// --collection`), so asking the source once per mod bought nothing but
+	// requests: a 353-mod collection's verify was what NexusMods throttled.
+	// omitzero.
+	CollectionLocked int `json:"collection_locked,omitzero"`
 
 	// CheckedAt is when the run began, in UTC (#334) - so a surface that
 	// renders a stored or cached result ("last verified 2 hours ago") reads
@@ -2091,6 +2102,15 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		}
 
 		ref := prof.FindRef(mod.SourceID, mod.ID)
+		// #671: a mod the profile's collection locks is the collection's -
+		// its files pinned, with the hashes the checksum walk checks, and
+		// moved only by a collection sync - so its source is not asked,
+		// as #667 never asks the update check. On a large collection these
+		// requests were the burst NexusMods throttled.
+		if ref != nil && ref.Locked && ref.FromCollection {
+			r.result.CollectionLocked++
+			continue
+		}
 
 		sourceFiles, err := r.svc.GetModFiles(r.ctx, r.game, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
 		if err != nil && errors.Is(err, domain.ErrModNotFound) {
@@ -2108,6 +2128,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		if err != nil {
 			r.result.Warnings++
 			f := VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "skipped", Note: fmt.Sprintf("could not check version: %v", err)}
+			f.FixableReason = throttleReason(err) // #671: "" unless the source is throttling lmm
 			if errors.Is(err, domain.ErrAuthRequired) {
 				f.AuthSource = mod.SourceID
 				f.FixableReason = r.svc.sourceDisplayName(mod.SourceID) + " needs an API key"
@@ -2270,4 +2291,28 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		return err
 	}
 	return nil
+}
+
+// throttleReason says, in a line, that err is a source throttling lmm and
+// when to try again (#671), or "" when it is not: a rate limit the retries
+// could not outlast, or a hold the source has in force. The finding's Note
+// keeps the whole error; this is what a frontend shows beside "could not
+// check version" instead of "source unreachable", which it was not.
+func throttleReason(err error) string {
+	var status *httpclient.StatusError
+	if errors.As(err, &status) && status.RateLimited() {
+		if status.RetryIn > 0 {
+			return fmt.Sprintf("%s rate limit: try again in %s", status.Service, status.RetryIn.Round(time.Second))
+		}
+		return fmt.Sprintf("%s rate limit: try again later", status.Service)
+	}
+	var later *source.RetryLaterError
+	if errors.As(err, &later) {
+		at := later.Until.Local().Format("15:04:05")
+		if time.Until(later.Until) >= 12*time.Hour {
+			at = later.Until.Local().Format("2006-01-02 15:04:05")
+		}
+		return fmt.Sprintf("%s is holding requests off: try again after %s", later.Source, at)
+	}
+	return ""
 }

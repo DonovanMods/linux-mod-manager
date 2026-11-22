@@ -1528,6 +1528,20 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #671: a collection profile's verify - the mods the
+			// collection locks are left to it, counted, and a mod whose
+			// source still throttled lmm says so and when to come back.
+			"verify_result_collection_locked",
+			core.VerifyResult{
+				Findings: []core.VerifyFinding{{
+					ModID: "107", ModName: "Cyber Engine Tweaks", Status: "skipped",
+					Note:          "could not check version: getting mod files: NexusMods rate limit: try again in 30s (still limited after 3 attempts)",
+					FixableReason: "NexusMods rate limit: try again in 30s",
+				}},
+				Warnings: 1, Checked: 353, HasFiles: true, Mods: 354, CollectionLocked: 352, CheckedAt: fixedTime,
+			},
+		},
+		{
 			"converged_file",
 			core.ConvergedFile{
 				Path: "Data/textures/old.dds", Reason: "no longer provided by nexusmods/42",

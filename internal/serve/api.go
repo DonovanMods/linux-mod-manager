@@ -444,8 +444,9 @@ func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
 	// mods (read_progress.go). The check also applies the auto-policy
 	// updates it finds (#587, auto_updates.go) - only for a request
 	// carrying the SPA's CSRF token, so no other site can start that.
-	report, err := s.checkModUpdates(r.Context(), sel.Game, sel.Profile,
-		s.readProgressSink(token, readUpdates, sel), opts, s.csrf.valid(r.Header.Get(csrfHeaderName)))
+	progress := s.newReadReporter(token, readUpdates, sel)
+	report, err := s.checkModUpdates(progress.watch(r.Context()), sel.Game, sel.Profile,
+		progress.sink(), opts, s.csrf.valid(r.Header.Get(csrfHeaderName)))
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
@@ -539,8 +540,9 @@ func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	report, err := s.svc.VerifyReportWithProgress(r.Context(), sel.Game, sel.Profile,
-		core.VerifyOptions{Tier: core.VerifyFull, Force: force}, s.readProgressSink(token, readHealth, sel))
+	progress := s.newReadReporter(token, readHealth, sel)
+	report, err := s.svc.VerifyReportWithProgress(progress.watch(r.Context()), sel.Game, sel.Profile,
+		core.VerifyOptions{Tier: core.VerifyFull, Force: force}, progress.sink())
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
