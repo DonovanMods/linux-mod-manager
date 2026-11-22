@@ -150,6 +150,7 @@ func TestE2E_ImportSwitchProgress_NeverGoesBack(t *testing.T) {
 	var got struct {
 		Import []*float64 `json:"import"`
 		Switch []*float64 `json:"switch"`
+		Unseen *float64   `json:"unseen"`
 		Plain  []*float64 `json:"plain"`
 		Label  string     `json:"label"`
 	}
@@ -159,17 +160,20 @@ func TestE2E_ImportSwitchProgress_NeverGoesBack(t *testing.T) {
 		chromedp.Evaluate(`(async () => {
 			const { progressFraction, humanizePhase } = await import("/static/app/progress.js");
 			const job = "j-import-switch";
-			const imp = (phase, index, total) => ({ job_id: job, op: "import", type: "step", phase, index, total });
-			const sw = (phase, index, total) => ({ job_id: job, op: "switch", type: "mod", phase, index, total });
+			const imp = (phase, index, total) => ({ job_id: job, kind: "profile_import", op: "import", type: "step", phase, index, total });
+			const sw = (phase, index, total) => ({ job_id: job, kind: "profile_import", op: "switch", type: "mod", phase, index, total });
 			const run = (frames) => frames.map((fr) => progressFraction(fr));
 			return {
 				import: run([imp("import_mod_installing", 1, 2), imp("import_mod_installing", 2, 2)]),
 				switch: run([
 					imp("import_switching"),
 					sw("switch_disabled", 1, 3), sw("switch_enabled", 1, 2),
-					{ job_id: job, op: "switch", type: "download", phase: "switch_downloading", percent: 10, total_bytes: 100 },
+					{ job_id: job, kind: "profile_import", op: "switch", type: "download", phase: "switch_downloading", percent: 10, total_bytes: 100 },
 				]),
-				plain: run([{ job_id: "j-plain-switch", op: "switch", type: "mod", phase: "switch_disabled", index: 1, total: 4 }]),
+				// #669: a switch frame alone - no earlier frame of its job
+				// seen - is the import's switch step too.
+				unseen: progressFraction({ job_id: "j-unseen", kind: "profile_import", op: "switch", type: "download", phase: "switch_downloading", percent: 10, total_bytes: 100 }),
+				plain: run([{ job_id: "j-plain-switch", kind: "switch", op: "switch", type: "mod", phase: "switch_disabled", index: 1, total: 4 }]),
 				label: humanizePhase("import_switching"),
 			};
 		})()`, &got, awaitPromise),
@@ -181,6 +185,7 @@ func TestE2E_ImportSwitchProgress_NeverGoesBack(t *testing.T) {
 	for i, v := range got.Switch {
 		assert.Nil(t, v, "switch frame %d is the fresh step's indeterminate bar, not a bar sent back", i)
 	}
+	assert.Nil(t, got.Unseen, "#669: decided from the frame alone, not from a frame a view happened to render")
 	require.Len(t, got.Plain, 1)
 	require.NotNil(t, got.Plain[0], "a switch job of its own is measured as before")
 	assert.InDelta(t, 0.25, *got.Plain[0], 0.001)

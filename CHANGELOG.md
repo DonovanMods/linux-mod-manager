@@ -1336,6 +1336,15 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **An import's switch keeps its progress step in a view opened late
+  (#669).** The web UI showed a collection import's switch to its profile
+  (#666) as its own step, with an indeterminate bar, only if a progress
+  view had been on screen when the switch began. A tray opened afterwards,
+  with the progress toast dismissed, or the page reconnecting mid-switch,
+  drew the switch's downloads as a determinate bar again, which could go
+  back from where the import left it (#664). The step is now told from
+  each progress frame alone.
+
 - **The web UI's running-job toast keeps one size (#665).** During a
   multi-mod install, such as a collection import, the progress toast in
   the bottom right changed size with every step, because its text changes

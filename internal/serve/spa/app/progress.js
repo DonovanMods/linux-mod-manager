@@ -385,27 +385,23 @@ export function progressFraction(frame, position) {
   return null;
 }
 
-// switchingImports holds the import jobs that went on to switch to the
-// profile they imported (issue 666), oldest first, bounded like `reached`.
-const switchingImports = new Set();
-
 /** importSwitchStep reports whether frame is an import's switch to its
- * profile (issue 666): the import_switching frame that starts it, or any
- * of the switch's own frames (op "switch") in that job. The switch is a
- * fresh step with its own label and an indeterminate bar - its disables,
- * enables and downloads count from their own start, and the bar must not
- * go back from where the import left it (issue 664). */
+ * profile (issue 666): in a profile_import job, the import_switching frame
+ * that starts it, or any of the switch's own frames (op "switch"). The
+ * switch is a fresh step with its own label and an indeterminate bar - its
+ * disables, enables and downloads count from their own start, and the bar
+ * must not go back from where the import left it (issue 664).
+ *
+ * Issue 669: decided from the frame alone. A rule that remembered seeing
+ * the switch begin knew it only when a progress view had rendered that
+ * frame; a view opened later - the tray closed and the toast dismissed
+ * while the switch began, or a reconnect that replays only the latest
+ * frame - drew the switch's frames as a determinate bar again. */
 function importSwitchStep(frame) {
-  if (!frame.job_id) return false;
-  // The phase alone names the step: only an import emits it.
-  if (frame.phase === "import_switching") {
-    switchingImports.add(frame.job_id);
-    if (switchingImports.size > REACHED_LIMIT) {
-      switchingImports.delete(switchingImports.values().next().value);
-    }
-    return true;
-  }
-  return frame.op === "switch" && switchingImports.has(frame.job_id);
+  return (
+    frame.kind === "profile_import" &&
+    (frame.op === "switch" || frame.phase === "import_switching")
+  );
 }
 
 function clamp(value) {
