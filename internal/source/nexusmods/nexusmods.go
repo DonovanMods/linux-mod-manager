@@ -434,6 +434,7 @@ func (n *NexusMods) CheckUpdatesWithProgress(ctx context.Context, installed []do
 		hasFileUpdate := len(fileReplacements) > 0
 
 		if !modVersionNewer && !hasFileUpdate {
+			source.ReportModChecked(ctx, inst.ID) // #672: up to date
 			continue
 		}
 
@@ -478,6 +479,7 @@ func (n *NexusMods) CheckUpdatesWithProgress(ctx context.Context, installed []do
 			Changelog:          changelog,
 			FileIDReplacements: fileReplacements,
 		})
+		source.ReportModChecked(ctx, inst.ID) // #672
 	}
 
 	if len(fetchErrs) > 0 {

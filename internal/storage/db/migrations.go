@@ -129,6 +129,7 @@ func (d *DB) migrations() []func(context.Context, migrationExec) error {
 		migrateV26,
 		migrateV27,
 		migrateV28,
+		migrateV29,
 	}
 }
 
@@ -828,4 +829,38 @@ func migrateV28(ctx context.Context, q migrationExec) error {
 		}
 	}
 	return nil
+}
+
+// migrateV29 adds mod_checks (#672): per installed mod, what lmm last
+// learned from its source - kind 'update', the update check's answer (the
+// update found as JSON, or ” for up to date), and kind 'version', that
+// verify confirmed the recorded version against the source's file list -
+// with the installed version and file IDs the answer is about and when it
+// was confirmed. A source that can say which mods changed since a given
+// time (source.ChangeTracker) then answers an unchanged mod from here
+// rather than fetching its file list again.
+//
+// A cache: a missing or stale row only costs that fetch. Keyed like
+// installed_mods and removed with its row, so an uninstalled mod leaves
+// nothing behind; an answer about another installed version or file set
+// is never used (core compares Version and FileIDs).
+func migrateV29(ctx context.Context, d migrationExec) error {
+	_, err := d.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS mod_checks (
+			kind TEXT NOT NULL CHECK (kind IN ('update', 'version')),
+			source_id TEXT NOT NULL,
+			mod_id TEXT NOT NULL,
+			game_id TEXT NOT NULL,
+			profile_name TEXT NOT NULL,
+			installed_version TEXT NOT NULL,
+			installed_file_ids TEXT NOT NULL,
+			checked_at DATETIME NOT NULL,
+			result TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (kind, source_id, mod_id, game_id, profile_name),
+			FOREIGN KEY (source_id, mod_id, game_id, profile_name)
+				REFERENCES installed_mods(source_id, mod_id, game_id, profile_name)
+				ON DELETE CASCADE
+		)
+	`)
+	return err
 }

@@ -2493,7 +2493,11 @@ func (s *Service) NewProfileManager() *ProfileManager {
 // exported as a serve-facing query (Phase 3 Ruling 10) - a frontend running
 // its own update check needs the same wiring.
 func (s *Service) NewUpdater() *Updater {
-	return NewUpdater(s.registry)
+	u := NewUpdater(s.registry)
+	if s.db != nil {
+		u.checks = s.db // #672: the per-mod check record
+	}
+	return u
 }
 
 // GetGameCachePath returns the effective cache path for a game.

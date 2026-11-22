@@ -77,6 +77,14 @@ type VerifyOptions struct {
 	// the case the memo exists for.
 	Force bool `json:"force,omitempty"`
 
+	// Refresh makes the full tier's version check ask every mod's source
+	// again (#672): without it, a mod whose recorded version verify already
+	// confirmed, and that its source says has not changed since, is not
+	// asked about again (VerifyResult.VersionUnchanged). `lmm verify
+	// --refresh`, and the web UI's Re-verify. It implies Force: a memo's
+	// answer would be no fresher.
+	Refresh bool `json:"refresh,omitzero"`
+
 	// observe makes a non-nil sink a watcher of whatever run happens rather
 	// than a reason to run: the memo still answers (and stores) as if there
 	// were no sink, and a hit reports nothing. Set only by
@@ -360,6 +368,12 @@ type VerifyResult struct {
 	// requests: a 353-mod collection's verify was what NexusMods throttled.
 	// omitzero.
 	CollectionLocked int `json:"collection_locked,omitzero"`
+	// VersionUnchanged counts the mods the full tier's version check did
+	// not ask their source about again (#672): verify already confirmed
+	// each one's recorded version against its source's file list, and the
+	// source says the mod has not changed since. VerifyOptions.Refresh asks
+	// about them all. omitzero.
+	VersionUnchanged int `json:"version_unchanged,omitzero"`
 
 	// CheckedAt is when the run began, in UTC (#334) - so a surface that
 	// renders a stored or cached result ("last verified 2 hours ago") reads
@@ -856,7 +870,7 @@ func (s *Service) verifyMemoized(ctx context.Context, game *domain.Game, profile
 		return walk()
 	}
 
-	if !opts.Force {
+	if !opts.Force && !opts.Refresh {
 		if hit := s.verifyMemoLookup(key, fingerprint); hit != nil {
 			// A copy, with the ORIGINAL CheckedAt: the answer really was
 			// computed then, and a surface saying "unchanged since ..."
@@ -2084,6 +2098,23 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 	if r.opts.Tier != VerifyFull {
 		return nil
 	}
+	// #672: the mods whose version this pass already confirmed, and that
+	// their source says have not changed since - asked about once per
+	// source, before the loop - are not asked about again.
+	started := time.Now()
+	var unchanged map[string]bool
+	if !r.opts.Refresh {
+		candidates := installedMods
+		if r.opts.ModFilter != "" {
+			candidates = nil
+			for _, mod := range installedMods {
+				if mod.ID == r.opts.ModFilter {
+					candidates = append(candidates, mod)
+				}
+			}
+		}
+		unchanged = r.svc.unchangedVersions(r.ctx, r.game, candidates)
+	}
 
 	for i := range installedMods {
 		mod := &installedMods[i]
@@ -2113,6 +2144,10 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		// requests were the burst NexusMods throttled.
 		if ref != nil && ref.Locked && ref.FromCollection {
 			r.result.CollectionLocked++
+			continue
+		}
+		if unchanged[domain.ModKey(mod.SourceID, mod.ID)] {
+			r.result.VersionUnchanged++
 			continue
 		}
 
@@ -2157,6 +2192,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		}
 
 		if len(matched) == 0 {
+			r.svc.recordVersion(r.ctx, r.game, *mod, false, started)
 			r.result.Warnings++
 			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "version_unverifiable",
 				FixableReason: "there is nothing to check the recorded version against"}, VerifyEvent{})
@@ -2171,6 +2207,8 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		// fallback, so a per-file version mis-stamp cannot exist for
 		// versionless sources.
 		effective := domain.EffectiveInstalledVersion(mod.Version, matched)
+		// #672: confirmed (or no longer) - recorded for the next pass.
+		r.svc.recordVersion(r.ctx, r.game, *mod, effective == mod.Version, started)
 		if effective != mod.Version {
 			recorded := mod.Version
 			r.result.Issues++

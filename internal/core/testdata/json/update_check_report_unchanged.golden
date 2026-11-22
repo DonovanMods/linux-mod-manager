@@ -1,0 +1,10 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "updates": [],
+  "skipped": {
+    "pinned": 2,
+    "local": 0
+  },
+  "unchanged": 340
+}
