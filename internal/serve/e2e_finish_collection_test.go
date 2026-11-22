@@ -78,7 +78,10 @@ func openImportCollectionDialog() chromedp.Tasks {
 }
 
 // importFinishPack imports the collection at path from the Import
-// collection… dialog, downloading and installing its mods.
+// collection… dialog, downloading and installing its mods. It unticks
+// "Switch to this profile when the import finishes" (#666): these
+// scenarios finish a collection recorded into a profile that is not the
+// active one.
 func importFinishPack(path string) chromedp.Tasks {
 	return chromedp.Tasks{
 		openImportCollectionDialog(),
@@ -88,6 +91,8 @@ func importFinishPack(path string) chromedp.Tasks {
 			Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] label.form-check'))
 				.find((l) => l.textContent.includes("Download and install"))?.querySelector("input").click();
 		`, nil),
+		settleEffects(),
+		clickWhenSettled(`.modal[data-kind="profile_import"] input[name="switch"]`),
 		settleEffects(),
 		clickWhenSettled(`.modal[data-kind="profile_import"] [data-action="confirm"]`),
 	}
@@ -292,7 +297,7 @@ func TestE2E_FinishCollection_ACleanImportIsAPlainSuccess(t *testing.T) {
 	)
 	assert.Equal(t, "success", toast.Tone)
 	assert.Equal(t, "Collection import finished", toast.Title)
-	assert.Equal(t, "Recorded 2 mods", toast.Detail, "into a profile that is not the active one")
+	assert.Equal(t, "Imported 2 mods", toast.Detail, "into a profile that is not the active one, which the import switched to (#666)")
 	assert.NotContains(t, toast.Buttons, "Finish collection")
 	assert.Empty(t, f.BrowserErrors())
 }

@@ -179,6 +179,22 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		return nil, err
 	}
 	s.settleOwedProfileBackfill(ctx)
+	return s.planProfileSwitchSettled(ctx, game, target)
+}
+
+// planProfileSwitchHeld is PlanProfileSwitch for a caller already holding
+// the mutation slot (#666's switch after an import), whose beginOp has
+// discharged any backfill owed: settling it would wait on that slot.
+func (s *Service) planProfileSwitchHeld(ctx context.Context, game *domain.Game, target string) (*SwitchPlan, error) {
+	if err := s.refuseUndeployable(ctx, game.ID); err != nil {
+		return nil, err
+	}
+	return s.planProfileSwitchSettled(ctx, game, target)
+}
+
+// planProfileSwitchSettled is the plan itself, once refuseUndeployable has
+// passed and the backfill is settled.
+func (s *Service) planProfileSwitchSettled(ctx context.Context, game *domain.Game, target string) (*SwitchPlan, error) {
 	pm := s.NewProfileManager()
 
 	targetProfile, err := pm.Get(ctx, game.ID, target)
@@ -611,6 +627,13 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		return &SwitchResult{}, err
 	}
 	defer release()
+	return s.applyProfileSwitchHeld(ctx, game, plan, sink)
+}
+
+// applyProfileSwitchHeld is ApplyProfileSwitch for a caller already
+// holding the mutation slot (#666's switch after an import, planned and
+// applied under one op).
+func (s *Service) applyProfileSwitchHeld(ctx context.Context, game *domain.Game, plan *SwitchPlan, sink EventSink) (*SwitchResult, error) {
 	result, err := s.applyProfileSwitch(ctx, game, plan, sink)
 	if err == nil && !plan.AlreadyActive {
 		// #630: the profile now live may override mod files the one it

@@ -197,6 +197,13 @@ function readResult(status) {
     // A finish in which an item failed again fails as a job, with its
     // result as the failure's details (core.CollectionFinishIncompleteError).
     collection: collectionOf(status?.kind, result ?? status?.error?.details),
+    // Issue 666: the switch an import ran to the profile it imported.
+    // A failed import (mods it could not install) carries its result as
+    // the failure's details, switch included.
+    importSwitch: importSwitchOf(
+      status?.kind,
+      result ?? status?.error?.details,
+    ),
   };
 }
 
@@ -221,8 +228,9 @@ export function collectionOf(kind, result) {
     todos: doc?.todos?.length ?? 0,
     total,
     // Recorded into a profile that is not the active one: nothing was
-    // installed ("Recorded N of M", as the CLI says it).
-    recorded: Boolean(doc?.recorded_only),
+    // installed ("Recorded N of M", as the CLI says it) - unless the
+    // import then switched to it (issue 666), which deployed them.
+    recorded: Boolean(doc?.recorded_only) && !doc?.switch?.switched,
   };
 }
 
@@ -244,11 +252,37 @@ function resultWarnings(kind, result) {
         )
       : kind === "collection_update" && Array.isArray(result?.import?.warnings)
         ? result.import.warnings
-        : [];
+        : kind === "profile_import"
+          ? importSwitchWarnings(result?.switch)
+          : [];
   const all = [...own, ...items].filter(
     (w) => typeof w === "string" && w !== "",
   );
   return all.length > 0 ? all : NO_WARNINGS;
+}
+
+/** importSwitchWarnings is what an import's switch to its profile (issue
+ * 666, core.ImportSwitch) has to say: why it failed - the import stands
+ * either way - and its own warnings. */
+function importSwitchWarnings(sw) {
+  if (!sw) return [];
+  const out = Array.isArray(sw.result?.warnings) ? [...sw.result.warnings] : [];
+  if (sw.error) {
+    out.unshift(
+      sw.switched
+        ? `Switched to ${sw.to}, but: ${sw.error}`
+        : `Not switched to ${sw.to}: ${sw.error}`,
+    );
+  }
+  return out;
+}
+
+/** importSwitchOf is a profile import's switch to its profile (issue 666)
+ * - {to, switched} - or null when it ran none. */
+function importSwitchOf(kind, result) {
+  const sw = kind === "profile_import" ? result?.switch : null;
+  if (!sw || typeof sw.to !== "string") return null;
+  return { to: sw.to, switched: Boolean(sw.switched) };
 }
 
 /**

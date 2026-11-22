@@ -1,0 +1,28 @@
+{
+  "profile_name": "alt",
+  "installed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "recorded_only": true,
+  "active_profile": "default",
+  "recorded": 2,
+  "switch": {
+    "from": "default",
+    "to": "alt",
+    "switched": true,
+    "error": "profile \"alt\" is now active, but 1 mod(s) failed: src:gone (no source)",
+    "result": {
+      "disabled": 1,
+      "enabled": 2,
+      "installed": 0,
+      "failed": [
+        {
+          "source_id": "src",
+          "mod_id": "gone",
+          "name": "Gone",
+          "reason": "no source"
+        }
+      ]
+    }
+  }
+}

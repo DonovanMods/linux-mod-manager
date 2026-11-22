@@ -56,6 +56,7 @@ import { DEPLOY_ORIGIN } from "./components/topbar.js";
 import { PLAY_NOT_ACTIVE_REASON } from "./components/playbutton.js";
 import { updateFromFileInputID } from "./components/updatefromfile.js";
 import { copyReplaces } from "./components/plan_mod_copy.js";
+import { importSwitches } from "./components/plan_profile_import.js";
 import {
   fetchJobResult,
   readoutHasNextStep,
@@ -1309,8 +1310,12 @@ async function openPlan({
     // renderer's own controls (setPlanOptions). It is carried HERE for
     // replanWith (below), which re-opens the same plan with a changed
     // plan-time option and must not throw away an apply-time choice the
-    // user already made in the same modal.
-    applyOptions,
+    // user already made in the same modal. Issue 666: an import's "Switch
+    // to this profile when the import finishes" starts checked.
+    applyOptions:
+      kind === "profile_import"
+        ? { switch: true, ...(applyOptions ?? {}) }
+        : applyOptions,
     onConfirmed,
     openerSelector,
     // extra is what the opener knows that the plan document cannot (issue
@@ -1974,6 +1979,9 @@ async function confirmPlan() {
   if (!modal || modal.status !== "ready") return;
 
   store.set({ modal: { ...modal, status: "starting" } });
+  // Issue 666 review: where the user was when they confirmed, so an
+  // import's switch is followed only if they are still there.
+  const { game: atGame, profile: atProfile, view: atView } = store.get().route;
   // Issue 530: confirming a mismatched update-from-file plan IS the answer
   // to its one question - confirmplan.js labels that click "Update anyway";
   // issue 535's install from a file (an import_archive plan) the same, as
@@ -1981,12 +1989,21 @@ async function confirmPlan() {
   //
   // Issue 437: confirming a copy into a profile that already lists the mod
   // is the replace - confirmplan.js labels that click "Replace".
+  //
+  // Issue 666: an import switches to its profile only when the plan's
+  // checkbox says so AND the import installs what it records
+  // (importSwitches) - never for an import into the active profile.
   const applyOptions =
     fromFileKinds.has(modal.kind) && modal.plan?.match === "mismatch"
       ? { ...(modal.applyOptions ?? {}), accept_mismatch: true }
       : modal.kind === "mod_copy" && copyReplaces(modal.plan)
         ? { ...(modal.applyOptions ?? {}), replace: true }
-        : modal.applyOptions;
+        : modal.kind === "profile_import"
+          ? {
+              ...(modal.applyOptions ?? {}),
+              switch: importSwitches(modal.plan, modal.applyOptions),
+            }
+          : modal.applyOptions;
   await startBinding(modal.origin, async () => {
     try {
       const { id: jobID } = await startJob(modal.planID, applyOptions);
@@ -2019,6 +2036,7 @@ async function confirmPlan() {
         });
       }
       rememberJobFacts(jobID, {
+        startedOn: { game: atGame, profile: atProfile, view: atView },
         collection:
           modal.kind === "profile_import" &&
           Boolean(modal.plan?.collection || modal.plan?.workshop_collection),
@@ -2947,6 +2965,13 @@ async function onJobDone(summary) {
     }
   }
 
+  // Issue 666: an import this page started that switched to the profile it
+  // imported takes the page there, so the library lists that profile's
+  // mods - whatever else the page shows of the job.
+  if (summary.kind === "profile_import" && jobFacts.has(summary.id)) {
+    await followImportSwitch(summary);
+  }
+
   // Either tense counts as "in view": the snapshot answers for a control
   // this function's own refresh took off screen, and the live check for a
   // control that only MOUNTED once the binding landed (a row rendered by
@@ -3014,6 +3039,49 @@ async function onJobDone(summary) {
     jobID: summary.id,
     ...(finish ? finishAffordance(summary, finish) : toastAffordance(summary)),
   });
+}
+
+/** followImportSwitch follows the profile a finished import switched to
+ * (issue 666) - also when the import itself failed some mods, as its
+ * switch still ran. The page goes there only while the user is where they
+ * confirmed the import: the same game, profile and page, with no dialog
+ * open. Otherwise a toast offers "Go to <profile>", so a user who moved on
+ * is not pulled away from what they are doing. A switch that did not
+ * happen leaves the page where it is; the job's readout says why. */
+async function followImportSwitch(summary) {
+  if (!summary.game) return;
+  const sw = (await fetchJobResult(summary.id))?.importSwitch;
+  if (!sw?.switched) return;
+  const route = store.get().route;
+  if (route.game === summary.game && route.profile === sw.to) return;
+  const at = jobFacts.get(summary.id)?.startedOn;
+  const stayed =
+    at &&
+    at.game === summary.game &&
+    route.game === at.game &&
+    route.profile === at.profile &&
+    route.view === at.view &&
+    !store.get().modal;
+  if (stayed) {
+    navigate(contextPath(summary.game, sw.to));
+    return;
+  }
+  pushToast({
+    tone: "success",
+    sticky: true,
+    title: `Switched to ${sw.to}`,
+    detail: `${sw.to} is now the active profile of this game.`,
+    action: "goToProfile",
+    actionLabel: `Go to ${sw.to}`,
+    actionArg: { game: summary.game, profile: sw.to },
+  });
+}
+
+/** goToProfile opens a game's profile ({game, profile}): the "Go to
+ * <profile>" of an import that switched while the user was elsewhere
+ * (issue 666). */
+function goToProfile({ game, profile }) {
+  navigate(contextPath(game, profile));
 }
 
 // COLLECTION_KINDS are the job kinds that always act on a collection
@@ -3476,6 +3544,7 @@ const actions = {
   openFinishCollection,
   noteTodos,
   reopenImport,
+  goToProfile,
   jobIsCollection,
   openShortcutsModal,
   openUninstallBatchModal,

@@ -311,6 +311,11 @@ func TestE2E_WorkshopTier2_TheCollectionPlanRendersItsOwnDocument(t *testing.T) 
 		"a control core would silently override must not be offered")
 	assert.Equal(t, 0, advanced, `and neither may the advanced "Never install"`)
 	assert.Positive(t, links, "each item links to its Workshop page")
+	// #666 review: the switch offered after the import deploys none of a
+	// Workshop collection's items, and its note says so, as the CLI does.
+	assert.Contains(t, modal, "Switch to this profile when the import finishes")
+	assert.Contains(t, modal, "switching deploys none of them")
+	assert.NotContains(t, modal, "in their place")
 	assert.Empty(t, f.BrowserErrors())
 }
 

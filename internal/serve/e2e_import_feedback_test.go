@@ -224,8 +224,10 @@ func assertCollectionTodoToast(t *testing.T, got e2eOutcomeToast, total, left in
 	t.Helper()
 	assert.Equal(t, "Collection import finished", got.Title)
 	assert.Equal(t, "attention", got.Tone, "an import that left items to finish is not a plain success")
-	// Into a new profile, not the active one: recorded, as the CLI says it.
-	assert.Equal(t, fmt.Sprintf("Recorded %d of %d mods; %d need you", total-left, total, left), got.Detail)
+	// Into a new profile, which the import then switched to (#666, the
+	// plan's default): its mods are deployed, so "Imported", not
+	// "Recorded".
+	assert.Equal(t, fmt.Sprintf("Imported %d of %d mods; %d need you", total-left, total, left), got.Detail)
 	assert.Equal(t, []string{"Finish collection", "Show in activity"}, got.Buttons)
 	assert.GreaterOrEqual(t, got.Gap, 4.0, "the two actions are two spaced controls")
 }

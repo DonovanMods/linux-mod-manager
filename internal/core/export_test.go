@@ -101,6 +101,12 @@ func (s *Service) SetAfterDeployLinkForTest(fn func(file string)) {
 	s.afterDeployLink = fn
 }
 
+// SetImportSwitchPlannedForTest arms the hook between an import's switch
+// plan and its apply (#666).
+func (s *Service) SetImportSwitchPlannedForTest(fn func()) {
+	s.importSwitchPlanned = fn
+}
+
 // SetAfterInstallSaveForTest arms the BATCH install engine's
 // post-SaveInstalledMod hook so a test can cancel the ctx after the DB row
 // lands but before ensureProfileExists's own read (the NEW-6 race).

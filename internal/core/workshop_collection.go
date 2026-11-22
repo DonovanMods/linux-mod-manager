@@ -261,17 +261,26 @@ func (s *Service) describeCollectionItems(ctx context.Context, game *domain.Game
 //
 // opts is otherwise honoured verbatim - Force in particular, which is what
 // re-importing an updated collection over its own profile needs.
+//
+// opts.Switch switches to the imported profile once it is saved (#666): the
+// collection's items are Steam's, so the switch deploys none of them, and
+// takes down what the active profile deployed.
 func (s *Service) ApplyWorkshopCollectionImport(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, sink EventSink) (*ProfileImportResult, error) {
 	opts.Install = false
 	opts.NoInstall = true
 
-	result, err := s.ApplyImport(ctx, game, plan, opts, sink)
+	result, err := s.applyImportOp(ctx, game, plan, opts, sink)
 	if err != nil {
 		return result, err
 	}
 	if c := plan.WorkshopCollection; c != nil && c.NotSubscribed > 0 {
 		result.Notes = append(result.Notes,
 			fmt.Sprintf("%d item(s) are not subscribed: %s", c.NotSubscribed, subscribeNote))
+	}
+	if opts.Switch {
+		// Nothing of a Workshop collection's is lmm's to install: it is
+		// installed as much as it will be.
+		s.switchToImported(ctx, game, result, nil, true, sink)
 	}
 	return result, nil
 }

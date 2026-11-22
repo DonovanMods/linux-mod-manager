@@ -378,7 +378,8 @@ func printCollectionLeft(profile string, total int, todos []core.CollectionTodoI
 // left to do and the command to run next.
 func printCollectionImportSummary(result *core.ProfileImportResult) {
 	verb := "Imported"
-	if result.RecordedOnly {
+	// #666: an import that switched to its profile deployed its mods.
+	if result.RecordedOnly && (result.Switch == nil || !result.Switch.Switched) {
 		verb = "Recorded"
 	}
 	if len(result.Todos) == 0 {

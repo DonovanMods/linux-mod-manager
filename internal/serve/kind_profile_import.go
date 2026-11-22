@@ -181,6 +181,23 @@ type profileImportApplyRequest struct {
 	// every document import.
 	WithHooks         bool `json:"with_hooks,omitzero"`
 	AllowAnyOverrides bool `json:"allow_any_overrides,omitzero"`
+	// Switch is `--switch` (#666): once the import finishes, switch the
+	// game to the imported profile, taking down the active profile's
+	// deployed files - the import modal's "Switch to this profile when the
+	// import finishes", checked by default for an import that would only
+	// record (ImportPlan.RecordedOnly). The result's switch says what it
+	// did; a failed switch leaves the import, and the job, as they were.
+	Switch bool `json:"switch,omitzero"`
+}
+
+// validate implements validatingOptions: switch with no_install is
+// refused, as `--switch --no-install` is (#666) - a switch installs every
+// mod the profile lists.
+func (r *profileImportApplyRequest) validate() error {
+	if r.Switch && r.NoInstall {
+		return errors.New(`"switch" deploys the imported profile, installing its mods; it cannot be combined with "no_install"`)
+	}
+	return nil
 }
 
 // choosesGonePins reports whether r decides any gone pin (#657).
@@ -190,7 +207,8 @@ func (r *profileImportPlanRequest) choosesGonePins() bool {
 
 // importOptions renders the request as the core options struct.
 func (r profileImportApplyRequest) importOptions() core.ProfileImportOptions {
-	return core.ProfileImportOptions{Install: r.Install, Force: r.Force, NoInstall: r.NoInstall, WithHooks: r.WithHooks, AllowAnyOverrides: r.AllowAnyOverrides, Fomod: r.Fomod}
+	return core.ProfileImportOptions{Install: r.Install, Force: r.Force, NoInstall: r.NoInstall, WithHooks: r.WithHooks,
+		AllowAnyOverrides: r.AllowAnyOverrides, Fomod: r.Fomod, Switch: r.Switch}
 }
 
 // pendingProfileImport is what the plan store holds between Plan and Apply:
