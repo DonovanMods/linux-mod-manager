@@ -1345,6 +1345,19 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   back from where the import left it (#664). The step is now told from
   each progress frame alone.
 
+- **The web UI's Activity tray keeps one size while jobs run (#670).** The
+  tray grew to fit a running job's progress line, which changes with every
+  mod's name and download, so during a multi-mod job its width and
+  position jumped on every step, as the running toast did (#665). The tray
+  now has one width (26rem, or the screen less its margins on a phone,
+  allowing for a scrollbar). A running job's progress is two fixed lines:
+  what is happening and where ("Downloading · Better Lights · 12 of 40"),
+  then the download's bytes or the step's own message. The second line
+  stays reserved, and empty, when there is nothing to show. A line too
+  long for the tray ends in an ellipsis and shows its full text on hover,
+  and the counters use tabular figures. An expanded job's event list keeps
+  its own height limit and scrolls.
+
 - **The web UI's running-job toast keeps one size (#665).** During a
   multi-mod install, such as a collection import, the progress toast in
   the bottom right changed size with every step, because its text changes

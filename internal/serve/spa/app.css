@@ -3398,8 +3398,13 @@ a.row-menu__item.mod-page-link {
 /* The activity tray.                                                      */
 /* ---------------------------------------------------------------------- */
 
+/* issue 670: one width, whatever a running row says - a tray that grows to
+ * fit a progress line changes size with every frame of a multi-mod job
+ * (issue 665's cause in the toasts). .picker__menu's max-width caps it at
+ * the viewport less its gutters, and placeMenu (menuplacement.js) narrows
+ * that cap to the room a classic scrollbar leaves. */
 .tray {
-  min-width: min(26rem, calc(100vw - 2 * var(--menu-gutter)));
+  width: 26rem;
   max-height: 70vh;
   overflow-y: auto;
 }
@@ -3462,12 +3467,24 @@ a.row-menu__item.mod-page-link {
   padding: var(--space-1) 0;
 }
 
-.tray__detail {
+/* issue 670: a running row's detail is two lines of one height each, the
+ * second kept even when empty, so the row's height never follows its text;
+ * a line too long for the tray ends in an ellipsis (its title has it all),
+ * and the counters are tabular so "9 of 40" to "10 of 40" moves nothing. */
+.tray__lines {
   flex: 1;
+  min-width: 0;
   color: var(--text-secondary);
   font-size: 0.85em;
-  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tray__detail {
+  display: block;
   overflow: hidden;
+  height: 1.4em;
+  line-height: 1.4;
+  white-space: nowrap;
   text-overflow: ellipsis;
 }
 
