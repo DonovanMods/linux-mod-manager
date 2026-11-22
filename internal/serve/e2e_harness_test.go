@@ -43,6 +43,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1459,6 +1460,11 @@ type e2eSearchSource struct {
 	// (#660's retry of a failed download). Atomic, since a scenario sets it
 	// while the server's jobs may read it.
 	recovered atomic.Bool
+	// bodyGates, by mod id, hold that mod's download half-sent until the
+	// gate is closed (#669): the client has read part of a file whose
+	// whole size it knows, so a determinate download frame is in flight
+	// while the scenario looks at the page. Set before the server serves.
+	bodyGates map[string]chan struct{}
 }
 
 func newE2ESearchSource(t *testing.T, id string) *e2eSearchSource {
@@ -1471,18 +1477,33 @@ func newE2ESearchSource(t *testing.T, id string) *e2eSearchSource {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		if archive, ok := entry.archives[fileID]; ok {
-			w.Header().Set("Content-Type", "application/zip")
-			_, _ = w.Write(archive)
-			return
-		}
-		member, ok := entry.members[fileID]
+		body, ok := entry.archives[fileID]
 		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			return
+			member, isMember := entry.members[fileID]
+			if !isMember {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			body = e2eZipWith(member, "payload for "+modID+"/"+fileID)
 		}
 		w.Header().Set("Content-Type", "application/zip")
-		_, _ = w.Write(e2eZipWith(member, "payload for "+modID+"/"+fileID))
+		gate, gated := s.bodyGates[modID]
+		if !gated {
+			_, _ = w.Write(body)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		half := len(body) / 2
+		_, _ = w.Write(body[:half])
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-gate:
+		case <-r.Context().Done():
+			return
+		}
+		_, _ = w.Write(body[half:])
 	}))
 	t.Cleanup(s.server.Close)
 	return s
