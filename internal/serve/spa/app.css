@@ -1608,6 +1608,48 @@ summary + .form-section {
   color: var(--text-primary);
 }
 
+/* issue 668: the quiet "N known conflicts" line - conflicts marked as
+ * intended. Like the skipped updates above it is not a card, so it spans
+ * the grid row in secondary text, collapsed until opened. */
+.known-conflicts {
+  grid-column: 1 / -1;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.known-conflicts__summary {
+  cursor: pointer;
+}
+
+.known-conflicts__list {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.known-conflicts__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.known-conflicts__name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.known-conflicts__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* A card whose own fetch failed - I3: never rendered as the all-clear
  * empty state. */
 .card__error {
@@ -1658,6 +1700,12 @@ summary + .form-section {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* issue 668: a mod whose every file conflict is known - marked as
+ * intended - gets the conflict glyph muted, not the danger tone. */
+.badge--muted {
+  color: var(--text-muted);
 }
 
 /* ---------------------------------------------------------------------- */

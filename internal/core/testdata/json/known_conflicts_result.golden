@@ -1,0 +1,30 @@
+{
+  "game_id": "cyberpunk2077",
+  "profile": "default",
+  "added": [
+    {
+      "winner": "nexusmods:7",
+      "loser": "nexusmods:42",
+      "origin": "user"
+    }
+  ],
+  "removed": [
+    {
+      "winner": "nexusmods:42",
+      "loser": "nexusmods:7",
+      "origin": "collection"
+    }
+  ],
+  "known_conflicts": [
+    {
+      "winner": "nexusmods:9",
+      "loser": "nexusmods:7",
+      "origin": "collection"
+    },
+    {
+      "winner": "nexusmods:7",
+      "loser": "nexusmods:42",
+      "origin": "user"
+    }
+  ]
+}

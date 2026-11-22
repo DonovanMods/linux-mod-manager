@@ -133,7 +133,11 @@ export function AttentionCards({
   // issue 588: the check did not walk the game because a job was changing
   // it. The card says so, calmly, instead of reading as a clean bill.
   const healthDeferred = Boolean(health?.result?.deferred);
-  const conflictRows = conflicts?.conflicts ?? [];
+  // issue 668: a known conflict - marked as intended - needs nothing, so it
+  // is not on the card and never keeps the section from its all-clear; it
+  // sits on its own quiet line, like a skipped update.
+  const conflictRows = (conflicts?.conflicts ?? []).filter((c) => !c.known);
+  const knownConflictRows = (conflicts?.conflicts ?? []).filter((c) => c.known);
   const hasError = Boolean(errors.updates || errors.health || errors.conflicts);
   // The profile count comes from status, but the installed set arrives in
   // a separate mods request. Until it does, subtracting from an empty set
@@ -178,6 +182,7 @@ export function AttentionCards({
     findings.length === 0 &&
     !healthDeferred &&
     conflictRows.length === 0 &&
+    knownConflictRows.length === 0 &&
     notInstalled === 0 &&
     notListed === 0 &&
     driftTotal === 0 &&
@@ -252,6 +257,10 @@ export function AttentionCards({
           onRetry=${actions.reloadConflicts}
           actions=${actions}
         />`
+      }
+      ${
+        knownConflictRows.length > 0 &&
+        html`<${KnownConflicts} rows=${knownConflictRows} actions=${actions} />`
       }
       ${
         skippedRows.length > 0 &&
@@ -1537,6 +1546,21 @@ function ConflictsCard({ state, rows, error, onRetry, actions }) {
                       <button
                         type="button"
                         class="button button--small"
+                        data-action="mark-known"
+                        aria-label=${`Mark the conflict on ${deployedPath(c.path, c.root)} as intended`}
+                        title="The winner is meant to override the others: stop reporting this conflict"
+                        onClick=${() =>
+                          runConflictMark(
+                            actions,
+                            "mark the conflict as intended",
+                            () => actions.markConflictKnown(c),
+                          )}
+                      >
+                        Mark as intended
+                      </button>
+                      <button
+                        type="button"
+                        class="button button--small"
                         data-action="resolve"
                         onClick=${() => resolve(c)}
                       >
@@ -1546,8 +1570,81 @@ function ConflictsCard({ state, rows, error, onRetry, actions }) {
                   `,
                 )}
               </ul>
+              <div class="card__actions">
+                <button
+                  type="button"
+                  class="button"
+                  data-action="mark-all-known"
+                  title="Accept every conflict as it stands: each file's winner is meant to override the others"
+                  onClick=${() =>
+                    runConflictMark(
+                      actions,
+                      "mark the conflicts as intended",
+                      () => actions.markAllConflictsKnown(),
+                    )}
+                >
+                  Mark all as intended
+                </button>
+              </div>
             `
       }
     </div>
+  `;
+}
+
+/** runConflictMark is the known-conflict controls' shared call (issue 668):
+ * a single synchronous write whose row moves once it lands, so a failure
+ * becomes a toast - runSkip's shape. */
+async function runConflictMark(actions, what, call) {
+  try {
+    await call();
+  } catch (err) {
+    actions.pushToast({
+      tone: "failure",
+      title: `Couldn't ${what}`,
+      detail: err?.message ?? String(err),
+    });
+  }
+}
+
+/** KnownConflicts is issue 668's quiet line: "N known conflicts", each named
+ * with its contenders and path and an Unmark. Not a card - a conflict marked
+ * as intended needs nothing - so it spans the grid under them, collapsed
+ * until opened. */
+function KnownConflicts({ rows, actions }) {
+  return html`
+    <details class="known-conflicts" data-testid="known-conflicts">
+      <summary class="known-conflicts__summary">
+        ${countOf(rows.length, "known conflict")}
+      </summary>
+      <ul class="known-conflicts__list">
+        ${rows.map(
+          (c) => html`
+            <li key=${deployedKey(c.path, c.root)} class="known-conflicts__row">
+              <span class="known-conflicts__name" title=${conflictLabel(c)}
+                >${conflictLabel(c)}</span
+              >
+              <span
+                class="mono known-conflicts__path"
+                title=${deployedPath(c.path, c.root)}
+                >${deployedPath(c.path, c.root)}</span
+              >
+              <button
+                type="button"
+                class="button button--small"
+                data-action="unmark-known"
+                aria-label=${`Unmark the conflict on ${deployedPath(c.path, c.root)}`}
+                onClick=${() =>
+                  runConflictMark(actions, "unmark the conflict", () =>
+                    actions.unmarkConflictKnown(c),
+                  )}
+              >
+                Unmark
+              </button>
+            </li>
+          `,
+        )}
+      </ul>
+    </details>
   `;
 }

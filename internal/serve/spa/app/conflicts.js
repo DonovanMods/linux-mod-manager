@@ -37,3 +37,35 @@ export function conflictLabel(c) {
   const label = `${c.owner.name} ↔ ${also} · wins: ${c.load_order_winner.name}`;
   return c.stale ? `${label} (${staleWinnerNote})` : label;
 }
+
+/**
+ * conflictPairs is the directed mod pairs that make conflict c known (issue
+ * 668): its load-order winner over every other provider - the pairs "Mark
+ * as intended" marks and "Unmark" unmarks, as core's own rule
+ * (conflicts.go's pathKnown) reads them.
+ */
+export function conflictPairs(c) {
+  const winner = c.load_order_winner.key;
+  return [c.owner, ...c.also_in]
+    .filter(
+      (m, i, all) =>
+        m.key !== winner && all.findIndex((o) => o.key === m.key) === i,
+    )
+    .map((m) => ({ winner, loser: m.key }));
+}
+
+/** knownConflictNote is what a known conflict means (issue 668). */
+export const knownConflictNote = "known — marked as intended";
+
+/**
+ * conflictRole is one mod's side of conflict c, for the surfaces that list
+ * a mod's own conflicts (the mod panel, the full mod page): whether it
+ * wins, and whether the conflict is known.
+ */
+export function conflictRole(c, key) {
+  const role =
+    c.load_order_winner.key === key
+      ? "wins"
+      : `loses to ${c.load_order_winner.name}`;
+  return c.known ? ` (${role} · known)` : ` (${role})`;
+}

@@ -23,6 +23,7 @@ import { getModDetail, getCategories, ApiError } from "../api.js";
 import { takePanelFocus } from "../panelfocus.js";
 import { useSourceName } from "../sourcenames.js";
 import { findingLabel } from "../verify.js";
+import { conflictRole } from "../conflicts.js";
 import { healthLabel } from "../modrows.js";
 import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
@@ -640,11 +641,7 @@ export function ModPanel({
                   (c) =>
                     html`<li key=${deployedKey(c.path, c.root)} class="mono">
                       ${deployedPath(c.path, c.root)}
-                      ${
-                        c.load_order_winner.key === row.key
-                          ? " (wins)"
-                          : ` (loses to ${c.load_order_winner.name})`
-                      }
+                      ${conflictRole(c, row.key)}
                     </li>`,
                 )}
               </ul>

@@ -73,7 +73,11 @@ func NewProfileManager(configDir string, database *db.DB) *ProfileManager {
 // the user a word about (config.SaveReport.Notices): a layout it had to
 // rewrite whole and where it kept the original, or a write it could not make
 // atomically (#441 review F6, F10).
+//
+// #668: every save first drops the known-conflict entries naming a mod the
+// profile no longer lists, so no flow that removes a mod has to.
 func (pm *ProfileManager) save(profile *domain.Profile) error {
+	profile.KeepKnownConflicts()
 	pm.countSave()
 	report, err := config.SaveProfileReporting(pm.configDir, profile)
 	pm.report(report)
@@ -82,6 +86,7 @@ func (pm *ProfileManager) save(profile *domain.Profile) error {
 
 // saveRenamed is save for config.SaveRenamedProfile.
 func (pm *ProfileManager) saveRenamed(profile *domain.Profile, oldName string) error {
+	profile.KeepKnownConflicts()
 	pm.countSave()
 	report, err := config.SaveRenamedProfileReporting(pm.configDir, profile, oldName)
 	pm.report(report)

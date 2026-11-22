@@ -1010,6 +1010,19 @@ export function Library({
             >`
           }
           ${
+            // issue 668: every conflict of this mod is known - intended -
+            // so the mark is muted rather than a warning.
+            row.hasKnownConflict &&
+            html`<span
+              class="badge badge--muted"
+              data-testid="row-known-conflict"
+              role="img"
+              aria-label="Known file conflict (marked as intended)"
+              title="Known file conflict (marked as intended)"
+              >⇄</span
+            >`
+          }
+          ${
             row.locked &&
             html`<span
               class="badge"

@@ -41,6 +41,10 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/profiles", s.wrap(s.handleAPIProfiles))
 	s.mux.Handle("GET /api/v1/health", s.wrap(s.handleAPIHealth))
 	s.mux.Handle("GET /api/v1/conflicts", s.wrap(s.handleAPIConflicts))
+	// The Conflicts card's "Mark as intended" and "Unmark" (#668,
+	// api_known_conflicts.go): single-step profile writes, no job.
+	s.mux.Handle("POST /api/v1/conflicts/mark", s.wrap(s.handleAPIConflictsMark))
+	s.mux.Handle("POST /api/v1/conflicts/unmark", s.wrap(s.handleAPIConflictsUnmark))
 	// The two plan-free toggles (kind_toggle.go). They are registered as
 	// two literal routes rather than one {action} wildcard so the table
 	// stays closed: an unknown action reaches the /api/v1/ fallback's JSON

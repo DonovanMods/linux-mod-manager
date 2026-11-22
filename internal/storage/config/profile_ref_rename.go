@@ -67,6 +67,13 @@ func RenameProfileModRef(configDir, gameID, profileName string, r ModRefRename) 
 			ref.FromCollection, ref.SubstitutedFor = false, nil
 		}
 	}
+	// #668: the mod's known-conflict marks move with it; left on the old
+	// identity, the next save would drop them as naming a mod the profile
+	// no longer has.
+	profile.KnownConflicts = profile.KnownConflicts.Rename(from, to)
+	if profile.CollectionBaseline != nil {
+		profile.CollectionBaseline.KnownConflicts = profile.CollectionBaseline.KnownConflicts.Rename(from, to)
+	}
 
 	path, err := ProfilePath(configDir, profile.GameID, profile.Name)
 	if err != nil {

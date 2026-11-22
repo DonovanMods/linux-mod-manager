@@ -18,7 +18,8 @@
         "key": "src:b",
         "name": "Mod B"
       },
-      "stale": false
+      "stale": false,
+      "known": false
     }
   ]
 }

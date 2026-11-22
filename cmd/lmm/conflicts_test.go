@@ -192,7 +192,8 @@ func TestDoConflicts_TwinConflict_JSON(t *testing.T) {
 			"        \"key\": \"src:b\",\n"+
 			"        \"name\": \"Mod B\"\n"+
 			"      },\n"+
-			"      \"stale\": false\n"+
+			"      \"stale\": false,\n"+
+			"      \"known\": false\n"+
 			"    }\n"+
 			"  ]\n"+
 			"}\n",

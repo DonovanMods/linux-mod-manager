@@ -157,9 +157,11 @@ func TestGenManTree_AngleBracketArgsSurviveForEveryCommand(t *testing.T) {
 	// enable|disable|move`, `lmm plugins rules add|remove`, `lmm plugins
 	// rules group add|remove`), +1 since #608 (`lmm profile fill <profile>
 	// [dir-or-archive...]`), +1 since #620 (`lmm load-order move <file>`),
-	// +1 since #660 (`lmm profile finish <profile>`).
-	assert.Equal(t, 42, checked,
-		"expected exactly 42 commands with angle-bracket Use args; update this count if the command tree changed")
+	// +1 since #660 (`lmm profile finish <profile>`), +2 since #668 (`lmm
+	// conflicts ack [<winner> <loser>]`, `lmm conflicts unack <winner>
+	// <loser>`).
+	assert.Equal(t, 44, checked,
+		"expected exactly 44 commands with angle-bracket Use args; update this count if the command tree changed")
 }
 
 // TestGenManTree_AngleBracketPlaceholdersSurviveInLongHelp is the same
@@ -198,8 +200,8 @@ func TestGenManTree_AngleBracketPlaceholdersSurviveInLongHelp(t *testing.T) {
 	}
 	walk(rootCmd)
 
-	assert.Equal(t, 12, checked,
-		"expected exactly 12 commands whose Long/Short help spells an angle-bracket placeholder (game detect, game edit, auth login, verify, snapshot, update, mod skip-update, mod fomod, launch, profile export, profile finish, search); update this count if the help text changed")
+	assert.Equal(t, 14, checked,
+		"expected exactly 14 commands whose Long/Short help spells an angle-bracket placeholder (game detect, game edit, auth login, verify, snapshot, update, mod skip-update, mod fomod, launch, profile export, profile finish, search, conflicts, conflicts ack); update this count if the help text changed")
 }
 
 // TestGenManTree_UnderscoredNamesSurviveMarkdown is the same generator

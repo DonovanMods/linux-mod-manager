@@ -1995,6 +1995,41 @@ func TestJSONGoldens(t *testing.T) {
 			core.ConflictReport{GameID: "skyrim-se", Profile: "default", Conflicts: nil},
 		},
 		{
+			// #668: a known (intended) conflict - its winner is marked over
+			// every other provider.
+			"profile_conflict_known",
+			core.ProfileConflict{
+				Path:            "archive/pc/mod/basegame.archive",
+				Owner:           core.ConflictModRef{Key: "nexusmods:7", Name: "Other Mod"},
+				AlsoIn:          []core.ConflictModRef{{Key: "nexusmods:42", Name: "Sample Mod"}},
+				LoadOrderWinner: core.ConflictModRef{Key: "nexusmods:7", Name: "Other Mod"},
+				Known:           true,
+			},
+		},
+		{
+			"conflict_pair",
+			core.ConflictPair{Winner: "nexusmods:7", Loser: "42"},
+		},
+		{
+			// #668: a mark that replaced the pair's old direction.
+			"known_conflicts_result",
+			core.KnownConflictsResult{
+				GameID: "cyberpunk2077", Profile: "default",
+				Added:   domain.KnownConflicts{{Winner: "nexusmods:7", Loser: "nexusmods:42", Origin: domain.KnownConflictUser}},
+				Removed: domain.KnownConflicts{{Winner: "nexusmods:42", Loser: "nexusmods:7", Origin: domain.KnownConflictCollection}},
+				KnownConflicts: domain.KnownConflicts{
+					{Winner: "nexusmods:9", Loser: "nexusmods:7", Origin: domain.KnownConflictCollection},
+					{Winner: "nexusmods:7", Loser: "nexusmods:42", Origin: domain.KnownConflictUser},
+				},
+			},
+		},
+		{
+			// #668: an unmark that found nothing to remove - every list is [].
+			"known_conflicts_result_empty",
+			core.KnownConflictsResult{GameID: "cyberpunk2077", Profile: "default",
+				Added: domain.KnownConflicts{}, Removed: domain.KnownConflicts{}, KnownConflicts: domain.KnownConflicts{}},
+		},
+		{
 			"download_result",
 			core.DownloadResult{Path: "/cache/g/src-1/1.0/file.zip", Size: 1234, Checksum: "md5", SHA256: "abc"},
 		},

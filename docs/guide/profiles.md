@@ -648,6 +648,21 @@ apply plans say "Collection incomplete" and name each mod left; the
 Profile card says how many are left, and **Play** says so on its notice,
 with **Finish collection** beside it.
 
+### A collection's own conflicts
+
+A collection is built to overwrite: its curator orders the mods so that one
+replaces another's files. So an import marks every file conflict between two
+of the collection's own mods as known (intended), with the collection's
+order deciding which mod wins. They stay off the Conflicts card and out of
+`lmm conflicts` (`--all` lists them). A conflict with one of your own mods is
+still listed. [Finishing a collection](#finishing-a-collection) and
+`lmm profile fill` mark the conflicts the mods they install bring.
+
+A collection's marks work like your own: a reorder that makes the other mod
+win lists the conflict again, and you can unmark one (**Unmark**, or
+`lmm conflicts unack`). See
+[Two mods change the same file](troubleshooting.md#two-mods-change-the-same-file).
+
 ### Updating a collection profile
 
 A profile imported from a link or from a NexusMods collection remembers
@@ -693,6 +708,10 @@ The plan lists:
 
 A pin whose files change while its version stays the same reinstalls the
 mod with the new files, and the plan says so.
+
+The update marks the new version's own conflicts as known, under its order.
+Your own marks stay, a conflict you unmarked stays unmarked, and a pair the
+new version no longer has is dropped.
 
 A mod the import installed at its current file, because the pinned one was
 gone, stays as it is while the new version still pins that gone file, and
