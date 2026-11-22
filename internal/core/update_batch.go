@@ -205,7 +205,7 @@ func (s *Service) PlanUpdateBatch(ctx context.Context, game *domain.Game, profil
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.checkGameUpdates(ctx, game, profileName, installed, nil, UpdateCheckOptions{})
+	res, err := s.checkGameUpdates(ctx, game, profileName, installed, nil, UpdateCheckOptions{}, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check updates: %w", err)
 	}

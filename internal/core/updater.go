@@ -219,13 +219,69 @@ func noRemote(sourceID string) bool {
 	return sourceID == domain.SourceLocal || sourceID == domain.SourceCollection
 }
 
-// UpdateSkips counts the mods CheckUpdates will filter out, by reason. The two
+// collectionLocked reports whether prof locks mod on its collection's behalf
+// (#667): the ref is locked and from_collection. Such a mod is the
+// collection's to move, so a bulk update check never asks its source about
+// it. A nil profile (missing or unreadable) locks nothing.
+func collectionLocked(prof *domain.Profile, mod domain.InstalledMod) bool {
+	if prof == nil {
+		return false
+	}
+	ref := prof.FindRef(mod.SourceID, mod.ID)
+	return ref != nil && ref.Locked && ref.FromCollection
+}
+
+// collectionLockSkips splits installed into the mods a bulk update check
+// asks about and the count of those prof's collection locks (#667), naming
+// the collection when it locks any. A pinned or local mod is left for
+// CountUpdateSkips to count, so no mod is counted twice.
+func collectionLockSkips(prof *domain.Profile, installed []domain.InstalledMod) ([]domain.InstalledMod, UpdateSkips) {
+	var skips UpdateSkips
+	kept := make([]domain.InstalledMod, 0, len(installed))
+	for _, mod := range installed {
+		if UpdateCheckable(mod) && collectionLocked(prof, mod) {
+			skips.Locked++
+			continue
+		}
+		kept = append(kept, mod)
+	}
+	if skips.Locked > 0 {
+		skips.Collection = prof.Name
+		if prof.Collection != nil {
+			skips.Collection = firstNonEmpty(prof.Collection.Title, prof.Name)
+			_, err := updateOrigin(prof)
+			skips.CollectionSync = err == nil
+		}
+	}
+	return kept, skips
+}
+
+// UpdateSkips counts the mods CheckUpdates will filter out, by reason. They
 // are reported separately because the remedies differ: a pin can be lifted, a
-// local mod can never be checked. Local counts a collection's bundled items
-// (#623) too: like a local import, they have no remote.
+// local mod can never be checked, and a collection's lock moves with the
+// collection. Local counts a collection's bundled items (#623) too: like a
+// local import, they have no remote.
 type UpdateSkips struct {
 	Pinned int `json:"pinned"`
 	Local  int `json:"local"`
+	// Locked counts the mods the profile's collection locks (#667): a ref
+	// both locked and from_collection is never sent to its source's update
+	// check, because the collection is the update unit - `lmm profile sync
+	// --collection` moves it. A lock the user set by hand (no
+	// from_collection) is checked as before, and reported with the update's
+	// Locked flag instead. A mod already counted as pinned or local is not
+	// counted again. Set by CheckGameUpdateReport, which reads the profile;
+	// CountUpdateSkips sees only the installed rows. omitzero.
+	Locked int `json:"locked,omitzero"`
+	// Collection is the collection's name when Locked counts any mod (the
+	// collection's title, else the profile's name), so a frontend can say
+	// whose lock it is. omitempty.
+	Collection string `json:"collection,omitempty"`
+	// CollectionSync reports that the collection records an origin to
+	// update from, so `lmm profile sync --collection` (the web UI's "Update
+	// collection") is the remedy to name. False for a collection imported
+	// from a file, whose newer version is imported again. omitzero.
+	CollectionSync bool `json:"collection_sync,omitzero"`
 	// Updates counts the updates the check found but left out because the
 	// user skipped that version (#542) - UpdateCheckReport.SkippedUpdates'
 	// length. Those mods WERE checked, so Total does not include them; it is
@@ -235,7 +291,7 @@ type UpdateSkips struct {
 }
 
 // Total is the number of mods that will not be checked at all.
-func (s UpdateSkips) Total() int { return s.Pinned + s.Local }
+func (s UpdateSkips) Total() int { return s.Pinned + s.Local + s.Locked }
 
 // updateSkippedByUser reports whether upd offers a version the user chose to
 // skip (#542): the installed row's SkippedVersion is set and upd's
@@ -431,7 +487,7 @@ func (s *Service) lockState(ctx context.Context, gameID, profileName, sourceID, 
 // (CheckGameUpdateReport names it in SkippedUpdates); a version newer than
 // the skipped one is reported as normal.
 func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) ([]domain.Update, error) {
-	res, err := s.checkGameUpdates(ctx, game, profileName, installed, sink, opts)
+	res, err := s.checkGameUpdates(ctx, game, profileName, installed, sink, opts, false)
 	return res.updates, err
 }
 
@@ -444,12 +500,14 @@ func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profi
 // nil; the error is the check's own, returned as well so a caller can
 // branch on it (an auth failure, the exit code).
 func (s *Service) CheckGameUpdateReport(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) (*UpdateCheckReport, error) {
-	res, checkErr := s.checkGameUpdates(ctx, game, profileName, installed, sink, opts)
+	res, checkErr := s.checkGameUpdates(ctx, game, profileName, installed, sink, opts, false)
+	skipped := CountUpdateSkips(installed)
+	skipped.Locked, skipped.Collection, skipped.CollectionSync = res.locks.Locked, res.locks.Collection, res.locks.CollectionSync
 	report := &UpdateCheckReport{
 		GameID:            game.ID,
 		Profile:           profileName,
 		Updates:           res.updates,
-		Skipped:           CountUpdateSkips(installed),
+		Skipped:           skipped,
 		External:          CountExternalUpdates(res.updates),
 		ExternalMissing:   res.drift.missingRefs(),
 		Warnings:          res.drift.warnings,
@@ -478,14 +536,41 @@ type gameUpdateCheck struct {
 	skipped []domain.Update
 	// cleared is the manual-only mods the check cleared (#627).
 	cleared []ManualOnlyCleared
+	// locks counts the mods the profile's collection locks, which were not
+	// checked (#667): Locked, Collection and CollectionSync only.
+	locks UpdateSkips
 }
 
 // checkGameUpdates is CheckGameUpdates' body, also returning what
 // CheckGameUpdateReport reports beside the updates.
-func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) (gameUpdateCheck, error) {
+//
+// explicit is a check of mods the user named (`lmm update <id>`, `lmm mod
+// skip-update <id>`): it asks about a collection-locked mod too, since the
+// answer - the lock's refusal naming the update - is what was asked for.
+// Every bulk check leaves such mods out before any source is asked (#667).
+func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions, explicit bool) (gameUpdateCheck, error) {
+	// The profile is read ONCE, before the network (#667): it says which
+	// mods the collection locks, and stamps every update's lock state below
+	// (#289 review, Minor 2). A missing/unreadable profile locks nothing,
+	// matching every other "profile load failure means unlocked" precedent
+	// (ApplyUpdate's own lock gate).
+	prof, profErr := s.NewProfileManager().Get(ctx, game.ID, profileName)
+	if profErr != nil {
+		// Ruling 16 (C): a cancelled read would leave every entry reported
+		// unlocked, which is a lie the caller acts on.
+		if cerr := ctx.Err(); cerr != nil {
+			return gameUpdateCheck{}, cerr
+		}
+		prof = nil
+	}
+	var locks UpdateSkips
+	if !explicit {
+		installed, locks = collectionLockSkips(prof, installed)
+	}
+
 	drift, err := s.readExternalDrift(ctx, game, installed)
 	if err != nil {
-		return gameUpdateCheck{drift: drift}, err
+		return gameUpdateCheck{drift: drift, locks: locks}, err
 	}
 	// #592: the sources report every mod they fetch, and the names they
 	// report are recorded on the rows - the backfill costs no request.
@@ -520,20 +605,8 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 
 	// #289: stamp each entry's lock state via lockStateFromProfile - the
 	// single seam that lets every caller (cmd/lmm's bulk table/JSON,
-	// PlanUpdate/PlanUpdateFrom) drop its own profile scan. The profile is
-	// loaded ONCE here (#289 review, Minor 2), not once per entry - a
-	// missing/unreadable profile leaves every entry unlocked, matching every
-	// other "profile load failure means unlocked" precedent (ApplyUpdate's
-	// own lock gate, applySingleUpdate before this task).
-	prof, profErr := s.NewProfileManager().Get(ctx, game.ID, profileName)
-	if profErr != nil {
-		// Ruling 16 (C): a cancelled read would leave every entry reported
-		// unlocked, which is a lie the caller acts on; the cancellation
-		// outranks checkErr, which under a cancelled ctx is derived from it.
-		if cerr := ctx.Err(); cerr != nil {
-			return gameUpdateCheck{updates: updates, drift: drift, catalogMissing: catalogMissing, cleared: cleared}, cerr
-		}
-	}
+	// PlanUpdate/PlanUpdateFrom) drop its own profile scan, from the
+	// profile read once above.
 	for i := range updates {
 		locked, lockedVersion := lockStateFromProfile(prof, updates[i].InstalledMod.SourceID, updates[i].InstalledMod.ID)
 		if locked {
@@ -543,7 +616,7 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 	}
 
 	offered, skipped := splitSkippedUpdates(installed, updates)
-	return gameUpdateCheck{updates: offered, drift: drift, catalogMissing: catalogMissing, skipped: skipped, cleared: cleared}, checkErr
+	return gameUpdateCheck{updates: offered, drift: drift, catalogMissing: catalogMissing, skipped: skipped, cleared: cleared, locks: locks}, checkErr
 }
 
 // splitSkippedUpdates separates the updates offering a version the user

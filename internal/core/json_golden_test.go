@@ -2132,6 +2132,16 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #667: the collection-locked mods are counted, not listed.
+			"update_check_report_collection_locked",
+			core.UpdateCheckReport{
+				GameID:  "cyberpunk2077",
+				Profile: "Welcome to Night City",
+				Updates: []domain.Update{},
+				Skipped: core.UpdateSkips{Locked: 352, Collection: "Welcome to Night City", CollectionSync: true},
+			},
+		},
+		{
 			"catalog_mod_ref",
 			core.CatalogModRef{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Bear Mount"},
 		},
@@ -2177,6 +2187,30 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			"update_skips",
 			core.UpdateSkips{Pinned: 3, Local: 2},
+		},
+		{
+			// #667: the mods a collection locks were not checked; the
+			// collection is named, and records an origin to sync from.
+			"update_skips_collection_locked",
+			core.UpdateSkips{Pinned: 1, Locked: 352, Collection: "Welcome to Night City", CollectionSync: true},
+		},
+		{
+			// #667: `lmm update --skip-all --json`, POST
+			// /api/v1/updates/skip-all (and unskip-all, the same shape).
+			"update_skip_all_result",
+			core.UpdateSkipAllResult{
+				GameID: "skyrim-se", Profile: "default",
+				Mods: []core.SkippedUpdateRef{{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.3.0"}},
+			},
+		},
+		{
+			"skipped_update_ref",
+			core.SkippedUpdateRef{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.3.0"},
+		},
+		{
+			// #667: nothing to skip is an empty list, never null.
+			"update_skip_all_result_empty",
+			core.UpdateSkipAllResult{GameID: "skyrim-se", Profile: "default", Mods: []core.SkippedUpdateRef{}},
 		},
 		{
 			"hook_result",

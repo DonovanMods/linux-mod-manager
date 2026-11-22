@@ -1,5 +1,6 @@
 // Package core: this file holds the small per-mod settings flows - lock/
-// unlock/set-update-policy/set-convert-paks/skip-update/unskip-update - each a single beginOp-gated
+// unlock/set-update-policy/set-convert-paks/skip-update/unskip-update, and
+// #667's skip-all/unskip-all - each a single beginOp-gated
 // mutation (no Plan/Apply pair: there is nothing to preview or go stale
 // beyond the mod itself, mirroring EnableMod/DisableMod's own shape) that
 // returns a ModSettingResult so cmd/lmm's renderers never need their own
@@ -13,6 +14,7 @@ import (
 	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // ModSettingResult reports sourceID/modID's full settings snapshot after a
@@ -249,7 +251,7 @@ func (s *Service) offeredUpdateVersion(ctx context.Context, game *domain.Game, s
 	if err != nil {
 		return "", err
 	}
-	res, err := s.checkGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil, UpdateCheckOptions{})
+	res, err := s.checkGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil, UpdateCheckOptions{}, true)
 	if err != nil {
 		return "", fmt.Errorf("failed to check update: %w", err)
 	}
@@ -274,4 +276,97 @@ func (s *Service) UnskipModUpdate(ctx context.Context, sourceID, modID, gameID, 
 		return nil, err
 	}
 	return s.modSettingResult(ctx, sourceID, modID, gameID, profileName)
+}
+
+// UpdateSkipAllResult is what SkipAllUpdates and UnskipAllUpdates did
+// (#667): the mods whose skip the call set, or cleared, in game/profile.
+// `lmm update --skip-all --json` / `--unskip-all --json`, and POST
+// /api/v1/updates/skip-all / unskip-all.
+type UpdateSkipAllResult struct {
+	GameID  string `json:"game_id"`
+	Profile string `json:"profile"`
+	// Mods are the mods the call changed, in the update check's order
+	// (SkipAllUpdates) or the profile's installed order (UnskipAllUpdates).
+	// Never null: an empty list is "nothing to skip" or "nothing skipped".
+	Mods []SkippedUpdateRef `json:"mods"`
+}
+
+// SkippedUpdateRef is one mod in an UpdateSkipAllResult: its identity and
+// the version skipped - the one SkipAllUpdates recorded, or the one the
+// skip UnskipAllUpdates cleared was holding off.
+type SkippedUpdateRef struct {
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+}
+
+// SkipAllUpdates skips every update a bulk check of game/profileName offers
+// now (#667, #542's skip in bulk): each mod's offered version is recorded as
+// its skipped version, so the updates leave the list until their sources
+// publish something newer. The check is the one every update surface runs
+// (a network read, before the mutation slot is taken), so a mod the
+// profile's collection locks is not among them, and a recompile row, which
+// offers no version, is never skipped. The writes are one transaction under
+// one beginOp.
+//
+// A partial check failure refuses: skipping "all" of an answer that is
+// missing some sources would leave the user believing every update was
+// handled.
+func (s *Service) SkipAllUpdates(ctx context.Context, game *domain.Game, profileName string) (*UpdateSkipAllResult, error) {
+	installed, err := s.GetInstalledMods(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.checkGameUpdates(ctx, game, profileName, installed, nil, UpdateCheckOptions{}, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check updates: %w", err)
+	}
+	result := &UpdateSkipAllResult{GameID: game.ID, Profile: profileName, Mods: []SkippedUpdateRef{}}
+	var skips []db.ModSkip
+	for _, upd := range res.updates {
+		if upd.RecompileNeeded || upd.NewVersion == "" {
+			continue
+		}
+		im := upd.InstalledMod
+		skips = append(skips, db.ModSkip{SourceID: im.SourceID, ModID: im.ID, Version: upd.NewVersion})
+		result.Mods = append(result.Mods, SkippedUpdateRef{SourceID: im.SourceID, ModID: im.ID, Name: im.Name, Version: upd.NewVersion})
+	}
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := s.db.SetModSkippedVersions(ctx, game.ID, profileName, skips); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// UnskipAllUpdates clears every skipped update in gameID/profileName
+// (#667), so the update check offers each again. Clearing when nothing is
+// skipped is not an error. One transaction under one beginOp.
+func (s *Service) UnskipAllUpdates(ctx context.Context, gameID, profileName string) (*UpdateSkipAllResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	installed, err := s.GetInstalledMods(ctx, gameID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	result := &UpdateSkipAllResult{GameID: gameID, Profile: profileName, Mods: []SkippedUpdateRef{}}
+	var skips []db.ModSkip
+	for _, mod := range installed {
+		if mod.SkippedVersion == "" {
+			continue
+		}
+		skips = append(skips, db.ModSkip{SourceID: mod.SourceID, ModID: mod.ID})
+		result.Mods = append(result.Mods, SkippedUpdateRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.SkippedVersion})
+	}
+	if err := s.db.SetModSkippedVersions(ctx, gameID, profileName, skips); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
