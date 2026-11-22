@@ -317,15 +317,28 @@ leave the card. A few things hold it back:
 `lmm update` in a terminal installs Auto mods' updates as it always has, with
 or without the game running.
 
-## Skipping one update
+## Skipping updates
 
 Not ready for a particular update? Skip it. lmm stops mentioning that version
-and tells you again when a newer one comes out.
+and tells you again when a newer one comes out. Skipping isn't pinning: the
+mod is still checked.
+
+On the Updates card, each mod has a **Skip** button, and **Skip all** skips
+every update the card lists, even when the card also says a site couldn't
+be checked. Skipped updates move to a quiet "N skipped
+updates" line under the cards. Open it to **Unskip** one, or **Unskip all**.
+
+In the terminal:
 
 ```bash
 lmm mod skip-update <mod-id>
 lmm mod unskip-update <mod-id>
+lmm update --skip-all
+lmm update --unskip-all
 ```
+
+`--skip-all` skips every update `lmm update` would list right now, and
+`--unskip-all` offers every skipped update again.
 
 ## Locking a mod to one version
 
@@ -349,6 +362,35 @@ lmm mod unlock <mod-id>
 With no version, the lock holds the version you have now. Locking to a
 different version changes the record straight away; the game folder catches
 up the next time you deploy or apply the profile.
+
+### Mods locked by a collection
+
+A collection decides which version of each of its mods you have, so
+importing one locks every mod it pins. lmm doesn't check those mods for
+updates at all. The collection updates them, all at once, when its curator
+publishes a new revision. Checking is quicker for it, too: a big collection
+can have hundreds of mods.
+
+Instead of a row per mod, the Updates card says how many mods the
+collection locks, for example "352 mods locked by collection Welcome to
+Night City (not checked)", with an **Update collection…** button. `lmm
+update` prints the same line with the command to run:
+
+```bash
+lmm profile sync <profile> --collection
+```
+
+lmm can't yet ask a collection's site whether a new revision is out
+without downloading it, so it doesn't say when one is. **Update
+collection…** fetches the newest revision and shows what would change
+before anything does.
+
+To manage one of those mods yourself, unlock it. It is then yours: the
+collection no longer changes its version, and lmm checks it for updates
+like any other mod. The mod's side panel and its **⋯** menu say so before
+you unlock it, and `lmm mod unlock` says so afterwards. A mod you lock
+yourself is still checked: its update is listed with a 🔒, because you may
+want to know about it.
 
 {: .note }
 A lock needs a mod site that can find old versions of a mod: NexusMods,

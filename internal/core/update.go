@@ -538,7 +538,7 @@ func (s *Service) PlanUpdate(ctx context.Context, game *domain.Game, profileName
 		return nil, err
 	}
 
-	res, err := s.checkGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil, UpdateCheckOptions{})
+	res, err := s.checkGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil, UpdateCheckOptions{}, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check update: %w", err)
 	}

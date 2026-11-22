@@ -46,7 +46,12 @@ type ModListing struct {
 	domain.InstalledMod
 	Locked        bool   `json:"locked"`
 	LockedVersion string `json:"locked_version,omitempty"`
-	ConvertPaks   *bool  `json:"convert_paks,omitempty"`
+	// LockedByCollection reports that the lock is the profile's
+	// collection's (#667): the ref is from_collection. Such a mod is left
+	// out of bulk update checks, and unlocking it makes it the user's - the
+	// collection no longer manages its version. omitzero.
+	LockedByCollection bool  `json:"locked_by_collection,omitzero"`
+	ConvertPaks        *bool `json:"convert_paks,omitempty"`
 	// EffectiveCategory is the category the mod is grouped under (#592):
 	// the user's category on the profile ref when set, else the source's
 	// category name (InstalledMod.CategoryName), else empty - which a
@@ -123,6 +128,7 @@ func (s *Service) ListMods(ctx context.Context, game *domain.Game, profileName s
 		if ref, ok := lockedByKey[domain.ModKey(mod.SourceID, mod.ID)]; ok {
 			row.Locked = true
 			row.LockedVersion = ref.Version
+			row.LockedByCollection = ref.FromCollection
 		}
 		if game.DeployMode == domain.DeployCompile && s.ModHasPakMergeSource(game, &mod) {
 			v := mod.ConvertPaks

@@ -112,6 +112,10 @@ export function AttentionCards({
   // issue 542: updates the user skipped. Not on the card - a card of only
   // skipped updates is not shown at all - but kept findable on a quiet line.
   const skippedRows = updates?.skipped_updates ?? [];
+  // issue 667: the mods the profile's collection locks were never checked;
+  // they are counted, not listed - one line, never a row apiece.
+  const skips = updates?.skipped ?? null;
+  const collectionLocked = skips?.locked ?? 0;
   // issue 582: sources that refused the check for want of a key. The
   // report's error was never rendered, so a refusal left the card silent;
   // each now names its source and links to its key.
@@ -176,6 +180,7 @@ export function AttentionCards({
     missingRows.length === 0 &&
     goneRows.length === 0 &&
     skippedRows.length === 0 &&
+    collectionLocked === 0 &&
     authRequired.length === 0 &&
     !autoRelink &&
     restored.length === 0 &&
@@ -193,16 +198,22 @@ export function AttentionCards({
     return null;
   }
 
+  // Whether the Updates card is on screen - its one render condition. It
+  // carries the collection line when it is; otherwise that line is a quiet
+  // one under the cards, like the skipped updates.
+  const updatesCardShown =
+    updateRows.length > 0 ||
+    missingRows.length > 0 ||
+    goneRows.length > 0 ||
+    authRequired.length > 0 ||
+    Boolean(autoRelink) ||
+    restored.length > 0 ||
+    Boolean(errors.updates);
+
   return html`
     <section class="attention-cards">
       ${
-        (updateRows.length > 0 ||
-          missingRows.length > 0 ||
-          goneRows.length > 0 ||
-          authRequired.length > 0 ||
-          autoRelink ||
-          restored.length > 0 ||
-          errors.updates) &&
+        updatesCardShown &&
         html`<${UpdatesCard}
           state=${state}
           rows=${updateRows}
@@ -212,6 +223,8 @@ export function AttentionCards({
           autoUpdate=${autoUpdate}
           autoRelink=${autoRelink}
           restored=${restored}
+          skips=${skips}
+          profile=${updates?.profile}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
           onRefresh=${actions.refreshUpdates}
@@ -263,6 +276,17 @@ export function AttentionCards({
         html`<${KnownConflicts} rows=${knownConflictRows} actions=${actions} />`
       }
       ${
+        !updatesCardShown &&
+        collectionLocked > 0 &&
+        html`<${CollectionLockNote}
+          skips=${skips}
+          profile=${updates?.profile}
+          state=${state}
+          actions=${actions}
+          quiet
+        />`
+      }
+      ${
         skippedRows.length > 0 &&
         html`<${SkippedUpdates} rows=${skippedRows} actions=${actions} />`
       }
@@ -279,7 +303,9 @@ async function runSkip(actions, verb, mod, call) {
   } catch (err) {
     actions.pushToast({
       tone: "failure",
-      title: `Couldn't ${verb} the update for ${mod.name || mod.id}`,
+      title: mod.all
+        ? `Couldn't ${verb} all updates`
+        : `Couldn't ${verb} the update for ${mod.name || mod.id}`,
       detail: err?.message ?? String(err),
     });
   }
@@ -302,6 +328,21 @@ function SkippedUpdates({ rows, actions }) {
       <summary class="skipped-updates__summary">
         ${countOf(rows.length, "skipped update")}
       </summary>
+      <div class="skipped-updates__row">
+        <button
+          type="button"
+          class="button button--small"
+          data-action="unskip-all"
+          title="Offer every skipped update again"
+          onClick=${() =>
+            // issue 667: issue 542's Unskip, for every row at once.
+            runSkip(actions, "unskip", { all: true }, () =>
+              actions.unskipAllUpdates(),
+            )}
+        >
+          Unskip all
+        </button>
+      </div>
       <ul class="skipped-updates__list">
         ${rows.map((u) => {
           const mod = u.installed_mod;
@@ -327,6 +368,57 @@ function SkippedUpdates({ rows, actions }) {
       </ul>
     </details>
   `;
+}
+
+/** collectionUpdateOrigin is the profiles modal's own "Update collection…"
+ * origin (profilesmodal.js), so this note's button and that one morph into
+ * the same job. */
+function collectionUpdateOrigin(profile) {
+  return `profile:${profile}:collection-update`;
+}
+
+/** CollectionLockNote is issue 667's one line for the mods the profile's
+ * collection locks: they were not checked, the collection is the update
+ * unit, and - when it records an origin - "Update collection…" opens the
+ * same plan as `lmm profile sync --collection`. Inside the Updates card
+ * when the card is on screen, else a quiet line under the cards. */
+function CollectionLockNote({ skips, profile, state, actions, quiet }) {
+  const n = skips.locked;
+  const text = `${countOf(n, "mod")} locked by collection ${skips.collection} (not checked).`;
+  const remedy = skips.collection_sync
+    ? ""
+    : ` The collection sets ${n === 1 ? "its version" : "their versions"}; unlock a mod to check it yourself.`;
+  const origin = collectionUpdateOrigin(profile);
+  // A <div>, not a <p>: the InlineJob below can morph into the job's
+  // progress block, which is no phrasing content.
+  return html`<div
+    class=${quiet ? "skipped-updates" : "card__meta"}
+    data-testid="updates-collection-locked"
+  >
+    ${text + remedy}${" "}
+    ${
+      skips.collection_sync &&
+      profile &&
+      html`<${InlineJob} origin=${origin} state=${state} actions=${actions}>
+        <button
+          type="button"
+          class="button button--small"
+          data-action="update-collection"
+          title="Fetch the collection's newer version and update this profile to it (lmm profile sync --collection)"
+          onClick=${() =>
+            actions.openPlan({
+              kind: "collection_update",
+              origin,
+              title: `Update ${profile}'s collection`,
+              confirmLabel: "Update",
+              options: { profile },
+            })}
+        >
+          Update collection…
+        </button>
+      <//>`
+    }
+  </div>`;
 }
 
 /** externalMissingNote is the updates card's one line for issue 538's
@@ -489,6 +581,8 @@ function UpdatesCard({
   autoUpdate = null,
   autoRelink = null,
   restored = [],
+  skips = null,
+  profile = "",
   error,
   onRetry,
   onRefresh,
@@ -550,6 +644,32 @@ function UpdatesCard({
   // updates. Everything this card could do before needed a selection first,
   // so the commonest intent - update what you just told me about - was the
   // one thing it had no button for.
+  // issue 667: Skip all is issue 542's Skip for every row with a version
+  // to skip - a recompile row offers none. Nothing is selected for it: it
+  // skips what the card shows, and core skips what the check offers.
+  const skippable = rows.filter((u) => !u.recompile_needed);
+  const [skipping, setSkipping] = useState(false);
+  async function skipAll() {
+    if (skippable.length === 0 || skipping) return;
+    setSkipping(true);
+    try {
+      // The rows on the card, each with the version on screen (as the
+      // per-mod Skip sends its row's): a check that half failed - a source
+      // wanting a key beside one that answered - still skips what is shown.
+      await runSkip(actions, "skip", { all: true }, () =>
+        actions.skipAllUpdates(
+          skippable.map((u) => ({
+            source_id: u.installed_mod.source_id,
+            mod_id: u.installed_mod.id,
+            new_version: u.new_version,
+          })),
+        ),
+      );
+    } finally {
+      setSkipping(false);
+    }
+  }
+
   function updateAll() {
     if (applicable.length === 0) return;
     actions.openPlan({
@@ -564,6 +684,15 @@ function UpdatesCard({
   return html`
     <div class="card card--updates">
       <h2 class="card__title">⬆ Updates (${rows.length})</h2>
+      ${
+        (skips?.locked ?? 0) > 0 &&
+        html`<${CollectionLockNote}
+          skips=${skips}
+          profile=${profile}
+          state=${state}
+          actions=${actions}
+        />`
+      }
       ${
         autoUpdate &&
         autoUpdate.state !== "failed" &&
@@ -814,6 +943,16 @@ function UpdatesCard({
                   onClick=${onRefresh}
                 >
                   Check again
+                </button>
+                <button
+                  type="button"
+                  class="button"
+                  data-action="skip-all"
+                  title="Hide every update listed here until a newer version appears"
+                  disabled=${skippable.length === 0 || skipping}
+                  onClick=${skipAll}
+                >
+                  Skip all
                 </button>
                 <${InlineJob}
                   origin=${UPDATES_ALL_ORIGIN}

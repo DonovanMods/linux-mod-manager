@@ -794,6 +794,18 @@ export function ModSettingsControls({ row, actions, panelRef }) {
         />
         Locked${row.locked && row.locked_version ? html` at <span class="mono">${row.locked_version}</span>` : ""}
       </label>
+      ${
+        // issue 667: the collection's own lock. Said before the click, since
+        // the click cannot be taken back: an unlocked mod is the user's, and
+        // a later collection update no longer moves it.
+        row.locked &&
+        row.locked_by_collection &&
+        html`<p class="form-hint" data-testid="unlock-collection-note">
+          Locked by the profile's collection. Unlocking makes this mod yours:
+          the collection will no longer manage its version, and update checks
+          include it again.
+        </p>`
+      }
       <label class="form-field form-field--inline">
         Update policy
         <select

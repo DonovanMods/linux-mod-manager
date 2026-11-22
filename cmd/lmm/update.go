@@ -28,6 +28,10 @@ var (
 	updateAll     bool
 	updateDryRun  bool
 	updateForce   bool
+	// updateSkipAll and updateUnskipAll are --skip-all / --unskip-all
+	// (#667): #542's per-mod skip, for every offered update at once.
+	updateSkipAll   bool
+	updateUnskipAll bool
 )
 
 // planUpdateResult builds the one-document result `lmm update <mod-id>`
@@ -80,6 +84,18 @@ archive's name or --version. The lock and update policy are kept, the
 previous version is preserved for 'lmm update rollback', and hooks run as
 for any update.
 
+A mod the profile's collection locks (a collection import locks each mod
+it pins) is not checked at all: the collection decides its version, so the
+check prints one line counting those mods instead of a row apiece, and
+'lmm profile sync <profile> --collection' updates them. Unlocking a mod
+('lmm mod unlock') makes it yours and returns it to the check. A lock you
+set yourself is still checked, and its update shown as locked.
+
+--skip-all skips every update the check offers now - 'lmm mod
+skip-update' for each, so nothing is pinned and a newer version is offered
+again - and --unskip-all clears every skipped update. Neither takes a mod
+ID, --all, --dry-run or --from-file.
+
 If the update check itself fails partway through (e.g. a source outage),
 whatever was learned before the failure is still printed and the command
 exits non-zero rather than silently claiming success.
@@ -91,9 +107,12 @@ recompile against the current base pak.
 
 --json prints exactly one JSON document to stdout, in one of two shapes:
   - Bulk check (no mod ID): {game_id, profile, updates: [...], skipped:
-    {pinned, local}, error?}. error is present when the check itself
-    failed partway through; updates/skipped still reflect whatever was
-    learned first. Each updates[] entry carries the whole installed mod
+    {pinned, local, locked?, collection?, collection_sync?, updates?},
+    error?}. skipped.locked counts the mods the collection locks (never
+    checked), skipped.collection names it, and collection_sync says it
+    has an origin 'lmm profile sync --collection' updates from. error is
+    present when the check itself failed partway through; updates/skipped
+    still reflect whatever was learned first. Each updates[] entry carries the whole installed mod
     under "installed_mod" plus "new_version"; "locked": true means the
     update is reported but will not be applied until the lock moves or
     clears, and "recompile_needed": true with a "recompile_reason" marks
@@ -111,6 +130,10 @@ recompile against the current base pak.
     matched_file?, match_normalized?, advertised?, locked, refusal?,
     files, hooks, warnings}. match is "advertised", "mismatch", "listed"
     or "none". Without --dry-run, the single-mod document above.
+  - With --skip-all or --unskip-all: {game_id, profile, mods: [{source_id,
+    mod_id, name, version}], applied, not_applied}, the mods whose skip was
+    set (version: the one skipped) or cleared (version: the one the skip
+    held); applied counts them.
   - 'update rollback' emits the rollback document: {mod, mod_name,
     from_version, to_version, status, reason, warnings, notes}, with
     status "rolled_back" or "skipped".
@@ -121,6 +144,8 @@ Examples:
   lmm update 12345 --game skyrim-se --source nexusmods  # Disambiguate by source
   lmm update --game skyrim-se --all              # Apply all available updates
   lmm update --game skyrim-se --dry-run          # Show what would update
+  lmm update --game skyrim-se --skip-all         # Skip every offered update
+  lmm update --game skyrim-se --unskip-all       # Offer every skipped update again
   lmm update 12345 --game wow --from-file ~/Downloads/Mod-2.0.zip  # Update from a downloaded archive`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runUpdate,
@@ -155,6 +180,8 @@ func init() {
 	updateCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "show what would update without applying")
 	updateCmd.Flags().BoolVar(&updateRefresh, "refresh", false, "bypass cached source metadata and locally cached source indexes (Steam Workshop caches for hours; the Thunderstore index for six)")
 	updateCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "continue even if hooks fail")
+	updateCmd.Flags().BoolVar(&updateSkipAll, "skip-all", false, "skip every update the check offers now, without pinning (each mod's offer is hidden until a newer version appears)")
+	updateCmd.Flags().BoolVar(&updateUnskipAll, "unskip-all", false, "clear every skipped update, so the check offers each again")
 	addFomodFlags(updateCmd)
 
 	updateRollbackCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source (default: the sole configured source; prompts when several are configured)")
@@ -174,6 +201,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	if err := checkUpdateFromFileFlags(args); err != nil {
 		return err
+	}
+	if updateSkipAll || updateUnskipAll {
+		return doUpdateSkipAll(ctx, service, game, args)
 	}
 	// #375: the source is resolved inside the single-mod branch below, not
 	// here. The bulk check walks every installed mod against ITS OWN
@@ -313,7 +343,13 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	var sink core.EventSink
 	if verbose && !jsonOutput {
-		fmt.Printf("Checking %d mod(s) for updates in %s (profile: %s)...\n", len(installed), game.Name, profileName)
+		// #667 review: the mods actually asked - not the pinned, local or
+		// collection-locked ones the check leaves out.
+		asked := len(installed)
+		if skips, err := service.CountGameUpdateSkips(ctx, game.ID, profileName, installed); err == nil {
+			asked -= skips.Total()
+		}
+		fmt.Printf("Checking %d mod(s) for updates in %s (profile: %s)...\n", asked, game.Name, profileName)
 		sink = func(e core.Event) {
 			if uc, ok := e.(core.UpdateCheckEvent); ok {
 				// Global, not per-source: a two-source check prints 1/5..5/5
@@ -387,9 +423,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		// nothing to report is that every mod was skipped. An empty profile
 		// returned earlier, so len(installed) is non-zero here.
 		printExternalCheckWarnings(report)
-		skips := core.CountUpdateSkips(installed)
+		skips := report.Skipped
 		if skips.Total() == len(installed) {
-			printSkipped(skips)
+			printSkipped(skips, profileName)
 			printExternalMissing(report)
 			printCatalogMissing(service, report)
 			return finish()
@@ -408,7 +444,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 		if skips.Total() > 0 {
 			fmt.Println()
-			printSkipped(skips)
+			printSkipped(skips, profileName)
 		}
 		printSkippedUpdates(service, report)
 		printExternalMissing(report)
@@ -466,9 +502,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 
 		fmt.Printf("\n%s\n", colorYellow(fmt.Sprintf("%d update(s) available.", len(updates))))
-		if skips := core.CountUpdateSkips(installed); skips.Total() > 0 {
+		if skips := report.Skipped; skips.Total() > 0 {
 			fmt.Println()
-			printSkipped(skips)
+			printSkipped(skips, profileName)
 		}
 		printSkippedUpdates(service, report)
 		printExternalMissing(report)
@@ -1569,7 +1605,23 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 // Emits no leading blank line: when every mod is skipped this is the whole
 // output, and a leading newline would render as a stray blank first line.
 // Callers with preceding output add their own separator.
-func printSkipped(skips core.UpdateSkips) {
+func printSkipped(skips core.UpdateSkips, profile string) {
+	if skips.Locked > 0 {
+		// #667: one line for every mod the collection locks - never a row
+		// apiece. The remedy depends on whether the collection has an
+		// origin to update from.
+		them, it := "them", "their versions"
+		if skips.Locked == 1 {
+			them, it = "it", "its version"
+		}
+		if skips.CollectionSync {
+			fmt.Printf("%d mod%s locked by collection %s (not checked) — 'lmm profile sync %s --collection' updates %s.\n",
+				skips.Locked, plural(skips.Locked), skips.Collection, cliArg(profile), them)
+		} else {
+			fmt.Printf("%d mod%s locked by collection %s (not checked) — the collection sets %s; 'lmm mod unlock <mod-id>' checks one yourself.\n",
+				skips.Locked, plural(skips.Locked), skips.Collection, it)
+		}
+	}
 	if skips.Pinned > 0 {
 		fmt.Printf("%d pinned mod%s skipped — see `lmm list -v`.\n", skips.Pinned, plural(skips.Pinned))
 	}

@@ -21,11 +21,14 @@ import (
 type skipTestSource struct {
 	*multiFileDownloadSource
 	newer string
+	// asked records every mod ID the update check was asked about (#667).
+	asked []string
 }
 
 func (s *skipTestSource) CheckUpdates(_ context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	var out []domain.Update
 	for _, im := range installed {
+		s.asked = append(s.asked, im.ID)
 		if im.Version != s.newer {
 			out = append(out, domain.Update{InstalledMod: im, NewVersion: s.newer})
 		}

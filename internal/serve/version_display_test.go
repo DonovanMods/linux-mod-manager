@@ -82,7 +82,7 @@ var allowedRawVersionReads = map[string]map[string]versionAllowance{
 		"version": {1, "core.SchemaUpgradedError.Version (#648): the database's SCHEMA version a newer lmm migrated it to (an integer like 29), never a mod's version, so no external content id can reach it."},
 	},
 	"components/cards.js": {
-		"new_version": {1, "The Updates card's Skip (#542) sends the row's own new_version to POST .../skip-update as the version to skip - a wire value, never rendered; the row's own detail line goes through displayUpdateTarget."},
+		"new_version": {2, "The Updates card's Skip (#542) sends the row's own new_version to POST .../skip-update as the version to skip, and its Skip all (#667) sends each row's to POST /api/v1/updates/skip-all - wire values, never rendered; the row's own detail line goes through displayUpdateTarget."},
 	},
 	"components/modpanel.js": {
 		"version": {3, "One is the CATALOG panel's meta line, whose catalogMod is a domain.Mod - a document with no External field at all, for a mod that is not installed (Workshop search is not Tier 1). The other two are ManagedBySteam's LABELLED 'Steam content id' line: the one place the design asks for the manifest."},

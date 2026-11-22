@@ -63,6 +63,10 @@ type InstalledDetail struct {
 	UpdatePolicy   domain.UpdatePolicy `json:"update_policy"`
 	Locked         bool                `json:"locked"`
 	LockedVersion  string              `json:"locked_version,omitempty"`
+	// LockedByCollection reports that the lock is the profile's
+	// collection's (#667), as ModListing.LockedByCollection does: unlocking
+	// the mod takes it out of the collection's hands. omitzero.
+	LockedByCollection bool `json:"locked_by_collection,omitzero"`
 	// ConvertPaks is nil when pak conversion does not apply to this mod at
 	// all (not a merge-compile game, or no pak merge source) - distinct from
 	// a non-nil pointer to false, which means "applies, and is off".
@@ -198,6 +202,7 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 			if ref.Locked {
 				info.Locked = true
 				info.LockedVersion = ref.Version
+				info.LockedByCollection = ref.FromCollection
 			}
 			userCategory = ref.Category
 			inputs = refTreeInputs(ref)

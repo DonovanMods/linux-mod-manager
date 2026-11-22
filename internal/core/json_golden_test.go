@@ -1584,6 +1584,14 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #667: a lock the profile's collection holds.
+			"installed_detail_locked_by_collection",
+			core.InstalledDetail{
+				Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateNotify,
+				Locked: true, LockedVersion: "1.2.3", LockedByCollection: true,
+			},
+		},
+		{
 			"installed_detail",
 			core.InstalledDetail{
 				Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateAuto,
@@ -1655,6 +1663,23 @@ func TestJSONGoldens(t *testing.T) {
 				},
 				EffectiveCategory: "Favourites",
 				CategorySource:    core.CategorySourceUser,
+			},
+		},
+		{
+			// #667: a lock the profile's collection holds.
+			"mod_listing_locked_by_collection",
+			core.ModListing{
+				InstalledMod: domain.InstalledMod{
+					Mod:          domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se"},
+					ProfileName:  "default",
+					UpdatePolicy: domain.UpdateNotify,
+					InstalledAt:  fixedTime,
+					LinkMethod:   domain.LinkSymlink,
+					Enabled:      true,
+				},
+				Locked:             true,
+				LockedVersion:      "1.2.3",
+				LockedByCollection: true,
 			},
 		},
 		{
@@ -2132,6 +2157,16 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #667: the collection-locked mods are counted, not listed.
+			"update_check_report_collection_locked",
+			core.UpdateCheckReport{
+				GameID:  "cyberpunk2077",
+				Profile: "Welcome to Night City",
+				Updates: []domain.Update{},
+				Skipped: core.UpdateSkips{Locked: 352, Collection: "Welcome to Night City", CollectionSync: true},
+			},
+		},
+		{
 			"catalog_mod_ref",
 			core.CatalogModRef{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Bear Mount"},
 		},
@@ -2177,6 +2212,46 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			"update_skips",
 			core.UpdateSkips{Pinned: 3, Local: 2},
+		},
+		{
+			// #667: the mods a collection locks were not checked; the
+			// collection is named, and records an origin to sync from.
+			"update_skips_collection_locked",
+			core.UpdateSkips{Pinned: 1, Locked: 352, Collection: "Welcome to Night City", CollectionSync: true},
+		},
+		{
+			// #667: `lmm update --skip-all --json`, POST
+			// /api/v1/updates/skip-all (and unskip-all, the same shape).
+			"update_skip_all_result",
+			core.UpdateSkipAllResult{
+				GameID: "skyrim-se", Profile: "default",
+				Mods:    []core.SkippedUpdateRef{{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.3.0"}},
+				Applied: 1,
+			},
+		},
+		{
+			// #667 review: the web UI's rows, one of which no longer applied.
+			"update_skip_all_result_not_applied",
+			core.UpdateSkipAllResult{
+				GameID: "skyrim-se", Profile: "default",
+				Mods:       []core.SkippedUpdateRef{{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.3.0"}},
+				Applied:    1,
+				NotApplied: 1,
+			},
+		},
+		{
+			// #667 review: one row of POST /api/v1/updates/skip-all's body.
+			"update_skip_item",
+			core.UpdateSkipItem{SourceID: "nexusmods", ModID: "42", NewVersion: "1.3.0"},
+		},
+		{
+			"skipped_update_ref",
+			core.SkippedUpdateRef{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.3.0"},
+		},
+		{
+			// #667: nothing to skip is an empty list, never null.
+			"update_skip_all_result_empty",
+			core.UpdateSkipAllResult{GameID: "skyrim-se", Profile: "default", Mods: []core.SkippedUpdateRef{}},
 		},
 		{
 			"hook_result",
@@ -3652,6 +3727,18 @@ func TestJSONGoldens(t *testing.T) {
 				UpdatePolicy:      domain.UpdateNotify,
 				EffectiveCategory: "Favourites",
 				CategorySource:    core.CategorySourceUser,
+			},
+		},
+		{
+			// #667: `lmm mod unlock --json` of a mod the collection locked.
+			"mod_setting_result_left_collection",
+			core.ModSettingResult{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se"},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				UpdatePolicy:   domain.UpdateNotify,
+				LeftCollection: true,
 			},
 		},
 		{

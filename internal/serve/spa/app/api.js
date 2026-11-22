@@ -313,6 +313,19 @@ export const skipModUpdate = (sourceID, modID, version, context) =>
 export const unskipModUpdate = (sourceID, modID, context) =>
   post(scoped(`${modPath(sourceID, modID)}/unskip-update`, context), {});
 
+/** Skips each of updates (issue 667: Skip all), a list of {source_id,
+ * mod_id, new_version} - the rows the Updates card shows, so a check that
+ * half failed still skips what the user saw. Returns
+ * core.UpdateSkipAllResult directly: applied, and not_applied for a row
+ * that no longer applies. */
+export const skipAllUpdates = (updates, context) =>
+  post(scoped("/api/v1/updates/skip-all", context), { updates });
+
+/** Clears every skipped update (issue 667: `lmm update --unskip-all`).
+ * Returns core.UpdateSkipAllResult directly. */
+export const unskipAllUpdates = (context) =>
+  post(scoped("/api/v1/updates/unskip-all", context), {});
+
 // profilePath builds one profile's /api/v1/profiles/{name} base path -
 // shared by every named-profile route below (api_profiles.go's own doc
 // comment: the profile is named in the PATH, never ?profile=).

@@ -580,6 +580,51 @@ func (d *DB) SetModSkippedVersion(ctx context.Context, sourceID, modID, gameID, 
 	return nil
 }
 
+// ModSkip is one row's skip for SetModSkippedVersions (#667): the mod, and
+// the version to skip - empty clears the row's skip.
+type ModSkip struct {
+	SourceID string
+	ModID    string
+	Version  string
+}
+
+// SetModSkippedVersions writes each of skips onto its row in gameID/
+// profileName in one transaction (#667: Skip all, Unskip all). A row that
+// does not exist refuses the whole batch with domain.ErrModNotFound, and
+// nothing is written.
+func (d *DB) SetModSkippedVersions(ctx context.Context, gameID, profileName string, skips []ModSkip) error {
+	if len(skips) == 0 {
+		return nil
+	}
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	for _, skip := range skips {
+		var value *string
+		if skip.Version != "" {
+			value = &skip.Version
+		}
+		result, err := tx.ExecContext(ctx, `
+			UPDATE installed_mods SET skipped_version = ?
+			WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
+		`, value, skip.SourceID, skip.ModID, gameID, profileName)
+		if err != nil {
+			return fmt.Errorf("updating mod skipped_version: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("updating mod skipped_version: checking rows affected: %w", err)
+		}
+		if rows == 0 {
+			return fmt.Errorf("%s: %w", domain.ModKey(skip.SourceID, skip.ModID), domain.ErrModNotFound)
+		}
+	}
+	return tx.Commit()
+}
+
 // SetModEnabled enables or disables a mod
 func (d *DB) SetModEnabled(ctx context.Context, sourceID, modID, gameID, profileName string, enabled bool) error {
 	result, err := d.ExecContext(ctx, `

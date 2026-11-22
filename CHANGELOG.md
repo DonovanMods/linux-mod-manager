@@ -40,6 +40,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     one (`lmm mod edit`) keeps them under its new identity. Snapshots
     and `lmm profile duplicate` carry the list.
 
+- **A collection's locked mods are no longer checked for updates; Skip all
+  (#667).** A mod whose profile entry is locked by its collection (a
+  collection import locks each mod it pins) is the collection's to move,
+  so a bulk update check never asks its site about it: `lmm update`, the
+  web Updates card, automatic updates and update batches leave it out,
+  which also makes checking a big collection profile much quicker. Both
+  frontends count those mods in one line instead of a row apiece ("352
+  mods locked by collection Welcome to Night City (not checked)"), naming
+  `lmm profile sync <profile> --collection`, or the card's **Update
+  collection…** button, when the collection records an origin. The update
+  report's `skipped` gains `locked`, `collection` and `collection_sync`
+  (omitted when zero). A lock you set yourself is checked as before, and
+  `lmm update <mod-id>`, which names the mod, still asks. Unlocking a
+  collection's mod makes it yours and returns it to the checks: the web
+  UI's side panel and row menu say so before the click, `lmm mod unlock`
+  says so after, the mod listing and the mod detail carry
+  `locked_by_collection` and the unlock's settings document
+  `left_collection`. `lmm update -v` counts the mods it actually asks.
+  There is no cheap check for a new collection revision yet (it would need
+  a source query of its own), so neither frontend announces one.
+  - **Skip all / Unskip all**: #542's skip for every update offered at
+    once. In the terminal, `lmm update --skip-all` / `--unskip-all` (a new
+    `UpdateSkipAllResult` document under `--json`, with `applied` and
+    `not_applied` counts) skips what its own check offers. In the web UI,
+    a **Skip all** button on the Updates card sends the rows the card
+    shows to `POST /api/v1/updates/skip-all` (`{"updates": [...]}`), so it
+    works even when another source's check failed, and **Unskip all** on
+    the skipped-updates line calls `POST /api/v1/updates/unskip-all`. Each
+    writes in one transaction; a row whose mod is gone, or that names the
+    installed version, counts as not applied. A collection's locked mods
+    are never skipped.
+
 - **Search a game's NexusMods collections (#651).** `lmm search
 --collections [query]` lists the game's collections on NexusMods (no API
   key needed): name, curator, endorsements, mod count, latest revision and

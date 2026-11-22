@@ -1,5 +1,6 @@
 // Package core: this file holds the small per-mod settings flows - lock/
-// unlock/set-update-policy/set-convert-paks/skip-update/unskip-update - each a single beginOp-gated
+// unlock/set-update-policy/set-convert-paks/skip-update/unskip-update, and
+// #667's skip-all/unskip-all - each a single beginOp-gated
 // mutation (no Plan/Apply pair: there is nothing to preview or go stale
 // beyond the mod itself, mirroring EnableMod/DisableMod's own shape) that
 // returns a ModSettingResult so cmd/lmm's renderers never need their own
@@ -13,6 +14,7 @@ import (
 	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // ModSettingResult reports sourceID/modID's full settings snapshot after a
@@ -41,6 +43,11 @@ type ModSettingResult struct {
 	// (CategorySourceSource), else both empty.
 	EffectiveCategory string `json:"effective_category,omitempty"`
 	CategorySource    string `json:"category_source,omitempty"`
+	// LeftCollection is set by ClearModLock when the lock it cleared was
+	// the profile's collection's (#667): the mod is the user's now, the
+	// collection no longer manages its version, and bulk update checks
+	// include it again. omitzero.
+	LeftCollection bool `json:"left_collection,omitzero"`
 }
 
 // modSettingResult builds sourceID/modID's ModSettingResult in
@@ -127,10 +134,22 @@ func (s *Service) ClearModLock(ctx context.Context, sourceID, modID, gameID, pro
 }
 
 func (s *Service) clearModLock(ctx context.Context, sourceID, modID, gameID, profileName string) (*ModSettingResult, error) {
+	// #667: whether the lock was the collection's, read before the clear
+	// takes the marker with it. An unreadable profile is ClearModLock's to
+	// report.
+	var leftCollection bool
+	if prof, err := s.NewProfileManager().Get(ctx, gameID, profileName); err == nil {
+		ref := prof.FindRef(sourceID, modID)
+		leftCollection = ref != nil && ref.Locked && ref.FromCollection
+	}
 	if err := s.NewProfileManager().ClearModLock(ctx, gameID, profileName, sourceID, modID); err != nil {
 		return nil, err
 	}
-	return s.modSettingResult(ctx, sourceID, modID, gameID, profileName)
+	result, err := s.modSettingResult(ctx, sourceID, modID, gameID, profileName)
+	if result != nil {
+		result.LeftCollection = leftCollection
+	}
+	return result, err
 }
 
 // SetModUpdatePolicy sets the update policy for an installed mod, returning
@@ -249,7 +268,7 @@ func (s *Service) offeredUpdateVersion(ctx context.Context, game *domain.Game, s
 	if err != nil {
 		return "", err
 	}
-	res, err := s.checkGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil, UpdateCheckOptions{})
+	res, err := s.checkGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil, UpdateCheckOptions{}, true)
 	if err != nil {
 		return "", fmt.Errorf("failed to check update: %w", err)
 	}
@@ -274,4 +293,160 @@ func (s *Service) UnskipModUpdate(ctx context.Context, sourceID, modID, gameID, 
 		return nil, err
 	}
 	return s.modSettingResult(ctx, sourceID, modID, gameID, profileName)
+}
+
+// UpdateSkipAllResult is what SkipAllUpdates, SkipUpdates and
+// UnskipAllUpdates did (#667): the mods whose skip the call set, or cleared,
+// in game/profile. `lmm update --skip-all --json` / `--unskip-all --json`,
+// and POST /api/v1/updates/skip-all / unskip-all.
+type UpdateSkipAllResult struct {
+	GameID  string `json:"game_id"`
+	Profile string `json:"profile"`
+	// Mods are the mods the call changed, in the order asked (SkipUpdates,
+	// SkipAllUpdates: the update check's) or the profile's installed order
+	// (UnskipAllUpdates). Never null: an empty list is "nothing to skip" or
+	// "nothing skipped".
+	Mods []SkippedUpdateRef `json:"mods"`
+	// Applied is len(Mods): the skips set, or cleared.
+	Applied int `json:"applied"`
+	// NotApplied counts the updates a SkipUpdates caller named that no
+	// longer apply - the mod is not installed in the profile any more, or
+	// the version named is no version to skip (empty, or the one installed)
+	// - and were left alone. Always zero for SkipAllUpdates and
+	// UnskipAllUpdates.
+	NotApplied int `json:"not_applied"`
+}
+
+// SkippedUpdateRef is one mod in an UpdateSkipAllResult: its identity and
+// the version skipped - the one recorded, or the one the skip
+// UnskipAllUpdates cleared was holding off.
+type SkippedUpdateRef struct {
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+}
+
+// UpdateSkipItem names one offered update to skip (#667): the mod and the
+// version its update offers - the row a frontend shows, as the per-mod
+// skip sends its row's new_version.
+type UpdateSkipItem struct {
+	SourceID   string `json:"source_id"`
+	ModID      string `json:"mod_id"`
+	NewVersion string `json:"new_version"`
+}
+
+// SkipUpdates skips each of items in gameID/profileName (#667: the web
+// UI's Skip all, which sends the rows its Updates card shows). It runs no
+// update check: the rows are the caller's, so a check that half failed - a
+// source wanting a key beside one that answered - still skips what the
+// user saw. Under one beginOp each item is checked against the installed
+// mods - it must be installed in the profile, and name a version other
+// than the installed one - and every one that passes is written in one
+// transaction; one that does not is counted in NotApplied and left alone,
+// never failing the rest.
+func (s *Service) SkipUpdates(ctx context.Context, gameID, profileName string, items []UpdateSkipItem) (*UpdateSkipAllResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return s.skipUpdates(ctx, gameID, profileName, items)
+}
+
+// skipUpdates is SkipUpdates' body, run under the caller's beginOp.
+func (s *Service) skipUpdates(ctx context.Context, gameID, profileName string, items []UpdateSkipItem) (*UpdateSkipAllResult, error) {
+	installed, err := s.GetInstalledMods(ctx, gameID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	rows := make(map[string]domain.InstalledMod, len(installed))
+	for _, mod := range installed {
+		rows[domain.ModKey(mod.SourceID, mod.ID)] = mod
+	}
+	result := &UpdateSkipAllResult{GameID: gameID, Profile: profileName, Mods: []SkippedUpdateRef{}}
+	var skips []db.ModSkip
+	for _, it := range items {
+		row, ok := rows[domain.ModKey(it.SourceID, it.ModID)]
+		if !ok || it.NewVersion == "" || it.NewVersion == row.Version {
+			result.NotApplied++
+			continue
+		}
+		skips = append(skips, db.ModSkip{SourceID: it.SourceID, ModID: it.ModID, Version: it.NewVersion})
+		result.Mods = append(result.Mods, SkippedUpdateRef{SourceID: it.SourceID, ModID: it.ModID, Name: row.Name, Version: it.NewVersion})
+	}
+	if err := s.db.SetModSkippedVersions(ctx, gameID, profileName, skips); err != nil {
+		return nil, err
+	}
+	result.Applied = len(result.Mods)
+	return result, nil
+}
+
+// SkipAllUpdates skips every update a bulk check of game/profileName offers
+// now (#667, #542's skip in bulk: `lmm update --skip-all`): each mod's
+// offered version is recorded as its skipped version, so the updates leave
+// the list until their sources publish something newer. The check is the
+// one every update surface runs, so a mod the profile's collection locks is
+// not among them, and a recompile row, which offers no version, is never
+// skipped. The writes are SkipUpdates', one transaction under one beginOp.
+//
+// A partial check failure refuses: skipping "all" of an answer that is
+// missing some sources would leave the user believing every update was
+// handled. (The web UI sends the rows it shows to SkipUpdates instead, so
+// a half-failed check there still skips what the user saw.)
+func (s *Service) SkipAllUpdates(ctx context.Context, game *domain.Game, profileName string) (*UpdateSkipAllResult, error) {
+	installed, err := s.GetInstalledMods(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	// The check is a network read, so it runs BEFORE the mutation slot is
+	// taken, as SkipModUpdate's does: holding beginOp across every source's
+	// round trip would stall every other mutation behind it. In the window
+	// between the two, a mod can be updated or uninstalled; skipUpdates
+	// re-reads the installed rows under beginOp and leaves such an item out
+	// (NotApplied), so the window can skip nothing the profile no longer
+	// offers. A newer version published in the window is not skipped - the
+	// next check offers it, as it would any newer version.
+	res, err := s.checkGameUpdates(ctx, game, profileName, installed, nil, UpdateCheckOptions{}, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check updates: %w", err)
+	}
+	var items []UpdateSkipItem
+	for _, upd := range res.updates {
+		if upd.RecompileNeeded || upd.NewVersion == "" {
+			continue
+		}
+		im := upd.InstalledMod
+		items = append(items, UpdateSkipItem{SourceID: im.SourceID, ModID: im.ID, NewVersion: upd.NewVersion})
+	}
+	return s.SkipUpdates(ctx, game.ID, profileName, items)
+}
+
+// UnskipAllUpdates clears every skipped update in gameID/profileName
+// (#667), so the update check offers each again. Clearing when nothing is
+// skipped is not an error. One transaction under one beginOp.
+func (s *Service) UnskipAllUpdates(ctx context.Context, gameID, profileName string) (*UpdateSkipAllResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	installed, err := s.GetInstalledMods(ctx, gameID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	result := &UpdateSkipAllResult{GameID: gameID, Profile: profileName, Mods: []SkippedUpdateRef{}}
+	var skips []db.ModSkip
+	for _, mod := range installed {
+		if mod.SkippedVersion == "" {
+			continue
+		}
+		skips = append(skips, db.ModSkip{SourceID: mod.SourceID, ModID: mod.ID})
+		result.Mods = append(result.Mods, SkippedUpdateRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.SkippedVersion})
+	}
+	if err := s.db.SetModSkippedVersions(ctx, gameID, profileName, skips); err != nil {
+		return nil, err
+	}
+	result.Applied = len(result.Mods)
+	return result, nil
 }
