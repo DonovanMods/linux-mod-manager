@@ -454,6 +454,16 @@ func TestServeJSONGoldens(t *testing.T) {
 			modLockRequest{Version: "1.2.0"},
 		},
 		{
+			// #668: the Conflicts card's "Mark as intended" / "Unmark".
+			"known_conflicts_request",
+			knownConflictsRequest{Pairs: []core.ConflictPair{{Winner: "nexusmods:7", Loser: "nexusmods:42"}}},
+		},
+		{
+			// #668: accept every present conflict as it stands.
+			"known_conflicts_request_all_current",
+			knownConflictsRequest{AllCurrent: true},
+		},
+		{
 			// #592: the mod panel's category Save; "" clears.
 			"mod_category_request",
 			modCategoryRequest{Category: "Weapons"},
