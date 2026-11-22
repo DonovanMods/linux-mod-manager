@@ -1,0 +1,11 @@
+{
+  "name": "Welcome to Night City",
+  "origin": "source",
+  "source_id": "nexusmods",
+  "installed": 30,
+  "checked": false,
+  "error": "not asking NexusMods again until 14:03:00: rate limited",
+  "held_until": "2026-08-27T12:00:00Z",
+  "held_by": "NexusMods",
+  "sync": true
+}

@@ -39,5 +39,14 @@
     "locked": 1,
     "collection": "Night City",
     "collection_sync": true
+  },
+  "collection_revision": {
+    "name": "Night City",
+    "origin": "source",
+    "source_id": "nexusmods",
+    "installed": 1,
+    "checked": false,
+    "reason": "unsupported",
+    "sync": true
   }
 }

@@ -1,0 +1,22 @@
+{
+  "game_id": "cyberpunk2077",
+  "profile": "Welcome to Night City",
+  "updates": [],
+  "skipped": {
+    "pinned": 0,
+    "local": 0,
+    "locked": 352,
+    "collection": "Welcome to Night City",
+    "collection_sync": true
+  },
+  "collection_revision": {
+    "name": "Welcome to Night City",
+    "origin": "source",
+    "source_id": "nexusmods",
+    "installed": 30,
+    "latest": 31,
+    "available": true,
+    "checked": true,
+    "sync": true
+  }
+}

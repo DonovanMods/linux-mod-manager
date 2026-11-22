@@ -308,6 +308,85 @@ func (n *NexusMods) ResolveGameCollection(ctx context.Context, gameSourceID, ref
 	return c, nil
 }
 
+// collectionLatestRevisionQuery reads only a collection's latest published
+// revision number (#673) - collectionRevision with $revision omitted, as
+// ResolveGameCollection's latest - and the identity to check it against.
+// Held to testdata/collection-schema.json like collectionRevisionQuery.
+const collectionLatestRevisionQuery = `
+query CollectionLatestRevision($slug: String, $domain: String, $adult: Boolean) {
+  collectionRevision(slug: $slug, domainName: $domain, viewAdultContent: $adult) {
+    revisionNumber
+    collection {
+      slug
+      game { domainName }
+    }
+  }
+}`
+
+// collectionLatestRevisionResponse is collectionLatestRevisionQuery's
+// answer.
+type collectionLatestRevisionResponse struct {
+	Data struct {
+		CollectionRevision *struct {
+			RevisionNumber int `json:"revisionNumber"`
+			Collection     struct {
+				Slug string `json:"slug"`
+				Game struct {
+					DomainName string `json:"domainName"`
+				} `json:"game"`
+			} `json:"collection"`
+		} `json:"collectionRevision"`
+	} `json:"data"`
+	Errors []struct {
+		Message    string `json:"message"`
+		Extensions struct {
+			Code string `json:"code"`
+		} `json:"extensions"`
+	} `json:"errors"`
+}
+
+// LatestCollectionRevision implements source.CollectionRevisionChecker
+// (#673): the latest published revision of the collection slug for the
+// game NexusMods knows as gameSourceID, in one GraphQL request through the
+// client's retrying transport (#671), so a rate-limit hold applies to it
+// as to every other request. The slug is checked before any request.
+func (n *NexusMods) LatestCollectionRevision(ctx context.Context, gameSourceID, slug string) (int, error) {
+	if !domainPattern.MatchString(gameSourceID) {
+		return 0, fmt.Errorf("%w: NexusMods game %q", source.ErrGameIdentifierInvalid, gameSourceID)
+	}
+	if !slugPattern.MatchString(slug) {
+		return 0, fmt.Errorf("%w: %q is not a NexusMods collection slug", source.ErrInvalidReference, slug)
+	}
+	vars := map[string]any{"slug": slug, "domain": gameSourceID, "adult": true}
+	var resp collectionLatestRevisionResponse
+	if err := n.client.graphql(ctx, collectionLatestRevisionQuery, vars, &resp); err != nil {
+		return 0, fmt.Errorf("checking NexusMods collection %s: %w", slug, err)
+	}
+	for _, e := range resp.Errors {
+		if e.Extensions.Code == "NOT_FOUND" {
+			return 0, fmt.Errorf("%w: NexusMods has no collection %s for %s", source.ErrInvalidReference, slug, gameSourceID)
+		}
+	}
+	if len(resp.Errors) > 0 {
+		msgs := make([]string, len(resp.Errors))
+		for i, e := range resp.Errors {
+			msgs[i] = e.Message
+		}
+		return 0, fmt.Errorf("checking NexusMods collection %s: GraphQL errors: %s", slug, strings.Join(msgs, "; "))
+	}
+	rev := resp.Data.CollectionRevision
+	if rev == nil {
+		return 0, fmt.Errorf("%w: NexusMods has no collection %s for %s", source.ErrInvalidReference, slug, gameSourceID)
+	}
+	if d := rev.Collection.Game.DomainName; d != "" && d != gameSourceID {
+		return 0, fmt.Errorf("%w: NexusMods says collection %s is for %s, not %s", source.ErrInvalidReference, slug, d, gameSourceID)
+	}
+	if got := rev.Collection.Slug; got != "" && got != slug {
+		return 0, fmt.Errorf("%w: NexusMods answered for collection %s, not %s", source.ErrInvalidReference, got, slug)
+	}
+	return rev.RevisionNumber, nil
+}
+
 // collectionPageURL is a collection's page on nexusmods.com.
 func collectionPageURL(domain, slug string) string {
 	return fmt.Sprintf("https://www.nexusmods.com/games/%s/collections/%s", domain, slug)

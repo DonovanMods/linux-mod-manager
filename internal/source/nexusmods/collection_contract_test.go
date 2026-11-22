@@ -33,7 +33,21 @@ type collectionSchema struct {
 // the query the client sends and checks each field exists, on the type the
 // recording says the enclosing field returns, and that the root field's
 // arguments are ones collectionRevision takes with the variable's type.
+//
+// #673's collectionLatestRevisionQuery reads the same root field, so it is
+// held to the same recording.
 func TestCollectionRevisionQuery_MatchesRecordedSchema(t *testing.T) {
+	for name, query := range map[string]string{
+		"collectionRevisionQuery":       collectionRevisionQuery,
+		"collectionLatestRevisionQuery": collectionLatestRevisionQuery,
+	} {
+		t.Run(name, func(t *testing.T) { checkCollectionRevisionQuery(t, query) })
+	}
+}
+
+// checkCollectionRevisionQuery is the check above for one query.
+func checkCollectionRevisionQuery(t *testing.T, query string) {
+	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", "collection-schema.json"))
 	require.NoError(t, err)
 	var schema collectionSchema
@@ -42,7 +56,7 @@ func TestCollectionRevisionQuery_MatchesRecordedSchema(t *testing.T) {
 	require.True(t, ok, "the recording must hold Query.collectionRevision")
 	require.NotEmpty(t, schema.Types[root.Type])
 
-	toks := gqlTokens(collectionRevisionQuery)
+	toks := gqlTokens(query)
 	// The operation header: query Name($var: Type, ...) {
 	vars := map[string]string{}
 	i := 0

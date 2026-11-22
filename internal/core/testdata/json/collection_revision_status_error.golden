@@ -1,0 +1,9 @@
+{
+  "name": "Welcome to Night City",
+  "origin": "source",
+  "source_id": "nexusmods",
+  "installed": 30,
+  "checked": false,
+  "error": "checking NexusMods collection iszwwe: rate limited",
+  "sync": true
+}

@@ -101,6 +101,16 @@ type GameCollectionResolver interface {
 	ResolveGameCollection(ctx context.Context, gameSourceID, ref string) (Collection, error)
 }
 
+// CollectionRevisionChecker answers a collection's latest published
+// revision in one small request (#673): a collection profile's update
+// check asks it instead of checking the collection's locked mods one by
+// one. gameSourceID is the game's id on the source, slug the collection's.
+// A slug the source has no collection for in this game is
+// ErrInvalidReference. Type-asserted, like GameCollectionResolver.
+type CollectionRevisionChecker interface {
+	LatestCollectionRevision(ctx context.Context, gameSourceID, slug string) (int, error)
+}
+
 // GameCollectionSearcher finds a game's collections on the source (#651):
 // NexusMods' collectionsV2 query, filtered to the game's domain. Optional,
 // type-asserted, like GameCollectionResolver; a hit's URL is a reference

@@ -2206,6 +2206,61 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #673: the collection checked as the update unit, with a newer
+			// revision out.
+			"update_check_report_collection_revision",
+			core.UpdateCheckReport{
+				GameID:  "cyberpunk2077",
+				Profile: "Welcome to Night City",
+				Updates: []domain.Update{},
+				Skipped: core.UpdateSkips{Locked: 352, Collection: "Welcome to Night City", CollectionSync: true},
+				CollectionRevision: &core.CollectionRevisionStatus{
+					Name: "Welcome to Night City", Origin: core.CollectionOriginSource, SourceID: "nexusmods",
+					Installed: 30, Latest: 31, Available: true, Checked: true, Sync: true,
+				},
+			},
+		},
+		{
+			"collection_revision_status",
+			core.CollectionRevisionStatus{
+				Name: "Welcome to Night City", Origin: core.CollectionOriginSource, SourceID: "nexusmods",
+				Installed: 31, Latest: 31, Checked: true, Sync: true,
+			},
+		},
+		{
+			// #673: an .lmmc address is not asked; the sync plan fetches it.
+			"collection_revision_status_unchecked",
+			core.CollectionRevisionStatus{
+				Name: "Shared Setup", Origin: core.CollectionOriginURL, Installed: 2,
+				Reason: core.CollectionUncheckedURL, Sync: true,
+			},
+		},
+		{
+			// #673 review: the source is holding requests (#671).
+			"collection_revision_status_held",
+			core.CollectionRevisionStatus{
+				Name: "Welcome to Night City", Origin: core.CollectionOriginSource, SourceID: "nexusmods",
+				Installed: 30, Error: "not asking NexusMods again until 14:03:00: rate limited",
+				HeldUntil: fixedTime, HeldBy: "NexusMods", Sync: true,
+			},
+		},
+		{
+			// #673 review: no installed revision to compare against.
+			"collection_revision_status_installed_unknown",
+			core.CollectionRevisionStatus{
+				Name: "Welcome to Night City", Origin: core.CollectionOriginSource, SourceID: "nexusmods",
+				Latest: 31, InstalledUnknown: true, Checked: true, Sync: true,
+			},
+		},
+		{
+			// #673: the request failed; the mods' check did not.
+			"collection_revision_status_error",
+			core.CollectionRevisionStatus{
+				Name: "Welcome to Night City", Origin: core.CollectionOriginSource, SourceID: "nexusmods",
+				Installed: 30, Error: "checking NexusMods collection iszwwe: rate limited", Sync: true,
+			},
+		},
+		{
 			"catalog_mod_ref",
 			core.CatalogModRef{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Bear Mount"},
 		},

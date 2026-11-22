@@ -207,6 +207,12 @@ type Service struct {
 	// forgets them.
 	recipePinsMu sync.Mutex
 	recipePins   map[string]*recipePin
+	// collectionRevisions keeps each collection's latest-revision answer
+	// for collectionRevisionTTL (#673 review), by source, game and slug, so
+	// every page open is not a request; a refresh bypasses it and a
+	// collection update forgets it (collection_revision.go).
+	collectionRevisionsMu sync.Mutex
+	collectionRevisions   map[string]collectionRevisionEntry
 	// prefixRoots remembers, per game, the prefix withPrefixRoot last
 	// resolved (#636), so GetGame and ListGames do not scan every Steam
 	// library on every call. An entry is used only while it is fresh, the

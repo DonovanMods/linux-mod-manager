@@ -380,10 +380,33 @@ update` prints the same line with the command to run:
 lmm profile sync <profile> --collection
 ```
 
-lmm can't yet ask a collection's site whether a new revision is out
-without downloading it, so it doesn't say when one is. **Update
-collection…** fetches the newest revision and shows what would change
-before anything does.
+Instead, lmm checks the collection itself. For a NexusMods collection, it
+asks NexusMods for the collection's latest revision, one quick request,
+and the line says either "Collection Welcome to Night City: revision 31
+available (installed 30)" or "up to date (revision 30)". A newer revision
+brings the Updates card up even when no mod has an update. **Update
+collection…** fetches that revision and shows what would change before
+anything does.
+
+lmm remembers the answer for five minutes, so opening pages doesn't ask
+again. **Check for updates** (or `lmm update --refresh`) asks right away,
+and updating the collection forgets the old answer. If NexusMods is
+holding requests after too many, the line says until when, for example
+"NexusMods is holding requests until 14:03; revision not checked".
+
+A collection you made yourself, by exporting your own profile, isn't
+checked: you're its author, so there's no newer revision to fetch.
+
+Other collections can't be checked that cheaply:
+
+- **Imported from an address** (an `.lmmc` link): lmm would have to
+  download the whole collection to see its version, so the line says it
+  can't check automatically. **Update collection…** (or `lmm profile
+  sync <profile> --collection`) fetches it and shows what changed.
+- **Imported from a file**: there's nowhere to ask. Import the new
+  version of the file with `lmm profile import <file> --force`.
+- **A Steam Workshop collection**: Steam keeps those items up to date
+  itself, so there is no collection revision to check.
 
 To manage one of those mods yourself, unlock it. It is then yours: the
 collection no longer changes its version, and lmm checks it for updates

@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A collection is checked as a collection (#673).** A collection
+  profile's update check asks the collection for its latest revision
+  instead of checking the mods it locks one by one (#667 already leaves
+  those out; a mod you unlocked is checked like any other). For a NexusMods
+  collection that is one small GraphQL request, through the same retrying
+  client and rate-limit holds as every other NexusMods request (#671). `lmm
+update` prints "Collection X: revision N available (installed M)" with
+  the `lmm profile sync <profile> --collection` command, or "up to date
+  (revision M)", and the web Updates card's collection line says the same,
+  with **Update collection…**; a newer revision brings the card up even
+  when no mod has an update. A collection imported from an `.lmmc` address
+  isn't checked: lmm records no validator for the address, so learning its
+  version means fetching the whole document, which is what the sync plan
+  does. One imported from a file has nowhere to ask, and a Steam Workshop
+  collection records no collection revision; the line says which. The
+  update report gains `collection_revision` (`name`, `origin`,
+  `installed`, `installed_unknown`, `latest`, `available`, `checked`,
+  `reason`, `error`, `held_until`, `held_by`, `sync`), and NexusMods gains
+  a `LatestCollectionRevision` source method. When NexusMods is holding
+  requests, both frontends say until when ("NexusMods is holding requests
+  until 14:03; revision not checked"). The answer is kept for five minutes,
+  so opening pages doesn't re-ask; **Check for updates** (`lmm update
+--refresh`) asks again, and a collection update forgets it. A collection
+  you authored yourself (an exported profile) gets no line.
+
 - **Mark a conflict as intended (#668).** Two mods sharing a file is
   often the point: a collection's order exists so one of its mods replaces
   another's files. A profile now records **known conflicts**, each a mod

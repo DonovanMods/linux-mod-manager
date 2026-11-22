@@ -22,7 +22,10 @@ func setupSkipUpdateTest(t *testing.T) (*core.Service, *domain.Game) {
 	ctx := context.Background()
 	_, err := svc.NewProfileManager().Create(ctx, game.ID, "default")
 	require.NoError(t, err)
-	for id, name := range map[string]string{"a": "Mod A", "b": "Mod B"} {
+	// In a fixed order (#673 make test): the check, and so --skip-all's
+	// golden, lists the mods in install order.
+	for _, m := range []struct{ id, name string }{{"a", "Mod A"}, {"b", "Mod B"}} {
+		id, name := m.id, m.name
 		require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 			Mod:         domain.Mod{ID: id, SourceID: "test-src", Name: name, Version: "1.0", GameID: game.ID},
 			ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true, Deployed: true,

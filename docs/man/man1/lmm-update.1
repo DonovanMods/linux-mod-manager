@@ -41,7 +41,11 @@ for any update.
 A mod the profile's collection locks (a collection import locks each mod
 it pins) is not checked at all: the collection decides its version, so the
 check prints one line counting those mods instead of a row apiece, and
-\&'lmm profile sync <profile> --collection' updates them. Unlocking a mod
+\&'lmm profile sync <profile> --collection' updates them. The collection
+itself is checked instead: for a NexusMods collection, one request asks
+for its latest revision, and a line says whether a newer one than the
+installed revision is out. A collection imported from an https address or
+a file can't be checked that cheaply; the line says so. Unlocking a mod
 ('lmm mod unlock') makes it yours and returns it to the check. A lock you
 set yourself is still checked, and its update shown as locked.
 
@@ -68,7 +72,11 @@ recompile against the current base pak.
     {pinned, local, locked?, collection?, collection_sync?, updates?},
     error?}. skipped.locked counts the mods the collection locks (never
     checked), skipped.collection names it, and collection_sync says it
-    has an origin 'lmm profile sync --collection' updates from. error is
+    has an origin 'lmm profile sync --collection' updates from.
+    collection_revision? is the collection checked as a whole: {name,
+    origin, source_id?, installed, latest?, available?, checked, reason?,
+    error?, sync?} - origin "source", "url" or "file"; reason "url",
+    "file" or "unsupported" when it was not asked. error is
     present when the check itself failed partway through; updates/skipped
     still reflect whatever was learned first. Each updates[] entry carries the whole installed mod
     under "installed_mod" plus "new_version"; "locked": true means the
