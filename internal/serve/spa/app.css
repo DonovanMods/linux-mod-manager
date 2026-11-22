@@ -3233,7 +3233,11 @@ a.row-menu__item.mod-page-link {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-width: 24rem;
+  /* issue 665: one width, whatever a toast says - a stack that shrink-wraps
+   * its text resizes with every progress frame, and anchored bottom right
+   * that is a card jumping several times a second. 24rem, or the viewport
+   * less both gutters on a phone. */
+  width: min(24rem, calc(100vw - 2 * var(--space-6)));
   /* issue 655: a stack of toasts scrolls rather than covering the page. */
   max-height: calc(100vh - 2 * var(--space-6));
   overflow-y: auto;
@@ -3267,6 +3271,8 @@ a.row-menu__item.mod-page-link {
 
 .toast__body {
   flex: 1;
+  /* issue 665: lets a .toast__line ellipsise rather than widen the card. */
+  min-width: 0;
 }
 
 .toast__title {
@@ -3291,6 +3297,26 @@ a.row-menu__item.mod-page-link {
   padding-left: var(--space-4);
   color: var(--text-secondary);
   font-size: 0.9em;
+}
+
+/* issue 665: a running toast's detail is two lines of one height each, the
+ * second kept even when empty, so the card's height never follows its text;
+ * a line too long for the card ends in an ellipsis (its title has it all),
+ * and the counters are tabular so "9 of 40" to "10 of 40" moves nothing. */
+.toast__progress {
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+}
+
+.toast__line {
+  overflow: hidden;
+  height: 1.4em;
+  margin: 0;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .toast--running .job-progress__bar {
