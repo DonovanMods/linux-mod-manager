@@ -1,9 +1,10 @@
 // api_mod_settings.go answers the slide-over's and the full mod page's
 // EDITABLE lock, update-policy and pak-conversion controls (docs/plans/2026-08-31-serve-spa
 // -design.md §Slide-over: "lock + policy controls (editable)"), and the
-// Updates card's skip/unskip (#542), over thin POST routes -
-// Service.SetModLock/ClearModLock/SetModUpdatePolicy/SetModConvertPaks/
-// SkipModUpdate/UnskipModUpdate verbatim, each already a single
+// Updates card's skip/unskip (#542) and Skip all/Unskip all (#667), over
+// thin POST routes - Service.SetModLock/ClearModLock/SetModUpdatePolicy/
+// SetModConvertPaks/SkipModUpdate/UnskipModUpdate/SkipAllUpdates/
+// UnskipAllUpdates verbatim, each already a single
 // beginOp-gated call with nothing to preview (mirroring EnableMod/DisableMod's own shape, mod_settings.go's own
 // doc comment).
 //
@@ -267,4 +268,51 @@ func (s *Server) modSettingErrorStatus(ctx context.Context, sourceID, modID stri
 		return http.StatusNotFound
 	}
 	return http.StatusInternalServerError
+}
+
+// handleAPIUpdatesSkipAll answers POST /api/v1/updates/skip-all (#667): the
+// Updates card's "Skip all", core.SkipAllUpdates verbatim - every update the
+// check offers now is skipped, in one write - answering with the
+// core.UpdateSkipAllResult `lmm update --skip-all --json` emits. It takes no
+// body: what to skip is whatever the check offers, as the CLI's flag. A
+// source that needs a credential is 401, as GET /api/v1/updates' is.
+func (s *Server) handleAPIUpdatesSkipAll(w http.ResponseWriter, r *http.Request) {
+	if err := decodeAPIBody(w, r, &struct{}{}); err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+	result, err := s.svc.SkipAllUpdates(r.Context(), sel.Game, sel.Profile)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, domain.ErrAuthRequired) {
+			status = http.StatusUnauthorized
+		}
+		s.writeAPIError(w, status, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+// handleAPIUpdatesUnskipAll answers POST /api/v1/updates/unskip-all (#667):
+// "Unskip all" beside the skipped updates, core.UnskipAllUpdates verbatim.
+// It takes no body.
+func (s *Server) handleAPIUpdatesUnskipAll(w http.ResponseWriter, r *http.Request) {
+	if err := decodeAPIBody(w, r, &struct{}{}); err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+	result, err := s.svc.UnskipAllUpdates(r.Context(), sel.Game.ID, sel.Profile)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
 }

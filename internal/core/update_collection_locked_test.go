@@ -111,8 +111,12 @@ func TestPlanUpdate_ExplicitCollectionLockedModIsStillChecked(t *testing.T) {
 func TestClearModLock_ReturnsACollectionModToUpdateChecks(t *testing.T) {
 	svc, game, src := newCollectionLockedService(t, &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "abc123"})
 
-	_, err := svc.ClearModLock(context.Background(), "src", "mod1", game.ID, "default")
+	result, err := svc.ClearModLock(context.Background(), "src", "mod1", game.ID, "default")
 	require.NoError(t, err)
+	assert.True(t, result.LeftCollection, "the unlock says the collection no longer manages the mod")
+	hand, err := svc.ClearModLock(context.Background(), "src", "mod2", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, hand.LeftCollection, "a hand lock leaves no collection")
 	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	ref := prof.FindRef("src", "mod1")
@@ -185,4 +189,20 @@ func TestUnskipAllUpdates_ClearsEverySkip(t *testing.T) {
 	again, err := svc.UnskipAllUpdates(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	assert.Empty(t, again.Mods, "clearing nothing is not an error")
+}
+
+func TestListMods_MarksACollectionsLock(t *testing.T) {
+	svc, game, _ := newCollectionLockedService(t, &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "abc123"})
+
+	list, err := svc.ListMods(context.Background(), game, "default")
+	require.NoError(t, err)
+	byID := map[string]core.ModListing{}
+	for _, m := range list.Mods {
+		byID[m.ID] = m
+	}
+	assert.True(t, byID["mod1"].Locked)
+	assert.True(t, byID["mod1"].LockedByCollection, "the collection's lock is told apart (#667): unlocking leaves the collection")
+	assert.True(t, byID["mod2"].Locked)
+	assert.False(t, byID["mod2"].LockedByCollection, "a hand lock is the user's")
+	assert.False(t, byID["mod3"].LockedByCollection)
 }

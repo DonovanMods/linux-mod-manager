@@ -527,6 +527,10 @@ func doModUnlock(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	fmt.Printf("%s %s unlocked (update policy: %s)\n", colorGreen("✓"), result.Mod.Name, policyToString(result.Mod.UpdatePolicy))
+	if result.LeftCollection {
+		// #667: the lock was the collection's; the mod is the user's now.
+		fmt.Println("  The collection no longer manages its version; 'lmm update' checks it again.")
+	}
 	return nil
 }
 

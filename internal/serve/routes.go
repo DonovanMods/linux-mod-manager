@@ -65,6 +65,9 @@ func (s *Server) routes() {
 	// same single-step settings shape as the four above.
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/skip-update", s.wrap(s.handleAPIModSkipUpdate))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/unskip-update", s.wrap(s.handleAPIModUnskipUpdate))
+	// #667: the same skip for every offered update at once, and its undo.
+	s.mux.Handle("POST /api/v1/updates/skip-all", s.wrap(s.handleAPIUpdatesSkipAll))
+	s.mux.Handle("POST /api/v1/updates/unskip-all", s.wrap(s.handleAPIUpdatesUnskipAll))
 	// The profiles modal's write half (api_profiles.go). Each is a
 	// sanctioned single-step mutation answering with the same
 	// core.ProfileResult document its `lmm profile ...` twin emits; the

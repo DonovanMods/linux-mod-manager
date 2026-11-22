@@ -43,6 +43,11 @@ type ModSettingResult struct {
 	// (CategorySourceSource), else both empty.
 	EffectiveCategory string `json:"effective_category,omitempty"`
 	CategorySource    string `json:"category_source,omitempty"`
+	// LeftCollection is set by ClearModLock when the lock it cleared was
+	// the profile's collection's (#667): the mod is the user's now, the
+	// collection no longer manages its version, and bulk update checks
+	// include it again. omitzero.
+	LeftCollection bool `json:"left_collection,omitzero"`
 }
 
 // modSettingResult builds sourceID/modID's ModSettingResult in
@@ -129,10 +134,22 @@ func (s *Service) ClearModLock(ctx context.Context, sourceID, modID, gameID, pro
 }
 
 func (s *Service) clearModLock(ctx context.Context, sourceID, modID, gameID, profileName string) (*ModSettingResult, error) {
+	// #667: whether the lock was the collection's, read before the clear
+	// takes the marker with it. An unreadable profile is ClearModLock's to
+	// report.
+	var leftCollection bool
+	if prof, err := s.NewProfileManager().Get(ctx, gameID, profileName); err == nil {
+		ref := prof.FindRef(sourceID, modID)
+		leftCollection = ref != nil && ref.Locked && ref.FromCollection
+	}
 	if err := s.NewProfileManager().ClearModLock(ctx, gameID, profileName, sourceID, modID); err != nil {
 		return nil, err
 	}
-	return s.modSettingResult(ctx, sourceID, modID, gameID, profileName)
+	result, err := s.modSettingResult(ctx, sourceID, modID, gameID, profileName)
+	if result != nil {
+		result.LeftCollection = leftCollection
+	}
+	return result, err
 }
 
 // SetModUpdatePolicy sets the update policy for an installed mod, returning

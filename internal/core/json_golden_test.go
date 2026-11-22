@@ -1658,6 +1658,23 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #667: a lock the profile's collection holds.
+			"mod_listing_locked_by_collection",
+			core.ModListing{
+				InstalledMod: domain.InstalledMod{
+					Mod:          domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se"},
+					ProfileName:  "default",
+					UpdatePolicy: domain.UpdateNotify,
+					InstalledAt:  fixedTime,
+					LinkMethod:   domain.LinkSymlink,
+					Enabled:      true,
+				},
+				Locked:             true,
+				LockedVersion:      "1.2.3",
+				LockedByCollection: true,
+			},
+		},
+		{
 			// #592: GroupModListByCategory's group; Name is "" for the
 			// uncategorised group.
 			"mod_category_group",
@@ -3686,6 +3703,18 @@ func TestJSONGoldens(t *testing.T) {
 				UpdatePolicy:      domain.UpdateNotify,
 				EffectiveCategory: "Favourites",
 				CategorySource:    core.CategorySourceUser,
+			},
+		},
+		{
+			// #667: `lmm mod unlock --json` of a mod the collection locked.
+			"mod_setting_result_left_collection",
+			core.ModSettingResult{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se"},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				UpdatePolicy:   domain.UpdateNotify,
+				LeftCollection: true,
 			},
 		},
 		{

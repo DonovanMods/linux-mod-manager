@@ -148,3 +148,17 @@ func TestJSONGolden_UpdateSkipAll(t *testing.T) {
 		assertJSONCLIGolden(t, "update_bulk_collection_locked", out)
 	})
 }
+
+func TestDoModUnlock_SaysTheCollectionLetsGo(t *testing.T) {
+	svc, game := setupSkipUpdateTest(t)
+	lockByCollection(t, svc, game, true)
+
+	out, err := captureStdoutErr(t, func() error { return doModUnlock(context.Background(), svc, game, "a") })
+	require.NoError(t, err)
+	assert.Contains(t, out, "The collection no longer manages its version; 'lmm update' checks it again.")
+
+	out, err = captureStdoutErr(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	assert.Contains(t, out, "Mod A", "the unlocked mod is checked, and listed, again")
+	assert.NotContains(t, out, "locked by collection")
+}
