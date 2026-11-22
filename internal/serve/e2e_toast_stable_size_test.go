@@ -77,7 +77,7 @@ const toastStableSizeJS = `(async () => {
 		const card = container.querySelector(".toast--running");
 		// The entrance (toast-in's translateY) is not a resize: measure
 		// the card where it rests.
-		await Promise.all(card.getAnimations().map((a) => a.finished));
+		await Promise.all(card.getAnimations().map((a) => a.finished.catch(() => {})));
 		const r = card.getBoundingClientRect();
 		const progress = card.querySelector('[data-testid="toast-progress"]');
 		boxes.push({ X: r.x, Y: r.y, Width: r.width, Height: r.height, Text: progress.textContent.replace(/\s+/g, " ").trim() });

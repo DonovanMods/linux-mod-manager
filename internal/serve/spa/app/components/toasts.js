@@ -261,7 +261,13 @@ function RunningToastBody({ toast, frame, position }) {
     </div>
     <div class="toast__progress" data-testid="toast-progress">
       <p class="toast__line" title=${first}>${first}</p>
-      <p class="toast__line" title=${second || null}>${second}</p>
+      <p
+        class="toast__line"
+        title=${second || null}
+        aria-hidden=${second ? null : "true"}
+      >
+        ${second}
+      </p>
     </div>
   `;
 }

@@ -1262,7 +1262,8 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   Toasts now have one width (24rem, or the screen less its margins on a
   phone). A running toast's detail is two fixed lines: where the job is
   ("12 of 40 · Better Lights"), then what it is doing ("downloading 42% of 118
-  MB"). A line too long for the card ends in an ellipsis and shows its
+  MB"). The second line stays reserved, and empty, when there is no step
+  to show. A line too long for the card ends in an ellipsis and shows its
   full text on hover. The counters use tabular figures.
 
 - **An update shows every step after its download (#664).** An update said

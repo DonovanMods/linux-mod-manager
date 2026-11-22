@@ -3236,8 +3236,11 @@ a.row-menu__item.mod-page-link {
   /* issue 665: one width, whatever a toast says - a stack that shrink-wraps
    * its text resizes with every progress frame, and anchored bottom right
    * that is a card jumping several times a second. 24rem, or the viewport
-   * less both gutters on a phone. */
-  width: min(24rem, calc(100vw - 2 * var(--space-6)));
+   * less both gutters on a phone. The cap is a percentage of the fixed box's
+   * containing block - the viewport without a classic scrollbar - rather
+   * than 100vw, which counts the scrollbar and would overhang it. */
+  width: 24rem;
+  max-width: calc(100% - 2 * var(--space-6));
   /* issue 655: a stack of toasts scrolls rather than covering the page. */
   max-height: calc(100vh - 2 * var(--space-6));
   overflow-y: auto;
