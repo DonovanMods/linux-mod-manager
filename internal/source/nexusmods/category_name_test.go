@@ -62,12 +62,14 @@ func TestNexusMods_GetMod_CategoryLookupFailureIsNotAnError(t *testing.T) {
 		require.NoError(t, err, "a failed category lookup never fails the read")
 		assert.Empty(t, mod.CategoryName)
 	}
-	assert.Equal(t, int32(1), hits[sse+".json"].Load(), "a failed fetch is not retried at once")
+	// One fetch is maxAttempts requests: a 5xx is retried in the transport
+	// (#671). It is the FETCH the back-off holds off.
+	assert.Equal(t, int32(maxAttempts), hits[sse+".json"].Load(), "a failed fetch is not retried at once")
 
 	now = now.Add(categoryRetryAfter)
 	_, err := nm.GetMod(ctx, "skyrimspecialedition", "1")
 	require.NoError(t, err)
-	assert.Equal(t, int32(2), hits[sse+".json"].Load(), "and is retried once the back-off has passed")
+	assert.Equal(t, int32(2*maxAttempts), hits[sse+".json"].Load(), "and is retried once the back-off has passed")
 }
 
 func TestNexusMods_GetMod_NoCategoryMakesNoGameFetch(t *testing.T) {

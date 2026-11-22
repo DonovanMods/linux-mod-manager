@@ -50,7 +50,7 @@ func (c *holdClock) advance(d time.Duration) {
 func holdProcess(t *testing.T, cacheDir, baseURL string, clock *holdClock) *Source {
 	t.Helper()
 	src := New(Options{CacheDir: cacheDir, BaseURL: baseURL, Now: clock.now})
-	src.client.retry.sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+	src.client.retry.Sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
 	return src
 }
 

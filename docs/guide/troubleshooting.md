@@ -77,6 +77,29 @@ the line says the key was rejected; when that key comes from a variable
 such as `CURSEFORGE_API_KEY`, fix or unset the variable, since it wins over
 a key stored with `lmm auth login`.
 
+### When a mod site slows lmm down
+
+A big collection means hundreds of requests to its site, and a site can
+answer "too many requests". lmm waits as long as the site asks, then tries
+again, up to three times per request. While it waits it says so: in the
+terminal, a line such as "Rate limited by NexusMods; retrying in 30s
+(attempt 2 of 3)."; in the web UI, on the job's progress and in the tray,
+or on the Health or Updates card's loading line. If the site asks for a
+longer wait than lmm will sit through, lmm doesn't ask it again until that
+time, and says "Not asking NexusMods again until 14:05:00". If NexusMods
+says the key's hourly and daily allowance are both used up, lmm waits for
+the hourly reset, or until you give it a different key.
+
+A mod whose check still couldn't get an answer reads "could not check
+version (NexusMods rate limit: try again in 30s)", or "could not check
+version (lmm is not asking NexusMods again until 14:05:00)" while lmm is
+holding off. Nothing is wrong with the mod: run verify again later.
+
+Verify doesn't ask the site about the mods a collection locks. The
+collection pins their files, and verify still checks those files against
+the hashes it recorded. The Health card and `lmm verify` say how many mods
+were left to the collection.
+
 ## Turn one mod off
 
 Not sure which mod is causing trouble? Turn mods off one at a time with the

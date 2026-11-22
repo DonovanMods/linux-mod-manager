@@ -375,6 +375,7 @@ func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []
 		if result.Mods > 0 {
 			fmt.Println()
 			printUnverified(result)
+			printCollectionLocked(result)
 		}
 		if result.Issues > 0 || result.Warnings > 0 {
 			if result.Mods == 0 {
@@ -389,6 +390,7 @@ func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []
 
 	fmt.Println()
 	printUnverified(result)
+	printCollectionLocked(result)
 
 	if result.Checked == 0 && modFilter != "" && result.Mods == 0 {
 		// #429: Checked stays 0 for a filter that matched an external
@@ -417,6 +419,15 @@ func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []
 func printUnverified(result *core.VerifyResult) {
 	if result.Unverified > 0 {
 		fmt.Printf("%d mod(s) have no recorded files for lmm to check (imported from disk, or installed before lmm recorded them)\n", result.Unverified)
+	}
+}
+
+// printCollectionLocked says how many mods the full tier's version check
+// left to the profile's collection (#671), so a clean run over a collection
+// is not read as "every mod was checked against NexusMods".
+func printCollectionLocked(result *core.VerifyResult) {
+	if result.CollectionLocked > 0 {
+		fmt.Printf("%d mod(s) the collection locks were not checked against their source (the collection pins their files; lmm profile sync --collection updates them)\n", result.CollectionLocked)
 	}
 }
 
@@ -898,6 +909,13 @@ func renderVerifySkipped(f core.VerifyFinding) {
 			remedy = "check $" + envVar
 		}
 		fmt.Printf("%s %s - could not check version: %s (%s)\n", colorYellow("?"), f.ModName, f.FixableReason, remedy)
+
+	// versionPass: the check could not be made for now (#671) - the
+	// source rate limited lmm past its retries, or lmm is holding the
+	// source off (a throttle's wait, a spent quota, or its breaker after
+	// repeated failures). FixableReason says which, and when to try again.
+	case strings.HasPrefix(f.Note, "could not check version: ") && f.FixableReason != "":
+		fmt.Printf("%s %s - could not check version (%s)\n", colorYellow("?"), f.ModName, f.FixableReason)
 
 	// versionPass: GetModFiles failed (source unreachable) - text mode
 	// deliberately drops the error detail; --json's Note carries it.

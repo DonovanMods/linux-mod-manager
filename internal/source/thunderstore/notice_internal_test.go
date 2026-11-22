@@ -96,7 +96,7 @@ func noticeSource(t *testing.T, handler http.Handler) (*Source, *[]time.Duration
 	src := New(Options{CacheDir: cacheDir, BaseURL: srv.URL})
 	var mu sync.Mutex
 	var waits []time.Duration
-	src.client.retry.sleep = func(ctx context.Context, d time.Duration) error {
+	src.client.retry.Sleep = func(ctx context.Context, d time.Duration) error {
 		mu.Lock()
 		waits = append(waits, d)
 		mu.Unlock()

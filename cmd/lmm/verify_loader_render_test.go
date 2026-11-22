@@ -145,3 +145,28 @@ func TestVerifyAuthEnvVars(t *testing.T) {
 	}}))
 	assert.Nil(t, authEnvVars(nil))
 }
+
+// TestRenderVerifySkipped_AThrottleSaysSoAndWhenToComeBack (#671): a
+// version check NexusMods still throttled after the retries printed
+// "source unreachable", which it was not. It keeps that row's shape, with
+// the rate limit and when to try again in place of "source unreachable".
+func TestRenderVerifySkipped_AThrottleSaysSoAndWhenToComeBack(t *testing.T) {
+	out := captureStdout(t, func() error {
+		renderVerifyFinding(core.VerifyEvent{Finding: core.VerifyFinding{
+			Status: "skipped", ModID: "m1", ModName: "Cyber Engine Tweaks",
+			Note:          "could not check version: getting mod files: NexusMods rate limit: try again in 30s (still limited after 3 attempts)",
+			FixableReason: "NexusMods rate limit: try again in 30s",
+		}})
+		return nil
+	})
+	assert.Equal(t, "? Cyber Engine Tweaks - could not check version (NexusMods rate limit: try again in 30s)\n", out)
+}
+
+// TestPrintCollectionLocked (#671): the full tier's version check leaves a
+// collection's locked mods to the collection, and says how many.
+func TestPrintCollectionLocked(t *testing.T) {
+	out := captureStdout(t, func() error { printCollectionLocked(&core.VerifyResult{CollectionLocked: 353}); return nil })
+	assert.Equal(t, "353 mod(s) the collection locks were not checked against their source (the collection pins their files; lmm profile sync --collection updates them)\n", out)
+	out = captureStdout(t, func() error { printCollectionLocked(&core.VerifyResult{}); return nil })
+	assert.Empty(t, out)
+}

@@ -170,7 +170,9 @@ func TestNexusMods_GetMod_TemporaryStatusesAreNotErrModNotFound(t *testing.T) {
 	}
 }
 
-// Any other failure keeps its status and body, and is not ErrModNotFound.
+// Any other failure keeps its status, and is not ErrModNotFound. A 5xx is
+// retried, and what is left once the retries run out is worded as the
+// status (#671): the body is the host's, and not read past the hint.
 func TestNexusMods_GetMod_500IsNotErrModNotFound(t *testing.T) {
 	nm, _ := statusServer(t, map[string]recorded{
 		sse + "/mods/4.json": {http.StatusInternalServerError, `{"code":500,"message":"backend unavailable"}`},
@@ -179,8 +181,7 @@ func TestNexusMods_GetMod_500IsNotErrModNotFound(t *testing.T) {
 	_, err := nm.GetMod(context.Background(), "skyrimspecialedition", "4")
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, domain.ErrModNotFound)
-	assert.Contains(t, err.Error(), "API error (status 500)")
-	assert.Contains(t, err.Error(), "backend unavailable")
+	assert.Contains(t, err.Error(), "NexusMods answered HTTP 500")
 }
 
 func TestNexusMods_GetModFiles_404IsErrModNotFound(t *testing.T) {
@@ -239,7 +240,7 @@ func TestNexusMods_CheckUpdates_GoneModsAreTypedPerMod(t *testing.T) {
 
 	require.Error(t, rest, "the hidden and failing mods are still failures")
 	assert.NotErrorIs(t, rest, domain.ErrModNotFound)
-	for _, want := range []string{"Hidden", "Flaky", "API error (status 500)"} {
+	for _, want := range []string{"Hidden", "Flaky", "NexusMods answered HTTP 500"} {
 		assert.Contains(t, rest.Error(), want)
 	}
 	for _, gone := range []string{"Deleted", "Removed", "Binned"} {

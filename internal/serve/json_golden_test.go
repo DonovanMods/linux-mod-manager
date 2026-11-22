@@ -306,6 +306,21 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #671: a frame saying what the read is waiting on - a source
+			// waiting out a rate limit - at the position the read reached.
+			"read_progress_frame_notice",
+			readProgressFrame{
+				Token:   "r1a2b3",
+				Read:    readHealth,
+				GameID:  "g1",
+				Profile: "default",
+				ModName: "Mod One",
+				Index:   17,
+				Total:   42,
+				Notice:  "Rate limited by NexusMods; retrying in 30s (attempt 2 of 3).",
+			},
+		},
+		{
 			"plan_response",
 			planResponse{
 				PlanID: "0123456789abcdef0123456789abcdef",

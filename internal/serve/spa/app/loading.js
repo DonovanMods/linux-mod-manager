@@ -66,9 +66,16 @@ export const PENDING_READS = ["updates", "health", "conflicts", "snapshots"];
  * mods the profile has, when the library has answered (null until then);
  * `progress` is the newest read_progress frame for this load, if any
  * (internal/serve/read_progress.go) - its total is the number actually
- * being walked, which is the one to state once known.
+ * being walked, which is the one to state once known. A frame carrying a
+ * notice (issue 671: a source waiting out a rate limit) adds it, in core's
+ * sentence, until the next tick replaces the frame.
  */
 export function pendingReadLabel(read, { mods = null, progress = null } = {}) {
+  const label = pendingReadBase(read, { mods, progress });
+  return progress?.notice ? `${label} ${progress.notice}` : label;
+}
+
+function pendingReadBase(read, { mods, progress }) {
   const total = progress?.total > 0 ? progress.total : mods;
   const position =
     progress?.total > 0 ? ` (${progress.index}/${progress.total})` : "";

@@ -11,6 +11,8 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
@@ -201,10 +203,14 @@ type VerifyFinding struct {
 	// FixableReason is the ENGINE's own reason this finding will not be
 	// repaired, or empty when Fixable is true (or when the row is not a
 	// problem at all - an "ok" or "skipped" row has nothing to explain).
-	// The one "skipped" row that does carry one is a check the source
-	// refused for want of a key (AuthSource, #582): "<Source> needs an API
-	// key" is the honest reason no repair is on offer, or "<Source>
-	// rejected its API key" when the user has supplied one.
+	// Two kinds of "skipped" version-check row carry one. A check the
+	// source refused for want of a key (AuthSource, #582): "<Source> needs
+	// an API key" is the honest reason no repair is on offer, or "<Source>
+	// rejected its API key" when the user has supplied one. And a check
+	// lmm could not make for now (#671): "<Source> rate limit: try again in
+	// 30s" for a throttle the retries could not outlast, or "lmm is not
+	// asking <Source> again until 14:05:00" for a hold - a throttle's, a
+	// spent quota's, or lmm's own after repeated failures.
 	// #334: it exists so a frontend offering a per-finding "Repair"
 	// affordance can say WHY the button is absent without reimplementing
 	// the question - the web UI carried a hand-maintained status->sentence
@@ -345,6 +351,15 @@ type VerifyResult struct {
 	Mods       int `json:"mods,omitzero"`
 	External   int `json:"external,omitzero"`
 	Unverified int `json:"unverified,omitzero"`
+	// CollectionLocked counts the mods the full tier's version check left
+	// to their collection (#671): a ref both locked and from_collection is
+	// never sent to its source, as #667 never sends it to the update check.
+	// The collection pins such a mod's files - and their hashes, which the
+	// checksum walk still checks - and moves them itself (`lmm profile sync
+	// --collection`), so asking the source once per mod bought nothing but
+	// requests: a 353-mod collection's verify was what NexusMods throttled.
+	// omitzero.
+	CollectionLocked int `json:"collection_locked,omitzero"`
 
 	// CheckedAt is when the run began, in UTC (#334) - so a surface that
 	// renders a stored or cached result ("last verified 2 hours ago") reads
@@ -2091,6 +2106,15 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		}
 
 		ref := prof.FindRef(mod.SourceID, mod.ID)
+		// #671: a mod the profile's collection locks is the collection's -
+		// its files pinned, with the hashes the checksum walk checks, and
+		// moved only by a collection sync - so its source is not asked,
+		// as #667 never asks the update check. On a large collection these
+		// requests were the burst NexusMods throttled.
+		if ref != nil && ref.Locked && ref.FromCollection {
+			r.result.CollectionLocked++
+			continue
+		}
 
 		sourceFiles, err := r.svc.GetModFiles(r.ctx, r.game, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
 		if err != nil && errors.Is(err, domain.ErrModNotFound) {
@@ -2108,6 +2132,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		if err != nil {
 			r.result.Warnings++
 			f := VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "skipped", Note: fmt.Sprintf("could not check version: %v", err)}
+			f.FixableReason = sourceWaitReason(err) // #671: "" unless the source is rate limiting lmm or held off
 			if errors.Is(err, domain.ErrAuthRequired) {
 				f.AuthSource = mod.SourceID
 				f.FixableReason = r.svc.sourceDisplayName(mod.SourceID) + " needs an API key"
@@ -2270,4 +2295,31 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		return err
 	}
 	return nil
+}
+
+// sourceWaitReason says, in a line, why lmm could not ask the source for
+// now and when it will again (#671), or "" when err is neither: a rate
+// limit the retries could not outlast, or a hold lmm has in force for the
+// source. A hold is worded as lmm's own decision, because it may be a
+// throttle's wait, a spent quota or lmm's breaker after repeated server
+// failures - an outage is no rate limit. The finding's Note keeps the
+// whole error; this is what a frontend shows beside "could not check
+// version" instead of "source unreachable".
+func sourceWaitReason(err error) string {
+	var status *httpclient.StatusError
+	if errors.As(err, &status) && status.RateLimited() {
+		if status.RetryIn > 0 {
+			return fmt.Sprintf("%s rate limit: try again in %s", status.Service, status.RetryIn.Round(time.Second))
+		}
+		return fmt.Sprintf("%s rate limit: try again later", status.Service)
+	}
+	var later *source.RetryLaterError
+	if errors.As(err, &later) {
+		at := later.Until.Local().Format("15:04:05")
+		if time.Until(later.Until) >= 12*time.Hour {
+			at = later.Until.Local().Format("2006-01-02 15:04:05")
+		}
+		return fmt.Sprintf("lmm is not asking %s again until %s", later.Source, at)
+	}
+	return ""
 }

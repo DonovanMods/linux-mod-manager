@@ -1,9 +1,11 @@
 package serve
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
+	"sync"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
@@ -47,6 +49,12 @@ type readProgressFrame struct {
 	ModName string `json:"mod_name,omitempty"`
 	Index   int    `json:"index"`
 	Total   int    `json:"total"`
+	// Notice is what the read is WAITING on, in core's sentence (#671): a
+	// source waiting out a rate limit ("Rate limited by NexusMods; retrying
+	// in 30s (attempt 2 of 3).") or refusing to be asked until a stated
+	// time. A frame carrying one repeats the read's position; the next
+	// tick, which carries none, ends it. omitempty.
+	Notice string `json:"notice,omitempty"`
 }
 
 // readProgressGate caps how many frames one read publishes: a frame when the
@@ -87,33 +95,104 @@ func (s *Server) progressToken(w http.ResponseWriter, r *http.Request) (string, 
 	return token, true
 }
 
-// readProgressSink is the core.EventSink a read hands its engine when the
-// caller named a token: it projects each per-mod tick onto a
-// readProgressFrame and publishes it, through the gate, on the activity
-// bus. Every other event the engine emits is ignored. nil when token is
-// empty, which is core's own "nobody is watching".
-func (s *Server) readProgressSink(token, read string, sel selection) core.EventSink {
+// readReporter is one read's progress reporting when the caller named a
+// token: the per-mod ticks, through the gate, and what a source says the
+// read is waiting on (#671). Notices arrive on whichever goroutine is
+// waiting, so the read's position is kept under a lock.
+type readReporter struct {
+	s     *Server
+	token string
+	read  string
+	sel   selection
+
+	mu    sync.Mutex
+	gate  readProgressGate
+	index int
+	total int
+	name  string
+	// noticed reports that the last frame carried a notice: the next tick
+	// is published whatever the gate says, so the notice is not left
+	// standing for a read that has moved on.
+	noticed bool
+	// lastNotice is the last notice published. One saying the same again
+	// is dropped (#671 review): notices pass the gate, and a long hold
+	// refuses every remaining mod with the same sentence - some 700 frames
+	// on a 353-mod verify, half of them the ticks each notice forced.
+	lastNotice string
+}
+
+// newReadReporter returns the reporter for a read that named token, or nil
+// when it named none - core's own "nobody is watching".
+func (s *Server) newReadReporter(token, read string, sel selection) *readReporter {
 	if token == "" {
 		return nil
 	}
-	var gate readProgressGate
-	publish := func(name string, index, total int) {
-		if !gate.admit(index, total) {
-			return
-		}
-		s.jobs.publish(activityEvent{Name: activityReadProgressEvent, Payload: readProgressFrame{
-			Token: token, Read: read, GameID: sel.Game.ID, Profile: sel.Profile,
-			ModName: name, Index: index, Total: total,
-		}})
+	return &readReporter{s: s, token: token, read: read, sel: sel}
+}
+
+// sink is the core.EventSink the read hands its engine: it projects each
+// per-mod tick onto a readProgressFrame and publishes it, through the gate,
+// on the activity bus. Every other event the engine emits is ignored. nil
+// for a nil reporter.
+func (r *readReporter) sink() core.EventSink {
+	if r == nil {
+		return nil
 	}
 	return func(e core.Event) {
 		switch ev := e.(type) {
 		case core.UpdateCheckEvent:
-			publish(ev.ModName, ev.GlobalIndex, ev.GlobalTotal)
+			r.tick(ev.ModName, ev.GlobalIndex, ev.GlobalTotal)
 		case core.VerifyEvent:
 			if ev.Kind == core.VerifyEvProgress {
-				publish(ev.ModName, ev.Index, ev.Total)
+				r.tick(ev.ModName, ev.Index, ev.Total)
 			}
 		}
 	}
+}
+
+// watch returns ctx with the read's source notices published as frames
+// (#671): the Health card's verify and the update check are plain reads,
+// with no job for a throttle to be said on. ctx unchanged for a nil
+// reporter.
+func (r *readReporter) watch(ctx context.Context) context.Context {
+	if r == nil {
+		return ctx
+	}
+	return core.WithSourceNotices(ctx, func(e core.Event) {
+		if w, ok := e.(core.WarningEvent); ok {
+			r.notice(w.Message)
+		}
+	})
+}
+
+func (r *readReporter) tick(name string, index, total int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if name != "" {
+		r.name = name
+	}
+	r.index, r.total = index, total
+	if !r.gate.admit(index, total) && !r.noticed {
+		return
+	}
+	r.noticed = false
+	r.publishLocked("")
+}
+
+func (r *readReporter) notice(text string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if text == r.lastNotice {
+		return
+	}
+	r.lastNotice = text
+	r.noticed = true
+	r.publishLocked(text)
+}
+
+func (r *readReporter) publishLocked(notice string) {
+	r.s.jobs.publish(activityEvent{Name: activityReadProgressEvent, Payload: readProgressFrame{
+		Token: r.token, Read: r.read, GameID: r.sel.Game.ID, Profile: r.sel.Profile,
+		ModName: r.name, Index: r.index, Total: r.total, Notice: notice,
+	}})
 }

@@ -20,7 +20,7 @@ func newTestTransport(t *testing.T, now func() time.Time) (*retryTransport, *[]t
 	t.Helper()
 	var waits []time.Duration
 	rt := newRetryTransport(http.DefaultTransport, now, nil)
-	rt.sleep = func(ctx context.Context, d time.Duration) error {
+	rt.Sleep = func(ctx context.Context, d time.Duration) error {
 		waits = append(waits, d)
 		return ctx.Err()
 	}
@@ -155,7 +155,7 @@ func TestRetryTransport_NoticesNameTheReason(t *testing.T) {
 	// nothing, which is not "could not reach" it.
 	t.Run("stalled", func(t *testing.T) {
 		rt, _ := newTestTransport(t, time.Now)
-		rt.base = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		rt.Base = roundTripFunc(func(*http.Request) (*http.Response, error) {
 			return nil, &httpclient.StallError{Timeout: stallTimeout}
 		})
 		ctx, notices := recordNotices(t)
@@ -434,7 +434,7 @@ func TestRetryTransport_CancellingDuringBackoffReturnsPromptly(t *testing.T) {
 }
 
 func TestSleepCtx_ReturnsNilWhenTheWaitCompletes(t *testing.T) {
-	require.NoError(t, sleepCtx(context.Background(), time.Millisecond))
+	require.NoError(t, httpclient.SleepContext(context.Background(), time.Millisecond))
 }
 
 func TestBackoffFor_IsBoundedAndJittered(t *testing.T) {
@@ -498,4 +498,15 @@ func TestRetryConstants_ArePinnedToTheDocumentedWindow(t *testing.T) {
 		worst += maxRetryAfter + min(maxRetryAfter/10, time.Second)
 	}
 	assert.Less(t, worst, fetchTimeout, "the stall and retry bounds fail a dead host long before the request ceiling")
+}
+
+// backoffFor is Thunderstore's policy's wait before attempt+1 (#671: the
+// policy itself lives in httpclient now; these tests pin its numbers).
+func backoffFor(attempt int, hint time.Duration) time.Duration {
+	return retryPolicy.Backoff(attempt, hint)
+}
+
+// retryAfter is how the transport reads a Retry-After, capped at maxHold.
+func retryAfter(resp *http.Response, now time.Time) time.Duration {
+	return httpclient.RetryAfter(resp.Header.Get("Retry-After"), now, maxHold)
 }

@@ -377,7 +377,7 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
+		return requestFailed(err)
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); err == nil && cerr != nil {

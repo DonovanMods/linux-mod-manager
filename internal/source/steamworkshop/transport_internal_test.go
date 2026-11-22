@@ -11,6 +11,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 )
 
 // newTestTransport builds a retryTransport whose waits are recorded rather
@@ -20,7 +23,7 @@ func newTestTransport(t *testing.T, now func() time.Time) (*retryTransport, *[]t
 	t.Helper()
 	var waits []time.Duration
 	rt := newRetryTransport(http.DefaultTransport, now)
-	rt.sleep = func(ctx context.Context, d time.Duration) error {
+	rt.Sleep = func(ctx context.Context, d time.Duration) error {
 		waits = append(waits, d)
 		return ctx.Err()
 	}
@@ -59,9 +62,10 @@ func TestRetryTransport_RetriesA429AndHonoursRetryAfter(t *testing.T) {
 
 	assert.Equal(t, 2, calls)
 	require.Len(t, *waits, 1)
-	// Jittered over the lower half of the server's own 2s hint.
-	assert.GreaterOrEqual(t, (*waits)[0], time.Second)
-	assert.LessOrEqual(t, (*waits)[0], 2*time.Second)
+	// The server's own 2s hint is a floor (#671: the shared transport);
+	// jitter only adds to it, at most a tenth.
+	assert.GreaterOrEqual(t, (*waits)[0], 2*time.Second)
+	assert.LessOrEqual(t, (*waits)[0], 2200*time.Millisecond)
 }
 
 func TestRetryTransport_RetriesA5xxAndGivesUpAfterThreeAttempts(t *testing.T) {
@@ -189,26 +193,60 @@ func TestRetryTransport_CancellingDuringBackoffReturnsPromptly(t *testing.T) {
 }
 
 func TestSleepCtx_ReturnsNilWhenTheWaitCompletes(t *testing.T) {
-	require.NoError(t, sleepCtx(context.Background(), time.Millisecond))
+	require.NoError(t, httpclient.SleepContext(context.Background(), time.Millisecond))
 }
 
 func TestBackoffFor_IsBoundedAndJittered(t *testing.T) {
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		nominal := min(baseBackoff<<(attempt-1), maxBackoff)
 		for range 20 {
-			d := backoffFor(attempt, 0)
+			d := retryPolicy.Backoff(attempt, 0)
 			assert.GreaterOrEqual(t, d, nominal/2)
 			assert.LessOrEqual(t, d, nominal)
 		}
 	}
-	assert.LessOrEqual(t, backoffFor(1, time.Hour), maxBackoff, "an absurd Retry-After is capped")
 }
 
-func TestRewind_RefusesARequestThatCannotBeReplayed(t *testing.T) {
-	req, err := http.NewRequest(http.MethodPost, "http://example.invalid", strings.NewReader("x"))
+// TestRetryTransport_ARetryAfterPastTheCapIsHeldNotSlept (#671): a wait
+// longer than maxBackoff is no longer cut short to 30s and re-asked early;
+// it is honoured as a hold, and the request refused as metadata
+// unavailable.
+func TestRetryTransport_ARetryAfterPastTheCapIsHeldNotSlept(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	rt, waits := newTestTransport(t, time.Now)
+	_, err := post(t, rt, srv.URL)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrMetadataUnavailable)
+	var later *source.RetryLaterError
+	require.ErrorAs(t, err, &later)
+	assert.Empty(t, *waits)
+	assert.Equal(t, 1, calls)
+	_, open := rt.breakerOpen()
+	assert.True(t, open, "the host's hour is honoured")
+}
+
+func TestRetryTransport_RefusesToRetryARequestThatCannotBeReplayed(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	rt, _ := newTestTransport(t, time.Now)
+	req, err := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader("x"))
 	require.NoError(t, err)
 	req.GetBody = nil
-	_, err = rewind(req, 2)
+	_, err = rt.RoundTrip(req)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrMetadataUnavailable))
+	assert.ErrorIs(t, err, httpclient.ErrReplay)
+	assert.Equal(t, 1, calls, "an unreplayable body is not sent empty")
 }
