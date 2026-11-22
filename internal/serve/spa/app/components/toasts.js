@@ -210,6 +210,16 @@ export function Toasts({
  * ("Importing collection…"), how far through its items it is ("12 of 40" -
  * the newest frame that counted, activity.js's jobPositions), the item it is
  * on, and the current download's own progress when one is under way.
+ *
+ * Issue 665: the card keeps one size for the whole job. Its text changes
+ * with every frame - a mod name of any length, bytes that come and go - and
+ * the card is anchored bottom right, so any change in its width or line
+ * count made it jump several times a second. So the stack has one width
+ * (app.css's .toasts) and the detail is two lines that never wrap: where the
+ * job is ("12 of 40 · <mod>") and what it is doing there ("Installing ·
+ * downloading 42% of 118 MB"). The second line is kept, empty, when there is
+ * nothing to say; a line too long for the card ends in an ellipsis, and its
+ * full text is its title. The live region stays the title alone.
  */
 function RunningToastBody({ toast, frame, position }) {
   const label = runningLabel(toast);
@@ -222,18 +232,22 @@ function RunningToastBody({ toast, frame, position }) {
     (counted
       ? Math.min(1, Math.max(0, (position.index ?? 0) / position.total))
       : progressFraction(frame));
-  const parts = [];
+  // where: the item the job is on; doing: what is happening to it.
+  const where = [];
+  const doing = [];
   if (counted) {
-    parts.push(`${position.index ?? 0} of ${position.total}`);
-    if (position.mod_name) parts.push(position.mod_name);
-    else if (position.phase) parts.push(humanizePhase(position.phase));
+    where.push(`${position.index ?? 0} of ${position.total}`);
+    if (position.mod_name) where.push(position.mod_name);
+    else if (position.phase) where.push(humanizePhase(position.phase));
     // Issue 664: and the step the item's update is on ("Installing").
-    if (isUpdateItemStep(frame)) parts.push(humanizePhase(frame.phase));
+    if (isUpdateItemStep(frame)) doing.push(humanizePhase(frame.phase));
   } else if (frame?.phase) {
-    parts.push(humanizePhase(frame.phase));
+    where.push(humanizePhase(frame.phase));
   }
   const bytes = downloadText(frame);
-  if (bytes) parts.push(`downloading ${bytes}`);
+  if (bytes) doing.push(`downloading ${bytes}`);
+  const first = where.join(" · ") || "Starting…";
+  const second = doing.join(" · ");
 
   return html`
     <p class="toast__title" role="status">${label}…</p>
@@ -245,9 +259,16 @@ function RunningToastBody({ toast, frame, position }) {
         style=${fraction === null ? "" : `width: ${Math.round(fraction * 100)}%`}
       ></div>
     </div>
-    <p class="toast__detail" data-testid="toast-progress">
-      ${parts.join(" · ") || "Starting…"}
-    </p>
+    <div class="toast__progress" data-testid="toast-progress">
+      <p class="toast__line" title=${first}>${first}</p>
+      <p
+        class="toast__line"
+        title=${second || null}
+        aria-hidden=${second ? null : "true"}
+      >
+        ${second}
+      </p>
+    </div>
   `;
 }
 
@@ -260,7 +281,10 @@ function runningLabel(toast) {
 }
 
 /** RunningGroupBody is the one toast several running jobs share: how many
- * there are, and what each is. */
+ * there are, and what each is. It takes no frames, so nothing in it moves
+ * while its jobs run; the stack's one width (issue 665) keeps it from
+ * changing width when a job joins or leaves it with a shorter or longer
+ * name. */
 function RunningGroupBody({ toasts }) {
   return html`
     <p class="toast__title" role="status">${toasts.length} jobs running…</p>
