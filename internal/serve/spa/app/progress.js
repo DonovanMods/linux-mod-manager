@@ -230,21 +230,36 @@ export function downloadText(frame) {
  * reads as a phase rather than as a phase with empty brackets after it.
  */
 export function progressText(frame) {
-  if (!frame) return "";
-  const parts = [];
-  const phase = humanizePhase(frame.phase);
-  if (phase) parts.push(phase);
-  if (frame.mod_name) parts.push(frame.mod_name);
-  if (frame.total > 0) parts.push(`${frame.index ?? 0} of ${frame.total}`);
+  return progressLines(frame).filter(Boolean).join(" · ");
+}
 
+/**
+ * progressLines is progressText in two halves, for a control that gives
+ * each its own fixed line (issue 670, the activity tray): what is happening
+ * and where - the phase, the mod, its place in the batch - and then what
+ * moves within that step - the download's bytes and the event's own words.
+ * Either may be empty; joined with " · " they are progressText.
+ */
+export function progressLines(frame) {
+  if (!frame) return ["", ""];
+  const where = [];
+  const phase = humanizePhase(frame.phase);
+  if (phase) where.push(phase);
+  if (frame.mod_name) where.push(frame.mod_name);
+  if (frame.total > 0) where.push(`${frame.index ?? 0} of ${frame.total}`);
+
+  const doing = [];
   const bytes = downloadText(frame);
-  if (bytes) parts.push(bytes);
+  if (bytes) doing.push(bytes);
   // The detail line is the event's own words (a warning's message, a step's
   // note). It is added last and only when it is not simply repeating the
   // phase this frame already rendered.
-  if (frame.detail && frame.detail !== phase) parts.push(frame.detail);
+  if (frame.detail && frame.detail !== phase) doing.push(frame.detail);
 
-  return parts.join(" · ") || humanizePhase(frame.type);
+  const first = where.join(" · ");
+  const second = doing.join(" · ");
+  if (!first && !second) return [humanizePhase(frame.type), ""];
+  return [first, second];
 }
 
 // UPDATE_STEPS is how far through ONE mod's update each of its steps is

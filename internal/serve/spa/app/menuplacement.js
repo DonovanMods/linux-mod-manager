@@ -16,7 +16,9 @@
 // leftward, data-align="end"), and when neither side fits - a window
 // narrower than the menu plus the trigger's own offset - it is shifted just
 // far enough to sit inside the gutters. A menu that already fits is never
-// touched, so nothing that worked moves.
+// moved, so nothing that worked moves; every menu's width cap is restated
+// in the room a scrollbar leaves (issue 670), which only narrows a menu
+// that was wider than that room.
 
 import { useEffect, useLayoutEffect, useRef } from "./render.js";
 
@@ -54,6 +56,12 @@ export function placeMenu(menu) {
   const gutter = gutterPx(menu);
   const lo = gutter;
   const hi = viewport - gutter;
+  // .picker__menu's CSS cap is 100vw less the gutters - the only viewport
+  // width CSS gives a box hung from its trigger, and one that counts a
+  // classic scrollbar. The usable room is narrower by the scrollbar, so the
+  // cap is restated in it (issue 670: the tray has a fixed width, which on a
+  // phone is that cap).
+  menu.style.maxWidth = `${Math.max(0, hi - lo)}px`;
   const fits = (r) => r.left >= lo && r.right <= hi;
 
   const start = menu.getBoundingClientRect();

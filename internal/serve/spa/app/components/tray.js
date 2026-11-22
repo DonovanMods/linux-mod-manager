@@ -26,6 +26,7 @@ import {
   jobStateLabel,
   jobTitle,
   mutationLabel,
+  progressLines,
   progressText,
   progressFraction,
   collectionTallyLabel,
@@ -406,9 +407,7 @@ function TrayRow({
                 style=${fraction === null ? "" : `width: ${Math.round(fraction * 100)}%`}
               ></div>
             </div>
-            <span class="tray__detail"
-              >${progressText(frame) || "Working…"}</span
-            >
+            <${TrayDetail} frame=${frame} />
           </div>
         `
       }
@@ -476,6 +475,34 @@ function TrayRow({
       }
       ${expanded && html`<${JobEventStream} jobID=${job.id} />`}
     </li>
+  `;
+}
+
+/**
+ * TrayDetail is a running row's progress text, on two lines that keep one
+ * size for the whole job (issue 670, issue 665's cause in the tray): what is
+ * happening and where ("Downloading · <mod> · 12 of 40"), then what moves
+ * within it ("42% of 118 MB", or the event's own words). The text changes
+ * with every frame and the tray hangs from the top bar, so a line that grew
+ * the tray, or wrapped, moved everything under it several times a second.
+ * Each line ends in an ellipsis when it is too long, with its whole text in
+ * its title; the second is kept, empty and hidden from assistive technology,
+ * when there is nothing to put on it.
+ */
+function TrayDetail({ frame }) {
+  const [where, doing] = progressLines(frame);
+  const first = where || "Working…";
+  return html`
+    <div class="tray__lines">
+      <span class="tray__detail" title=${first}>${first}</span>
+      <span
+        class="tray__detail"
+        title=${doing || null}
+        aria-hidden=${doing ? null : "true"}
+      >
+        ${doing}
+      </span>
+    </div>
   `;
 }
 
