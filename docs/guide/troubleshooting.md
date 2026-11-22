@@ -96,6 +96,39 @@ load order so the right mod wins: the mod lower in the list wins. In the
 terminal, `lmm conflicts` lists them and `lmm profile reorder` changes the
 order.
 
+### A conflict you meant
+
+Often one mod is meant to replace another's files: a patch over the mod it
+fixes, or a collection whose order exists so that one of its mods wins.
+**Mark as intended** on a Conflicts card row says so. The conflict leaves
+the card, and the mods' library rows show a muted ⇄ in place of the warning.
+**Mark all as intended** accepts every conflict on the card as it stands.
+Marked conflicts are listed under **N known conflicts**, below the cards,
+each with **Unmark**.
+
+A mark is for the two mods, not one file: "Mod B overrides Mod A" covers
+every file they share, including one they come to share after an update. It
+records which mod wins. If you reorder so the other mod wins, the conflict
+is listed again, because that is not what you marked. The reorder preview
+shows this before you save: a known winner is labelled **known**, and an
+order that makes it lose says **no longer intended**. A file that three
+mods share is known only once its winner is marked over both of the
+others.
+
+In the terminal:
+
+```bash
+lmm conflicts                          # known conflicts are counted, not listed
+lmm conflicts --all                    # list them too
+lmm conflicts ack <winner> <loser>     # Mod B overrides Mod A: intended
+lmm conflicts ack --all-current        # accept every conflict as it stands
+lmm conflicts unack <winner> <loser>   # list it again
+```
+
+A collection's own conflicts are marked for you: see
+[A collection's own conflicts](profiles.md#a-collections-own-conflicts).
+Uninstalling a mod removes its marks.
+
 Removing the winning mod (uninstalling it, switching it off, or updating it
 to a version without the file) puts the next mod's copy in its place
 straight away, and lmm says which mod has the file now. The game's own file

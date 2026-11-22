@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mark a conflict as intended (#668).** Two mods sharing a file is
+  often the point: a collection's order exists so one of its mods replaces
+  another's files. A profile now records **known conflicts**, each a mod
+  pair with a direction ("Mod B overrides Mod A"), covering every file the
+  two share, including one they come to share after an update. The mark
+  records the winner, so a reorder that makes the other mod win reports the
+  conflict again. A file's conflict is known when its winner is marked over
+  every other mod that has the file.
+  - `lmm conflicts` lists the unresolved conflicts first and folds the
+    known ones into a count; `--all` lists them too. `lmm conflicts ack
+<winner> <loser>` marks a pair, `lmm conflicts ack --all-current`
+    accepts every present conflict as it stands, and `lmm conflicts unack`
+    removes a mark. `--json` rows gain `known` (additive), and ack/unack
+    emit a new `KnownConflictsResult` document.
+  - The web UI's Conflicts card gains **Mark as intended** on each row and
+    **Mark all as intended**. Known conflicts leave the card and the
+    attention area for a collapsed "N known conflicts" line with
+    **Unmark** (`POST /api/v1/conflicts/mark` and `/unmark`). The library's
+    conflict badge is muted for a mod whose conflicts are all known, the mod
+    panel and mod page say "known", and the reorder preview marks a known
+    winner and an order that makes it a conflict again.
+  - A collection import marks every conflict between two of the
+    collection's own mods known, and a profile fill or Finish collection
+    marks the pairs the mods it installs bring. `lmm profile sync
+--collection` recomputes them against the new version, keeps your own
+    marks, and leaves a pair you unmarked unmarked.
+  - The profile file gains a `known_conflicts:` list (with `origin: user`
+    or `collection`), and a removed mod takes its marks with it. Snapshots
+    and `lmm profile duplicate` carry the list.
+
 - **Search a game's NexusMods collections (#651).** `lmm search
 --collections [query]` lists the game's collections on NexusMods (no API
   key needed): name, curator, endorsements, mod count, latest revision and
