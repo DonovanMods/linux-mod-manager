@@ -132,7 +132,42 @@ func doConflictsAck(ctx context.Context, svc *core.Service, game *domain.Game, a
 	if err != nil {
 		return err
 	}
-	return renderKnownConflictsResult(result, "ack", args)
+	if err := renderKnownConflictsResult(result, "ack", args); err != nil || jsonOutput || conflictsAllCurrent {
+		return err
+	}
+	return noteStillContested(ctx, svc, game, profileName, result.Added)
+}
+
+// noteStillContested says when a pair just marked leaves files listed: a
+// file a third mod also has is known only once its winner is marked over
+// every other mod that has it (#668 review).
+func noteStillContested(ctx context.Context, svc *core.Service, game *domain.Game, profileName string, added domain.KnownConflicts) error {
+	if len(added) == 0 {
+		return nil
+	}
+	conflicts, err := svc.GetProfileConflicts(ctx, game, profileName)
+	if err != nil {
+		return nil // the mark is made; this note is only a hint
+	}
+	for _, e := range added {
+		n := 0
+		for _, c := range conflicts {
+			if c.Known || c.LoadOrderWinner.Key != e.Winner {
+				continue
+			}
+			for _, m := range append([]core.ConflictModRef{c.Owner}, c.AlsoIn...) {
+				if m.Key == e.Loser {
+					n++
+					break
+				}
+			}
+		}
+		if n > 0 {
+			fmt.Printf("%d file(s) %s and %s share are still listed: another mod has them too. Mark %s over it as well, or accept every conflict as it stands with `lmm conflicts ack --all-current`.\n",
+				n, e.Winner, e.Loser, e.Winner)
+		}
+	}
+	return nil
 }
 
 func runConflictsUnack(cmd *cobra.Command, args []string) error {

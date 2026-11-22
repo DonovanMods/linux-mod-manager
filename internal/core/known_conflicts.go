@@ -79,15 +79,32 @@ func (s *Service) MarkCurrentConflictsKnown(ctx context.Context, game *domain.Ga
 	if err != nil {
 		return nil, err
 	}
+	profile, err := s.NewProfileManager().Get(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	// A conflict's owner comes from the deployed-files record, which can
+	// name a mod the profile no longer lists (removed since the last
+	// deploy): such a mod is skipped - a mark naming it would be dropped on
+	// the save anyway - rather than refusing the whole batch.
+	listed := make(map[string]bool, len(profile.Mods))
+	for _, ref := range profile.Mods {
+		listed[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
+	// One pair per mod pair, however many paths it shares.
+	seen := domain.KnownConflictSet{}
 	var pairs []ConflictPair
 	for _, c := range conflicts {
-		if c.Known {
+		winner := c.LoadOrderWinner.Key
+		if c.Known || !listed[winner] {
 			continue
 		}
 		for _, m := range append([]ConflictModRef{c.Owner}, c.AlsoIn...) {
-			if m.Key != c.LoadOrderWinner.Key {
-				pairs = append(pairs, ConflictPair{Winner: c.LoadOrderWinner.Key, Loser: m.Key})
+			if m.Key == winner || !listed[m.Key] || seen.Has(winner, m.Key) {
+				continue
 			}
+			seen.Add(winner, m.Key)
+			pairs = append(pairs, ConflictPair{Winner: winner, Loser: m.Key})
 		}
 	}
 	return s.editKnownConflicts(ctx, game, profileName, pairs, markPair)

@@ -1702,6 +1702,12 @@ summary + .form-section {
   letter-spacing: 0.04em;
 }
 
+/* issue 668: a mod whose every file conflict is known - marked as
+ * intended - gets the conflict glyph muted, not the danger tone. */
+.badge--muted {
+  color: var(--text-muted);
+}
+
 /* ---------------------------------------------------------------------- */
 /* Library.                                                                */
 /* ---------------------------------------------------------------------- */

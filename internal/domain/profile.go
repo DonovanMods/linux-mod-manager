@@ -1,6 +1,9 @@
 package domain
 
-import "slices"
+import (
+	"maps"
+	"slices"
+)
 
 // HookExplicitFlags tracks which hooks were explicitly set in profile config
 // This allows distinguishing between "not set" (inherit from game) and "set to empty" (disable)
@@ -129,6 +132,26 @@ type CollectionSkip struct {
 	// the mod anew at an available file: Pin is then that declined pin, so
 	// the update does not offer it again until the collection pins another.
 	Declined bool `yaml:"declined,omitempty"`
+}
+
+// Clone is a deep copy of b sharing nothing with it; nil stays nil, and an
+// empty baseline stays an empty one.
+func (b *CollectionBaseline) Clone() *CollectionBaseline {
+	if b == nil {
+		return nil
+	}
+	out := &CollectionBaseline{Plugins: b.Plugins.Clone(), LoadOrders: b.LoadOrders.Clone(), KnownConflicts: b.KnownConflicts.Clone()}
+	if b.Overrides != nil {
+		out.Overrides = maps.Clone(b.Overrides)
+	}
+	if b.Skipped != nil {
+		out.Skipped = make([]CollectionSkip, len(b.Skipped))
+		for i, s := range b.Skipped {
+			out.Skipped[i] = s
+			out.Skipped[i].Pin = *s.Pin.Clone()
+		}
+	}
+	return out
 }
 
 // IsZero reports whether b records nothing.

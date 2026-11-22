@@ -783,6 +783,11 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 		if release, oerr := s.beginOp(ctx); oerr == nil {
 			s.noteCollectionConflicts(ctx, game, result.ProfileName, nil, false, &result.Warnings)
 			release()
+		} else if ctx.Err() == nil {
+			// Another operation took the slot between the import and this
+			// step: the mods are installed, so it is a warning, as any
+			// marking failure is (noteCollectionConflicts).
+			result.Warnings = append(result.Warnings, fmt.Sprintf("marking the collection's own conflicts as known: %v; mark the ones you intend with `lmm conflicts ack`", oerr))
 		}
 	}
 	if terr := s.recordCollectionTodos(ctx, game, result, held); terr != nil && err == nil {

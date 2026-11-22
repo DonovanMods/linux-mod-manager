@@ -188,3 +188,56 @@ func TestKnownConflicts_DuplicateCarriesThem(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, domain.KnownConflicts{{Winner: "src:modY", Loser: "src:modX", Origin: domain.KnownConflictUser}}, dup.KnownConflicts)
 }
+
+// TestKnownConflicts_ARelinkMovesTheMarks: a re-link (#593) renames the
+// mod's marks with its reference, so the next save does not drop them as
+// naming a mod the profile no longer has.
+func TestKnownConflicts_ARelinkMovesTheMarks(t *testing.T) {
+	ctx := context.Background()
+	svc, game, _ := newModDetailTestService(t)
+	seedModDetailInstalled(t, svc, game, "a", "1.5")
+	game.SourceIDs["src"] = game.ID
+
+	profile, err := config.LoadProfile(svc.ConfigDir(), game.ID, "default")
+	require.NoError(t, err)
+	profile.Mods = append(profile.Mods, domain.ModReference{SourceID: "src", ModID: "z", Version: "1"})
+	profile.KnownConflicts = domain.KnownConflicts{{Winner: "src:z", Loser: "src:a", Origin: domain.KnownConflictUser}}
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
+
+	plan, err := svc.PlanRelinkMod(ctx, game, "default", "src", "a", "src", "b")
+	require.NoError(t, err)
+	_, err = svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.NoError(t, err)
+
+	// Any later save keeps them.
+	require.NoError(t, svc.NewProfileManager().SetModDisabled(ctx, game.ID, "default", "src", "z", true))
+	saved, err := config.LoadProfile(svc.ConfigDir(), game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, domain.KnownConflicts{{Winner: "src:z", Loser: "src:b", Origin: domain.KnownConflictUser}}, saved.KnownConflicts)
+}
+
+// TestKnownConflicts_MarkCurrentSkipsAModTheProfileNoLongerLists: a
+// conflict's owner is the deployed-files record's, which can name a mod
+// removed from the profile since the last deploy. --all-current marks the
+// rest instead of refusing the batch.
+func TestKnownConflicts_MarkCurrentSkipsAModTheProfileNoLongerLists(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	for _, id := range []string{"modX", "modZ", "modY"} {
+		seedNamedInstalledMod(t, svc, game, "src", id, "Mod "+id, "1.0", true, map[string][]byte{"shared.esp": []byte(id)})
+		seedProfileWithMod(t, svc, "g1", "default", "src", id, "1.0")
+	}
+	_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	// modY, the deployed owner, leaves the profile without a redeploy.
+	profile, err := config.LoadProfile(svc.ConfigDir(), "g1", "default")
+	require.NoError(t, err)
+	profile.Mods = profile.Mods[:2]
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
+
+	result, err := svc.MarkCurrentConflictsKnown(ctx, game, "default")
+	require.NoError(t, err)
+	assert.Equal(t, domain.KnownConflicts{{Winner: "src:modZ", Loser: "src:modX", Origin: domain.KnownConflictUser}}, result.Added)
+}

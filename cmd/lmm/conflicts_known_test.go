@@ -121,3 +121,23 @@ func TestConflictsAck_JSONAndRefusals(t *testing.T) {
 	_, err = runConflictsCmd(t, "conflicts", "ack", "b", "zzz", "--game", game.ID)
 	assert.ErrorIs(t, err, core.ErrModNotInProfile)
 }
+
+func TestConflictsAck_SaysWhenAThirdModStillContestsTheFile(t *testing.T) {
+	restoreFlags(t)
+	svc, game := setupConflictsCmdTest(t)
+	seedConflictMod(t, svc, game, "a", "Mod A", true, map[string][]byte{"shared.esp": []byte("A")})
+	seedConflictMod(t, svc, game, "b", "Mod B", true, map[string][]byte{"shared.esp": []byte("B")})
+	seedConflictMod(t, svc, game, "c", "Mod C", true, map[string][]byte{"shared.esp": []byte("C")})
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.NoError(t, svc.Close())
+
+	out, err := runConflictsCmd(t, "conflicts", "ack", "c", "a", "--game", game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Marked as known: src:c overrides src:a\n"+
+		"1 file(s) src:c and src:a share are still listed: another mod has them too. Mark src:c over it as well, or accept every conflict as it stands with `lmm conflicts ack --all-current`.\n", out)
+
+	out, err = runConflictsCmd(t, "conflicts", "ack", "c", "b", "--game", game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Marked as known: src:c overrides src:b\n", out, "the file is known now")
+}

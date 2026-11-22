@@ -36,7 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 --collection` recomputes them against the new version, keeps your own
     marks, and leaves a pair you unmarked unmarked.
   - The profile file gains a `known_conflicts:` list (with `origin: user`
-    or `collection`), and a removed mod takes its marks with it. Snapshots
+    or `collection`). A removed mod takes its marks with it, and a re-linked
+    one (`lmm mod edit`) keeps them under its new identity. Snapshots
     and `lmm profile duplicate` carry the list.
 
 - **Search a game's NexusMods collections (#651).** `lmm search

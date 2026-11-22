@@ -1014,7 +1014,7 @@ export function Library({
             // so the mark is muted rather than a warning.
             row.hasKnownConflict &&
             html`<span
-              class="badge"
+              class="badge badge--muted"
               data-testid="row-known-conflict"
               role="img"
               aria-label="Known file conflict (marked as intended)"

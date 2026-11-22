@@ -31,6 +31,17 @@ func TestE2E_KnownConflicts_MarkAsIntendedAndUnmark(t *testing.T) {
 		waitGone(`[data-testid="row-conflict"]`),
 		chromedp.WaitVisible(`[data-testid="row-known-conflict"]`, chromedp.ByQuery),
 	)
+	// The mark is muted: the theme's muted text colour, not the danger tone.
+	var muted bool
+	f.runInBrowser(t, chromedp.Evaluate(`(() => {
+		const probe = document.createElement("span");
+		probe.style.color = "var(--text-muted)";
+		document.body.appendChild(probe);
+		const want = getComputedStyle(probe).color;
+		probe.remove();
+		return getComputedStyle(document.querySelector('[data-testid="row-known-conflict"]')).color === want;
+	})()`, &muted))
+	assert.True(t, muted, "the known-conflict badge is muted")
 
 	profile, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
 	require.NoError(t, err)

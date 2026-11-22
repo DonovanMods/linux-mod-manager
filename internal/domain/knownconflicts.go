@@ -84,6 +84,51 @@ func (k KnownConflicts) Keep(keys map[string]bool) KnownConflicts {
 	return out
 }
 
+// Rename is a copy of k in which every entry naming the mod from names to
+// instead: a re-link moves the mod's marks to its new identity. Nil when k
+// is empty.
+func (k KnownConflicts) Rename(from, to string) KnownConflicts {
+	out := k.Clone()
+	for i := range out {
+		if out[i].Winner == from {
+			out[i].Winner = to
+		}
+		if out[i].Loser == from {
+			out[i].Loser = to
+		}
+	}
+	return out
+}
+
+// KnownConflictSet indexes a KnownConflicts list for lookups: one map read
+// per question instead of a scan of the list, which a collection's
+// thousands of pairs make worth building once per query.
+type KnownConflictSet map[[2]string]bool
+
+// Set is k indexed, each entry by its (winner, loser) direction.
+func (k KnownConflicts) Set() KnownConflictSet {
+	set := make(KnownConflictSet, len(k))
+	for _, e := range k {
+		set[[2]string{e.Winner, e.Loser}] = true
+	}
+	return set
+}
+
+// Has reports whether the set marks winner over loser, in that direction.
+func (s KnownConflictSet) Has(winner, loser string) bool {
+	return s[[2]string{winner, loser}]
+}
+
+// HasPair reports whether the set holds the pair a, b in either direction.
+func (s KnownConflictSet) HasPair(a, b string) bool {
+	return s[[2]string{a, b}] || s[[2]string{b, a}]
+}
+
+// Add records winner over loser.
+func (s KnownConflictSet) Add(winner, loser string) {
+	s[[2]string{winner, loser}] = true
+}
+
 // KeepKnownConflicts drops every known-conflict entry, the profile's and
 // its collection baseline's, that names a mod the profile no longer lists
 // (#668): a removed mod takes its pairs with it. Every save of a profile

@@ -123,21 +123,26 @@ func (s *Service) markCollectionConflicts(ctx context.Context, game *domain.Game
 // a reorder that flipped it included. It reports whether it changed
 // anything.
 func addCollectionKnown(profile *domain.Profile, pairs domain.KnownConflicts) bool {
-	var base domain.KnownConflicts
+	// Indexed once each, as pathKnown's lookups are: an import's pairs
+	// against the profile's and the baseline's lists, a map read apiece.
+	var base domain.KnownConflictSet
 	if profile.CollectionBaseline != nil {
-		base = profile.CollectionBaseline.KnownConflicts.Clone()
+		base = profile.CollectionBaseline.KnownConflicts.Set()
 	}
+	have := profile.KnownConflicts.Set()
 	changed := false
 	for _, e := range pairs {
-		if base.Index(e.Winner, e.Loser) >= 0 {
+		if base.HasPair(e.Winner, e.Loser) {
 			continue
 		}
 		if profile.CollectionBaseline != nil {
 			profile.CollectionBaseline.KnownConflicts = append(profile.CollectionBaseline.KnownConflicts, e)
+			base.Add(e.Winner, e.Loser)
 			changed = true
 		}
-		if profile.KnownConflicts.Index(e.Winner, e.Loser) < 0 {
+		if !have.HasPair(e.Winner, e.Loser) {
 			profile.KnownConflicts = append(profile.KnownConflicts, e)
+			have.Add(e.Winner, e.Loser)
 			changed = true
 		}
 	}
@@ -165,12 +170,13 @@ func updateCollectionKnown(profile *domain.Profile, pairs domain.KnownConflicts)
 			user = append(user, e)
 		}
 	}
+	userSet, oursSet, baseSet := user.Set(), ours.Set(), base.Set()
 	result := user.Clone()
 	for _, e := range pairs {
-		if user.Index(e.Winner, e.Loser) >= 0 {
+		if userSet.HasPair(e.Winner, e.Loser) {
 			continue
 		}
-		if ours.Has(e.Winner, e.Loser) || !base.Has(e.Winner, e.Loser) {
+		if oursSet.Has(e.Winner, e.Loser) || !baseSet.Has(e.Winner, e.Loser) {
 			result = append(result, e)
 		}
 	}

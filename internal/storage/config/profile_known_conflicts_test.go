@@ -69,3 +69,29 @@ func TestSnapshotProfileValue_CarriesKnownConflicts(t *testing.T) {
 	require.Equal(t, profile.KnownConflicts, back.KnownConflicts)
 	require.Equal(t, profile.KnownConflicts, config.ExportProfileValue(profile).KnownConflicts, "profile export --json carries them too")
 }
+
+// TestRenameProfileModRef_RenamesItsKnownConflicts: a re-link (#593) moves
+// the mod's known-conflict marks (#668) to its new identity, the
+// collection baseline's included, rather than leaving them to be pruned.
+func TestRenameProfileModRef_RenamesItsKnownConflicts(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, config.SaveProfile(dir, &domain.Profile{Name: "p", GameID: "tg",
+		Mods:               []domain.ModReference{{SourceID: "nexusmods", ModID: "1"}, {SourceID: "nexusmods", ModID: "2"}, {SourceID: "nexusmods", ModID: "3"}},
+		KnownConflicts:     knownConflictsFixture(),
+		CollectionBaseline: &domain.CollectionBaseline{KnownConflicts: knownConflictsFixture()[:1]},
+	}))
+
+	_, err := config.RenameProfileModRef(dir, "tg", "p", config.ModRefRename{
+		FromSourceID: "nexusmods", FromModID: "2", ToSourceID: "local", ToModID: "two", Version: "1",
+	})
+	require.NoError(t, err)
+
+	profile, err := config.LoadProfile(dir, "tg", "p")
+	require.NoError(t, err)
+	require.Equal(t, domain.KnownConflicts{
+		{Winner: "local:two", Loser: "nexusmods:1", Origin: domain.KnownConflictCollection},
+		{Winner: "nexusmods:3", Loser: "local:two", Origin: domain.KnownConflictUser},
+	}, profile.KnownConflicts)
+	require.Equal(t, domain.KnownConflicts{{Winner: "local:two", Loser: "nexusmods:1", Origin: domain.KnownConflictCollection}},
+		profile.CollectionBaseline.KnownConflicts)
+}

@@ -84,6 +84,9 @@ func (s *Service) DuplicateProfile(ctx context.Context, gameID, source, newName 
 	dup.Plugins = profile.Plugins.Clone()
 	dup.LoadOrders = profile.LoadOrders.Clone()
 	dup.KnownConflicts = profile.KnownConflicts.Clone()
+	// #668 review: the copy's baseline is its own - a later collection
+	// update or mark on either profile must not reach the other in memory.
+	dup.CollectionBaseline = profile.CollectionBaseline.Clone()
 
 	err = completeProfileWrite(ctx, func(ctx context.Context) error {
 		if err := pm.save(&dup); err != nil {

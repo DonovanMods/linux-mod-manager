@@ -173,9 +173,11 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 	}
 	// #668: the marks are the saved profile's whichever order is asked
 	// about, so a preview that flips a winner shows its pair unknown.
-	var known domain.KnownConflicts
-	if saved != nil {
-		known = saved.KnownConflicts
+	// Indexed once: a collection's thousands of pairs would otherwise be
+	// scanned once per provider of every contested path.
+	var known domain.KnownConflictSet
+	if saved != nil && len(saved.KnownConflicts) > 0 {
+		known = saved.KnownConflicts.Set()
 	}
 	orderIndex := make(map[string]int, len(enabled))
 	for i, m := range orderByProfile(profile, enabled) {
@@ -273,7 +275,7 @@ func (s *Service) conflictProviders(ctx context.Context, game *domain.Game, mods
 
 // pathKnown reports whether known marks winner over each other of keys (a
 // path's providers, winner among them): the whole path intended (#668).
-func pathKnown(known domain.KnownConflicts, winner string, keys []string) bool {
+func pathKnown(known domain.KnownConflictSet, winner string, keys []string) bool {
 	if len(known) == 0 {
 		return false
 	}
