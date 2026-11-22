@@ -116,6 +116,10 @@ export function AttentionCards({
   // they are counted, not listed - one line, never a row apiece.
   const skips = updates?.skipped ?? null;
   const collectionLocked = skips?.locked ?? 0;
+  // issue 673: the collection itself, checked as the update unit - a newer
+  // revision is an update, so it brings the Updates card on screen.
+  const revision = updates?.collection_revision ?? null;
+  const collectionLine = collectionLocked > 0 || Boolean(revision);
   // issue 582: sources that refused the check for want of a key. The
   // report's error was never rendered, so a refusal left the card silent;
   // each now names its source and links to its key.
@@ -180,7 +184,7 @@ export function AttentionCards({
     missingRows.length === 0 &&
     goneRows.length === 0 &&
     skippedRows.length === 0 &&
-    collectionLocked === 0 &&
+    !collectionLine &&
     authRequired.length === 0 &&
     !autoRelink &&
     restored.length === 0 &&
@@ -208,6 +212,7 @@ export function AttentionCards({
     authRequired.length > 0 ||
     Boolean(autoRelink) ||
     restored.length > 0 ||
+    Boolean(revision?.available) ||
     Boolean(errors.updates);
 
   return html`
@@ -224,6 +229,7 @@ export function AttentionCards({
           autoRelink=${autoRelink}
           restored=${restored}
           skips=${skips}
+          revision=${revision}
           profile=${updates?.profile}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
@@ -277,9 +283,10 @@ export function AttentionCards({
       }
       ${
         !updatesCardShown &&
-        collectionLocked > 0 &&
+        collectionLine &&
         html`<${CollectionLockNote}
           skips=${skips}
+          revision=${revision}
           profile=${updates?.profile}
           state=${state}
           actions=${actions}
@@ -377,27 +384,76 @@ function collectionUpdateOrigin(profile) {
   return `profile:${profile}:collection-update`;
 }
 
-/** CollectionLockNote is issue 667's one line for the mods the profile's
- * collection locks: they were not checked, the collection is the update
- * unit, and - when it records an origin - "Update collection…" opens the
- * same plan as `lmm profile sync --collection`. Inside the Updates card
- * when the card is on screen, else a quiet line under the cards. */
-function CollectionLockNote({ skips, profile, state, actions, quiet }) {
-  const n = skips.locked;
-  const text = `${countOf(n, "mod")} locked by collection ${skips.collection} (not checked).`;
-  const remedy = skips.collection_sync
-    ? ""
-    : ` The collection sets ${n === 1 ? "its version" : "their versions"}; unlock a mod to check it yourself.`;
+/** revisionSentence is issue 673's half of the collection line: the
+ * collection checked as the update unit (core.CollectionRevisionStatus) -
+ * a newer revision, up to date, or why it could not be asked - in the
+ * words `lmm update` prints. Empty when the report carries none. */
+function revisionSentence(r) {
+  if (!r) return "";
+  const name = `Collection ${r.name}`;
+  if (r.available) {
+    return `${name}: revision ${r.latest} available (installed ${r.installed}).`;
+  }
+  if (r.checked) return `${name}: up to date (revision ${r.latest}).`;
+  if (r.error) return `${name}: couldn't check for a new revision.`;
+  if (r.reason === "url") {
+    return `${name}: lmm can't check its address for a new version automatically.`;
+  }
+  if (r.reason === "file") {
+    return `${name}: imported from a file, so lmm can't check for a new version.`;
+  }
+  return `${name}: its source can't be asked for a new revision.`;
+}
+
+/** revisionState names the line's state for data-state (and a test): the
+ * same cases revisionSentence words. */
+function revisionState(r) {
+  if (!r) return "locked";
+  if (r.available) return "available";
+  if (r.checked) return "current";
+  return r.error ? "error" : "unchecked";
+}
+
+/** CollectionLockNote is the collection line (issues 667, 673): the
+ * collection checked as the update unit - "revision N available" or "up to
+ * date (revision M)" - and the mods it locks, counted, not checked one by
+ * one; when it records an origin, "Update collection…" opens the same plan
+ * as `lmm profile sync --collection`. Inside the Updates card when the card
+ * is on screen (a newer revision brings it), else a quiet line under the
+ * cards. */
+function CollectionLockNote({
+  skips,
+  revision = null,
+  profile,
+  state,
+  actions,
+  quiet,
+}) {
+  const n = skips?.locked ?? 0;
+  const locked =
+    n > 0
+      ? `${countOf(n, "mod")} locked by collection ${skips.collection} (not checked).`
+      : "";
+  const sync = Boolean(revision ? revision.sync : skips?.collection_sync);
+  const remedy =
+    n > 0 && !sync
+      ? ` The collection sets ${n === 1 ? "its version" : "their versions"}; unlock a mod to check it yourself.`
+      : "";
+  const text = [revisionSentence(revision), locked + remedy]
+    .filter(Boolean)
+    .join(" ");
   const origin = collectionUpdateOrigin(profile);
   // A <div>, not a <p>: the InlineJob below can morph into the job's
   // progress block, which is no phrasing content.
   return html`<div
     class=${quiet ? "skipped-updates" : "card__meta"}
     data-testid="updates-collection-locked"
+    data-state=${revisionState(revision)}
+    title=${revision?.error || undefined}
   >
-    ${text + remedy}${" "}
+    ${text}${" "}
     ${
-      skips.collection_sync &&
+      sync &&
       profile &&
       html`<${InlineJob} origin=${origin} state=${state} actions=${actions}>
         <button
@@ -582,6 +638,7 @@ function UpdatesCard({
   autoRelink = null,
   restored = [],
   skips = null,
+  revision = null,
   profile = "",
   error,
   onRetry,
@@ -685,9 +742,10 @@ function UpdatesCard({
     <div class="card card--updates">
       <h2 class="card__title">⬆ Updates (${rows.length})</h2>
       ${
-        (skips?.locked ?? 0) > 0 &&
+        ((skips?.locked ?? 0) > 0 || revision) &&
         html`<${CollectionLockNote}
           skips=${skips}
+          revision=${revision}
           profile=${profile}
           state=${state}
           actions=${actions}

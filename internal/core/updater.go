@@ -183,6 +183,12 @@ type UpdateCheckOptions struct {
 	// but Steam Workshop today) never see it; see
 	// source.RefreshingUpdateChecker.
 	Refresh bool
+	// NoCollectionRevision leaves CheckGameUpdateReport's collection
+	// revision check out (#673): a caller re-running a check it already
+	// reported - `lmm update` after re-linking moved mods (#590) - carries
+	// the first answer over rather than asking the collection's origin
+	// again.
+	NoCollectionRevision bool
 }
 
 // CountExternalUpdates reports how many of updates belong to EXTERNAL mods
@@ -373,6 +379,13 @@ type UpdateCheckReport struct {
 	// being, or already, re-linked to their one successor. Set by the
 	// frontend that ran it; omitempty.
 	AutoRelink *CatalogAutoRelink `json:"auto_relink,omitempty"`
+	// CollectionRevision is the profile's collection, checked as the
+	// update unit (#673): its latest published revision against the one
+	// installed, from one request to its origin - or why it could not be
+	// asked. The mods it locks are not checked one by one (Skipped.Locked).
+	// nil for a profile that is not a collection's. omitempty.
+	CollectionRevision *CollectionRevisionStatus `json:"collection_revision,omitempty"`
+
 	// ManualOnlyCleared names the manual-only mods (#543) this check
 	// cleared because their source now says it serves them through its API
 	// (#627): automatic downloads are available for them again, so they
@@ -537,6 +550,12 @@ func (s *Service) CheckGameUpdateReport(ctx context.Context, game *domain.Game, 
 		ManualOnlyCleared: res.cleared,
 	}
 	report.Skipped.Updates = len(res.skipped)
+	// #673: the collection is checked here, in the report a frontend shows,
+	// and not in checkGameUpdates: a plan or a single-mod check has no use
+	// for it, so it costs them no request.
+	if !opts.NoCollectionRevision {
+		report.CollectionRevision = s.collectionRevision(ctx, game, profileName)
+	}
 	if checkErr != nil {
 		report.ErrorMessage = checkErr.Error()
 		report.AuthRequired = AuthRequiredSources(checkErr)

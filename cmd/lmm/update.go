@@ -87,7 +87,11 @@ for any update.
 A mod the profile's collection locks (a collection import locks each mod
 it pins) is not checked at all: the collection decides its version, so the
 check prints one line counting those mods instead of a row apiece, and
-'lmm profile sync <profile> --collection' updates them. Unlocking a mod
+'lmm profile sync <profile> --collection' updates them. The collection
+itself is checked instead: for a NexusMods collection, one request asks
+for its latest revision, and a line says whether a newer one than the
+installed revision is out. A collection imported from an https address or
+a file can't be checked that cheaply; the line says so. Unlocking a mod
 ('lmm mod unlock') makes it yours and returns it to the check. A lock you
 set yourself is still checked, and its update shown as locked.
 
@@ -110,7 +114,11 @@ recompile against the current base pak.
     {pinned, local, locked?, collection?, collection_sync?, updates?},
     error?}. skipped.locked counts the mods the collection locks (never
     checked), skipped.collection names it, and collection_sync says it
-    has an origin 'lmm profile sync --collection' updates from. error is
+    has an origin 'lmm profile sync --collection' updates from.
+    collection_revision? is the collection checked as a whole: {name,
+    origin, source_id?, installed, latest?, available?, checked, reason?,
+    error?, sync?} - origin "source", "url" or "file"; reason "url",
+    "file" or "unsupported" when it was not asked. error is
     present when the check itself failed partway through; updates/skipped
     still reflect whatever was learned first. Each updates[] entry carries the whole installed mod
     under "installed_mod" plus "new_version"; "locked": true means the
@@ -390,6 +398,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 	if !jsonOutput {
 		printManualOnlyCleared(report)
+		printCollectionRevision(report.CollectionRevision, profileName)
 	}
 
 	// finish is returned at every exit below rather than bailing out early: a
@@ -875,8 +884,11 @@ func autoRelinkGone(ctx context.Context, service *core.Service, game *domain.Gam
 	}
 	// The first check already asked the sources afresh when --refresh said
 	// to; this one only re-reads the moved mods.
-	again, againErr := service.CheckGameUpdateReport(ctx, game, profileName, reread, sink, core.UpdateCheckOptions{})
+	again, againErr := service.CheckGameUpdateReport(ctx, game, profileName, reread, sink, core.UpdateCheckOptions{NoCollectionRevision: true})
 	again.AutoRelink = &core.CatalogAutoRelink{Relinked: result.Relinked}
+	// #673: the first check asked the collection; a re-link changes no
+	// collection revision.
+	again.CollectionRevision = report.CollectionRevision
 	// #627: the first check cleared these, so the re-run cannot report them.
 	again.ManualOnlyCleared = append(slices.Clone(report.ManualOnlyCleared), again.ManualOnlyCleared...)
 	return again, reread, againErr
@@ -1605,6 +1617,31 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 // Emits no leading blank line: when every mod is skipped this is the whole
 // output, and a leading newline would render as a stray blank first line.
 // Callers with preceding output add their own separator.
+// printCollectionRevision is #673's one line for a collection profile's
+// collection, checked as the update unit: a newer revision with the
+// command that takes it, up to date, or why it could not be asked. Silent
+// for a profile that is not a collection's.
+func printCollectionRevision(c *core.CollectionRevisionStatus, profile string) {
+	if c == nil {
+		return
+	}
+	sync := fmt.Sprintf("'lmm profile sync %s --collection'", cliArg(profile))
+	switch {
+	case c.Available:
+		fmt.Printf("Collection %s: revision %d available (installed %d) — %s updates it.\n", c.Name, c.Latest, c.Installed, sync)
+	case c.Checked:
+		fmt.Printf("Collection %s: up to date (revision %d).\n", c.Name, c.Latest)
+	case c.Error != "":
+		fmt.Printf("Collection %s: couldn't check for a new revision (%s) — %s checks it.\n", c.Name, c.Error, sync)
+	case c.Reason == core.CollectionUncheckedURL:
+		fmt.Printf("Collection %s: lmm can't check an address for a new version automatically — %s fetches it and shows what changed.\n", c.Name, sync)
+	case c.Reason == core.CollectionUncheckedFile:
+		fmt.Printf("Collection %s: imported from a file, so lmm can't check for a new version — import the new version with 'lmm profile import <file> --force'.\n", c.Name)
+	default:
+		fmt.Printf("Collection %s: its source can't be asked for a new revision — %s checks it.\n", c.Name, sync)
+	}
+}
+
 func printSkipped(skips core.UpdateSkips, profile string) {
 	if skips.Locked > 0 {
 		// #667: one line for every mod the collection locks - never a row
