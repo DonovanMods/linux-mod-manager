@@ -27,6 +27,8 @@ import {
   startToggle as startToggleJob,
   setModLock as apiSetModLock,
   skipModUpdate as apiSkipModUpdate,
+  markConflictsKnown as apiMarkConflictsKnown,
+  unmarkConflictsKnown as apiUnmarkConflictsKnown,
   unskipModUpdate as apiUnskipModUpdate,
   clearModLock as apiClearModLock,
   setModUpdatePolicy as apiSetModUpdatePolicy,
@@ -47,6 +49,7 @@ import {
 } from "./api.js";
 import { fomodQuestionFor, mergeQuestions } from "./fomod.js";
 import { failuresOf } from "./itemfailures.js";
+import { conflictPairs } from "./conflicts.js";
 import { DEPLOY_ORIGIN } from "./components/topbar.js";
 import { PLAY_NOT_ACTIVE_REASON } from "./components/playbutton.js";
 import { updateFromFileInputID } from "./components/updatefromfile.js";
@@ -2515,6 +2518,19 @@ async function unskipModUpdate(sourceID, modID) {
   await refreshAfterUpdateSkip(sourceID, modID);
 }
 
+/** setConflictsKnown runs one mark/unmark (issue 668) and re-reads the
+ * conflicts report every surface derives its known state from: the
+ * Conflicts card, the library badge, the mod panel and the reorder
+ * preview. A failure is the caller's to show. */
+async function setConflictsKnown(call, body) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await call(body, context);
+  await reload("conflicts", "/api/v1/conflicts");
+}
+
 async function refreshAfterUpdateSkip(sourceID, modID) {
   const route = store.get().route;
   if (route.view === "mod") {
@@ -3355,6 +3371,15 @@ const actions = {
   // job completion is exactly the repeated caller the memo exists for.
   reloadHealth: () => reload("health", "/api/v1/health?force=1"),
   reloadConflicts: () => reload("conflicts", "/api/v1/conflicts"),
+  // issue 668: "Mark as intended" / "Unmark" on a conflict, and "Mark all
+  // as intended" - single-step writes; the report is re-read after, since
+  // core decides which paths a pair makes known.
+  markConflictKnown: (c) =>
+    setConflictsKnown(apiMarkConflictsKnown, { pairs: conflictPairs(c) }),
+  markAllConflictsKnown: () =>
+    setConflictsKnown(apiMarkConflictsKnown, { all_current: true }),
+  unmarkConflictKnown: (c) =>
+    setConflictsKnown(apiUnmarkConflictsKnown, { pairs: conflictPairs(c) }),
   reloadSnapshots: () => reload("snapshots", "/api/v1/snapshots"),
   reloadModPage: () => {
     const route = store.get().route;

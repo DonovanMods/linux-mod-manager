@@ -132,6 +132,9 @@ export function isManualOnly(modOrUpdate) {
  *     assumption the finding itself already makes.
  *   - conflicts: core.ConflictReport's "conflicts" array (core.
  *     ProfileConflict), matched by the owner/also_in ConflictModRef keys.
+ *     Only an unresolved conflict makes hasConflict; a mod whose every
+ *     conflict is known - intended (issue 668) - gets hasKnownConflict
+ *     instead, a muted mark.
  *   - verified: whether a core.VerifyResult exists at all (issue 418).
  *     Without it "no findings for this mod" is ambiguous between "checked,
  *     nothing wrong" and "never checked", and those are opposite things to
@@ -153,9 +156,11 @@ export function buildRows(mods, updates, findings, conflicts, verified) {
     problems.set(f.mod_id, (problems.get(f.mod_id) ?? 0) + 1);
   }
   const conflictKeys = new Set();
+  const knownConflictKeys = new Set();
   for (const c of conflicts ?? []) {
-    conflictKeys.add(c.owner.key);
-    for (const also of c.also_in) conflictKeys.add(also.key);
+    const keys = c.known ? knownConflictKeys : conflictKeys;
+    keys.add(c.owner.key);
+    for (const also of c.also_in) keys.add(also.key);
   }
 
   return (mods ?? []).map((mod, index) => {
@@ -196,6 +201,7 @@ export function buildRows(mods, updates, findings, conflicts, verified) {
           : "ok",
       findingCount: problems.get(mod.id) ?? 0,
       hasConflict: conflictKeys.has(key),
+      hasKnownConflict: !conflictKeys.has(key) && knownConflictKeys.has(key),
     };
   });
 }

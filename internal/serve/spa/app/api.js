@@ -464,6 +464,18 @@ export function conflictsForOrder(order, context) {
   return get(url.pathname + url.search);
 }
 
+/** Marks conflicts known - intended (issue 668: `lmm conflicts ack`): body
+ * is {pairs: [{winner, loser}]}, or {all_current: true} for every present
+ * conflict as it stands. Returns core.KnownConflictsResult. */
+export const markConflictsKnown = (body, context) =>
+  post(scoped("/api/v1/conflicts/mark", context), body);
+
+/** Unmarks known conflicts (issue 668: `lmm conflicts unack`): body is
+ * {pairs: [{winner, loser}]}, each pair named either way round. Returns
+ * core.KnownConflictsResult. */
+export const unmarkConflictsKnown = (body, context) =>
+  post(scoped("/api/v1/conflicts/unmark", context), body);
+
 // -- Setup surface (issue 333): games, auth, custom sources, uploads. None
 // of these routes is game-scoped (task-A's own wire note - "they are how a
 // game comes to exist"), so none takes `scoped()`/context.

@@ -37,7 +37,7 @@ import {
 import { PluginsTab } from "./pluginstab.js";
 import { LoadOrderTab } from "./loadordertab.js";
 import { modKey } from "../modrows.js";
-import { staleWinnerNote } from "../conflicts.js";
+import { knownConflictNote, staleWinnerNote } from "../conflicts.js";
 
 // PREVIEW_DEBOUNCE_MS mirrors main.js's own debounced fetches (the omnibar
 // fan-out has none - it fires on Enter - but the search page's category/
@@ -55,6 +55,17 @@ const PREVIEW_DEBOUNCE_MS = 200;
  * reason to risk the ambiguous case). */
 function buildInitialOrder(mods) {
   return (mods ?? []).map(modKey);
+}
+
+/** KnownBadge marks a known - intended - conflict's winner in the preview
+ * table (issue 668). */
+function KnownBadge() {
+  return html`<span
+    class="badge"
+    data-testid="reorder-known"
+    title=${`This winner is ${knownConflictNote}`}
+    >known</span
+  >`;
 }
 
 /** conflictsByPath indexes a ConflictReport's rows by path - the join this
@@ -642,11 +653,27 @@ function ReorderModalBody({ modal, state, actions }) {
                                             >redeploy needed</span
                                           >`
                                         }
+                                        ${current?.known && html`<${KnownBadge} />`}
                                       </td>
                                       <td
                                         class=${changed ? "reorder-preview__changed" : ""}
                                       >
                                         ${proposed?.load_order_winner.name ?? "—"}
+                                        ${proposed?.known && html`<${KnownBadge} />`}
+                                        ${
+                                          // issue 668: the order flips a
+                                          // known conflict's winner, so it
+                                          // is a conflict again.
+                                          current?.known &&
+                                          proposed &&
+                                          !proposed.known &&
+                                          html`<span
+                                            class="badge badge--warn"
+                                            data-testid="reorder-unknown"
+                                            title="The conflict was marked as intended with the current winner; this order makes another mod win, so it is a conflict again"
+                                            >no longer intended</span
+                                          >`
+                                        }
                                       </td>
                                     </tr>
                                   `;

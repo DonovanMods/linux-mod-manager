@@ -61,6 +61,7 @@ import {
 } from "./updatefromfile.js";
 import { AwayBar } from "./awaybar.js";
 import { findingLabel } from "../verify.js";
+import { conflictRole } from "../conflicts.js";
 import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { RichText } from "../richtext.js";
@@ -477,11 +478,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
                 (c) =>
                   html`<li key=${deployedKey(c.path, c.root)} class="mono">
                     ${deployedPath(c.path, c.root)}
-                    ${
-                      c.load_order_winner.key === `${sourceID}:${modID}`
-                        ? " (wins)"
-                        : ` (loses to ${c.load_order_winner.name})`
-                    }
+                    ${conflictRole(c, `${sourceID}:${modID}`)}
                   </li>`,
               )}
             </ul>
