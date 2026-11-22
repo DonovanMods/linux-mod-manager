@@ -267,6 +267,12 @@ type Service struct {
 	// production.
 	beforeInstallReplace func()
 
+	// importSwitchPlanned, when non-nil, runs between an import's switch
+	// plan and its apply (#666), inside their one mutation slot. Test-only
+	// seam (export_test.go's SetImportSwitchPlannedForTest); always nil in
+	// production.
+	importSwitchPlanned func()
+
 	// afterInstallSave, when non-nil, runs immediately after a successful
 	// SaveInstalledMod call in the BATCH install engine (applyInstallBatchMod)
 	// - the only point between the DB row landing and ensureProfileExists's

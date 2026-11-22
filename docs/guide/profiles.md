@@ -339,7 +339,9 @@ the profile's mods.
 In the browser, the import's plan has **Switch to this profile when the
 import finishes**, ticked by default. It says whose mods the switch takes
 out before you press **Import**. When the import is done, the page moves
-to the new profile and the library lists the collection's mods. The box
+to the new profile and the library lists the collection's mods. If you have
+moved to another page or opened a dialog meanwhile, the page stays where
+you are, and a notice offers **Go to** the new profile instead. The box
 can't be ticked while the import isn't installing its mods (**Download
 and install** unticked, or **Never install** ticked).
 

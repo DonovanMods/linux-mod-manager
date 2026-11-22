@@ -59,6 +59,8 @@ const phaseLabels = {
   update_batch_item_applied: "Updated",
   update_batch_item_skipped: "Skipped",
   update_batch_item_failed: "Failed",
+  // issue 666: an import going on to switch to the profile it imported.
+  import_switching: "Switching to profile",
 };
 
 /**
@@ -371,6 +373,7 @@ export function updateStepFraction(frame, position) {
  */
 export function progressFraction(frame, position) {
   if (!frame) return null;
+  if (importSwitchStep(frame)) return null;
   const stepped = updateStepFraction(frame, position);
   if (stepped !== null) return stepped;
   if (frame.type === "download" && frame.total_bytes > 0) {
@@ -380,6 +383,28 @@ export function progressFraction(frame, position) {
     return clamp(frame.index / frame.total);
   }
   return null;
+}
+
+// switchingImports holds the import jobs that went on to switch to the
+// profile they imported (issue 666), oldest first, bounded like `reached`.
+const switchingImports = new Set();
+
+/** importSwitchStep reports whether frame is an import's switch to its
+ * profile (issue 666): the import_switching frame that starts it, or any
+ * of the switch's own frames (op "switch") in that job. The switch is a
+ * fresh step with its own label and an indeterminate bar - its disables,
+ * enables and downloads count from their own start, and the bar must not
+ * go back from where the import left it (issue 664). */
+function importSwitchStep(frame) {
+  if (!frame.job_id) return false;
+  if (frame.op === "import" && frame.phase === "import_switching") {
+    switchingImports.add(frame.job_id);
+    if (switchingImports.size > REACHED_LIMIT) {
+      switchingImports.delete(switchingImports.values().next().value);
+    }
+    return true;
+  }
+  return frame.op === "switch" && switchingImports.has(frame.job_id);
 }
 
 function clamp(value) {

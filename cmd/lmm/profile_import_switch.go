@@ -116,7 +116,7 @@ func offerImportSwitch(ctx context.Context, service *core.Service, game *domain.
 	}
 	fmt.Printf("\n%s is imported; %s is the active profile, whose mods are the ones deployed.\n", result.ProfileName, result.ActiveProfile)
 	err := runSwitch(ctx, service, game, result.ProfileName,
-		switchRun{prompt: fmt.Sprintf("\nSwitch to %s now? [Y/n]: ", result.ProfileName)})
+		switchRun{offer: true, prompt: fmt.Sprintf("\nSwitch to %s now? [Y/n]: ", result.ProfileName)})
 	if errors.Is(err, ErrCancelled) {
 		fmt.Printf("Not switched. `lmm profile switch %s` switches to it later.\n", result.ProfileName)
 		return nil

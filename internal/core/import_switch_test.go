@@ -11,6 +11,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -208,4 +209,65 @@ func TestImportSwitch_AnImportThatLeftItsModsPendingDoesNotSwitch(t *testing.T) 
 			assert.Equal(t, before, treeOf(t, f.gameDir))
 		})
 	}
+}
+
+// #666 review: the switch is planned and applied under one mutation slot,
+// so a job queued behind the import - here a disable in the outgoing
+// profile - waits for it rather than leaving the switch's plan stale.
+func TestImportSwitch_AJobQueuedBehindTheImportWaitsForTheSwitch(t *testing.T) {
+	ctx := context.Background()
+	f := liveDirFixture(t)
+
+	plan, err := f.svc.PlanImport(ctx, f.game, importDoc("c", "bonly"))
+	require.NoError(t, err)
+
+	queued := make(chan error, 1)
+	var ranInside bool
+	f.svc.SetImportSwitchPlannedForTest(func() {
+		go func() {
+			_, err := f.svc.DisableMod(ctx, f.game, "a", "src", "aonly")
+			queued <- err
+		}()
+		select {
+		case err := <-queued:
+			// It ran between the plan and the apply: the slot was not
+			// held. Hand its result back for the assertions below.
+			ranInside = true
+			queued <- err
+		case <-time.After(300 * time.Millisecond):
+		}
+	})
+	result, err := f.svc.ApplyImport(ctx, f.game, plan, core.ProfileImportOptions{Install: true, Switch: true}, nil)
+	require.NoError(t, err)
+
+	assert.False(t, ranInside, "nothing runs between the switch's plan and its apply")
+	require.NotNil(t, result.Switch)
+	assert.True(t, result.Switch.Switched)
+	assert.Empty(t, result.Switch.Error, "the switch is never refused as stale")
+	assert.Equal(t, "c", activeProfile(t, f.svc, f.game.ID))
+	require.NoError(t, <-queued, "the queued job ran once the switch was done")
+}
+
+// #666 review: a job that runs after the import's slot is released and
+// before the switch takes its own is seen by the switch's plan.
+func TestImportSwitch_AJobBetweenTheImportAndTheSwitchIsPlannedFor(t *testing.T) {
+	ctx := context.Background()
+	f := liveDirFixture(t)
+
+	plan, err := f.svc.PlanImport(ctx, f.game, importDoc("c", "bonly"))
+	require.NoError(t, err)
+	sink := func(e core.Event) {
+		if s, ok := e.(core.StepEvent); ok && s.Phase == core.ImportSwitching {
+			_, err := f.svc.DisableMod(ctx, f.game, "a", "src", "aonly")
+			require.NoError(t, err)
+		}
+	}
+	result, err := f.svc.ApplyImport(ctx, f.game, plan, core.ProfileImportOptions{Install: true, Switch: true}, sink)
+	require.NoError(t, err)
+
+	require.NotNil(t, result.Switch)
+	assert.True(t, result.Switch.Switched)
+	assert.Empty(t, result.Switch.Error)
+	assert.Equal(t, "c", activeProfile(t, f.svc, f.game.ID))
+	assert.FileExists(t, filepath.Join(f.gameDir, "bonly.esp"))
 }

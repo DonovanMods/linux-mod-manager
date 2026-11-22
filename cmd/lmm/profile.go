@@ -636,9 +636,33 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 // switchRun is how runSwitch runs: `lmm profile switch`'s --yes and
 // --dry-run, and the question it asks before applying - "Proceed?", or an
 // import's offer to switch to the profile it imported (#666).
+//
+// offer marks an import's offer to switch to the profile it imported
+// (#666): it asks before every switch, a plan with no mod changes and a
+// flag-only plan included, which `lmm profile switch` applies on its own
+// confirmation of the target.
 type switchRun struct {
-	yes, dryRun bool
-	prompt      string
+	yes, dryRun, offer bool
+	prompt             string
+}
+
+// confirmSwitch asks prompt unless run.yes, and returns ErrCancelled for
+// anything but yes (the default).
+func confirmSwitch(run switchRun, prompt string) error {
+	if run.yes {
+		return nil
+	}
+	if !jsonOutput {
+		fmt.Print(prompt)
+	}
+	input, err := readPromptLine()
+	if err != nil {
+		return err
+	}
+	if input != "" && input != "y" && input != "yes" {
+		return ErrCancelled
+	}
+	return nil
 }
 
 // runSwitch is doProfileSwitch, run as run says.
@@ -712,6 +736,17 @@ func runSwitch(ctx context.Context, service *core.Service, game *domain.Game, ta
 		if run.dryRun {
 			return nil
 		}
+		// #666 review: an import's offer asks even here - the switch still
+		// makes another profile the active one.
+		if run.offer {
+			if !jsonOutput {
+				fmt.Printf("%s lists the same mods as %s: switching deploys and takes down nothing, and makes %s the active profile.\n",
+					targetName, plan.From, targetName)
+			}
+			if err := confirmSwitch(run, run.prompt); err != nil {
+				return err
+			}
+		}
 		result, err := service.ApplyProfileSwitch(ctx, game, plan, quietSink(progress))
 		if err != nil {
 			return err
@@ -761,22 +796,13 @@ func runSwitch(ctx context.Context, service *core.Service, game *domain.Game, ta
 		return nil
 	}
 
-	// Confirm unless --yes
-	if !run.yes {
-		if !jsonOutput {
-			fmt.Print(run.prompt)
-		}
-		input, err := readPromptLine()
-		if err != nil {
-			return err
-		}
-		if input != "" && input != "y" && input != "yes" {
-			// #382: exit 2, like every other declined confirmation - this
-			// used to print "Cancelled." and exit 0, so `lmm profile switch
-			// p && echo switched` printed "switched" over a switch that
-			// never happened. Execute prints the notice.
-			return ErrCancelled
-		}
+	// Confirm unless --yes. #382: a decline is ErrCancelled, exit 2, like
+	// every other declined confirmation - this used to print "Cancelled."
+	// and exit 0, so `lmm profile switch p && echo switched` printed
+	// "switched" over a switch that never happened. Execute prints the
+	// notice.
+	if err := confirmSwitch(run, run.prompt); err != nil {
+		return err
 	}
 
 	result, err := service.ApplyProfileSwitch(ctx, game, plan, quietSink(progress))
@@ -842,17 +868,17 @@ func applyFlagOnlySwitch(ctx context.Context, service *core.Service, game *domai
 	if run.dryRun {
 		return nil
 	}
-	if !run.yes {
+	prompt := fmt.Sprintf("Mark %s as the active profile? [Y/n]: ", plan.To)
+	if run.offer {
+		// #666 review: an import's offer says what this switch is - it
+		// only marks the profile active - and asks its own question.
 		if !jsonOutput {
-			fmt.Printf("Mark %s as the active profile? [Y/n]: ", plan.To)
+			fmt.Printf("Switching to %s only marks it as the active profile: nothing is deployed or taken down.\n", plan.To)
 		}
-		input, err := readPromptLine()
-		if err != nil {
-			return err
-		}
-		if input != "" && input != "y" && input != "yes" {
-			return ErrCancelled
-		}
+		prompt = run.prompt
+	}
+	if err := confirmSwitch(run, prompt); err != nil {
+		return err
 	}
 	result, err := service.ApplyProfileSwitch(ctx, game, plan, nil)
 	if err != nil {
@@ -1381,9 +1407,12 @@ func runImportPlan(ctx context.Context, service *core.Service, game *domain.Game
 			}
 			if input != "" && input != "y" && input != "yes" {
 				declined = true
-				// #666: a switch would install what was just declined.
-				opts.Switch = false
 				fmt.Printf("Skipped. %s\n", installLaterHint(plan.Profile.Name))
+				// #666: a switch would install what was just declined.
+				if opts.Switch {
+					opts.Switch = false
+					fmt.Printf("Not switching to %s: switching would install the mods just skipped.\n", plan.Profile.Name)
+				}
 				// Unreachable under --json: readPromptLine above refuses to
 				// read stdin there (Ruling 2), so a decline is impossible.
 			} else {

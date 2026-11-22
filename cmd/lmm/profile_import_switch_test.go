@@ -211,3 +211,117 @@ func TestRunProfileImport_RefusesContradictorySwitchFlags(t *testing.T) {
 		})
 	}
 }
+
+// emptyActiveFixture is setupDoProfileImportTest's game with one profile,
+// "default", active and empty: importing an empty "coll" leaves a switch
+// with no mod changes at all.
+func emptyActiveFixture(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, game, _ := setupDoProfileImportTest(t)
+	ctx := context.Background()
+	pm := getProfileManager(svc)
+	_, err := pm.Create(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "default"))
+	setFlag(t, &profileImportSwitch, false)
+	setFlag(t, &profileImportNoSwitch, false)
+	setFlag(t, &profileImportYes, false)
+	setFlag(t, &jsonOutput, false)
+	setFlag(t, &profileImportStdinIsTerminal, func() bool { return true })
+	return svc, game
+}
+
+// #666 review: a switch with nothing to deploy or take down is still a
+// switch - the offer asks before it, and a decline keeps the active
+// profile.
+func TestDoProfileImport_TheOfferAsksEvenWithNoModChanges(t *testing.T) {
+	t.Run("declined", func(t *testing.T) {
+		svc, game := emptyActiveFixture(t)
+		feedStdin(t, "n\n")
+
+		stdout, _, err := captureStdoutAndStderr(t, func() error {
+			return doProfileImport(context.Background(), svc, game, collDoc(t))
+		})
+
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "switching deploys and takes down nothing")
+		assert.Contains(t, stdout, "Switch to coll now? [Y/n]")
+		assert.Contains(t, stdout, "Not switched.")
+		assert.Equal(t, "default", activeProfileName(t, svc, game), "a decline keeps the active profile")
+	})
+	t.Run("accepted", func(t *testing.T) {
+		svc, game := emptyActiveFixture(t)
+		feedStdin(t, "y\n")
+
+		stdout, _, err := captureStdoutAndStderr(t, func() error {
+			return doProfileImport(context.Background(), svc, game, collDoc(t))
+		})
+
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "Switch to coll now? [Y/n]")
+		assert.Contains(t, stdout, "✓ Switched to profile: coll")
+		assert.Equal(t, "coll", activeProfileName(t, svc, game))
+	})
+}
+
+// #666 review: when no single profile is marked active, the switch only
+// marks the imported one - the offer says so, and asks its own question.
+func TestOfferImportSwitch_AFlagOnlySwitchSaysWhatItDoes(t *testing.T) {
+	for name, answer := range map[string]string{"declined": "n\n", "accepted": "\n"} {
+		t.Run(name, func(t *testing.T) {
+			svc, game := emptyActiveFixture(t)
+			ctx := context.Background()
+			_, err := getProfileManager(svc).Create(ctx, game.ID, "coll")
+			require.NoError(t, err)
+			unmarkProfile(t, game.ID, "default")
+			feedStdin(t, answer)
+
+			stdout, _, err := captureStdoutAndStderr(t, func() error {
+				return offerImportSwitch(ctx, svc, game, &core.ProfileImportResult{ProfileName: "coll", RecordedOnly: true, ActiveProfile: "default"})
+			})
+
+			require.NoError(t, err)
+			assert.Contains(t, stdout, "only marks it as the active profile")
+			assert.Contains(t, stdout, "Switch to coll now? [Y/n]")
+			assert.NotContains(t, stdout, "Mark coll as the active profile?")
+			p, err := getProfileManager(svc).Get(ctx, game.ID, "coll")
+			require.NoError(t, err)
+			assert.Equal(t, name == "accepted", p.IsDefault)
+		})
+	}
+}
+
+// #666 review: --switch with the install prompt declined says it is not
+// switching, rather than dropping the switch without a word.
+func TestDoProfileImport_SwitchWithTheInstallDeclinedSaysSo(t *testing.T) {
+	svc, game := switchImportFixture(t)
+	setFlag(t, &profileImportSwitch, true)
+	feedStdin(t, "n\n")
+
+	stdout, _, err := captureStdoutAndStderr(t, func() error {
+		return doProfileImport(context.Background(), svc, game, collDoc(t, "altonly"))
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Not switching to coll: switching would install the mods just skipped.")
+	assert.NotContains(t, stdout, "Switched to profile")
+	assert.Equal(t, "default", activeProfileName(t, svc, game))
+}
+
+// #666 review: a collection import that switched to its profile deployed
+// its mods, so its summary says "Imported", as the web UI does; one that
+// only recorded them says "Recorded".
+func TestPrintCollectionImportSummary_SaysImportedAfterASwitch(t *testing.T) {
+	setFlag(t, &jsonOutput, false)
+	for want, sw := range map[string]*core.ImportSwitch{
+		"Imported 2 mods.": {To: "coll", Switched: true},
+		"Recorded 2 mods.": {To: "coll", Error: "not switched"},
+	} {
+		stdout, _, err := captureStdoutAndStderr(t, func() error {
+			printCollectionImportSummary(&core.ProfileImportResult{ProfileName: "coll", RecordedOnly: true, Total: 2, Switch: sw})
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, want+"\n", stdout)
+	}
+}

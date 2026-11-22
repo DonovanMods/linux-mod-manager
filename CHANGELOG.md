@@ -84,7 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or `--json` keeps today's behaviour. In the web UI the import's plan has
   **Switch to this profile when the import finishes**, ticked by default
   and saying whose mods come down, and the page moves to the new profile
-  when the job ends. A collection with items left to finish still
+  when the job ends (or, if you moved on meanwhile, a notice offers **Go
+  to** it). A collection with items left to finish still
   switches, with its warning; a failed switch never undoes the import.
   `--json` and the job's result carry a new `switch` object
   (`core.ImportSwitch`); the job's options take `switch`.

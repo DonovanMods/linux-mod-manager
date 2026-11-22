@@ -1979,6 +1979,9 @@ async function confirmPlan() {
   if (!modal || modal.status !== "ready") return;
 
   store.set({ modal: { ...modal, status: "starting" } });
+  // Issue 666 review: where the user was when they confirmed, so an
+  // import's switch is followed only if they are still there.
+  const { game: atGame, profile: atProfile, view: atView } = store.get().route;
   // Issue 530: confirming a mismatched update-from-file plan IS the answer
   // to its one question - confirmplan.js labels that click "Update anyway";
   // issue 535's install from a file (an import_archive plan) the same, as
@@ -2033,6 +2036,7 @@ async function confirmPlan() {
         });
       }
       rememberJobFacts(jobID, {
+        startedOn: { game: atGame, profile: atProfile, view: atView },
         collection:
           modal.kind === "profile_import" &&
           Boolean(modal.plan?.collection || modal.plan?.workshop_collection),
@@ -3037,9 +3041,12 @@ async function onJobDone(summary) {
   });
 }
 
-/** followImportSwitch navigates to the profile a finished import switched
- * to (issue 666), in the game the import ran for - also when the import
- * itself failed some mods, as its switch still ran. A switch that did not
+/** followImportSwitch follows the profile a finished import switched to
+ * (issue 666) - also when the import itself failed some mods, as its
+ * switch still ran. The page goes there only while the user is where they
+ * confirmed the import: the same game, profile and page, with no dialog
+ * open. Otherwise a toast offers "Go to <profile>", so a user who moved on
+ * is not pulled away from what they are doing. A switch that did not
  * happen leaves the page where it is; the job's readout says why. */
 async function followImportSwitch(summary) {
   if (!summary.game) return;
@@ -3047,7 +3054,34 @@ async function followImportSwitch(summary) {
   if (!sw?.switched) return;
   const route = store.get().route;
   if (route.game === summary.game && route.profile === sw.to) return;
-  navigate(contextPath(summary.game, sw.to));
+  const at = jobFacts.get(summary.id)?.startedOn;
+  const stayed =
+    at &&
+    at.game === summary.game &&
+    route.game === at.game &&
+    route.profile === at.profile &&
+    route.view === at.view &&
+    !store.get().modal;
+  if (stayed) {
+    navigate(contextPath(summary.game, sw.to));
+    return;
+  }
+  pushToast({
+    tone: "success",
+    sticky: true,
+    title: `Switched to ${sw.to}`,
+    detail: `${sw.to} is now the active profile of this game.`,
+    action: "goToProfile",
+    actionLabel: `Go to ${sw.to}`,
+    actionArg: { game: summary.game, profile: sw.to },
+  });
+}
+
+/** goToProfile opens a game's profile ({game, profile}): the "Go to
+ * <profile>" of an import that switched while the user was elsewhere
+ * (issue 666). */
+function goToProfile({ game, profile }) {
+  navigate(contextPath(game, profile));
 }
 
 // COLLECTION_KINDS are the job kinds that always act on a collection
@@ -3510,6 +3544,7 @@ const actions = {
   openFinishCollection,
   noteTodos,
   reopenImport,
+  goToProfile,
   jobIsCollection,
   openShortcutsModal,
   openUninstallBatchModal,

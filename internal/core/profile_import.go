@@ -976,7 +976,17 @@ func (s *Service) switchToImported(ctx context.Context, game *domain.Game, resul
 	if sink != nil {
 		sink(StepEvent{Scope: Scope{Op: OpImport, ModName: result.ProfileName}, Phase: ImportSwitching})
 	}
-	plan, perr := s.PlanProfileSwitch(ctx, game, result.ProfileName)
+	// #666 review: planned and applied under one mutation slot. A job
+	// queued behind the import may run before this slot is taken, and the
+	// plan sees what it did; nothing runs between the plan and its apply,
+	// so the apply is never refused as stale.
+	release, oerr := s.beginOp(ctx)
+	if oerr != nil {
+		sw.Error = oerr.Error()
+		return
+	}
+	defer release()
+	plan, perr := s.planProfileSwitchHeld(ctx, game, result.ProfileName)
 	if perr != nil {
 		sw.Error = perr.Error()
 		return
@@ -986,7 +996,10 @@ func (s *Service) switchToImported(ctx context.Context, game *domain.Game, resul
 		sw.Switched = true
 		return
 	}
-	res, aerr := s.ApplyProfileSwitch(ctx, game, plan, sink)
+	if s.importSwitchPlanned != nil {
+		s.importSwitchPlanned()
+	}
+	res, aerr := s.applyProfileSwitchHeld(ctx, game, plan, sink)
 	sw.Result = res
 	if aerr != nil {
 		sw.Error = aerr.Error()

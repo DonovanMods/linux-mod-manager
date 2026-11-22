@@ -1273,12 +1273,28 @@ function ImportSwitchOption({ plan, modal, actions }) {
   if (!plan.recorded_only) return null;
   const blocked = importSwitchBlocked(plan, modal?.applyOptions);
   const name = plan.profile?.name;
+  const active = html`<span class="mono">${plan.active_profile}</span>`;
+  let note;
+  if (blocked) {
+    note = html`Not available: ${blocked}. The import records${" "}
+      <span class="mono">${name}</span> without deploying it.`;
+  } else if (plan.workshop_collection) {
+    // A Workshop collection's items are Steam's: the switch deploys none of
+    // them, as the CLI says.
+    note = html`Switching takes down the mods ${active} has deployed. Steam
+    decides what the game loads for this collection's items, so switching
+    deploys none of them.`;
+  } else {
+    note = html`Switching takes down the mods ${active} has deployed, and
+      deploys <span class="mono">${name}</span> in their place.`;
+  }
   return html`
     <div class="form-section" data-testid="import-switch">
       <label class="form-check">
         <input
           type="checkbox"
           name="switch"
+          aria-describedby="import-switch-note"
           checked=${modal?.applyOptions?.switch !== false && !blocked}
           disabled=${modal?.status !== "ready" || Boolean(blocked)}
           onChange=${(e) =>
@@ -1286,15 +1302,12 @@ function ImportSwitchOption({ plan, modal, actions }) {
         />
         Switch to this profile when the import finishes
       </label>
-      <p class="plan__note plan__note--warn" data-testid="import-switch-note">
-        ${
-          blocked
-            ? html`Not available: ${blocked}. The import records${" "}
-                <span class="mono">${name}</span> without deploying it.`
-            : html`Switching takes down the mods${" "}
-                <span class="mono">${plan.active_profile}</span> has deployed,
-                and deploys <span class="mono">${name}</span> in their place.`
-        }
+      <p
+        class="plan__note plan__note--warn"
+        id="import-switch-note"
+        data-testid="import-switch-note"
+      >
+        ${note}
       </p>
     </div>
   `;
