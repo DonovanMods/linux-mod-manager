@@ -573,9 +573,23 @@ export function Library({
         <button
           type="button"
           class="menu-item row-menu__item"
+          data-action="toggle-lock"
+          title=${
+            // issue 667: unlocking the collection's lock hands the mod to
+            // the user - said on the action itself, before the click.
+            row.locked && row.locked_by_collection
+              ? "The collection will no longer manage this mod's version; update checks include it again"
+              : undefined
+          }
           onClick=${() => toggleLock(row)}
         >
-          ${row.locked ? "Unlock" : "Lock"}
+          ${
+            row.locked
+              ? row.locked_by_collection
+                ? "Unlock (leave the collection)"
+                : "Unlock"
+              : "Lock"
+          }
         </button>
         ${
           // issue 418: the per-row half of "is this mod OK?". Verify is the

@@ -30,6 +30,8 @@ import {
   markConflictsKnown as apiMarkConflictsKnown,
   unmarkConflictsKnown as apiUnmarkConflictsKnown,
   unskipModUpdate as apiUnskipModUpdate,
+  skipAllUpdates as apiSkipAllUpdates,
+  unskipAllUpdates as apiUnskipAllUpdates,
   clearModLock as apiClearModLock,
   setModUpdatePolicy as apiSetModUpdatePolicy,
   setModConvert as apiSetModConvert,
@@ -2531,6 +2533,30 @@ async function setConflictsKnown(call, body) {
   await reload("conflicts", "/api/v1/conflicts");
 }
 
+/** skipAllUpdates/unskipAllUpdates are issue 667's Skip all and Unskip
+ * all: issue 542's skip for every offered update at once, and its undo. The
+ * report is re-read, as for one skip, since only the server decides which
+ * rows move. */
+async function skipAllUpdates() {
+  const { game, profile } = store.get().route;
+  const result = await apiSkipAllUpdates({ game, profile });
+  await Promise.all([
+    reload("updates", "/api/v1/updates"),
+    reload("mods", "/api/v1/mods"),
+  ]);
+  return result;
+}
+
+async function unskipAllUpdates() {
+  const { game, profile } = store.get().route;
+  const result = await apiUnskipAllUpdates({ game, profile });
+  await Promise.all([
+    reload("updates", "/api/v1/updates"),
+    reload("mods", "/api/v1/mods"),
+  ]);
+  return result;
+}
+
 async function refreshAfterUpdateSkip(sourceID, modID) {
   const route = store.get().route;
   if (route.view === "mod") {
@@ -3427,6 +3453,8 @@ const actions = {
   setModCategory,
   skipModUpdate,
   unskipModUpdate,
+  skipAllUpdates,
+  unskipAllUpdates,
   clearOrigin,
   dismissToast,
   // pushToast is exposed directly (I1, unit 6 fix wave): the row menu's own

@@ -2329,6 +2329,12 @@ a.row-menu__item.mod-page-link {
   border-radius: var(--radius);
 }
 
+/* issue 667: the collection-lock note under the Locked box, on a line of
+ * its own in the wrapping settings row. */
+.slide-over__settings > .form-hint {
+  flex-basis: 100%;
+}
+
 /* The category editor (issue 592): field, Save, Clear on one line, and
  * where the category comes from on its own line under them. */
 .slide-over__category {
