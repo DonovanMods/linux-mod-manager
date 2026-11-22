@@ -383,7 +383,7 @@ function SkippedUpdates({ rows, actions }) {
  * origin both morph into whichever job either started - and while this
  * line is on Mission Control, a job started from the profiles modal would
  * finish inline here instead of as the toast its own control's closing
- * promises (#673: the line now shows for every collection profile). */
+ * promises (issue 673: the line now shows for every collection profile). */
 function collectionUpdateOrigin(profile) {
   return `updates:${profile}:collection-update`;
 }
