@@ -610,6 +610,23 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #668: one known (intended) conflict, a directed mod pair.
+			"known_conflict",
+			domain.KnownConflict{Winner: "nexusmods:200", Loser: "nexusmods:100", Origin: domain.KnownConflictCollection},
+		},
+		{
+			// #668: an exported profile carries its known conflicts, so a
+			// snapshot restores them; absent when there are none.
+			"exported_profile_known_conflicts",
+			domain.ExportedProfile{
+				Name: "default", GameID: "cyberpunk2077",
+				KnownConflicts: domain.KnownConflicts{
+					{Winner: "nexusmods:200", Loser: "nexusmods:100", Origin: domain.KnownConflictCollection},
+					{Winner: "nexusmods:300", Loser: "nexusmods:200", Origin: domain.KnownConflictUser},
+				},
+			},
+		},
+		{
 			// #621: the collection format's portable game identity.
 			"collection_game",
 			domain.CollectionGame{

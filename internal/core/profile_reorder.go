@@ -117,36 +117,11 @@ func (s *Service) ResolveReorder(ctx context.Context, game *domain.Game, profile
 	var newRefs []domain.ModReference
 	seen := make(map[string]bool)
 	for _, id := range ids {
-		var ref domain.ModReference
-		var key string
-		if strings.Contains(id, ":") {
-			key = id
-			var ok bool
-			ref, ok = byKey[key]
-			if !ok {
-				return nil, fmt.Errorf("mod %s %w", id, ErrModNotInProfile)
-			}
-		} else {
-			// Look up by ModID only; ambiguous if multiple sources have this ModID
-			var matches []string
-			for k, r := range byKey {
-				if r.ModID == id {
-					matches = append(matches, k)
-				}
-			}
-			switch len(matches) {
-			case 0:
-				return nil, fmt.Errorf("mod %s %w", id, ErrModNotInProfile)
-			case 1:
-				key = matches[0]
-				ref = byKey[key]
-			default:
-				// Ruling 4 (#298): matches are "sourceID:modID" keys sharing
-				// the same modID, so sorting the keys sorts by source ID.
-				sort.Strings(matches)
-				return nil, fmt.Errorf("%w %s (use source:modid): %s", ErrAmbiguousModID, id, strings.Join(matches, ", "))
-			}
+		key, err := resolveModIdentifier(byKey, id)
+		if err != nil {
+			return nil, err
 		}
+		ref := byKey[key]
 		if seen[key] {
 			continue
 		}
@@ -166,4 +141,36 @@ func (s *Service) ResolveReorder(ctx context.Context, game *domain.Game, profile
 	}
 
 	return newRefs, nil
+}
+
+// resolveModIdentifier resolves one user-supplied mod identifier -
+// "source:modid", or a bare mod ID that names exactly one of byKey's mods -
+// to its domain.ModKey: ResolveReorder's rule, shared with the known
+// conflict marks (#668). Errors: ErrModNotInProfile, and ErrAmbiguousModID
+// naming the candidate keys.
+func resolveModIdentifier(byKey map[string]domain.ModReference, id string) (string, error) {
+	if strings.Contains(id, ":") {
+		if _, ok := byKey[id]; !ok {
+			return "", fmt.Errorf("mod %s %w", id, ErrModNotInProfile)
+		}
+		return id, nil
+	}
+	// Look up by ModID only; ambiguous if multiple sources have this ModID
+	var matches []string
+	for k, r := range byKey {
+		if r.ModID == id {
+			matches = append(matches, k)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("mod %s %w", id, ErrModNotInProfile)
+	case 1:
+		return matches[0], nil
+	default:
+		// Ruling 4 (#298): matches are "sourceID:modID" keys sharing
+		// the same modID, so sorting the keys sorts by source ID.
+		sort.Strings(matches)
+		return "", fmt.Errorf("%w %s (use source:modid): %s", ErrAmbiguousModID, id, strings.Join(matches, ", "))
+	}
 }

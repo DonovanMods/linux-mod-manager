@@ -330,6 +330,11 @@ type collectionState struct {
 	// because the pinned one was gone to that pin (#657), by domain.ModKey:
 	// the saved profile records it on each (ModReference.SubstitutedFor).
 	substituted map[string]*domain.CollectionPin
+	// knownConflicts are the profile's known conflicts (#668), which no
+	// document carries: a collection update keeps the profile's own, and
+	// recomputes the collection's after its apply
+	// (markCollectionConflicts). None at an import.
+	knownConflicts domain.KnownConflicts
 }
 
 // applyTo sets c's state on profile; a nil c sets nothing.
@@ -340,6 +345,7 @@ func (c *collectionState) applyTo(profile *domain.Profile) {
 	profile.Collection, profile.External = c.collection, c.external
 	profile.Plugins = c.plugins.Clone()
 	profile.LoadOrders = c.loadOrders.Clone()
+	profile.KnownConflicts = c.knownConflicts.Clone()
 	for i := range profile.Mods {
 		ref := &profile.Mods[i]
 		key := domain.ModKey(ref.SourceID, ref.ModID)
@@ -366,6 +372,7 @@ func (c *collectionState) finish(profile *domain.Profile) {
 		b.Plugins = c.baseline.Plugins.Clone()
 		b.LoadOrders = c.baseline.LoadOrders.Clone()
 		b.Skipped = slices.Clone(c.baseline.Skipped)
+		b.KnownConflicts = c.baseline.KnownConflicts.Clone()
 	}
 	b.Overrides = overrideHashes(profile.Overrides)
 	// An empty baseline is kept, not dropped: it says the collection
@@ -771,6 +778,13 @@ func (s *Service) ApplyCollectionImport(ctx context.Context, game *domain.Game, 
 		return result, err
 	}
 	result.BundledSkipped = bundledSkipped
+	if !result.Refused {
+		// #668: the collection's own conflicts are intended.
+		if release, oerr := s.beginOp(ctx); oerr == nil {
+			s.noteCollectionConflicts(ctx, game, result.ProfileName, nil, false, &result.Warnings)
+			release()
+		}
+	}
 	if terr := s.recordCollectionTodos(ctx, game, result, held); terr != nil && err == nil {
 		err = terr
 	}

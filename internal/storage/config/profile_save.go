@@ -30,7 +30,7 @@ const profileBackupSuffix = ".bak"
 // A key an in-place save adds goes after the nearest key before it in this
 // order, so a file lmm wrote stays exactly as a whole write would have it.
 var (
-	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins", "load_orders", "collection_baseline"}
+	profileKeys = []string{"name", "game_id", "mods", "link_method", "is_default", "hooks", "overrides", "collection", "external", "plugins", "load_orders", "known_conflicts", "collection_baseline"}
 	refKeys     = []string{"source_id", "mod_id", "version", "file_ids", "locked", "disabled", "category", "mod_type", "fomod", "fomod_files", "fomod_order", "from_collection", "substituted_for", "todo", "file_list", "patches"}
 )
 
@@ -54,17 +54,18 @@ type profileFileHooksYAML struct {
 // ProfileConfig's keys, in its order, with the hooks written as
 // profileFileHooksYAML.
 type profileFileYAML struct {
-	Name       string                          `yaml:"name"`
-	GameID     string                          `yaml:"game_id"`
-	Mods       []ModReferenceConfig            `yaml:"mods"`
-	LinkMethod string                          `yaml:"link_method,omitempty"`
-	IsDefault  bool                            `yaml:"is_default,omitempty"`
-	Hooks      profileFileHooksYAML            `yaml:"hooks,omitempty"`
-	Overrides  overridesYAML                   `yaml:"overrides,omitempty"`
-	Collection *domain.CollectionInfo          `yaml:"collection,omitempty"`
-	External   []domain.CollectionExternalItem `yaml:"external,omitempty"`
-	Plugins    *ProfilePluginsConfig           `yaml:"plugins,omitempty"`
-	LoadOrders domain.FileLoadOrders           `yaml:"load_orders,omitempty"`
+	Name           string                          `yaml:"name"`
+	GameID         string                          `yaml:"game_id"`
+	Mods           []ModReferenceConfig            `yaml:"mods"`
+	LinkMethod     string                          `yaml:"link_method,omitempty"`
+	IsDefault      bool                            `yaml:"is_default,omitempty"`
+	Hooks          profileFileHooksYAML            `yaml:"hooks,omitempty"`
+	Overrides      overridesYAML                   `yaml:"overrides,omitempty"`
+	Collection     *domain.CollectionInfo          `yaml:"collection,omitempty"`
+	External       []domain.CollectionExternalItem `yaml:"external,omitempty"`
+	Plugins        *ProfilePluginsConfig           `yaml:"plugins,omitempty"`
+	LoadOrders     domain.FileLoadOrders           `yaml:"load_orders,omitempty"`
+	KnownConflicts domain.KnownConflicts           `yaml:"known_conflicts,omitempty"`
 	// CollectionBaseline is #613's, last.
 	CollectionBaseline *CollectionBaselineConfig `yaml:"collection_baseline,omitempty"`
 }
@@ -87,6 +88,7 @@ func profileFileOf(profile *domain.Profile) profileFileYAML {
 		External:           externalOrNil(profile.External),
 		Plugins:            pluginsConfigOf(profile.Plugins),
 		LoadOrders:         profile.LoadOrders.Clone(),
+		KnownConflicts:     profile.KnownConflicts.Clone(),
 		CollectionBaseline: baselineConfigOf(profile.CollectionBaseline),
 	}
 	// Only write link_method if explicitly set: String() never returns "", so
@@ -564,6 +566,13 @@ func editProfileDocument(base []byte, fromName string, want *domain.Profile, ren
 			return nil, err
 		}
 	}
+	if !haveProfile.KnownConflicts.Equal(want.KnownConflicts) {
+		if err := e.setTopBlock("known_conflicts", struct {
+			KnownConflicts domain.KnownConflicts `yaml:"known_conflicts,omitempty"`
+		}{want.KnownConflicts.Clone()}); err != nil {
+			return nil, err
+		}
+	}
 	if !sameBaseline(haveProfile.CollectionBaseline, want.CollectionBaseline) {
 		if err := e.setTopBlock("collection_baseline", struct {
 			CollectionBaseline *CollectionBaselineConfig `yaml:"collection_baseline,omitempty"`
@@ -600,7 +609,7 @@ func sameProfile(a, b *domain.Profile) bool {
 		a.Hooks != b.Hooks || a.HooksExplicit != b.HooksExplicit ||
 		!sameOverrides(a.Overrides, b.Overrides) ||
 		!a.Collection.Equal(b.Collection) || !slices.Equal(a.External, b.External) ||
-		!a.Plugins.Equal(b.Plugins) || !a.LoadOrders.Equal(b.LoadOrders) || !sameBaseline(a.CollectionBaseline, b.CollectionBaseline) {
+		!a.Plugins.Equal(b.Plugins) || !a.LoadOrders.Equal(b.LoadOrders) || !a.KnownConflicts.Equal(b.KnownConflicts) || !sameBaseline(a.CollectionBaseline, b.CollectionBaseline) {
 		return false
 	}
 	return sameRefs(refConfigsOf(a.Mods), b.Mods)

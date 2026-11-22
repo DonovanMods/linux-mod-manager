@@ -83,6 +83,7 @@ func (s *Service) DuplicateProfile(ctx context.Context, gameID, source, newName 
 	dup.Collection = duplicateCollection(profile.Collection)
 	dup.Plugins = profile.Plugins.Clone()
 	dup.LoadOrders = profile.LoadOrders.Clone()
+	dup.KnownConflicts = profile.KnownConflicts.Clone()
 
 	err = completeProfileWrite(ctx, func(ctx context.Context) error {
 		if err := pm.save(&dup); err != nil {

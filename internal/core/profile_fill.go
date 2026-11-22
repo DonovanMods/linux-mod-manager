@@ -928,6 +928,10 @@ func (s *Service) ApplyProfileFill(ctx context.Context, game *domain.Game, plan 
 	}
 	defer release()
 	result, err := s.applyProfileFill(ctx, game, plan, opts, sink)
+	if result.Installed+result.Recorded > 0 {
+		// #668: the pairs the installed collection mods bring.
+		s.noteCollectionConflicts(ctx, game, plan.Profile, nil, false, &result.Warnings)
+	}
 	s.takeCaptureWarnings(game.ID, OpProfileFill, ImportNote, &result.Warnings, nil)
 	if err == nil && result.Failed > 0 {
 		err = &ProfileFillIncompleteError{Profile: plan.Profile, Result: result}

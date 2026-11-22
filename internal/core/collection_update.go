@@ -1033,6 +1033,10 @@ func updateTarget(plan *CollectionUpdatePlan, base *domain.Profile, c updateChoi
 	// #657: a skipped mod the update brings back is no longer skipped.
 	target.CollectionBaseline.Skipped = slices.Clone(plan.skips)
 	b, hasBase := baselineOf(base)
+	// #668: the collection's last known pairs stay the base until the
+	// apply recomputes them against the new version
+	// (markCollectionConflicts).
+	target.CollectionBaseline.KnownConflicts = b.KnownConflicts.Clone()
 	target.LoadOrders, _ = mergeLoadOrders(base.LoadOrders, b.LoadOrders, plan.doc.LoadOrders, hasBase, c.overrides)
 	var heldBack []RestrictedOverride
 	target.Overrides, heldBack = mergeCollectionOverrides(plan, base, c, target.CollectionBaseline)
@@ -1159,7 +1163,8 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		}
 	}
 	ip.collectionState = &collectionState{collection: target.Collection, external: target.External, plugins: target.Plugins,
-		loadOrders: target.LoadOrders, fromCollection: marks, baseline: target.CollectionBaseline, substituted: substituted}
+		loadOrders: target.LoadOrders, fromCollection: marks, baseline: target.CollectionBaseline, substituted: substituted,
+		knownConflicts: target.KnownConflicts}
 	// #609: the new version's recorded installer choices replay only
 	// against the curator's archive, as at an import - a substitute's
 	// against the gone pin's (#657).
@@ -1277,6 +1282,12 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		}
 		result.Removed = append(result.Removed, key)
 	}
+	// #668: the new version's own conflicts, under its order.
+	order := make([]domain.ModReference, 0, len(targetPlan.doc.Items))
+	for _, item := range targetPlan.doc.Items {
+		order = append(order, item.Ref)
+	}
+	s.noteCollectionConflicts(ctx, game, plan.Profile, order, true, &result.Warnings)
 	if plan.Origin == CollectionFromSource && plan.Version > 0 && plan.NewVersion != plan.Version {
 		if w := s.dropCollectionRevision(ctx, game, plan.SourceID, plan.Slug, plan.Version); w != "" {
 			result.Warnings = append(result.Warnings, w)

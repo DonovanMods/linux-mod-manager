@@ -52,6 +52,11 @@ type Profile struct {
 	// archives). Absent from every document of a profile without one.
 	LoadOrders FileLoadOrders `json:"load_orders,omitempty"`
 
+	// KnownConflicts are the mod pairs whose file conflict the profile
+	// marks as intended (#668). Absent from every document of a profile
+	// without one.
+	KnownConflicts KnownConflicts `json:"known_conflicts,omitempty"`
+
 	// CollectionBaseline is what the profile's collection last applied
 	// beyond its mod entries (#613): the base a collection update merges
 	// the profile's plugin list and overrides against, so it can tell the
@@ -80,6 +85,11 @@ type CollectionBaseline struct {
 	// the profile, and kept out by a collection update unless the user
 	// takes the collection's new pin for one.
 	Skipped []CollectionSkip
+	// KnownConflicts are the pairs the collection last marked known
+	// (#668): the base a collection update merges the profile's
+	// collection-origin entries against, so a pair the user unmarked stays
+	// unmarked.
+	KnownConflicts KnownConflicts
 }
 
 // CollectionPin is a collection's pin of one mod (#657): the version and
@@ -123,7 +133,7 @@ type CollectionSkip struct {
 
 // IsZero reports whether b records nothing.
 func (b *CollectionBaseline) IsZero() bool {
-	return b == nil || (b.Plugins.IsZero() && len(b.Overrides) == 0 && b.LoadOrders.IsZero() && len(b.Skipped) == 0)
+	return b == nil || (b.Plugins.IsZero() && len(b.Overrides) == 0 && b.LoadOrders.IsZero() && len(b.Skipped) == 0 && len(b.KnownConflicts) == 0)
 }
 
 // FindRef returns a pointer into p.Mods for the reference matching
@@ -192,4 +202,8 @@ type ExportedProfile struct {
 	// LoadOrders are the profile's file load orders (#620), carried so a
 	// snapshot restores them; absent for a profile without one.
 	LoadOrders FileLoadOrders `json:"load_orders,omitempty"`
+
+	// KnownConflicts are the profile's known conflicts (#668), carried so
+	// a snapshot restores them; absent for a profile without any.
+	KnownConflicts KnownConflicts `json:"known_conflicts,omitempty"`
 }

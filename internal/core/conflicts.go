@@ -28,6 +28,14 @@ type ConflictModRef struct {
 // flags a conflict whose DB owner disagrees with the load-order winner (the
 // profile was reordered - or historically, deploy order was nondeterministic
 // - since the last deploy), meaning a redeploy would change which file wins.
+//
+// Known (#668) says the conflict is intended: the profile's known_conflicts
+// list marks LoadOrderWinner over every other provider of the path - each
+// pair (LoadOrderWinner, provider), in that direction. One provider the
+// list does not cover in that direction leaves the path unknown, and so
+// does a reorder that makes another provider the winner: the marks record
+// who was meant to win. Stale is independent of it - a known conflict can
+// still need a redeploy.
 type ProfileConflict struct {
 	// Path is relative to Root, in slash form.
 	Path string `json:"path"`
@@ -39,6 +47,7 @@ type ProfileConflict struct {
 	AlsoIn          []ConflictModRef  `json:"also_in"`
 	LoadOrderWinner ConflictModRef    `json:"load_order_winner"`
 	Stale           bool              `json:"stale"`
+	Known           bool              `json:"known"`
 }
 
 // ConflictReport is the document `lmm conflicts` (and serve) renders:
@@ -143,52 +152,30 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 		return ConflictModRef{Key: key, Name: name}
 	}
 
-	// Collect every path each enabled mod PROVIDES (its cache manifest) and
-	// which mods provide it. A mod with no cache entry contributes nothing.
-	gameCache := s.GetGameCache(game)
-	// #353: one adapter resolution for the whole sweep - a games.yaml
-	// naming an adapter this build does not ship is a config error worth
-	// surfacing here rather than per mod. The refusal is returned as the
-	// typed *AdapterRefusedError (#455): which mod wins a path is a
-	// question about the layout, and a refused game has none, so there is
-	// no partial answer worth giving instead.
-	gameAdapter, err := s.AdapterFor(game)
+	fileToKeys, err := s.conflictProviders(ctx, game, enabled)
 	if err != nil {
 		return nil, err
-	}
-	fileToKeys := make(map[domain.DeployPath][]string)
-	for _, m := range enabled {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		files, err := deployableFiles(gameCache, gameAdapter, game, modCacheKey(game.ID, m.Mod), m.ModType)
-		if err != nil {
-			// A missing cache entry (e.g. manually deleted) just means the mod
-			// provides nothing; any OTHER read failure (permissions, corruption)
-			// would silently under-report conflicts if skipped, so it aborts.
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return nil, fmt.Errorf("listing cache files for %s: %w", domain.ModKey(m.SourceID, m.ID), err)
-		}
-		key := domain.ModKey(m.SourceID, m.ID)
-		for _, f := range files {
-			fileToKeys[f.path] = append(fileToKeys[f.path], key)
-		}
 	}
 
 	// Load order: position in orderByProfile's ordering (unlisted providers
 	// first sorted by key, then profile.Mods order; last = winner). A
 	// load-failed profile degrades to nil, per the doc comment above.
-	profile, err := s.NewProfileManager().Get(ctx, game.ID, profileName)
+	saved, err := s.NewProfileManager().Get(ctx, game.ID, profileName)
 	if err != nil {
-		profile = nil
+		saved = nil
 	}
+	profile := saved
 	if order != nil {
 		// The proposed-order preview: an in-memory stand-in whose Mods are
 		// the order being previewed. Only orderByProfile reads it, and it
 		// reads nothing but Mods.
 		profile = &domain.Profile{Name: profileName, GameID: game.ID, Mods: order}
+	}
+	// #668: the marks are the saved profile's whichever order is asked
+	// about, so a preview that flips a winner shows its pair unknown.
+	var known domain.KnownConflicts
+	if saved != nil {
+		known = saved.KnownConflicts
 	}
 	orderIndex := make(map[string]int, len(enabled))
 	for i, m := range orderByProfile(profile, enabled) {
@@ -232,6 +219,7 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 			AlsoIn:          alsoIn,
 			LoadOrderWinner: ref(winnerKey),
 			Stale:           ownerKey != winnerKey,
+			Known:           pathKnown(known, winnerKey, keys),
 		})
 	}
 
@@ -242,4 +230,57 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 		return conflicts[i].Path < conflicts[j].Path
 	})
 	return conflicts, nil
+}
+
+// conflictProviders maps every deploy path one of mods PROVIDES (its cache
+// manifest) to the mods providing it (domain.ModKey), in mods' order.
+func (s *Service) conflictProviders(ctx context.Context, game *domain.Game, mods []domain.InstalledMod) (map[domain.DeployPath][]string, error) {
+	// Collect every path each enabled mod PROVIDES (its cache manifest) and
+	// which mods provide it. A mod with no cache entry contributes nothing.
+	gameCache := s.GetGameCache(game)
+	// #353: one adapter resolution for the whole sweep - a games.yaml
+	// naming an adapter this build does not ship is a config error worth
+	// surfacing here rather than per mod. The refusal is returned as the
+	// typed *AdapterRefusedError (#455): which mod wins a path is a
+	// question about the layout, and a refused game has none, so there is
+	// no partial answer worth giving instead.
+	gameAdapter, err := s.AdapterFor(game)
+	if err != nil {
+		return nil, err
+	}
+	fileToKeys := make(map[domain.DeployPath][]string)
+	for _, m := range mods {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		files, err := deployableFiles(gameCache, gameAdapter, game, modCacheKey(game.ID, m.Mod), m.ModType)
+		if err != nil {
+			// A missing cache entry (e.g. manually deleted) just means the mod
+			// provides nothing; any OTHER read failure (permissions, corruption)
+			// would silently under-report conflicts if skipped, so it aborts.
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("listing cache files for %s: %w", domain.ModKey(m.SourceID, m.ID), err)
+		}
+		key := domain.ModKey(m.SourceID, m.ID)
+		for _, f := range files {
+			fileToKeys[f.path] = append(fileToKeys[f.path], key)
+		}
+	}
+	return fileToKeys, nil
+}
+
+// pathKnown reports whether known marks winner over each other of keys (a
+// path's providers, winner among them): the whole path intended (#668).
+func pathKnown(known domain.KnownConflicts, winner string, keys []string) bool {
+	if len(known) == 0 {
+		return false
+	}
+	for _, k := range keys {
+		if k != winner && !known.Has(winner, k) {
+			return false
+		}
+	}
+	return true
 }

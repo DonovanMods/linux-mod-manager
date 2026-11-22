@@ -50,6 +50,9 @@ type ProfileConfig struct {
 	// LoadOrders is #620's file load orders; omitempty, so a file without
 	// one is unchanged.
 	LoadOrders domain.FileLoadOrders `yaml:"load_orders,omitempty"`
+	// KnownConflicts is #668's list of mod pairs whose file conflict is
+	// intended; omitempty, so a file without one is unchanged.
+	KnownConflicts domain.KnownConflicts `yaml:"known_conflicts,omitempty"`
 	// CollectionBaseline is #613's record of what the profile's collection
 	// last applied (domain.Profile.CollectionBaseline); omitempty, so a file
 	// without one is unchanged.
@@ -66,6 +69,9 @@ type CollectionBaselineConfig struct {
 	// their pinned file was gone. Omitted when none, so a file without it
 	// is unchanged.
 	Skipped []domain.CollectionSkip `yaml:"skipped,omitempty"`
+	// KnownConflicts is #668's: the pairs the collection last marked
+	// known. Omitted when none.
+	KnownConflicts domain.KnownConflicts `yaml:"known_conflicts,omitempty"`
 }
 
 // baselineFromConfig is the domain baseline c records; nil records none.
@@ -80,6 +86,7 @@ func baselineFromConfig(c *CollectionBaselineConfig) *domain.CollectionBaseline 
 		b.Overrides = maps.Clone(c.Overrides)
 	}
 	b.Skipped = cloneSkips(c.Skipped)
+	b.KnownConflicts = c.KnownConflicts.Clone()
 	return b
 }
 
@@ -109,6 +116,7 @@ func baselineConfigOf(b *domain.CollectionBaseline) *CollectionBaselineConfig {
 		out.Overrides = maps.Clone(b.Overrides)
 	}
 	out.Skipped = cloneSkips(b.Skipped)
+	out.KnownConflicts = b.KnownConflicts.Clone()
 	return out
 }
 
@@ -122,7 +130,7 @@ func sameBaseline(a, b *domain.CollectionBaseline) bool {
 		slices.EqualFunc(a.Skipped, b.Skipped, func(x, y domain.CollectionSkip) bool {
 			return x.SourceID == y.SourceID && x.ModID == y.ModID && x.Pin.Version == y.Pin.Version && slices.Equal(x.Pin.FileIDs, y.Pin.FileIDs) &&
 				x.Declined == y.Declined
-		})
+		}) && a.KnownConflicts.Equal(b.KnownConflicts)
 }
 
 // ModReferenceConfig is the YAML representation of a mod reference.
@@ -381,6 +389,7 @@ func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.P
 	}
 	profile.Plugins = pluginsFromConfig(cfg.Plugins)
 	profile.LoadOrders = cfg.LoadOrders.Clone()
+	profile.KnownConflicts = cfg.KnownConflicts.Clone()
 	profile.CollectionBaseline = baselineFromConfig(cfg.CollectionBaseline)
 
 	if len(cfg.Overrides) > 0 {
@@ -506,6 +515,9 @@ func SnapshotProfileValue(profile *domain.Profile) *domain.ExportedProfile {
 		External:      profile.External,
 		Plugins:       profile.Plugins.Clone(),
 		LoadOrders:    profile.LoadOrders.Clone(),
+		// #668: the known conflicts travel with the profile's mods - a
+		// snapshot restores them, and `profile export --json` shows them.
+		KnownConflicts: profile.KnownConflicts.Clone(),
 	}
 }
 
@@ -607,15 +619,16 @@ func ProfileFromExported(exported *domain.ExportedProfile) *domain.Profile {
 		return nil
 	}
 	profile := &domain.Profile{
-		Name:          exported.Name,
-		GameID:        exported.GameID,
-		Mods:          exported.Mods,
-		Hooks:         exported.Hooks,
-		HooksExplicit: exported.HooksExplicit,
-		Collection:    collectionOrNil(exported.Collection),
-		External:      exported.External,
-		Plugins:       exported.Plugins.Clone(),
-		LoadOrders:    exported.LoadOrders.Clone(),
+		Name:           exported.Name,
+		GameID:         exported.GameID,
+		Mods:           exported.Mods,
+		Hooks:          exported.Hooks,
+		HooksExplicit:  exported.HooksExplicit,
+		Collection:     collectionOrNil(exported.Collection),
+		External:       exported.External,
+		Plugins:        exported.Plugins.Clone(),
+		LoadOrders:     exported.LoadOrders.Clone(),
+		KnownConflicts: exported.KnownConflicts.Clone(),
 	}
 	// LinkMethod is only carried when it was EXPLICIT: ExportProfileValue
 	// writes it as "" otherwise, and turning "" into a phantom symlink

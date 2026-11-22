@@ -15,5 +15,6 @@
     "key": "nexusmods:42",
     "name": "Sample ENB"
   },
-  "stale": false
+  "stale": false,
+  "known": false
 }
