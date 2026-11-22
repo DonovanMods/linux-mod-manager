@@ -182,7 +182,7 @@ func TestClient_GetLatestUpdated_NonOK(t *testing.T) {
 
 	_, err := client.GetLatestUpdated(context.Background(), "starrupture")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "API error (status 500)")
+	assert.Contains(t, err.Error(), "NexusMods answered HTTP 500", "retried, then said plainly (#671)")
 }
 
 func TestClient_GetLatestUpdated_MalformedJSON(t *testing.T) {
@@ -235,7 +235,7 @@ func TestClient_GetTrending_NonOK(t *testing.T) {
 
 	_, err := client.GetTrending(context.Background(), "starrupture")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "API error (status 500)")
+	assert.Contains(t, err.Error(), "NexusMods answered HTTP 500", "retried, then said plainly (#671)")
 }
 
 func TestClient_GetTrending_MalformedJSON(t *testing.T) {

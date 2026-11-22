@@ -214,7 +214,7 @@ func (n *NexusMods) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.
 
 	fileList, err := n.client.GetModFiles(ctx, mod.GameID, modID)
 	if err != nil {
-		return nil, fmt.Errorf("getting mod files: %w", err)
+		return nil, err // already "getting mod files: ..." (#671: it was said twice)
 	}
 
 	files := make([]domain.DownloadableFile, len(fileList.Files))
@@ -268,7 +268,7 @@ func (n *NexusMods) Changelog(ctx context.Context, sourceGameID, modID, version 
 
 	fileList, err := n.client.GetModFiles(ctx, sourceGameID, id)
 	if err != nil {
-		return "", fmt.Errorf("getting mod files: %w", err)
+		return "", err // already "getting mod files: ..."
 	}
 
 	primary := ""

@@ -33,6 +33,12 @@ type Client struct {
 	rest       *httpclient.Client
 	graphqlURL string
 
+	// retry is httpClient's transport: every request this client sends,
+	// REST and GraphQL alike, is retried through it (#671), and holds is
+	// the throttle and quota holds it keeps.
+	retry *httpclient.RetryTransport
+	holds *httpclient.MemoryHolds
+
 	// apiKey is read and written only under keyMu (#601): lmm serve
 	// re-keys a live source (SetAPIKey) while requests are in flight.
 	keyMu  sync.RWMutex
@@ -103,9 +109,12 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
+	httpClient, retry, holds := newRetryingClient(httpClient)
 
 	return &Client{
 		httpClient: httpClient,
+		retry:      retry,
+		holds:      holds,
 		rest: httpclient.New(httpclient.Options{
 			HTTPClient:  httpClient,
 			BaseURL:     defaultBaseURL,
@@ -188,7 +197,7 @@ func (c *Client) validate(ctx context.Context, key string) (v validateResponse, 
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return v, fmt.Errorf("executing request: %w", err)
+		return v, requestFailed(err)
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); err == nil && cerr != nil {
@@ -246,9 +255,40 @@ func (c *Client) AccountTier(ctx context.Context) (source.Tier, error) {
 }
 
 // doRequest performs an authenticated REST request and JSON-decodes the response.
-// Thin wrapper around httpclient.Client.DoJSON, kept for callsite stability.
+// Thin wrapper around httpclient.Client.DoJSON, kept for callsite stability;
+// a throttle the retries could not outlast is said in its own words
+// (throttleError), not as "executing request to <path>".
 func (c *Client) doRequest(ctx context.Context, method, path string, result interface{}) error {
-	return c.rest.DoJSON(ctx, method, path, result)
+	err := c.rest.DoJSON(ctx, method, path, result)
+	if throttled := throttleError(err); throttled != nil {
+		return throttled
+	}
+	return err
+}
+
+// throttleError is err's throttle, when the retrying transport gave up on
+// one (#671): a *httpclient.StatusError ("NexusMods rate limit: try again in
+// 30s ...") or a *source.RetryLaterError (a hold). Both already name
+// NexusMods and say when to come back, so the request path and the
+// transport's own wrapping only bury that. nil for any other error.
+func throttleError(err error) error {
+	var status *httpclient.StatusError
+	if errors.As(err, &status) {
+		return status
+	}
+	var later *source.RetryLaterError
+	if errors.As(err, &later) {
+		return later
+	}
+	return nil
+}
+
+// requestFailed words a request that got no usable answer.
+func requestFailed(err error) error {
+	if throttled := throttleError(err); throttled != nil {
+		return throttled
+	}
+	return fmt.Errorf("executing request: %w", err)
 }
 
 // apiStatusError is a REST endpoint's non-2xx answer with the status kept
@@ -611,7 +651,7 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category str
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
+		return nil, requestFailed(err)
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); err == nil && cerr != nil {
@@ -751,7 +791,7 @@ func (c *Client) GetModRequirements(ctx context.Context, gameDomain string, modI
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
+		return nil, requestFailed(err)
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); err == nil && cerr != nil {

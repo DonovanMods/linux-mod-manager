@@ -108,14 +108,15 @@ func TestNexusMods_AccountTier_CachedForTheSession(t *testing.T) {
 	assert.Equal(t, int32(2), hits.Load())
 }
 
-// A failed check is not remembered: the next call asks again.
+// A failed check is not remembered: the next call asks again. Each call is
+// maxAttempts requests: a 5xx is retried (#671).
 func TestNexusMods_AccountTier_FailureIsNotCached(t *testing.T) {
 	nm, hits := tierServer(t, validatePath, http.StatusInternalServerError, []byte(`{"message":"boom"}`))
 	_, err := nm.AccountTier(context.Background())
 	require.Error(t, err)
 	_, err = nm.AccountTier(context.Background())
 	require.Error(t, err)
-	assert.Equal(t, int32(2), hits.Load())
+	assert.Equal(t, int32(2*maxAttempts), hits.Load())
 }
 
 func TestNexusMods_AccountTier_RejectedKeyIsAuthRequired(t *testing.T) {

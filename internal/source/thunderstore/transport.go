@@ -41,10 +41,7 @@
 package thunderstore
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"math/rand/v2"
 	"net/http"
 	"strings"
 	"time"
@@ -82,9 +79,11 @@ const (
 	breakerCooldown = 5 * time.Minute
 )
 
-// retryTransport retries a throttled (429) or failing (5xx, or no answer
-// at all) request with exponential backoff and jitter, and refuses to dial
-// at all while the host is held (hold.go).
+// retryTransport is the shared retrying transport (httpclient.RetryTransport,
+// #671 lifted it from here) over this host's holds: it retries a throttled
+// (429) or failing (5xx, or no answer at all) request with exponential
+// backoff and jitter, and refuses to dial at all while the host is held
+// (hold.go).
 //
 // Every wait it is about to sit through, and every refusal, is reported as
 // a source.Notice on the request's context (#436), so a frontend can say
@@ -98,17 +97,23 @@ const (
 // Everything this package sends is an idempotent, bodiless GET, so
 // re-sending one is safe by construction.
 type retryTransport struct {
-	base http.RoundTripper
-	now  func() time.Time
-	// sleep waits out one backoff, or returns the request context's error
-	// the moment the caller gives up. GO.md's context-threading rule: with
-	// maxRetryAfter at a minute and two retries, a Ctrl-C during a cold
-	// index build (or a closed browser tab) could otherwise wait out two
-	// minutes of sleeping before the cancellation was observed. Injectable
-	// so the tests assert the backoff POLICY without spending it.
-	sleep func(context.Context, time.Duration) error
+	*httpclient.RetryTransport
 	// holds is the persisted hold state, shared with the index build.
 	holds *holdStore
+}
+
+// retryPolicy is Thunderstore's numbers (see the package doc) and its
+// wording: an exhausted request is ErrIndexUnavailable.
+var retryPolicy = httpclient.RetryPolicy{
+	Service:       serviceName,
+	MaxAttempts:   maxAttempts,
+	BaseBackoff:   baseBackoff,
+	MaxBackoff:    maxBackoff,
+	MaxRetryAfter: maxRetryAfter,
+	MaxHold:       maxHold,
+	Exhausted: func(last error, _ int) error {
+		return fmt.Errorf("%w: %w", ErrIndexUnavailable, last)
+	},
 }
 
 func newRetryTransport(base http.RoundTripper, now func() time.Time, holds *holdStore) *retryTransport {
@@ -118,98 +123,45 @@ func newRetryTransport(base http.RoundTripper, now func() time.Time, holds *hold
 	if holds == nil {
 		holds = newHoldStore("", now)
 	}
-	return &retryTransport{base: base, now: now, sleep: retrySleep, holds: holds}
+	return &retryTransport{
+		RetryTransport: &httpclient.RetryTransport{
+			Base: base, Policy: retryPolicy, Holds: hostHolds{holds}, Now: now, Sleep: retrySleep,
+		},
+		holds: holds,
+	}
 }
 
-// retrySleep is the sleep every new retryTransport takes: sleepCtx. A var
-// only so the package's external tests can build a Source whose retries
-// skip their backoff (SkipRetryBackoffForTest, #576); it is read once, at
+// retrySleep is the sleep every new retryTransport takes. A var only so the
+// package's external tests can build a Source whose retries skip their
+// backoff (SkipRetryBackoffForTest, #576); it is read once, at
 // construction, so a test's change never reaches a transport already built.
-var retrySleep = sleepCtx
+var retrySleep = httpclient.SleepContext
 
-// RoundTrip implements http.RoundTripper.
-func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	ctx := req.Context()
-	if held, _, open := t.holds.active(""); open {
-		source.Notify(ctx, source.Notice{Kind: source.NoticeSuspended, Source: serviceName, Until: held.Until})
-		return nil, &source.RetryLaterError{Source: serviceName, Until: held.Until, Reason: held.Reason}
-	}
-	community := communityOfPath(req.URL.Path)
+// hostHolds is the holdStore as the shared transport's HoldKeeper: the
+// host's scope for a hold, and the request's community named in a failure,
+// so a hold the host trips says which game's index the last failure was
+// fetching (T3 review F9).
+type hostHolds struct{ store *holdStore }
 
-	var lastErr error
-	// named is the server-named wait this request has already sat
-	// through. maxRetryAfter bounds the TOTAL, not each wait (T3 review
-	// F8): two Retry-After: 60 answers used to hold a search silent for
-	// two minutes.
-	var named time.Duration
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		resp, err := t.base.RoundTrip(req)
-		retry := source.Notice{Kind: source.NoticeRetry, Source: serviceName, Attempt: attempt + 1, MaxAttempts: maxAttempts}
-		var hint time.Duration
-		switch {
-		case err != nil:
-			if ctx.Err() != nil {
-				// The caller gave up: not an upstream failure, and nothing
-				// to retry or count against the host.
-				return nil, err
-			}
-			lastErr = err
-			retry.Reason, retry.Err = source.RetryNetworkError, err
-			if errors.Is(err, httpclient.ErrStalled) {
-				retry.Reason = source.RetryStalled
-			}
-		case retryableStatus(resp.StatusCode):
-			lastErr = statusFailure(resp.StatusCode)
-			retry.Reason, retry.Status, retry.Err = retryReason(resp.StatusCode), resp.StatusCode, lastErr
-			hint = retryAfter(resp, t.now())
-			// Closed so the connection can be released before the retry.
-			// Not drained: an unread 429/5xx body means the connection is
-			// not returned to the pool, which is the right trade for an
-			// error response whose size lmm has no reason to trust.
-			_ = resp.Body.Close()
-			if hint > maxRetryAfter-named {
-				held := t.holds.named("", t.now().Add(hint), fmt.Sprintf("%v, which asked lmm to wait %s", lastErr, hint))
-				return nil, &source.RetryLaterError{Source: serviceName, Until: held.Until, Reason: held.Reason}
-			}
-			if attempt == maxAttempts {
-				t.failed(lastErr, community)
-				if hint > 0 {
-					// Out of attempts is not out of obligation: the time the
-					// server named still holds for the next request.
-					t.holds.named("", t.now().Add(hint), fmt.Sprintf("%v, which asked lmm to wait %s", lastErr, hint))
-				}
-				return nil, fmt.Errorf("%w: %w after %d attempts", ErrIndexUnavailable, lastErr, maxAttempts)
-			}
-		default:
-			t.holds.succeeded("")
-			return resp, nil
-		}
-
-		if attempt == maxAttempts {
-			break
-		}
-		retry.Wait = backoffFor(attempt, hint)
-		named += hint
-		source.Notify(ctx, retry)
-		if err := t.sleep(ctx, retry.Wait); err != nil {
-			return nil, err
-		}
-	}
-
-	t.failed(lastErr, community)
-	return nil, lastErr
+func (h hostHolds) Active(*http.Request) (source.Hold, bool) {
+	held, _, open := h.store.active("")
+	return source.Hold{Source: serviceName, Until: held.Until, Reason: held.Reason}, open
 }
 
-// failed records one exhausted request against the host, naming the
-// community it was for: a hold the host trips then says which game's index
-// the last failure was fetching (T3 review F9).
-func (t *retryTransport) failed(err error, community string) {
+func (h hostHolds) Named(_ *http.Request, until time.Time, why string) source.Hold {
+	held := h.store.named("", until, why)
+	return source.Hold{Source: serviceName, Until: held.Until, Reason: held.Reason}
+}
+
+func (h hostHolds) Failed(req *http.Request, err error) {
 	why := err.Error()
-	if community != "" {
+	if community := communityOfPath(req.URL.Path); community != "" {
 		why = fmt.Sprintf("%s (fetching the %s index)", why, community)
 	}
-	t.holds.failed("", why)
+	h.store.failed("", why)
 }
+
+func (h hostHolds) Succeeded(*http.Request) { h.store.succeeded("") }
 
 // communityOfPath names the community a listing request is for, or "".
 func communityOfPath(path string) string {
@@ -222,68 +174,4 @@ func communityOfPath(path string) string {
 		return ""
 	}
 	return community
-}
-
-// statusFailure words a retryable status for the error a user finally sees.
-func statusFailure(status int) error {
-	if status == http.StatusTooManyRequests {
-		return fmt.Errorf("rate limited by %s (HTTP %d)", serviceName, status)
-	}
-	return fmt.Errorf("%s answered HTTP %d", serviceName, status)
-}
-
-// retryReason classifies a retryable status for a notice.
-func retryReason(status int) string {
-	if status == http.StatusTooManyRequests {
-		return source.RetryRateLimited
-	}
-	return source.RetryServerError
-}
-
-// sleepCtx is the production sleep: it waits out d, or gives up the moment
-// ctx is done and reports that instead. A cancelled backoff is the caller's
-// error, not an upstream failure, so it is returned rather than folded into
-// ErrIndexUnavailable and never counts toward the circuit breaker.
-func sleepCtx(ctx context.Context, d time.Duration) error {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// retryableStatus reports whether a status is worth trying again: a
-// throttle (429) or a server-side failure (5xx). A 4xx that is not 429 is
-// lmm's own request being wrong, and repeating it would only be rude. A 304
-// is a SUCCESS here - it is the answer a conditional GET is asking for.
-func retryableStatus(status int) bool {
-	return status == http.StatusTooManyRequests || status >= 500
-}
-
-// retryAfter reads a Retry-After header in either of its RFC 9110 forms,
-// capped at maxHold (httpclient.RetryAfter). Anything unparseable,
-// negative or already past yields 0 and lets the caller's own backoff
-// decide.
-func retryAfter(resp *http.Response, now time.Time) time.Duration {
-	return httpclient.RetryAfter(resp.Header.Get("Retry-After"), now, maxHold)
-}
-
-// backoffFor returns the wait before the next attempt.
-//
-// A server's own Retry-After is a FLOOR: coming back early is how a
-// throttled client gets throttled again, so the hint is waited in full and
-// the jitter only ever adds to it (a tenth, at most a second) to keep a
-// herd from returning in lockstep. Without a hint the wait is exponential
-// from baseBackoff, capped at maxBackoff, with full jitter over the lower
-// half so it is still bounded below by half the nominal delay.
-func backoffFor(attempt int, serverHint time.Duration) time.Duration {
-	if serverHint > 0 {
-		spread := min(serverHint/10, time.Second)
-		return serverHint + time.Duration(rand.Int64N(int64(spread)+1))
-	}
-	d := min(baseBackoff<<(attempt-1), maxBackoff)
-	return d/2 + time.Duration(rand.Int64N(int64(d/2)+1))
 }
