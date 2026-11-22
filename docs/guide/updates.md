@@ -32,6 +32,19 @@ appears when the check finishes. The verify behind the **Health** card
 shows the same kind of line ("Verifying 42 mods…"). Switching game or
 profile shows these lines too, under the new profile's own library.
 
+### Mods that haven't changed
+
+lmm remembers what it found the last time it checked each mod. When the
+mod's site can say which mods changed since then, lmm asks it once for the
+whole game and checks only those mods again. NexusMods can say this. The
+rest are answered from the last check: still up to date, or the same update
+still waiting. A big profile's check is then a few requests instead of
+hundreds.
+
+The check says how many it answered that way, for example "340 mods
+unchanged since the last check, not asked again". **Check for updates**,
+and `lmm update --refresh`, ask about every mod.
+
 In the terminal:
 
 ```bash

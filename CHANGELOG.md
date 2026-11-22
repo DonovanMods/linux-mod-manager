@@ -1086,6 +1086,33 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Changed
 
+- **An update check and a verify fetch a mod's file list only when the mod
+  has changed (#672).** Every check used to ask NexusMods for each mod's
+  details and its file list, two requests per mod, every time. lmm now
+  remembers what it found for each installed mod. When the source can say
+  which mods changed since then, the rest are answered from that record:
+  up to date, or the update it found last time.
+  - NexusMods says so with one `updated.json` listing per game, the
+    shortest of a day, a week or a month that reaches back to the
+    least recently checked mod, as Vortex does. A mod last checked before
+    that is asked about alone, with one request that still saves its file
+    list.
+  - Verify's version check skips a mod whose recorded version it already
+    confirmed, unless the mod has changed. Its files are still checked
+    every time.
+  - Both frontends say how many: "340 mods unchanged since the last
+    check, not asked again". The CLI prints it after `lmm update` and
+    `lmm verify`. In the web UI it appears on the Updates card (or under
+    the cards) and in the Health card's coverage line. `--json` gains
+    `unchanged` and `version_unchanged` (additive).
+  - An explicit refresh asks about every mod: `lmm update --refresh`,
+    the new `lmm verify --refresh`, **Check for updates**, and
+    **Re-verify** (`GET /api/v1/health` gains `refresh=1`).
+  - The record lives in the database (migration 29, `mod_checks`), per
+    profile and per installed version and file set. It goes away with the
+    mod. A missing or unusable record only costs the fetch. Sources without
+    a change signal are checked as before.
+
 - **A large collection import no longer slows down as it goes (#661).**
   A profile import - a collection import or update included -
   `lmm profile finish` and `lmm profile fill` (and their web UI jobs) used

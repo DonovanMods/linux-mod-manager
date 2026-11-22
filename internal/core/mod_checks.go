@@ -19,6 +19,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -254,4 +255,19 @@ func (s *Service) recordVersion(ctx context.Context, game *domain.Game, mod doma
 	_ = checks.store.SaveModCheck(ctx, db.ModCheckVersion, game.ID, mod.ProfileName, db.ModCheck{
 		SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: mod.FileIDs, CheckedAt: at,
 	})
+}
+
+// UnchangedSummary is the sentence both frontends say about the n mods a
+// check answered from their record (#672) - UpdateCheckReport.Unchanged,
+// VerifyResult.VersionUnchanged - or "" for none. The web UI's Updates and
+// Health cards say the same words (internal/serve/spa/app/loading.js).
+func UnchangedSummary(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	mods := "mods"
+	if n == 1 {
+		mods = "mod"
+	}
+	return fmt.Sprintf("%d %s unchanged since the last check, not asked again", n, mods)
 }
