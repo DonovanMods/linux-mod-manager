@@ -1336,6 +1336,41 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Fixed
 
+- **NexusMods rate limits are waited out, said, and read as rate limits
+  (#671).** A verify of a large collection hit Cloudflare's error 1015 on
+  `api.nexusmods.com`, and every throttled request became a "could not
+  check version" row carrying the raw JSON. NexusMods requests, REST and
+  GraphQL alike, are now retried on a 429 or a 5xx: the wait a
+  `Retry-After` header names is honoured, and so is the `retry_after` in
+  Cloudflare's JSON body, which sends no header; otherwise lmm backs off
+  exponentially with jitter. A request makes at most three attempts and
+  waits at most two minutes in all. A longer wait is not slept through:
+  lmm holds off NexusMods until then, and a short hold is waited out
+  instead of failing every remaining mod. When NexusMods' quota headers
+  (`X-RL-Hourly-Remaining`, `X-RL-Daily-Remaining`) say both budgets are
+  spent, lmm sends nothing more until the hourly reset.
+  - The wait is said while it runs ("Rate limited by NexusMods; retrying
+    in 30s (attempt 2 of 3)."): on stderr in the terminal, on a job's
+    progress and in the tray in the web UI, and now on the Health card's
+    and the Updates card's loading line too, which are reads rather than
+    jobs (`read_progress` frames gain `notice`, additive).
+  - A throttle that outlasts the retries reads "NexusMods rate limit: try
+    again in 30s", and `lmm verify` prints "could not check version
+    (NexusMods rate limit: try again in 30s)" rather than "source
+    unreachable". The doubled "getting mod files: getting mod files:" is
+    gone.
+  - Verify no longer asks the source about a mod the profile's collection
+    locks, as the update check already doesn't (#667): the collection pins
+    its files, whose hashes verify still checks, and moves them itself.
+    `lmm verify` says how many it left to the collection, the Health card's
+    coverage line does too, and `--json` gains `collection_locked`
+    (additive).
+  - The retrying transport is now one shared piece
+    (`internal/source/httpclient`) under NexusMods, Thunderstore and Steam
+    Workshop. Steam Workshop honours a `Retry-After` as a floor rather than
+    halving it, holds off past 30 seconds rather than cutting the wait
+    short, and reports its waits like Thunderstore does.
+
 - **An import's switch keeps its progress step in a view opened late
   (#669).** The web UI showed a collection import's switch to its profile
   (#666) as its own step, with an indeterminate bar, only if a progress
