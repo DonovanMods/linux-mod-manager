@@ -181,6 +181,14 @@ func (d *DB) RelinkInstalledMod(ctx context.Context, oldSourceID, oldModID strin
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
+	// #672 review: what lmm last learned about the OLD mod is no answer
+	// about the one the row is relinked to. Forgotten before the key moves,
+	// so mod_checks' ON UPDATE CASCADE has nothing left to carry over.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM mod_checks WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?`,
+		oldSourceID, oldModID, mod.GameID, mod.ProfileName); err != nil {
+		return fmt.Errorf("forgetting the relinked mod's check records: %w", err)
+	}
+
 	// installed_mod_files has a foreign key without ON UPDATE CASCADE.
 	// Preserve checksums before replacing children during the relink.
 	checksums := make(map[string]sql.NullString)

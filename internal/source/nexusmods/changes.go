@@ -17,10 +17,15 @@
 // check as five minutes before it was made, "since the list is cached and
 // might be that outdated" - listingStaleness below.
 //
-// lmm differs in one place: a mod whose last check is older than any
-// listing reaches is not checked in full but asked about alone - its own
-// updated_time, one request that still saves the file list (#672's first
-// ask) - and checked in full only if that moved.
+// A mod whose last check is older than any listing reaches is checked in
+// full, as Vortex does. Answering it from the mod's own updated_time
+// instead (one request that would still save the file list) was tried and
+// measured against the live API on 2026-11-22 (#672 review): across seven
+// recently changed mods in two games updated_timestamp matched the newest
+// file's upload every time, but did not follow the mod's later activity -
+// one mod's listing showed activity 33 seconds after its upload that
+// updated_timestamp never reflected - so it cannot vouch for a change that
+// is not a file upload, such as the mod's version edited on its page.
 package nexusmods
 
 import (
@@ -41,8 +46,8 @@ const (
 	// this close before the check is still treated as after it.
 	changeSkew = 10 * time.Minute
 	// listingReach is the oldest check a listing answers for (Vortex's 28
-	// days, inside the month the longest period covers). An older check
-	// is answered by the mod's own updated time instead.
+	// days, inside the month the longest period covers). A mod checked
+	// before that is checked in full.
 	listingReach = 28 * 24 * time.Hour
 )
 
@@ -82,19 +87,18 @@ func (c *Client) GetUpdatedMods(ctx context.Context, gameDomain, period string) 
 
 // UnchangedSince implements source.ChangeTracker: the mods of gameID that
 // have not changed since lmm last checked them, from one updated-mods
-// listing for every mod checked within listingReach, and the mod's own
-// updated time for each one checked before that. A request that fails
-// answers nothing for the mods it was for - each is then checked in full,
-// which reports the failure - so the only error is the caller giving up.
+// listing for every mod checked within listingReach. A mod checked before
+// that is not answered, and so is checked in full. A listing that fails
+// answers nothing - each mod is then checked in full, which reports the
+// failure - so the only error is the caller giving up.
 func (n *NexusMods) UnchangedSince(ctx context.Context, gameID string, since map[string]time.Time) (map[string]time.Time, error) {
 	now := n.client.clock()
 	out := make(map[string]time.Time)
 	var oldest time.Time
-	var listed, alone []string
+	var listed []string
 	for id, at := range since {
 		if now.Sub(at)+changeSkew >= listingReach {
-			alone = append(alone, id)
-			continue
+			continue // too old for any listing: checked in full
 		}
 		listed = append(listed, id)
 		if oldest.IsZero() || at.Before(oldest) {
@@ -127,20 +131,5 @@ func (n *NexusMods) UnchangedSince(ctx context.Context, gameID string, since map
 		}
 	}
 
-	for _, id := range alone {
-		if err := ctx.Err(); err != nil {
-			return out, err
-		}
-		modID, err := strconv.Atoi(id)
-		if err != nil {
-			continue
-		}
-		data, err := n.client.GetMod(ctx, gameID, modID)
-		if err != nil || data.UpdatedTime.IsZero() || goneStatuses[data.Status] ||
-			!data.UpdatedTime.Before(since[id].Add(-changeSkew)) {
-			continue
-		}
-		out[id] = now
-	}
 	return out, ctx.Err()
 }

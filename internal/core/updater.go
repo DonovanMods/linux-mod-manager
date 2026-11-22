@@ -161,7 +161,7 @@ func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed
 		}
 		mods = rest
 		var checked checkedMods
-		ctx = checked.watch(ctx)
+		checkCtx := checked.watch(ctx)
 
 		var updates []domain.Update
 		// #269: a source that caches remote metadata gets told whether the
@@ -169,11 +169,11 @@ func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed
 		// way, so this branch replaces (rather than sits beside) the
 		// progress-reporter one for such a source.
 		if refresher, ok := src.(source.RefreshingUpdateChecker); ok {
-			updates, err = refresher.CheckUpdatesRefreshing(ctx, mods, opts.Refresh, progress)
+			updates, err = refresher.CheckUpdatesRefreshing(checkCtx, mods, opts.Refresh, progress)
 		} else if rep, ok := src.(source.UpdateProgressReporter); ok && progress != nil {
-			updates, err = rep.CheckUpdatesWithProgress(ctx, mods, progress)
+			updates, err = rep.CheckUpdatesWithProgress(checkCtx, mods, progress)
 		} else {
-			updates, err = src.CheckUpdates(ctx, mods)
+			updates, err = src.CheckUpdates(checkCtx, mods)
 		}
 		updates = sanitizeSourceUpdates(updates) // #594
 		allUpdates = append(allUpdates, updates...)

@@ -1094,9 +1094,10 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   up to date, or the update it found last time.
   - NexusMods says so with one `updated.json` listing per game, the
     shortest of a day, a week or a month that reaches back to the
-    least recently checked mod, as Vortex does. A mod last checked before
-    that is asked about alone, with one request that still saves its file
-    list.
+    least recently checked mod, as Vortex does. A mod last checked more
+    than 28 days ago is checked in full, as Vortex does too: a mod's own
+    `updated_time` follows its file uploads but not every change, so it
+    cannot stand in.
   - Verify's version check skips a mod whose recorded version it already
     confirmed, unless the mod has changed. Its files are still checked
     every time.
@@ -1109,8 +1110,9 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
     the new `lmm verify --refresh`, **Check for updates**, and
     **Re-verify** (`GET /api/v1/health` gains `refresh=1`).
   - The record lives in the database (migration 29, `mod_checks`), per
-    profile and per installed version and file set. It goes away with the
-    mod. A missing or unusable record only costs the fetch. Sources without
+    profile and per installed version and file set. It moves with a
+    renamed profile and goes away with the mod, or with a relink to
+    another mod. A missing or unusable record only costs the fetch. Sources without
     a change signal are checked as before.
 
 - **A large collection import no longer slows down as it goes (#661).**

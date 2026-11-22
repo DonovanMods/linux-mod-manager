@@ -23,7 +23,9 @@ const (
 // ModCheck is one mod_checks row: what lmm last learned about an installed
 // mod from its source, about the installed Version and FileIDs, as of
 // CheckedAt. Result is the update check's answer (the update found as JSON,
-// "" for up to date); a version confirmation carries none.
+// "" for up to date); a version confirmation carries none. Logic is the
+// version of core's comparison that produced the answer: a core that
+// compares differently bumps it, and ignores every older record.
 type ModCheck struct {
 	SourceID  string
 	ModID     string
@@ -31,6 +33,7 @@ type ModCheck struct {
 	FileIDs   []string
 	CheckedAt time.Time
 	Result    string
+	Logic     int
 }
 
 // SaveModCheck records rec for kind, replacing what was recorded. It fails
@@ -42,9 +45,9 @@ func (d *DB) SaveModCheck(ctx context.Context, kind ModCheckKind, gameID, profil
 	}
 	if _, err := d.ExecContext(ctx, `
 		INSERT OR REPLACE INTO mod_checks
-			(kind, source_id, mod_id, game_id, profile_name, installed_version, installed_file_ids, checked_at, result)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		string(kind), rec.SourceID, rec.ModID, gameID, profileName, rec.Version, string(files), formatTime(rec.CheckedAt), rec.Result,
+			(kind, source_id, mod_id, game_id, profile_name, installed_version, installed_file_ids, checked_at, result, logic_version)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		string(kind), rec.SourceID, rec.ModID, gameID, profileName, rec.Version, string(files), formatTime(rec.CheckedAt), rec.Result, rec.Logic,
 	); err != nil {
 		return fmt.Errorf("recording %s's %s check: %w", domain.ModKey(rec.SourceID, rec.ModID), kind, err)
 	}
@@ -56,7 +59,7 @@ func (d *DB) SaveModCheck(ctx context.Context, kind ModCheckKind, gameID, profil
 // lmm cannot use is one it does not have.
 func (d *DB) ModChecks(ctx context.Context, kind ModCheckKind, gameID, profileName string) (map[string]ModCheck, error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT source_id, mod_id, installed_version, installed_file_ids, checked_at, result
+		SELECT source_id, mod_id, installed_version, installed_file_ids, checked_at, result, logic_version
 		FROM mod_checks WHERE kind = ? AND game_id = ? AND profile_name = ?`,
 		string(kind), gameID, profileName)
 	if err != nil {
@@ -68,7 +71,7 @@ func (d *DB) ModChecks(ctx context.Context, kind ModCheckKind, gameID, profileNa
 	for rows.Next() {
 		var rec ModCheck
 		var files, at string
-		if err := rows.Scan(&rec.SourceID, &rec.ModID, &rec.Version, &files, &at, &rec.Result); err != nil {
+		if err := rows.Scan(&rec.SourceID, &rec.ModID, &rec.Version, &files, &at, &rec.Result, &rec.Logic); err != nil {
 			return nil, fmt.Errorf("scanning %s checks: %w", kind, err)
 		}
 		var ok bool

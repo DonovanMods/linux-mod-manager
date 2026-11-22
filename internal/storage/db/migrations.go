@@ -841,9 +841,12 @@ func migrateV28(ctx context.Context, q migrationExec) error {
 // rather than fetching its file list again.
 //
 // A cache: a missing or stale row only costs that fetch. Keyed like
-// installed_mods and removed with its row, so an uninstalled mod leaves
-// nothing behind; an answer about another installed version or file set
-// is never used (core compares Version and FileIDs).
+// installed_mods, removed with its row and renamed with it (a profile
+// rename moves its records; a relink forgets them, RelinkInstalledMod), so
+// an uninstalled mod leaves nothing behind; an answer about another
+// installed version or file set is never used (core compares Version and
+// FileIDs), nor one recorded by another logic_version of core's
+// comparison (#672 review).
 func migrateV29(ctx context.Context, d migrationExec) error {
 	_, err := d.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS mod_checks (
@@ -856,10 +859,11 @@ func migrateV29(ctx context.Context, d migrationExec) error {
 			installed_file_ids TEXT NOT NULL,
 			checked_at DATETIME NOT NULL,
 			result TEXT NOT NULL DEFAULT '',
+			logic_version INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (kind, source_id, mod_id, game_id, profile_name),
 			FOREIGN KEY (source_id, mod_id, game_id, profile_name)
 				REFERENCES installed_mods(source_id, mod_id, game_id, profile_name)
-				ON DELETE CASCADE
+				ON DELETE CASCADE ON UPDATE CASCADE
 		)
 	`)
 	return err

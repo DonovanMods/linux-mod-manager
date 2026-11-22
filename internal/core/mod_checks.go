@@ -52,10 +52,18 @@ type recordedUpdate struct {
 	FileIDReplacements map[string]string `json:"file_id_replacements,omitempty"`
 }
 
-// recordAbout reports whether rec was made about mod as it is installed now:
-// the same version and the same file IDs.
+// modCheckLogic is the version of the comparison a record's answer came
+// from (#672 review): the update check's file-replacement and version
+// rules, and verify's confirmation. Bump it when either changes how it
+// answers, and every record made before is ignored - checked in full once
+// and recorded again - rather than kept until its mod changes, a refresh,
+// or the 28 days after which a source asks about the mod alone.
+const modCheckLogic = 1
+
+// recordAbout reports whether rec was made about mod as it is installed now
+// - the same version and the same file IDs - by this logic.
 func recordAbout(rec db.ModCheck, mod domain.InstalledMod) bool {
-	return rec.Version == mod.Version && slices.Equal(rec.FileIDs, mod.FileIDs)
+	return rec.Logic == modCheckLogic && rec.Version == mod.Version && slices.Equal(rec.FileIDs, mod.FileIDs)
 }
 
 // unchanged asks tracker which of mods - one source's, with their source
@@ -194,7 +202,7 @@ func (c *modChecks) recordUpdates(ctx context.Context, sourceID string, mods []d
 			result = string(data)
 		}
 		_ = c.store.SaveModCheck(ctx, db.ModCheckUpdate, c.gameID, mod.ProfileName, db.ModCheck{
-			SourceID: sourceID, ModID: mod.ID, Version: mod.Version, FileIDs: mod.FileIDs, CheckedAt: at, Result: result,
+			SourceID: sourceID, ModID: mod.ID, Version: mod.Version, FileIDs: mod.FileIDs, CheckedAt: at, Result: result, Logic: modCheckLogic,
 		})
 	}
 }
@@ -253,14 +261,14 @@ func (s *Service) recordVersion(ctx context.Context, game *domain.Game, mod doma
 		return
 	}
 	_ = checks.store.SaveModCheck(ctx, db.ModCheckVersion, game.ID, mod.ProfileName, db.ModCheck{
-		SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: mod.FileIDs, CheckedAt: at,
+		SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: mod.FileIDs, CheckedAt: at, Logic: modCheckLogic,
 	})
 }
 
 // UnchangedSummary is the sentence both frontends say about the n mods a
 // check answered from their record (#672) - UpdateCheckReport.Unchanged,
 // VerifyResult.VersionUnchanged - or "" for none. The web UI's Updates and
-// Health cards say the same words (internal/serve/spa/app/loading.js).
+// Health cards say the same words (internal/serve/spa/app/unchanged.js).
 func UnchangedSummary(n int) string {
 	if n <= 0 {
 		return ""

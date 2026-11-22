@@ -2104,13 +2104,12 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 	started := time.Now()
 	var unchanged map[string]bool
 	if !r.opts.Refresh {
-		candidates := installedMods
-		if r.opts.ModFilter != "" {
-			candidates = nil
-			for _, mod := range installedMods {
-				if mod.ID == r.opts.ModFilter {
-					candidates = append(candidates, mod)
-				}
+		// Only the mods the loop below would ask about (#672 review): a
+		// skipped mod's record must cost no request either.
+		var candidates []domain.InstalledMod
+		for _, mod := range installedMods {
+			if r.versionAskable(mod, prof) {
+				candidates = append(candidates, mod)
 			}
 		}
 		unchanged = r.svc.unchangedVersions(r.ctx, r.game, candidates)
@@ -2126,23 +2125,12 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		if r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter {
 			continue
 		}
-		// Nothing to check against: local imports and mods adopted in place
-		// (#516) have no source to query, and a mod with no recorded file IDs predates
-		// even the buggy stamping this check exists to catch.
-		// #269: an external mod has no source file list to check a recorded
-		// version against - and no lmm-owned cache entry a repair could act
-		// on. Its own check is externalPresencePass.
-		if mod.SourceID == domain.SourceLocal || mod.AdoptedInPlace || mod.External || len(mod.FileIDs) == 0 {
+		if !versionCheckable(*mod) {
 			continue
 		}
 
 		ref := prof.FindRef(mod.SourceID, mod.ID)
-		// #671: a mod the profile's collection locks is the collection's -
-		// its files pinned, with the hashes the checksum walk checks, and
-		// moved only by a collection sync - so its source is not asked,
-		// as #667 never asks the update check. On a large collection these
-		// requests were the burst NexusMods throttled.
-		if ref != nil && ref.Locked && ref.FromCollection {
+		if collectionLockedRef(ref) {
 			r.result.CollectionLocked++
 			continue
 		}
@@ -2360,4 +2348,36 @@ func sourceWaitReason(err error) string {
 		return fmt.Sprintf("lmm is not asking %s again until %s", later.Source, at)
 	}
 	return ""
+}
+
+// versionCheckable reports whether the version pass has anything to check
+// mod's recorded version against. Local imports and mods adopted in place
+// (#516) have no source to query, and a mod with no recorded file IDs
+// predates even the buggy stamping this check exists to catch. #269: an
+// external mod has no source file list to check a recorded version against
+// - and no lmm-owned cache entry a repair could act on. Its own check is
+// externalPresencePass.
+func versionCheckable(mod domain.InstalledMod) bool {
+	return mod.SourceID != domain.SourceLocal && !mod.AdoptedInPlace && !mod.External && len(mod.FileIDs) > 0
+}
+
+// collectionLockedRef reports whether ref is locked on its collection's
+// behalf (#671): such a mod is the collection's - its files pinned, with
+// the hashes the checksum walk checks, and moved only by a collection sync
+// - so the version pass does not ask its source, as #667 never asks the
+// update check. On a large collection these requests were the burst
+// NexusMods throttled.
+func collectionLockedRef(ref *domain.ModReference) bool {
+	return ref != nil && ref.Locked && ref.FromCollection
+}
+
+// versionAskable reports whether the version pass would ask mod's source
+// about it: the filter names it, it is checkable, and its collection does
+// not lock it. The record is consulted for exactly these mods (#672
+// review), so a mod the pass skips anyway costs no request.
+func (r *verifyRun) versionAskable(mod domain.InstalledMod, prof *domain.Profile) bool {
+	if r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter {
+		return false
+	}
+	return versionCheckable(mod) && !collectionLockedRef(prof.FindRef(mod.SourceID, mod.ID))
 }

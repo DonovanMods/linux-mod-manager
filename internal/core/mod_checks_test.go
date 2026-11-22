@@ -17,6 +17,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // trackingSource is a source with a change signal: it checks mods one by
@@ -28,6 +29,7 @@ type trackingSource struct {
 	checked   []string // mods whose update was checked in full
 	listed    []string // mods whose file list verify fetched
 	asked     int      // UnchangedSince calls
+	sinceIDs  []string // every mod UnchangedSince was asked about
 	changed   map[string]bool
 	failTrack bool
 }
@@ -61,6 +63,9 @@ func (s *trackingSource) UnchangedSince(_ context.Context, _ string, since map[s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.asked++
+	for id := range since {
+		s.sinceIDs = append(s.sinceIDs, id)
+	}
 	out := map[string]time.Time{}
 	if s.failTrack {
 		return out, nil
@@ -230,4 +235,46 @@ func TestUpdateCheck_AnsweredModsStillTickTheProgress(t *testing.T) {
 	assert.Equal(t, 1, ticks[0].GlobalIndex)
 	assert.Equal(t, 2, ticks[0].GlobalTotal)
 	assert.Equal(t, 2, ticks[0].Total)
+}
+
+// TestVerify_AModThePassSkipsIsNotAskedAbout (#672 review): the record is
+// consulted only for the mods the version pass would ask about - a
+// collection-locked mod with a record costs no request, not even a source's
+// per-mod fallback.
+func TestVerify_AModThePassSkipsIsNotAskedAbout(t *testing.T) {
+	svc, game, src := newTrackingService(t)
+	ctx := context.Background()
+	full := core.VerifyOptions{Tier: core.VerifyFull, Force: true}
+	_, err := svc.VerifyForTest(ctx, game, "default", full, nil)
+	require.NoError(t, err)
+
+	prof, err := svc.NewProfileManager().Get(ctx, game.ID, "default")
+	require.NoError(t, err)
+	prof.Collection = &domain.CollectionInfo{ID: "c", Version: 1, Title: "C"}
+	prof.Mods = []domain.ModReference{
+		{SourceID: "tsrc", ModID: "same", Version: "1.0", FileIDs: []string{"f1"}, Locked: true, FromCollection: true},
+		{SourceID: "tsrc", ModID: "upd", Version: "1.0", FileIDs: []string{"f1"}},
+	}
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), prof))
+	src.sinceIDs = nil
+
+	result, err := svc.VerifyForTest(ctx, game, "default", full, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"upd"}, src.sinceIDs, "the collection's mod is not asked about")
+	assert.Equal(t, 1, result.CollectionLocked)
+	assert.Equal(t, 1, result.VersionUnchanged)
+}
+
+// TestUpdateCheck_ARecordFromAnotherLogicVersionIsNotUsed (#672 review): a
+// record made by a different version of core's comparison is ignored, so a
+// change to how lmm answers does not keep old answers alive.
+func TestUpdateCheck_ARecordFromAnotherLogicVersionIsNotUsed(t *testing.T) {
+	svc, game, src := newTrackingService(t)
+	trackingCheck(t, svc, game, core.UpdateCheckOptions{})
+	require.NoError(t, svc.ExecForTest(context.Background(), `UPDATE mod_checks SET logic_version = 0 WHERE mod_id = 'same'`))
+	src.reset()
+
+	report := trackingCheck(t, svc, game, core.UpdateCheckOptions{})
+	assert.Equal(t, []string{"same"}, src.checked)
+	assert.Equal(t, 1, report.Unchanged)
 }

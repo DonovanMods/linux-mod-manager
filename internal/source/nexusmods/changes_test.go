@@ -114,25 +114,33 @@ func TestUnchangedSince_ThePeriodCoversTheOldestCheck(t *testing.T) {
 	}
 }
 
-func TestUnchangedSince_AnOldCheckIsAnsweredByTheModsOwnUpdatedTime(t *testing.T) {
-	c := &changesServer{modUpdated: map[int]time.Time{
-		4: changesNow.Add(-60 * 24 * time.Hour), // last changed before its check
-		5: changesNow.Add(-24 * time.Hour),      // changed since
-	}}
+// TestUnchangedSince_AnOldCheckIsCheckedInFull: a mod last checked before
+// any listing reaches is not answered - and so is checked in full, as
+// Vortex does - because the mod's own updated_time does not follow every
+// change (#672 review spike: it moves with a file upload, not with later
+// page activity).
+func TestUnchangedSince_AnOldCheckIsCheckedInFull(t *testing.T) {
+	c := &changesServer{modUpdated: map[int]time.Time{4: changesNow.Add(-60 * 24 * time.Hour)}}
 	nm := newChangesSource(t, c)
-	since := map[string]time.Time{
-		"4": changesNow.Add(-40 * 24 * time.Hour),
-		"5": changesNow.Add(-40 * 24 * time.Hour),
-		"6": changesNow.Add(-40 * 24 * time.Hour), // gone: checked in full, which reports it
-	}
 
-	got, err := nm.UnchangedSince(context.Background(), "skyrim", since)
+	got, err := nm.UnchangedSince(context.Background(), "skyrim", map[string]time.Time{"4": changesNow.Add(-40 * 24 * time.Hour)})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]time.Time{"4": changesNow}, got)
-	for _, p := range c.asked() {
-		assert.NotContains(t, p, "updated.json", "no listing reaches back forty days")
-		assert.NotContains(t, p, "files", "and no file list is fetched")
-	}
+	assert.Empty(t, got)
+	assert.Empty(t, c.asked(), "no listing reaches back forty days, and the mod's own page is no answer")
+}
+
+func TestUnchangedSince_OnlyTheRecentChecksShareTheListing(t *testing.T) {
+	c := &changesServer{}
+	nm := newChangesSource(t, c)
+	got, err := nm.UnchangedSince(context.Background(), "skyrim", map[string]time.Time{
+		"1": changesNow.Add(-2 * time.Hour),
+		"2": changesNow.Add(-40 * 24 * time.Hour),
+	})
+	require.NoError(t, err)
+	assert.Contains(t, got, "1")
+	assert.NotContains(t, got, "2")
+	assert.Equal(t, []string{"/v1/games/skyrim/mods/updated.json?period=1d"}, c.asked(),
+		"the period is the recent check's, not stretched to the old one")
 }
 
 func TestUnchangedSince_AFailedListingAnswersNothing(t *testing.T) {

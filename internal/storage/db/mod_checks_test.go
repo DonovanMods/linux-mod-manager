@@ -34,7 +34,7 @@ func TestModChecks_RecordReadTouchAndCascade(t *testing.T) {
 	at := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
 
 	require.NoError(t, database.SaveModCheck(ctx, db.ModCheckUpdate, "g1", "default", db.ModCheck{
-		SourceID: "nexusmods", ModID: "1", Version: "1.0", FileIDs: []string{"f1"}, CheckedAt: at, Result: `{"new_version":"2.0"}`,
+		SourceID: "nexusmods", ModID: "1", Version: "1.0", FileIDs: []string{"f1"}, CheckedAt: at, Result: `{"new_version":"2.0"}`, Logic: 3,
 	}))
 	require.NoError(t, database.SaveModCheck(ctx, db.ModCheckVersion, "g1", "default", db.ModCheck{
 		SourceID: "nexusmods", ModID: "1", Version: "1.0", FileIDs: []string{"f1"}, CheckedAt: at,
@@ -51,6 +51,7 @@ func TestModChecks_RecordReadTouchAndCascade(t *testing.T) {
 	assert.Equal(t, []string{"f1"}, one.FileIDs)
 	assert.True(t, at.Equal(one.CheckedAt))
 	assert.JSONEq(t, `{"new_version":"2.0"}`, one.Result)
+	assert.Equal(t, 3, one.Logic)
 	assert.Empty(t, got["nexusmods:2"].Result, "up to date")
 
 	later := at.Add(time.Hour)
@@ -76,4 +77,55 @@ func TestModChecks_RecordReadTouchAndCascade(t *testing.T) {
 
 	assert.Error(t, database.SaveModCheck(ctx, db.ModCheckUpdate, "g1", "default", db.ModCheck{SourceID: "nexusmods", ModID: "9", CheckedAt: at}),
 		"no record for a mod that is not installed")
+}
+
+// newCheckedDB is a database with mod "1" installed in g1/default and an
+// update record for it.
+func newCheckedDB(t *testing.T) (*db.DB, time.Time) {
+	t.Helper()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	seedCheckMod(t, database, "1")
+	at := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, database.SaveModCheck(context.Background(), db.ModCheckUpdate, "g1", "default", db.ModCheck{
+		SourceID: "nexusmods", ModID: "1", Version: "1.0", FileIDs: []string{"f1"}, CheckedAt: at,
+	}))
+	return database, at
+}
+
+// TestModChecks_AProfileRenameKeepsItsRecords (#672 review): the record's
+// foreign key used to cascade on delete only, so renaming a profile with a
+// record failed with FOREIGN KEY constraint failed. The records move with
+// the profile.
+func TestModChecks_AProfileRenameKeepsItsRecords(t *testing.T) {
+	database, at := newCheckedDB(t)
+	ctx := context.Background()
+
+	require.NoError(t, database.RenameProfile(ctx, "g1", "default", "renamed"))
+
+	moved, err := database.ModChecks(ctx, db.ModCheckUpdate, "g1", "renamed")
+	require.NoError(t, err)
+	require.Contains(t, moved, "nexusmods:1")
+	assert.True(t, at.Equal(moved["nexusmods:1"].CheckedAt))
+	left, err := database.ModChecks(ctx, db.ModCheckUpdate, "g1", "default")
+	require.NoError(t, err)
+	assert.Empty(t, left)
+}
+
+// TestModChecks_ARelinkForgetsTheOldIdentitysRecord (#672 review): a relink
+// with a record failed the same way. It succeeds, and the record - about
+// the mod the row used to be - does not follow it.
+func TestModChecks_ARelinkForgetsTheOldIdentitysRecord(t *testing.T) {
+	database, _ := newCheckedDB(t)
+	ctx := context.Background()
+
+	require.NoError(t, database.RelinkInstalledMod(ctx, "nexusmods", "1", &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "2", SourceID: "nexusmods", Name: "Moved", Version: "1.0", GameID: "g1"},
+		ProfileName: "default", Enabled: true, FileIDs: []string{"f1"}, UpdatePolicy: domain.UpdateNotify,
+	}))
+
+	got, err := database.ModChecks(ctx, db.ModCheckUpdate, "g1", "default")
+	require.NoError(t, err)
+	assert.Empty(t, got, "neither the old ID's record nor a copy under the new one")
 }
