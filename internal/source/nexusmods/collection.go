@@ -330,6 +330,7 @@ type collectionLatestRevisionResponse struct {
 		CollectionRevision *struct {
 			RevisionNumber int `json:"revisionNumber"`
 			Collection     struct {
+				Slug string `json:"slug"`
 				Game struct {
 					DomainName string `json:"domainName"`
 				} `json:"game"`
@@ -379,6 +380,9 @@ func (n *NexusMods) LatestCollectionRevision(ctx context.Context, gameSourceID, 
 	}
 	if d := rev.Collection.Game.DomainName; d != "" && d != gameSourceID {
 		return 0, fmt.Errorf("%w: NexusMods says collection %s is for %s, not %s", source.ErrInvalidReference, slug, d, gameSourceID)
+	}
+	if got := rev.Collection.Slug; got != "" && got != slug {
+		return 0, fmt.Errorf("%w: NexusMods answered for collection %s, not %s", source.ErrInvalidReference, got, slug)
 	}
 	return rev.RevisionNumber, nil
 }

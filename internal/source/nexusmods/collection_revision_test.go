@@ -79,6 +79,8 @@ func TestLatestCollectionRevision_Refusals(t *testing.T) {
 			_, _ = io.WriteString(w, `{"errors":[{"message":"Collection not found","extensions":{"code":"NOT_FOUND"}}],"data":null}`)
 		case "other":
 			_, _ = io.WriteString(w, `{"data":{"collectionRevision":{"revisionNumber":2,"collection":{"slug":"other","game":{"domainName":"fallout4"}}}}}`)
+		case "asked":
+			_, _ = io.WriteString(w, `{"data":{"collectionRevision":{"revisionNumber":2,"collection":{"slug":"answered","game":{"domainName":"skyrimspecialedition"}}}}}`)
 		default:
 			_, _ = io.WriteString(w, `{"errors":[{"message":"boom"}],"data":null}`)
 		}
@@ -92,6 +94,8 @@ func TestLatestCollectionRevision_Refusals(t *testing.T) {
 	require.ErrorIs(t, err, source.ErrInvalidReference)
 	_, err = nm.LatestCollectionRevision(ctx, "skyrimspecialedition", "other")
 	require.ErrorIs(t, err, source.ErrInvalidReference, "a collection for another game is not this one")
+	_, err = nm.LatestCollectionRevision(ctx, "skyrimspecialedition", "asked")
+	require.ErrorIs(t, err, source.ErrInvalidReference, "an answer about another collection is not this one's revision")
 	_, err = nm.LatestCollectionRevision(ctx, "skyrimspecialedition", "broken")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "boom")

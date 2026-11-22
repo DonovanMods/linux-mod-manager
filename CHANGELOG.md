@@ -25,8 +25,14 @@ update` prints "Collection X: revision N available (installed M)" with
   does. One imported from a file has nowhere to ask, and a Steam Workshop
   collection records no collection revision; the line says which. The
   update report gains `collection_revision` (`name`, `origin`,
-  `installed`, `latest`, `available`, `checked`, `reason`, `error`,
-  `sync`), and NexusMods gains a `LatestCollectionRevision` source method.
+  `installed`, `installed_unknown`, `latest`, `available`, `checked`,
+  `reason`, `error`, `held_until`, `held_by`, `sync`), and NexusMods gains
+  a `LatestCollectionRevision` source method. When NexusMods is holding
+  requests, both frontends say until when ("NexusMods is holding requests
+  until 14:03; revision not checked"). The answer is kept for five minutes,
+  so opening pages doesn't re-ask; **Check for updates** (`lmm update
+--refresh`) asks again, and a collection update forgets it. A collection
+  you authored yourself (an exported profile) gets no line.
 
 - **Mark a conflict as intended (#668).** Two mods sharing a file is
   often the point: a collection's order exists so one of its mods replaces

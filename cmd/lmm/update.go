@@ -1608,15 +1608,6 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	return nil
 }
 
-// printSkipped notes the mods CheckUpdates filtered out, if any. No-op at zero
-// so the common case stays quiet.
-//
-// Pinned and local get separate lines because the remedies differ: a pin is a
-// reversible choice, a local mod has no remote and never will.
-//
-// Emits no leading blank line: when every mod is skipped this is the whole
-// output, and a leading newline would render as a stray blank first line.
-// Callers with preceding output add their own separator.
 // printCollectionRevision is #673's one line for a collection profile's
 // collection, checked as the update unit: a newer revision with the
 // command that takes it, up to date, or why it could not be asked. Silent
@@ -1629,8 +1620,15 @@ func printCollectionRevision(c *core.CollectionRevisionStatus, profile string) {
 	switch {
 	case c.Available:
 		fmt.Printf("Collection %s: revision %d available (installed %d) — %s updates it.\n", c.Name, c.Latest, c.Installed, sync)
+	case c.Checked && c.InstalledUnknown:
+		// #673 review: no installed revision recorded, nothing to compare.
+		fmt.Printf("Collection %s: latest revision %d (the installed revision isn't recorded) — %s compares them.\n", c.Name, c.Latest, sync)
 	case c.Checked:
 		fmt.Printf("Collection %s: up to date (revision %d).\n", c.Name, c.Latest)
+	case !c.HeldUntil.IsZero():
+		// #673 review: #671's hold, said with when it ends.
+		fmt.Printf("Collection %s: %s is holding requests until %s; revision not checked.\n",
+			c.Name, cmp.Or(c.HeldBy, "its source"), c.HeldUntil.Local().Format("15:04"))
 	case c.Error != "":
 		fmt.Printf("Collection %s: couldn't check for a new revision (%s) — %s checks it.\n", c.Name, c.Error, sync)
 	case c.Reason == core.CollectionUncheckedURL:
@@ -1642,6 +1640,15 @@ func printCollectionRevision(c *core.CollectionRevisionStatus, profile string) {
 	}
 }
 
+// printSkipped notes the mods CheckUpdates filtered out, if any. No-op at zero
+// so the common case stays quiet.
+//
+// Pinned and local get separate lines because the remedies differ: a pin is a
+// reversible choice, a local mod has no remote and never will.
+//
+// Emits no leading blank line: when every mod is skipped this is the whole
+// output, and a leading newline would render as a stray blank first line.
+// Callers with preceding output add their own separator.
 func printSkipped(skips core.UpdateSkips, profile string) {
 	if skips.Locked > 0 {
 		// #667: one line for every mod the collection locks - never a row

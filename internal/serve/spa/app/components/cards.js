@@ -398,8 +398,22 @@ function revisionSentence(r) {
   if (r.available) {
     return `${name}: revision ${r.latest} available (installed ${r.installed}).`;
   }
+  if (r.checked && r.installed_unknown) {
+    // issue 673 review: no installed revision recorded - nothing to compare.
+    return `${name}: latest revision ${r.latest} (the installed revision isn't recorded).`;
+  }
   if (r.checked) return `${name}: up to date (revision ${r.latest}).`;
-  if (r.error) return `${name}: couldn't check for a new revision.`;
+  if (r.held_until) {
+    // issue 671's hold, said in the reader's clock - visible text, not a
+    // tooltip, so a keyboard or screen-reader user reads it too.
+    const until = new Date(r.held_until).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    return `${name}: ${r.held_by || "its source"} is holding requests until ${until}; revision not checked.`;
+  }
+  if (r.error)
+    return `${name}: couldn't check for a new revision (${r.error}).`;
   if (r.reason === "url") {
     return `${name}: lmm can't check its address for a new version automatically.`;
   }
@@ -415,6 +429,7 @@ function revisionState(r) {
   if (!r) return "locked";
   if (r.available) return "available";
   if (r.checked) return "current";
+  if (r.held_until) return "held";
   return r.error ? "error" : "unchecked";
 }
 
@@ -453,7 +468,6 @@ function CollectionLockNote({
     class=${quiet ? "skipped-updates" : "card__meta"}
     data-testid="updates-collection-locked"
     data-state=${revisionState(revision)}
-    title=${revision?.error || undefined}
   >
     ${text}${" "}
     ${
@@ -742,9 +756,13 @@ function UpdatesCard({
     });
   }
 
+  // issue 673 review: a newer collection revision is an update too, so a
+  // card brought up by it alone never reads "Updates (0)".
+  const updateCount = rows.length + (revision?.available ? 1 : 0);
+
   return html`
     <div class="card card--updates">
-      <h2 class="card__title">⬆ Updates (${rows.length})</h2>
+      <h2 class="card__title">${`⬆ Updates (${updateCount})`}</h2>
       ${
         ((skips?.locked ?? 0) > 0 || revision) &&
         html`<${CollectionLockNote}

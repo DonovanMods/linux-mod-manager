@@ -10,6 +10,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/assert"
@@ -21,10 +24,11 @@ import (
 type e2eRevisionSource struct {
 	*fakeSource
 	latest int
+	err    error
 }
 
 func (s *e2eRevisionSource) LatestCollectionRevision(context.Context, string, string) (int, error) {
-	return s.latest, nil
+	return s.latest, s.err
 }
 
 // newE2EFixtureWithACollectionRevision is newE2EFixtureWithACollectionLock
@@ -33,10 +37,17 @@ func (s *e2eRevisionSource) LatestCollectionRevision(context.Context, string, st
 // there could be.
 func newE2EFixtureWithACollectionRevision(t *testing.T, latest int) e2eFixture {
 	t.Helper()
+	return newE2EFixtureWithARevisionAnswer(t, latest, nil)
+}
+
+// newE2EFixtureWithARevisionAnswer is newE2EFixtureWithACollectionRevision
+// whose revision request answers err.
+func newE2EFixtureWithARevisionAnswer(t *testing.T, latest int, answer error) e2eFixture {
+	t.Helper()
 	f := newE2EFixtureWithACollectionLock(t)
 	got, err := f.Svc.GetSource("fake")
 	require.NoError(t, err)
-	f.Svc.RegisterSource(&e2eRevisionSource{fakeSource: got.(*fakeSource), latest: latest})
+	f.Svc.RegisterSource(&e2eRevisionSource{fakeSource: got.(*fakeSource), latest: latest, err: answer})
 	f.Game.SourceIDs["fake"] = "fixturegame"
 	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
 	_, err = f.Svc.SkipModUpdate(t.Context(), f.Game, "fake", "b", f.Profile, "3.0")
@@ -47,14 +58,16 @@ func newE2EFixtureWithACollectionRevision(t *testing.T, latest int) e2eFixture {
 func TestE2E_UpdatesCard_ANewCollectionRevisionOpensTheSyncPlan(t *testing.T) {
 	f := newE2EFixtureWithACollectionRevision(t, 2)
 
-	var note string
+	var note, cardTitle string
 	var rows int
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.card--updates [data-testid="updates-collection-locked"][data-state="available"]`, chromedp.ByQuery),
 		textContent(`.card--updates [data-testid="updates-collection-locked"]`, &note),
+		textContent(`.card--updates .card__title`, &cardTitle),
 		chromedp.Evaluate(`document.querySelectorAll(".card--updates .card__row").length`, &rows),
 	)
+	assert.Equal(t, "⬆ Updates (1)", strings.TrimSpace(cardTitle), "the collection's revision is the one update, never (0)")
 	assert.Contains(t, note, "Collection Night City: revision 2 available (installed 1).")
 	assert.Contains(t, note, "1 mod locked by collection Night City (not checked).")
 	assert.Zero(t, rows, "the card is there for the collection alone: no mod row")
@@ -84,5 +97,22 @@ func TestE2E_UpdatesCard_AnUpToDateCollectionIsAQuietLine(t *testing.T) {
 	)
 	assert.Contains(t, note, "Collection Night City: up to date (revision 1).")
 	assert.False(t, cardShown, "nothing needs attention: no Updates card")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// #673 review: a #671 hold is said in visible text, with when it ends - not
+// in a tooltip a keyboard or screen reader cannot reach.
+func TestE2E_UpdatesCard_AHeldSourceIsSaidInText(t *testing.T) {
+	f := newE2EFixtureWithARevisionAnswer(t, 0,
+		&source.RetryLaterError{Source: "NexusMods", Until: time.Now().Add(30 * time.Minute), Reason: "rate limited"})
+
+	var note string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`[data-testid="updates-collection-locked"][data-state="held"]`, chromedp.ByQuery),
+		textContent(`[data-testid="updates-collection-locked"]`, &note),
+	)
+	assert.Contains(t, note, "Collection Night City: NexusMods is holding requests until ")
+	assert.Contains(t, note, "; revision not checked.")
 	assert.Empty(t, f.BrowserErrors())
 }

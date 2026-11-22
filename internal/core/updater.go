@@ -554,7 +554,7 @@ func (s *Service) CheckGameUpdateReport(ctx context.Context, game *domain.Game, 
 	// and not in checkGameUpdates: a plan or a single-mod check has no use
 	// for it, so it costs them no request.
 	if !opts.NoCollectionRevision {
-		report.CollectionRevision = s.collectionRevision(ctx, game, profileName)
+		report.CollectionRevision = s.collectionRevision(ctx, game, profileName, opts.Refresh)
 	}
 	if checkErr != nil {
 		report.ErrorMessage = checkErr.Error()

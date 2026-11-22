@@ -388,6 +388,15 @@ brings the Updates card up even when no mod has an update. **Update
 collection…** fetches that revision and shows what would change before
 anything does.
 
+lmm remembers the answer for five minutes, so opening pages doesn't ask
+again. **Check for updates** (or `lmm update --refresh`) asks right away,
+and updating the collection forgets the old answer. If NexusMods is
+holding requests after too many, the line says until when, for example
+"NexusMods is holding requests until 14:03; revision not checked".
+
+A collection you made yourself, by exporting your own profile, isn't
+checked: you're its author, so there's no newer revision to fetch.
+
 Other collections can't be checked that cheaply:
 
 - **Imported from an address** (an `.lmmc` link): lmm would have to

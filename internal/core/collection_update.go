@@ -1245,6 +1245,11 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 		// Nothing was written.
 		return result, err
 	}
+	// #673: the profile is at a new revision; the kept latest-revision
+	// answer would compare the old one against it.
+	if plan.Origin == CollectionFromSource {
+		s.forgetCollectionRevision(plan.SourceID, game.SourceIDs[plan.SourceID], plan.Slug)
+	}
 	for _, it := range plan.addedEntries() {
 		if marks[it.Key()] {
 			result.Added++

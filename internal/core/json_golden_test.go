@@ -2236,6 +2236,23 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #673 review: the source is holding requests (#671).
+			"collection_revision_status_held",
+			core.CollectionRevisionStatus{
+				Name: "Welcome to Night City", Origin: core.CollectionOriginSource, SourceID: "nexusmods",
+				Installed: 30, Error: "not asking NexusMods again until 14:03:00: rate limited",
+				HeldUntil: fixedTime, HeldBy: "NexusMods", Sync: true,
+			},
+		},
+		{
+			// #673 review: no installed revision to compare against.
+			"collection_revision_status_installed_unknown",
+			core.CollectionRevisionStatus{
+				Name: "Welcome to Night City", Origin: core.CollectionOriginSource, SourceID: "nexusmods",
+				Latest: 31, InstalledUnknown: true, Checked: true, Sync: true,
+			},
+		},
+		{
 			// #673: the request failed; the mods' check did not.
 			"collection_revision_status_error",
 			core.CollectionRevisionStatus{

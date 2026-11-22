@@ -28,7 +28,8 @@ import (
 // revision can pin a newer file.
 type revisionSource struct {
 	*collectionSource
-	versions map[string]string // file id -> version
+	versions      map[string]string // file id -> version
+	revisionCalls int               // LatestCollectionRevision requests (#673)
 }
 
 func (s *revisionSource) ParseManifest(root fs.FS) (source.CollectionManifest, error) {
@@ -608,4 +609,39 @@ func TestCollection_UnknownOptionalIDIsRefused(t *testing.T) {
 	_, err = f.svc.PlanCollectionUpdate(ctx, f.game, core.CollectionUpdateRequest{Profile: "coll", Optional: []string{"10:101"}, OptionalChosen: true})
 	require.ErrorIs(t, err, core.ErrUnknownOptionalItem, "a required item is not an optional one")
 	assert.Contains(t, err.Error(), "10:101")
+}
+
+// LatestCollectionRevision answers the fixture collection's revision
+// (#673), counting the requests.
+func (s *revisionSource) LatestCollectionRevision(context.Context, string, string) (int, error) {
+	s.revisionCalls++
+	return s.recipe.collection.Revision, nil
+}
+
+// #673 review: a successful collection update forgets the kept revision
+// answer, so the next check asks again rather than reporting the old
+// revision against the new one.
+func TestCollectionUpdate_ForgetsTheKeptRevision(t *testing.T) {
+	f := newUpdateFixture(t)
+	ctx := context.Background()
+	f.importNexus(t)
+	report := func() *core.CollectionRevisionStatus {
+		installed, err := f.svc.GetInstalledMods(ctx, "skyrim", "coll")
+		require.NoError(t, err)
+		r, _ := f.svc.CheckGameUpdateReport(ctx, f.game, "coll", installed, nil, core.UpdateCheckOptions{})
+		return r.CollectionRevision
+	}
+	require.Equal(t, 3, report().Latest)
+	f.bumpNexus(t)
+	assert.Equal(t, 3, report().Latest, "kept for a few minutes")
+	assert.Equal(t, 1, f.src.revisionCalls)
+
+	plan := f.planUpdate(t)
+	_, err := f.svc.ApplyCollectionUpdate(ctx, f.game, plan, core.CollectionUpdateOptions{}, nil)
+	require.NoError(t, err)
+	got := report()
+	assert.Equal(t, 2, f.src.revisionCalls, "the update forgot the kept answer")
+	assert.Equal(t, 4, got.Latest)
+	assert.Equal(t, 4, got.Installed)
+	assert.False(t, got.Available)
 }

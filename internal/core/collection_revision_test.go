@@ -9,7 +9,9 @@ package core_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -171,4 +173,82 @@ func TestCheckGameUpdateReport_ARerunCanSkipTheRevision(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, report.CollectionRevision)
 	assert.Zero(t, rs.calls, "a re-run of a check that already asked does not ask again")
+}
+
+// #673 review: a collection the user authored - exporting a profile
+// records its collection identity, with no origin - has nothing to check
+// and is no import: it gets no line at all, never "import it again with
+// --force", which would overwrite the author's own profile.
+func TestCheckGameUpdateReport_AnAuthoredCollectionReportsNothing(t *testing.T) {
+	svc, game, _ := newSkipTestService(t)
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	_, err := svc.ExportCollection(context.Background(), game.ID, "default", core.CollectionExportOptions{})
+	require.NoError(t, err)
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NotNil(t, prof.Collection, "the export recorded the collection's identity")
+	require.Nil(t, prof.Collection.Origin)
+
+	assert.Nil(t, skipReport(t, svc, game).CollectionRevision)
+}
+
+// #673 review: a #671 hold is data, so both frontends can say when the
+// source will be asked again.
+func TestCheckGameUpdateReport_AHeldSourceSaysUntilWhen(t *testing.T) {
+	svc, game, rs := newLatestRevisionService(t, nexusOrigin(), 0)
+	until := time.Date(2026, 11, 22, 14, 3, 0, 0, time.UTC)
+	rs.err = fmt.Errorf("checking NexusMods collection abc123: %w",
+		&source.RetryLaterError{Source: "NexusMods", Until: until, Reason: "rate limited"})
+
+	got := skipReport(t, svc, game).CollectionRevision
+	require.NotNil(t, got)
+	assert.False(t, got.Checked)
+	assert.True(t, until.Equal(got.HeldUntil))
+	assert.Equal(t, "NexusMods", got.HeldBy)
+	assert.NotEmpty(t, got.Error)
+}
+
+// #673 review: the answer is kept for a few minutes, so every page open is
+// not a request; Check for updates (Refresh) asks again.
+func TestCheckGameUpdateReport_TheRevisionIsCachedUntilARefresh(t *testing.T) {
+	svc, game, rs := newLatestRevisionService(t, nexusOrigin(), 4)
+	skipReport(t, svc, game)
+	second := skipReport(t, svc, game)
+	assert.Equal(t, 1, rs.calls, "the second report reads the kept answer")
+	assert.Equal(t, 4, second.CollectionRevision.Latest)
+
+	rs.latest = 5
+	refreshed, err := svc.CheckGameUpdateReport(context.Background(), game, "default", installedFor(t, svc, game), nil,
+		core.UpdateCheckOptions{Refresh: true})
+	require.NoError(t, err)
+	assert.Equal(t, 2, rs.calls, "a refresh asks again")
+	assert.Equal(t, 5, refreshed.CollectionRevision.Latest)
+	assert.Equal(t, 5, skipReport(t, svc, game).CollectionRevision.Latest, "and keeps the new answer")
+	assert.Equal(t, 2, rs.calls)
+}
+
+func TestCheckGameUpdateReport_AFailureIsNotCached(t *testing.T) {
+	svc, game, rs := newLatestRevisionService(t, nexusOrigin(), 4)
+	rs.err = errors.New("timeout")
+	skipReport(t, svc, game)
+	rs.err = nil
+	assert.True(t, skipReport(t, svc, game).CollectionRevision.Checked)
+	assert.Equal(t, 2, rs.calls)
+}
+
+// #673 review: with no installed revision recorded, the latest one is
+// reported but not compared - never "installed 0".
+func TestCheckGameUpdateReport_NoInstalledRevisionIsNotComparable(t *testing.T) {
+	svc, game, _ := newLatestRevisionService(t, &domain.CollectionOrigin{SourceID: "src", Slug: "abc123"}, 4)
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	prof.Collection.Version = 0
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), prof))
+
+	got := skipReport(t, svc, game).CollectionRevision
+	assert.True(t, got.Checked)
+	assert.Equal(t, 4, got.Latest)
+	assert.Zero(t, got.Installed)
+	assert.True(t, got.InstalledUnknown)
+	assert.False(t, got.Available, "nothing to compare against")
 }

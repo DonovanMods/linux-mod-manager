@@ -7,9 +7,11 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
@@ -90,4 +92,41 @@ func TestJSONGolden_UpdateBulkCollectionRevision(t *testing.T) {
 	withCollectionRevision(t, svc, game, &domain.CollectionOrigin{SourceID: "test-src", Slug: "abc123", Revision: 3}, 4)
 	out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
 	assertJSONCLIGolden(t, "update_bulk_collection_revision", out)
+}
+
+// heldRevisionSource refuses the revision request with #671's hold.
+type heldRevisionSource struct {
+	*fakeUpdateSource
+	until time.Time
+}
+
+func (s *heldRevisionSource) LatestCollectionRevision(context.Context, string, string) (int, error) {
+	return 0, &source.RetryLaterError{Source: "NexusMods", Until: s.until, Reason: "rate limited"}
+}
+
+func TestDoUpdate_AHeldSourceSaysUntilWhen(t *testing.T) {
+	svc, game := setupSkipUpdateTest(t)
+	withCollectionRevision(t, svc, game, &domain.CollectionOrigin{SourceID: "test-src", Slug: "abc123", Revision: 3}, 0)
+	got, err := svc.GetSource("test-src")
+	require.NoError(t, err)
+	until := time.Date(2026, 11, 22, 14, 3, 0, 0, time.Local)
+	svc.RegisterSource(&heldRevisionSource{fakeUpdateSource: got.(*revisionUpdateSource).fakeUpdateSource, until: until})
+
+	out, err := captureStdoutErr(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	assert.Contains(t, out, "Collection Night City: NexusMods is holding requests until 14:03; revision not checked.")
+}
+
+func TestDoUpdate_NoInstalledRevisionIsNotCompared(t *testing.T) {
+	svc, game := setupSkipUpdateTest(t)
+	withCollectionRevision(t, svc, game, &domain.CollectionOrigin{SourceID: "test-src", Slug: "abc123"}, 4)
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	prof.Collection.Version = 0
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), prof))
+
+	out, err := captureStdoutErr(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	assert.Contains(t, out, "Collection Night City: latest revision 4 (the installed revision isn't recorded)")
+	assert.NotContains(t, out, "installed 0")
 }
