@@ -88,11 +88,12 @@ or on the Health or Updates card's loading line. If the site asks for a
 longer wait than lmm will sit through, lmm doesn't ask it again until that
 time, and says "Not asking NexusMods again until 14:05:00". If NexusMods
 says the key's hourly and daily allowance are both used up, lmm waits for
-the hourly reset.
+the hourly reset, or until you give it a different key.
 
 A mod whose check still couldn't get an answer reads "could not check
-version (NexusMods rate limit: try again in 30s)". Nothing is wrong with
-the mod: run verify again later.
+version (NexusMods rate limit: try again in 30s)", or "could not check
+version (lmm is not asking NexusMods again until 14:05:00)" while lmm is
+holding off. Nothing is wrong with the mod: run verify again later.
 
 Verify doesn't ask the site about the mods a collection locks. The
 collection pins their files, and verify still checks those files against

@@ -270,9 +270,88 @@ func TestRetryTransport_AShortHoldIsWaitedOutRatherThanRefused(t *testing.T) {
 	require.Len(t, h.waits, 1)
 	assert.Equal(t, 30*time.Second, h.waits[0], "waited until the hold ends, then asked")
 	require.Len(t, h.notices, 1)
-	assert.Equal(t, source.NoticeRetry, h.notices[0].Kind)
-	assert.Equal(t, source.RetryRateLimited, h.notices[0].Reason)
-	assert.Equal(t, 30*time.Second, h.notices[0].Wait)
+	// Said as the hold it is, not as a retry of some status: lmm does not
+	// know here whether a 429, a 503 or a spent quota set it.
+	assert.Equal(t, source.NoticeSuspended, h.notices[0].Kind)
+	assert.Equal(t, h.clock.Now(), h.notices[0].Until, "until the moment it was waited to")
+}
+
+// pastHold is a keeper whose one hold has already ended - the moment
+// between a hold's end and its keeper noticing.
+type pastHold struct {
+	*MemoryHolds
+	until time.Time
+}
+
+func (p pastHold) Active(*http.Request) (source.Hold, bool) {
+	return source.Hold{Source: "Example", Until: p.until, Reason: "over"}, true
+}
+
+func TestRetryTransport_AHoldThatHasEndedSendsTheRequest(t *testing.T) {
+	srv, calls := sequence(t, ok)
+	h := newHarness(t, testPolicy())
+	h.rt.Holds = pastHold{MemoryHolds: h.holds, until: h.clock.Now().Add(-time.Second)}
+
+	_, err := h.do(t, http.MethodGet, srv.URL, "")
+	require.NoError(t, err, "an ended hold refuses nothing")
+	assert.Equal(t, 1, *calls)
+	assert.Empty(t, h.waits)
+	assert.Empty(t, h.notices)
+}
+
+func TestRetryTransport_AWaitedOutHoldCountsAgainstTheRequestsBudget(t *testing.T) {
+	// 90s waited out, then a host asking 60s more: 150s is past the
+	// two-minute budget, so the 60s is held, not slept.
+	srv, calls := sequence(t, status(http.StatusTooManyRequests, map[string]string{"Retry-After": "60"}, ""))
+	h := newHarness(t, testPolicy())
+	h.holds.Named(nil, h.clock.Now().Add(90*time.Second), "a throttle a moment ago")
+
+	_, err := h.do(t, http.MethodGet, srv.URL, "")
+	var later *source.RetryLaterError
+	require.ErrorAs(t, err, &later)
+	assert.Equal(t, 1, *calls)
+	assert.Equal(t, []time.Duration{90 * time.Second}, h.waits, "only the hold was waited")
+}
+
+// quotaKeeper is a HoldKeeper keeping quota holds apart (QuotaKeeper).
+type quotaKeeper struct {
+	*MemoryHolds
+	quota *MemoryHolds
+}
+
+func (q quotaKeeper) Active(req *http.Request) (source.Hold, bool) {
+	host, hostOK := q.MemoryHolds.Active(req)
+	quota, quotaOK := q.quota.Active(req)
+	if !hostOK || (quotaOK && quota.Until.After(host.Until)) {
+		return quota, quotaOK
+	}
+	return host, true
+}
+
+func (q quotaKeeper) Quota(req *http.Request, until time.Time, why string) source.Hold {
+	return q.quota.Named(req, until, why)
+}
+
+func TestRetryTransport_A429WithRetryAfterAndASpentQuotaWaitsForTheLater(t *testing.T) {
+	srv, calls := sequence(t, status(http.StatusTooManyRequests, map[string]string{"Retry-After": "30"}, ""))
+	h := newHarness(t, testPolicy())
+	keeper := quotaKeeper{MemoryHolds: h.holds, quota: NewMemoryHolds("Example", h.clock.Now, 0, time.Minute, time.Hour)}
+	h.rt.Holds = keeper
+	h.rt.Policy.Observe = func(_ *http.Response, now time.Time) (time.Time, string) {
+		return now.Add(40 * time.Minute), "quota used up"
+	}
+
+	_, err := h.do(t, http.MethodGet, srv.URL, "")
+	var later *source.RetryLaterError
+	require.ErrorAs(t, err, &later, "the quota's forty minutes, not the header's thirty seconds")
+	assert.Equal(t, 1, *calls)
+	assert.Empty(t, h.waits)
+	assert.Equal(t, h.clock.Now().Add(40*time.Minute), later.Until)
+	assert.Equal(t, "quota used up", later.Reason)
+	require.Len(t, keeper.quota.Holds(), 1, "kept as the credential's quota hold")
+	host := h.holds.Holds()
+	require.Len(t, host, 1, "and the host's own thirty seconds as the host's")
+	assert.Equal(t, h.clock.Now().Add(30*time.Second), host[0].Until)
 }
 
 func TestRetryTransport_ANamedWaitIsBoundedAcrossTheWholeRequest(t *testing.T) {

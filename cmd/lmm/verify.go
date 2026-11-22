@@ -910,8 +910,10 @@ func renderVerifySkipped(f core.VerifyFinding) {
 		}
 		fmt.Printf("%s %s - could not check version: %s (%s)\n", colorYellow("?"), f.ModName, f.FixableReason, remedy)
 
-	// versionPass: the source is throttling lmm (#671) - say so, and when
-	// to try again, rather than "unreachable", which it was not.
+	// versionPass: the check could not be made for now (#671) - the
+	// source rate limited lmm past its retries, or lmm is holding the
+	// source off (a throttle's wait, a spent quota, or its breaker after
+	// repeated failures). FixableReason says which, and when to try again.
 	case strings.HasPrefix(f.Note, "could not check version: ") && f.FixableReason != "":
 		fmt.Printf("%s %s - could not check version (%s)\n", colorYellow("?"), f.ModName, f.FixableReason)
 

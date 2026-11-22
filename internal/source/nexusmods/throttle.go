@@ -82,8 +82,8 @@ var retrySleep = httpclient.SleepContext
 
 // newRetryingClient returns httpClient with its transport wrapped in the
 // retrying one, and the holds that transport keeps.
-func newRetryingClient(httpClient *http.Client) (*http.Client, *httpclient.RetryTransport, *httpclient.MemoryHolds) {
-	holds := httpclient.NewMemoryHolds(serviceName, nil, breakerThreshold, breakerCooldown, maxHold)
+func newRetryingClient(httpClient *http.Client) (*http.Client, *httpclient.RetryTransport, *nexusHolds) {
+	holds := newNexusHolds(nil)
 	base := httpClient.Transport
 	if base == nil {
 		base = http.DefaultTransport
@@ -92,6 +92,63 @@ func newRetryingClient(httpClient *http.Client) (*http.Client, *httpclient.Retry
 	retrying := *httpClient
 	retrying.Transport = rt
 	return &retrying, rt, holds
+}
+
+// nexusHolds keeps NexusMods' two kinds of hold apart (#671 review). A
+// throttle Cloudflare named and lmm's own circuit breaker belong to the
+// host - and to the address lmm asks it from - so they stand whatever key
+// is configured. A spent quota belongs to the KEY: a user whose free key
+// ran out and who adds a Premium one must not be refused until the free
+// key's hourly reset, so SetAPIKey clears it (clearQuota).
+type nexusHolds struct {
+	host  *httpclient.MemoryHolds
+	quota *httpclient.MemoryHolds
+}
+
+func newNexusHolds(now func() time.Time) *nexusHolds {
+	return &nexusHolds{
+		host:  httpclient.NewMemoryHolds(serviceName, now, breakerThreshold, breakerCooldown, maxHold),
+		quota: httpclient.NewMemoryHolds(serviceName, now, 0, breakerCooldown, maxHold),
+	}
+}
+
+// Active implements httpclient.HoldKeeper: whichever hold in force ends
+// later.
+func (h *nexusHolds) Active(req *http.Request) (source.Hold, bool) {
+	host, hostHeld := h.host.Active(req)
+	quota, quotaHeld := h.quota.Active(req)
+	if quotaHeld && (!hostHeld || quota.Until.After(host.Until)) {
+		return quota, true
+	}
+	return host, hostHeld
+}
+
+// Named implements httpclient.HoldKeeper: the host's.
+func (h *nexusHolds) Named(req *http.Request, until time.Time, why string) source.Hold {
+	h.host.Named(req, until, why)
+	held, _ := h.Active(req)
+	return held
+}
+
+// Quota implements httpclient.QuotaKeeper: the key's.
+func (h *nexusHolds) Quota(req *http.Request, until time.Time, why string) source.Hold {
+	h.quota.Named(req, until, why)
+	held, _ := h.Active(req)
+	return held
+}
+
+// Failed implements httpclient.HoldKeeper: the breaker is the host's.
+func (h *nexusHolds) Failed(req *http.Request, err error) { h.host.Failed(req, err) }
+
+// Succeeded implements httpclient.HoldKeeper.
+func (h *nexusHolds) Succeeded(req *http.Request) { h.host.Succeeded(req) }
+
+// clearQuota forgets the spent quota: the key it belonged to is gone.
+func (h *nexusHolds) clearQuota() { h.quota.Clear() }
+
+// list is every hold in force, the host's first.
+func (h *nexusHolds) list() []source.Hold {
+	return append(h.host.Holds(), h.quota.Holds()...)
 }
 
 // quotaWhy is the reason a spent quota holds the host for.
@@ -136,4 +193,4 @@ func parseReset(v string) (time.Time, bool) {
 
 // Holds implements source.HoldReporter: the throttle or quota hold in
 // force, if any, without asking NexusMods anything.
-func (n *NexusMods) Holds(context.Context) []source.Hold { return n.client.holds.Holds() }
+func (n *NexusMods) Holds(context.Context) []source.Hold { return n.client.holds.list() }

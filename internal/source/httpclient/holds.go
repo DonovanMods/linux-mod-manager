@@ -110,6 +110,14 @@ func (h *MemoryHolds) Succeeded(*http.Request) {
 	}
 }
 
+// Clear forgets every hold and the failure streak: what a keeper of one
+// credential's quota holds does when the credential changes (#671).
+func (h *MemoryHolds) Clear() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.until, h.reason, h.named, h.failures, h.lastFailure = time.Time{}, "", false, 0, time.Time{}
+}
+
 // Holds reports the hold in force, if any - what a source's
 // source.HoldReporter answers without asking the host anything.
 func (h *MemoryHolds) Holds() []source.Hold {

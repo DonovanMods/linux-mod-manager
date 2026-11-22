@@ -114,6 +114,11 @@ type readReporter struct {
 	// is published whatever the gate says, so the notice is not left
 	// standing for a read that has moved on.
 	noticed bool
+	// lastNotice is the last notice published. One saying the same again
+	// is dropped (#671 review): notices pass the gate, and a long hold
+	// refuses every remaining mod with the same sentence - some 700 frames
+	// on a 353-mod verify, half of them the ticks each notice forced.
+	lastNotice string
 }
 
 // newReadReporter returns the reporter for a read that named token, or nil
@@ -177,6 +182,10 @@ func (r *readReporter) tick(name string, index, total int) {
 func (r *readReporter) notice(text string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if text == r.lastNotice {
+		return
+	}
+	r.lastNotice = text
 	r.noticed = true
 	r.publishLocked(text)
 }

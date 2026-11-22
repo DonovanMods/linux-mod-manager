@@ -203,10 +203,14 @@ type VerifyFinding struct {
 	// FixableReason is the ENGINE's own reason this finding will not be
 	// repaired, or empty when Fixable is true (or when the row is not a
 	// problem at all - an "ok" or "skipped" row has nothing to explain).
-	// The one "skipped" row that does carry one is a check the source
-	// refused for want of a key (AuthSource, #582): "<Source> needs an API
-	// key" is the honest reason no repair is on offer, or "<Source>
-	// rejected its API key" when the user has supplied one.
+	// Two kinds of "skipped" version-check row carry one. A check the
+	// source refused for want of a key (AuthSource, #582): "<Source> needs
+	// an API key" is the honest reason no repair is on offer, or "<Source>
+	// rejected its API key" when the user has supplied one. And a check
+	// lmm could not make for now (#671): "<Source> rate limit: try again in
+	// 30s" for a throttle the retries could not outlast, or "lmm is not
+	// asking <Source> again until 14:05:00" for a hold - a throttle's, a
+	// spent quota's, or lmm's own after repeated failures.
 	// #334: it exists so a frontend offering a per-finding "Repair"
 	// affordance can say WHY the button is absent without reimplementing
 	// the question - the web UI carried a hand-maintained status->sentence
@@ -2128,7 +2132,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		if err != nil {
 			r.result.Warnings++
 			f := VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "skipped", Note: fmt.Sprintf("could not check version: %v", err)}
-			f.FixableReason = throttleReason(err) // #671: "" unless the source is throttling lmm
+			f.FixableReason = sourceWaitReason(err) // #671: "" unless the source is rate limiting lmm or held off
 			if errors.Is(err, domain.ErrAuthRequired) {
 				f.AuthSource = mod.SourceID
 				f.FixableReason = r.svc.sourceDisplayName(mod.SourceID) + " needs an API key"
@@ -2293,12 +2297,15 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 	return nil
 }
 
-// throttleReason says, in a line, that err is a source throttling lmm and
-// when to try again (#671), or "" when it is not: a rate limit the retries
-// could not outlast, or a hold the source has in force. The finding's Note
-// keeps the whole error; this is what a frontend shows beside "could not
-// check version" instead of "source unreachable", which it was not.
-func throttleReason(err error) string {
+// sourceWaitReason says, in a line, why lmm could not ask the source for
+// now and when it will again (#671), or "" when err is neither: a rate
+// limit the retries could not outlast, or a hold lmm has in force for the
+// source. A hold is worded as lmm's own decision, because it may be a
+// throttle's wait, a spent quota or lmm's breaker after repeated server
+// failures - an outage is no rate limit. The finding's Note keeps the
+// whole error; this is what a frontend shows beside "could not check
+// version" instead of "source unreachable".
+func sourceWaitReason(err error) string {
 	var status *httpclient.StatusError
 	if errors.As(err, &status) && status.RateLimited() {
 		if status.RetryIn > 0 {
@@ -2312,7 +2319,7 @@ func throttleReason(err error) string {
 		if time.Until(later.Until) >= 12*time.Hour {
 			at = later.Until.Local().Format("2006-01-02 15:04:05")
 		}
-		return fmt.Sprintf("%s is holding requests off: try again after %s", later.Source, at)
+		return fmt.Sprintf("lmm is not asking %s again until %s", later.Source, at)
 	}
 	return ""
 }

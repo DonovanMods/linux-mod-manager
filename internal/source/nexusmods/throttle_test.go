@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -220,8 +221,77 @@ func headerOf(m map[string]string) http.Header {
 // setRetryClock puts the client's retries, and the holds they keep, on the
 // given clock and sleep.
 func (c *Client) setRetryClock(now func() time.Time, sleep func(context.Context, time.Duration) error) {
-	c.holds = httpclient.NewMemoryHolds(serviceName, now, breakerThreshold, breakerCooldown, maxHold)
+	c.holds = newNexusHolds(now)
 	c.retry.Holds = c.holds
 	c.retry.Now = now
 	c.retry.Sleep = sleep
+}
+
+// TestNexusThrottle_ANewKeyLiftsTheOldKeysQuotaHold (#671 review): the
+// quota is the key's. A user whose free key ran out and who adds a Premium
+// one is not refused until the free key's hourly reset - not even the
+// validate call AccountTier makes - while a throttle Cloudflare named,
+// which is the host's, still stands.
+func TestNexusThrottle_ANewKeyLiftsTheOldKeysQuotaHold(t *testing.T) {
+	var mu sync.Mutex
+	spent := true
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		quotaGone := spent
+		mu.Unlock()
+		if quotaGone {
+			w.Header().Set("X-RL-Daily-Remaining", "0")
+			w.Header().Set("X-RL-Hourly-Remaining", "0")
+			w.Header().Set("X-RL-Hourly-Reset", "2026-11-22T12:40:00+00:00")
+		}
+		if strings.HasSuffix(r.URL.Path, "/validate.json") {
+			_, _ = w.Write([]byte(`{"is_premium":true}`))
+			return
+		}
+		_, _ = w.Write([]byte(filesJSON))
+	}))
+	defer srv.Close()
+	nm, _ := newThrottleSource(t, srv)
+	ctx := context.Background()
+	mod := &domain.Mod{ID: "1", GameID: "cyberpunk2077"}
+
+	_, err := nm.GetModFiles(ctx, mod)
+	require.NoError(t, err)
+	_, err = nm.GetModFiles(ctx, mod)
+	var later *source.RetryLaterError
+	require.ErrorAs(t, err, &later, "the free key's quota is spent")
+
+	mu.Lock()
+	spent = false
+	mu.Unlock()
+	nm.SetAPIKey("premium-key")
+	tier, err := nm.AccountTier(ctx)
+	require.NoError(t, err, "the new key's validate call is sent")
+	assert.Equal(t, source.TierPremium, tier)
+	_, err = nm.GetModFiles(ctx, mod)
+	require.NoError(t, err, "and so are its requests")
+	assert.Equal(t, 3, calls)
+	assert.Empty(t, nm.Holds(ctx))
+}
+
+func TestNexusThrottle_ANewKeyLeavesAThrottleHoldStanding(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "600")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	nm, _ := newThrottleSource(t, srv)
+	mod := &domain.Mod{ID: "1", GameID: "cyberpunk2077"}
+
+	_, err := nm.GetModFiles(context.Background(), mod)
+	var later *source.RetryLaterError
+	require.ErrorAs(t, err, &later)
+	nm.SetAPIKey("another-key")
+	_, err = nm.GetModFiles(context.Background(), mod)
+	require.ErrorAs(t, err, &later, "Cloudflare's ten minutes are the address's, not the key's")
+	assert.Equal(t, 1, calls)
 }

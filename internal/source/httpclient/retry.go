@@ -69,10 +69,11 @@ type RetryPolicy struct {
 	// not in a Retry-After header. Zero is "no hint".
 	BodyHint func(body []byte) time.Duration
 	// Observe, when set, sees every answer, and may name a time before
-	// which the host must not be asked again (a quota the answer says is
-	// used up). On an answer that is not retried it is recorded as a hold;
-	// on a retryable one with no other hint it is the hint. A zero time
-	// records nothing.
+	// which the host must not be asked again with this credential: a
+	// quota the answer says is used up. It is recorded as a quota hold
+	// (QuotaKeeper, else an ordinary named hold), and on a retryable
+	// answer the later of it and the host's own wait is the hint. A zero
+	// time records nothing.
 	Observe func(resp *http.Response, now time.Time) (until time.Time, why string)
 	// Exhausted words a request whose attempts ran out on a retryable
 	// status; last is a *StatusError carrying the attempts. Nil returns
@@ -115,6 +116,17 @@ type HoldKeeper interface {
 	// Succeeded records an answer: the failure streak, and a hold lmm set
 	// itself, end. A hold the host named stands until it expires.
 	Succeeded(req *http.Request)
+}
+
+// QuotaKeeper is a HoldKeeper that keeps a quota hold apart from the
+// host's own (#671): a hold Observe names belongs to the credential the
+// request was sent with, so a new credential can lift it while a throttle
+// or a breaker hold - the host's, or the address's - stands. A keeper
+// that does not implement it records a quota hold with Named.
+type QuotaKeeper interface {
+	// Quota records a quota hold, never shortening one already in force,
+	// and returns the hold now in force for req.
+	Quota(req *http.Request, until time.Time, why string) source.Hold
 }
 
 // RetryTransport is the retrying http.RoundTripper. Base, Policy and Holds
@@ -169,16 +181,17 @@ func (e *StatusError) Error() string {
 func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
 	p := t.Policy
-	if err := t.waitForHold(req); err != nil {
+	waited, err := t.waitForHold(req)
+	if err != nil {
 		return nil, err
 	}
 
 	var lastErr error
-	// named is the host-named wait this request has already sat through:
-	// MaxRetryAfter bounds the TOTAL, not each wait (Thunderstore T3
-	// review F8) - two Retry-After: 60 answers would otherwise hold one
-	// request silent for two minutes.
-	var named time.Duration
+	// named is the host-named wait this request has already sat through,
+	// a hold it waited out included: MaxRetryAfter bounds the TOTAL, not
+	// each wait (Thunderstore T3 review F8) - two Retry-After: 60 answers
+	// would otherwise hold one request silent for two minutes.
+	named := waited
 	for attempt := 1; attempt <= p.MaxAttempts; attempt++ {
 		send, err := rewind(req, attempt)
 		if err != nil {
@@ -200,7 +213,8 @@ func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 				retry.Reason = source.RetryStalled
 			}
 		case retryableStatus(resp.StatusCode):
-			hint = t.hint(resp)
+			var hostHint time.Duration
+			hostHint, hint = t.hint(req, resp)
 			// Closed so the connection can be released before the retry.
 			// Not drained past the hint: an unread error body means the
 			// connection is not returned to the pool, which is the right
@@ -210,15 +224,24 @@ func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			lastErr = failure
 			retry.Reason, retry.Status, retry.Err = retryReason(resp.StatusCode), resp.StatusCode, failure
 			if hint > p.MaxRetryAfter-named {
-				held := t.Holds.Named(req, t.now().Add(hint), fmt.Sprintf("%v, which asked lmm to wait %s", failure, hint))
+				// Past what this request sits through. A quota's wait is
+				// already recorded (hint); the host's own is recorded here,
+				// and the refusal names whichever ends later.
+				if hostHint > 0 {
+					t.Holds.Named(req, t.now().Add(hostHint), fmt.Sprintf("%v, which asked lmm to wait %s", failure, hostHint))
+				}
+				held, ok := t.Holds.Active(req)
+				if !ok {
+					held = source.Hold{Source: p.Service, Until: t.now().Add(hint), Reason: failure.Error()}
+				}
 				return nil, t.refuse(ctx, held)
 			}
 			if attempt == p.MaxAttempts {
 				t.Holds.Failed(req, failure)
-				if hint > 0 {
+				if hostHint > 0 {
 					// Out of attempts is not out of obligation: the time the
 					// host named still holds for the next request.
-					t.Holds.Named(req, t.now().Add(hint), fmt.Sprintf("%v, which asked lmm to wait %s", failure, hint))
+					t.Holds.Named(req, t.now().Add(hostHint), fmt.Sprintf("%v, which asked lmm to wait %s", failure, hostHint))
 				}
 				failure.Attempts = p.MaxAttempts
 				if p.Exhausted != nil {
@@ -230,7 +253,7 @@ func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			t.Holds.Succeeded(req)
 			if p.Observe != nil {
 				if until, why := p.Observe(resp, t.now()); !until.IsZero() {
-					t.Holds.Named(req, until, why)
+					t.holdQuota(req, until, why)
 				}
 			}
 			return resp, nil
@@ -251,24 +274,29 @@ func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return nil, lastErr
 }
 
-// waitForHold returns nil when req may be sent: no hold is in force, or one
-// ending within the policy's WaitOutHold has just been waited out. A hold
-// further off refuses the request.
-func (t *RetryTransport) waitForHold(req *http.Request) error {
+// waitForHold returns how long it waited before req may be sent: nothing
+// when no hold is in force (or the one in force has just ended), the rest
+// of a hold that ends within the policy's WaitOutHold, which it waits out.
+// A hold further off refuses the request.
+//
+// A waited-out hold is reported as the suspension it is - "not asking ...
+// again until" - not as a retry of a status: lmm does not know here
+// whether a throttle, a server failure or a spent quota set it.
+func (t *RetryTransport) waitForHold(req *http.Request) (time.Duration, error) {
 	ctx := req.Context()
 	held, open := t.Holds.Active(req)
 	if !open {
-		return nil
+		return 0, nil
 	}
 	left := held.Until.Sub(t.now())
-	if left <= 0 || left > t.Policy.WaitOutHold {
-		return t.refuse(ctx, held)
+	if left <= 0 {
+		return 0, nil
 	}
-	source.Notify(ctx, source.Notice{
-		Kind: source.NoticeRetry, Source: t.Policy.Service, Reason: source.RetryRateLimited,
-		Status: http.StatusTooManyRequests, Attempt: 1, MaxAttempts: t.Policy.MaxAttempts, Wait: left,
-	})
-	return t.sleep(ctx, left)
+	if left > t.Policy.WaitOutHold || left > t.Policy.MaxRetryAfter {
+		return 0, t.refuse(ctx, held)
+	}
+	source.Notify(ctx, source.Notice{Kind: source.NoticeSuspended, Source: t.Policy.Service, GameID: held.GameID, Until: held.Until})
+	return left, t.sleep(ctx, left)
 }
 
 // refuse reports held as a suspension notice and returns the refusal.
@@ -281,25 +309,37 @@ func (t *RetryTransport) refuse(ctx context.Context, held source.Hold) error {
 	return err
 }
 
-// hint is the wait a retryable answer names: its Retry-After header, else
-// what the policy reads from its body, never more than MaxHold.
-func (t *RetryTransport) hint(resp *http.Response) time.Duration {
-	if d := RetryAfter(resp.Header.Get("Retry-After"), t.now(), t.Policy.MaxHold); d > 0 {
-		return d
+// holdQuota records a quota hold: apart from the host's holds when the
+// keeper keeps them apart (QuotaKeeper), else as a named hold.
+func (t *RetryTransport) holdQuota(req *http.Request, until time.Time, why string) {
+	if q, ok := t.Holds.(QuotaKeeper); ok {
+		q.Quota(req, until, why)
+		return
 	}
-	if t.Policy.BodyHint != nil {
+	t.Holds.Named(req, until, why)
+}
+
+// hint reads the waits a retryable answer names. host is the host's own:
+// its Retry-After header, else what the policy reads from its body. A
+// quota the answer says is spent (Observe) is recorded as a quota hold
+// here, and hint is the later of the two - a 429 that names thirty
+// seconds while the hour's quota is gone is not over in thirty seconds.
+// Neither is ever more than MaxHold.
+func (t *RetryTransport) hint(req *http.Request, resp *http.Response) (host, hint time.Duration) {
+	now := t.now()
+	host = RetryAfter(resp.Header.Get("Retry-After"), now, t.Policy.MaxHold)
+	if host == 0 && t.Policy.BodyHint != nil {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, retryHintBodyLimit))
-		if d := min(max(t.Policy.BodyHint(body), 0), t.Policy.MaxHold); d > 0 {
-			return d
-		}
+		host = min(max(t.Policy.BodyHint(body), 0), t.Policy.MaxHold)
 	}
+	hint = host
 	if t.Policy.Observe != nil {
-		now := t.now()
-		if until, _ := t.Policy.Observe(resp, now); until.After(now) {
-			return min(until.Sub(now), t.Policy.MaxHold)
+		if until, why := t.Policy.Observe(resp, now); until.After(now) {
+			t.holdQuota(req, until, why)
+			hint = max(hint, min(until.Sub(now), t.Policy.MaxHold))
 		}
 	}
-	return 0
+	return host, hint
 }
 
 func (t *RetryTransport) now() time.Time {

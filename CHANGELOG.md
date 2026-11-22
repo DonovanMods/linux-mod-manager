@@ -1348,7 +1348,8 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   lmm holds off NexusMods until then, and a short hold is waited out
   instead of failing every remaining mod. When NexusMods' quota headers
   (`X-RL-Hourly-Remaining`, `X-RL-Daily-Remaining`) say both budgets are
-  spent, lmm sends nothing more until the hourly reset.
+  spent, lmm sends nothing more until the hourly reset, or until the key
+  changes: the quota is the key's, while a throttle's hold is the host's.
   - The wait is said while it runs ("Rate limited by NexusMods; retrying
     in 30s (attempt 2 of 3)."): on stderr in the terminal, on a job's
     progress and in the tray in the web UI, and now on the Health card's
@@ -1356,8 +1357,9 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
     jobs (`read_progress` frames gain `notice`, additive).
   - A throttle that outlasts the retries reads "NexusMods rate limit: try
     again in 30s", and `lmm verify` prints "could not check version
-    (NexusMods rate limit: try again in 30s)" rather than "source
-    unreachable". The doubled "getting mod files: getting mod files:" is
+    (NexusMods rate limit: try again in 30s)", or "(lmm is not asking
+    NexusMods again until 14:05:00)" while lmm holds off, rather than
+    "source unreachable". The doubled "getting mod files: getting mod files:" is
     gone.
   - Verify no longer asks the source about a mod the profile's collection
     locks, as the update check already doesn't (#667): the collection pins

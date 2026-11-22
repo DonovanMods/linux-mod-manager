@@ -26,6 +26,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
@@ -189,7 +190,8 @@ func TestVerify_AThrottleThatOutlastsTheRetriesReadsAsARateLimit(t *testing.T) {
 
 	held := byMod["held"]
 	assert.Equal(t, "skipped", held.Status)
-	assert.Equal(t, "NexusMods is holding requests off: try again after "+until.Local().Format("15:04:05"), held.FixableReason)
+	assert.Equal(t, "lmm is not asking NexusMods again until "+until.Local().Format("15:04:05"), held.FixableReason,
+		"a hold may be a throttle's, a quota's or the breaker's: worded as lmm's own decision")
 
 	assert.Empty(t, byMod["down"].FixableReason, "a server failure is not a rate limit")
 }
@@ -239,4 +241,37 @@ func TestVerify_ACollectionLockedModIsNotSentToItsSource(t *testing.T) {
 	assert.ElementsMatch(t, []string{"handlocked", "free"}, src.asked,
 		"the collection pins its mods' files with their hashes, and moves them itself: nothing to ask the source")
 	assert.Equal(t, 2, result.CollectionLocked, "and the skip is counted, so a frontend can say so")
+}
+
+// TestVerify_ACollectionLockedModStillGetsItsFileFindingsAndRepair (#671
+// review): leaving a collection's mods out of the version check leaves
+// nothing else out. Their files are still checked against the recorded
+// hashes - a missing one is a finding - and --fix still repairs it.
+func TestVerify_ACollectionLockedModStillGetsItsFileFindingsAndRepair(t *testing.T) {
+	svc, game, src := setupLockedMissingFileFixture(t, "1.0") // cache entry gone; the source still serves 1.0
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+	prof, err := pm.Get(ctx, game.ID, "default")
+	require.NoError(t, err)
+	for i := range prof.Mods {
+		if prof.Mods[i].ModID == "locked-mod" {
+			prof.Mods[i].FromCollection = true
+		}
+	}
+	prof.Collection = &domain.CollectionInfo{ID: "night-city", Version: 3, Title: "Night City"}
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), prof))
+
+	result, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.CollectionLocked, "its version is left to the collection")
+	f := findingFor(t, result, "locked-mod")
+	assert.Equal(t, "missing", f.Status, "but its missing file is still a finding")
+	assert.True(t, f.Fixable)
+	assert.Zero(t, src.DownloadCount())
+
+	result, err = svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyFull, Fix: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, src.DownloadCount(), "and --fix fetches the pinned file again")
+	assert.True(t, svc.GetGameCache(game).Exists(cache.Key{GameID: game.ID, SourceID: "lsrc", ModID: "locked-mod", Version: "1.0"}))
+	assert.Equal(t, "ok", findingFor(t, result, "locked-mod").Status)
 }

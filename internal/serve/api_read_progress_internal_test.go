@@ -202,3 +202,34 @@ func TestAPIReads_NoProgressTokenNoNoticeFrames(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Empty(t, readProgressFrames(live))
 }
+
+// TestReadReporter_ARepeatedNoticeIsNotSentAgain (#671 review): notice
+// frames pass the gate, and a long hold refuses every remaining mod with
+// the same sentence - about 700 frames on a 353-mod verify, each notice
+// forcing the tick after it through too. A notice saying what the last
+// one said is dropped, and forces nothing.
+func TestReadReporter_ARepeatedNoticeIsNotSentAgain(t *testing.T) {
+	s, _, game := newUpdatesFixtureServer(t)
+	_, live, cancel := s.jobs.watch(2048)
+	defer cancel()
+	r := s.newReadReporter("tok", readHealth, selection{Game: game, Profile: "default"})
+	sink := r.sink()
+	ctx := r.watch(t.Context())
+
+	// What the transport raises for each mod a held source refuses.
+	until := time.Now().Add(4 * time.Minute)
+	for i := 1; i <= 353; i++ {
+		sink(core.VerifyEvent{Kind: core.VerifyEvProgress, Scope: core.Scope{Index: i, Total: 353, ModName: "m"}})
+		source.Notify(ctx, source.Notice{Kind: source.NoticeSuspended, Source: "NexusMods", Until: until})
+	}
+
+	frames := readProgressFrames(live)
+	notices := 0
+	for _, f := range frames {
+		if f.Notice != "" {
+			notices++
+		}
+	}
+	assert.LessOrEqual(t, notices, 3, "the same sentence is said once, not per mod")
+	assert.LessOrEqual(t, len(frames), 110, "and the ticks keep to the gate's hundred or so")
+}

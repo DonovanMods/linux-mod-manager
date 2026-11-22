@@ -37,7 +37,7 @@ type Client struct {
 	// REST and GraphQL alike, is retried through it (#671), and holds is
 	// the throttle and quota holds it keeps.
 	retry *httpclient.RetryTransport
-	holds *httpclient.MemoryHolds
+	holds *nexusHolds
 
 	// apiKey is read and written only under keyMu (#601): lmm serve
 	// re-keys a live source (SetAPIKey) while requests are in flight.
@@ -129,11 +129,16 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 }
 
 // SetAPIKey sets the API key for authentication
+//
+// A quota hold the old key earned is lifted (#671 review): the quota is the
+// key's, and a new key has its own. A throttle or breaker hold stands - it
+// is the host's.
 func (c *Client) SetAPIKey(key string) {
 	c.keyMu.Lock()
 	defer c.keyMu.Unlock()
 	c.apiKey = key
 	c.rest.SetAPIKey(key)
+	c.holds.clearQuota()
 }
 
 // key returns the configured API key.
